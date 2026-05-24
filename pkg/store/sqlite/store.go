@@ -391,6 +391,11 @@ func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.
 	if settings == nil {
 		return fmt.Errorf("agent runtime settings are required")
 	}
+	// Canonicalize at the store boundary so the migration default
+	// ('off') and the upsert path don't disagree on the empty-string
+	// case. Two values meaning the same thing trip future `== "off"`
+	// checks that elsewhere defensively re-normalize but might miss.
+	settings.ConversationAutoApproveThreshold = store.NormalizeConversationAutoApproveThreshold(settings.ConversationAutoApproveThreshold)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO agent_runtime_settings (
 			agent_id, runtime_enabled, runtime_mode, starter_profile, outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled,

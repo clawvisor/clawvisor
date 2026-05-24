@@ -427,6 +427,25 @@ func ValidateConversationAutoApproveThreshold(raw string, enforceUICap bool) (st
 	return v, nil
 }
 
+// NormalizeConversationAutoApproveThreshold canonicalizes a threshold
+// string to the form the migration stores: lowercased, trimmed, and
+// with the empty string mapped to "off". Unknown values pass through
+// unchanged so the upsert path doesn't silently rewrite an invalid
+// value into a valid one — validation belongs in the API handler.
+// Used by the sqlite + postgres upsert paths so the persisted value
+// matches the migration default and any future `== "off"` string
+// comparison doesn't have to defensively treat "" as equivalent.
+func NormalizeConversationAutoApproveThreshold(raw string) string {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	if v == "" {
+		return ConversationAutoApproveOff
+	}
+	if _, ok := conversationAutoApproveRank[v]; !ok {
+		return raw
+	}
+	return v
+}
+
 // conversationAutoApproveRank orders the threshold values so the gate
 // can ask "is the assessed risk level <= the user's threshold?". "off"
 // ranks below every level, so when threshold=="off" nothing is ever

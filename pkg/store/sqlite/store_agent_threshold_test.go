@@ -33,7 +33,11 @@ func TestAgentConversationAutoApproveThreshold_DefaultAndUpdate(t *testing.T) {
 		t.Fatalf("CreateAgent: %v", err)
 	}
 
-	// Insert baseline runtime settings; defaults should give "off".
+	// Insert baseline runtime settings; threshold intentionally
+	// omitted. The store's UpsertAgentRuntimeSettings normalizes ""
+	// → "off" so the persisted value matches the migration's column
+	// default and any future `== "off"` comparison elsewhere doesn't
+	// have to defensively treat "" as equivalent.
 	if err := st.UpsertAgentRuntimeSettings(ctx, &store.AgentRuntimeSettings{
 		AgentID:                          agent.ID,
 		RuntimeEnabled:                   true,
@@ -41,11 +45,6 @@ func TestAgentConversationAutoApproveThreshold_DefaultAndUpdate(t *testing.T) {
 		StarterProfile:                   "none",
 		OutboundCredentialMode:           "inherit",
 		LiteProxySecretDetectionDisabled: true,
-		// Threshold intentionally omitted — should write "" and
-		// surface as "" on read (the runtime helper collapses to
-		// "off"). The DB column default applies only when the row is
-		// freshly INSERTed without listing the column; since we list
-		// every column in the upsert, an empty string round-trips.
 	}); err != nil {
 		t.Fatalf("Upsert (baseline): %v", err)
 	}
@@ -53,8 +52,9 @@ func TestAgentConversationAutoApproveThreshold_DefaultAndUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentRuntimeSettings: %v", err)
 	}
-	if got.ConversationAutoApproveThreshold != "" {
-		t.Errorf("baseline threshold = %q, want empty string", got.ConversationAutoApproveThreshold)
+	if got.ConversationAutoApproveThreshold != store.ConversationAutoApproveOff {
+		t.Errorf("baseline threshold = %q, want %q (upsert must normalize empty to 'off')",
+			got.ConversationAutoApproveThreshold, store.ConversationAutoApproveOff)
 	}
 
 	// Set to medium and round-trip.

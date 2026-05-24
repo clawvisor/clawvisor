@@ -278,6 +278,20 @@ func maybeInterceptInlineTaskDefinition(
 	}, true
 }
 
+// hasNonEmptyTurn reports whether the slice contains at least one
+// turn with non-whitespace content. Used by the auto-approve gate as
+// the deterministic "did the user actually say anything?" check so
+// the floor isn't trivially defeated by a future caller passing in
+// a slice of whitespace strings.
+func hasNonEmptyTurn(turns []string) bool {
+	for _, t := range turns {
+		if strings.TrimSpace(t) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // autoApproveUserNotice renders the human-facing one-liner the
 // handler prepends to the continuation's assistant turn after the
 // gate fires. Quoting the task purpose makes the message
@@ -331,15 +345,24 @@ func autoApproveUserNotice(purpose string) string {
 // missing auto-approval can see exactly which gate refused without
 // inferring it from prompt-vs-no-prompt observation.
 func autoApproveFromConversation(cfg PostprocessConfig, assessment *taskrisk.RiskAssessment) (bool, string, string) {
+	// assessInlineTaskRisk always returns at least the deterministic
+	// envelope assessment (never nil), so a nil assessment here is
+	// unreachable in production. Defensive zero-value handling keeps
+	// the function total in case a test or future caller wires the
+	// gate with a stubbed/nil assessor; collapses into the same
+	// audit-trail outcome as "no risk level emitted at all," which
+	// is the safest fail-closed read.
 	if assessment == nil {
 		return false, "", "no_assessment"
 	}
 	// Deterministic floor: no extracted human turns ⇒ no auto-approval,
 	// no matter what the assessor claims. ExtractRecentHumanTurns
 	// already trims whitespace and filters Clawvisor-internal verbs,
-	// so a non-zero length here means the runtime actually observed
-	// at least one genuine human message in the inbound transcript.
-	if len(cfg.RecentUserTurns) == 0 {
+	// but we re-check content here so the floor holds even if a
+	// future caller routes raw turns into cfg without going through
+	// the extractor — the gate owns "did the user actually say
+	// anything?" and shouldn't delegate that to an upstream invariant.
+	if !hasNonEmptyTurn(cfg.RecentUserTurns) {
 		return false, "", "no_recent_turns"
 	}
 	if strings.EqualFold(strings.TrimSpace(cfg.ConversationAutoApproveThreshold), "off") ||

@@ -233,6 +233,17 @@ func isClawvisorInternalUserText(text string) bool {
 		strings.Contains(text, InlineTaskCreatorErrorMarker) {
 		return true
 	}
+	// Defense in depth: any user-role text whose first non-whitespace
+	// content is the [Clawvisor] proxy prefix is not a fresh human
+	// turn. Today the only [Clawvisor] injections happen on the
+	// assistant side (auto-approval notice), so this filter is a
+	// no-op in production. Adding it now so a future codepath that
+	// (intentionally or by mistake) routes proxy-prefixed text
+	// through the user role can't smuggle authorization into the
+	// auto-approve gate.
+	if strings.HasPrefix(strings.TrimSpace(text), "[Clawvisor]") {
+		return true
+	}
 	verb, _ := conversation.ParseApprovalReplyText(text)
 	return verb != ""
 }

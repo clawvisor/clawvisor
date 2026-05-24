@@ -1097,6 +1097,30 @@ func (h *LLMEndpointHandler) tryContinuation(
 	if len(toolResults) == 0 {
 		return nil, 0, "", nil
 	}
+	// Tool_use / tool_result must be 1:1 for the upstream — Anthropic
+	// and OpenAI Chat both 400 on an unbalanced continuation body. If
+	// the assistant turn carried sibling tool_uses that were NOT
+	// auto-approved (e.g. a Bash command we passed through alongside
+	// the POST /api/control/tasks the gate intercepted), we'd
+	// otherwise emit N tool_uses + len(toolResults) tool_results and
+	// the upstream would reject the turn. Worse, the proxy's response
+	// to the harness is the continuation: if we tried to continue
+	// anyway and the model ran something, the harness would also
+	// execute the passed-through Bash, double-running it. The safe
+	// answer is to skip continuation entirely and fall back to the
+	// substitute path — the user gets the [Clawvisor] bracketed
+	// fallback turn, the model sees no continuation, and the
+	// passed-through tool_use returns to its normal harness fate on
+	// the model's next turn.
+	if len(toolResults) != len(processed.Decisions) {
+		h.Logger.WarnContext(r.Context(), "lite-proxy continuation skipped: sibling tool_uses in same turn would unbalance tool_use/tool_result count",
+			"request_id", requestID,
+			"agent_id", agent.ID,
+			"tool_uses_in_turn", len(processed.Decisions),
+			"continue_results", len(toolResults),
+		)
+		return nil, 0, "", nil
+	}
 	contBody, err := llmproxy.BuildContinuationBody(provider, upstreamCT, inboundBody, upstreamBody, toolResults)
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("build continuation body: %w", err)
@@ -1195,14 +1219,35 @@ func (h *LLMEndpointHandler) tryContinuation(
 	}
 	if len(notices) > 0 && len(newProcessed.Body) > 0 {
 		joined := strings.Join(notices, "\n")
+		originalLen := len(newProcessed.Body)
 		pre, prependErr := llmproxy.PrependAssistantNotice(provider, contCT, newProcessed.Body, joined)
-		if prependErr != nil {
+		switch {
+		case prependErr != nil:
 			// Prepend is UX polish, not correctness — log and return
 			// the unmodified body so the user still sees the model's
 			// output. The continuation itself succeeded.
 			h.Logger.WarnContext(r.Context(), "lite-proxy continuation notice prepend failed; returning unannotated body",
 				"request_id", requestID, "agent_id", agent.ID, "err", prependErr.Error())
-		} else if len(pre) > 0 {
+		case len(pre) == 0:
+			// Empty result is a defensive no-op signal; keep the
+			// existing body to avoid stranding the harness.
+		case len(pre) == originalLen && bytes.Equal(pre, newProcessed.Body):
+			// Prepend was a silent no-op: the dispatcher couldn't
+			// find a shape it recognized (e.g. response body lacked
+			// the expected `choices`/`output`/`content` marker, or
+			// Anthropic SSE was missing `message_start`). The audit
+			// row for the auto-approval still fired, but the only
+			// user-facing trace is gone. Warn so an operator chasing
+			// "I auto-approved but the user didn't see the notice"
+			// has a deterministic log entry.
+			h.Logger.WarnContext(r.Context(), "lite-proxy continuation notice prepend silently no-op'd (shape not recognized); user will not see auto-approval notice",
+				"request_id", requestID,
+				"agent_id", agent.ID,
+				"provider", string(provider),
+				"content_type", contCT,
+				"body_bytes", originalLen,
+			)
+		default:
 			newProcessed.Body = pre
 		}
 	}

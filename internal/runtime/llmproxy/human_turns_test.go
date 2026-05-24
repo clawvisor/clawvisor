@@ -102,6 +102,32 @@ func TestExtractRecentHumanTurns_AnthropicSkipsBareApprovalVerbs(t *testing.T) {
 	}
 }
 
+// TestExtractRecentHumanTurns_AnthropicMultiLineEndingInBareVerb
+// documents the deliberate (and surprising) fail-closed behavior of
+// the extractor when a user turn ends in a bare approval verb. The
+// approval-reply parser scans bottom-up and matches the last
+// non-empty line, so "Please proceed with my plan.\n\nyes" is
+// treated as the user driving the approval flow and the whole turn
+// drops out — including the leading instruction. The conservative
+// read is that we'd rather lose surrounding intent than mistakenly
+// treat "yes" as fresh authorization for unrelated scope. If you
+// loosen this, narrow ParseApprovalReplyText to require the trimmed
+// text equal a bare verb instead of just ending in one.
+func TestExtractRecentHumanTurns_AnthropicMultiLineEndingInBareVerb(t *testing.T) {
+	body := mustMarshal(t, map[string]any{
+		"messages": []map[string]any{
+			{"role": "user", "content": "Please proceed with my plan.\n\nyes"},
+		},
+	})
+	turns := ExtractRecentHumanTurns(ExtractHumanTurnsRequest{
+		Provider: conversation.ProviderAnthropic,
+		Body:     body,
+	})
+	if len(turns) != 0 {
+		t.Errorf("expected the entire turn to be dropped (trailing bare verb is interpreted as approval reply); got %v", turns)
+	}
+}
+
 func TestExtractRecentHumanTurns_AnthropicSkipsAugmentedReply(t *testing.T) {
 	// When the proxy augments a user's "yes" with an internal marker
 	// payload, the resulting user-role text is Clawvisor-internal and
