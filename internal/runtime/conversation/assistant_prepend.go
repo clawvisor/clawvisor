@@ -400,24 +400,64 @@ func prependOpenAIResponsesAssistantTextSSE(body []byte, text string) ([]byte, e
 	// Inject the notice block immediately AFTER response.created (or
 	// at the top if the stream skips response.created), then shift
 	// every existing output_index by +1.
+	//
+	// The full six-event envelope (output_item.added →
+	// content_part.added → output_text.delta → output_text.done →
+	// content_part.done → output_item.done) mirrors what
+	// synthOpenAIResponsesTextSSE emits. Codex CLI's renderer keys
+	// off content_part.added + output_text.done specifically to
+	// open and close a visible text block; without them the text
+	// arrives but is never rendered. Every text-bearing event
+	// must carry both item_id and content_index — the renderer
+	// uses (item_id, content_index) as the part key and silently
+	// drops events that don't address an open part.
+	const noticeItemID = "msg_clawvisor_notice"
 	insertNotice := func() error {
 		if err := emit("response.output_item.added", map[string]any{
 			"type":         "response.output_item.added",
 			"output_index": 0,
 			"item": map[string]any{
-				"type":    "message",
-				"id":      "msg_clawvisor_notice",
-				"role":    "assistant",
-				"status":  "in_progress",
-				"content": []any{},
+				"type":   "message",
+				"id":     noticeItemID,
+				"role":   "assistant",
+				"status": "in_progress",
 			},
 		}); err != nil {
 			return err
 		}
+		if err := emit("response.content_part.added", map[string]any{
+			"type":          "response.content_part.added",
+			"item_id":       noticeItemID,
+			"output_index":  0,
+			"content_index": 0,
+			"part":          map[string]any{"type": "output_text", "text": ""},
+		}); err != nil {
+			return err
+		}
 		if err := emit("response.output_text.delta", map[string]any{
-			"type":         "response.output_text.delta",
-			"output_index": 0,
-			"delta":        text,
+			"type":          "response.output_text.delta",
+			"item_id":       noticeItemID,
+			"output_index":  0,
+			"content_index": 0,
+			"delta":         text,
+		}); err != nil {
+			return err
+		}
+		if err := emit("response.output_text.done", map[string]any{
+			"type":          "response.output_text.done",
+			"item_id":       noticeItemID,
+			"output_index":  0,
+			"content_index": 0,
+			"text":          text,
+		}); err != nil {
+			return err
+		}
+		if err := emit("response.content_part.done", map[string]any{
+			"type":          "response.content_part.done",
+			"item_id":       noticeItemID,
+			"output_index":  0,
+			"content_index": 0,
+			"part":          map[string]any{"type": "output_text", "text": text},
 		}); err != nil {
 			return err
 		}
@@ -426,7 +466,7 @@ func prependOpenAIResponsesAssistantTextSSE(body []byte, text string) ([]byte, e
 			"output_index": 0,
 			"item": map[string]any{
 				"type":   "message",
-				"id":     "msg_clawvisor_notice",
+				"id":     noticeItemID,
 				"role":   "assistant",
 				"status": "completed",
 				"content": []map[string]any{

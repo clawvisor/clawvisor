@@ -302,10 +302,33 @@ func TestPrependOpenAIResponsesAssistantText_SSE(t *testing.T) {
 	}
 	// Original event's output_index was shifted from 0 to 1.
 	// (The notice item occupies index 0.)
-	// We assert by counting: a fresh "output_index":1 should appear
-	// for the original item.
 	if !strings.Contains(got, `"output_index":1`) {
 		t.Errorf("original output_index not shifted to 1:\n%s", got)
+	}
+	// FULL envelope shape — Codex CLI's renderer keys off
+	// content_part.added + output_text.done to actually open and
+	// close a visible text block, and (item_id, content_index)
+	// to address it. Without all six events plus the keys, the
+	// notice text is silently dropped from the rendered output.
+	for _, eventName := range []string{
+		"response.output_item.added",
+		"response.content_part.added",
+		"response.output_text.delta",
+		"response.output_text.done",
+		"response.content_part.done",
+		"response.output_item.done",
+	} {
+		if !strings.Contains(got, "event: "+eventName) {
+			t.Errorf("missing required envelope event %q for Codex CLI rendering:\n%s", eventName, got)
+		}
+	}
+	// item_id + content_index must appear together on text-bearing
+	// events so the renderer can address the open part.
+	if !strings.Contains(got, `"item_id":"msg_clawvisor_notice"`) {
+		t.Errorf("text-bearing events missing item_id; renderer can't address the notice part:\n%s", got)
+	}
+	if !strings.Contains(got, `"content_index":0`) {
+		t.Errorf("text-bearing events missing content_index:\n%s", got)
 	}
 }
 
