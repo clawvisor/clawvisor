@@ -76,7 +76,15 @@ func (s *RedisTaskCheckoutStore) Clear(ctx context.Context, key TaskCheckoutKey)
 }
 
 func redisTaskCheckoutKey(key TaskCheckoutKey) string {
-	sum := sha256.Sum256([]byte(key.UserID + "\x00" + key.AgentID))
+	// ConversationID partitions focus per-conversation. When empty, we
+	// hash the legacy (user, agent) shape unchanged so existing redis
+	// entries from pre-conversation-scoping clients remain readable —
+	// no migration required, no silent loss of focus on upgrade.
+	if key.ConversationID == "" {
+		sum := sha256.Sum256([]byte(key.UserID + "\x00" + key.AgentID))
+		return redisTaskCheckoutPrefix + hex.EncodeToString(sum[:])
+	}
+	sum := sha256.Sum256([]byte(key.UserID + "\x00" + key.AgentID + "\x00" + key.ConversationID))
 	return redisTaskCheckoutPrefix + hex.EncodeToString(sum[:])
 }
 

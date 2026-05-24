@@ -1830,6 +1830,95 @@ func TestLLMEndpoint_RewritesTaskApprovalReplyBeforeForwarding(t *testing.T) {
 	}
 }
 
+// TestCheckedOutTaskID_FallsBackToLegacyKeyForControlPlaneCheckout
+// guards the per-conversation/legacy-bucket fallback rule:
+// POST /control/task/checkout writes under (UserID, AgentID) with empty
+// ConversationID because the control endpoint has no per-turn
+// conversation context. Without the fallback, a scoped lookup with a
+// non-empty ConversationID would miss every time and the
+// manually-selected task would never be preferred.
+func TestCheckedOutTaskID_FallsBackToLegacyKeyForControlPlaneCheckout(t *testing.T) {
+	ctx := context.Background()
+	checkouts := llmproxy.NewMemoryTaskCheckoutStore(time.Hour)
+	// Simulate POST /control/task/checkout: stored under the legacy
+	// (user, agent) key, no conversation ID.
+	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{
+		UserID:  "user-1",
+		AgentID: "agent-1",
+	}, "task-active", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	h := &LLMEndpointHandler{TaskCheckouts: checkouts}
+	agent := &store.Agent{ID: "agent-1", UserID: "user-1"}
+	candidates := []*store.Task{
+		{ID: "task-active", AgentID: "agent-1", Status: "active"},
+	}
+
+	// Conversation-scoped lookup: scoped bucket is empty, falls back to
+	// legacy, finds task-active.
+	id, err := h.checkedOutTaskID(ctx, agent, "conv-A", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "task-active" {
+		t.Fatalf("scoped lookup with fallback returned %q, want task-active", id)
+	}
+
+	// Unscoped (empty ConversationID) still works.
+	id, err = h.checkedOutTaskID(ctx, agent, "", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "task-active" {
+		t.Fatalf("legacy-bucket lookup returned %q, want task-active", id)
+	}
+}
+
+// TestCheckedOutTaskID_ScopedWinsOverLegacyFallback confirms an
+// inline-task approval that wrote to the scoped bucket takes
+// precedence over any control-plane checkout in the legacy bucket: the
+// fallback only fires when the scoped bucket is empty.
+func TestCheckedOutTaskID_ScopedWinsOverLegacyFallback(t *testing.T) {
+	ctx := context.Background()
+	checkouts := llmproxy.NewMemoryTaskCheckoutStore(time.Hour)
+	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{
+		UserID:  "user-1",
+		AgentID: "agent-1",
+	}, "task-legacy", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		ConversationID: "conv-A",
+	}, "task-scoped", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	h := &LLMEndpointHandler{TaskCheckouts: checkouts}
+	agent := &store.Agent{ID: "agent-1", UserID: "user-1"}
+	candidates := []*store.Task{
+		{ID: "task-legacy", AgentID: "agent-1", Status: "active"},
+		{ID: "task-scoped", AgentID: "agent-1", Status: "active"},
+	}
+
+	id, err := h.checkedOutTaskID(ctx, agent, "conv-A", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "task-scoped" {
+		t.Fatalf("scoped bucket should win; got %q, want task-scoped", id)
+	}
+
+	// A sibling conversation with no scoped entry falls back to legacy.
+	id, err = h.checkedOutTaskID(ctx, agent, "conv-B", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "task-legacy" {
+		t.Fatalf("sibling conversation should fall back; got %q, want task-legacy", id)
+	}
+}
+
 func TestLLMEndpoint_RejectsMissingAuth(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("upstream should not be hit when auth missing")

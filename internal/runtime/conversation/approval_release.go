@@ -34,13 +34,34 @@ func AnthropicApprovalReply(body []byte) (verb, id string) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return "", ""
 	}
+	userIdx := -1
 	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role != "user" {
+		if req.Messages[i].Role == "user" {
+			userIdx = i
+			break
+		}
+	}
+	if userIdx < 0 {
+		return "", ""
+	}
+	verb, id = ParseApprovalReplyText(flattenAnthropicUserText(req.Messages[userIdx].Content))
+	if verb == "" || id != "" {
+		return verb, id
+	}
+	// Bare reply (e.g. "y"): scan back through assistant messages for the
+	// most recent approval-ID marker. Without this, a "y" lands on whatever
+	// hold the cache picks LIFO — which can be the wrong agent's when
+	// several share a Clawvisor token. The marker pins the reply to the
+	// specific approval prompt this transcript is looking at.
+	for i := userIdx - 1; i >= 0; i-- {
+		if req.Messages[i].Role != "assistant" {
 			continue
 		}
-		return ParseApprovalReplyText(flattenAnthropicUserText(req.Messages[i].Content))
+		if marker := FindLatestApprovalIDMarker(flattenAnthropicUserText(req.Messages[i].Content)); marker != "" {
+			return verb, marker
+		}
 	}
-	return "", ""
+	return verb, ""
 }
 
 func SyntheticApprovalToolUseResponse(req *http.Request, provider Provider, requestBody []byte, allow bool, toolUseID, toolName string, toolInput map[string]any) (SyntheticApprovalResponse, bool) {

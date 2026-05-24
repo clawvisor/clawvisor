@@ -134,6 +134,7 @@ func maybeInterceptInlineTaskDefinition(
 		UserID:         cfg.AgentUserID,
 		AgentID:        cfg.AgentID,
 		Provider:       provider,
+		ConversationID: cfg.ConversationID,
 		ToolUse:        tu,
 		Reason:         "inline task creation awaiting user approval",
 		Stage:          StageAwaitingTaskApproval,

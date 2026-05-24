@@ -27,6 +27,7 @@ type approvalReplyRoutingRequest struct {
 	UserID          string
 	AgentID         string
 	Provider        conversation.Provider
+	ConversationID  string
 	PendingApproval PendingApprovalCache
 	Verb            string
 	ApprovalID      string
@@ -60,10 +61,11 @@ func resolveApprovalReplyAction(ctx context.Context, req approvalReplyRoutingReq
 	}
 
 	hold, err := req.PendingApproval.Peek(ctx, ResolveRequest{
-		UserID:     req.UserID,
-		AgentID:    req.AgentID,
-		Provider:   req.Provider,
-		ApprovalID: req.ApprovalID,
+		UserID:         req.UserID,
+		AgentID:        req.AgentID,
+		Provider:       req.Provider,
+		ConversationID: req.ConversationID,
+		ApprovalID:     req.ApprovalID,
 	})
 	if err != nil {
 		return action, err

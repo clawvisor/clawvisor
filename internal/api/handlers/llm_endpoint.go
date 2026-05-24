@@ -398,11 +398,23 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		body = sanitized.Body
 		auditParams["inbound_history_sanitized"] = true
 	}
+	// Extract per-conversation identifier from the inbound body once. It
+	// scopes pending approvals + task checkout to a single conversation
+	// when multiple sessions share a Clawvisor token (Conductor workspaces,
+	// sub-agents, multiple Claude Code installs). Threaded through every
+	// downstream rewrite + the release path. Empty falls back to the
+	// pre-conversation-scoping behavior, so older clients that don't
+	// surface a conversation ID continue working.
+	conversationID := conversation.ConversationID(r, provider, body)
+	if conversationID != "" {
+		auditParams["conversation_id"] = conversationID
+	}
 	if taskRewrite, taskErr := llmproxy.RewriteTaskApprovalReply(r.Context(), llmproxy.TaskReplyRewriteRequest{
 		HTTPRequest:     r,
 		Provider:        provider,
 		Body:            body,
 		Agent:           agent,
+		ConversationID:  conversationID,
 		PendingApproval: h.PendingApprovals,
 	}); taskErr != nil {
 		auditStatus = http.StatusBadRequest
@@ -435,6 +447,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		Provider:        provider,
 		Body:            body,
 		Agent:           agent,
+		ConversationID:  conversationID,
 		PendingApproval: h.PendingApprovals,
 		Creator:         h.InlineTaskCreator,
 		Audit:           h.AuditEmitter,
@@ -548,7 +561,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// the same turn). A single user "approve" must only resolve one
 	// hold.
 	if !inlineApprovalConsumed {
-		if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
+		if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, conversationID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
 			return
 		}
 	}
@@ -786,7 +799,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"authorization inputs unavailable; please retry")
 			return
 		}
-		preferredTaskID, preferredTaskErr := h.checkedOutTaskID(r.Context(), agent, candidateTasks)
+		preferredTaskID, preferredTaskErr := h.checkedOutTaskID(r.Context(), agent, conversationID, candidateTasks)
 		if preferredTaskErr != nil {
 			h.Logger.WarnContext(r.Context(), "lite-proxy task checkout lookup failed; continuing without preferred task",
 				"request_id", requestID, "agent_id", agent.ID, "err", preferredTaskErr.Error())
@@ -809,6 +822,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			Store:            h.Store,
 			AgentUserID:      agent.UserID,
 			AgentID:          agent.ID,
+			ConversationID:   conversationID,
 			Audit:            h.AuditEmitter,
 			RequestID:        requestID,
 			Catalog:          catalogIface,
@@ -1089,14 +1103,43 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 	return candidateTasks, toolRules, egressRules, nil
 }
 
-func (h *LLMEndpointHandler) checkedOutTaskID(ctx context.Context, agent *store.Agent, candidateTasks []*store.Task) (string, error) {
+func (h *LLMEndpointHandler) checkedOutTaskID(ctx context.Context, agent *store.Agent, conversationID string, candidateTasks []*store.Task) (string, error) {
 	if h == nil || h.TaskCheckouts == nil || agent == nil {
 		return "", nil
 	}
-	checkout, ok, err := h.TaskCheckouts.Get(ctx, llmproxy.TaskCheckoutKey{
+	// Scoped lookup first: a checkout written by inline-task approval
+	// in this conversation should win. If the scoped bucket misses,
+	// fall back to the legacy (user, agent)-only bucket — that's where
+	// `POST /control/task/checkout` writes, since the control endpoint
+	// has no per-turn conversation context. Without this fallback, a
+	// manually-selected task would never be preferred for any
+	// conversation that surfaces a non-empty ConversationID.
+	scopedKey := llmproxy.TaskCheckoutKey{
+		UserID:         agent.UserID,
+		AgentID:        agent.ID,
+		ConversationID: conversationID,
+	}
+	if id, err := h.resolveCheckedOutTaskID(ctx, scopedKey, agent, candidateTasks); err != nil || id != "" {
+		return id, err
+	}
+	if conversationID == "" {
+		// Already checked the legacy bucket above.
+		return "", nil
+	}
+	legacyKey := llmproxy.TaskCheckoutKey{
 		UserID:  agent.UserID,
 		AgentID: agent.ID,
-	})
+	}
+	return h.resolveCheckedOutTaskID(ctx, legacyKey, agent, candidateTasks)
+}
+
+// resolveCheckedOutTaskID looks up a single TaskCheckoutKey, returns
+// the checked-out task ID when it still matches an active candidate
+// task for this agent, and clears the entry when it's stale. Returning
+// ("", nil) means the bucket either had no entry or had a stale entry
+// (which is now cleared) — the caller should treat both the same.
+func (h *LLMEndpointHandler) resolveCheckedOutTaskID(ctx context.Context, key llmproxy.TaskCheckoutKey, agent *store.Agent, candidateTasks []*store.Task) (string, error) {
+	checkout, ok, err := h.TaskCheckouts.Get(ctx, key)
 	if err != nil || !ok || strings.TrimSpace(checkout.TaskID) == "" {
 		return "", err
 	}
@@ -1105,7 +1148,7 @@ func (h *LLMEndpointHandler) checkedOutTaskID(ctx context.Context, agent *store.
 			return checkout.TaskID, nil
 		}
 	}
-	if err := h.TaskCheckouts.Clear(ctx, llmproxy.TaskCheckoutKey{UserID: agent.UserID, AgentID: agent.ID}); err != nil {
+	if err := h.TaskCheckouts.Clear(ctx, key); err != nil {
 		return "", err
 	}
 	return "", nil
@@ -2351,7 +2394,7 @@ func syntheticLiteTextResponse(r *http.Request, provider conversation.Provider, 
 	}
 }
 
-func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
+func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID, conversationID string, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
 	candidateTasks, toolRules, egressRules, decisionLoadErr := h.loadLiteProxyDecisionInputs(r.Context(), agent)
 	if decisionLoadErr != nil {
 		// Approval-release path also authorizes; same fail-closed rule
@@ -2381,6 +2424,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		Provider:        provider,
 		Body:            body,
 		Agent:           agent,
+		ConversationID:  conversationID,
 		Inspector:       h.Inspector,
 		RewriteOpts:     opts,
 		Store:           h.Store,
