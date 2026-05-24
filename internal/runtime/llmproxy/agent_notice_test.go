@@ -315,9 +315,13 @@ func TestHasInboundAssistantTurn_OpenAIResponsesEmptyPreviousResponseID(t *testi
 	}
 }
 
-func TestHasInboundAssistantTurn_OpenAIResponsesConversationField(t *testing.T) {
-	// Newer Responses conversation-state field. Accept both the
-	// string-id form and the object form.
+func TestHasInboundAssistantTurn_OpenAIResponsesConversationAloneNotConclusive(t *testing.T) {
+	// `conversation` is a container, not a back-reference: a fresh
+	// client kickoff can ship a brand-new (empty) conversation alongside
+	// the user's first turn. Without other evidence of prior assistant
+	// activity, this must be classified as a first turn so the routing
+	// notice fires. Compare to previous_response_id, which IS a
+	// conclusive back-reference and short-circuits to "has history."
 	for _, tc := range []struct {
 		name string
 		conv any
@@ -328,12 +332,44 @@ func TestHasInboundAssistantTurn_OpenAIResponsesConversationField(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			body := mustMarshal(t, map[string]any{
 				"conversation": tc.conv,
-				"input":        "follow up",
+				"input":        "first turn in this conversation",
 			})
-			if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
-				t.Errorf("expected true when conversation field is %v", tc.conv)
+			if HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+				t.Errorf("expected false (first turn) for conversation-only kickoff, conv=%v", tc.conv)
 			}
 		})
+	}
+}
+
+func TestHasInboundAssistantTurn_OpenAIResponsesConversationWithPreviousResponseID(t *testing.T) {
+	// Mixed-field follow-up: conversation container + previous_response_id
+	// back-reference. The back-reference is conclusive — there IS a
+	// prior response.
+	body := mustMarshal(t, map[string]any{
+		"conversation":         "conv_xyz789",
+		"previous_response_id": "resp_abc123",
+		"input":                "follow up",
+	})
+	if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+		t.Error("expected true when previous_response_id is set alongside conversation")
+	}
+}
+
+func TestHasInboundAssistantTurn_OpenAIResponsesConversationWithAssistantInput(t *testing.T) {
+	// A conversation chain that echoes prior assistant items in
+	// `input` is still caught by the items walk — `conversation`
+	// being non-conclusive doesn't disable the rest of the detector.
+	body := mustMarshal(t, map[string]any{
+		"conversation": "conv_xyz789",
+		"input": []map[string]any{
+			{"type": "message", "role": "user", "content": "first"},
+			{"type": "function_call", "name": "Bash", "arguments": `{"command":"ls"}`, "call_id": "c1"},
+			{"type": "function_call_output", "call_id": "c1", "output": "a"},
+			{"type": "message", "role": "user", "content": "follow up"},
+		},
+	})
+	if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+		t.Error("expected true when conversation chain echoes prior assistant items in input")
 	}
 }
 

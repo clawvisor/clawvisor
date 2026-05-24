@@ -97,16 +97,23 @@ func openAIInboundHasAssistant(body []byte) bool {
 		}
 		return false
 	}
-	// Responses API stateful conversation mode: the harness uses
-	// `previous_response_id` (or the newer `conversation` field) to
-	// chain turns server-side, leaving the request body to carry only
-	// the new user turn. Either field is conclusive evidence that
-	// prior assistant state exists, even if `input` contains only
-	// user-shaped items. Check before walking `input`.
+	// Responses API stateful chaining: `previous_response_id`
+	// back-references a prior response, which is always assistant
+	// output. Conclusive evidence of prior history regardless of what
+	// `input` carries — check before walking `input`.
+	//
+	// We deliberately do NOT treat the top-level `conversation` field
+	// the same way. A conversation is a container that can be brand-
+	// new and empty on a fresh client kickoff, so its presence alone
+	// is not evidence that any assistant turn has occurred yet.
+	// Clients that chain turns within a conversation typically also
+	// set `previous_response_id` (the conversation field carries
+	// state; the response_id chain carries the back-reference), so
+	// the conclusive signal is still available. A client that chains
+	// via `conversation` ALONE and ships only a new user turn each
+	// time will get the notice re-prepended on every turn — degenerate
+	// but acceptable for a UX-polish surface.
 	if prev, ok := raw["previous_response_id"]; ok && hasNonEmptyJSONStringOrObject(prev) {
-		return true
-	}
-	if conv, ok := raw["conversation"]; ok && hasNonEmptyJSONStringOrObject(conv) {
 		return true
 	}
 	// Responses API shape: `input` is either a plain string (single
