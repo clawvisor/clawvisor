@@ -40,6 +40,16 @@ type ToolUseVerdict struct {
 	// continuation failed and the substitute fallback rendered
 	// instead.
 	PrependAssistantNotice string
+
+	// CreatedTaskID is set by the conversation auto-approval gate to
+	// the ID of the inline task it created before returning the
+	// verdict. Carried so downstream audit rows in the lite-proxy
+	// handler (e.g. LogContinuationSkippedSiblingTools when sibling
+	// tool_uses force a fallback) can link to the same task_id the
+	// rest of the approval audit trail uses — without parsing the
+	// augmentation text or threading a separate map. Empty for any
+	// other verdict source.
+	CreatedTaskID string
 }
 
 type RewriteResult struct {

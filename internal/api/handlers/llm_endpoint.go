@@ -876,13 +876,14 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		// postprocess again on the new response. The harness then sees
 		// the model's next tool_use rather than a "task was approved"
 		// terminal message — letting auto-approved tasks proceed
-		// seamlessly. Capped at maxContinuationDepth so a misbehaving
-		// gate can't loop. On any failure path the handler falls back to
-		// the original `processed` (which still carries SubstituteWith
-		// as a terminal assistant text), so the harness never sees an
-		// empty body.
-		continuationDepth := llmproxy.ContinuationDepthFromContext(r.Context())
-		if continuationDepth < llmproxy.MaxContinuationDepth {
+		// seamlessly. Recursion is bounded by construction: tryContinuation
+		// performs exactly one inline Postprocess pass and does not loop,
+		// so even if the second pass fires the auto-approve gate again it
+		// falls through to SubstituteWith (no further forward, no further
+		// Postprocess). On any failure path the handler falls back to the
+		// original `processed` (which still carries SubstituteWith as a
+		// terminal assistant text), so the harness never sees an empty body.
+		{
 			contFinal, contStatus, contCT, contErr := h.tryContinuation(r, agent, provider, requestID, body, full, upstreamCT, resp.StatusCode, processed, llmproxy.PostprocessConfig{
 				Inspector:                        h.Inspector,
 				RewriteOpts:                      opts,
@@ -910,7 +911,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				ConversationAutoApproveThreshold: autoApproveThreshold,
 				InlineTaskCreator:                h.InlineTaskCreator,
 				Checkouts:                        h.TaskCheckouts,
-			}, continuationDepth)
+			})
 			switch {
 			case contErr != nil:
 				h.Logger.WarnContext(r.Context(), "lite-proxy continuation failed; falling back to substitute response",
@@ -1074,7 +1075,6 @@ func (h *LLMEndpointHandler) tryContinuation(
 	upstreamStatus int,
 	processed llmproxy.PostprocessResult,
 	cfg llmproxy.PostprocessConfig,
-	currentDepth int,
 ) (*llmproxy.PostprocessResult, int, string, error) {
 	if upstreamStatus >= 400 {
 		// Don't try to continue on top of an upstream error response —
@@ -1121,10 +1121,13 @@ func (h *LLMEndpointHandler) tryContinuation(
 		// after that." Record a dedicated audit row enumerating the
 		// dropped tool names so the trail is greppable.
 		var droppedNames []string
-		var autoApprovedTUID string
+		var autoApprovedTUID, autoApprovedTaskID string
 		for _, dec := range processed.Decisions {
 			if dec.Verdict.ContinueWithToolResult != "" {
 				autoApprovedTUID = dec.ToolUse.ID
+				if autoApprovedTaskID == "" {
+					autoApprovedTaskID = dec.Verdict.CreatedTaskID
+				}
 				continue
 			}
 			droppedNames = append(droppedNames, dec.ToolUse.Name)
@@ -1132,12 +1135,13 @@ func (h *LLMEndpointHandler) tryContinuation(
 		h.Logger.WarnContext(r.Context(), "lite-proxy continuation skipped: sibling tool_uses in same turn would unbalance tool_use/tool_result count",
 			"request_id", requestID,
 			"agent_id", agent.ID,
+			"task_id", autoApprovedTaskID,
 			"tool_uses_in_turn", len(processed.Decisions),
 			"continue_results", len(toolResults),
 			"dropped_tools", droppedNames,
 		)
 		if h.AuditEmitter != nil {
-			h.AuditEmitter.LogContinuationSkippedSiblingTools(r.Context(), agent, requestID, "", autoApprovedTUID, droppedNames)
+			h.AuditEmitter.LogContinuationSkippedSiblingTools(r.Context(), agent, requestID, autoApprovedTaskID, autoApprovedTUID, droppedNames)
 		}
 		return nil, 0, "", nil
 	}
@@ -1150,11 +1154,9 @@ func (h *LLMEndpointHandler) tryContinuation(
 		"agent_id", agent.ID,
 		"provider", string(provider),
 		"tool_results", len(toolResults),
-		"depth", currentDepth,
 		"body_bytes", len(contBody),
 	)
-	ctx := llmproxy.WithContinuationDepth(r.Context(), currentDepth+1)
-	resp, err := h.Forwarder.Forward(ctx, agent.UserID, agent.ID, provider, r, contBody)
+	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, contBody)
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("forward continuation: %w", err)
 	}
@@ -1200,13 +1202,16 @@ func (h *LLMEndpointHandler) tryContinuation(
 		h.Logger.WarnContext(r.Context(), "lite-proxy continuation decision-input refresh failed; using pre-continuation snapshot",
 			"request_id", requestID, "agent_id", agent.ID, "err", refreshErr.Error())
 	}
-	// Build a new *http.Request carrying the depth-marked context so
-	// that any inline_task_intercept on the second pass can see we're
-	// in a continuation (today nothing inside Postprocess branches on
-	// depth, but the per-context recursion guard is the natural place
-	// to add it as the gate's coverage expands).
-	contReq := r.Clone(ctx)
-	newProcessed := llmproxy.Postprocess(contReq, full, contCT, cfg)
+	// Recursion is bounded by construction here: tryContinuation does
+	// not loop, so the second Postprocess pass below runs at most once
+	// per inbound harness request. If that second pass fires the
+	// auto-approve gate again, the gate's verdict still carries
+	// ContinueWithToolResult, but we never act on it — the caller
+	// (serve()) doesn't re-invoke tryContinuation. The verdict's
+	// SubstituteWith fallback renders as a terminal text turn instead,
+	// which is the right behavior for a model that re-emits a task-
+	// creation tool_use on the continuation.
+	newProcessed := llmproxy.Postprocess(r, full, contCT, cfg)
 	// Force Rewritten=true on a successful continuation swap. The
 	// body now comes from a SECOND upstream call whose length almost
 	// certainly differs from the first call's Content-Length (which

@@ -242,6 +242,44 @@ func TestPrependOpenAIChatAssistantText_SSE(t *testing.T) {
 	}
 }
 
+// TestPrependOpenAIChatAssistantText_SSE_MultimodalContentArray
+// confirms that when the upstream's first delta carries a content-parts
+// array (multimodal/vision deltas), the prepend prepends a text part
+// rather than collapsing the array to a string. Without this the
+// image/audio parts on that delta are silently lost from the
+// rendered turn.
+func TestPrependOpenAIChatAssistantText_SSE_MultimodalContentArray(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"chatcmpl-mm","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"https://example/img.png"}}]},"finish_reason":null}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	out, err := PrependOpenAIChatAssistantText("text/event-stream", []byte(sse), "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got := string(out)
+	// Notice text appears as a prepended text part.
+	if !strings.Contains(got, `[Clawvisor] approved`) {
+		t.Errorf("notice missing:\n%s", got)
+	}
+	// Original text part survived.
+	if !strings.Contains(got, `"text":"hi"`) {
+		t.Errorf("original text part lost:\n%s", got)
+	}
+	// Image part survived — this is the load-bearing assertion
+	// (previously the array got collapsed to a string and the image
+	// disappeared).
+	if !strings.Contains(got, `"image_url"`) || !strings.Contains(got, `"https://example/img.png"`) {
+		t.Errorf("multimodal image part lost on prepend:\n%s", got)
+	}
+	// Content is still an array (not collapsed to a string).
+	if !strings.Contains(got, `"content":[`) {
+		t.Errorf("content should still be an array; appears collapsed:\n%s", got)
+	}
+}
+
 // TestPrependOpenAIChatAssistantText_SSE_EmptyStreamFallsBack covers
 // the malformed/empty-upstream case where there's no chunk to merge
 // into. We fall back to a leading synthetic chunk so the notice still

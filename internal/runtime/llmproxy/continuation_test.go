@@ -475,12 +475,3 @@ func TestBuildAnthropicContinuationBody_SkipsEmptyToolUseID(t *testing.T) {
 	}
 }
 
-func TestContinuationDepthCtx_RoundTrip(t *testing.T) {
-	ctx := WithContinuationDepth(nil, 7)
-	if got := ContinuationDepthFromContext(ctx); got != 7 {
-		t.Errorf("depth round-trip: got %d, want 7", got)
-	}
-	if got := ContinuationDepthFromContext(nil); got != 0 {
-		t.Errorf("nil context: got %d, want 0", got)
-	}
-}

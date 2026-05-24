@@ -246,11 +246,27 @@ func sanitizeResponsesItemForInput(raw json.RawMessage) (json.RawMessage, bool) 
 			return nil, false
 		}
 		return out, true
+	case "reasoning":
+		// o1/o3/o4-mini extended-thinking responses include reasoning
+		// items carrying `encrypted_content` (or `summary`) that the
+		// upstream needs back on the continuation request so the model
+		// can preserve its chain of thought across the synthetic
+		// function_call_output we're about to inject. Dropping these
+		// either 400s the request (some models require the reasoning
+		// item to immediately precede the function_call) or breaks
+		// the model's reasoning continuity. Strip only the response-
+		// only `status` field and re-emit verbatim.
+		delete(probe, "status")
+		out, err := json.Marshal(probe)
+		if err != nil {
+			return nil, false
+		}
+		return out, true
 	default:
-		// Unknown / response-only item types (reasoning,
-		// web_search_call, image_generation_call, …) are dropped on
-		// the continuation: re-sending them as input[] items would
-		// likely 400 from the upstream.
+		// Truly unknown / response-only item types (web_search_call,
+		// image_generation_call, …) are dropped on the continuation:
+		// re-sending them as input[] items would likely 400 from the
+		// upstream.
 		return nil, false
 	}
 }

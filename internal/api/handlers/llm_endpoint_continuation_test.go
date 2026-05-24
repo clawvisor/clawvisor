@@ -125,7 +125,7 @@ func TestTryContinuation_PostsSecondCallWithToolResult(t *testing.T) {
 			AgentUserID: agent.UserID,
 			AgentID:     agent.ID,
 		},
-		0, // currentDepth
+
 	)
 	if err != nil {
 		t.Fatalf("tryContinuation: %v", err)
@@ -280,7 +280,7 @@ func TestTryContinuation_RefreshesCandidateTasksFromStore(t *testing.T) {
 			CallerNonces:     h.CallerNonces,
 			PendingApprovals: h.PendingApprovals,
 		},
-		0,
+
 	)
 	if err != nil {
 		t.Fatalf("tryContinuation: %v", err)
@@ -362,7 +362,7 @@ func TestTryContinuation_PrependsUserFacingNotice(t *testing.T) {
 			AgentUserID: agent.UserID,
 			AgentID:     agent.ID,
 		},
-		0,
+
 	)
 	if err != nil {
 		t.Fatalf("tryContinuation: %v", err)
@@ -405,7 +405,7 @@ func TestTryContinuation_NoContinueDecisionIsNoOp(t *testing.T) {
 	final, status, ct, err := h.tryContinuation(
 		req, agent, conversation.ProviderAnthropic, "req-x",
 		[]byte(`{"messages":[]}`), []byte(`{"content":[]}`), "application/json", http.StatusOK,
-		processed, llmproxy.PostprocessConfig{Inspector: h.Inspector}, 0,
+		processed, llmproxy.PostprocessConfig{Inspector: h.Inspector},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -484,7 +484,7 @@ func TestServe_ContinuationClearsStaleContentLengthHeader(t *testing.T) {
 			AgentUserID: agent.UserID,
 			AgentID:     agent.ID,
 		},
-		0,
+
 	)
 	if err != nil {
 		t.Fatalf("tryContinuation: %v", err)
@@ -539,7 +539,7 @@ func TestTryContinuation_UpstreamErrorFallsBack(t *testing.T) {
 	final, _, _, err := h.tryContinuation(
 		req, agent, conversation.ProviderAnthropic, "req-y",
 		inbound, first, "application/json", http.StatusOK,
-		processed, llmproxy.PostprocessConfig{Inspector: h.Inspector}, 0,
+		processed, llmproxy.PostprocessConfig{Inspector: h.Inspector},
 	)
 	if err == nil {
 		t.Fatal("expected error on upstream failure; got nil so caller would silently swap in continuation result")

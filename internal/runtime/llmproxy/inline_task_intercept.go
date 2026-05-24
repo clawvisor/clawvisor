@@ -199,9 +199,17 @@ func maybeInterceptInlineTaskDefinition(
 			} else {
 				checkedOut := false
 				if cfg.Checkouts != nil && created.ID != "" {
+					// Include ConversationID for parity with the manual
+					// approval path (inline_task_transitions.go's Set call).
+					// Without it the entry lands in the legacy (user, agent)
+					// bucket which is the cross-conversation fallback —
+					// approving a task in conversation A would silently
+					// become conversation B's preferred task on its next
+					// call, contradicting the TaskCheckoutKey contract.
 					if setErr := cfg.Checkouts.Set(req.Context(), TaskCheckoutKey{
-						UserID:  cfg.AgentUserID,
-						AgentID: cfg.AgentID,
+						UserID:         cfg.AgentUserID,
+						AgentID:        cfg.AgentID,
+						ConversationID: cfg.ConversationID,
 					}, created.ID, 0); setErr == nil {
 						checkedOut = true
 					}
@@ -242,6 +250,11 @@ func maybeInterceptInlineTaskDefinition(
 				return conversation.ToolUseVerdict{
 					Allowed: false,
 					Reason:  "Clawvisor: auto-approved from conversation context",
+					// CreatedTaskID lets downstream audit emissions
+					// (LogContinuationSkippedSiblingTools etc.) link
+					// to the same task without parsing the
+					// augmentation text or threading a sidecar map.
+					CreatedTaskID: created.ID,
 					// SubstituteWith is the fallback rendered to the
 					// harness as an assistant text turn if the handler
 					// can't complete the recursive continuation call

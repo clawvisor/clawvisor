@@ -347,22 +347,55 @@ func mergeOpenAIChatChunkWithNotice(payload []byte, text string) ([]byte, bool) 
 		return nil, false
 	}
 	// Combine notice with any pre-existing content on the delta.
-	var combined string
-	if existingRaw, hasContent := delta["content"]; hasContent && len(existingRaw) > 0 && string(existingRaw) != "null" {
-		var existing string
-		if err := json.Unmarshal(existingRaw, &existing); err == nil && existing != "" {
-			combined = text + "\n\n" + existing
-		} else {
-			combined = text
+	// content can be (a) absent / null, (b) a string, or (c) a
+	// content-parts array (multimodal/vision deltas). Collapsing the
+	// array case to a single string loses any image/audio parts the
+	// upstream emitted, so we have to detect each shape.
+	existingRaw, hasContent := delta["content"]
+	hasContent = hasContent && len(existingRaw) > 0 && string(existingRaw) != "null"
+	switch {
+	case !hasContent:
+		raw, err := json.Marshal(text)
+		if err != nil {
+			return nil, false
 		}
-	} else {
-		combined = text
-	}
-	contentRaw, err := json.Marshal(combined)
-	if err != nil {
+		delta["content"] = raw
+	case existingRaw[0] == '"':
+		// String form.
+		var existing string
+		if err := json.Unmarshal(existingRaw, &existing); err != nil {
+			return nil, false
+		}
+		combined := text
+		if existing != "" {
+			combined = text + "\n\n" + existing
+		}
+		raw, err := json.Marshal(combined)
+		if err != nil {
+			return nil, false
+		}
+		delta["content"] = raw
+	case existingRaw[0] == '[':
+		// Content-parts array form. Prepend a text part so the
+		// existing multimodal payload (image_url, audio, …) survives.
+		var parts []json.RawMessage
+		if err := json.Unmarshal(existingRaw, &parts); err != nil {
+			return nil, false
+		}
+		textPart, err := json.Marshal(map[string]any{"type": "text", "text": text})
+		if err != nil {
+			return nil, false
+		}
+		merged := append([]json.RawMessage{json.RawMessage(textPart)}, parts...)
+		raw, err := json.Marshal(merged)
+		if err != nil {
+			return nil, false
+		}
+		delta["content"] = raw
+	default:
+		// Unknown shape — refuse rather than corrupt.
 		return nil, false
 	}
-	delta["content"] = contentRaw
 	deltaMarshaled, err := json.Marshal(delta)
 	if err != nil {
 		return nil, false
