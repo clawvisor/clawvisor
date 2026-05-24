@@ -144,6 +144,153 @@ func TestUser_UpdateMe_MissingFields(t *testing.T) {
 	mustStatus(t, resp, http.StatusBadRequest)
 }
 
+// ── Agent runtime settings: ConversationAutoApproveThreshold ────────────────
+
+// createTestAgent provisions an agent under the current session and
+// returns its ID. Each conversation-auto-approve test needs an agent
+// to scope the runtime-settings endpoint against.
+func createTestAgent(t *testing.T, s *testSession) string {
+	t.Helper()
+	resp := s.do("POST", "/api/agents", map[string]any{"name": "test-agent"})
+	body := mustStatus(t, resp, http.StatusCreated)
+	id, _ := body["id"].(string)
+	if id == "" {
+		t.Fatalf("agent create returned no id; body=%v", body)
+	}
+	return id
+}
+
+// runtimeSettingsBody returns a minimal payload for PUT runtime-settings
+// with the supplied conversation-auto-approve threshold and everything
+// else at safe defaults. The handler requires all the non-optional
+// fields, so we always send the full shape.
+func runtimeSettingsBody(threshold *string) map[string]any {
+	body := map[string]any{
+		"runtime_enabled":          true,
+		"runtime_mode":             "observe",
+		"starter_profile":          "none",
+		"outbound_credential_mode": "inherit",
+		"inject_stored_bearer":     false,
+	}
+	if threshold != nil {
+		body["conversation_auto_approve_threshold"] = *threshold
+	}
+	return body
+}
+
+func TestAgentRuntimeSettings_ConversationAutoApprove_DefaultIsOff(t *testing.T) {
+	env := newTestEnv(t)
+	s := newSession(t, env)
+	agentID := createTestAgent(t, s)
+
+	resp := s.do("GET", "/api/agents/"+agentID+"/runtime-settings", nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	if got, _ := body["conversation_auto_approve_threshold"].(string); got != "off" {
+		t.Errorf("default threshold = %q, want %q", got, "off")
+	}
+}
+
+func TestAgentRuntimeSettings_ConversationAutoApprove_SetLow(t *testing.T) {
+	env := newTestEnv(t)
+	s := newSession(t, env)
+	agentID := createTestAgent(t, s)
+	low := "low"
+
+	resp := s.do("PUT", "/api/agents/"+agentID+"/runtime-settings", runtimeSettingsBody(&low))
+	body := mustStatus(t, resp, http.StatusOK)
+	if got, _ := body["conversation_auto_approve_threshold"].(string); got != "low" {
+		t.Errorf("threshold after PUT = %q, want %q", got, "low")
+	}
+
+	resp = s.do("GET", "/api/agents/"+agentID+"/runtime-settings", nil)
+	body = mustStatus(t, resp, http.StatusOK)
+	if got, _ := body["conversation_auto_approve_threshold"].(string); got != "low" {
+		t.Errorf("threshold on subsequent GET = %q, want %q", got, "low")
+	}
+}
+
+func TestAgentRuntimeSettings_ConversationAutoApprove_SetMediumAtCap(t *testing.T) {
+	env := newTestEnv(t)
+	s := newSession(t, env)
+	agentID := createTestAgent(t, s)
+	medium := "medium"
+
+	resp := s.do("PUT", "/api/agents/"+agentID+"/runtime-settings", runtimeSettingsBody(&medium))
+	body := mustStatus(t, resp, http.StatusOK)
+	if got, _ := body["conversation_auto_approve_threshold"].(string); got != "medium" {
+		t.Errorf("threshold = %q, want %q", got, "medium")
+	}
+}
+
+func TestAgentRuntimeSettings_ConversationAutoApprove_RejectsHigh(t *testing.T) {
+	// The API must enforce the UI cap even when a direct HTTP client
+	// tries to skip the dropdown. "high" and "critical" are above the
+	// cap and must come back as 400 BAD REQUEST.
+	env := newTestEnv(t)
+	s := newSession(t, env)
+	agentID := createTestAgent(t, s)
+
+	for _, level := range []string{"high", "critical"} {
+		t.Run(level, func(t *testing.T) {
+			l := level
+			resp := s.do("PUT", "/api/agents/"+agentID+"/runtime-settings", runtimeSettingsBody(&l))
+			mustStatus(t, resp, http.StatusBadRequest)
+		})
+	}
+}
+
+func TestAgentRuntimeSettings_ConversationAutoApprove_RejectsGarbage(t *testing.T) {
+	env := newTestEnv(t)
+	s := newSession(t, env)
+	agentID := createTestAgent(t, s)
+	bad := "EXTREME"
+
+	resp := s.do("PUT", "/api/agents/"+agentID+"/runtime-settings", runtimeSettingsBody(&bad))
+	mustStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestAgentRuntimeSettings_ConversationAutoApprove_OmittedFieldPreserved(t *testing.T) {
+	// When the client doesn't include the threshold field in the PUT
+	// payload, the stored value must not be reset to "off". This is
+	// the optional-field semantics that protects existing
+	// runtime-settings clients (which don't know about this field)
+	// from accidentally clobbering it.
+	env := newTestEnv(t)
+	s := newSession(t, env)
+	agentID := createTestAgent(t, s)
+
+	// First set to medium.
+	medium := "medium"
+	resp := s.do("PUT", "/api/agents/"+agentID+"/runtime-settings", runtimeSettingsBody(&medium))
+	mustStatus(t, resp, http.StatusOK)
+
+	// Then PUT without the threshold field; existing value must persist.
+	resp = s.do("PUT", "/api/agents/"+agentID+"/runtime-settings", runtimeSettingsBody(nil))
+	body := mustStatus(t, resp, http.StatusOK)
+	if got, _ := body["conversation_auto_approve_threshold"].(string); got != "medium" {
+		t.Errorf("threshold after omitted-field PUT = %q, want %q (must not clobber)", got, "medium")
+	}
+}
+
+func TestAgentRuntimeSettings_ConversationAutoApprove_EmptyCollapsesToOff(t *testing.T) {
+	// Empty-string value collapses to "off" — that's how a client
+	// "clears" the setting. Distinct from omitting the field, which
+	// preserves the existing value.
+	env := newTestEnv(t)
+	s := newSession(t, env)
+	agentID := createTestAgent(t, s)
+
+	medium := "medium"
+	s.do("PUT", "/api/agents/"+agentID+"/runtime-settings", runtimeSettingsBody(&medium))
+
+	empty := ""
+	resp := s.do("PUT", "/api/agents/"+agentID+"/runtime-settings", runtimeSettingsBody(&empty))
+	body := mustStatus(t, resp, http.StatusOK)
+	if got, _ := body["conversation_auto_approve_threshold"].(string); got != "off" {
+		t.Errorf("threshold after empty-string PUT = %q, want %q", got, "off")
+	}
+}
+
 // ── User: DeleteMe ────────────────────────────────────────────────────────────
 
 func TestUser_DeleteMe(t *testing.T) {

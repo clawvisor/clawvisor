@@ -293,6 +293,7 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id),
 		       ars.agent_id, ars.runtime_enabled, ars.runtime_mode, ars.starter_profile,
 		       ars.outbound_credential_mode, ars.inject_stored_bearer, ars.lite_proxy_secret_detection_disabled,
+		       ars.conversation_auto_approve_threshold,
 		       ars.created_at, ars.updated_at
 		FROM agents a
 		LEFT JOIN agent_runtime_settings ars ON ars.agent_id = a.id
@@ -318,11 +319,13 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		var settingsOutbound *string
 		var settingsInject *int
 		var settingsLiteProxySecretDetectionDisabled *int
+		var settingsConversationAutoApprove *string
 		var settingsCreatedAt *string
 		var settingsUpdatedAt *string
 		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID, &a.Description,
 			&a.ActiveTaskCount, &lastTaskAt, &settingsAgentID, &settingsEnabled, &settingsMode, &settingsProfile,
-			&settingsOutbound, &settingsInject, &settingsLiteProxySecretDetectionDisabled, &settingsCreatedAt, &settingsUpdatedAt); err != nil {
+			&settingsOutbound, &settingsInject, &settingsLiteProxySecretDetectionDisabled,
+			&settingsConversationAutoApprove, &settingsCreatedAt, &settingsUpdatedAt); err != nil {
 			return nil, err
 		}
 		a.CreatedAt = parseTime(createdAt)
@@ -333,7 +336,7 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 			ts := parseTime(*lastTaskAt)
 			a.LastTaskAt = &ts
 		}
-		a.RuntimeSettings = scanSQLiteAgentRuntimeSettings(settingsAgentID, settingsEnabled, settingsMode, settingsProfile, settingsOutbound, settingsInject, settingsLiteProxySecretDetectionDisabled, settingsCreatedAt, settingsUpdatedAt)
+		a.RuntimeSettings = scanSQLiteAgentRuntimeSettings(settingsAgentID, settingsEnabled, settingsMode, settingsProfile, settingsOutbound, settingsInject, settingsLiteProxySecretDetectionDisabled, settingsConversationAutoApprove, settingsCreatedAt, settingsUpdatedAt)
 		agents = append(agents, a)
 	}
 	return agents, rows.Err()
@@ -357,7 +360,8 @@ func (s *Store) UpdateAgentDescription(ctx context.Context, agentID, userID, des
 func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*store.AgentRuntimeSettings, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT agent_id, runtime_enabled, runtime_mode, starter_profile,
-		       outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled, created_at, updated_at
+		       outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled,
+		       conversation_auto_approve_threshold, created_at, updated_at
 		FROM agent_runtime_settings
 		WHERE agent_id = ?
 	`, agentID)
@@ -367,7 +371,8 @@ func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*s
 	var liteProxySecretDetectionDisabled int
 	var createdAt, updatedAt string
 	err := row.Scan(&settings.AgentID, &runtimeEnabled, &settings.RuntimeMode, &settings.StarterProfile,
-		&settings.OutboundCredentialMode, &injectStoredBearer, &liteProxySecretDetectionDisabled, &createdAt, &updatedAt)
+		&settings.OutboundCredentialMode, &injectStoredBearer, &liteProxySecretDetectionDisabled,
+		&settings.ConversationAutoApproveThreshold, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -388,8 +393,9 @@ func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO agent_runtime_settings (
-			agent_id, runtime_enabled, runtime_mode, starter_profile, outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
+			agent_id, runtime_enabled, runtime_mode, starter_profile, outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled,
+			conversation_auto_approve_threshold
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (agent_id) DO UPDATE SET
 			runtime_enabled = excluded.runtime_enabled,
 			runtime_mode = excluded.runtime_mode,
@@ -397,9 +403,11 @@ func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.
 			outbound_credential_mode = excluded.outbound_credential_mode,
 			inject_stored_bearer = excluded.inject_stored_bearer,
 			lite_proxy_secret_detection_disabled = excluded.lite_proxy_secret_detection_disabled,
+			conversation_auto_approve_threshold = excluded.conversation_auto_approve_threshold,
 			updated_at = CURRENT_TIMESTAMP
 	`, settings.AgentID, boolToInt(settings.RuntimeEnabled), settings.RuntimeMode, settings.StarterProfile,
-		settings.OutboundCredentialMode, boolToInt(settings.InjectStoredBearer), boolToInt(settings.LiteProxySecretDetectionDisabled))
+		settings.OutboundCredentialMode, boolToInt(settings.InjectStoredBearer), boolToInt(settings.LiteProxySecretDetectionDisabled),
+		settings.ConversationAutoApproveThreshold)
 	return err
 }
 
@@ -3581,7 +3589,7 @@ func rawJSONOrDefault(msg json.RawMessage, fallback string) string {
 	return string(msg)
 }
 
-func scanSQLiteAgentRuntimeSettings(agentID *string, runtimeEnabled *int, runtimeMode, starterProfile, outboundMode *string, injectStoredBearer, liteProxySecretDetectionDisabled *int, createdAt, updatedAt *string) *store.AgentRuntimeSettings {
+func scanSQLiteAgentRuntimeSettings(agentID *string, runtimeEnabled *int, runtimeMode, starterProfile, outboundMode *string, injectStoredBearer, liteProxySecretDetectionDisabled *int, conversationAutoApprove *string, createdAt, updatedAt *string) *store.AgentRuntimeSettings {
 	if agentID == nil {
 		return nil
 	}
@@ -3605,6 +3613,9 @@ func scanSQLiteAgentRuntimeSettings(agentID *string, runtimeEnabled *int, runtim
 	}
 	if liteProxySecretDetectionDisabled != nil {
 		settings.LiteProxySecretDetectionDisabled = *liteProxySecretDetectionDisabled != 0
+	}
+	if conversationAutoApprove != nil {
+		settings.ConversationAutoApproveThreshold = *conversationAutoApprove
 	}
 	if createdAt != nil {
 		settings.CreatedAt = parseTime(*createdAt)

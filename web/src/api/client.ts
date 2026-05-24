@@ -163,6 +163,13 @@ export interface User {
   updated_at: string
 }
 
+// ConversationAutoApproveThreshold caps the risk level at which the
+// per-agent conversation-based auto-approval gate will skip the human
+// approval prompt for inline task creation. The backend supports all
+// risk levels, but the UI (and the validation layer behind the API)
+// cap user-settable values to off/low/medium.
+export type ConversationAutoApproveThreshold = 'off' | 'low' | 'medium'
+
 export interface AuthResponse {
   user: User
   access_token: string
@@ -260,6 +267,12 @@ export interface AgentRuntimeSettings {
   outbound_credential_mode: 'inherit' | 'observe' | 'strict'
   inject_stored_bearer: boolean
   lite_proxy_secret_detection_disabled: boolean
+  // Per-agent cap for conversation-based auto-approval of inline task
+  // creation. "off" always prompts; "low"/"medium" let the runtime
+  // skip the prompt when the assessor sees the user's recent chat
+  // turns authorize the task and the risk is at-or-below this level.
+  // Backend rejects values above "medium" at the API layer.
+  conversation_auto_approve_threshold?: ConversationAutoApproveThreshold
   created_at?: string
   updated_at?: string
 }

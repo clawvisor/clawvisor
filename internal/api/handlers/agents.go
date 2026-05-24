@@ -172,12 +172,13 @@ func (h *AgentsHandler) UpdateRuntimeSettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body struct {
-		RuntimeEnabled                   bool   `json:"runtime_enabled"`
-		RuntimeMode                      string `json:"runtime_mode"`
-		StarterProfile                   string `json:"starter_profile"`
-		OutboundCredentialMode           string `json:"outbound_credential_mode"`
-		InjectStoredBearer               bool   `json:"inject_stored_bearer"`
-		LiteProxySecretDetectionDisabled *bool  `json:"lite_proxy_secret_detection_disabled"`
+		RuntimeEnabled                   bool    `json:"runtime_enabled"`
+		RuntimeMode                      string  `json:"runtime_mode"`
+		StarterProfile                   string  `json:"starter_profile"`
+		OutboundCredentialMode           string  `json:"outbound_credential_mode"`
+		InjectStoredBearer               bool    `json:"inject_stored_bearer"`
+		LiteProxySecretDetectionDisabled *bool   `json:"lite_proxy_secret_detection_disabled"`
+		ConversationAutoApproveThreshold *string `json:"conversation_auto_approve_threshold"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -196,6 +197,20 @@ func (h *AgentsHandler) UpdateRuntimeSettings(w http.ResponseWriter, r *http.Req
 	}
 	if body.StarterProfile == "" {
 		body.StarterProfile = "none"
+	}
+	// Conversation auto-approve threshold is optional in the request
+	// body so the existing runtime-settings clients (which don't know
+	// about this field) don't accidentally clobber it on unrelated
+	// edits. When supplied, it MUST validate under the UI cap — the
+	// API is the authoritative gate; the UI dropdown happens to surface
+	// the same set but a direct API call cannot bypass.
+	if body.ConversationAutoApproveThreshold != nil {
+		normalized, err := store.ValidateConversationAutoApproveThreshold(*body.ConversationAutoApproveThreshold, true)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+			return
+		}
+		settings.ConversationAutoApproveThreshold = normalized
 	}
 	settings.RuntimeEnabled = body.RuntimeEnabled
 	settings.RuntimeMode = body.RuntimeMode
@@ -329,5 +344,6 @@ func defaultAgentRuntimeSettings(cfg *config.Config, agentID string) *store.Agen
 		OutboundCredentialMode:           "inherit",
 		InjectStoredBearer:               cfg != nil && cfg.RuntimePolicy.InjectStoredBearer,
 		LiteProxySecretDetectionDisabled: true,
+		ConversationAutoApproveThreshold: store.ConversationAutoApproveOff,
 	}
 }

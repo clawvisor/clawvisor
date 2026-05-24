@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -384,6 +386,78 @@ type User struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// Risk-level constants for ConversationAutoApproveThreshold and the
+// taskrisk classifier's risk_level field. Defined here (not in
+// taskrisk) so pkg/store can validate threshold values without pulling
+// in the taskrisk LLM client dependency.
+const (
+	ConversationAutoApproveOff      = "off"
+	ConversationAutoApproveLow      = "low"
+	ConversationAutoApproveMedium   = "medium"
+	ConversationAutoApproveHigh     = "high"
+	ConversationAutoApproveCritical = "critical"
+)
+
+// ConversationAutoApproveUICap is the highest threshold a user is
+// allowed to set today via UI or API. The auto-approve gate's
+// comparison code accepts any level (so a future product decision can
+// relax this without touching the runtime), but write paths enforce
+// the cap.
+const ConversationAutoApproveUICap = ConversationAutoApproveMedium
+
+// ValidateConversationAutoApproveThreshold normalizes and validates a
+// candidate threshold value. Empty string collapses to "off" (the
+// default). Any unknown value is rejected. When enforceUICap is true,
+// values above ConversationAutoApproveUICap are rejected — this is the
+// shape used by API handlers and the Store update method. When false,
+// any documented level is accepted — used by tests and any future
+// internal path that bypasses the product cap.
+func ValidateConversationAutoApproveThreshold(raw string, enforceUICap bool) (string, error) {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	if v == "" {
+		v = ConversationAutoApproveOff
+	}
+	rank, ok := conversationAutoApproveRank[v]
+	if !ok {
+		return "", fmt.Errorf("invalid conversation_auto_approve_threshold: %q", raw)
+	}
+	if enforceUICap && rank > conversationAutoApproveRank[ConversationAutoApproveUICap] {
+		return "", fmt.Errorf("conversation_auto_approve_threshold %q exceeds UI cap %q", v, ConversationAutoApproveUICap)
+	}
+	return v, nil
+}
+
+// conversationAutoApproveRank orders the threshold values so the gate
+// can ask "is the assessed risk level <= the user's threshold?". "off"
+// ranks below every level, so when threshold=="off" nothing is ever
+// at-or-below it. Risk levels follow the taskrisk severity order.
+var conversationAutoApproveRank = map[string]int{
+	ConversationAutoApproveOff:      -1,
+	ConversationAutoApproveLow:      0,
+	ConversationAutoApproveMedium:   1,
+	ConversationAutoApproveHigh:     2,
+	ConversationAutoApproveCritical: 3,
+}
+
+// ConversationAutoApproveCovers reports whether an assessed risk_level
+// is at-or-below the user's configured threshold. Unknown risk levels
+// (e.g. "unknown" from the assessor) and an "off" threshold both
+// produce false — the caller falls back to human approval. Comparison
+// is case-insensitive on both sides.
+func ConversationAutoApproveCovers(threshold, riskLevel string) bool {
+	t := strings.ToLower(strings.TrimSpace(threshold))
+	r := strings.ToLower(strings.TrimSpace(riskLevel))
+	if t == "" || t == ConversationAutoApproveOff {
+		return false
+	}
+	tRank, tOK := conversationAutoApproveRank[t]
+	rRank, rOK := conversationAutoApproveRank[r]
+	if !tOK || !rOK {
+		return false
+	}
+	return rRank <= tRank
+}
+
 // Session holds a hashed refresh token.
 type Session struct {
 	ID        string    `json:"id"`
@@ -414,13 +488,23 @@ type Agent struct {
 }
 
 type AgentRuntimeSettings struct {
-	AgentID                          string    `json:"agent_id"`
-	RuntimeEnabled                   bool      `json:"runtime_enabled"`
-	RuntimeMode                      string    `json:"runtime_mode"`
-	StarterProfile                   string    `json:"starter_profile"`
-	OutboundCredentialMode           string    `json:"outbound_credential_mode"`
-	InjectStoredBearer               bool      `json:"inject_stored_bearer"`
-	LiteProxySecretDetectionDisabled bool      `json:"lite_proxy_secret_detection_disabled"`
+	AgentID                          string `json:"agent_id"`
+	RuntimeEnabled                   bool   `json:"runtime_enabled"`
+	RuntimeMode                      string `json:"runtime_mode"`
+	StarterProfile                   string `json:"starter_profile"`
+	OutboundCredentialMode           string `json:"outbound_credential_mode"`
+	InjectStoredBearer               bool   `json:"inject_stored_bearer"`
+	LiteProxySecretDetectionDisabled bool   `json:"lite_proxy_secret_detection_disabled"`
+	// ConversationAutoApproveThreshold caps the risk level at which
+	// conversation-based auto-approval of inline task creation will
+	// skip the human approval prompt for this agent. Values: "off"
+	// (default — always prompt), "low", "medium" (UI cap), "high",
+	// "critical" (theoretically supported, blocked at the API/UI
+	// layer). The gate also requires the assessor to emit
+	// intent_match="yes" and an empty conflicts array AND the runtime
+	// to have extracted at least one genuine human turn from the
+	// inbound transcript — threshold alone is not sufficient.
+	ConversationAutoApproveThreshold string    `json:"conversation_auto_approve_threshold"`
 	CreatedAt                        time.Time `json:"created_at"`
 	UpdatedAt                        time.Time `json:"updated_at"`
 }

@@ -10,6 +10,7 @@ import (
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // inlineTaskApprovalTTL is how long the user has to type yes/no
@@ -129,6 +130,83 @@ func maybeInterceptInlineTaskDefinition(
 		return conversation.ToolUseVerdict{}, false
 	}
 
+	// Risk assessment runs BEFORE the hold so the auto-approval gate
+	// can decide whether to skip the human prompt entirely. The
+	// assessment is also used to render the prompt on the fall-through
+	// path, so we compute it once.
+	assessment := assessInlineTaskRisk(req, cfg, parsed, env, trace)
+
+	// Conversation-based auto-approval. If the user's recent turns
+	// authorize the requested scope and the risk level is at-or-below
+	// the user's configured threshold (with no conflicts), create the
+	// task pre-approved and substitute the success augmentation —
+	// no human prompt, no hold.
+	if ok, reason := autoApproveFromConversation(cfg, assessment); ok {
+		if cfg.InlineTaskCreator == nil {
+			// Threshold says "approve" but the runtime cannot create
+			// the task without prompting (no creator wired). Fall
+			// through to the human approval path; logged as a
+			// configuration gap for operators.
+			audit("fallthrough", "auto_approve_creator_missing", "conversation gate covered but no inline task creator configured")
+			trace("inline_task.auto_approve_creator_missing", "threshold", cfg.ConversationAutoApproveThreshold)
+		} else {
+			created, createErr := cfg.InlineTaskCreator.CreateInlineApprovedTask(req.Context(), &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID}, parsed, tu.ID)
+			if createErr != nil {
+				// Create failed — log and fall through to the prompt
+				// path so the user can still approve manually.
+				audit("fallthrough", "auto_approve_create_failed", createErr.Error())
+				trace("inline_task.auto_approve_create_failed", "err", createErr.Error())
+			} else {
+				checkedOut := false
+				if cfg.Checkouts != nil && created.ID != "" {
+					if setErr := cfg.Checkouts.Set(req.Context(), TaskCheckoutKey{
+						UserID:  cfg.AgentUserID,
+						AgentID: cfg.AgentID,
+					}, created.ID, 0); setErr == nil {
+						checkedOut = true
+					}
+				}
+				audit("approve", "auto_approved_from_conversation", reason)
+				// Task-linked audit row. The generic tool_use row above
+				// records that the intercept fired; this one records
+				// WHICH task got auto-approved so downstream consumers
+				// filtering by task_id can reconstruct the chain —
+				// matching the manual-approval path's
+				// LogInlineTaskApproved behavior, with a distinct event
+				// name so dashboards can distinguish gate-bypassed
+				// approvals from human ones.
+				if cfg.Audit != nil {
+					if auditAgent := auditAgentForCfg(cfg); auditAgent != nil {
+						cfg.Audit.LogInlineTaskAutoApproved(
+							req.Context(),
+							auditAgent,
+							cfg.RequestID,
+							tu.ID,
+							created,
+							reason,
+							assessment.RiskLevel,
+							assessment.IntentMatch,
+							cfg.ConversationAutoApproveThreshold,
+						)
+					}
+				}
+				trace("inline_task.auto_approved",
+					"task_id", created.ID,
+					"risk_level", assessment.RiskLevel,
+					"intent_match", assessment.IntentMatch,
+					"threshold", cfg.ConversationAutoApproveThreshold,
+					"checked_out", checkedOut,
+					"reason", reason,
+				)
+				return conversation.ToolUseVerdict{
+					Allowed:        false,
+					Reason:         "Clawvisor: auto-approved from conversation context",
+					SubstituteWith: inlineApprovedReplyAugmentationContext(created.ID, checkedOut, created.Credentials),
+				}, true
+			}
+		}
+	}
+
 	now := time.Now().UTC()
 	innerHold, holdErr := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 		UserID:         cfg.AgentUserID,
@@ -153,12 +231,61 @@ func maybeInterceptInlineTaskDefinition(
 		"purpose", parsed.Purpose,
 		"signal", "query",
 	)
-	assessment := assessInlineTaskRisk(req, cfg, parsed, env, trace)
 	return conversation.ToolUseVerdict{
 		Allowed:        false,
 		Reason:         "Clawvisor: awaiting inline task approval",
 		SubstituteWith: renderTaskApprovalPromptWithRisk(parsed, innerHold.Pending.ID, assessment),
 	}, true
+}
+
+// autoApproveFromConversation reports whether the conversation-based
+// auto-approval gate should fire for the given assessment + config.
+// Four independent conditions must all hold:
+//
+//  1. At least one trusted recent user turn was extracted by the
+//     deterministic walker. This is the security floor: the gate
+//     refuses to fire on the LLM's intent verdict alone, because a
+//     misbehaving or compromised assessor could otherwise return
+//     intent_match="yes" despite having seen no human input at all.
+//     Requiring non-empty turns here means the runtime — not the LLM
+//     — owns the "did the user actually say anything?" question.
+//  2. The user has opted in by setting a non-"off" threshold.
+//  3. The assessor returned intent_match="yes" — the user's recent
+//     turns plainly authorize the requested scope. "partial" / "no" /
+//     "unknown" fall through to the human prompt; ambiguity is the
+//     user's call, not ours.
+//  4. The risk level is at-or-below the user's threshold and the
+//     assessor reported no internal conflicts. A conflicting task
+//     (purpose vs. expected_use mismatch, etc.) always reaches the
+//     human regardless of intent_match, because the conflict is
+//     evidence the agent's task envelope isn't what the user thinks
+//     they're approving.
+//
+// Returns (true, audit_reason) when all four hold; (false, "") otherwise.
+// The audit reason is a short string suitable for the audit log so
+// operators can see why a given task was auto-approved.
+func autoApproveFromConversation(cfg PostprocessConfig, assessment *taskrisk.RiskAssessment) (bool, string) {
+	if assessment == nil {
+		return false, ""
+	}
+	// Deterministic floor: no extracted human turns ⇒ no auto-approval,
+	// no matter what the assessor claims. ExtractRecentHumanTurns
+	// already trims whitespace and filters Clawvisor-internal verbs,
+	// so a non-zero length here means the runtime actually observed
+	// at least one genuine human message in the inbound transcript.
+	if len(cfg.RecentUserTurns) == 0 {
+		return false, ""
+	}
+	if !store.ConversationAutoApproveCovers(cfg.ConversationAutoApproveThreshold, assessment.RiskLevel) {
+		return false, ""
+	}
+	if !strings.EqualFold(strings.TrimSpace(assessment.IntentMatch), "yes") {
+		return false, ""
+	}
+	if len(assessment.Conflicts) > 0 {
+		return false, ""
+	}
+	return true, "risk=" + assessment.RiskLevel + ", intent_match=yes, threshold=" + cfg.ConversationAutoApproveThreshold
 }
 
 // assessInlineTaskRisk runs the LLM-backed risk assessor (when configured) and
@@ -194,16 +321,31 @@ func assessInlineTaskRisk(
 		RequiredCredentials:    env.RequiredCredentials,
 		IntentVerificationMode: env.IntentVerificationMode,
 		ExpectedUse:            env.ExpectedUse,
+		RecentUserTurns:        cfg.RecentUserTurns,
 	})
 	if llmVerdict == nil || strings.EqualFold(strings.TrimSpace(llmVerdict.RiskLevel), "unknown") {
 		trace("inline_task.risk_llm_unavailable")
 		return envelopeAssessment
 	}
 
+	// Lift the lite-proxy projection of conflicts back into the
+	// taskrisk shape so the merge + auto-approve gate can read them
+	// uniformly. The intent_match fields are preserved verbatim.
+	conflicts := make([]taskrisk.ConflictDetail, 0, len(llmVerdict.Conflicts))
+	for _, c := range llmVerdict.Conflicts {
+		conflicts = append(conflicts, taskrisk.ConflictDetail{
+			Field:       c.Field,
+			Description: c.Description,
+			Severity:    c.Severity,
+		})
+	}
 	llmAssessment := &taskrisk.RiskAssessment{
-		RiskLevel:   llmVerdict.RiskLevel,
-		Explanation: llmVerdict.Explanation,
-		Factors:     llmVerdict.Factors,
+		RiskLevel:              llmVerdict.RiskLevel,
+		Explanation:            llmVerdict.Explanation,
+		Factors:                llmVerdict.Factors,
+		Conflicts:              conflicts,
+		IntentMatch:            llmVerdict.IntentMatch,
+		IntentMatchExplanation: llmVerdict.IntentMatchExplanation,
 	}
 	return mergeInlineRisk(llmAssessment, envelopeAssessment)
 }

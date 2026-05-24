@@ -76,6 +76,116 @@ func TestParseRiskResponse_WithConflicts(t *testing.T) {
 	}
 }
 
+func TestParseRiskResponse_IntentMatchYes(t *testing.T) {
+	raw := `{"risk_level":"low","explanation":"Read-only.","factors":[],"conflicts":[],"intent_match":"yes","intent_match_explanation":"User asked to list calendar events."}`
+	a, err := parseRiskResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.IntentMatch != "yes" {
+		t.Errorf("intent_match = %q, want %q", a.IntentMatch, "yes")
+	}
+	if a.IntentMatchExplanation == "" {
+		t.Error("intent_match_explanation should not be empty")
+	}
+}
+
+func TestParseRiskResponse_IntentMatchPartial(t *testing.T) {
+	raw := `{"risk_level":"medium","explanation":"x","factors":[],"conflicts":[],"intent_match":"partial","intent_match_explanation":"User asked to read but task also writes."}`
+	a, err := parseRiskResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.IntentMatch != "partial" {
+		t.Errorf("intent_match = %q, want %q", a.IntentMatch, "partial")
+	}
+}
+
+func TestParseRiskResponse_IntentMatchAbsent(t *testing.T) {
+	// Legacy / v1 responses omit intent_match — parser should collapse
+	// to "unknown" rather than fail.
+	raw := `{"risk_level":"low","explanation":"x","factors":[],"conflicts":[]}`
+	a, err := parseRiskResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.IntentMatch != "unknown" {
+		t.Errorf("intent_match = %q, want %q (absent should collapse)", a.IntentMatch, "unknown")
+	}
+}
+
+func TestParseRiskResponse_IntentMatchInvalid(t *testing.T) {
+	// Unknown enum value should not fail the whole parse — the rest of
+	// the risk read is still useful.
+	raw := `{"risk_level":"low","explanation":"x","factors":[],"conflicts":[],"intent_match":"absolutely"}`
+	a, err := parseRiskResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.IntentMatch != "unknown" {
+		t.Errorf("intent_match = %q, want %q (invalid should collapse)", a.IntentMatch, "unknown")
+	}
+}
+
+func TestParseRiskResponse_IntentMatchCasing(t *testing.T) {
+	// Models sometimes capitalize enums; normalize.
+	raw := `{"risk_level":"low","explanation":"x","factors":[],"conflicts":[],"intent_match":"YES"}`
+	a, err := parseRiskResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.IntentMatch != "yes" {
+		t.Errorf("intent_match = %q, want %q", a.IntentMatch, "yes")
+	}
+}
+
+func TestBuildAssessUserMessage_RecentUserTurns(t *testing.T) {
+	msg := buildAssessUserMessage(AssessRequest{
+		AgentName: "test-agent",
+		Purpose:   "Check my calendar",
+		AuthorizedActions: []store.TaskAction{
+			{Service: "google.calendar", Action: "list_events", ExpectedUse: "list today's events"},
+		},
+		RecentUserTurns: []string{"can you check my calendar for tomorrow's events"},
+	}, true)
+	if !contains(msg, "Recent user turns") {
+		t.Error("message should label the conversation block")
+	}
+	if !contains(msg, "tomorrow's events") {
+		t.Error("message should include the actual user turn")
+	}
+	if !contains(msg, "UNTRUSTED") {
+		t.Error("message should mark turns as UNTRUSTED for the assessor")
+	}
+}
+
+func TestBuildAssessUserMessage_RecentUserTurns_FiltersBlank(t *testing.T) {
+	// Whitespace-only turns must not produce empty quoted entries that
+	// would mislead the assessor into "the user said nothing meaningful
+	// twice."
+	msg := buildAssessUserMessage(AssessRequest{
+		AgentName:       "test-agent",
+		Purpose:         "x",
+		RecentUserTurns: []string{"", "  ", "real ask"},
+	}, true)
+	if !contains(msg, `(1, most recent last)`) {
+		t.Errorf("blank turns should be filtered; message: %q", msg)
+	}
+}
+
+func TestBuildAssessUserMessage_NoRecentUserTurns(t *testing.T) {
+	// When the conversation block is absent, the assessor should not
+	// see a "Recent user turns" header at all — that's the signal it
+	// uses to emit intent_match=unknown.
+	msg := buildAssessUserMessage(AssessRequest{
+		AgentName: "test-agent",
+		Purpose:   "x",
+	}, true)
+	if contains(msg, "Recent user turns") {
+		t.Error("message should omit the recent-turns block when none provided")
+	}
+}
+
 func TestBuildAssessUserMessage_Basic(t *testing.T) {
 	msg := buildAssessUserMessage(AssessRequest{
 		AgentName: "test-agent",

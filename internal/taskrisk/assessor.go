@@ -49,6 +49,16 @@ type AssessRequest struct {
 	RequiredCredentials    []runtimetasks.RequiredCredential
 	IntentVerificationMode string
 	ExpectedUse            string
+
+	// RecentUserTurns carries the human-authored chat turns leading up to
+	// this task creation. When non-empty, the assessor emits an
+	// IntentMatch verdict reporting whether the user's prior message(s)
+	// unambiguously authorize the requested scope. Used by the
+	// conversation-based auto-approval gate: a "yes" verdict paired with
+	// a risk level at or below the user's configured threshold skips the
+	// human approval prompt. Treated as UNTRUSTED text (may contain
+	// injection); the assessor evaluates it only as data.
+	RecentUserTurns []string
 }
 
 // HasEnvelope reports whether the request carries v2 envelope fields.
@@ -64,6 +74,15 @@ type RiskAssessment struct {
 	Conflicts   []ConflictDetail `json:"conflicts"`     // internal inconsistencies within the task
 	Model       string           `json:"model"`
 	LatencyMS   int              `json:"latency_ms"`
+
+	// IntentMatch reports whether the user's recent chat turns
+	// unambiguously authorize the requested scope. Set only when
+	// RecentUserTurns was provided to the assessor; "unknown" otherwise.
+	// Values: "yes" | "partial" | "no" | "unknown".
+	IntentMatch string `json:"intent_match,omitempty"`
+	// IntentMatchExplanation is a 1-sentence plain-language rationale
+	// surfaced to the auto-approval gate's audit trail.
+	IntentMatchExplanation string `json:"intent_match_explanation,omitempty"`
 }
 
 // ConflictDetail describes an internal inconsistency within a task.
@@ -175,10 +194,12 @@ func parseRiskResponse(raw string) (*RiskAssessment, error) {
 	raw = strings.TrimSpace(raw)
 
 	var out struct {
-		RiskLevel   string           `json:"risk_level"`
-		Explanation string           `json:"explanation"`
-		Factors     []string         `json:"factors"`
-		Conflicts   []ConflictDetail `json:"conflicts"`
+		RiskLevel              string           `json:"risk_level"`
+		Explanation            string           `json:"explanation"`
+		Factors                []string         `json:"factors"`
+		Conflicts              []ConflictDetail `json:"conflicts"`
+		IntentMatch            string           `json:"intent_match"`
+		IntentMatchExplanation string           `json:"intent_match_explanation"`
 	}
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil, fmt.Errorf("parse risk response: %w", err)
@@ -200,10 +221,25 @@ func parseRiskResponse(raw string) (*RiskAssessment, error) {
 		}
 	}
 
+	// intent_match is optional in the response (legacy v1 prompts and
+	// envelope-only requests without conversation context don't emit
+	// it). When present, it must be one of the documented values; an
+	// unrecognized value collapses to "unknown" rather than failing the
+	// whole parse — the surrounding risk read is still useful.
+	intentMatch := strings.ToLower(strings.TrimSpace(out.IntentMatch))
+	validIntent := map[string]bool{
+		"yes": true, "partial": true, "no": true, "unknown": true,
+	}
+	if intentMatch == "" || !validIntent[intentMatch] {
+		intentMatch = "unknown"
+	}
+
 	return &RiskAssessment{
-		RiskLevel:   out.RiskLevel,
-		Explanation: out.Explanation,
-		Factors:     out.Factors,
-		Conflicts:   out.Conflicts,
+		RiskLevel:              out.RiskLevel,
+		Explanation:            out.Explanation,
+		Factors:                out.Factors,
+		Conflicts:              out.Conflicts,
+		IntentMatch:            intentMatch,
+		IntentMatchExplanation: strings.TrimSpace(out.IntentMatchExplanation),
 	}, nil
 }

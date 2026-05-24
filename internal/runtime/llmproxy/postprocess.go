@@ -46,6 +46,14 @@ type TaskRiskAssessRequest struct {
 	RequiredCredentials    []runtimetasks.RequiredCredential
 	IntentVerificationMode string
 	ExpectedUse            string
+	// RecentUserTurns carries the user's recent human-authored chat
+	// turns (chronological, most recent last) so the assessor can
+	// evaluate whether the conversation context authorizes this task.
+	// When non-empty, the assessor emits an IntentMatch verdict on the
+	// returned TaskRiskAssessment; empty means the assessor falls back
+	// to scope-only judgment. Treated as UNTRUSTED data by the
+	// assessor's prompt — never used as instruction.
+	RecentUserTurns []string
 }
 
 // TaskRiskAssessment mirrors taskrisk.RiskAssessment but lives in this
@@ -56,6 +64,27 @@ type TaskRiskAssessment struct {
 	RiskLevel   string
 	Explanation string
 	Factors     []string
+	// IntentMatch reports whether the user's recent chat turns
+	// unambiguously authorize the requested scope. Set only when
+	// RecentUserTurns was supplied in the request and the assessor
+	// returned a verdict; "unknown" otherwise. Values:
+	// "yes" | "partial" | "no" | "unknown".
+	IntentMatch string
+	// IntentMatchExplanation is a 1-sentence rationale for IntentMatch.
+	IntentMatchExplanation string
+	// Conflicts mirrors taskrisk.ConflictDetail entries. The
+	// auto-approve gate refuses to fire when this slice is non-empty,
+	// regardless of intent_match or risk_level — a conflict means the
+	// task is internally inconsistent and the human should see it.
+	Conflicts []TaskRiskConflict
+}
+
+// TaskRiskConflict is the lite-proxy projection of taskrisk.ConflictDetail.
+// Kept narrow to avoid pulling the taskrisk dependency into this package.
+type TaskRiskConflict struct {
+	Field       string
+	Description string
+	Severity    string
 }
 
 // IntentVerifyRequest is the per-tool-use input to the verifier. Mirrors
@@ -174,6 +203,40 @@ type PostprocessConfig struct {
 	// its prompt context matches the dashboard task-creation surface.
 	// Optional.
 	AgentName string
+
+	// RecentUserTurns is the user's recent human-authored chat turns,
+	// extracted from the inbound LLM request by the handler. Passed to
+	// the risk assessor so it can emit an intent_match verdict, and
+	// consulted by the auto-approve gate to decide whether the
+	// conversation context covers the task being created. Empty when
+	// the handler couldn't extract any genuine human turns from the
+	// inbound body. Optional.
+	RecentUserTurns []string
+
+	// ConversationAutoApproveThreshold is the user's per-account cap
+	// for conversation-based auto-approval ("off" | "low" | "medium" |
+	// "high" | "critical"; "off" by default). When the assessor's
+	// risk_level is at-or-below this threshold AND intent_match=="yes"
+	// AND no conflicts are present, the inline-task intercept skips
+	// the human approval prompt and pre-approves the task. The gate's
+	// comparison logic accepts any documented level; the
+	// product/UI/API cap is enforced at write time, not here.
+	ConversationAutoApproveThreshold string
+
+	// InlineTaskCreator is the handler-supplied bridge that creates an
+	// inline-approved task on the user's behalf. Required for the
+	// conversation-based auto-approval path; when nil, the gate cannot
+	// fire and the intercept falls back to the human approval prompt.
+	// Same interface used by the post-yes release path, so the wire
+	// shape stays uniform.
+	InlineTaskCreator InlineTaskCreator
+
+	// Checkouts records the active task per (user, agent). When the
+	// auto-approve gate fires, the newly created task is set as the
+	// active checkout — matching the manual "yes" flow's behavior so
+	// subsequent tool calls land under the new task. Optional; nil
+	// disables checkout side-effects but doesn't block auto-approval.
+	Checkouts TaskCheckoutStore
 
 	// ControlBaseURL is the daemon URL used for synthetic Clawvisor control
 	// endpoint rewrites. Empty disables the control-plane rewrite path.

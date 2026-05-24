@@ -275,6 +275,7 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id),
 		       ars.agent_id, ars.runtime_enabled, ars.runtime_mode, ars.starter_profile,
 		       ars.outbound_credential_mode, ars.inject_stored_bearer, ars.lite_proxy_secret_detection_disabled,
+		       ars.conversation_auto_approve_threshold,
 		       ars.created_at, ars.updated_at
 		FROM agents a
 		LEFT JOIN agent_runtime_settings ars ON ars.agent_id = a.id
@@ -292,13 +293,15 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*store.AgentRuntimeSettings, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT agent_id, runtime_enabled, runtime_mode, starter_profile,
-		       outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled, created_at, updated_at
+		       outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled,
+		       conversation_auto_approve_threshold, created_at, updated_at
 		FROM agent_runtime_settings
 		WHERE agent_id = $1
 	`, agentID)
 	settings := &store.AgentRuntimeSettings{}
 	err := row.Scan(&settings.AgentID, &settings.RuntimeEnabled, &settings.RuntimeMode, &settings.StarterProfile,
 		&settings.OutboundCredentialMode, &settings.InjectStoredBearer, &settings.LiteProxySecretDetectionDisabled,
+		&settings.ConversationAutoApproveThreshold,
 		&settings.CreatedAt, &settings.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -312,8 +315,9 @@ func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.
 	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO agent_runtime_settings (
-			agent_id, runtime_enabled, runtime_mode, starter_profile, outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled
-		) VALUES ($1,$2,$3,$4,$5,$6,$7)
+			agent_id, runtime_enabled, runtime_mode, starter_profile, outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled,
+			conversation_auto_approve_threshold
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		ON CONFLICT (agent_id) DO UPDATE SET
 			runtime_enabled = EXCLUDED.runtime_enabled,
 			runtime_mode = EXCLUDED.runtime_mode,
@@ -321,9 +325,11 @@ func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.
 			outbound_credential_mode = EXCLUDED.outbound_credential_mode,
 			inject_stored_bearer = EXCLUDED.inject_stored_bearer,
 			lite_proxy_secret_detection_disabled = EXCLUDED.lite_proxy_secret_detection_disabled,
+			conversation_auto_approve_threshold = EXCLUDED.conversation_auto_approve_threshold,
 			updated_at = NOW()
 	`, settings.AgentID, settings.RuntimeEnabled, settings.RuntimeMode, settings.StarterProfile,
-		settings.OutboundCredentialMode, settings.InjectStoredBearer, settings.LiteProxySecretDetectionDisabled)
+		settings.OutboundCredentialMode, settings.InjectStoredBearer, settings.LiteProxySecretDetectionDisabled,
+		settings.ConversationAutoApproveThreshold)
 	return err
 }
 
@@ -3181,11 +3187,13 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 		var settingsOutbound *string
 		var settingsInject *bool
 		var settingsLiteProxySecretDetectionDisabled *bool
+		var settingsConversationAutoApprove *string
 		var settingsCreatedAt *time.Time
 		var settingsUpdatedAt *time.Time
 		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID, &a.Description,
 			&a.ActiveTaskCount, &a.LastTaskAt, &settingsAgentID, &settingsEnabled, &settingsMode,
 			&settingsProfile, &settingsOutbound, &settingsInject, &settingsLiteProxySecretDetectionDisabled,
+			&settingsConversationAutoApprove,
 			&settingsCreatedAt, &settingsUpdatedAt); err != nil {
 			return nil, err
 		}
@@ -3213,6 +3221,9 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 			}
 			if settingsLiteProxySecretDetectionDisabled != nil {
 				a.RuntimeSettings.LiteProxySecretDetectionDisabled = *settingsLiteProxySecretDetectionDisabled
+			}
+			if settingsConversationAutoApprove != nil {
+				a.RuntimeSettings.ConversationAutoApproveThreshold = *settingsConversationAutoApprove
 			}
 			if settingsCreatedAt != nil {
 				a.RuntimeSettings.CreatedAt = *settingsCreatedAt

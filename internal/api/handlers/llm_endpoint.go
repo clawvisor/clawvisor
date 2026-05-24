@@ -816,6 +816,18 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"egress_rules", len(egressRules),
 			"preferred_task_id", preferredTaskID,
 		)
+		// Conversation-based auto-approval inputs: human turns from the
+		// inbound transcript and the agent's per-runtime threshold.
+		// Both are best-effort — extraction yields []string{} on a
+		// malformed body, and an unset threshold collapses to "off",
+		// which makes the gate refuse to fire. Either fallback
+		// preserves existing behavior (human approval prompt) rather
+		// than risking a spurious auto-approve.
+		recentTurns := llmproxy.ExtractRecentHumanTurns(llmproxy.ExtractHumanTurnsRequest{
+			Provider: provider,
+			Body:     body,
+		})
+		autoApproveThreshold := agentConversationAutoApproveThreshold(agent)
 		processed := llmproxy.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
 			Inspector:        h.Inspector,
 			RewriteOpts:      opts,
@@ -838,10 +850,14 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// Per-tool-use nonce minting overrides RewriteOpts.CallerToken
 			// inside the credentialed rewrite path so the agent's raw
 			// bearer token never enters the model's conversation context.
-			CallerNonces:     h.CallerNonces,
-			Trace:            h.TraceLogger,
-			TaskRiskAssessor: h.taskRiskBridge(),
-			AgentName:        agent.Name,
+			CallerNonces:                     h.CallerNonces,
+			Trace:                            h.TraceLogger,
+			TaskRiskAssessor:                 h.taskRiskBridge(),
+			AgentName:                        agent.Name,
+			RecentUserTurns:                  recentTurns,
+			ConversationAutoApproveThreshold: autoApproveThreshold,
+			InlineTaskCreator:                h.InlineTaskCreator,
+			Checkouts:                        h.TaskCheckouts,
 		})
 		h.Logger.DebugContext(r.Context(), "lite-proxy postprocess complete",
 			"request_id", requestID,
@@ -1458,6 +1474,21 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 
 func agentLiteProxySecretDetectionDisabled(agent *store.Agent) bool {
 	return agent != nil && (agent.RuntimeSettings == nil || agent.RuntimeSettings.LiteProxySecretDetectionDisabled)
+}
+
+// agentConversationAutoApproveThreshold reads the per-agent
+// conversation-based auto-approval cap from the agent's runtime
+// settings. Defaults to "off" when no runtime settings row exists or
+// the agent itself is nil — matching the database column default so
+// pre-feature agents keep the human-approval prompt.
+func agentConversationAutoApproveThreshold(agent *store.Agent) string {
+	if agent == nil || agent.RuntimeSettings == nil {
+		return store.ConversationAutoApproveOff
+	}
+	if v := strings.TrimSpace(agent.RuntimeSettings.ConversationAutoApproveThreshold); v != "" {
+		return v
+	}
+	return store.ConversationAutoApproveOff
 }
 
 func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, llmproxy.SecretDecisionAction, map[string]struct{}, bool) {
@@ -2693,13 +2724,25 @@ func (b *liteProxyTaskRiskBridge) AssessEnvelope(ctx context.Context, req llmpro
 		RequiredCredentials:    req.RequiredCredentials,
 		IntentVerificationMode: req.IntentVerificationMode,
 		ExpectedUse:            req.ExpectedUse,
+		RecentUserTurns:        req.RecentUserTurns,
 	})
 	if err != nil || out == nil {
 		return nil
 	}
+	conflicts := make([]llmproxy.TaskRiskConflict, 0, len(out.Conflicts))
+	for _, c := range out.Conflicts {
+		conflicts = append(conflicts, llmproxy.TaskRiskConflict{
+			Field:       c.Field,
+			Description: c.Description,
+			Severity:    c.Severity,
+		})
+	}
 	return &llmproxy.TaskRiskAssessment{
-		RiskLevel:   out.RiskLevel,
-		Explanation: out.Explanation,
-		Factors:     out.Factors,
+		RiskLevel:              out.RiskLevel,
+		Explanation:            out.Explanation,
+		Factors:                out.Factors,
+		Conflicts:              conflicts,
+		IntentMatch:            out.IntentMatch,
+		IntentMatchExplanation: out.IntentMatchExplanation,
 	}
 }

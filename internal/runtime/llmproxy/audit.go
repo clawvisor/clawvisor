@@ -273,6 +273,55 @@ func (e *AuditEmitter) LogInlineTaskApproved(ctx context.Context, agent *store.A
 	}
 }
 
+// LogInlineTaskAutoApproved records the audit trail for an inline task
+// that bypassed the human approval prompt via the conversation-based
+// auto-approval gate. Distinct from LogInlineTaskApproved because the
+// trigger is fundamentally different — no human gesture was made — so
+// the event name and the gate's reason are surfaced for downstream
+// monitoring. Carries the same task_id / approval_record_id / tool_use
+// linkage as the human-approved path so dashboards that filter by
+// task_id keep working.
+func (e *AuditEmitter) LogInlineTaskAutoApproved(ctx context.Context, agent *store.Agent, requestID, toolUseID string, task *InlineApprovedTask, gateReason, riskLevel, intentMatch, threshold string) {
+	if e == nil || e.Store == nil || agent == nil || task == nil {
+		return
+	}
+	params := map[string]any{
+		"event":                   "lite_proxy.task_create.inline_auto_approved",
+		"task_id":                 task.ID,
+		"approval_record_id":      task.ApprovalRecordID,
+		"approval_record_missing": task.ApprovalRecordID == "",
+		"approval_source":         task.ApprovalSource,
+		"task_status":             task.Status,
+		"task_lifetime":           task.Lifetime,
+		"surface":                 "inline_chat_auto",
+		"gate_reason":             gateReason,
+		"risk_level":              riskLevel,
+		"intent_match":            intentMatch,
+		"threshold":               threshold,
+		"build_sha":               buildSHA(),
+		"clawvisor_version":       version.Version,
+	}
+	paramsJSON, _ := json.Marshal(params)
+	entry := &store.AuditEntry{
+		ID:         uuid.NewString(),
+		UserID:     agent.UserID,
+		AgentID:    &agent.ID,
+		RequestID:  requestID,
+		ToolUseID:  &toolUseID,
+		TaskID:     &task.ID,
+		Timestamp:  time.Now().UTC(),
+		Service:    "runtime.tool_use",
+		Action:     "lite_proxy.task_create.inline_auto_approved",
+		ParamsSafe: paramsJSON,
+		Decision:   "allow",
+		Outcome:    "inline_task_auto_approved",
+	}
+	if err := e.Store.LogAudit(ctx, entry); err != nil {
+		e.Logger.WarnContext(ctx, "lite-proxy: inline task auto-approval audit failed",
+			"agent_id", agent.ID, "task_id", task.ID, "err", err.Error())
+	}
+}
+
 // LogResolverSwap records one credential swap at the resolver. Each row
 // links to the placeholder, target host, and upstream status.
 func (e *AuditEmitter) LogResolverSwap(ctx context.Context, agent *store.Agent, requestID, placeholder, boundService, targetHost, targetPath, method string, statusCode int, decision, outcome, reason string, duration time.Duration) {
