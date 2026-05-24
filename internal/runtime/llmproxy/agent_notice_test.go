@@ -184,6 +184,89 @@ func TestHasInboundAssistantTurn_OpenAIResponsesArrayWithAssistant(t *testing.T)
 	}
 }
 
+func TestHasInboundAssistantTurn_OpenAIResponsesFunctionCallHistory(t *testing.T) {
+	// Turn-2+ Responses continuation: the assistant's prior turn was a
+	// tool call (function_call) followed by the tool's output
+	// (function_call_output). No assistant-role message exists. Must
+	// still be treated as "has assistant history" so the routing notice
+	// doesn't re-prepend on every continuation.
+	body := mustMarshal(t, map[string]any{
+		"input": []map[string]any{
+			{"type": "message", "role": "user", "content": "list files"},
+			{"type": "function_call", "name": "Bash", "arguments": `{"command":"ls"}`, "call_id": "call_1"},
+			{"type": "function_call_output", "call_id": "call_1", "output": "a\nb"},
+		},
+	})
+	if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+		t.Error("expected true when Responses input carries function_call history")
+	}
+}
+
+func TestHasInboundAssistantTurn_OpenAIResponsesReasoningHistory(t *testing.T) {
+	body := mustMarshal(t, map[string]any{
+		"input": []map[string]any{
+			{"type": "message", "role": "user", "content": "think then answer"},
+			{"type": "reasoning", "summary": []any{}, "encrypted_content": "..."},
+		},
+	})
+	if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+		t.Error("expected true when Responses input carries reasoning history")
+	}
+}
+
+func TestHasInboundAssistantTurn_OpenAIResponsesBuiltinToolCallHistory(t *testing.T) {
+	body := mustMarshal(t, map[string]any{
+		"input": []map[string]any{
+			{"type": "message", "role": "user", "content": "search the web"},
+			{"type": "web_search_call", "id": "ws_1"},
+		},
+	})
+	if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+		t.Error("expected true when Responses input carries a built-in tool_call item")
+	}
+}
+
+func TestHasInboundAssistantTurn_OpenAIResponsesCustomToolCallHistory(t *testing.T) {
+	body := mustMarshal(t, map[string]any{
+		"input": []map[string]any{
+			{"type": "message", "role": "user", "content": "use my tool"},
+			{"type": "custom_tool_call", "name": "do_thing", "call_id": "ct_1"},
+		},
+	})
+	if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+		t.Error("expected true when Responses input carries a custom_tool_call item")
+	}
+}
+
+func TestHasInboundAssistantTurn_OpenAIResponsesSystemAndUserOnly(t *testing.T) {
+	// First turn variants: developer/system priming + user message,
+	// no prior assistant activity of any kind. Must still detect as
+	// first turn.
+	body := mustMarshal(t, map[string]any{
+		"input": []map[string]any{
+			{"type": "message", "role": "system", "content": "you are a helper"},
+			{"type": "message", "role": "developer", "content": "behave deterministically"},
+			{"type": "message", "role": "user", "content": "hi"},
+		},
+	})
+	if HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+		t.Error("expected false for system/developer/user-only Responses input")
+	}
+}
+
+func TestHasInboundAssistantTurn_OpenAIResponsesItemWithoutTypeIsMessage(t *testing.T) {
+	// Items default to type:"message" when omitted. A user-role item
+	// without an explicit type must still be classified correctly.
+	body := mustMarshal(t, map[string]any{
+		"input": []map[string]any{
+			{"role": "user", "content": "hi"},
+		},
+	})
+	if HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+		t.Error("expected false when message item omits type field (defaults to message)")
+	}
+}
+
 func TestHasInboundAssistantTurn_OpenAINoMessagesOrInput(t *testing.T) {
 	body := mustMarshal(t, map[string]any{"model": "gpt-4"})
 	if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {

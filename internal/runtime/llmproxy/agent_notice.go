@@ -97,8 +97,17 @@ func openAIInboundHasAssistant(body []byte) bool {
 		return false
 	}
 	// Responses API shape: `input` is either a plain string (single
-	// user turn, no prior assistant) or an array of typed items where
-	// assistant turns appear as role:"assistant" message items.
+	// user turn, no prior assistant) or an array of typed items. The
+	// "no prior assistant" set is small and well-known: `message` items
+	// with role in {user, system, developer}. Everything else carries
+	// assistant-side state — assistant-role messages, `function_call`,
+	// `custom_tool_call`, `reasoning`, built-in tool calls
+	// (`web_search_call`, `file_search_call`, …), and even
+	// `function_call_output` (which only exists in response to a prior
+	// assistant function_call). Enumerate the user-side shape and treat
+	// everything else as assistant history; otherwise a turn-2+ request
+	// whose assistant turn was a tool call (no text message) would be
+	// misread as the first turn and re-prepended on every continuation.
 	if inputRaw, ok := raw["input"]; ok {
 		var asString string
 		if err := json.Unmarshal(inputRaw, &asString); err == nil {
@@ -112,10 +121,18 @@ func openAIInboundHasAssistant(body []byte) bool {
 			return true
 		}
 		for _, it := range items {
-			if it.Type != "" && it.Type != "message" {
-				continue
+			// Default item type is "message" when omitted.
+			typ := it.Type
+			if typ == "" {
+				typ = "message"
 			}
-			if it.Role == "assistant" {
+			if typ != "message" {
+				return true
+			}
+			switch it.Role {
+			case "user", "system", "developer":
+				continue
+			default:
 				return true
 			}
 		}
