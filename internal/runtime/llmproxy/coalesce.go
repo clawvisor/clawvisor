@@ -202,11 +202,30 @@ func flushBufferedAudit(ctx context.Context, cfg PostprocessConfig, agent *store
 // coalescence?" but the decision/outcome reflect what actually
 // happened: the call did not execute and is awaiting one combined
 // user approval.
+//
+// The audit schema's UNIQUE(user_id, request_id, COALESCE(task_id,''))
+// canonical dedup index collapses repeated emits for one request to a
+// single persisted row. Approval-triggering captures are emitted
+// FIRST so the row that wins dedup describes the call that drove the
+// hold — without ordering, an auto-allow sibling that happens to be
+// first in turn order would shadow the approval-needing call in the
+// persisted trail.
 func emitCoalescedPendingAuditRows(ctx context.Context, cfg PostprocessConfig, agent *store.Agent, captures []evalCapture, approvalID string) {
 	if cfg.Audit == nil || agent == nil {
 		return
 	}
+	ordered := make([]evalCapture, 0, len(captures))
 	for _, c := range captures {
+		if c.Kind == HeldKindApproval {
+			ordered = append(ordered, c)
+		}
+	}
+	for _, c := range captures {
+		if c.Kind != HeldKindApproval {
+			ordered = append(ordered, c)
+		}
+	}
+	for _, c := range ordered {
 		reason := "held under coalesced approval " + approvalID + " (originally classified as " + string(c.Kind) + ")"
 		cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, c.Use, c.Inspector, "block", "coalesced_approval_pending", reason)
 	}

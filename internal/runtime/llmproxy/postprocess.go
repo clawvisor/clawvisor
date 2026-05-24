@@ -1001,9 +1001,14 @@ func approvalPrompt(tu conversation.ToolUse, reason string) string {
 }
 
 // coalescedApprovalPrompt renders the prompt for a hold that covers
-// multiple tool_uses in one turn. Binary approve/deny only — the inline-
-// task ("task" verb) flow is single-tool by design, so it's omitted to
-// avoid an ambiguous "task" gesture against a batch with mixed kinds.
+// multiple tool_uses in one turn. Offers approve/deny/task — the same
+// three verbs as the single-tool prompt. "task" against a coalesced
+// hold generates a task-definition prompt whose expected_tools
+// enumerates every distinct tool name in the batch (see
+// taskCreationPromptForHolds), so the user can promote the whole
+// batch into a durable scope in one gesture instead of approving
+// each call individually.
+//
 // The kinds slice parallels uses: each entry tags whether that use was
 // the trigger for approval or held alongside (auto-allow / auto-rewrite).
 func coalescedApprovalPrompt(uses []HeldToolUse) string {
@@ -1040,21 +1045,53 @@ func coalescedApprovalPrompt(uses []HeldToolUse) string {
 			b.WriteString(preview)
 		}
 	}
-	b.WriteString("\n\nReply `yes` or `y` to approve all calls and run them in order, `no` or `n` to deny the whole turn.")
+	b.WriteString("\n\nReply `yes` or `y` to approve all calls and run them in order, `no` or `n` to deny the whole turn, or `task` to scope this work under a Clawvisor task that covers every call above.")
 	return b.String()
 }
 
 func taskCreationPrompt(tu conversation.ToolUse) string {
-	toolName := strings.TrimSpace(tu.Name)
-	if toolName == "" {
+	return taskCreationPromptForHolds([]HeldToolUse{{ToolUse: tu, Kind: HeldKindApproval}})
+}
+
+// taskCreationPromptForHolds renders the task-creation prompt for one
+// or more held tool_uses. When len(holds) == 1 the output is
+// byte-identical to the legacy single-tool taskCreationPrompt — the
+// inline-task flow on a single hold is unchanged. When len(holds) > 1
+// (coalesced hold), `expected_tools` enumerates every distinct tool
+// name in the batch so the generated task scope covers every held
+// call. Without this, typing "task" on a coalesced approval prompt
+// would scope only the primary tool and leave sibling reviewed calls
+// to re-prompt on the next retry.
+func taskCreationPromptForHolds(holds []HeldToolUse) string {
+	if len(holds) == 0 {
+		return ""
+	}
+	// Deduplicate by tool name; keep insertion order so the rendered
+	// expected_tools mirrors the model's emit order (matters for
+	// dependent sequences readers will recognize). The why for a
+	// duplicated tool name comes from the FIRST tool_use of that
+	// name — taskToolWhy already produces a description broad enough
+	// to cover sibling calls (e.g. "Run shell commands needed for
+	// the task, including writes AND verification reads").
+	seen := map[string]bool{}
+	expected := make([]map[string]any, 0, len(holds))
+	for _, held := range holds {
+		name := strings.TrimSpace(held.ToolUse.Name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		expected = append(expected, map[string]any{
+			"tool_name": name,
+			"why":       taskToolWhy(held.ToolUse),
+		})
+	}
+	if len(expected) == 0 {
 		return ""
 	}
 	payload := map[string]any{
-		"purpose": "Describe the user-visible task you are trying to complete, including why this tool access is needed.",
-		"expected_tools": []map[string]any{{
-			"tool_name": toolName,
-			"why":       taskToolWhy(tu),
-		}},
+		"purpose":                  "Describe the user-visible task you are trying to complete, including why this tool access is needed.",
+		"expected_tools":           expected,
 		"intent_verification_mode": "strict",
 		"expires_in_seconds":       600,
 	}

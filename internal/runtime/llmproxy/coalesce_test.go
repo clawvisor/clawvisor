@@ -580,6 +580,88 @@ func TestPostprocess_CoalesceAuditDoesNotEmitMisleadingAllow(t *testing.T) {
 	}
 }
 
+// Regression: the persisted coalesced-pending audit detail must not
+// lose the tool_use that actually triggered approval. The audit table
+// dedups canonical rows by (user, request, task), so writing one row
+// per held tool can leave only the first sibling (Bash) and drop the
+// WebFetch row that explains why the turn was held.
+func TestPostprocess_CoalescePendingAuditSurfacesApprovalTrigger(t *testing.T) {
+	requestID := "req-coalesced-pending-trigger"
+	body := []byte(`{
+		"id":"msg_1",
+		"type":"message",
+		"role":"assistant",
+		"model":"claude-haiku-4-5",
+		"content":[
+			{"type":"tool_use","id":"toolu_bash","name":"Bash","input":{"command":"ls -la"}},
+			{"type":"tool_use","id":"toolu_fetch","name":"WebFetch","input":{"url":"https://example.com/x"}}
+		],
+		"stop_reason":"tool_use"
+	}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	emitter := NewAuditEmitter(st, nil, nil)
+
+	_ = Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		RequestID:        requestID,
+		PendingApprovals: cache,
+		ResponseRegistry: conversation.DefaultResponseRegistry(),
+		CandidateTasks:   []*store.Task{},
+		ToolRules: []*store.RuntimePolicyRule{
+			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+		},
+		EgressRules: []*store.RuntimePolicyRule{},
+		Audit:       emitter,
+	})
+
+	rows, _, err := st.ListAuditEntries(context.Background(), userID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	foundPending := false
+	foundApprovalTrigger := false
+	var persisted []map[string]any
+	for _, r := range rows {
+		if r.RequestID != requestID || r.Outcome != "coalesced_approval_pending" {
+			continue
+		}
+		foundPending = true
+		var params map[string]any
+		if err := json.Unmarshal(r.ParamsSafe, &params); err != nil {
+			t.Fatalf("params unmarshal: %v", err)
+		}
+		persisted = append(persisted, params)
+		if params["tool_name"] == "WebFetch" || params["tool_use_id"] == "toolu_fetch" {
+			foundApprovalTrigger = true
+		}
+		if held, ok := params["held_tools"].([]any); ok {
+			for _, item := range held {
+				m, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				if m["tool_name"] == "WebFetch" || m["tool_use_id"] == "toolu_fetch" {
+					foundApprovalTrigger = true
+				}
+			}
+		}
+	}
+	if !foundPending {
+		t.Fatalf("expected a coalesced_approval_pending audit row for %s", requestID)
+	}
+	if !foundApprovalTrigger {
+		t.Fatalf("coalesced pending audit lost approval-triggering WebFetch/toolu_fetch; persisted params: %+v", persisted)
+	}
+}
+
 // Regression: legacy-path replay must fail closed when the underlying
 // cache rejects the Hold. The first-pass body references approval
 // prompts; if their per-tool holds can't be committed, the body
@@ -876,6 +958,56 @@ func TestAuditEmitter_LogApprovalRelease_CoalescedEmitsOneRowWithPerToolDetail(t
 		}
 		if m["tool_use_id"] == "" || m["held_kind"] == "" {
 			t.Fatalf("held_tools[%d] missing tool_use_id/held_kind: %+v", i, m)
+		}
+	}
+}
+
+// Regression: when the user types "task" against a coalesced hold,
+// the rewritten user turn (which the model sees on its next request)
+// must enumerate EVERY held tool's name in expected_tools — not
+// just the primary. Without this, the generated task scope covers
+// only one of the held calls and the sibling reviewed calls re-prompt
+// on retry, defeating the gesture.
+func TestStartInlineTaskDefinition_CoalescedHoldCoversEveryHeldTool(t *testing.T) {
+	ctx := context.Background()
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	held, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-coalescetaskxxxxxxxxxxxxxx",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageTool,
+		ToolUse:  conversation.ToolUse{ID: "toolu_fetch", Name: "WebFetch", Input: json.RawMessage(`{"url":"https://example.com/x"}`)},
+		Additional: []HeldToolUse{{
+			ToolUse: conversation.ToolUse{ID: "toolu_bash", Name: "Bash", Input: json.RawMessage(`{"command":"ls"}`)},
+			Kind:    HeldKindAllow,
+		}},
+		PrimaryIndex: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := RewriteTaskApprovalReply(ctx, TaskReplyRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            []byte(`{"messages":[{"role":"user","content":"task ` + held.Pending.ID + `"}]}`),
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Rewritten {
+		t.Fatalf("expected task-reply rewrite to fire on coalesced hold")
+	}
+	rewritten := string(out.Body)
+	// The prompt is embedded as a JSON string inside the Anthropic
+	// request body so double-quotes are escaped; match the escaped
+	// form to avoid coupling to the body's outer encoding.
+	for _, name := range []string{`\"tool_name\": \"WebFetch\"`, `\"tool_name\": \"Bash\"`} {
+		if !strings.Contains(rewritten, name) {
+			t.Fatalf("rewritten user turn must enumerate every held tool's name; missing %s\nbody: %s", name, rewritten)
 		}
 	}
 }

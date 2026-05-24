@@ -930,8 +930,8 @@ func TestPostprocess_CoalescesMultipleApprovalsIntoSingleHold(t *testing.T) {
 	if !strings.Contains(out, "https://example.com/one") || !strings.Contains(out, "https://example.com/two") {
 		t.Fatalf("coalesced prompt should describe every held call, got: %s", out)
 	}
-	if strings.Contains(out, "or `task` to instruct") {
-		t.Fatalf("coalesced prompt must be binary (no 'task' verb), got: %s", out)
+	if !strings.Contains(out, "`task` to scope this work under a Clawvisor task") {
+		t.Fatalf("coalesced prompt must offer the `task` verb so the user can promote a batch into a durable scope, got: %s", out)
 	}
 
 	// Only ONE hold is created for the whole turn; both held tool_uses
