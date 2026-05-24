@@ -154,21 +154,54 @@ func (e *AuditEmitter) LogApprovalRelease(ctx context.Context, agent *store.Agen
 	if e == nil || e.Store == nil || agent == nil || pending == nil {
 		return
 	}
+	// One audit row per release event, with every held tool's
+	// per-call detail under params.held_tools. The audit schema's
+	// canonical dedup index is UNIQUE(user_id, request_id, COALESCE(task_id, ''))
+	// which collapses N rows for the same request to one on insert;
+	// emitting N rows would only land the first and silently drop
+	// the rest, leaving the dashboard grouping that the comment
+	// promised broken. A single row carrying the held_tools array
+	// preserves the per-call detail without fighting the schema.
+	holds := pending.AllHolds()
+	coalesced := pending.IsCoalesced()
+	heldTools := make([]map[string]any, 0, len(holds))
+	for _, held := range holds {
+		heldTools = append(heldTools, map[string]any{
+			"tool_use_id":     held.ToolUse.ID,
+			"tool_name":       held.ToolUse.Name,
+			"held_kind":       string(held.Kind),
+			"target_host":     held.Inspector.Host,
+			"target_method":   held.Inspector.Method,
+			"target_path":     held.Inspector.Path,
+			"decision_source": string(held.Fingerprint.Source),
+		})
+	}
+	// The primary held use drives the top-level target_* fields for
+	// dashboards that key on (target_host, target_method, target_path)
+	// without parsing held_tools. Identical to the pre-coalesce shape
+	// when len(holds) == 1.
+	primary := holds[0]
+	if pending.IsCoalesced() && pending.PrimaryIndex < len(holds) {
+		primary = holds[pending.PrimaryIndex]
+	}
 	params := map[string]any{
 		"event":             "lite_proxy.approval_released",
 		"approval_id":       pending.ID,
 		"provider":          string(pending.Provider),
-		"target_host":       pending.Inspector.Host,
-		"target_method":     pending.Inspector.Method,
-		"target_path":       pending.Inspector.Path,
-		"decision_source":   string(pending.Fingerprint.Source),
+		"target_host":       primary.Inspector.Host,
+		"target_method":     primary.Inspector.Method,
+		"target_path":       primary.Inspector.Path,
+		"decision_source":   string(primary.Fingerprint.Source),
+		"coalesced":         coalesced,
+		"hold_size":         len(holds),
+		"held_tools":        heldTools,
 		"build_sha":         buildSHA(),
 		"validator_prompt":  e.ValidatorPromptSHA,
 		"parser_version":    parserVersion(),
 		"clawvisor_version": version.Version,
 	}
 	paramsJSON, _ := json.Marshal(params)
-	tu := pending.ToolUse.ID
+	tu := primary.ToolUse.ID
 	entry := &store.AuditEntry{
 		ID:         uuid.NewString(),
 		UserID:     agent.UserID,

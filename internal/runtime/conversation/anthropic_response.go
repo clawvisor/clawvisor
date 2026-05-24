@@ -562,6 +562,130 @@ func SynthAnthropicToolUseSSE(msgID, model, role, toolUseID, toolName string, to
 	return b.Bytes()
 }
 
+// SynthAnthropicToolUsesJSON builds an Anthropic JSON message-shaped
+// response carrying N tool_use content blocks. Used by the coalesced-
+// approval release path to surface every approved call in one assistant
+// turn. Byte-identical to SynthAnthropicToolUseJSON when len(calls)==1.
+func SynthAnthropicToolUsesJSON(msgID, model, role string, calls []SyntheticToolCall) []byte {
+	if msgID == "" {
+		msgID = "msg_clawvisor_approve"
+	}
+	if model == "" {
+		model = "unknown"
+	}
+	if role == "" {
+		role = "assistant"
+	}
+	content := make([]anthropicJSONContent, 0, len(calls))
+	for _, call := range calls {
+		input := call.Input
+		if input == nil {
+			input = map[string]any{}
+		}
+		inputJSON, err := json.Marshal(input)
+		if err != nil {
+			inputJSON = []byte("{}")
+		}
+		content = append(content, anthropicJSONContent{
+			Type:  "tool_use",
+			ID:    call.ID,
+			Name:  call.Name,
+			Input: inputJSON,
+		})
+	}
+	out := anthropicJSONResponse{
+		ID:         msgID,
+		Type:       "message",
+		Role:       role,
+		Model:      model,
+		Content:    content,
+		StopReason: "tool_use",
+	}
+	body, _ := json.Marshal(out)
+	return body
+}
+
+// SynthAnthropicToolUsesSSE is the SSE counterpart to
+// SynthAnthropicToolUsesJSON: one self-contained Anthropic streamed
+// message carrying N tool_use blocks at sequential indices.
+func SynthAnthropicToolUsesSSE(msgID, model, role string, calls []SyntheticToolCall) []byte {
+	if msgID == "" {
+		msgID = "msg_clawvisor_approve"
+	}
+	if model == "" {
+		model = "unknown"
+	}
+	if role == "" {
+		role = "assistant"
+	}
+	var b bytes.Buffer
+	emit := func(name string, data any) {
+		raw, _ := json.Marshal(data)
+		b.WriteString("event: ")
+		b.WriteString(name)
+		b.WriteString("\ndata: ")
+		b.Write(raw)
+		b.WriteString("\n\n")
+	}
+	emit("message_start", map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"id":            msgID,
+			"type":          "message",
+			"role":          role,
+			"model":         model,
+			"content":       []any{},
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage":         map[string]int{"input_tokens": 0, "output_tokens": 0},
+		},
+	})
+	for i, call := range calls {
+		input := call.Input
+		if input == nil {
+			input = map[string]any{}
+		}
+		inputJSON, err := json.Marshal(input)
+		if err != nil {
+			inputJSON = []byte("{}")
+		}
+		emit("content_block_start", map[string]any{
+			"type":  "content_block_start",
+			"index": i,
+			"content_block": map[string]any{
+				"type":  "tool_use",
+				"id":    call.ID,
+				"name":  call.Name,
+				"input": map[string]any{},
+			},
+		})
+		emit("content_block_delta", map[string]any{
+			"type":  "content_block_delta",
+			"index": i,
+			"delta": map[string]any{
+				"type":         "input_json_delta",
+				"partial_json": string(inputJSON),
+			},
+		})
+		emit("content_block_stop", map[string]any{
+			"type":  "content_block_stop",
+			"index": i,
+		})
+	}
+	emit("message_delta", map[string]any{
+		"type": "message_delta",
+		"delta": map[string]any{
+			"stop_reason":   "tool_use",
+			"stop_sequence": nil,
+		},
+		"usage": map[string]int{"output_tokens": 0},
+	})
+	emit("message_stop", map[string]any{
+		"type": "message_stop",
+	})
+	return b.Bytes()
+}
+
 func SynthAnthropicToolUseJSON(msgID, model, role, toolUseID, toolName string, toolInput map[string]any) []byte {
 	if msgID == "" {
 		msgID = "msg_clawvisor_approve"

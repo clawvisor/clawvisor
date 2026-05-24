@@ -890,7 +890,7 @@ func TestPostprocess_MalformedSyntheticControlCommandRewritesToToolFailure(t *te
 	}
 }
 
-func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
+func TestPostprocess_CoalescesMultipleApprovalsIntoSingleHold(t *testing.T) {
 	body := []byte(`{
 		"id":"msg_1",
 		"type":"message",
@@ -921,28 +921,41 @@ func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
 		EgressRules:      []*store.RuntimePolicyRule{},
 	})
 	if !got.Rewritten {
-		t.Fatalf("expected approval prompts for reviewed tool calls")
+		t.Fatalf("expected coalesced approval prompt for reviewed tool calls")
 	}
-	if !strings.Contains(string(got.Body), "Tool: `WebFetch`") ||
-		!strings.Contains(string(got.Body), "https://example.com/one") {
-		t.Fatalf("approval prompt should identify held tool and input: %s", got.Body)
+	out := string(got.Body)
+	if !strings.Contains(out, "Clawvisor paused this turn for approval (2 tool calls).") {
+		t.Fatalf("expected coalesced prompt header, got: %s", out)
 	}
-	// Bare no-ID resolve returns the most recent hold first (LIFO).
-	// The user is replying to the most recent prompt the harness
-	// rendered, not the oldest unresolved one.
-	first, err := cache.Resolve(req.Context(), ResolveRequest{UserID: userID, AgentID: agentID, Provider: conversation.ProviderAnthropic})
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(out, "https://example.com/one") || !strings.Contains(out, "https://example.com/two") {
+		t.Fatalf("coalesced prompt should describe every held call, got: %s", out)
 	}
-	if first == nil || first.ToolUse.ID != "toolu_2" {
-		t.Fatalf("first bare resolve = %+v, want toolu_2 (most recent)", first)
+	if strings.Contains(out, "or `task` to instruct") {
+		t.Fatalf("coalesced prompt must be binary (no 'task' verb), got: %s", out)
 	}
-	second, err := cache.Resolve(req.Context(), ResolveRequest{UserID: userID, AgentID: agentID, Provider: conversation.ProviderAnthropic})
-	if err != nil {
-		t.Fatal(err)
+
+	// Only ONE hold is created for the whole turn; both held tool_uses
+	// live under it (primary + Additional). A single user yes/no
+	// releases or denies all of them together.
+	holds := cache.snapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	if len(holds) != 1 {
+		t.Fatalf("expected exactly one coalesced hold, got %d: %+v", len(holds), holds)
 	}
-	if second == nil || second.ToolUse.ID != "toolu_1" {
-		t.Fatalf("second bare resolve = %+v, want toolu_1 (older after most-recent consumed)", second)
+	hold := holds[0]
+	if !hold.IsCoalesced() {
+		t.Fatalf("expected hold.IsCoalesced() true; got primary=%s additional=%d", hold.ToolUse.ID, len(hold.Additional))
+	}
+	all := hold.AllHolds()
+	if len(all) != 2 {
+		t.Fatalf("expected 2 held tool_uses in the coalesced hold, got %d", len(all))
+	}
+	if all[0].ToolUse.ID != "toolu_1" || all[1].ToolUse.ID != "toolu_2" {
+		t.Fatalf("held tool_uses out of order: %s, %s (want toolu_1, toolu_2)", all[0].ToolUse.ID, all[1].ToolUse.ID)
+	}
+	for _, h := range all {
+		if h.Kind != HeldKindApproval {
+			t.Fatalf("expected all coalesced uses to be HeldKindApproval, got %q for %s", h.Kind, h.ToolUse.ID)
+		}
 	}
 }
 
