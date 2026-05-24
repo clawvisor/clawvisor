@@ -379,3 +379,52 @@ func TestHasInboundAssistantTurn_OpenAINoMessagesOrInput(t *testing.T) {
 		t.Error("expected true (fail-safe) when neither messages nor input present")
 	}
 }
+
+// TestHasInboundAssistantTurn_PostSyntheticApprovalStripIsAmbiguous documents
+// the bug class the handler avoids by snapshotting the body BEFORE
+// StripSyntheticApprovalHistory runs.
+//
+// Scenario: a fresh conversation's very first user prompt triggered a
+// tool_use that Postprocess substituted with an approval prompt
+// containing ToolApprovalSubstitutedPromptMarker. The user replied
+// "approve". On the continuation request, the inbound body has
+// [user, assistant(prompt+routing-notice), user("approve")]. The
+// strip removes the assistant prompt AND the bare reply, leaving just
+// [user]. The detector cannot tell this stripped body apart from a
+// genuine fresh turn-1 request and (correctly per its own contract)
+// returns false.
+//
+// The handler must therefore pass the pre-strip body to the detector
+// (or otherwise consult the synthetic_approval_history_stripped audit
+// signal). This test pins that invariant: if you change the strip to
+// preserve a turn-marker stub, update both this test and the handler
+// snapshot logic together.
+func TestHasInboundAssistantTurn_PostSyntheticApprovalStripIsAmbiguous(t *testing.T) {
+	preStrip := anthropicTextBody(
+		map[string]string{"role": "user", "content": "delete /tmp/x"},
+		map[string]string{"role": "assistant", "content": "[Clawvisor] Routing this conversation through Clawvisor as agent \"laptop\".\n\n" + ToolApprovalSubstitutedPromptMarker + " Reply yes or y to approve."},
+		map[string]string{"role": "user", "content": "y"},
+	)
+	// Sanity: the un-stripped body has the assistant turn the user saw.
+	if !HasInboundAssistantTurn(conversation.ProviderAnthropic, preStrip) {
+		t.Fatal("pre-strip body should detect as having an assistant turn")
+	}
+	stripped, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider: conversation.ProviderAnthropic,
+		Body:     preStrip,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stripped.Modified {
+		t.Fatal("expected the synthetic approval prompt to be stripped")
+	}
+	// Post-strip the assistant turn is gone — detection now reports
+	// "no assistant" even though the user observed one in turn 1.
+	// The handler MUST use the pre-strip body for the first-turn
+	// decision; this assertion locks the failure mode in place so a
+	// future refactor that loses the snapshot trips this test.
+	if HasInboundAssistantTurn(conversation.ProviderAnthropic, stripped.Body) {
+		t.Fatal("post-strip body unexpectedly still has an assistant turn; the snapshot may no longer be necessary — re-evaluate the handler wiring")
+	}
+}

@@ -565,6 +565,17 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Snapshot the pre-strip body for the first-turn routing-notice
+	// detector below. StripSyntheticApprovalHistory removes assistant
+	// approval-prompt turns and their bare "approve" replies so the
+	// upstream model doesn't see synthesized scaffolding it could
+	// hallucinate; from the user's POV those turns still happened.
+	// Detecting on the post-strip body would misclassify
+	// "first user prompt → tool_use → approval → continuation" as a
+	// fresh turn-1 request and re-prepend the routing notice. The
+	// pre-strip body reflects what the harness actually shipped, which
+	// is the right input for the first-turn question.
+	bodyForFirstTurnDetect := body
 	if stripped, stripErr := llmproxy.StripSyntheticApprovalHistory(llmproxy.SyntheticApprovalHistoryStripRequest{
 		Provider: provider,
 		Body:     body,
@@ -973,7 +984,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		// accept the prepend and would be soft no-ops anyway. The
 		// per-tool-use auto-approve notice is handled separately on the
 		// continuation path and is additive with this one.
-		if resp.StatusCode == http.StatusOK && !llmproxy.HasInboundAssistantTurn(provider, body) {
+		if resp.StatusCode == http.StatusOK && !llmproxy.HasInboundAssistantTurn(provider, bodyForFirstTurnDetect) {
 			notice := llmproxy.RenderAgentRoutingNotice(agent.Name)
 			pre, changed, prependErr := llmproxy.PrependAssistantNotice(provider, processed.ContentType, processed.Body, notice)
 			switch {
