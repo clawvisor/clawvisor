@@ -141,7 +141,29 @@ func maybeInterceptInlineTaskDefinition(
 	// the user's configured threshold (with no conflicts), create the
 	// task pre-approved and substitute the success augmentation —
 	// no human prompt, no hold.
-	if ok, reason := autoApproveFromConversation(cfg, assessment); ok {
+	ok, reason, refusal := autoApproveFromConversation(cfg, assessment)
+	if !ok {
+		// Trace why the gate refused so operators chasing "auto-approval
+		// didn't fire" have a deterministic answer in the log instead of
+		// having to guess from prompt-vs-no-prompt behavior. Recorded
+		// even when the threshold is "off" — that's the most common
+		// "miss" and operators should still see the agent's actual
+		// configuration in the log.
+		intentMatch := ""
+		riskLevel := ""
+		if assessment != nil {
+			intentMatch = assessment.IntentMatch
+			riskLevel = assessment.RiskLevel
+		}
+		trace("inline_task.auto_approve_refused",
+			"refusal", refusal,
+			"threshold", cfg.ConversationAutoApproveThreshold,
+			"risk_level", riskLevel,
+			"intent_match", intentMatch,
+			"recent_user_turns", len(cfg.RecentUserTurns),
+		)
+	}
+	if ok {
 		if cfg.InlineTaskCreator == nil {
 			// Threshold says "approve" but the runtime cannot create
 			// the task without prompting (no creator wired). Fall
@@ -272,12 +294,16 @@ func maybeInterceptInlineTaskDefinition(
 //     evidence the agent's task envelope isn't what the user thinks
 //     they're approving.
 //
-// Returns (true, audit_reason) when all four hold; (false, "") otherwise.
-// The audit reason is a short string suitable for the audit log so
-// operators can see why a given task was auto-approved.
-func autoApproveFromConversation(cfg PostprocessConfig, assessment *taskrisk.RiskAssessment) (bool, string) {
+// Returns (true, audit_reason, "") when all four hold;
+// (false, "", refusal_reason) otherwise. refusal_reason is a short
+// machine-readable string ("no_recent_turns", "threshold_off",
+// "risk_above_threshold", "intent_match_not_yes",
+// "intent_match_conflicts", "no_assessment") so operators chasing a
+// missing auto-approval can see exactly which gate refused without
+// inferring it from prompt-vs-no-prompt observation.
+func autoApproveFromConversation(cfg PostprocessConfig, assessment *taskrisk.RiskAssessment) (bool, string, string) {
 	if assessment == nil {
-		return false, ""
+		return false, "", "no_assessment"
 	}
 	// Deterministic floor: no extracted human turns ⇒ no auto-approval,
 	// no matter what the assessor claims. ExtractRecentHumanTurns
@@ -285,18 +311,22 @@ func autoApproveFromConversation(cfg PostprocessConfig, assessment *taskrisk.Ris
 	// so a non-zero length here means the runtime actually observed
 	// at least one genuine human message in the inbound transcript.
 	if len(cfg.RecentUserTurns) == 0 {
-		return false, ""
+		return false, "", "no_recent_turns"
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.ConversationAutoApproveThreshold), "off") ||
+		strings.TrimSpace(cfg.ConversationAutoApproveThreshold) == "" {
+		return false, "", "threshold_off"
 	}
 	if !store.ConversationAutoApproveCovers(cfg.ConversationAutoApproveThreshold, assessment.RiskLevel) {
-		return false, ""
+		return false, "", "risk_above_threshold"
 	}
 	if !strings.EqualFold(strings.TrimSpace(assessment.IntentMatch), "yes") {
-		return false, ""
+		return false, "", "intent_match_not_yes"
 	}
 	if len(assessment.Conflicts) > 0 {
-		return false, ""
+		return false, "", "intent_match_conflicts"
 	}
-	return true, "risk=" + assessment.RiskLevel + ", intent_match=yes, threshold=" + cfg.ConversationAutoApproveThreshold
+	return true, "risk=" + assessment.RiskLevel + ", intent_match=yes, threshold=" + cfg.ConversationAutoApproveThreshold, ""
 }
 
 // assessInlineTaskRisk runs the LLM-backed risk assessor (when configured) and
