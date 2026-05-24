@@ -267,6 +267,76 @@ func TestHasInboundAssistantTurn_OpenAIResponsesItemWithoutTypeIsMessage(t *test
 	}
 }
 
+func TestHasInboundAssistantTurn_OpenAIResponsesPreviousResponseIDStringInput(t *testing.T) {
+	// Stateful Responses follow-up: the harness chains turns via
+	// previous_response_id and ships only the new user turn as a plain
+	// string input. Server-side state holds the assistant history, so
+	// this must NOT be treated as a first turn.
+	body := mustMarshal(t, map[string]any{
+		"previous_response_id": "resp_abc123",
+		"input":                "follow up question",
+	})
+	if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+		t.Error("expected true when previous_response_id is set (stateful follow-up)")
+	}
+}
+
+func TestHasInboundAssistantTurn_OpenAIResponsesPreviousResponseIDUserItems(t *testing.T) {
+	body := mustMarshal(t, map[string]any{
+		"previous_response_id": "resp_abc123",
+		"input": []map[string]any{
+			{"type": "message", "role": "user", "content": "another follow up"},
+		},
+	})
+	if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+		t.Error("expected true when previous_response_id is set with user-only input items")
+	}
+}
+
+func TestHasInboundAssistantTurn_OpenAIResponsesEmptyPreviousResponseID(t *testing.T) {
+	// Empty/null previous_response_id must NOT trigger the follow-up
+	// classification — it's the absent-field signal.
+	for _, tc := range []struct {
+		name string
+		val  any
+	}{
+		{"empty string", ""},
+		{"null", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := mustMarshal(t, map[string]any{
+				"previous_response_id": tc.val,
+				"input":                "first turn",
+			})
+			if HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+				t.Errorf("expected false when previous_response_id is %v", tc.val)
+			}
+		})
+	}
+}
+
+func TestHasInboundAssistantTurn_OpenAIResponsesConversationField(t *testing.T) {
+	// Newer Responses conversation-state field. Accept both the
+	// string-id form and the object form.
+	for _, tc := range []struct {
+		name string
+		conv any
+	}{
+		{"string form", "conv_xyz789"},
+		{"object form", map[string]any{"id": "conv_xyz789"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := mustMarshal(t, map[string]any{
+				"conversation": tc.conv,
+				"input":        "follow up",
+			})
+			if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {
+				t.Errorf("expected true when conversation field is %v", tc.conv)
+			}
+		})
+	}
+}
+
 func TestHasInboundAssistantTurn_OpenAINoMessagesOrInput(t *testing.T) {
 	body := mustMarshal(t, map[string]any{"model": "gpt-4"})
 	if !HasInboundAssistantTurn(conversation.ProviderOpenAI, body) {

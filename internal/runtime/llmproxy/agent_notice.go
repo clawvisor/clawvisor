@@ -1,6 +1,7 @@
 package llmproxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -96,6 +97,18 @@ func openAIInboundHasAssistant(body []byte) bool {
 		}
 		return false
 	}
+	// Responses API stateful conversation mode: the harness uses
+	// `previous_response_id` (or the newer `conversation` field) to
+	// chain turns server-side, leaving the request body to carry only
+	// the new user turn. Either field is conclusive evidence that
+	// prior assistant state exists, even if `input` contains only
+	// user-shaped items. Check before walking `input`.
+	if prev, ok := raw["previous_response_id"]; ok && hasNonEmptyJSONStringOrObject(prev) {
+		return true
+	}
+	if conv, ok := raw["conversation"]; ok && hasNonEmptyJSONStringOrObject(conv) {
+		return true
+	}
 	// Responses API shape: `input` is either a plain string (single
 	// user turn, no prior assistant) or an array of typed items. The
 	// "no prior assistant" set is small and well-known: `message` items
@@ -140,6 +153,38 @@ func openAIInboundHasAssistant(body []byte) bool {
 	}
 	// No messages and no input — fail safe.
 	return true
+}
+
+// hasNonEmptyJSONStringOrObject reports whether the raw JSON value is a
+// non-empty string, a non-null object, or any other concrete (non-null,
+// non-empty-string) value. Used to detect whether an optional pointer-
+// like field on the Responses request (`previous_response_id`,
+// `conversation`) is actually set vs. literally `null` / `""` / absent.
+func hasNonEmptyJSONStringOrObject(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	if bytes.Equal(trimmed, []byte("null")) {
+		return false
+	}
+	if bytes.Equal(trimmed, []byte(`""`)) {
+		return false
+	}
+	// Try as string first — the common case for previous_response_id
+	// ("resp_abc123") and the string form of conversation
+	// ("conv_xyz789").
+	var s string
+	if err := json.Unmarshal(trimmed, &s); err == nil {
+		return strings.TrimSpace(s) != ""
+	}
+	// Object form (e.g. {"id":"conv_xyz789"}) — anything that parses
+	// as a non-null object counts.
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &obj); err == nil {
+		return len(obj) > 0
+	}
+	return false
 }
 
 func truncateRunes(s string, max int) string {
