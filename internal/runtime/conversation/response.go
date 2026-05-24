@@ -29,6 +29,17 @@ type ToolUseVerdict struct {
 	// upstream LLM. SubstituteWith remains the fallback rendered to the
 	// harness if the continuation call fails.
 	ContinueWithToolResult string
+
+	// PrependAssistantNotice, when non-empty, is text the handler
+	// prepends to the assistant turn it returns to the harness AFTER a
+	// successful ContinueWithToolResult round-trip. The use case is
+	// surfacing a user-facing notice ("a task was auto-approved on
+	// your behalf") in the same response that carries the model's next
+	// actions, so the user sees what happened without a separate turn.
+	// Ignored when ContinueWithToolResult is empty or when the
+	// continuation failed and the substitute fallback rendered
+	// instead.
+	PrependAssistantNotice string
 }
 
 type RewriteResult struct {

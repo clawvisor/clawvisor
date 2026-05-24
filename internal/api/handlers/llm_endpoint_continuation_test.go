@@ -304,6 +304,84 @@ func TestTryContinuation_RefreshesCandidateTasksFromStore(t *testing.T) {
 	}
 }
 
+// TestTryContinuation_PrependsUserFacingNotice verifies the handler
+// injects the verdict's PrependAssistantNotice text into the
+// continuation's assistant turn — so when the auto-approve gate fires,
+// the user sees a "[Clawvisor] approved" line at the top of the
+// model's next response in the same turn as the model's actions.
+func TestTryContinuation_PrependsUserFacingNotice(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "msg_second",
+			"type": "message",
+			"role": "assistant",
+			"model": "claude-sonnet-4",
+			"content": [{"type": "text", "text": "Files created."}],
+			"stop_reason": "end_turn"
+		}`))
+	}))
+	defer upstream.Close()
+
+	h, _, _, _ := newSeededHandler(t, upstream.URL)
+	agent := firstSeededAgent(t, h.Store)
+
+	inboundBody := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"make /tmp/x"}]}`)
+	firstUpstreamBody := []byte(`{
+		"id": "msg_first",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-sonnet-4",
+		"content": [{"type": "tool_use", "id": "toolu_a", "name": "Bash", "input": {"cmd": "curl https://clawvisor.local/control/tasks"}}],
+		"stop_reason": "tool_use"
+	}`)
+	processed := llmproxy.PostprocessResult{
+		Body: []byte("fallback"),
+		Decisions: []conversation.ToolUseDecisionRecord{{
+			ToolUse: conversation.ToolUse{ID: "toolu_a", Name: "Bash"},
+			Verdict: conversation.ToolUseVerdict{
+				Allowed:                false,
+				SubstituteWith:         "[task approved]",
+				ContinueWithToolResult: "[task approved]",
+				PrependAssistantNotice: `[Clawvisor] Auto-approved task: Create files in /tmp`,
+			},
+		}},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages", strings.NewReader(string(inboundBody)))
+	req = req.WithContext(store.WithAgent(req.Context(), agent))
+
+	final, _, _, err := h.tryContinuation(
+		req, agent, conversation.ProviderAnthropic, "req-notice",
+		inboundBody, firstUpstreamBody, "application/json", http.StatusOK,
+		processed,
+		llmproxy.PostprocessConfig{
+			Inspector:   h.Inspector,
+			RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
+			Store:       h.Store,
+			AgentUserID: agent.UserID,
+			AgentID:     agent.ID,
+		},
+		0,
+	)
+	if err != nil {
+		t.Fatalf("tryContinuation: %v", err)
+	}
+	if final == nil {
+		t.Fatal("expected final result")
+	}
+	body := string(final.Body)
+	if !strings.Contains(body, "[Clawvisor] Auto-approved task: Create files in /tmp") {
+		t.Errorf("notice missing from continuation body:\n%s", body)
+	}
+	// Notice precedes the model's "Files created." text.
+	noticePos := strings.Index(body, "[Clawvisor] Auto-approved")
+	modelPos := strings.Index(body, "Files created.")
+	if noticePos == -1 || modelPos == -1 || noticePos >= modelPos {
+		t.Errorf("notice should come before model text; notice at %d, model at %d", noticePos, modelPos)
+	}
+}
+
 // TestTryContinuation_NoContinueDecisionIsNoOp confirms the handler
 // short-circuits when no decision asked for continuation.
 func TestTryContinuation_NoContinueDecisionIsNoOp(t *testing.T) {

@@ -1163,6 +1163,33 @@ func (h *LLMEndpointHandler) tryContinuation(
 	// to add it as the gate's coverage expands).
 	contReq := r.Clone(ctx)
 	newProcessed := llmproxy.Postprocess(contReq, full, contCT, cfg)
+
+	// User-facing notices. The auto-approve gate records a one-line
+	// notice on each verdict via PrependAssistantNotice; we collect
+	// them here and inject into the continuation's assistant turn so
+	// the user sees what was auto-approved at the top of the model's
+	// response. Multiple notices (one per auto-approved tool_use in a
+	// coalesced turn) join with newlines.
+	var notices []string
+	for _, dec := range processed.Decisions {
+		if n := strings.TrimSpace(dec.Verdict.PrependAssistantNotice); n != "" {
+			notices = append(notices, n)
+		}
+	}
+	if len(notices) > 0 && len(newProcessed.Body) > 0 {
+		joined := strings.Join(notices, "\n")
+		pre, prependErr := llmproxy.PrependAssistantNotice(provider, contCT, newProcessed.Body, joined)
+		if prependErr != nil {
+			// Prepend is UX polish, not correctness — log and return
+			// the unmodified body so the user still sees the model's
+			// output. The continuation itself succeeded.
+			h.Logger.WarnContext(r.Context(), "lite-proxy continuation notice prepend failed; returning unannotated body",
+				"request_id", requestID, "agent_id", agent.ID, "err", prependErr.Error())
+		} else if len(pre) > 0 {
+			newProcessed.Body = pre
+		}
+	}
+
 	return &newProcessed, resp.StatusCode, contCT, nil
 }
 

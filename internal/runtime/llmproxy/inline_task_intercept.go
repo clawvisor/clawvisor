@@ -235,6 +235,13 @@ func maybeInterceptInlineTaskDefinition(
 					// without bouncing to the user.
 					SubstituteWith:         augmentation,
 					ContinueWithToolResult: augmentation,
+					// PrependAssistantNotice is shown to the human in
+					// the continuation's assistant turn so they see
+					// what happened on their behalf. Quoting the
+					// model-authored Purpose makes the notice
+					// self-describing without leaking task IDs or
+					// internal scope details.
+					PrependAssistantNotice: autoApproveUserNotice(created.Purpose),
 				}, true
 			}
 		}
@@ -269,6 +276,28 @@ func maybeInterceptInlineTaskDefinition(
 		Reason:         "Clawvisor: awaiting inline task approval",
 		SubstituteWith: renderTaskApprovalPromptWithRisk(parsed, innerHold.Pending.ID, assessment),
 	}, true
+}
+
+// autoApproveUserNotice renders the human-facing one-liner the
+// handler prepends to the continuation's assistant turn after the
+// gate fires. Quoting the task purpose makes the message
+// self-describing — the user sees both that an auto-approval
+// happened AND what was approved, without needing to look at the
+// dashboard. The purpose is model-authored, so we strip control
+// characters and cap the length defensively so a runaway purpose
+// can't dominate the assistant turn.
+func autoApproveUserNotice(purpose string) string {
+	const maxPurposeLen = 200
+	cleaned := strings.TrimSpace(purpose)
+	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
+	cleaned = strings.ReplaceAll(cleaned, "\n", " ")
+	if len(cleaned) > maxPurposeLen {
+		cleaned = cleaned[:maxPurposeLen] + "…"
+	}
+	if cleaned == "" {
+		return "[Clawvisor] Auto-approved a task based on your request."
+	}
+	return "[Clawvisor] Auto-approved task: " + cleaned
 }
 
 // autoApproveFromConversation reports whether the conversation-based

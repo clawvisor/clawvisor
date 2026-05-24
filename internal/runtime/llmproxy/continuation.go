@@ -1,6 +1,7 @@
 package llmproxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +66,46 @@ func BuildContinuationBody(
 		}
 	default:
 		return nil, ErrContinuationUnsupportedProvider
+	}
+}
+
+// PrependAssistantNotice inserts a leading text block into the
+// assistant turn of an upstream LLM response so the user sees a
+// notice ("a task was auto-approved") in the same turn as the
+// model's next actions. Dispatches by provider; for OpenAI it
+// auto-detects the Chat Completions vs Responses shape from the
+// response body. Returns the original body untouched (no error)
+// when text is blank, the shape can't be determined, or the body
+// is malformed — the notice is a UX nicety, not a correctness
+// guarantee, and we prefer surfacing the model's output to losing
+// it on a parse hiccup.
+func PrependAssistantNotice(
+	provider conversation.Provider,
+	contentType string,
+	body []byte,
+	text string,
+) ([]byte, error) {
+	if strings.TrimSpace(text) == "" {
+		return body, nil
+	}
+	switch provider {
+	case conversation.ProviderAnthropic:
+		return conversation.PrependAnthropicAssistantText(contentType, body, text)
+	case conversation.ProviderOpenAI:
+		// Differentiate Chat Completions vs Responses by sniffing the
+		// response body. Chat carries `choices[]`; Responses carries
+		// `output[]` (and SSE Responses streams carry
+		// `response.output_item.*` events).
+		switch {
+		case bytes.Contains(body, []byte(`"choices"`)) && !bytes.Contains(body, []byte(`response.output_item`)):
+			return conversation.PrependOpenAIChatAssistantText(contentType, body, text)
+		case bytes.Contains(body, []byte(`"output"`)) || bytes.Contains(body, []byte(`response.output_item`)):
+			return conversation.PrependOpenAIResponsesAssistantText(contentType, body, text)
+		default:
+			return body, nil
+		}
+	default:
+		return body, nil
 	}
 }
 

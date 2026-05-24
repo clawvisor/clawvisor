@@ -1,0 +1,327 @@
+package conversation
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestPrependAnthropicAssistantText_JSON(t *testing.T) {
+	body := []byte(`{
+		"id": "msg_abc",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-sonnet-4",
+		"content": [
+			{"type": "text", "text": "thinking"},
+			{"type": "tool_use", "id": "toolu_1", "name": "Write", "input": {"path": "/tmp/x"}}
+		],
+		"stop_reason": "tool_use"
+	}`)
+	out, err := PrependAnthropicAssistantText("application/json", body, "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("PrependAnthropicAssistantText: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("output not JSON: %v\n%s", err, out)
+	}
+	// Top-level fields preserved.
+	for _, k := range []string{"id", "model", "stop_reason"} {
+		if parsed[k] == nil {
+			t.Errorf("field %q lost in prepend", k)
+		}
+	}
+	content, ok := parsed["content"].([]any)
+	if !ok || len(content) != 3 {
+		t.Fatalf("expected 3 content blocks (notice + original 2); got %d: %v", len(content), content)
+	}
+	notice := content[0].(map[string]any)
+	if notice["type"] != "text" || notice["text"] != "[Clawvisor] approved" {
+		t.Errorf("notice block malformed: %v", notice)
+	}
+	// Original first block still in position 1.
+	orig := content[1].(map[string]any)
+	if orig["type"] != "text" || orig["text"] != "thinking" {
+		t.Errorf("original text block lost: %v", orig)
+	}
+	// tool_use still in position 2, unmodified.
+	tu := content[2].(map[string]any)
+	if tu["type"] != "tool_use" || tu["id"] != "toolu_1" {
+		t.Errorf("tool_use lost or mutated: %v", tu)
+	}
+}
+
+func TestPrependAnthropicAssistantText_JSON_EmptyTextIsNoOp(t *testing.T) {
+	body := []byte(`{"content":[{"type":"text","text":"hi"}]}`)
+	out, err := PrependAnthropicAssistantText("application/json", body, "  ")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if string(out) != string(body) {
+		t.Errorf("expected no-op for blank text; got %s", out)
+	}
+}
+
+func TestPrependAnthropicAssistantText_SSE(t *testing.T) {
+	sse := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_x","role":"assistant","model":"claude-sonnet-4","content":[]}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_orig","name":"Write","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"/tmp\"}"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	out, err := PrependAnthropicAssistantText("text/event-stream", []byte(sse), "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("PrependAnthropicAssistantText: %v", err)
+	}
+	got := string(out)
+
+	// Notice text appears once, before the tool_use.
+	noticePos := strings.Index(got, "[Clawvisor] approved")
+	toolPos := strings.Index(got, "toolu_orig")
+	if noticePos == -1 {
+		t.Fatalf("notice text missing from output:\n%s", got)
+	}
+	if toolPos == -1 {
+		t.Fatalf("original tool_use missing from output:\n%s", got)
+	}
+	if noticePos >= toolPos {
+		t.Errorf("notice should come before tool_use; notice at %d, tool at %d\n%s", noticePos, toolPos, got)
+	}
+
+	// message_start preserved (still references msg_x).
+	if !strings.Contains(got, `"id":"msg_x"`) {
+		t.Errorf("message_start id lost:\n%s", got)
+	}
+	// message_delta + message_stop preserved.
+	if !strings.Contains(got, "message_delta") || !strings.Contains(got, "message_stop") {
+		t.Errorf("message tail events lost:\n%s", got)
+	}
+
+	// Original tool_use block's index was reindexed from 0 to 1.
+	// We verify by parsing the SSE and locating the tool_use's
+	// content_block_start event.
+	if !strings.Contains(got, `"index":1`) {
+		t.Errorf("original block index not shifted to 1:\n%s", got)
+	}
+	// The new text block uses index 0.
+	if !strings.Contains(got, `"index":0`) {
+		t.Errorf("new notice block index 0 missing:\n%s", got)
+	}
+}
+
+func TestPrependOpenAIChatAssistantText_JSON_NullContent(t *testing.T) {
+	// tool_calls-only response: content is null.
+	body := []byte(`{
+		"id": "chatcmpl-1",
+		"object": "chat.completion",
+		"choices": [{
+			"index": 0,
+			"message": {
+				"role": "assistant",
+				"content": null,
+				"tool_calls": [{"id": "call_x", "type": "function", "function": {"name": "Write", "arguments": "{}"}}]
+			},
+			"finish_reason": "tool_calls"
+		}]
+	}`)
+	out, err := PrependOpenAIChatAssistantText("application/json", body, "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("PrependOpenAIChatAssistantText: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("output not JSON: %v\n%s", err, out)
+	}
+	choices := parsed["choices"].([]any)
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	if msg["content"] != "[Clawvisor] approved" {
+		t.Errorf("content should be the notice; got %v", msg["content"])
+	}
+	// tool_calls preserved.
+	calls, ok := msg["tool_calls"].([]any)
+	if !ok || len(calls) != 1 {
+		t.Errorf("tool_calls lost: %v", msg["tool_calls"])
+	}
+}
+
+func TestPrependOpenAIChatAssistantText_JSON_StringContent(t *testing.T) {
+	body := []byte(`{
+		"choices": [{
+			"index": 0,
+			"message": {"role": "assistant", "content": "doing the work"},
+			"finish_reason": "stop"
+		}]
+	}`)
+	out, err := PrependOpenAIChatAssistantText("application/json", body, "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	msg := parsed["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
+	c, ok := msg["content"].(string)
+	if !ok {
+		t.Fatalf("content not string: %T", msg["content"])
+	}
+	if !strings.HasPrefix(c, "[Clawvisor] approved") {
+		t.Errorf("notice not prepended: %q", c)
+	}
+	if !strings.Contains(c, "doing the work") {
+		t.Errorf("original content lost: %q", c)
+	}
+}
+
+func TestPrependOpenAIChatAssistantText_SSE(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"chatcmpl-sse","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_y","type":"function","function":{"name":"Write","arguments":""}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl-sse","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl-sse","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	out, err := PrependOpenAIChatAssistantText("text/event-stream", []byte(sse), "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got := string(out)
+	// Notice content shows up.
+	if !strings.Contains(got, `"content":"[Clawvisor] approved"`) {
+		t.Errorf("notice content delta missing:\n%s", got)
+	}
+	// Notice precedes the original tool_call delta.
+	noticePos := strings.Index(got, "[Clawvisor] approved")
+	toolPos := strings.Index(got, "call_y")
+	if noticePos == -1 || toolPos == -1 || noticePos >= toolPos {
+		t.Errorf("notice should be before tool_calls; notice at %d, tool at %d\n%s", noticePos, toolPos, got)
+	}
+	// First-chunk id reused for injected chunks (so the harness sees
+	// one coherent stream id).
+	if !strings.Contains(got, `"id":"chatcmpl-sse"`) {
+		t.Errorf("chunk id not preserved on injected chunks:\n%s", got)
+	}
+	// Upstream chunks still present untouched (we appended them
+	// verbatim after our injected ones).
+	if strings.Count(got, "call_y") == 0 {
+		t.Errorf("original chunks dropped:\n%s", got)
+	}
+}
+
+func TestPrependOpenAIResponsesAssistantText_JSON(t *testing.T) {
+	body := []byte(`{
+		"id": "resp_1",
+		"object": "response",
+		"output": [
+			{"type": "function_call", "id": "fc_1", "call_id": "call_x", "name": "Write", "arguments": "{}", "status": "completed"}
+		],
+		"output_text": ""
+	}`)
+	out, err := PrependOpenAIResponsesAssistantText("application/json", body, "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	output := parsed["output"].([]any)
+	if len(output) != 2 {
+		t.Fatalf("expected 2 output items (notice + original); got %d", len(output))
+	}
+	notice := output[0].(map[string]any)
+	if notice["type"] != "message" || notice["role"] != "assistant" {
+		t.Errorf("first item should be assistant message; got %v", notice)
+	}
+	noticeContent := notice["content"].([]any)
+	noticeText := noticeContent[0].(map[string]any)
+	if noticeText["type"] != "output_text" || noticeText["text"] != "[Clawvisor] approved" {
+		t.Errorf("notice text malformed: %v", noticeText)
+	}
+	// Original function_call still in position 1.
+	orig := output[1].(map[string]any)
+	if orig["type"] != "function_call" || orig["call_id"] != "call_x" {
+		t.Errorf("original function_call lost: %v", orig)
+	}
+}
+
+func TestPrependOpenAIResponsesAssistantText_SSE(t *testing.T) {
+	sse := strings.Join([]string{
+		`event: response.created`,
+		`data: {"type":"response.created","response":{"id":"resp_sse"}}`,
+		``,
+		`event: response.output_item.added`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_orig","call_id":"call_z","name":"Write","arguments":""}}`,
+		``,
+		`event: response.output_item.done`,
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_orig","call_id":"call_z","name":"Write","arguments":"{}","status":"completed"}}`,
+		``,
+	}, "\n")
+
+	out, err := PrependOpenAIResponsesAssistantText("text/event-stream", []byte(sse), "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got := string(out)
+
+	// response.created passes through unchanged.
+	if !strings.Contains(got, `"id":"resp_sse"`) {
+		t.Errorf("response.created lost:\n%s", got)
+	}
+	// Notice item events appear before the original function_call events.
+	noticePos := strings.Index(got, "msg_clawvisor_notice")
+	origPos := strings.Index(got, "fc_orig")
+	if noticePos == -1 {
+		t.Fatalf("notice item not emitted:\n%s", got)
+	}
+	if origPos == -1 {
+		t.Fatalf("original item lost:\n%s", got)
+	}
+	if noticePos >= origPos {
+		t.Errorf("notice should be before original; notice at %d, orig at %d\n%s", noticePos, origPos, got)
+	}
+	// Original event's output_index was shifted from 0 to 1.
+	// (The notice item occupies index 0.)
+	// We assert by counting: a fresh "output_index":1 should appear
+	// for the original item.
+	if !strings.Contains(got, `"output_index":1`) {
+		t.Errorf("original output_index not shifted to 1:\n%s", got)
+	}
+}
+
+func TestPrependAnthropicAssistantText_SSE_NoMessageStartFallsThrough(t *testing.T) {
+	// Malformed: no message_start, just a content_block. We refuse
+	// to inject the notice rather than corrupt the event order.
+	sse := strings.Join([]string{
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		``,
+	}, "\n")
+	out, err := PrependAnthropicAssistantText("text/event-stream", []byte(sse), "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if strings.Contains(string(out), "[Clawvisor] approved") {
+		t.Errorf("notice should not be inserted into malformed stream (no message_start)")
+	}
+}
