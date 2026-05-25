@@ -576,6 +576,42 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// pre-strip body reflects what the harness actually shipped, which
 	// is the right input for the first-turn question.
 	bodyForFirstTurnDetect := body
+	// First-turn detection feeds two side-by-side decisions:
+	//
+	//  1. Conversation-ID mint. On harnesses without a native session
+	//     identifier (today: OpenAI Chat Completions), turn-1 of a
+	//     fresh conversation has no echoed marker yet, so
+	//     ConversationID() returned the user-message fingerprint.
+	//     Override it with a freshly minted "cv-conv-…" value and embed
+	//     that value in the response-side routing notice so the
+	//     harness round-trips it back to us in assistant history on
+	//     turn 2+. The state we key by conversation ID (pending-approval
+	//     holds, task-checkout focus) is created downstream under this
+	//     minted value, so the next-turn marker-echo resolves cleanly
+	//     to the same bucket.
+	//
+	//  2. Routing-notice prepend. Same firstTurn predicate selects
+	//     which response gets the human-visible Clawvisor notice.
+	firstTurn := !llmproxy.HasInboundAssistantTurn(provider, bodyForFirstTurnDetect)
+	mintedConversationID := ""
+	if firstTurn && provider == conversation.ProviderOpenAI && conversation.IsOpenAIChatCompletionsEndpoint(r) {
+		minted, mintErr := conversation.NewConversationID()
+		if mintErr != nil {
+			// Mint failure is rare (crypto/rand outage) and recoverable:
+			// fall through to the fingerprint that ConversationID()
+			// already produced. The cost is just a degraded scope key
+			// for this conversation, not a request failure.
+			h.Logger.WarnContext(r.Context(), "lite-proxy conversation id mint failed; falling through to fingerprint",
+				"request_id", requestID, "agent_id", agent.ID, "err", mintErr.Error())
+		} else {
+			mintedConversationID = minted
+			conversationID = minted
+			auditParams["conversation_id"] = minted
+			auditParams["conversation_id_minted"] = true
+		}
+	}
+	auditParams["first_turn"] = firstTurn
+	auditParams["conversation_id_source"] = liteProxyConversationIDSource(provider, r, conversationID, mintedConversationID)
 	if stripped, stripErr := llmproxy.StripSyntheticApprovalHistory(llmproxy.SyntheticApprovalHistoryStripRequest{
 		Provider: provider,
 		Body:     body,
@@ -984,8 +1020,12 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		// accept the prepend and would be soft no-ops anyway. The
 		// per-tool-use auto-approve notice is handled separately on the
 		// continuation path and is additive with this one.
-		if resp.StatusCode == http.StatusOK && !llmproxy.HasInboundAssistantTurn(provider, bodyForFirstTurnDetect) {
-			notice := llmproxy.RenderAgentRoutingNotice(agent.Name)
+		if resp.StatusCode == http.StatusOK && firstTurn {
+			// mintedConversationID is non-empty only on Chat Completions
+			// turn 1 (where no native session ID exists). For Anthropic
+			// and OpenAI Responses the renderer drops the marker
+			// argument and emits the existing notice unchanged.
+			notice := llmproxy.RenderAgentRoutingNotice(agent.Name, mintedConversationID)
 			pre, changed, prependErr := llmproxy.PrependAssistantNotice(provider, processed.ContentType, processed.Body, notice)
 			switch {
 			case prependErr != nil:
@@ -2887,6 +2927,36 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 
 func liteProxyDecisionPosture(agent *store.Agent) runtimedecision.EvaluationPosture {
 	return runtimedecision.PostureEnforce
+}
+
+// liteProxyConversationIDSource labels how the conversation ID currently
+// in use was derived, for the per-request audit row. Lets dashboards
+// answer "what fraction of Chat-Completions turn-2+ requests had the
+// minted marker round-trip?" without re-doing the lookup. Values are
+// stable strings safe to switch on in downstream queries.
+func liteProxyConversationIDSource(provider conversation.Provider, req *http.Request, conversationID, mintedConversationID string) string {
+	if conversationID == "" {
+		return "empty"
+	}
+	if mintedConversationID != "" && conversationID == mintedConversationID {
+		return "minted"
+	}
+	switch provider {
+	case conversation.ProviderAnthropic:
+		return "native_anthropic"
+	case conversation.ProviderOpenAI:
+		if req != nil && conversation.IsOpenAIChatCompletionsEndpoint(req) {
+			if strings.HasPrefix(conversationID, conversation.ConversationIDPrefix) {
+				return "echoed_marker"
+			}
+			if strings.HasPrefix(conversationID, "fp-") {
+				return "fingerprint"
+			}
+			return "unknown"
+		}
+		return "native_openai_responses"
+	}
+	return "unknown"
 }
 
 type liteProxyRequestSummary struct {
