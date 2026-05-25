@@ -37,6 +37,15 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 		!strings.Contains(notice, "unless every required tool call is allowed without a task") {
 		t.Fatalf("notice should exempt allowlisted-only work from task creation; got:\n%s", notice)
 	}
+	if !strings.Contains(notice, "BEFORE running any permitted setup calls that are part of executing the request") ||
+		!strings.Contains(notice, "permitted read-only calls used solely to scope an accurate task spec may run beforehand") {
+		t.Fatalf("notice should require up-front task creation before execution prep while allowing scoping research; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, `"Rename foo to bar across the repo" → task FIRST`) ||
+		!strings.Contains(notice, `"Clean up unused imports in this codebase" → inspect first`) ||
+		!strings.Contains(notice, `"Show me what's in README.md" → no task`) {
+		t.Fatalf("notice should include the worked task/research/no-task examples; got:\n%s", notice)
+	}
 	if !strings.Contains(notice, "`lifetime`") ||
 		!strings.Contains(notice, `"lifetime":"standing"`) ||
 		!strings.Contains(notice, "NEVER include `expires_in_seconds`") {
