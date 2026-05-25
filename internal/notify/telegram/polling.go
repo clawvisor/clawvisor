@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"strconv"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/groupchat"
@@ -301,10 +302,15 @@ func senderDisplayName(u telegramUser) string {
 func (n *Notifier) handleCallbackQuery(ctx context.Context, ps *pollingSession, cq *callbackQuery) {
 	logger := slog.Default()
 
-	// Verify the tap came from the expected chat.
-	if cq.From.ID != 0 && fmt.Sprintf("%d", cq.From.ID) != ps.chatID {
-		n.answerCallbackQuery(ctx, ps.botToken, cq.ID, "Not authorized.")
-		return
+	// Verify the tap came from the expected user by comparing their Telegram
+	// user ID (cq.From.ID, an int64) against the user this polling session is
+	// running for (ps.userID, a string).
+	if cq.From.ID != 0 {
+		psUserID, err := strconv.ParseInt(ps.userID, 10, 64)
+		if err != nil || cq.From.ID != psUserID {
+			n.answerCallbackQuery(ctx, ps.botToken, cq.ID, "Not authorized.")
+			return
+		}
 	}
 
 	// Parse callback_data: "a:<shortID>" or "d:<shortID>"

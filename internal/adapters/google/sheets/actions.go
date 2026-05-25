@@ -51,7 +51,11 @@ func (a *SheetsAdapter) listSpreadsheets(ctx context.Context, client *http.Clien
 		if !driveQueryAllowlist.MatchString(query) {
 			return nil, fmt.Errorf("sheets list_spreadsheets: query contains disallowed characters; use only letters, digits, spaces, and common punctuation (- . , ( ) & @ ! # +)")
 		}
-		driveQ += fmt.Sprintf(" and name contains '%s'", query)
+		// Escape embedded single quotes to prevent Drive query injection.
+		// Drive API uses single quotes to delimit string values, so any unescaped
+		// quote in the user-provided query could break out of the 'name contains'
+		// clause and inject arbitrary operators.
+		driveQ += fmt.Sprintf(" and name contains '%s'", strings.ReplaceAll(query, "'", "''"))
 	}
 	q.Set("q", driveQ)
 
