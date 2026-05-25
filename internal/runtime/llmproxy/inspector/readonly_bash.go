@@ -217,6 +217,9 @@ type optionSpec struct {
 	longNoArg  map[string]bool
 	longArg    map[string]bool
 	operands   operandMode
+	// bareDigits accepts -N where N is all digits (e.g. `head -40`,
+	// shorthand for `head -n 40`). Only meaningful for head and tail.
+	bareDigits bool
 }
 
 type operandMode int
@@ -249,8 +252,8 @@ var readOnlyCommandOptions = map[string]optionSpec{
 	"dirname":  {shortNoArg: "z", longNoArg: flagSet("zero", "help", "version"), operands: operandsAny},
 	"basename": {shortNoArg: "azs", longArg: flagSet("suffix"), longNoArg: flagSet("multiple", "zero", "help", "version"), operands: operandsAny},
 	"cat":      {shortNoArg: "AbeEnstTuv", longNoArg: flagSet("show-all", "number-nonblank", "show-ends", "number", "squeeze-blank", "show-tabs", "show-nonprinting", "help", "version"), operands: operandsAny},
-	"head":     {shortNoArg: "cqvz", shortArg: "cn", longNoArg: flagSet("quiet", "silent", "verbose", "zero-terminated", "help", "version"), longArg: flagSet("bytes", "lines"), operands: operandsAny},
-	"tail":     {shortNoArg: "qvz", shortArg: "cn", longNoArg: flagSet("quiet", "silent", "verbose", "zero-terminated", "help", "version"), longArg: flagSet("bytes", "lines", "pid", "sleep-interval", "max-unchanged-stats"), operands: operandsAny},
+	"head":     {shortNoArg: "cqvz", shortArg: "cn", longNoArg: flagSet("quiet", "silent", "verbose", "zero-terminated", "help", "version"), longArg: flagSet("bytes", "lines"), operands: operandsAny, bareDigits: true},
+	"tail":     {shortNoArg: "qvz", shortArg: "cn", longNoArg: flagSet("quiet", "silent", "verbose", "zero-terminated", "help", "version"), longArg: flagSet("bytes", "lines", "pid", "sleep-interval", "max-unchanged-stats"), operands: operandsAny, bareDigits: true},
 	"hexdump":  {shortNoArg: "bcdCvx", shortArg: "efnos", longNoArg: flagSet("canonical", "help", "version"), longArg: flagSet("format", "format-file", "length", "skip"), operands: operandsAny},
 	"od":       {shortNoArg: "AbcDdfFHiIloOsvx", shortArg: "jNtw", longNoArg: flagSet("address-radix", "skip-bytes", "read-bytes", "format", "output-duplicates", "strings", "traditional", "width", "help", "version"), longArg: flagSet("endian"), operands: operandsAny},
 	"grep":     {shortNoArg: "EFGPiwxvcsnHhLloqbrRIUVzZ", shortArg: "ABCDefm", longNoArg: flagSet("basic-regexp", "extended-regexp", "fixed-strings", "perl-regexp", "ignore-case", "word-regexp", "line-regexp", "invert-match", "count", "line-number", "with-filename", "no-filename", "files-with-matches", "files-without-match", "only-matching", "quiet", "silent", "byte-offset", "text", "binary", "recursive", "dereference-recursive", "initial-tab", "unix-byte-offsets", "null", "null-data", "help", "version"), longArg: flagSet("after-context", "before-context", "binary-files", "color", "colour", "context", "devices", "directories", "exclude", "exclude-dir", "exclude-from", "group-separator", "include", "label", "max-count"), operands: operandsAny},
@@ -328,6 +331,9 @@ func splitLongOption(value string) (string, bool) {
 }
 
 func shortOptionsMatch(value string, values []string, index *int, spec optionSpec) bool {
+	if spec.bareDigits && len(value) > 1 && allDigits(value[1:]) {
+		return true
+	}
 	options := []rune(value[1:])
 	for i, opt := range options {
 		if strings.ContainsRune(spec.shortNoArg, opt) {
