@@ -147,7 +147,7 @@ func TestBuildAssessUserMessage_RecentUserTurns(t *testing.T) {
 			{Service: "google.calendar", Action: "list_events", ExpectedUse: "list today's events"},
 		},
 		RecentUserTurns: []string{"can you check my calendar for tomorrow's events"},
-	}, true)
+	}, true, "")
 	if !contains(msg, "Recent user turns") {
 		t.Error("message should label the conversation block")
 	}
@@ -167,7 +167,7 @@ func TestBuildAssessUserMessage_RecentUserTurns_FiltersBlank(t *testing.T) {
 		AgentName:       "test-agent",
 		Purpose:         "x",
 		RecentUserTurns: []string{"", "  ", "real ask"},
-	}, true)
+	}, true, "")
 	if !contains(msg, `(1, most recent last)`) {
 		t.Errorf("blank turns should be filtered; message: %q", msg)
 	}
@@ -180,7 +180,7 @@ func TestBuildAssessUserMessage_NoRecentUserTurns(t *testing.T) {
 	msg := buildAssessUserMessage(AssessRequest{
 		AgentName: "test-agent",
 		Purpose:   "x",
-	}, true)
+	}, true, "")
 	if contains(msg, "Recent user turns") {
 		t.Error("message should omit the recent-turns block when none provided")
 	}
@@ -193,7 +193,7 @@ func TestBuildAssessUserMessage_Basic(t *testing.T) {
 		AuthorizedActions: []store.TaskAction{
 			{Service: "google.calendar", Action: "list_events", AutoExecute: true, ExpectedUse: "fetch today's events"},
 		},
-	}, true)
+	}, true, "")
 	if msg == "" {
 		t.Fatal("message should not be empty")
 	}
@@ -211,7 +211,7 @@ func TestBuildAssessUserMessage_Wildcard(t *testing.T) {
 		AuthorizedActions: []store.TaskAction{
 			{Service: "google.gmail", Action: "*", AutoExecute: true},
 		},
-	}, true)
+	}, true, "")
 	if !contains(msg, "google.gmail:*") {
 		t.Error("message should contain wildcard action")
 	}
@@ -225,11 +225,11 @@ func TestBuildAssessUserMessage_VerificationDisabledNote(t *testing.T) {
 			{Service: "google.gmail", Action: "send_message", AutoExecute: true},
 		},
 	}
-	enabled := buildAssessUserMessage(req, true)
+	enabled := buildAssessUserMessage(req, true, "")
 	if contains(enabled, "DEPLOYMENT NOTE") {
 		t.Error("verification-enabled message should NOT contain deployment note")
 	}
-	disabled := buildAssessUserMessage(req, false)
+	disabled := buildAssessUserMessage(req, false, "")
 	if !contains(disabled, "DEPLOYMENT NOTE: Intent verification is DISABLED") {
 		t.Error("verification-disabled message should contain deployment note")
 	}
