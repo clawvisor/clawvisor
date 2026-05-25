@@ -279,11 +279,11 @@ func mapToolToService(toolName string) (service, action string) {
 func describeToolCall(toolName string, input map[string]any) string {
 	switch toolName {
 	case "Bash":
-		cmd, _ := input["command"].(string)
-		desc, _ := input["description"].(string)
-		if desc != "" && cmd != "" {
-			return fmt.Sprintf("execute: %s (%s)", cmd, desc)
-		} else if cmd != "" {
+		// Claude Code's Bash `description` is a label for what the
+		// command does, not a why-clause — folding it in inflated the
+		// coherence check on benign commands. Send just the command;
+		// the verifier deduces intent from params + task purpose.
+		if cmd, _ := input["command"].(string); cmd != "" {
 			return fmt.Sprintf("execute: %s", cmd)
 		}
 	case "Read":
