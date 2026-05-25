@@ -22,15 +22,28 @@ const agentNoticeMaxNameRunes = 80
 // through Clawvisor and which agent identity is in use. Empty / blank
 // agent names render a name-less fallback rather than an awkward empty
 // quote.
-func RenderAgentRoutingNotice(agentName string) string {
+//
+// mintedConversationID, when non-empty, is appended as a parseable
+// [clawvisor:conversation=cv-conv-…] footer so the harness round-trips
+// the ID back to us in assistant history on turn 2+. Only set on
+// harnesses without a native session identifier (today: OpenAI Chat
+// Completions); empty for Anthropic / OpenAI Responses where the
+// native session ID is the conclusive scope key.
+func RenderAgentRoutingNotice(agentName, mintedConversationID string) string {
 	cleaned := strings.TrimSpace(agentName)
 	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
 	cleaned = strings.ReplaceAll(cleaned, "\n", " ")
 	cleaned = truncateRunes(cleaned, agentNoticeMaxNameRunes)
+	var notice string
 	if cleaned == "" {
-		return "[Clawvisor] Routing this conversation through Clawvisor."
+		notice = "[Clawvisor] Routing this conversation through Clawvisor."
+	} else {
+		notice = fmt.Sprintf("[Clawvisor] Routing this conversation through Clawvisor as agent %q.", cleaned)
 	}
-	return fmt.Sprintf("[Clawvisor] Routing this conversation through Clawvisor as agent %q.", cleaned)
+	if id := strings.TrimSpace(mintedConversationID); id != "" {
+		notice += " " + conversation.RenderConversationIDMarker(id)
+	}
+	return notice
 }
 
 // HasInboundAssistantTurn reports whether the inbound LLM request body
