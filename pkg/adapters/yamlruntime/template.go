@@ -31,25 +31,7 @@ func renderSummary(tmplStr string, data any) string {
 		return ""
 	}
 
-	// Restrict template actions to a safe subset: text, conditionals, pipelines,
-	// and indexing only. Disallow: pipeline to external commands, variable
-	// assignment, function calls that could escape the sandbox (e.g. index with
-	// a crafted key that invokes template.HTML), and any pipeline ending in a
-	// single value that template.Execute might reconstruct as a template node.
-	t, err := template.New("summary").
-		Funcs(template.FuncMap{
-			"len":   summaryFuncs["len"],
-			"upper": summaryFuncs["upper"],
-		}).
-		Delims("{{", "}}").
-		Funcs(template.FuncMap{
-			// Block access to pipeline variables that carry template parse state.
-			// The built-in index function is allowed (safe on maps/slices).
-			"print": func(a ...any) string {
-				return fmt.Sprint(a...)
-			},
-		}).
-		Parse(tmplStr)
+	t, err := template.New("summary").Funcs(summaryFuncs).Parse(tmplStr)
 	if err != nil {
 		return fmt.Sprintf("(template error: %v)", err)
 	}

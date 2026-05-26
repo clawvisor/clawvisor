@@ -106,6 +106,7 @@ func TestListSpreadsheets_QueryAllowlistRejects(t *testing.T) {
 		"foo and trashed=false", // Drive operator
 		"bar\\baz",              // backslash
 		"x<y",                   // comparison operator
+		"'",                     // single quote alone
 	}
 	for _, q := range badQueries {
 		_, err := adapter().listSpreadsheets(t.Context(), newTestClient(srv), map[string]any{
@@ -374,5 +375,27 @@ func TestCreateSpreadsheet_TitleTooLong(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected error for title > 200 chars")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// escapeDriveLiteral
+// ---------------------------------------------------------------------------
+
+func TestEscapeDriveLiteral(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"it's", "it''s"},
+		{"O'Reilly", "O''Reilly"},
+		{"x=('y')", "x=(''y'')"},
+		{"plain", "plain"},
+		{"", ""},
+		{"''", "''''"},
+	}
+	for _, tc := range tests {
+		if got := escapeDriveLiteral(tc.in); got != tc.want {
+			t.Errorf("escapeDriveLiteral(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

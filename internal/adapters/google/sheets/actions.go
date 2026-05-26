@@ -26,6 +26,13 @@ const (
 // backslashes, =, <, >, and/or keywords, etc.) are intentionally excluded.
 var driveQueryAllowlist = regexp.MustCompile(`^[a-zA-Z0-9\s\-._,()&@!#+]+$`)
 
+// escapeDriveLiteral doubles single quotes so a user-provided string can be
+// safely embedded inside Drive's single-quoted 'name contains' operand.
+// This is defense-in-depth: driveQueryAllowlist already rejects '.
+func escapeDriveLiteral(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
 type spreadsheetListItem struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -51,11 +58,12 @@ func (a *SheetsAdapter) listSpreadsheets(ctx context.Context, client *http.Clien
 		if !driveQueryAllowlist.MatchString(query) {
 			return nil, fmt.Errorf("sheets list_spreadsheets: query contains disallowed characters; use only letters, digits, spaces, and common punctuation (- . , ( ) & @ ! # +)")
 		}
-		// Escape embedded single quotes to prevent Drive query injection.
-		// Drive API uses single quotes to delimit string values, so any unescaped
-		// quote in the user-provided query could break out of the 'name contains'
-		// clause and inject arbitrary operators.
-		driveQ += fmt.Sprintf(" and name contains '%s'", strings.ReplaceAll(query, "'", "''"))
+		// Escape embedded single quotes in the user-provided query.
+		// Drive API uses single quotes to delimit string values inside
+		// 'name contains'. This is defense-in-depth: the query has already
+		// been validated against driveQueryAllowlist, which excludes '.
+		// Adding the escape here guards against a future allowlist widening.
+		driveQ += fmt.Sprintf(" and name contains '%s'", escapeDriveLiteral(query))
 	}
 	q.Set("q", driveQ)
 
