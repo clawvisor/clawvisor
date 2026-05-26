@@ -712,7 +712,7 @@ func TestLLMEndpoint_InboundSecretVaultRefusesNameCollision(t *testing.T) {
 	if decisionRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 harness-shaped conflict error, got %d (%s)", decisionRec.Code, decisionRec.Body.String())
 	}
-	if !strings.Contains(decisionRec.Body.String(), "vault item already exists") {
+	if !strings.Contains(decisionRec.Body.String(), "already exists with a different value") {
 		t.Fatalf("body should explain the name conflict:\n%s", decisionRec.Body.String())
 	}
 	if got := string(v.data[user.ID+"/slack_ci"]); got != "old-slack-token" {
@@ -1062,7 +1062,7 @@ func TestLLMEndpoint_InboundSecretVaultFailureKeepsDecisionRetryable(t *testing.
 	if failingRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 harness-shaped error on vault failure, got %d (%s)", failingRec.Code, failingRec.Body.String())
 	}
-	if !strings.Contains(failingRec.Body.String(), "could not save detected secret") {
+	if !strings.Contains(failingRec.Body.String(), "couldn't save the detected secret") {
 		t.Fatalf("body should explain the save failure:\n%s", failingRec.Body.String())
 	}
 	if upstreamHits != 0 {
@@ -1457,7 +1457,7 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 harness-shaped error on vault miss, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "no upstream API key configured") {
+	if !strings.Contains(rec.Body.String(), "no upstream API key is configured") {
 		t.Fatalf("body should explain vault miss:\n%s", rec.Body.String())
 	}
 }
