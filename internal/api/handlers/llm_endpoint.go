@@ -166,7 +166,7 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		Forwarder:              llmproxy.NewForwarder(v),
 		Parsers:                conversation.DefaultRegistry(),
 		Logger:                 logger,
-		PendingApprovals:       llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
+		PendingApprovals:       llmproxy.NewMemoryPendingApprovalCache(1 * time.Minute), // TEMP: shortened for branch testing of expired-approval flow
 		PendingSecrets:         llmproxy.NewMemoryPendingSecretDecisionCache(10 * time.Minute),
 		InlineApprovalOutcomes: llmproxy.NewMemoryInlineApprovalOutcomeStore(24 * time.Hour),
 		TaskCheckouts:          llmproxy.NewMemoryTaskCheckoutStore(24 * time.Hour),
