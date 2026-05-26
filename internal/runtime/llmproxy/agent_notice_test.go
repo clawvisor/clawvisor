@@ -1,6 +1,8 @@
 package llmproxy
 
 import (
+	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -8,7 +10,7 @@ import (
 )
 
 func TestRenderAgentRoutingNotice_NamedAgent(t *testing.T) {
-	got := RenderAgentRoutingNotice("My Laptop")
+	got := RenderAgentRoutingNotice("My Laptop", "")
 	want := `[Clawvisor] Routing this conversation through Clawvisor as agent "My Laptop".`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -16,7 +18,7 @@ func TestRenderAgentRoutingNotice_NamedAgent(t *testing.T) {
 }
 
 func TestRenderAgentRoutingNotice_EmptyName(t *testing.T) {
-	got := RenderAgentRoutingNotice("")
+	got := RenderAgentRoutingNotice("", "")
 	want := `[Clawvisor] Routing this conversation through Clawvisor.`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -24,7 +26,7 @@ func TestRenderAgentRoutingNotice_EmptyName(t *testing.T) {
 }
 
 func TestRenderAgentRoutingNotice_WhitespaceName(t *testing.T) {
-	got := RenderAgentRoutingNotice("   \t  ")
+	got := RenderAgentRoutingNotice("   \t  ", "")
 	want := `[Clawvisor] Routing this conversation through Clawvisor.`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -32,7 +34,7 @@ func TestRenderAgentRoutingNotice_WhitespaceName(t *testing.T) {
 }
 
 func TestRenderAgentRoutingNotice_StripsControlChars(t *testing.T) {
-	got := RenderAgentRoutingNotice("Line1\nLine2\rEnd")
+	got := RenderAgentRoutingNotice("Line1\nLine2\rEnd", "")
 	want := `[Clawvisor] Routing this conversation through Clawvisor as agent "Line1 Line2 End".`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -41,7 +43,7 @@ func TestRenderAgentRoutingNotice_StripsControlChars(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_TruncatesLongName(t *testing.T) {
 	long := strings.Repeat("z", agentNoticeMaxNameRunes+50)
-	got := RenderAgentRoutingNotice(long)
+	got := RenderAgentRoutingNotice(long, "")
 	if !strings.Contains(got, "…") {
 		t.Errorf("expected truncation ellipsis, got %q", got)
 	}
@@ -58,13 +60,74 @@ func TestRenderAgentRoutingNotice_TruncatesMultibyteRunes(t *testing.T) {
 	// mid-rune and produce U+FFFD on JSON marshal. Rune-aware truncation
 	// keeps the output well-formed.
 	long := strings.Repeat("日", agentNoticeMaxNameRunes+10)
-	got := RenderAgentRoutingNotice(long)
+	got := RenderAgentRoutingNotice(long, "")
 	if !strings.Contains(got, "…") {
 		t.Errorf("expected truncation ellipsis, got %q", got)
 	}
 	if strings.Count(got, "日") != agentNoticeMaxNameRunes {
 		t.Errorf("expected %d 日 runes, got %d", agentNoticeMaxNameRunes, strings.Count(got, "日"))
 	}
+}
+
+func TestRenderAgentRoutingNotice_AppendsConversationIDMarker(t *testing.T) {
+	id := "cv-conv-abcdefghijklmnopqrstuvwxyz"
+	got := RenderAgentRoutingNotice("My Laptop", id)
+	want := `[Clawvisor] Routing this conversation through Clawvisor as agent "My Laptop". [clawvisor:conversation=cv-conv-abcdefghijklmnopqrstuvwxyz]`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderAgentRoutingNotice_AppendsMarkerToNameLessFallback(t *testing.T) {
+	got := RenderAgentRoutingNotice("", "cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	want := `[Clawvisor] Routing this conversation through Clawvisor. [clawvisor:conversation=cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa]`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderAgentRoutingNotice_WhitespaceMintedIDOmitsMarker(t *testing.T) {
+	// Empty/whitespace mintedConversationID must not produce an empty
+	// "[clawvisor:conversation=]" footer.
+	got := RenderAgentRoutingNotice("agent", "   ")
+	want := `[Clawvisor] Routing this conversation through Clawvisor as agent "agent".`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderAgentRoutingNotice_MintedIDRoundTripsThroughScanner(t *testing.T) {
+	id, err := conversation.NewConversationID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	notice := RenderAgentRoutingNotice("agent", id)
+	// Build a Chat Completions inbound body where the assistant turn
+	// is exactly the rendered notice — simulating turn-2 echo.
+	body := []byte(`{"messages":[{"role":"assistant","content":` + mustJSONString(t, notice) + `}]}`)
+	req := chatCompletionsReq(t)
+	recovered := conversation.FindInjectedConversationID(req, conversation.ProviderOpenAI, body)
+	if recovered != id {
+		t.Fatalf("rendered notice did not round-trip through scanner: minted=%q recovered=%q notice=%q", id, recovered, notice)
+	}
+}
+
+func mustJSONString(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func chatCompletionsReq(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return req
 }
 
 func TestHasInboundAssistantTurn_AnthropicNoAssistant(t *testing.T) {

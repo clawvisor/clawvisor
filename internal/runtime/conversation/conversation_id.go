@@ -30,12 +30,15 @@ import (
 //     per Codex session.
 //
 //   - OpenAI Chat Completions (/v1/chat/completions): no native session
-//     identifier exists on the wire. Fall back to a fingerprint of the FIRST
-//     user message text. The first user message is the most stable thing
-//     harnesses leave alone — system prompts can be rewritten on policy
-//     changes, and compaction replaces middle messages, but the first
-//     user-typed turn survives. Two conversations starting with literally
-//     identical text will collide; acceptable.
+//     identifier exists on the wire. First consult FindInjectedConversationID
+//     for a Clawvisor-minted marker echoed back in assistant history. Fall
+//     back to a fingerprint of the FIRST user message text when no marker
+//     has been minted yet (or the harness stripped it). The first user
+//     message is the most stable thing harnesses leave alone — system
+//     prompts can be rewritten on policy changes, and compaction replaces
+//     middle messages, but the first user-typed turn survives. Two
+//     conversations starting with literally identical text will collide
+//     under the fingerprint; the marker, when echoed, partitions cleanly.
 //
 // The request shape is inspected without disturbing it — body is read-only.
 func ConversationID(req *http.Request, provider Provider, body []byte) string {
@@ -47,6 +50,15 @@ func ConversationID(req *http.Request, provider Provider, body []byte) string {
 		return anthropicConversationID(body)
 	case ProviderOpenAI:
 		if req != nil && isOpenAIChatCompletionsEndpoint(req) {
+			// Echoed Clawvisor marker is conclusive when present — it
+			// was minted on turn 1 specifically because no native ID
+			// exists, and the harness has now round-tripped it.
+			if id := FindInjectedConversationID(req, ProviderOpenAI, body); id != "" {
+				return id
+			}
+			// Pre-mint or marker-stripped fallback. Will be removed in
+			// a follow-up once telemetry confirms the marker round-trips
+			// reliably across the active OpenClaw harness population.
 			return openAIChatFingerprint(body)
 		}
 		return openAIResponsesConversationID(body)

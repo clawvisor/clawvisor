@@ -4,19 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
 
 // TestLive_CountRiskAssessmentPromptTokens calls Anthropic's count_tokens
-// endpoint to report the exact token count of the risk assessment system
-// prompt. The constant has a "%s" placeholder for adapter action context;
-// we measure the static portion (with empty action context) only.
+// endpoint to report the exact token count of the (now fully static) risk
+// assessment system prompt. The per-user action context lives in the user
+// message and is excluded from this measurement.
 //
 //	CLAWVISOR_LLM_API_KEY=sk-ant-... go test -run TestLive_CountRiskAssessmentPromptTokens -v ./internal/taskrisk/
 func TestLive_CountRiskAssessmentPromptTokens(t *testing.T) {
@@ -33,16 +31,11 @@ func TestLive_CountRiskAssessmentPromptTokens(t *testing.T) {
 		endpoint = "https://api.anthropic.com/v1"
 	}
 
-	// Render with an empty action context to measure the static prefix.
-	system := fmt.Sprintf(riskAssessmentSystemPrompt, "")
-	// Defensive: confirm the format directive resolved (no leftover %s literals).
-	if strings.Contains(system, "%!s") {
-		t.Fatalf("riskAssessmentSystemPrompt has unexpected fmt verbs")
-	}
+	system := riskAssessmentSystemPrompt
 
 	n := countTokens(t, endpoint, apiKey, model, system)
 	gap := 4096 - n
-	t.Logf("risk assessment (static, empty action context): %d tokens (%d bytes) — gap to Haiku 4096 floor: %d tokens",
+	t.Logf("risk assessment (static system prompt): %d tokens (%d bytes) — gap to Haiku 4096 floor: %d tokens",
 		n, len(system), gap)
 }
 

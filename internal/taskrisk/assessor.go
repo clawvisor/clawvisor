@@ -104,12 +104,44 @@ type LLMAssessor struct {
 	health   *llm.Health
 	registry *adapters.Registry
 	logger   *slog.Logger
+
+	// geminiCacheNameFn returns the current Gemini cachedContents resource
+	// name, or "" when no cache is registered. Set via StartGeminiCache.
+	// Attached to every per-call llm.Client so the cache is referenced on
+	// Gemini provider requests.
+	geminiCacheNameFn func() string
+	// geminiCacheInvalidator drops the in-process cache name and triggers
+	// an async refresh when a server-side cache reference fails. Wired
+	// alongside geminiCacheNameFn when a manager is in use.
+	geminiCacheInvalidator func(string)
+	// geminiCacheMgr owns the cache lifecycle when StartGeminiCache was
+	// used. Nil when no cache was set up.
+	geminiCacheMgr *llm.GeminiCacheManager
 }
 
 // NewLLMAssessor creates an LLM-backed task risk assessor.
 // The registry is used to read action metadata from adapters that implement MetadataProvider.
 func NewLLMAssessor(health *llm.Health, registry *adapters.Registry, logger *slog.Logger) *LLMAssessor {
 	return &LLMAssessor{health: health, registry: registry, logger: logger}
+}
+
+// StartGeminiCache initializes the Gemini explicit context cache for the
+// assessor's system prompt and registers it so per-request clients reference
+// it automatically. cfg.SystemPrompt is filled in by the assessor and should
+// be left empty by callers. On creation failure the assessor proceeds
+// without caching (slower, but functional).
+func (a *LLMAssessor) StartGeminiCache(ctx context.Context, cfg llm.GeminiCacheManagerConfig) error {
+	if cfg.Logger == nil {
+		cfg.Logger = a.logger
+	}
+	mgr, nameFn, invalidator, err := llm.StartCachedSystemPrompt(ctx, cfg, riskAssessmentSystemPrompt)
+	if err != nil {
+		return fmt.Errorf("assessor gemini cache: %w", err)
+	}
+	a.geminiCacheMgr = mgr
+	a.geminiCacheNameFn = nameFn
+	a.geminiCacheInvalidator = invalidator
+	return nil
 }
 
 func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAssessment, error) {
@@ -120,17 +152,23 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 
 	start := time.Now()
 
-	systemPrompt := fmt.Sprintf(riskAssessmentSystemPrompt, buildActionContextFromRegistry(ctx, a.registry, req.UserID))
+	actionContext := buildActionContextFromRegistry(ctx, a.registry, req.UserID)
 	client := llm.NewClient(cfg.LLMProviderConfig)
+	if a.geminiCacheNameFn != nil {
+		client.AttachGeminiCacheNameFn(a.geminiCacheNameFn)
+		if a.geminiCacheInvalidator != nil {
+			client.AttachGeminiCacheInvalidator(a.geminiCacheInvalidator)
+		}
+	}
 	verificationEnabled := a.health.VerificationConfig().Enabled
-	userMsg := buildAssessUserMessage(req, verificationEnabled)
-	// systemPrompt varies per user (the action context includes the user's
-	// MCP-discovered tools), so the cache prefix is effectively per-user.
-	// Still worth caching: a single user runs many risk assessments per
-	// session, all sharing the same activated-tool set, so the cache hit
-	// rate within a user is high.
+	userMsg := buildAssessUserMessage(req, verificationEnabled, actionContext)
+	// The system prompt is fully static — the per-user action context lives
+	// in the user message. That means the Anthropic prompt-cache prefix is
+	// shared across all users (and all assessments), and the Gemini
+	// explicit-content cache (when configured) covers it in a single
+	// cachedContents resource.
 	messages := []llm.ChatMessage{
-		{Role: "system", Content: systemPrompt, CacheControl: true},
+		{Role: "system", Content: riskAssessmentSystemPrompt, CacheControl: true},
 		{Role: "user", Content: userMsg},
 	}
 

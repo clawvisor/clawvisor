@@ -562,7 +562,9 @@ func (s *Server) routes() http.Handler {
 	// the lite-proxy's inline-approval intercept.
 	var assessor taskrisk.Assessor = taskrisk.NoopAssessor{}
 	if s.llmCfg.TaskRisk.Enabled {
-		assessor = taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
+		a := taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
+		startGeminiCacheIfConfigured(s.llmCfg.TaskRisk.LLMProviderConfig, s.logger, "assessor", a.StartGeminiCache)
+		assessor = a
 	}
 	s.taskRiskAssessor = assessor
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, *s.cfg, assessor, s.logger, s.eventHub)

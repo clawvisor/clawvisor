@@ -380,6 +380,35 @@ func verificationSystemPromptFor(proxyLite bool) string {
 	return verificationSystemPrompt
 }
 
+// promptVariant identifies one of the cacheable verifier system-prompt
+// shapes. Lenient mode appends a per-call addendum and is not cached.
+type promptVariant int
+
+const (
+	variantStrict promptVariant = iota
+	variantProxyLite
+)
+
+func (v promptVariant) String() string {
+	switch v {
+	case variantStrict:
+		return "strict"
+	case variantProxyLite:
+		return "proxy_lite"
+	default:
+		return fmt.Sprintf("unknown(%d)", int(v))
+	}
+}
+
+// variantForRequest selects the prompt variant for a verification
+// request. Lenient is handled separately at the call site (no cache).
+func variantForRequest(req VerifyRequest) promptVariant {
+	if req.ProxyLite {
+		return variantProxyLite
+	}
+	return variantStrict
+}
+
 // lenientAddendum is appended to the system prompt when the task's verification
 // mode for this action is "lenient". It tells the verifier to give the agent
 // the benefit of the doubt for ambiguous cases while still blocking clear
