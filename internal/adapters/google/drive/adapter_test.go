@@ -137,6 +137,42 @@ func TestExportFile_RejectsSheetNameOnNonSheet(t *testing.T) {
 	}
 }
 
+func TestGetFile_SheetIncludesAvailableTabs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/drive/v3/files/sheet-1":
+			writeJSON(w, map[string]any{"id": "sheet-1", "name": "Routing", "mimeType": sheetsMimeType})
+		case "/v4/spreadsheets/sheet-1":
+			writeJSON(w, map[string]any{
+				"sheets": []any{
+					map[string]any{"properties": map[string]any{"title": "README"}},
+					map[string]any{"properties": map[string]any{"title": "Routing Map"}},
+				},
+			})
+		default:
+			t.Errorf("unexpected request path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	a := New(staticOAuthProvider{})
+	res, err := a.getFile(t.Context(), newTestClient(srv), map[string]any{
+		"file_id": "sheet-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := res.Data.(map[string]any)
+	tabs, ok := data["available_tabs"].([]string)
+	if !ok {
+		t.Fatalf("available_tabs = %T, want []string", data["available_tabs"])
+	}
+	if len(tabs) != 2 || tabs[0] != "README" || tabs[1] != "Routing Map" {
+		t.Errorf("available_tabs = %v, want [README Routing Map]", tabs)
+	}
+}
+
 func TestExportFile_SheetWithoutSheetNameEmitsHint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -179,6 +215,14 @@ func TestExportFile_SheetWithoutSheetNameEmitsHint(t *testing.T) {
 	}
 	if len(tabs) != 2 || tabs[0] != "README" || tabs[1] != "Routing Map" {
 		t.Errorf("available_tabs = %v, want [README Routing Map]", tabs)
+	}
+	data := res.Data.(map[string]any)
+	dataTabs, ok := data["available_tabs"].([]string)
+	if !ok {
+		t.Fatalf("data.available_tabs = %T, want []string", data["available_tabs"])
+	}
+	if len(dataTabs) != 2 || dataTabs[0] != "README" || dataTabs[1] != "Routing Map" {
+		t.Errorf("data.available_tabs = %v, want [README Routing Map]", dataTabs)
 	}
 }
 

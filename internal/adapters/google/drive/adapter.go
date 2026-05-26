@@ -211,6 +211,12 @@ func (a *DriveAdapter) getFile(ctx context.Context, client *http.Client, params 
 		"web_view_link": meta.WebViewLink,
 	}
 
+	if meta.MimeType == sheetsMimeType {
+		if titles, err := a.listSheetTitles(ctx, client, meta.ID); err == nil && len(titles) > 0 {
+			result["available_tabs"] = titles
+		}
+	}
+
 	// Fetch content preview for text types only.
 	if textMimeTypes[meta.MimeType] {
 		contentURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s?alt=media",
@@ -370,6 +376,7 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 			"hint": "Google Sheets CSV export returns only the first tab. Pass sheet_name (e.g. \"Routing Map\") to export a specific tab.",
 		}
 		if titles, err := a.listSheetTitles(ctx, client, meta.ID); err == nil && len(titles) > 0 {
+			result["available_tabs"] = titles
 			res.Meta["available_tabs"] = titles
 			res.Meta["hint"] = fmt.Sprintf("Google Sheets CSV export returns only the first tab. Pass sheet_name with one of: %s.", strings.Join(titles, ", "))
 		}
