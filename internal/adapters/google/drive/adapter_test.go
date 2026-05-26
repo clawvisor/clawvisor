@@ -144,6 +144,13 @@ func TestExportFile_SheetWithoutSheetNameEmitsHint(t *testing.T) {
 			writeJSON(w, map[string]any{"id": "sheet-1", "name": "Routing", "mimeType": sheetsMimeType})
 		case "/drive/v3/files/sheet-1/export":
 			_, _ = w.Write([]byte("col1,col2\n"))
+		case "/v4/spreadsheets/sheet-1":
+			writeJSON(w, map[string]any{
+				"sheets": []any{
+					map[string]any{"properties": map[string]any{"title": "README"}},
+					map[string]any{"properties": map[string]any{"title": "Routing Map"}},
+				},
+			})
 		default:
 			t.Errorf("unexpected request path: %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -165,6 +172,13 @@ func TestExportFile_SheetWithoutSheetNameEmitsHint(t *testing.T) {
 	hint, _ := res.Meta["hint"].(string)
 	if !strings.Contains(hint, "sheet_name") || !strings.Contains(hint, "first tab") {
 		t.Errorf("hint missing expected guidance: %q", hint)
+	}
+	tabs, ok := res.Meta["available_tabs"].([]string)
+	if !ok {
+		t.Fatalf("available_tabs = %T, want []string", res.Meta["available_tabs"])
+	}
+	if len(tabs) != 2 || tabs[0] != "README" || tabs[1] != "Routing Map" {
+		t.Errorf("available_tabs = %v, want [README Routing Map]", tabs)
 	}
 }
 

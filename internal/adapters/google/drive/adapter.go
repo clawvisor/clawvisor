@@ -369,15 +369,15 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 		res.Meta = map[string]any{
 			"hint": "Google Sheets CSV export returns only the first tab. Pass sheet_name (e.g. \"Routing Map\") to export a specific tab.",
 		}
+		if titles, err := a.listSheetTitles(ctx, client, meta.ID); err == nil && len(titles) > 0 {
+			res.Meta["available_tabs"] = titles
+			res.Meta["hint"] = fmt.Sprintf("Google Sheets CSV export returns only the first tab. Pass sheet_name with one of: %s.", strings.Join(titles, ", "))
+		}
 	}
 	return res, nil
 }
 
-// exportSheetTab reads a single sheet (tab) from a Google Sheets file via the
-// Sheets API and serializes the values as CSV or TSV. The drive.readonly scope
-// is sufficient to call spreadsheets.values.get.
-func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, fileID, fileName, sheetName, targetMime string) (*adapters.Result, error) {
-	// Validate that the named tab exists; surface available titles otherwise.
+func (a *DriveAdapter) listSheetTitles(ctx context.Context, client *http.Client, fileID string) ([]string, error) {
 	ssURL := fmt.Sprintf("https://sheets.googleapis.com/v4/spreadsheets/%s?fields=sheets(properties(title))",
 		url.PathEscape(fileID))
 	var ssResp struct {
@@ -388,20 +388,32 @@ func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, 
 		} `json:"sheets"`
 	}
 	if err := apiGET(ctx, client, ssURL, &ssResp); err != nil {
+		return nil, err
+	}
+	titles := make([]string, 0, len(ssResp.Sheets))
+	for _, s := range ssResp.Sheets {
+		titles = append(titles, s.Properties.Title)
+	}
+	return titles, nil
+}
+
+// exportSheetTab reads a single sheet (tab) from a Google Sheets file via the
+// Sheets API and serializes the values as CSV or TSV. The drive.readonly scope
+// is sufficient to call spreadsheets.values.get.
+func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, fileID, fileName, sheetName, targetMime string) (*adapters.Result, error) {
+	// Validate that the named tab exists; surface available titles otherwise.
+	titles, err := a.listSheetTitles(ctx, client, fileID)
+	if err != nil {
 		return nil, fmt.Errorf("drive export_file: resolving sheet metadata: %w", err)
 	}
 	found := false
-	for _, s := range ssResp.Sheets {
-		if s.Properties.Title == sheetName {
+	for _, title := range titles {
+		if title == sheetName {
 			found = true
 			break
 		}
 	}
 	if !found {
-		titles := make([]string, 0, len(ssResp.Sheets))
-		for _, s := range ssResp.Sheets {
-			titles = append(titles, s.Properties.Title)
-		}
 		return nil, fmt.Errorf("drive export_file: sheet_name %q not found; available tabs: %s", sheetName, strings.Join(titles, ", "))
 	}
 
