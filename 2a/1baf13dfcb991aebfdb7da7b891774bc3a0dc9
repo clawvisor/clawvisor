@@ -1,0 +1,21 @@
+internal/adapters/google/drive/adapter_test.go
+  s_03effdb9cd1965::t_405f8c89bd3cd0 147-153,176-181
+internal/adapters/google/drive/adapter.go
+  s_03effdb9cd1965::t_c8e7f84d222e19 372-375,380,391-406,410-411
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "2a1baf13dfcb991aebfdb7da7b891774bc3a0dc9",
+  "prompts": {},
+  "sessions": {
+    "s_03effdb9cd1965": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e62a9-1455-73c3-a8c0-c4f5a1185cb3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
