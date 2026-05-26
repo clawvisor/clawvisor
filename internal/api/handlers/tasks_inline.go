@@ -114,7 +114,13 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 	}
 	requiredCredentials := req.RequiredCredentials
 
-	now := time.Now().UTC()
+	// createInlineApprovedTask is only invoked from the release path
+	// (resolveInlineTaskApproval, after the user's "approve" gesture)
+	// or from the auto-approve gate (which constitutes approval — no
+	// user gesture, but creation is the approval). In both cases
+	// "now" is approval time, not hold time. Name it accordingly so
+	// the scope-lifetime computation below is unambiguous.
+	approvedAt := time.Now().UTC()
 	task := &store.Task{
 		ID:                     uuid.New().String(),
 		UserID:                 agent.UserID,
@@ -127,10 +133,21 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 		SchemaVersion:          env.SchemaVersion,
 		ExpiresInSeconds:       expiresIn,
 		ApprovalSource:         "inline_chat",
-		ApprovedAt:             &now,
+		ApprovedAt:             &approvedAt,
 	}
 	if lifetime != "standing" {
-		expiresAt := now.Add(time.Duration(expiresIn) * time.Second)
+		// Task scope lifetime once approved. expires_in_seconds is
+		// "usable scope after the user approves," not "time to
+		// decide" — the awaiting_task_approval hold (see
+		// inlineTaskApprovalHoldTTL) owns the decide window. So
+		// regardless of how long the approval took to land, the
+		// caller gets a full expiresIn of usable scope starting
+		// now. The most common runtime case is expiresIn falling
+		// back to task.default_expiry_seconds (config default
+		// 1800 → 30 minutes of post-approval scope); callers
+		// passing an explicit expires_in_seconds get exactly what
+		// they asked for.
+		expiresAt := approvedAt.Add(time.Duration(expiresIn) * time.Second)
 		task.ExpiresAt = &expiresAt
 	}
 	if len(req.ExpectedTools) > 0 {
@@ -253,7 +270,7 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 	// (allow_session for session, allow_always for standing) to match
 	// what taskApprovalResolution returns for the dashboard path.
 	resolution := taskApprovalResolution(task)
-	rec, err := h.createCanonicalInlineApprovalRecord(ctx, task, resolution, now)
+	rec, err := h.createCanonicalInlineApprovalRecord(ctx, task, resolution, approvedAt)
 	if err != nil {
 		// Audit invariant: every active inline_chat task must have a
 		// matching approval_records row. Without that row, we'd leave

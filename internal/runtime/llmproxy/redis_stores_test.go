@@ -111,6 +111,73 @@ func TestRedisPendingApprovalCacheStageResolveLeavesOtherHolds(t *testing.T) {
 	}
 }
 
+// Bare reply with a Stage filter must NOT walk past a newer
+// different-stage hold to find an older same-stage one. Redis
+// counterpart to the memory cache's
+// TestMemoryPendingApprovalCache_BareReplyDoesNotWalkPastNewest —
+// the Lua-script bare branch and the Go find()'s bare branch must
+// agree: newest doesn't match → no match.
+func TestRedisPendingApprovalCache_BareReplyDoesNotWalkPastNewest(t *testing.T) {
+	cache := NewRedisPendingApprovalCache(testRedisClient(t), time.Minute)
+	ctx := context.Background()
+
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID: "cv-older-inline", UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, Stage: StageAwaitingTaskApproval,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID: "cv-newer-tool", UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, Stage: StageTool,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Peek (Go find() branch).
+	got, err := cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageAwaitingTaskApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("bare stage-filtered Peek returned %+v, want nil", got)
+	}
+
+	// Resolve (Lua-script branch) — separate path, same rule.
+	got, err = cache.Resolve(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageAwaitingTaskApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("bare stage-filtered Resolve returned %+v, want nil", got)
+	}
+
+	// Both holds must still be in the cache — a no-match bare reply
+	// must not consume anything.
+	if got, _ := cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-older-inline",
+	}); got == nil {
+		t.Fatal("older inline hold should still be in cache")
+	}
+	if got, _ := cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-newer-tool",
+	}); got == nil {
+		t.Fatal("newer tool hold should still be in cache")
+	}
+}
+
 // TestRedisPendingApprovalCacheScopesByConversationID asserts the
 // redis-backed cache also partitions holds per conversation. Without
 // this, two Claude Code sessions sharing a token would collide on the
@@ -160,6 +227,57 @@ func TestRedisPendingApprovalCacheScopesByConversationID(t *testing.T) {
 	}
 	if resolvedB == nil || resolvedB.ID != "cv-B" {
 		t.Fatalf("conv-B resolved %+v, want cv-B", resolvedB)
+	}
+}
+
+// Hold's key TTL must honor per-hold ExpiresAt; otherwise the Redis
+// key (and every hold inside it) is evicted at c.ttl from the last
+// LPush, regardless of the longer ExpiresAt written into the JSON.
+func TestRedisPendingApprovalCacheHoldKeyTTLHonorsPerHoldExpiresAt(t *testing.T) {
+	rdb := testRedisClient(t)
+	cache := NewRedisPendingApprovalCache(rdb, 10*time.Minute)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:        "cv-long",
+		UserID:    "user-1",
+		AgentID:   "agent-1",
+		Provider:  conversation.ProviderAnthropic,
+		ExpiresAt: now.Add(24 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	key := redisPendingApprovalKey("user-1", "agent-1", conversation.ProviderAnthropic, "")
+	ttl, err := rdb.PTTL(ctx, key).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Floor: must exceed the cache's default c.ttl (10 min). We expect
+	// roughly 24h; allow generous slack for clock-tick variance.
+	if ttl < 23*time.Hour {
+		t.Fatalf("key PTTL = %v, want ≥ 23h (per-hold ExpiresAt was 24h)", ttl)
+	}
+
+	// A subsequent short-TTL hold pushed onto the same key must NOT
+	// shrink the existing 24h key TTL — otherwise the still-pending
+	// 24h hold would be evicted along with the key.
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:        "cv-short",
+		UserID:    "user-1",
+		AgentID:   "agent-1",
+		Provider:  conversation.ProviderAnthropic,
+		ExpiresAt: now.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ttl, err = rdb.PTTL(ctx, key).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ttl < 23*time.Hour {
+		t.Fatalf("after short-TTL Hold, key PTTL = %v, want ≥ 23h (sibling 24h hold must not be evicted)", ttl)
 	}
 }
 

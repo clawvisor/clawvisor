@@ -14,12 +14,18 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
-// inlineTaskApprovalTTL is how long the user has to type yes/no
-// after the model has emitted the task definition. Bounded so the second
-// gesture sits within the same approval cache window as the first; if
-// the user walks away mid-flight both holds expire together and the
-// model's next turn naturally re-prompts.
-const inlineTaskApprovalTTL = 10 * time.Minute
+// inlineTaskApprovalHoldTTL bounds how long an awaiting_task_approval
+// hold may sit in the cache before it's pruned. It is the decide
+// window only in the sense of "we won't keep this hold around
+// forever" — it does NOT cap the user's usable scope. The task's
+// scope lifetime is expires_in_seconds, applied at approval time
+// (see tasks_inline.go), so a generous decide window is safe:
+// regardless of how long the user takes to approve, they get a full
+// expires_in_seconds of usable scope starting from their "yes".
+//
+// 24h is chosen to comfortably cover an overnight decide gap while
+// still bounding stale-approval accumulation in the cache.
+const inlineTaskApprovalHoldTTL = 24 * time.Hour
 
 // InlineSurfaceQueryParam is the query-string flag the model adds to
 // POST /api/control/tasks to opt in to the inline-approval flow when there
@@ -290,7 +296,7 @@ func maybeInterceptInlineTaskDefinition(
 		Stage:          StageAwaitingTaskApproval,
 		TaskDefinition: parsed,
 		CreatedAt:      now,
-		ExpiresAt:      now.Add(inlineTaskApprovalTTL),
+		ExpiresAt:      now.Add(inlineTaskApprovalHoldTTL),
 	})
 	if holdErr != nil {
 		audit("block", "inline_task_hold_failed", holdErr.Error())

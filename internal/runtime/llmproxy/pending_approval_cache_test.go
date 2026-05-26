@@ -315,12 +315,14 @@ func TestPendingLiteApprovalCarriesNewFields(t *testing.T) {
 	}
 }
 
-// Two StageAwaitingTaskApproval holds alive at once must resolve LIFO
-// when a stage-filtered lookup runs without an ApprovalID. The user
-// is replying to the MOST RECENT inline prompt the harness rendered;
-// resolving the older one would silently land on stale state — the
-// same failure pattern the no-stage LIFO fix addressed, just in the
-// stage-filtered code path.
+// Two StageAwaitingTaskApproval holds alive at once must resolve to
+// the most recent one when a stage-filtered lookup runs without an
+// ApprovalID — the user's bare reply pertains to the harness's last
+// rendered prompt, so the newer of two same-stage prompts wins.
+// (Companion test below pins the stricter rule that drives this:
+// bare with a stage filter returns NOTHING when the newest hold's
+// stage doesn't match. Same-stage just happens to be a sub-case
+// where the newest also matches.)
 func TestMemoryPendingApprovalCache_StageFilteredLookupIsLIFO(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	ctx := context.Background()
@@ -352,6 +354,61 @@ func TestMemoryPendingApprovalCache_StageFilteredLookupIsLIFO(t *testing.T) {
 		t.Fatalf("stage-filtered no-ID Peek returned %+v, want most recent %q", peeked, newer.Pending.ID)
 	}
 	_ = older
+}
+
+// Bare reply with a Stage filter must NOT walk past a newer
+// different-stage hold to find an older same-stage one. The user's
+// "approve" (no ID) is a direct response to the harness's last
+// rendered prompt — if that prompt was a tool-stage hold, an older
+// awaiting-task-approval hold can't claim the response. The user
+// must use the explicit ID form to target the older hold.
+func TestMemoryPendingApprovalCache_BareReplyDoesNotWalkPastNewest(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	// Older inline-task hold sits in the cache first.
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID: "cv-older-inline", UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, Stage: StageAwaitingTaskApproval,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Newer tool-stage hold arrives — that's what the harness most
+	// recently prompted the user about.
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID: "cv-newer-tool", UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, Stage: StageTool,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bare peek with StageAwaitingTaskApproval filter: newest is
+	// StageTool → no match. Must NOT silently return the older
+	// inline hold.
+	got, err := cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageAwaitingTaskApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("bare stage-filtered peek returned %+v, want nil (newest hold's stage doesn't match filter)", got)
+	}
+
+	// Sanity: explicit-ID lookup still reaches the older inline hold.
+	got, err = cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-older-inline",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ID != "cv-older-inline" {
+		t.Fatalf("explicit-ID peek = %+v, want cv-older-inline", got)
+	}
 }
 
 // TestMemoryPendingApprovalCacheScopesByConversationID guards the

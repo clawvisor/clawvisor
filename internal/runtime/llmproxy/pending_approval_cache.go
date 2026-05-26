@@ -342,31 +342,22 @@ func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLit
 		}
 		return nil, -1, items
 	}
-	// Stage-filtered scan: callers that know which kind of hold they
-	// want (e.g. the inline-task release path) pass req.Stage so a
-	// stale tool-stage hold doesn't shadow the inline-task hold they
-	// care about. Scan from the END so the MOST RECENT matching hold
-	// wins — same LIFO rule the no-stage branch below uses. The two
-	// must agree: a user reply lands on the freshest prompt of its
-	// kind, never the oldest.
-	if req.Stage != "" {
-		for i := len(items) - 1; i >= 0; i-- {
-			if items[i].Stage == req.Stage {
-				pending := items[i]
-				return &pending, i, items
-			}
-		}
-		return nil, -1, items
-	}
-	// No ID, no stage filter — pick the MOST RECENT hold (items[-1]).
-	// The user is replying to the most recent approval prompt the
-	// harness rendered; resolving the oldest hold (FIFO) is
-	// counterintuitive and was a source of "I approved but nothing
-	// happened" bugs when one prompt sat unresolved while another
-	// arrived. Explicit-ID lookups (above) and Stage-filtered lookups
-	// are unaffected — they're scoped by construction.
+	// Bare reply (no explicit ApprovalID): only the absolute most
+	// recent hold qualifies. The user typing "approve" / "deny" /
+	// "task" is responding to the harness's LAST rendered prompt —
+	// not to anything older. If the newest hold's stage doesn't
+	// match a Stage filter the caller passed, the bare reply
+	// doesn't apply and we return no match rather than walking
+	// past the newest to find an older same-stage hold. Walking
+	// would let a stale older same-stage hold steal the user's
+	// response away from a newer different-stage prompt the user
+	// actually saw last — the opposite of "direct response to the
+	// last message."
 	idx := len(items) - 1
 	pending := items[idx]
+	if req.Stage != "" && pending.Stage != req.Stage {
+		return nil, -1, items
+	}
 	return &pending, idx, items
 }
 
