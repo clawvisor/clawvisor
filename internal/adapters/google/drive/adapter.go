@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,10 +16,12 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
+
+const sheetsMimeType = "application/vnd.google-apps.spreadsheet"
 
 const serviceID = "google.drive"
 
@@ -171,11 +174,11 @@ func (a *DriveAdapter) listFiles(ctx context.Context, client *http.Client, param
 
 // textMimeTypes are the MIME types for which content preview is returned.
 var textMimeTypes = map[string]bool{
-	"text/plain":        true,
-	"text/markdown":     true,
-	"application/json":  true,
-	"text/csv":          true,
-	"text/html":         true,
+	"text/plain":       true,
+	"text/markdown":    true,
+	"application/json": true,
+	"text/csv":         true,
+	"text/html":        true,
 }
 
 func (a *DriveAdapter) getFile(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
@@ -200,11 +203,11 @@ func (a *DriveAdapter) getFile(ctx context.Context, client *http.Client, params 
 	}
 
 	result := map[string]any{
-		"id":           meta.ID,
-		"name":         format.SanitizeText(meta.Name, format.MaxFieldLen),
-		"mime_type":    meta.MimeType,
-		"modified_at":  meta.ModifiedTime,
-		"size":         meta.Size,
+		"id":            meta.ID,
+		"name":          format.SanitizeText(meta.Name, format.MaxFieldLen),
+		"mime_type":     meta.MimeType,
+		"modified_at":   meta.ModifiedTime,
+		"size":          meta.Size,
 		"web_view_link": meta.WebViewLink,
 	}
 
@@ -291,9 +294,16 @@ func (a *DriveAdapter) downloadFile(ctx context.Context, client *http.Client, pa
 
 // exportFile exports a Google Workspace file (Docs, Sheets, Slides) to the
 // requested MIME type using the Drive files.export endpoint.
+//
+// For Google Sheets exported as CSV/TSV, the Drive export endpoint only emits
+// the first tab. When sheet_name is supplied (and the source is a Google
+// Sheet), exportFile instead calls the Sheets API to read just that tab's
+// values and serializes them as CSV/TSV.
 func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	fileID, _ := params["file_id"].(string)
 	targetMime, _ := params["mime_type"].(string)
+	sheetName, _ := params["sheet_name"].(string)
+	sheetName = strings.TrimSpace(sheetName)
 	if fileID == "" {
 		return nil, fmt.Errorf("drive export_file: file_id is required")
 	}
@@ -311,6 +321,20 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 	}
 	if err := apiGET(ctx, client, metaURL, &meta); err != nil {
 		return nil, fmt.Errorf("drive export_file: %w", err)
+	}
+
+	isSheet := meta.MimeType == sheetsMimeType
+	wantsTabular := targetMime == "text/csv" || targetMime == "text/tab-separated-values"
+
+	if sheetName != "" && !isSheet {
+		return nil, fmt.Errorf("drive export_file: sheet_name is only supported when the source is a Google Sheet (got %s)", meta.MimeType)
+	}
+	if sheetName != "" && !wantsTabular {
+		return nil, fmt.Errorf("drive export_file: sheet_name requires mime_type=text/csv or text/tab-separated-values")
+	}
+
+	if isSheet && wantsTabular && sheetName != "" {
+		return a.exportSheetTab(ctx, client, meta.ID, meta.Name, sheetName, targetMime)
 	}
 
 	exportURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s/export?mimeType=%s",
@@ -331,14 +355,102 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 	}
 
 	result := map[string]any{
-		"id":              meta.ID,
-		"name":            format.SanitizeText(meta.Name, format.MaxFieldLen),
+		"id":               meta.ID,
+		"name":             format.SanitizeText(meta.Name, format.MaxFieldLen),
 		"source_mime_type": meta.MimeType,
 		"export_mime_type": targetMime,
-		"content":         format.SanitizeText(string(body), format.MaxBodyLen),
+		"content":          format.SanitizeText(string(body), format.MaxBodyLen),
+	}
+	res := &adapters.Result{
+		Summary: format.Summary("Exported %s as %s", meta.Name, targetMime),
+		Data:    result,
+	}
+	if isSheet && wantsTabular {
+		res.Meta = map[string]any{
+			"hint": "Google Sheets CSV export returns only the first tab. Pass sheet_name (e.g. \"Routing Map\") to export a specific tab.",
+		}
+	}
+	return res, nil
+}
+
+// exportSheetTab reads a single sheet (tab) from a Google Sheets file via the
+// Sheets API and serializes the values as CSV or TSV. The drive.readonly scope
+// is sufficient to call spreadsheets.values.get.
+func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, fileID, fileName, sheetName, targetMime string) (*adapters.Result, error) {
+	// Validate that the named tab exists; surface available titles otherwise.
+	ssURL := fmt.Sprintf("https://sheets.googleapis.com/v4/spreadsheets/%s?fields=sheets(properties(title))",
+		url.PathEscape(fileID))
+	var ssResp struct {
+		Sheets []struct {
+			Properties struct {
+				Title string `json:"title"`
+			} `json:"properties"`
+		} `json:"sheets"`
+	}
+	if err := apiGET(ctx, client, ssURL, &ssResp); err != nil {
+		return nil, fmt.Errorf("drive export_file: resolving sheet metadata: %w", err)
+	}
+	found := false
+	for _, s := range ssResp.Sheets {
+		if s.Properties.Title == sheetName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		titles := make([]string, 0, len(ssResp.Sheets))
+		for _, s := range ssResp.Sheets {
+			titles = append(titles, s.Properties.Title)
+		}
+		return nil, fmt.Errorf("drive export_file: sheet_name %q not found; available tabs: %s", sheetName, strings.Join(titles, ", "))
+	}
+
+	// Read all values for the named sheet. The A1 range must single-quote the
+	// sheet title — otherwise titles with spaces or punctuation are rejected,
+	// and a bare title that happens to match a defined named range resolves to
+	// the named range instead of the tab. Embedded single quotes double.
+	a1Range := "'" + strings.ReplaceAll(sheetName, "'", "''") + "'"
+	valuesURL := fmt.Sprintf("https://sheets.googleapis.com/v4/spreadsheets/%s/values/%s",
+		url.PathEscape(fileID), url.PathEscape(a1Range))
+	var valuesResp struct {
+		Range  string          `json:"range"`
+		Values [][]interface{} `json:"values"`
+	}
+	if err := apiGET(ctx, client, valuesURL, &valuesResp); err != nil {
+		return nil, fmt.Errorf("drive export_file: reading sheet values: %w", err)
+	}
+
+	delim := ','
+	if targetMime == "text/tab-separated-values" {
+		delim = '\t'
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	w.Comma = delim
+	for _, row := range valuesResp.Values {
+		record := make([]string, len(row))
+		for i, cell := range row {
+			record[i] = fmt.Sprintf("%v", cell)
+		}
+		if err := w.Write(record); err != nil {
+			return nil, fmt.Errorf("drive export_file: serializing row: %w", err)
+		}
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, fmt.Errorf("drive export_file: serializing CSV: %w", err)
+	}
+
+	result := map[string]any{
+		"id":               fileID,
+		"name":             format.SanitizeText(fileName, format.MaxFieldLen),
+		"source_mime_type": sheetsMimeType,
+		"export_mime_type": targetMime,
+		"sheet_name":       sheetName,
+		"content":          format.SanitizeText(buf.String(), format.MaxBodyLen),
 	}
 	return &adapters.Result{
-		Summary: format.Summary("Exported %s as %s", meta.Name, targetMime),
+		Summary: format.Summary("Exported %s [%s] as %s (%d row(s))", fileName, sheetName, targetMime, len(valuesResp.Values)),
 		Data:    result,
 	}, nil
 }
@@ -497,4 +609,3 @@ func paramInt(params map[string]any, key string) (int, bool) {
 	}
 	return 0, false
 }
-
