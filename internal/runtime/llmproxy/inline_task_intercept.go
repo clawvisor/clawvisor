@@ -19,7 +19,7 @@ import (
 // gesture sits within the same approval cache window as the first; if
 // the user walks away mid-flight both holds expire together and the
 // model's next turn naturally re-prompts.
-const inlineTaskApprovalTTL = 10 * time.Minute
+const inlineTaskApprovalTTL = 1 * time.Minute // TEMP: shortened for branch testing of expired-approval flow
 
 // InlineSurfaceQueryParam is the query-string flag the model adds to
 // POST /api/control/tasks to opt in to the inline-approval flow when there

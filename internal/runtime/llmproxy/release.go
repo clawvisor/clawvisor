@@ -141,7 +141,7 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	peeked := action.Hold
 	if peeked == nil {
 		if approvalID != "" {
-			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
+			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "this approval is no longer valid — it may have expired, already been used, or been issued to another agent. Please retry your original request to get a fresh approval prompt."}
 		}
 		return ReleaseResult{}
 	}
@@ -165,7 +165,7 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 			HTTPStatus: http.StatusServiceUnavailable,
 			Decision:   "deny",
 			Outcome:    "inline_task_preprocess_missing",
-			Reason:     "inline task hold reached release without preprocess rewrite",
+			Reason:     "couldn't process this approval (internal: inline-task preprocess missing). Please retry your original request.",
 		}
 	}
 	// Resolve the SAME hold we inspected, by explicit ID. Calling
@@ -191,7 +191,7 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 		// Peeked one moment ago but it's gone now — a concurrent
 		// release/rewrite pass consumed it. Treat as not-found.
 		if approvalID != "" {
-			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
+			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "this approval is no longer valid — it may have expired, already been used, or been issued to another agent. Please retry your original request to get a fresh approval prompt."}
 		}
 		return ReleaseResult{}
 	}
@@ -400,11 +400,15 @@ func boundaryCheckReleaseVerdict(ctx context.Context, req ReleaseRequest, v insp
 func syntheticReleaseResultMulti(req ReleaseRequest, pending *PendingLiteApproval, allow bool, calls []conversation.SyntheticToolCall, decision, outcome, reason string) ReleaseResult {
 	denyMessage := conversation.ApprovalDeniedMessage
 	if !allow && outcome == "approval_release_blocked" && strings.TrimSpace(reason) != "" {
-		denyMessage = "Approval could not be released. " + strings.TrimSpace(reason)
+		// Branded so the user can tell the deny reason came from
+		// Clawvisor (not the model or upstream provider). Mirrors the
+		// "Clawvisor: ..." prefix added by writeLiteProxyError for
+		// every other synthesized error.
+		denyMessage = "Clawvisor: couldn't release this approval. " + strings.TrimSpace(reason)
 	}
 	synth, ok := conversation.SyntheticApprovalToolUsesResponseWithDenyMessage(req.HTTPRequest, req.Provider, req.Body, allow, calls, denyMessage)
 	if !ok {
-		return ReleaseResult{Handled: true, HTTPStatus: http.StatusBadRequest, Decision: "deny", Outcome: "approval_release_unsupported", Reason: "unsupported approval release provider"}
+		return ReleaseResult{Handled: true, HTTPStatus: http.StatusBadRequest, Decision: "deny", Outcome: "approval_release_unsupported", Reason: "can't process this approval for this provider. Please retry your original request."}
 	}
 	return ReleaseResult{
 		Handled:     true,
