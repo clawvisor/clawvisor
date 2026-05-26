@@ -706,8 +706,14 @@ func TestLLMEndpoint_InboundSecretVaultRefusesNameCollision(t *testing.T) {
 	decision.Header.Set("Authorization", "Bearer "+rawToken)
 	decisionRec := httptest.NewRecorder()
 	mux.ServeHTTP(decisionRec, decision)
-	if decisionRec.Code != http.StatusConflict {
-		t.Fatalf("expected vault name conflict, got %d (%s)", decisionRec.Code, decisionRec.Body.String())
+	// Conflict is wire-shaped as a harness-renderable assistant text
+	// turn (HTTP 200) carrying the conflict explanation, so the user
+	// sees actionable guidance ("choose a different vault name") inline.
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 harness-shaped conflict error, got %d (%s)", decisionRec.Code, decisionRec.Body.String())
+	}
+	if !strings.Contains(decisionRec.Body.String(), "vault item already exists") {
+		t.Fatalf("body should explain the name conflict:\n%s", decisionRec.Body.String())
 	}
 	if got := string(v.data[user.ID+"/slack_ci"]); got != "old-slack-token" {
 		t.Fatalf("existing vault entry should not be overwritten or deleted, got %q", got)
@@ -1049,8 +1055,15 @@ func TestLLMEndpoint_InboundSecretVaultFailureKeepsDecisionRetryable(t *testing.
 	failingDecision.Header.Set("Authorization", "Bearer "+rawToken)
 	failingRec := httptest.NewRecorder()
 	mux.ServeHTTP(failingRec, failingDecision)
-	if failingRec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected first vault decision to fail, got %d (%s)", failingRec.Code, failingRec.Body.String())
+	// Vault-store failure is wire-shaped as a harness-renderable
+	// assistant text turn (HTTP 200) so the user can retry the same
+	// `vault …` decision once the dependency is healthy. The internal
+	// 500 lives in the audit log for operators.
+	if failingRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 harness-shaped error on vault failure, got %d (%s)", failingRec.Code, failingRec.Body.String())
+	}
+	if !strings.Contains(failingRec.Body.String(), "could not save detected secret") {
+		t.Fatalf("body should explain the save failure:\n%s", failingRec.Body.String())
 	}
 	if upstreamHits != 0 {
 		t.Fatalf("failed vault decision must not forward upstream, hits=%d body=%s", upstreamHits, seenBody)
@@ -1437,8 +1450,15 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadGateway && rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 or 502 on vault miss, got %d (%s)", rec.Code, rec.Body.String())
+	// Vault-miss errors come back wire-shaped as a harness-renderable
+	// assistant text turn (HTTP 200) so the user sees a recoverable
+	// "configure your upstream API key" message instead of the CLI's
+	// generic "model may not exist" fallback.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 harness-shaped error on vault miss, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "no upstream API key configured") {
+		t.Fatalf("body should explain vault miss:\n%s", rec.Body.String())
 	}
 }
 
@@ -1459,8 +1479,15 @@ func TestLLMEndpoint_RejectsMalformedBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+	// Errors are wire-shaped as a harness-renderable assistant text turn
+	// (HTTP 200) rather than a 4xx JSON body. The harness can't parse
+	// non-harness-shaped errors and falls back to its generic "model may
+	// not exist" message, which is unrecoverable from the user's POV.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 harness-shaped error, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid character") {
+		t.Fatalf("body should carry parse error message:\n%s", rec.Body.String())
 	}
 }
 

@@ -294,7 +294,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditDecide = "deny"
 		auditOutcome = "request_too_large"
 		auditReason = err.Error()
-		writeJSONError(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
 		return
 	}
 	if h.RawIOLogger != nil {
@@ -324,7 +324,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = sanitizeErr.Error()
-			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", sanitizeErr.Error())
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", sanitizeErr.Error())
 			return
 		}
 		if sanitized {
@@ -337,7 +337,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditDecide = "deny"
 		auditOutcome = "malformed_request"
 		auditReason = err.Error()
-		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 		return
 	}
 	if passthrough.Enabled {
@@ -366,7 +366,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				auditDecide = "deny"
 				auditOutcome = "malformed_request"
 				auditReason = err.Error()
-				writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 				return
 			}
 			auditParams["secret_decision"] = string(decision)
@@ -421,7 +421,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditDecide = "deny"
 		auditOutcome = "malformed_request"
 		auditReason = taskErr.Error()
-		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", taskErr.Error())
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", taskErr.Error())
 		return
 	} else if taskRewrite.Rewritten {
 		body = taskRewrite.Body
@@ -430,7 +430,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = err.Error()
-			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 			return
 		}
 		auditParams["approval_task_rewritten"] = true
@@ -459,7 +459,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditDecide = "deny"
 		auditOutcome = "malformed_request"
 		auditReason = inlineErr.Error()
-		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", inlineErr.Error())
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", inlineErr.Error())
 		return
 	} else if inlineRewrite.Rewritten {
 		body = inlineRewrite.Body
@@ -468,7 +468,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = err.Error()
-			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 			return
 		}
 		inlineApprovalConsumed = true
@@ -517,7 +517,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = injectErr.Error()
-			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", injectErr.Error())
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", injectErr.Error())
 			return
 		}
 		if injected {
@@ -527,7 +527,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				auditDecide = "deny"
 				auditOutcome = "malformed_request"
 				auditReason = err.Error()
-				writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 				return
 			}
 			reqSummary = liteProxyRequestDebugSummary(provider, body)
@@ -675,7 +675,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditStatus = http.StatusUnauthorized
 			auditDecide = "deny"
 			auditOutcome = "upstream_key_missing"
-			writeJSONError(w, http.StatusUnauthorized, "UPSTREAM_KEY_MISSING",
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusUnauthorized, "UPSTREAM_KEY_MISSING",
 				"no upstream API key configured in vault for this provider")
 			return
 		}
@@ -695,7 +695,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditOutcome = "upstream_error"
 		}
 		auditReason = err.Error()
-		writeJSONError(w, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
 		return
 	}
 	defer resp.Body.Close()
@@ -780,8 +780,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// Clear the upstream-mirrored headers (Content-Length now
 			// lies about our JSON error body, vendor request-id leaks)
 			// before writing the JSON error.
-			clearMirroredUpstreamHeaders(w.Header())
-			writeJSONError(w, http.StatusBadGateway, "UPSTREAM_READ_ERROR", "upstream read failed")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "UPSTREAM_READ_ERROR", "upstream read failed")
 			return
 		}
 		if resp.StatusCode >= 400 {
@@ -841,8 +840,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "decision_input_load_failed"
 			auditReason = decisionLoadErr.Error()
-			clearMirroredUpstreamHeaders(w.Header())
-			writeJSONError(w, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
 				"authorization inputs unavailable; please retry")
 			return
 		}
@@ -1007,8 +1005,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "postprocess_error"
 			auditReason = processed.SkippedReason
-			clearMirroredUpstreamHeaders(w.Header())
-			writeJSONError(w, http.StatusBadGateway, "POSTPROCESS_ERROR",
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "POSTPROCESS_ERROR",
 				"response postprocess failed; see clawvisor audit log")
 			return
 		}
@@ -1116,7 +1113,9 @@ func isVaultMiss(err error) bool {
 	return false
 }
 
-// writeJSONError produces a uniform JSON error response.
+// writeJSONError produces a uniform JSON error response. Use this only
+// for pre-provider failures (no agent token, unknown route) where the
+// harness can't be addressed in its native wire shape.
 func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -1124,6 +1123,52 @@ func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 		"error": message,
 		"code":  code,
 	})
+}
+
+// writeLiteProxyError emits an error in the wire shape the harness
+// expects (Anthropic SSE / OpenAI Responses SSE / Chat Completions
+// SSE or JSON) so the user sees a recoverable inline message — "the
+// approval expired, please retry" — instead of the harness's generic
+// "model may not exist" fallback. A non-harness-shaped JSON body
+// triggers that fallback on every CLI we ship to today.
+//
+// The wire response is HTTP 200 with a synthetic assistant text turn.
+// The original error status/code/reason stays in audit logs and slog
+// for operators. Callers still set audit* fields before invoking this
+// helper; behavior beyond response synthesis matches writeJSONError.
+//
+// When provider is unsupported (or message is empty), falls back to
+// writeJSONError with the supplied status/code/message.
+func (h *LLMEndpointHandler) writeLiteProxyError(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestBody []byte, requestID string, status int, code, message string) {
+	clearMirroredUpstreamHeaders(w.Header())
+	synth, ok := conversation.SyntheticErrorResponse(r, provider, requestBody, message)
+	if !ok {
+		writeJSONError(w, status, code, message)
+		return
+	}
+	w.Header().Set("Content-Type", synth.ContentType)
+	w.Header().Set("Cache-Control", "no-cache")
+	if h.RawIOLogger != nil && agent != nil {
+		bodyStr, bodyEnc := llmproxy.EncodeBody(synth.Body)
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:        "harness_response",
+			RequestID:    requestID,
+			UserID:       agent.UserID,
+			AgentID:      agent.ID,
+			Provider:     string(provider),
+			Method:       r.Method,
+			Path:         r.URL.RequestURI(),
+			Status:       http.StatusOK,
+			ContentType:  synth.ContentType,
+			Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
+			Body:         bodyStr,
+			BodyEncoding: bodyEnc,
+			BodyBytes:    len(synth.Body),
+			Marker:       "synth_error_" + code,
+		})
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(synth.Body)
 }
 
 // readLimited reads at most max bytes from r. Returns an error if the body
@@ -1766,7 +1811,7 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 			*auditStatus = http.StatusUnauthorized
 			*auditDecide = "deny"
 			*auditOutcome = "upstream_key_missing"
-			writeJSONError(w, http.StatusUnauthorized, "UPSTREAM_KEY_MISSING", "no upstream API key configured in vault for this provider")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusUnauthorized, "UPSTREAM_KEY_MISSING", "no upstream API key configured in vault for this provider")
 			return
 		}
 		*auditStatus = http.StatusBadGateway
@@ -1777,7 +1822,7 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 			*auditOutcome = "upstream_error"
 		}
 		*auditReason = err.Error()
-		writeJSONError(w, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
 		return
 	}
 	defer resp.Body.Close()
@@ -1998,11 +2043,11 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 				if errors.Is(err, errSecretVaultNameConflict) {
 					*auditStatus = http.StatusConflict
 					*auditOutcome = "secret_vault_name_conflict"
-					writeJSONError(w, http.StatusConflict, "SECRET_VAULT_NAME_CONFLICT", "vault item already exists with a different value; choose a different vault name")
+					h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusConflict, "SECRET_VAULT_NAME_CONFLICT", "vault item already exists with a different value; choose a different vault name")
 				} else {
 					*auditStatus = http.StatusInternalServerError
 					*auditOutcome = "secret_vault_failed"
-					writeJSONError(w, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not save detected secret")
+					h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not save detected secret")
 				}
 				*auditDecide = "deny"
 				*auditReason = err.Error()
@@ -2038,7 +2083,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 				} else {
 					*auditReason = "detected secret was not present in request JSON"
 				}
-				writeJSONError(w, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not rewrite detected secret")
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not rewrite detected secret")
 				return nil, reply.Action, nil, true
 			}
 			resumeBody = rewrittenBody
@@ -2457,7 +2502,7 @@ func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *ht
 		*auditDecide = "deny"
 		*auditOutcome = "secret_hold_failed"
 		*auditReason = err.Error()
-		writeJSONError(w, http.StatusInternalServerError, "SECRET_HOLD_FAILED", "could not hold detected secret")
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "SECRET_HOLD_FAILED", "could not hold detected secret")
 		return true
 	}
 	if auditParams != nil {
@@ -2842,8 +2887,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		*auditDecide = "deny"
 		*auditOutcome = "decision_input_load_failed"
 		*auditReason = decisionLoadErr.Error()
-		clearMirroredUpstreamHeaders(w.Header())
-		writeJSONError(w, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
 			"authorization inputs unavailable; please retry")
 		return true
 	}
@@ -2896,7 +2940,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 	*auditOutcome = result.Outcome
 	*auditReason = result.Reason
 	if len(result.Body) == 0 {
-		writeJSONError(w, result.HTTPStatus, "APPROVAL_RELEASE_ERROR", result.Reason)
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, result.HTTPStatus, "APPROVAL_RELEASE_ERROR", result.Reason)
 		return true
 	}
 	w.Header().Set("Content-Type", result.ContentType)
