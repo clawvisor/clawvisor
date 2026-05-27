@@ -1,0 +1,95 @@
+web/src/pages/Runtime.tsx
+  s_b7635082fff64b::t_b38fa1d2245e6d 57,61,67,73,79,84,89,168,180-187,189,203-214,216-225,227,229,231-245
+  s_b7635082fff64b::t_c9ef21f0a3abea 581,591,668
+docs/LITE_PROXY.md
+  s_b7635082fff64b::t_3f9d0c498a5404 175,191,304
+internal/runtime/llmproxy/postprocess.go
+  s_b7635082fff64b::t_3f9d0c498a5404 718
+internal/runtime/tasks/envelope.go
+  s_b7635082fff64b::t_3f9d0c498a5404 57-59
+internal/runtime/llmproxy/inline_approval_outcome.go
+  s_b7635082fff64b::t_3f9d0c498a5404 29
+internal/runtime/llmproxy/inline_task_prompt.go
+  s_b7635082fff64b::t_3f9d0c498a5404 21-22
+web/src/api/client.ts
+  s_b7635082fff64b::t_3f9d0c498a5404 556-557
+internal/runtime/llmproxy/secret_detection_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 72,89,127,593
+internal/tui/client/types.go
+  s_b7635082fff64b::t_3f9d0c498a5404 193-194
+internal/runtime/llmproxy/postprocess_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 605,632,673,716,752
+internal/api/handlers/tasks.go
+  s_b7635082fff64b::t_3f9d0c498a5404 135-137,174,180,251,483,545,553,561,1146,1319,2112,2131
+web/src/pages/Restrictions.tsx
+  s_b7635082fff64b::t_540d8773db37c4 879
+  s_b7635082fff64b::t_57ff98e9991d43 495-499,606-607,618-619,690-691,693,695,706-707,709,711,728-729,731,733,743-744,746,748,773-774,776,778,793-794,796,798,805-806,808,810,814,845,848,862,869-878,880-886
+  s_b7635082fff64b::t_f6b54be2b2f2c9 535-536,1093-1094,1105-1106,1129-1130
+  s_b7635082fff64b::t_16c3d0b9e071c8 1469-1470,1494-1495,1579-1580
+  s_b7635082fff64b::t_02aab46e17d42e 316,320,326,331,341,439,446,455,463,525
+  s_b7635082fff64b::t_09cce1ac25b16a 412-417
+  s_b7635082fff64b::t_5ebbc84b36cada 1198-1199,1208-1209,1215,1244-1254,1266
+  s_b7635082fff64b::t_12f93e99964cf7 1,351-360,406-407,409-411,418-422,490
+  s_b7635082fff64b::t_346a523cd51a6c 3,284-285,289
+internal/runtime/llmproxy/control_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 19,27,36
+web/src/pages/Audit.tsx
+  s_b7635082fff64b::t_6aaf6725ecc95d 719-731,736,923,980
+internal/runtime/policy/request_shape.go
+  s_b7635082fff64b::t_3f9d0c498a5404 22,38,62,116
+pkg/runtime/decision/decision_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 304,332,351,368
+internal/mcp/tools.go
+  s_b7635082fff64b::t_3f9d0c498a5404 34,53,67,102
+internal/runtime/policy/request_shape_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 72
+web/src/components/TaskCard.tsx
+  s_b7635082fff64b::t_3f9d0c498a5404 81-82
+web/src/pages/Overview.tsx
+  s_b7635082fff64b::t_4a0b7d3f0fa932 68-69,72,74,78,80-81,84,86,90
+  s_b7635082fff64b::t_d44c47b4f50426 102,121-122,134-135,185
+internal/api/handlers/tasks_inline.go
+  s_b7635082fff64b::t_3f9d0c498a5404 57,59,123,130,137
+internal/api/handlers/control_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 29
+internal/api/handlers/llm_endpoint_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 630,662
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 19,243,272
+internal/runtime/policy/task_match_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 177
+pkg/store/store.go
+  s_b7635082fff64b::t_3f9d0c498a5404 574-576
+internal/runtime/llmproxy/control_multistmt_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 23,38
+web/src/pages/Agents.tsx
+  s_b7635082fff64b::t_acdcf65eb73cfc 394
+  s_b7635082fff64b::t_b175f49da63974 320,343,384-386,412,416,427
+  s_b7635082fff64b::t_2e3edf8ebf6cf8 35-40,44,50,115,231-232,261,266
+internal/api/task_v2_test.go
+  s_b7635082fff64b::t_3f9d0c498a5404 18,24,50-51,53-54,67,93,99,111,113,142,146,183,187,220,224,254,258,296,300,324,355,373-374
+internal/runtime/llmproxy/control.go
+  s_b7635082fff64b::t_3f9d0c498a5404 59,64,69-71,76,78,98,128,138-139
+pkg/runtime/decision/decision.go
+  s_b7635082fff64b::t_3f9d0c498a5404 176
+internal/api/handlers/control.go
+  s_b7635082fff64b::t_3f9d0c498a5404 47,49-50,57,61
+web/src/pages/Dashboard.tsx
+  s_b7635082fff64b::t_4ac3a7c9d56e18 65-76,87,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "b23fb3dd5ac8b163ed52b603b90c11fe81b07f22",
+  "prompts": {},
+  "sessions": {
+    "s_b7635082fff64b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e32a6-368e-7c40-a4de-d67d7171c8f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
