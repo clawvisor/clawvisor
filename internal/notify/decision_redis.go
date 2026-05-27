@@ -54,7 +54,7 @@ func (b *RedisDecisionBus) Subscribe(ctx context.Context) <-chan notify.Callback
 				if err == redis.Nil {
 					continue // timeout, loop again
 				}
-				b.logger.Warn("redis decision bus: brpop", "err", err)
+				b.logger.WarnContext(ctx, "redis decision bus: brpop", "err", err)
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
@@ -64,7 +64,7 @@ func (b *RedisDecisionBus) Subscribe(ctx context.Context) <-chan notify.Callback
 			}
 			var d notify.CallbackDecision
 			if err := json.Unmarshal([]byte(result[1]), &d); err != nil {
-				b.logger.Warn("redis decision bus: unmarshal", "err", err)
+				b.logger.WarnContext(ctx, "redis decision bus: unmarshal", "err", err)
 				continue
 			}
 			select {

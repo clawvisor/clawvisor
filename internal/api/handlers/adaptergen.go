@@ -223,7 +223,7 @@ func (h *AdapterGenHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.generatorForRequest(r).Generate(r.Context(), src)
 	if err != nil {
-		h.logger.Warn("adapter generation failed", "err", err)
+		h.logger.WarnContext(r.Context(), "adapter generation failed", "err", err)
 		writeJSONResponse(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
@@ -269,7 +269,7 @@ func (h *AdapterGenHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.generatorForRequest(r).Update(r.Context(), serviceID, src)
 	if err != nil {
-		h.logger.Warn("adapter update failed", "service_id", serviceID, "err", err)
+		h.logger.WarnContext(r.Context(), "adapter update failed", "service_id", serviceID, "err", err)
 		writeJSONResponse(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
@@ -286,7 +286,7 @@ func (h *AdapterGenHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.generatorForRequest(r).Remove(r.Context(), serviceID); err != nil {
-		h.logger.Warn("adapter removal failed", "service_id", serviceID, "err", err)
+		h.logger.WarnContext(r.Context(), "adapter removal failed", "service_id", serviceID, "err", err)
 		writeJSONResponse(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
@@ -310,7 +310,7 @@ func (h *AdapterGenHandler) Install(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.generatorForRequest(r).Install(r.Context(), req.YAML)
 	if err != nil {
-		h.logger.Warn("adapter install failed", "err", err)
+		h.logger.WarnContext(r.Context(), "adapter install failed", "err", err)
 		writeJSONResponse(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}

@@ -288,7 +288,7 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Revoke all active/pending tasks for this agent before deleting.
 	revokedCount, err := h.st.RevokeTasksByAgent(ctx, id, user.ID)
 	if err != nil {
-		h.logger.Warn("failed to revoke tasks for agent", "err", err, "agent_id", id)
+		h.logger.WarnContext(ctx, "failed to revoke tasks for agent", "err", err, "agent_id", id)
 	}
 
 	if err := h.st.DeleteAgent(ctx, id, user.ID); err != nil {

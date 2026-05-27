@@ -362,7 +362,7 @@ func (h *SkillHandler) writeCatalogOverview(buf *strings.Builder, ctx context.Co
 	if h.localSvcProvider != nil {
 		localServices, err := h.localSvcProvider.ActiveLocalServices(ctx, userID)
 		if err != nil {
-			h.logger.Warn("failed to fetch local services for catalog", "err", err)
+			h.logger.WarnContext(ctx, "failed to fetch local services for catalog", "err", err)
 		} else if len(localServices) > 0 {
 			buf.WriteString("---\n\n")
 			buf.WriteString("# Local Services\n\n")

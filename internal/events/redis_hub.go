@@ -111,7 +111,7 @@ func (h *RedisHub) forwardFromRedis(ctx context.Context, userID string) {
 			}
 			var e Event
 			if err := json.Unmarshal([]byte(msg.Payload), &e); err != nil {
-				h.logger.Warn("redis hub: unmarshal event", "err", err)
+				h.logger.WarnContext(ctx, "redis hub: unmarshal event", "err", err)
 				continue
 			}
 			h.local.Publish(userID, e)

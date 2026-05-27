@@ -32,7 +32,7 @@ func (c *Client) handleRequest(ctx context.Context, id string, payload HTTPReque
 	tunnelCtx := context.WithValue(ctx, viaRelayKey, true)
 	req, err := http.NewRequestWithContext(tunnelCtx, payload.Method, payload.Path, bytes.NewReader(body))
 	if err != nil {
-		c.logger.Warn("relay: failed to build request", "id", id, "err", err)
+		c.logger.WarnContext(ctx, "relay: failed to build request", "id", id, "err", err)
 		c.sendResponse(id, HTTPResponsePayload{
 			Status:  http.StatusBadGateway,
 			Headers: map[string][]string{"Content-Type": {"text/plain"}},
@@ -55,7 +55,7 @@ func (c *Client) handleRequest(ctx context.Context, id string, payload HTTPReque
 		if ip := net.ParseIP(payload.ClientIP); ip != nil {
 			req.RemoteAddr = net.JoinHostPort(ip.String(), "0")
 		} else {
-			c.logger.Warn("relay: rejecting non-IP client_ip from envelope",
+			c.logger.WarnContext(ctx, "relay: rejecting non-IP client_ip from envelope",
 				"id", id, "client_ip", payload.ClientIP)
 		}
 	}

@@ -1406,7 +1406,7 @@ func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.
 				}
 			}
 			if err != nil {
-				s.logger.Warn("notifier decision failed",
+				s.logger.WarnContext(ctx, "notifier decision failed",
 					"type", d.Type, "action", d.Action,
 					"target_id", d.TargetID, "err", err)
 			}

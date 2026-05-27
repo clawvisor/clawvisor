@@ -225,7 +225,7 @@ func (h *DevicesHandler) CompletePairing(w http.ResponseWriter, r *http.Request)
 	// Register with push service if available.
 	if h.pushN != nil {
 		if err := h.pushN.RegisterDevice(r.Context(), body.DeviceToken, bundleID); err != nil {
-			h.logger.Warn("failed to register device with push service", "err", err)
+			h.logger.WarnContext(r.Context(), "failed to register device with push service", "err", err)
 		}
 	}
 
@@ -283,7 +283,7 @@ func (h *DevicesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Deregister from push service before deleting.
 	if h.pushN != nil {
 		if err := h.pushN.DeregisterDevice(r.Context(), device.DeviceToken); err != nil {
-			h.logger.Warn("failed to deregister device from push service", "err", err)
+			h.logger.WarnContext(r.Context(), "failed to deregister device from push service", "err", err)
 		}
 	}
 
@@ -371,7 +371,7 @@ func (h *DevicesHandler) UpdatePushToStartToken(w http.ResponseWriter, r *http.R
 
 	// Register the token with the push service so the daemon is authorized to send live activities to it.
 	if err := h.pushN.RegisterPushToStartToken(r.Context(), body.PushToStartToken); err != nil {
-		h.logger.Warn("failed to register push-to-start token with push service", "err", err)
+		h.logger.WarnContext(r.Context(), "failed to register push-to-start token with push service", "err", err)
 	}
 
 	_ = h.st.UpdatePairedDeviceLastSeen(r.Context(), device.ID)
@@ -416,7 +416,7 @@ func (h *DevicesHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// Look up the user to get their email for the JWT claims.
 	user, err := h.st.GetUserByID(r.Context(), device.UserID)
 	if err != nil {
-		h.logger.Error("mint device token: user lookup failed", "device_id", device.ID, "user_id", device.UserID, "error", err)
+		h.logger.ErrorContext(r.Context(), "mint device token: user lookup failed", "device_id", device.ID, "user_id", device.UserID, "error", err)
 		writeError(w, http.StatusInternalServerError, "TOKEN_ERROR", "failed to resolve user")
 		return
 	}
@@ -424,7 +424,7 @@ func (h *DevicesHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	const tokenTTL = 5 * time.Minute
 	token, err := h.jwtSvc.GenerateAccessToken(user.ID, user.Email, tokenTTL)
 	if err != nil {
-		h.logger.Error("mint device token failed", "device_id", device.ID, "error", err)
+		h.logger.ErrorContext(r.Context(), "mint device token failed", "device_id", device.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "TOKEN_ERROR", "failed to generate token")
 		return
 	}

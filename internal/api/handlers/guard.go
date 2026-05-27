@@ -238,7 +238,7 @@ func (h *GuardHandler) logGuardAudit(
 	}
 
 	if err := h.store.LogAudit(ctx, entry); err != nil {
-		h.logger.Warn("guard audit log failed", "err", err)
+		h.logger.WarnContext(ctx, "guard audit log failed", "err", err)
 	}
 
 	if taskID != nil {

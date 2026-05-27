@@ -113,7 +113,7 @@ func (h *GatewayHandler) HandleBatch(w http.ResponseWriter, r *http.Request) {
 			// unrecovered panic here would crash the whole process.
 			defer func() {
 				if rec := recover(); rec != nil {
-					h.logger.Error("batch sub-request panicked",
+					h.logger.ErrorContext(r.Context(), "batch sub-request panicked",
 						"panic", rec,
 						"request_id", sub.RequestID,
 						"service", sub.Service,

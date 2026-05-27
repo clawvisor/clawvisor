@@ -117,7 +117,11 @@ func (s *Server) logTimingTrace(ctx *goproxy.ProxyCtx, st *RequestState, resp *h
 			entry.Attrs = attrs
 		}
 		if err := s.traceSink.Write(entry); err != nil && s.logger != nil {
-			s.logger.Warn("runtime timing trace write failed", "err", err)
+			if ctx != nil && ctx.Req != nil {
+				s.logger.WarnContext(ctx.Req.Context(), "runtime timing trace write failed", "err", err)
+			} else {
+				s.logger.Warn("runtime timing trace write failed", "err", err)
+			}
 		}
 	})
 }

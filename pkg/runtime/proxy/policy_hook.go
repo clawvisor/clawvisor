@@ -316,7 +316,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			})
 			s.recordTimingSpan(req, "egress.context_judge", judgeStartedAt)
 			if judgeErr != nil && hooks.Logger != nil {
-				hooks.Logger.Warn("runtime context judge failed", "err", judgeErr, "session_id", st.Session.ID, "host", host, "method", req.Method, "path", req.URL.Path)
+				hooks.Logger.WarnContext(req.Context(), "runtime context judge failed", "err", judgeErr, "session_id", st.Session.ID, "host", host, "method", req.Method, "path", req.URL.Path)
 			}
 			switch judgment.Kind {
 			case runtimepolicy.ClassificationBelongsToExistingTask:

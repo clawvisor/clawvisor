@@ -325,7 +325,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 				}
 				var tools []mcpclient.Tool
 				if err := json.Unmarshal(toolsJSON, &tools); err != nil {
-					logger.Warn("resolver: bad mcp tools json", "service", serviceID, "user", userID, "alias", alias, "err", err)
+					logger.WarnContext(ctx, "resolver: bad mcp tools json", "service", serviceID, "user", userID, "alias", alias, "err", err)
 					continue
 				}
 				return mcp.ForUser(tools), true
@@ -346,7 +346,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		}
 		rows, err := st.ListGeneratedAdapters(ctx, userID)
 		if err != nil {
-			logger.Warn("resolver: failed to list generated adapters", "user_id", userID, "err", err)
+			logger.WarnContext(ctx, "resolver: failed to list generated adapters", "user_id", userID, "err", err)
 			return nil, false
 		}
 		for _, row := range rows {
@@ -362,13 +362,13 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		adapterReg.SetUserAdapterLister(func(ctx context.Context, userID string) ([]adapters.Adapter, bool) {
 			rows, err := st.ListGeneratedAdapters(ctx, userID)
 			if err != nil {
-				logger.Warn("resolver: failed to list generated adapters", "user_id", userID, "err", err)
+				logger.WarnContext(ctx, "resolver: failed to list generated adapters", "user_id", userID, "err", err)
 				return nil, false
 			}
 			out := make([]adapters.Adapter, 0, len(rows))
 			for _, row := range rows {
 				if _, isGlobal := adapterReg.Get(row.ServiceID); isGlobal {
-					logger.Warn("resolver: skipping generated adapter that collides with a built-in adapter",
+					logger.WarnContext(ctx, "resolver: skipping generated adapter that collides with a built-in adapter",
 						"user_id", userID, "service_id", row.ServiceID)
 					continue
 				}

@@ -225,7 +225,7 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 			ExpectedUse:            env.ExpectedUse,
 		})
 		if err != nil {
-			h.logger.Warn("inline task risk assessment failed", "error", err)
+			h.logger.WarnContext(ctx, "inline task risk assessment failed", "error", err)
 		}
 		if llmAssessment != nil && !strings.EqualFold(llmAssessment.RiskLevel, "unknown") {
 			finalAssessment = mergeRiskAssessments(llmAssessment, envelopeAssessment)
@@ -248,7 +248,7 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 		var err error
 		credentialPlaceholders, err = h.mintTaskCredentialPlaceholders(ctx, task, requiredCredentials, credentialExpiresAt)
 		if err != nil {
-			h.logger.Error("failed to mint inline task credential placeholders; denying task to avoid orphaned active credential task",
+			h.logger.ErrorContext(ctx, "failed to mint inline task credential placeholders; denying task to avoid orphaned active credential task",
 				"task_id", task.ID, "err", err)
 			// Rollback must outlive the inbound request — a client
 			// disconnect that cancels ctx between the mint failure and
@@ -257,7 +257,7 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 			// values (logging, tracing).
 			rollbackCtx := context.WithoutCancel(ctx)
 			if rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied"); rollbackErr != nil {
-				h.logger.Error("CRITICAL: credential placeholder mint failed AND rollback failed; task is now orphaned active",
+				h.logger.ErrorContext(ctx, "CRITICAL: credential placeholder mint failed AND rollback failed; task is now orphaned active",
 					"task_id", task.ID, "mint_err", err, "rollback_err", rollbackErr)
 			}
 			return nil, fmt.Errorf("mint credential placeholders: %w", err)
@@ -279,14 +279,14 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 		// authorize anything, then fail the inline-create — the caller
 		// will rewrite the user message as a deny with the approval
 		// error surfaced to the LLM.
-		h.logger.Error("failed to create inline approval record; denying task to preserve audit invariant",
+		h.logger.ErrorContext(ctx, "failed to create inline approval record; denying task to preserve audit invariant",
 			"task_id", task.ID, "err", err)
 		rollbackCtx := context.WithoutCancel(ctx)
 		if rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied"); rollbackErr != nil {
 			// Best-effort: log loudly. The original error is what we
 			// surface; an orphaned active task here is far worse than
 			// any other failure mode, so flag it.
-			h.logger.Error("CRITICAL: approval record failed AND rollback failed; task is now orphaned active",
+			h.logger.ErrorContext(ctx, "CRITICAL: approval record failed AND rollback failed; task is now orphaned active",
 				"task_id", task.ID, "approval_err", err, "rollback_err", rollbackErr)
 		}
 		return nil, fmt.Errorf("create inline approval record: %w", err)

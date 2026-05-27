@@ -75,14 +75,14 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			if traceDir == "" {
 				traceDir = filepath.Join(dataDir, "timing-traces")
 			}
-			opts.Logger.Info("runtime proxy timing traces enabled", "dir", traceDir)
+			opts.Logger.InfoContext(ctx, "runtime proxy timing traces enabled", "dir", traceDir)
 		}
 		if opts.Config.RuntimeProxy.BodyTraceEnabled && opts.Logger != nil {
 			traceDir := bodyTraceDir
 			if traceDir == "" {
 				traceDir = filepath.Join(dataDir, "body-traces")
 			}
-			opts.Logger.Info("runtime proxy body traces enabled", "dir", traceDir)
+			opts.Logger.InfoContext(ctx, "runtime proxy body traces enabled", "dir", traceDir)
 		}
 		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store, Config: opts.Config, Logger: opts.Logger})
 		runtimeSrv.InstallObserveNoticeRequestScrubber()
@@ -105,7 +105,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			// In-memory approval cache is correct only for single-instance deploys.
 			// On a multi-replica setup, an approval held on one replica is invisible
 			// to others and the proxy will block forever on the second instance.
-			opts.Logger.Warn("runtime proxy: RedisClient not configured — held-approval cache is process-local; running multiple replicas will desync approvals")
+			opts.Logger.WarnContext(ctx, "runtime proxy: RedisClient not configured — held-approval cache is process-local; running multiple replicas will desync approvals")
 		}
 		contextJudge := runtimepolicy.NewLLMRuntimeContextJudge(llm.NewHealth(opts.Config.LLM), opts.Logger)
 		runtimeSrv.InstallToolUseInterceptors(runtimeproxy.ToolUseHooks{
@@ -373,13 +373,13 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		if err := runtimeSrv.Start(); err != nil {
 			return err
 		}
-		opts.Logger.Info("runtime proxy running", "addr", runtimeSrv.Addr())
+		opts.Logger.InfoContext(ctx, "runtime proxy running", "addr", runtimeSrv.Addr())
 		go func() {
 			<-ctx.Done()
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := runtimeSrv.Shutdown(shutdownCtx); err != nil && opts.Logger != nil {
-				opts.Logger.Warn("runtime proxy shutdown failed", "error", err)
+				opts.Logger.WarnContext(shutdownCtx, "runtime proxy shutdown failed", "error", err)
 			}
 		}()
 	}
@@ -390,7 +390,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		opts.RelayClient.SetHandler(srv.Handler())
 		go func() {
 			if err := opts.RelayClient.Run(ctx); err != nil && ctx.Err() == nil {
-				opts.Logger.Error("relay client stopped", "error", err)
+				opts.Logger.ErrorContext(ctx, "relay client stopped", "error", err)
 			}
 		}()
 	}

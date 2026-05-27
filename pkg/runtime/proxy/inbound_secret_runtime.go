@@ -627,7 +627,7 @@ func (s *runtimeSecretScanner) runAdjudicationGroup(ctx context.Context, client 
 	if err != nil {
 		s.recordAdjudicationDebug(debugRec)
 		if s.hooks.Logger != nil {
-			s.hooks.Logger.Warn("runtime secret adjudicator failed", "err", err, "host", s.host, "field", rep.fieldName)
+			s.hooks.Logger.WarnContext(ctx, "runtime secret adjudicator failed", "err", err, "host", s.host, "field", rep.fieldName)
 		}
 		return
 	}
@@ -636,7 +636,7 @@ func (s *runtimeSecretScanner) runAdjudicationGroup(ctx context.Context, client 
 		debugRec.ParseErr = perr
 		s.recordAdjudicationDebug(debugRec)
 		if s.hooks.Logger != nil {
-			s.hooks.Logger.Warn("runtime secret adjudicator parse failed",
+			s.hooks.Logger.WarnContext(ctx, "runtime secret adjudicator parse failed",
 				"err", perr, "host", s.host, "field", rep.fieldName, "raw_len", len(raw))
 		}
 		return
@@ -811,7 +811,7 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 	if err != nil {
 		s.recordAdjudicationDebug(debugRec)
 		if s.hooks.Logger != nil {
-			s.hooks.Logger.Warn("runtime secret adjudicator failed", "err", err, "host", s.host, "field", fieldName)
+			s.hooks.Logger.WarnContext(ctx, "runtime secret adjudicator failed", "err", err, "host", s.host, "field", fieldName)
 		}
 		return adjudicationVerdict{}, false
 	}
@@ -820,7 +820,7 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 		debugRec.ParseErr = perr
 		s.recordAdjudicationDebug(debugRec)
 		if s.hooks.Logger != nil {
-			s.hooks.Logger.Warn("runtime secret adjudicator parse failed",
+			s.hooks.Logger.WarnContext(ctx, "runtime secret adjudicator parse failed",
 				"err", perr, "host", s.host, "field", fieldName, "raw_len", len(raw))
 		}
 		return adjudicationVerdict{}, false

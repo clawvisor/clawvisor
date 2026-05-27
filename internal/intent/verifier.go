@@ -157,7 +157,7 @@ func (v *LLMVerifier) StartGeminiCache(ctx context.Context, cfg llm.GeminiCacheM
 	for _, vr := range variants {
 		mgr, nameFn, invalidator, err := llm.StartCachedSystemPrompt(ctx, cfg, vr.prompt)
 		if err != nil {
-			logger.Warn("verifier gemini cache start failed for variant; running uncached for this variant",
+			logger.WarnContext(ctx, "verifier gemini cache start failed for variant; running uncached for this variant",
 				"variant", vr.variant.String(), "err", err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("verifier gemini cache (%s): %w", vr.variant.String(), err)
@@ -297,7 +297,7 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		return verdict, nil
 	}
 
-	v.logger.Warn("intent verification failed after retry",
+	v.logger.WarnContext(ctx, "intent verification failed after retry",
 		"error", lastErr,
 		"service", req.Service,
 		"action", req.Action,

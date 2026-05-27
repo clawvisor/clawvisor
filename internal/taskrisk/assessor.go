@@ -202,7 +202,7 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 		return assessment, nil
 	}
 
-	a.logger.Warn("task risk assessment failed after retry", "error", lastErr)
+	a.logger.WarnContext(ctx, "task risk assessment failed after retry", "error", lastErr)
 	return &RiskAssessment{
 		RiskLevel:   "unknown",
 		Explanation: "Risk assessment temporarily unavailable.",

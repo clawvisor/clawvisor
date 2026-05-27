@@ -115,14 +115,14 @@ func (h *WelcomeHandler) Suggestions(w http.ResponseWriter, r *http.Request) {
 
 	services, err := h.listActivatedServices(ctx, user.ID)
 	if err != nil {
-		h.logger.Warn("welcome: failed to list services", "err", err)
+		h.logger.WarnContext(ctx, "welcome: failed to list services", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list services")
 		return
 	}
 
 	agents, err := h.st.ListAgents(ctx, user.ID)
 	if err != nil {
-		h.logger.Warn("welcome: failed to list agents", "err", err)
+		h.logger.WarnContext(ctx, "welcome: failed to list agents", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list agents")
 		return
 	}
@@ -165,7 +165,7 @@ func (h *WelcomeHandler) Suggestions(w http.ResponseWriter, r *http.Request) {
 			h.llmHealth.SetSpendCapExhausted()
 			resp.LLMStatus = "exhausted"
 		} else {
-			h.logger.Warn("welcome: suggestion generation failed", "err", err)
+			h.logger.WarnContext(ctx, "welcome: suggestion generation failed", "err", err)
 			resp.LLMStatus = "error"
 		}
 		writeJSON(w, http.StatusOK, resp)

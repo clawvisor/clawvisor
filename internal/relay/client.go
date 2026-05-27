@@ -134,7 +134,7 @@ func (c *Client) register(ctx context.Context) error {
 
 	c.daemonID = result.DaemonID
 	c.registered = true
-	c.logger.Info("relay: registered with relay", "daemon_id", result.DaemonID)
+	c.logger.InfoContext(ctx, "relay: registered with relay", "daemon_id", result.DaemonID)
 	return nil
 }
 
@@ -146,7 +146,7 @@ func (c *Client) Run(ctx context.Context) error {
 	// daemon_id if the key is already known.
 	if !c.registered {
 		if err := c.register(ctx); err != nil {
-			c.logger.Warn("relay: initial registration failed, will retry on auth failure", "err", err)
+			c.logger.WarnContext(ctx, "relay: initial registration failed, will retry on auth failure", "err", err)
 		}
 	}
 
@@ -164,10 +164,10 @@ func (c *Client) Run(ctx context.Context) error {
 		if err != nil && isAuthError(err) {
 			consecutiveAuthFailures++
 			if regErr := c.register(ctx); regErr != nil {
-				c.logger.Warn("relay: re-registration failed", "err", regErr)
+				c.logger.WarnContext(ctx, "relay: re-registration failed", "err", regErr)
 			}
 			if consecutiveAuthFailures >= maxConsecutiveAuthFailures {
-				c.logger.Error("relay auth failing repeatedly — check daemon key/config",
+				c.logger.ErrorContext(ctx, "relay auth failing repeatedly — check daemon key/config",
 					"err", err, "consecutive_failures", consecutiveAuthFailures)
 			}
 		} else {
@@ -181,7 +181,7 @@ func (c *Client) Run(ctx context.Context) error {
 			delay = c.baseDelay
 		}
 
-		c.logger.Warn("relay connection lost, reconnecting",
+		c.logger.WarnContext(ctx, "relay connection lost, reconnecting",
 			"err", err, "delay", delay)
 
 		// Apply ±25% jitter.
@@ -274,7 +274,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 		conn.Close(websocket.StatusNormalClosure, "")
 	}()
 
-	c.logger.Info("relay connected", "daemon_id", c.daemonID)
+	c.logger.InfoContext(connCtx, "relay connected", "daemon_id", c.daemonID)
 
 	// Send periodic pings to keep the connection alive. The relay may not
 	// send traffic during idle periods, so without client-side pings the
@@ -288,7 +288,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 				return
 			case <-ticker.C:
 				if err := c.sendFrame(FramePing, "", nil); err != nil {
-					c.logger.Warn("relay: ping write failed, closing connection", "err", err)
+					c.logger.WarnContext(connCtx, "relay: ping write failed, closing connection", "err", err)
 					connCancel() // tear down read loop
 					return
 				}
@@ -307,7 +307,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 
 		var frame Frame
 		if err := json.Unmarshal(data, &frame); err != nil {
-			c.logger.Warn("relay: invalid frame", "err", err)
+			c.logger.WarnContext(connCtx, "relay: invalid frame", "err", err)
 			continue
 		}
 
@@ -315,14 +315,14 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 		case FrameHTTPRequest:
 			var payload HTTPRequestPayload
 			if err := json.Unmarshal(frame.Payload, &payload); err != nil {
-				c.logger.Warn("relay: invalid request payload", "err", err)
+				c.logger.WarnContext(connCtx, "relay: invalid request payload", "err", err)
 				continue
 			}
 			// Acquire semaphore slot (bounded concurrency).
 			select {
 			case sem <- struct{}{}:
 			default:
-				c.logger.Warn("relay: too many concurrent requests, dropping", "id", frame.ID)
+				c.logger.WarnContext(connCtx, "relay: too many concurrent requests, dropping", "id", frame.ID)
 				go c.sendResponse(frame.ID, HTTPResponsePayload{
 					Status:  http.StatusServiceUnavailable,
 					Headers: map[string][]string{"Content-Type": {"text/plain"}},
@@ -341,7 +341,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 			c.sendFrame(FramePong, frame.ID, nil)
 
 		default:
-			c.logger.Debug("relay: ignoring frame", "type", frame.Type)
+			c.logger.DebugContext(connCtx, "relay: ignoring frame", "type", frame.Type)
 		}
 	}
 }

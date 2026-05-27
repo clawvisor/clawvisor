@@ -41,7 +41,7 @@ func (s *Server) HandleJSONRPC(w http.ResponseWriter, r *http.Request, req *Requ
 		// Notification — validate session but no response either way.
 		sessionID := r.Header.Get("Mcp-Session-Id")
 		if !s.sessions.Valid(r.Context(), sessionID) {
-			s.logger.Warn("notifications/initialized with invalid session", "session_id", sessionID)
+			s.logger.WarnContext(r.Context(), "notifications/initialized with invalid session", "session_id", sessionID)
 		}
 		return nil
 	case "ping", "tools/list", "tools/call", "prompts/list", "prompts/get":

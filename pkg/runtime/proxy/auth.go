@@ -231,7 +231,7 @@ func (a *Authenticator) maybeExtendSessionExpiry(ctx context.Context, session *s
 	}
 	if err := a.Store.UpdateRuntimeSessionExpiry(ctx, session.ID, newExpiry); err != nil {
 		if a.Logger != nil {
-			a.Logger.Warn("failed to extend runtime session expiry", "session_id", session.ID, "err", err)
+			a.Logger.WarnContext(ctx, "failed to extend runtime session expiry", "session_id", session.ID, "err", err)
 		}
 		return
 	}

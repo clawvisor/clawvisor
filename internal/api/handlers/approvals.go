@@ -219,7 +219,7 @@ func (h *ApprovalsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "this approval is no longer pending — refresh to see the current state")
 			return
 		}
-		h.logger.Error("failed to approve pending request", "request_id", requestID, "resolution", resolution, "err", err)
+		h.logger.ErrorContext(r.Context(), "failed to approve pending request", "request_id", requestID, "resolution", resolution, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve pending request")
 		return
 	}
@@ -288,7 +288,7 @@ func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, us
 func (h *ApprovalsHandler) revertOrTerminate(ctx context.Context, pa *store.PendingApproval, reason string) {
 	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, pa.UserID, paTaskID(pa), "approved", pa.Status)
 	if err != nil {
-		h.logger.Error("failed to revert approval status",
+		h.logger.ErrorContext(ctx, "failed to revert approval status",
 			"request_id", pa.RequestID, "reason", reason, "err", err)
 		return
 	}
@@ -300,7 +300,7 @@ func (h *ApprovalsHandler) revertOrTerminate(ctx context.Context, pa *store.Pend
 	// approval to a terminal "denied" state so it doesn't stay pending in
 	// the dashboard. The pending_approvals row itself will be cleaned up
 	// by the lease-recovery sweeper.
-	h.logger.Warn("approval revert lost CAS; forcing canonical resolution",
+	h.logger.WarnContext(ctx, "approval revert lost CAS; forcing canonical resolution",
 		"request_id", pa.RequestID, "reason", reason)
 	h.resolveCanonicalApproval(ctx, pa, "deny", "denied")
 }
@@ -325,7 +325,7 @@ var errApprovalAlreadyResolved = errors.New("approval is no longer pending")
 func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingApproval, resolution string) (*store.Task, error) {
 	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, pa.UserID, paTaskID(pa), "pending", "approved")
 	if err != nil {
-		h.logger.Error("failed to update approval status", "request_id", pa.RequestID, "err", err)
+		h.logger.ErrorContext(ctx, "failed to update approval status", "request_id", pa.RequestID, "err", err)
 		return nil, err
 	}
 	if !won {
@@ -346,7 +346,7 @@ func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingAp
 	}
 	h.resolveCanonicalApproval(ctx, pa, resolution, "approved")
 	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, "approved", "", 0); err != nil {
-		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
+		h.logger.ErrorContext(ctx, "failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
 	}
 
 	notifyText := "✅ <b>Approved</b> — waiting for agent to execute."
@@ -423,10 +423,10 @@ func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userI
 
 	h.resolveCanonicalApproval(ctx, pa, "deny", "denied")
 	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, "denied", "", 0); err != nil {
-		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
+		h.logger.ErrorContext(ctx, "failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
 	}
 	if err := h.st.DeletePendingApproval(ctx, requestID, userID, taskID); err != nil {
-		h.logger.Error("failed to delete pending approval", "request_id", requestID, "err", err)
+		h.logger.ErrorContext(ctx, "failed to delete pending approval", "request_id", requestID, "err", err)
 	}
 
 	h.updateNotificationMsg(ctx, "approval", approvalNotifyTargetID(requestID, taskID), pa.UserID, "❌ <b>Denied</b> — request rejected.")
@@ -486,10 +486,10 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 
 	h.resolveCanonicalApproval(r.Context(), pa, "deny", "denied")
 	if err := h.st.UpdateAuditOutcome(r.Context(), pa.AuditID, "denied", "", 0); err != nil {
-		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
+		h.logger.ErrorContext(r.Context(), "failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
 	}
 	if err := h.st.DeletePendingApproval(r.Context(), requestID, user.ID, taskID); err != nil {
-		h.logger.Error("failed to delete pending approval", "request_id", requestID, "err", err)
+		h.logger.ErrorContext(r.Context(), "failed to delete pending approval", "request_id", requestID, "err", err)
 	}
 
 	h.updateNotificationMsg(r.Context(), "approval", approvalNotifyTargetID(requestID, taskID), pa.UserID, "❌ <b>Denied</b> — request rejected.")
@@ -537,10 +537,10 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 	}
 
 	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, outcome, errMsg, dur); err != nil {
-		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
+		h.logger.ErrorContext(ctx, "failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
 	}
 	if err := h.st.DeletePendingApproval(ctx, pa.RequestID, pa.UserID, paTaskID(pa)); err != nil {
-		h.logger.Error("failed to delete pending approval", "request_id", pa.RequestID, "err", err)
+		h.logger.ErrorContext(ctx, "failed to delete pending approval", "request_id", pa.RequestID, "err", err)
 	}
 
 	notifyText := "✅ <b>Approved</b> — request executed."
@@ -632,13 +632,13 @@ func (h *ApprovalsHandler) processExpiredApproval(ctx context.Context, pa *store
 	}
 	h.decrementNotifierPolling(pa.UserID)
 	h.publishQueueAndAudit(pa.UserID, pa.AuditID)
-	h.logger.Info("pending approval expired", "request_id", pa.RequestID, "reason", reason)
+	h.logger.InfoContext(ctx, "pending approval expired", "request_id", pa.RequestID, "reason", reason)
 }
 
 func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 	expired, err := h.st.ListExpiredPendingApprovals(ctx)
 	if err != nil {
-		h.logger.Warn("expiry cleanup: list failed", "err", err)
+		h.logger.WarnContext(ctx, "expiry cleanup: list failed", "err", err)
 		return
 	}
 	for _, pa := range expired {
@@ -657,21 +657,21 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 	// resolver wins.
 	stalled, err := h.st.ListStalledExecutingApprovals(ctx, executingLeaseTTL)
 	if err != nil {
-		h.logger.Warn("expiry cleanup: stalled-executing list failed", "err", err)
+		h.logger.WarnContext(ctx, "expiry cleanup: stalled-executing list failed", "err", err)
 	} else {
 		for _, pa := range stalled {
 			won, err := h.st.ClaimStalledExecutingApprovalForRecovery(ctx, pa.RequestID, pa.UserID, paTaskID(pa), executingLeaseTTL)
 			if err != nil {
-				h.logger.Warn("expiry cleanup: stalled-executing claim failed", "request_id", pa.RequestID, "err", err)
+				h.logger.WarnContext(ctx, "expiry cleanup: stalled-executing claim failed", "request_id", pa.RequestID, "err", err)
 				continue
 			}
 			if !won {
 				// The executor finished between list and claim — it has
 				// already delivered an "executed" callback. Do nothing.
-				h.logger.Debug("stalled approval finished before recovery sweep", "request_id", pa.RequestID)
+				h.logger.DebugContext(ctx, "stalled approval finished before recovery sweep", "request_id", pa.RequestID)
 				continue
 			}
-			h.logger.Warn("recovered stalled executing approval", "request_id", pa.RequestID, "user_id", pa.UserID)
+			h.logger.WarnContext(ctx, "recovered stalled executing approval", "request_id", pa.RequestID, "user_id", pa.UserID)
 			h.processExpiredApproval(ctx, pa, "stranded", "⏰ <b>Recovered</b> — execution lease expired.")
 		}
 	}
@@ -679,7 +679,7 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 	// Expire timed-out tasks.
 	expiredTasks, err := h.st.ListExpiredTasks(ctx)
 	if err != nil {
-		h.logger.Warn("task expiry cleanup: list failed", "err", err)
+		h.logger.WarnContext(ctx, "task expiry cleanup: list failed", "err", err)
 		return
 	}
 	for _, task := range expiredTasks {
@@ -699,7 +699,7 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		}
 		h.decrementNotifierPolling(task.UserID)
 		h.publishTasksAndQueue(task.UserID)
-		h.logger.Info("task expired", "task_id", task.ID)
+		h.logger.InfoContext(ctx, "task expired", "task_id", task.ID)
 	}
 }
 
@@ -723,18 +723,18 @@ func (h *ApprovalsHandler) resolveCanonicalApproval(ctx context.Context, pa *sto
 		loaded, err := h.st.GetApprovalRecord(ctx, *approvalID)
 		if err != nil {
 			if !errors.Is(err, store.ErrNotFound) {
-				h.logger.Error("failed to load canonical approval before resolve", "approval_id", *approvalID, "request_id", pa.RequestID, "err", err)
+				h.logger.ErrorContext(ctx, "failed to load canonical approval before resolve", "approval_id", *approvalID, "request_id", pa.RequestID, "err", err)
 			}
 			return
 		}
 		rec = loaded
 	}
 	if err := validateApprovalRecordTransition(rec, resolution, status); err != nil {
-		h.logger.Error("illegal canonical approval transition", "approval_id", rec.ID, "request_id", pa.RequestID, "kind", rec.Kind, "from_status", rec.Status, "resolution", resolution, "status", status, "err", err)
+		h.logger.ErrorContext(ctx, "illegal canonical approval transition", "approval_id", rec.ID, "request_id", pa.RequestID, "kind", rec.Kind, "from_status", rec.Status, "resolution", resolution, "status", status, "err", err)
 		return
 	}
 	if err := h.st.ResolveApprovalRecord(ctx, *approvalID, resolution, status, time.Now().UTC()); err != nil && !errors.Is(err, store.ErrNotFound) {
-		h.logger.Error("failed to resolve canonical approval", "approval_id", *approvalID, "request_id", pa.RequestID, "err", err)
+		h.logger.ErrorContext(ctx, "failed to resolve canonical approval", "approval_id", *approvalID, "request_id", pa.RequestID, "err", err)
 	}
 }
 
@@ -828,7 +828,7 @@ func (h *ApprovalsHandler) promotePendingApprovalToTask(ctx context.Context, pa 
 			UserID:    task.UserID,
 		})
 		if err != nil {
-			h.logger.Warn("task risk assessment failed for promoted request task", "request_id", pa.RequestID, "err", err)
+			h.logger.WarnContext(ctx, "task risk assessment failed for promoted request task", "request_id", pa.RequestID, "err", err)
 		} else if assessment != nil {
 			task.RiskLevel = assessment.RiskLevel
 			task.RiskDetails = taskrisk.MarshalAssessment(assessment)
@@ -892,6 +892,6 @@ func (h *ApprovalsHandler) updateNotificationMsg(ctx context.Context, targetType
 		return
 	}
 	if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
-		h.logger.Warn("telegram message update failed", "err", err, "target_type", targetType, "target_id", targetID)
+		h.logger.WarnContext(ctx, "telegram message update failed", "err", err, "target_type", targetType, "target_id", targetID)
 	}
 }

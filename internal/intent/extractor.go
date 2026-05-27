@@ -535,7 +535,7 @@ func (e *LLMExtractor) ExtractLLM(ctx context.Context, req ExtractRequest, exist
 		if errors.Is(err, llm.ErrSpendCapExhausted) {
 			e.health.SetSpendCapExhausted()
 		}
-		e.logger.Warn("chain context extraction LLM call failed", "err", err, "task_id", req.TaskID)
+		e.logger.WarnContext(ctx, "chain context extraction LLM call failed", "err", err, "task_id", req.TaskID)
 		return nil, nil
 	}
 	llm.LogUsage(e.logger, "chain_context_extraction", cfg.Model, usage)
@@ -546,7 +546,7 @@ func (e *LLMExtractor) ExtractLLM(ctx context.Context, req ExtractRequest, exist
 	// brace-matching to avoid those failure modes.
 	extracted := extractFirstJSONValue(raw)
 	if extracted == "" {
-		e.logger.Warn("chain context extraction: no JSON value found in response", "task_id", req.TaskID)
+		e.logger.WarnContext(ctx, "chain context extraction: no JSON value found in response", "task_id", req.TaskID)
 		return nil, nil
 	}
 	directFacts, patterns := parseExtractionResponse(extracted, e.logger, req.TaskID)
@@ -561,7 +561,7 @@ func (e *LLMExtractor) ExtractLLM(ctx context.Context, req ExtractRequest, exist
 
 	facts, dropped := mergeExtractionResults(directFacts, patterns, seen, req, e.logger)
 
-	e.logger.Debug("chain context LLM extraction complete",
+	e.logger.DebugContext(ctx, "chain context LLM extraction complete",
 		"task_id", req.TaskID,
 		"direct_facts", len(directFacts)-dropped,
 		"dropped", dropped,
