@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -52,28 +53,42 @@ func TraceFromContext(ctx context.Context) (traceID, spanID string, ok bool) {
 
 // ExtractTrace parses the trace ID and span ID from an incoming request.
 // It prefers the Google Cloud-specific X-Cloud-Trace-Context header and falls
-// back to the W3C traceparent header. Returns empty strings if neither is
-// present or parseable.
+// back to the W3C traceparent header. The returned spanID is always 16-char
+// hex (the form logging.googleapis.com/spanId expects); X-Cloud-Trace-Context
+// carries it in decimal, so it is converted here. Returns empty strings if
+// neither header is present or parseable.
 func ExtractTrace(r *http.Request) (traceID, spanID string) {
 	if v := r.Header.Get("X-Cloud-Trace-Context"); v != "" {
-		// Format: TRACE_ID/SPAN_ID;o=OPTIONS
+		// Format: TRACE_ID/SPAN_ID;o=OPTIONS — SPAN_ID is a decimal uint64.
 		rest := v
 		if i := strings.Index(rest, ";"); i >= 0 {
 			rest = rest[:i]
 		}
 		if i := strings.Index(rest, "/"); i >= 0 {
-			return rest[:i], rest[i+1:]
+			return rest[:i], decimalSpanIDToHex(rest[i+1:])
 		}
 		return rest, ""
 	}
 	if v := r.Header.Get("traceparent"); v != "" {
-		// Format: VERSION-TRACE_ID-PARENT_ID-FLAGS
+		// Format: VERSION-TRACE_ID-PARENT_ID-FLAGS — PARENT_ID is already
+		// 16-char hex, matching logging.googleapis.com/spanId.
 		parts := strings.Split(v, "-")
 		if len(parts) >= 3 {
 			return parts[1], parts[2]
 		}
 	}
 	return "", ""
+}
+
+// decimalSpanIDToHex converts an X-Cloud-Trace-Context decimal span ID into
+// the 16-char zero-padded hex form that logging.googleapis.com/spanId
+// expects. Returns "" if s is not a valid unsigned 64-bit decimal.
+func decimalSpanIDToHex(s string) string {
+	n, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%016x", n)
 }
 
 // Handler wraps another slog.Handler and adds trace fields recognised by

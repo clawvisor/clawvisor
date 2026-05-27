@@ -11,11 +11,33 @@ import (
 
 func TestExtractTrace_CloudHeader(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
+	// X-Cloud-Trace-Context span IDs are decimal; we must convert to the
+	// 16-char hex form logging.googleapis.com/spanId expects.
 	req.Header.Set("X-Cloud-Trace-Context", "abc123/456;o=1")
 
 	traceID, spanID := ExtractTrace(req)
-	if traceID != "abc123" || spanID != "456" {
+	if traceID != "abc123" || spanID != "00000000000001c8" {
 		t.Fatalf("got %q/%q", traceID, spanID)
+	}
+}
+
+func TestExtractTrace_CloudHeaderMaxSpanID(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Cloud-Trace-Context", "abc/18446744073709551615")
+
+	_, spanID := ExtractTrace(req)
+	if spanID != "ffffffffffffffff" {
+		t.Fatalf("expected ffffffffffffffff, got %q", spanID)
+	}
+}
+
+func TestExtractTrace_CloudHeaderBadSpanID(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Cloud-Trace-Context", "abc/notanumber")
+
+	traceID, spanID := ExtractTrace(req)
+	if traceID != "abc" || spanID != "" {
+		t.Fatalf("expected abc/'', got %q/%q", traceID, spanID)
 	}
 }
 
@@ -53,7 +75,7 @@ func TestHandler_InjectsTraceAndSpan(t *testing.T) {
 	h := NewHandler(inner, "my-project")
 	logger := slog.New(h)
 
-	ctx := WithTrace(context.Background(), "abc123", "456")
+	ctx := WithTrace(context.Background(), "abc123", "00000000000001c8")
 	logger.InfoContext(ctx, "hello")
 
 	var got map[string]any
@@ -63,7 +85,7 @@ func TestHandler_InjectsTraceAndSpan(t *testing.T) {
 	if got["logging.googleapis.com/trace"] != "projects/my-project/traces/abc123" {
 		t.Fatalf("trace field: %v", got["logging.googleapis.com/trace"])
 	}
-	if got["logging.googleapis.com/spanId"] != "456" {
+	if got["logging.googleapis.com/spanId"] != "00000000000001c8" {
 		t.Fatalf("span field: %v", got["logging.googleapis.com/spanId"])
 	}
 }
