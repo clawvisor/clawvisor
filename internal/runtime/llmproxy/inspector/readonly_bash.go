@@ -190,6 +190,10 @@ func commandFlagsReadOnly(name string, args []*syntax.Word) bool {
 		return false
 	}
 	switch name {
+	case "echo":
+		// echo treats only -e/-n/-E (and combinations) as flags; everything
+		// else is printed literally. Any static argument is safe.
+		return true
 	case "date":
 		return dateArgsReadOnly(values)
 	case "find":
@@ -265,7 +269,6 @@ var readOnlyCommandOptions = map[string]optionSpec{
 	"tr":       {shortNoArg: "cdst", longNoArg: flagSet("complement", "delete", "squeeze-repeats", "truncate-set1", "help", "version"), operands: operandsAny},
 	"paste":    {shortNoArg: "sz", shortArg: "d", longNoArg: flagSet("serial", "zero-terminated", "help", "version"), longArg: flagSet("delimiters"), operands: operandsAny},
 	"col":      {shortNoArg: "bfhpx", operands: operandsAny},
-	"echo":     {shortNoArg: "enE", longNoArg: flagSet("help", "version"), operands: operandsAny},
 }
 
 func flagSet(names ...string) map[string]bool {

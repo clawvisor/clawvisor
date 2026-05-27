@@ -31,6 +31,13 @@ func TestIsReadOnlyBashCommandAcceptsCommonReads(t *testing.T) {
 		"tail -40 README.md",
 		"ls /tmp | head -40",
 		"ls /tmp | tail -5",
+		"echo ---",
+		"echo -x",
+		"echo -- foo",
+		"echo --foo",
+		"echo --bar=baz",
+		"echo -en hi",
+		"echo -e hi",
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {
