@@ -283,10 +283,15 @@ func TestOpenAIResponseRewriterBlocksResponsesFunctionCallSSE(t *testing.T) {
 func TestOpenAIToolResultIDsAndApprovalReply(t *testing.T) {
 	t.Parallel()
 
+	// function_call_output must precede the user approval reply: tool
+	// outputs only appear after a prior release, so a real conversation
+	// can't have one sitting AFTER the message that's now requesting a
+	// release. OpenAIApprovalReply treats a function_call_output after
+	// the latest user message as a signal the approval already happened.
 	responsesBody := []byte(`{
 	  "input":[
-	    {"type":"message","role":"user","content":[{"type":"input_text","text":"approve cv-abcdefghijklmnopqrstuvwxyz"}]},
-	    {"type":"function_call_output","call_id":"call_123","output":"ok"}
+	    {"type":"function_call_output","call_id":"call_123","output":"ok"},
+	    {"type":"message","role":"user","content":[{"type":"input_text","text":"approve cv-abcdefghijklmnopqrstuvwxyz"}]}
 	  ]
 	}`)
 	responsesReq, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)

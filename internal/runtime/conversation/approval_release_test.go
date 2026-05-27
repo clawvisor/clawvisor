@@ -103,3 +103,82 @@ func TestOpenAIApprovalReplyResponsesInputBareReplyUsesMarker(t *testing.T) {
 		t.Fatalf("verb=%q id=%q, want approve cv-dddddddddddd", verb, id)
 	}
 }
+
+func TestOpenAIApprovalReplyResponsesInputStaleAfterFunctionCallOutput(t *testing.T) {
+	// Regression: after the user's "y" is consumed and the released tool
+	// has run, the function_call_output item appears later in the input
+	// array than the "y". Subsequent inference requests still carry the
+	// "y" in history but it must NOT re-fire the release path, or the
+	// proxy will deny every follow-up with "approval no longer valid".
+	body := []byte(`{
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "create some files"}]},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "paused [clawvisor:approval=cv-eeeeeeeeeeee]"}]},
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "y"}]},
+			{"type": "function_call", "name": "exec_command", "call_id": "call_1", "arguments": "{}"},
+			{"type": "function_call_output", "call_id": "call_1", "output": "ok"}
+		]
+	}`)
+	verb, id := OpenAIApprovalReply(body)
+	if verb != "" || id != "" {
+		t.Fatalf("verb=%q id=%q, want empty (release already happened)", verb, id)
+	}
+}
+
+func TestOpenAIApprovalReplyResponsesInputStaleAfterPendingFunctionCall(t *testing.T) {
+	// Defense: even if only a function_call (no output yet) has appeared
+	// after the "y", the model has already moved past the approval turn
+	// — the held call was released and the harness is about to execute
+	// it. Treat the "y" as stale rather than re-firing the release path.
+	body := []byte(`{
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "create some files"}]},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "paused [clawvisor:approval=cv-ffffffffffff]"}]},
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "y"}]},
+			{"type": "function_call", "name": "exec_command", "call_id": "call_2", "arguments": "{}"}
+		]
+	}`)
+	verb, id := OpenAIApprovalReply(body)
+	if verb != "" || id != "" {
+		t.Fatalf("verb=%q id=%q, want empty (release already happened)", verb, id)
+	}
+}
+
+func TestOpenAIApprovalReplyResponsesInputStaleAfterCustomToolCall(t *testing.T) {
+	// custom_tool_call is a first-class input item type that Responses
+	// round-trips (see sanitizeResponsesItemForInput). A released custom
+	// tool call sitting after the user's "y" is the same staleness
+	// signal as function_call — the approval was already processed.
+	body := []byte(`{
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "apply the patch"}]},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "paused [clawvisor:approval=cv-hhhhhhhhhhhh]"}]},
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "y"}]},
+			{"type": "custom_tool_call", "name": "apply_patch", "call_id": "ctc_1", "input": "*** Begin Patch\n*** End Patch\n"}
+		]
+	}`)
+	verb, id := OpenAIApprovalReply(body)
+	if verb != "" || id != "" {
+		t.Fatalf("verb=%q id=%q, want empty (release already happened)", verb, id)
+	}
+}
+
+func TestOpenAIApprovalReplyResponsesInputHeldCallBeforeReplyStillFires(t *testing.T) {
+	// Inverse of the stale case: when the held function_call sits BEFORE
+	// the "y" (the model emitted it on the prior turn, it was held, then
+	// the user replied), the release path must still fire. Only function
+	// calls appearing AFTER the user reply indicate the conversation
+	// moved past the approval.
+	body := []byte(`{
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "create some files"}]},
+			{"type": "function_call", "name": "exec_command", "call_id": "call_3", "arguments": "{}"},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "paused [clawvisor:approval=cv-gggggggggggg]"}]},
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "y"}]}
+		]
+	}`)
+	verb, id := OpenAIApprovalReply(body)
+	if verb != "approve" || id != "cv-gggggggggggg" {
+		t.Fatalf("verb=%q id=%q, want approve cv-gggggggggggg", verb, id)
+	}
+}

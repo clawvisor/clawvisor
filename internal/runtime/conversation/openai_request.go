@@ -64,10 +64,37 @@ func OpenAIApprovalReply(body []byte) (verb, id string) {
 	if len(probe.Input) > 0 {
 		var items []openAIInputItem
 		if err := json.Unmarshal(probe.Input, &items); err == nil {
+			// Find the latest message,role=user. If a tool-call or
+			// tool-output item appears more recently than that user
+			// message, the conversation has already moved past the
+			// approval turn (the held call was approved, executed, and
+			// the model has spoken since) — the "y" is stale history,
+			// not a fresh release. Bail so we pass through to upstream
+			// instead of denying with "approval no longer valid".
+			//
+			// This mirrors Anthropic's natural shape: tool_result there
+			// is a role=user message whose flattened text is empty, so
+			// the existing latest-user-text scan silently goes quiet
+			// once a tool runs. The Responses API splits message and
+			// function_call_output into separate item types, so we have
+			// to skip past them explicitly to get the same behavior.
+			//
+			// custom_tool_call is included because Responses round-trips
+			// it as an input-acceptable item type (see
+			// sanitizeResponsesItemForInput); a released custom tool
+			// call sitting after the stale "y" would otherwise re-fire
+			// this scan the same way function_call did.
 			itemUserIdx := -1
 			for i := len(items) - 1; i >= 0; i-- {
-				if items[i].Type == "message" && items[i].Role == "user" {
-					itemUserIdx = i
+				switch items[i].Type {
+				case "function_call", "function_call_output", "custom_tool_call":
+					return "", ""
+				case "message":
+					if items[i].Role == "user" {
+						itemUserIdx = i
+					}
+				}
+				if itemUserIdx >= 0 {
 					break
 				}
 			}
