@@ -1123,28 +1123,23 @@ func isVaultMiss(err error) bool {
 }
 
 // upstreamCredMissingError shapes the user-facing error for the "no
-// upstream credential available" case. Passthrough-with-no-bearer and a
-// plain vault miss get distinct codes/outcomes so the failure modes are
-// distinguishable in audit. The message deep-links to the agent's
-// dashboard page (where the Gateway API key field lives) and to the
-// provider's console for minting the key.
+// upstream credential available" case. The user message is the same
+// either way — just "get a key, paste it here" — but the audit
+// outcome distinguishes passthrough-with-no-bearer from a plain vault
+// miss so operators can still tell the failure modes apart.
 func upstreamCredMissingError(r *http.Request, agent *store.Agent, provider conversation.Provider) (code, outcome, message string) {
-	passthroughBare := llmproxy.PassthroughUpstreamAuth(r.Context()) && !llmproxy.HasPassthroughBearer(r)
-	if passthroughBare {
+	if llmproxy.PassthroughUpstreamAuth(r.Context()) && !llmproxy.HasPassthroughBearer(r) {
 		code, outcome = "UPSTREAM_AUTH_MISSING", "upstream_auth_missing_for_passthrough"
-		message = "no upstream credential available. You sent X-Clawvisor-Agent-Token (passthrough mode), but the request carried no upstream Authorization bearer for Clawvisor to forward, and no API key is vaulted for this provider."
 	} else {
 		code, outcome = "UPSTREAM_KEY_MISSING", "upstream_key_missing"
-		message = "no upstream API key is configured for this provider."
 	}
-	consoleURL := ""
-	switch provider {
-	case conversation.ProviderAnthropic:
-		consoleURL = "https://console.anthropic.com/settings/keys"
-	case conversation.ProviderOpenAI:
+	providerName := "Anthropic"
+	consoleURL := "https://console.anthropic.com/settings/keys"
+	if provider == conversation.ProviderOpenAI {
+		providerName = "OpenAI"
 		consoleURL = "https://platform.openai.com/api-keys"
 	}
-	message += " Create an API key at " + consoleURL + " and paste it into the Gateway API key field at " + version.DashboardURL() + "/dashboard/agents/" + agent.ID + " — then retry."
+	message = "no " + providerName + " API key configured. Get one at " + consoleURL + " and paste it at " + version.DashboardURL() + "/dashboard/agents/" + agent.ID + "."
 	return code, outcome, message
 }
 

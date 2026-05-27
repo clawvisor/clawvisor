@@ -1462,14 +1462,8 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 		t.Fatalf("expected 200 harness-shaped error on vault miss, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "no upstream API key is configured") {
+	if !strings.Contains(body, "no Anthropic API key configured") {
 		t.Fatalf("body should explain vault miss:\n%s", body)
-	}
-	// When the caller put the agent token in Authorization (i.e. not
-	// passthrough), the message must NOT mention X-Clawvisor-Agent-Token
-	// — that's the wrong remediation for this path.
-	if strings.Contains(body, "X-Clawvisor-Agent-Token") {
-		t.Fatalf("non-passthrough vault miss should not mention X-Clawvisor-Agent-Token:\n%s", body)
 	}
 	// Deep links: the Anthropic console + this agent's vault page on
 	// the dashboard host for the current build environment.
@@ -1481,7 +1475,7 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 	}
 }
 
-func TestLLMEndpoint_VaultMissUnderPassthroughHasDistinctMessage(t *testing.T) {
+func TestLLMEndpoint_VaultMissUnderPassthroughUsesSameMessage(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("upstream should not be hit when vault is empty and passthrough has no bearer")
 	}))
@@ -1501,10 +1495,9 @@ func TestLLMEndpoint_VaultMissUnderPassthroughHasDistinctMessage(t *testing.T) {
 	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
 
 	// Caller signals passthrough intent via X-Clawvisor-Agent-Token but
-	// sends no upstream Authorization. The proxy falls through to the
-	// vault, misses, and should report the passthrough-specific failure
-	// (not the generic "configure an API key" message that's correct for
-	// the Authorization/x-api-key path).
+	// sends no upstream Authorization. The user sees the same friendly
+	// "get a key, paste it here" message as the plain vault-miss path —
+	// the failure modes are distinguishable only via the audit outcome.
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude","messages":[]}`))
 	req.Header.Set(middleware.AgentTokenHeader, rawToken)
 	rec := httptest.NewRecorder()
@@ -1514,11 +1507,16 @@ func TestLLMEndpoint_VaultMissUnderPassthroughHasDistinctMessage(t *testing.T) {
 		t.Fatalf("expected 200 harness-shaped error, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "X-Clawvisor-Agent-Token") {
-		t.Fatalf("passthrough vault miss should mention X-Clawvisor-Agent-Token:\n%s", body)
+	if !strings.Contains(body, "no Anthropic API key configured") {
+		t.Fatalf("body should carry the friendly vault-miss message:\n%s", body)
 	}
-	if !strings.Contains(body, "passthrough") {
-		t.Fatalf("passthrough vault miss should mention passthrough:\n%s", body)
+	// The user message must NOT leak implementation jargon — these
+	// belong in the audit outcome (upstream_auth_missing_for_passthrough),
+	// not the chat-rendered text.
+	for _, term := range []string{"X-Clawvisor-Agent-Token", "passthrough", "Bearer"} {
+		if strings.Contains(body, term) {
+			t.Fatalf("user-facing message must not leak %q:\n%s", term, body)
+		}
 	}
 	if !strings.Contains(body, "https://console.anthropic.com/settings/keys") {
 		t.Fatalf("body should link to the Anthropic console:\n%s", body)
