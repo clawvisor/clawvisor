@@ -1440,6 +1440,7 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 	emptyVault := &stubVault{}
 	h.Forwarder = llmproxy.NewForwarder(emptyVault)
 	h.Forwarder.Upstream = llmproxy.UpstreamSelector{AnthropicBaseURL: upstream.URL}
+	h.DashboardBaseURL = "http://localhost:25297"
 	agent, err := st.GetAgentByToken(context.Background(), auth.HashToken(rawToken))
 	if err != nil {
 		t.Fatalf("GetAgentByToken: %v", err)
@@ -1466,12 +1467,17 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 		t.Fatalf("body should explain vault miss:\n%s", body)
 	}
 	// Deep links: the Anthropic console + this agent's vault page on
-	// the dashboard host for the current build environment.
+	// the configured dashboard host (local in this test — must NOT
+	// fall through to the build-env default app.clawvisor.com).
 	if !strings.Contains(body, "https://console.anthropic.com/settings/keys") {
 		t.Fatalf("body should link to the Anthropic console:\n%s", body)
 	}
-	if !strings.Contains(body, "/dashboard/agents/"+agent.ID) {
-		t.Fatalf("body should deep-link to this agent's vault page:\n%s", body)
+	wantAgentURL := "http://localhost:25297/dashboard/agents/" + agent.ID
+	if !strings.Contains(body, wantAgentURL) {
+		t.Fatalf("body should deep-link to the configured dashboard (%s):\n%s", wantAgentURL, body)
+	}
+	if strings.Contains(body, "app.clawvisor.com") || strings.Contains(body, "app.staging.clawvisor.com") {
+		t.Fatalf("local handler should not link to the hosted dashboard:\n%s", body)
 	}
 }
 
@@ -1485,6 +1491,7 @@ func TestLLMEndpoint_VaultMissUnderPassthroughUsesSameMessage(t *testing.T) {
 	emptyVault := &stubVault{}
 	h.Forwarder = llmproxy.NewForwarder(emptyVault)
 	h.Forwarder.Upstream = llmproxy.UpstreamSelector{AnthropicBaseURL: upstream.URL}
+	h.DashboardBaseURL = "http://localhost:25297"
 	agent, err := st.GetAgentByToken(context.Background(), auth.HashToken(rawToken))
 	if err != nil {
 		t.Fatalf("GetAgentByToken: %v", err)
@@ -1521,8 +1528,9 @@ func TestLLMEndpoint_VaultMissUnderPassthroughUsesSameMessage(t *testing.T) {
 	if !strings.Contains(body, "https://console.anthropic.com/settings/keys") {
 		t.Fatalf("body should link to the Anthropic console:\n%s", body)
 	}
-	if !strings.Contains(body, "/dashboard/agents/"+agent.ID) {
-		t.Fatalf("body should deep-link to this agent's vault page:\n%s", body)
+	wantAgentURL := "http://localhost:25297/dashboard/agents/" + agent.ID
+	if !strings.Contains(body, wantAgentURL) {
+		t.Fatalf("body should deep-link to the configured dashboard (%s):\n%s", wantAgentURL, body)
 	}
 }
 

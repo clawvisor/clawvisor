@@ -1249,6 +1249,16 @@ func (s *Server) registerLiteProxyRoutes(
 		}
 		llmHandler.ResolverBaseURL = strings.TrimRight(resolverBase, "/") + "/api/proxy"
 		llmHandler.ControlBaseURL = strings.TrimRight(baseURL, "/")
+		// Dashboard host for the "vault a key" deep link surfaced on
+		// upstream-credential errors. In split-mode hosted deploys
+		// (route_set: proxy_lite) baseURL points at the proxy itself
+		// (e.g. llm.clawvisor.com), so fall back to the build-env
+		// dashboard URL. Everywhere else baseURL IS the dashboard.
+		if strings.EqualFold(strings.TrimSpace(s.cfg.Server.RouteSet), "proxy_lite") {
+			llmHandler.DashboardBaseURL = version.DashboardURL()
+		} else {
+			llmHandler.DashboardBaseURL = strings.TrimRight(baseURL, "/")
+		}
 
 		auditEmitter := llmproxy.NewAuditEmitter(s.store, s.logger, nil)
 		llmHandler.AuditEmitter = auditEmitter

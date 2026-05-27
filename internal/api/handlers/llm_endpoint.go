@@ -56,6 +56,16 @@ type LLMEndpointHandler struct {
 	// Empty disables control prompt injection and control rewrites.
 	ControlBaseURL string
 
+	// DashboardBaseURL is the externally reachable dashboard host used
+	// to deep-link the user from "no upstream key" errors to the page
+	// where they can paste one. Should NOT include a trailing slash.
+	// In monolithic / local deploys it equals ControlBaseURL; in
+	// split-mode hosted deploys (route_set: proxy_lite) it must be set
+	// separately because ControlBaseURL there is the proxy host, not
+	// the dashboard. Empty falls back to the build-environment default
+	// from pkg/version (correct for hosted builds, wrong for local).
+	DashboardBaseURL string
+
 	// AuditEmitter writes one audit_log row per /api/v1/* request and per
 	// inspected tool_use. nil disables audit logging.
 	AuditEmitter *llmproxy.AuditEmitter
@@ -683,7 +693,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		if isVaultMiss(err) {
 			auditStatus = http.StatusUnauthorized
 			auditDecide = "deny"
-			code, outcome, message := upstreamCredMissingError(r, agent, provider)
+			code, outcome, message := upstreamCredMissingError(r, agent, provider, h.DashboardBaseURL)
 			auditOutcome = outcome
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusUnauthorized, code, message)
 			return
@@ -1127,7 +1137,13 @@ func isVaultMiss(err error) bool {
 // either way — just "get a key, paste it here" — but the audit
 // outcome distinguishes passthrough-with-no-bearer from a plain vault
 // miss so operators can still tell the failure modes apart.
-func upstreamCredMissingError(r *http.Request, agent *store.Agent, provider conversation.Provider) (code, outcome, message string) {
+//
+// dashboardBaseURL is the deployment's externally reachable dashboard
+// host. Falls back to the build-env default in pkg/version when
+// empty — correct for hosted builds, wrong for local self-hosted, so
+// the wiring in server.go should set this explicitly when it knows
+// the right host (which is essentially always in practice).
+func upstreamCredMissingError(r *http.Request, agent *store.Agent, provider conversation.Provider, dashboardBaseURL string) (code, outcome, message string) {
 	if llmproxy.PassthroughUpstreamAuth(r.Context()) && !llmproxy.HasPassthroughBearer(r) {
 		code, outcome = "UPSTREAM_AUTH_MISSING", "upstream_auth_missing_for_passthrough"
 	} else {
@@ -1139,7 +1155,11 @@ func upstreamCredMissingError(r *http.Request, agent *store.Agent, provider conv
 		providerName = "OpenAI"
 		consoleURL = "https://platform.openai.com/api-keys"
 	}
-	message = "no " + providerName + " API key configured. Get one at " + consoleURL + " and paste it at " + version.DashboardURL() + "/dashboard/agents/" + agent.ID + "."
+	dashboardBase := strings.TrimRight(strings.TrimSpace(dashboardBaseURL), "/")
+	if dashboardBase == "" {
+		dashboardBase = version.DashboardURL()
+	}
+	message = "no " + providerName + " API key configured. Get one at " + consoleURL + " and paste it at " + dashboardBase + "/dashboard/agents/" + agent.ID + "."
 	return code, outcome, message
 }
 
@@ -1847,7 +1867,7 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 		if isVaultMiss(err) {
 			*auditStatus = http.StatusUnauthorized
 			*auditDecide = "deny"
-			code, outcome, message := upstreamCredMissingError(r, agent, provider)
+			code, outcome, message := upstreamCredMissingError(r, agent, provider, h.DashboardBaseURL)
 			*auditOutcome = outcome
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusUnauthorized, code, message)
 			return
