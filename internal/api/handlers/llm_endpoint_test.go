@@ -1460,6 +1460,49 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "no upstream API key is configured") {
 		t.Fatalf("body should explain vault miss:\n%s", rec.Body.String())
 	}
+	// When the caller put the agent token in Authorization (i.e. not
+	// passthrough), the message must NOT mention X-Clawvisor-Agent-Token
+	// — that's the wrong remediation for this path.
+	if strings.Contains(rec.Body.String(), "X-Clawvisor-Agent-Token") {
+		t.Fatalf("non-passthrough vault miss should not mention X-Clawvisor-Agent-Token:\n%s", rec.Body.String())
+	}
+}
+
+func TestLLMEndpoint_VaultMissUnderPassthroughHasDistinctMessage(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("upstream should not be hit when vault is empty and passthrough has no bearer")
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	emptyVault := &stubVault{}
+	h.Forwarder = llmproxy.NewForwarder(emptyVault)
+	h.Forwarder.Upstream = llmproxy.UpstreamSelector{AnthropicBaseURL: upstream.URL}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	// Caller signals passthrough intent via X-Clawvisor-Agent-Token but
+	// sends no upstream Authorization. The proxy falls through to the
+	// vault, misses, and should report the passthrough-specific failure
+	// (not the generic "configure an API key" message that's correct for
+	// the Authorization/x-api-key path).
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude","messages":[]}`))
+	req.Header.Set(middleware.AgentTokenHeader, rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 harness-shaped error, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "X-Clawvisor-Agent-Token") {
+		t.Fatalf("passthrough vault miss should mention X-Clawvisor-Agent-Token:\n%s", body)
+	}
+	if !strings.Contains(body, "passthrough") {
+		t.Fatalf("passthrough vault miss should mention passthrough:\n%s", body)
+	}
 }
 
 func TestLLMEndpoint_RejectsMalformedBody(t *testing.T) {

@@ -114,9 +114,11 @@ func TestRequireAgentLLM_AcceptsClawvisorAgentTokenHeaderForPassthrough(t *testi
 
 	var seenAgent *store.Agent
 	var passthrough bool
+	var source string
 	handler := RequireAgentLLM(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenAgent = AgentFromContext(r.Context())
 		passthrough = llmproxy.PassthroughUpstreamAuth(r.Context())
+		source = llmproxy.CallerAuthSource(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -134,6 +136,67 @@ func TestRequireAgentLLM_AcceptsClawvisorAgentTokenHeaderForPassthrough(t *testi
 	}
 	if !passthrough {
 		t.Fatalf("expected passthrough upstream auth context")
+	}
+	if source != llmproxy.CallerAuthSourceClawvisorHeader {
+		t.Fatalf("expected caller_auth_source=%q, got %q", llmproxy.CallerAuthSourceClawvisorHeader, source)
+	}
+}
+
+func TestRequireAgentLLM_RecordsCallerAuthSourceForEachHeader(t *testing.T) {
+	cases := []struct {
+		name    string
+		header  string
+		value   func(raw string) string
+		want    string
+		setRaw  bool
+		extra   func(*http.Request, string)
+	}{
+		{
+			name:   "Authorization",
+			header: "Authorization",
+			value:  func(raw string) string { return "Bearer " + raw },
+			want:   llmproxy.CallerAuthSourceAuthorization,
+			setRaw: true,
+		},
+		{
+			name:   "x-api-key",
+			header: "x-api-key",
+			value:  func(raw string) string { return raw },
+			want:   llmproxy.CallerAuthSourceXAPIKey,
+			setRaw: true,
+		},
+		{
+			name:   "X-Clawvisor-Agent-Token",
+			header: AgentTokenHeader,
+			value:  func(raw string) string { return raw },
+			want:   llmproxy.CallerAuthSourceClawvisorHeader,
+			setRaw: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, _, raw := newSeededAgent(t)
+			var source string
+			handler := RequireAgentLLM(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				source = llmproxy.CallerAuthSource(r.Context())
+				w.WriteHeader(http.StatusOK)
+			}))
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			if tc.setRaw {
+				req.Header.Set(tc.header, tc.value(raw))
+			}
+			if tc.extra != nil {
+				tc.extra(req, raw)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if source != tc.want {
+				t.Fatalf("caller_auth_source: want %q, got %q", tc.want, source)
+			}
+		})
 	}
 }
 

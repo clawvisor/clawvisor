@@ -82,6 +82,7 @@ func RequireAgentLLM(st store.Store) func(http.Handler) http.Handler {
 			}
 			ctx := store.WithAgent(r.Context(), agent)
 			ctx = withCallerToken(ctx, validTok)
+			ctx = llmproxy.WithCallerAuthSource(ctx, source)
 			if source == agentLLMTokenSourceClawvisorHeader {
 				ctx = llmproxy.WithPassthroughUpstreamAuth(ctx)
 			}
@@ -189,9 +190,9 @@ func RequireAgentLLMNonce(st store.Store, cache llmproxy.CallerNonceCache, logge
 // values still authenticates if at least one is valid.
 const (
 	AgentTokenHeader                   = "X-Clawvisor-Agent-Token"
-	agentLLMTokenSourceAuthorization   = "authorization"
-	agentLLMTokenSourceXAPIKey         = "x-api-key"
-	agentLLMTokenSourceClawvisorHeader = "x-clawvisor-agent-token"
+	agentLLMTokenSourceAuthorization   = llmproxy.CallerAuthSourceAuthorization
+	agentLLMTokenSourceXAPIKey         = llmproxy.CallerAuthSourceXAPIKey
+	agentLLMTokenSourceClawvisorHeader = llmproxy.CallerAuthSourceClawvisorHeader
 )
 
 type agentLLMTokenCandidate struct {
