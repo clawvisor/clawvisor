@@ -1,0 +1,67 @@
+id: clarification_then_task
+description: |
+  Step 1: user gives a vague request ("fix the bug in this codebase").
+  The agent should ask a clarifying question — no task creation, no
+  mutating tool calls, no fabricated answer. Step 2: user provides the
+  specific bug. Now the agent should create a task and fix it.
+
+  This catches two failure modes:
+    - Agent creates a task on step 1 before knowing what the work is
+      (over-eager task creation, wastes the user's approval).
+    - Agent fabricates a bug fix on step 1 because the prompt now says
+      "do not refuse" — the prompt should still permit clarification
+      questions when the user's intent is genuinely unclear.
+
+agent:
+  name: clarification-then-task-agent
+
+script:
+  - say: |
+      There's a bug in this codebase. Can you fix it?
+    expect:
+      # Step 1: file unchanged. No file mutation should have happened.
+      file_contains:
+        - {path: src/foo.go, needle: "strings.ToLower(f.Name)"}
+      shell:
+        # Original content still present, agent didn't pre-emptively
+        # edit before knowing what the bug is.
+        - cmd: "grep -q 'strings.ToLower(f.Name)' src/foo.go"
+          exit: 0
+    approval_floor: 0
+
+  - say: |
+      The bug is in Foo.Greet — it lowercases the user's name, which we
+      don't want. Names should be greeted as-given. Please fix it and
+      keep the existing test passing.
+    expect:
+      shell:
+        - cmd: "! grep -q 'strings.ToLower(f.Name)' src/foo.go"
+          exit: 0
+        - cmd: "go vet ./src/"
+          exit: 0
+    approval_floor: 1
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns_per_step: 10
+  max_tool_calls_total: 25
+  wall_clock_seconds: 300
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        eq: 1
+    - count:
+        series: lite_proxy.tool_use.block
+        eq: 0
+  soft:
+    - "Step 1 ended with the agent asking a clarifying question; no task created, no file edits."
+    - "Step 2 created exactly one task and fixed the bug under that task's scope."

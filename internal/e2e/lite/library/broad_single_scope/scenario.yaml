@@ -1,0 +1,55 @@
+id: broad_single_scope
+description: |
+  User asks for a multi-part change in a single message. A correctly-behaving
+  agent recognizes the whole thing as one broad scope and creates exactly one
+  task covering both halves of the work, then runs the edits under that task.
+  Pre-prompt-change behavior we want to catch: agent creates one task for the
+  rename, executes it, then creates a second task for the import cleanup
+  (over-fragmentation) — or worse, runs the rename without a task.
+
+agent:
+  name: broad-single-scope-agent
+
+script:
+  - say: |
+      In src/ there's a type called Foo. Rename it to Bar across all files in
+      src/ (including the test) AND remove any unused imports while you're
+      there. Then run `go vet ./src/` to confirm it builds.
+    expect:
+      # Filename-agnostic — agents legitimately rename files as part
+      # of a rename, so check the post-state with grep + go vet rather
+      # than asserting on specific paths.
+      shell:
+        - cmd: "go vet ./src/"
+          exit: 0
+        - cmd: "grep -rq 'type Bar struct' src/"
+          exit: 0
+        - cmd: "grep -rq 'NewBar' src/"
+          exit: 0
+        - cmd: "! grep -rq 'type Foo struct' src/"
+          exit: 0
+    approval_floor: 1
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns_per_step: 10
+  max_tool_calls_total: 30
+  wall_clock_seconds: 240
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        eq: 1
+    - count:
+        series: lite_proxy.tool_use.block
+        eq: 0
+  soft:
+    - "The agent created exactly one broad task covering the rename and the import cleanup, not two narrow tasks."
