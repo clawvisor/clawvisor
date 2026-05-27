@@ -20,6 +20,14 @@ type evalCapture struct {
 	Inspector   inspector.Verdict
 	Fingerprint runtimedecision.DecisionFingerprint
 	Reason      string
+	// TaskID names the active task this tool_use matched (via task
+	// scope or authorization decision), when one was matched. Empty
+	// for paths that ran before/without a task match (trigger miss
+	// pass-through, control-tool inline-task creation, hard denials
+	// preceding any decision). Forwarded to the coalesced audit rows
+	// so dashboards filtering on task_id surface coalesced-pending
+	// rows alongside their owning task.
+	TaskID string
 }
 
 // capturedHoldSink buffers PendingApprovalCache.Hold calls the first
@@ -121,6 +129,7 @@ type bufferedAudit struct {
 	Decision string
 	Outcome  string
 	Reason   string
+	TaskID   string
 }
 
 // capturedAuditSink buffers audit rows from pass 1. See capturedHoldSink
@@ -169,7 +178,7 @@ func replayBufferedHolds(ctx context.Context, cfg PostprocessConfig, inner Pendi
 			if cfg.Audit != nil && agent != nil && i < len(captures) {
 				use := captures[i].Use
 				v := captures[i].Inspector
-				cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, use, v, "block", "approval_hold_replay_failed", err.Error())
+				cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, use, v, "block", "approval_hold_replay_failed", err.Error(), captures[i].TaskID)
 			}
 			return err
 		}
@@ -177,7 +186,7 @@ func replayBufferedHolds(ctx context.Context, cfg PostprocessConfig, inner Pendi
 		if res.Evicted != nil && cfg.Audit != nil && agent != nil && i < len(captures) {
 			use := captures[i].Use
 			v := captures[i].Inspector
-			cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, use, v, "block", "approval_evicted", "superseded pending approval "+res.Evicted.ID)
+			cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, use, v, "block", "approval_evicted", "superseded pending approval "+res.Evicted.ID, captures[i].TaskID)
 		}
 	}
 	return nil
@@ -191,7 +200,7 @@ func flushBufferedAudit(ctx context.Context, cfg PostprocessConfig, agent *store
 		return
 	}
 	for _, e := range sink.entries {
-		cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, e.ToolUse, e.Verdict, e.Decision, e.Outcome, e.Reason)
+		cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, e.ToolUse, e.Verdict, e.Decision, e.Outcome, e.Reason, e.TaskID)
 	}
 }
 
@@ -227,7 +236,7 @@ func emitCoalescedPendingAuditRows(ctx context.Context, cfg PostprocessConfig, a
 	}
 	for _, c := range ordered {
 		reason := "held under coalesced approval " + approvalID + " (originally classified as " + string(c.Kind) + ")"
-		cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, c.Use, c.Inspector, "block", "coalesced_approval_pending", reason)
+		cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, c.Use, c.Inspector, "block", "coalesced_approval_pending", reason, c.TaskID)
 	}
 }
 

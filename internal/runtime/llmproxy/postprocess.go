@@ -328,6 +328,16 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 
 	innerEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		var v inspector.Verdict
+		// matchedTaskID is set by branches that resolve a task scope
+		// (EvaluateAuthorization with a matched task, or
+		// TaskScope.Check returning Allowed). audit() reads it into
+		// the buffered row's TaskID so flushed audit rows carry the
+		// matched task — that's what the dashboard's per-task activity
+		// feed filters on (AuditEntry.task_id). Branches that never
+		// matched a task (trigger-miss pass-through, hard denials
+		// before any decision, control-tool inline-task creation where
+		// the task is being created here) leave it empty.
+		var matchedTaskID string
 		audit := func(decision, outcome, reason string) {
 			// Always buffer, even when no AuditEmitter is configured.
 			// The outer eval wrapper reads the last entry for this
@@ -345,6 +355,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				Decision: decision,
 				Outcome:  outcome,
 				Reason:   reason,
+				TaskID:   matchedTaskID,
 			})
 		}
 		// trace emits one JSONL line per decision point when
@@ -537,6 +548,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					audit("block", "decision_error", err.Error())
 					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: authorization failed — " + err.Error()}
 				}
+				matchedTaskID = taskIDFromDecision(dec)
 				trace(TraceEventDecision,
 					"path", "trigger_miss",
 					"kind", string(dec.Kind),
@@ -664,6 +676,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					Reason:  "Clawvisor: authorization failed — " + err.Error(),
 				}
 			}
+			matchedTaskID = taskIDFromDecision(dec)
 			trace(TraceEventDecision,
 				"path", "credentialed",
 				"kind", string(dec.Kind),
@@ -735,6 +748,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 						Reason:  "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
 					}
 				}
+				matchedTaskID = dec.TaskID
 				// Intent verification: when the matched TaskAction's
 				// Verification mode opts in (strict | lenient | empty)
 				// and an IntentVerifier is configured, the LLM compares
@@ -849,6 +863,16 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			last := auditSink.entries[len(auditSink.entries)-1]
 			c.Inspector = last.Verdict
 			c.Reason = last.Reason
+		}
+		// TaskID is sourced from the audit sink (not the hold sink)
+		// because the hold sink doesn't carry it — the matched task
+		// is recorded by the audit closure right after EvaluateAuthorization
+		// or TaskScope.Check resolves it. Both the held and the
+		// non-held branches above leave any matched task on the most
+		// recent audit entry, so reading it here picks it up
+		// regardless of whether a hold was created.
+		if auditSink != nil && len(auditSink.entries) > auditsBefore {
+			c.TaskID = auditSink.entries[len(auditSink.entries)-1].TaskID
 		}
 		captures = append(captures, c)
 		return v

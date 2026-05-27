@@ -92,7 +92,16 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 // LogToolUseInspected records one tool_use seen by the lite-proxy. Each row
 // carries the tool name, a bounded input summary, verdict source, decision,
 // target host (when known), and placeholder substrings (no real credential).
-func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Agent, requestID string, tu conversation.ToolUse, verdict inspector.Verdict, decision, outcome, reason string) {
+//
+// taskID names the active task this tool_use matched (via task-scope
+// authorization), when one was matched. The dashboard task viewer
+// filters audit rows on AuditEntry.task_id, so threading the matched
+// task here is what makes lite-proxy tool_use rows visible in the
+// per-task activity feed. Empty taskID means "no task matched" — the
+// row still lands in the global audit feed but won't appear in any
+// task's activity tab, which matches reality (the call wasn't bound
+// to a task).
+func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Agent, requestID string, tu conversation.ToolUse, verdict inspector.Verdict, decision, outcome, reason, taskID string) {
 	if e == nil || e.Store == nil || agent == nil {
 		return
 	}
@@ -136,6 +145,7 @@ func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Age
 		AgentID:    &agent.ID,
 		RequestID:  requestID,
 		ToolUseID:  &toolUseID,
+		TaskID:     nilIfEmpty(taskID),
 		Timestamp:  time.Now().UTC(),
 		Service:    service,
 		Action:     "lite_proxy.tool_use." + decision,
