@@ -57,6 +57,16 @@ func HaikuProxyURL() string {
 	return "https://hp.clawvisor.com/api/v1"
 }
 
+// DashboardURL returns the externally reachable dashboard base URL for
+// the current environment (no trailing slash). Used by user-facing
+// error messages that deep-link into the dashboard.
+func DashboardURL() string {
+	if IsStaging() {
+		return "https://app.staging.clawvisor.com"
+	}
+	return "https://app.clawvisor.com"
+}
+
 // CORSOrigins returns the allowed CORS origins for the current environment.
 func CORSOrigins() []string {
 	if IsStaging() {

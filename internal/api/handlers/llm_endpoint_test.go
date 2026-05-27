@@ -1440,6 +1440,10 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 	emptyVault := &stubVault{}
 	h.Forwarder = llmproxy.NewForwarder(emptyVault)
 	h.Forwarder.Upstream = llmproxy.UpstreamSelector{AnthropicBaseURL: upstream.URL}
+	agent, err := st.GetAgentByToken(context.Background(), auth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("GetAgentByToken: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLM(st)
@@ -1457,14 +1461,23 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 harness-shaped error on vault miss, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "no upstream API key is configured") {
-		t.Fatalf("body should explain vault miss:\n%s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, "no upstream API key is configured") {
+		t.Fatalf("body should explain vault miss:\n%s", body)
 	}
 	// When the caller put the agent token in Authorization (i.e. not
 	// passthrough), the message must NOT mention X-Clawvisor-Agent-Token
 	// — that's the wrong remediation for this path.
-	if strings.Contains(rec.Body.String(), "X-Clawvisor-Agent-Token") {
-		t.Fatalf("non-passthrough vault miss should not mention X-Clawvisor-Agent-Token:\n%s", rec.Body.String())
+	if strings.Contains(body, "X-Clawvisor-Agent-Token") {
+		t.Fatalf("non-passthrough vault miss should not mention X-Clawvisor-Agent-Token:\n%s", body)
+	}
+	// Deep links: the Anthropic console + this agent's vault page on
+	// the dashboard host for the current build environment.
+	if !strings.Contains(body, "https://console.anthropic.com/settings/keys") {
+		t.Fatalf("body should link to the Anthropic console:\n%s", body)
+	}
+	if !strings.Contains(body, "/dashboard/agents/"+agent.ID) {
+		t.Fatalf("body should deep-link to this agent's vault page:\n%s", body)
 	}
 }
 
@@ -1478,6 +1491,10 @@ func TestLLMEndpoint_VaultMissUnderPassthroughHasDistinctMessage(t *testing.T) {
 	emptyVault := &stubVault{}
 	h.Forwarder = llmproxy.NewForwarder(emptyVault)
 	h.Forwarder.Upstream = llmproxy.UpstreamSelector{AnthropicBaseURL: upstream.URL}
+	agent, err := st.GetAgentByToken(context.Background(), auth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("GetAgentByToken: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLM(st)
@@ -1502,6 +1519,12 @@ func TestLLMEndpoint_VaultMissUnderPassthroughHasDistinctMessage(t *testing.T) {
 	}
 	if !strings.Contains(body, "passthrough") {
 		t.Fatalf("passthrough vault miss should mention passthrough:\n%s", body)
+	}
+	if !strings.Contains(body, "https://console.anthropic.com/settings/keys") {
+		t.Fatalf("body should link to the Anthropic console:\n%s", body)
+	}
+	if !strings.Contains(body, "/dashboard/agents/"+agent.ID) {
+		t.Fatalf("body should deep-link to this agent's vault page:\n%s", body)
 	}
 }
 

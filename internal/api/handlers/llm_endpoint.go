@@ -24,6 +24,7 @@ import (
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/clawvisor/clawvisor/pkg/version"
 	"github.com/google/uuid"
 )
 
@@ -682,7 +683,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		if isVaultMiss(err) {
 			auditStatus = http.StatusUnauthorized
 			auditDecide = "deny"
-			code, outcome, message := upstreamCredMissingError(r)
+			code, outcome, message := upstreamCredMissingError(r, agent, provider)
 			auditOutcome = outcome
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusUnauthorized, code, message)
 			return
@@ -1122,21 +1123,29 @@ func isVaultMiss(err error) bool {
 }
 
 // upstreamCredMissingError shapes the user-facing error for the "no
-// upstream credential available" case. When the caller signalled
-// passthrough intent (via X-Clawvisor-Agent-Token) but didn't actually
-// send an upstream Bearer, the proxy fell through to a vault lookup
-// that also missed — surface a distinct outcome/code so operators can
-// tell the two failure modes apart instead of seeing the same generic
-// "upstream API key missing" for both.
-func upstreamCredMissingError(r *http.Request) (code, outcome, message string) {
-	if llmproxy.PassthroughUpstreamAuth(r.Context()) && !llmproxy.HasPassthroughBearer(r) {
-		return "UPSTREAM_AUTH_MISSING",
-			"upstream_auth_missing_for_passthrough",
-			"no upstream credential available. You sent X-Clawvisor-Agent-Token (passthrough mode), but the request had no upstream Authorization bearer for Clawvisor to forward, and no API key is vaulted for this provider. Either let your client send its provider credential, or add an API key in the Clawvisor dashboard."
+// upstream credential available" case. Passthrough-with-no-bearer and a
+// plain vault miss get distinct codes/outcomes so the failure modes are
+// distinguishable in audit. The message deep-links to the agent's
+// dashboard page (where the Gateway API key field lives) and to the
+// provider's console for minting the key.
+func upstreamCredMissingError(r *http.Request, agent *store.Agent, provider conversation.Provider) (code, outcome, message string) {
+	passthroughBare := llmproxy.PassthroughUpstreamAuth(r.Context()) && !llmproxy.HasPassthroughBearer(r)
+	if passthroughBare {
+		code, outcome = "UPSTREAM_AUTH_MISSING", "upstream_auth_missing_for_passthrough"
+		message = "no upstream credential available. You sent X-Clawvisor-Agent-Token (passthrough mode), but the request carried no upstream Authorization bearer for Clawvisor to forward, and no API key is vaulted for this provider."
+	} else {
+		code, outcome = "UPSTREAM_KEY_MISSING", "upstream_key_missing"
+		message = "no upstream API key is configured for this provider."
 	}
-	return "UPSTREAM_KEY_MISSING",
-		"upstream_key_missing",
-		"no upstream API key is configured for this provider. Add one in the Clawvisor dashboard and retry."
+	consoleURL := ""
+	switch provider {
+	case conversation.ProviderAnthropic:
+		consoleURL = "https://console.anthropic.com/settings/keys"
+	case conversation.ProviderOpenAI:
+		consoleURL = "https://platform.openai.com/api-keys"
+	}
+	message += " Create an API key at " + consoleURL + " and paste it into the Gateway API key field at " + version.DashboardURL() + "/dashboard/agents/" + agent.ID + " — then retry."
+	return code, outcome, message
 }
 
 // writeJSONError produces a uniform JSON error response. Use this only
@@ -1843,7 +1852,7 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 		if isVaultMiss(err) {
 			*auditStatus = http.StatusUnauthorized
 			*auditDecide = "deny"
-			code, outcome, message := upstreamCredMissingError(r)
+			code, outcome, message := upstreamCredMissingError(r, agent, provider)
 			*auditOutcome = outcome
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusUnauthorized, code, message)
 			return
