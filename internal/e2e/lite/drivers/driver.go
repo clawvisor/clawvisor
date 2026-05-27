@@ -35,6 +35,11 @@ type Config struct {
 	// or "gpt-5.5"). Empty means use the driver default.
 	Model string
 
+	// MaxTurnsPerStep caps the number of LLM turns (initial prompt
+	// plus approval round-trips) a single Send call will make before
+	// erroring out. Zero means use the driver default (6).
+	MaxTurnsPerStep int
+
 	// Approver decides how to reply when the lite-proxy substitutes
 	// an approval prompt into the assistant turn. nil-safe: when nil,
 	// drivers default to "yes" for task-approval prompts and "task"

@@ -102,7 +102,10 @@ func (s *claudeSession) Send(ctx context.Context, message string) (*StepOutcome,
 	outcome := &StepOutcome{}
 	current := message
 	start := time.Now()
-	const innerCap = 6 // upper bound on approval round-trips per step
+	innerCap := s.cfg.MaxTurnsPerStep
+	if innerCap <= 0 {
+		innerCap = 6
+	}
 	for inner := range innerCap {
 		args := s.baseArgs()
 		// First call uses --session-id to pin the id we generate; later
@@ -150,10 +153,11 @@ func (s *claudeSession) Send(ctx context.Context, message string) (*StepOutcome,
 			continue
 		}
 		outcome.FinalText = final
-		break
+		outcome.DurationMs = time.Since(start).Milliseconds()
+		return outcome, nil
 	}
 	outcome.DurationMs = time.Since(start).Milliseconds()
-	return outcome, nil
+	return outcome, fmt.Errorf("claude: step exceeded MaxTurnsPerStep=%d without reaching a final text turn (stuck in approval loop?)", innerCap)
 }
 
 func (s *claudeSession) baseArgs() []string {

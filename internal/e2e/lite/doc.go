@@ -16,6 +16,11 @@
 //     because task-scope enforcement is not wired in this iteration)
 //   - whether each step's filesystem expectations passed
 //
-// Tests skip when CLAWVISOR_LLM_API_KEY (or the legacy
-// CLAWVISOR_E2E_ANTHROPIC_KEY) is unset.
+// The whole TestLiteProxyScenarios entry-point skips when BOTH the
+// Anthropic key (CLAWVISOR_LLM_API_KEY, or legacy
+// CLAWVISOR_E2E_ANTHROPIC_KEY) AND the OpenAI key
+// (CLAWVISOR_OPENAI_KEY) are absent — one is enough to run the
+// corresponding driver's column of the matrix. Per-driver subtests
+// skip individually when the matching CLI binary or upstream key is
+// missing.
 package lite

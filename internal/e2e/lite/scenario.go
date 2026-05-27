@@ -1,6 +1,7 @@
 package lite
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -129,7 +130,13 @@ func LoadScenario(dir string) (*Scenario, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	var s Scenario
-	if err := yaml.Unmarshal(raw, &s); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	// Strict decoding: a typo in the scenario YAML (e.g. `aproval_floor`
+	// instead of `approval_floor`) silently used a zero value before
+	// this switch and produced scenarios that looked correct but
+	// ignored the misspelled field. Fail fast instead.
+	dec.KnownFields(true)
+	if err := dec.Decode(&s); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if s.ID == "" {

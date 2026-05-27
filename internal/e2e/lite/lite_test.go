@@ -104,11 +104,12 @@ func runScenarioAgainstDriver(t *testing.T, scnDir string, drv drivers.Driver, k
 	defer cancel()
 
 	sess, err := drv.Start(ctx, drivers.Config{
-		LiteProxyURL: h.EndpointURL(),
-		AgentToken:   h.AgentToken,
-		Workspace:    h.Workspace,
-		Approver:     NewScriptedApprover(scn.Approvals),
-		Logf:         t.Logf,
+		LiteProxyURL:    h.EndpointURL(),
+		AgentToken:      h.AgentToken,
+		Workspace:       h.Workspace,
+		MaxTurnsPerStep: scn.Budget.MaxTurnsPerStep,
+		Approver:        NewScriptedApprover(scn.Approvals),
+		Logf:            t.Logf,
 	})
 	if err != nil {
 		if drivers.IsSkip(err) {
@@ -148,6 +149,16 @@ func runScenarioAgainstDriver(t *testing.T, scnDir string, drv drivers.Driver, k
 		if len(fails) > 0 {
 			stepFailures = append(stepFailures,
 				fmt.Sprintf("step %d expectations: %s", i+1, strings.Join(fails, "; ")))
+			break
+		}
+		// Enforce the scenario-level tool-call budget. The driver's
+		// per-step ToolCallCount is summed via SeriesToolCalls; exceed
+		// the cap and we fail the run early rather than letting the
+		// agent burn budget across remaining steps.
+		if limit := scn.Budget.MaxToolCallsTotal; limit > 0 && h.Counters.Get(SeriesToolCalls) > limit {
+			stepFailures = append(stepFailures,
+				fmt.Sprintf("step %d: tool_calls=%d exceeded MaxToolCallsTotal=%d",
+					i+1, h.Counters.Get(SeriesToolCalls), limit))
 			break
 		}
 	}

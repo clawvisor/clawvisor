@@ -49,7 +49,10 @@ func (s *codexSession) Send(ctx context.Context, message string) (*StepOutcome, 
 	outcome := &StepOutcome{}
 	current := message
 	start := time.Now()
-	const innerCap = 6
+	innerCap := s.cfg.MaxTurnsPerStep
+	if innerCap <= 0 {
+		innerCap = 6
+	}
 	for inner := range innerCap {
 		args, captureSessionID, err := s.buildArgs(current)
 		if err != nil {
@@ -87,10 +90,11 @@ func (s *codexSession) Send(ctx context.Context, message string) (*StepOutcome, 
 			continue
 		}
 		outcome.FinalText = parsed.finalText
-		break
+		outcome.DurationMs = time.Since(start).Milliseconds()
+		return outcome, nil
 	}
 	outcome.DurationMs = time.Since(start).Milliseconds()
-	return outcome, nil
+	return outcome, fmt.Errorf("codex: step exceeded MaxTurnsPerStep=%d without reaching a final text turn (stuck in approval loop?)", innerCap)
 }
 
 // buildArgs picks between `codex exec ...` (first call) and
