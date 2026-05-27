@@ -132,6 +132,10 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		}
 	}
 
+	if opts.Logger != nil {
+		apiOpts = append(apiOpts, api.WithLogger(opts.Logger))
+	}
+
 	apiOpts = append(apiOpts, api.WithFeatures(api.FeatureSet{
 		MultiTenant:       opts.Features.MultiTenant,
 		EmailVerification: opts.Features.EmailVerification,

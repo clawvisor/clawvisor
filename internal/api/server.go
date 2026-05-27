@@ -180,6 +180,13 @@ type FeaturesHook func(ctx context.Context, user *store.User, fs FeatureSet) Fea
 // ServerOption configures optional behavior on the Server.
 type ServerOption func(*Server)
 
+// WithLogger uses the supplied *slog.Logger instead of constructing one from
+// cfg.Server.LogFormat. Required when the caller wraps the slog handler (e.g.
+// with pkg/cloudlogging) and needs that wrapping preserved on every log entry.
+func WithLogger(l *slog.Logger) ServerOption {
+	return func(s *Server) { s.logger = l }
+}
+
 // WithExtraRoutes registers additional HTTP routes (e.g. cloud-only endpoints).
 func WithExtraRoutes(fn func(*http.ServeMux, Dependencies)) ServerOption {
 	return func(s *Server) { s.extraRoutes = fn }
@@ -384,21 +391,6 @@ func New(
 	magicStore pkgauth.MagicTokenStore,
 	opts ...ServerOption,
 ) (*Server, error) {
-	logOpts := &slog.HandlerOptions{Level: cfg.Server.SlogLevel()}
-	var logHandler slog.Handler
-	switch {
-	case cfg.Server.LogFormat == "json":
-		logHandler = slog.NewJSONHandler(os.Stdout, logOpts)
-	case cfg.Server.LogFormat == "text":
-		logHandler = slog.NewTextHandler(os.Stdout, logOpts)
-	case !cfg.Server.IsLocal():
-		logHandler = slog.NewJSONHandler(os.Stdout, logOpts)
-	default:
-		logHandler = slog.NewTextHandler(os.Stdout, logOpts)
-	}
-	logger := slog.New(logHandler)
-	slog.SetDefault(logger)
-
 	s := &Server{
 		cfg:        cfg,
 		store:      st,
@@ -409,14 +401,32 @@ func New(
 		llmCfg:     llmCfg,
 		llmHealth:  llm.NewHealth(llmCfg),
 		magicStore: magicStore,
-		logger:     logger,
 		eventHub:   events.NewHub(),
 	}
 
-	// Apply optional configuration.
+	// Apply optional configuration. WithLogger may set s.logger here, in which
+	// case we skip building a default below — that preserves caller-installed
+	// handler wrappers (e.g. cloudlogging).
 	for _, o := range opts {
 		o(s)
 	}
+
+	if s.logger == nil {
+		logOpts := &slog.HandlerOptions{Level: cfg.Server.SlogLevel()}
+		var logHandler slog.Handler
+		switch {
+		case cfg.Server.LogFormat == "json":
+			logHandler = slog.NewJSONHandler(os.Stdout, logOpts)
+		case cfg.Server.LogFormat == "text":
+			logHandler = slog.NewTextHandler(os.Stdout, logOpts)
+		case !cfg.Server.IsLocal():
+			logHandler = slog.NewJSONHandler(os.Stdout, logOpts)
+		default:
+			logHandler = slog.NewTextHandler(os.Stdout, logOpts)
+		}
+		s.logger = slog.New(logHandler)
+	}
+	slog.SetDefault(s.logger)
 
 	if s.quiet {
 		s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
