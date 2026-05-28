@@ -2,6 +2,7 @@ package llmproxy
 
 import (
 	"context"
+	"errors"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -124,6 +125,20 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 	case hasPending && resolved.PendingTaskID != "" && req.Agent != nil:
 		created, createErr := pendingCreator.ApproveInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID)
 		if createErr != nil {
+			// Distinct branch when the task was already terminated
+			// from a non-chat surface (dashboard or notifier Deny,
+			// the 24h expiry sweep, manual revocation). The user
+			// has already dismissed this work; we render an
+			// explanatory reply so the model understands it lost a
+			// race rather than treating it as a generic creator
+			// failure that might prompt a retry of the same body.
+			var terminal *ErrInlineTaskAlreadyTerminal
+			if errors.As(createErr, &terminal) {
+				out.Decision = "deny"
+				out.Outcome = "inline_task_already_terminal"
+				out.Reason = "task already " + terminal.Status + " from another surface before approve landed"
+				return renderInlineTaskAlreadyTerminalReply(terminal.Status), out
+			}
 			out.Decision = "deny"
 			out.Outcome = "inline_task_create_failed"
 			out.Reason = "approve failed: " + createErr.Error()

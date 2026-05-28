@@ -1772,11 +1772,14 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task is not pending approval or scope expansion")
 		return
 	}
-	if isInlineChatPending(task) {
-		writeError(w, http.StatusConflict, "INLINE_CHAT_BOUND", "deny in the agent chat surface — reply 'deny' to the running session")
-		return
-	}
-
+	// Deny is intentionally permitted on chat-bound pending rows so
+	// users can dismiss a task that's no longer actionable in the
+	// conversation (e.g. the agent moved on, the model lost the
+	// thread). The chat-side resolve path detects an already-terminal
+	// task on a later "approve" reply and renders an explanatory
+	// message to the model. Approve, by contrast, remains chat-only
+	// because it grants scope+credentials that need the in-flight
+	// cache hold to land coherently.
 	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, task.Status, "denied")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not deny task")
@@ -2316,9 +2319,11 @@ func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) 
 	if task.UserID != userID {
 		return fmt.Errorf("not your task")
 	}
-	if isInlineChatPending(task) {
-		return errInlineChatBound
-	}
+	// Chat-bound pending rows are intentionally denyable from this
+	// path so the dashboard / notifier can dismiss zombie tasks the
+	// agent has lost track of. The chat-side approve path handles
+	// the "already terminal" case explicitly. Approve, by contrast,
+	// remains chat-only (see ApproveByTaskID's guard).
 	if task.Status != "pending_approval" && task.Status != "pending_scope_expansion" {
 		return fmt.Errorf("task is not pending")
 	}
@@ -2442,18 +2447,23 @@ func (h *TasksHandler) decrementNotifierPolling(userID string) {
 	}
 }
 
-// errInlineChatBound is returned by the dashboard approve/deny path
-// when the caller targets a chat-bound pending task. These rows must
-// be resolved via the agent chat (the llmproxy cache hold is the
-// in-process resolution anchor); flipping the DB row from the
-// dashboard would leave the model unaware. ApproveInlineTask /
-// DenyInlineTask in tasks_inline.go bypass this guard because the
-// chat surface itself is doing the approval.
+// errInlineChatBound is returned by the dashboard APPROVE path when
+// the caller targets a chat-bound pending task. Approval requires the
+// in-process cache hold to land coherently — granting scope and
+// credentials via the dashboard would leave the model unaware of the
+// transition. The DENY path intentionally does NOT gate on this:
+// users must be able to dismiss zombie chat-bound tasks even when
+// the conversation has moved on, and the chat-side approve handler
+// detects the resulting already-terminal state via
+// llmproxy.ErrInlineTaskAlreadyTerminal. ApproveInlineTask in
+// tasks_inline.go bypasses this guard because the chat surface IS
+// the legitimate caller.
 var errInlineChatBound = errors.New("approve in the agent chat surface")
 
-// isInlineChatPending reports whether a task is awaiting decision via
-// the chat surface. Read by the dashboard Approve/Deny handlers as a
-// 409 gate.
+// isInlineChatPending reports whether a task is awaiting an APPROVE
+// decision via the chat surface. Read by the dashboard Approve
+// handler (and ApproveByTaskID notifier callback) as a 409 gate.
+// Deny does not consult it.
 func isInlineChatPending(task *store.Task) bool {
 	if task == nil {
 		return false

@@ -560,6 +560,19 @@ func (h *TasksHandler) ApproveInlineTask(ctx context.Context, taskID, userID str
 	if task.UserID != userID {
 		return nil, errors.New("not your task")
 	}
+	// Detect the "dashboard already terminated this row" case explicitly.
+	// Deny via the dashboard is permitted on chat-bound pending rows so
+	// users can dismiss zombie tasks; when the model's "approve" reply
+	// races in afterwards we want a clean signal back to
+	// resolveInlineTaskApproval so it can render an explanatory reply
+	// instead of a generic "approve failed" creator error. Same for
+	// expired (24h sweep) and revoked (manual repair).
+	if task.ApprovalSource == "inline_chat" {
+		switch task.Status {
+		case "denied", "expired", "revoked":
+			return nil, &llmproxy.ErrInlineTaskAlreadyTerminal{Status: task.Status}
+		}
+	}
 	if task.Status != "pending_approval" || task.ApprovalSource != "inline_chat" {
 		return nil, fmt.Errorf("task is not a pending inline-chat task (status=%q, source=%q)", task.Status, task.ApprovalSource)
 	}

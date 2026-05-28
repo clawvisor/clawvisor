@@ -85,6 +85,30 @@ type InlineTaskPendingCreator interface {
 	DenyInlineTask(ctx context.Context, taskID, userID string) error
 }
 
+// ErrInlineTaskAlreadyTerminal is the typed error
+// ApproveInlineTask returns when the chat-side "approve" reply
+// arrives after the task has already been terminated through a
+// non-chat surface (dashboard or notifier Deny, the 24h expiry
+// sweep, manual revocation). It is intentionally a distinct shape
+// from the generic "task is not pending" string so
+// resolveInlineTaskApproval can detect this race specifically and
+// render an explanatory reply directing the model to ask the user
+// to create a fresh task, rather than surfacing a generic
+// "approve failed" creator error to the LLM.
+type ErrInlineTaskAlreadyTerminal struct {
+	// Status is the actual terminal status the row landed at
+	// ("denied" / "expired" / "revoked") so the rendered reply
+	// can match the user's mental model of what happened.
+	Status string
+}
+
+func (e *ErrInlineTaskAlreadyTerminal) Error() string {
+	if e == nil {
+		return "inline-chat task already terminal"
+	}
+	return "inline-chat task already terminal: " + e.Status
+}
+
 // InlineApprovedTask is the slice of the created task surfaced back
 // through the synthetic release response. The fields here are what the
 // model needs to see — it isn't a full store.Task because the LLM

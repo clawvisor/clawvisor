@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -172,13 +173,14 @@ func TestDenyInlineTask_FlipsPendingToDenied(t *testing.T) {
 	}
 }
 
-// TestApproveByTaskID_RefusesInlineChatPending verifies the dashboard
-// surface guard: a chat-bound pending task returns errInlineChatBound
-// when called via the standard ApproveByTaskID path (used by both the
-// HTTP handler and the Telegram notifier callback). The chat surface
-// must call ApproveInlineTask instead.
+// TestApproveByTaskID_RefusesInlineChatPending verifies the asymmetric
+// guard: ApproveByTaskID refuses chat-bound pending rows with
+// errInlineChatBound (the chat surface must drive approval so the
+// model sees the substituted reply), but DenyByTaskID intentionally
+// permits dismissal so a user can clear a zombie task the agent has
+// lost track of.
 func TestApproveByTaskID_RefusesInlineChatPending(t *testing.T) {
-	h, _, _, agent := newInlineTasksHandlerForTest(t)
+	h, st, _, agent := newInlineTasksHandlerForTest(t)
 	ctx := context.Background()
 
 	req := &runtimetasks.TaskCreateRequest{
@@ -195,15 +197,26 @@ func TestApproveByTaskID_RefusesInlineChatPending(t *testing.T) {
 	if err := h.ApproveByTaskID(ctx, taskID, agent.UserID); !errors.Is(err, errInlineChatBound) {
 		t.Fatalf("ApproveByTaskID: err=%v, want errInlineChatBound", err)
 	}
-	if err := h.DenyByTaskID(ctx, taskID, agent.UserID); !errors.Is(err, errInlineChatBound) {
-		t.Fatalf("DenyByTaskID: err=%v, want errInlineChatBound", err)
+	// Deny is permitted on chat-bound rows so a zombie task can be
+	// dismissed; verify it lands the row at "denied".
+	if err := h.DenyByTaskID(ctx, taskID, agent.UserID); err != nil {
+		t.Fatalf("DenyByTaskID: %v", err)
+	}
+	got, err := st.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != "denied" {
+		t.Errorf("status=%q after DenyByTaskID, want denied", got.Status)
 	}
 }
 
-// TestApprove_HTTPRefusesInlineChatPending verifies the HTTP layer
-// returns 409 INLINE_CHAT_BOUND for chat-bound pending tasks.
+// TestApprove_HTTPRefusesInlineChatPending verifies the HTTP layer:
+// Approve still returns 409 INLINE_CHAT_BOUND for chat-bound pending
+// tasks, but Deny succeeds (matching the dashboard UX where the user
+// can dismiss a zombie chat-bound task).
 func TestApprove_HTTPRefusesInlineChatPending(t *testing.T) {
-	h, _, user, agent := newInlineTasksHandlerForTest(t)
+	h, st, user, agent := newInlineTasksHandlerForTest(t)
 	ctx := context.Background()
 
 	req := &runtimetasks.TaskCreateRequest{
@@ -217,7 +230,7 @@ func TestApprove_HTTPRefusesInlineChatPending(t *testing.T) {
 		t.Fatalf("CreatePendingInlineTask: %v", err)
 	}
 
-	// Approve.
+	// Approve still 409s.
 	r := httptest.NewRequest("POST", "/api/tasks/"+taskID+"/approve", nil)
 	r.SetPathValue("id", taskID)
 	r = r.WithContext(context.WithValue(r.Context(), middleware.UserContextKey, user))
@@ -230,16 +243,70 @@ func TestApprove_HTTPRefusesInlineChatPending(t *testing.T) {
 		t.Errorf("Approve body missing INLINE_CHAT_BOUND; got %s", w.Body.String())
 	}
 
-	// Deny.
+	// Deny succeeds — the dashboard is allowed to dismiss zombie
+	// chat-bound rows so users aren't stuck waiting on a task the
+	// agent has lost track of.
 	r = httptest.NewRequest("POST", "/api/tasks/"+taskID+"/deny", nil)
 	r.SetPathValue("id", taskID)
 	r = r.WithContext(context.WithValue(r.Context(), middleware.UserContextKey, user))
 	w = httptest.NewRecorder()
 	h.Deny(w, r)
-	if w.Code != 409 {
-		t.Fatalf("Deny status=%d, want 409; body=%s", w.Code, w.Body.String())
+	if w.Code != 200 {
+		t.Fatalf("Deny status=%d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "INLINE_CHAT_BOUND") {
-		t.Errorf("Deny body missing INLINE_CHAT_BOUND; got %s", w.Body.String())
+	got, err := st.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTask after Deny: %v", err)
+	}
+	if got.Status != "denied" {
+		t.Errorf("status=%q after HTTP Deny, want denied", got.Status)
+	}
+}
+
+// TestApproveInlineTask_ReturnsAlreadyTerminalAfterDashboardDeny
+// covers the race where the dashboard denied a chat-bound task and
+// the model's "approve" reply arrives afterward. The chat path must
+// surface a typed *llmproxy.ErrInlineTaskAlreadyTerminal so
+// resolveInlineTaskApproval can render an "already dismissed
+// elsewhere" reply instead of the generic creator-failed error.
+func TestApproveInlineTask_ReturnsAlreadyTerminalAfterDashboardDeny(t *testing.T) {
+	h, st, _, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	req := &runtimetasks.TaskCreateRequest{
+		Purpose:                "Make files",
+		IntentVerificationMode: "strict",
+		ExpiresInSeconds:       600,
+		ExpectedTools:          []runtimetasks.ExpectedTool{{ToolName: "Bash", Why: "Run"}},
+	}
+	taskID, err := h.CreatePendingInlineTask(ctx, agent, req, "tu-1", nil)
+	if err != nil {
+		t.Fatalf("CreatePendingInlineTask: %v", err)
+	}
+
+	// Dashboard deny lands first.
+	if err := h.DenyByTaskID(ctx, taskID, agent.UserID); err != nil {
+		t.Fatalf("DenyByTaskID: %v", err)
+	}
+
+	// Chat-side approve arrives second — must surface the typed
+	// terminal error.
+	_, approveErr := h.ApproveInlineTask(ctx, taskID, agent.UserID)
+	var terminal *llmproxy.ErrInlineTaskAlreadyTerminal
+	if !errors.As(approveErr, &terminal) {
+		t.Fatalf("ApproveInlineTask: err=%v (%T), want *llmproxy.ErrInlineTaskAlreadyTerminal", approveErr, approveErr)
+	}
+	if terminal.Status != "denied" {
+		t.Errorf("terminal.Status=%q, want denied", terminal.Status)
+	}
+
+	// Task is still at denied — no spurious mutation from the
+	// failed approve attempt.
+	got, err := st.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != "denied" {
+		t.Errorf("status=%q after racing approve, want denied (unchanged)", got.Status)
 	}
 }

@@ -416,3 +416,21 @@ func renderInlineTaskDenyReply() string {
 func renderInlineTaskCreatorErrorReply(msg string) string {
 	return fmt.Sprintf(InlineTaskCreatorErrorMarker+" — %s. Acknowledge the failure to the user; do not retry without changes.]", msg)
 }
+
+// renderInlineTaskAlreadyTerminalReply is used when the chat-side
+// "approve" reply arrives after the task has already been terminated
+// from a non-chat surface (dashboard / notifier Deny, the 24h expiry
+// sweep, manual revocation). The model needs to understand it lost a
+// race — the user already dismissed this work elsewhere — and surface
+// that to the user rather than acting as though the approval landed
+// or retrying the same task body.
+func renderInlineTaskAlreadyTerminalReply(status string) string {
+	verb := "denied"
+	switch status {
+	case "expired":
+		verb = "let lapse"
+	case "revoked":
+		verb = "revoked"
+	}
+	return fmt.Sprintf(InlineTaskCreatorErrorMarker+" — the user %s this task on another surface (dashboard or notifier) before your approval landed. Acknowledge to the user that the task is gone; if they still want the work done, ask them to issue a fresh request — do NOT retry the same task body.]", verb)
+}
