@@ -17,6 +17,12 @@ export default function Agents() {
   const liveSessionsUI = !orgId && !!features?.agent_live_sessions
   const runtimePolicyUI = !orgId && !!features?.runtime_policy_ui
   const proxyLiteUI = !orgId && !!features?.proxy_lite
+  // The Connect-an-Agent wizard owns its step via `?agent=<harness>`. While
+  // a harness is picked, hide the global Pending Connections section —
+  // the wizard renders its own copy inline so the user sees their request
+  // in the same scroll position as the install instructions.
+  const [topLevelSearchParams] = useSearchParams()
+  const wizardActive = !orgId && !!topLevelSearchParams.get('agent')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [newToken, setNewToken] = useState<string | null>(null)
@@ -137,8 +143,11 @@ export default function Agents() {
       {/* Connect an Agent guide (personal context only) */}
       {!orgId && <ConnectAgentGuide newToken={newToken} />}
 
-      {/* Pending connection requests (personal context only) */}
-      {!orgId && pending.length > 0 && (
+      {/* Pending connection requests (personal context only).
+          Hidden while the wizard is mid-flight — the wizard renders its
+          own copy of these cards inline so the user can approve without
+          scrolling. */}
+      {!orgId && !wizardActive && pending.length > 0 && (
         <section>
           <div className="flex items-center gap-3 mb-3">
             <h2 className="text-lg font-semibold text-text-primary">Pending Connections</h2>
@@ -766,36 +775,86 @@ function SwitchControl({
   )
 }
 
-// ── Connect an Agent guide ───────────────────────────────────────────────────
+// ── Connect an Agent wizard ──────────────────────────────────────────────────
+//
+// Step 1: pick the agent (card grid).
+// Step 2: install — per-target instructions, with a "back to picker" affordance
+//         and an inline copy of the pending connections card so the user can
+//         approve without scrolling.
+//
+// Wizard step is derived from `?agent=<harness>` so it survives reloads, deep
+// links land directly on step 2, and the browser back button rewinds the
+// wizard naturally.
 
 type AgentTab = 'openclaw' | 'hermes' | 'claude-code' | 'codex' | 'claude-desktop' | 'other'
 
 const PROXY_LITE_AGENT_TABS: AgentTab[] = ['openclaw', 'hermes', 'claude-code', 'codex', 'claude-desktop', 'other']
 const LEGACY_AGENT_TABS: AgentTab[] = ['openclaw', 'claude-code', 'claude-desktop', 'other']
 
+interface AgentMeta {
+  label: string
+  tagline: string
+  // primitive is the install mechanism — shown as a small tag so the user
+  // knows up front whether they're running a skill, downloading a config
+  // profile, or doing it manually. Sets expectations on effort.
+  primitive: 'Skill' | 'Configuration profile' | 'Manual'
+}
+
+const AGENT_META: Record<AgentTab, AgentMeta> = {
+  'claude-code': {
+    label: 'Claude Code',
+    tagline: "Anthropic's CLI coding agent",
+    primitive: 'Skill',
+  },
+  codex: {
+    label: 'Codex',
+    tagline: "OpenAI's CLI coding agent",
+    primitive: 'Skill',
+  },
+  hermes: {
+    label: 'Hermes',
+    tagline: 'Nous Research general-purpose agent',
+    primitive: 'Skill',
+  },
+  openclaw: {
+    label: 'OpenClaw',
+    tagline: 'OpenClaw workspace with webhook callbacks',
+    primitive: 'Skill',
+  },
+  'claude-desktop': {
+    label: 'Claude Desktop',
+    tagline: 'Anthropic desktop app (macOS)',
+    primitive: 'Configuration profile',
+  },
+  other: {
+    label: 'Other agent',
+    tagline: 'Custom HTTP clients, harnesses without skill support',
+    primitive: 'Manual',
+  },
+}
+
 function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const { user, features } = useAuth()
   const proxyLiteUI = !!features?.proxy_lite
   const agentTabs = proxyLiteUI ? PROXY_LITE_AGENT_TABS : LEGACY_AGENT_TABS
-  const initialTab = (agentTabs.includes(searchParams.get('agent') as AgentTab)
-    ? (searchParams.get('agent') as AgentTab)
-    : proxyLiteUI ? 'claude-code' : 'openclaw')
-  const [tab, setTabState] = useState<AgentTab>(initialTab)
-  useEffect(() => {
-    if (!agentTabs.includes(tab)) {
-      setTabState(agentTabs[0])
-    }
-  }, [agentTabs, tab])
-  const setTab = (next: AgentTab) => {
-    setTabState(next)
+
+  // Wizard step is derived from the URL: no param → picker; valid param →
+  // install. Invalid params resolve to the picker so a stale deep link
+  // doesn't strand the user in a broken state.
+  const paramTarget = searchParams.get('agent') as AgentTab | null
+  const picked: AgentTab | null = paramTarget && agentTabs.includes(paramTarget) ? paramTarget : null
+
+  const setPicked = (next: AgentTab | null) => {
     const params = new URLSearchParams(searchParams)
-    params.set('agent', next)
-    setSearchParams(params, { replace: true })
+    if (next) params.set('agent', next)
+    else params.delete('agent')
+    // `push` not `replace` so the browser back button rewinds the wizard.
+    setSearchParams(params)
   }
-  // `?mode=skill` opens each tab with its skill-based escape hatch expanded
-  // by default — useful for support / docs deep links. Otherwise tabs lead
-  // with the proxy-lite (passthrough or vaulted) setup.
+
+  // `?mode=skill` opens the fallback path with its skill escape hatch expanded
+  // by default — useful for support / docs deep links.
   const showSkillDefault = !proxyLiteUI || searchParams.get('mode') === 'skill'
   const [copied, setCopied] = useState(false)
 
@@ -807,12 +866,15 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
     queryKey: ['public-config'],
     queryFn: () => api.config.public(),
   })
+  const { data: connections } = useQuery({
+    queryKey: ['connections'],
+    queryFn: () => api.connections.list(),
+  })
+  const pendingForWizard = (connections ?? []).filter(c => c.status === 'pending')
 
   // Mint a single-use claim code so the bootstrap curl never has to embed
-  // the user's ID. BootstrapApproveStep invalidates this query after the
-  // claim is consumed (via the inline Approve mutation) so re-bootstrapping
-  // in the same session always has a fresh code. Codes expire server-side
-  // at claimCodeTTL (5 min); refetch every 4 min to keep the visible curl warm.
+  // the user's ID. Codes expire server-side at claimCodeTTL (5 min); refetch
+  // every 4 min to keep the visible curl warm.
   const { data: claim } = useQuery({
     queryKey: ['connection-claim'],
     queryFn: () => api.connections.mintClaim(),
@@ -824,9 +886,6 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
   const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   const hasRelay = !!(pairInfo?.daemon_id && pairInfo?.relay_host)
 
-  // When accessed locally, agents should talk to the daemon directly rather
-  // than routing through the relay. Use the relay URL only when the dashboard
-  // itself is being accessed remotely (cloud-hosted).
   const clawvisorURL = isLocal
     ? window.location.origin
     : hasRelay
@@ -848,70 +907,94 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const tabs: { id: AgentTab; label: string }[] = [
-    ...(proxyLiteUI
-      ? [
-          { id: 'openclaw' as const, label: 'OpenClaw' },
-          { id: 'hermes' as const, label: 'Hermes' },
-          { id: 'claude-code' as const, label: 'Claude Code' },
-          { id: 'codex' as const, label: 'Codex' },
-          { id: 'claude-desktop' as const, label: 'Claude Desktop' },
-          { id: 'other' as const, label: 'Other Agents' },
-        ]
-      : [
-          { id: 'openclaw' as const, label: 'OpenClaw / Hermes' },
-          { id: 'claude-code' as const, label: 'Claude Code' },
-          { id: 'claude-desktop' as const, label: 'Claude Desktop' },
-          { id: 'other' as const, label: 'Other Agents' },
-        ]),
-  ]
-
   return (
     <section className="bg-surface-1 border border-border-default rounded-md overflow-hidden">
-      <div className="px-5 pt-5 pb-0">
+      <div className="px-5 pt-5 pb-4">
         <h2 className="text-lg font-semibold text-text-primary">Connect an Agent</h2>
         <p className="text-sm text-text-tertiary mt-1">
-          Follow the steps below to connect a coding agent to Clawvisor.
+          {picked
+            ? <>Connecting <strong className="text-text-primary">{AGENT_META[picked].label}</strong> to Clawvisor.</>
+            : 'Pick the agent you want to connect.'}
         </p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-0 px-5 mt-4 border-b border-border-subtle overflow-x-auto">
-        {tabs.map(t => (
-          <button
-            key={t.id}
-            onClick={() => { setTab(t.id); setCopied(false) }}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              tab === t.id
-                ? 'border-brand text-brand'
-                : 'border-transparent text-text-tertiary hover:text-text-secondary'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="p-5">
-        {proxyLiteUI ? (
+      <div className="p-5 pt-0">
+        {picked ? (
           <>
-            {tab === 'openclaw' && <InstallerSkillGuide target="openclaw" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
-            {tab === 'hermes' && <InstallerSkillGuide target="hermes" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
-            {tab === 'claude-code' && <InstallerSkillGuide target="claude-code" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
-            {tab === 'codex' && <InstallerSkillGuide target="codex" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
-            {tab === 'claude-desktop' && <ClaudeDesktopProfileGuide />}
-            {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+            <button
+              onClick={() => { setPicked(null); setCopied(false) }}
+              className="text-xs text-text-tertiary hover:text-text-primary mb-4 inline-flex items-center gap-1"
+            >
+              ← Choose a different agent
+            </button>
+
+            {proxyLiteUI ? (
+              <>
+                {picked === 'openclaw' && <InstallerSkillGuide target="openclaw" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
+                {picked === 'hermes' && <InstallerSkillGuide target="hermes" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
+                {picked === 'claude-code' && <InstallerSkillGuide target="claude-code" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
+                {picked === 'codex' && <InstallerSkillGuide target="codex" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
+                {picked === 'claude-desktop' && <ClaudeDesktopProfileGuide />}
+                {picked === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+              </>
+            ) : (
+              <>
+                {picked === 'openclaw' && <LegacyOpenClawGuide setupURL={setupURL} copied={copied} onCopy={copyText} />}
+                {picked === 'claude-code' && <LegacyClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
+                {picked === 'claude-desktop' && <LegacyClaudeDesktopGuide isLocal={isLocal} onCopy={copyText} />}
+                {picked === 'other' && <LegacyOtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
+              </>
+            )}
+
+            {pendingForWizard.length > 0 && (
+              <div className="mt-6 pt-5 border-t border-border-subtle">
+                <div className="flex items-center gap-2 mb-3">
+                  <h3 className="text-sm font-medium text-text-primary">Pending Connections</h3>
+                  <span className="bg-warning text-surface-0 text-xs font-bold rounded px-2 py-0.5 font-mono">
+                    {pendingForWizard.length}
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  {pendingForWizard.map(cr => (
+                    <ConnectionCard key={cr.id} request={cr} />
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         ) : (
-          <>
-            {tab === 'openclaw' && <LegacyOpenClawGuide setupURL={setupURL} copied={copied} onCopy={copyText} />}
-            {tab === 'claude-code' && <LegacyClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
-            {tab === 'claude-desktop' && <LegacyClaudeDesktopGuide isLocal={isLocal} onCopy={copyText} />}
-            {tab === 'other' && <LegacyOtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
-          </>
+          <AgentPickerGrid agents={agentTabs} onPick={setPicked} />
         )}
       </div>
     </section>
+  )
+}
+
+function AgentPickerGrid({ agents, onPick }: {
+  agents: AgentTab[]
+  onPick: (next: AgentTab) => void
+}) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {agents.map(id => {
+        const m = AGENT_META[id]
+        return (
+          <button
+            key={id}
+            onClick={() => onPick(id)}
+            className="text-left rounded-md border border-border-default bg-surface-0 hover:border-brand hover:bg-surface-1 px-4 py-4 transition-colors group"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <span className="font-medium text-text-primary group-hover:text-brand">{m.label}</span>
+              <span className="text-xs text-text-tertiary bg-surface-1 group-hover:bg-surface-0 px-1.5 py-0.5 rounded whitespace-nowrap">
+                {m.primitive}
+              </span>
+            </div>
+            <p className="text-xs text-text-tertiary mt-1.5">{m.tagline}</p>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
