@@ -1000,6 +1000,13 @@ func (s *Server) routes() http.Handler {
 		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal())
 		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
 		mux.HandleFunc("GET /skill/clawvisor-setup.md", onboardingHandler.ClaudeCodeSetup)
+
+		// Per-harness installer skills — one markdown doc per target (claude-code,
+		// codex, hermes, openclaw). Each renders with a pre-filled CLAWVISOR_URL
+		// and optional ?claim=<code> so the embedded mint curl doesn't need a
+		// user_id. The Other Agents fallback path still uses /skill/setup.
+		installerHandler := handlers.NewInstallerHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal())
+		mux.HandleFunc("GET /skill/install/{target}", installerHandler.Setup)
 	}
 	// skillRenderOpts builds RenderOptions based on whether the request
 	// arrived directly (local) or via the relay (cloud).
