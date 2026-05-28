@@ -1008,6 +1008,14 @@ func (s *Server) routes() http.Handler {
 		installerHandler := handlers.NewInstallerHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal())
 		mux.HandleFunc("GET /skill/install/{target}", installerHandler.Setup)
 	}
+
+	// Claude Desktop configuration profile (.mobileconfig) — the user
+	// downloads the file, double-clicks it, macOS installs the managed
+	// config and Claude Desktop reads it. The endpoint mints a fresh agent
+	// + token at request time; the download itself is the consent gate, so
+	// it requires the user JWT.
+	mobileConfigHandler := handlers.NewMobileConfigHandler(s.store, relayHostFromCfg(s.cfg.Relay.URL), s.daemonID, s.cfg.Server.IsLocal())
+	mux.Handle("GET /api/agents/install/claude-desktop.mobileconfig", user(mobileConfigHandler.ClaudeDesktop))
 	// skillRenderOpts builds RenderOptions based on whether the request
 	// arrived directly (local) or via the relay (cloud).
 	skillRenderOpts := func(r *http.Request) skillfiles.RenderOptions {
