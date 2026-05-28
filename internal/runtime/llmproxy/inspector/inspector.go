@@ -222,7 +222,7 @@ var shadowPlaceholderTokenRE = regexp.MustCompile(`(?i)(^|[^a-z0-9])autovault[_:
 // "ambiguous credentialed call refused" verdicts on tool_uses (notably
 // Edit/Write of test or doc files) whose only `autovault_…` substrings
 // are too short to resolve in the vault anyway.
-const minRealisticPlaceholderLen = 40
+const minRealisticPlaceholderLen = len("autovault_x_") + 32
 
 // AllPlaceholdersAreStubs reports whether every placeholder found in
 // the input is shorter than a real generated one. When true, callers
