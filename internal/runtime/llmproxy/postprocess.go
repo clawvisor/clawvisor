@@ -242,6 +242,15 @@ type PostprocessConfig struct {
 	// endpoint rewrites. Empty disables the control-plane rewrite path.
 	ControlBaseURL string
 
+	// DefaultTaskExpirySeconds is the daemon's resolved
+	// task.default_expiry_seconds, surfaced into the inline task
+	// approval prompt so the displayed Duration tracks the operator's
+	// configured default when the agent omits expires_in_seconds.
+	// Optional: when 0 or unset, the renderer falls back to its
+	// historical 30-minute constant — the actual scope-binding
+	// fallback used by tasks_inline.go is unaffected either way.
+	DefaultTaskExpirySeconds int
+
 	// Trace, when non-nil, receives one JSON-line event per inspector
 	// decision point for this request. Disabled by default; enabled
 	// via cfg.ProxyLite.TraceLogPath. Calls on a nil *TraceLogger are

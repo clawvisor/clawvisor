@@ -332,6 +332,48 @@ func TestPostprocess_InlineTaskInvalidCredentialFallsThroughToToolError(t *testi
 	}
 }
 
+func TestPostprocess_InlineTaskStandingWithExpiresFallsThrough(t *testing.T) {
+	// lifetime=standing + expires_in_seconds>0 is rejected at task
+	// creation time (tasks_inline.go); the intercept catches the same
+	// conflict before rendering so the user never sees an approval
+	// prompt that would resolve to a failed create.
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	taskBody := `{"purpose":"Standing task with expiry","lifetime":"standing","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"x"}]}`
+	body := anthropicBashControlTasksPostWithQuery(taskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		ControlBaseURL:   "http://localhost:25297",
+		PendingApprovals: cache,
+	})
+
+	out := string(got.Body)
+	if strings.Contains(out, "Clawvisor wants to create a task") {
+		t.Fatalf("standing+expires_in_seconds should not render an approval prompt: %s", out)
+	}
+	if !strings.Contains(out, "http://localhost:25297/api/control/tasks") {
+		t.Fatalf("standing+expires_in_seconds should fall through to control rewrite: %s", out)
+	}
+
+	cache.mu.Lock()
+	holds := len(cache.pending[pendingApprovalKey{
+		userID: userID, agentID: agentID, provider: conversation.ProviderAnthropic,
+	}])
+	cache.mu.Unlock()
+	if holds != 0 {
+		t.Fatalf("standing+expires_in_seconds should not create an approval hold, got %d", holds)
+	}
+}
+
 func TestPostprocess_InlineTaskBareNoSignalRoutesToDashboard(t *testing.T) {
 	// No prior `task` reply AND no surface=inline → fall through to
 	// the regular control-rewrite path (dashboard task creation).

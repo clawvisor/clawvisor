@@ -137,6 +137,19 @@ func maybeInterceptInlineTaskDefinition(
 		return conversation.ToolUseVerdict{}, false
 	}
 
+	// Lifetime/expires conflict: standing tasks reject expires_in_seconds
+	// at creation time (see tasks_inline.go's createInlineApprovedTask).
+	// Catch the same conflict here before rendering — otherwise the user
+	// would see a "Lifetime: always" prompt, approve, and then watch the
+	// release path fail with a confusing error. Fall through to the
+	// dashboard rewrite so the model gets the same JSON error it would
+	// receive from a direct POST, keeping behavior consistent across
+	// surfaces.
+	if strings.EqualFold(strings.TrimSpace(parsed.Lifetime), "standing") && parsed.ExpiresInSeconds > 0 {
+		audit("fallthrough", "inline_task_invalid_envelope", "expires_in_seconds cannot be set on a standing task; deferring to dashboard rewrite")
+		return conversation.ToolUseVerdict{}, false
+	}
+
 	// Risk assessment runs BEFORE the hold so the auto-approval gate
 	// can decide whether to skip the human prompt entirely. The
 	// assessment is also used to render the prompt on the fall-through
@@ -313,7 +326,7 @@ func maybeInterceptInlineTaskDefinition(
 	return conversation.ToolUseVerdict{
 		Allowed:        false,
 		Reason:         "Clawvisor: awaiting inline task approval",
-		SubstituteWith: renderTaskApprovalPromptWithRisk(parsed, innerHold.Pending.ID, assessment),
+		SubstituteWith: renderTaskApprovalPromptWithRisk(parsed, innerHold.Pending.ID, assessment, cfg.DefaultTaskExpirySeconds),
 	}, true
 }
 

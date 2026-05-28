@@ -20,10 +20,10 @@ import (
 //   - purpose (wrapped at 80 cols)
 //   - expected_tools[].tool_name + .why (bullet list)
 //   - required_credentials[].vault_item_id / vault_item_handle + .why (bullet list)
-//   - assessed risk level + explanation when available
-//   - intent_verification_mode (default "strict")
-//   - lifetime humanized ("until session ends" / "always")
-//   - expires_in_seconds humanized ("10 min" / "1 hour")
+//   - assessed risk level + explanation when available (with 🟢/🟡/🟠/🔴 prefix)
+//   - intent_verification_mode (only when non-strict — strict is default and noise)
+//   - duration: "Duration: 30 min" for session tasks (using daemon default
+//     when unset) or "Lifetime: always" for standing tasks
 //
 // Malformed or empty input falls back to a one-line summary instead of
 // raw JSON — never leak unparsed input back at the user.
@@ -36,10 +36,18 @@ import (
 // a failed one when both leave only a bare "approve" in conversation
 // history.
 func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest, approvalID string) string {
-	return renderTaskApprovalPromptWithRisk(req, approvalID, nil)
+	return renderTaskApprovalPromptWithRisk(req, approvalID, nil, 0)
 }
 
-func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, approvalID string, risk *taskrisk.RiskAssessment) string {
+// renderTaskApprovalPromptWithRisk renders the inline approval prompt.
+//
+// defaultExpirySeconds is the daemon's resolved task.default_expiry_seconds,
+// used to fill the displayed Duration when the agent omits
+// expires_in_seconds. Pass 0 (or a negative) to fall back to
+// defaultSessionTaskDurationSeconds — that fallback exists so callers that
+// don't have access to live config (tests, the renderTaskApprovalPrompt
+// convenience wrapper) still produce an honest-looking prompt.
+func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, approvalID string, risk *taskrisk.RiskAssessment, defaultExpirySeconds int) string {
 	suffix := approvalIDFooter(approvalID)
 	if req == nil {
 		return "Clawvisor wants to create a task.\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel." + suffix
@@ -52,7 +60,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	var b strings.Builder
 	b.WriteString("Clawvisor wants to create a task to cover this work:\n\n")
 	b.WriteString("Purpose\n  ")
-	b.WriteString(wrapForPrompt(purpose, 80, "  "))
+	b.WriteString(wrapForPrompt(purpose, 80, "    "))
 
 	if len(req.ExpectedTools) > 0 {
 		b.WriteString("\n\nTools requested")
@@ -65,7 +73,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 			b.WriteString(name)
 			if why := strings.TrimSpace(tool.Why); why != "" {
 				b.WriteString(" — ")
-				b.WriteString(wrapForPrompt(why, 80, "    "))
+				b.WriteString(wrapForPrompt(why, 80, "      "))
 			}
 		}
 	}
@@ -81,7 +89,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 			b.WriteString(host)
 			if why := strings.TrimSpace(eg.Why); why != "" {
 				b.WriteString(" — ")
-				b.WriteString(wrapForPrompt(why, 80, "    "))
+				b.WriteString(wrapForPrompt(why, 80, "      "))
 			}
 		}
 	}
@@ -100,41 +108,48 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 			b.WriteString(name)
 			if why := strings.TrimSpace(cred.Why); why != "" {
 				b.WriteString(" — ")
-				b.WriteString(wrapForPrompt(why, 80, "    "))
+				b.WriteString(wrapForPrompt(why, 80, "      "))
 			}
 		}
 	}
 
 	if risk != nil && strings.TrimSpace(risk.RiskLevel) != "" {
+		level := strings.TrimSpace(risk.RiskLevel)
 		b.WriteString("\n\nRisk")
 		b.WriteString("\n  ")
-		b.WriteString(strings.TrimSpace(risk.RiskLevel))
+		if emoji := riskEmoji(level); emoji != "" {
+			b.WriteString(emoji)
+			b.WriteString(" ")
+		}
+		b.WriteString(level)
 		if explanation := strings.TrimSpace(risk.Explanation); explanation != "" {
 			b.WriteString(" — ")
-			b.WriteString(wrapForPrompt(explanation, 80, "    "))
+			b.WriteString(wrapForPrompt(explanation, 80, "      "))
 		}
 	}
 
 	mode := strings.TrimSpace(req.IntentVerificationMode)
-	if mode == "" {
-		mode = "strict"
-	}
-	lifetime := humanizeLifetime(req.Lifetime)
-	expires := humanizeExpiresIn(req.ExpiresInSeconds)
+	durationLabel, durationValue := durationLine(req.Lifetime, req.ExpiresInSeconds, defaultExpirySeconds)
 
-	b.WriteString("\n\nVerification: ")
-	b.WriteString(mode)
-	if lifetime != "" {
-		b.WriteString("   Lifetime: ")
-		b.WriteString(lifetime)
-	}
-	if expires != "" {
-		b.WriteString("   Expires: ")
-		b.WriteString(expires)
+	if (mode != "" && mode != "strict") || durationValue != "" {
+		b.WriteString("\n\n")
+		needsSep := false
+		if mode != "" && mode != "strict" {
+			b.WriteString("Verification: ")
+			b.WriteString(mode)
+			needsSep = true
+		}
+		if durationValue != "" {
+			if needsSep {
+				b.WriteString("   ")
+			}
+			b.WriteString(durationLabel)
+			b.WriteString(": ")
+			b.WriteString(durationValue)
+		}
 	}
 
-	b.WriteString("\n\nApproving will create this task and run the original tool call.\n")
-	b.WriteString("Reply `yes` or `y` to authorize, `no` or `n` to cancel.")
+	b.WriteString("\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel.")
 	b.WriteString(suffix)
 	return b.String()
 }
@@ -168,17 +183,68 @@ func extractApprovalIDFromPrompt(text string) string {
 	return strings.TrimSpace(rest[:end])
 }
 
-// humanizeLifetime maps the task lifetime to a short user-facing phrase.
-// Defaults to "until session ends" for empty/"session"; "always" for
-// "standing". Unknown values pass through as-is.
-func humanizeLifetime(lifetime string) string {
+// defaultSessionTaskDurationSeconds is the renderer's last-resort
+// fallback when both the agent's expires_in_seconds and the daemon's
+// resolved default are unset/non-positive — matches the historical
+// pkg/config.TaskConfig default (1800 = 30 min). Production wires the
+// live config value through PostprocessConfig.DefaultTaskExpirySeconds
+// so this constant is only hit by tests and unconfigured deploys; in
+// configured deploys an operator override flows through to the
+// displayed Duration and the prompt no longer drifts from the resolved
+// scope.
+const defaultSessionTaskDurationSeconds = 1800
+
+// durationLine returns the (label, value) pair describing how long the
+// task will be active once approved. The two lifetime modes render with
+// different labels because they answer different user questions:
+//
+//   - session (the common case): "Duration: 30 min" — how long the
+//     scope is usable. Empty expires_in_seconds falls back to the
+//     caller-provided default (daemon config), and then to
+//     defaultSessionTaskDurationSeconds if that's also unset.
+//   - standing: "Lifetime: always" — standing tasks reject
+//     expires_in_seconds (see tasks_inline.go), so there is no duration
+//     to show; the label conveys "no time cap" instead.
+//
+// Returns ("", "") only for unknown lifetime strings, so callers can
+// omit the line entirely rather than printing something misleading.
+func durationLine(lifetime string, expiresInSeconds, defaultExpirySeconds int) (label, value string) {
 	switch strings.TrimSpace(lifetime) {
 	case "", "session":
-		return "until session ends"
+		secs := expiresInSeconds
+		if secs <= 0 {
+			secs = defaultExpirySeconds
+		}
+		if secs <= 0 {
+			secs = defaultSessionTaskDurationSeconds
+		}
+		return "Duration", humanizeExpiresIn(secs)
 	case "standing":
-		return "always"
+		return "Lifetime", "always"
 	default:
-		return lifetime
+		return "", ""
+	}
+}
+
+// riskEmoji maps the LLM-assessed risk level to a traffic-light emoji
+// prefix. "unknown" gets a neutral marker so the user can distinguish a
+// parse-failed assessment from an unscored task. Unknown levels return
+// "" so the level renders without a prefix rather than with a
+// misleading one.
+func riskEmoji(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "low":
+		return "🟢"
+	case "medium":
+		return "🟡"
+	case "high":
+		return "🟠"
+	case "critical":
+		return "🔴"
+	case "unknown":
+		return "⚪"
+	default:
+		return ""
 	}
 }
 

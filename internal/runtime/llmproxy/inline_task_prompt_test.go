@@ -31,14 +31,14 @@ func TestRenderTaskApprovalPromptWellFormed(t *testing.T) {
 	if !strings.Contains(prompt, "Create directory") {
 		t.Errorf("missing why text: %q", prompt)
 	}
-	if !strings.Contains(prompt, "Verification: strict") {
-		t.Errorf("missing verification line: %q", prompt)
+	if strings.Contains(prompt, "Verification:") {
+		t.Errorf("strict verification should be hidden as the default: %q", prompt)
 	}
-	if !strings.Contains(prompt, "until session ends") {
-		t.Errorf("missing humanized lifetime: %q", prompt)
+	if strings.Contains(prompt, "Lifetime:") {
+		t.Errorf("session lifetime should not surface a Lifetime line: %q", prompt)
 	}
-	if !strings.Contains(prompt, "10 min") {
-		t.Errorf("missing humanized expiry: %q", prompt)
+	if !strings.Contains(prompt, "Duration: 10 min") {
+		t.Errorf("missing combined Duration line: %q", prompt)
 	}
 	if !strings.Contains(prompt, "`yes` or `y`") || !strings.Contains(prompt, "`no` or `n`") {
 		t.Errorf("missing yes/no instructions: %q", prompt)
@@ -58,23 +58,35 @@ func TestRenderTaskApprovalPromptStandingLifetime(t *testing.T) {
 	}
 }
 
-func TestRenderTaskApprovalPromptDefaultsVerification(t *testing.T) {
+func TestRenderTaskApprovalPromptHidesStrictVerification(t *testing.T) {
 	prompt := renderTaskApprovalPrompt(&runtimetasks.TaskCreateRequest{
 		Purpose: "Send a single test email",
 	}, "")
-	if !strings.Contains(prompt, "Verification: strict") {
-		t.Errorf("expected default strict verification, got %q", prompt)
+	if strings.Contains(prompt, "Verification:") {
+		t.Errorf("strict (default) verification should be omitted, got %q", prompt)
 	}
 }
 
-func TestRenderTaskApprovalPromptOmitsExpiryWhenUnset(t *testing.T) {
+func TestRenderTaskApprovalPromptShowsNonStrictVerification(t *testing.T) {
 	prompt := renderTaskApprovalPrompt(&runtimetasks.TaskCreateRequest{
 		Purpose:                "x",
-		ExpiresInSeconds:       0,
 		IntentVerificationMode: "lenient",
 	}, "")
+	if !strings.Contains(prompt, "Verification: lenient") {
+		t.Errorf("expected lenient verification surfaced, got %q", prompt)
+	}
+}
+
+func TestRenderTaskApprovalPromptDefaultsDurationWhenExpiryUnset(t *testing.T) {
+	prompt := renderTaskApprovalPrompt(&runtimetasks.TaskCreateRequest{
+		Purpose:          "x",
+		ExpiresInSeconds: 0,
+	}, "")
+	if !strings.Contains(prompt, "Duration: 30 min") {
+		t.Errorf("expected default 30 min duration when seconds<=0, got %q", prompt)
+	}
 	if strings.Contains(prompt, "Expires:") {
-		t.Errorf("expected no Expires line when seconds<=0, got %q", prompt)
+		t.Errorf("legacy Expires label leaked, got %q", prompt)
 	}
 }
 
@@ -158,12 +170,12 @@ func TestRenderTaskApprovalPromptRendersRisk(t *testing.T) {
 	}, "", &taskrisk.RiskAssessment{
 		RiskLevel:   "medium",
 		Explanation: "This task requests credential access.",
-	})
+	}, 0)
 	if !strings.Contains(prompt, "Risk") {
 		t.Errorf("expected risk section, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "medium") {
-		t.Errorf("expected risk level in prompt, got %q", prompt)
+	if !strings.Contains(prompt, "🟡 medium") {
+		t.Errorf("expected risk level with traffic-light emoji prefix, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "This task requests credential access.") {
 		t.Errorf("expected risk explanation in prompt, got %q", prompt)
@@ -189,17 +201,52 @@ func TestHumanizeExpiresIn(t *testing.T) {
 	}
 }
 
-func TestHumanizeLifetime(t *testing.T) {
+func TestDurationLine(t *testing.T) {
+	cases := []struct {
+		name           string
+		lifetime       string
+		seconds        int
+		defaultSeconds int
+		wantLabel      string
+		wantValue      string
+	}{
+		{"session explicit overrides default", "session", 600, 1800, "Duration", "10 min"},
+		{"session default from config", "session", 0, 3600, "Duration", "1 hour"},
+		{"session falls back to const when no default", "session", 0, 0, "Duration", "30 min"},
+		{"empty lifetime + zero default uses const", "", 0, 0, "Duration", "30 min"},
+		{"empty lifetime + config default", "", 0, 7200, "Duration", "2 hours"},
+		{"empty lifetime + explicit duration", "", 3600, 0, "Duration", "1 hour"},
+		{"standing ignores seconds and default", "standing", 0, 3600, "Lifetime", "always"},
+		{"standing ignores nonzero seconds", "standing", 600, 1800, "Lifetime", "always"},
+		{"unknown lifetime omits line", "weird", 0, 0, "", ""},
+		{"negative default treated as unset", "session", 0, -1, "Duration", "30 min"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotLabel, gotValue := durationLine(c.lifetime, c.seconds, c.defaultSeconds)
+			if gotLabel != c.wantLabel || gotValue != c.wantValue {
+				t.Errorf("durationLine(%q, %d, %d) = (%q, %q), want (%q, %q)",
+					c.lifetime, c.seconds, c.defaultSeconds, gotLabel, gotValue, c.wantLabel, c.wantValue)
+			}
+		})
+	}
+}
+
+func TestRiskEmoji(t *testing.T) {
 	cases := map[string]string{
-		"":         "until session ends",
-		"session":  "until session ends",
-		"standing": "always",
-		"weird":    "weird",
+		"low":      "🟢",
+		"medium":   "🟡",
+		"high":     "🟠",
+		"critical": "🔴",
+		"unknown":  "⚪",
+		"":         "",
+		"weird":    "",
+		"LOW":      "🟢",
 	}
 	for input, want := range cases {
-		got := humanizeLifetime(input)
+		got := riskEmoji(input)
 		if got != want {
-			t.Errorf("humanizeLifetime(%q) = %q, want %q", input, got, want)
+			t.Errorf("riskEmoji(%q) = %q, want %q", input, got, want)
 		}
 	}
 }
