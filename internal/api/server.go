@@ -954,6 +954,7 @@ func (s *Server) routes() http.Handler {
 
 	// Tasks (user JWT)
 	mux.Handle("GET /api/tasks", user(tasksHandler.List))
+	mux.Handle("GET /api/tasks/{id}/cost", user(tasksHandler.Cost))
 	mux.Handle("POST /api/tasks/{id}/approve", user(tasksHandler.Approve))
 	mux.Handle("PATCH /api/tasks/{id}/scope", user(tasksHandler.UpdateScope))
 	mux.Handle("POST /api/tasks/{id}/deny", user(tasksHandler.Deny))

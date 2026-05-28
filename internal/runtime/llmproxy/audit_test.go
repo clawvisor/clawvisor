@@ -38,7 +38,7 @@ func TestAuditEmitter_LogEndpointCall(t *testing.T) {
 	em := NewAuditEmitter(st, nil, nil)
 
 	em.LogEndpointCall(context.Background(), agent, "req-1", "anthropic", "lite_proxy.messages.create",
-		200, "allow", "success", "", 12*time.Millisecond, map[string]any{"input_tokens": 18, "output_tokens": 8})
+		200, "allow", "success", "", 12*time.Millisecond, map[string]any{"input_tokens": 18, "output_tokens": 8}, EndpointCallExtras{})
 
 	rows, _, err := st.ListAuditEntries(context.Background(), agent.UserID, store.AuditFilter{})
 	if err != nil {
@@ -209,7 +209,7 @@ func TestAuditEmitter_PopulatesValidatorPromptSHA(t *testing.T) {
 	em := NewAuditEmitter(st, nil, promptSHAStub{sha: "abc123"})
 
 	em.LogEndpointCall(context.Background(), agent, "req-1", "anthropic", "lite_proxy.messages.create",
-		200, "allow", "success", "", 0, nil)
+		200, "allow", "success", "", 0, nil, EndpointCallExtras{})
 
 	rows, _, _ := st.ListAuditEntries(context.Background(), agent.UserID, store.AuditFilter{})
 	if len(rows) != 1 {

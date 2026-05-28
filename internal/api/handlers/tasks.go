@@ -874,6 +874,50 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, task)
 }
 
+// Cost returns the LLM token usage and computed cost (in micro-USD)
+// for one task, rolled up across all upstream calls made under that
+// task. Authenticated by user (not agent) — the dashboard surfaces
+// per-task spend; agents don't need this view.
+//
+// GET /api/tasks/{id}/cost
+// Auth: user session
+func (h *TasksHandler) Cost(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user := middleware.UserFromContext(ctx)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	taskID := r.PathValue("id")
+	if taskID == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "missing task id")
+		return
+	}
+	// Confirm the task belongs to this user before exposing its cost.
+	// GetTaskCost itself filters by user_id, but a missing task should
+	// still 404 rather than silently returning a zeroed summary.
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "task not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get task")
+		return
+	}
+	if task.UserID != user.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
+		return
+	}
+	summary, err := h.st.GetTaskCost(ctx, user.ID, taskID)
+	if err != nil {
+		h.logger.WarnContext(ctx, "GetTaskCost failed", "task_id", taskID, "err", err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load task cost")
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
 // Start resolves a task into the active state and, when provided a runtime
 // session id, binds that runtime session to the task for subsequent proxy
 // attribution and biasing.

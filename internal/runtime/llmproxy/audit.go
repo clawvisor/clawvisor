@@ -10,6 +10,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/version"
 	"github.com/google/uuid"
@@ -48,11 +49,37 @@ func NewAuditEmitter(st store.Store, logger *slog.Logger, v interface{ PromptSHA
 	return e
 }
 
+// EndpointCallExtras carries optional, request-call-specific signals
+// that LogEndpointCall threads into the audit row and (when present)
+// the llm_request_cost row. Keeping these out of the positional args
+// avoids breaking the many callers that don't supply them.
+type EndpointCallExtras struct {
+	// TaskID, when non-empty, populates llm_request_cost.task_id so
+	// per-task spend rolls up. It deliberately does NOT propagate to
+	// audit_log.task_id: that column is part of the canonical dedup
+	// key UNIQUE(user_id, request_id, COALESCE(task_id, '')) and the
+	// same request_id already has task-scoped audit rows landing
+	// from LogToolUseInspected / LogInlineTaskApproved at
+	// (uid, rid, T). Adding the endpoint_call row at the same key
+	// would silently dedup it out — and the cost row with it.
+	// Leaving audit_log.task_id NULL keeps the legacy dedup behavior
+	// and the cost table carries the task linkage independently.
+	TaskID string
+	// Usage, when Found, drives one llm_request_cost row computed
+	// against the pricing table. Skipped when nil or not Found.
+	Usage *ExtractUsageResult
+}
+
 // LogEndpointCall records one /v1/* request hitting the lite-proxy LLM
 // endpoint. Service is the provider name; Action is the route shape
 // ("messages.create", "responses.create", "chat.completions.create").
 // outcome is "success" / "error_<status>" / "upstream_key_missing" etc.
-func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, requestID, provider, action string, statusCode int, decision, outcome, reason string, duration time.Duration, paramsExtra map[string]any) {
+//
+// When extras.Usage is non-nil and reports Found, the call also writes
+// one llm_request_cost row tying the audit entry to its token + price
+// breakdown. Cost-record failures are logged but never block the
+// audit insert — billing is best-effort observability, not a gate.
+func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, requestID, provider, action string, statusCode int, decision, outcome, reason string, duration time.Duration, paramsExtra map[string]any, extras EndpointCallExtras) {
 	if e == nil || e.Store == nil || agent == nil {
 		return
 	}
@@ -69,6 +96,14 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 	}
 	paramsJSON, _ := json.Marshal(params)
 
+	var taskIDPtr *string
+	if extras.TaskID != "" {
+		t := extras.TaskID
+		taskIDPtr = &t
+	}
+	// audit_log.task_id is deliberately left NULL on endpoint_call
+	// rows — see EndpointCallExtras.TaskID for the dedup rationale.
+	// The task linkage is recorded on the cost row below.
 	entry := &store.AuditEntry{
 		ID:         uuid.NewString(),
 		UserID:     agent.UserID,
@@ -84,8 +119,87 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 		DurationMS: int(duration.Milliseconds()),
 	}
 	if err := e.Store.LogAudit(ctx, entry); err != nil {
-		e.Logger.WarnContext(ctx, "lite-proxy: audit log failed",
-			"agent_id", agent.ID, "action", action, "err", err.Error())
+		// Surface the token counts to slog on the failure path so a
+		// dropped row leaves a trace that can be reconciled later —
+		// without this, an audit-log outage silently loses the
+		// per-request usage data entirely.
+		var tokenAttrs []any
+		tokenAttrs = append(tokenAttrs, "agent_id", agent.ID, "action", action, "err", err.Error())
+		if extras.Usage != nil && extras.Usage.Found {
+			tokenAttrs = append(tokenAttrs,
+				"usage_model", extras.Usage.Model,
+				"usage_input_tokens", extras.Usage.Usage.InputTokens,
+				"usage_output_tokens", extras.Usage.Usage.OutputTokens,
+				"usage_cache_read_tokens", extras.Usage.Usage.CacheReadTokens,
+				"usage_cache_write_tokens", extras.Usage.Usage.CacheWriteTokens,
+				"usage_cache_write_1h_tokens", extras.Usage.Usage.CacheWrite1hTokens,
+			)
+		}
+		e.Logger.WarnContext(ctx, "lite-proxy: audit log failed", tokenAttrs...)
+		// Skip cost recording when the audit row didn't land. The
+		// schema does not enforce a foreign key between
+		// llm_request_cost.audit_id and audit_log.id (intentionally —
+		// we don't want a cost-record outage to gate the audit row),
+		// so write-order is what guarantees the cost row never refers
+		// to a non-existent audit. Tokens just logged above survive
+		// the drop.
+		return
+	}
+	if extras.Usage != nil && extras.Usage.Found {
+		// Store the normalized model id so GROUP BY in GetTaskCost
+		// doesn't fragment a task's spend across spelling variants
+		// (e.g. `claude-opus-4-7` and `anthropic/claude-opus-4-7` and
+		// `claude-opus-4-7-20260120` are the same priced model).
+		normModel := pricing.Normalize(extras.Usage.Model)
+		if normModel == "" {
+			// Both the upstream body and the inbound request omitted
+			// a model id. The cost row would be unattributable (it
+			// can't be priced, can't roll up under any model in the
+			// UI). Skip the insert and warn — the token counts are
+			// still in slog above for forensics.
+			e.Logger.WarnContext(ctx, "lite-proxy: skipping cost record — no model on request or response",
+				"agent_id", agent.ID, "audit_id", entry.ID)
+		} else {
+			cost := pricing.Compute(normModel, extras.Usage.Usage)
+			var costMicros *int64
+			if cost.Known {
+				c := cost.CostMicros
+				costMicros = &c
+			} else {
+				// Surface unknown-model rows so the pricing table can
+				// be updated. Recorded with cost_micros=NULL so
+				// aggregates can flag them rather than under-billing
+				// silently.
+				e.Logger.WarnContext(ctx, "lite-proxy: cost not priced — model missing from pricing table",
+					"agent_id", agent.ID, "model", normModel)
+			}
+			// Storage flattens the per-TTL cache-write breakdown into
+			// one column; cost has already been computed against the
+			// split buckets by pricing.Compute above. Re-deriving cost
+			// from the stored row would assume 5m rates and slightly
+			// under-bill 1h cache writes — acceptable for re-derivation
+			// today, callable out in a future schema bump if needed.
+			cacheWriteTotal := extras.Usage.Usage.CacheWriteTokens + extras.Usage.Usage.CacheWrite1hTokens
+			row := &store.LLMRequestCost{
+				AuditID:          entry.ID,
+				UserID:           agent.UserID,
+				AgentID:          &agent.ID,
+				TaskID:           taskIDPtr,
+				RequestID:        requestID,
+				Timestamp:        entry.Timestamp,
+				Provider:         provider,
+				Model:            normModel,
+				InputTokens:      extras.Usage.Usage.InputTokens,
+				OutputTokens:     extras.Usage.Usage.OutputTokens,
+				CacheReadTokens:  extras.Usage.Usage.CacheReadTokens,
+				CacheWriteTokens: cacheWriteTotal,
+				CostMicros:       costMicros,
+			}
+			if err := e.Store.RecordLLMRequestCost(ctx, row); err != nil {
+				e.Logger.WarnContext(ctx, "lite-proxy: cost record failed",
+					"agent_id", agent.ID, "audit_id", entry.ID, "err", err.Error())
+			}
+		}
 	}
 }
 

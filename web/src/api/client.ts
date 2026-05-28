@@ -1628,7 +1628,31 @@ export const api = {
       post<{ task_id: string; status: string }>(`/api/tasks/${id}/expand/deny`, {}),
     revoke: (id: string) =>
       post<{ task_id: string; status: string }>(`/api/tasks/${id}/revoke`, {}),
+    cost: (id: string) => get<TaskCostSummary>(`/api/tasks/${id}/cost`),
   },
+}
+
+export interface TaskCostByModelEntry {
+  model: string
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  cost_micros: number
+  known: boolean
+}
+
+export interface TaskCostSummary {
+  task_id: string
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  cost_micros: number
+  unknown_models?: string[]
+  by_model: TaskCostByModelEntry[]
 }
 
 export { get, post, put, patch, del }

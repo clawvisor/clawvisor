@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -922,6 +923,86 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 		return store.ErrConflict
 	}
 	return err
+}
+
+// RecordLLMRequestCost inserts one llm_request_cost row. AuditID is
+// the FK back to the audit_log row that captured this request; the
+// primary-key conflict path is harmless on retries because the audit
+// row is also written exactly-once per request.
+func (s *Store) RecordLLMRequestCost(ctx context.Context, c *store.LLMRequestCost) error {
+	if c == nil || c.AuditID == "" {
+		return errors.New("RecordLLMRequestCost: audit_id required")
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO llm_request_cost (
+			audit_id, user_id, agent_id, task_id, request_id, timestamp,
+			provider, model, input_tokens, output_tokens, cache_read_tokens,
+			cache_write_tokens, cost_micros
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, c.AuditID, c.UserID, c.AgentID, c.TaskID, c.RequestID,
+		c.Timestamp.UTC().Format(time.RFC3339Nano),
+		c.Provider, c.Model, c.InputTokens, c.OutputTokens,
+		c.CacheReadTokens, c.CacheWriteTokens, c.CostMicros)
+	if err != nil && isDuplicate(err) {
+		return store.ErrConflict
+	}
+	return err
+}
+
+// GetTaskCost rolls up llm_request_cost rows for one task. Returns an
+// empty TaskCostSummary (not ErrNotFound) when the task has no cost
+// rows yet — the caller can still render "no LLM spend recorded".
+func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.TaskCostSummary, error) {
+	out := &store.TaskCostSummary{TaskID: taskID, ByModel: []store.TaskCostByModelEntry{}}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT model,
+		       COUNT(*) AS n,
+		       COALESCE(SUM(input_tokens), 0),
+		       COALESCE(SUM(output_tokens), 0),
+		       COALESCE(SUM(cache_read_tokens), 0),
+		       COALESCE(SUM(cache_write_tokens), 0),
+		       COALESCE(SUM(cost_micros), 0),
+		       SUM(CASE WHEN cost_micros IS NULL THEN 1 ELSE 0 END) AS unknown_rows
+		FROM llm_request_cost
+		WHERE user_id = ? AND task_id = ?
+		GROUP BY model
+		ORDER BY model`, userID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	unknownModels := map[string]struct{}{}
+	for rows.Next() {
+		var e store.TaskCostByModelEntry
+		var unknownRows int64
+		if err := rows.Scan(&e.Model, &e.RequestCount, &e.InputTokens, &e.OutputTokens,
+			&e.CacheReadTokens, &e.CacheWriteTokens, &e.CostMicros, &unknownRows); err != nil {
+			return nil, err
+		}
+		// A model is "known" when every row for it priced successfully.
+		// Mixed (some priced, some not) — common when the pricing table
+		// is updated mid-task — surfaces in UnknownModels so the UI can
+		// flag that the total is a lower bound.
+		e.Known = unknownRows == 0
+		if !e.Known {
+			unknownModels[e.Model] = struct{}{}
+		}
+		out.ByModel = append(out.ByModel, e)
+		out.RequestCount += e.RequestCount
+		out.InputTokens += e.InputTokens
+		out.OutputTokens += e.OutputTokens
+		out.CacheReadTokens += e.CacheReadTokens
+		out.CacheWriteTokens += e.CacheWriteTokens
+		out.CostMicros += e.CostMicros
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for m := range unknownModels {
+		out.UnknownModels = append(out.UnknownModels, m)
+	}
+	sort.Strings(out.UnknownModels)
+	return out, nil
 }
 
 func (s *Store) UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg string, durationMS int) error {

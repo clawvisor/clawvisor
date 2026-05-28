@@ -106,7 +106,7 @@ func TestTryContinuation_PostsSecondCallWithToolResult(t *testing.T) {
 	agent := firstSeededAgent(t, h.Store)
 	req = req.WithContext(store.WithAgent(req.Context(), agent))
 
-	final, status, ct, err := h.tryContinuation(
+	final, status, ct, _, err := h.tryContinuation(
 		req,
 		agent,
 		conversation.ProviderAnthropic,
@@ -263,7 +263,7 @@ func TestTryContinuation_RefreshesCandidateTasksFromStore(t *testing.T) {
 	// where the original load happened before any inline auto-approve
 	// minted a new task — the refresh inside tryContinuation must
 	// re-read the store to find the seeded github task.
-	final, _, _, err := h.tryContinuation(
+	final, _, _, _, err := h.tryContinuation(
 		req, agent, conversation.ProviderAnthropic, "req-refresh",
 		inboundBody, firstUpstreamBody, "application/json", http.StatusOK,
 		processed,
@@ -351,7 +351,7 @@ func TestTryContinuation_PrependsUserFacingNotice(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages", strings.NewReader(string(inboundBody)))
 	req = req.WithContext(store.WithAgent(req.Context(), agent))
 
-	final, _, _, err := h.tryContinuation(
+	final, _, _, _, err := h.tryContinuation(
 		req, agent, conversation.ProviderAnthropic, "req-notice",
 		inboundBody, firstUpstreamBody, "application/json", http.StatusOK,
 		processed,
@@ -402,7 +402,7 @@ func TestTryContinuation_NoContinueDecisionIsNoOp(t *testing.T) {
 			Verdict: conversation.ToolUseVerdict{Allowed: true},
 		}},
 	}
-	final, status, ct, err := h.tryContinuation(
+	final, status, ct, _, err := h.tryContinuation(
 		req, agent, conversation.ProviderAnthropic, "req-x",
 		[]byte(`{"messages":[]}`), []byte(`{"content":[]}`), "application/json", http.StatusOK,
 		processed, llmproxy.PostprocessConfig{Inspector: h.Inspector},
@@ -471,7 +471,7 @@ func TestServe_ContinuationClearsStaleContentLengthHeader(t *testing.T) {
 		}},
 	}
 
-	final, _, _, err := h.tryContinuation(
+	final, _, _, _, err := h.tryContinuation(
 		req, agent, conversation.ProviderAnthropic, "req-headers",
 		[]byte(`{"messages":[{"role":"user","content":"x"}]}`),
 		[]byte(`{"content":[{"type":"tool_use","id":"toolu_a","name":"Bash","input":{}}]}`),
@@ -536,7 +536,7 @@ func TestTryContinuation_UpstreamErrorFallsBack(t *testing.T) {
 	}
 	inbound := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
 	first := []byte(`{"content":[{"type":"tool_use","id":"toolu_x","name":"Bash","input":{}}]}`)
-	final, _, _, err := h.tryContinuation(
+	final, _, _, _, err := h.tryContinuation(
 		req, agent, conversation.ProviderAnthropic, "req-y",
 		inbound, first, "application/json", http.StatusOK,
 		processed, llmproxy.PostprocessConfig{Inspector: h.Inspector},

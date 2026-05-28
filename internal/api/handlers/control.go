@@ -302,7 +302,7 @@ func (h *LLMControlHandler) CheckoutTask(w http.ResponseWriter, r *http.Request)
 		h.Audit.LogEndpointCall(r.Context(), agent, uuid.NewString(), "clawvisor.control", "task.checkout", http.StatusOK, "allow", "checked_out", "", 0, map[string]any{
 			"task_id": task.ID,
 			"purpose": task.Purpose,
-		})
+		}, llmproxy.EndpointCallExtras{TaskID: task.ID})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":     "checked_out",

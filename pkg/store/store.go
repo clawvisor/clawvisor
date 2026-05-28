@@ -150,6 +150,13 @@ type Store interface {
 	FindDedupCandidate(ctx context.Context, requestID, userID, taskID string) (*AuditEntry, error)
 	ListAuditEntries(ctx context.Context, userID string, filter AuditFilter) ([]*AuditEntry, int, error)
 	AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]ActivityBucket, error)
+
+	// LLM request cost tracking. RecordLLMRequestCost stores one row per
+	// upstream LLM call so per-task / per-user spend can be aggregated
+	// without scanning audit_log. GetTaskCost rolls up by model for one
+	// task.
+	RecordLLMRequestCost(ctx context.Context, cost *LLMRequestCost) error
+	GetTaskCost(ctx context.Context, userID, taskID string) (*TaskCostSummary, error)
 	CreateActivityMute(ctx context.Context, mute *ActivityMute) error
 	ListActivityMutes(ctx context.Context, userID string) ([]*ActivityMute, error)
 	DeleteActivityMute(ctx context.Context, id, userID string) error
@@ -642,6 +649,65 @@ type AuditEntry struct {
 	// DedupedOf is set on retry-attempt rows to the id of the canonical
 	// audit entry they shadow. Canonical rows have DedupedOf == nil.
 	DedupedOf *string `json:"deduped_of,omitempty"`
+}
+
+// LLMRequestCost is one row per upstream LLM call recording the model,
+// token breakdown, and computed cost. Lives in its own table (not on
+// audit_log) so the majority of audit rows — tool_use, approvals,
+// resolver swaps — don't carry mostly-NULL usage columns. AuditID is
+// the FK back to the audit_log row that captured the request.
+//
+// CostMicros is int64 micro-USD (1e-6 USD per unit). Nil when the
+// model isn't in the pricing table — token counts are still recorded
+// so aggregates can surface "unknown-model spend" and cost is
+// re-derivable when the table updates.
+//
+// Caller contract: UserID must equal the owning agent's UserID (the
+// per-user cost rollup query in GetTaskCost filters by this column,
+// so a mismatch would silently miscount). Today the only producer is
+// the lite-proxy audit emitter, which derives UserID from
+// agent.UserID; any future caller should preserve that invariant.
+type LLMRequestCost struct {
+	AuditID          string    `json:"audit_id"`
+	UserID           string    `json:"user_id"`
+	AgentID          *string   `json:"agent_id,omitempty"`
+	TaskID           *string   `json:"task_id,omitempty"`
+	RequestID        string    `json:"request_id"`
+	Timestamp        time.Time `json:"timestamp"`
+	Provider         string    `json:"provider"`
+	Model            string    `json:"model"`
+	InputTokens      int       `json:"input_tokens"`
+	OutputTokens     int       `json:"output_tokens"`
+	CacheReadTokens  int       `json:"cache_read_tokens"`
+	CacheWriteTokens int       `json:"cache_write_tokens"`
+	CostMicros       *int64    `json:"cost_micros,omitempty"`
+}
+
+// TaskCostSummary is the rollup of all LLMRequestCost rows for a
+// single task. ByModel breaks the totals down per model so the UI
+// can show "X spent on Opus, Y on Sonnet" without re-querying.
+type TaskCostSummary struct {
+	TaskID           string                  `json:"task_id"`
+	RequestCount     int                     `json:"request_count"`
+	InputTokens      int64                   `json:"input_tokens"`
+	OutputTokens     int64                   `json:"output_tokens"`
+	CacheReadTokens  int64                   `json:"cache_read_tokens"`
+	CacheWriteTokens int64                   `json:"cache_write_tokens"`
+	CostMicros       int64                   `json:"cost_micros"`
+	UnknownModels    []string                `json:"unknown_models,omitempty"`
+	ByModel          []TaskCostByModelEntry  `json:"by_model"`
+}
+
+// TaskCostByModelEntry is one model's contribution to a task's cost.
+type TaskCostByModelEntry struct {
+	Model            string `json:"model"`
+	RequestCount     int    `json:"request_count"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	CostMicros       int64  `json:"cost_micros"`
+	Known            bool   `json:"known"`
 }
 
 // ActivityMute suppresses noisy runtime egress rows from the activity feed.
