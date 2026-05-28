@@ -575,11 +575,15 @@ func (h *TasksHandler) ApproveInlineTask(ctx context.Context, taskID, userID str
 		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 	}
 
-	placeholders, err := h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt)
-	if err != nil {
-		return nil, fmt.Errorf("mint credential placeholders: %w", err)
-	}
-
+	// CAS pending → active FIRST, then mint placeholders. The expiry
+	// sweeper specifically targets approval_source='inline_chat'
+	// pending rows past the 24h hold TTL — running mint before the
+	// CAS would leave credential placeholders bound to a task the
+	// sweeper has just denied, with no cleanup path. Doing the CAS
+	// first means a lost race surfaces as "no longer pending"
+	// before any side effects fire. The minor cost is one extra
+	// rollback path when mint fails post-CAS, which we handle
+	// explicitly below.
 	won, err := h.st.UpdateTaskApprovedFrom(ctx, taskID, "pending_approval", expiresAt, task.AuthorizedActions)
 	if err != nil {
 		return nil, err
@@ -591,6 +595,20 @@ func (h *TasksHandler) ApproveInlineTask(ctx context.Context, taskID, userID str
 	now := time.Now().UTC()
 	task.ApprovedAt = &now
 	task.ExpiresAt = &expiresAt
+
+	placeholders, err := h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt)
+	if err != nil {
+		// Mint failed AFTER the CAS landed. Roll the task back to
+		// denied so we don't leave an active task with no usable
+		// credentials. Detach the cancellation so a mid-request
+		// client disconnect doesn't strand an orphan active task.
+		rollbackCtx := context.WithoutCancel(ctx)
+		if rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied"); rollbackErr != nil {
+			h.logger.ErrorContext(ctx, "CRITICAL: post-CAS credential mint failed AND rollback failed; task is now orphaned active",
+				"task_id", task.ID, "mint_err", err, "rollback_err", rollbackErr)
+		}
+		return nil, fmt.Errorf("mint credential placeholders: %w", err)
+	}
 
 	// Snapshot the pending canonical record BEFORE resolve flips it;
 	// findPendingTaskApprovalRecord filters to status="pending" so a
@@ -630,7 +648,20 @@ func (h *TasksHandler) DenyInlineTask(ctx context.Context, taskID, userID string
 	if task.UserID != userID {
 		return errors.New("not your task")
 	}
-	if task.Status != "pending_approval" || task.ApprovalSource != "inline_chat" {
+	// Idempotency: a task already in a terminal state matching the
+	// user's intent (denied / expired) is a successful no-op rather
+	// than an error. The common cause is the expiry sweeper having
+	// already denied the row between our GetTask and the CAS — the
+	// model still gets a "denied" reply, and we don't want to stuff
+	// "task is no longer pending" into out.Reason and the SSE log.
+	switch task.Status {
+	case "denied", "expired", "revoked":
+		return nil
+	case "pending_approval":
+		if task.ApprovalSource != "inline_chat" {
+			return fmt.Errorf("task is not a pending inline-chat task (source=%q)", task.ApprovalSource)
+		}
+	default:
 		return fmt.Errorf("task is not a pending inline-chat task (status=%q, source=%q)", task.Status, task.ApprovalSource)
 	}
 	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, "pending_approval", "denied")
@@ -638,7 +669,11 @@ func (h *TasksHandler) DenyInlineTask(ctx context.Context, taskID, userID string
 		return err
 	}
 	if !won {
-		return errors.New("task is no longer pending approval")
+		// Lost the CAS to another resolver (sweeper, parallel deny).
+		// The terminal state is what the user asked for, so report
+		// success — the side effects below would double-fire
+		// otherwise.
+		return nil
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_create", "deny", "denied")
 	if h.eventHub != nil {

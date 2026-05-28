@@ -1,6 +1,7 @@
 package llmproxy
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -325,7 +326,10 @@ func maybeInterceptInlineTaskDefinition(
 		agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, Name: cfg.AgentName}
 		created, pendingErr := pendingCreator.CreatePendingInlineTask(req.Context(), agentForCreate, parsed, tu.ID, assessment)
 		if pendingErr != nil {
-			audit("block", "inline_task_pending_create_failed", pendingErr.Error())
+			// fallthrough (not block) — we return false, so the
+			// caller proceeds to the regular control-rewrite path.
+			// See the lines 99-106 comment for the rationale.
+			audit("fallthrough", "inline_task_pending_create_failed", pendingErr.Error()+"; deferring to dashboard rewrite")
 			trace("inline_task.pending_create_failed", "err", pendingErr.Error())
 			return conversation.ToolUseVerdict{}, false
 		}
@@ -351,12 +355,17 @@ func maybeInterceptInlineTaskDefinition(
 		// Cache hold failed. If we already landed a pending task in
 		// the DB, roll it back so the dashboard doesn't show an
 		// orphaned pending task whose cache anchor never existed.
+		// Use a detached context so a mid-request client disconnect
+		// (a plausible cause of cache misbehavior) doesn't cancel
+		// the rollback and strand the orphan for the full 24h TTL.
 		if pendingCreator != nil && pendingTaskID != "" {
-			if denyErr := pendingCreator.DenyInlineTask(req.Context(), pendingTaskID, cfg.AgentUserID); denyErr != nil {
+			rollbackCtx := context.WithoutCancel(req.Context())
+			if denyErr := pendingCreator.DenyInlineTask(rollbackCtx, pendingTaskID, cfg.AgentUserID); denyErr != nil {
 				trace("inline_task.pending_rollback_failed", "task_id", pendingTaskID, "err", denyErr.Error())
 			}
 		}
-		audit("block", "inline_task_hold_failed", holdErr.Error())
+		// fallthrough — see the audit-decision rationale above.
+		audit("fallthrough", "inline_task_hold_failed", holdErr.Error()+"; deferring to dashboard rewrite")
 		return conversation.ToolUseVerdict{}, false
 	}
 
