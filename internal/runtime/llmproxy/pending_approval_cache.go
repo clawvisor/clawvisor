@@ -12,6 +12,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 )
 
@@ -82,6 +83,17 @@ type PendingLiteApproval struct {
 	// inline approval prompt and to create the task once the user approves.
 	// nil at the other stages.
 	TaskDefinition *runtimetasks.TaskCreateRequest
+
+	// PrecomputedRisk is the merged LLM+envelope risk assessment computed
+	// at hold time (with RecentUserTurns in scope). The release path
+	// passes this to CreateInlineApprovedTaskWithAssessment so the
+	// persisted task.RiskDetails matches what the user saw in the inline
+	// approval prompt — without it the handler runs a fresh assessor call
+	// that lacks conversation context and produces a different, more
+	// cautious explanation that disagrees with the inline read.
+	// nil at stages other than StageAwaitingTaskApproval, and may be nil
+	// at that stage if the assessor wasn't configured or returned unknown.
+	PrecomputedRisk *taskrisk.RiskAssessment
 
 	// Additional carries the other tool_uses that share this hold when
 	// multiple tool_uses in a single upstream response are coalesced into
