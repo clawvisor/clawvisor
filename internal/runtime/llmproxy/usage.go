@@ -83,7 +83,14 @@ func bodyLooksLikeSSE(body []byte) bool {
 		i++
 	}
 	rest := body[i:]
-	return bytes.HasPrefix(rest, []byte("event:")) || bytes.HasPrefix(rest, []byte("data:"))
+	// Per the SSE spec a line starting with `:` is a comment, often
+	// used by intermediaries as a keep-alive heartbeat (e.g. `: ping`)
+	// before any real event arrives. A stream that opens with a
+	// comment line is still SSE; treating it as JSON would silently
+	// skip cost recording for the call.
+	return bytes.HasPrefix(rest, []byte("event:")) ||
+		bytes.HasPrefix(rest, []byte("data:")) ||
+		bytes.HasPrefix(rest, []byte(":"))
 }
 
 type anthropicCacheCreation struct {

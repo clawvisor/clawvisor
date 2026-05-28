@@ -20,6 +20,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -1050,22 +1051,56 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				if contCT != "" && contCT != upstreamCT {
 					w.Header().Set("Content-Type", contCT)
 				}
+				// Reattribute the cost row to the task that the
+				// continuation was made for. The auto-approve gate
+				// in the first postprocess pass minted a new task
+				// (Verdict.CreatedTaskID) and the continuation does
+				// THAT task's work, so the cost belongs there — not
+				// on the pre-continuation checkout (which was
+				// resolved before the task existed and is often
+				// empty for the conversation's very first turn).
+				// Use the first decision that carried both
+				// ContinueWithToolResult (so it actually triggered a
+				// continuation) and a CreatedTaskID; multiple in one
+				// turn is rare, and any one is a strict improvement
+				// over NULL.
+				for _, dec := range processed.Decisions {
+					if dec.Verdict.ContinueWithToolResult != "" && dec.Verdict.CreatedTaskID != "" {
+						auditTaskID = dec.Verdict.CreatedTaskID
+						break
+					}
+				}
 				// Roll the continuation's tokens into the per-request
-				// cost. Both calls used the same model (the
-				// continuation builder preserves it), so summing the
-				// token buckets is correct; pricing.Compute will
-				// price the combined sum against one model row.
+				// cost. We expect both calls to report the same
+				// model (BuildContinuationBody preserves the inbound
+				// `model` field), so summing token buckets is safe
+				// and pricing.Compute will price the combined sum
+				// against one model row. Defend against a future
+				// regression where the upstream resolves to a
+				// different model on the continuation: drop the
+				// continuation's usage rather than silently bill it
+				// at the first call's rate.
 				if contUsage != nil {
-					if auditUsage == nil {
+					switch {
+					case auditUsage == nil:
 						auditUsage = contUsage
-					} else {
+						auditParams["continuation_usage_recorded"] = true
+					case pricingModelMatch(auditUsage.Model, contUsage.Model):
 						auditUsage.Usage.InputTokens += contUsage.Usage.InputTokens
 						auditUsage.Usage.OutputTokens += contUsage.Usage.OutputTokens
 						auditUsage.Usage.CacheReadTokens += contUsage.Usage.CacheReadTokens
 						auditUsage.Usage.CacheWriteTokens += contUsage.Usage.CacheWriteTokens
 						auditUsage.Usage.CacheWrite1hTokens += contUsage.Usage.CacheWrite1hTokens
+						auditParams["continuation_usage_recorded"] = true
+					default:
+						h.Logger.WarnContext(r.Context(), "lite-proxy continuation usage dropped: model mismatch with original call",
+							"request_id", requestID,
+							"agent_id", agent.ID,
+							"original_model", auditUsage.Model,
+							"continuation_model", contUsage.Model,
+						)
+						auditParams["continuation_usage_dropped_model_mismatch"] = true
 					}
-					auditParams["continuation_usage_recorded"] = true
 				}
 			}
 		}
@@ -1606,6 +1641,23 @@ func (w *limitedCaptureWriter) Bytes() []byte {
 		return nil
 	}
 	return w.buf.Bytes()
+}
+
+// pricingModelMatch reports whether two model identifiers resolve to
+// the same pricing-table row (case, vendor prefix, date suffix, etc.
+// are all collapsed by pricing.Normalize). Used to gate the
+// continuation token-merge so a continuation that resolves to a
+// different upstream model can't get billed at the first call's rate.
+// An empty model on either side is treated as "match unknown" — the
+// merge proceeds because the prior code path used to assume models
+// always match, and an empty model is almost always the first call
+// (extractor populated it from requestModel) and the continuation
+// (extractor saw the same body).
+func pricingModelMatch(a, b string) bool {
+	if a == "" || b == "" {
+		return true
+	}
+	return pricing.Normalize(a) == pricing.Normalize(b)
 }
 
 // actionForRoute maps a request path to an audit-log action label.

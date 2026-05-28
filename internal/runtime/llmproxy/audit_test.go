@@ -9,6 +9,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
@@ -78,6 +79,96 @@ func TestAuditEmitter_LogEndpointCall(t *testing.T) {
 	}
 	if _, ok := params["parser_version"]; !ok {
 		t.Errorf("expected forensic parser_version")
+	}
+}
+
+// TestAuditEmitter_LogEndpointCall_DedupCostUsesCanonicalAuditID
+// pins the FK-safety contract on the dedup path: when LogAudit
+// returns ErrConflict (the canonical row already exists for this
+// request_id), the cost row must be written against the surviving
+// canonical audit row's id — not the locally generated id that
+// never landed. With FK llm_request_cost.audit_id REFERENCES
+// audit_log(id), using the local id would fail the insert.
+func TestAuditEmitter_LogEndpointCall_DedupCostUsesCanonicalAuditID(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	em := NewAuditEmitter(st, nil, nil)
+	ctx := context.Background()
+
+	usage := &ExtractUsageResult{
+		Found: true,
+		Model: "claude-opus-4-7",
+		Usage: pricing.Usage{InputTokens: 100, OutputTokens: 50},
+	}
+
+	// First call lands the canonical audit row + cost row.
+	em.LogEndpointCall(ctx, agent, "req-dedup", "anthropic", "lite_proxy.messages.create",
+		200, "allow", "success", "", 0, nil, EndpointCallExtras{Usage: usage})
+
+	rows, _, err := st.ListAuditEntries(ctx, agent.UserID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 audit row after first call, got %d", len(rows))
+	}
+	canonicalAuditID := rows[0].ID
+
+	costSummary, err := st.GetTaskCost(ctx, agent.UserID, "")
+	if err != nil {
+		t.Fatalf("GetTaskCost: %v", err)
+	}
+	_ = costSummary // task_id is NULL on these rows; just confirm no error
+
+	// Second call with same request_id triggers ErrConflict on LogAudit.
+	// The cost record must succeed (FK-safe) by pointing at the
+	// canonical row's id, not the new entry's local id.
+	em.LogEndpointCall(ctx, agent, "req-dedup", "anthropic", "lite_proxy.messages.create",
+		200, "allow", "success", "", 0, nil, EndpointCallExtras{Usage: usage})
+
+	// Still exactly one audit row (dedup worked).
+	rows, _, err = st.ListAuditEntries(ctx, agent.UserID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries after retry: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 audit row after retry (dedup), got %d", len(rows))
+	}
+	if rows[0].ID != canonicalAuditID {
+		t.Fatalf("canonical audit id changed unexpectedly: %s -> %s", canonicalAuditID, rows[0].ID)
+	}
+
+	// The cost row from the FIRST call must still be there (PK conflict
+	// on audit_id meant the retry insert was a no-op rather than a row
+	// pointing at a non-existent audit_id). If the dedup path had used
+	// a fresh entry.ID, the FK would have rejected it; if there were
+	// no FK, we'd now have two cost rows for one canonical audit row.
+	sqliteStore, ok := st.(*sqlite.Store)
+	if !ok {
+		t.Fatalf("expected *sqlite.Store, got %T", st)
+	}
+	db := sqliteStore.DB()
+	var costRowCount int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM llm_request_cost WHERE audit_id = ?`, canonicalAuditID,
+	).Scan(&costRowCount); err != nil {
+		t.Fatalf("count cost rows: %v", err)
+	}
+	if costRowCount != 1 {
+		t.Fatalf("expected exactly 1 cost row tied to canonical audit_id %s, got %d",
+			canonicalAuditID, costRowCount)
+	}
+
+	// And no orphan cost rows pointing at audit ids that don't exist.
+	var orphans int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM llm_request_cost c
+		 LEFT JOIN audit_log a ON a.id = c.audit_id
+		 WHERE a.id IS NULL`,
+	).Scan(&orphans); err != nil {
+		t.Fatalf("count orphan cost rows: %v", err)
+	}
+	if orphans != 0 {
+		t.Fatalf("found %d orphan cost rows pointing at non-existent audit_log rows", orphans)
 	}
 }
 

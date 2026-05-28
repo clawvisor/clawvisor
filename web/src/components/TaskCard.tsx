@@ -120,20 +120,11 @@ export default function TaskCard({
   const isActive = task.status === 'active'
   const isStanding = task.lifetime === 'standing'
   const isActionable = needsApproval || needsExpansion
-  const activityVisible = !isActionable && expanded && activeTab === 'activity'
   // Fetch cost as soon as the card is expanded (not gated on tab click)
   // so we can decide whether to render the Cost tab at all — non-llm-proxy
   // tasks return request_count=0 and the tab stays hidden. The query is
   // cheap when there are no rows.
   const costPrefetchEnabled = !isActionable && expanded
-
-  const { data: auditData, isLoading: auditLoading } = useQuery({
-    queryKey: ['audit', { task_id: task.id }],
-    queryFn: () => api.audit.list({ task_id: task.id, limit: 50 }),
-    enabled: activityVisible,
-    refetchInterval: (query) =>
-      activityVisible && task.request_count !== (query.state.data?.entries?.length ?? 0) ? 1_000 : false,
-  })
 
   const { data: costData, isLoading: costLoading } = useQuery({
     queryKey: ['task-cost', task.id],
@@ -145,6 +136,25 @@ export default function TaskCard({
     refetchInterval: costPrefetchEnabled && isActive ? 5_000 : false,
   })
   const hasCostData = (costData?.request_count ?? 0) > 0
+  // If the user picked Cost and the data later disappears (refetch
+  // returns 0 rows, error, etc.), the tab button vanishes but
+  // activeTab is still 'cost' — that strands them on an empty panel
+  // with no obvious way back. Fall through to the default tab in
+  // that case. Local-only; activeTab itself stays as-is so if data
+  // reappears the original selection takes effect again.
+  const effectiveTab: typeof activeTab =
+    activeTab === 'cost' && !hasCostData
+      ? (task.request_count === 0 ? 'scopes' : 'activity')
+      : activeTab
+  const activityVisible = !isActionable && expanded && effectiveTab === 'activity'
+
+  const { data: auditData, isLoading: auditLoading } = useQuery({
+    queryKey: ['audit', { task_id: task.id }],
+    queryFn: () => api.audit.list({ task_id: task.id, limit: 50 }),
+    enabled: activityVisible,
+    refetchInterval: (query) =>
+      activityVisible && task.request_count !== (query.state.data?.entries?.length ?? 0) ? 1_000 : false,
+  })
 
   const effectiveValue = (a: TaskAction): ScopePillValue => {
     const key = `${a.service}|${a.action}`
@@ -445,7 +455,7 @@ export default function TaskCard({
             <button
               onClick={() => setActiveTab('activity')}
               className={`px-3 py-2.5 text-[12.5px] border-b-2 -mb-px transition-colors ${
-                activeTab === 'activity'
+                effectiveTab === 'activity'
                   ? 'text-text-primary border-brand'
                   : 'text-text-tertiary border-transparent hover:text-text-secondary'
               }`}
@@ -455,7 +465,7 @@ export default function TaskCard({
             <button
               onClick={() => setActiveTab('scopes')}
               className={`px-3 py-2.5 text-[12.5px] border-b-2 -mb-px transition-colors ${
-                activeTab === 'scopes'
+                effectiveTab === 'scopes'
                   ? 'text-text-primary border-brand'
                   : 'text-text-tertiary border-transparent hover:text-text-secondary'
               }`}
@@ -471,7 +481,7 @@ export default function TaskCard({
               <button
                 onClick={() => setActiveTab('cost')}
                 className={`px-3 py-2.5 text-[12.5px] border-b-2 -mb-px transition-colors ${
-                  activeTab === 'cost'
+                  effectiveTab === 'cost'
                     ? 'text-text-primary border-brand'
                     : 'text-text-tertiary border-transparent hover:text-text-secondary'
                 }`}
@@ -481,7 +491,7 @@ export default function TaskCard({
             )}
           </div>
 
-          {activeTab === 'activity' && (
+          {effectiveTab === 'activity' && (
             <div className="divide-y divide-border-subtle text-sm">
               {auditLoading && <div className="px-4 py-2 text-xs text-text-tertiary">Loading...</div>}
               {!auditLoading && auditEntries.length === 0 && (
@@ -491,7 +501,7 @@ export default function TaskCard({
             </div>
           )}
 
-          {activeTab === 'scopes' && (
+          {effectiveTab === 'scopes' && (
             <div className="pt-3">
               {showRisk && <RiskPanel risk={riskDetails} level={riskLevel} />}
               {showRationale && <AutoApprovalPanel rationale={task.approval_rationale!} />}
@@ -533,7 +543,7 @@ export default function TaskCard({
             </div>
           )}
 
-          {activeTab === 'cost' && (
+          {effectiveTab === 'cost' && (
             <CostPanel data={costData} loading={costLoading} />
           )}
 
@@ -1111,7 +1121,7 @@ function CostPanel({ data, loading }: { data: TaskCostSummary | undefined; loadi
       </div>
     )
   }
-  const hasUnknown = (data.unknown_models?.length ?? 0) > 0
+  const hasUnknown = data.unknown_models.length > 0
   return (
     <div className="px-4 py-3 space-y-3">
       <div className="grid grid-cols-3 gap-3">
@@ -1123,7 +1133,7 @@ function CostPanel({ data, loading }: { data: TaskCostSummary | undefined; loadi
       </div>
       {hasUnknown && (
         <div className="text-[11px] text-warning">
-          Cost is a lower bound — pricing not configured for: {data.unknown_models!.join(', ')}
+          Cost is a lower bound — pricing not configured for: {data.unknown_models.join(', ')}
         </div>
       )}
       {data.by_model.length > 0 && (

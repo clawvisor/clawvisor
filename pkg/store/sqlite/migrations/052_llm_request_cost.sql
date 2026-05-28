@@ -12,8 +12,16 @@
 -- aggregates can surface "unknown-model spend" rather than silently
 -- under-bill. Tokens are recorded regardless so cost is re-derivable
 -- if a pricing-table bug slips through.
+--
+-- audit_id FKs into audit_log(id) ON DELETE CASCADE so cost rows can't
+-- become orphaned (e.g. when an audit row is GC'd later, or when a
+-- code path tries to insert a cost row whose audit_id never landed —
+-- the dedup-conflict path in LogEndpointCall resolves the surviving
+-- canonical audit row's id before insert specifically to honor this).
+-- The SQLite store enables this with PRAGMA foreign_keys = ON in
+-- sqlite.New (migration 001 also sets it for new DBs).
 CREATE TABLE IF NOT EXISTS llm_request_cost (
-  audit_id            TEXT PRIMARY KEY,
+  audit_id            TEXT PRIMARY KEY REFERENCES audit_log(id) ON DELETE CASCADE,
   user_id             TEXT NOT NULL,
   agent_id            TEXT,
   task_id             TEXT,

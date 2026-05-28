@@ -60,40 +60,44 @@ type Cost struct {
 	CostMicros int64
 }
 
-// asOf2026q2 stamps every entry below. Bump when you edit a price.
-var asOf2026q2 = time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
+// lastBulkPricedAt is the timestamp the entire table was last
+// reconciled against upstream pricing in one pass. Single-row updates
+// between bulk reconciliations should inline a distinct time.Date(...)
+// literal on the row instead — using this shared stamp on a row that
+// was edited later makes the PricedAt claim a lie for that row.
+var lastBulkPricedAt = time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
 
 var table = map[string]ModelPricing{
 	// Anthropic — current generation (Claude 4.x). CacheWrite1hPerM
 	// is 2x InputPerM (Anthropic's 1-hour cache premium); 5-minute
 	// writes are at 1.25x.
-	"claude-opus-4-7":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: asOf2026q2},
-	"claude-opus-4-6":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: asOf2026q2},
-	"claude-opus-4-5":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: asOf2026q2},
-	"claude-sonnet-4-7":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: asOf2026q2},
-	"claude-sonnet-4-6":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: asOf2026q2},
-	"claude-sonnet-4-5":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: asOf2026q2},
-	"claude-haiku-4-5":            {InputPerM: 1.00, OutputPerM: 5.00, CacheWritePerM: 1.25, CacheWrite1hPerM: 2.00, CacheReadPerM: 0.10, PricedAt: asOf2026q2},
+	"claude-opus-4-7":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: lastBulkPricedAt},
+	"claude-opus-4-6":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: lastBulkPricedAt},
+	"claude-opus-4-5":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: lastBulkPricedAt},
+	"claude-sonnet-4-7":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: lastBulkPricedAt},
+	"claude-sonnet-4-6":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: lastBulkPricedAt},
+	"claude-sonnet-4-5":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: lastBulkPricedAt},
+	"claude-haiku-4-5":            {InputPerM: 1.00, OutputPerM: 5.00, CacheWritePerM: 1.25, CacheWrite1hPerM: 2.00, CacheReadPerM: 0.10, PricedAt: lastBulkPricedAt},
 	// Keys are the normalized form: vendor prefix, `-latest` suffix,
 	// and `-YYYYMMDD` date suffix stripped (see Normalize). So the
 	// concrete `claude-3-7-sonnet-20250219` and the alias
 	// `claude-3-7-sonnet-latest` both resolve to this row.
-	"claude-3-7-sonnet":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: asOf2026q2},
-	"claude-3-5-haiku":            {InputPerM: 0.80, OutputPerM: 4.00, CacheWritePerM: 1.00, CacheWrite1hPerM: 1.60, CacheReadPerM: 0.08, PricedAt: asOf2026q2},
+	"claude-3-7-sonnet":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: lastBulkPricedAt},
+	"claude-3-5-haiku":            {InputPerM: 0.80, OutputPerM: 4.00, CacheWritePerM: 1.00, CacheWrite1hPerM: 1.60, CacheReadPerM: 0.08, PricedAt: lastBulkPricedAt},
 
 	// OpenAI. CacheWritePerM is omitted because OpenAI caches
 	// automatically with no per-write premium; their prompt-caching
 	// only discounts the cached-read portion. Cache-write fields
 	// stay zero for OpenAI rows.
-	"gpt-5.5":         {InputPerM: 5.00, OutputPerM: 30.00, CacheReadPerM: 0.50, PricedAt: asOf2026q2},
-	"gpt-5.5-pro":     {InputPerM: 30.00, OutputPerM: 180.00, CacheReadPerM: 3.00, PricedAt: asOf2026q2},
-	"gpt-5.2-codex":   {InputPerM: 1.75, OutputPerM: 14.00, CacheReadPerM: 0.175, PricedAt: asOf2026q2},
-	"gpt-4o":          {InputPerM: 2.50, OutputPerM: 10.00, CacheReadPerM: 1.25, PricedAt: asOf2026q2},
-	"gpt-4o-mini":     {InputPerM: 0.15, OutputPerM: 0.60, CacheReadPerM: 0.075, PricedAt: asOf2026q2},
-	"gpt-4-turbo":     {InputPerM: 10.00, OutputPerM: 30.00, PricedAt: asOf2026q2},
-	"o1":              {InputPerM: 15.00, OutputPerM: 60.00, CacheReadPerM: 7.50, PricedAt: asOf2026q2},
-	"o1-mini":         {InputPerM: 3.00, OutputPerM: 12.00, CacheReadPerM: 1.50, PricedAt: asOf2026q2},
-	"o3-mini":         {InputPerM: 1.10, OutputPerM: 4.40, CacheReadPerM: 0.55, PricedAt: asOf2026q2},
+	"gpt-5.5":         {InputPerM: 5.00, OutputPerM: 30.00, CacheReadPerM: 0.50, PricedAt: lastBulkPricedAt},
+	"gpt-5.5-pro":     {InputPerM: 30.00, OutputPerM: 180.00, CacheReadPerM: 3.00, PricedAt: lastBulkPricedAt},
+	"gpt-5.2-codex":   {InputPerM: 1.75, OutputPerM: 14.00, CacheReadPerM: 0.175, PricedAt: lastBulkPricedAt},
+	"gpt-4o":          {InputPerM: 2.50, OutputPerM: 10.00, CacheReadPerM: 1.25, PricedAt: lastBulkPricedAt},
+	"gpt-4o-mini":     {InputPerM: 0.15, OutputPerM: 0.60, CacheReadPerM: 0.075, PricedAt: lastBulkPricedAt},
+	"gpt-4-turbo":     {InputPerM: 10.00, OutputPerM: 30.00, PricedAt: lastBulkPricedAt},
+	"o1":              {InputPerM: 15.00, OutputPerM: 60.00, CacheReadPerM: 7.50, PricedAt: lastBulkPricedAt},
+	"o1-mini":         {InputPerM: 3.00, OutputPerM: 12.00, CacheReadPerM: 1.50, PricedAt: lastBulkPricedAt},
+	"o3-mini":         {InputPerM: 1.10, OutputPerM: 4.40, CacheReadPerM: 0.55, PricedAt: lastBulkPricedAt},
 }
 
 // Compute returns the dollar cost of one request, in micro-USD.

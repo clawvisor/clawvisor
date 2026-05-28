@@ -1651,7 +1651,7 @@ export interface TaskCostSummary {
   cache_read_tokens: number
   cache_write_tokens: number
   cost_micros: number
-  unknown_models?: string[]
+  unknown_models: string[]
   by_model: TaskCostByModelEntry[]
 }
 

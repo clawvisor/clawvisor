@@ -796,7 +796,11 @@ func (s *Store) RecordLLMRequestCost(ctx context.Context, c *store.LLMRequestCos
 // GetTaskCost rolls up llm_request_cost rows for one task. See the
 // sqlite copy for the contract.
 func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.TaskCostSummary, error) {
-	out := &store.TaskCostSummary{TaskID: taskID, ByModel: []store.TaskCostByModelEntry{}}
+	out := &store.TaskCostSummary{
+		TaskID:        taskID,
+		ByModel:       []store.TaskCostByModelEntry{},
+		UnknownModels: []string{},
+	}
 	// Postgres' SUM(bigint) widens to NUMERIC; pgx can't scan that
 	// into int64. Cast each SUM back to bigint so the column type
 	// matches the destination. Token columns are INTEGER → SUM is

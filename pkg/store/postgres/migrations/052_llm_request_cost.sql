@@ -3,8 +3,14 @@
 -- (separate table to avoid mostly-NULL columns on audit_log;
 -- task_id denormalised for fast SUM rollups; cost_micros nullable
 -- for unknown-model rows so aggregates surface them).
+--
+-- audit_id FKs into audit_log(id) ON DELETE CASCADE so cost rows
+-- can't become orphaned. The dedup-conflict path in LogEndpointCall
+-- resolves the surviving canonical audit row's id via
+-- FindDedupCandidate before inserting the cost row, so the FK
+-- doesn't fire on the legitimate retry case.
 CREATE TABLE IF NOT EXISTS llm_request_cost (
-  audit_id            TEXT PRIMARY KEY,
+  audit_id            TEXT PRIMARY KEY REFERENCES audit_log(id) ON DELETE CASCADE,
   user_id             TEXT NOT NULL,
   agent_id            TEXT,
   task_id             TEXT,

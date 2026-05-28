@@ -953,7 +953,11 @@ func (s *Store) RecordLLMRequestCost(ctx context.Context, c *store.LLMRequestCos
 // empty TaskCostSummary (not ErrNotFound) when the task has no cost
 // rows yet — the caller can still render "no LLM spend recorded".
 func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.TaskCostSummary, error) {
-	out := &store.TaskCostSummary{TaskID: taskID, ByModel: []store.TaskCostByModelEntry{}}
+	out := &store.TaskCostSummary{
+		TaskID:        taskID,
+		ByModel:       []store.TaskCostByModelEntry{},
+		UnknownModels: []string{},
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT model,
 		       COUNT(*) AS n,

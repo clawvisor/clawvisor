@@ -111,6 +111,27 @@ func TestExtractUsage_OpenAIJSON(t *testing.T) {
 	}
 }
 
+func TestExtractUsage_DetectsSSEFromCommentLine(t *testing.T) {
+	// SSE intermediaries (CDN proxies, etc.) often send `:` comment
+	// lines as a keep-alive heartbeat before the first event. The
+	// body sniff has to recognize that as SSE — otherwise a stream
+	// that opens with `: ping\n\n` would fall through to the JSON
+	// parser and silently drop the usage row when Content-Type was
+	// also absent.
+	body := []byte("" +
+		`: keep-alive heartbeat` + "\n\n" +
+		`event: response.completed` + "\n" +
+		`data: {"type":"response.completed","response":{"id":"r1","model":"gpt-5.5","usage":{"input_tokens":42,"output_tokens":7}}}` + "\n\n",
+	)
+	got := ExtractUsage(conversation.ProviderOpenAI, "", body, "gpt-5.5")
+	if !got.Found {
+		t.Fatal("body opening with `:` comment must still be detected as SSE")
+	}
+	if got.Usage.InputTokens != 42 || got.Usage.OutputTokens != 7 {
+		t.Errorf("got in/out %d/%d, want 42/7", got.Usage.InputTokens, got.Usage.OutputTokens)
+	}
+}
+
 func TestExtractUsage_DetectsSSEFromBodyWhenContentTypeMissing(t *testing.T) {
 	// Regression: Codex traffic was arriving with the Content-Type
 	// header empty by the time our extractor saw it, so the SSE

@@ -694,8 +694,11 @@ type TaskCostSummary struct {
 	CacheReadTokens  int64                   `json:"cache_read_tokens"`
 	CacheWriteTokens int64                   `json:"cache_write_tokens"`
 	CostMicros       int64                   `json:"cost_micros"`
-	UnknownModels    []string                `json:"unknown_models,omitempty"`
-	ByModel          []TaskCostByModelEntry  `json:"by_model"`
+	// UnknownModels and ByModel both serialize as `[]` when empty so
+	// consumers (TS client) get a consistent shape across all
+	// summaries and don't have to branch on undefined-vs-empty-array.
+	UnknownModels []string               `json:"unknown_models"`
+	ByModel       []TaskCostByModelEntry `json:"by_model"`
 }
 
 // TaskCostByModelEntry is one model's contribution to a task's cost.

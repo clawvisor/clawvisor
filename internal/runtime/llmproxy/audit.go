@@ -3,6 +3,7 @@ package llmproxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -119,31 +120,60 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 		DurationMS: int(duration.Milliseconds()),
 	}
 	if err := e.Store.LogAudit(ctx, entry); err != nil {
-		// Surface the token counts to slog on the failure path so a
-		// dropped row leaves a trace that can be reconciled later —
-		// without this, an audit-log outage silently loses the
-		// per-request usage data entirely.
-		var tokenAttrs []any
-		tokenAttrs = append(tokenAttrs, "agent_id", agent.ID, "action", action, "err", err.Error())
-		if extras.Usage != nil && extras.Usage.Found {
-			tokenAttrs = append(tokenAttrs,
-				"usage_model", extras.Usage.Model,
-				"usage_input_tokens", extras.Usage.Usage.InputTokens,
-				"usage_output_tokens", extras.Usage.Usage.OutputTokens,
-				"usage_cache_read_tokens", extras.Usage.Usage.CacheReadTokens,
-				"usage_cache_write_tokens", extras.Usage.Usage.CacheWriteTokens,
-				"usage_cache_write_1h_tokens", extras.Usage.Usage.CacheWrite1hTokens,
-			)
+		// ErrConflict means the canonical audit row for this
+		// (user_id, request_id, task_id) already exists — this is
+		// the dedup path the schema is designed to enforce, not a
+		// store failure. Fall through and still record cost so the
+		// retried request's billable usage isn't permanently lost.
+		//
+		// BUT: llm_request_cost.audit_id has a FK into audit_log(id)
+		// ON DELETE CASCADE, so using the locally generated entry.ID
+		// (which never landed) would violate the FK. Resolve the
+		// surviving canonical row via FindDedupCandidate — the audit
+		// task_id used for dedup is COALESCE(task_id, ''), and
+		// endpoint_call rows deliberately leave audit_log.task_id
+		// NULL (see EndpointCallExtras.TaskID), so we look up with
+		// taskID="" to match the canonical pre-task row.
+		if errors.Is(err, store.ErrConflict) {
+			canonical, lookupErr := e.Store.FindDedupCandidate(ctx, requestID, agent.UserID, "")
+			if lookupErr != nil || canonical == nil {
+				// Defensive: ErrConflict means the row exists, so
+				// the lookup should succeed. If it doesn't, skip the
+				// cost row rather than risk an FK violation — the
+				// tokens are still observable via the warn below.
+				e.Logger.WarnContext(ctx, "lite-proxy: audit deduped but canonical lookup failed; skipping cost record",
+					"agent_id", agent.ID, "request_id", requestID, "action", action, "err", errString(lookupErr))
+				return
+			}
+			entry.ID = canonical.ID
+			entry.Timestamp = canonical.Timestamp
+			e.Logger.DebugContext(ctx, "lite-proxy: audit log deduped; recording cost against canonical row",
+				"agent_id", agent.ID, "request_id", requestID, "action", action, "canonical_audit_id", canonical.ID)
+		} else {
+			// Surface the token counts to slog on the failure path so
+			// a dropped row leaves a trace that can be reconciled
+			// later — without this, an audit-log outage silently
+			// loses the per-request usage data entirely.
+			var tokenAttrs []any
+			tokenAttrs = append(tokenAttrs, "agent_id", agent.ID, "action", action, "err", err.Error())
+			if extras.Usage != nil && extras.Usage.Found {
+				tokenAttrs = append(tokenAttrs,
+					"usage_model", extras.Usage.Model,
+					"usage_input_tokens", extras.Usage.Usage.InputTokens,
+					"usage_output_tokens", extras.Usage.Usage.OutputTokens,
+					"usage_cache_read_tokens", extras.Usage.Usage.CacheReadTokens,
+					"usage_cache_write_tokens", extras.Usage.Usage.CacheWriteTokens,
+					"usage_cache_write_1h_tokens", extras.Usage.Usage.CacheWrite1hTokens,
+				)
+			}
+			e.Logger.WarnContext(ctx, "lite-proxy: audit log failed", tokenAttrs...)
+			// Skip cost recording on real store errors. The cost
+			// row carries no FK to audit_log so technically we could
+			// land it anyway, but a store error on audit suggests
+			// the cost insert would likely fail too — and the
+			// tokens above are in slog for reconciliation.
+			return
 		}
-		e.Logger.WarnContext(ctx, "lite-proxy: audit log failed", tokenAttrs...)
-		// Skip cost recording when the audit row didn't land. The
-		// schema does not enforce a foreign key between
-		// llm_request_cost.audit_id and audit_log.id (intentionally —
-		// we don't want a cost-record outage to gate the audit row),
-		// so write-order is what guarantees the cost row never refers
-		// to a non-existent audit. Tokens just logged above survive
-		// the drop.
-		return
 	}
 	if extras.Usage != nil && extras.Usage.Found {
 		// Store the normalized model id so GROUP BY in GetTaskCost
@@ -568,6 +598,16 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// errString safely renders an error for slog without panicking on nil.
+// Used on defensive branches where the error may or may not be set
+// (e.g. a nil-return-with-nil-error contract from a store lookup).
+func errString(err error) string {
+	if err == nil {
+		return "<nil>"
+	}
+	return err.Error()
 }
 
 // buildSHA returns the clawvisor build identifier. Stamped at link time
