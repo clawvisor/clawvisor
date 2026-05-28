@@ -20,10 +20,10 @@ import (
 //   - purpose (wrapped at 80 cols)
 //   - expected_tools[].tool_name + .why (bullet list)
 //   - required_credentials[].vault_item_id / vault_item_handle + .why (bullet list)
-//   - assessed risk level + explanation when available
-//   - intent_verification_mode (default "strict")
-//   - lifetime humanized ("until session ends" / "always")
-//   - expires_in_seconds humanized ("10 min" / "1 hour")
+//   - assessed risk level + explanation when available (with 🟢/🟡/🟠/🔴 prefix)
+//   - intent_verification_mode (only when non-strict — strict is default and noise)
+//   - duration: "Duration: 30 min" for session tasks (using daemon default
+//     when unset) or "Lifetime: always" for standing tasks
 //
 // Malformed or empty input falls back to a one-line summary instead of
 // raw JSON — never leak unparsed input back at the user.
@@ -106,9 +106,14 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	}
 
 	if risk != nil && strings.TrimSpace(risk.RiskLevel) != "" {
+		level := strings.TrimSpace(risk.RiskLevel)
 		b.WriteString("\n\nRisk")
 		b.WriteString("\n  ")
-		b.WriteString(strings.TrimSpace(risk.RiskLevel))
+		if emoji := riskEmoji(level); emoji != "" {
+			b.WriteString(emoji)
+			b.WriteString(" ")
+		}
+		b.WriteString(level)
 		if explanation := strings.TrimSpace(risk.Explanation); explanation != "" {
 			b.WriteString(" — ")
 			b.WriteString(wrapForPrompt(explanation, 80, "    "))
@@ -116,25 +121,27 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	}
 
 	mode := strings.TrimSpace(req.IntentVerificationMode)
-	if mode == "" {
-		mode = "strict"
-	}
-	lifetime := humanizeLifetime(req.Lifetime)
-	expires := humanizeExpiresIn(req.ExpiresInSeconds)
+	durationLabel, durationValue := durationLine(req.Lifetime, req.ExpiresInSeconds)
 
-	b.WriteString("\n\nVerification: ")
-	b.WriteString(mode)
-	if lifetime != "" {
-		b.WriteString("   Lifetime: ")
-		b.WriteString(lifetime)
-	}
-	if expires != "" {
-		b.WriteString("   Expires: ")
-		b.WriteString(expires)
+	if (mode != "" && mode != "strict") || durationValue != "" {
+		b.WriteString("\n\n")
+		needsSep := false
+		if mode != "" && mode != "strict" {
+			b.WriteString("Verification: ")
+			b.WriteString(mode)
+			needsSep = true
+		}
+		if durationValue != "" {
+			if needsSep {
+				b.WriteString("   ")
+			}
+			b.WriteString(durationLabel)
+			b.WriteString(": ")
+			b.WriteString(durationValue)
+		}
 	}
 
-	b.WriteString("\n\nApproving will create this task and run the original tool call.\n")
-	b.WriteString("Reply `yes` or `y` to authorize, `no` or `n` to cancel.")
+	b.WriteString("\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel.")
 	b.WriteString(suffix)
 	return b.String()
 }
@@ -168,17 +175,63 @@ func extractApprovalIDFromPrompt(text string) string {
 	return strings.TrimSpace(rest[:end])
 }
 
-// humanizeLifetime maps the task lifetime to a short user-facing phrase.
-// Defaults to "until session ends" for empty/"session"; "always" for
-// "standing". Unknown values pass through as-is.
-func humanizeLifetime(lifetime string) string {
+// defaultSessionTaskDurationSeconds mirrors pkg/config.TaskConfig's
+// default_expiry_seconds (1800 = 30 min). Duplicated here rather than
+// threaded through PostprocessConfig because the renderer is a UI
+// concern and only needs an honest display fallback — the actual
+// task-scope expiry binding happens in tasks_inline.go using the live
+// config value. If an operator overrides the config default, the
+// prompt may show "30 min" while the resolved scope uses a different
+// number; that drift is acceptable for a status line.
+const defaultSessionTaskDurationSeconds = 1800
+
+// durationLine returns the (label, value) pair describing how long the
+// task will be active once approved. The two lifetime modes render with
+// different labels because they answer different user questions:
+//
+//   - session (the common case): "Duration: 30 min" — how long the
+//     scope is usable. Empty expires_in_seconds falls back to the daemon
+//     default so the user always sees a concrete number.
+//   - standing: "Lifetime: always" — standing tasks reject
+//     expires_in_seconds (see tasks_inline.go), so there is no duration
+//     to show; the label conveys "no time cap" instead.
+//
+// Returns ("", "") only for unknown lifetime strings, so callers can
+// omit the line entirely rather than printing something misleading.
+func durationLine(lifetime string, expiresInSeconds int) (label, value string) {
 	switch strings.TrimSpace(lifetime) {
 	case "", "session":
-		return "until session ends"
+		secs := expiresInSeconds
+		if secs <= 0 {
+			secs = defaultSessionTaskDurationSeconds
+		}
+		return "Duration", humanizeExpiresIn(secs)
 	case "standing":
-		return "always"
+		return "Lifetime", "always"
 	default:
-		return lifetime
+		return "", ""
+	}
+}
+
+// riskEmoji maps the LLM-assessed risk level to a traffic-light emoji
+// prefix. "unknown" gets a neutral marker so the user can distinguish a
+// parse-failed assessment from an unscored task. Unknown levels return
+// "" so the level renders without a prefix rather than with a
+// misleading one.
+func riskEmoji(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "low":
+		return "🟢"
+	case "medium":
+		return "🟡"
+	case "high":
+		return "🟠"
+	case "critical":
+		return "🔴"
+	case "unknown":
+		return "⚪"
+	default:
+		return ""
 	}
 }
 
