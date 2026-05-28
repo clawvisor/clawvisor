@@ -60,7 +60,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	var b strings.Builder
 	b.WriteString("Clawvisor wants to create a task to cover this work:\n\n")
 	b.WriteString("Purpose\n  ")
-	b.WriteString(wrapForPrompt(purpose, 80, "  "))
+	b.WriteString(wrapForPrompt(purpose, 80, "    "))
 
 	if len(req.ExpectedTools) > 0 {
 		b.WriteString("\n\nTools requested")
@@ -73,7 +73,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 			b.WriteString(name)
 			if why := strings.TrimSpace(tool.Why); why != "" {
 				b.WriteString(" — ")
-				b.WriteString(wrapForPrompt(why, 80, "    "))
+				b.WriteString(wrapForPrompt(why, 80, "      "))
 			}
 		}
 	}
@@ -89,7 +89,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 			b.WriteString(host)
 			if why := strings.TrimSpace(eg.Why); why != "" {
 				b.WriteString(" — ")
-				b.WriteString(wrapForPrompt(why, 80, "    "))
+				b.WriteString(wrapForPrompt(why, 80, "      "))
 			}
 		}
 	}
@@ -108,7 +108,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 			b.WriteString(name)
 			if why := strings.TrimSpace(cred.Why); why != "" {
 				b.WriteString(" — ")
-				b.WriteString(wrapForPrompt(why, 80, "    "))
+				b.WriteString(wrapForPrompt(why, 80, "      "))
 			}
 		}
 	}
@@ -124,7 +124,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 		b.WriteString(level)
 		if explanation := strings.TrimSpace(risk.Explanation); explanation != "" {
 			b.WriteString(" — ")
-			b.WriteString(wrapForPrompt(explanation, 80, "    "))
+			b.WriteString(wrapForPrompt(explanation, 80, "      "))
 		}
 	}
 
