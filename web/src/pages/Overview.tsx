@@ -330,13 +330,39 @@ function ActivityChart({ data }: { data: ActivityBucket[] }) {
   const rows = useMemo(() => {
     // Build lookup from bucket timestamp → aggregated counts
     const counts = new Map<number, ChartRow>()
+    // Green bucket is keyed on outcome, not decision: a pending-approval row
+    // starts with decision="approve" but only flips to a success outcome
+    // when execution actually happens — denial, error, http_error, or
+    // timeout updates the same outcome in place (see UpdateAuditOutcome
+    // callers in handlers/approvals.go, gateway.go, runtime/proxy/
+    // policy_hook.go). Terminal success outcomes by source:
+    //   gateway / approval-then-execute / runtime egress: "executed"
+    //   runtime tool-use (pkg/runtime/proxy/tooluse_runtime.go): "approved"
+    //   llmproxy release (LogApprovalRelease): "approval_released"
+    //   llmproxy direct allow/rewrite (postprocess.go, inline_task_intercept.go):
+    //     "pass_through", "success", "shell_poll_pass_through",
+    //     "readonly_shell_pass_through", "auto_approved_from_conversation",
+    //     "inline_task_approved", "inline_task_auto_approved"
+    // Keep in sync when adding success outcomes in the emitter sources above.
+    const successOutcomes = new Set([
+      'executed',
+      'approved',
+      'approval_released',
+      'pass_through',
+      'success',
+      'shell_poll_pass_through',
+      'readonly_shell_pass_through',
+      'auto_approved_from_conversation',
+      'inline_task_approved',
+      'inline_task_auto_approved',
+    ])
     for (const b of data) {
       const ms = new Date(b.bucket).getTime()
       if (!counts.has(ms)) {
         counts.set(ms, { time: '', executed: 0, blocked: 0, pending: 0 })
       }
       const row = counts.get(ms)!
-      if (b.outcome === 'executed') row.executed += b.count
+      if (successOutcomes.has(b.outcome)) row.executed += b.count
       else if (b.outcome === 'blocked' || b.outcome === 'restricted') row.blocked += b.count
       else row.pending += b.count
     }
