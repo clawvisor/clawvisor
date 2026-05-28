@@ -749,15 +749,15 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO audit_log (
-			id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+			id, user_id, agent_id, request_id, dedup_key, task_id, session_id, approval_id, lease_id,
 			tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
 			params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
 			intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
 			would_block, would_review, would_prompt_inline,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
 			duration_ms, filters_applied, verification, error_msg, deduped_of
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
-	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.SessionID, e.ApprovalID, e.LeaseID,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38)
+	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.DedupKey, e.TaskID, e.SessionID, e.ApprovalID, e.LeaseID,
 		e.ToolUseID, e.MatchedTaskID, e.LeaseTaskID, e.Timestamp,
 		e.Service, e.Action, []byte(paramsSafe), e.Decision, e.Outcome,
 		e.PolicyID, e.RuleID, e.ResolutionConfidence, e.IntentVerdict,
@@ -875,7 +875,7 @@ func (s *Store) UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg stri
 // callers (FindDedupCandidate, GetAuditEntryByRequestID) can filter on the
 // canonical partial-unique index.
 const auditColumns = `
-	id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+	id, user_id, agent_id, request_id, dedup_key, task_id, session_id, approval_id, lease_id,
 	tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
 	params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
 	intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
@@ -888,7 +888,7 @@ func scanAuditRow(scan func(...any) error) (*store.AuditEntry, error) {
 	e := &store.AuditEntry{}
 	var paramsSafe, filtersApplied, verification []byte
 	err := scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.DedupKey, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
 		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
 		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
 		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
@@ -921,13 +921,14 @@ func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.Au
 	return e, err
 }
 
-// GetAuditEntryByRequestID returns the latest canonical row for
+// GetAuditEntryByRequestID returns the latest request-level canonical row for
 // (request_id, user_id) — polling endpoint contract. See sqlite for full
 // rationale.
 func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*store.AuditEntry, error) {
 	e, err := scanAuditRow(s.pool.QueryRow(ctx,
 		`SELECT `+auditColumns+` FROM audit_log
 		 WHERE request_id = $1 AND user_id = $2 AND deduped_of IS NULL
+		   AND dedup_key IS NULL
 		 ORDER BY timestamp DESC LIMIT 1`,
 		requestID, userID,
 	).Scan)
@@ -937,7 +938,7 @@ func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID 
 	return e, err
 }
 
-// GetAuditEntryByRequestIDAndTask returns the canonical row for an exact
+// GetAuditEntryByRequestIDAndTask returns the request-level canonical row for an exact
 // (request_id, user_id, task_id) — inverting FindDedupCandidate's
 // precedence so the feedback handler can resolve the task's row first.
 func (s *Store) GetAuditEntryByRequestIDAndTask(ctx context.Context, requestID, userID, taskID string) (*store.AuditEntry, error) {
@@ -951,6 +952,7 @@ func (s *Store) GetAuditEntryByRequestIDAndTask(ctx context.Context, requestID, 
 	}
 	q := `SELECT ` + auditColumns + ` FROM audit_log
 		WHERE request_id = $1 AND user_id = $2 AND deduped_of IS NULL
+		  AND dedup_key IS NULL
 		  AND ` + taskFilter + `
 		ORDER BY CASE WHEN task_id IS NULL THEN 1 ELSE 0 END, timestamp DESC
 		LIMIT 1`
@@ -961,9 +963,10 @@ func (s *Store) GetAuditEntryByRequestIDAndTask(ctx context.Context, requestID, 
 	return e, err
 }
 
-// FindDedupCandidate returns the canonical audit row a new
-// (request_id, user_id, task_id) should dedup against. Pre-task canonicals
-// (task_id IS NULL) win over task-scoped ones; oldest within a tier.
+// FindDedupCandidate returns the request-level canonical audit row a new
+// (request_id, user_id, task_id) should dedup against. Exact task canonicals
+// win over pre-task fallback. Child audit observations are excluded because
+// gateway retries must resolve to request outcomes.
 func (s *Store) FindDedupCandidate(ctx context.Context, requestID, userID, taskID string) (*store.AuditEntry, error) {
 	var taskFilter string
 	args := []any{requestID, userID}
@@ -975,8 +978,9 @@ func (s *Store) FindDedupCandidate(ctx context.Context, requestID, userID, taskI
 	}
 	q := `SELECT ` + auditColumns + ` FROM audit_log
 		WHERE request_id = $1 AND user_id = $2 AND deduped_of IS NULL
+		  AND dedup_key IS NULL
 		  AND ` + taskFilter + `
-		ORDER BY CASE WHEN task_id IS NULL THEN 0 ELSE 1 END, timestamp ASC
+		ORDER BY CASE WHEN task_id IS NULL THEN 1 ELSE 0 END, timestamp ASC
 		LIMIT 1`
 	e, err := scanAuditRow(s.pool.QueryRow(ctx, q, args...).Scan)
 	if errors.Is(err, pgx.ErrNoRows) {

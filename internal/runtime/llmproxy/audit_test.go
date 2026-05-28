@@ -3,6 +3,7 @@ package llmproxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -208,11 +209,23 @@ func TestAuditEmitter_LogToolUseInspected(t *testing.T) {
 	if row.ToolUseID == nil || *row.ToolUseID != "toolu_1" {
 		t.Errorf("tool_use_id missing or wrong: %v", row.ToolUseID)
 	}
+	if row.RequestID != "req-1" {
+		t.Errorf("request_id=%q, want original parent request id", row.RequestID)
+	}
+	if row.DedupKey == nil || *row.DedupKey == "" {
+		t.Errorf("dedup_key missing on lite-proxy tool-use row")
+	}
 	if row.TaskID != nil {
 		t.Errorf("task_id should be nil when caller passes empty string, got %v", row.TaskID)
 	}
 	var params map[string]any
 	_ = json.Unmarshal(row.ParamsSafe, &params)
+	if params["parent_request_id"] != "req-1" {
+		t.Errorf("expected parent_request_id=req-1, got %v", params["parent_request_id"])
+	}
+	if params["tool_use_id"] != "toolu_1" {
+		t.Errorf("expected params tool_use_id=toolu_1, got %v", params["tool_use_id"])
+	}
 	if params["target_host"] != "api.github.com" {
 		t.Errorf("expected target_host in params, got %v", params["target_host"])
 	}
@@ -254,6 +267,269 @@ func TestAuditEmitter_LogToolUseInspected_TaskID(t *testing.T) {
 	}
 	if rows[0].TaskID == nil || *rows[0].TaskID != "task-abc" {
 		t.Errorf("task_id not persisted: %v", rows[0].TaskID)
+	}
+}
+
+func TestAuditEmitter_LogToolUseInspected_AllowsMultipleRowsPerParentRequestAndTask(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	em := NewAuditEmitter(st, nil, nil)
+	ctx := context.Background()
+	verdict := inspector.Verdict{
+		IsAPICall: true,
+		Host:      "api.github.com",
+		Method:    "GET",
+		Path:      "/repos/x/y",
+		Source:    inspector.SourceDeterministic,
+	}
+
+	em.LogToolUseInspected(ctx, agent, "req-multi", conversation.ToolUse{
+		ID:    "toolu_one",
+		Name:  "WebFetch",
+		Input: json.RawMessage(`{"url":"https://api.github.com/repos/x/y"}`),
+	}, verdict, "allow", "matched_task", "scope covered", "task-multi")
+	em.LogToolUseInspected(ctx, agent, "req-multi", conversation.ToolUse{
+		ID:    "toolu_two",
+		Name:  "WebFetch",
+		Input: json.RawMessage(`{"url":"https://api.github.com/repos/x/y/issues"}`),
+	}, verdict, "allow", "matched_task", "scope covered", "task-multi")
+	em.LogToolUseInspected(ctx, agent, "req-multi", conversation.ToolUse{
+		ID:    "toolu_two",
+		Name:  "WebFetch",
+		Input: json.RawMessage(`{"url":"https://api.github.com/repos/x/y/issues"}`),
+	}, verdict, "allow", "matched_task", "scope covered", "task-multi")
+
+	rows, _, err := st.ListAuditEntries(ctx, agent.UserID, store.AuditFilter{TaskID: "task-multi"})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 tool-use rows with same parent request/task, got %d", len(rows))
+	}
+	got := map[string]bool{}
+	for _, row := range rows {
+		if row.ToolUseID == nil {
+			t.Fatalf("tool_use_id missing on row: %+v", row)
+		}
+		got[*row.ToolUseID] = true
+		if row.RequestID != "req-multi" {
+			t.Fatalf("request_id=%q, want original parent request id", row.RequestID)
+		}
+		var params map[string]any
+		if err := json.Unmarshal(row.ParamsSafe, &params); err != nil {
+			t.Fatalf("params unmarshal: %v", err)
+		}
+		if params["parent_request_id"] != "req-multi" {
+			t.Fatalf("parent_request_id=%v, want req-multi", params["parent_request_id"])
+		}
+		if params["tool_use_id"] != *row.ToolUseID {
+			t.Fatalf("params tool_use_id=%v, want %s", params["tool_use_id"], *row.ToolUseID)
+		}
+	}
+	if !got["toolu_one"] || !got["toolu_two"] {
+		t.Fatalf("missing expected tool-use rows: %+v", got)
+	}
+}
+
+func TestAuditLog_RuntimeToolUseDeduplicatesRepeatedChildEvents(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	ctx := context.Background()
+	taskID := "task-dedup"
+	toolUseID := "toolu_repeat"
+	agentID := agent.ID
+
+	entry := func(id, dedupKey string) *store.AuditEntry {
+		return &store.AuditEntry{
+			ID:         id,
+			UserID:     agent.UserID,
+			AgentID:    &agentID,
+			RequestID:  "req-dedup",
+			DedupKey:   &dedupKey,
+			TaskID:     &taskID,
+			ToolUseID:  &toolUseID,
+			Timestamp:  time.Now().UTC(),
+			Service:    "runtime.tool_use",
+			Action:     "lite_proxy.tool_use.allow",
+			ParamsSafe: json.RawMessage(`{}`),
+			Decision:   "allow",
+			Outcome:    "matched_task",
+		}
+	}
+
+	if err := st.LogAudit(ctx, entry("audit-one", "lite_proxy_event:req-dedup:toolu_repeat")); err != nil {
+		t.Fatalf("LogAudit(first): %v", err)
+	}
+	if err := st.LogAudit(ctx, entry("audit-two", "lite_proxy_event:req-dedup:toolu_repeat")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("LogAudit(repeated child event) = %v, want ErrConflict", err)
+	}
+
+	siblingToolUseID := "toolu_sibling"
+	sibling := entry("audit-three", "lite_proxy_event:req-dedup:toolu_sibling")
+	sibling.ToolUseID = &siblingToolUseID
+	if err := st.LogAudit(ctx, sibling); err != nil {
+		t.Fatalf("LogAudit(sibling child): %v", err)
+	}
+}
+
+func TestAuditLog_LiteProxyChildrenPreserveEventHistory(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	ctx := context.Background()
+	agentID := agent.ID
+
+	base := &store.AuditEntry{
+		ID:         "audit-endpoint",
+		UserID:     agent.UserID,
+		AgentID:    &agentID,
+		RequestID:  "req-lite-children",
+		Timestamp:  time.Now().UTC(),
+		Service:    "anthropic",
+		Action:     "lite_proxy.messages.create",
+		ParamsSafe: json.RawMessage(`{"event":"lite_proxy.endpoint_call"}`),
+		Decision:   "allow",
+		Outcome:    "success",
+	}
+	if err := st.LogAudit(ctx, base); err != nil {
+		t.Fatalf("LogAudit(endpoint): %v", err)
+	}
+	duplicateEndpoint := *base
+	duplicateEndpoint.ID = "audit-endpoint-dupe"
+	if err := st.LogAudit(ctx, &duplicateEndpoint); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("LogAudit(duplicate request-level endpoint) = %v, want ErrConflict", err)
+	}
+
+	resolver := *base
+	resolver.ID = "audit-resolver"
+	resolverDedupKey := "lite_proxy_event:audit-resolver"
+	resolver.DedupKey = &resolverDedupKey
+	resolver.Service = "github"
+	resolver.Action = "lite_proxy.resolver.POST"
+	resolver.Outcome = "resolved"
+	resolver.ParamsSafe = json.RawMessage(`{"event":"lite_proxy.resolver_swap","placeholder":"autovault_github_x","target_host":"api.github.com","target_path":"/repos/x/y"}`)
+	if err := st.LogAudit(ctx, &resolver); err != nil {
+		t.Fatalf("LogAudit(resolver child): %v", err)
+	}
+	duplicateResolver := resolver
+	duplicateResolver.ID = "audit-resolver-dupe"
+	if err := st.LogAudit(ctx, &duplicateResolver); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("LogAudit(repeated resolver child event) = %v, want ErrConflict", err)
+	}
+
+	secondResolver := resolver
+	secondResolver.ID = "audit-resolver-second"
+	secondResolverDedupKey := "lite_proxy_event:audit-resolver-second"
+	secondResolver.DedupKey = &secondResolverDedupKey
+	secondResolver.ParamsSafe = json.RawMessage(`{"event":"lite_proxy.resolver_swap","placeholder":"autovault_github_y","target_host":"api.github.com","target_path":"/repos/x/y/issues"}`)
+	if err := st.LogAudit(ctx, &secondResolver); err != nil {
+		t.Fatalf("LogAudit(second resolver child): %v", err)
+	}
+}
+
+func TestAuditLog_RequestLookupPrefersRequestLevelRows(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	ctx := context.Background()
+	agentID := agent.ID
+	requestLevel := &store.AuditEntry{
+		ID:         "audit-request",
+		UserID:     agent.UserID,
+		AgentID:    &agentID,
+		RequestID:  "req-lookup",
+		Timestamp:  time.Now().UTC(),
+		Service:    "anthropic",
+		Action:     "lite_proxy.messages.create",
+		ParamsSafe: json.RawMessage(`{"event":"lite_proxy.endpoint_call"}`),
+		Decision:   "allow",
+		Outcome:    "success",
+	}
+	if err := st.LogAudit(ctx, requestLevel); err != nil {
+		t.Fatalf("LogAudit(request-level): %v", err)
+	}
+	childDedupKey := "lite_proxy_event:audit-child"
+	toolUseID := "toolu_child"
+	child := &store.AuditEntry{
+		ID:         "audit-child",
+		UserID:     agent.UserID,
+		AgentID:    &agentID,
+		RequestID:  "req-lookup",
+		DedupKey:   &childDedupKey,
+		ToolUseID:  &toolUseID,
+		Timestamp:  time.Now().UTC().Add(time.Second),
+		Service:    "runtime.tool_use",
+		Action:     "lite_proxy.tool_use.block",
+		ParamsSafe: json.RawMessage(`{"event":"lite_proxy.tool_use_inspected"}`),
+		Decision:   "block",
+		Outcome:    "task_scope_missing",
+	}
+	if err := st.LogAudit(ctx, child); err != nil {
+		t.Fatalf("LogAudit(child): %v", err)
+	}
+
+	got, err := st.GetAuditEntryByRequestID(ctx, "req-lookup", agent.UserID)
+	if err != nil {
+		t.Fatalf("GetAuditEntryByRequestID: %v", err)
+	}
+	if got.ID != requestLevel.ID {
+		t.Fatalf("GetAuditEntryByRequestID returned %s, want request-level row %s", got.ID, requestLevel.ID)
+	}
+	got, err = st.FindDedupCandidate(ctx, "req-lookup", agent.UserID, "")
+	if err != nil {
+		t.Fatalf("FindDedupCandidate: %v", err)
+	}
+	if got.ID != requestLevel.ID {
+		t.Fatalf("FindDedupCandidate returned %s, want request-level row %s", got.ID, requestLevel.ID)
+	}
+}
+
+func TestAuditLog_FindDedupCandidateUsesExactTaskRequestLevelRow(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	ctx := context.Background()
+	agentID := agent.ID
+	preTask := &store.AuditEntry{
+		ID:         "audit-pre-task",
+		UserID:     agent.UserID,
+		AgentID:    &agentID,
+		RequestID:  "req-task-precedence",
+		Timestamp:  time.Now().UTC(),
+		Service:    "anthropic",
+		Action:     "lite_proxy.messages.create",
+		ParamsSafe: json.RawMessage(`{"event":"lite_proxy.endpoint_call"}`),
+		Decision:   "allow",
+		Outcome:    "pre_task",
+	}
+	if err := st.LogAudit(ctx, preTask); err != nil {
+		t.Fatalf("LogAudit(pre-task): %v", err)
+	}
+	taskID := "task-exact"
+	taskScoped := &store.AuditEntry{
+		ID:         "audit-task-scoped",
+		UserID:     agent.UserID,
+		AgentID:    &agentID,
+		RequestID:  "req-task-precedence",
+		TaskID:     &taskID,
+		Timestamp:  time.Now().UTC().Add(time.Second),
+		Service:    "anthropic",
+		Action:     "lite_proxy.messages.create",
+		ParamsSafe: json.RawMessage(`{"event":"lite_proxy.endpoint_call"}`),
+		Decision:   "allow",
+		Outcome:    "task_scoped",
+	}
+	if err := st.LogAudit(ctx, taskScoped); err != nil {
+		t.Fatalf("LogAudit(task-scoped): %v", err)
+	}
+	childDedupKey := "lite_proxy_event:req-task-precedence:toolu_child"
+	child := *taskScoped
+	child.ID = "audit-child-keyed"
+	child.DedupKey = &childDedupKey
+	child.Service = "runtime.tool_use"
+	child.Action = "lite_proxy.tool_use.allow"
+	if err := st.LogAudit(ctx, &child); err != nil {
+		t.Fatalf("LogAudit(child): %v", err)
+	}
+
+	got, err := st.FindDedupCandidate(ctx, "req-task-precedence", agent.UserID, taskID)
+	if err != nil {
+		t.Fatalf("FindDedupCandidate: %v", err)
+	}
+	if got.ID != taskScoped.ID {
+		t.Fatalf("FindDedupCandidate returned %s, want exact task row %s", got.ID, taskScoped.ID)
 	}
 }
 

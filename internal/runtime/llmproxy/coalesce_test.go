@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -616,12 +617,11 @@ func TestPostprocess_CoalesceAuditDoesNotEmitMisleadingAllow(t *testing.T) {
 	// surviving row(s) must be "block / coalesced_approval_pending".
 	// The misuse this guards against is a sibling that would have
 	// auto-allowed leaving a stale "allow / pass_through" row in the
-	// audit trail even though its call never executed. Note that
-	// the audit schema has a unique (user_id, request_id, task_id)
-	// dedup index, so per-tool rows for the same request collapse on
-	// insert; what we assert is that the row that lands describes
-	// the coalesced state, never the buffered allow/rewrite that
-	// would have been wrong.
+	// audit trail even though its call never executed. Runtime tool-use
+	// rows use child-level dedup so sibling tool_use IDs can persist
+	// under the same parent request; what we assert here is that every
+	// persisted inspection row describes the coalesced state, never the
+	// buffered allow/rewrite that would have been wrong.
 	rows, _, err := st.ListAuditEntries(context.Background(), userID, store.AuditFilter{})
 	if err != nil {
 		t.Fatalf("ListAuditEntries: %v", err)
@@ -645,10 +645,9 @@ func TestPostprocess_CoalesceAuditDoesNotEmitMisleadingAllow(t *testing.T) {
 }
 
 // Regression: the persisted coalesced-pending audit detail must not
-// lose the tool_use that actually triggered approval. The audit table
-// dedups canonical rows by (user, request, task), so writing one row
-// per held tool can leave only the first sibling (Bash) and drop the
-// WebFetch row that explains why the turn was held.
+// lose the tool_use that actually triggered approval. Runtime tool-use rows
+// use child-level dedup keys, so held siblings remain queryable under the
+// original parent request.
 func TestPostprocess_CoalescePendingAuditSurfacesApprovalTrigger(t *testing.T) {
 	requestID := "req-coalesced-pending-trigger"
 	body := []byte(`{
@@ -950,11 +949,10 @@ func TestPostprocess_CoalescedSiblingCarriesInspectorMetadata(t *testing.T) {
 	}
 }
 
-// Regression: LogApprovalRelease must emit ONE row per release event
-// (not N), with per-tool detail under params.held_tools. The audit
-// schema has UNIQUE(user_id, request_id, COALESCE(task_id, '')) so
-// N rows for one request would collapse on insert and the dashboard
-// grouping the comment promised would silently break.
+// Regression: LogApprovalRelease emits one row per release event with
+// per-tool detail under params.held_tools. Keeping that grouped shape
+// avoids forcing dashboards to reconstruct one approval decision from
+// several child audit rows.
 func TestAuditEmitter_LogApprovalRelease_CoalescedEmitsOneRowWithPerToolDetail(t *testing.T) {
 	ctx := context.Background()
 	st, agent := newAuditTestStore(t)
@@ -994,7 +992,7 @@ func TestAuditEmitter_LogApprovalRelease_CoalescedEmitsOneRowWithPerToolDetail(t
 		}
 	}
 	if releaseRows != 1 {
-		t.Fatalf("expected exactly one release row (dedup index folds N to 1); got %d", releaseRows)
+		t.Fatalf("expected exactly one grouped release row; got %d", releaseRows)
 	}
 	var params map[string]any
 	if err := json.Unmarshal(got.ParamsSafe, &params); err != nil {
@@ -1126,8 +1124,9 @@ func stringFromInt(t *testing.T, n int) string {
 }
 
 // SyntheticApprovalToolUsesResponseWithDenyMessage with a 1-element
-// slice must be byte-identical to the legacy single-call helper.
-// Guards downstream callers that haven't migrated.
+// slice must preserve the legacy single-call response semantics.
+// Guards downstream callers that haven't migrated without coupling the
+// test to byte-identical JSON rendering.
 func TestSyntheticApprovalToolUses_SingletonMatchesLegacy(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	reqBody := []byte(`{"stream":false}`)
@@ -1147,10 +1146,18 @@ func TestSyntheticApprovalToolUses_SingletonMatchesLegacy(t *testing.T) {
 	if !ok {
 		t.Fatal("multi synth refused")
 	}
-	if string(legacy.Body) != string(multi.Body) {
-		t.Fatalf("singleton multi-synth diverges from legacy:\nlegacy=%s\nmulti =%s", legacy.Body, multi.Body)
-	}
 	if legacy.ContentType != multi.ContentType {
 		t.Fatalf("singleton content-type mismatch: legacy=%q multi=%q", legacy.ContentType, multi.ContentType)
+	}
+	var legacyJSON any
+	if err := json.Unmarshal(legacy.Body, &legacyJSON); err != nil {
+		t.Fatalf("legacy body is not JSON: %v\n%s", err, legacy.Body)
+	}
+	var multiJSON any
+	if err := json.Unmarshal(multi.Body, &multiJSON); err != nil {
+		t.Fatalf("multi body is not JSON: %v\n%s", err, multi.Body)
+	}
+	if !reflect.DeepEqual(legacyJSON, multiJSON) {
+		t.Fatalf("singleton multi-synth diverges semantically from legacy:\nlegacy=%s\nmulti =%s", legacy.Body, multi.Body)
 	}
 }

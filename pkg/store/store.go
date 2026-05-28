@@ -116,9 +116,11 @@ type Store interface {
 	// Audit log
 	//
 	// LogAudit inserts an audit row. If entry.DedupedOf is nil the row is
-	// treated as canonical and subject to the (user_id, request_id,
-	// COALESCE(task_id,'')) WHERE deduped_of IS NULL partial unique index;
-	// a collision returns ErrConflict. The canonical-insertion sites in
+	// treated as canonical. Request-level canonical rows leave DedupKey empty
+	// and are unique on (user_id, request_id, COALESCE(task_id,'')); child
+	// canonical rows set DedupKey and are unique on
+	// (user_id, request_id, COALESCE(task_id,''), dedup_key). A collision
+	// returns ErrConflict. The canonical-insertion sites in
 	// handlers/gateway.go gate side effects on a prior FindDedupCandidate
 	// check, so an ErrConflict here means two workers both passed that
 	// check and raced — the loser should look the winner up via
@@ -128,11 +130,11 @@ type Store interface {
 	LogAudit(ctx context.Context, entry *AuditEntry) error
 	UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg string, durationMS int) error
 	GetAuditEntry(ctx context.Context, id, userID string) (*AuditEntry, error)
-	// GetAuditEntryByRequestID returns the latest canonical (deduped_of IS NULL)
-	// audit entry for (request_id, user_id). Used by the polling endpoint and
-	// other callers that don't have task context. Newer canonicals shadow older
-	// ones — agents almost always poll right after submitting, where "latest"
-	// is the entry they care about.
+	// GetAuditEntryByRequestID returns the latest request-level canonical audit
+	// entry for (request_id, user_id). Used by the polling endpoint and other
+	// callers that don't have task context. Child audit observations with
+	// DedupKey set are excluded so per-tool history cannot shadow the request
+	// outcome.
 	GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*AuditEntry, error)
 	// GetAuditEntryByRequestIDAndTask returns the canonical audit entry for
 	// (request_id, user_id, task_id). Inverts FindDedupCandidate's precedence:
@@ -141,12 +143,11 @@ type Store interface {
 	// in the agent's task. Pre-task is the fallback when no task-scoped row
 	// exists.
 	GetAuditEntryByRequestIDAndTask(ctx context.Context, requestID, userID, taskID string) (*AuditEntry, error)
-	// FindDedupCandidate returns the canonical audit entry that a new
+	// FindDedupCandidate returns the request-level canonical audit entry that a new
 	// (request_id, user_id, task_id) request should dedup against, or
-	// ErrNotFound if no candidate exists. Pre-task canonicals (task_id IS NULL)
-	// always win over task-scoped canonicals for the same request_id; within a
-	// tier the oldest row wins. taskID == "" means the caller has no task
-	// context yet (runtime classification path) and only pre-task rows match.
+	// ErrNotFound if no candidate exists. Exact task-scoped canonicals win over
+	// pre-task fallback; within a tier the oldest row wins. Child audit
+	// observations with DedupKey set are excluded.
 	FindDedupCandidate(ctx context.Context, requestID, userID, taskID string) (*AuditEntry, error)
 	ListAuditEntries(ctx context.Context, userID string, filter AuditFilter) ([]*AuditEntry, int, error)
 	AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]ActivityBucket, error)
@@ -622,6 +623,7 @@ type AuditEntry struct {
 	UserID                  string          `json:"user_id"`
 	AgentID                 *string         `json:"agent_id,omitempty"`
 	RequestID               string          `json:"request_id"`
+	DedupKey                *string         `json:"-"`
 	TaskID                  *string         `json:"task_id,omitempty"`
 	SessionID               *string         `json:"session_id,omitempty"`
 	ApprovalID              *string         `json:"approval_id,omitempty"`

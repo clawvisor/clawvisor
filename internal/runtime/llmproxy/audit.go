@@ -2,6 +2,8 @@ package llmproxy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -264,6 +266,8 @@ func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Age
 	toolInput := decodeAuditToolInput(tu.Input)
 	params := map[string]any{
 		"event":             "lite_proxy.tool_use_inspected",
+		"parent_request_id": requestID,
+		"tool_use_id":       tu.ID,
 		"tool_name":         tu.Name,
 		"tool_input":        toolInput,
 		"tool_target":       toolTarget(toolInput),
@@ -294,12 +298,15 @@ func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Age
 
 	service := "runtime.tool_use"
 	toolUseID := tu.ID
+	id := uuid.NewString()
+	dedupKey := liteProxyEventDedupKey("tool_use_inspected", requestID, tu.ID)
 
 	entry := &store.AuditEntry{
-		ID:         uuid.NewString(),
+		ID:         id,
 		UserID:     agent.UserID,
 		AgentID:    &agent.ID,
 		RequestID:  requestID,
+		DedupKey:   &dedupKey,
 		ToolUseID:  &toolUseID,
 		TaskID:     nilIfEmpty(taskID),
 		Timestamp:  time.Now().UTC(),
@@ -368,11 +375,14 @@ func (e *AuditEmitter) LogApprovalRelease(ctx context.Context, agent *store.Agen
 	}
 	paramsJSON, _ := json.Marshal(params)
 	tu := primary.ToolUse.ID
+	id := uuid.NewString()
+	dedupKey := liteProxyEventDedupKey("approval_release", requestID, pending.ID)
 	entry := &store.AuditEntry{
-		ID:         uuid.NewString(),
+		ID:         id,
 		UserID:     agent.UserID,
 		AgentID:    &agent.ID,
 		RequestID:  requestID,
+		DedupKey:   &dedupKey,
 		ToolUseID:  &tu,
 		Timestamp:  time.Now().UTC(),
 		Service:    string(pending.Provider),
@@ -419,11 +429,14 @@ func (e *AuditEmitter) LogInlineTaskApproved(ctx context.Context, agent *store.A
 	}
 	paramsJSON, _ := json.Marshal(params)
 	toolUseID := inner.ToolUse.ID
+	id := uuid.NewString()
+	dedupKey := liteProxyEventDedupKey("task_create.inline_approved", requestID, inner.ID, task.ID)
 	entry := &store.AuditEntry{
-		ID:         uuid.NewString(),
+		ID:         id,
 		UserID:     agent.UserID,
 		AgentID:    &agent.ID,
 		RequestID:  requestID,
+		DedupKey:   &dedupKey,
 		ToolUseID:  &toolUseID,
 		TaskID:     &task.ID,
 		Timestamp:  time.Now().UTC(),
@@ -479,11 +492,14 @@ func (e *AuditEmitter) LogInlineTaskAutoApproved(ctx context.Context, agent *sto
 		"clawvisor_version":       version.Version,
 	}
 	paramsJSON, _ := json.Marshal(params)
+	id := uuid.NewString()
+	dedupKey := liteProxyEventDedupKey("task_create.inline_auto_approved", requestID, toolUseID, task.ID)
 	entry := &store.AuditEntry{
-		ID:         uuid.NewString(),
+		ID:         id,
 		UserID:     agent.UserID,
 		AgentID:    &agent.ID,
 		RequestID:  requestID,
+		DedupKey:   &dedupKey,
 		ToolUseID:  &toolUseID,
 		TaskID:     &task.ID,
 		Timestamp:  time.Now().UTC(),
@@ -547,11 +563,14 @@ func (e *AuditEmitter) LogContinuationSkippedSiblingTools(ctx context.Context, a
 		id := autoApprovedToolUseID
 		toolUseIDPtr = &id
 	}
+	id := uuid.NewString()
+	dedupKey := liteProxyEventDedupKey("continuation.skipped_sibling_tools", requestID, taskID, autoApprovedToolUseID)
 	entry := &store.AuditEntry{
-		ID:         uuid.NewString(),
+		ID:         id,
 		UserID:     agent.UserID,
 		AgentID:    &agent.ID,
 		RequestID:  requestID,
+		DedupKey:   &dedupKey,
 		ToolUseID:  toolUseIDPtr,
 		TaskID:     taskIDPtr,
 		Timestamp:  time.Now().UTC(),
@@ -585,11 +604,14 @@ func (e *AuditEmitter) LogResolverSwap(ctx context.Context, agent *store.Agent, 
 		"clawvisor_version": version.Version,
 	}
 	paramsJSON, _ := json.Marshal(params)
+	id := uuid.NewString()
+	dedupKey := liteProxyEventDedupKey("resolver_swap", requestID, placeholder, boundService, targetHost, targetPath, method)
 	entry := &store.AuditEntry{
-		ID:         uuid.NewString(),
+		ID:         id,
 		UserID:     agent.UserID,
 		AgentID:    &agent.ID,
 		RequestID:  requestID,
+		DedupKey:   &dedupKey,
 		Timestamp:  time.Now().UTC(),
 		Service:    boundService,
 		Action:     "lite_proxy.resolver." + method,
@@ -620,6 +642,16 @@ func errString(err error) string {
 		return "<nil>"
 	}
 	return err.Error()
+}
+
+func liteProxyEventDedupKey(kind string, parts ...string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(strings.TrimSpace(kind)))
+	for _, part := range parts {
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(strings.TrimSpace(part)))
+	}
+	return "lite_proxy_event:" + strings.TrimSpace(kind) + ":" + hex.EncodeToString(h.Sum(nil))
 }
 
 // buildSHA returns the clawvisor build identifier. Stamped at link time
