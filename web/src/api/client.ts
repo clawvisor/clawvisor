@@ -112,6 +112,40 @@ const put = <T>(path: string, body: unknown) => request<T>('PUT', path, body)
 const patch = <T>(path: string, body: unknown) => request<T>('PATCH', path, body)
 const del = <T>(path: string, body?: unknown) => request<T>('DELETE', path, body)
 
+async function download(path: string): Promise<{ blob: Blob; filename?: string }> {
+  const headers: Record<string, string> = {}
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+  if (currentOrgId) headers['X-Org-Id'] = currentOrgId
+
+  const run = (requestHeaders: Record<string, string>) => fetch(path, {
+    method: 'GET',
+    headers: requestHeaders,
+    credentials: 'include',
+  })
+
+  let res = await run(headers)
+  if (res.status === 401 && _refreshFn) {
+    const newToken = await doRefreshOnce()
+    res = await run({ ...headers, Authorization: `Bearer ${newToken}` })
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new APIError(res.status, err.error ?? res.statusText, err.code, err)
+  }
+
+  const disposition = res.headers.get('Content-Disposition') ?? ''
+  const filename = parseContentDispositionFilename(disposition)
+  return { blob: await res.blob(), filename }
+}
+
+function parseContentDispositionFilename(disposition: string): string | undefined {
+  const match = /filename="([^"]+)"/i.exec(disposition) ?? /filename=([^;]+)/i.exec(disposition)
+  const raw = match?.[1]?.trim()
+  if (!raw) return undefined
+  const cleaned = raw.replace(/^["']|["']$/g, '').replace(/[\\/]/g, '-')
+  return cleaned || undefined
+}
+
 // Request with an explicit bearer token (for setup/pending tokens, not the session token)
 async function requestWithToken<T>(
   method: string,
@@ -1230,13 +1264,13 @@ export const api = {
       post<{ code: string; expires_at: string }>('/api/agents/connect/claim', {}),
   },
   installer: {
-    // The mobileconfig endpoint streams a binary plist with Content-Disposition:
-    // attachment. Returning a URL is simpler than fetching — the browser
-    // handles the download via <a href> or window.location assignment, and the
-    // user's session cookie carries auth automatically.
     claudeDesktopProfileURL: (name?: string) => {
       const base = '/api/agents/install/claude-desktop.mobileconfig'
       return name ? `${base}?name=${encodeURIComponent(name)}` : base
+    },
+    downloadClaudeDesktopProfile: (name?: string) => {
+      const base = '/api/agents/install/claude-desktop.mobileconfig'
+      return download(name ? `${base}?name=${encodeURIComponent(name)}` : base)
     },
   },
   services: {

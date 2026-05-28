@@ -1005,7 +1005,7 @@ func (s *Server) routes() http.Handler {
 		// codex, hermes, openclaw). Each renders with a pre-filled CLAWVISOR_URL
 		// and optional ?claim=<code> so the embedded mint curl doesn't need a
 		// user_id. The Other Agents fallback path still uses /skill/setup.
-		installerHandler := handlers.NewInstallerHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal(), s.cfg.ProxyLite.PublicURL)
+		installerHandler := handlers.NewInstallerHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal(), s.cfg.ProxyLite.PublicURL, s.cfg.Server.PublicURL)
 		mux.HandleFunc("GET /skill/install/{target}", installerHandler.Setup)
 	}
 

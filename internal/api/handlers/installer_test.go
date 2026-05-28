@@ -49,7 +49,7 @@ func assertContainsAll(t *testing.T, body string, needles ...string) {
 }
 
 func TestInstallerUnknownTargetIs404(t *testing.T) {
-	h := NewInstallerHandler("", "", true, "")
+	h := NewInstallerHandler("", "", true, "", "")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /skill/install/{target}", h.Setup)
 	srv := httptest.NewServer(mux)
@@ -66,13 +66,14 @@ func TestInstallerUnknownTargetIs404(t *testing.T) {
 }
 
 func TestInstallerClaudeCodeRender(t *testing.T) {
-	h := NewInstallerHandler("", "", true, "")
+	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "claude-code", "ABCDEFGHIJ")
 
 	assertContainsAll(t, body,
 		"# Connect Claude Code to Clawvisor",
 		"passthrough mode",
-		"## 1. Probe the environment",
+		"## 1. Check the local CLI",
+		"install_mode\": \"local\"",
 		"## 2. Check for an existing token",
 		"## 3. Mint a connection request",
 		"claim=ABCDEFGHIJ",
@@ -83,40 +84,46 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 		"ANTHROPIC_BASE_URL",
 		"ANTHROPIC_CUSTOM_HEADERS",
 		"X-Clawvisor-Agent-Token",
-		"~/.claude/settings.json",
+		"Dashboard answers",
+		"Claude Code routing scope: alias",
+		"The user chose **scoped routing**",
+		"Leave permissions unchanged",
 		"## 6. Offer a shell alias",
 		"claude-cv()",
-		"--dangerously-skip-permissions",
 		"## 7. Connectivity smoke test",
 		"/api/skill/catalog",
 		"## 8. Save an uninstall reference",
-		"## 9. Self-uninstall",
-		"rm ~/.claude/commands/clawvisor-install.md",
+		"## 9. Self-uninstall automatically",
+		"rm -f ~/.claude/commands/clawvisor-install.md",
+		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
 }
 
 func TestInstallerCodexRender(t *testing.T) {
-	h := NewInstallerHandler("", "", true, "")
+	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "codex", "CLAIMCODE0")
 
 	assertContainsAll(t, body,
 		"# Connect Codex to Clawvisor",
 		"passthrough mode",
 		"codex login",
+		"## 1. Check the local CLI",
+		"install_mode\": \"local\"",
 		"claim=CLAIMCODE0",
 		"[model_providers.clawvisor]",
 		`base_url = "http://`,
 		`/api/v1"`,
 		"requires_openai_auth = true",
 		"X-Clawvisor-Agent-Token = \"CLAWVISOR_AGENT_TOKEN\"",
+		"Dashboard answers",
+		"Alias mode: safe",
 		"codex-cv()",
-		"--dangerously-bypass-approvals-and-sandbox",
-		"~/.codex/skills/clawvisor-install",
+		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
 }
 
 func TestInstallerHermesRender(t *testing.T) {
-	h := NewInstallerHandler("", "", true, "")
+	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "hermes", "")
 
 	assertContainsAll(t, body,
@@ -127,7 +134,8 @@ func TestInstallerHermesRender(t *testing.T) {
 		"/api/v1",
 		"~/.hermes/config.yaml",
 		"hermes-cv()",
-		"hermes skills uninstall clawvisor-install",
+		"rm -f ~/.claude/commands/clawvisor-install.md",
+		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
 	// No claim → mint URL should not contain `claim=` or `user_id=`.
 	if strings.Contains(body, "&claim=") {
@@ -136,7 +144,7 @@ func TestInstallerHermesRender(t *testing.T) {
 }
 
 func TestInstallerOpenClawRender(t *testing.T) {
-	h := NewInstallerHandler("", "", true, "")
+	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "openclaw", "CLAIMOPEN12")
 
 	assertContainsAll(t, body,
@@ -149,7 +157,8 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"OPENCLAW_HOOKS_URL",
 		"host.docker.internal",
 		"openclaw.json",
-		"~/.openclaw/workspace/skills/clawvisor-install",
+		"rm -f ~/.claude/commands/clawvisor-install.md",
+		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
 }
 
@@ -157,7 +166,7 @@ func TestInstallerOpenClawRender(t *testing.T) {
 // frontmatter at load time; we caught this in the field after a real install,
 // so guard against regression by asserting the exact shape on every target.
 func TestInstallerAllTargetsHaveFrontmatter(t *testing.T) {
-	h := NewInstallerHandler("", "", true, "")
+	h := NewInstallerHandler("", "", true, "", "")
 	for _, target := range []string{"claude-code", "codex", "hermes", "openclaw"} {
 		body := installerGet(t, h, target, "")
 		if !strings.HasPrefix(body, "---\nname: clawvisor-install\ndescription:") {
@@ -175,26 +184,43 @@ func TestInstallerAllTargetsHaveFrontmatter(t *testing.T) {
 	}
 }
 
-func TestInstallerPreferConfiguredPublicURL(t *testing.T) {
-	// When the deployment has a configured public URL, all embedded curl URLs
-	// must use that — not the request host. Agents installing the skill are
-	// on a different machine in cloud deployments and won't reach the
-	// dashboard origin.
-	h := NewInstallerHandler("", "", false, "https://llm.example.com")
+func TestInstallerPrefersLLMProxyURL(t *testing.T) {
+	// When the deployment has a configured lite-proxy URL, all embedded curl
+	// URLs must use that — even if the app has its own public URL. Agents
+	// installing the skill need the LLM-proxy endpoint for both registration
+	// and model traffic.
+	h := NewInstallerHandler("", "", false, "https://llm.example.com", "https://app.example.com")
 	body := installerGet(t, h, "claude-code", "")
 	if !strings.Contains(body, "https://llm.example.com/api") {
-		t.Errorf("expected embedded URL to use configured public URL; body excerpt:\n%s",
+		t.Errorf("expected embedded URL to use configured LLM proxy URL; body excerpt:\n%s",
+			body[:min(len(body), 500)])
+	}
+	if strings.Contains(body, "https://app.example.com") {
+		t.Errorf("embedded URL should not use server public URL when LLM proxy URL is configured")
+	}
+	if strings.Contains(body, "http://127.0.0.1:") {
+		t.Errorf("embedded URL should not fall back to request host when LLM proxy URL is configured")
+	}
+}
+
+func TestInstallerFallsBackToServerPublicURL(t *testing.T) {
+	// If there is no dedicated lite-proxy URL, use the general public URL
+	// before falling back to the request host.
+	h := NewInstallerHandler("", "", false, "", "https://app.example.com")
+	body := installerGet(t, h, "codex", "")
+	if !strings.Contains(body, "https://app.example.com/api/v1") {
+		t.Errorf("expected embedded URL to use server public URL; body excerpt:\n%s",
 			body[:min(len(body), 500)])
 	}
 	if strings.Contains(body, "http://127.0.0.1:") {
-		t.Errorf("embedded URL should not fall back to request host when public URL is configured")
+		t.Errorf("embedded URL should not fall back to request host when server public URL is configured")
 	}
 }
 
 func TestInstallerEmbedsRequestHost(t *testing.T) {
 	// When not via the relay, the resolved URL should mirror the request host so
 	// agents on the user's box talk to the daemon directly.
-	h := NewInstallerHandler("", "", true, "")
+	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "claude-code", "")
 	if !strings.Contains(body, "ANTHROPIC_BASE_URL") || !strings.Contains(body, "/api/skill/catalog") {
 		t.Fatalf("rendered body missing required scaffolding: %s", body)
