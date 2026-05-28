@@ -153,10 +153,16 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 		return finalizeInlineApproval(ctx, req, resolved, created, &out)
 
 	default:
+		// Reached when neither the pending-flow shape (creator
+		// implements InlineTaskPendingCreator AND resolved.PendingTaskID
+		// is set AND req.Agent is non-nil) nor the legacy shape
+		// (resolved.TaskDefinition is non-nil) is satisfied. Common
+		// causes: a nil Agent on the request, or a hold rebuilt from
+		// state that lost both linkages.
 		out.Decision = "deny"
 		out.Outcome = "inline_task_definition_missing"
-		out.Reason = "missing task definition and pending task id on approval"
-		return renderInlineTaskCreatorErrorReply("missing task definition on approval"), out
+		out.Reason = "approve flow preconditions not met (creator/agent/pending task id/task def)"
+		return renderInlineTaskCreatorErrorReply("missing approval context on approval"), out
 	}
 }
 

@@ -606,33 +606,39 @@ func (h *TasksHandler) ApproveInlineTask(ctx context.Context, taskID, userID str
 		// denied so we don't leave an active task with no usable
 		// credentials. Detach the cancellation so a mid-request
 		// client disconnect doesn't strand an orphan active task,
-		// but cap with a 5s timeout — WithoutCancel alone strips
+		// but cap with 5s timeouts — WithoutCancel alone strips
 		// the parent deadline too, so a stalled store backend
-		// would otherwise block this goroutine indefinitely.
-		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied")
-		// Hydrate the in-memory task with the post-rollback state so
-		// resolveCanonicalTaskApproval reads a consistent status —
-		// the validator's pending → denied check sees what's actually
-		// landed in the row.
-		if rollbackErr == nil {
-			task.Status = "denied"
-		}
-		// Resolve the canonical approval_records row to deny/denied
-		// so the dashboard's pending-records list doesn't strand it
-		// (the chat-bound expiry sweep filters by
-		// status='pending_approval', so a "denied" task is invisible
-		// to it; without this resolve the canonical record would sit
-		// at "pending" forever, violating the audit invariant that
-		// every chat-bound task eventually has a terminal canonical
-		// resolution). Same detached+timeout context shape so a
-		// stalled store backend can't block here.
-		h.resolveCanonicalTaskApproval(rollbackCtx, task, "task_create", "deny", "denied")
-		cancel()
+		// would otherwise block this goroutine indefinitely. Each
+		// step gets its OWN 5s budget so a slow task rollback
+		// can't starve the canonical resolve.
+		taskRollbackCtx, taskCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		rollbackErr := h.st.UpdateTaskStatus(taskRollbackCtx, task.ID, "denied")
+		taskCancel()
 		if rollbackErr != nil {
+			// Task rollback failed: the row is still "active". DO
+			// NOT also resolve the canonical record to deny/denied
+			// here — that would create an audit-trail inversion
+			// (record claims user denied, task row is active). The
+			// CRITICAL log below is the operator's cue to
+			// investigate; the canonical record stays pending
+			// until manual repair.
 			h.logger.ErrorContext(ctx, "CRITICAL: post-CAS credential mint failed AND rollback failed; task is now orphaned active",
 				"task_id", task.ID, "mint_err", err, "rollback_err", rollbackErr)
+			return nil, fmt.Errorf("mint credential placeholders: %w", err)
 		}
+		// Rollback succeeded — hydrate the in-memory task so the
+		// canonical resolve validator sees pending → denied, then
+		// flip the canonical record under its own bounded context.
+		// Without this resolve the pending canonical row would sit
+		// forever (the chat-bound expiry sweep filters by
+		// status='pending_approval', so a "denied" task is invisible
+		// to it), violating the audit invariant that every
+		// chat-bound task eventually has a terminal canonical
+		// resolution.
+		task.Status = "denied"
+		canonicalCtx, canonicalCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		h.resolveCanonicalTaskApproval(canonicalCtx, task, "task_create", "deny", "denied")
+		canonicalCancel()
 		return nil, fmt.Errorf("mint credential placeholders: %w", err)
 	}
 
