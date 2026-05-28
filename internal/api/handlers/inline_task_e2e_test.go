@@ -11,6 +11,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -212,6 +213,95 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 	}
 	if rec.ResolvedAt == nil {
 		t.Error("rec.ResolvedAt should be set")
+	}
+}
+
+// Manual-approve release path threads the hold's PrecomputedRisk into
+// CreateInlineApprovedTaskWithAssessment, so the persisted
+// task.RiskDetails matches what the user saw in the inline prompt
+// instead of a second assessor call that lacks RecentUserTurns and
+// produces a different, more cautious explanation.
+func TestInlineTaskApproval_PrecomputedRiskThreadsThrough(t *testing.T) {
+	ctx := context.Background()
+	h, st, _, agent := newInlineTasksHandlerForTest(t)
+	// Wire an assessor that would return a DIFFERENT verdict than the
+	// precomputed one. If the release path falls back to the legacy
+	// CreateInlineApprovedTask (which re-runs the assessor), the
+	// recorded calls AND the persisted RiskLevel will both reflect
+	// this — failing the test.
+	rec := &recordingAssessor{
+		respond: func() *taskrisk.RiskAssessment {
+			return &taskrisk.RiskAssessment{RiskLevel: "high", Explanation: "fresh-assessor-call"}
+		},
+	}
+	h.assessor = rec
+
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+
+	const originalHoldID = "cv-origtoolxxxxxxxxxxxxxxxxxx"
+	if _, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
+		ID:       originalHoldID,
+		UserID:   agent.UserID,
+		AgentID:  agent.ID,
+		Provider: conversation.ProviderAnthropic,
+		ToolUse:  conversation.ToolUse{ID: "toolu_orig", Name: "Bash"},
+		Stage:    llmproxy.StageAwaitingTaskDefinition,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	innerHold, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
+		UserID:          agent.UserID,
+		AgentID:         agent.ID,
+		Provider:        conversation.ProviderAnthropic,
+		ToolUse:         conversation.ToolUse{ID: "toolu_post", Name: "Bash"},
+		Stage:           llmproxy.StageAwaitingTaskApproval,
+		AwaitingTaskFor: originalHoldID,
+		TaskDefinition: &runtimetasks.TaskCreateRequest{
+			Purpose:                "files in /tmp",
+			IntentVerificationMode: "strict",
+			ExpiresInSeconds:       600,
+			ExpectedTools:          []runtimetasks.ExpectedTool{{ToolName: "Bash", Why: "create"}},
+		},
+		PrecomputedRisk: &taskrisk.RiskAssessment{
+			RiskLevel:   "low",
+			Explanation: "precomputed-at-hold-time",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"messages":[{"role":"user","content":"approve ` + innerHold.Pending.ID + `"}]}`)
+	result, err := llmproxy.RewriteInlineTaskApprovalReply(ctx, llmproxy.InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            body,
+		Agent:           agent,
+		PendingApproval: cache,
+		Creator:         h,
+	})
+	if err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if result.Decision != "allow" {
+		t.Fatalf("decision=%q want allow (outcome=%s)", result.Decision, result.Outcome)
+	}
+
+	if rec.calls != 0 {
+		t.Errorf("assessor should NOT be called on the release path when the hold carries PrecomputedRisk; got calls=%d", rec.calls)
+	}
+
+	tasks := listTasksForAgent(t, st, agent)
+	if len(tasks) != 1 {
+		t.Fatalf("want 1 task; got %d", len(tasks))
+	}
+	task := tasks[0]
+	if task.RiskLevel != "low" {
+		t.Errorf("task.RiskLevel=%q want low (the precomputed level); release path likely fell back to a fresh assessor call", task.RiskLevel)
+	}
+	if !strings.Contains(string(task.RiskDetails), "precomputed-at-hold-time") {
+		t.Errorf("task.RiskDetails should carry the precomputed explanation; got %s", string(task.RiskDetails))
 	}
 }
 

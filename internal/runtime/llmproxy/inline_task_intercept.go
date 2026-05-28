@@ -287,16 +287,17 @@ func maybeInterceptInlineTaskDefinition(
 
 	now := time.Now().UTC()
 	innerHold, holdErr := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
-		UserID:         cfg.AgentUserID,
-		AgentID:        cfg.AgentID,
-		Provider:       provider,
-		ConversationID: cfg.ConversationID,
-		ToolUse:        tu,
-		Reason:         "inline task creation awaiting user approval",
-		Stage:          StageAwaitingTaskApproval,
-		TaskDefinition: parsed,
-		CreatedAt:      now,
-		ExpiresAt:      now.Add(inlineTaskApprovalHoldTTL),
+		UserID:          cfg.AgentUserID,
+		AgentID:         cfg.AgentID,
+		Provider:        provider,
+		ConversationID:  cfg.ConversationID,
+		ToolUse:         tu,
+		Reason:          "inline task creation awaiting user approval",
+		Stage:           StageAwaitingTaskApproval,
+		TaskDefinition:  parsed,
+		PrecomputedRisk: assessment,
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(inlineTaskApprovalHoldTTL),
 	})
 	if holdErr != nil {
 		audit("block", "inline_task_hold_failed", holdErr.Error())

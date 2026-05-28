@@ -92,7 +92,21 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 		return renderInlineTaskCreatorErrorReply("missing task definition on approval"), out
 	default:
 		originalToolUseID := resolved.AwaitingTaskFor
-		created, createErr := req.Creator.CreateInlineApprovedTask(ctx, req.Agent, resolved.TaskDefinition, originalToolUseID)
+		// Fast-path the precomputed assessment when the creator honors
+		// it. The intercept ran the assessor with RecentUserTurns in
+		// scope; reusing that verdict here keeps the persisted
+		// task.RiskDetails (and the dashboard) in sync with the inline
+		// approval prompt the user actually approved. Falling back to
+		// CreateInlineApprovedTask triggers a second assessor call
+		// without conversation context, which produces a different,
+		// more cautious explanation than the one shown inline.
+		var created *InlineApprovedTask
+		var createErr error
+		if withAssessment, ok := req.Creator.(InlineTaskCreatorWithAssessment); ok {
+			created, createErr = withAssessment.CreateInlineApprovedTaskWithAssessment(ctx, req.Agent, resolved.TaskDefinition, originalToolUseID, resolved.PrecomputedRisk)
+		} else {
+			created, createErr = req.Creator.CreateInlineApprovedTask(ctx, req.Agent, resolved.TaskDefinition, originalToolUseID)
+		}
 		if createErr != nil {
 			out.Decision = "deny"
 			out.Outcome = "inline_task_create_failed"
