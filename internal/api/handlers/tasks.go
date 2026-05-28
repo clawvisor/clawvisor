@@ -1171,6 +1171,15 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task is not pending approval")
 		return
 	}
+	if isInlineChatPending(task) {
+		// Chat-bound pending task. Dashboard cannot resolve it — the
+		// llmproxy cache hold is the in-process anchor, and approving
+		// here would flip the DB row without telling the model. Refuse
+		// with a clear code so the dashboard can render the pointer
+		// back to chat.
+		writeError(w, http.StatusConflict, "INLINE_CHAT_BOUND", "approve in the agent chat surface — reply 'approve' or 'deny' to the running session")
+		return
+	}
 
 	// Optionally parse per-scope overrides from the request body. Each override
 	// targets one authorized_action by (service, action) and may set verification
@@ -1763,6 +1772,10 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task is not pending approval or scope expansion")
 		return
 	}
+	if isInlineChatPending(task) {
+		writeError(w, http.StatusConflict, "INLINE_CHAT_BOUND", "deny in the agent chat surface — reply 'deny' to the running session")
+		return
+	}
 
 	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, task.Status, "denied")
 	if err != nil {
@@ -2226,6 +2239,13 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 	if task.UserID != userID {
 		return fmt.Errorf("not your task")
 	}
+	if isInlineChatPending(task) {
+		// Chat-bound pending task; the cache hold owns the in-process
+		// resolution path. Notifier callers (Telegram button) see this
+		// error and surface it; the chat surface uses ApproveInlineTask
+		// instead which bypasses this guard.
+		return errInlineChatBound
+	}
 	if task.Status != "pending_approval" {
 		if task.Status == "active" {
 			requiredCredentials, parseErr := taskRequiredCredentials(task)
@@ -2295,6 +2315,9 @@ func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) 
 	}
 	if task.UserID != userID {
 		return fmt.Errorf("not your task")
+	}
+	if isInlineChatPending(task) {
+		return errInlineChatBound
 	}
 	if task.Status != "pending_approval" && task.Status != "pending_scope_expansion" {
 		return fmt.Errorf("task is not pending")
@@ -2417,6 +2440,25 @@ func (h *TasksHandler) decrementNotifierPolling(userID string) {
 	if pd, ok := h.notifier.(notify.PollingDecrementer); ok {
 		pd.DecrementPolling(userID)
 	}
+}
+
+// errInlineChatBound is returned by the dashboard approve/deny path
+// when the caller targets a chat-bound pending task. These rows must
+// be resolved via the agent chat (the llmproxy cache hold is the
+// in-process resolution anchor); flipping the DB row from the
+// dashboard would leave the model unaware. ApproveInlineTask /
+// DenyInlineTask in tasks_inline.go bypass this guard because the
+// chat surface itself is doing the approval.
+var errInlineChatBound = errors.New("approve in the agent chat surface")
+
+// isInlineChatPending reports whether a task is awaiting decision via
+// the chat surface. Read by the dashboard Approve/Deny handlers as a
+// 409 gate.
+func isInlineChatPending(task *store.Task) bool {
+	if task == nil {
+		return false
+	}
+	return task.Status == "pending_approval" && task.ApprovalSource == "inline_chat"
 }
 
 func canonicalTaskApprovalKind(task *store.Task) string {

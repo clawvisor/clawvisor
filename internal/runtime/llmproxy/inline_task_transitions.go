@@ -72,12 +72,6 @@ func dropLinkedToolHold(ctx context.Context, cache PendingApprovalCache, agent *
 
 func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteRequest, resolved *PendingLiteApproval, verb string) (string, InlineApprovalRewriteResult) {
 	out := InlineApprovalRewriteResult{Body: req.Body}
-	if verb == "deny" {
-		out.Decision = "deny"
-		out.Outcome = "inline_task_denied"
-		out.Reason = "user denied inline task"
-		return renderInlineTaskDenyReply(), out
-	}
 
 	switch {
 	case req.Creator == nil:
@@ -85,21 +79,57 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 		out.Outcome = "inline_task_creator_missing"
 		out.Reason = "no inline task creator configured"
 		return renderInlineTaskCreatorErrorReply("inline task creation is not available on this daemon"), out
-	case resolved == nil || resolved.TaskDefinition == nil:
+	case resolved == nil:
 		out.Decision = "deny"
 		out.Outcome = "inline_task_definition_missing"
-		out.Reason = "missing task definition on approval"
-		return renderInlineTaskCreatorErrorReply("missing task definition on approval"), out
-	default:
+		out.Reason = "missing approval hold on resolve"
+		return renderInlineTaskCreatorErrorReply("missing approval hold on resolve"), out
+	}
+
+	// Prefer the new pending-task flow: the intercept already landed a
+	// store.Task at pending_approval; here we just transition it to
+	// active (approve) or denied (deny). This keeps the dashboard's
+	// Tasks page authoritative for "what awaits the user" and avoids
+	// a second create-with-assessment call. Legacy creators (test
+	// stubs without the extension) still drive the original
+	// create-on-approve path so we don't break those callers.
+	pendingCreator, hasPending := req.Creator.(InlineTaskPendingCreator)
+
+	if verb == "deny" {
+		if hasPending && resolved.PendingTaskID != "" && req.Agent != nil {
+			if err := pendingCreator.DenyInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID); err != nil {
+				// Log into the rewrite outcome; the user's chat reply
+				// still rewrites to a denial since the cache hold is
+				// already consumed.
+				out.Reason = "deny failed: " + err.Error()
+			}
+		}
+		out.Decision = "deny"
+		out.Outcome = "inline_task_denied"
+		if out.Reason == "" {
+			out.Reason = "user denied inline task"
+		}
+		return renderInlineTaskDenyReply(), out
+	}
+
+	// Approve path.
+	switch {
+	case hasPending && resolved.PendingTaskID != "" && req.Agent != nil:
+		created, createErr := pendingCreator.ApproveInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID)
+		if createErr != nil {
+			out.Decision = "deny"
+			out.Outcome = "inline_task_create_failed"
+			out.Reason = "approve failed: " + createErr.Error()
+			return renderInlineTaskCreatorErrorReply(createErr.Error()), out
+		}
+		return finalizeInlineApproval(ctx, req, resolved, created, &out)
+
+	case resolved.TaskDefinition != nil:
+		// Legacy fall-through: creator doesn't expose the pending
+		// flow OR the hold predates the intercept's pending-task
+		// landing. Create-with-precomputed (or plain create) to
+		// keep older callers working until they migrate.
 		originalToolUseID := resolved.AwaitingTaskFor
-		// Fast-path the precomputed assessment when the creator honors
-		// it. The intercept ran the assessor with RecentUserTurns in
-		// scope; reusing that verdict here keeps the persisted
-		// task.RiskDetails (and the dashboard) in sync with the inline
-		// approval prompt the user actually approved. Falling back to
-		// CreateInlineApprovedTask triggers a second assessor call
-		// without conversation context, which produces a different,
-		// more cautious explanation than the one shown inline.
 		var created *InlineApprovedTask
 		var createErr error
 		if withAssessment, ok := req.Creator.(InlineTaskCreatorWithAssessment); ok {
@@ -113,28 +143,41 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 			out.Reason = "create failed: " + createErr.Error()
 			return renderInlineTaskCreatorErrorReply(createErr.Error()), out
 		}
+		return finalizeInlineApproval(ctx, req, resolved, created, &out)
 
-		out.Decision = "allow"
-		out.Outcome = "inline_task_approved"
-		out.TaskID = created.ID
-		out.ApprovalRecordID = created.ApprovalRecordID
-		out.Credentials = created.Credentials
-		if req.Checkouts != nil && req.Agent != nil && created.ID != "" {
-			if err := req.Checkouts.Set(ctx, TaskCheckoutKey{
-				UserID:         req.Agent.UserID,
-				AgentID:        req.Agent.ID,
-				ConversationID: req.ConversationID,
-			}, created.ID, 0); err == nil {
-				out.CheckedOut = true
-			}
-		}
-		if req.Audit != nil {
-			req.Audit.LogInlineTaskApproved(ctx, req.Agent, req.RequestID, resolved, created)
-		}
-		// Use the SAME text the persistent augmenter produces on
-		// subsequent turns. One canonical rendering avoids showing the
-		// model the same user approve turn with different content across
-		// calls.
-		return inlineApprovedReplyAugmentationContext(created.ID, out.CheckedOut, created.Credentials), out
+	default:
+		out.Decision = "deny"
+		out.Outcome = "inline_task_definition_missing"
+		out.Reason = "missing task definition and pending task id on approval"
+		return renderInlineTaskCreatorErrorReply("missing task definition on approval"), out
 	}
+}
+
+// finalizeInlineApproval performs the post-approval bookkeeping shared
+// by the pending-task and legacy create-on-approve paths: checkout,
+// audit emission, return shape. Mutates `out` and returns the
+// substituted reply text.
+func finalizeInlineApproval(ctx context.Context, req InlineApprovalRewriteRequest, resolved *PendingLiteApproval, created *InlineApprovedTask, out *InlineApprovalRewriteResult) (string, InlineApprovalRewriteResult) {
+	out.Decision = "allow"
+	out.Outcome = "inline_task_approved"
+	out.TaskID = created.ID
+	out.ApprovalRecordID = created.ApprovalRecordID
+	out.Credentials = created.Credentials
+	if req.Checkouts != nil && req.Agent != nil && created.ID != "" {
+		if err := req.Checkouts.Set(ctx, TaskCheckoutKey{
+			UserID:         req.Agent.UserID,
+			AgentID:        req.Agent.ID,
+			ConversationID: req.ConversationID,
+		}, created.ID, 0); err == nil {
+			out.CheckedOut = true
+		}
+	}
+	if req.Audit != nil {
+		req.Audit.LogInlineTaskApproved(ctx, req.Agent, req.RequestID, resolved, created)
+	}
+	// Use the SAME text the persistent augmenter produces on
+	// subsequent turns. One canonical rendering avoids showing the
+	// model the same user approve turn with different content across
+	// calls.
+	return inlineApprovedReplyAugmentationContext(created.ID, out.CheckedOut, created.Credentials), *out
 }

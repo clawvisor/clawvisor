@@ -182,6 +182,14 @@ type Store interface {
 	IncrementTaskRequestCount(ctx context.Context, id string) error
 	SetTaskPendingExpansion(ctx context.Context, id string, action *TaskAction, reason string) error
 	ListExpiredTasks(ctx context.Context) ([]*Task, error)
+	// ListExpiredInlineChatPendingTasks returns chat-bound pending
+	// tasks (status='pending_approval', approval_source='inline_chat')
+	// whose llmproxy cache hold has lapsed, i.e. created_at < cutoff.
+	// Used by the approval sweeper to auto-deny tasks the user
+	// abandoned in the chat surface (the cache hold expired so the
+	// chat path can no longer resolve it; dashboard is gated by the
+	// CHAT_APPROVAL_REQUIRED guard, so without this they sit forever).
+	ListExpiredInlineChatPendingTasks(ctx context.Context, cutoff time.Time) ([]*Task, error)
 	RevokeTask(ctx context.Context, id, userID string) error
 	RevokeTasksByAgent(ctx context.Context, agentID, userID string) (int, error)
 

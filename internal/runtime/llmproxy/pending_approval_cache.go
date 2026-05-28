@@ -95,6 +95,16 @@ type PendingLiteApproval struct {
 	// at that stage if the assessor wasn't configured or returned unknown.
 	PrecomputedRisk *taskrisk.RiskAssessment
 
+	// PendingTaskID is the ID of the store.Task row the inline-task
+	// intercept landed at status="pending_approval" BEFORE calling
+	// Hold. Set only on StageAwaitingTaskApproval holds; empty
+	// otherwise. The chat-resolve path (resolveInlineTaskApproval) uses
+	// it to call ApproveInlineTask / DenyInlineTask against the
+	// already-created Task row rather than creating a fresh task at
+	// resolve time. The dashboard Tasks page renders the same row as a
+	// pending task while the cache hold awaits the user's reply.
+	PendingTaskID string
+
 	// Additional carries the other tool_uses that share this hold when
 	// multiple tool_uses in a single upstream response are coalesced into
 	// one approval. Empty for the standard single-tool hold path

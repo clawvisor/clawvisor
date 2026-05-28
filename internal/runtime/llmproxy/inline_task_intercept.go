@@ -27,6 +27,13 @@ import (
 // still bounding stale-approval accumulation in the cache.
 const inlineTaskApprovalHoldTTL = 24 * time.Hour
 
+// InlineTaskApprovalHoldTTL exposes the cache hold's decide window so
+// callers outside llmproxy (notably the expiry sweeper in the
+// approvals handler) can use the same cutoff when reaping abandoned
+// chat-bound pending tasks. Lower-cased internal const remains the
+// canonical value to avoid drift; the exported alias just reflects it.
+const InlineTaskApprovalHoldTTL = inlineTaskApprovalHoldTTL
+
 // InlineSurfaceQueryParam is the query-string flag the model adds to
 // POST /api/control/tasks to opt in to the inline-approval flow when there
 // is no prior `task` reply (e.g. the agent knows the user is sitting
@@ -298,6 +305,33 @@ func maybeInterceptInlineTaskDefinition(
 		}
 	}
 
+	// Create the pending Task row BEFORE the cache hold so the
+	// dashboard's Tasks page renders this work as a pending task while
+	// the cache hold awaits the user's reply (status='pending_approval',
+	// approval_source='inline_chat'). The dashboard's Approve / Deny
+	// endpoints refuse to act on inline_chat-bound pending rows; the
+	// cache hold is the in-process resolution path.
+	//
+	// When the configured creator doesn't implement the pending-flow
+	// extension (legacy test stubs, runtimes wired before this
+	// change), skip the pending-task landing and fall back to the
+	// legacy create-on-approve flow — the prompt still renders and
+	// the chat path still resolves via resolved.TaskDefinition. The
+	// only loss is the dashboard's pending-task surface for those
+	// callers, which they didn't have before.
+	pendingCreator, _ := cfg.InlineTaskCreator.(InlineTaskPendingCreator)
+	var pendingTaskID string
+	if pendingCreator != nil {
+		agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, Name: cfg.AgentName}
+		created, pendingErr := pendingCreator.CreatePendingInlineTask(req.Context(), agentForCreate, parsed, tu.ID, assessment)
+		if pendingErr != nil {
+			audit("block", "inline_task_pending_create_failed", pendingErr.Error())
+			trace("inline_task.pending_create_failed", "err", pendingErr.Error())
+			return conversation.ToolUseVerdict{}, false
+		}
+		pendingTaskID = created
+	}
+
 	now := time.Now().UTC()
 	innerHold, holdErr := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 		UserID:          cfg.AgentUserID,
@@ -309,10 +343,19 @@ func maybeInterceptInlineTaskDefinition(
 		Stage:           StageAwaitingTaskApproval,
 		TaskDefinition:  parsed,
 		PrecomputedRisk: assessment,
+		PendingTaskID:   pendingTaskID,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(inlineTaskApprovalHoldTTL),
 	})
 	if holdErr != nil {
+		// Cache hold failed. If we already landed a pending task in
+		// the DB, roll it back so the dashboard doesn't show an
+		// orphaned pending task whose cache anchor never existed.
+		if pendingCreator != nil && pendingTaskID != "" {
+			if denyErr := pendingCreator.DenyInlineTask(req.Context(), pendingTaskID, cfg.AgentUserID); denyErr != nil {
+				trace("inline_task.pending_rollback_failed", "task_id", pendingTaskID, "err", denyErr.Error())
+			}
+		}
 		audit("block", "inline_task_hold_failed", holdErr.Error())
 		return conversation.ToolUseVerdict{}, false
 	}
@@ -320,6 +363,7 @@ func maybeInterceptInlineTaskDefinition(
 	audit("approve", "pending", "inline_task_pending_approval: awaiting user yes/no on inline task definition (query)")
 	trace("inline_task.held",
 		"approval_id", innerHold.Pending.ID,
+		"task_id", pendingTaskID,
 		"purpose", parsed.Purpose,
 		"signal", "query",
 	)

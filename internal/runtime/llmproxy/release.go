@@ -52,6 +52,39 @@ type InlineTaskCreatorWithAssessment interface {
 	) (*InlineApprovedTask, error)
 }
 
+// InlineTaskPendingCreator is the contract the inline-task intercept
+// uses to land a pending Task row in the dashboard's Tasks surface BEFORE
+// the user has replied in chat. The auto-approve gate continues to use
+// CreateInlineApprovedTask (which produces an already-active task in
+// one step); this interface is only for the human-prompt branch.
+//
+// Why split from InlineTaskCreator: the pending flow lives on a
+// separate timeline from the active-creation flow. The intercept calls
+// CreatePendingInlineTask once (returns the task id which lands in the
+// cache hold); later, when the user replies, the chat-resolve path
+// calls ApproveInlineTask or DenyInlineTask against that same task id.
+// All three are typically implemented by the same handler, but a
+// stripped-down test stub can implement just one. Returning the task
+// ID (not the full Task) keeps the llmproxy package independent of
+// store.Task's schema.
+type InlineTaskPendingCreator interface {
+	CreatePendingInlineTask(
+		ctx context.Context,
+		agent *store.Agent,
+		req *runtimetasks.TaskCreateRequest,
+		originalToolUseID string,
+		precomputed *taskrisk.RiskAssessment,
+	) (taskID string, err error)
+	// ApproveInlineTask transitions a pending inline-chat task to
+	// active and returns the InlineApprovedTask shape the chat path
+	// renders to the LLM. Bypasses the dashboard CHAT_APPROVAL_REQUIRED
+	// guard since the chat surface itself is doing the approval.
+	ApproveInlineTask(ctx context.Context, taskID, userID string) (*InlineApprovedTask, error)
+	// DenyInlineTask transitions a pending inline-chat task to
+	// denied. Symmetric to ApproveInlineTask.
+	DenyInlineTask(ctx context.Context, taskID, userID string) error
+}
+
 // InlineApprovedTask is the slice of the created task surfaced back
 // through the synthetic release response. The fields here are what the
 // model needs to see — it isn't a full store.Task because the LLM

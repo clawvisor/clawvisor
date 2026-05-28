@@ -11,6 +11,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -166,11 +167,19 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 
 // capturingInlineCreator is a test InlineTaskCreator that records the
 // inputs and returns a canned response (or an error when fail is set,
-// so auto-approve gate fall-back paths can be exercised).
+// so auto-approve gate fall-back paths can be exercised). Implements
+// the InlineTaskPendingCreator extension so the human-prompt path's
+// pre-Hold CreatePendingInlineTask call lands in `pendingTaskID`.
 type capturingInlineCreator struct {
 	called bool
 	fail   bool
 	resp   *InlineApprovedTask
+
+	pendingCalled bool
+	pendingFail   bool
+	pendingTaskID string
+	approveCalled bool
+	denyCalled    bool
 }
 
 func (c *capturingInlineCreator) CreateInlineApprovedTask(_ context.Context, _ *store.Agent, _ *runtimetasks.TaskCreateRequest, _ string) (*InlineApprovedTask, error) {
@@ -179,6 +188,31 @@ func (c *capturingInlineCreator) CreateInlineApprovedTask(_ context.Context, _ *
 		return nil, fmtErrorf("simulated inline creator failure")
 	}
 	return c.resp, nil
+}
+
+func (c *capturingInlineCreator) CreatePendingInlineTask(_ context.Context, _ *store.Agent, _ *runtimetasks.TaskCreateRequest, _ string, _ *taskrisk.RiskAssessment) (string, error) {
+	c.pendingCalled = true
+	if c.pendingFail {
+		return "", fmtErrorf("simulated pending creator failure")
+	}
+	if c.pendingTaskID == "" {
+		c.pendingTaskID = "task-stub-pending"
+	}
+	return c.pendingTaskID, nil
+}
+
+func (c *capturingInlineCreator) ApproveInlineTask(_ context.Context, _, _ string) (*InlineApprovedTask, error) {
+	c.approveCalled = true
+	c.called = true
+	if c.fail {
+		return nil, fmtErrorf("simulated inline approve failure")
+	}
+	return c.resp, nil
+}
+
+func (c *capturingInlineCreator) DenyInlineTask(_ context.Context, _, _ string) error {
+	c.denyCalled = true
+	return nil
 }
 
 // fmtErrorf is a tiny local helper to avoid adding an extra import for

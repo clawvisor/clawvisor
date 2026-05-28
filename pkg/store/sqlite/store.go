@@ -1776,6 +1776,92 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 	return tasks, rows.Err()
 }
 
+// ListExpiredInlineChatPendingTasks returns chat-bound tasks that
+// have been sitting at pending_approval longer than the caller's
+// cutoff. The sweeper uses this to auto-deny tasks the user
+// abandoned in the chat surface (cache hold lapsed; dashboard refuses
+// to resolve them).
+func (s *Store) ListExpiredInlineChatPendingTasks(ctx context.Context, cutoff time.Time) ([]*store.Task, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, agent_id, purpose, status, authorized_actions,
+		       planned_calls, callback_url,
+		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
+		       pending_action, pending_reason, lifetime, risk_level, risk_details,
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		FROM tasks
+		WHERE status = 'pending_approval'
+		  AND approval_source = 'inline_chat'
+		  AND created_at < ?
+	`, cutoff.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []*store.Task
+	for rows.Next() {
+		t := &store.Task{}
+		var actionsStr, createdAt string
+		var plannedCallsStr *string
+		var approvedAt, expiresAt, pendingActionStr *string
+		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
+		var chainExtractionMode *string
+		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
+			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
+			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
+			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
+			&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
+			&chainExtractionMode); err != nil {
+			return nil, err
+		}
+		if chainExtractionMode != nil {
+			t.ChainExtractionMode = *chainExtractionMode
+		}
+		t.CreatedAt = parseTime(createdAt)
+		if approvedAt != nil {
+			ts := parseTime(*approvedAt)
+			t.ApprovedAt = &ts
+		}
+		if expiresAt != nil {
+			ts := parseTime(*expiresAt)
+			t.ExpiresAt = &ts
+		}
+		if err := json.Unmarshal([]byte(actionsStr), &t.AuthorizedActions); err != nil {
+			return nil, fmt.Errorf("unmarshal authorized_actions for task %s: %w", t.ID, err)
+		}
+		if plannedCallsStr != nil {
+			if err := json.Unmarshal([]byte(*plannedCallsStr), &t.PlannedCalls); err != nil {
+				return nil, fmt.Errorf("unmarshal planned_calls for task %s: %w", t.ID, err)
+			}
+		}
+		if pendingActionStr != nil {
+			var pa store.TaskAction
+			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err != nil {
+				return nil, fmt.Errorf("unmarshal pending_action for task %s: %w", t.ID, err)
+			}
+			t.PendingAction = &pa
+		}
+		if riskDetailsStr != "" {
+			t.RiskDetails = json.RawMessage(riskDetailsStr)
+		}
+		if approvalRationaleStr != "" {
+			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
+		}
+		if expectedToolsStr != "" {
+			t.ExpectedTools = json.RawMessage(expectedToolsStr)
+		}
+		if expectedEgressStr != "" {
+			t.ExpectedEgress = json.RawMessage(expectedEgressStr)
+		}
+		if requiredCredentialsStr != "" {
+			t.RequiredCredentials = json.RawMessage(requiredCredentialsStr)
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
+}
+
 // ── Pending Approvals ─────────────────────────────────────────────────────────
 
 // pendingApprovalColumns is the canonical SELECT list for pending_approvals
