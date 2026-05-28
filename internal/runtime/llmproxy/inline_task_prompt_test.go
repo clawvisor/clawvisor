@@ -170,7 +170,7 @@ func TestRenderTaskApprovalPromptRendersRisk(t *testing.T) {
 	}, "", &taskrisk.RiskAssessment{
 		RiskLevel:   "medium",
 		Explanation: "This task requests credential access.",
-	})
+	}, 0)
 	if !strings.Contains(prompt, "Risk") {
 		t.Errorf("expected risk section, got %q", prompt)
 	}
@@ -203,26 +203,30 @@ func TestHumanizeExpiresIn(t *testing.T) {
 
 func TestDurationLine(t *testing.T) {
 	cases := []struct {
-		name      string
-		lifetime  string
-		seconds   int
-		wantLabel string
-		wantValue string
+		name           string
+		lifetime       string
+		seconds        int
+		defaultSeconds int
+		wantLabel      string
+		wantValue      string
 	}{
-		{"session explicit", "session", 600, "Duration", "10 min"},
-		{"session default (empty)", "session", 0, "Duration", "30 min"},
-		{"empty lifetime treated as session", "", 0, "Duration", "30 min"},
-		{"empty lifetime explicit duration", "", 3600, "Duration", "1 hour"},
-		{"standing ignores seconds", "standing", 0, "Lifetime", "always"},
-		{"standing ignores nonzero seconds", "standing", 600, "Lifetime", "always"},
-		{"unknown lifetime omits line", "weird", 0, "", ""},
+		{"session explicit overrides default", "session", 600, 1800, "Duration", "10 min"},
+		{"session default from config", "session", 0, 3600, "Duration", "1 hour"},
+		{"session falls back to const when no default", "session", 0, 0, "Duration", "30 min"},
+		{"empty lifetime + zero default uses const", "", 0, 0, "Duration", "30 min"},
+		{"empty lifetime + config default", "", 0, 7200, "Duration", "2 hours"},
+		{"empty lifetime + explicit duration", "", 3600, 0, "Duration", "1 hour"},
+		{"standing ignores seconds and default", "standing", 0, 3600, "Lifetime", "always"},
+		{"standing ignores nonzero seconds", "standing", 600, 1800, "Lifetime", "always"},
+		{"unknown lifetime omits line", "weird", 0, 0, "", ""},
+		{"negative default treated as unset", "session", 0, -1, "Duration", "30 min"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gotLabel, gotValue := durationLine(c.lifetime, c.seconds)
+			gotLabel, gotValue := durationLine(c.lifetime, c.seconds, c.defaultSeconds)
 			if gotLabel != c.wantLabel || gotValue != c.wantValue {
-				t.Errorf("durationLine(%q, %d) = (%q, %q), want (%q, %q)",
-					c.lifetime, c.seconds, gotLabel, gotValue, c.wantLabel, c.wantValue)
+				t.Errorf("durationLine(%q, %d, %d) = (%q, %q), want (%q, %q)",
+					c.lifetime, c.seconds, c.defaultSeconds, gotLabel, gotValue, c.wantLabel, c.wantValue)
 			}
 		})
 	}

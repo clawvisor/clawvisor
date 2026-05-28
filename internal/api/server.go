@@ -1303,6 +1303,7 @@ func (s *Server) registerLiteProxyRoutes(
 		}
 		llmHandler.InlineTaskCreator = tasksHandler
 		llmHandler.TaskRiskAssessor = s.taskRiskAssessor
+		llmHandler.DefaultTaskExpirySeconds = s.cfg.Task.DefaultExpirySeconds
 
 		controlHandler := handlers.NewLLMControlHandler(baseURL)
 		controlHandler.Store = s.store

@@ -36,10 +36,18 @@ import (
 // a failed one when both leave only a bare "approve" in conversation
 // history.
 func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest, approvalID string) string {
-	return renderTaskApprovalPromptWithRisk(req, approvalID, nil)
+	return renderTaskApprovalPromptWithRisk(req, approvalID, nil, 0)
 }
 
-func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, approvalID string, risk *taskrisk.RiskAssessment) string {
+// renderTaskApprovalPromptWithRisk renders the inline approval prompt.
+//
+// defaultExpirySeconds is the daemon's resolved task.default_expiry_seconds,
+// used to fill the displayed Duration when the agent omits
+// expires_in_seconds. Pass 0 (or a negative) to fall back to
+// defaultSessionTaskDurationSeconds — that fallback exists so callers that
+// don't have access to live config (tests, the renderTaskApprovalPrompt
+// convenience wrapper) still produce an honest-looking prompt.
+func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, approvalID string, risk *taskrisk.RiskAssessment, defaultExpirySeconds int) string {
 	suffix := approvalIDFooter(approvalID)
 	if req == nil {
 		return "Clawvisor wants to create a task.\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel." + suffix
@@ -121,7 +129,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	}
 
 	mode := strings.TrimSpace(req.IntentVerificationMode)
-	durationLabel, durationValue := durationLine(req.Lifetime, req.ExpiresInSeconds)
+	durationLabel, durationValue := durationLine(req.Lifetime, req.ExpiresInSeconds, defaultExpirySeconds)
 
 	if (mode != "" && mode != "strict") || durationValue != "" {
 		b.WriteString("\n\n")
@@ -175,14 +183,15 @@ func extractApprovalIDFromPrompt(text string) string {
 	return strings.TrimSpace(rest[:end])
 }
 
-// defaultSessionTaskDurationSeconds mirrors pkg/config.TaskConfig's
-// default_expiry_seconds (1800 = 30 min). Duplicated here rather than
-// threaded through PostprocessConfig because the renderer is a UI
-// concern and only needs an honest display fallback — the actual
-// task-scope expiry binding happens in tasks_inline.go using the live
-// config value. If an operator overrides the config default, the
-// prompt may show "30 min" while the resolved scope uses a different
-// number; that drift is acceptable for a status line.
+// defaultSessionTaskDurationSeconds is the renderer's last-resort
+// fallback when both the agent's expires_in_seconds and the daemon's
+// resolved default are unset/non-positive — matches the historical
+// pkg/config.TaskConfig default (1800 = 30 min). Production wires the
+// live config value through PostprocessConfig.DefaultTaskExpirySeconds
+// so this constant is only hit by tests and unconfigured deploys; in
+// configured deploys an operator override flows through to the
+// displayed Duration and the prompt no longer drifts from the resolved
+// scope.
 const defaultSessionTaskDurationSeconds = 1800
 
 // durationLine returns the (label, value) pair describing how long the
@@ -190,18 +199,22 @@ const defaultSessionTaskDurationSeconds = 1800
 // different labels because they answer different user questions:
 //
 //   - session (the common case): "Duration: 30 min" — how long the
-//     scope is usable. Empty expires_in_seconds falls back to the daemon
-//     default so the user always sees a concrete number.
+//     scope is usable. Empty expires_in_seconds falls back to the
+//     caller-provided default (daemon config), and then to
+//     defaultSessionTaskDurationSeconds if that's also unset.
 //   - standing: "Lifetime: always" — standing tasks reject
 //     expires_in_seconds (see tasks_inline.go), so there is no duration
 //     to show; the label conveys "no time cap" instead.
 //
 // Returns ("", "") only for unknown lifetime strings, so callers can
 // omit the line entirely rather than printing something misleading.
-func durationLine(lifetime string, expiresInSeconds int) (label, value string) {
+func durationLine(lifetime string, expiresInSeconds, defaultExpirySeconds int) (label, value string) {
 	switch strings.TrimSpace(lifetime) {
 	case "", "session":
 		secs := expiresInSeconds
+		if secs <= 0 {
+			secs = defaultExpirySeconds
+		}
 		if secs <= 0 {
 			secs = defaultSessionTaskDurationSeconds
 		}

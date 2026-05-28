@@ -138,6 +138,15 @@ type LLMEndpointHandler struct {
 	// prompt falls back to the deterministic envelope-shape policy only.
 	TaskRiskAssessor taskrisk.Assessor
 
+	// DefaultTaskExpirySeconds mirrors the daemon's resolved
+	// cfg.Task.DefaultExpirySeconds. Surfaced into the inline task
+	// approval prompt so the displayed Duration matches the operator's
+	// configured default when the agent omits expires_in_seconds.
+	// Optional — 0 lets the renderer fall back to its 30-minute
+	// constant, which is fine for tests and unconfigured deploys but
+	// would drift from the resolved scope in production.
+	DefaultTaskExpirySeconds int
+
 	// RawIOLogger, when non-nil, captures full raw HTTP bodies for
 	// inbound requests, upstream responses, and the bodies returned
 	// to the harness. Off by default; opted in via
@@ -922,6 +931,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			ConversationAutoApproveThreshold: autoApproveThreshold,
 			InlineTaskCreator:                h.InlineTaskCreator,
 			Checkouts:                        h.TaskCheckouts,
+			DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
 		})
 		h.Logger.DebugContext(r.Context(), "lite-proxy postprocess complete",
 			"request_id", requestID,
@@ -975,6 +985,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				ConversationAutoApproveThreshold: autoApproveThreshold,
 				InlineTaskCreator:                h.InlineTaskCreator,
 				Checkouts:                        h.TaskCheckouts,
+				DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
 			})
 			switch {
 			case contErr != nil:
