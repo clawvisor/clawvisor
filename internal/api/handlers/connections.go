@@ -97,10 +97,11 @@ func (h *ConnectionsHandler) SetClaimCodeCache(cc ClaimCodeCache) {
 // An agent calls this to request access to the daemon.
 func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		CallbackURL string `json:"callback_url"`
-		UserID      string `json:"user_id"`
+		Name           string                 `json:"name"`
+		Description    string                 `json:"description"`
+		CallbackURL    string                 `json:"callback_url"`
+		UserID         string                 `json:"user_id"`
+		InstallContext *store.InstallContext `json:"install_context"`
 	}
 	// decodeJSON tolerates an empty body so callers can send everything as
 	// query params and skip the Content-Type / -d flags entirely.
@@ -218,13 +219,14 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 	}
 
 	req := &store.ConnectionRequest{
-		UserID:      owner.ID,
-		Name:        body.Name,
-		Description: body.Description,
-		CallbackURL: body.CallbackURL,
-		Status:      "pending",
-		IPAddress:   r.RemoteAddr,
-		ExpiresAt:   time.Now().Add(connectionRequestExpiry),
+		UserID:         owner.ID,
+		Name:           body.Name,
+		Description:    body.Description,
+		CallbackURL:    body.CallbackURL,
+		Status:         "pending",
+		IPAddress:      r.RemoteAddr,
+		ExpiresAt:      time.Now().Add(connectionRequestExpiry),
+		InstallContext: body.InstallContext,
 	}
 	if err := h.st.CreateConnectionRequest(r.Context(), req); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create connection request")

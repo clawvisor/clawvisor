@@ -3090,21 +3090,26 @@ func (s *Store) CreateConnectionRequest(ctx context.Context, req *store.Connecti
 	if req.ID == "" {
 		req.ID = uuid.New().String()
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO connection_requests (id, user_id, name, description, callback_url, status, ip_address, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, req.ID, req.UserID, req.Name, req.Description, req.CallbackURL, req.Status, req.IPAddress, req.ExpiresAt)
+	installContext, err := marshalInstallContext(req.InstallContext)
+	if err != nil {
+		return fmt.Errorf("marshal install_context: %w", err)
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO connection_requests (id, user_id, name, description, callback_url, status, ip_address, expires_at, install_context)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, req.ID, req.UserID, req.Name, req.Description, req.CallbackURL, req.Status, req.IPAddress, req.ExpiresAt, installContext)
 	return err
 }
 
 func (s *Store) GetConnectionRequest(ctx context.Context, id string) (*store.ConnectionRequest, error) {
 	r := &store.ConnectionRequest{}
 	var agentID *string
+	var installContext string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, name, description, callback_url, status, agent_id, ip_address, created_at, expires_at
+		SELECT id, user_id, name, description, callback_url, status, agent_id, ip_address, created_at, expires_at, install_context
 		FROM connection_requests WHERE id = $1
 	`, id).Scan(&r.ID, &r.UserID, &r.Name, &r.Description, &r.CallbackURL, &r.Status,
-		&agentID, &r.IPAddress, &r.CreatedAt, &r.ExpiresAt)
+		&agentID, &r.IPAddress, &r.CreatedAt, &r.ExpiresAt, &installContext)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -3114,12 +3119,15 @@ func (s *Store) GetConnectionRequest(ctx context.Context, id string) (*store.Con
 	if agentID != nil {
 		r.AgentID = *agentID
 	}
+	if r.InstallContext, err = unmarshalInstallContext(installContext); err != nil {
+		return nil, fmt.Errorf("unmarshal install_context: %w", err)
+	}
 	return r, nil
 }
 
 func (s *Store) ListPendingConnectionRequests(ctx context.Context, userID string) ([]*store.ConnectionRequest, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, name, description, callback_url, status, agent_id, ip_address, created_at, expires_at
+		SELECT id, user_id, name, description, callback_url, status, agent_id, ip_address, created_at, expires_at, install_context
 		FROM connection_requests WHERE user_id = $1 AND status = 'pending' ORDER BY created_at DESC
 	`, userID)
 	if err != nil {
@@ -3131,16 +3139,50 @@ func (s *Store) ListPendingConnectionRequests(ctx context.Context, userID string
 	for rows.Next() {
 		r := &store.ConnectionRequest{}
 		var agentID *string
+		var installContext string
 		if err := rows.Scan(&r.ID, &r.UserID, &r.Name, &r.Description, &r.CallbackURL, &r.Status,
-			&agentID, &r.IPAddress, &r.CreatedAt, &r.ExpiresAt); err != nil {
+			&agentID, &r.IPAddress, &r.CreatedAt, &r.ExpiresAt, &installContext); err != nil {
 			return nil, err
 		}
 		if agentID != nil {
 			r.AgentID = *agentID
 		}
+		ic, err := unmarshalInstallContext(installContext)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal install_context: %w", err)
+		}
+		r.InstallContext = ic
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// marshalInstallContext encodes the typed install context as JSON for storage.
+// Nil or empty contexts marshal to "" so the column stays NOT NULL without
+// requiring a separate sql.NullString wrapper.
+func marshalInstallContext(ic *store.InstallContext) (string, error) {
+	if ic == nil {
+		return "", nil
+	}
+	b, err := json.Marshal(ic)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// unmarshalInstallContext decodes a stored JSON blob back to a typed struct.
+// "" round-trips to nil so older rows (and rows from before this column was
+// added) deserialize as "no install context."
+func unmarshalInstallContext(raw string) (*store.InstallContext, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var ic store.InstallContext
+	if err := json.Unmarshal([]byte(raw), &ic); err != nil {
+		return nil, err
+	}
+	return &ic, nil
 }
 
 func (s *Store) UpdateConnectionRequestStatusIfPending(ctx context.Context, id, status string) (bool, error) {

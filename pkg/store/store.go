@@ -1119,17 +1119,33 @@ type PairedDevice struct {
 
 // ConnectionRequest represents an agent's request to connect to this daemon.
 type ConnectionRequest struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	CallbackURL string    `json:"callback_url,omitempty"`
-	Status      string    `json:"status"`             // pending | approved | denied | expired
-	AgentID     string    `json:"agent_id,omitempty"` // set on approval
-	Token       string    `json:"token,omitempty"`    // raw token, set on approval (never persisted)
-	IPAddress   string    `json:"ip_address"`
-	CreatedAt   time.Time `json:"created_at"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	ID             string          `json:"id"`
+	UserID         string          `json:"user_id"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	CallbackURL    string          `json:"callback_url,omitempty"`
+	Status         string          `json:"status"`             // pending | approved | denied | expired
+	AgentID        string          `json:"agent_id,omitempty"` // set on approval
+	Token          string          `json:"token,omitempty"`    // raw token, set on approval (never persisted)
+	IPAddress      string          `json:"ip_address"`
+	CreatedAt      time.Time       `json:"created_at"`
+	ExpiresAt      time.Time       `json:"expires_at"`
+	InstallContext *InstallContext `json:"install_context,omitempty"`
+}
+
+// InstallContext captures non-PII facts the installer skill discovered about
+// the calling environment. Set at mint time, displayed on the approval card,
+// and persisted on the connection request for downstream debugging. Every
+// field is optional — the skill sends as much as it knows.
+type InstallContext struct {
+	Harness        string `json:"harness,omitempty"`         // claude-code | codex | hermes | openclaw | claude-desktop
+	HarnessVersion string `json:"harness_version,omitempty"`
+	InstallMode    string `json:"install_mode,omitempty"` // local | docker | cloud
+	HostOS         string `json:"host_os,omitempty"`      // darwin | linux | windows
+	ContainerID    string `json:"container_id,omitempty"` // populated when install_mode=docker
+	AuthMode       string `json:"auth_mode,omitempty"`    // passthrough | swap
+	AliasIntent    string `json:"alias_intent,omitempty"` // none | safe | yolo
+	Reuse          bool   `json:"reuse,omitempty"`        // true when the agent reused a pre-existing on-disk token
 }
 
 // OAuthClient is a dynamically registered OAuth 2.1 client (RFC 7591).
