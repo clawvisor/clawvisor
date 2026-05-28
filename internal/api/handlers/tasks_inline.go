@@ -606,6 +606,22 @@ func (h *TasksHandler) ApproveInlineTask(ctx context.Context, taskID, userID str
 		return nil, err
 	}
 	if !won {
+		// Lost the CAS to a concurrent resolver: dashboard Deny,
+		// the chat-bound expiry sweep, or eviction-driven Expire.
+		// Re-fetch so we can surface the typed terminal error if
+		// the row landed at a known terminal state — same UX as
+		// the pre-CAS early check above so the chat reply
+		// renders "the user dismissed elsewhere; ask for a fresh
+		// request" instead of a generic creator failure that
+		// invites the model to retry the same body. Fall back to
+		// the generic error if the re-fetch itself fails or the
+		// row landed somewhere unexpected.
+		if reread, rereadErr := h.st.GetTask(ctx, taskID); rereadErr == nil && reread != nil {
+			switch reread.Status {
+			case "denied", "expired", "revoked":
+				return nil, &llmproxy.ErrInlineTaskAlreadyTerminal{Status: reread.Status}
+			}
+		}
 		return nil, errors.New("task is no longer pending approval")
 	}
 	task.Status = "active"
