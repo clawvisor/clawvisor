@@ -614,6 +614,11 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 						}
 						if held.Evicted != nil {
 							audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID)
+							// If an inline-task hold was evicted by this
+							// commit, terminate its store.Task so the
+							// dashboard doesn't keep showing a zombie
+							// row that chat can no longer resolve.
+							cleanupEvictedInlineTask(req.Context(), cfg, held.Evicted)
 						}
 						approvalID = held.Pending.ID
 					}
@@ -730,6 +735,9 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					}
 					if held.Evicted != nil {
 						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID)
+						// See above: terminate evicted inline-task rows so
+						// the dashboard doesn't strand them.
+						cleanupEvictedInlineTask(req.Context(), cfg, held.Evicted)
 					}
 					approvalID = held.Pending.ID
 				}

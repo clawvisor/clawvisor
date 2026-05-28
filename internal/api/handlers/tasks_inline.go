@@ -727,6 +727,52 @@ func (h *TasksHandler) DenyInlineTask(ctx context.Context, taskID, userID string
 	return nil
 }
 
+// ExpireInlineTask transitions a pending inline-chat task to expired.
+// Called when the llmproxy cache evicts an awaiting_task_approval
+// hold under capacity pressure: the chat anchor is gone, so chat
+// approve can no longer resolve the row. Without this the dashboard
+// would keep showing the task as pending_approval with "reply in
+// chat" guidance that can never succeed. Distinct from
+// DenyInlineTask because the user didn't dismiss it — the system
+// did, for operational reasons; the canonical record resolution
+// reuses the same "deny"/"expired" shape the 24h sweeper uses.
+// Idempotent on already-terminal rows.
+func (h *TasksHandler) ExpireInlineTask(ctx context.Context, taskID, userID string) error {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return errors.New("not your task")
+	}
+	switch task.Status {
+	case "denied", "expired", "revoked":
+		return nil
+	case "pending_approval":
+		if task.ApprovalSource != "inline_chat" {
+			return fmt.Errorf("task is not a pending inline-chat task (source=%q)", task.ApprovalSource)
+		}
+	default:
+		return fmt.Errorf("task is not a pending inline-chat task (status=%q, source=%q)", task.Status, task.ApprovalSource)
+	}
+	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, "pending_approval", "expired")
+	if err != nil {
+		return err
+	}
+	if !won {
+		// Lost CAS to a concurrent resolver (sweeper or user
+		// reply landing during eviction). Terminal state was
+		// reached; report success so the eviction caller doesn't
+		// double-publish or double-log.
+		return nil
+	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_create", "deny", "expired")
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
+	}
+	return nil
+}
+
 // createCanonicalPendingInlineApprovalRecord writes the canonical
 // approval_records row anchoring a chat-bound pending task. Status is
 // "pending" with no Resolution/ResolvedAt — those land at chat-approve

@@ -388,6 +388,37 @@ func maybeInterceptInlineTaskDefinition(
 	}, true
 }
 
+// cleanupEvictedInlineTask expires the store.Task row anchoring an
+// evicted inline-task hold. The LRU cache only carries N holds per
+// (user, agent, provider, conversation) tuple; when a new Hold
+// displaces an older inline-task hold, the cache anchor is gone and
+// chat approve can never resolve the row. Without this the dashboard
+// would keep showing the row as pending_approval with a "reply in
+// chat" notice that can never succeed — exactly the zombie shape
+// the dashboard-deny escape hatch was meant to solve, but
+// automatically, since the user has no signal that the cache evicted
+// anything.
+//
+// No-op on holds without a PendingTaskID (non-inline holds, or
+// inline holds minted before the pending-task surface was wired),
+// or when the creator doesn't implement the pending extension.
+// Safe to call unconditionally on any eviction.
+func cleanupEvictedInlineTask(ctx context.Context, cfg PostprocessConfig, evicted *PendingLiteApproval) {
+	if evicted == nil || evicted.PendingTaskID == "" || evicted.UserID == "" {
+		return
+	}
+	pendingCreator, ok := cfg.InlineTaskCreator.(InlineTaskPendingCreator)
+	if !ok || pendingCreator == nil {
+		return
+	}
+	// Bounded detached context so a stalled store backend can't
+	// hang the inbound request goroutine, and a mid-request client
+	// disconnect doesn't strand the row at pending.
+	expireCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = pendingCreator.ExpireInlineTask(expireCtx, evicted.PendingTaskID, evicted.UserID)
+}
+
 // hasNonEmptyTurn reports whether the slice contains at least one
 // turn with non-whitespace content. Used by the auto-approve gate as
 // the deterministic "did the user actually say anything?" check so

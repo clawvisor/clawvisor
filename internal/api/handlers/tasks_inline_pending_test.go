@@ -263,6 +263,79 @@ func TestApprove_HTTPRefusesInlineChatPending(t *testing.T) {
 	}
 }
 
+// TestExpireInlineTask_FlipsPendingToExpired covers the LRU-eviction
+// cleanup path: when the cache evicts an inline-task hold, the
+// runtime calls TasksHandler.ExpireInlineTask which must terminate
+// the store.Task and resolve the canonical approval record so the
+// dashboard stops showing a row whose chat anchor is gone.
+func TestExpireInlineTask_FlipsPendingToExpired(t *testing.T) {
+	h, st, _, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	req := &runtimetasks.TaskCreateRequest{
+		Purpose:                "Build the thing",
+		IntentVerificationMode: "strict",
+		ExpiresInSeconds:       600,
+		ExpectedTools:          []runtimetasks.ExpectedTool{{ToolName: "Bash", Why: "Run"}},
+	}
+	taskID, err := h.CreatePendingInlineTask(ctx, agent, req, "tu-1", nil)
+	if err != nil {
+		t.Fatalf("CreatePendingInlineTask: %v", err)
+	}
+
+	if err := h.ExpireInlineTask(ctx, taskID, agent.UserID); err != nil {
+		t.Fatalf("ExpireInlineTask: %v", err)
+	}
+
+	got, err := st.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != "expired" {
+		t.Errorf("status=%q after ExpireInlineTask, want expired", got.Status)
+	}
+
+	// Canonical record resolved.
+	recs, err := st.ListPendingApprovalRecords(ctx, agent.UserID)
+	if err != nil {
+		t.Fatalf("ListPendingApprovalRecords: %v", err)
+	}
+	for _, r := range recs {
+		if r.TaskID != nil && *r.TaskID == taskID {
+			t.Errorf("pending approval record should be resolved after ExpireInlineTask; still pending: %+v", r)
+		}
+	}
+}
+
+// TestExpireInlineTask_IdempotentOnTerminalRow confirms that calling
+// ExpireInlineTask on a row already in a terminal state is a no-op
+// success — important because eviction cleanup fires on every Hold
+// commit and we don't want a benign race with the 24h sweep or a
+// dashboard Deny to surface as an error.
+func TestExpireInlineTask_IdempotentOnTerminalRow(t *testing.T) {
+	h, _, _, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	req := &runtimetasks.TaskCreateRequest{
+		Purpose:                "X",
+		IntentVerificationMode: "strict",
+		ExpiresInSeconds:       600,
+		ExpectedTools:          []runtimetasks.ExpectedTool{{ToolName: "Bash", Why: "Run"}},
+	}
+	taskID, err := h.CreatePendingInlineTask(ctx, agent, req, "tu-1", nil)
+	if err != nil {
+		t.Fatalf("CreatePendingInlineTask: %v", err)
+	}
+	// Drive to denied first.
+	if err := h.DenyInlineTask(ctx, taskID, agent.UserID); err != nil {
+		t.Fatalf("DenyInlineTask: %v", err)
+	}
+	// Now the eviction-triggered Expire should be a no-op success.
+	if err := h.ExpireInlineTask(ctx, taskID, agent.UserID); err != nil {
+		t.Fatalf("ExpireInlineTask on already-denied row: %v (want nil for idempotency)", err)
+	}
+}
+
 // TestApproveInlineTask_ReturnsAlreadyTerminalAfterDashboardDeny
 // covers the race where the dashboard denied a chat-bound task and
 // the model's "approve" reply arrives afterward. The chat path must

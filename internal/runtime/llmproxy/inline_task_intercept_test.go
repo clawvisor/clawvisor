@@ -180,6 +180,9 @@ type capturingInlineCreator struct {
 	pendingTaskID string
 	approveCalled bool
 	denyCalled    bool
+	expireCalled  bool
+	expireFail    bool
+	expiredIDs    []string
 }
 
 func (c *capturingInlineCreator) CreateInlineApprovedTask(_ context.Context, _ *store.Agent, _ *runtimetasks.TaskCreateRequest, _ string) (*InlineApprovedTask, error) {
@@ -208,6 +211,15 @@ func (c *capturingInlineCreator) ApproveInlineTask(_ context.Context, _, _ strin
 		return nil, fmtErrorf("simulated inline approve failure")
 	}
 	return c.resp, nil
+}
+
+func (c *capturingInlineCreator) ExpireInlineTask(_ context.Context, taskID, _ string) error {
+	c.expireCalled = true
+	c.expiredIDs = append(c.expiredIDs, taskID)
+	if c.expireFail {
+		return fmtErrorf("simulated inline expire failure")
+	}
+	return nil
 }
 
 func (c *capturingInlineCreator) DenyInlineTask(_ context.Context, _, _ string) error {

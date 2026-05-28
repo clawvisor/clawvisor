@@ -83,6 +83,14 @@ type InlineTaskPendingCreator interface {
 	// DenyInlineTask transitions a pending inline-chat task to
 	// denied. Symmetric to ApproveInlineTask.
 	DenyInlineTask(ctx context.Context, taskID, userID string) error
+	// ExpireInlineTask transitions a pending inline-chat task to
+	// expired. Distinct from Deny because the cause is operational
+	// (the LRU cache evicted the hold so the chat anchor is gone),
+	// not a user dismissal. Without this the dashboard would keep
+	// showing the row as pending_approval with "reply in chat to
+	// approve" guidance even though no chat reply can ever resolve
+	// it. Idempotent on already-terminal rows.
+	ExpireInlineTask(ctx context.Context, taskID, userID string) error
 }
 
 // ErrInlineTaskAlreadyTerminal is the typed error
