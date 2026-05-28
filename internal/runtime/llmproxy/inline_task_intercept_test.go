@@ -367,6 +367,52 @@ func TestMaybeInterceptInlineTaskDefinition_ExpiresEvictedInlineHold(t *testing.
 	}
 }
 
+func TestMaybeInterceptInlineTaskDefinition_ExpiresPendingTaskOnHoldFailure(t *testing.T) {
+	inner := NewMemoryPendingApprovalCache(time.Minute)
+	cache := &flakyHoldFromCallN{inner: inner, failOnCall: 1}
+	userID := "user-inline-hold-fail"
+	agentID := "agent-inline-hold-fail"
+
+	cmd := `curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' -H 'Content-Type: application/json' --data '` + inlineTaskBody + `'`
+	input, err := json.Marshal(map[string]string{"command": cmd})
+	if err != nil {
+		t.Fatalf("marshal tool input: %v", err)
+	}
+	tu := conversation.ToolUse{ID: "toolu_new", Name: "Bash", Input: input}
+	call, ok := ParseControlToolUse(tu)
+	if !ok {
+		t.Fatalf("control call did not parse")
+	}
+	creator := &capturingInlineCreator{pendingTaskID: "task-hold-failed"}
+
+	_, handled := maybeInterceptInlineTaskDefinition(
+		httptest.NewRequest("POST", "/v1/messages", nil),
+		PostprocessConfig{
+			AgentUserID:       userID,
+			AgentID:           agentID,
+			PendingApprovals:  cache,
+			InlineTaskCreator: creator,
+		},
+		func(_, _, _ string) {},
+		func(string, ...any) {},
+		conversation.ProviderAnthropic,
+		tu,
+		call,
+	)
+	if handled {
+		t.Fatalf("hold failure should fall through to dashboard rewrite")
+	}
+	if !creator.expireCalled {
+		t.Fatalf("ExpireInlineTask was not called for operational hold failure")
+	}
+	if creator.denyCalled {
+		t.Fatalf("DenyInlineTask should not be used for operational hold failure")
+	}
+	if len(creator.expiredIDs) != 1 || creator.expiredIDs[0] != "task-hold-failed" {
+		t.Fatalf("expired ids = %v, want [task-hold-failed]", creator.expiredIDs)
+	}
+}
+
 func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")

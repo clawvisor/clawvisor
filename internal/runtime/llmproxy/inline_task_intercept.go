@@ -363,10 +363,10 @@ func maybeInterceptInlineTaskDefinition(
 		// alone strips the parent deadline too.
 		if pendingCreator != nil && pendingTaskID != "" {
 			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 5*time.Second)
-			denyErr := pendingCreator.DenyInlineTask(rollbackCtx, pendingTaskID, cfg.AgentUserID)
+			expireErr := pendingCreator.ExpireInlineTask(rollbackCtx, pendingTaskID, cfg.AgentUserID)
 			cancel()
-			if denyErr != nil {
-				trace("inline_task.pending_rollback_failed", "task_id", pendingTaskID, "err", denyErr.Error())
+			if expireErr != nil {
+				trace("inline_task.pending_rollback_failed", "task_id", pendingTaskID, "err", expireErr.Error())
 			}
 		}
 		// fallthrough — see the audit-decision rationale above.
@@ -424,7 +424,17 @@ func cleanupEvictedInlineTask(ctx context.Context, cfg PostprocessConfig, evicte
 	// disconnect doesn't strand the row at pending.
 	expireCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	_ = pendingCreator.ExpireInlineTask(expireCtx, evicted.PendingTaskID, evicted.UserID)
+	if err := pendingCreator.ExpireInlineTask(expireCtx, evicted.PendingTaskID, evicted.UserID); err != nil && cfg.Trace != nil {
+		cfg.Trace.Emit(map[string]any{
+			"event":       "inline_task.evicted_expire_failed",
+			"request_id":  cfg.RequestID,
+			"user_id":     evicted.UserID,
+			"agent_id":    evicted.AgentID,
+			"approval_id": evicted.ID,
+			"task_id":     evicted.PendingTaskID,
+			"err":         err.Error(),
+		})
+	}
 }
 
 // hasNonEmptyTurn reports whether the slice contains at least one

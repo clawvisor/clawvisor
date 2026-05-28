@@ -1,7 +1,9 @@
 package llmproxy
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +58,29 @@ func TestCleanupEvictedInlineTask_CallsExpireWhenInlineHold(t *testing.T) {
 	}
 	if len(creator.expiredIDs) != 1 || creator.expiredIDs[0] != "task-aaa" {
 		t.Fatalf("expired ids = %v, want [task-aaa]", creator.expiredIDs)
+	}
+}
+
+func TestCleanupEvictedInlineTask_TracesExpireFailure(t *testing.T) {
+	ctx := context.Background()
+	creator := &capturingInlineCreator{expireFail: true}
+	var buf bytes.Buffer
+	cleanupEvictedInlineTask(ctx, PostprocessConfig{
+		InlineTaskCreator: creator,
+		RequestID:         "req-evict-trace",
+		Trace:             NewTraceLogger(&buf),
+	}, &PendingLiteApproval{
+		ID:            "cv-inline-hold",
+		UserID:        "u",
+		AgentID:       "a",
+		PendingTaskID: "task-aaa",
+	})
+	out := buf.String()
+	if !strings.Contains(out, "inline_task.evicted_expire_failed") {
+		t.Fatalf("trace missing eviction-expire failure event: %s", out)
+	}
+	if !strings.Contains(out, "task-aaa") {
+		t.Fatalf("trace missing task id: %s", out)
 	}
 }
 

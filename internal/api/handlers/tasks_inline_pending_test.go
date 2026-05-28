@@ -81,6 +81,68 @@ func TestCreatePendingInlineTask_LandsRowAndCanonicalRecord(t *testing.T) {
 	}
 }
 
+func TestCreatePendingInlineTask_StandingLifetimeStoresZeroExpiresIn(t *testing.T) {
+	h, st, _, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	req := &runtimetasks.TaskCreateRequest{
+		Purpose:                "Keep ingest running",
+		IntentVerificationMode: "strict",
+		Lifetime:               "standing",
+		ExpectedTools:          []runtimetasks.ExpectedTool{{ToolName: "Bash", Why: "Run ingest"}},
+	}
+	taskID, err := h.CreatePendingInlineTask(ctx, agent, req, "tu-1", nil)
+	if err != nil {
+		t.Fatalf("CreatePendingInlineTask: %v", err)
+	}
+	got, err := st.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.ExpiresInSeconds != 0 {
+		t.Errorf("standing pending task ExpiresInSeconds=%d, want 0", got.ExpiresInSeconds)
+	}
+}
+
+func TestCreatePendingInlineTask_RecordFailureExpiresTask(t *testing.T) {
+	h, st, _, agent := newInlineTasksHandlerForTest(t)
+	h.st = &createApprovalRecordFailStore{Store: st}
+	ctx := context.Background()
+
+	req := &runtimetasks.TaskCreateRequest{
+		Purpose:                "Build a landing page",
+		IntentVerificationMode: "strict",
+		ExpiresInSeconds:       600,
+		ExpectedTools:          []runtimetasks.ExpectedTool{{ToolName: "Bash", Why: "Create dir"}},
+	}
+	taskID, err := h.CreatePendingInlineTask(ctx, agent, req, "tu-1", nil)
+	if err == nil {
+		t.Fatalf("CreatePendingInlineTask succeeded, want approval-record error")
+	}
+	if taskID != "" {
+		t.Fatalf("CreatePendingInlineTask taskID=%q, want empty on error", taskID)
+	}
+
+	tasks, _, err := st.ListTasks(ctx, agent.UserID, store.TaskFilter{})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("tasks len=%d, want 1", len(tasks))
+	}
+	if tasks[0].Status != "expired" {
+		t.Fatalf("rollback status=%q, want expired for operational record failure", tasks[0].Status)
+	}
+}
+
+type createApprovalRecordFailStore struct {
+	store.Store
+}
+
+func (s *createApprovalRecordFailStore) CreateApprovalRecord(context.Context, *store.ApprovalRecord) error {
+	return errors.New("forced approval record failure")
+}
+
 // TestApproveInlineTask_TransitionsPendingToActive exercises the chat
 // approve transition: the existing pending task flips to active,
 // returns InlineApprovedTask, and the canonical record flips to

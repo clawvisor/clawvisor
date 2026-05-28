@@ -105,12 +105,14 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 		return nil, fmt.Errorf("invalid lifetime %q (want session or standing)", req.Lifetime)
 	}
 
-	expiresIn := req.ExpiresInSeconds
-	if expiresIn <= 0 {
-		expiresIn = h.cfg.Task.DefaultExpirySeconds
-	}
 	if lifetime == "standing" && req.ExpiresInSeconds > 0 {
 		return nil, errors.New("expires_in_seconds cannot be set on a standing task")
+	}
+	expiresIn := req.ExpiresInSeconds
+	if lifetime == "standing" {
+		expiresIn = 0
+	} else if expiresIn <= 0 {
+		expiresIn = h.cfg.Task.DefaultExpirySeconds
 	}
 	requiredCredentials := req.RequiredCredentials
 
@@ -419,12 +421,14 @@ func (h *TasksHandler) CreatePendingInlineTask(ctx context.Context, agent *store
 		return "", fmt.Errorf("invalid lifetime %q (want session or standing)", req.Lifetime)
 	}
 
-	expiresIn := req.ExpiresInSeconds
-	if expiresIn <= 0 {
-		expiresIn = h.cfg.Task.DefaultExpirySeconds
-	}
 	if lifetime == "standing" && req.ExpiresInSeconds > 0 {
 		return "", errors.New("expires_in_seconds cannot be set on a standing task")
+	}
+	expiresIn := req.ExpiresInSeconds
+	if lifetime == "standing" {
+		expiresIn = 0
+	} else if expiresIn <= 0 {
+		expiresIn = h.cfg.Task.DefaultExpirySeconds
 	}
 
 	task := &store.Task{
@@ -524,14 +528,15 @@ func (h *TasksHandler) CreatePendingInlineTask(ctx context.Context, agent *store
 	// resolveCanonicalTaskApproval call. Without this row the audit
 	// trail couldn't account for "a chat-bound task sat pending."
 	if err := h.createCanonicalPendingInlineApprovalRecord(ctx, task); err != nil {
-		// Rollback to denied so we don't leave a pending task with no
-		// audit anchor.
-		h.logger.ErrorContext(ctx, "failed to create pending inline approval record; denying task to preserve audit invariant",
+		// Rollback to expired so we don't leave a pending task with no
+		// audit anchor. This is an operational failure before the user
+		// sees an approval prompt, not a user denial.
+		h.logger.ErrorContext(ctx, "failed to create pending inline approval record; expiring task to preserve audit invariant",
 			"task_id", task.ID, "err", err)
 		// Bounded detached context: WithoutCancel alone would let a
 		// stalled store backend hang the inbound request goroutine.
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied")
+		rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "expired")
 		cancel()
 		if rollbackErr != nil {
 			h.logger.ErrorContext(ctx, "CRITICAL: pending approval record failed AND rollback failed; task is now orphaned pending",
