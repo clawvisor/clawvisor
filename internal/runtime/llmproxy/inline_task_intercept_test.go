@@ -311,6 +311,62 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 	_ = ctx
 }
 
+func TestMaybeInterceptInlineTaskDefinition_ExpiresEvictedInlineHold(t *testing.T) {
+	ctx := context.Background()
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache.max = 1
+	userID := "user-inline-evict"
+	agentID := "agent-inline-evict"
+
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:            "cv-oldevictedxxxxxxxxxxxxx",
+		UserID:        userID,
+		AgentID:       agentID,
+		Provider:      conversation.ProviderAnthropic,
+		Stage:         StageAwaitingTaskApproval,
+		PendingTaskID: "task-old-evicted",
+		ToolUse:       conversation.ToolUse{ID: "toolu_old", Name: "Bash"},
+	}); err != nil {
+		t.Fatalf("seed old inline hold: %v", err)
+	}
+
+	cmd := `curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' -H 'Content-Type: application/json' --data '` + inlineTaskBody + `'`
+	input, err := json.Marshal(map[string]string{"command": cmd})
+	if err != nil {
+		t.Fatalf("marshal tool input: %v", err)
+	}
+	tu := conversation.ToolUse{ID: "toolu_new", Name: "Bash", Input: input}
+	call, ok := ParseControlToolUse(tu)
+	if !ok {
+		t.Fatalf("control call did not parse")
+	}
+	creator := &capturingInlineCreator{pendingTaskID: "task-new-pending"}
+
+	_, handled := maybeInterceptInlineTaskDefinition(
+		httptest.NewRequest("POST", "/v1/messages", nil),
+		PostprocessConfig{
+			AgentUserID:       userID,
+			AgentID:           agentID,
+			PendingApprovals:  cache,
+			InlineTaskCreator: creator,
+		},
+		func(_, _, _ string) {},
+		func(string, ...any) {},
+		conversation.ProviderAnthropic,
+		tu,
+		call,
+	)
+	if !handled {
+		t.Fatalf("inline task definition was not intercepted")
+	}
+	if !creator.expireCalled {
+		t.Fatalf("ExpireInlineTask was not called for the evicted inline hold")
+	}
+	if len(creator.expiredIDs) != 1 || creator.expiredIDs[0] != "task-old-evicted" {
+		t.Fatalf("expired ids = %v, want [task-old-evicted]", creator.expiredIDs)
+	}
+}
+
 func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -922,7 +978,6 @@ func TestAutoApprove_FallsBackWhenCreatorMissing(t *testing.T) {
 		t.Error("missing creator must fall back to human prompt")
 	}
 }
-
 
 func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)

@@ -373,6 +373,14 @@ func maybeInterceptInlineTaskDefinition(
 		audit("fallthrough", "inline_task_hold_failed", holdErr.Error()+"; deferring to dashboard rewrite")
 		return conversation.ToolUseVerdict{}, false
 	}
+	if innerHold.Evicted != nil {
+		// This direct Hold path can displace an older inline-task
+		// approval when the bounded cache is full. Expire the evicted
+		// task's DB anchor so the dashboard doesn't keep showing
+		// "reply in chat" guidance for a hold that can no longer be
+		// resolved from chat.
+		cleanupEvictedInlineTask(req.Context(), cfg, innerHold.Evicted)
+	}
 
 	audit("approve", "pending", "inline_task_pending_approval: awaiting user yes/no on inline task definition (query)")
 	trace("inline_task.held",
