@@ -94,6 +94,20 @@ func (h *InstallerHandler) resolveURL(r *http.Request) string {
 	return "http://localhost:25297"
 }
 
+// installerFrontmatter emits the YAML frontmatter every target's skill loader
+// expects. Codex *requires* `name` + `description` (rejects skills without it
+// at startup); Hermes and the openclaw clawhub format use the same shape; Claude
+// Code slash commands accept a `description` (shown in the slash-command
+// picker). One shared block keeps the four renders in sync.
+func installerFrontmatter(harness string) string {
+	return fmt.Sprintf(`---
+name: clawvisor-install
+description: Install Clawvisor into %s — probe the environment, mint and approve a connection request, configure %s, optionally add an alias, run a connectivity smoke test, and offer to remove itself when done.
+---
+
+`, harness, harness)
+}
+
 // ── Shared markdown helpers ──────────────────────────────────────────────────
 //
 // Every installer skill follows the same outline: probe → reuse-check → mint →
@@ -266,6 +280,7 @@ func sectionSelfUninstall(harness, skillRemovePath string) string {
 
 func renderClaudeCodeInstaller(ctx installerCtx) string {
 	var b strings.Builder
+	b.WriteString(installerFrontmatter("Claude Code"))
 	fmt.Fprintf(&b, "# Connect Claude Code to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are walking the user through connecting Claude Code to a running\n")
 	fmt.Fprintf(&b, "Clawvisor instance at `%s`. This is a one-shot skill: do the work,\n", ctx.ClawvisorURL)
@@ -358,6 +373,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 
 func renderCodexInstaller(ctx installerCtx) string {
 	var b strings.Builder
+	b.WriteString(installerFrontmatter("Codex"))
 	fmt.Fprintf(&b, "# Connect Codex to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are walking the user through connecting OpenAI Codex CLI to a running\n")
 	fmt.Fprintf(&b, "Clawvisor instance at `%s`. One-shot skill — do the work, verify, then\n", ctx.ClawvisorURL)
@@ -437,6 +453,7 @@ func renderCodexInstaller(ctx installerCtx) string {
 
 func renderHermesInstaller(ctx installerCtx) string {
 	var b strings.Builder
+	b.WriteString(installerFrontmatter("Hermes"))
 	fmt.Fprintf(&b, "# Connect Hermes to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are walking the user through connecting Hermes (Nous Research) to a\n")
 	fmt.Fprintf(&b, "running Clawvisor instance at `%s`. One-shot — do, verify, offer to\n", ctx.ClawvisorURL)
@@ -522,6 +539,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 
 func renderOpenClawInstaller(ctx installerCtx) string {
 	var b strings.Builder
+	b.WriteString(installerFrontmatter("OpenClaw"))
 	fmt.Fprintf(&b, "# Connect OpenClaw to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are walking the user through connecting an OpenClaw instance to a\n")
 	fmt.Fprintf(&b, "running Clawvisor at `%s`. OpenClaw uses Clawvisor as a **tool gateway**\n", ctx.ClawvisorURL)

@@ -153,6 +153,28 @@ func TestInstallerOpenClawRender(t *testing.T) {
 	)
 }
 
+// TestInstallerAllTargetsHaveFrontmatter — Codex rejects skills without YAML
+// frontmatter at load time; we caught this in the field after a real install,
+// so guard against regression by asserting the exact shape on every target.
+func TestInstallerAllTargetsHaveFrontmatter(t *testing.T) {
+	h := NewInstallerHandler("", "", true)
+	for _, target := range []string{"claude-code", "codex", "hermes", "openclaw"} {
+		body := installerGet(t, h, target, "")
+		if !strings.HasPrefix(body, "---\nname: clawvisor-install\ndescription:") {
+			t.Errorf("[%s] missing required YAML frontmatter at top of body. First 200 chars:\n%s",
+				target, body[:min(len(body), 200)])
+		}
+		// Closing fence must come before the heading or downstream loaders
+		// treat the body as part of the frontmatter.
+		fenceEnd := strings.Index(body, "\n---\n")
+		heading := strings.Index(body, "# Connect")
+		if fenceEnd < 0 || heading < 0 || fenceEnd > heading {
+			t.Errorf("[%s] frontmatter not properly closed before heading (fenceEnd=%d, heading=%d)",
+				target, fenceEnd, heading)
+		}
+	}
+}
+
 func TestInstallerEmbedsRequestHost(t *testing.T) {
 	// When not via the relay, the resolved URL should mirror the request host so
 	// agents on the user's box talk to the daemon directly.
