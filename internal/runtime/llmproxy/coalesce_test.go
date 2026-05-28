@@ -510,6 +510,70 @@ func TestPostprocess_CoalesceDoesNotEvictUnrelatedApprovals(t *testing.T) {
 	}
 }
 
+// Regression: the coalesced Hold itself can evict an older inline-task
+// hold. When that happens, the evicted hold's PendingTaskID must be
+// expired so the dashboard stops showing an approval that no longer has
+// a cache anchor for chat resolution.
+func TestPostprocess_CoalescedHoldEvictionExpiresInlineTask(t *testing.T) {
+	ctx := context.Background()
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache.max = 1
+	st, userID, agentID := seedPostprocessStore(t, "placeholder_github_coalesce")
+
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:            "cv-inlineevictedxxxxxxxxxx",
+		UserID:        userID,
+		AgentID:       agentID,
+		Provider:      conversation.ProviderAnthropic,
+		Stage:         StageAwaitingTaskApproval,
+		PendingTaskID: "task-coalesced-evicted",
+		ToolUse:       conversation.ToolUse{ID: "toolu_inline", Name: "Bash"},
+	}); err != nil {
+		t.Fatalf("seed inline hold: %v", err)
+	}
+
+	body := []byte(`{
+		"id":"msg_1",
+		"type":"message",
+		"role":"assistant",
+		"model":"claude-haiku-4-5",
+		"content":[
+			{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{"url":"https://example.com/one"}},
+			{"type":"tool_use","id":"toolu_2","name":"WebFetch","input":{"url":"https://example.com/two"}}
+		],
+		"stop_reason":"tool_use"
+	}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	creator := &capturingInlineCreator{}
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		PendingApprovals: cache,
+		ResponseRegistry: conversation.DefaultResponseRegistry(),
+		CandidateTasks:   []*store.Task{},
+		ToolRules: []*store.RuntimePolicyRule{
+			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+		},
+		EgressRules:       []*store.RuntimePolicyRule{},
+		InlineTaskCreator: creator,
+	})
+	if !got.Rewritten {
+		t.Fatalf("expected coalesced approval rewrite")
+	}
+	if !creator.expireCalled {
+		t.Fatalf("ExpireInlineTask was not invoked for coalesced Hold eviction")
+	}
+	if len(creator.expiredIDs) != 1 || creator.expiredIDs[0] != "task-coalesced-evicted" {
+		t.Fatalf("expired ids = %v, want [task-coalesced-evicted]", creator.expiredIDs)
+	}
+}
+
 // Regression for #1: when coalescence kicks in, the audit trail must
 // describe each held tool_use as "coalesced_approval_pending" — not
 // as "allow" or "rewrite" that would falsely imply the call ran.

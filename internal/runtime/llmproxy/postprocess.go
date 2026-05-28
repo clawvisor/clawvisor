@@ -928,13 +928,32 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			// Coalesced hold committed. The buffered per-tool holds
 			// were never inserted into the underlying cache, so
 			// there's nothing to drop here — that closes the
-			// bounded-cache eviction hazard. The buffered audit rows
-			// are deliberately discarded: they would have reported
-			// "allow"/"rewrite" for siblings whose calls are now
-			// being held under the coalesced approval, which is
-			// false in the audit trail. We emit one
-			// "coalesced_approval_pending" row per held tool_use
-			// instead so dashboards see what actually happened.
+			// bounded-cache eviction hazard for the buffered side.
+			// The buffered audit rows are deliberately discarded:
+			// they would have reported "allow"/"rewrite" for
+			// siblings whose calls are now being held under the
+			// coalesced approval, which is false in the audit
+			// trail. We emit one "coalesced_approval_pending" row
+			// per held tool_use instead so dashboards see what
+			// actually happened.
+			//
+			// The coalesced Hold itself, though, CAN displace an
+			// older inline-task hold from the underlying cache —
+			// the bounded-cache hazard applies to this insert too.
+			// Audit the eviction and terminate the displaced
+			// inline-task row's DB anchor so the dashboard doesn't
+			// strand it at pending_approval forever.
+			if held.Evicted != nil {
+				if cfg.Audit != nil && auditAgent != nil && len(captures) > 0 {
+					// Attach the audit row to the first held
+					// tool_use in the coalesced turn so dashboards
+					// have a non-empty linkage; the reason string
+					// names the evicted hold explicitly.
+					first := captures[0]
+					cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, first.Use, first.Inspector, "block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, first.TaskID)
+				}
+				cleanupEvictedInlineTask(req.Context(), cfg, held.Evicted)
+			}
 			emitCoalescedPendingAuditRows(req.Context(), cfg, auditAgent, captures, held.Pending.ID)
 			// Re-run the rewriter with a coalesced eval. Every
 			// tool_use returns Allowed:false; the first carries the
