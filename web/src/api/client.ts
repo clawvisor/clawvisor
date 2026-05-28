@@ -277,6 +277,17 @@ export interface AgentRuntimeSettings {
   updated_at?: string
 }
 
+export interface InstallContext {
+  harness?: string // claude-code | codex | hermes | openclaw | claude-desktop
+  harness_version?: string
+  install_mode?: string // local | docker | cloud
+  host_os?: string // darwin | linux | windows
+  container_id?: string
+  auth_mode?: string // passthrough | swap
+  alias_intent?: string // none | safe | yolo
+  reuse?: boolean
+}
+
 export interface ConnectionRequest {
   id: string
   user_id: string
@@ -288,6 +299,7 @@ export interface ConnectionRequest {
   ip_address: string
   created_at: string
   expires_at: string
+  install_context?: InstallContext
 }
 
 export interface ServiceActionInfo {
@@ -1216,6 +1228,16 @@ export const api = {
       post<{ status: string }>(`/api/agents/connect/${id}/deny`, {}),
     mintClaim: () =>
       post<{ code: string; expires_at: string }>('/api/agents/connect/claim', {}),
+  },
+  installer: {
+    // The mobileconfig endpoint streams a binary plist with Content-Disposition:
+    // attachment. Returning a URL is simpler than fetching — the browser
+    // handles the download via <a href> or window.location assignment, and the
+    // user's session cookie carries auth automatically.
+    claudeDesktopProfileURL: (name?: string) => {
+      const base = '/api/agents/install/claude-desktop.mobileconfig'
+      return name ? `${base}?name=${encodeURIComponent(name)}` : base
+    },
   },
   services: {
     list: async () => {
