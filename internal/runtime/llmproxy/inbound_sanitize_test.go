@@ -19,7 +19,7 @@ func TestSanitizeInboundHistory_AnthropicRevertsRewrittenCurl(t *testing.T) {
 			{"role": "assistant", "content": [
 				{"type": "text", "text": "ok"},
 				{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {
-					"command": "curl -sS -H 'Authorization: Bearer autovault_github_xxx' -H 'X-Clawvisor-Target-Host: api.github.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-abc123' http://localhost:25297/api/proxy/user"
+					"command": "curl -sS -H 'Authorization: Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' -H 'X-Clawvisor-Target-Host: api.github.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-abc123' http://localhost:25297/api/proxy/user"
 				}}
 			]}
 		]
@@ -43,7 +43,7 @@ func TestSanitizeInboundHistory_AnthropicRevertsRewrittenCurl(t *testing.T) {
 	if !strings.Contains(out, "https://api.github.com/user") {
 		t.Errorf("reverted URL missing in: %s", out)
 	}
-	if !strings.Contains(out, "Authorization: Bearer autovault_github_xxx") {
+	if !strings.Contains(out, "Authorization: Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") {
 		t.Errorf("placeholder Authorization header must survive sanitization: %s", out)
 	}
 
@@ -147,7 +147,7 @@ func TestSanitizeInboundHistory_OpenAIChatRevertsArguments(t *testing.T) {
 		"messages": [{"role":"assistant","tool_calls":[
 			{"id":"call_1","type":"function","function":{
 				"name":"Bash",
-				"arguments":"{\"command\":\"curl -sS -H 'Authorization: Bearer autovault_github_xxx' -H 'X-Clawvisor-Target-Host: api.github.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-abc' http://localhost:25297/api/proxy/user\"}"
+				"arguments":"{\"command\":\"curl -sS -H 'Authorization: Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' -H 'X-Clawvisor-Target-Host: api.github.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-abc' http://localhost:25297/api/proxy/user\"}"
 			}}
 		]}]
 	}`)

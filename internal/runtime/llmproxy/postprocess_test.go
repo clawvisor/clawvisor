@@ -76,7 +76,7 @@ func TestPostprocess_JSONNoTrigger(t *testing.T) {
 	body := anthropicJSONWithToolUse(`{"url":"https://example.com/foo"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
@@ -99,7 +99,7 @@ func TestPostprocess_AuditsNoTriggerToolUse(t *testing.T) {
 	body := anthropicJSONWithToolUse(`{"url":"https://example.com/foo"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
@@ -151,7 +151,7 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	body := anthropicJSONWithToolUse(`{"url":"https://example.com/foo"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
@@ -221,7 +221,7 @@ func TestPostprocess_ReadOnlyBashBypassesTaskScopeByDefault(t *testing.T) {
 			body := anthropicJSONWithNamedToolUse("Bash", `{"command":`+jsonString(tc.cmd)+`}`)
 			req := httptest.NewRequest("POST", "/v1/messages", nil)
 			insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 			got := Postprocess(req, body, "application/json", PostprocessConfig{
 				Inspector:        insp,
@@ -257,7 +257,7 @@ func TestPostprocess_ReadOnlyBashCanBeDisabledByPolicy(t *testing.T) {
 	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"ls -la /tmp"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	agentRuleID := "readonly-shell-disabled"
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
@@ -300,7 +300,7 @@ func TestPostprocess_WriteStdinPollBypassesTaskScope(t *testing.T) {
 		`{"session_id":79860,"chars":"","max_output_tokens":1200,"yield_time_ms":1000}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
@@ -336,7 +336,7 @@ func TestPostprocess_WriteStdinWithCharsStillRequiresApproval(t *testing.T) {
 		`{"session_id":79860,"chars":"rm -rf /tmp/x\n","max_output_tokens":1200,"yield_time_ms":1000}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
@@ -379,7 +379,7 @@ func TestPostprocess_MutatingBashStillRequiresApproval(t *testing.T) {
 			body := anthropicJSONWithNamedToolUse("Bash", `{"command":`+jsonString(tc.cmd)+`}`)
 			req := httptest.NewRequest("POST", "/v1/messages", nil)
 			insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 			got := Postprocess(req, body, "application/json", PostprocessConfig{
 				Inspector:        insp,
@@ -423,7 +423,7 @@ func TestPostprocess_ReadOnlyToolPolicyAllowlistBypassesTaskScope(t *testing.T) 
 			body := anthropicJSONWithNamedToolUse(tc.tool, tc.args)
 			req := httptest.NewRequest("POST", "/v1/messages", nil)
 			insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 			got := Postprocess(req, body, "application/json", PostprocessConfig{
 				Inspector:      insp,
@@ -478,7 +478,7 @@ func TestPostprocess_BashWithoutTaskScopeStillRequiresApproval(t *testing.T) {
 	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"mkdir /tmp/something"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
@@ -508,7 +508,7 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"mkdir -p /tmp/greet","description":"Create greet workspace"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
@@ -555,7 +555,7 @@ func TestPostprocess_ToolTaskIntentRefusalRequiresApproval(t *testing.T) {
 	body := anthropicJSONWithNamedToolUse("Write", `{"file_path":"/tmp/goodbye.py","content":"print('bye')\n"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	task := &store.Task{
 		ID:                     "task-1",
 		AgentID:                agentID,
@@ -696,7 +696,7 @@ func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 	body := anthropicJSONWithToolUse(`{"cmd":"curl -X POST https://clawvisor.local/control/tasks -H 'Content-Type: application/json' -d '{\"purpose\":\"test\",\"expected_tools\":[{\"tool_name\":\"bash\",\"why\":\"test\"}]}'"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:      insp,
@@ -737,7 +737,7 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 	body := anthropicJSONWithToolUse(`{"cmd":"curl -i -X POST -H 'Content-Type: application/json' -H 'X-Clawvisor-Target-Host: clawvisor.local' -H 'X-Clawvisor-Caller: Bearer cvis_test' --data '{\"purpose\":\"Create a sample permission task from the shell for control-plane verification.\",\"intent_verification_mode\":\"strict\",\"expires_in_seconds\":600,\"expected_tools\":[{\"tool_name\":\"bash\",\"why\":\"Run curl against the proxied Clawvisor control endpoints.\"}]}' https://control.example.test/api/control/tasks"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	opts := inspector.DefaultRewriteOpts("https://control.example.test")
 	opts.CallerToken = "cvis_test"
 
@@ -780,7 +780,7 @@ func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing
 	body := anthropicJSONWithToolUse("{\"cmd\":\"curl -i -X POST \\\\\\n-H 'Content-Type: application/json' \\\\\\n--data '{\\\"purpose\\\":\\\"test\\\",\\\"expected_tools\\\":[{\\\"tool_name\\\":\\\"bash\\\",\\\"why\\\":\\\"test\\\"}]}' \\\\\\nhttps://control.example.test/api/control/tasks\"}")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	opts := inspector.DefaultRewriteOpts("https://control.example.test")
 	opts.CallerToken = "cvis_test"
 
@@ -821,7 +821,7 @@ func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T)
 	body := anthropicJSONWithNamedToolUse("Bash", string(input))
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	opts := inspector.DefaultRewriteOpts("https://control.example.test")
 	opts.CallerToken = "cvis_test"
 
@@ -872,7 +872,7 @@ func TestPostprocess_MalformedSyntheticControlCommandRewritesToToolFailure(t *te
 	body := anthropicJSONWithNamedToolUse("Bash", string(input))
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:      insp,
@@ -919,7 +919,7 @@ func TestPostprocess_CoalescesMultipleApprovalsIntoSingleHold(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
@@ -975,11 +975,11 @@ func TestPostprocess_CoalescesMultipleApprovalsIntoSingleHold(t *testing.T) {
 }
 
 func TestPostprocess_ObservePostureDoesNotBlockToolDenyRule(t *testing.T) {
-	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`
 	body := anthropicJSONWithToolUse(input)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
@@ -1013,11 +1013,11 @@ func TestPostprocess_ObservePostureDoesNotBlockToolDenyRule(t *testing.T) {
 }
 
 func TestPostprocess_JSONRewritesAutovaultURL(t *testing.T) {
-	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`
 	body := anthropicJSONWithToolUse(input)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
@@ -1057,7 +1057,7 @@ func TestPostprocess_JSONRewritesAutovaultURL(t *testing.T) {
 		if inputObj.Headers["X-Clawvisor-Target-Host"] != "api.github.com" {
 			t.Fatalf("expected X-Clawvisor-Target-Host header, got %+v", inputObj.Headers)
 		}
-		if inputObj.Headers["Authorization"] != "Bearer autovault_github_xxx" {
+		if inputObj.Headers["Authorization"] != "Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" {
 			t.Fatalf("placeholder should be preserved in headers, got %+v", inputObj.Headers)
 		}
 	}
@@ -1083,7 +1083,7 @@ event: content_block_start
 data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{}}}
 
 event: content_block_delta
-data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxx\"}}"}}
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}}
 
 event: content_block_stop
 data: {"type":"content_block_stop","index":1}
@@ -1097,7 +1097,7 @@ data: {"type":"message_stop"}
 `)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:    insp,
@@ -1118,7 +1118,7 @@ data: {"type":"message_stop"}
 	if !strings.Contains(out, "X-Clawvisor-Target-Host") {
 		t.Fatalf("rewritten SSE missing X-Clawvisor-Target-Host header:\n%s", out)
 	}
-	if !strings.Contains(out, "Bearer autovault_github_xxx") {
+	if !strings.Contains(out, "Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") {
 		t.Fatalf("placeholder lost in SSE rewrite:\n%s", out)
 	}
 	if !strings.Contains(out, "event: message_start") || !strings.Contains(out, "event: message_stop") {
@@ -1134,12 +1134,12 @@ func TestPostprocess_OpenAIResponsesJSONRewrite(t *testing.T) {
 		"model":"gpt-5",
 		"output":[
 			{"type":"function_call","id":"fc_1","call_id":"call_1","name":"WebFetch",
-			 "arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxx\"}}"}
+			 "arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}
 		]
 	}`)
 	req := httptest.NewRequest("POST", "/v1/responses", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
@@ -1170,13 +1170,13 @@ event: response.output_item.added
 data: {"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","call_id":"call_1","name":"WebFetch"}}
 
 event: response.function_call_arguments.delta
-data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxx\"}}"}
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}
 
 event: response.function_call_arguments.done
-data: {"type":"response.function_call_arguments.done","item_id":"fc_1","output_index":0,"name":"WebFetch","arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxx\"}}"}
+data: {"type":"response.function_call_arguments.done","item_id":"fc_1","output_index":0,"name":"WebFetch","arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}
 
 event: response.output_item.done
-data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_1","name":"WebFetch","arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxx\"}}"}}
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_1","name":"WebFetch","arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}}
 
 event: response.completed
 data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}
@@ -1184,7 +1184,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 `)
 	req := httptest.NewRequest("POST", "/v1/responses", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:    insp,
@@ -1226,7 +1226,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 `)
 	req := httptest.NewRequest("POST", "/v1/responses", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:    insp,
@@ -1284,7 +1284,7 @@ func TestPostprocess_OpenAIChatJSONRewrite(t *testing.T) {
 					"type":"function",
 					"function":{
 						"name":"WebFetch",
-						"arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxx\"}}"
+						"arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"
 					}
 				}]
 			},
@@ -1293,7 +1293,7 @@ func TestPostprocess_OpenAIChatJSONRewrite(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
@@ -1316,7 +1316,7 @@ func TestPostprocess_OpenAIChatJSONRewrite(t *testing.T) {
 func TestPostprocess_OpenAIChatSSERewrite(t *testing.T) {
 	body := []byte(`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
 
-data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"WebFetch","arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxx\"}}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"WebFetch","arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}}]},"finish_reason":null}]}
 
 data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
 
@@ -1325,7 +1325,7 @@ data: [DONE]
 `)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:    insp,
@@ -1355,11 +1355,11 @@ func TestPostprocess_AmbiguousFailsClosed(t *testing.T) {
 	// A tool_use with autovault placeholder in a shape the deterministic
 	// parser can't classify. The AmbiguousValidator returns ambiguous,
 	// so the response should be replaced with a blocked-explanation text.
-	input := `{"unknown_field":"autovault_github_xxx"}`
+	input := `{"unknown_field":"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}`
 	body := anthropicJSONWithToolUse(input)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,

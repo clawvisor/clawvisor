@@ -723,3 +723,28 @@ func TestDefaultParser_BashProcessSubstitutionRefused(t *testing.T) {
 		t.Fatalf("expected ambiguous on process substitution, got %+v", v)
 	}
 }
+
+func TestAllPlaceholdersAreStubs(t *testing.T) {
+	// Real placeholders look like autovault_<service>_<32-char-base64>.
+	real1 := "autovault_github_" + strings.Repeat("a", 32)
+	real2 := "autovault_resend_" + strings.Repeat("b", 32)
+	cases := []struct {
+		name string
+		in   []string
+		want bool
+	}{
+		{"empty list — nothing to suppress", nil, false},
+		{"single short stub", []string{"autovault_github_xxx"}, true},
+		{"all short stubs", []string{"autovault_github_xxx", "autovault_resend_abc"}, true},
+		{"single real placeholder", []string{real1}, false},
+		{"mixed — one real, one stub", []string{real1, "autovault_github_xxx"}, false},
+		{"all real", []string{real1, real2}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AllPlaceholdersAreStubs(tc.in); got != tc.want {
+				t.Fatalf("AllPlaceholdersAreStubs(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}

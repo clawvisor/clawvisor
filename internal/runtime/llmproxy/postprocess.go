@@ -529,6 +529,21 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			"reason", v.Reason,
 		)
 
+		// If the only `autovault_…` substrings in this tool_use are too
+		// short to be real vault references — test fixtures, prose
+		// examples, doc snippets — there's no credential to mediate.
+		// Downgrade to trigger-miss so the surrounding tool call (often
+		// an Edit of a test file that mentions the literal) is evaluated
+		// under normal authorization rather than refused as ambiguous.
+		if v.Source != inspector.SourceTriggerMiss && inspector.AllPlaceholdersAreStubs(v.Placeholders) {
+			audit("allow", "stub_placeholder", "placeholders below realistic length floor")
+			v = inspector.Verdict{
+				IsAPICall: false,
+				Source:    inspector.SourceTriggerMiss,
+				Reason:    "placeholders are stub-length (no real vault reference)",
+			}
+		}
+
 		// Inspector says trigger missed (no autovault placeholder). There
 		// is no credential rewrite to perform, but shared authorization
 		// still sees ordinary tool_use calls such as Bash/Read.

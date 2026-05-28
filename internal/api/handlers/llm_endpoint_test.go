@@ -173,7 +173,7 @@ func newSeededHandlerWithLiteProxySecretDetection(t *testing.T, upstreamURL stri
 
 	// Register a github placeholder so the rewrite-path boundary check
 	// has something to bind against.
-	placeholder := "autovault_github_xxx"
+	placeholder := "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 	if err := st.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
 		Placeholder: placeholder,
 		UserID:      user.ID,
@@ -1577,7 +1577,7 @@ func TestLLMEndpoint_InspectorRewritesAutovaultToolUse(t *testing.T) {
 				{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{
 					"url":"https://api.github.com/repos/x/y/issues",
 					"method":"POST",
-					"headers":{"Authorization":"Bearer autovault_github_xxx"}
+					"headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
 				}}
 			],
 			"stop_reason":"tool_use"
@@ -1630,7 +1630,7 @@ func TestLLMEndpoint_InspectorRewritesAutovaultToolUse(t *testing.T) {
 		if inputObj.Headers["X-Clawvisor-Target-Host"] != "api.github.com" {
 			t.Fatalf("expected X-Clawvisor-Target-Host=api.github.com header, got %+v", inputObj.Headers)
 		}
-		if inputObj.Headers["Authorization"] != "Bearer autovault_github_xxx" {
+		if inputObj.Headers["Authorization"] != "Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" {
 			t.Fatalf("placeholder lost in rewrite: %+v", inputObj.Headers)
 		}
 	}
@@ -1647,7 +1647,7 @@ event: content_block_start
 data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{}}}
 
 event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxx\"}}"}}
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}}
 
 event: content_block_stop
 data: {"type":"content_block_stop","index":0}

@@ -219,7 +219,7 @@ func TestTryContinuation_RefreshesCandidateTasksFromStore(t *testing.T) {
 				{"type": "tool_use", "id": "toolu_next", "name": "WebFetch", "input": {
 					"url": "https://api.github.com/repos/x/y/issues",
 					"method": "POST",
-					"headers": {"Authorization": "Bearer autovault_github_xxx"}
+					"headers": {"Authorization": "Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
 				}}
 			],
 			"stop_reason": "tool_use"

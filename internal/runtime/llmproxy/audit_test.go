@@ -183,7 +183,7 @@ func TestAuditEmitter_LogToolUseInspected(t *testing.T) {
 		Path:         "/repos/x/y/issues",
 		Source:       inspector.SourceDeterministic,
 		Reason:       "structured fetch with header credential",
-		Placeholders: []string{"autovault_github_xxx"},
+		Placeholders: []string{"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
 		CredentialLocations: []inspector.CredentialLocation{
 			{Kind: "header", Name: "Authorization", Scheme: "Bearer"},
 		},
@@ -262,7 +262,7 @@ func TestAuditEmitter_LogResolverSwap(t *testing.T) {
 	em := NewAuditEmitter(st, nil, nil)
 
 	em.LogResolverSwap(context.Background(), agent, "req-2",
-		"autovault_github_xxx", "github", "api.github.com", "/repos/x/y", "POST",
+		"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "github", "api.github.com", "/repos/x/y", "POST",
 		201, "allow", "success", "",
 		7*time.Millisecond)
 
@@ -285,7 +285,7 @@ func TestAuditEmitter_LogResolverSwap(t *testing.T) {
 	if params["target_host"] != "api.github.com" {
 		t.Errorf("expected target_host=api.github.com, got %v", params["target_host"])
 	}
-	if params["placeholder"] != "autovault_github_xxx" {
+	if params["placeholder"] != "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" {
 		t.Errorf("expected placeholder in params, got %v", params["placeholder"])
 	}
 }

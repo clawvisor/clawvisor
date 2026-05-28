@@ -31,7 +31,7 @@ func TestPostprocess_CoalescesMixedAllowAndApproval(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
@@ -108,7 +108,7 @@ func TestPostprocess_SingleApprovalKeepsLegacyPromptShape(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
@@ -323,7 +323,7 @@ func TestPostprocess_CoalescedReleasePreservesTurnOrder(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 
 	_ = Postprocess(req, body, "application/json", PostprocessConfig{
@@ -396,7 +396,7 @@ func TestPostprocess_CoalescedHoldFailureFallsBackToPerToolHolds(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	inner := NewMemoryPendingApprovalCache(time.Minute)
 	// failFirst=1 → the coalesced Hold (first call) fails; subsequent
 	// replay calls succeed. With pass-1 buffering this is the right
@@ -443,7 +443,7 @@ func TestPostprocess_CoalesceDoesNotEvictUnrelatedApprovals(t *testing.T) {
 	// pre-buffering passthrough design would have hit max via
 	// per-tool inserts and evicted one of the seeded entries.
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	seedIDs := make([]string, 0, 9)
 	for i := 0; i < 9; i++ {
 		// 26-char suffix to satisfy approvalReplyRE if anyone
@@ -527,7 +527,7 @@ func TestPostprocess_CoalesceAuditDoesNotEmitMisleadingAllow(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	emitter := NewAuditEmitter(st, nil, nil)
 
@@ -600,7 +600,7 @@ func TestPostprocess_CoalescePendingAuditSurfacesApprovalTrigger(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	emitter := NewAuditEmitter(st, nil, nil)
 
@@ -681,7 +681,7 @@ func TestPostprocess_LegacyReplayFailureFailsClosed(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	// failFirst=999 → every Hold call fails. Single tool_use → no
 	// coalescence; the legacy-replay path is the one exercised.
 	inner := NewMemoryPendingApprovalCache(time.Minute)
@@ -788,7 +788,7 @@ func TestPostprocess_BufferedHoldRespectsConfiguredCacheTTL(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	// Configure the cache with a 30-second TTL. The wrapper used to
 	// default ExpiresAt = now + 10m; with that bug the persisted
 	// hold would expire 9.5 minutes later than the configured TTL.
@@ -840,7 +840,7 @@ func TestPostprocess_CoalescedSiblingCarriesInspectorMetadata(t *testing.T) {
 	}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 
 	_ = Postprocess(req, body, "application/json", PostprocessConfig{

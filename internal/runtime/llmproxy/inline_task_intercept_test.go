@@ -40,7 +40,7 @@ func TestPostprocess_AsyncControlTasksPostFallsThroughWhenNoHold(t *testing.T) {
 	// creation (or just calling /api/control/tasks directly), which should
 	// hit the dashboard-backed rewrite path unchanged.
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	body := anthropicBashControlTasksPost(inlineTaskBody)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
@@ -77,7 +77,7 @@ func TestPostprocess_AsyncControlTasksPostFallsThroughWhenNoHold(t *testing.T) {
 func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	// Drive Postprocess on a model response that emits the bash-form
 	// POST /api/control/tasks WITH the surface=inline query — that's how a
@@ -205,7 +205,7 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 	// explicitly opts into inline approval via ?surface=inline.
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
@@ -267,7 +267,7 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 
 func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	taskBody := `{"purpose":"Create GitHub release issues","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"Call the GitHub API."}],"required_credentials":[{"vault_item_id":"github","why":"Create issues in owner/repo."}]}`
 	body := anthropicBashControlTasksPostWithQuery(taskBody, "surface=inline")
@@ -296,7 +296,7 @@ func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
 
 func TestPostprocess_InlineTaskInvalidCredentialFallsThroughToToolError(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	taskBody := `{"purpose":"Call agentphone","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"Call the agentphone API."}],"required_credentials":[{"vault_item_id":"agentphone"}]}`
 	body := anthropicBashControlTasksPostWithQuery(taskBody, "surface=inline")
@@ -338,7 +338,7 @@ func TestPostprocess_InlineTaskStandingWithExpiresFallsThrough(t *testing.T) {
 	// conflict before rendering so the user never sees an approval
 	// prompt that would resolve to a failed create.
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	taskBody := `{"purpose":"Standing task with expiry","lifetime":"standing","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"x"}]}`
 	body := anthropicBashControlTasksPostWithQuery(taskBody, "surface=inline")
@@ -378,7 +378,7 @@ func TestPostprocess_InlineTaskBareNoSignalRoutesToDashboard(t *testing.T) {
 	// No prior `task` reply AND no surface=inline → fall through to
 	// the regular control-rewrite path (dashboard task creation).
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	body := anthropicBashControlTasksPost(inlineTaskBody)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
@@ -481,7 +481,7 @@ type autoApproveFixture struct {
 func newAutoApproveFixture(t *testing.T, assessment *TaskRiskAssessment) autoApproveFixture {
 	t.Helper()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	return autoApproveFixture{
 		t:        t,
 		cache:    cache,
@@ -848,7 +848,7 @@ func TestAutoApprove_FallsBackOnCreatorError(t *testing.T) {
 // audit the gap.
 func TestAutoApprove_FallsBackWhenCreatorMissing(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	assessor := &stubInlineRiskAssessor{out: &TaskRiskAssessment{
 		RiskLevel: "low", IntentMatch: "yes",
 	}}
@@ -880,7 +880,7 @@ func TestAutoApprove_FallsBackWhenCreatorMissing(t *testing.T) {
 
 func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	assessor := &stubInlineRiskAssessor{out: &TaskRiskAssessment{
 		RiskLevel:   "medium",
@@ -931,7 +931,7 @@ func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
 // renders a risk read.
 func TestPostprocess_InlineTaskFallsBackWhenLLMUnknown(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	assessor := &stubInlineRiskAssessor{out: &TaskRiskAssessment{
 		RiskLevel:   "unknown",
@@ -966,7 +966,7 @@ func TestPostprocess_InlineTaskFallsBackWhenLLMUnknown(t *testing.T) {
 func TestPostprocess_InlineTaskMalformedBodyFallsThrough(t *testing.T) {
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	if _, err := cache.Hold(ctx, PendingLiteApproval{
 		ID:       "cv-origtooluuid00000000000001",

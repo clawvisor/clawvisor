@@ -152,11 +152,11 @@ func TestDefsFromRegistry_NilSafe(t *testing.T) {
 // TestPostprocess_JSONRewritesAutovaultURL which uses the same fixture
 // but doesn't pass a Catalog/TaskScope (so task-scope is skipped).
 func TestPostprocess_TaskScopeBlocksUnauthorizedAction(t *testing.T) {
-	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`
 	body := anthropicJSONWithToolUse(input)
 
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
@@ -185,11 +185,11 @@ func TestPostprocess_TaskScopeBlocksUnauthorizedAction(t *testing.T) {
 
 // Same fixture, but the task-scope check allows. The rewrite proceeds.
 func TestPostprocess_TaskScopeAllowsAuthorizedAction(t *testing.T) {
-	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`
 	body := anthropicJSONWithToolUse(input)
 
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
@@ -228,10 +228,10 @@ func (s *stubIntentVerifier) Verify(ctx context.Context, req IntentVerifyRequest
 }
 
 func TestPostprocess_IntentVerifierBlocksOnDeny(t *testing.T) {
-	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`
 	body := anthropicJSONWithToolUse(input)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	// Task-scope returns a matched action with strict verification mode.
@@ -273,10 +273,10 @@ func TestPostprocess_IntentVerifierBlocksOnDeny(t *testing.T) {
 }
 
 func TestPostprocess_IntentVerifierLenientFlag(t *testing.T) {
-	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`
 	body := anthropicJSONWithToolUse(input)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	matchedAction := &store.TaskAction{Service: "github", Action: "create_issue", Verification: "lenient"}
@@ -303,10 +303,10 @@ func TestPostprocess_IntentVerifierLenientFlag(t *testing.T) {
 }
 
 func TestPostprocess_IntentVerifierOffSkipsCall(t *testing.T) {
-	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`
 	body := anthropicJSONWithToolUse(input)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	matchedAction := &store.TaskAction{Service: "github", Action: "create_issue", Verification: "off"}
@@ -340,11 +340,11 @@ func TestPostprocess_IntentVerifierOffSkipsCall(t *testing.T) {
 // fail-open for unmapped actions). The placeholder boundary check
 // already constrained the host.
 func TestPostprocess_TaskScopeFallthroughOnUnknownAction(t *testing.T) {
-	input := `{"url":"https://api.github.com/totally/unknown/path","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	input := `{"url":"https://api.github.com/totally/unknown/path","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`
 	body := anthropicJSONWithToolUse(input)
 
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	denyAll := stubTaskScope{decision: TaskScopeDecision{Reason: "should_not_be_called"}}
@@ -367,11 +367,11 @@ func TestPostprocess_TaskScopeFallthroughOnUnknownAction(t *testing.T) {
 }
 
 func TestPostprocess_SharedDecisionAllowSkipsLegacyTaskScope(t *testing.T) {
-	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`
 	body := anthropicJSONWithToolUse(input)
 
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	denyAll := stubTaskScope{decision: TaskScopeDecision{Reason: "legacy task scope should not run"}}
