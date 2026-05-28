@@ -18,7 +18,7 @@ export default function GetStarted() {
   const ready = !!data?.ready
   const services = data?.services ?? []
   const agents = data?.agents ?? []
-  
+
   const sectionIds = useMemo(() => ready 
     ? ['overview', 'suggestions', 'your-setup', 'how-it-works']
     : ['overview', 'connect-service', 'connect-agent', 'how-it-works'], 
