@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"sync"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
@@ -66,20 +67,23 @@ type LLMVerifier struct {
 	logger *slog.Logger
 	cache  VerdictCacher
 
-	// geminiCacheNameFn returns the current Gemini cachedContents resource
-	// name, or "" when no cache is registered. Set via SetGeminiCacheNameFn
-	// at app startup. Attached to every per-call llm.Client so the cache
-	// is referenced on Gemini provider requests.
-	geminiCacheNameFn func() string
-	// geminiCacheInvalidator drops the in-process cache name and
-	// triggers an async refresh when a server-side cache reference
-	// fails (404 or 400 expired). Wired alongside geminiCacheNameFn
-	// when a manager is in use; nil when SetGeminiCacheNameFn was
-	// called directly (e.g. by tests).
-	geminiCacheInvalidator func(string)
-	// geminiCacheMgr owns the cache lifecycle when StartGeminiCache was
-	// used. Nil when SetGeminiCacheNameFn was used directly (e.g. by tests).
-	geminiCacheMgr *llm.GeminiCacheManager
+	geminiMu sync.RWMutex
+	// geminiCaches holds one binding per prompt variant — the strict base
+	// prompt and the proxy-lite variant (base + addendum) are cached as
+	// separate Vertex cachedContents resources because Gemini drops
+	// systemInstruction when cachedContent is set, so an addendum cannot
+	// be appended to a cached base prompt at request time. Verify() picks
+	// the binding that matches the request's variant; missing entries
+	// fall through to the uncached path.
+	geminiCaches    map[promptVariant]geminiCacheBinding
+	geminiCacheMgrs []*llm.GeminiCacheManager
+}
+
+// geminiCacheBinding pairs a cache-name accessor with its invalidator for
+// one prompt variant.
+type geminiCacheBinding struct {
+	nameFn      func() string
+	invalidator func(string)
 }
 
 // NewLLMVerifier creates an LLM-backed intent verifier.
@@ -121,31 +125,93 @@ func (v *LLMVerifier) RunCleanup(ctx context.Context) {
 	}
 }
 
-// SetGeminiCacheNameFn registers a function the verifier calls (per-request,
-// via the llm.Client) to discover the current Gemini cachedContents
-// resource name. Pass nil to disable cache attachment. No effect when the
-// configured provider is not "gemini".
-func (v *LLMVerifier) SetGeminiCacheNameFn(fn func() string) {
-	v.geminiCacheNameFn = fn
+// StartGeminiCache initializes a Gemini explicit context cache for each
+// verifier prompt variant (strict + proxy-lite) and registers them so
+// per-request clients reference the right one automatically based on
+// the request's ProxyLite flag. cfg.SystemPrompt is filled in by the
+// verifier and should be left empty by callers.
+//
+// Each variant is started independently: a failure to create one cache
+// is logged and that variant degrades to inline system prompts, but the
+// other variant still benefits from caching. The first hard error
+// encountered (if any) is returned for visibility, but the verifier is
+// always functional regardless.
+func (v *LLMVerifier) StartGeminiCache(ctx context.Context, cfg llm.GeminiCacheManagerConfig) error {
+	logger := v.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = logger
+	}
+	newCaches := make(map[promptVariant]geminiCacheBinding, 2)
+	newMgrs := make([]*llm.GeminiCacheManager, 0, 2)
+	variants := []struct {
+		variant promptVariant
+		prompt  string
+	}{
+		{variantStrict, verificationSystemPromptFor(false)},
+		{variantProxyLite, verificationSystemPromptFor(true)},
+	}
+	var firstErr error
+	for _, vr := range variants {
+		mgr, nameFn, invalidator, err := llm.StartCachedSystemPrompt(ctx, cfg, vr.prompt)
+		if err != nil {
+			logger.WarnContext(ctx, "verifier gemini cache start failed for variant; running uncached for this variant",
+				"variant", vr.variant.String(), "err", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("verifier gemini cache (%s): %w", vr.variant.String(), err)
+			}
+			continue
+		}
+		newMgrs = append(newMgrs, mgr)
+		newCaches[vr.variant] = geminiCacheBinding{nameFn: nameFn, invalidator: invalidator}
+	}
+
+	v.geminiMu.Lock()
+	oldMgrs := v.geminiCacheMgrs
+	v.geminiCaches = newCaches
+	v.geminiCacheMgrs = newMgrs
+	v.geminiMu.Unlock()
+
+	stopGeminiCacheManagers(oldMgrs)
+	return firstErr
 }
 
-// StartGeminiCache initializes the Gemini explicit context cache for the
-// verifier's system prompt and registers it so per-request clients
-// reference it automatically. cfg.SystemPrompt is filled in by the
-// verifier and should be left empty by callers. On creation failure the
-// verifier proceeds without caching (slower, but functional).
-func (v *LLMVerifier) StartGeminiCache(ctx context.Context, cfg llm.GeminiCacheManagerConfig) error {
-	if cfg.Logger == nil {
-		cfg.Logger = v.logger
+// StopGeminiCache stops any verifier-owned Gemini cache managers and clears
+// their bindings. It is safe to call multiple times.
+func (v *LLMVerifier) StopGeminiCache(ctx context.Context) {
+	v.geminiMu.Lock()
+	mgrs := v.geminiCacheMgrs
+	v.geminiCacheMgrs = nil
+	v.geminiCaches = nil
+	v.geminiMu.Unlock()
+
+	stopGeminiCacheManagersWithContext(ctx, mgrs)
+}
+
+func stopGeminiCacheManagers(mgrs []*llm.GeminiCacheManager) {
+	if len(mgrs) == 0 {
+		return
 	}
-	mgr, nameFn, invalidator, err := llm.StartCachedSystemPrompt(ctx, cfg, verificationSystemPrompt)
-	if err != nil {
-		return fmt.Errorf("verifier gemini cache: %w", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	stopGeminiCacheManagersWithContext(ctx, mgrs)
+}
+
+func stopGeminiCacheManagersWithContext(ctx context.Context, mgrs []*llm.GeminiCacheManager) {
+	for _, mgr := range mgrs {
+		if mgr != nil {
+			mgr.Stop(ctx)
+		}
 	}
-	v.geminiCacheMgr = mgr
-	v.geminiCacheNameFn = nameFn
-	v.geminiCacheInvalidator = invalidator
-	return nil
+}
+
+func (v *LLMVerifier) geminiCacheBinding(req VerifyRequest) (geminiCacheBinding, bool) {
+	v.geminiMu.RLock()
+	defer v.geminiMu.RUnlock()
+	binding, ok := v.geminiCaches[variantForRequest(req)]
+	return binding, ok
 }
 
 func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*VerificationVerdict, error) {
@@ -163,15 +229,15 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 	start := time.Now()
 
 	client := llm.NewClient(cfg.LLMProviderConfig)
-	// Lenient and proxy-lite modes append per-call addenda to the system prompt. The
-	// Gemini cached system instruction holds only the strict base prompt,
-	// and Gemini drops systemInstruction when cachedContent is set, so a
-	// cached addendum call would silently revert to strict. Bypass the
-	// cache so the full system prompt is inlined.
-	if v.geminiCacheNameFn != nil && !req.Lenient && !req.ProxyLite {
-		client.AttachGeminiCacheNameFn(v.geminiCacheNameFn)
-		if v.geminiCacheInvalidator != nil {
-			client.AttachGeminiCacheInvalidator(v.geminiCacheInvalidator)
+	// Lenient mode appends a per-call addendum that isn't pre-cached, so it
+	// always inlines the system prompt. Proxy-lite has its own cached
+	// variant; pick the binding that matches the request.
+	if !req.Lenient {
+		if binding, ok := v.geminiCacheBinding(req); ok && binding.nameFn != nil {
+			client.AttachGeminiCacheNameFn(binding.nameFn)
+			if binding.invalidator != nil {
+				client.AttachGeminiCacheInvalidator(binding.invalidator)
+			}
 		}
 	}
 	if v.logger != nil {
@@ -231,7 +297,7 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		return verdict, nil
 	}
 
-	v.logger.Warn("intent verification failed after retry",
+	v.logger.WarnContext(ctx, "intent verification failed after retry",
 		"error", lastErr,
 		"service", req.Service,
 		"action", req.Action,

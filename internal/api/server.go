@@ -180,6 +180,13 @@ type FeaturesHook func(ctx context.Context, user *store.User, fs FeatureSet) Fea
 // ServerOption configures optional behavior on the Server.
 type ServerOption func(*Server)
 
+// WithLogger uses the supplied *slog.Logger instead of constructing one from
+// cfg.Server.LogFormat. Required when the caller wraps the slog handler (e.g.
+// with pkg/cloudlogging) and needs that wrapping preserved on every log entry.
+func WithLogger(l *slog.Logger) ServerOption {
+	return func(s *Server) { s.logger = l }
+}
+
 // WithExtraRoutes registers additional HTTP routes (e.g. cloud-only endpoints).
 func WithExtraRoutes(fn func(*http.ServeMux, Dependencies)) ServerOption {
 	return func(s *Server) { s.extraRoutes = fn }
@@ -384,21 +391,6 @@ func New(
 	magicStore pkgauth.MagicTokenStore,
 	opts ...ServerOption,
 ) (*Server, error) {
-	logOpts := &slog.HandlerOptions{Level: cfg.Server.SlogLevel()}
-	var logHandler slog.Handler
-	switch {
-	case cfg.Server.LogFormat == "json":
-		logHandler = slog.NewJSONHandler(os.Stdout, logOpts)
-	case cfg.Server.LogFormat == "text":
-		logHandler = slog.NewTextHandler(os.Stdout, logOpts)
-	case !cfg.Server.IsLocal():
-		logHandler = slog.NewJSONHandler(os.Stdout, logOpts)
-	default:
-		logHandler = slog.NewTextHandler(os.Stdout, logOpts)
-	}
-	logger := slog.New(logHandler)
-	slog.SetDefault(logger)
-
 	s := &Server{
 		cfg:        cfg,
 		store:      st,
@@ -409,14 +401,32 @@ func New(
 		llmCfg:     llmCfg,
 		llmHealth:  llm.NewHealth(llmCfg),
 		magicStore: magicStore,
-		logger:     logger,
 		eventHub:   events.NewHub(),
 	}
 
-	// Apply optional configuration.
+	// Apply optional configuration. WithLogger may set s.logger here, in which
+	// case we skip building a default below — that preserves caller-installed
+	// handler wrappers (e.g. cloudlogging).
 	for _, o := range opts {
 		o(s)
 	}
+
+	if s.logger == nil {
+		logOpts := &slog.HandlerOptions{Level: cfg.Server.SlogLevel()}
+		var logHandler slog.Handler
+		switch {
+		case cfg.Server.LogFormat == "json":
+			logHandler = slog.NewJSONHandler(os.Stdout, logOpts)
+		case cfg.Server.LogFormat == "text":
+			logHandler = slog.NewTextHandler(os.Stdout, logOpts)
+		case !cfg.Server.IsLocal():
+			logHandler = slog.NewJSONHandler(os.Stdout, logOpts)
+		default:
+			logHandler = slog.NewTextHandler(os.Stdout, logOpts)
+		}
+		s.logger = slog.New(logHandler)
+	}
+	slog.SetDefault(s.logger)
 
 	if s.quiet {
 		s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -562,7 +572,9 @@ func (s *Server) routes() http.Handler {
 	// the lite-proxy's inline-approval intercept.
 	var assessor taskrisk.Assessor = taskrisk.NoopAssessor{}
 	if s.llmCfg.TaskRisk.Enabled {
-		assessor = taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
+		a := taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
+		startGeminiCacheIfConfigured(s.llmCfg.TaskRisk.LLMProviderConfig, s.logger, "assessor", a.StartGeminiCache)
+		assessor = a
 	}
 	s.taskRiskAssessor = assessor
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, *s.cfg, assessor, s.logger, s.eventHub)
@@ -1237,6 +1249,16 @@ func (s *Server) registerLiteProxyRoutes(
 		}
 		llmHandler.ResolverBaseURL = strings.TrimRight(resolverBase, "/") + "/api/proxy"
 		llmHandler.ControlBaseURL = strings.TrimRight(baseURL, "/")
+		// Dashboard host for the "vault a key" deep link surfaced on
+		// upstream-credential errors. In split-mode hosted deploys
+		// (route_set: proxy_lite) baseURL points at the proxy itself
+		// (e.g. llm.clawvisor.com), so fall back to the build-env
+		// dashboard URL. Everywhere else baseURL IS the dashboard.
+		if strings.EqualFold(strings.TrimSpace(s.cfg.Server.RouteSet), "proxy_lite") {
+			llmHandler.DashboardBaseURL = version.DashboardURL()
+		} else {
+			llmHandler.DashboardBaseURL = strings.TrimRight(baseURL, "/")
+		}
 
 		auditEmitter := llmproxy.NewAuditEmitter(s.store, s.logger, nil)
 		llmHandler.AuditEmitter = auditEmitter
@@ -1394,7 +1416,7 @@ func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.
 				}
 			}
 			if err != nil {
-				s.logger.Warn("notifier decision failed",
+				s.logger.WarnContext(ctx, "notifier decision failed",
 					"type", d.Type, "action", d.Action,
 					"target_id", d.TargetID, "err", err)
 			}

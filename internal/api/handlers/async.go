@@ -146,7 +146,7 @@ func (d *CallbackDispatcher) deliverOne(job callbackJob) {
 	cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := callback.DeliverResult(cbCtx, job.url, job.payload, job.signingKey); err != nil && d.logger != nil {
-		d.logger.Warn("callback delivery failed",
+		d.logger.WarnContext(cbCtx, "callback delivery failed",
 			"url", job.url,
 			"request_id", job.payload.RequestID,
 			"task_id", job.payload.TaskID,

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/oauth2"
+
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlvalidate"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -121,10 +123,58 @@ actions:
 // riskJSON is the risk classification response the mock LLM returns.
 const riskJSON = `{"list_items":{"category":"read","sensitivity":"low"},"create_item":{"category":"write","sensitivity":"medium"}}`
 
+const installableYAML = `service:
+  id: testapi
+  display_name: Test API
+  description: A test API service
+auth:
+  type: api_key
+  header: Authorization
+  header_prefix: "Bearer "
+api:
+  base_url: https://api.test.com
+  type: rest
+actions:
+  list_items:
+    display_name: List items
+    risk:
+      category: read
+      sensitivity: low
+      description: List all items
+    method: GET
+    path: /items
+    params:
+      limit:
+        type: int
+        location: query
+    response:
+      fields:
+        - { name: id }
+        - { name: name }
+      summary: "{{len .Data}} items"
+`
+
 func newTestStore(t *testing.T) *FilesystemStore {
 	t.Helper()
 	return NewFilesystemStore(filepath.Join(t.TempDir(), "adapters"))
 }
+
+type installTestAdapter struct {
+	id      string
+	actions []string
+}
+
+func (a *installTestAdapter) ServiceID() string { return a.id }
+func (a *installTestAdapter) SupportedActions() []string {
+	return a.actions
+}
+func (a *installTestAdapter) Execute(context.Context, adapters.Request) (*adapters.Result, error) {
+	return nil, nil
+}
+func (a *installTestAdapter) OAuthConfig() *oauth2.Config                       { return nil }
+func (a *installTestAdapter) CredentialFromToken(*oauth2.Token) ([]byte, error) { return nil, nil }
+func (a *installTestAdapter) ValidateCredential([]byte) error                   { return nil }
+func (a *installTestAdapter) RequiredScopes() []string                          { return nil }
 
 func TestGenerate_EndToEnd(t *testing.T) {
 	callCount := 0
@@ -190,6 +240,118 @@ func TestGenerate_EndToEnd(t *testing.T) {
 	yamlPath := filepath.Join(store.dir, "testapi.yaml")
 	if _, err := os.Stat(yamlPath); os.IsNotExist(err) {
 		t.Error("adapter YAML file not written to disk")
+	}
+}
+
+func TestInstall_UserScopedDoesNotTouchSharedRegistry(t *testing.T) {
+	store := newTestStore(t)
+	registry := adapters.NewRegistry()
+	gen := New(config.AdapterGenConfig{}, registry, store, "alice", nil)
+
+	installed, err := gen.Install(context.Background(), installableYAML)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !installed.Installed {
+		t.Fatal("expected installed result")
+	}
+
+	if _, ok := registry.Get("testapi"); ok {
+		t.Fatal("user-scoped install registered adapter in shared registry")
+	}
+
+	aliceAdapter, ok := registry.GetForUser(context.Background(), "testapi", "alice")
+	if !ok {
+		t.Fatal("alice cannot resolve her generated adapter")
+	}
+	if len(aliceAdapter.SupportedActions()) != 1 {
+		t.Fatalf("alice adapter actions: got %d, want 1", len(aliceAdapter.SupportedActions()))
+	}
+
+	if _, ok := registry.GetForUser(context.Background(), "testapi", "bob"); ok {
+		t.Fatal("bob can resolve alice's generated adapter")
+	}
+}
+
+func TestInstall_UserScopedRejectsBuiltInCollision(t *testing.T) {
+	store := newTestStore(t)
+	registry := adapters.NewRegistry()
+	registry.Register(&installTestAdapter{id: "testapi", actions: []string{"builtin"}})
+	gen := New(config.AdapterGenConfig{}, registry, store, "alice", nil)
+
+	_, err := gen.Install(context.Background(), installableYAML)
+	if err == nil {
+		t.Fatal("expected collision error")
+	}
+	if !strings.Contains(err.Error(), "collides with a built-in adapter") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	yamlPath := filepath.Join(store.dir, "testapi.yaml")
+	if _, statErr := os.Stat(yamlPath); !os.IsNotExist(statErr) {
+		t.Fatalf("colliding adapter was saved to disk; stat err=%v", statErr)
+	}
+
+	got, ok := registry.Get("testapi")
+	if !ok {
+		t.Fatal("built-in adapter disappeared")
+	}
+	actions := got.SupportedActions()
+	if len(actions) != 1 || actions[0] != "builtin" {
+		t.Fatalf("built-in adapter was replaced: actions=%v", actions)
+	}
+}
+
+func TestUpdate_UserScopedGeneratedAdapter(t *testing.T) {
+	callCount := 0
+	_, cfg := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		if callCount == 1 {
+			w.Write(oaResponse(generatedYAML))
+		} else {
+			w.Write(oaResponse(riskJSON))
+		}
+	})
+
+	store := newTestStore(t)
+	registry := adapters.NewRegistry()
+	gen := New(cfg, registry, store, "alice", nil)
+	if _, err := gen.Install(context.Background(), installableYAML); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	result, err := gen.Update(context.Background(), "testapi", Source{
+		Type:    SourceMCP,
+		Content: sampleSlackMCPTools,
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if result.ServiceID != "testapi" {
+		t.Fatalf("updated service ID: got %q, want testapi", result.ServiceID)
+	}
+	if result.Installed {
+		t.Fatal("Update should return a preview, not install automatically")
+	}
+}
+
+func TestRemove_UserScopedGeneratedAdapter(t *testing.T) {
+	store := newTestStore(t)
+	registry := adapters.NewRegistry()
+	gen := New(config.AdapterGenConfig{}, registry, store, "alice", nil)
+	if _, err := gen.Install(context.Background(), installableYAML); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	if err := gen.Remove(context.Background(), "testapi"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, ok := registry.GetForUser(context.Background(), "testapi", "alice"); ok {
+		t.Fatal("alice can still resolve removed generated adapter")
+	}
+	if _, ok := registry.Get("testapi"); ok {
+		t.Fatal("removed user adapter affected shared registry")
 	}
 }
 

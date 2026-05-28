@@ -70,17 +70,30 @@ func TestBoundServiceHosts_HandlesLLMScopedKeys(t *testing.T) {
 func TestBoundServiceHosts_SplitsGoogleServiceContexts(t *testing.T) {
 	gmail := BoundServiceHosts("google.gmail")
 	calendar := BoundServiceHosts("google.calendar")
+	sheets := BoundServiceHosts("google.sheets")
 	if !containsHost(gmail, "gmail.googleapis.com") {
 		t.Fatalf("gmail hosts should include gmail API, got %v", gmail)
 	}
 	if containsHost(gmail, "calendar.googleapis.com") {
 		t.Fatalf("gmail hosts should not include calendar API, got %v", gmail)
 	}
+	if containsHost(gmail, "sheets.googleapis.com") {
+		t.Fatalf("gmail hosts should not include sheets API, got %v", gmail)
+	}
 	if !containsHost(calendar, "calendar.googleapis.com") {
 		t.Fatalf("calendar hosts should include calendar API, got %v", calendar)
 	}
 	if containsHost(calendar, "gmail.googleapis.com") {
 		t.Fatalf("calendar hosts should not include gmail API, got %v", calendar)
+	}
+	if containsHost(calendar, "sheets.googleapis.com") {
+		t.Fatalf("calendar hosts should not include sheets API, got %v", calendar)
+	}
+	if !containsHost(sheets, "sheets.googleapis.com") {
+		t.Fatalf("sheets hosts should include sheets API, got %v", sheets)
+	}
+	if containsHost(sheets, "gmail.googleapis.com") {
+		t.Fatalf("sheets hosts should not include gmail API, got %v", sheets)
 	}
 }
 

@@ -489,9 +489,12 @@ func runToolIntentVerify(ctx context.Context, in AuthorizationInput, task *store
 	// match.Item.Why: that's the task's pre-declared scope description
 	// (same text we already pass as ExpectedUse), and the verifier
 	// correctly flags a verbatim copy as "instructions/procedural steps
-	// rather than a 'why' clause." Pull a fresh rationale from the tool
-	// input instead; harnesses like Claude Code prompt the model for a
-	// short `description` on each Bash call for exactly this purpose.
+	// rather than a 'why' clause." resolveToolReason pulls a rationale
+	// out of input fields explicitly named for it (`reason`,
+	// `rationale`); harness "description" labels (e.g. Claude Code's
+	// Bash `description`) are NOT treated as rationales — they describe
+	// the command, not the why — and the verifier deduces intent from
+	// params + task purpose instead.
 	verdict, err := in.IntentVerifier.Verify(ctx, IntentVerifyRequest{
 		TaskPurpose: purpose,
 		ExpectedUse: expectedUse,
@@ -595,25 +598,23 @@ func decodeToolInput(raw json.RawMessage) map[string]any {
 }
 
 // toolsExpectingPerCallRationale enumerates tool names whose harness
-// schema requires a per-call rationale field. For these tools, an
-// absent or sentinel-stuffed rationale field is a non-compliance
-// signal (or a bypass attempt), NOT a harness limitation — the
-// verifier's coherence check must still run rather than be skipped
-// via NoPerCallReasonSentinel.
+// schema collects a genuine per-call rationale (a "why" field, not a
+// label or summary). For these tools, an absent or sentinel-stuffed
+// rationale is a non-compliance signal — the verifier's coherence
+// check must still run rather than be skipped via NoPerCallReasonSentinel.
 //
-// Without this list, a model on Claude Code (whose Bash schema
-// requires `description`) could trivially defeat the coherence check
-// by omitting the description field: the proxy would substitute the
-// system sentinel, the verifier would treat it as "harness has no
-// rationale" and skip the check entirely.
+// Notably absent: Bash. Claude Code's Bash schema requires a
+// `description`, but that field is a short label of WHAT the command
+// does (e.g. "List llmproxy directory"), not WHY the agent is running
+// it. Treating it as a rationale produced noisy false-positive
+// "reason_coherence: insufficient" verdicts on benign commands.
+// Bash now falls through to the sentinel path so the verifier
+// deduces intent from params + task purpose instead.
 //
-// Lowercase + trimmed. Keep in sync with the tool schemas actual
-// harnesses enforce. Tools that legitimately ship without a
+// Lowercase + trimmed. Tools that legitimately ship without a
 // rationale convention (Codex's argv-only `shell`/`exec_command`)
-// stay out of this set — for them the sentinel correctly signals a
-// genuine harness limitation.
+// also stay out of this set.
 var toolsExpectingPerCallRationale = map[string]bool{
-	"bash":     true, // Claude Code: `description` is required by tool schema
 	"webfetch": true, // Claude Code: `prompt` is the per-call rationale
 }
 
@@ -633,36 +634,33 @@ func resolveToolReason(toolName string, params map[string]any) string {
 	return NoPerCallReasonSentinel
 }
 
-// perCallToolReason pulls a per-call rationale out of tool input. Claude
-// Code's Bash tool prompts the model for a short `description` on every
-// call; Codex and other harnesses use similar conventions. When the
-// agent supplies one we forward it to the verifier as the Reason — it's
-// the only field meant to capture "why THIS call, right now," distinct
-// from the task's pre-declared scope.
+// perCallToolReason pulls a per-call rationale out of tool input.
+// When the agent supplies one we forward it to the verifier as the
+// Reason — it's the only field meant to capture "why THIS call,
+// right now," distinct from the task's pre-declared scope.
 //
-// Keys are limited to names that semantically mean "rationale": a
-// generic `purpose` field on a task-creation or evaluator tool would
-// be USER data (a task's purpose, an evaluator's subject), not the
-// agent's why-clause for this specific call — feeding that to the
-// verifier risks false coherence findings.
+// Keys are limited to names that semantically mean "rationale".
+// Notably excluded: `description`. Claude Code's Bash schema
+// requires a `description`, but it is a short label of WHAT the
+// command does (e.g. "List llmproxy directory"), not WHY — treating
+// it as a rationale flagged benign commands as incoherent. A generic
+// `purpose` field on a task-creation or evaluator tool would
+// similarly be USER data, not the agent's per-call why-clause.
 func perCallToolReason(params map[string]any) string {
 	if params == nil {
 		return ""
 	}
 	// First pass: detect a sentinel forgery in ANY inspected field. A
-	// model that drops the sentinel into `description` and a plausible
-	// rationale into `reason` would otherwise still get a rationale
-	// forwarded — the bypass attempt itself is the signal we care
-	// about, and "advance past sentinel to the next field" lets the
-	// model surface the wrong-but-not-flagged field as the rationale
-	// by knowing this lookup order. Fall through to the system
-	// sentinel instead.
-	for _, key := range []string{"description", "reason", "rationale"} {
+	// model that drops the sentinel into one rationale field and a
+	// plausible rationale into another would otherwise still get a
+	// rationale forwarded — the bypass attempt itself is the signal
+	// we care about. Fall through to the system sentinel instead.
+	for _, key := range []string{"reason", "rationale"} {
 		if v, ok := params[key].(string); ok && strings.TrimSpace(v) == NoPerCallReasonSentinel {
 			return ""
 		}
 	}
-	for _, key := range []string{"description", "reason", "rationale"} {
+	for _, key := range []string{"reason", "rationale"} {
 		if v, ok := params[key].(string); ok {
 			if s := strings.TrimSpace(v); s != "" {
 				return s

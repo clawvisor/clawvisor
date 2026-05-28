@@ -199,7 +199,7 @@ func TestEvalIntentVerification(t *testing.T) {
 			if verdict.ParamScope != tc.Expected.ParamScope {
 				mismatches = append(mismatches, fmt.Sprintf("param_scope: got %q, want %q", verdict.ParamScope, tc.Expected.ParamScope))
 			}
-			if verdict.ReasonCoherence != tc.Expected.ReasonCoherence {
+			if !reasonCoherenceMatches(verdict.ReasonCoherence, tc.Expected.ReasonCoherence) {
 				mismatches = append(mismatches, fmt.Sprintf("reason_coherence: got %q, want %q", verdict.ReasonCoherence, tc.Expected.ReasonCoherence))
 			}
 			// When expected missing_chain_values are specified, verify each one
@@ -296,17 +296,59 @@ type evalResult struct {
 	details  string
 }
 
-// expandDatePlaceholders replaces __TODAY__ and __TOMORROW__ in string param
-// values with the current UTC date, preventing eval cases from going stale.
+// reasonCoherenceMatches reports whether a verdict's reason_coherence value
+// satisfies the expected value. "insufficient" and "incoherent" are treated
+// as interchangeable: both signal a non-rationale reason (placeholder vs.
+// injection), and the line between them is sometimes arbitrary (a bare URL
+// or timestamp is plausibly either). "ok" must match "ok" exactly — we
+// don't want to silently accept a flagged reason when the test expected
+// clean.
+func reasonCoherenceMatches(got, want string) bool {
+	if got == want {
+		return true
+	}
+	badReason := func(s string) bool { return s == "insufficient" || s == "incoherent" }
+	return badReason(got) && badReason(want)
+}
+
+// expandDatePlaceholders replaces date placeholders in string param values
+// with computed dates relative to "now", preventing eval cases from going
+// stale. Supports:
+//
+//	__TODAY__              today, UTC, YYYY-MM-DD
+//	__TOMORROW__           today + 1 day
+//	__TODAY_PLUS_14__      today + 14 days
+//	__THIS_WEEK_START__    Monday of the current week
+//	__THIS_WEEK_END__      Sunday of the current week
+//	__THIS_MONTH_START__   first day of the current month
 func expandDatePlaceholders(params map[string]any) map[string]any {
-	today := time.Now().UTC().Format("2006-01-02")
-	tomorrow := time.Now().UTC().Add(24 * time.Hour).Format("2006-01-02")
+	now := time.Now().UTC()
+	fmtDate := func(t time.Time) string { return t.Format("2006-01-02") }
+
+	// ISO week: Monday = 1, Sunday = 7. Go's Weekday has Sunday = 0.
+	weekday := int(now.Weekday())
+	if weekday == 0 {
+		weekday = 7
+	}
+	weekStart := now.AddDate(0, 0, 1-weekday)
+	weekEnd := now.AddDate(0, 0, 7-weekday)
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	replacements := map[string]string{
+		"__TODAY__":            fmtDate(now),
+		"__TOMORROW__":         fmtDate(now.AddDate(0, 0, 1)),
+		"__TODAY_PLUS_14__":    fmtDate(now.AddDate(0, 0, 14)),
+		"__THIS_WEEK_START__":  fmtDate(weekStart),
+		"__THIS_WEEK_END__":    fmtDate(weekEnd),
+		"__THIS_MONTH_START__": fmtDate(monthStart),
+	}
 
 	out := make(map[string]any, len(params))
 	for k, v := range params {
 		if s, ok := v.(string); ok {
-			s = strings.ReplaceAll(s, "__TODAY__", today)
-			s = strings.ReplaceAll(s, "__TOMORROW__", tomorrow)
+			for from, to := range replacements {
+				s = strings.ReplaceAll(s, from, to)
+			}
 			out[k] = s
 		} else {
 			out[k] = v

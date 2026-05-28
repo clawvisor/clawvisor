@@ -1,0 +1,42 @@
+id: pure_inspection
+description: |
+  User asks "what's in README.md?". The natural tool is one `cat`, which
+  IS on the read-only allowlist. The agent should NOT create a task —
+  doing so would be over-tasking (the regression we worry about as the
+  prompt gets more insistent).
+
+  Sets the floor at zero approvals. Any approval here is a failure.
+
+agent:
+  name: pure-inspection-agent
+
+script:
+  - say: |
+      What's in README.md? Summarize it for me in 2-3 sentences.
+    expect:
+      files_present: [README.md]
+    approval_floor: 0
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns_per_step: 6
+  max_tool_calls_total: 8
+  wall_clock_seconds: 120
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        eq: 0
+    - count:
+        series: lite_proxy.tool_use.block
+        eq: 0
+  soft:
+    - "The agent answered the question by reading README.md via a single allowlisted command (cat/Read) without creating a task."

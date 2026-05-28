@@ -27,6 +27,17 @@ func TestIsReadOnlyBashCommandAcceptsCommonReads(t *testing.T) {
 		"printf -- -v",
 		"sort README.md",
 		"uniq README.md",
+		"head -40 README.md",
+		"tail -40 README.md",
+		"ls /tmp | head -40",
+		"ls /tmp | tail -5",
+		"echo ---",
+		"echo -x",
+		"echo -- foo",
+		"echo --foo",
+		"echo --bar=baz",
+		"echo -en hi",
+		"echo -e hi",
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {
@@ -95,6 +106,8 @@ func TestIsReadOnlyBashCommandRejectsMutationsAndEscapes(t *testing.T) {
 		`$CMD foo`,
 		`"$(which ls)" -la`,
 		"command rm -rf /tmp",
+		"cat -40 README.md",
+		"head -40x README.md",
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {

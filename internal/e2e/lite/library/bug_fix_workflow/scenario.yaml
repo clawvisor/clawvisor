@@ -1,0 +1,56 @@
+id: bug_fix_workflow
+description: |
+  Realistic bug-fix workflow as a single task. The user describes a
+  bug, the desired behavior, AND asks for a test + verification — all
+  in one message. The natural shape is one task with multiple tools
+  (Read, Edit, Bash for go test).
+
+  Catches over-fragmentation: agents that create separate tasks for
+  "investigate", "fix", "add test", "run test" are misreading the
+  scope. The user gave a complete plan; the agent should execute it
+  under one task.
+
+agent:
+  name: bug-fix-workflow-agent
+
+script:
+  - say: |
+      There's a bug in src/foo.go: Foo.Greet returns "hello from " when
+      Name is empty (just a trailing space, no recipient). Please:
+
+        1. In Greet, detect empty Name and return "hello, stranger" instead.
+        2. Add a test in src/foo_test.go that covers the empty-Name case.
+        3. Run `go test ./src/` to confirm both the old and new tests pass.
+    expect:
+      file_contains:
+        - {path: src/foo.go, needle: "stranger"}
+        - {path: src/foo_test.go, needle: "stranger"}
+      shell:
+        - cmd: "go test ./src/"
+          exit: 0
+    approval_floor: 1
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns_per_step: 15
+  max_tool_calls_total: 40
+  wall_clock_seconds: 360
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        eq: 1
+    - count:
+        series: lite_proxy.tool_use.block
+        eq: 0
+  soft:
+    - "The agent created exactly one task covering all three sub-steps (fix, test, verify), not separate tasks per phase."
+    - "go test passed at the end and the agent reported success accurately."

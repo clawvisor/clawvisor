@@ -99,6 +99,9 @@ actions:
         type: string
         required: true
         description: "Target MIME type (e.g. application/pdf, text/plain, text/csv, application/vnd.openxmlformats-officedocument.wordprocessingml.document)"
+      sheet_name:
+        type: string
+        description: "Google Sheets only: name of the tab to export when mime_type is text/csv or text/tab-separated-values. Without this, only the first tab is returned."
 
   search_files:
     display_name: "Search files"

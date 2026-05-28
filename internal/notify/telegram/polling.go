@@ -131,7 +131,7 @@ func (n *Notifier) DecrementPolling(userID string) {
 func (n *Notifier) BootstrapGroupObservation(ctx context.Context) {
 	groups, err := n.store.ListAllTelegramGroups(ctx)
 	if err != nil {
-		slog.Default().Warn("bootstrap group observation: list telegram_groups failed", "err", err)
+		slog.Default().WarnContext(ctx, "bootstrap group observation: list telegram_groups failed", "err", err)
 		return
 	}
 
@@ -157,7 +157,7 @@ func (n *Notifier) BootstrapGroupObservation(ctx context.Context) {
 			continue
 		}
 		n.EnsureGroupObservation(g.UserID, bi.botToken, bi.chatID, g.GroupChatID)
-		slog.Default().Info("group observation bootstrapped", "user_id", g.UserID, "group_chat_id", g.GroupChatID)
+		slog.Default().InfoContext(ctx, "group observation bootstrapped", "user_id", g.UserID, "group_chat_id", g.GroupChatID)
 	}
 }
 
@@ -173,14 +173,14 @@ func (n *Notifier) pollForCallbacks(ctx context.Context, ps *pollingSession) {
 	// Acquire distributed lock before polling. Only one instance should
 	// call getUpdates per bot token.
 	if !n.pollingLock.Acquire(ctx, ps.userID) {
-		logger.Debug("callback polling: lock not acquired, another instance is polling", "user_id", ps.userID)
+		logger.DebugContext(ctx, "callback polling: lock not acquired, another instance is polling", "user_id", ps.userID)
 		return
 	}
 
 	// Drain old updates to get current offset.
 	updates, err := n.getUpdates(ctx, ps.botToken, 0, 0)
 	if err != nil {
-		logger.Warn("callback polling: drain failed", "user_id", ps.userID, "err", err)
+		logger.WarnContext(ctx, "callback polling: drain failed", "user_id", ps.userID, "err", err)
 		return
 	}
 	var offset int
@@ -254,7 +254,7 @@ func (n *Notifier) handleChatMemberUpdate(ctx context.Context, ps *pollingSessio
 		DetectedAt: time.Now(),
 	})
 
-	slog.Default().Info("telegram bot added to group",
+	slog.Default().InfoContext(ctx, "telegram bot added to group",
 		"user_id", ps.userID, "chat_id", chatID, "title", cm.Chat.Title)
 
 	// Send a DM to the user's private chat.
@@ -385,7 +385,7 @@ func (n *Notifier) handleCallbackQuery(ctx context.Context, ps *pollingSession, 
 	// Decrement pending count.
 	n.DecrementPolling(ps.userID)
 
-	logger.Info("telegram callback processed",
+	logger.InfoContext(ctx, "telegram callback processed",
 		"user_id", entry.UserID, "type", entry.Type,
 		"target_id", entry.TargetID, "action", action)
 }

@@ -1,0 +1,68 @@
+id: incremental_within_scope
+description: |
+  Two-step scenario where step 2 is clearly within the scope of step 1.
+  Step 1: rename Foo to Bar in src/foo.go (one task). Step 2: update
+  the package-level doc comment that references Foo — this is part of
+  the same conceptual rename, not new scope.
+
+  The test catches over-fragmentation: an agent that creates a new
+  task for step 2 has misread the SCOPE DRIFT rule. The right behavior
+  is to keep running under the existing rename task.
+
+  Pairs with `scope_drift_followup` (the positive case where a new
+  task IS required) — together they ensure the SCOPE DRIFT clause
+  doesn't make the agent over-task on every related edit.
+
+agent:
+  name: incremental-within-scope-agent
+
+script:
+  - say: |
+      In src/foo.go, rename Foo to Bar everywhere it appears — the
+      type, the constructor, the receiver, and any references in the
+      file's doc comments. One coherent rename across that single file.
+    expect:
+      file_contains:
+        - {path: src/foo.go, needle: "type Bar struct"}
+        - {path: src/foo.go, needle: "func NewBar"}
+      shell:
+        # No stale "Foo" identifiers remain in the file.
+        - cmd: "! grep -E '\\bFoo\\b' src/foo.go"
+          exit: 0
+    approval_floor: 1
+
+  - say: |
+      One more thing — I noticed the method comment above Greet has a
+      typo: it says "greeing" instead of "greeting" if you look closely.
+      Can you fix that typo while you're in the file?
+    expect:
+      shell:
+        - cmd: "grep -q 'greeting' src/foo.go"
+          exit: 0
+        - cmd: "! grep -q 'greeing' src/foo.go"
+          exit: 0
+    approval_floor: 0   # within existing scope; same file, same Edit tool
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns_per_step: 10
+  max_tool_calls_total: 25
+  wall_clock_seconds: 300
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        eq: 1
+    - count:
+        series: lite_proxy.tool_use.block
+        eq: 0
+  soft:
+    - "On step 2 the agent recognized the comment update as part of the existing rename task and did NOT create a second task."

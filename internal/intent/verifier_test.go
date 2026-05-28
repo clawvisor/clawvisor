@@ -1,8 +1,18 @@
 package intent
 
 import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/clawvisor/clawvisor/internal/llm"
+	"golang.org/x/oauth2"
 )
 
 func TestParseVerificationResponse_ValidJSON(t *testing.T) {
@@ -251,6 +261,56 @@ func TestCacheCleanup(t *testing.T) {
 	defer c.mu.Unlock()
 	if len(c.entries) != 0 {
 		t.Errorf("expected 0 entries after cleanup, got %d", len(c.entries))
+	}
+}
+
+func TestStartGeminiCacheReplacesAndStopsOldManagers(t *testing.T) {
+	rt := &verifierGeminiCacheRoundTripper{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	v := &LLMVerifier{logger: logger}
+	cfg := llm.GeminiCacheManagerConfig{
+		Project:     "p",
+		Region:      "global",
+		Model:       "gemini-test",
+		TTL:         time.Hour,
+		HTTPClient:  &http.Client{Transport: rt},
+		TokenSource: verifierStaticTokenSource{},
+		Logger:      logger,
+	}
+
+	if err := v.StartGeminiCache(context.Background(), cfg); err != nil {
+		t.Fatalf("first StartGeminiCache: %v", err)
+	}
+	if got := len(v.geminiCacheMgrs); got != 2 {
+		t.Fatalf("first manager count=%d, want 2", got)
+	}
+	oldStrict := v.geminiCaches[variantStrict].nameFn()
+	oldProxyLite := v.geminiCaches[variantProxyLite].nameFn()
+
+	if err := v.StartGeminiCache(context.Background(), cfg); err != nil {
+		t.Fatalf("second StartGeminiCache: %v", err)
+	}
+	if got := len(v.geminiCacheMgrs); got != 2 {
+		t.Fatalf("second manager count=%d, want 2", got)
+	}
+	if got := v.geminiCaches[variantStrict].nameFn(); got == "" || got == oldStrict {
+		t.Fatalf("strict cache name after restart=%q, old=%q", got, oldStrict)
+	}
+	if got := v.geminiCaches[variantProxyLite].nameFn(); got == "" || got == oldProxyLite {
+		t.Fatalf("proxy-lite cache name after restart=%q, old=%q", got, oldProxyLite)
+	}
+
+	deletes := rt.deletedNames()
+	if !sliceContainsCacheName(deletes, oldStrict) {
+		t.Fatalf("old strict cache %q was not deleted; deletes=%v", oldStrict, deletes)
+	}
+	if !sliceContainsCacheName(deletes, oldProxyLite) {
+		t.Fatalf("old proxy-lite cache %q was not deleted; deletes=%v", oldProxyLite, deletes)
+	}
+
+	v.StopGeminiCache(context.Background())
+	if got := len(v.geminiCacheMgrs); got != 0 {
+		t.Fatalf("manager count after stop=%d, want 0", got)
 	}
 }
 
@@ -526,6 +586,71 @@ func contains(s, sub string) bool {
 func containsStr(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {
 		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+type verifierStaticTokenSource struct{}
+
+func (verifierStaticTokenSource) Token() (*oauth2.Token, error) {
+	return &oauth2.Token{AccessToken: "test-token"}, nil
+}
+
+type verifierGeminiCacheRoundTripper struct {
+	mu      sync.Mutex
+	next    int
+	deletes []string
+}
+
+func (rt *verifierGeminiCacheRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	switch req.Method {
+	case http.MethodPost:
+		rt.next++
+		name := fmt.Sprintf("projects/p/locations/global/cachedContents/cache-%d", rt.next)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`{"name":%q}`, name))),
+			Request:    req,
+		}, nil
+	case http.MethodDelete:
+		rt.deletes = append(rt.deletes, req.URL.Path)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{}`)),
+			Request:    req,
+		}, nil
+	default:
+		return &http.Response{
+			StatusCode: http.StatusMethodNotAllowed,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{}`)),
+			Request:    req,
+		}, nil
+	}
+}
+
+func (rt *verifierGeminiCacheRoundTripper) deletedNames() []string {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	out := make([]string, len(rt.deletes))
+	copy(out, rt.deletes)
+	return out
+}
+
+// sliceContainsCacheName reports whether any recorded DELETE path targets the
+// given cachedContents resource name. Vertex DELETE URLs are "/v1/<name>", so
+// suffix-match against the bare name avoids the prior fuzzy substring check
+// without changing how the round-tripper records paths.
+func sliceContainsCacheName(paths []string, name string) bool {
+	for _, p := range paths {
+		if p == "/v1/"+name {
 			return true
 		}
 	}

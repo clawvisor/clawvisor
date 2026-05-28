@@ -115,7 +115,7 @@ func (d *Daemon) RunContext(ctx context.Context) error {
 	paired := d.state.IsPaired()
 	d.mu.RUnlock()
 
-	d.logger.Info("starting", "version", version.Version, "daemon_id", daemonID)
+	d.logger.InfoContext(ctx, "starting", "version", version.Version, "daemon_id", daemonID)
 
 	// Initialize server manager.
 	d.serverMgr = executor.NewServerManager(d.baseDir)
@@ -168,7 +168,7 @@ func (d *Daemon) RunContext(ctx context.Context) error {
 
 	<-ctx.Done()
 
-	d.logger.Info("shutting down")
+	d.logger.InfoContext(ctx, "shutting down")
 
 	if scanTicker != nil {
 		scanTicker.Stop()
@@ -419,7 +419,7 @@ func (d *Daemon) handleRequest(ctx context.Context, id string, req *tunnel.Reque
 
 	if tc != nil {
 		if err := tc.SendResponse(id, payload); err != nil {
-			d.logger.Warn("failed to send response", "request_id", id, "err", err)
+			d.logger.WarnContext(ctx, "failed to send response", "request_id", id, "err", err)
 		}
 	}
 }

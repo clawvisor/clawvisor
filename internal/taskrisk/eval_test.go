@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -24,16 +25,28 @@ type evalCase struct {
 }
 
 type evalRequest struct {
-	AgentName string          `json:"agent_name"`
-	Purpose   string          `json:"purpose"`
-	Actions   []evalAction    `json:"actions"`
+	AgentName string       `json:"agent_name"`
+	Purpose   string       `json:"purpose"`
+	Actions   []evalAction `json:"actions"`
+
+	// v2 envelope fields. Cases set either Actions (v1) or these (v2).
+	ExpectedTools          []evalExpectedTool `json:"expected_tools,omitempty"`
+	IntentVerificationMode string             `json:"intent_verification_mode,omitempty"`
+	ExpectedUse            string             `json:"expected_use,omitempty"`
 }
 
 type evalAction struct {
-	Service     string `json:"service"`
-	Action      string `json:"action"`
-	AutoExecute bool   `json:"auto_execute"`
-	ExpectedUse string `json:"expected_use"`
+	Service      string `json:"service"`
+	Action       string `json:"action"`
+	AutoExecute  bool   `json:"auto_execute"`
+	ExpectedUse  string `json:"expected_use"`
+	Verification string `json:"verification,omitempty"`
+}
+
+type evalExpectedTool struct {
+	ToolName   string `json:"tool_name"`
+	Why        string `json:"why,omitempty"`
+	InputRegex string `json:"input_regex,omitempty"`
 }
 
 type evalExpect struct {
@@ -50,25 +63,56 @@ type evalResult struct {
 }
 
 // TestEvalTaskRiskAssessment runs labeled eval cases against a real LLM assessor.
-// Skipped unless CLAWVISOR_LLM_TASK_RISK_API_KEY is set.
+//
+// Two ways to invoke:
+//
+//   - Anthropic (or any API-key provider): set CLAWVISOR_LLM_TASK_RISK_API_KEY.
+//     Optionally override CLAWVISOR_LLM_TASK_RISK_{PROVIDER,MODEL,ENDPOINT}.
+//
+//   - Gemini on Vertex (matches production): set CLAWVISOR_LLM_TASK_RISK_PROVIDER=gemini
+//     and CLAWVISOR_LLM_TASK_RISK_PROJECT=<gcp-project>. Optionally override
+//     CLAWVISOR_LLM_TASK_RISK_{MODEL,REGION}. Auth uses Application Default
+//     Credentials (run `gcloud auth application-default login`).
+//
+// Skipped when neither configuration is present.
 func TestEvalTaskRiskAssessment(t *testing.T) {
-	apiKey := os.Getenv("CLAWVISOR_LLM_TASK_RISK_API_KEY")
-	if apiKey == "" {
-		t.Skip("CLAWVISOR_LLM_TASK_RISK_API_KEY not set — skipping eval")
-	}
-
-	model := os.Getenv("CLAWVISOR_LLM_TASK_RISK_MODEL")
-	if model == "" {
-		model = "claude-haiku-4-5-20251001"
-	}
 	provider := os.Getenv("CLAWVISOR_LLM_TASK_RISK_PROVIDER")
 	if provider == "" {
 		provider = "anthropic"
 	}
+
+	apiKey := os.Getenv("CLAWVISOR_LLM_TASK_RISK_API_KEY")
+	project := os.Getenv("CLAWVISOR_LLM_TASK_RISK_PROJECT")
+	region := os.Getenv("CLAWVISOR_LLM_TASK_RISK_REGION")
+	if region == "" {
+		region = "global"
+	}
+
+	switch provider {
+	case "gemini":
+		if project == "" {
+			t.Skip("CLAWVISOR_LLM_TASK_RISK_PROVIDER=gemini requires CLAWVISOR_LLM_TASK_RISK_PROJECT — skipping eval")
+		}
+	default:
+		if apiKey == "" {
+			t.Skip("CLAWVISOR_LLM_TASK_RISK_API_KEY not set — skipping eval")
+		}
+	}
+
+	model := os.Getenv("CLAWVISOR_LLM_TASK_RISK_MODEL")
+	if model == "" {
+		if provider == "gemini" {
+			model = "gemini-3.1-flash-lite"
+		} else {
+			model = "claude-haiku-4-5-20251001"
+		}
+	}
 	endpoint := os.Getenv("CLAWVISOR_LLM_TASK_RISK_ENDPOINT")
-	if endpoint == "" {
+	if endpoint == "" && provider == "anthropic" {
 		endpoint = "https://api.anthropic.com/v1"
 	}
+	// For Gemini, llm.NewClient builds the endpoint from project/region/model
+	// when Endpoint is empty — leave it unset.
 
 	// Load eval cases.
 	data, err := os.ReadFile("testdata/eval_cases.json")
@@ -83,13 +127,25 @@ func TestEvalTaskRiskAssessment(t *testing.T) {
 		t.Fatal("no eval cases found")
 	}
 
-	// Build assessor.
+	// Build assessor. The eval cases reason about intent verification mode
+	// (strict/lenient/off) per task, which presupposes the deployment-level
+	// verifier is enabled — leave Verification.Enabled=true so the assessor
+	// does NOT prepend its "deployment note: verification disabled" override.
+	// The verifier is never actually called during these evals; only its
+	// enabled flag is read.
 	health := llm.NewHealth(config.LLMConfig{
 		Provider:       provider,
 		Endpoint:       endpoint,
 		APIKey:         apiKey,
 		Model:          model,
+		Project:        project,
+		Region:         region,
 		TimeoutSeconds: 30,
+		Verification: config.VerificationConfig{
+			LLMProviderConfig: config.LLMProviderConfig{
+				Enabled: true,
+			},
+		},
 		TaskRisk: config.TaskRiskConfig{
 			LLMProviderConfig: config.LLMProviderConfig{
 				Enabled:        true,
@@ -97,6 +153,8 @@ func TestEvalTaskRiskAssessment(t *testing.T) {
 				Endpoint:       endpoint,
 				APIKey:         apiKey,
 				Model:          model,
+				Project:        project,
+				Region:         region,
 				TimeoutSeconds: 30,
 			},
 		},
@@ -108,21 +166,35 @@ func TestEvalTaskRiskAssessment(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.Name, func(t *testing.T) {
-			// Convert eval actions to store.TaskAction.
+			// Convert eval actions to store.TaskAction (v1).
 			actions := make([]store.TaskAction, len(tc.Request.Actions))
 			for i, a := range tc.Request.Actions {
 				actions[i] = store.TaskAction{
-					Service:     a.Service,
-					Action:      a.Action,
-					AutoExecute: a.AutoExecute,
-					ExpectedUse: a.ExpectedUse,
+					Service:      a.Service,
+					Action:       a.Action,
+					AutoExecute:  a.AutoExecute,
+					ExpectedUse:  a.ExpectedUse,
+					Verification: a.Verification,
+				}
+			}
+
+			// Convert eval expected_tools to runtime envelope (v2).
+			tools := make([]runtimetasks.ExpectedTool, len(tc.Request.ExpectedTools))
+			for i, t := range tc.Request.ExpectedTools {
+				tools[i] = runtimetasks.ExpectedTool{
+					ToolName:   t.ToolName,
+					Why:        t.Why,
+					InputRegex: t.InputRegex,
 				}
 			}
 
 			req := AssessRequest{
-				AgentName:         tc.Request.AgentName,
-				Purpose:           tc.Request.Purpose,
-				AuthorizedActions: actions,
+				AgentName:              tc.Request.AgentName,
+				Purpose:                tc.Request.Purpose,
+				AuthorizedActions:      actions,
+				ExpectedTools:          tools,
+				IntentVerificationMode: tc.Request.IntentVerificationMode,
+				ExpectedUse:            tc.Request.ExpectedUse,
 			}
 
 			assessment, err := assessor.Assess(context.Background(), req)
@@ -199,6 +271,7 @@ func printEvalSummary(t *testing.T, results []evalResult) {
 		"expected_use_conflict",
 		"multi_service",
 		"prompt_injection",
+		"intent_scoped_capability",
 	}
 	for _, cat := range categories {
 		s, ok := categoryStats[cat]

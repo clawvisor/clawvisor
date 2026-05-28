@@ -97,7 +97,7 @@ func (h *FeedbackHandler) ReportBug(w http.ResponseWriter, r *http.Request) {
 		AgentName:   agent.Name,
 	})
 	if err != nil {
-		h.logger.Error("feedback review failed", "err", err)
+		h.logger.ErrorContext(ctx, "feedback review failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to review report")
 		return
 	}
@@ -118,12 +118,12 @@ func (h *FeedbackHandler) ReportBug(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.CreateFeedbackReport(ctx, report); err != nil {
-		h.logger.Error("failed to save feedback report", "err", err)
+		h.logger.ErrorContext(ctx, "failed to save feedback report", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to save report")
 		return
 	}
 
-	h.logger.Info("agent feedback report submitted",
+	h.logger.InfoContext(ctx, "agent feedback report submitted",
 		"report_id", report.ID,
 		"agent_id", agent.ID,
 		"category", reviewResult.Category,
@@ -183,12 +183,12 @@ func (h *FeedbackHandler) SubmitNPS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.SaveNPSResponse(ctx, nps); err != nil {
-		h.logger.Error("failed to save NPS response", "err", err)
+		h.logger.ErrorContext(ctx, "failed to save NPS response", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to save response")
 		return
 	}
 
-	h.logger.Info("agent NPS response submitted",
+	h.logger.InfoContext(ctx, "agent NPS response submitted",
 		"agent_id", agent.ID,
 		"score", req.Score,
 	)

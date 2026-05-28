@@ -287,7 +287,7 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 		"Before creating the task, tell me I will need to approve it",
 		// Proactive task-creation steer: the model should declare scope
 		// up front, not wait until a tool call gets refused.
-		"start every non-trivial request with a task",
+		"create a task before any tool call that is not on the ALLOWED WITHOUT A TASK list",
 		"Don't wait for a tool call to be refused",
 		// Vault-placeholder steer: tell the model these are SAFE to use
 		// directly, not raw credentials it should refuse to handle.
@@ -706,8 +706,14 @@ func TestLLMEndpoint_InboundSecretVaultRefusesNameCollision(t *testing.T) {
 	decision.Header.Set("Authorization", "Bearer "+rawToken)
 	decisionRec := httptest.NewRecorder()
 	mux.ServeHTTP(decisionRec, decision)
-	if decisionRec.Code != http.StatusConflict {
-		t.Fatalf("expected vault name conflict, got %d (%s)", decisionRec.Code, decisionRec.Body.String())
+	// Conflict is wire-shaped as a harness-renderable assistant text
+	// turn (HTTP 200) carrying the conflict explanation, so the user
+	// sees actionable guidance ("choose a different vault name") inline.
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 harness-shaped conflict error, got %d (%s)", decisionRec.Code, decisionRec.Body.String())
+	}
+	if !strings.Contains(decisionRec.Body.String(), "already exists with a different value") {
+		t.Fatalf("body should explain the name conflict:\n%s", decisionRec.Body.String())
 	}
 	if got := string(v.data[user.ID+"/slack_ci"]); got != "old-slack-token" {
 		t.Fatalf("existing vault entry should not be overwritten or deleted, got %q", got)
@@ -1049,8 +1055,15 @@ func TestLLMEndpoint_InboundSecretVaultFailureKeepsDecisionRetryable(t *testing.
 	failingDecision.Header.Set("Authorization", "Bearer "+rawToken)
 	failingRec := httptest.NewRecorder()
 	mux.ServeHTTP(failingRec, failingDecision)
-	if failingRec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected first vault decision to fail, got %d (%s)", failingRec.Code, failingRec.Body.String())
+	// Vault-store failure is wire-shaped as a harness-renderable
+	// assistant text turn (HTTP 200) so the user can retry the same
+	// `vault …` decision once the dependency is healthy. The internal
+	// 500 lives in the audit log for operators.
+	if failingRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 harness-shaped error on vault failure, got %d (%s)", failingRec.Code, failingRec.Body.String())
+	}
+	if !strings.Contains(failingRec.Body.String(), "couldn't save the detected secret") {
+		t.Fatalf("body should explain the save failure:\n%s", failingRec.Body.String())
 	}
 	if upstreamHits != 0 {
 		t.Fatalf("failed vault decision must not forward upstream, hits=%d body=%s", upstreamHits, seenBody)
@@ -1427,6 +1440,11 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 	emptyVault := &stubVault{}
 	h.Forwarder = llmproxy.NewForwarder(emptyVault)
 	h.Forwarder.Upstream = llmproxy.UpstreamSelector{AnthropicBaseURL: upstream.URL}
+	h.DashboardBaseURL = "http://localhost:25297"
+	agent, err := st.GetAgentByToken(context.Background(), auth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("GetAgentByToken: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLM(st)
@@ -1437,8 +1455,82 @@ func TestLLMEndpoint_VaultMissReturnsClearError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadGateway && rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 or 502 on vault miss, got %d (%s)", rec.Code, rec.Body.String())
+	// Vault-miss errors come back wire-shaped as a harness-renderable
+	// assistant text turn (HTTP 200) so the user sees a recoverable
+	// "configure your upstream API key" message instead of the CLI's
+	// generic "model may not exist" fallback.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 harness-shaped error on vault miss, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "no Anthropic API key configured") {
+		t.Fatalf("body should explain vault miss:\n%s", body)
+	}
+	// Deep links: the Anthropic console + this agent's vault page on
+	// the configured dashboard host (local in this test — must NOT
+	// fall through to the build-env default app.clawvisor.com).
+	if !strings.Contains(body, "https://console.anthropic.com/settings/keys") {
+		t.Fatalf("body should link to the Anthropic console:\n%s", body)
+	}
+	wantAgentURL := "http://localhost:25297/dashboard/agents/" + agent.ID
+	if !strings.Contains(body, wantAgentURL) {
+		t.Fatalf("body should deep-link to the configured dashboard (%s):\n%s", wantAgentURL, body)
+	}
+	if strings.Contains(body, "app.clawvisor.com") || strings.Contains(body, "app.staging.clawvisor.com") {
+		t.Fatalf("local handler should not link to the hosted dashboard:\n%s", body)
+	}
+}
+
+func TestLLMEndpoint_VaultMissUnderPassthroughUsesSameMessage(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("upstream should not be hit when vault is empty and passthrough has no bearer")
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	emptyVault := &stubVault{}
+	h.Forwarder = llmproxy.NewForwarder(emptyVault)
+	h.Forwarder.Upstream = llmproxy.UpstreamSelector{AnthropicBaseURL: upstream.URL}
+	h.DashboardBaseURL = "http://localhost:25297"
+	agent, err := st.GetAgentByToken(context.Background(), auth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("GetAgentByToken: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	// Caller signals passthrough intent via X-Clawvisor-Agent-Token but
+	// sends no upstream Authorization. The user sees the same friendly
+	// "get a key, paste it here" message as the plain vault-miss path —
+	// the failure modes are distinguishable only via the audit outcome.
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude","messages":[]}`))
+	req.Header.Set(middleware.AgentTokenHeader, rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 harness-shaped error, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "no Anthropic API key configured") {
+		t.Fatalf("body should carry the friendly vault-miss message:\n%s", body)
+	}
+	// The user message must NOT leak implementation jargon — these
+	// belong in the audit outcome (upstream_auth_missing_for_passthrough),
+	// not the chat-rendered text.
+	for _, term := range []string{"X-Clawvisor-Agent-Token", "passthrough", "Bearer"} {
+		if strings.Contains(body, term) {
+			t.Fatalf("user-facing message must not leak %q:\n%s", term, body)
+		}
+	}
+	if !strings.Contains(body, "https://console.anthropic.com/settings/keys") {
+		t.Fatalf("body should link to the Anthropic console:\n%s", body)
+	}
+	wantAgentURL := "http://localhost:25297/dashboard/agents/" + agent.ID
+	if !strings.Contains(body, wantAgentURL) {
+		t.Fatalf("body should deep-link to the configured dashboard (%s):\n%s", wantAgentURL, body)
 	}
 }
 
@@ -1459,8 +1551,15 @@ func TestLLMEndpoint_RejectsMalformedBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+	// Errors are wire-shaped as a harness-renderable assistant text turn
+	// (HTTP 200) rather than a 4xx JSON body. The harness can't parse
+	// non-harness-shaped errors and falls back to its generic "model may
+	// not exist" message, which is unrecoverable from the user's POV.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 harness-shaped error, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid character") {
+		t.Fatalf("body should carry parse error message:\n%s", rec.Body.String())
 	}
 }
 
@@ -1827,6 +1926,95 @@ func TestLLMEndpoint_RewritesTaskApprovalReplyBeforeForwarding(t *testing.T) {
 		!strings.Contains(string(seenBody), "/tmp/greet.sh") ||
 		strings.Contains(string(seenBody), `"content":"task"`) {
 		t.Fatalf("upstream body was not rewritten with task guidance: %s", seenBody)
+	}
+}
+
+// TestCheckedOutTaskID_FallsBackToLegacyKeyForControlPlaneCheckout
+// guards the per-conversation/legacy-bucket fallback rule:
+// POST /control/task/checkout writes under (UserID, AgentID) with empty
+// ConversationID because the control endpoint has no per-turn
+// conversation context. Without the fallback, a scoped lookup with a
+// non-empty ConversationID would miss every time and the
+// manually-selected task would never be preferred.
+func TestCheckedOutTaskID_FallsBackToLegacyKeyForControlPlaneCheckout(t *testing.T) {
+	ctx := context.Background()
+	checkouts := llmproxy.NewMemoryTaskCheckoutStore(time.Hour)
+	// Simulate POST /control/task/checkout: stored under the legacy
+	// (user, agent) key, no conversation ID.
+	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{
+		UserID:  "user-1",
+		AgentID: "agent-1",
+	}, "task-active", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	h := &LLMEndpointHandler{TaskCheckouts: checkouts}
+	agent := &store.Agent{ID: "agent-1", UserID: "user-1"}
+	candidates := []*store.Task{
+		{ID: "task-active", AgentID: "agent-1", Status: "active"},
+	}
+
+	// Conversation-scoped lookup: scoped bucket is empty, falls back to
+	// legacy, finds task-active.
+	id, err := h.checkedOutTaskID(ctx, agent, "conv-A", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "task-active" {
+		t.Fatalf("scoped lookup with fallback returned %q, want task-active", id)
+	}
+
+	// Unscoped (empty ConversationID) still works.
+	id, err = h.checkedOutTaskID(ctx, agent, "", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "task-active" {
+		t.Fatalf("legacy-bucket lookup returned %q, want task-active", id)
+	}
+}
+
+// TestCheckedOutTaskID_ScopedWinsOverLegacyFallback confirms an
+// inline-task approval that wrote to the scoped bucket takes
+// precedence over any control-plane checkout in the legacy bucket: the
+// fallback only fires when the scoped bucket is empty.
+func TestCheckedOutTaskID_ScopedWinsOverLegacyFallback(t *testing.T) {
+	ctx := context.Background()
+	checkouts := llmproxy.NewMemoryTaskCheckoutStore(time.Hour)
+	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{
+		UserID:  "user-1",
+		AgentID: "agent-1",
+	}, "task-legacy", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		ConversationID: "conv-A",
+	}, "task-scoped", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	h := &LLMEndpointHandler{TaskCheckouts: checkouts}
+	agent := &store.Agent{ID: "agent-1", UserID: "user-1"}
+	candidates := []*store.Task{
+		{ID: "task-legacy", AgentID: "agent-1", Status: "active"},
+		{ID: "task-scoped", AgentID: "agent-1", Status: "active"},
+	}
+
+	id, err := h.checkedOutTaskID(ctx, agent, "conv-A", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "task-scoped" {
+		t.Fatalf("scoped bucket should win; got %q, want task-scoped", id)
+	}
+
+	// A sibling conversation with no scoped entry falls back to legacy.
+	id, err = h.checkedOutTaskID(ctx, agent, "conv-B", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "task-legacy" {
+		t.Fatalf("sibling conversation should fall back; got %q, want task-legacy", id)
 	}
 }
 

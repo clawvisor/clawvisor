@@ -27,6 +27,7 @@ import (
 	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
+	sheetsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/sheets"
 	onedriveadapter "github.com/clawvisor/clawvisor/internal/adapters/microsoft/onedrive"
 	outlookadapter "github.com/clawvisor/clawvisor/internal/adapters/microsoft/outlook"
 	perplexityadapter "github.com/clawvisor/clawvisor/internal/adapters/perplexity"
@@ -179,6 +180,11 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	contacts := contactsadapter.New(oauthProvider)
 	goOverrides["google.contacts:list_contacts"] = contacts.Execute
 
+	sheets := sheetsadapter.New(oauthProvider)
+	for _, action := range []string{"list_spreadsheets", "get_spreadsheet", "read_range", "append_rows", "update_cells", "create_spreadsheet"} {
+		goOverrides["google.sheets:"+action] = sheets.Execute
+	}
+
 	dbx := dropboxadapter.New()
 	for _, action := range []string{"list_folder", "download_file", "upload_file"} {
 		goOverrides["dropbox:"+action] = dbx.Execute
@@ -272,6 +278,20 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		mcpByID[ma.ServiceID()] = ma
 	}
 
+	buildGeneratedAdapter := func(serviceID, yamlContent string) (adapters.Adapter, bool) {
+		var def yamldef.ServiceDef
+		if err := yaml.Unmarshal([]byte(yamlContent), &def); err != nil {
+			logger.Warn("resolver: bad YAML for generated adapter", "service_id", serviceID, "err", err)
+			return nil, false
+		}
+		a, err := yamlruntime.New(def, nil)
+		if err != nil {
+			logger.Warn("resolver: failed to build adapter", "service_id", serviceID, "err", err)
+			return nil, false
+		}
+		return a, true
+	}
+
 	// Resolver chain: MCP tool-cache lookup (any mode) + cloud-mode user
 	// generated YAML adapters. Called by Registry on per-user cache miss.
 	adapterReg.SetResolver(func(ctx context.Context, serviceID, userID string) (adapters.Adapter, bool) {
@@ -305,7 +325,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 				}
 				var tools []mcpclient.Tool
 				if err := json.Unmarshal(toolsJSON, &tools); err != nil {
-					logger.Warn("resolver: bad mcp tools json", "service", serviceID, "user", userID, "alias", alias, "err", err)
+					logger.WarnContext(ctx, "resolver: bad mcp tools json", "service", serviceID, "user", userID, "alias", alias, "err", err)
 					continue
 				}
 				return mcp.ForUser(tools), true
@@ -326,27 +346,39 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		}
 		rows, err := st.ListGeneratedAdapters(ctx, userID)
 		if err != nil {
-			logger.Warn("resolver: failed to list generated adapters", "user_id", userID, "err", err)
+			logger.WarnContext(ctx, "resolver: failed to list generated adapters", "user_id", userID, "err", err)
 			return nil, false
 		}
 		for _, row := range rows {
 			if row.ServiceID != serviceID {
 				continue
 			}
-			var def yamldef.ServiceDef
-			if err := yaml.Unmarshal([]byte(row.YAMLContent), &def); err != nil {
-				logger.Warn("resolver: bad YAML for generated adapter", "service_id", serviceID, "err", err)
-				return nil, false
-			}
-			a, err := yamlruntime.New(def, nil)
-			if err != nil {
-				logger.Warn("resolver: failed to build adapter", "service_id", serviceID, "err", err)
-				return nil, false
-			}
-			return a, true
+			return buildGeneratedAdapter(serviceID, row.YAMLContent)
 		}
 		return nil, false
 	})
+
+	if cfg.Database.Driver == "postgres" {
+		adapterReg.SetUserAdapterLister(func(ctx context.Context, userID string) ([]adapters.Adapter, bool) {
+			rows, err := st.ListGeneratedAdapters(ctx, userID)
+			if err != nil {
+				logger.WarnContext(ctx, "resolver: failed to list generated adapters", "user_id", userID, "err", err)
+				return nil, false
+			}
+			out := make([]adapters.Adapter, 0, len(rows))
+			for _, row := range rows {
+				if _, isGlobal := adapterReg.Get(row.ServiceID); isGlobal {
+					logger.WarnContext(ctx, "resolver: skipping generated adapter that collides with a built-in adapter",
+						"user_id", userID, "service_id", row.ServiceID)
+					continue
+				}
+				if a, ok := buildGeneratedAdapter(row.ServiceID, row.YAMLContent); ok {
+					out = append(out, a)
+				}
+			}
+			return out, true
+		})
+	}
 
 	// Initialize the display package with the adapter registry.
 	display.Init(adapterReg)

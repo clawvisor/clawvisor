@@ -101,7 +101,7 @@ func TestAuditEmitter_LogToolUseInspected(t *testing.T) {
 		ID:    "toolu_1",
 		Name:  "WebFetch",
 		Input: json.RawMessage(`{"url":"https://api.github.com/repos/x/y/issues","headers":{"Authorization":"Bearer secret"}}`),
-	}, verdict, "rewrite", "success", verdict.Reason)
+	}, verdict, "rewrite", "success", verdict.Reason, "")
 
 	rows, _, _ := st.ListAuditEntries(context.Background(), agent.UserID, store.AuditFilter{})
 	if len(rows) != 1 {
@@ -116,6 +116,9 @@ func TestAuditEmitter_LogToolUseInspected(t *testing.T) {
 	}
 	if row.ToolUseID == nil || *row.ToolUseID != "toolu_1" {
 		t.Errorf("tool_use_id missing or wrong: %v", row.ToolUseID)
+	}
+	if row.TaskID != nil {
+		t.Errorf("task_id should be nil when caller passes empty string, got %v", row.TaskID)
 	}
 	var params map[string]any
 	_ = json.Unmarshal(row.ParamsSafe, &params)
@@ -135,6 +138,31 @@ func TestAuditEmitter_LogToolUseInspected(t *testing.T) {
 	headers, _ := toolInput["headers"].(map[string]any)
 	if _, ok := headers["Authorization"]; ok {
 		t.Errorf("tool_input should not persist Authorization header: %+v", headers)
+	}
+}
+
+// TestAuditEmitter_LogToolUseInspected_TaskID confirms that passing a
+// non-empty taskID populates AuditEntry.TaskID — the field the
+// dashboard's per-task activity feed filters on (GET /api/audit?task_id=).
+// Without this linkage, lite-proxy tool_use rows never appear in any
+// task's activity tab.
+func TestAuditEmitter_LogToolUseInspected_TaskID(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	em := NewAuditEmitter(st, nil, nil)
+
+	em.LogToolUseInspected(context.Background(), agent, "req-task", conversation.ToolUse{
+		ID:    "toolu_2",
+		Name:  "WebFetch",
+		Input: json.RawMessage(`{"url":"https://api.github.com/repos/x/y"}`),
+	}, inspector.Verdict{IsAPICall: true, Host: "api.github.com", Method: "GET", Path: "/repos/x/y", Source: inspector.SourceDeterministic},
+		"allow", "matched_task", "scope covered", "task-abc")
+
+	rows, _, _ := st.ListAuditEntries(context.Background(), agent.UserID, store.AuditFilter{TaskID: "task-abc"})
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row filtered by task_id, got %d", len(rows))
+	}
+	if rows[0].TaskID == nil || *rows[0].TaskID != "task-abc" {
+		t.Errorf("task_id not persisted: %v", rows[0].TaskID)
 	}
 }
 

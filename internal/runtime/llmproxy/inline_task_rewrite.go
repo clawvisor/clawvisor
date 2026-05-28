@@ -20,6 +20,7 @@ type InlineApprovalRewriteRequest struct {
 	Provider        conversation.Provider
 	Body            []byte
 	Agent           *store.Agent
+	ConversationID  string
 	PendingApproval PendingApprovalCache
 	// Creator is the handlers-side helper that creates the task in
 	// the store with surface=inline_chat. Required for approve;
@@ -102,6 +103,7 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 		UserID:          req.Agent.UserID,
 		AgentID:         req.Agent.ID,
 		Provider:        req.Provider,
+		ConversationID:  req.ConversationID,
 		PendingApproval: req.PendingApproval,
 		Verb:            verb,
 		ApprovalID:      approvalID,
@@ -154,7 +156,7 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 		return out, nil
 	}
 
-	resolved, err := consumeApprovalActionHold(ctx, req.PendingApproval, req.Agent, req.Provider, action)
+	resolved, err := consumeApprovalActionHold(ctx, req.PendingApproval, req.Agent, req.Provider, req.ConversationID, action)
 	if err != nil {
 		return InlineApprovalRewriteResult{Body: req.Body}, err
 	}
@@ -165,7 +167,7 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	// Drop the linked outer tool hold so it doesn't sit in the cache
 	// re-matching subsequent approval prompts. The model will re-emit
 	// the original tool naturally now that the task scope covers it.
-	dropLinkedToolHold(ctx, req.PendingApproval, req.Agent, req.Provider, resolved)
+	dropLinkedToolHold(ctx, req.PendingApproval, req.Agent, req.Provider, req.ConversationID, resolved)
 	replacement, out := resolveInlineTaskApproval(ctx, req, resolved, verb)
 
 	// Record the outcome before returning. The augmenter on later

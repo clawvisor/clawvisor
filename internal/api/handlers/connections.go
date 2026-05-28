@@ -246,7 +246,7 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 			ApproveURL:   approveURL,
 			DenyURL:      denyURL,
 		}); err != nil {
-			h.logger.Warn("failed to send connection request notification", "err", err)
+			h.logger.WarnContext(r.Context(), "failed to send connection request notification", "err", err)
 		} else if msgID != "" {
 			_ = h.st.SaveNotificationMessage(r.Context(), "connection", req.ID, "telegram", msgID)
 		}
@@ -720,7 +720,7 @@ func (h *ConnectionsHandler) updateNotificationMsg(ctx context.Context, targetID
 		return
 	}
 	if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
-		h.logger.Warn("telegram message update failed", "err", err, "target_type", "connection", "target_id", targetID)
+		h.logger.WarnContext(ctx, "telegram message update failed", "err", err, "target_type", "connection", "target_id", targetID)
 	}
 }
 

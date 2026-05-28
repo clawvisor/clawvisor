@@ -108,7 +108,7 @@ func (m *MultiNotifier) SendApprovalRequest(ctx context.Context, req ApprovalReq
 	for _, n := range m.notifiers {
 		id, err := n.SendApprovalRequest(ctx, req)
 		if err != nil {
-			m.logger.Warn("notifier: SendApprovalRequest failed", "err", err)
+			m.logger.WarnContext(ctx,"notifier: SendApprovalRequest failed", "err", err)
 			errs = append(errs, err)
 		} else if messageID == "" && id != "" {
 			messageID = id
@@ -121,7 +121,7 @@ func (m *MultiNotifier) SendActivationRequest(ctx context.Context, req Activatio
 	var errs []error
 	for _, n := range m.notifiers {
 		if err := n.SendActivationRequest(ctx, req); err != nil {
-			m.logger.Warn("notifier: SendActivationRequest failed", "err", err)
+			m.logger.WarnContext(ctx,"notifier: SendActivationRequest failed", "err", err)
 			errs = append(errs, err)
 		}
 	}
@@ -134,7 +134,7 @@ func (m *MultiNotifier) SendTaskApprovalRequest(ctx context.Context, req TaskApp
 	for _, n := range m.notifiers {
 		id, err := n.SendTaskApprovalRequest(ctx, req)
 		if err != nil {
-			m.logger.Warn("notifier: SendTaskApprovalRequest failed", "err", err)
+			m.logger.WarnContext(ctx,"notifier: SendTaskApprovalRequest failed", "err", err)
 			errs = append(errs, err)
 		} else if messageID == "" && id != "" {
 			messageID = id
@@ -149,7 +149,7 @@ func (m *MultiNotifier) SendScopeExpansionRequest(ctx context.Context, req Scope
 	for _, n := range m.notifiers {
 		id, err := n.SendScopeExpansionRequest(ctx, req)
 		if err != nil {
-			m.logger.Warn("notifier: SendScopeExpansionRequest failed", "err", err)
+			m.logger.WarnContext(ctx,"notifier: SendScopeExpansionRequest failed", "err", err)
 			errs = append(errs, err)
 		} else if messageID == "" && id != "" {
 			messageID = id
@@ -164,7 +164,7 @@ func (m *MultiNotifier) SendConnectionRequest(ctx context.Context, req Connectio
 	for _, n := range m.notifiers {
 		id, err := n.SendConnectionRequest(ctx, req)
 		if err != nil {
-			m.logger.Warn("notifier: SendConnectionRequest failed", "err", err)
+			m.logger.WarnContext(ctx,"notifier: SendConnectionRequest failed", "err", err)
 			errs = append(errs, err)
 		} else if messageID == "" && id != "" {
 			messageID = id
@@ -177,7 +177,7 @@ func (m *MultiNotifier) UpdateMessage(ctx context.Context, userID, messageID, te
 	var errs []error
 	for _, n := range m.notifiers {
 		if err := n.UpdateMessage(ctx, userID, messageID, text); err != nil {
-			m.logger.Warn("notifier: UpdateMessage failed", "err", err)
+			m.logger.WarnContext(ctx,"notifier: UpdateMessage failed", "err", err)
 			errs = append(errs, err)
 		}
 	}
@@ -188,7 +188,7 @@ func (m *MultiNotifier) SendTestMessage(ctx context.Context, userID string) erro
 	var errs []error
 	for _, n := range m.notifiers {
 		if err := n.SendTestMessage(ctx, userID); err != nil {
-			m.logger.Warn("notifier: SendTestMessage failed", "err", err)
+			m.logger.WarnContext(ctx,"notifier: SendTestMessage failed", "err", err)
 			errs = append(errs, err)
 		}
 	}
@@ -199,7 +199,7 @@ func (m *MultiNotifier) SendAlert(ctx context.Context, userID, text string) erro
 	var errs []error
 	for _, n := range m.notifiers {
 		if err := n.SendAlert(ctx, userID, text); err != nil {
-			m.logger.Warn("notifier: SendAlert failed", "err", err)
+			m.logger.WarnContext(ctx,"notifier: SendAlert failed", "err", err)
 			errs = append(errs, err)
 		}
 	}

@@ -34,13 +34,43 @@ func AnthropicApprovalReply(body []byte) (verb, id string) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return "", ""
 	}
+	userIdx := -1
 	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role != "user" {
+		if req.Messages[i].Role == "user" {
+			userIdx = i
+			break
+		}
+	}
+	if userIdx < 0 {
+		return "", ""
+	}
+	verb, id = ParseApprovalReplyText(flattenAnthropicUserText(req.Messages[userIdx].Content))
+	if verb == "" || id != "" {
+		return verb, id
+	}
+	// Bare reply (e.g. "y"): scan back through assistant messages for the
+	// most recent approval-ID marker. Without this, a "y" lands on whatever
+	// hold the cache picks LIFO — which can be the wrong agent's when
+	// several share a Clawvisor token. The marker pins the reply to the
+	// specific approval prompt this transcript is looking at.
+	for i := userIdx - 1; i >= 0; i-- {
+		if req.Messages[i].Role != "assistant" {
 			continue
 		}
-		return ParseApprovalReplyText(flattenAnthropicUserText(req.Messages[i].Content))
+		if marker := FindLatestApprovalIDMarker(flattenAnthropicUserText(req.Messages[i].Content)); marker != "" {
+			return verb, marker
+		}
 	}
-	return "", ""
+	return verb, ""
+}
+
+// SyntheticToolCall is one tool_use entry in a (possibly multi-block)
+// synthetic approval-release response. The release path emits one of
+// these per held tool_use when the user approves a coalesced hold.
+type SyntheticToolCall struct {
+	ID    string
+	Name  string
+	Input map[string]any
 }
 
 func SyntheticApprovalToolUseResponse(req *http.Request, provider Provider, requestBody []byte, allow bool, toolUseID, toolName string, toolInput map[string]any) (SyntheticApprovalResponse, bool) {
@@ -48,9 +78,27 @@ func SyntheticApprovalToolUseResponse(req *http.Request, provider Provider, requ
 }
 
 func SyntheticApprovalToolUseResponseWithDenyMessage(req *http.Request, provider Provider, requestBody []byte, allow bool, toolUseID, toolName string, toolInput map[string]any, denyMessage string) (SyntheticApprovalResponse, bool) {
+	calls := []SyntheticToolCall{{ID: toolUseID, Name: toolName, Input: toolInput}}
+	return SyntheticApprovalToolUsesResponseWithDenyMessage(req, provider, requestBody, allow, calls, denyMessage)
+}
+
+// SyntheticApprovalToolUsesResponseWithDenyMessage builds a synthetic
+// upstream response that carries N tool_use blocks on approve (or a
+// single text block on deny). When len(calls) == 1 the wire shape is
+// byte-identical to the single-call helper. When len(calls) > 1 the
+// shape is a multi-block assistant turn (Anthropic content[], OpenAI
+// Responses output[], OpenAI Chat tool_calls[]).
+//
+// Used by the coalesced-approval release path: one user yes/no covers
+// every held tool_use in the turn, so the synthetic response must
+// surface every approved call back to the harness for execution.
+func SyntheticApprovalToolUsesResponseWithDenyMessage(req *http.Request, provider Provider, requestBody []byte, allow bool, calls []SyntheticToolCall, denyMessage string) (SyntheticApprovalResponse, bool) {
 	denyMessage = strings.TrimSpace(denyMessage)
 	if denyMessage == "" {
 		denyMessage = ApprovalDeniedMessage
+	}
+	if allow && len(calls) == 0 {
+		return SyntheticApprovalResponse{}, false
 	}
 	contentType := "application/json"
 	var body []byte
@@ -60,9 +108,9 @@ func SyntheticApprovalToolUseResponseWithDenyMessage(req *http.Request, provider
 		if allow {
 			if stream {
 				contentType = "text/event-stream"
-				body = SynthAnthropicToolUseSSE("", "", "assistant", toolUseID, toolName, toolInput)
+				body = SynthAnthropicToolUsesSSE("", "", "assistant", calls)
 			} else {
-				body = SynthAnthropicToolUseJSON("", "", "assistant", toolUseID, toolName, toolInput)
+				body = SynthAnthropicToolUsesJSON("", "", "assistant", calls)
 			}
 		} else if stream {
 			contentType = "text/event-stream"
@@ -76,9 +124,9 @@ func SyntheticApprovalToolUseResponseWithDenyMessage(req *http.Request, provider
 			if allow {
 				if stream {
 					contentType = "text/event-stream"
-					body = SynthOpenAIChatToolCallSSE(toolUseID, toolName, toolInput)
+					body = SynthOpenAIChatToolCallsSSE(calls)
 				} else {
-					body = SynthOpenAIChatToolCallJSON(toolUseID, toolName, toolInput)
+					body = SynthOpenAIChatToolCallsJSON(calls)
 				}
 			} else if stream {
 				contentType = "text/event-stream"
@@ -89,9 +137,9 @@ func SyntheticApprovalToolUseResponseWithDenyMessage(req *http.Request, provider
 		} else if allow {
 			if stream {
 				contentType = "text/event-stream"
-				body = SynthOpenAIResponsesFunctionCallSSE(toolUseID, toolName, toolInput)
+				body = SynthOpenAIResponsesFunctionCallsSSE(calls)
 			} else {
-				body = SynthOpenAIResponsesFunctionCallJSON(toolUseID, toolName, toolInput)
+				body = SynthOpenAIResponsesFunctionCallsJSON(calls)
 			}
 		} else if stream {
 			contentType = "text/event-stream"

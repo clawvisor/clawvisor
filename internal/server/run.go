@@ -65,7 +65,7 @@ func SetupLocalAuth(opts *clawvisor.ServerOptions, logger *slog.Logger) (*LocalA
 		if _, err := opts.Store.CreateUser(bgCtx, localEmail, hash); err != nil {
 			return nil, fmt.Errorf("creating local user: %w", err)
 		}
-		logger.Debug("created local user", "email", localEmail)
+		logger.DebugContext(bgCtx, "created local user", "email", localEmail)
 	}
 
 	localUser, err := opts.Store.GetUserByEmail(bgCtx, localEmail)
@@ -91,7 +91,7 @@ func SetupLocalAuth(opts *clawvisor.ServerOptions, logger *slog.Logger) (*LocalA
 	// TUI auto-login token (written to .local-session).
 	tuiToken, err := ms.Generate(localUser.ID)
 	if err != nil {
-		logger.Warn("could not generate TUI magic token", "err", err)
+		logger.WarnContext(bgCtx, "could not generate TUI magic token", "err", err)
 	} else {
 		writeLocalSession(serverURL, tuiToken, logger)
 	}

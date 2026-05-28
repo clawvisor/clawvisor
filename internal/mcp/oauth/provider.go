@@ -84,7 +84,7 @@ func (p *Provider) Register(w http.ResponseWriter, r *http.Request) {
 		RedirectURIs: req.RedirectURIs,
 	}
 	if err := p.st.CreateOAuthClient(r.Context(), client); err != nil {
-		p.logger.Error("failed to create oauth client", "err", err)
+		p.logger.ErrorContext(r.Context(), "failed to create oauth client", "err", err)
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to register client")
 		return
 	}
@@ -163,7 +163,7 @@ func (p *Provider) AuthorizeApprove(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:     time.Now().Add(5 * time.Minute),
 	}
 	if err := p.st.SaveAuthorizationCode(r.Context(), authCode); err != nil {
-		p.logger.Error("failed to save authorization code", "err", err)
+		p.logger.ErrorContext(r.Context(), "failed to save authorization code", "err", err)
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to save authorization code")
 		return
 	}
@@ -307,7 +307,7 @@ func (p *Provider) Token(w http.ResponseWriter, r *http.Request) {
 	_, err = p.st.CreateAgentWithExpiry(r.Context(), authCode.UserID, agentName,
 		auth.HashToken(rawToken), time.Now().UTC().Add(mcpTokenTTL))
 	if err != nil {
-		p.logger.Error("failed to create agent for oauth token", "err", err)
+		p.logger.ErrorContext(r.Context(), "failed to create agent for oauth token", "err", err)
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to create agent")
 		return
 	}
@@ -348,7 +348,7 @@ func (p *Provider) handleRelayPairing(w http.ResponseWriter, r *http.Request) {
 	// Look up the local user — in daemon mode this is always admin@local.
 	user, err := p.st.GetUserByEmail(r.Context(), "admin@local")
 	if err != nil {
-		p.logger.Error("relay_pairing: could not find local user", "err", err)
+		p.logger.ErrorContext(r.Context(), "relay_pairing: could not find local user", "err", err)
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "could not resolve local user")
 		return
 	}
@@ -356,7 +356,7 @@ func (p *Provider) handleRelayPairing(w http.ResponseWriter, r *http.Request) {
 	// Generate a long-lived agent token (same as authorization_code grant).
 	token, err := auth.GenerateAgentToken()
 	if err != nil {
-		p.logger.Error("relay_pairing: failed to generate agent token", "err", err)
+		p.logger.ErrorContext(r.Context(), "relay_pairing: failed to generate agent token", "err", err)
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to generate token")
 		return
 	}
@@ -368,7 +368,7 @@ func (p *Provider) handleRelayPairing(w http.ResponseWriter, r *http.Request) {
 	const relayTokenTTL = 30 * 24 * time.Hour
 	if _, err := p.st.CreateAgentWithExpiry(r.Context(), user.ID, agentName, tokenHash,
 		time.Now().UTC().Add(relayTokenTTL)); err != nil {
-		p.logger.Error("relay_pairing: failed to create agent", "err", err)
+		p.logger.ErrorContext(r.Context(), "relay_pairing: failed to create agent", "err", err)
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to create agent")
 		return
 	}

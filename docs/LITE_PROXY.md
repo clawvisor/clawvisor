@@ -204,7 +204,7 @@ features:
 
 A **task** is a user-approved scope: a purpose statement plus a list of tools the agent expects to use. Once approved, the agent can do anything within that scope without per-call prompts.
 
-The model is instructed to POST a task definition to the control plane at the start of any non-trivial request:
+The model is instructed to POST a task definition to the control plane before any tool call that is not on the read-only allowlist (writes, deletes, non-default CLIs, network calls, credential use, multi-step work):
 
 ```bash
 curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' \

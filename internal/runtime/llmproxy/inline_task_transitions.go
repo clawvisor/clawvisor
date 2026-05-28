@@ -8,6 +8,9 @@ import (
 )
 
 func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest, action approvalReplyAction, editor approvalBodyEditor) (TaskReplyRewriteResult, error) {
+	// Conversation scope flows through to the cache so the consumed hold
+	// is picked from this conversation's bucket, even when another
+	// conversation sharing the token has its own pending holds.
 	// Drop the original tool hold. The user typed "task" so the
 	// harness now shows the task-creation prompt instead — there's
 	// no way back to approving the original tool. Leaving the hold
@@ -20,7 +23,7 @@ func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest,
 	// awaiting_task_definition hold. taskCreationPrompt always renders
 	// surface=inline in the example URL, so compliant models still
 	// drive the inline path.
-	pending, err := consumeApprovalActionHold(ctx, req.PendingApproval, req.Agent, req.Provider, action)
+	pending, err := consumeApprovalActionHold(ctx, req.PendingApproval, req.Agent, req.Provider, req.ConversationID, action)
 	if err != nil || pending == nil {
 		return TaskReplyRewriteResult{Body: req.Body}, err
 	}
@@ -28,34 +31,42 @@ func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest,
 	if pending != nil {
 		pendingApprovalID = pending.ID
 	}
-	rewritten, ok, err := editor.ReplaceLatestUserText("task", pendingApprovalID, taskCreationPrompt(pending.ToolUse))
+	// For a coalesced hold, generate a task definition prompt that
+	// covers every held tool_use — not just the primary. Otherwise
+	// the user typing "task" on a multi-call review would scope only
+	// one call and the sibling reviewed calls re-prompt on retry,
+	// defeating the point of the gesture. Single-tool holds collapse
+	// to the legacy single-element prompt unchanged.
+	rewritten, ok, err := editor.ReplaceLatestUserText("task", pendingApprovalID, taskCreationPromptForHolds(pending.AllHolds()))
 	if err != nil || !ok {
 		return TaskReplyRewriteResult{Body: req.Body}, err
 	}
 	return TaskReplyRewriteResult{Body: rewritten, Rewritten: true}, nil
 }
 
-func consumeApprovalActionHold(ctx context.Context, cache PendingApprovalCache, agent *store.Agent, provider conversation.Provider, action approvalReplyAction) (*PendingLiteApproval, error) {
+func consumeApprovalActionHold(ctx context.Context, cache PendingApprovalCache, agent *store.Agent, provider conversation.Provider, conversationID string, action approvalReplyAction) (*PendingLiteApproval, error) {
 	if cache == nil || agent == nil || action.Hold == nil {
 		return nil, nil
 	}
 	return cache.Resolve(ctx, ResolveRequest{
-		UserID:     agent.UserID,
-		AgentID:    agent.ID,
-		Provider:   provider,
-		ApprovalID: action.Hold.ID,
+		UserID:         agent.UserID,
+		AgentID:        agent.ID,
+		Provider:       provider,
+		ConversationID: conversationID,
+		ApprovalID:     action.Hold.ID,
 	})
 }
 
-func dropLinkedToolHold(ctx context.Context, cache PendingApprovalCache, agent *store.Agent, provider conversation.Provider, resolved *PendingLiteApproval) {
+func dropLinkedToolHold(ctx context.Context, cache PendingApprovalCache, agent *store.Agent, provider conversation.Provider, conversationID string, resolved *PendingLiteApproval) {
 	if cache == nil || agent == nil || resolved == nil || resolved.AwaitingTaskFor == "" {
 		return
 	}
 	_ = cache.Drop(ctx, ResolveRequest{
-		UserID:     agent.UserID,
-		AgentID:    agent.ID,
-		Provider:   provider,
-		ApprovalID: resolved.AwaitingTaskFor,
+		UserID:         agent.UserID,
+		AgentID:        agent.ID,
+		Provider:       provider,
+		ConversationID: conversationID,
+		ApprovalID:     resolved.AwaitingTaskFor,
 	})
 }
 
@@ -96,8 +107,9 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 		out.Credentials = created.Credentials
 		if req.Checkouts != nil && req.Agent != nil && created.ID != "" {
 			if err := req.Checkouts.Set(ctx, TaskCheckoutKey{
-				UserID:  req.Agent.UserID,
-				AgentID: req.Agent.ID,
+				UserID:         req.Agent.UserID,
+				AgentID:        req.Agent.ID,
+				ConversationID: req.ConversationID,
 			}, created.ID, 0); err == nil {
 				out.CheckedOut = true
 			}

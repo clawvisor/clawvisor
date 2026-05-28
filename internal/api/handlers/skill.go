@@ -206,7 +206,7 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 			if m.ServiceID != baseID {
 				continue
 			}
-			vKey := h.adapterReg.VaultKeyWithAlias(baseID, m.Alias)
+			vKey := h.adapterReg.VaultKeyWithAliasForUser(baseID, m.Alias, agent.UserID)
 			if !keySet[vKey] {
 				continue
 			}
@@ -226,7 +226,7 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !shown {
-			baseKey := h.adapterReg.VaultKey(baseID)
+			baseKey := h.adapterReg.VaultKeyForUser(baseID, agent.UserID)
 			usesSharedKey := baseKey != baseID
 			if !usesSharedKey && keySet[baseKey] {
 				entries[baseID] = &catalogEntry{
@@ -362,7 +362,7 @@ func (h *SkillHandler) writeCatalogOverview(buf *strings.Builder, ctx context.Co
 	if h.localSvcProvider != nil {
 		localServices, err := h.localSvcProvider.ActiveLocalServices(ctx, userID)
 		if err != nil {
-			h.logger.Warn("failed to fetch local services for catalog", "err", err)
+			h.logger.WarnContext(ctx, "failed to fetch local services for catalog", "err", err)
 		} else if len(localServices) > 0 {
 			buf.WriteString("---\n\n")
 			buf.WriteString("# Local Services\n\n")

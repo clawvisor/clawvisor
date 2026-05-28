@@ -218,7 +218,7 @@ func (c *Client) readLoop(connCtx context.Context, conn *websocket.Conn) error {
 
 		var frame Frame
 		if err := json.Unmarshal(data, &frame); err != nil {
-			c.logger.Warn("tunnel: invalid frame", "err", err)
+			c.logger.WarnContext(connCtx, "tunnel: invalid frame", "err", err)
 			continue
 		}
 
@@ -226,7 +226,7 @@ func (c *Client) readLoop(connCtx context.Context, conn *websocket.Conn) error {
 		case FrameRequest:
 			var req RequestPayload
 			if err := json.Unmarshal(frame.Payload, &req); err != nil {
-				c.logger.Warn("tunnel: invalid request payload", "err", err)
+				c.logger.WarnContext(connCtx, "tunnel: invalid request payload", "err", err)
 				continue
 			}
 			if c.onRequest != nil {
@@ -238,7 +238,7 @@ func (c *Client) readLoop(connCtx context.Context, conn *websocket.Conn) error {
 			// reset on each successful Read call.
 
 		default:
-			c.logger.Debug("tunnel: unknown frame type", "type", frame.Type)
+			c.logger.DebugContext(connCtx, "tunnel: unknown frame type", "type", frame.Type)
 		}
 	}
 }
@@ -253,7 +253,7 @@ func (c *Client) pingLoop(connCtx context.Context, connCancel context.CancelFunc
 			return
 		case <-ticker.C:
 			if err := c.writeFrame(FramePing, generateFrameID(), map[string]string{}); err != nil {
-				c.logger.Warn("tunnel: ping write failed, closing connection", "err", err)
+				c.logger.WarnContext(connCtx, "tunnel: ping write failed, closing connection", "err", err)
 				connCancel()
 				return
 			}

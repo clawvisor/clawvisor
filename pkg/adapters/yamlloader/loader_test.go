@@ -29,6 +29,7 @@ func TestLoadEmbeddedDefinitions(t *testing.T) {
 		"google.calendar":  false,
 		"google.drive":     false,
 		"google.contacts":  false,
+		"google.sheets":    false,
 		"dropbox":          false,
 		"granola":          false,
 		"perplexity":       false,

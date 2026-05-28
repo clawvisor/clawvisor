@@ -92,7 +92,16 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 // LogToolUseInspected records one tool_use seen by the lite-proxy. Each row
 // carries the tool name, a bounded input summary, verdict source, decision,
 // target host (when known), and placeholder substrings (no real credential).
-func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Agent, requestID string, tu conversation.ToolUse, verdict inspector.Verdict, decision, outcome, reason string) {
+//
+// taskID names the active task this tool_use matched (via task-scope
+// authorization), when one was matched. The dashboard task viewer
+// filters audit rows on AuditEntry.task_id, so threading the matched
+// task here is what makes lite-proxy tool_use rows visible in the
+// per-task activity feed. Empty taskID means "no task matched" — the
+// row still lands in the global audit feed but won't appear in any
+// task's activity tab, which matches reality (the call wasn't bound
+// to a task).
+func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Agent, requestID string, tu conversation.ToolUse, verdict inspector.Verdict, decision, outcome, reason, taskID string) {
 	if e == nil || e.Store == nil || agent == nil {
 		return
 	}
@@ -136,6 +145,7 @@ func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Age
 		AgentID:    &agent.ID,
 		RequestID:  requestID,
 		ToolUseID:  &toolUseID,
+		TaskID:     nilIfEmpty(taskID),
 		Timestamp:  time.Now().UTC(),
 		Service:    service,
 		Action:     "lite_proxy.tool_use." + decision,
@@ -154,21 +164,54 @@ func (e *AuditEmitter) LogApprovalRelease(ctx context.Context, agent *store.Agen
 	if e == nil || e.Store == nil || agent == nil || pending == nil {
 		return
 	}
+	// One audit row per release event, with every held tool's
+	// per-call detail under params.held_tools. The audit schema's
+	// canonical dedup index is UNIQUE(user_id, request_id, COALESCE(task_id, ''))
+	// which collapses N rows for the same request to one on insert;
+	// emitting N rows would only land the first and silently drop
+	// the rest, leaving the dashboard grouping that the comment
+	// promised broken. A single row carrying the held_tools array
+	// preserves the per-call detail without fighting the schema.
+	holds := pending.AllHolds()
+	coalesced := pending.IsCoalesced()
+	heldTools := make([]map[string]any, 0, len(holds))
+	for _, held := range holds {
+		heldTools = append(heldTools, map[string]any{
+			"tool_use_id":     held.ToolUse.ID,
+			"tool_name":       held.ToolUse.Name,
+			"held_kind":       string(held.Kind),
+			"target_host":     held.Inspector.Host,
+			"target_method":   held.Inspector.Method,
+			"target_path":     held.Inspector.Path,
+			"decision_source": string(held.Fingerprint.Source),
+		})
+	}
+	// The primary held use drives the top-level target_* fields for
+	// dashboards that key on (target_host, target_method, target_path)
+	// without parsing held_tools. Identical to the pre-coalesce shape
+	// when len(holds) == 1.
+	primary := holds[0]
+	if pending.IsCoalesced() && pending.PrimaryIndex < len(holds) {
+		primary = holds[pending.PrimaryIndex]
+	}
 	params := map[string]any{
 		"event":             "lite_proxy.approval_released",
 		"approval_id":       pending.ID,
 		"provider":          string(pending.Provider),
-		"target_host":       pending.Inspector.Host,
-		"target_method":     pending.Inspector.Method,
-		"target_path":       pending.Inspector.Path,
-		"decision_source":   string(pending.Fingerprint.Source),
+		"target_host":       primary.Inspector.Host,
+		"target_method":     primary.Inspector.Method,
+		"target_path":       primary.Inspector.Path,
+		"decision_source":   string(primary.Fingerprint.Source),
+		"coalesced":         coalesced,
+		"hold_size":         len(holds),
+		"held_tools":        heldTools,
 		"build_sha":         buildSHA(),
 		"validator_prompt":  e.ValidatorPromptSHA,
 		"parser_version":    parserVersion(),
 		"clawvisor_version": version.Version,
 	}
 	paramsJSON, _ := json.Marshal(params)
-	tu := pending.ToolUse.ID
+	tu := primary.ToolUse.ID
 	entry := &store.AuditEntry{
 		ID:         uuid.NewString(),
 		UserID:     agent.UserID,
@@ -237,6 +280,134 @@ func (e *AuditEmitter) LogInlineTaskApproved(ctx context.Context, agent *store.A
 	if err := e.Store.LogAudit(ctx, entry); err != nil {
 		e.Logger.WarnContext(ctx, "lite-proxy: inline task approval audit failed",
 			"agent_id", agent.ID, "approval_id", inner.ID, "task_id", task.ID, "err", err.Error())
+	}
+}
+
+// LogInlineTaskAutoApproved records the audit trail for an inline task
+// that bypassed the human approval prompt via the conversation-based
+// auto-approval gate. Distinct from LogInlineTaskApproved because the
+// trigger is fundamentally different — no human gesture was made — so
+// the event name and the gate's reason are surfaced for downstream
+// monitoring. Carries the same task_id / approval_record_id / tool_use
+// linkage as the human-approved path so dashboards that filter by
+// task_id keep working.
+//
+// PAIRED EMISSION: the auto-approve gate also writes a generic
+// tool-use audit row (action="lite_proxy.tool_use", outcome=
+// "auto_approved_from_conversation") via the rewriter's audit
+// closure. This task-linked row is emitted alongside, so the audit
+// trail for a single auto-approval contains TWO rows for the same
+// (request_id, tool_use_id): the tool-use row records the intercept
+// firing; this row records WHICH task got created. Consumers grouping
+// by (request_id, tool_use_id) should expect the pair — neither row
+// alone is the complete picture. Same pairing exists for the manual
+// path's LogInlineTaskApproved.
+func (e *AuditEmitter) LogInlineTaskAutoApproved(ctx context.Context, agent *store.Agent, requestID, toolUseID string, task *InlineApprovedTask, gateReason, riskLevel, intentMatch, threshold string) {
+	if e == nil || e.Store == nil || agent == nil || task == nil {
+		return
+	}
+	params := map[string]any{
+		"event":                   "lite_proxy.task_create.inline_auto_approved",
+		"task_id":                 task.ID,
+		"approval_record_id":      task.ApprovalRecordID,
+		"approval_record_missing": task.ApprovalRecordID == "",
+		"approval_source":         task.ApprovalSource,
+		"task_status":             task.Status,
+		"task_lifetime":           task.Lifetime,
+		"surface":                 "inline_chat_auto",
+		"gate_reason":             gateReason,
+		"risk_level":              riskLevel,
+		"intent_match":            intentMatch,
+		"threshold":               threshold,
+		"build_sha":               buildSHA(),
+		"clawvisor_version":       version.Version,
+	}
+	paramsJSON, _ := json.Marshal(params)
+	entry := &store.AuditEntry{
+		ID:         uuid.NewString(),
+		UserID:     agent.UserID,
+		AgentID:    &agent.ID,
+		RequestID:  requestID,
+		ToolUseID:  &toolUseID,
+		TaskID:     &task.ID,
+		Timestamp:  time.Now().UTC(),
+		Service:    "runtime.tool_use",
+		Action:     "lite_proxy.task_create.inline_auto_approved",
+		ParamsSafe: paramsJSON,
+		Decision:   "allow",
+		Outcome:    "inline_task_auto_approved",
+	}
+	if err := e.Store.LogAudit(ctx, entry); err != nil {
+		e.Logger.WarnContext(ctx, "lite-proxy: inline task auto-approval audit failed",
+			"agent_id", agent.ID, "task_id", task.ID, "err", err.Error())
+	}
+}
+
+// LogContinuationSkippedSiblingTools records the audit trail for the
+// case where the conversation auto-approval gate fired AND created a
+// task, but the model's assistant turn carried sibling tool_uses that
+// were NOT auto-approved (count mismatch between tool_uses and
+// continuation tool_results). The continuation was skipped to avoid
+// double-execution of the sibling tool_uses; the substitute fallback
+// rendered as a terminal assistant turn instead. The sibling
+// tool_uses were dropped from that rendered turn — the model never
+// receives a tool_result for them and the harness never executes
+// them. This is the audit row an operator chasing "I approved the
+// task but Bash never ran" can grep for.
+//
+// droppedToolNames is the list of sibling tool names the model
+// emitted alongside the auto-approved POST /api/control/tasks; the
+// AUDIT row records them by name (not arguments — those can be large
+// and may carry sensitive payloads).
+func (e *AuditEmitter) LogContinuationSkippedSiblingTools(ctx context.Context, agent *store.Agent, requestID string, taskID, autoApprovedToolUseID string, droppedToolNames []string) {
+	if e == nil || e.Store == nil || agent == nil {
+		return
+	}
+	// Normalize a nil dropped-names slice to []string{} so the JSON
+	// renders as `[]` not `null`. Keeps the row's shape consistent
+	// with the documented dropped_count=0 companion field and saves
+	// downstream consumers a null-vs-empty branch.
+	if droppedToolNames == nil {
+		droppedToolNames = []string{}
+	}
+	params := map[string]any{
+		"event":                  "lite_proxy.continuation.skipped_sibling_tools",
+		"task_id":                taskID,
+		"auto_approved_tool_use": autoApprovedToolUseID,
+		"dropped_tool_names":     droppedToolNames,
+		"dropped_count":          len(droppedToolNames),
+		"reason":                 "would unbalance tool_use/tool_result count; substitute fallback rendered instead and sibling tool_uses were not executed",
+		"build_sha":              buildSHA(),
+		"clawvisor_version":      version.Version,
+	}
+	paramsJSON, _ := json.Marshal(params)
+	var taskIDPtr *string
+	if taskID != "" {
+		t := taskID
+		taskIDPtr = &t
+	}
+	var toolUseIDPtr *string
+	if autoApprovedToolUseID != "" {
+		id := autoApprovedToolUseID
+		toolUseIDPtr = &id
+	}
+	entry := &store.AuditEntry{
+		ID:         uuid.NewString(),
+		UserID:     agent.UserID,
+		AgentID:    &agent.ID,
+		RequestID:  requestID,
+		ToolUseID:  toolUseIDPtr,
+		TaskID:     taskIDPtr,
+		Timestamp:  time.Now().UTC(),
+		Service:    "runtime.tool_use",
+		Action:     "lite_proxy.continuation.skipped_sibling_tools",
+		ParamsSafe: paramsJSON,
+		Decision:   "allow",
+		Outcome:    "continuation_skipped_sibling_tools",
+	}
+	if err := e.Store.LogAudit(ctx, entry); err != nil {
+		e.Logger.WarnContext(ctx, "lite-proxy: continuation-skipped audit failed",
+			"agent_id", agent.ID, "request_id", requestID, "err", err.Error())
 	}
 }
 

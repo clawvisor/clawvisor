@@ -382,9 +382,9 @@ func (n *Notifier) sendToDevices(ctx context.Context, userID string, p pushPaylo
 				AlertBody:         p.LiveActivity.AlertBody,
 			}
 			laBody, _ := json.Marshal(laReq)
-			n.logger.Info("push: sending live activity", "token_count", len(ptsTokens))
+			n.logger.InfoContext(ctx, "push: sending live activity", "token_count", len(ptsTokens))
 			if err := n.signedPost(ctx, "/api/push/live-activity", laBody); err != nil {
-				n.logger.Warn("push: live activity failed", "err", err)
+				n.logger.WarnContext(ctx, "push: live activity failed", "err", err)
 			}
 			return "push:" + n.daemonID, nil
 		}
@@ -403,7 +403,7 @@ func (n *Notifier) sendToDevices(ctx context.Context, userID string, p pushPaylo
 		return "", err
 	}
 
-	n.logger.Info("push: sending notification", "category", p.Category, "title", p.Title, "data", p.Data, "device_count", len(tokens))
+	n.logger.InfoContext(ctx, "push: sending notification", "category", p.Category, "title", p.Title, "data", p.Data, "device_count", len(tokens))
 
 	if err := n.signedPost(ctx, "/api/push", body); err != nil {
 		return "", err

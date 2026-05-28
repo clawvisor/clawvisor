@@ -27,32 +27,32 @@ type Generator struct {
 	genClient  *llm.Client // high max_tokens for YAML generation
 	riskClient *llm.Client // lower max_tokens for risk classification JSON
 	registry   *adapters.Registry
-	store       AdapterStore
-	userID      string // scopes cache operations; empty for local single-user mode
-	logger      *slog.Logger
+	store      AdapterStore
+	userID     string // scopes cache operations; empty for local single-user mode
+	logger     *slog.Logger
 }
 
 // GenerateResult contains the output of a generation attempt.
 type GenerateResult struct {
-	ServiceID   string         `json:"service_id"`
-	DisplayName string         `json:"display_name"`
-	Description string         `json:"description,omitempty"`
-	BaseURL     string         `json:"base_url"`
-	AuthType    string         `json:"auth_type"`
-	YAML        string         `json:"yaml"`
+	ServiceID   string          `json:"service_id"`
+	DisplayName string          `json:"display_name"`
+	Description string          `json:"description,omitempty"`
+	BaseURL     string          `json:"base_url"`
+	AuthType    string          `json:"auth_type"`
+	YAML        string          `json:"yaml"`
 	Actions     []ActionPreview `json:"actions"`
-	Warnings    []string       `json:"warnings,omitempty"`
-	Installed   bool           `json:"installed"`
+	Warnings    []string        `json:"warnings,omitempty"`
+	Installed   bool            `json:"installed"`
 }
 
 // ActionPreview is a user-friendly summary of a generated action.
 type ActionPreview struct {
-	Name        string        `json:"name"`
-	DisplayName string        `json:"display_name"`
-	Method      string        `json:"method,omitempty"`
-	Path        string        `json:"path,omitempty"`
-	Category    string        `json:"category"`
-	Sensitivity string        `json:"sensitivity"`
+	Name        string         `json:"name"`
+	DisplayName string         `json:"display_name"`
+	Method      string         `json:"method,omitempty"`
+	Path        string         `json:"path,omitempty"`
+	Category    string         `json:"category"`
+	Sensitivity string         `json:"sensitivity"`
 	Params      []ParamPreview `json:"params,omitempty"`
 }
 
@@ -158,7 +158,7 @@ func (g *Generator) Install(ctx context.Context, yamlContent string) (*GenerateR
 // Update regenerates an existing adapter from new source material.
 // The old adapter is replaced in-place.
 func (g *Generator) Update(ctx context.Context, serviceID string, src Source) (*GenerateResult, error) {
-	if _, ok := g.registry.Get(serviceID); !ok {
+	if _, ok := g.registry.GetForUser(ctx, serviceID, g.userID); !ok {
 		return nil, fmt.Errorf("adapter %q not found in registry", serviceID)
 	}
 
@@ -243,6 +243,12 @@ func (g *Generator) classifyRisk(ctx context.Context, rawYAML string) (string, e
 
 // install persists the YAML via the adapter store and hot-loads the adapter into the registry.
 func (g *Generator) install(ctx context.Context, def yamldef.ServiceDef, yamlContent string) error {
+	if g.userID != "" {
+		if _, ok := g.registry.Get(def.Service.ID); ok {
+			return fmt.Errorf("service ID %q collides with a built-in adapter", def.Service.ID)
+		}
+	}
+
 	if err := g.store.Save(ctx, def.Service.ID, yamlContent); err != nil {
 		return fmt.Errorf("saving adapter: %w", err)
 	}
@@ -252,7 +258,11 @@ func (g *Generator) install(ctx context.Context, def yamldef.ServiceDef, yamlCon
 	if err != nil {
 		return fmt.Errorf("building adapter from definition: %w", err)
 	}
-	g.registry.Replace(adapter)
+	if g.userID != "" {
+		g.registry.ReplaceForUser(def.Service.ID, g.userID, adapter)
+	} else {
+		g.registry.Replace(adapter)
+	}
 
 	return nil
 }

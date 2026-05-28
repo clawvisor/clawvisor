@@ -45,7 +45,7 @@ func (s *SessionStore) Create(ctx context.Context) (string, error) {
 func (s *SessionStore) Valid(ctx context.Context, id string) bool {
 	ok, err := s.store.MCPSessionValid(ctx, id)
 	if err != nil {
-		s.logger.Warn("mcp session lookup failed", "session_id", id, "err", err)
+		s.logger.WarnContext(ctx, "mcp session lookup failed", "session_id", id, "err", err)
 		return false
 	}
 	return ok

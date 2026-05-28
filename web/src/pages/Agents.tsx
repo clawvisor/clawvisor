@@ -695,6 +695,33 @@ function AgentRuntimePanel({
               label="Detect raw secrets"
             />
           </div>
+          <div className="rounded border border-border-subtle bg-surface-1 px-4 py-3 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-sm font-medium text-text-primary">Conversation-based auto-approval</div>
+            </div>
+            <p className="text-xs text-text-tertiary">
+              When this agent asks to create a task in response to your message, skip the
+              approval prompt if the conversation makes your intent clear and the task's
+              risk is at or below this level. Higher levels are not selectable here.
+            </p>
+            <label className="block space-y-1">
+              <span className="text-xs text-text-tertiary">Auto-approve up to</span>
+              <select
+                value={current.conversation_auto_approve_threshold ?? 'off'}
+                onChange={e =>
+                  setDraft({
+                    ...current,
+                    conversation_auto_approve_threshold: e.target.value as 'off' | 'low' | 'medium',
+                  })
+                }
+                className="w-full rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
+              >
+                <option value="off">Off — always ask</option>
+                <option value="low">Low risk only</option>
+                <option value="medium">Low and medium risk</option>
+              </select>
+            </label>
+          </div>
           <div className="flex justify-end">
             <button
               onClick={() => saveMut.mutate(current)}

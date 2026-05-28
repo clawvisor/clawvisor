@@ -33,9 +33,31 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 		!strings.Contains(notice, "OMIT unless credentials are needed") {
 		t.Fatalf("notice should make credential requests optional and show both task shapes; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "do not create a task when the request can be completed using only tools or command shapes listed under ALLOWED WITHOUT A TASK") ||
-		!strings.Contains(notice, "unless every required tool call is allowed without a task") {
-		t.Fatalf("notice should exempt allowlisted-only work from task creation; got:\n%s", notice)
+	if !strings.Contains(notice, "create a task before any tool call that is not on the ALLOWED WITHOUT A TASK list") ||
+		!strings.Contains(notice, "There is no \"trivial enough to skip\" exception") {
+		t.Fatalf("notice should make task creation the default for anything off the allowlist; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "a task is REQUIRED before: any write, edit, delete") ||
+		!strings.Contains(notice, "any shell command other than the read-only inspection commands listed below") ||
+		!strings.Contains(notice, "even when the specific invocation looks read-only") {
+		t.Fatalf("notice should enumerate the categories that require a task, including non-allowlisted CLIs; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "BEFORE running any permitted setup calls that are part of executing the request") ||
+		!strings.Contains(notice, "Permitted read-only calls used solely to scope an accurate task spec may run beforehand") {
+		t.Fatalf("notice should require up-front task creation before execution prep while allowing scoping research; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, `"Rename foo to bar across the repo" → task FIRST`) ||
+		!strings.Contains(notice, `"Clean up unused imports in this codebase" → inspect first`) ||
+		!strings.Contains(notice, `"Show me what's in README.md" → no task`) ||
+		!strings.Contains(notice, `"Show me the last 5 commits"`) ||
+		!strings.Contains(notice, "Do not rationalize") {
+		t.Fatalf("notice should include the worked task/research/no-task examples plus the non-default-CLI callout; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "SCOPE DRIFT") ||
+		!strings.Contains(notice, "SHIFTS the work outside the active task's scope") ||
+		!strings.Contains(notice, "iteration, not drift") ||
+		!strings.Contains(notice, "POST a new task before continuing") {
+		t.Fatalf("notice should distinguish iteration (covered) from drift (new task); got:\n%s", notice)
 	}
 	if !strings.Contains(notice, "`lifetime`") ||
 		!strings.Contains(notice, `"lifetime":"standing"`) ||

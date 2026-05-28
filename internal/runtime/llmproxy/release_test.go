@@ -393,7 +393,7 @@ func TestTryReleasePendingApproval_BlockedReleaseShowsReason(t *testing.T) {
 		t.Fatalf("expected blocked release, got %+v", result)
 	}
 	body := string(result.Body)
-	if !strings.Contains(body, "Approval could not be released") || !strings.Contains(body, "verdict host not in bound-service allowlist") {
+	if !strings.Contains(body, "Clawvisor: couldn't release this approval") || !strings.Contains(body, "verdict host not in bound-service allowlist") {
 		t.Fatalf("blocked release body should explain the reason, got:\n%s", body)
 	}
 }

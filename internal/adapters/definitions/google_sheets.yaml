@@ -1,0 +1,89 @@
+service:
+  id: google.sheets
+  display_name: Google Sheets
+  description: "Read and write Google Sheets spreadsheets."
+  setup_url: "https://github.com/clawvisor/clawvisor/blob/main/docs/GOOGLE_OAUTH_SETUP.md"
+  icon_url: "/logos/google-sheets.svg"
+  identity:
+    endpoint: "https://www.googleapis.com/oauth2/v2/userinfo"
+    field: email
+
+auth:
+  type: oauth2
+  oauth:
+    scopes:
+      - "https://www.googleapis.com/auth/spreadsheets"
+      - "https://www.googleapis.com/auth/userinfo.email"
+    endpoint: google
+    vault_key: google
+    scope_merge: true
+
+api:
+  # Required by the YAML schema even when actions are overridden in Go.
+  base_url: "https://sheets.googleapis.com/v4"
+
+# The Sheets adapter is implemented in Go for now; this YAML exists so the
+# service appears in the catalog with action risk metadata.
+# Each action is wired via defaults.go using goOverrides.
+actions:
+  list_spreadsheets:
+    display_name: "List spreadsheets"
+    risk: { category: read, sensitivity: low, description: "List spreadsheets in Google Drive" }
+    scopes: ["https://www.googleapis.com/auth/drive.readonly"]
+    override: go
+    params:
+      query: { type: string }
+      max_results: { type: int, default: 10, max: 50 }
+
+  get_spreadsheet:
+    display_name: "Get spreadsheet"
+    risk: { category: read, sensitivity: low, description: "Read spreadsheet metadata (sheets, titles)" }
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+    override: go
+    params:
+      spreadsheet_id: { type: string, required: true }
+
+  read_range:
+    display_name: "Read range"
+    risk: { category: read, sensitivity: low, description: "Read values from a range" }
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+    override: go
+    params:
+      spreadsheet_id: { type: string, required: true }
+      range: { type: string, required: true, description: "A1 notation, e.g. Sheet1!A1:D10" }
+      major_dimension:
+        type: string
+        default: "ROWS"
+        description: "ROWS or COLUMNS"
+      max_rows: { type: int, default: 200, max: 200 }
+
+  append_rows:
+    display_name: "Append rows"
+    risk: { category: write, sensitivity: medium, description: "Append rows to a sheet" }
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+    override: go
+    params:
+      spreadsheet_id: { type: string, required: true }
+      range: { type: string, required: true }
+      rows: { type: array, required: true, description: "2D array of rows" }
+      value_input_option: { type: string, default: "USER_ENTERED" }
+
+  update_cells:
+    display_name: "Update cells"
+    risk: { category: write, sensitivity: medium, description: "Update values in a sheet range" }
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+    override: go
+    params:
+      spreadsheet_id: { type: string, required: true }
+      range: { type: string, required: true }
+      values: { type: array, required: true, description: "2D array of values" }
+      value_input_option: { type: string, default: "USER_ENTERED" }
+
+  create_spreadsheet:
+    display_name: "Create spreadsheet"
+    risk: { category: write, sensitivity: medium, description: "Create a new spreadsheet" }
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+    override: go
+    params:
+      title: { type: string, required: true }
+      sheets: { type: array, description: "Optional array of sheet titles" }

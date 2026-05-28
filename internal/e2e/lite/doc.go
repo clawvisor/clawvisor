@@ -1,0 +1,26 @@
+// Package lite runs LLM-driven scenarios against the in-process lite-proxy
+// (LLMEndpointHandler) so we can measure how the control-notice prompt
+// changes affect real agent behavior.
+//
+// Each scenario lives in library/<name>/ as a YAML file plus a workspace/
+// subdirectory of fixture files. At test start the workspace is copied to
+// t.TempDir() and the agent's bash/read/write/edit tools are sandboxed to
+// that path. The scripted user delivers messages one at a time; if the
+// agent fails a step's filesystem expectations, the scenario fails and no
+// further user messages are sent.
+//
+// The harness measures, per scenario:
+//
+//   - task approvals granted (count of inline-approved task_create)
+//   - lite-proxy tool-use blocks (postprocess refusals — currently advisory
+//     because task-scope enforcement is not wired in this iteration)
+//   - whether each step's filesystem expectations passed
+//
+// The whole TestLiteProxyScenarios entry-point skips when BOTH the
+// Anthropic key (CLAWVISOR_LLM_API_KEY, or legacy
+// CLAWVISOR_E2E_ANTHROPIC_KEY) AND the OpenAI key
+// (CLAWVISOR_OPENAI_KEY) are absent — one is enough to run the
+// corresponding driver's column of the matrix. Per-driver subtests
+// skip individually when the matching CLI binary or upstream key is
+// missing.
+package lite

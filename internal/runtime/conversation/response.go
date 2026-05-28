@@ -20,6 +20,36 @@ type ToolUseVerdict struct {
 	// the original method/path/body. Per-block mutation; the assistant
 	// turn otherwise streams through unchanged.
 	RewriteInput json.RawMessage
+
+	// ContinueWithToolResult, when non-empty, signals that the proxy
+	// has answered the tool_use itself and wants to feed the result back
+	// to the model so it continues with its next tool_use rather than
+	// terminating the turn. The handler builds a synthetic user turn
+	// containing a tool_result block with this content and re-calls the
+	// upstream LLM. SubstituteWith remains the fallback rendered to the
+	// harness if the continuation call fails.
+	ContinueWithToolResult string
+
+	// PrependAssistantNotice, when non-empty, is text the handler
+	// prepends to the assistant turn it returns to the harness AFTER a
+	// successful ContinueWithToolResult round-trip. The use case is
+	// surfacing a user-facing notice ("a task was auto-approved on
+	// your behalf") in the same response that carries the model's next
+	// actions, so the user sees what happened without a separate turn.
+	// Ignored when ContinueWithToolResult is empty or when the
+	// continuation failed and the substitute fallback rendered
+	// instead.
+	PrependAssistantNotice string
+
+	// CreatedTaskID is set by the conversation auto-approval gate to
+	// the ID of the inline task it created before returning the
+	// verdict. Carried so downstream audit rows in the lite-proxy
+	// handler (e.g. LogContinuationSkippedSiblingTools when sibling
+	// tool_uses force a fallback) can link to the same task_id the
+	// rest of the approval audit trail uses — without parsing the
+	// augmentation text or threading a separate map. Empty for any
+	// other verdict source.
+	CreatedTaskID string
 }
 
 type RewriteResult struct {
@@ -193,6 +223,12 @@ func isSSE(contentType string) bool {
 	ct := strings.ToLower(strings.TrimSpace(contentType))
 	return strings.HasPrefix(ct, "text/event-stream")
 }
+
+// IsSSEContentType reports whether the given Content-Type is an SSE
+// stream. Exported so sibling packages (the lite-proxy handler in
+// particular) can branch on wire format without duplicating the prefix
+// check.
+func IsSSEContentType(contentType string) bool { return isSSE(contentType) }
 
 func matchAnthropicEndpoint(req *http.Request) bool {
 	if req == nil || req.URL == nil {

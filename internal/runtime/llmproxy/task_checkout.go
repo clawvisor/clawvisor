@@ -9,9 +9,17 @@ import (
 // TaskCheckoutKey scopes the agent's current task focus. This is deliberately
 // an authorization hint only: decision logic must still verify the checked-out
 // task is a valid candidate for the concrete tool/API call.
+//
+// ConversationID partitions focus across conversations sharing a Clawvisor
+// token (Conductor workspaces, sub-agents, multiple Claude Code sessions in
+// the same installation). Approving a task in conversation B no longer
+// overwrites conversation A's focus. Empty ConversationID falls back to the
+// pre-conversation-scoping key shape (user+agent only), matching old clients
+// that never surfaced a session identifier on the wire.
 type TaskCheckoutKey struct {
-	UserID  string
-	AgentID string
+	UserID         string
+	AgentID        string
+	ConversationID string
 }
 
 // TaskCheckout records the task an agent is currently focused on.

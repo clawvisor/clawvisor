@@ -61,7 +61,7 @@ func executeTool(
 	respBody := rec.Body.String()
 	statusCode := rec.Code
 
-	logger.Debug("mcp tool executed",
+	logger.DebugContext(originalReq.Context(), "mcp tool executed",
 		"tool", toolName,
 		"status", statusCode,
 		"response_len", len(respBody),

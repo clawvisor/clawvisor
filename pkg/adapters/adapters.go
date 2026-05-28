@@ -23,18 +23,18 @@ type ServiceMetadata struct {
 	DisplayName       string
 	Description       string
 	SetupURL          string
-	KeyHint           string // placeholder text for the credential input
-	KeyDisplayName    string // label rendered above the credential input (e.g. "Connection string")
-	KeyDescription    string // helper text shown under the label; supports newlines
+	KeyHint           string                // placeholder text for the credential input
+	KeyDisplayName    string                // label rendered above the credential input (e.g. "Connection string")
+	KeyDescription    string                // helper text shown under the label; supports newlines
 	IconSVG           string                // inline SVG markup for the service icon (mutually exclusive with IconURL)
 	IconURL           string                // absolute or site-relative URL to the service icon (e.g. "/logos/github.svg")
 	VaultKey          string                // shared vault key (e.g. "google" for all google.* services); empty = use service ID
 	OAuthEndpoint     string                // well-known OAuth endpoint name (e.g. "google"); empty = not OAuth or no known endpoint
-	DeviceFlow          bool                  // whether device flow activation is available
-	PKCEFlow            bool                  // whether PKCE authorization code flow is available (client ID resolved)
-	PKCEFlowDefined     bool                  // whether PKCE flow is defined in the adapter (even without client ID)
-	AutoIdentity        bool                  // whether the adapter can auto-detect account identity
-	Deprecated          bool                  // hide from the connect-service list for new users (existing connections stay visible)
+	DeviceFlow        bool                  // whether device flow activation is available
+	PKCEFlow          bool                  // whether PKCE authorization code flow is available (client ID resolved)
+	PKCEFlowDefined   bool                  // whether PKCE flow is defined in the adapter (even without client ID)
+	AutoIdentity      bool                  // whether the adapter can auto-detect account identity
+	Deprecated        bool                  // hide from the connect-service list for new users (existing connections stay visible)
 	ActionMeta        map[string]ActionMeta // action_id → metadata
 	VerificationHints string
 	Variables         []VariableMeta // user-configurable variables declared by the adapter
@@ -63,9 +63,9 @@ type ParamMeta struct {
 	Name     string // parameter name as passed in the request
 	Type     string // "string", "int", "bool", "object", "array"
 	Required bool
-	Default  any    // default value, nil if none
-	Min      *int   // minimum value (for int params)
-	Max      *int   // maximum value (for int params)
+	Default  any  // default value, nil if none
+	Min      *int // minimum value (for int params)
+	Max      *int // maximum value (for int params)
 }
 
 // ActionInfo is returned by the service catalog with per-action metadata.
@@ -251,7 +251,7 @@ type Adapter interface {
 // ParamInfo describes a single action parameter for validation and error reporting.
 type ParamInfo struct {
 	Name     string `json:"name"`
-	Type     string `json:"type"`               // "string", "int", "bool", "object", "array"
+	Type     string `json:"type"` // "string", "int", "bool", "object", "array"
 	Required bool   `json:"required"`
 }
 
@@ -276,13 +276,18 @@ type ServiceInfo struct {
 // Used in cloud mode to lazily resolve user-generated adapters from the database.
 type AdapterResolver func(ctx context.Context, serviceID, userID string) (Adapter, bool)
 
+// UserAdapterLister loads all adapters owned by a specific user.
+// Used by catalog/listing paths where the service ID is not known up front.
+type UserAdapterLister func(ctx context.Context, userID string) ([]Adapter, bool)
+
 // Registry holds all registered adapters, keyed by service ID.
 // It is safe for concurrent use.
 type Registry struct {
 	mu           sync.RWMutex
-	adapters     map[string]Adapter                // built-in (shared) adapters
-	userAdapters map[string]map[string]Adapter     // userID → serviceID → adapter (per-user generated)
-	resolver     AdapterResolver                   // optional; called on cache miss by GetForUser
+	adapters     map[string]Adapter                                          // built-in (shared) adapters
+	userAdapters map[string]map[string]Adapter                               // userID → serviceID → adapter (per-user generated)
+	resolver     AdapterResolver                                             // optional; called on cache miss by GetForUser
+	userLister   UserAdapterLister                                           // optional; loads user-only adapters for catalog views
 	fallback     func(ctx context.Context, serviceID string) (Adapter, bool) // cloud-injected resolver for custom adapters
 }
 
@@ -299,6 +304,15 @@ func (r *Registry) SetResolver(fn AdapterResolver) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.resolver = fn
+}
+
+// SetUserAdapterLister sets an optional resolver for user-only adapters when
+// the caller needs the user's whole adapter set and does not already know each
+// service ID. This is the catalog/listing counterpart to GetForUser's resolver.
+func (r *Registry) SetUserAdapterLister(fn UserAdapterLister) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.userLister = fn
 }
 
 func (r *Registry) Register(a Adapter) {
@@ -356,19 +370,29 @@ func (r *Registry) GetForUser(ctx context.Context, serviceID, userID string) (Ad
 	return global, hasGlobal
 }
 
-// RegisterForUser stores a user-scoped adapter instance. Used by activation
-// flows that build adapters with per-user state (e.g. MCP-discovered tools)
-// after the user supplies a credential. Look up via GetForUser.
-func (r *Registry) RegisterForUser(userID string, a Adapter) {
+// ReplaceForUser stores or replaces a user-scoped adapter instance without
+// touching the shared registry. Used for generated adapters and for activation
+// flows that build adapters with per-user state (e.g. MCP-discovered tools).
+func (r *Registry) ReplaceForUser(serviceID, userID string, a Adapter) {
 	if userID == "" {
 		return
+	}
+	if serviceID == "" {
+		serviceID = a.ServiceID()
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.userAdapters[userID] == nil {
 		r.userAdapters[userID] = make(map[string]Adapter)
 	}
-	r.userAdapters[userID][a.ServiceID()] = a
+	r.userAdapters[userID][serviceID] = a
+}
+
+// RegisterForUser stores a user-scoped adapter instance. Used by activation
+// flows that build adapters with per-user state (e.g. MCP-discovered tools)
+// after the user supplies a credential. Look up via GetForUser.
+func (r *Registry) RegisterForUser(userID string, a Adapter) {
+	r.ReplaceForUser(a.ServiceID(), userID, a)
 }
 
 // AllForUser returns the union of built-in adapters and the user's per-user
@@ -384,6 +408,7 @@ func (r *Registry) RegisterForUser(userID string, a Adapter) {
 func (r *Registry) AllForUser(ctx context.Context, userID string) []Adapter {
 	r.mu.RLock()
 	resolver := r.resolver
+	userLister := r.userLister
 	out := make([]Adapter, 0, len(r.adapters))
 	type resolveCandidate struct {
 		serviceID string
@@ -427,6 +452,41 @@ func (r *Registry) AllForUser(ctx context.Context, userID string) []Adapter {
 			out = append(out, resolved)
 		} else {
 			out = append(out, c.global)
+		}
+	}
+	if userLister != nil && userID != "" {
+		if userAdapters, ok := userLister(ctx, userID); ok {
+			r.mu.Lock()
+			if r.userAdapters[userID] == nil {
+				r.userAdapters[userID] = make(map[string]Adapter)
+			}
+			for _, a := range userAdapters {
+				serviceID := a.ServiceID()
+				if _, global := r.adapters[serviceID]; global {
+					continue
+				}
+				r.userAdapters[userID][serviceID] = a
+			}
+			r.mu.Unlock()
+
+			present := make(map[string]bool, len(out))
+			for _, a := range out {
+				present[a.ServiceID()] = true
+			}
+			for _, a := range userAdapters {
+				serviceID := a.ServiceID()
+				if present[serviceID] {
+					continue
+				}
+				r.mu.RLock()
+				_, global := r.adapters[serviceID]
+				r.mu.RUnlock()
+				if global {
+					continue
+				}
+				out = append(out, a)
+				present[serviceID] = true
+			}
 		}
 	}
 	return out

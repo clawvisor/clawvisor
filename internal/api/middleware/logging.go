@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/clawvisor/clawvisor/pkg/cloudlogging"
 )
 
 type responseWriter struct {
@@ -39,10 +41,18 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 
-			traceID := generateTraceID()
+			// Prefer an upstream trace from X-Cloud-Trace-Context or W3C
+			// traceparent so log entries coalesce under the GCP request
+			// log in the Cloud Logs Explorer. Fall back to a locally
+			// generated ID so X-Trace-Id is always set.
+			traceID, spanID := cloudlogging.ExtractTrace(r)
+			if traceID == "" {
+				traceID = generateTraceID()
+			}
 			w.Header().Set("X-Trace-Id", traceID)
 
-			ctx, lf := WithLogFields(r.Context())
+			ctx := cloudlogging.WithTrace(r.Context(), traceID, spanID)
+			ctx, lf := WithLogFields(ctx)
 			r = r.WithContext(ctx)
 
 			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}

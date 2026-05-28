@@ -11,6 +11,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -29,6 +30,26 @@ import (
 // request (or ask the agent to).
 type InlineTaskCreator interface {
 	CreateInlineApprovedTask(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string) (*InlineApprovedTask, error)
+}
+
+// InlineTaskCreatorWithAssessment is an optional extension of
+// InlineTaskCreator. When the auto-approve gate has already run the
+// LLM risk assessor (and so already has a RiskAssessment in hand),
+// callers can type-assert to this interface and pass the precomputed
+// verdict, avoiding a second round-trip and the verdict drift it can
+// cause. Implementations that don't (or can't) honor the precomputed
+// value may simply call through to CreateInlineApprovedTask and
+// compute a fresh assessment — the precomputed value is a hint, not
+// a contract.
+type InlineTaskCreatorWithAssessment interface {
+	InlineTaskCreator
+	CreateInlineApprovedTaskWithAssessment(
+		ctx context.Context,
+		agent *store.Agent,
+		req *runtimetasks.TaskCreateRequest,
+		originalToolUseID string,
+		precomputed *taskrisk.RiskAssessment,
+	) (*InlineApprovedTask, error)
 }
 
 // InlineApprovedTask is the slice of the created task surfaced back
@@ -55,11 +76,12 @@ type InlineTaskCredentialPlaceholder struct {
 }
 
 type ReleaseRequest struct {
-	HTTPRequest *http.Request
-	RequestID   string
-	Provider    conversation.Provider
-	Body        []byte
-	Agent       *store.Agent
+	HTTPRequest    *http.Request
+	RequestID      string
+	Provider       conversation.Provider
+	Body           []byte
+	Agent          *store.Agent
+	ConversationID string
 
 	Inspector   *inspector.Inspector
 	RewriteOpts inspector.RewriteOpts
@@ -108,6 +130,7 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 		UserID:          req.Agent.UserID,
 		AgentID:         req.Agent.ID,
 		Provider:        req.Provider,
+		ConversationID:  req.ConversationID,
 		PendingApproval: req.PendingApproval,
 		Verb:            verb,
 		ApprovalID:      approvalID,
@@ -118,7 +141,7 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	peeked := action.Hold
 	if peeked == nil {
 		if approvalID != "" {
-			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
+			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "this approval is no longer valid — it may have expired, already been used, or been issued to another agent. Please retry your original request to get a fresh approval prompt."}
 		}
 		return ReleaseResult{}
 	}
@@ -142,7 +165,7 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 			HTTPStatus: http.StatusServiceUnavailable,
 			Decision:   "deny",
 			Outcome:    "inline_task_preprocess_missing",
-			Reason:     "inline task hold reached release without preprocess rewrite",
+			Reason:     "couldn't process this approval (internal: inline-task preprocess missing). Please retry your original request.",
 		}
 	}
 	// Resolve the SAME hold we inspected, by explicit ID. Calling
@@ -155,10 +178,11 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	// hold has since been consumed, Resolve returns nil and we treat
 	// as not-found rather than grab whatever else is newest.
 	pending, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
-		UserID:     req.Agent.UserID,
-		AgentID:    req.Agent.ID,
-		Provider:   req.Provider,
-		ApprovalID: peeked.ID,
+		UserID:         req.Agent.UserID,
+		AgentID:        req.Agent.ID,
+		Provider:       req.Provider,
+		ConversationID: req.ConversationID,
+		ApprovalID:     peeked.ID,
 	})
 	if err != nil {
 		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
@@ -167,36 +191,71 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 		// Peeked one moment ago but it's gone now — a concurrent
 		// release/rewrite pass consumed it. Treat as not-found.
 		if approvalID != "" {
-			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
+			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "this approval is no longer valid — it may have expired, already been used, or been issued to another agent. Please retry your original request to get a fresh approval prompt."}
 		}
 		return ReleaseResult{}
 	}
 	if verb == "deny" {
 		req.logRelease(ctx, pending, "deny", "denied", "denied inline by user")
-		return syntheticReleaseResult(req, pending, false, nil, "deny", "approval_denied", "")
+		return syntheticReleaseResultMulti(req, pending, false, nil, "deny", "approval_denied", "")
 	}
 
-	rewrittenInput, releaseErr := rewriteApprovedToolUse(ctx, req, pending)
+	rewrittenCalls, releaseErr := rewriteApprovedToolUses(ctx, req, pending)
 	if releaseErr != nil {
 		req.logRelease(ctx, pending, "deny", "blocked", releaseErr.Error())
-		return syntheticReleaseResult(req, pending, false, nil, "deny", "approval_release_blocked", releaseErr.Error())
+		return syntheticReleaseResultMulti(req, pending, false, nil, "deny", "approval_release_blocked", releaseErr.Error())
 	}
 	req.logRelease(ctx, pending, "allow", "released", "approved inline by user")
-	return syntheticReleaseResult(req, pending, true, rewrittenInput, "allow", "approval_released", "")
+	return syntheticReleaseResultMulti(req, pending, true, rewrittenCalls, "allow", "approval_released", "")
 }
 
-func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *PendingLiteApproval) (map[string]any, error) {
-	if req.Inspector == nil || pending == nil {
+// rewriteApprovedToolUses re-evaluates every held tool_use in the
+// pending approval against current state and returns the synthesized
+// call list in turn order. Fail-closed for the whole batch: if any
+// single use refuses re-eval (decision changed, fingerprint diverged,
+// boundary failed, nonce mint failed), the entire release is denied so
+// we never half-execute a coalesced turn.
+//
+// For single-tool holds (no Additional entries) this collapses to the
+// pre-coalescence behavior — one input map for one tool_use — and the
+// returned slice has length 1.
+func rewriteApprovedToolUses(ctx context.Context, req ReleaseRequest, pending *PendingLiteApproval) ([]conversation.SyntheticToolCall, error) {
+	if pending == nil {
 		return nil, errors.New("no pending approval")
 	}
+	holds := pending.AllHolds()
+	out := make([]conversation.SyntheticToolCall, 0, len(holds))
+	for _, held := range holds {
+		input, err := rewriteApprovedHeldToolUse(ctx, req, held)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, conversation.SyntheticToolCall{
+			ID:    held.ToolUse.ID,
+			Name:  held.ToolUse.Name,
+			Input: input,
+		})
+	}
+	return out, nil
+}
+
+// rewriteApprovedHeldToolUse is the per-held-use re-evaluation that
+// rewriteApprovedToolUses calls in a loop. Replays the inspector,
+// decision, boundary, and (for credentialed paths) caller-nonce mint
+// against the current agent / catalog / posture state. Any divergence
+// from the originally captured fingerprint denies the release.
+func rewriteApprovedHeldToolUse(ctx context.Context, req ReleaseRequest, held HeldToolUse) (map[string]any, error) {
+	if req.Inspector == nil {
+		return nil, errors.New("no inspector configured for release")
+	}
 	verdict := req.Inspector.Inspect(ctx, inspector.ToolUse{
-		ID:    pending.ToolUse.ID,
-		Name:  pending.ToolUse.Name,
-		Input: pending.ToolUse.Input,
+		ID:    held.ToolUse.ID,
+		Name:  held.ToolUse.Name,
+		Input: held.ToolUse.Input,
 	})
 	if verdict.Source == inspector.SourceTriggerMiss {
 		decisionInput := runtimedecision.AuthorizationInput{
-			ToolUse:           pending.ToolUse,
+			ToolUse:           held.ToolUse,
 			UserID:            req.Agent.UserID,
 			AgentID:           req.Agent.ID,
 			Posture:           req.Posture,
@@ -214,11 +273,18 @@ func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *Pe
 		case runtimedecision.VerdictDeny:
 			return nil, errors.New(dec.Reason)
 		case runtimedecision.VerdictNeedsApproval:
-			if !runtimedecision.EquivalentFingerprint(pending.Fingerprint, runtimedecision.Fingerprint(dec, decisionInput)) {
+			if held.Kind != HeldKindApproval {
+				// A coalesced sibling that was previously auto-allow now
+				// requires approval. Fail-closed so the user isn't
+				// silently bypassing a new policy decision via an
+				// earlier yes that didn't promise this.
+				return nil, errors.New("coalesced sibling now requires approval; re-prompt needed")
+			}
+			if !runtimedecision.EquivalentFingerprint(held.Fingerprint, runtimedecision.Fingerprint(dec, decisionInput)) {
 				return nil, errors.New("held approval no longer matches current authorization decision")
 			}
 		}
-		return decodeToolUseInput(pending.ToolUse.Input), nil
+		return decodeToolUseInput(held.ToolUse.Input), nil
 	}
 	if verdict.Ambiguous || !verdict.IsAPICall {
 		return nil, errors.New("held tool use no longer resolves to a credentialed API call")
@@ -231,7 +297,7 @@ func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *Pe
 		resolved, _ = req.Catalog.Resolve(verdict.Host, verdict.Method, verdict.Path)
 	}
 	decisionInput := runtimedecision.AuthorizationInput{
-		ToolUse:        pending.ToolUse,
+		ToolUse:        held.ToolUse,
 		UserID:         req.Agent.UserID,
 		AgentID:        req.Agent.ID,
 		Posture:        req.Posture,
@@ -251,7 +317,10 @@ func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *Pe
 	case runtimedecision.VerdictDeny:
 		return nil, errors.New(dec.Reason)
 	case runtimedecision.VerdictNeedsApproval:
-		if !runtimedecision.EquivalentFingerprint(pending.Fingerprint, runtimedecision.Fingerprint(dec, decisionInput)) {
+		if held.Kind != HeldKindApproval {
+			return nil, errors.New("coalesced sibling now requires approval; re-prompt needed")
+		}
+		if !runtimedecision.EquivalentFingerprint(held.Fingerprint, runtimedecision.Fingerprint(dec, decisionInput)) {
 			return nil, errors.New("held approval no longer matches current authorization decision")
 		}
 	}
@@ -272,7 +341,7 @@ func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *Pe
 	}
 	opts := req.RewriteOpts
 	opts.CallerToken = nonce
-	raw, err := inspector.Rewrite(inspector.ToolUse{ID: pending.ToolUse.ID, Name: pending.ToolUse.Name, Input: pending.ToolUse.Input}, verdict, opts)
+	raw, err := inspector.Rewrite(inspector.ToolUse{ID: held.ToolUse.ID, Name: held.ToolUse.Name, Input: held.ToolUse.Input}, verdict, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -321,14 +390,25 @@ func boundaryCheckReleaseVerdict(ctx context.Context, req ReleaseRequest, v insp
 	return "", true
 }
 
-func syntheticReleaseResult(req ReleaseRequest, pending *PendingLiteApproval, allow bool, toolInput map[string]any, decision, outcome, reason string) ReleaseResult {
+// syntheticReleaseResultMulti synthesizes the release response for a
+// hold that may carry multiple tool_uses (the coalesced path). On
+// allow, the response carries every approved tool_use in turn order so
+// the harness executes them all from one user yes. On deny, the
+// response is a single text block — calls is ignored. A single-tool
+// hold (no Additional entries) collapses to a one-element synthesis
+// that is byte-identical to the pre-coalescence shape.
+func syntheticReleaseResultMulti(req ReleaseRequest, pending *PendingLiteApproval, allow bool, calls []conversation.SyntheticToolCall, decision, outcome, reason string) ReleaseResult {
 	denyMessage := conversation.ApprovalDeniedMessage
 	if !allow && outcome == "approval_release_blocked" && strings.TrimSpace(reason) != "" {
-		denyMessage = "Approval could not be released. " + strings.TrimSpace(reason)
+		// Branded so the user can tell the deny reason came from
+		// Clawvisor (not the model or upstream provider). Mirrors the
+		// "Clawvisor: ..." prefix added by writeLiteProxyError for
+		// every other synthesized error.
+		denyMessage = "Clawvisor: couldn't release this approval. " + strings.TrimSpace(reason)
 	}
-	synth, ok := conversation.SyntheticApprovalToolUseResponseWithDenyMessage(req.HTTPRequest, req.Provider, req.Body, allow, pending.ToolUse.ID, pending.ToolUse.Name, toolInput, denyMessage)
+	synth, ok := conversation.SyntheticApprovalToolUsesResponseWithDenyMessage(req.HTTPRequest, req.Provider, req.Body, allow, calls, denyMessage)
 	if !ok {
-		return ReleaseResult{Handled: true, HTTPStatus: http.StatusBadRequest, Decision: "deny", Outcome: "approval_release_unsupported", Reason: "unsupported approval release provider"}
+		return ReleaseResult{Handled: true, HTTPStatus: http.StatusBadRequest, Decision: "deny", Outcome: "approval_release_unsupported", Reason: "can't process this approval for this provider. Please retry your original request."}
 	}
 	return ReleaseResult{
 		Handled:     true,

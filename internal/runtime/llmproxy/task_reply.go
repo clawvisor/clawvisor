@@ -13,6 +13,7 @@ type TaskReplyRewriteRequest struct {
 	Provider        conversation.Provider
 	Body            []byte
 	Agent           *store.Agent
+	ConversationID  string
 	PendingApproval PendingApprovalCache
 }
 
@@ -34,6 +35,7 @@ func RewriteTaskApprovalReply(ctx context.Context, req TaskReplyRewriteRequest) 
 		UserID:          req.Agent.UserID,
 		AgentID:         req.Agent.ID,
 		Provider:        req.Provider,
+		ConversationID:  req.ConversationID,
 		PendingApproval: req.PendingApproval,
 		Verb:            verb,
 		ApprovalID:      approvalID,

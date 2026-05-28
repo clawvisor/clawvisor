@@ -114,7 +114,7 @@ func (m *GeminiCacheManager) Start(ctx context.Context) error {
 		return fmt.Errorf("create initial cache: %w", err)
 	}
 	m.cacheName.Store(name)
-	m.logger.Info("gemini cache created",
+	m.logger.InfoContext(ctx, "gemini cache created",
 		"name", name, "model", m.cfg.Model, "ttl", m.cfg.TTL)
 	go m.refreshLoop()
 	return nil
@@ -190,12 +190,12 @@ func (m *GeminiCacheManager) InvalidateIfMatches(failed string) {
 		defer cancel()
 		newName, err := m.create(ctx)
 		if err != nil {
-			m.logger.Warn("gemini cache async refresh after invalidation failed",
+			m.logger.WarnContext(ctx, "gemini cache async refresh after invalidation failed",
 				"err", err)
 			return
 		}
 		m.cacheName.Store(newName)
-		m.logger.Info("gemini cache repopulated after invalidation",
+		m.logger.InfoContext(ctx, "gemini cache repopulated after invalidation",
 			"name", newName)
 	}()
 }
@@ -218,7 +218,7 @@ func (m *GeminiCacheManager) Stop(ctx context.Context) {
 		if name, _ := m.cacheName.Load().(string); name != "" {
 			m.cacheName.Store("")
 			if err := m.delete(ctx, name); err != nil {
-				m.logger.Warn("gemini cache delete on shutdown failed (will auto-expire)",
+				m.logger.WarnContext(ctx, "gemini cache delete on shutdown failed (will auto-expire)",
 					"err", err, "name", name)
 			}
 		}
@@ -252,13 +252,13 @@ func (m *GeminiCacheManager) refreshLoop() {
 			newName, err := m.create(ctx)
 			cancel()
 			if err != nil {
-				m.logger.Warn("gemini cache refresh failed; keeping old cache until it expires",
+				m.logger.WarnContext(ctx, "gemini cache refresh failed; keeping old cache until it expires",
 					"err", err)
 				continue
 			}
 			old, _ := m.cacheName.Load().(string)
 			m.cacheName.Store(newName)
-			m.logger.Info("gemini cache refreshed",
+			m.logger.InfoContext(ctx, "gemini cache refreshed",
 				"new_name", newName, "old_name", old)
 			// Best-effort delete the old cache. Don't block the loop on it.
 			if old != "" {
@@ -266,7 +266,7 @@ func (m *GeminiCacheManager) refreshLoop() {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
 					if err := m.delete(ctx, name); err != nil {
-						m.logger.Debug("delete of old cache failed (will auto-expire)",
+						m.logger.DebugContext(ctx, "delete of old cache failed (will auto-expire)",
 							"err", err, "name", name)
 					}
 				}(old)

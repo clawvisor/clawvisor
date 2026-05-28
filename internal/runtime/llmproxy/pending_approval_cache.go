@@ -50,7 +50,15 @@ type PendingLiteApproval struct {
 	UserID   string
 	AgentID  string
 	Provider conversation.Provider
-	ToolUse  conversation.ToolUse
+	// ConversationID partitions the hold to a single conversation when
+	// multiple conversations share a Clawvisor token (Conductor workspaces,
+	// sub-agents, multiple Claude Code sessions on the same install). A
+	// bare "y" reply in conversation B can no longer release a hold from
+	// conversation A. Empty falls back to the pre-conversation-scoping
+	// key shape (user + agent + provider), preserving behavior for older
+	// clients that don't surface a conversation identifier on the wire.
+	ConversationID string
+	ToolUse        conversation.ToolUse
 
 	Inspector   inspector.Verdict
 	Fingerprint runtimedecision.DecisionFingerprint
@@ -74,13 +82,126 @@ type PendingLiteApproval struct {
 	// inline approval prompt and to create the task once the user approves.
 	// nil at the other stages.
 	TaskDefinition *runtimetasks.TaskCreateRequest
+
+	// Additional carries the other tool_uses that share this hold when
+	// multiple tool_uses in a single upstream response are coalesced into
+	// one approval. Empty for the standard single-tool hold path
+	// (preserves legacy behavior — the singular ToolUse + Inspector +
+	// Fingerprint + Reason describe the only held use). When non-empty,
+	// the singular fields describe the FIRST approval-needing use; the
+	// slice carries every other use in the turn (which may itself be
+	// approval-needing, auto-allow, or auto-rewrite — captured by Kind).
+	// One yes/no reply releases or denies the whole batch.
+	Additional []HeldToolUse
+
+	// PrimaryIndex is the position of the primary tool_use (the one
+	// mapped to the singular ToolUse/Inspector/Fingerprint/Reason
+	// fields) in the original turn order. Used by AllHolds() to
+	// reconstruct the full slice in turn order — release-time emission
+	// must match the order the model produced so that dependent tool
+	// call sequences (e.g. Bash then a WebFetch that consumes its
+	// output) execute in the right sequence. Zero (the JSON-omitted
+	// default) means "primary is the first held use," which is
+	// correct for legacy single-tool holds and for coalesced holds
+	// whose first held use happens to be the approval trigger.
+	PrimaryIndex int `json:",omitempty"`
+}
+
+// HeldToolUseKind tags how a tool_use was originally classified at hold
+// time. The release path re-evaluates each held use against current state,
+// but the original classification is the audit-trail truth and the cue
+// for whether the use needs re-rewriting at release.
+type HeldToolUseKind string
+
+const (
+	// HeldKindApproval is a tool_use that needed user approval. The hold
+	// exists because of these uses.
+	HeldKindApproval HeldToolUseKind = "approval"
+	// HeldKindAllow is a tool_use that would have auto-allowed (e.g.
+	// read-only bash, pass-through with no credential trigger) but is
+	// held alongside an approval-needing sibling because we hold the
+	// whole turn.
+	HeldKindAllow HeldToolUseKind = "allow"
+	// HeldKindRewrite is a tool_use that would have been credential-
+	// rewritten and auto-allowed, held alongside an approval-needing
+	// sibling. On release we re-run the rewriter to mint a fresh nonce
+	// (the one minted at hold time has long since expired).
+	HeldKindRewrite HeldToolUseKind = "rewrite"
+	// HeldKindDeny is a tool_use that policy would refuse outright.
+	// Not actually held (the coalesce decision treats this as a hard
+	// block — see Postprocess). The kind exists for classification
+	// completeness so downstream code can pattern-match without a
+	// default fallthrough.
+	HeldKindDeny HeldToolUseKind = "deny"
+)
+
+// HeldToolUse is one tool_use carried by a coalesced PendingLiteApproval.
+// Each entry remembers the original classification, the inspector
+// verdict, and the decision fingerprint so the release path can replay
+// the per-use decision in isolation.
+type HeldToolUse struct {
+	ToolUse     conversation.ToolUse
+	Kind        HeldToolUseKind
+	Inspector   inspector.Verdict
+	Fingerprint runtimedecision.DecisionFingerprint
+	Reason      string
+}
+
+// AllHolds returns every held tool_use in original turn order. For the
+// standard single-tool hold this is a one-element slice constructed
+// from the singular fields. For a coalesced hold the singular fields
+// describe one entry and Additional carries the others; PrimaryIndex
+// is the original position of the singular entry within the turn, so
+// the released call sequence matches what the model produced (e.g. a
+// preceding Bash whose stdout a later WebFetch consumes).
+func (p PendingLiteApproval) AllHolds() []HeldToolUse {
+	primary := HeldToolUse{
+		ToolUse:     p.ToolUse,
+		Kind:        HeldKindApproval,
+		Inspector:   p.Inspector,
+		Fingerprint: p.Fingerprint,
+		Reason:      p.Reason,
+	}
+	total := 1 + len(p.Additional)
+	idx := p.PrimaryIndex
+	if idx < 0 || idx >= total {
+		// Defensive: stale entries from before PrimaryIndex existed
+		// have idx==0, which is also the natural primary-first
+		// fallback. Out-of-range values get clamped to 0 to keep
+		// release order deterministic rather than panic on a slice
+		// bound.
+		idx = 0
+	}
+	out := make([]HeldToolUse, 0, total)
+	addIdx := 0
+	for i := 0; i < total; i++ {
+		if i == idx {
+			out = append(out, primary)
+			continue
+		}
+		out = append(out, p.Additional[addIdx])
+		addIdx++
+	}
+	return out
+}
+
+// IsCoalesced reports whether the hold covers more than one tool_use.
+// Single-tool holds (Additional empty) keep today's 3-option (yes/no/task)
+// prompt; coalesced holds are strictly binary.
+func (p PendingLiteApproval) IsCoalesced() bool {
+	return len(p.Additional) > 0
 }
 
 type ResolveRequest struct {
 	UserID     string
 	AgentID    string
 	Provider   conversation.Provider
-	ApprovalID string
+	// ConversationID scopes the lookup to the requesting conversation's
+	// bucket so bare/no-ID resolves and Drops can't cross conversation
+	// boundaries. Empty matches the pre-conversation-scoping bucket so
+	// older clients keep working without any wire-level changes.
+	ConversationID string
+	ApprovalID     string
 	// Stage, when non-empty, restricts Peek/Resolve/Drop to holds at
 	// the named stage. Used by the inline-task path to target its
 	// StageAwaitingTaskApproval hold specifically even when older,
@@ -112,9 +233,10 @@ type MemoryPendingApprovalCache struct {
 }
 
 type pendingApprovalKey struct {
-	userID   string
-	agentID  string
-	provider conversation.Provider
+	userID         string
+	agentID        string
+	provider       conversation.Provider
+	conversationID string
 }
 
 var liteApprovalRandRead = rand.Read
@@ -180,7 +302,7 @@ func (c *MemoryPendingApprovalCache) Resolve(_ context.Context, req ResolveReque
 	if pending == nil {
 		return nil, nil
 	}
-	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
+	key := resolveRequestKey(req)
 	items = append(items[:index], items[index+1:]...)
 	if len(items) == 0 {
 		delete(c.pending, key)
@@ -201,7 +323,7 @@ func (c *MemoryPendingApprovalCache) Peek(_ context.Context, req ResolveRequest)
 }
 
 func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLiteApproval, int, []PendingLiteApproval) {
-	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
+	key := resolveRequestKey(req)
 	items := c.pruneExpiredLocked(key, c.now().UTC())
 	if len(items) == 0 {
 		return nil, -1, items
@@ -220,31 +342,22 @@ func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLit
 		}
 		return nil, -1, items
 	}
-	// Stage-filtered scan: callers that know which kind of hold they
-	// want (e.g. the inline-task release path) pass req.Stage so a
-	// stale tool-stage hold doesn't shadow the inline-task hold they
-	// care about. Scan from the END so the MOST RECENT matching hold
-	// wins — same LIFO rule the no-stage branch below uses. The two
-	// must agree: a user reply lands on the freshest prompt of its
-	// kind, never the oldest.
-	if req.Stage != "" {
-		for i := len(items) - 1; i >= 0; i-- {
-			if items[i].Stage == req.Stage {
-				pending := items[i]
-				return &pending, i, items
-			}
-		}
-		return nil, -1, items
-	}
-	// No ID, no stage filter — pick the MOST RECENT hold (items[-1]).
-	// The user is replying to the most recent approval prompt the
-	// harness rendered; resolving the oldest hold (FIFO) is
-	// counterintuitive and was a source of "I approved but nothing
-	// happened" bugs when one prompt sat unresolved while another
-	// arrived. Explicit-ID lookups (above) and Stage-filtered lookups
-	// are unaffected — they're scoped by construction.
+	// Bare reply (no explicit ApprovalID): only the absolute most
+	// recent hold qualifies. The user typing "approve" / "deny" /
+	// "task" is responding to the harness's LAST rendered prompt —
+	// not to anything older. If the newest hold's stage doesn't
+	// match a Stage filter the caller passed, the bare reply
+	// doesn't apply and we return no match rather than walking
+	// past the newest to find an older same-stage hold. Walking
+	// would let a stale older same-stage hold steal the user's
+	// response away from a newer different-stage prompt the user
+	// actually saw last — the opposite of "direct response to the
+	// last message."
 	idx := len(items) - 1
 	pending := items[idx]
+	if req.Stage != "" && pending.Stage != req.Stage {
+		return nil, -1, items
+	}
 	return &pending, idx, items
 }
 
@@ -254,7 +367,7 @@ func (c *MemoryPendingApprovalCache) Drop(_ context.Context, req ResolveRequest)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
+	key := resolveRequestKey(req)
 	if req.ApprovalID == "" {
 		delete(c.pending, key)
 		return nil
@@ -275,7 +388,38 @@ func (c *MemoryPendingApprovalCache) Drop(_ context.Context, req ResolveRequest)
 }
 
 func (p PendingLiteApproval) key() pendingApprovalKey {
-	return pendingApprovalKey{userID: p.UserID, agentID: p.AgentID, provider: p.Provider}
+	return pendingApprovalKey{
+		userID:         p.UserID,
+		agentID:        p.AgentID,
+		provider:       p.Provider,
+		conversationID: p.ConversationID,
+	}
+}
+
+func resolveRequestKey(req ResolveRequest) pendingApprovalKey {
+	return pendingApprovalKey{
+		userID:         req.UserID,
+		agentID:        req.AgentID,
+		provider:       req.Provider,
+		conversationID: req.ConversationID,
+	}
+}
+
+// snapshotHoldsForTest returns the current holds for one
+// (user, agent, provider) tuple in insertion order. Test-only — used
+// by coalescence tests to assert how many holds were created and what
+// they contain without poking the private storage map.
+func (c *MemoryPendingApprovalCache) snapshotHoldsForTest(userID, agentID string, provider conversation.Provider) []PendingLiteApproval {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := pendingApprovalKey{userID: userID, agentID: agentID, provider: provider}
+	items := c.pending[key]
+	out := make([]PendingLiteApproval, len(items))
+	copy(out, items)
+	return out
 }
 
 func (c *MemoryPendingApprovalCache) pruneExpiredLocked(key pendingApprovalKey, now time.Time) []PendingLiteApproval {

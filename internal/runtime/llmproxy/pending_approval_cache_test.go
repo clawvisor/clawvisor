@@ -315,12 +315,14 @@ func TestPendingLiteApprovalCarriesNewFields(t *testing.T) {
 	}
 }
 
-// Two StageAwaitingTaskApproval holds alive at once must resolve LIFO
-// when a stage-filtered lookup runs without an ApprovalID. The user
-// is replying to the MOST RECENT inline prompt the harness rendered;
-// resolving the older one would silently land on stale state — the
-// same failure pattern the no-stage LIFO fix addressed, just in the
-// stage-filtered code path.
+// Two StageAwaitingTaskApproval holds alive at once must resolve to
+// the most recent one when a stage-filtered lookup runs without an
+// ApprovalID — the user's bare reply pertains to the harness's last
+// rendered prompt, so the newer of two same-stage prompts wins.
+// (Companion test below pins the stricter rule that drives this:
+// bare with a stage filter returns NOTHING when the newest hold's
+// stage doesn't match. Same-stage just happens to be a sub-case
+// where the newest also matches.)
 func TestMemoryPendingApprovalCache_StageFilteredLookupIsLIFO(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	ctx := context.Background()
@@ -352,6 +354,218 @@ func TestMemoryPendingApprovalCache_StageFilteredLookupIsLIFO(t *testing.T) {
 		t.Fatalf("stage-filtered no-ID Peek returned %+v, want most recent %q", peeked, newer.Pending.ID)
 	}
 	_ = older
+}
+
+// Bare reply with a Stage filter must NOT walk past a newer
+// different-stage hold to find an older same-stage one. The user's
+// "approve" (no ID) is a direct response to the harness's last
+// rendered prompt — if that prompt was a tool-stage hold, an older
+// awaiting-task-approval hold can't claim the response. The user
+// must use the explicit ID form to target the older hold.
+func TestMemoryPendingApprovalCache_BareReplyDoesNotWalkPastNewest(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	// Older inline-task hold sits in the cache first.
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID: "cv-older-inline", UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, Stage: StageAwaitingTaskApproval,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Newer tool-stage hold arrives — that's what the harness most
+	// recently prompted the user about.
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID: "cv-newer-tool", UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, Stage: StageTool,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bare peek with StageAwaitingTaskApproval filter: newest is
+	// StageTool → no match. Must NOT silently return the older
+	// inline hold.
+	got, err := cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageAwaitingTaskApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("bare stage-filtered peek returned %+v, want nil (newest hold's stage doesn't match filter)", got)
+	}
+
+	// Sanity: explicit-ID lookup still reaches the older inline hold.
+	got, err = cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-older-inline",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ID != "cv-older-inline" {
+		t.Fatalf("explicit-ID peek = %+v, want cv-older-inline", got)
+	}
+}
+
+// TestMemoryPendingApprovalCacheScopesByConversationID guards the
+// per-conversation partition: two holds under the same (user, agent,
+// provider) but distinct ConversationID values must resolve
+// independently. Conversation A's bare-verb "y" reply may not consume
+// conversation B's hold, and vice versa. Empty ConversationID falls
+// back to the legacy bucket so old clients keep working.
+func TestMemoryPendingApprovalCacheScopesByConversationID(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	heldA, err := cache.Hold(ctx, PendingLiteApproval{
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-A",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	heldB, err := cache.Hold(ctx, PendingLiteApproval{
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-B",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A bare resolve in conversation A returns A's hold even though B's
+	// is newer overall — different bucket.
+	resolvedA, err := cache.Resolve(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-A",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedA == nil || resolvedA.ID != heldA.Pending.ID {
+		t.Fatalf("conv-A resolved %+v, want %q", resolvedA, heldA.Pending.ID)
+	}
+
+	// Conversation A's hold is gone; B's is still there.
+	resolvedB, err := cache.Resolve(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-B",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedB == nil || resolvedB.ID != heldB.Pending.ID {
+		t.Fatalf("conv-B resolved %+v, want %q", resolvedB, heldB.Pending.ID)
+	}
+}
+
+// TestMemoryPendingApprovalCacheConversationIDIsolatesExplicitIDLookup
+// makes sure that explicit-ID resolves are also bucket-scoped: an
+// attacker (or merely a confused harness) can't replay a known approval
+// ID from a sibling conversation to consume it. The ID exists only
+// inside its own conversation's bucket.
+func TestMemoryPendingApprovalCacheConversationIDIsolatesExplicitIDLookup(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	heldA, err := cache.Hold(ctx, PendingLiteApproval{
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-A",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Conversation B asks for A's approval ID by name: no match.
+	resolvedFromB, err := cache.Resolve(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-B",
+		ApprovalID:     heldA.Pending.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedFromB != nil {
+		t.Fatalf("cross-conversation explicit-ID resolve leaked %+v", resolvedFromB)
+	}
+
+	// And the hold is still there in its own bucket.
+	resolved, err := cache.Resolve(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-A",
+		ApprovalID:     heldA.Pending.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved == nil || resolved.ID != heldA.Pending.ID {
+		t.Fatalf("in-conversation explicit-ID resolve returned %+v", resolved)
+	}
+}
+
+// TestMemoryPendingApprovalCacheEmptyConversationIDFallsBack confirms
+// the empty bucket is unchanged from pre-conversation-scoping behavior:
+// a hold and resolve with empty ConversationID still pair correctly so
+// older clients keep working without any wire-level change.
+func TestMemoryPendingApprovalCacheEmptyConversationIDFallsBack(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	held, err := cache.Hold(ctx, PendingLiteApproval{
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := cache.Resolve(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved == nil || resolved.ID != held.Pending.ID {
+		t.Fatalf("empty-conversation-ID resolve returned %+v, want %q", resolved, held.Pending.ID)
+	}
+
+	// And a hold with non-empty ConversationID can't be resolved from the
+	// empty bucket either: empty and non-empty are distinct buckets.
+	scoped, err := cache.Hold(ctx, PendingLiteApproval{
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-A",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyResolve, err := cache.Resolve(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: scoped.Pending.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emptyResolve != nil {
+		t.Fatalf("empty bucket leaked scoped hold: %+v", emptyResolve)
+	}
 }
 
 func TestMemoryPendingApprovalCacheFailsClosedWhenIDGenerationFails(t *testing.T) {

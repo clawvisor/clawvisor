@@ -915,6 +915,156 @@ func SynthOpenAIResponsesTextJSON(text string) []byte {
 	return body
 }
 
+// SynthOpenAIResponsesFunctionCallsJSON builds a Responses-API JSON
+// payload carrying N function_call items in `output`. Used by the
+// coalesced-approval release path.
+func SynthOpenAIResponsesFunctionCallsJSON(calls []SyntheticToolCall) []byte {
+	items := make([]openAIResponseOutputItem, 0, len(calls))
+	for _, call := range calls {
+		input := call.Input
+		if input == nil {
+			input = map[string]any{}
+		}
+		args, _ := json.Marshal(input)
+		items = append(items, openAIResponseOutputItem{
+			ID:        "fc_" + call.ID,
+			Type:      "function_call",
+			Status:    "completed",
+			CallID:    call.ID,
+			Name:      call.Name,
+			Arguments: string(args),
+		})
+	}
+	out := openAIResponsesJSON{
+		ID:     "resp_clawvisor_approve",
+		Object: "response",
+		Output: items,
+	}
+	body, _ := json.Marshal(out)
+	return body
+}
+
+// SynthOpenAIResponsesFunctionCallsSSE is the SSE counterpart to
+// SynthOpenAIResponsesFunctionCallsJSON: emits sequential output_item
+// added/delta/done sequences for each function_call.
+func SynthOpenAIResponsesFunctionCallsSSE(calls []SyntheticToolCall) []byte {
+	var b strings.Builder
+	b.WriteString(sseEventBlock("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_clawvisor_approve", "status": "in_progress"}}))
+	for i, call := range calls {
+		input := call.Input
+		if input == nil {
+			input = map[string]any{}
+		}
+		args, _ := json.Marshal(input)
+		b.WriteString(sseEventBlock("response.output_item.added", map[string]any{
+			"type":         "response.output_item.added",
+			"output_index": i,
+			"item":         map[string]any{"id": "fc_" + call.ID, "type": "function_call", "status": "in_progress", "call_id": call.ID, "name": call.Name},
+		}))
+		b.WriteString(sseEventBlock("response.function_call_arguments.delta", map[string]any{
+			"type":         "response.function_call_arguments.delta",
+			"item_id":      "fc_" + call.ID,
+			"output_index": i,
+			"delta":        string(args),
+		}))
+		b.WriteString(sseEventBlock("response.function_call_arguments.done", map[string]any{
+			"type":         "response.function_call_arguments.done",
+			"item_id":      "fc_" + call.ID,
+			"output_index": i,
+			"name":         call.Name,
+			"arguments":    string(args),
+		}))
+		b.WriteString(sseEventBlock("response.output_item.done", map[string]any{
+			"type":         "response.output_item.done",
+			"output_index": i,
+			"item":         map[string]any{"id": "fc_" + call.ID, "type": "function_call", "status": "completed", "call_id": call.ID, "name": call.Name, "arguments": string(args)},
+		}))
+	}
+	b.WriteString(sseEventBlock("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_clawvisor_approve", "status": "completed"}}))
+	return []byte(b.String())
+}
+
+// SynthOpenAIChatToolCallsJSON builds a chat.completion JSON payload
+// carrying N tool_calls on one assistant message. Used by the
+// coalesced-approval release path.
+func SynthOpenAIChatToolCallsJSON(calls []SyntheticToolCall) []byte {
+	toolCalls := make([]openAIChatToolCall, 0, len(calls))
+	for _, call := range calls {
+		input := call.Input
+		if input == nil {
+			input = map[string]any{}
+		}
+		args, _ := json.Marshal(input)
+		toolCalls = append(toolCalls, openAIChatToolCall{
+			ID:   call.ID,
+			Type: "function",
+			Function: openAIChatFunction{
+				Name:      call.Name,
+				Arguments: string(args),
+			},
+		})
+	}
+	out := openAIChatCompletionsResponse{
+		ID:     "chatcmpl_clawvisor_approve",
+		Object: "chat.completion",
+		Choices: []openAIChatChoice{{
+			Index: 0,
+			Message: openAIChatMessage{
+				Role:      "assistant",
+				ToolCalls: toolCalls,
+			},
+			FinishReason: "tool_calls",
+		}},
+	}
+	body, _ := json.Marshal(out)
+	return body
+}
+
+// SynthOpenAIChatToolCallsSSE is the SSE counterpart to
+// SynthOpenAIChatToolCallsJSON: emits one tool_calls delta carrying all
+// N entries (each with its own index in the array).
+func SynthOpenAIChatToolCallsSSE(calls []SyntheticToolCall) []byte {
+	var b strings.Builder
+	b.WriteString(chatCompletionSSEBlock(map[string]any{
+		"id":      "chatcmpl_clawvisor_approve",
+		"object":  "chat.completion.chunk",
+		"choices": []map[string]any{{"index": 0, "delta": map[string]any{"role": "assistant"}, "finish_reason": nil}},
+	}))
+	toolCalls := make([]map[string]any, 0, len(calls))
+	for i, call := range calls {
+		input := call.Input
+		if input == nil {
+			input = map[string]any{}
+		}
+		args, _ := json.Marshal(input)
+		toolCalls = append(toolCalls, map[string]any{
+			"index": i,
+			"id":    call.ID,
+			"type":  "function",
+			"function": map[string]any{
+				"name":      call.Name,
+				"arguments": string(args),
+			},
+		})
+	}
+	b.WriteString(chatCompletionSSEBlock(map[string]any{
+		"id":     "chatcmpl_clawvisor_approve",
+		"object": "chat.completion.chunk",
+		"choices": []map[string]any{{
+			"index":         0,
+			"delta":         map[string]any{"tool_calls": toolCalls},
+			"finish_reason": nil,
+		}},
+	}))
+	b.WriteString(chatCompletionSSEBlock(map[string]any{
+		"id":      "chatcmpl_clawvisor_approve",
+		"object":  "chat.completion.chunk",
+		"choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "tool_calls"}},
+	}))
+	b.WriteString("data: [DONE]\n\n")
+	return []byte(b.String())
+}
+
 func SynthOpenAIResponsesFunctionCallJSON(toolUseID, toolName string, toolInput map[string]any) []byte {
 	args, _ := json.Marshal(toolInput)
 	out := openAIResponsesJSON{

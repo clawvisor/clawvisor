@@ -221,7 +221,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		h.logger.Warn("deprecated: task created with planned_calls but no authorized_actions; deriving scope from planned_calls",
+		h.logger.WarnContext(ctx, "deprecated: task created with planned_calls but no authorized_actions; deriving scope from planned_calls",
 			"agent_id", agent.ID,
 			"derived_scope_count", len(req.AuthorizedActions),
 		)
@@ -589,7 +589,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			}
 			llmAssessment, err := h.assessor.Assess(ctx, llmReq)
 			if err != nil {
-				h.logger.Warn("task risk assessment failed", "error", err)
+				h.logger.WarnContext(ctx, "task risk assessment failed", "error", err)
 			}
 			assessment = llmAssessment
 		}
@@ -661,7 +661,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 					AgentName:           agent.Name,
 				})
 				if err != nil {
-					h.logger.Warn("group chat approval check failed", "err", err, "user_id", agent.UserID)
+					h.logger.WarnContext(ctx, "group chat approval check failed", "err", err, "user_id", agent.UserID)
 				} else if result != nil && result.Approved {
 					preApproved = true
 					task.Status = "active"
@@ -677,7 +677,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 						"latency_ms":  result.LatencyMS,
 					})
 					task.ApprovalRationale = rationale
-					h.logger.Info("task auto-approved via group chat LLM check",
+					h.logger.InfoContext(ctx, "task auto-approved via group chat LLM check",
 						"task_id", task.ID, "confidence", result.Confidence,
 						"explanation", result.Explanation, "model", result.Model,
 						"latency_ms", result.LatencyMS)
@@ -687,13 +687,13 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.st.CreateTask(ctx, task); err != nil {
-		h.logger.Warn("create task failed", "err", err)
+		h.logger.WarnContext(ctx, "create task failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create task")
 		return
 	}
 	if !preApproved {
 		if err := h.createCanonicalTaskApproval(ctx, task, "task_create"); err != nil {
-			h.logger.Error("failed to create canonical task approval", "task_id", task.ID, "err", err)
+			h.logger.ErrorContext(ctx, "failed to create canonical task approval", "task_id", task.ID, "err", err)
 		}
 	}
 
@@ -757,7 +757,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			DenyURL:      denyURL,
 			ExpiresIn:    expiresInStr,
 		}); err != nil {
-			h.logger.Warn("failed to send task approval notification", "task_id", task.ID, "err", err)
+			h.logger.WarnContext(ctx, "failed to send task approval notification", "task_id", task.ID, "err", err)
 		} else if msgID != "" {
 			_ = h.st.SaveNotificationMessage(ctx, "task", task.ID, "telegram", msgID)
 		}
@@ -1051,7 +1051,7 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.logger.Info("listing tasks", "active_only", filter.ActiveOnly, "status", filter.Status, "limit", filter.Limit, "offset", filter.Offset)
+	h.logger.InfoContext(ctx, "listing tasks", "active_only", filter.ActiveOnly, "status", filter.Status, "limit", filter.Limit, "offset", filter.Offset)
 
 	tasks, total, err := h.st.ListTasks(ctx, user.ID, filter)
 	if err != nil {
@@ -1733,7 +1733,7 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, canonicalTaskApprovalKind(task), "deny", "denied")
 	if err := h.st.DeleteChainFactsByTask(ctx, taskID); err != nil {
-		h.logger.Warn("chain facts cleanup failed", "err", err, "task_id", taskID)
+		h.logger.WarnContext(ctx, "chain facts cleanup failed", "err", err, "task_id", taskID)
 	}
 
 	h.publishTasksAndQueue(user.ID)
@@ -1792,7 +1792,7 @@ func (h *TasksHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.st.DeleteChainFactsByTask(ctx, taskID); err != nil {
-		h.logger.Warn("chain facts cleanup failed", "err", err, "task_id", taskID)
+		h.logger.WarnContext(ctx, "chain facts cleanup failed", "err", err, "task_id", taskID)
 	}
 
 	h.publishTasksAndQueue(agent.UserID)
@@ -1991,7 +1991,7 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 	task.PendingReason = req.Reason
 	task.Status = "pending_scope_expansion"
 	if err := h.createCanonicalTaskApproval(ctx, task, "task_expand"); err != nil {
-		h.logger.Error("failed to create canonical scope expansion approval", "task_id", taskID, "err", err)
+		h.logger.ErrorContext(ctx, "failed to create canonical scope expansion approval", "task_id", taskID, "err", err)
 	}
 
 	// Send notification.
@@ -2009,7 +2009,7 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 			ApproveURL: approveURL,
 			DenyURL:    denyURL,
 		}); err != nil {
-			h.logger.Warn("failed to send scope expansion notification", "task_id", taskID, "err", err)
+			h.logger.WarnContext(ctx, "failed to send scope expansion notification", "task_id", taskID, "err", err)
 		} else if msgID != "" {
 			_ = h.st.SaveNotificationMessage(ctx, "task", taskID, "telegram", msgID)
 		}
@@ -2429,16 +2429,16 @@ func (h *TasksHandler) resolveCanonicalTaskApproval(ctx context.Context, task *s
 	rec, err := h.findPendingTaskApprovalRecord(ctx, task.UserID, task.ID, kind)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
-			h.logger.Error("failed to load canonical task approval", "task_id", task.ID, "kind", kind, "err", err)
+			h.logger.ErrorContext(ctx, "failed to load canonical task approval", "task_id", task.ID, "kind", kind, "err", err)
 		}
 		return
 	}
 	if err := validateApprovalRecordTransition(rec, resolution, status); err != nil {
-		h.logger.Error("illegal canonical task approval transition", "task_id", task.ID, "approval_id", rec.ID, "kind", rec.Kind, "from_status", rec.Status, "resolution", resolution, "status", status, "err", err)
+		h.logger.ErrorContext(ctx, "illegal canonical task approval transition", "task_id", task.ID, "approval_id", rec.ID, "kind", rec.Kind, "from_status", rec.Status, "resolution", resolution, "status", status, "err", err)
 		return
 	}
 	if err := h.st.ResolveApprovalRecord(ctx, rec.ID, resolution, status, time.Now().UTC()); err != nil {
-		h.logger.Error("failed to resolve canonical task approval", "task_id", task.ID, "approval_id", rec.ID, "err", err)
+		h.logger.ErrorContext(ctx, "failed to resolve canonical task approval", "task_id", task.ID, "approval_id", rec.ID, "err", err)
 	}
 }
 
@@ -2473,7 +2473,7 @@ func (h *TasksHandler) updateNotificationMsg(ctx context.Context, targetType, ta
 		return
 	}
 	if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
-		h.logger.Warn("telegram message update failed", "err", err, "target_type", targetType, "target_id", targetID)
+		h.logger.WarnContext(ctx, "telegram message update failed", "err", err, "target_type", targetType, "target_id", targetID)
 	}
 }
 
@@ -2510,7 +2510,7 @@ func (h *TasksHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.st.DeleteChainFactsByTask(ctx, taskID); err != nil {
-		h.logger.Warn("chain facts cleanup failed", "err", err, "task_id", taskID)
+		h.logger.WarnContext(ctx, "chain facts cleanup failed", "err", err, "task_id", taskID)
 	}
 
 	h.publishTasksAndQueue(user.ID)
@@ -2566,7 +2566,7 @@ func (h *TasksHandler) serviceActivated(ctx context.Context, userID, serviceType
 		_, err := h.st.GetServiceMeta(ctx, userID, serviceType, alias)
 		return err == nil
 	}
-	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, alias, userID)
 	_, err := h.vault.Get(ctx, userID, vKey)
 	return err == nil
 }
@@ -2595,7 +2595,7 @@ func (h *TasksHandler) missingCredentialScopes(ctx context.Context, userID, serv
 	if len(required) == 0 {
 		return nil
 	}
-	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, alias, userID)
 	credBytes, err := h.vault.Get(ctx, userID, vKey)
 	if err != nil || len(credBytes) == 0 {
 		return nil

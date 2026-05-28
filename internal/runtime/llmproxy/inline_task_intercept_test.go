@@ -165,16 +165,29 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 }
 
 // capturingInlineCreator is a test InlineTaskCreator that records the
-// inputs and returns a canned response.
+// inputs and returns a canned response (or an error when fail is set,
+// so auto-approve gate fall-back paths can be exercised).
 type capturingInlineCreator struct {
 	called bool
+	fail   bool
 	resp   *InlineApprovedTask
 }
 
 func (c *capturingInlineCreator) CreateInlineApprovedTask(_ context.Context, _ *store.Agent, _ *runtimetasks.TaskCreateRequest, _ string) (*InlineApprovedTask, error) {
 	c.called = true
+	if c.fail {
+		return nil, fmtErrorf("simulated inline creator failure")
+	}
 	return c.resp, nil
 }
+
+// fmtErrorf is a tiny local helper to avoid adding an extra import for
+// this single test path.
+func fmtErrorf(s string) error { return &simpleErr{s: s} }
+
+type simpleErr struct{ s string }
+
+func (e *simpleErr) Error() string { return e.s }
 
 // anthropicBashControlTasksPostWithQuery is anthropicBashControlTasksPost
 // with an extra URL query parameter (e.g. surface=inline).
@@ -408,6 +421,420 @@ func (s *stubInlineRiskAssessor) AssessEnvelope(_ context.Context, req TaskRiskA
 	s.got = req
 	return s.out
 }
+
+// autoApproveFixture bundles the recurring test setup for the
+// conversation-based auto-approval gate so each test can focus on the
+// specific condition being exercised.
+type autoApproveFixture struct {
+	t        *testing.T
+	cache    *MemoryPendingApprovalCache
+	store    store.Store
+	userID   string
+	agentID  string
+	assessor *stubInlineRiskAssessor
+	creator  *capturingInlineCreator
+	insp     *inspector.Inspector
+}
+
+func newAutoApproveFixture(t *testing.T, assessment *TaskRiskAssessment) autoApproveFixture {
+	t.Helper()
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	return autoApproveFixture{
+		t:        t,
+		cache:    cache,
+		store:    st,
+		userID:   userID,
+		agentID:  agentID,
+		assessor: &stubInlineRiskAssessor{out: assessment},
+		creator: &capturingInlineCreator{
+			resp: &InlineApprovedTask{
+				ID:               "task-auto-approved",
+				Status:           "active",
+				Purpose:          "Build a landing page at /tmp/landing",
+				Lifetime:         "session",
+				ApprovalSource:   "inline_chat",
+				ApprovalRecordID: "appr-auto",
+			},
+		},
+		insp: inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+	}
+}
+
+func (f autoApproveFixture) run(threshold string, turns []string) PostprocessResult {
+	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	return Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:                        f.insp,
+		RewriteOpts:                      inspector.DefaultRewriteOpts("http://localhost:25297"),
+		CallerNonces:                     NewMemoryCallerNonceCache(time.Minute),
+		Store:                            f.store,
+		AgentUserID:                      f.userID,
+		AgentID:                          f.agentID,
+		ControlBaseURL:                   "http://localhost:25297",
+		PendingApprovals:                 f.cache,
+		TaskRiskAssessor:                 f.assessor,
+		AgentName:                        "test-agent",
+		RecentUserTurns:                  turns,
+		ConversationAutoApproveThreshold: threshold,
+		InlineTaskCreator:                f.creator,
+	})
+}
+
+func (f autoApproveFixture) holdCount() int {
+	f.cache.mu.Lock()
+	defer f.cache.mu.Unlock()
+	return len(f.cache.pending[pendingApprovalKey{
+		userID: f.userID, agentID: f.agentID, provider: conversation.ProviderAnthropic,
+	}])
+}
+
+// TestAutoApproveUserNotice_TruncatesByRune ensures the user-facing
+// notice's purpose suffix is truncated on rune boundaries, not byte
+// boundaries. The purpose is model-controlled and can be non-ASCII;
+// a byte-slice would split a multibyte UTF-8 sequence and render as
+// U+FFFD once JSON-marshalled.
+func TestAutoApproveUserNotice_TruncatesByRune(t *testing.T) {
+	// Each Chinese character is 3 bytes in UTF-8; 300 chars = 900
+	// bytes, well over the 200-rune cap.
+	long := strings.Repeat("漢", 300)
+	got := autoApproveUserNotice(long)
+	// Result must be valid UTF-8 — no replacement chars from
+	// mid-rune slicing.
+	if strings.Contains(got, "�") {
+		t.Errorf("notice contains U+FFFD; truncation split a rune mid-sequence:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("notice should end with ellipsis when truncated; got: %s", got)
+	}
+}
+
+// TestAutoApprove_FiresOnLowRiskYesMatch is the happy path: user
+// authorized the work in the conversation, risk is low, threshold is
+// low — gate fires, task is created, no prompt rendered.
+func TestAutoApprove_FiresOnLowRiskYesMatch(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:              "low",
+		Explanation:            "Read-only landing-page work.",
+		IntentMatch:            "yes",
+		IntentMatchExplanation: "User asked to build a landing page at /tmp/landing.",
+	})
+
+	got := f.run("low", []string{"build me a landing page at /tmp/landing"})
+
+	if !f.creator.called {
+		t.Fatal("auto-approve gate must invoke the inline task creator")
+	}
+	if f.holdCount() != 0 {
+		t.Errorf("auto-approve gate must not register a pending hold; got %d holds", f.holdCount())
+	}
+	out := string(got.Body)
+	if strings.Contains(out, "Clawvisor wants to create a task") {
+		t.Errorf("auto-approve must skip the human prompt; got %s", out)
+	}
+	if !strings.Contains(out, "was created and approved by the user") {
+		t.Errorf("auto-approve must substitute the success augmentation; got %s", out)
+	}
+	if !strings.Contains(out, "task-auto-approved") {
+		t.Errorf("augmentation should carry the created task id; got %s", out)
+	}
+	// The assessor still ran and saw the recent turns — that's how it
+	// arrived at intent_match=yes in the first place.
+	if !f.assessor.called {
+		t.Fatal("expected risk assessor to be called even on auto-approve path")
+	}
+	if len(f.assessor.got.RecentUserTurns) == 0 {
+		t.Errorf("assessor should receive recent user turns; got %+v", f.assessor.got.RecentUserTurns)
+	}
+}
+
+// TestAutoApprove_VerdictRequestsContinuation verifies that the
+// auto-approve gate sets ContinueWithToolResult on the verdict — not
+// just SubstituteWith. The presence of this field is what tells the
+// handler to make a recursive LLM call instead of terminating the turn
+// with an assistant text reply.
+func TestAutoApprove_VerdictRequestsContinuation(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:   "low",
+		IntentMatch: "yes",
+	})
+	got := f.run("low", []string{"build me a landing page at /tmp/landing"})
+	if len(got.Decisions) == 0 {
+		t.Fatal("expected at least one tool_use decision")
+	}
+	v := got.Decisions[0].Verdict
+	if v.ContinueWithToolResult == "" {
+		t.Fatal("auto-approve verdict must populate ContinueWithToolResult so handler can recursive-call")
+	}
+	if v.SubstituteWith == "" {
+		t.Fatal("auto-approve verdict must keep SubstituteWith as fallback when continuation can't run")
+	}
+	if v.SubstituteWith != v.ContinueWithToolResult {
+		t.Errorf("fallback and continuation should carry the same augmentation body; sub=%q cont=%q",
+			v.SubstituteWith, v.ContinueWithToolResult)
+	}
+}
+
+// TestAutoApprove_DoesNotFireOnThresholdOff exercises the default case.
+// Even with a perfect intent match and low risk, threshold="off" must
+// keep the human in the loop.
+func TestAutoApprove_DoesNotFireOnThresholdOff(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:   "low",
+		IntentMatch: "yes",
+	})
+	got := f.run("off", []string{"build me a landing page"})
+
+	if f.creator.called {
+		t.Fatal("threshold=off must never auto-approve")
+	}
+	if f.holdCount() != 1 {
+		t.Errorf("threshold=off must register a pending hold; got %d holds", f.holdCount())
+	}
+	if !strings.Contains(string(got.Body), "Clawvisor wants to create a task") {
+		t.Errorf("threshold=off must render the human prompt")
+	}
+}
+
+// TestAutoApprove_DoesNotFireOnRiskAboveThreshold confirms the cap
+// works: low threshold with medium risk must still prompt the human.
+func TestAutoApprove_DoesNotFireOnRiskAboveThreshold(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:   "medium",
+		IntentMatch: "yes",
+	})
+	got := f.run("low", []string{"build me a landing page"})
+
+	if f.creator.called {
+		t.Fatal("risk above threshold must not auto-approve")
+	}
+	if f.holdCount() != 1 {
+		t.Errorf("expected pending hold; got %d", f.holdCount())
+	}
+	if !strings.Contains(string(got.Body), "Clawvisor wants to create a task") {
+		t.Error("expected human prompt")
+	}
+}
+
+// TestAutoApprove_DoesNotFireOnPartialIntent ensures the gate is
+// strict: only a "yes" intent_match counts. "partial" — user asked for
+// some but not all of the requested scope — must prompt.
+func TestAutoApprove_DoesNotFireOnPartialIntent(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:   "low",
+		IntentMatch: "partial",
+	})
+	got := f.run("medium", []string{"check my calendar"})
+
+	if f.creator.called {
+		t.Fatal("intent_match=partial must not auto-approve")
+	}
+	if !strings.Contains(string(got.Body), "Clawvisor wants to create a task") {
+		t.Error("expected human prompt")
+	}
+}
+
+// TestAutoApprove_DoesNotFireOnUnknownIntent covers the empty-context
+// path: no recent human turns → assessor emits intent_match=unknown →
+// gate must not fire even at threshold=medium.
+func TestAutoApprove_DoesNotFireOnUnknownIntent(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:   "low",
+		IntentMatch: "unknown",
+	})
+	got := f.run("medium", nil)
+
+	if f.creator.called {
+		t.Fatal("intent_match=unknown must not auto-approve")
+	}
+	if !strings.Contains(string(got.Body), "Clawvisor wants to create a task") {
+		t.Error("expected human prompt")
+	}
+}
+
+// TestAutoApprove_DoesNotFireWithoutRecentTurnsEvenWhenAssessorSaysYes
+// is the deterministic-floor test. A misbehaving or compromised LLM
+// assessor could emit intent_match="yes" even when the runtime knows
+// the inbound transcript carried zero human-authored turns. The gate
+// must reject this on its own — it cannot defer that question to the
+// LLM, because the assessor itself is the layer being constrained.
+func TestAutoApprove_DoesNotFireWithoutRecentTurnsEvenWhenAssessorSaysYes(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:              "low",
+		IntentMatch:            "yes",
+		IntentMatchExplanation: "Assessor incorrectly claims user authorized this.",
+	})
+	// Empty turns slice — the extraction layer found no genuine
+	// human-authored content in the inbound body.
+	got := f.run("medium", nil)
+
+	if f.creator.called {
+		t.Fatal("empty recent turns must prevent auto-approval regardless of intent_match")
+	}
+	if f.holdCount() != 1 {
+		t.Errorf("empty recent turns must register a human approval hold; got %d holds", f.holdCount())
+	}
+	if !strings.Contains(string(got.Body), "Clawvisor wants to create a task") {
+		t.Error("expected human prompt when no recent turns were extracted")
+	}
+}
+
+// TestAutoApprove_DoesNotFireWithConflicts ensures internal task
+// inconsistencies always reach the human. Even an intent_match=yes
+// verdict with low risk must prompt when the assessor flagged a
+// conflict.
+func TestAutoApprove_DoesNotFireWithConflicts(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:   "low",
+		IntentMatch: "yes",
+		Conflicts: []TaskRiskConflict{{
+			Field:       "expected_use",
+			Description: "expected_use mentions sending email but purpose is read-only",
+			Severity:    "warning",
+		}},
+	})
+	got := f.run("medium", []string{"build me a landing page"})
+
+	if f.creator.called {
+		t.Fatal("conflicts present must not auto-approve")
+	}
+	if !strings.Contains(string(got.Body), "Clawvisor wants to create a task") {
+		t.Error("expected human prompt")
+	}
+}
+
+// TestAutoApprove_WritesTaskLinkedAuditRow confirms the audit trail
+// for an auto-approved task carries the task_id / approval_record_id
+// linkage that downstream consumers depend on. Without this row,
+// dashboards filtering by task_id can't reconstruct which task was
+// auto-approved — only that the intercept fired.
+func TestAutoApprove_WritesTaskLinkedAuditRow(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:              "low",
+		Explanation:            "Read-only landing-page work.",
+		IntentMatch:            "yes",
+		IntentMatchExplanation: "User asked for it.",
+	})
+
+	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:                        f.insp,
+		RewriteOpts:                      inspector.DefaultRewriteOpts("http://localhost:25297"),
+		CallerNonces:                     NewMemoryCallerNonceCache(time.Minute),
+		Store:                            f.store,
+		AgentUserID:                      f.userID,
+		AgentID:                          f.agentID,
+		ControlBaseURL:                   "http://localhost:25297",
+		PendingApprovals:                 f.cache,
+		TaskRiskAssessor:                 f.assessor,
+		AgentName:                        "test-agent",
+		RecentUserTurns:                  []string{"build me a landing page at /tmp/landing"},
+		ConversationAutoApproveThreshold: "low",
+		InlineTaskCreator:                f.creator,
+		Audit:                            NewAuditEmitter(f.store, nil, nil),
+		RequestID:                        "req-auto-approve-audit",
+	})
+
+	if !f.creator.called {
+		t.Fatal("auto-approve gate should have fired")
+	}
+	if !strings.Contains(string(got.Body), "was created and approved by the user") {
+		t.Errorf("expected success augmentation; got %s", got.Body)
+	}
+
+	rows, _, err := f.store.ListAuditEntries(req.Context(), f.userID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	// Expect at least two rows: the generic tool_use approve row and
+	// the task-linked inline_auto_approved row.
+	var taskLinked *store.AuditEntry
+	for i := range rows {
+		if rows[i].Action == "lite_proxy.task_create.inline_auto_approved" {
+			taskLinked = rows[i]
+			break
+		}
+	}
+	if taskLinked == nil {
+		t.Fatalf("missing lite_proxy.task_create.inline_auto_approved audit row; got actions %v", auditActions(rows))
+	}
+	if taskLinked.TaskID == nil || *taskLinked.TaskID != "task-auto-approved" {
+		t.Errorf("task-linked row task_id = %v, want task-auto-approved", taskLinked.TaskID)
+	}
+	if taskLinked.Decision != "allow" || taskLinked.Outcome != "inline_task_auto_approved" {
+		t.Errorf("decision=%q outcome=%q, want allow / inline_task_auto_approved",
+			taskLinked.Decision, taskLinked.Outcome)
+	}
+	if taskLinked.ToolUseID == nil || *taskLinked.ToolUseID == "" {
+		t.Error("expected tool_use_id set on auto-approve audit row")
+	}
+}
+
+func auditActions(rows []*store.AuditEntry) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Action
+	}
+	return out
+}
+
+// TestAutoApprove_FallsBackOnCreatorError exercises the create-failure
+// safety net: when the gate would fire but the inline task creator
+// errors, fall through to the human prompt rather than dropping the
+// task on the floor.
+func TestAutoApprove_FallsBackOnCreatorError(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:   "low",
+		IntentMatch: "yes",
+	})
+	f.creator.fail = true
+	got := f.run("low", []string{"build me a landing page"})
+
+	if f.holdCount() != 1 {
+		t.Errorf("creator error must leave a fall-back hold; got %d holds", f.holdCount())
+	}
+	if !strings.Contains(string(got.Body), "Clawvisor wants to create a task") {
+		t.Error("creator error must render the human prompt")
+	}
+}
+
+// TestAutoApprove_FallsBackWhenCreatorMissing covers the
+// misconfigured-runtime path. If the threshold says fire but no
+// creator is wired, the runtime must NOT silently drop the task or
+// pretend to approve; it should fall through to the human prompt and
+// audit the gap.
+func TestAutoApprove_FallsBackWhenCreatorMissing(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	assessor := &stubInlineRiskAssessor{out: &TaskRiskAssessment{
+		RiskLevel: "low", IntentMatch: "yes",
+	}}
+	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:                        insp,
+		RewriteOpts:                      inspector.DefaultRewriteOpts("http://localhost:25297"),
+		CallerNonces:                     NewMemoryCallerNonceCache(time.Minute),
+		Store:                            st,
+		AgentUserID:                      userID,
+		AgentID:                          agentID,
+		ControlBaseURL:                   "http://localhost:25297",
+		PendingApprovals:                 cache,
+		TaskRiskAssessor:                 assessor,
+		AgentName:                        "test-agent",
+		RecentUserTurns:                  []string{"build me a landing page"},
+		ConversationAutoApproveThreshold: "low",
+		// InlineTaskCreator intentionally nil.
+	})
+
+	if !strings.Contains(string(got.Body), "Clawvisor wants to create a task") {
+		t.Error("missing creator must fall back to human prompt")
+	}
+}
+
 
 func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)

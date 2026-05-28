@@ -49,6 +49,16 @@ type AssessRequest struct {
 	RequiredCredentials    []runtimetasks.RequiredCredential
 	IntentVerificationMode string
 	ExpectedUse            string
+
+	// RecentUserTurns carries the human-authored chat turns leading up to
+	// this task creation. When non-empty, the assessor emits an
+	// IntentMatch verdict reporting whether the user's prior message(s)
+	// unambiguously authorize the requested scope. Used by the
+	// conversation-based auto-approval gate: a "yes" verdict paired with
+	// a risk level at or below the user's configured threshold skips the
+	// human approval prompt. Treated as UNTRUSTED text (may contain
+	// injection); the assessor evaluates it only as data.
+	RecentUserTurns []string
 }
 
 // HasEnvelope reports whether the request carries v2 envelope fields.
@@ -64,6 +74,15 @@ type RiskAssessment struct {
 	Conflicts   []ConflictDetail `json:"conflicts"`     // internal inconsistencies within the task
 	Model       string           `json:"model"`
 	LatencyMS   int              `json:"latency_ms"`
+
+	// IntentMatch reports whether the user's recent chat turns
+	// unambiguously authorize the requested scope. Set only when
+	// RecentUserTurns was provided to the assessor; "unknown" otherwise.
+	// Values: "yes" | "partial" | "no" | "unknown".
+	IntentMatch string `json:"intent_match,omitempty"`
+	// IntentMatchExplanation is a 1-sentence plain-language rationale
+	// surfaced to the auto-approval gate's audit trail.
+	IntentMatchExplanation string `json:"intent_match_explanation,omitempty"`
 }
 
 // ConflictDetail describes an internal inconsistency within a task.
@@ -85,12 +104,44 @@ type LLMAssessor struct {
 	health   *llm.Health
 	registry *adapters.Registry
 	logger   *slog.Logger
+
+	// geminiCacheNameFn returns the current Gemini cachedContents resource
+	// name, or "" when no cache is registered. Set via StartGeminiCache.
+	// Attached to every per-call llm.Client so the cache is referenced on
+	// Gemini provider requests.
+	geminiCacheNameFn func() string
+	// geminiCacheInvalidator drops the in-process cache name and triggers
+	// an async refresh when a server-side cache reference fails. Wired
+	// alongside geminiCacheNameFn when a manager is in use.
+	geminiCacheInvalidator func(string)
+	// geminiCacheMgr owns the cache lifecycle when StartGeminiCache was
+	// used. Nil when no cache was set up.
+	geminiCacheMgr *llm.GeminiCacheManager
 }
 
 // NewLLMAssessor creates an LLM-backed task risk assessor.
 // The registry is used to read action metadata from adapters that implement MetadataProvider.
 func NewLLMAssessor(health *llm.Health, registry *adapters.Registry, logger *slog.Logger) *LLMAssessor {
 	return &LLMAssessor{health: health, registry: registry, logger: logger}
+}
+
+// StartGeminiCache initializes the Gemini explicit context cache for the
+// assessor's system prompt and registers it so per-request clients reference
+// it automatically. cfg.SystemPrompt is filled in by the assessor and should
+// be left empty by callers. On creation failure the assessor proceeds
+// without caching (slower, but functional).
+func (a *LLMAssessor) StartGeminiCache(ctx context.Context, cfg llm.GeminiCacheManagerConfig) error {
+	if cfg.Logger == nil {
+		cfg.Logger = a.logger
+	}
+	mgr, nameFn, invalidator, err := llm.StartCachedSystemPrompt(ctx, cfg, riskAssessmentSystemPrompt)
+	if err != nil {
+		return fmt.Errorf("assessor gemini cache: %w", err)
+	}
+	a.geminiCacheMgr = mgr
+	a.geminiCacheNameFn = nameFn
+	a.geminiCacheInvalidator = invalidator
+	return nil
 }
 
 func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAssessment, error) {
@@ -101,16 +152,23 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 
 	start := time.Now()
 
-	systemPrompt := fmt.Sprintf(riskAssessmentSystemPrompt, buildActionContextFromRegistry(ctx, a.registry, req.UserID))
+	actionContext := buildActionContextFromRegistry(ctx, a.registry, req.UserID)
 	client := llm.NewClient(cfg.LLMProviderConfig)
-	userMsg := buildAssessUserMessage(req)
-	// systemPrompt varies per user (the action context includes the user's
-	// MCP-discovered tools), so the cache prefix is effectively per-user.
-	// Still worth caching: a single user runs many risk assessments per
-	// session, all sharing the same activated-tool set, so the cache hit
-	// rate within a user is high.
+	if a.geminiCacheNameFn != nil {
+		client.AttachGeminiCacheNameFn(a.geminiCacheNameFn)
+		if a.geminiCacheInvalidator != nil {
+			client.AttachGeminiCacheInvalidator(a.geminiCacheInvalidator)
+		}
+	}
+	verificationEnabled := a.health.VerificationConfig().Enabled
+	userMsg := buildAssessUserMessage(req, verificationEnabled, actionContext)
+	// The system prompt is fully static — the per-user action context lives
+	// in the user message. That means the Anthropic prompt-cache prefix is
+	// shared across all users (and all assessments), and the Gemini
+	// explicit-content cache (when configured) covers it in a single
+	// cachedContents resource.
 	messages := []llm.ChatMessage{
-		{Role: "system", Content: systemPrompt, CacheControl: true},
+		{Role: "system", Content: riskAssessmentSystemPrompt, CacheControl: true},
 		{Role: "user", Content: userMsg},
 	}
 
@@ -144,10 +202,10 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 		return assessment, nil
 	}
 
-	a.logger.Warn("task risk assessment failed after retry", "error", lastErr)
+	a.logger.WarnContext(ctx, "task risk assessment failed after retry", "error", lastErr)
 	return &RiskAssessment{
 		RiskLevel:   "unknown",
-		Explanation: "Risk assessment failed: " + lastErr.Error(),
+		Explanation: "Risk assessment temporarily unavailable.",
 		Model:       cfg.Model,
 		LatencyMS:   int(time.Since(start).Milliseconds()),
 	}, nil
@@ -174,10 +232,12 @@ func parseRiskResponse(raw string) (*RiskAssessment, error) {
 	raw = strings.TrimSpace(raw)
 
 	var out struct {
-		RiskLevel   string           `json:"risk_level"`
-		Explanation string           `json:"explanation"`
-		Factors     []string         `json:"factors"`
-		Conflicts   []ConflictDetail `json:"conflicts"`
+		RiskLevel              string           `json:"risk_level"`
+		Explanation            string           `json:"explanation"`
+		Factors                []string         `json:"factors"`
+		Conflicts              []ConflictDetail `json:"conflicts"`
+		IntentMatch            string           `json:"intent_match"`
+		IntentMatchExplanation string           `json:"intent_match_explanation"`
 	}
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil, fmt.Errorf("parse risk response: %w", err)
@@ -199,10 +259,25 @@ func parseRiskResponse(raw string) (*RiskAssessment, error) {
 		}
 	}
 
+	// intent_match is optional in the response (legacy v1 prompts and
+	// envelope-only requests without conversation context don't emit
+	// it). When present, it must be one of the documented values; an
+	// unrecognized value collapses to "unknown" rather than failing the
+	// whole parse — the surrounding risk read is still useful.
+	intentMatch := strings.ToLower(strings.TrimSpace(out.IntentMatch))
+	validIntent := map[string]bool{
+		"yes": true, "partial": true, "no": true, "unknown": true,
+	}
+	if intentMatch == "" || !validIntent[intentMatch] {
+		intentMatch = "unknown"
+	}
+
 	return &RiskAssessment{
-		RiskLevel:   out.RiskLevel,
-		Explanation: out.Explanation,
-		Factors:     out.Factors,
-		Conflicts:   out.Conflicts,
+		RiskLevel:              out.RiskLevel,
+		Explanation:            out.Explanation,
+		Factors:                out.Factors,
+		Conflicts:              out.Conflicts,
+		IntentMatch:            intentMatch,
+		IntentMatchExplanation: strings.TrimSpace(out.IntentMatchExplanation),
 	}, nil
 }

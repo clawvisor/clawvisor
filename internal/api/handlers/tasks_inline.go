@@ -41,6 +41,22 @@ import (
 // Returns an InlineApprovedTask shaped for the synthetic response
 // surfaced back to the LLM via the lite-proxy's release path.
 func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string) (*llmproxy.InlineApprovedTask, error) {
+	return h.createInlineApprovedTask(ctx, agent, req, originalToolUseID, nil)
+}
+
+// CreateInlineApprovedTaskWithAssessment is the auto-approve gate's
+// fast-path entry. When the lite-proxy has already run the LLM risk
+// assessor for the gate's intent-match check, it passes the resulting
+// assessment here so we don't pay a second LLM round-trip — and the
+// persisted task.RiskLevel is byte-identical to the level that
+// justified bypassing the prompt. Passing nil (or an "unknown"
+// assessment) falls back to computing fresh, matching the dashboard
+// path's behavior.
+func (h *TasksHandler) CreateInlineApprovedTaskWithAssessment(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string, precomputed *taskrisk.RiskAssessment) (*llmproxy.InlineApprovedTask, error) {
+	return h.createInlineApprovedTask(ctx, agent, req, originalToolUseID, precomputed)
+}
+
+func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string, precomputed *taskrisk.RiskAssessment) (*llmproxy.InlineApprovedTask, error) {
 	if agent == nil {
 		return nil, errors.New("agent is required")
 	}
@@ -98,7 +114,13 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	}
 	requiredCredentials := req.RequiredCredentials
 
-	now := time.Now().UTC()
+	// createInlineApprovedTask is only invoked from the release path
+	// (resolveInlineTaskApproval, after the user's "approve" gesture)
+	// or from the auto-approve gate (which constitutes approval — no
+	// user gesture, but creation is the approval). In both cases
+	// "now" is approval time, not hold time. Name it accordingly so
+	// the scope-lifetime computation below is unambiguous.
+	approvedAt := time.Now().UTC()
 	task := &store.Task{
 		ID:                     uuid.New().String(),
 		UserID:                 agent.UserID,
@@ -111,10 +133,21 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 		SchemaVersion:          env.SchemaVersion,
 		ExpiresInSeconds:       expiresIn,
 		ApprovalSource:         "inline_chat",
-		ApprovedAt:             &now,
+		ApprovedAt:             &approvedAt,
 	}
 	if lifetime != "standing" {
-		expiresAt := now.Add(time.Duration(expiresIn) * time.Second)
+		// Task scope lifetime once approved. expires_in_seconds is
+		// "usable scope after the user approves," not "time to
+		// decide" — the awaiting_task_approval hold (see
+		// inlineTaskApprovalHoldTTL) owns the decide window. So
+		// regardless of how long the approval took to land, the
+		// caller gets a full expiresIn of usable scope starting
+		// now. The most common runtime case is expiresIn falling
+		// back to task.default_expiry_seconds (config default
+		// 1800 → 30 minutes of post-approval scope); callers
+		// passing an explicit expires_in_seconds get exactly what
+		// they asked for.
+		expiresAt := approvedAt.Add(time.Duration(expiresIn) * time.Second)
 		task.ExpiresAt = &expiresAt
 	}
 	if len(req.ExpectedTools) > 0 {
@@ -157,9 +190,30 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	// envelope-shape policy for parity with the dashboard path. Failures
 	// in either are non-fatal — a task should still be created with at
 	// least the structural assessment when the LLM call errors out.
+	//
+	// Precomputed-assessment fast path: the auto-approve gate already
+	// ran the assessor (with RecentUserTurns) before deciding to skip
+	// the human prompt. Reusing its verdict here avoids a second
+	// round-trip AND avoids the displayed task.RiskLevel disagreeing
+	// with the level that justified the bypass. A nil or "unknown"
+	// precomputed value falls through to the normal compute path —
+	// the manual approval surface uses that branch and we keep its
+	// behavior unchanged.
 	envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
 	finalAssessment := envelopeAssessment
-	if h.assessor != nil {
+	// Honor the precomputed value only when it carries a usable
+	// risk level. nil, empty, and the literal "unknown" all fall
+	// through to a fresh assessor call so we never persist a task
+	// with an empty risk_level when the precomputed slot was set
+	// but unpopulated.
+	precomputedRisk := ""
+	if precomputed != nil {
+		precomputedRisk = strings.ToLower(strings.TrimSpace(precomputed.RiskLevel))
+	}
+	usePrecomputed := precomputed != nil && precomputedRisk != "" && precomputedRisk != "unknown"
+	if usePrecomputed {
+		finalAssessment = precomputed
+	} else if h.assessor != nil {
 		llmAssessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
 			Purpose:                req.Purpose,
 			AgentName:              agent.Name,
@@ -171,7 +225,7 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 			ExpectedUse:            env.ExpectedUse,
 		})
 		if err != nil {
-			h.logger.Warn("inline task risk assessment failed", "error", err)
+			h.logger.WarnContext(ctx, "inline task risk assessment failed", "error", err)
 		}
 		if llmAssessment != nil && !strings.EqualFold(llmAssessment.RiskLevel, "unknown") {
 			finalAssessment = mergeRiskAssessments(llmAssessment, envelopeAssessment)
@@ -194,7 +248,7 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 		var err error
 		credentialPlaceholders, err = h.mintTaskCredentialPlaceholders(ctx, task, requiredCredentials, credentialExpiresAt)
 		if err != nil {
-			h.logger.Error("failed to mint inline task credential placeholders; denying task to avoid orphaned active credential task",
+			h.logger.ErrorContext(ctx, "failed to mint inline task credential placeholders; denying task to avoid orphaned active credential task",
 				"task_id", task.ID, "err", err)
 			// Rollback must outlive the inbound request — a client
 			// disconnect that cancels ctx between the mint failure and
@@ -203,7 +257,7 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 			// values (logging, tracing).
 			rollbackCtx := context.WithoutCancel(ctx)
 			if rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied"); rollbackErr != nil {
-				h.logger.Error("CRITICAL: credential placeholder mint failed AND rollback failed; task is now orphaned active",
+				h.logger.ErrorContext(ctx, "CRITICAL: credential placeholder mint failed AND rollback failed; task is now orphaned active",
 					"task_id", task.ID, "mint_err", err, "rollback_err", rollbackErr)
 			}
 			return nil, fmt.Errorf("mint credential placeholders: %w", err)
@@ -216,7 +270,7 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	// (allow_session for session, allow_always for standing) to match
 	// what taskApprovalResolution returns for the dashboard path.
 	resolution := taskApprovalResolution(task)
-	rec, err := h.createCanonicalInlineApprovalRecord(ctx, task, resolution, now)
+	rec, err := h.createCanonicalInlineApprovalRecord(ctx, task, resolution, approvedAt)
 	if err != nil {
 		// Audit invariant: every active inline_chat task must have a
 		// matching approval_records row. Without that row, we'd leave
@@ -225,14 +279,14 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 		// authorize anything, then fail the inline-create — the caller
 		// will rewrite the user message as a deny with the approval
 		// error surfaced to the LLM.
-		h.logger.Error("failed to create inline approval record; denying task to preserve audit invariant",
+		h.logger.ErrorContext(ctx, "failed to create inline approval record; denying task to preserve audit invariant",
 			"task_id", task.ID, "err", err)
 		rollbackCtx := context.WithoutCancel(ctx)
 		if rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied"); rollbackErr != nil {
 			// Best-effort: log loudly. The original error is what we
 			// surface; an orphaned active task here is far worse than
 			// any other failure mode, so flag it.
-			h.logger.Error("CRITICAL: approval record failed AND rollback failed; task is now orphaned active",
+			h.logger.ErrorContext(ctx, "CRITICAL: approval record failed AND rollback failed; task is now orphaned active",
 				"task_id", task.ID, "approval_err", err, "rollback_err", rollbackErr)
 		}
 		return nil, fmt.Errorf("create inline approval record: %w", err)

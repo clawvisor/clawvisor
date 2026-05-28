@@ -237,7 +237,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 	if req.Context.CallbackURL != "" {
 		if err := callback.ValidateCallbackURL(req.Context.CallbackURL); err != nil {
-			h.logger.Warn("callback URL blocked by SSRF policy",
+			h.logger.WarnContext(ctx, "callback URL blocked by SSRF policy",
 				"callback_url", req.Context.CallbackURL,
 				"err", err,
 				"agent_id", agent.ID,
@@ -311,7 +311,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			Outcome:    outOutcome,
 			DurationMS: int(time.Since(start).Milliseconds()),
 		}); logErr != nil {
-			h.logger.Warn("backup request log failed", "err", logErr)
+			h.logger.WarnContext(ctx, "backup request log failed", "err", logErr)
 		}
 	}()
 
@@ -345,7 +345,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e := baseEntry("block", "blocked", nil)
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
 			resp := map[string]any{
@@ -380,7 +380,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		e.DurationMS = int(time.Since(start).Milliseconds())
 		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-			h.logger.Warn("audit log failed", "err", logErr)
+			h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 		}
 		h.publishAuditAndQueue(agent.UserID, "")
 		reason := ""
@@ -425,7 +425,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			errMsg := "missing required field: task_id"
 			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 				Error:         errMsg,
@@ -458,7 +458,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				Params:         req.Params,
 			})
 			if resolveErr != nil {
-				h.logger.Warn("gateway request resolver failed", "err", resolveErr, "service", serviceType, "action", req.Action, "request_id", req.RequestID)
+				h.logger.WarnContext(ctx, "gateway request resolver failed", "err", resolveErr, "service", serviceType, "action", req.Action, "request_id", req.RequestID)
 			} else {
 				classification = resolved
 			}
@@ -472,7 +472,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			errMsg := "request matches multiple active tasks; specify task_id explicitly"
 			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
 			resp := map[string]any{
@@ -494,7 +494,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			winner, logErr := h.logAuditCanonical(ctx, e)
 			if logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
 			if winner != nil {
@@ -514,7 +514,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				reason = "request is outside every active task and may need a new task"
 			}
 			if routeErr := h.routeToApproval(ctx, agent.UserID, blob, auditID, req.Context.CallbackURL, expiresAt, reason, nil); routeErr != nil {
-				h.logger.Warn("route to approval failed", "err", routeErr)
+				h.logger.WarnContext(ctx, "route to approval failed", "err", routeErr)
 			}
 			if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
 				pa := h.waitForApprovalDecision(r.Context(), req.RequestID, agent.UserID, req.TaskID, longPollDeadline(r))
@@ -549,7 +549,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			errMsg := "missing required field: task_id"
 			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 				Error:         errMsg,
@@ -582,7 +582,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			errMsg := fmt.Sprintf("task %q not found", req.TaskID)
 			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 				Error: errMsg,
@@ -598,7 +598,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			errMsg := "task does not belong to this agent's user"
 			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusForbidden, apiErrorDetail{
 				Error: errMsg,
@@ -619,7 +619,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			errMsg := "task belongs to a different agent"
 			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusForbidden, apiErrorDetail{
 				Error: errMsg,
@@ -633,7 +633,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e := baseEntry("reject", "task_expired", taskIDPtr)
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			resp := map[string]any{
 				"status":  "task_expired",
@@ -664,7 +664,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusConflict, apiErrorDetail{
 				Error: errMsg,
@@ -681,7 +681,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			errMsg := "session_id is required for standing task requests"
 			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 				Error: errMsg,
@@ -714,7 +714,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				e.DurationMS = int(time.Since(start).Milliseconds())
 				e.ErrorMsg = &msg
 				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-					h.logger.Warn("audit log failed", "err", logErr)
+					h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 				}
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
 				writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
@@ -734,7 +734,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				e.DurationMS = int(time.Since(start).Milliseconds())
 				e.ErrorMsg = &msg
 				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-					h.logger.Warn("audit log failed", "err", logErr)
+					h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 				}
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
 				writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
@@ -761,7 +761,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			e.ErrorMsg = &msg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, req.TaskID)
 			resp := map[string]any{
@@ -796,7 +796,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					errMsg := "local services are not available in this deployment"
 					e.ErrorMsg = &errMsg
 					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-						h.logger.Warn("audit log failed", "err", logErr)
+						h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 					}
 					h.publishAuditAndQueue(agent.UserID, req.TaskID)
 					writeJSON(w, http.StatusOK, map[string]any{
@@ -815,7 +815,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
 				vMode := verificationModeFor(match.MatchedAction)
 				if matchedPlannedCall != nil && plannedCallBypassEligible(task.RiskLevel) {
-					h.logger.Info("request matches planned call — skipping intent verification",
+					h.logger.InfoContext(ctx, "request matches planned call — skipping intent verification",
 						"task_id", req.TaskID,
 						"service", req.Service,
 						"action", req.Action,
@@ -838,7 +838,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					}
 				} else {
 					if matchedPlannedCall != nil {
-						h.logger.Info("planned call match present but risk assessment did not run; running verifier anyway",
+						h.logger.InfoContext(ctx, "planned call match present but risk assessment did not run; running verifier anyway",
 							"task_id", req.TaskID, "risk_level", task.RiskLevel)
 					}
 					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts, vMode == "lenient")
@@ -852,7 +852,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					e.DurationMS = dur
 					e.Verification = intent.MarshalVerdict(verdict)
 					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-						h.logger.Warn("audit log failed", "err", logErr)
+						h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 					}
 					h.publishAuditAndQueue(agent.UserID, req.TaskID)
 					if verdict.ReasonCoherence == "incoherent" && h.notifier != nil {
@@ -863,7 +863,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 								"<b>Verdict:</b> %s",
 							task.Purpose, req.Reason, verdict.Explanation)
 						if alertErr := h.notifier.SendAlert(ctx, agent.UserID, alertText); alertErr != nil {
-							h.logger.Warn("intent alert failed", "err", alertErr)
+							h.logger.WarnContext(ctx, "intent alert failed", "err", alertErr)
 						}
 					}
 					resp := map[string]any{
@@ -908,7 +908,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 				vMode := verificationModeFor(match.MatchedAction)
 				if matchedPlannedCall != nil && plannedCallBypassEligible(task.RiskLevel) {
-					h.logger.Info("request matches planned call — skipping intent verification",
+					h.logger.InfoContext(ctx, "request matches planned call — skipping intent verification",
 						"task_id", req.TaskID,
 						"service", req.Service,
 						"action", req.Action,
@@ -931,7 +931,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					}
 				} else {
 					if matchedPlannedCall != nil {
-						h.logger.Info("planned call match present but risk assessment did not run; running verifier anyway",
+						h.logger.InfoContext(ctx, "planned call match present but risk assessment did not run; running verifier anyway",
 							"task_id", req.TaskID, "risk_level", task.RiskLevel)
 					}
 					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts, vMode == "lenient")
@@ -948,7 +948,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					e.DurationMS = dur
 					e.Verification = intent.MarshalVerdict(verdict)
 					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-						h.logger.Warn("audit log failed", "err", logErr)
+						h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 					}
 					h.publishAuditAndQueue(agent.UserID, req.TaskID)
 					// Alert on incoherent reason
@@ -960,7 +960,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 								"<b>Verdict:</b> %s",
 							task.Purpose, req.Reason, verdict.Explanation)
 						if alertErr := h.notifier.SendAlert(ctx, agent.UserID, alertText); alertErr != nil {
-							h.logger.Warn("intent alert failed", "err", alertErr)
+							h.logger.WarnContext(ctx, "intent alert failed", "err", alertErr)
 						}
 					}
 					resp := map[string]any{
@@ -989,7 +989,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
 						e.ErrorMsg = &auditMsg
 						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-							h.logger.Warn("audit log failed", "err", logErr)
+							h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 						}
 						h.publishAuditAndQueue(agent.UserID, req.TaskID)
 						writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -1013,7 +1013,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						e.DurationMS = int(time.Since(start).Milliseconds())
 						e.ErrorMsg = &errMsg
 						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-							h.logger.Warn("audit log failed", "err", logErr)
+							h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 						}
 						h.publishAuditAndQueue(agent.UserID, req.TaskID)
 						writeDetailedError(w, http.StatusBadRequest, *paramErr)
@@ -1052,7 +1052,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						vaultFinalizeCtx, vaultFinalizeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 						defer vaultFinalizeCancel()
 						if updErr := h.store.UpdateAuditOutcome(vaultFinalizeCtx, auditID, "error", auditMsg, dur); updErr != nil {
-							h.logger.Warn("audit outcome update failed", "err", updErr)
+							h.logger.WarnContext(ctx, "audit outcome update failed", "err", updErr)
 						}
 						outDecision, outOutcome = "execute", "error"
 						h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -1087,7 +1087,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			if execErr != nil {
 				errMsg := execErr.Error()
 				if updErr := h.store.UpdateAuditOutcome(finalizeCtx, auditID, "error", errMsg, dur); updErr != nil {
-					h.logger.Warn("audit outcome update failed", "err", updErr)
+					h.logger.WarnContext(ctx, "audit outcome update failed", "err", updErr)
 				}
 				outDecision, outOutcome = "execute", "error"
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -1113,7 +1113,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			middleware.AddLogField(ctx, "decision", "execute")
 			middleware.AddLogField(ctx, "outcome", "executed")
 			if updErr := h.store.UpdateAuditOutcome(finalizeCtx, auditID, "executed", "", dur); updErr != nil {
-				h.logger.Warn("audit outcome update failed", "err", updErr)
+				h.logger.WarnContext(ctx, "audit outcome update failed", "err", updErr)
 			}
 			outDecision, outOutcome = "execute", "executed"
 			h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -1167,7 +1167,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			errMsg := fmt.Sprintf("unknown service %q", serviceType)
 			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
+				h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
 			writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -1199,7 +1199,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, approveAdapter)
 				e.ErrorMsg = &auditMsg
 				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-					h.logger.Warn("audit log failed", "err", logErr)
+					h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 				}
 				h.publishAuditAndQueue(agent.UserID, "")
 				writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -1223,7 +1223,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	e.Verification = intent.MarshalVerdict(advisoryVerdict)
 	winner, logErr := h.logAuditCanonical(ctx, e)
 	if logErr != nil {
-		h.logger.Warn("audit log failed", "err", logErr)
+		h.logger.WarnContext(ctx, "audit log failed", "err", logErr)
 	}
 	h.publishAuditAndQueue(agent.UserID, req.TaskID)
 	if winner != nil {
@@ -1246,7 +1246,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if routeErr := h.routeToApproval(ctx, agent.UserID, blob, auditID,
 		req.Context.CallbackURL, expiresAt, reason, advisoryVerdict); routeErr != nil {
-		h.logger.Warn("route to approval failed", "err", routeErr)
+		h.logger.WarnContext(ctx, "route to approval failed", "err", routeErr)
 	}
 	// If wait=true, long-poll for approval then execute inline.
 	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
@@ -1399,7 +1399,7 @@ func (h *GatewayHandler) reserveExecAndWaitLoser(w http.ResponseWriter, r *http.
 	ctx := r.Context()
 	winner, reserveErr := h.logAuditCanonical(ctx, e)
 	if reserveErr != nil {
-		h.logger.Warn("audit reservation failed; proceeding without dedup protection", "err", reserveErr)
+		h.logger.WarnContext(ctx, "audit reservation failed; proceeding without dedup protection", "err", reserveErr)
 	}
 	publishTaskID := ""
 	if e.TaskID != nil {
@@ -1729,7 +1729,7 @@ func (h *GatewayHandler) maybeInjectNPS(ctx context.Context, resp map[string]any
 	}
 	lastNPS, err := h.store.GetAgentLastNPSTime(ctx, agentID)
 	if err != nil {
-		h.logger.Warn("nps cooldown check failed, skipping cooldown", "err", err, "agent_id", agentID)
+		h.logger.WarnContext(ctx, "nps cooldown check failed, skipping cooldown", "err", err, "agent_id", agentID)
 		// Fall through — don't suppress NPS just because the cooldown check failed.
 	}
 	if lastNPS != nil && time.Since(*lastNPS) < 7*24*time.Hour {
@@ -2189,7 +2189,7 @@ func chainContextFallback(
 			}
 		}
 		if allFound {
-			logger.Info("chain context fallback: values landed after waiting for in-flight extraction",
+			logger.InfoContext(ctx, "chain context fallback: values landed after waiting for in-flight extraction",
 				"task_id", taskID,
 				"session_id", chainSessionID,
 				"missing_values", verdict.MissingChainValues,
@@ -2198,7 +2198,7 @@ func chainContextFallback(
 	}
 
 	if allFound {
-		logger.Info("chain context fallback: all missing values found in extended context",
+		logger.InfoContext(ctx, "chain context fallback: all missing values found in extended context",
 			"task_id", taskID,
 			"missing_values", verdict.MissingChainValues,
 		)
@@ -2212,7 +2212,7 @@ func chainContextFallback(
 	// Log at warn so lossy-extraction cases are still visible even though
 	// they now reject rather than auto-allow.
 	if len(loadedFacts) > 0 {
-		logger.Warn("chain context fallback: missing value not in loaded facts or DB, rejecting",
+		logger.WarnContext(ctx, "chain context fallback: missing value not in loaded facts or DB, rejecting",
 			"task_id", taskID,
 			"missing_values", verdict.MissingChainValues,
 			"loaded_facts", len(loadedFacts),
@@ -2244,7 +2244,7 @@ func checkMissingValues(
 		}
 		found, err := st.ChainFactValueExists(ctx, taskID, chainSessionID, value)
 		if err != nil {
-			logger.Warn("chain fact fallback DB query failed", "err", err, "task_id", taskID)
+			logger.WarnContext(ctx, "chain fact fallback DB query failed", "err", err, "task_id", taskID)
 			return false, err
 		}
 		if !found {
@@ -2417,7 +2417,7 @@ func (h *GatewayHandler) routeToApproval(
 	}
 	msgID, err := h.notifier.SendApprovalRequest(ctx, approvalReq)
 	if err != nil {
-		h.logger.Warn("telegram approval notification failed", "err", err)
+		h.logger.WarnContext(ctx, "telegram approval notification failed", "err", err)
 		return nil
 	}
 
@@ -2452,7 +2452,7 @@ func parseServiceAlias(service string) (serviceType, alias string) {
 // hasAnyAlias reports whether any vault entry exists for the given service type
 // (under any alias). It uses vault.List and checks for matching key prefixes.
 func hasAnyAlias(ctx context.Context, v vault.Vault, reg *adapters.Registry, userID, serviceType string) bool {
-	base := reg.VaultKey(serviceType)
+	base := reg.VaultKeyForUser(serviceType, userID)
 	keys, err := v.List(ctx, userID)
 	if err != nil {
 		return false
@@ -2488,7 +2488,7 @@ func listServiceAliases(
 		}
 		return aliases
 	}
-	base := reg.VaultKey(serviceType)
+	base := reg.VaultKeyForUser(serviceType, userID)
 	keys, err := v.List(ctx, userID)
 	if err != nil {
 		return nil

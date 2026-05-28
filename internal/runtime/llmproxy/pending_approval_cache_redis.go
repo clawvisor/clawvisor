@@ -63,7 +63,7 @@ func (c *RedisPendingApprovalCache) Hold(ctx context.Context, pending PendingLit
 	if err != nil {
 		return HoldResult{}, err
 	}
-	key := redisPendingApprovalKey(pending.UserID, pending.AgentID, pending.Provider)
+	key := redisPendingApprovalKey(pending.UserID, pending.AgentID, pending.Provider, pending.ConversationID)
 	max := c.max
 	if max <= 0 {
 		max = 10
@@ -75,11 +75,28 @@ func (c *RedisPendingApprovalCache) Hold(ctx context.Context, pending PendingLit
 			evicted = &decoded
 		}
 	}
-	pipe := c.rdb.TxPipeline()
-	pipe.LPush(ctx, key, raw)
-	pipe.LTrim(ctx, key, 0, int64(max-1))
-	pipe.Expire(ctx, key, c.ttl)
-	if _, err := pipe.Exec(ctx); err != nil {
+	// Key TTL must be at least as long as the longest per-hold
+	// ExpiresAt currently sitting in the key — otherwise Redis evicts
+	// the entire list (and every hold in it) before its holds expire.
+	// c.ttl is the floor for holds that don't set their own ExpiresAt
+	// (most tool-stage holds); per-hold ExpiresAt may extend beyond
+	// that floor (inline-task approval holds use a 24h ExpiresAt to
+	// give the user an overnight decide window).
+	//
+	// The push+trim+ttl is one Lua script so the conditional-EXPIRE
+	// observes the same key state as the LPush — and so a sibling
+	// 10-min hold pushed onto a key that already has a 24h hold can't
+	// drop the key TTL below 24h.
+	keyTTL := c.ttl
+	if !pending.ExpiresAt.IsZero() {
+		if d := pending.ExpiresAt.Sub(now); d > keyTTL {
+			keyTTL = d
+		}
+	}
+	if _, err := redisPendingApprovalHoldScript.Run(
+		ctx, c.rdb, []string{key},
+		raw, max, keyTTL.Milliseconds(),
+	).Result(); err != nil && !errors.Is(err, redis.Nil) {
 		return HoldResult{}, err
 	}
 	return HoldResult{Pending: pending, Evicted: evicted}, nil
@@ -99,7 +116,7 @@ func (c *RedisPendingApprovalCache) Resolve(ctx context.Context, req ResolveRequ
 	if c == nil || c.rdb == nil {
 		return nil, nil
 	}
-	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider)
+	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider, req.ConversationID)
 	for {
 		result, err := redisResolvePendingApprovalScript.Run(ctx, c.rdb, []string{key},
 			req.ApprovalID, string(req.Stage), redisPendingApprovalRemovalMarker(c.now()),
@@ -130,7 +147,7 @@ func (c *RedisPendingApprovalCache) Drop(ctx context.Context, req ResolveRequest
 	if c == nil || c.rdb == nil {
 		return nil
 	}
-	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider)
+	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider, req.ConversationID)
 	if req.ApprovalID == "" {
 		return c.rdb.Del(ctx, key).Err()
 	}
@@ -142,7 +159,7 @@ func (c *RedisPendingApprovalCache) Drop(ctx context.Context, req ResolveRequest
 }
 
 func (c *RedisPendingApprovalCache) find(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, string, error) {
-	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider)
+	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider, req.ConversationID)
 	rawItems, err := c.rdb.LRange(ctx, key, 0, -1).Result()
 	if err != nil {
 		return nil, "", err
@@ -170,8 +187,14 @@ func (c *RedisPendingApprovalCache) find(ctx context.Context, req ResolveRequest
 			}
 			return &pending, raw, c.dropExpired(ctx, key, firstExpired)
 		}
+		// Bare reply: only the newest valid hold qualifies. If the
+		// caller passed a Stage filter and the newest's stage
+		// doesn't match, bail rather than walking back to find an
+		// older same-stage hold — the user's "approve" / "deny" /
+		// "task" pertains to the LAST prompt the harness rendered,
+		// not to a stale earlier one of the right shape.
 		if req.Stage != "" && pending.Stage != req.Stage {
-			continue
+			break
 		}
 		fallback = &pending
 		fallbackRaw = raw
@@ -192,14 +215,43 @@ func (c *RedisPendingApprovalCache) dropExpired(ctx context.Context, key string,
 	return err
 }
 
-func redisPendingApprovalKey(userID, agentID string, provider conversation.Provider) string {
-	sum := sha256.Sum256([]byte(userID + "\x00" + agentID + "\x00" + string(provider)))
+func redisPendingApprovalKey(userID, agentID string, provider conversation.Provider, conversationID string) string {
+	// ConversationID partitions holds per-conversation. When empty, we
+	// keep the legacy (user, agent, provider) shape unchanged so existing
+	// redis entries from pre-conversation-scoping clients remain readable
+	// — no migration required, no silent loss of pending approvals on
+	// upgrade.
+	if conversationID == "" {
+		sum := sha256.Sum256([]byte(userID + "\x00" + agentID + "\x00" + string(provider)))
+		return redisPendingApprovalPrefix + hex.EncodeToString(sum[:])
+	}
+	sum := sha256.Sum256([]byte(userID + "\x00" + agentID + "\x00" + string(provider) + "\x00" + conversationID))
 	return redisPendingApprovalPrefix + hex.EncodeToString(sum[:])
 }
 
 func redisPendingApprovalRemovalMarker(now time.Time) string {
 	return "__clawvisor_removed_pending_approval__:" + now.UTC().Format(time.RFC3339Nano)
 }
+
+// redisPendingApprovalHoldScript performs LPush + LTrim + conditional
+// PEXPIRE atomically. The PEXPIRE only fires when it would EXTEND the
+// current TTL — never shorten it. Treats "no TTL" (-1) and "missing"
+// (-2) as zero so a freshly LPush'd key always gets an initial TTL.
+// (ExpireGT alone won't do this: it treats a no-TTL key as infinite
+// and thus refuses to set the first TTL.)
+var redisPendingApprovalHoldScript = redis.NewScript(`
+local key = KEYS[1]
+local raw = ARGV[1]
+local max_len = tonumber(ARGV[2])
+local target_ms = tonumber(ARGV[3])
+redis.call('LPUSH', key, raw)
+redis.call('LTRIM', key, 0, max_len - 1)
+local current_ms = redis.call('PTTL', key)
+if current_ms == -1 or current_ms == -2 or current_ms < target_ms then
+  redis.call('PEXPIRE', key, target_ms)
+end
+return 1
+`)
 
 var redisResolvePendingApprovalScript = redis.NewScript(`
 local key = KEYS[1]
@@ -228,7 +280,16 @@ for i = 0, len - 1 do
 				redis.call('LREM', key, 1, marker)
 				return raw
 			end
-		elseif stage == '' or pending_stage == stage then
+		else
+			-- Bare reply: only the newest valid hold (the first
+			-- one we reach after skipping invalid JSON) qualifies.
+			-- If a Stage filter is set and this hold's stage
+			-- doesn't match, return nil rather than walking past
+			-- to find an older same-stage hold. Expired-by-
+			-- ExpiresAt is handled by the Go caller's retry loop.
+			if stage ~= '' and pending_stage ~= stage then
+				return nil
+			end
 			redis.call('LSET', key, i, marker)
 			redis.call('LREM', key, 1, marker)
 			return raw

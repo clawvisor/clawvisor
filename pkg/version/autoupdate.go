@@ -16,11 +16,11 @@ import (
 // The goroutine exits when ctx is cancelled. It is a no-op for dev builds.
 func StartAutoUpdater(ctx context.Context, interval time.Duration, logger *slog.Logger) {
 	if v := GetCurrent(); v == "dev" || v == "" {
-		logger.Debug("auto-update: skipping for dev build")
+		logger.DebugContext(ctx, "auto-update: skipping for dev build")
 		return
 	}
 
-	logger.Info("auto-update: enabled", "check_interval", interval)
+	logger.InfoContext(ctx, "auto-update: enabled", "check_interval", interval)
 
 	go func() {
 		// Stagger the first check so it doesn't fire immediately on startup.

@@ -107,7 +107,7 @@ func Start(ctx context.Context, cfg *config.Config, st store.Store, logger *slog
 func fillUsage(ctx context.Context, st store.Store, e *event, logger *slog.Logger) {
 	counts, err := st.TelemetryCounts(ctx)
 	if err != nil {
-		logger.Debug("telemetry: count query error", "err", err)
+		logger.DebugContext(ctx, "telemetry: count query error", "err", err)
 		return
 	}
 	e.Agents = bucket(counts.Agents)
@@ -130,7 +130,7 @@ func fillUsage(ctx context.Context, st store.Store, e *event, logger *slog.Logge
 func send(ctx context.Context, endpoint string, e *event, logger *slog.Logger) {
 	body, err := json.Marshal(e)
 	if err != nil {
-		logger.Debug("telemetry: marshal error", "err", err)
+		logger.DebugContext(ctx, "telemetry: marshal error", "err", err)
 		return
 	}
 
@@ -139,16 +139,16 @@ func send(ctx context.Context, endpoint string, e *event, logger *slog.Logger) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		logger.Debug("telemetry: request error", "err", err)
+		logger.DebugContext(ctx, "telemetry: request error", "err", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		logger.Debug("telemetry: send error", "err", err)
+		logger.DebugContext(ctx, "telemetry: send error", "err", err)
 		return
 	}
 	resp.Body.Close()
-	logger.Info("telemetry: sent", "event", e.Event, "endpoint", endpoint, "status", resp.StatusCode)
+	logger.InfoContext(ctx, "telemetry: sent", "event", e.Event, "endpoint", endpoint, "status", resp.StatusCode)
 }

@@ -186,7 +186,7 @@ func DeliverResult(ctx context.Context, callbackURL string, payload *Payload, si
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		idKey, idVal := payloadIDAttr(payload)
-		slog.Warn("callback: delivery failed",
+		slog.WarnContext(ctx, "callback: delivery failed",
 			"url", callbackURL,
 			"type", payload.Type,
 			idKey, idVal,
@@ -199,7 +199,7 @@ func DeliverResult(ctx context.Context, callbackURL string, payload *Payload, si
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		idKey, idVal := payloadIDAttr(payload)
-		slog.Warn("callback: non-success response",
+		slog.WarnContext(ctx, "callback: non-success response",
 			"url", callbackURL,
 			"type", payload.Type,
 			idKey, idVal,

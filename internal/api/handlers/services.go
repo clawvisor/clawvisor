@@ -23,12 +23,12 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
-	"github.com/clawvisor/clawvisor/pkg/adapters/mcpadapter"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/display"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/adapters/mcpadapter"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -152,7 +152,7 @@ func (h *ServicesHandler) checkPendingRequestOwnership(w http.ResponseWriter, r 
 	}
 	pa, err := h.st.GetPendingApproval(r.Context(), pendingReqID, userID)
 	if err != nil || pa.UserID != userID {
-		h.logger.Warn("rejected oauth init with cross-user pending_request_id",
+		h.logger.WarnContext(r.Context(), "rejected oauth init with cross-user pending_request_id",
 			"caller_user_id", userID,
 			"pending_request_id", pendingReqID,
 			"err", err,
@@ -240,30 +240,30 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type serviceEntry struct {
-		ID                   string                  `json:"id"`
-		Name                 string                  `json:"name"`
-		Description          string                  `json:"description"`
-		IconSVG              string                  `json:"icon_svg,omitempty"`
-		IconURL              string                  `json:"icon_url,omitempty"`
-		Alias                string                  `json:"alias,omitempty"`
-		OAuth                bool                    `json:"oauth"`
+		ID                    string                  `json:"id"`
+		Name                  string                  `json:"name"`
+		Description           string                  `json:"description"`
+		IconSVG               string                  `json:"icon_svg,omitempty"`
+		IconURL               string                  `json:"icon_url,omitempty"`
+		Alias                 string                  `json:"alias,omitempty"`
+		OAuth                 bool                    `json:"oauth"`
 		OAuthEndpoint         string                  `json:"oauth_endpoint,omitempty"`
 		OAuthClientIDRequired bool                    `json:"oauth_client_id_required,omitempty"`
 		Deprecated            bool                    `json:"deprecated,omitempty"`
 		DeviceFlow            bool                    `json:"device_flow,omitempty"`
-		PKCEFlow             bool                    `json:"pkce_flow,omitempty"`
-		PKCEClientIDRequired bool                    `json:"pkce_client_id_required,omitempty"`
-		AutoIdentity         bool                    `json:"auto_identity,omitempty"`
-		RequiresActivation   bool                    `json:"requires_activation"`
-		CredentialFree       bool                    `json:"credential_free"`
-		Actions              []actionEntry           `json:"actions"`
-		Variables            []adapters.VariableMeta `json:"variables,omitempty"`
-		Status               string                  `json:"status"`
-		ActivatedAt          *time.Time              `json:"activated_at,omitempty"`
-		SetupURL             string                  `json:"setup_url,omitempty"`
-		KeyHint              string                  `json:"key_hint,omitempty"`
-		KeyDisplayName       string                  `json:"key_display_name,omitempty"`
-		KeyDescription       string                  `json:"key_description,omitempty"`
+		PKCEFlow              bool                    `json:"pkce_flow,omitempty"`
+		PKCEClientIDRequired  bool                    `json:"pkce_client_id_required,omitempty"`
+		AutoIdentity          bool                    `json:"auto_identity,omitempty"`
+		RequiresActivation    bool                    `json:"requires_activation"`
+		CredentialFree        bool                    `json:"credential_free"`
+		Actions               []actionEntry           `json:"actions"`
+		Variables             []adapters.VariableMeta `json:"variables,omitempty"`
+		Status                string                  `json:"status"`
+		ActivatedAt           *time.Time              `json:"activated_at,omitempty"`
+		SetupURL              string                  `json:"setup_url,omitempty"`
+		KeyHint               string                  `json:"key_hint,omitempty"`
+		KeyDisplayName        string                  `json:"key_display_name,omitempty"`
+		KeyDescription        string                  `json:"key_description,omitempty"`
 	}
 
 	// buildEntry creates a serviceEntry from an adapter, using MetadataProvider when available.
@@ -406,7 +406,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			if m.ServiceID != a.ServiceID() {
 				continue
 			}
-			vKey := h.adapterReg.VaultKeyWithAlias(a.ServiceID(), m.Alias)
+			vKey := h.adapterReg.VaultKeyWithAliasForUser(a.ServiceID(), m.Alias, user.ID)
 			if !keySet[vKey] {
 				continue
 			}
@@ -423,7 +423,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			services = append(services, entry)
 		}
 
-		baseKey := h.adapterReg.VaultKey(a.ServiceID())
+		baseKey := h.adapterReg.VaultKeyForUser(a.ServiceID(), user.ID)
 		usesSharedKey := baseKey != a.ServiceID()
 		if !shown && !usesSharedKey && keySet[baseKey] {
 			var activatedAt *time.Time
@@ -478,7 +478,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	adapter, ok := h.adapterReg.Get(serviceID)
+	adapter, ok := h.adapterReg.GetForUser(r.Context(), serviceID, user.ID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
 		return
@@ -490,7 +490,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 	// pre-registration.
 	if mcp, ok := adapter.(*mcpadapter.MCPAdapter); ok {
 		if err := mcp.EnsureOAuthReady(r.Context(), h.oauthRedirectURL()); err != nil {
-			h.logger.Warn("mcp oauth discovery/registration failed", "service", serviceID, "err", err)
+			h.logger.WarnContext(r.Context(), "mcp oauth discovery/registration failed", "service", serviceID, "err", err)
 			writeError(w, http.StatusBadGateway, "OAUTH_DISCOVERY_FAILED", err.Error())
 			return
 		}
@@ -522,7 +522,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		// state from before the activation rollback shipped, or a user who
 		// hit the rollback once and re-clicked Connect).
 		if err := h.repairMCPToolsForUser(r.Context(), adapter, user.ID, serviceID, alias); err != nil {
-			h.logger.Warn("mcp tool repair on already_authorized failed",
+			h.logger.WarnContext(r.Context(), "mcp tool repair on already_authorized failed",
 				"service", serviceID, "user", user.ID, "err", err)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -587,7 +587,7 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	adapter, ok := h.adapterReg.Get(serviceID)
+	adapter, ok := h.adapterReg.GetForUser(r.Context(), serviceID, user.ID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
 		return
@@ -599,7 +599,7 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	// pre-registration.
 	if mcp, ok := adapter.(*mcpadapter.MCPAdapter); ok {
 		if err := mcp.EnsureOAuthReady(r.Context(), h.oauthRedirectURL()); err != nil {
-			h.logger.Warn("mcp oauth discovery/registration failed", "service", serviceID, "err", err)
+			h.logger.WarnContext(r.Context(), "mcp oauth discovery/registration failed", "service", serviceID, "err", err)
 			writeError(w, http.StatusBadGateway, "OAUTH_DISCOVERY_FAILED", err.Error())
 			return
 		}
@@ -675,7 +675,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	adapter, ok := h.adapterReg.Get(entry.ServiceID)
+	adapter, ok := h.adapterReg.GetForUser(r.Context(), entry.ServiceID, entry.UserID)
 	if !ok {
 		oauthPopupClose(w, "Service not found.", "", entry.OpenerOrigin)
 		return
@@ -705,7 +705,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 			"grant_type":    {"authorization_code"},
 		}
 		if err := validateTokenEndpoint(oauthCfg.Endpoint.TokenURL); err != nil {
-			h.logger.Warn("oauth token exchange: invalid token_url", "service", entry.ServiceID, "err", err)
+			h.logger.WarnContext(r.Context(), "oauth token exchange: invalid token_url", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Provider token endpoint is not allowed.", "", entry.OpenerOrigin)
 			return
 		}
@@ -719,7 +719,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 		resp, err := ssrfSafeOAuthClient.Do(tokenReq)
 		if err != nil {
-			h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
+			h.logger.WarnContext(r.Context(), "oauth token exchange failed", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Token exchange with provider failed.", "", entry.OpenerOrigin)
 			return
 		}
@@ -735,7 +735,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 			if desc == "" {
 				desc = errVal
 			}
-			h.logger.Warn("oauth token exchange: provider error", "service", entry.ServiceID, "error", errVal, "desc", desc)
+			h.logger.WarnContext(r.Context(), "oauth token exchange: provider error", "service", entry.ServiceID, "error", errVal, "desc", desc)
 			oauthPopupClose(w, "Authorization failed: "+desc, "", entry.OpenerOrigin)
 			return
 		}
@@ -748,25 +748,25 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		credBytes, err = credentialFromTokenPathResponse(rawResp, entry.TokenPath, scopes, existingRefreshToken, time.Now())
 		if err != nil {
 			if errors.Is(err, errEmptyAccessToken) {
-				h.logger.Warn("oauth token exchange: empty access token", "service", entry.ServiceID, "token_path", entry.TokenPath)
+				h.logger.WarnContext(r.Context(), "oauth token exchange: empty access token", "service", entry.ServiceID, "token_path", entry.TokenPath)
 				oauthPopupClose(w, "Provider returned empty access token.", "", entry.OpenerOrigin)
 				return
 			}
-			h.logger.Warn("credential from token_path response failed", "service", entry.ServiceID, "err", err)
+			h.logger.WarnContext(r.Context(), "credential from token_path response failed", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Failed to process credential.", "", entry.OpenerOrigin)
 			return
 		}
 	} else {
 		// Standard OAuth2 token exchange — route through the SSRF-safe client.
 		if err := validateTokenEndpoint(oauthCfg.Endpoint.TokenURL); err != nil {
-			h.logger.Warn("oauth token exchange: invalid token_url", "service", entry.ServiceID, "err", err)
+			h.logger.WarnContext(r.Context(), "oauth token exchange: invalid token_url", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Provider token endpoint is not allowed.", "", entry.OpenerOrigin)
 			return
 		}
 		exchangeCtx := context.WithValue(r.Context(), oauth2.HTTPClient, ssrfSafeOAuthClient)
 		token, err := oauthCfg.Exchange(exchangeCtx, code)
 		if err != nil {
-			h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
+			h.logger.WarnContext(r.Context(), "oauth token exchange failed", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Token exchange with provider failed.", "", entry.OpenerOrigin)
 			return
 		}
@@ -798,18 +798,18 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 		credBytes, err = credential.FromToken(token, scopes, scopesGranted)
 		if err != nil {
-			h.logger.Warn("credential from token failed", "service", entry.ServiceID, "err", err)
+			h.logger.WarnContext(r.Context(), "credential from token failed", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Failed to process credential.", "", entry.OpenerOrigin)
 			return
 		}
 	}
 
 	// Auto-detect identity (e.g. email) before storing so the vault key is correct.
-	alias = h.resolveIdentityAlias(r.Context(), entry.ServiceID, alias, credBytes, entry.Config)
+	alias = h.resolveIdentityAlias(r.Context(), entry.UserID, entry.ServiceID, alias, credBytes, entry.Config)
 
-	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(entry.ServiceID, alias, entry.UserID)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
-		h.logger.Warn("vault set failed", "service", entry.ServiceID, "err", err)
+		h.logger.WarnContext(r.Context(), "vault set failed", "service", entry.ServiceID, "err", err)
 		oauthPopupClose(w, "Failed to store credential in vault.", "", entry.OpenerOrigin)
 		return
 	}
@@ -827,7 +827,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 	// end up with a "connected" service exposing zero actions — the OAuth
 	// grant at the vendor still stands, so a retry is cheap.
 	if err := h.ensureMCPToolsActivated(r.Context(), adapter, entry.UserID, entry.ServiceID, alias, credBytes); err != nil {
-		h.logger.Error("mcp tool discovery failed at oauth activation; rolling back",
+		h.logger.ErrorContext(r.Context(), "mcp tool discovery failed at oauth activation; rolling back",
 			"service", entry.ServiceID, "user", entry.UserID, "err", err)
 		_ = h.vault.Delete(r.Context(), entry.UserID, vKey)
 		_ = h.st.DeleteServiceMeta(r.Context(), entry.UserID, entry.ServiceID, alias)
@@ -835,7 +835,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	h.logger.Info("service activated", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
+	h.logger.InfoContext(r.Context(), "service activated", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
 
 	// Re-execute any pending request that was waiting for this activation.
 	if entry.PendingReqID != "" {
@@ -942,7 +942,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	adapter, ok := h.adapterReg.Get(serviceID)
+	adapter, ok := h.adapterReg.GetForUser(r.Context(), serviceID, user.ID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
 		return
@@ -977,7 +977,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			// no-ops if tools are already cached, so this is cheap when
 			// nothing's wrong.
 			if err := h.repairMCPToolsForUser(r.Context(), adapter, user.ID, serviceID, alias); err != nil {
-				h.logger.Warn("mcp tool repair on already_authorized failed",
+				h.logger.WarnContext(r.Context(), "mcp tool repair on already_authorized failed",
 					"service", serviceID, "user", user.ID, "err", err)
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
@@ -1019,7 +1019,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, "default", time.Now())
-		h.logger.Info("credential-free service activated", "user", user.ID, "service", serviceID)
+		h.logger.InfoContext(r.Context(), "credential-free service activated", "user", user.ID, "service", serviceID)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "activated", "service": serviceID})
 		return
 	}
@@ -1046,7 +1046,7 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	adapter, ok := h.adapterReg.Get(serviceID)
+	adapter, ok := h.adapterReg.GetForUser(r.Context(), serviceID, user.ID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
 		return
@@ -1103,11 +1103,11 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 	}
 
 	// Auto-detect identity (e.g. GitHub username) before storing.
-	alias = h.resolveIdentityAlias(r.Context(), serviceID, alias, credBytes, body.Config)
+	alias = h.resolveIdentityAlias(r.Context(), user.ID, serviceID, alias, credBytes, body.Config)
 
-	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceID, alias, user.ID)
 	if err := h.vault.Set(r.Context(), user.ID, vKey, credBytes); err != nil {
-		h.logger.Warn("vault set failed (api key)", "service", serviceID, "err", err)
+		h.logger.WarnContext(r.Context(), "vault set failed (api key)", "service", serviceID, "err", err)
 		writeError(w, http.StatusInternalServerError, "VAULT_ERROR", "failed to store credential")
 		return
 	}
@@ -1124,7 +1124,7 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 	// clone carrying the discovered tool set. The store row is the source
 	// of truth across restarts; the in-memory clone is just a cache.
 	if err := h.ensureMCPToolsActivated(r.Context(), adapter, user.ID, serviceID, alias, credBytes); err != nil {
-		h.logger.Error("mcp tool discovery failed at api-key activation; rolling back",
+		h.logger.ErrorContext(r.Context(), "mcp tool discovery failed at api-key activation; rolling back",
 			"service", serviceID, "user", user.ID, "err", err)
 		_ = h.vault.Delete(r.Context(), user.ID, vKey)
 		_ = h.st.DeleteServiceMeta(r.Context(), user.ID, serviceID, alias)
@@ -1132,7 +1132,7 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	h.logger.Info("service activated via api key", "user", user.ID, "service", serviceID, "alias", alias)
+	h.logger.InfoContext(r.Context(), "service activated via api key", "user", user.ID, "service", serviceID, "alias", alias)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "activated", "service": serviceID, "alias": alias})
 }
@@ -1188,10 +1188,10 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 	h.adapterReg.RemoveForUser(serviceID, user.ID)
 
 	// Credential-free services have no vault credential to clean up.
-	adapter, ok := h.adapterReg.Get(serviceID)
+	adapter, ok := h.adapterReg.GetForUser(r.Context(), serviceID, user.ID)
 	if ok && adapter.ValidateCredential(nil) == nil {
 		h.revokeTasksForService(r.Context(), user.ID, serviceID, alias)
-		h.logger.Info("credential-free service deactivated", "user", user.ID, "service", serviceID)
+		h.logger.InfoContext(r.Context(), "credential-free service deactivated", "user", user.ID, "service", serviceID)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deactivated", "service": serviceID})
 		return
 	}
@@ -1201,18 +1201,18 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 	// deactivated service's scopes from the stored credential instead of
 	// deleting it. This ensures resolveOAuthScopes will re-request consent
 	// if the service is re-activated later.
-	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceID, alias, user.ID)
 	metas, _ := h.st.ListServiceMetas(r.Context(), user.ID)
 	otherUsesKey := false
 	for _, m := range metas {
-		if h.adapterReg.VaultKeyWithAlias(m.ServiceID, m.Alias) == vKey {
+		if h.adapterReg.VaultKeyWithAliasForUser(m.ServiceID, m.Alias, user.ID) == vKey {
 			otherUsesKey = true
 			break
 		}
 	}
 	if otherUsesKey {
 		// Strip the deactivated service's scopes from the shared credential.
-		adapter, ok := h.adapterReg.Get(serviceID)
+		adapter, ok := h.adapterReg.GetForUser(r.Context(), serviceID, user.ID)
 		if ok {
 			h.removeAdapterScopes(r.Context(), user.ID, vKey, adapter)
 		}
@@ -1222,7 +1222,7 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 
 	h.revokeTasksForService(r.Context(), user.ID, serviceID, alias)
 
-	h.logger.Info("service deactivated", "user", user.ID, "service", serviceID, "alias", alias)
+	h.logger.InfoContext(r.Context(), "service deactivated", "user", user.ID, "service", serviceID, "alias", alias)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deactivated", "service": serviceID})
 }
@@ -1242,7 +1242,7 @@ func serviceMatchStrings(serviceID, alias string) (base, withAlias string) {
 func (h *ServicesHandler) countTasksForService(ctx context.Context, userID, serviceID, alias string) int {
 	tasks, _, err := h.st.ListTasks(ctx, userID, store.TaskFilter{ActiveOnly: true})
 	if err != nil {
-		h.logger.Warn("failed to list tasks for service count", "err", err, "user", userID)
+		h.logger.WarnContext(ctx, "failed to list tasks for service count", "err", err, "user", userID)
 		return 0
 	}
 	base, withAlias := serviceMatchStrings(serviceID, alias)
@@ -1260,7 +1260,7 @@ func (h *ServicesHandler) countTasksForService(ctx context.Context, userID, serv
 func (h *ServicesHandler) revokeTasksForService(ctx context.Context, userID, serviceID, alias string) {
 	tasks, _, err := h.st.ListTasks(ctx, userID, store.TaskFilter{ActiveOnly: true})
 	if err != nil {
-		h.logger.Warn("failed to list tasks for service cleanup", "err", err, "user", userID)
+		h.logger.WarnContext(ctx, "failed to list tasks for service cleanup", "err", err, "user", userID)
 		return
 	}
 
@@ -1269,11 +1269,11 @@ func (h *ServicesHandler) revokeTasksForService(ctx context.Context, userID, ser
 	for _, t := range tasks {
 		if taskReferencesService(t, base, withAlias) {
 			if err := h.st.RevokeTask(ctx, t.ID, userID); err != nil {
-				h.logger.Warn("failed to revoke task for deactivated service", "err", err, "task_id", t.ID)
+				h.logger.WarnContext(ctx, "failed to revoke task for deactivated service", "err", err, "task_id", t.ID)
 				continue
 			}
 			_ = h.st.DeleteChainFactsByTask(ctx, t.ID)
-			h.logger.Info("revoked task due to service deactivation", "task_id", t.ID, "service", serviceID, "alias", alias)
+			h.logger.InfoContext(ctx, "revoked task due to service deactivation", "task_id", t.ID, "service", serviceID, "alias", alias)
 		}
 	}
 
@@ -1360,8 +1360,8 @@ func (h *ServicesHandler) RenameAlias(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Move the vault credential (if the service has one).
-	oldVKey := h.adapterReg.VaultKeyWithAlias(serviceID, body.OldAlias)
-	newVKey := h.adapterReg.VaultKeyWithAlias(serviceID, body.NewAlias)
+	oldVKey := h.adapterReg.VaultKeyWithAliasForUser(serviceID, body.OldAlias, user.ID)
+	newVKey := h.adapterReg.VaultKeyWithAliasForUser(serviceID, body.NewAlias, user.ID)
 	if oldVKey != newVKey {
 		credBytes, err := h.vault.Get(r.Context(), user.ID, oldVKey)
 		if err == nil && len(credBytes) > 0 {
@@ -1393,14 +1393,14 @@ func (h *ServicesHandler) RenameAlias(w http.ResponseWriter, r *http.Request) {
 		if m.ServiceID == serviceID {
 			continue // already handled
 		}
-		if h.adapterReg.VaultKeyWithAlias(m.ServiceID, m.Alias) == oldVKey {
+		if h.adapterReg.VaultKeyWithAliasForUser(m.ServiceID, m.Alias, user.ID) == oldVKey {
 			_ = h.st.UpsertServiceMeta(r.Context(), user.ID, m.ServiceID, body.NewAlias, m.ActivatedAt)
 			_ = h.st.DeleteServiceMeta(r.Context(), user.ID, m.ServiceID, m.Alias)
-			h.logger.Info("alias renamed (shared key)", "user", user.ID, "service", m.ServiceID, "old", m.Alias, "new", body.NewAlias)
+			h.logger.InfoContext(r.Context(), "alias renamed (shared key)", "user", user.ID, "service", m.ServiceID, "old", m.Alias, "new", body.NewAlias)
 		}
 	}
 
-	h.logger.Info("alias renamed", "user", user.ID, "service", serviceID, "old", body.OldAlias, "new", body.NewAlias)
+	h.logger.InfoContext(r.Context(), "alias renamed", "user", user.ID, "service", serviceID, "old", body.OldAlias, "new", body.NewAlias)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "renamed", "service": serviceID, "alias": body.NewAlias})
 }
 
@@ -1431,7 +1431,7 @@ func (h *ServicesHandler) ensureMCPToolsActivated(
 		return fmt.Errorf("persist: %w", err)
 	}
 	h.adapterReg.RegisterForUser(userID, mcp.ForUser(tools))
-	h.logger.Info("mcp tools discovered",
+	h.logger.InfoContext(ctx, "mcp tools discovered",
 		"service", serviceID, "user", userID, "alias", alias, "tool_count", len(tools))
 	return nil
 }
@@ -1450,7 +1450,7 @@ func (h *ServicesHandler) repairMCPToolsForUser(
 	if raw, err := h.st.GetMCPTools(ctx, userID, serviceID, alias); err == nil && len(raw) > 2 {
 		return nil // already cached
 	}
-	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceID, alias, userID)
 	credBytes, err := h.vault.Get(ctx, userID, vKey)
 	if err != nil {
 		return fmt.Errorf("vault get: %w", err)
@@ -1463,13 +1463,13 @@ func (h *ServicesHandler) repairMCPToolsForUser(
 // it fetches the identity and returns it as the new alias. On failure or if the
 // adapter doesn't support identity fetching, it returns the original alias unchanged.
 func (h *ServicesHandler) resolveIdentityAlias(
-	ctx context.Context, serviceID, currentAlias string, credBytes []byte, config map[string]string,
+	ctx context.Context, userID, serviceID, currentAlias string, credBytes []byte, config map[string]string,
 ) string {
 	if currentAlias != "default" {
 		return currentAlias // user explicitly chose an alias
 	}
 
-	adapter, ok := h.adapterReg.Get(serviceID)
+	adapter, ok := h.adapterReg.GetForUser(ctx, serviceID, userID)
 	if !ok {
 		return currentAlias
 	}
@@ -1482,19 +1482,19 @@ func (h *ServicesHandler) resolveIdentityAlias(
 	identity, err := fetcher.FetchIdentity(ctx, credBytes, config)
 	if err != nil || identity == "" {
 		if err != nil {
-			h.logger.Warn("identity fetch failed, using default alias",
+			h.logger.WarnContext(ctx, "identity fetch failed, using default alias",
 				"service", serviceID, "err", err)
 		}
 		return currentAlias
 	}
 
 	if !validAlias(identity) {
-		h.logger.Warn("fetched identity contains invalid characters, using default alias",
+		h.logger.WarnContext(ctx, "fetched identity contains invalid characters, using default alias",
 			"service", serviceID, "identity", identity)
 		return currentAlias
 	}
 
-	h.logger.Info("auto-detected service identity",
+	h.logger.InfoContext(ctx, "auto-detected service identity",
 		"service", serviceID, "identity", identity)
 	return identity
 }
@@ -1503,14 +1503,14 @@ func (h *ServicesHandler) resolveIdentityAlias(
 func (h *ServicesHandler) reactivatePendingRequest(ctx context.Context, userID, requestID string) {
 	pa, err := h.st.GetPendingApproval(ctx, requestID, userID)
 	if err != nil {
-		h.logger.Warn("reactivate: pending approval not found", "request_id", requestID, "err", err)
+		h.logger.WarnContext(ctx, "reactivate: pending approval not found", "request_id", requestID, "err", err)
 		return
 	}
 	// Defense in depth: even though OAuth init verifies ownership before
 	// stashing the request_id, refuse to act on a pending approval that does
 	// not belong to the user whose OAuth flow we just completed.
 	if pa.UserID != userID {
-		h.logger.Warn("reactivate: refusing cross-user pending approval",
+		h.logger.WarnContext(ctx, "reactivate: refusing cross-user pending approval",
 			"request_id", requestID,
 			"oauth_user_id", userID,
 			"pending_user_id", pa.UserID,
@@ -1520,12 +1520,12 @@ func (h *ServicesHandler) reactivatePendingRequest(ctx context.Context, userID, 
 
 	var blob pendingRequestBlob
 	if err := json.Unmarshal(pa.RequestBlob, &blob); err != nil {
-		h.logger.Warn("reactivate: invalid request blob", "request_id", requestID, "err", err)
+		h.logger.WarnContext(ctx, "reactivate: invalid request blob", "request_id", requestID, "err", err)
 		return
 	}
 
 	serviceType, alias := parseServiceAlias(blob.Service)
-	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, alias, userID)
 	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg, h.st,
 		userID, blob.Service, blob.Action, blob.Params, vKey)
 
@@ -1558,7 +1558,7 @@ func (h *ServicesHandler) reactivatePendingRequest(ctx context.Context, userID, 
 		}, cbKey)
 	}
 
-	h.logger.Info("pending request re-executed after activation",
+	h.logger.InfoContext(ctx, "pending request re-executed after activation",
 		"request_id", requestID, "outcome", outcome)
 }
 
@@ -1577,7 +1577,7 @@ func (h *ServicesHandler) resolveOAuthScopes(
 	}
 
 	// Check for existing credential in the vault.
-	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceID, alias, userID)
 	existingBytes, err := h.vault.Get(ctx, userID, vKey)
 	if err != nil || len(existingBytes) == 0 {
 		// No existing credential — just use this adapter's scopes.
@@ -1665,7 +1665,7 @@ func oauthAuthURL(cfg *oauth2.Config, stateToken string, selectAccount bool, sco
 // loadExistingRefreshToken retrieves the refresh token from an existing vault
 // credential, if any. Google may not re-issue a refresh token on re-consent.
 func (h *ServicesHandler) loadExistingRefreshToken(ctx context.Context, userID, serviceID, alias string) string {
-	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceID, alias, userID)
 	existingBytes, err := h.vault.Get(ctx, userID, vKey)
 	if err != nil || len(existingBytes) == 0 {
 		return ""
@@ -1748,7 +1748,7 @@ func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	adapter, ok := h.adapterReg.Get(serviceID)
+	adapter, ok := h.adapterReg.GetForUser(r.Context(), serviceID, user.ID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
 		return
@@ -1793,7 +1793,7 @@ func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request
 		"scope":     {strings.Join(dfCfg.Scopes, " ")},
 	}
 	if err := validateTokenEndpoint(dfCfg.DeviceCodeURL); err != nil {
-		h.logger.Warn("device flow: invalid device_code_url", "service", serviceID, "err", err)
+		h.logger.WarnContext(r.Context(), "device flow: invalid device_code_url", "service", serviceID, "err", err)
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "device_code_url is not allowed")
 		return
 	}
@@ -1807,7 +1807,7 @@ func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request
 
 	resp, err := ssrfSafeOAuthClient.Do(req)
 	if err != nil {
-		h.logger.Warn("device flow: request to provider failed", "err", err)
+		h.logger.WarnContext(r.Context(), "device flow: request to provider failed", "err", err)
 		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "failed to contact provider")
 		return
 	}
@@ -1827,7 +1827,7 @@ func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if dfResp.Error != "" {
-		h.logger.Warn("device flow: provider error", "error", dfResp.Error, "desc", dfResp.ErrorDesc)
+		h.logger.WarnContext(r.Context(), "device flow: provider error", "error", dfResp.Error, "desc", dfResp.ErrorDesc)
 		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", dfResp.ErrorDesc)
 		return
 	}
@@ -1911,7 +1911,7 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 		"grant_type":  {entry.GrantType},
 	}
 	if err := validateTokenEndpoint(entry.TokenURL); err != nil {
-		h.logger.Warn("device flow poll: invalid token_url", "service", entry.ServiceID, "err", err)
+		h.logger.WarnContext(r.Context(), "device flow poll: invalid token_url", "service", entry.ServiceID, "err", err)
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "token_url is not allowed")
 		return
 	}
@@ -1925,7 +1925,7 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 
 	resp, err := ssrfSafeOAuthClient.Do(req)
 	if err != nil {
-		h.logger.Warn("device flow poll: request failed", "err", err)
+		h.logger.WarnContext(r.Context(), "device flow poll: request failed", "err", err)
 		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "failed to contact provider")
 		return
 	}
@@ -1970,7 +1970,7 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 
 	// Success: validate and store the token as an api_key credential.
 	if tokenResp.AccessToken == "" {
-		h.logger.Warn("device flow: provider returned empty access token", "service", entry.ServiceID)
+		h.logger.WarnContext(r.Context(), "device flow: provider returned empty access token", "service", entry.ServiceID)
 		h.oauthStore.DeleteDeviceFlow(body.FlowID)
 		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "provider returned empty access token")
 		return
@@ -1985,11 +1985,11 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Auto-detect identity before storing.
-	alias := h.resolveIdentityAlias(r.Context(), entry.ServiceID, entry.Alias, credBytes, entry.Config)
+	alias := h.resolveIdentityAlias(r.Context(), entry.UserID, entry.ServiceID, entry.Alias, credBytes, entry.Config)
 
-	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(entry.ServiceID, alias, entry.UserID)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
-		h.logger.Warn("device flow: vault set failed", "err", err)
+		h.logger.WarnContext(r.Context(), "device flow: vault set failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "VAULT_ERROR", "failed to store credential")
 		return
 	}
@@ -2000,7 +2000,7 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 	}
 	h.oauthStore.DeleteDeviceFlow(body.FlowID)
 
-	h.logger.Info("service activated via device flow", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
+	h.logger.InfoContext(r.Context(), "service activated via device flow", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "complete", "alias": alias})
 }
 
@@ -2040,7 +2040,7 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	adapter, ok := h.adapterReg.Get(serviceID)
+	adapter, ok := h.adapterReg.GetForUser(r.Context(), serviceID, user.ID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
 		return
@@ -2071,7 +2071,7 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 	// If a client_id was provided in the request, save it to the vault for future use.
 	if body.ClientID != "" {
 		if err := adapters.SetPKCEClientID(r.Context(), h.vault, serviceID, body.ClientID); err != nil {
-			h.logger.Error("failed to store PKCE client ID", "service_id", serviceID, "err", err)
+			h.logger.ErrorContext(r.Context(), "failed to store PKCE client ID", "service_id", serviceID, "err", err)
 		}
 	}
 
@@ -2202,7 +2202,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	adapter, ok := h.adapterReg.Get(entry.ServiceID)
+	adapter, ok := h.adapterReg.GetForUser(r.Context(), entry.ServiceID, entry.UserID)
 	if !ok {
 		oauthPopupClose(w, "Service not found.", "", entry.OpenerOrigin)
 		return
@@ -2221,7 +2221,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 		"grant_type":    {"authorization_code"},
 	}
 	if err := validateTokenEndpoint(entry.TokenURL); err != nil {
-		h.logger.Warn("pkce flow: invalid token_url", "service", entry.ServiceID, "err", err)
+		h.logger.WarnContext(r.Context(), "pkce flow: invalid token_url", "service", entry.ServiceID, "err", err)
 		oauthPopupClose(w, "Provider token endpoint is not allowed.", "", entry.OpenerOrigin)
 		return
 	}
@@ -2235,7 +2235,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 
 	resp, err := ssrfSafeOAuthClient.Do(tokenReq)
 	if err != nil {
-		h.logger.Warn("pkce flow: token exchange failed", "err", err)
+		h.logger.WarnContext(r.Context(), "pkce flow: token exchange failed", "err", err)
 		oauthPopupClose(w, "Failed to contact token endpoint.", "", entry.OpenerOrigin)
 		return
 	}
@@ -2253,7 +2253,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 		if desc == "" {
 			desc = errVal
 		}
-		h.logger.Warn("pkce flow: provider returned error", "error", errVal, "desc", desc)
+		h.logger.WarnContext(r.Context(), "pkce flow: provider returned error", "error", errVal, "desc", desc)
 		oauthPopupClose(w, "Authorization failed: "+desc, "", entry.OpenerOrigin)
 		return
 	}
@@ -2267,21 +2267,21 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	)
 	if err != nil {
 		if errors.Is(err, errEmptyAccessToken) {
-			h.logger.Warn("pkce flow: empty access token in response", "service", entry.ServiceID, "token_path", entry.TokenPath)
+			h.logger.WarnContext(r.Context(), "pkce flow: empty access token in response", "service", entry.ServiceID, "token_path", entry.TokenPath)
 			oauthPopupClose(w, "Provider returned empty access token.", "", entry.OpenerOrigin)
 			return
 		}
-		h.logger.Warn("pkce flow: failed to process token response", "service", entry.ServiceID, "err", err)
+		h.logger.WarnContext(r.Context(), "pkce flow: failed to process token response", "service", entry.ServiceID, "err", err)
 		oauthPopupClose(w, "Failed to process credential.", "", entry.OpenerOrigin)
 		return
 	}
 
 	// Auto-detect identity before storing.
-	alias = h.resolveIdentityAlias(r.Context(), entry.ServiceID, alias, credBytes, entry.Config)
+	alias = h.resolveIdentityAlias(r.Context(), entry.UserID, entry.ServiceID, alias, credBytes, entry.Config)
 
-	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(entry.ServiceID, alias, entry.UserID)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
-		h.logger.Warn("pkce flow: vault set failed", "err", err)
+		h.logger.WarnContext(r.Context(), "pkce flow: vault set failed", "err", err)
 		oauthPopupClose(w, "Failed to store credential.", "", entry.OpenerOrigin)
 		return
 	}
@@ -2291,7 +2291,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 		_ = h.st.UpsertServiceConfig(r.Context(), entry.UserID, entry.ServiceID, alias, configJSON)
 	}
 
-	h.logger.Info("service activated via PKCE flow", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
+	h.logger.InfoContext(r.Context(), "service activated via PKCE flow", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
 	oauthPopupClose(w, "", entry.CLICallback, entry.OpenerOrigin)
 }
 
@@ -2425,12 +2425,12 @@ func (h *ServicesHandler) SetGoogleOAuthConfig(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := adapters.SetGoogleOAuthCredentials(r.Context(), h.vault, body.ClientID, body.ClientSecret); err != nil {
-		h.logger.Error("failed to store Google OAuth credentials", "err", err)
+		h.logger.ErrorContext(r.Context(), "failed to store Google OAuth credentials", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store credentials")
 		return
 	}
 
-	h.logger.Info("Google OAuth credentials stored in system vault")
+	h.logger.InfoContext(r.Context(), "Google OAuth credentials stored in system vault")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -2467,12 +2467,12 @@ func (h *ServicesHandler) SetMicrosoftOAuthConfig(w http.ResponseWriter, r *http
 	}
 
 	if err := adapters.SetMicrosoftOAuthCredentials(r.Context(), h.vault, body.ClientID, body.ClientSecret); err != nil {
-		h.logger.Error("failed to store Microsoft OAuth credentials", "err", err)
+		h.logger.ErrorContext(r.Context(), "failed to store Microsoft OAuth credentials", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store credentials")
 		return
 	}
 
-	h.logger.Info("Microsoft OAuth credentials stored in system vault")
+	h.logger.InfoContext(r.Context(), "Microsoft OAuth credentials stored in system vault")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -2519,12 +2519,12 @@ func (h *ServicesHandler) SetPKCECredential(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := adapters.SetPKCEClientID(r.Context(), h.vault, body.ServiceID, body.ClientID); err != nil {
-		h.logger.Error("failed to store PKCE client ID", "service_id", body.ServiceID, "err", err)
+		h.logger.ErrorContext(r.Context(), "failed to store PKCE client ID", "service_id", body.ServiceID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store credential")
 		return
 	}
 
-	h.logger.Info("PKCE client ID stored", "service_id", body.ServiceID)
+	h.logger.InfoContext(r.Context(), "PKCE client ID stored", "service_id", body.ServiceID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -2541,12 +2541,12 @@ func (h *ServicesHandler) DeletePKCECredential(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := adapters.DeletePKCEClientID(r.Context(), h.vault, serviceID); err != nil {
-		h.logger.Error("failed to delete PKCE client ID", "service_id", serviceID, "err", err)
+		h.logger.ErrorContext(r.Context(), "failed to delete PKCE client ID", "service_id", serviceID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to delete credential")
 		return
 	}
 
-	h.logger.Info("PKCE client ID removed", "service_id", serviceID)
+	h.logger.InfoContext(r.Context(), "PKCE client ID removed", "service_id", serviceID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -2563,7 +2563,7 @@ func (h *ServicesHandler) DeletePKCECredential(w http.ResponseWriter, r *http.Re
 func (h *ServicesHandler) ListMCPOAuthCredentials(w http.ResponseWriter, r *http.Request) {
 	entries, err := adapters.ListMCPOAuthCredentials(r.Context(), h.vault)
 	if err != nil {
-		h.logger.Error("failed to list MCP OAuth credentials", "err", err)
+		h.logger.ErrorContext(r.Context(), "failed to list MCP OAuth credentials", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list MCP OAuth credentials")
 		return
 	}
@@ -2607,11 +2607,11 @@ func (h *ServicesHandler) SetMCPOAuthCredential(w http.ResponseWriter, r *http.R
 		}
 	}
 	if err := adapters.SetMCPOAuthCredentials(r.Context(), h.vault, body.ServiceID, body.ClientID, body.ClientSecret); err != nil {
-		h.logger.Error("failed to store MCP OAuth credentials", "service_id", body.ServiceID, "err", err)
+		h.logger.ErrorContext(r.Context(), "failed to store MCP OAuth credentials", "service_id", body.ServiceID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store credentials")
 		return
 	}
-	h.logger.Info("MCP OAuth credentials stored", "service_id", body.ServiceID)
+	h.logger.InfoContext(r.Context(), "MCP OAuth credentials stored", "service_id", body.ServiceID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -2627,10 +2627,10 @@ func (h *ServicesHandler) DeleteMCPOAuthCredential(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := adapters.DeleteMCPOAuthCredentials(r.Context(), h.vault, serviceID); err != nil {
-		h.logger.Error("failed to delete MCP OAuth credentials", "service_id", serviceID, "err", err)
+		h.logger.ErrorContext(r.Context(), "failed to delete MCP OAuth credentials", "service_id", serviceID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to delete credentials")
 		return
 	}
-	h.logger.Info("MCP OAuth credentials removed", "service_id", serviceID)
+	h.logger.InfoContext(r.Context(), "MCP OAuth credentials removed", "service_id", serviceID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

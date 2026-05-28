@@ -24,6 +24,7 @@ import (
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/clawvisor/clawvisor/pkg/version"
 	"github.com/google/uuid"
 )
 
@@ -54,6 +55,16 @@ type LLMEndpointHandler struct {
 	// endpoint rewrites (https://clawvisor.local/control/... in tool calls).
 	// Empty disables control prompt injection and control rewrites.
 	ControlBaseURL string
+
+	// DashboardBaseURL is the externally reachable dashboard host used
+	// to deep-link the user from "no upstream key" errors to the page
+	// where they can paste one. Should NOT include a trailing slash.
+	// In monolithic / local deploys it equals ControlBaseURL; in
+	// split-mode hosted deploys (route_set: proxy_lite) it must be set
+	// separately because ControlBaseURL there is the proxy host, not
+	// the dashboard. Empty falls back to the build-environment default
+	// from pkg/version (correct for hosted builds, wrong for local).
+	DashboardBaseURL string
 
 	// AuditEmitter writes one audit_log row per /api/v1/* request and per
 	// inspected tool_use. nil disables audit logging.
@@ -227,6 +238,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"decision", auditDecide,
 			"outcome", auditOutcome,
 			"reason", auditReason,
+			"caller_auth_source", llmproxy.CallerAuthSource(r.Context()),
 			"client_cancelled", r.Context().Err() != nil,
 			"total_ms", time.Since(start).Milliseconds(),
 		)
@@ -276,6 +288,13 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		"query":    r.URL.RawQuery,
 		"route":    actionForRoute(r.URL.Path),
 	}
+	if src := llmproxy.CallerAuthSource(r.Context()); src != "" {
+		auditParams["caller_auth_source"] = src
+	}
+	if llmproxy.PassthroughUpstreamAuth(r.Context()) {
+		auditParams["upstream_auth_passthrough_requested"] = true
+		auditParams["upstream_auth_passthrough_bearer_present"] = llmproxy.HasPassthroughBearer(r)
+	}
 	passthrough := h.activeLitePassthrough(r.Context(), agent)
 	if passthrough.Enabled {
 		auditParams["passthrough"] = true
@@ -294,7 +313,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditDecide = "deny"
 		auditOutcome = "request_too_large"
 		auditReason = err.Error()
-		writeJSONError(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", "this request is too large to process. Please shorten it and try again.")
 		return
 	}
 	if h.RawIOLogger != nil {
@@ -324,7 +343,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = sanitizeErr.Error()
-			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", sanitizeErr.Error())
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+sanitizeErr.Error()+". This usually means a client bug; please retry.")
 			return
 		}
 		if sanitized {
@@ -337,7 +356,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditDecide = "deny"
 		auditOutcome = "malformed_request"
 		auditReason = err.Error()
-		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
 		return
 	}
 	if passthrough.Enabled {
@@ -366,7 +385,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				auditDecide = "deny"
 				auditOutcome = "malformed_request"
 				auditReason = err.Error()
-				writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
 				return
 			}
 			auditParams["secret_decision"] = string(decision)
@@ -398,18 +417,30 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		body = sanitized.Body
 		auditParams["inbound_history_sanitized"] = true
 	}
+	// Extract per-conversation identifier from the inbound body once. It
+	// scopes pending approvals + task checkout to a single conversation
+	// when multiple sessions share a Clawvisor token (Conductor workspaces,
+	// sub-agents, multiple Claude Code installs). Threaded through every
+	// downstream rewrite + the release path. Empty falls back to the
+	// pre-conversation-scoping behavior, so older clients that don't
+	// surface a conversation ID continue working.
+	conversationID := conversation.ConversationID(r, provider, body)
+	if conversationID != "" {
+		auditParams["conversation_id"] = conversationID
+	}
 	if taskRewrite, taskErr := llmproxy.RewriteTaskApprovalReply(r.Context(), llmproxy.TaskReplyRewriteRequest{
 		HTTPRequest:     r,
 		Provider:        provider,
 		Body:            body,
 		Agent:           agent,
+		ConversationID:  conversationID,
 		PendingApproval: h.PendingApprovals,
 	}); taskErr != nil {
 		auditStatus = http.StatusBadRequest
 		auditDecide = "deny"
 		auditOutcome = "malformed_request"
 		auditReason = taskErr.Error()
-		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", taskErr.Error())
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the task-approval reply: "+taskErr.Error()+". Please retry.")
 		return
 	} else if taskRewrite.Rewritten {
 		body = taskRewrite.Body
@@ -418,7 +449,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = err.Error()
-			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
 			return
 		}
 		auditParams["approval_task_rewritten"] = true
@@ -435,6 +466,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		Provider:        provider,
 		Body:            body,
 		Agent:           agent,
+		ConversationID:  conversationID,
 		PendingApproval: h.PendingApprovals,
 		Creator:         h.InlineTaskCreator,
 		Audit:           h.AuditEmitter,
@@ -446,7 +478,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditDecide = "deny"
 		auditOutcome = "malformed_request"
 		auditReason = inlineErr.Error()
-		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", inlineErr.Error())
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the inline-approval reply: "+inlineErr.Error()+". Please retry.")
 		return
 	} else if inlineRewrite.Rewritten {
 		body = inlineRewrite.Body
@@ -455,7 +487,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = err.Error()
-			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
 			return
 		}
 		inlineApprovalConsumed = true
@@ -504,7 +536,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = injectErr.Error()
-			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", injectErr.Error())
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't inject the control notice: "+injectErr.Error()+". Please retry.")
 			return
 		}
 		if injected {
@@ -514,7 +546,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				auditDecide = "deny"
 				auditOutcome = "malformed_request"
 				auditReason = err.Error()
-				writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
 				return
 			}
 			reqSummary = liteProxyRequestDebugSummary(provider, body)
@@ -548,10 +580,57 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// the same turn). A single user "approve" must only resolve one
 	// hold.
 	if !inlineApprovalConsumed {
-		if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
+		if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, conversationID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
 			return
 		}
 	}
+	// Snapshot the pre-strip body for the first-turn routing-notice
+	// detector below. StripSyntheticApprovalHistory removes assistant
+	// approval-prompt turns and their bare "approve" replies so the
+	// upstream model doesn't see synthesized scaffolding it could
+	// hallucinate; from the user's POV those turns still happened.
+	// Detecting on the post-strip body would misclassify
+	// "first user prompt → tool_use → approval → continuation" as a
+	// fresh turn-1 request and re-prepend the routing notice. The
+	// pre-strip body reflects what the harness actually shipped, which
+	// is the right input for the first-turn question.
+	bodyForFirstTurnDetect := body
+	// First-turn detection feeds two side-by-side decisions:
+	//
+	//  1. Conversation-ID mint. On harnesses without a native session
+	//     identifier (today: OpenAI Chat Completions), turn-1 of a
+	//     fresh conversation has no echoed marker yet, so
+	//     ConversationID() returned the user-message fingerprint.
+	//     Override it with a freshly minted "cv-conv-…" value and embed
+	//     that value in the response-side routing notice so the
+	//     harness round-trips it back to us in assistant history on
+	//     turn 2+. The state we key by conversation ID (pending-approval
+	//     holds, task-checkout focus) is created downstream under this
+	//     minted value, so the next-turn marker-echo resolves cleanly
+	//     to the same bucket.
+	//
+	//  2. Routing-notice prepend. Same firstTurn predicate selects
+	//     which response gets the human-visible Clawvisor notice.
+	firstTurn := !llmproxy.HasInboundAssistantTurn(provider, bodyForFirstTurnDetect)
+	mintedConversationID := ""
+	if firstTurn && provider == conversation.ProviderOpenAI && conversation.IsOpenAIChatCompletionsEndpoint(r) {
+		minted, mintErr := conversation.NewConversationID()
+		if mintErr != nil {
+			// Mint failure is rare (crypto/rand outage) and recoverable:
+			// fall through to the fingerprint that ConversationID()
+			// already produced. The cost is just a degraded scope key
+			// for this conversation, not a request failure.
+			h.Logger.WarnContext(r.Context(), "lite-proxy conversation id mint failed; falling through to fingerprint",
+				"request_id", requestID, "agent_id", agent.ID, "err", mintErr.Error())
+		} else {
+			mintedConversationID = minted
+			conversationID = minted
+			auditParams["conversation_id"] = minted
+			auditParams["conversation_id_minted"] = true
+		}
+	}
+	auditParams["first_turn"] = firstTurn
+	auditParams["conversation_id_source"] = liteProxyConversationIDSource(provider, r, conversationID, mintedConversationID)
 	if stripped, stripErr := llmproxy.StripSyntheticApprovalHistory(llmproxy.SyntheticApprovalHistoryStripRequest{
 		Provider: provider,
 		Body:     body,
@@ -614,9 +693,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		if isVaultMiss(err) {
 			auditStatus = http.StatusUnauthorized
 			auditDecide = "deny"
-			auditOutcome = "upstream_key_missing"
-			writeJSONError(w, http.StatusUnauthorized, "UPSTREAM_KEY_MISSING",
-				"no upstream API key configured in vault for this provider")
+			code, outcome, message := upstreamCredMissingError(r, agent, provider, h.DashboardBaseURL)
+			auditOutcome = outcome
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusUnauthorized, code, message)
 			return
 		}
 		h.Logger.WarnContext(context.Background(), "lite-proxy forward failed",
@@ -635,7 +714,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditOutcome = "upstream_error"
 		}
 		auditReason = err.Error()
-		writeJSONError(w, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "UPSTREAM_ERROR", "couldn't reach the upstream provider. Please retry; if this persists, check the Clawvisor daemon logs.")
 		return
 	}
 	defer resp.Body.Close()
@@ -720,8 +799,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// Clear the upstream-mirrored headers (Content-Length now
 			// lies about our JSON error body, vendor request-id leaks)
 			// before writing the JSON error.
-			clearMirroredUpstreamHeaders(w.Header())
-			writeJSONError(w, http.StatusBadGateway, "UPSTREAM_READ_ERROR", "upstream read failed")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "UPSTREAM_READ_ERROR", "lost the connection to the upstream provider while reading its response. Please retry.")
 			return
 		}
 		if resp.StatusCode >= 400 {
@@ -781,12 +859,11 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "decision_input_load_failed"
 			auditReason = decisionLoadErr.Error()
-			clearMirroredUpstreamHeaders(w.Header())
-			writeJSONError(w, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
-				"authorization inputs unavailable; please retry")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
+				"couldn't load authorization data right now. Please retry in a moment.")
 			return
 		}
-		preferredTaskID, preferredTaskErr := h.checkedOutTaskID(r.Context(), agent, candidateTasks)
+		preferredTaskID, preferredTaskErr := h.checkedOutTaskID(r.Context(), agent, conversationID, candidateTasks)
 		if preferredTaskErr != nil {
 			h.Logger.WarnContext(r.Context(), "lite-proxy task checkout lookup failed; continuing without preferred task",
 				"request_id", requestID, "agent_id", agent.ID, "err", preferredTaskErr.Error())
@@ -803,12 +880,25 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"egress_rules", len(egressRules),
 			"preferred_task_id", preferredTaskID,
 		)
+		// Conversation-based auto-approval inputs: human turns from the
+		// inbound transcript and the agent's per-runtime threshold.
+		// Both are best-effort — extraction yields []string{} on a
+		// malformed body, and an unset threshold collapses to "off",
+		// which makes the gate refuse to fire. Either fallback
+		// preserves existing behavior (human approval prompt) rather
+		// than risking a spurious auto-approve.
+		recentTurns := llmproxy.ExtractRecentHumanTurns(llmproxy.ExtractHumanTurnsRequest{
+			Provider: provider,
+			Body:     body,
+		})
+		autoApproveThreshold := agentConversationAutoApproveThreshold(agent)
 		processed := llmproxy.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
 			Inspector:        h.Inspector,
 			RewriteOpts:      opts,
 			Store:            h.Store,
 			AgentUserID:      agent.UserID,
 			AgentID:          agent.ID,
+			ConversationID:   conversationID,
 			Audit:            h.AuditEmitter,
 			RequestID:        requestID,
 			Catalog:          catalogIface,
@@ -824,10 +914,14 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// Per-tool-use nonce minting overrides RewriteOpts.CallerToken
 			// inside the credentialed rewrite path so the agent's raw
 			// bearer token never enters the model's conversation context.
-			CallerNonces:     h.CallerNonces,
-			Trace:            h.TraceLogger,
-			TaskRiskAssessor: h.taskRiskBridge(),
-			AgentName:        agent.Name,
+			CallerNonces:                     h.CallerNonces,
+			Trace:                            h.TraceLogger,
+			TaskRiskAssessor:                 h.taskRiskBridge(),
+			AgentName:                        agent.Name,
+			RecentUserTurns:                  recentTurns,
+			ConversationAutoApproveThreshold: autoApproveThreshold,
+			InlineTaskCreator:                h.InlineTaskCreator,
+			Checkouts:                        h.TaskCheckouts,
 		})
 		h.Logger.DebugContext(r.Context(), "lite-proxy postprocess complete",
 			"request_id", requestID,
@@ -838,6 +932,86 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"decisions", len(processed.Decisions),
 			"skipped_reason", processed.SkippedReason,
 		)
+
+		// Conversation continuation. When one or more tool_use verdicts
+		// asked the proxy to feed a synthetic tool_result back to the
+		// upstream (instead of bouncing to the user as an assistant text
+		// turn), build a continuation request, forward upstream, and run
+		// postprocess again on the new response. The harness then sees
+		// the model's next tool_use rather than a "task was approved"
+		// terminal message — letting auto-approved tasks proceed
+		// seamlessly. Recursion is bounded by construction: tryContinuation
+		// performs exactly one inline Postprocess pass and does not loop,
+		// so even if the second pass fires the auto-approve gate again it
+		// falls through to SubstituteWith (no further forward, no further
+		// Postprocess). On any failure path the handler falls back to the
+		// original `processed` (which still carries SubstituteWith as a
+		// terminal assistant text), so the harness never sees an empty body.
+		{
+			contFinal, contStatus, contCT, contErr := h.tryContinuation(r, agent, provider, requestID, body, full, upstreamCT, resp.StatusCode, processed, llmproxy.PostprocessConfig{
+				Inspector:                        h.Inspector,
+				RewriteOpts:                      opts,
+				Store:                            h.Store,
+				AgentUserID:                      agent.UserID,
+				AgentID:                          agent.ID,
+				ConversationID:                   conversationID,
+				Audit:                            h.AuditEmitter,
+				RequestID:                        requestID,
+				Catalog:                          catalogIface,
+				TaskScope:                        h.TaskScope,
+				IntentVerifier:                   h.IntentVerifier,
+				Posture:                          liteProxyDecisionPosture(agent),
+				CandidateTasks:                   candidateTasks,
+				ToolRules:                        toolRules,
+				EgressRules:                      egressRules,
+				PreferredTaskID:                  preferredTaskID,
+				PendingApprovals:                 h.PendingApprovals,
+				ControlBaseURL:                   h.ControlBaseURL,
+				CallerNonces:                     h.CallerNonces,
+				Trace:                            h.TraceLogger,
+				TaskRiskAssessor:                 h.taskRiskBridge(),
+				AgentName:                        agent.Name,
+				RecentUserTurns:                  recentTurns,
+				ConversationAutoApproveThreshold: autoApproveThreshold,
+				InlineTaskCreator:                h.InlineTaskCreator,
+				Checkouts:                        h.TaskCheckouts,
+			})
+			switch {
+			case contErr != nil:
+				h.Logger.WarnContext(r.Context(), "lite-proxy continuation failed; falling back to substitute response",
+					"request_id", requestID, "agent_id", agent.ID, "err", contErr.Error())
+			case contFinal != nil:
+				// Treat any SkippedReason on the continuation's
+				// postprocess as a continuation failure regardless of
+				// whether a (possibly partial) body came back.
+				// SkippedReason indicates the rewriter couldn't finish
+				// its pass cleanly; swapping that body in would mask
+				// the original processed.SubstituteWith fallback and
+				// could leak partially-rewritten content (e.g. a
+				// literal autovault_… placeholder that never got
+				// resolved). Fall back to the original `processed`,
+				// matching the pre-continuation fail-closed posture.
+				if contFinal.SkippedReason != "" {
+					h.Logger.WarnContext(r.Context(), "lite-proxy continuation postprocess reported SkippedReason; falling back to substitute response",
+						"request_id", requestID,
+						"agent_id", agent.ID,
+						"skipped_reason", contFinal.SkippedReason,
+						"body_bytes", len(contFinal.Body),
+					)
+					break
+				}
+				processed = *contFinal
+				if contStatus != 0 {
+					resp.StatusCode = contStatus
+					auditStatus = contStatus
+					auditOutcome = outcomeFromStatus(contStatus)
+				}
+				if contCT != "" && contCT != upstreamCT {
+					w.Header().Set("Content-Type", contCT)
+				}
+			}
+		}
+
 		// Fail closed when postprocess could not finish its rewrite pass.
 		// A rewriter mid-body error leaves Body=nil with a non-empty
 		// SkippedReason; passing the upstream body through unchanged
@@ -850,10 +1024,36 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "postprocess_error"
 			auditReason = processed.SkippedReason
-			clearMirroredUpstreamHeaders(w.Header())
-			writeJSONError(w, http.StatusBadGateway, "POSTPROCESS_ERROR",
-				"response postprocess failed; see clawvisor audit log")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "POSTPROCESS_ERROR",
+				"couldn't process the upstream response. Please retry; details are in the Clawvisor audit log.")
 			return
+		}
+		// First-turn routing notice. When the inbound transcript carries
+		// no prior assistant turn, this is the user's opening prompt of
+		// a fresh conversation — prepend a one-liner so they see that
+		// Clawvisor is intermediating and which agent identity is in
+		// use. Only fires on 200; non-success bodies aren't shaped to
+		// accept the prepend and would be soft no-ops anyway. The
+		// per-tool-use auto-approve notice is handled separately on the
+		// continuation path and is additive with this one.
+		if resp.StatusCode == http.StatusOK && firstTurn {
+			// mintedConversationID is non-empty only on Chat Completions
+			// turn 1 (where no native session ID exists). For Anthropic
+			// and OpenAI Responses the renderer drops the marker
+			// argument and emits the existing notice unchanged.
+			notice := llmproxy.RenderAgentRoutingNotice(agent.Name, mintedConversationID)
+			pre, changed, prependErr := llmproxy.PrependAssistantNotice(provider, processed.ContentType, processed.Body, notice)
+			switch {
+			case prependErr != nil:
+				h.Logger.WarnContext(r.Context(), "lite-proxy first-turn notice prepend failed; returning unannotated body",
+					"request_id", requestID, "agent_id", agent.ID, "err", prependErr.Error())
+			case changed:
+				processed.Body = pre
+				// Mark Rewritten so the Content-Length / Content-Encoding
+				// cleanup below runs — the prepended body's length no
+				// longer matches the upstream header.
+				processed.Rewritten = true
+			}
 		}
 		if processed.Rewritten {
 			// Drop Content-Length entirely — the rewritten body's length
@@ -932,7 +1132,40 @@ func isVaultMiss(err error) bool {
 	return false
 }
 
-// writeJSONError produces a uniform JSON error response.
+// upstreamCredMissingError shapes the user-facing error for the "no
+// upstream credential available" case. The user message is the same
+// either way — just "get a key, paste it here" — but the audit
+// outcome distinguishes passthrough-with-no-bearer from a plain vault
+// miss so operators can still tell the failure modes apart.
+//
+// dashboardBaseURL is the deployment's externally reachable dashboard
+// host. Falls back to the build-env default in pkg/version when
+// empty — correct for hosted builds, wrong for local self-hosted, so
+// the wiring in server.go should set this explicitly when it knows
+// the right host (which is essentially always in practice).
+func upstreamCredMissingError(r *http.Request, agent *store.Agent, provider conversation.Provider, dashboardBaseURL string) (code, outcome, message string) {
+	if llmproxy.PassthroughUpstreamAuth(r.Context()) && !llmproxy.HasPassthroughBearer(r) {
+		code, outcome = "UPSTREAM_AUTH_MISSING", "upstream_auth_missing_for_passthrough"
+	} else {
+		code, outcome = "UPSTREAM_KEY_MISSING", "upstream_key_missing"
+	}
+	providerName := "Anthropic"
+	consoleURL := "https://console.anthropic.com/settings/keys"
+	if provider == conversation.ProviderOpenAI {
+		providerName = "OpenAI"
+		consoleURL = "https://platform.openai.com/api-keys"
+	}
+	dashboardBase := strings.TrimRight(strings.TrimSpace(dashboardBaseURL), "/")
+	if dashboardBase == "" {
+		dashboardBase = version.DashboardURL()
+	}
+	message = "no " + providerName + " API key configured. Get one at " + consoleURL + " and paste it at " + dashboardBase + "/dashboard/agents/" + agent.ID + "."
+	return code, outcome, message
+}
+
+// writeJSONError produces a uniform JSON error response. Use this only
+// for pre-provider failures (no agent token, unknown route) where the
+// harness can't be addressed in its native wire shape.
 func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -940,6 +1173,59 @@ func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 		"error": message,
 		"code":  code,
 	})
+}
+
+// writeLiteProxyError emits an error in the wire shape the harness
+// expects (Anthropic SSE / OpenAI Responses SSE / Chat Completions
+// SSE or JSON) so the user sees a recoverable inline message — "the
+// approval expired, please retry" — instead of the harness's generic
+// "model may not exist" fallback. A non-harness-shaped JSON body
+// triggers that fallback on every CLI we ship to today.
+//
+// The wire response is HTTP 200 with a synthetic assistant text turn.
+// The original error status/code/reason stays in audit logs and slog
+// for operators. Callers still set audit* fields before invoking this
+// helper; behavior beyond response synthesis matches writeJSONError.
+//
+// When provider is unsupported (or message is empty), falls back to
+// writeJSONError with the supplied status/code/message.
+func (h *LLMEndpointHandler) writeLiteProxyError(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestBody []byte, requestID string, status int, code, message string) {
+	clearMirroredUpstreamHeaders(w.Header())
+	// Prefix every synthesized error so the user can tell it's from
+	// Clawvisor and not from the model or the upstream provider. The
+	// JSON fallback path keeps its `code` field for that role.
+	branded := message
+	if branded != "" && !strings.HasPrefix(branded, "Clawvisor") {
+		branded = "Clawvisor: " + branded
+	}
+	synth, ok := conversation.SyntheticErrorResponse(r, provider, requestBody, branded)
+	if !ok {
+		writeJSONError(w, status, code, message)
+		return
+	}
+	w.Header().Set("Content-Type", synth.ContentType)
+	w.Header().Set("Cache-Control", "no-cache")
+	if h.RawIOLogger != nil && agent != nil {
+		bodyStr, bodyEnc := llmproxy.EncodeBody(synth.Body)
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:        "harness_response",
+			RequestID:    requestID,
+			UserID:       agent.UserID,
+			AgentID:      agent.ID,
+			Provider:     string(provider),
+			Method:       r.Method,
+			Path:         r.URL.RequestURI(),
+			Status:       http.StatusOK,
+			ContentType:  synth.ContentType,
+			Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
+			Body:         bodyStr,
+			BodyEncoding: bodyEnc,
+			BodyBytes:    len(synth.Body),
+			Marker:       "synth_error_" + code,
+		})
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(synth.Body)
 }
 
 // readLimited reads at most max bytes from r. Returns an error if the body
@@ -954,6 +1240,258 @@ func readLimited(r io.Reader, max int64) ([]byte, error) {
 		return nil, errors.New("request body too large")
 	}
 	return buf, nil
+}
+
+// tryContinuation inspects the just-completed postprocess result for
+// tool_use verdicts that requested the proxy "continue the
+// conversation" (i.e. auto-approved tasks). When any are present and
+// the provider supports continuation, the handler builds a new
+// request body that appends the upstream's assistant turn plus a
+// synthetic user turn of tool_result blocks, forwards it upstream,
+// and re-runs postprocess on the new response. The new processed
+// result (along with its upstream status + content-type) is returned;
+// the caller swaps it in for the original.
+//
+// Returns (nil, 0, "", nil) when no continuation was requested — the
+// caller falls through to the existing path unchanged.
+// Returns an error when continuation was requested but couldn't be
+// completed (unsupported provider, malformed bodies, upstream failure);
+// the caller logs and falls back to the original processed result,
+// whose SubstituteWith fallback still surfaces the augmentation text
+// to the harness as a terminal assistant turn.
+func (h *LLMEndpointHandler) tryContinuation(
+	r *http.Request,
+	agent *store.Agent,
+	provider conversation.Provider,
+	requestID string,
+	inboundBody []byte,
+	upstreamBody []byte,
+	upstreamCT string,
+	upstreamStatus int,
+	processed llmproxy.PostprocessResult,
+	cfg llmproxy.PostprocessConfig,
+) (*llmproxy.PostprocessResult, int, string, error) {
+	if upstreamStatus >= 400 {
+		// Don't try to continue on top of an upstream error response —
+		// the model never actually emitted a clean tool_use turn, and
+		// the body shape may not match what extractAnthropicAssistantContent
+		// expects.
+		return nil, 0, "", nil
+	}
+	var toolResults []llmproxy.ContinuationToolResult
+	for _, dec := range processed.Decisions {
+		if dec.Verdict.ContinueWithToolResult == "" {
+			continue
+		}
+		toolResults = append(toolResults, llmproxy.ContinuationToolResult{
+			ToolUseID: dec.ToolUse.ID,
+			Content:   dec.Verdict.ContinueWithToolResult,
+		})
+	}
+	if len(toolResults) == 0 {
+		return nil, 0, "", nil
+	}
+	// Tool_use / tool_result must be 1:1 for the upstream — Anthropic
+	// and OpenAI Chat both 400 on an unbalanced continuation body. If
+	// the assistant turn carried sibling tool_uses that were NOT
+	// auto-approved (e.g. a Bash command we passed through alongside
+	// the POST /api/control/tasks the gate intercepted), we'd
+	// otherwise emit N tool_uses + len(toolResults) tool_results and
+	// the upstream would reject the turn. Worse, the proxy's response
+	// to the harness is the continuation: if we tried to continue
+	// anyway and the model ran something, the harness would also
+	// execute the passed-through Bash, double-running it. The safe
+	// answer is to skip continuation entirely and fall back to the
+	// substitute path — the user gets the [Clawvisor] bracketed
+	// fallback turn, the model sees no continuation, and the
+	// passed-through tool_use returns to its normal harness fate on
+	// the model's next turn.
+	if len(toolResults) != len(processed.Decisions) {
+		// The auto-approved task has already been created by the
+		// gate. The sibling tool_uses get dropped from the
+		// substitute-rendered assistant turn (the rewriter's "any
+		// blocked" branch substitutes the whole turn), so the
+		// harness never sees them — that's the surprising part for
+		// operators chasing "I approved the task but Bash never ran
+		// after that." Record a dedicated audit row enumerating the
+		// dropped tool names so the trail is greppable.
+		var droppedNames []string
+		var autoApprovedTUID, autoApprovedTaskID string
+		for _, dec := range processed.Decisions {
+			if dec.Verdict.ContinueWithToolResult != "" {
+				autoApprovedTUID = dec.ToolUse.ID
+				if autoApprovedTaskID == "" {
+					autoApprovedTaskID = dec.Verdict.CreatedTaskID
+				}
+				continue
+			}
+			droppedNames = append(droppedNames, dec.ToolUse.Name)
+		}
+		h.Logger.WarnContext(r.Context(), "lite-proxy continuation skipped: sibling tool_uses in same turn would unbalance tool_use/tool_result count",
+			"request_id", requestID,
+			"agent_id", agent.ID,
+			"task_id", autoApprovedTaskID,
+			"tool_uses_in_turn", len(processed.Decisions),
+			"continue_results", len(toolResults),
+			"dropped_tools", droppedNames,
+		)
+		if h.AuditEmitter != nil {
+			h.AuditEmitter.LogContinuationSkippedSiblingTools(r.Context(), agent, requestID, autoApprovedTaskID, autoApprovedTUID, droppedNames)
+		}
+		return nil, 0, "", nil
+	}
+	contBody, err := llmproxy.BuildContinuationBody(provider, upstreamCT, inboundBody, upstreamBody, toolResults)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("build continuation body: %w", err)
+	}
+	h.Logger.DebugContext(r.Context(), "lite-proxy continuation forwarding",
+		"request_id", requestID,
+		"agent_id", agent.ID,
+		"provider", string(provider),
+		"tool_results", len(toolResults),
+		"body_bytes", len(contBody),
+	)
+	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, contBody)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("forward continuation: %w", err)
+	}
+	defer resp.Body.Close()
+	full, readErr := readResponseLimited(resp.Body, h.MaxResponseBytes)
+	if readErr != nil {
+		return nil, 0, "", fmt.Errorf("read continuation upstream: %w", readErr)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, 0, "", fmt.Errorf("continuation upstream returned %d", resp.StatusCode)
+	}
+	contCT := resp.Header.Get("Content-Type")
+	if contCT == "" {
+		contCT = upstreamCT
+	}
+	// Refresh decision inputs before the continuation postprocess. The
+	// original cfg.CandidateTasks was loaded at the top of serve(),
+	// BEFORE the auto-approve gate created the new task — so it doesn't
+	// include the task we just minted. Without this reload the model's
+	// next tool_uses (Write, Bash, …) fall through to "no matching task
+	// scope" and the harness shows the human-approval prompt again,
+	// defeating the whole point of conversation auto-approval. ToolRules
+	// and EgressRules rarely change inside a single inbound request, but
+	// reloading them keeps the cfg internally consistent and absorbs any
+	// concurrent rule updates for free. PreferredTaskID gets recomputed
+	// from the checkouts cache (which the auto-approve path Set'd to the
+	// new task) so the decision layer's task preference matches the
+	// active checkout.
+	refreshedCandidates, refreshedToolRules, refreshedEgressRules, refreshErr := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+	if refreshErr == nil {
+		cfg.CandidateTasks = refreshedCandidates
+		cfg.ToolRules = refreshedToolRules
+		cfg.EgressRules = refreshedEgressRules
+		if newPref, prefErr := h.checkedOutTaskID(r.Context(), agent, cfg.ConversationID, refreshedCandidates); prefErr == nil {
+			cfg.PreferredTaskID = newPref
+		}
+	} else {
+		// Don't fail the continuation on a decision-input refresh
+		// hiccup — fall through with the stale cfg. The worst case is
+		// the human-approval prompt we were trying to avoid, which is
+		// the same behavior as a transient store outage on the
+		// original request path.
+		h.Logger.WarnContext(r.Context(), "lite-proxy continuation decision-input refresh failed; using pre-continuation snapshot",
+			"request_id", requestID, "agent_id", agent.ID, "err", refreshErr.Error())
+	}
+	// Recursion is bounded by construction here: tryContinuation does
+	// not loop, so the second Postprocess pass below runs at most once
+	// per inbound harness request. If that second pass fires the
+	// auto-approve gate again, the gate's verdict still carries
+	// ContinueWithToolResult, but we never act on it — the caller
+	// (serve()) doesn't re-invoke tryContinuation. The verdict's
+	// SubstituteWith fallback renders as a terminal text turn instead,
+	// which is the right behavior for a model that re-emits a task-
+	// creation tool_use on the continuation.
+	newProcessed := llmproxy.Postprocess(r, full, contCT, cfg)
+	// Force Rewritten=true on a successful continuation swap. The
+	// body now comes from a SECOND upstream call whose length almost
+	// certainly differs from the first call's Content-Length (which
+	// serve() mirrored into w.Header at the top of the handler) and
+	// which may carry a different Content-Encoding. Without this flag,
+	// the second Postprocess can legitimately report Rewritten=false
+	// when the body itself was passthrough (plain text turn, no
+	// tool_use to rewrite) — and serve()'s `if processed.Rewritten`
+	// header-clear block would skip dropping Content-Length /
+	// Content-Encoding. Go would then truncate the harness write to
+	// the stale length or the harness would try to gunzip our
+	// plaintext. Co-locating the flag here (rather than in serve())
+	// keeps the invariant tight: any non-nil return from
+	// tryContinuation has had its origin headers invalidated by the
+	// upstream swap, and the caller can rely on Rewritten=true to
+	// route through the normal post-rewrite cleanup.
+	newProcessed.Rewritten = true
+
+	// User-facing notices. The auto-approve gate records a one-line
+	// notice on each verdict via PrependAssistantNotice; we collect
+	// them here and inject into the continuation's assistant turn so
+	// the user sees what was auto-approved at the top of the model's
+	// response. Multiple notices (one per auto-approved tool_use in
+	// a coalesced turn) join with newlines.
+	//
+	// Both pass results contribute. The first pass carries notices
+	// for whatever the gate fired on in the original assistant turn
+	// (always present in this branch since we got here on a
+	// continuation). The second pass can also fire the gate when
+	// the model re-emits POST /api/control/tasks?surface=inline in
+	// the continuation response — that second auto-approval falls
+	// back to SubstituteWith because recursion is capped at depth=1,
+	// but its notice still belongs in the visible turn for parity
+	// with the first task. Without this, two auto-approved tasks in
+	// the same inbound request would render with only the first
+	// notice and silently elide the second.
+	var notices []string
+	seen := map[string]struct{}{}
+	collect := func(decs []conversation.ToolUseDecisionRecord) {
+		for _, dec := range decs {
+			n := strings.TrimSpace(dec.Verdict.PrependAssistantNotice)
+			if n == "" {
+				continue
+			}
+			if _, ok := seen[n]; ok {
+				continue
+			}
+			seen[n] = struct{}{}
+			notices = append(notices, n)
+		}
+	}
+	collect(processed.Decisions)
+	collect(newProcessed.Decisions)
+	if len(notices) > 0 && len(newProcessed.Body) > 0 {
+		joined := strings.Join(notices, "\n")
+		pre, changed, prependErr := llmproxy.PrependAssistantNotice(provider, contCT, newProcessed.Body, joined)
+		switch {
+		case prependErr != nil:
+			// Prepend is UX polish, not correctness — log and return
+			// the unmodified body so the user still sees the model's
+			// output. The continuation itself succeeded.
+			h.Logger.WarnContext(r.Context(), "lite-proxy continuation notice prepend failed; returning unannotated body",
+				"request_id", requestID, "agent_id", agent.ID, "err", prependErr.Error())
+		case !changed:
+			// Prepend was a no-op: the dispatcher couldn't find a
+			// shape it recognized (response body lacked the expected
+			// `choices`/`output`/`content` marker, or Anthropic SSE
+			// was missing `message_start`). The audit row for the
+			// auto-approval still fired, but the only user-facing
+			// trace is gone. Warn so an operator chasing "I
+			// auto-approved but the user didn't see the notice"
+			// has a deterministic log entry.
+			h.Logger.WarnContext(r.Context(), "lite-proxy continuation notice prepend silently no-op'd (shape not recognized); user will not see auto-approval notice",
+				"request_id", requestID,
+				"agent_id", agent.ID,
+				"provider", string(provider),
+				"content_type", contCT,
+				"body_bytes", len(newProcessed.Body),
+			)
+		default:
+			newProcessed.Body = pre
+		}
+	}
+
+	return &newProcessed, resp.StatusCode, contCT, nil
 }
 
 // readResponseLimited mirrors readLimited for upstream responses. Default
@@ -1089,14 +1627,43 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 	return candidateTasks, toolRules, egressRules, nil
 }
 
-func (h *LLMEndpointHandler) checkedOutTaskID(ctx context.Context, agent *store.Agent, candidateTasks []*store.Task) (string, error) {
+func (h *LLMEndpointHandler) checkedOutTaskID(ctx context.Context, agent *store.Agent, conversationID string, candidateTasks []*store.Task) (string, error) {
 	if h == nil || h.TaskCheckouts == nil || agent == nil {
 		return "", nil
 	}
-	checkout, ok, err := h.TaskCheckouts.Get(ctx, llmproxy.TaskCheckoutKey{
+	// Scoped lookup first: a checkout written by inline-task approval
+	// in this conversation should win. If the scoped bucket misses,
+	// fall back to the legacy (user, agent)-only bucket — that's where
+	// `POST /control/task/checkout` writes, since the control endpoint
+	// has no per-turn conversation context. Without this fallback, a
+	// manually-selected task would never be preferred for any
+	// conversation that surfaces a non-empty ConversationID.
+	scopedKey := llmproxy.TaskCheckoutKey{
+		UserID:         agent.UserID,
+		AgentID:        agent.ID,
+		ConversationID: conversationID,
+	}
+	if id, err := h.resolveCheckedOutTaskID(ctx, scopedKey, agent, candidateTasks); err != nil || id != "" {
+		return id, err
+	}
+	if conversationID == "" {
+		// Already checked the legacy bucket above.
+		return "", nil
+	}
+	legacyKey := llmproxy.TaskCheckoutKey{
 		UserID:  agent.UserID,
 		AgentID: agent.ID,
-	})
+	}
+	return h.resolveCheckedOutTaskID(ctx, legacyKey, agent, candidateTasks)
+}
+
+// resolveCheckedOutTaskID looks up a single TaskCheckoutKey, returns
+// the checked-out task ID when it still matches an active candidate
+// task for this agent, and clears the entry when it's stale. Returning
+// ("", nil) means the bucket either had no entry or had a stale entry
+// (which is now cleared) — the caller should treat both the same.
+func (h *LLMEndpointHandler) resolveCheckedOutTaskID(ctx context.Context, key llmproxy.TaskCheckoutKey, agent *store.Agent, candidateTasks []*store.Task) (string, error) {
+	checkout, ok, err := h.TaskCheckouts.Get(ctx, key)
 	if err != nil || !ok || strings.TrimSpace(checkout.TaskID) == "" {
 		return "", err
 	}
@@ -1105,7 +1672,7 @@ func (h *LLMEndpointHandler) checkedOutTaskID(ctx context.Context, agent *store.
 			return checkout.TaskID, nil
 		}
 	}
-	if err := h.TaskCheckouts.Clear(ctx, llmproxy.TaskCheckoutKey{UserID: agent.UserID, AgentID: agent.ID}); err != nil {
+	if err := h.TaskCheckouts.Clear(ctx, key); err != nil {
 		return "", err
 	}
 	return "", nil
@@ -1300,8 +1867,9 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 		if isVaultMiss(err) {
 			*auditStatus = http.StatusUnauthorized
 			*auditDecide = "deny"
-			*auditOutcome = "upstream_key_missing"
-			writeJSONError(w, http.StatusUnauthorized, "UPSTREAM_KEY_MISSING", "no upstream API key configured in vault for this provider")
+			code, outcome, message := upstreamCredMissingError(r, agent, provider, h.DashboardBaseURL)
+			*auditOutcome = outcome
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusUnauthorized, code, message)
 			return
 		}
 		*auditStatus = http.StatusBadGateway
@@ -1312,7 +1880,7 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 			*auditOutcome = "upstream_error"
 		}
 		*auditReason = err.Error()
-		writeJSONError(w, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "UPSTREAM_ERROR", "couldn't reach the upstream provider. Please retry; if this persists, check the Clawvisor daemon logs.")
 		return
 	}
 	defer resp.Body.Close()
@@ -1417,6 +1985,21 @@ func agentLiteProxySecretDetectionDisabled(agent *store.Agent) bool {
 	return agent != nil && (agent.RuntimeSettings == nil || agent.RuntimeSettings.LiteProxySecretDetectionDisabled)
 }
 
+// agentConversationAutoApproveThreshold reads the per-agent
+// conversation-based auto-approval cap from the agent's runtime
+// settings. Defaults to "off" when no runtime settings row exists or
+// the agent itself is nil — matching the database column default so
+// pre-feature agents keep the human-approval prompt.
+func agentConversationAutoApproveThreshold(agent *store.Agent) string {
+	if agent == nil || agent.RuntimeSettings == nil {
+		return store.ConversationAutoApproveOff
+	}
+	if v := strings.TrimSpace(agent.RuntimeSettings.ConversationAutoApproveThreshold); v != "" {
+		return v
+	}
+	return store.ConversationAutoApproveOff
+}
+
 func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, llmproxy.SecretDecisionAction, map[string]struct{}, bool) {
 	if h == nil || h.PendingSecrets == nil || agent == nil {
 		return nil, "", nil, false
@@ -1518,11 +2101,11 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 				if errors.Is(err, errSecretVaultNameConflict) {
 					*auditStatus = http.StatusConflict
 					*auditOutcome = "secret_vault_name_conflict"
-					writeJSONError(w, http.StatusConflict, "SECRET_VAULT_NAME_CONFLICT", "vault item already exists with a different value; choose a different vault name")
+					h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusConflict, "SECRET_VAULT_NAME_CONFLICT", "a vault item with that name already exists with a different value. Please choose a different name and retry.")
 				} else {
 					*auditStatus = http.StatusInternalServerError
 					*auditOutcome = "secret_vault_failed"
-					writeJSONError(w, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not save detected secret")
+					h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "couldn't save the detected secret to your vault. Please retry.")
 				}
 				*auditDecide = "deny"
 				*auditReason = err.Error()
@@ -1558,7 +2141,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 				} else {
 					*auditReason = "detected secret was not present in request JSON"
 				}
-				writeJSONError(w, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not rewrite detected secret")
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "couldn't substitute the detected secret into the request. Please retry.")
 				return nil, reply.Action, nil, true
 			}
 			resumeBody = rewrittenBody
@@ -1977,7 +2560,7 @@ func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *ht
 		*auditDecide = "deny"
 		*auditOutcome = "secret_hold_failed"
 		*auditReason = err.Error()
-		writeJSONError(w, http.StatusInternalServerError, "SECRET_HOLD_FAILED", "could not hold detected secret")
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "SECRET_HOLD_FAILED", "couldn't pause this request for secret review. Please retry.")
 		return true
 	}
 	if auditParams != nil {
@@ -2351,7 +2934,7 @@ func syntheticLiteTextResponse(r *http.Request, provider conversation.Provider, 
 	}
 }
 
-func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
+func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID, conversationID string, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
 	candidateTasks, toolRules, egressRules, decisionLoadErr := h.loadLiteProxyDecisionInputs(r.Context(), agent)
 	if decisionLoadErr != nil {
 		// Approval-release path also authorizes; same fail-closed rule
@@ -2362,9 +2945,8 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		*auditDecide = "deny"
 		*auditOutcome = "decision_input_load_failed"
 		*auditReason = decisionLoadErr.Error()
-		clearMirroredUpstreamHeaders(w.Header())
-		writeJSONError(w, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
-			"authorization inputs unavailable; please retry")
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
+			"couldn't load authorization data right now. Please retry in a moment.")
 		return true
 	}
 	var catalogIface interface {
@@ -2381,6 +2963,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		Provider:        provider,
 		Body:            body,
 		Agent:           agent,
+		ConversationID:  conversationID,
 		Inspector:       h.Inspector,
 		RewriteOpts:     opts,
 		Store:           h.Store,
@@ -2415,7 +2998,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 	*auditOutcome = result.Outcome
 	*auditReason = result.Reason
 	if len(result.Body) == 0 {
-		writeJSONError(w, result.HTTPStatus, "APPROVAL_RELEASE_ERROR", result.Reason)
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, result.HTTPStatus, "APPROVAL_RELEASE_ERROR", result.Reason)
 		return true
 	}
 	w.Header().Set("Content-Type", result.ContentType)
@@ -2446,6 +3029,36 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 
 func liteProxyDecisionPosture(agent *store.Agent) runtimedecision.EvaluationPosture {
 	return runtimedecision.PostureEnforce
+}
+
+// liteProxyConversationIDSource labels how the conversation ID currently
+// in use was derived, for the per-request audit row. Lets dashboards
+// answer "what fraction of Chat-Completions turn-2+ requests had the
+// minted marker round-trip?" without re-doing the lookup. Values are
+// stable strings safe to switch on in downstream queries.
+func liteProxyConversationIDSource(provider conversation.Provider, req *http.Request, conversationID, mintedConversationID string) string {
+	if conversationID == "" {
+		return "empty"
+	}
+	if mintedConversationID != "" && conversationID == mintedConversationID {
+		return "minted"
+	}
+	switch provider {
+	case conversation.ProviderAnthropic:
+		return "native_anthropic"
+	case conversation.ProviderOpenAI:
+		if req != nil && conversation.IsOpenAIChatCompletionsEndpoint(req) {
+			if strings.HasPrefix(conversationID, conversation.ConversationIDPrefix) {
+				return "echoed_marker"
+			}
+			if strings.HasPrefix(conversationID, "fp-") {
+				return "fingerprint"
+			}
+			return "unknown"
+		}
+		return "native_openai_responses"
+	}
+	return "unknown"
 }
 
 type liteProxyRequestSummary struct {
@@ -2649,13 +3262,25 @@ func (b *liteProxyTaskRiskBridge) AssessEnvelope(ctx context.Context, req llmpro
 		RequiredCredentials:    req.RequiredCredentials,
 		IntentVerificationMode: req.IntentVerificationMode,
 		ExpectedUse:            req.ExpectedUse,
+		RecentUserTurns:        req.RecentUserTurns,
 	})
 	if err != nil || out == nil {
 		return nil
 	}
+	conflicts := make([]llmproxy.TaskRiskConflict, 0, len(out.Conflicts))
+	for _, c := range out.Conflicts {
+		conflicts = append(conflicts, llmproxy.TaskRiskConflict{
+			Field:       c.Field,
+			Description: c.Description,
+			Severity:    c.Severity,
+		})
+	}
 	return &llmproxy.TaskRiskAssessment{
-		RiskLevel:   out.RiskLevel,
-		Explanation: out.Explanation,
-		Factors:     out.Factors,
+		RiskLevel:              out.RiskLevel,
+		Explanation:            out.Explanation,
+		Factors:                out.Factors,
+		Conflicts:              conflicts,
+		IntentMatch:            out.IntentMatch,
+		IntentMatchExplanation: out.IntentMatchExplanation,
 	}
 }
