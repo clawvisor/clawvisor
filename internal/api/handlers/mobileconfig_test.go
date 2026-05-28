@@ -19,7 +19,7 @@ func TestMobileConfigClaudeDesktopRequiresUser(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlitestore.NewStore(db)
-	h := NewMobileConfigHandler(st, "", "", true)
+	h := NewMobileConfigHandler(st, "", "", true, "")
 
 	req := httptest.NewRequest("GET", "/api/agents/install/claude-desktop.mobileconfig", nil)
 	w := httptest.NewRecorder()
@@ -42,7 +42,7 @@ func TestMobileConfigClaudeDesktopHappyPath(t *testing.T) {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	h := NewMobileConfigHandler(st, "", "", true)
+	h := NewMobileConfigHandler(st, "", "", true, "")
 	req := httptest.NewRequest("GET", "/api/agents/install/claude-desktop.mobileconfig", nil)
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
 	req.Host = "localhost:25297"
@@ -118,7 +118,7 @@ func TestMobileConfigClaudeDesktopDisambiguatesName(t *testing.T) {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	h := NewMobileConfigHandler(st, "", "", true)
+	h := NewMobileConfigHandler(st, "", "", true, "")
 	doReq := func() {
 		req := httptest.NewRequest("GET", "/api/agents/install/claude-desktop.mobileconfig", nil)
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
@@ -167,7 +167,7 @@ func TestMobileConfigClaudeDesktopRejectsBadName(t *testing.T) {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	h := NewMobileConfigHandler(st, "", "", true)
+	h := NewMobileConfigHandler(st, "", "", true, "")
 	req := httptest.NewRequest("GET", "/api/agents/install/claude-desktop.mobileconfig?name=Bad%20Name!", nil)
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
 	req.Host = "localhost:25297"

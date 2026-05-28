@@ -895,10 +895,10 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
       <div className="p-5">
         {proxyLiteUI ? (
           <>
-            {tab === 'openclaw' && <InstallerSkillGuide target="openclaw" clawvisorURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
-            {tab === 'hermes' && <InstallerSkillGuide target="hermes" clawvisorURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
-            {tab === 'claude-code' && <InstallerSkillGuide target="claude-code" clawvisorURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
-            {tab === 'codex' && <InstallerSkillGuide target="codex" clawvisorURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
+            {tab === 'openclaw' && <InstallerSkillGuide target="openclaw" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
+            {tab === 'hermes' && <InstallerSkillGuide target="hermes" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
+            {tab === 'claude-code' && <InstallerSkillGuide target="claude-code" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
+            {tab === 'codex' && <InstallerSkillGuide target="codex" installerBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
             {tab === 'claude-desktop' && <ClaudeDesktopProfileGuide />}
             {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
           </>
@@ -1984,13 +1984,17 @@ const INSTALLER_SPECS: Record<InstallerTarget, InstallerSpec> = {
 
 function InstallerSkillGuide({
   target,
-  clawvisorURL,
+  installerBaseURL,
   claim,
   userIdParam,
   onCopy,
 }: {
   target: InstallerTarget
-  clawvisorURL: string
+  // installerBaseURL is the agent-reachable host (proxyLiteURL on the
+  // dashboard side). The user's terminal curls this for the skill markdown,
+  // and the markdown embeds it again for the mint endpoint — so a
+  // configured public_url propagates end to end.
+  installerBaseURL: string
   claim: string | undefined
   userIdParam: string
   onCopy: (text: string) => void
@@ -2001,7 +2005,7 @@ function InstallerSkillGuide({
   let query = ''
   if (claim) query = `?claim=${claim}`
   else if (userIdParam) query = userIdParam
-  const skillURL = `${clawvisorURL}/skill/install/${target}.md${query}`
+  const skillURL = `${installerBaseURL}/skill/install/${target}.md${query}`
   const oneLiner = spec.installCommand(skillURL)
 
   return (

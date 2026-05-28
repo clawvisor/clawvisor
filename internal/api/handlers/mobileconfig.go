@@ -25,10 +25,18 @@ type MobileConfigHandler struct {
 	relayHost string
 	daemonID  string
 	isLocal   bool
+	// publicURL is the externally reachable lite-proxy endpoint, baked into
+	// the plist's inferenceGatewayBaseUrl. Claude Desktop calls that URL
+	// from the user's Mac, which in cloud deployments isn't the dashboard
+	// origin. Empty falls back to the request host (covers local installs).
+	publicURL string
 }
 
-func NewMobileConfigHandler(st store.Store, relayHost, daemonID string, isLocal bool) *MobileConfigHandler {
-	return &MobileConfigHandler{st: st, relayHost: relayHost, daemonID: daemonID, isLocal: isLocal}
+func NewMobileConfigHandler(st store.Store, relayHost, daemonID string, isLocal bool, publicURL string) *MobileConfigHandler {
+	return &MobileConfigHandler{
+		st: st, relayHost: relayHost, daemonID: daemonID, isLocal: isLocal,
+		publicURL: strings.TrimRight(strings.TrimSpace(publicURL), "/"),
+	}
 }
 
 // agentNameSafe constrains user-supplied names to a small, filesystem-safe
@@ -107,6 +115,9 @@ func uniqueAgentName(existing []*store.Agent, base string) string {
 }
 
 func (h *MobileConfigHandler) resolveURL(r *http.Request) string {
+	if h.publicURL != "" {
+		return h.publicURL
+	}
 	if !relay.ViaRelay(r.Context()) {
 		scheme := "http"
 		if r.TLS != nil {

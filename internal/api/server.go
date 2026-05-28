@@ -1005,7 +1005,7 @@ func (s *Server) routes() http.Handler {
 		// codex, hermes, openclaw). Each renders with a pre-filled CLAWVISOR_URL
 		// and optional ?claim=<code> so the embedded mint curl doesn't need a
 		// user_id. The Other Agents fallback path still uses /skill/setup.
-		installerHandler := handlers.NewInstallerHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal())
+		installerHandler := handlers.NewInstallerHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal(), s.cfg.ProxyLite.PublicURL)
 		mux.HandleFunc("GET /skill/install/{target}", installerHandler.Setup)
 	}
 
@@ -1014,7 +1014,7 @@ func (s *Server) routes() http.Handler {
 	// config and Claude Desktop reads it. The endpoint mints a fresh agent
 	// + token at request time; the download itself is the consent gate, so
 	// it requires the user JWT.
-	mobileConfigHandler := handlers.NewMobileConfigHandler(s.store, relayHostFromCfg(s.cfg.Relay.URL), s.daemonID, s.cfg.Server.IsLocal())
+	mobileConfigHandler := handlers.NewMobileConfigHandler(s.store, relayHostFromCfg(s.cfg.Relay.URL), s.daemonID, s.cfg.Server.IsLocal(), s.cfg.ProxyLite.PublicURL)
 	mux.Handle("GET /api/agents/install/claude-desktop.mobileconfig", user(mobileConfigHandler.ClaudeDesktop))
 	// skillRenderOpts builds RenderOptions based on whether the request
 	// arrived directly (local) or via the relay (cloud).

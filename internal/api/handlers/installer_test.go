@@ -49,7 +49,7 @@ func assertContainsAll(t *testing.T, body string, needles ...string) {
 }
 
 func TestInstallerUnknownTargetIs404(t *testing.T) {
-	h := NewInstallerHandler("", "", true)
+	h := NewInstallerHandler("", "", true, "")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /skill/install/{target}", h.Setup)
 	srv := httptest.NewServer(mux)
@@ -66,7 +66,7 @@ func TestInstallerUnknownTargetIs404(t *testing.T) {
 }
 
 func TestInstallerClaudeCodeRender(t *testing.T) {
-	h := NewInstallerHandler("", "", true)
+	h := NewInstallerHandler("", "", true, "")
 	body := installerGet(t, h, "claude-code", "ABCDEFGHIJ")
 
 	assertContainsAll(t, body,
@@ -96,7 +96,7 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 }
 
 func TestInstallerCodexRender(t *testing.T) {
-	h := NewInstallerHandler("", "", true)
+	h := NewInstallerHandler("", "", true, "")
 	body := installerGet(t, h, "codex", "CLAIMCODE0")
 
 	assertContainsAll(t, body,
@@ -116,7 +116,7 @@ func TestInstallerCodexRender(t *testing.T) {
 }
 
 func TestInstallerHermesRender(t *testing.T) {
-	h := NewInstallerHandler("", "", true)
+	h := NewInstallerHandler("", "", true, "")
 	body := installerGet(t, h, "hermes", "")
 
 	assertContainsAll(t, body,
@@ -136,7 +136,7 @@ func TestInstallerHermesRender(t *testing.T) {
 }
 
 func TestInstallerOpenClawRender(t *testing.T) {
-	h := NewInstallerHandler("", "", true)
+	h := NewInstallerHandler("", "", true, "")
 	body := installerGet(t, h, "openclaw", "CLAIMOPEN12")
 
 	assertContainsAll(t, body,
@@ -157,7 +157,7 @@ func TestInstallerOpenClawRender(t *testing.T) {
 // frontmatter at load time; we caught this in the field after a real install,
 // so guard against regression by asserting the exact shape on every target.
 func TestInstallerAllTargetsHaveFrontmatter(t *testing.T) {
-	h := NewInstallerHandler("", "", true)
+	h := NewInstallerHandler("", "", true, "")
 	for _, target := range []string{"claude-code", "codex", "hermes", "openclaw"} {
 		body := installerGet(t, h, target, "")
 		if !strings.HasPrefix(body, "---\nname: clawvisor-install\ndescription:") {
@@ -175,10 +175,26 @@ func TestInstallerAllTargetsHaveFrontmatter(t *testing.T) {
 	}
 }
 
+func TestInstallerPreferConfiguredPublicURL(t *testing.T) {
+	// When the deployment has a configured public URL, all embedded curl URLs
+	// must use that — not the request host. Agents installing the skill are
+	// on a different machine in cloud deployments and won't reach the
+	// dashboard origin.
+	h := NewInstallerHandler("", "", false, "https://llm.example.com")
+	body := installerGet(t, h, "claude-code", "")
+	if !strings.Contains(body, "https://llm.example.com/api") {
+		t.Errorf("expected embedded URL to use configured public URL; body excerpt:\n%s",
+			body[:min(len(body), 500)])
+	}
+	if strings.Contains(body, "http://127.0.0.1:") {
+		t.Errorf("embedded URL should not fall back to request host when public URL is configured")
+	}
+}
+
 func TestInstallerEmbedsRequestHost(t *testing.T) {
 	// When not via the relay, the resolved URL should mirror the request host so
 	// agents on the user's box talk to the daemon directly.
-	h := NewInstallerHandler("", "", true)
+	h := NewInstallerHandler("", "", true, "")
 	body := installerGet(t, h, "claude-code", "")
 	if !strings.Contains(body, "ANTHROPIC_BASE_URL") || !strings.Contains(body, "/api/skill/catalog") {
 		t.Fatalf("rendered body missing required scaffolding: %s", body)

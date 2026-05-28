@@ -27,10 +27,17 @@ type InstallerHandler struct {
 	relayHost string
 	daemonID  string
 	isLocal   bool
+	// publicURL is the externally reachable lite-proxy endpoint configured
+	// via cfg.ProxyLite.PublicURL. The installer skill runs *on the agent's
+	// machine*, which in cloud deployments isn't the dashboard origin — so
+	// every embedded curl URL (mint, smoke test, configure-time base_url)
+	// needs to be the publicly reachable host, not the request host the
+	// dashboard happens to be on. Empty falls back to resolveURL.
+	publicURL string
 }
 
-func NewInstallerHandler(relayHost, daemonID string, isLocal bool) *InstallerHandler {
-	return &InstallerHandler{relayHost: relayHost, daemonID: daemonID, isLocal: isLocal}
+func NewInstallerHandler(relayHost, daemonID string, isLocal bool, publicURL string) *InstallerHandler {
+	return &InstallerHandler{relayHost: relayHost, daemonID: daemonID, isLocal: isLocal, publicURL: strings.TrimRight(strings.TrimSpace(publicURL), "/")}
 }
 
 type installerCtx struct {
@@ -78,6 +85,13 @@ func (h *InstallerHandler) Setup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *InstallerHandler) resolveURL(r *http.Request) string {
+	// Configured public URL wins — that's the host the user has explicitly
+	// said is reachable from agent machines. Without it, fall back to
+	// request-host (covers local installs where dashboard origin == agent
+	// origin) and then to the relay URL for cloud deployments.
+	if h.publicURL != "" {
+		return h.publicURL
+	}
 	if !relay.ViaRelay(r.Context()) {
 		scheme := "http"
 		if r.TLS != nil {
