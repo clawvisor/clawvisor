@@ -347,6 +347,7 @@ function ActivityChart({ data }: { data: ActivityBucket[] }) {
     const successOutcomes = new Set([
       'executed',
       'approved',
+      'observed',
       'approval_released',
       'pass_through',
       'success',
