@@ -358,9 +358,14 @@ func maybeInterceptInlineTaskDefinition(
 		// Use a detached context so a mid-request client disconnect
 		// (a plausible cause of cache misbehavior) doesn't cancel
 		// the rollback and strand the orphan for the full 24h TTL.
+		// Cap it at 5s so a stalled store backend can't block the
+		// inbound request goroutine indefinitely — WithoutCancel
+		// alone strips the parent deadline too.
 		if pendingCreator != nil && pendingTaskID != "" {
-			rollbackCtx := context.WithoutCancel(req.Context())
-			if denyErr := pendingCreator.DenyInlineTask(rollbackCtx, pendingTaskID, cfg.AgentUserID); denyErr != nil {
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 5*time.Second)
+			denyErr := pendingCreator.DenyInlineTask(rollbackCtx, pendingTaskID, cfg.AgentUserID)
+			cancel()
+			if denyErr != nil {
 				trace("inline_task.pending_rollback_failed", "task_id", pendingTaskID, "err", denyErr.Error())
 			}
 		}

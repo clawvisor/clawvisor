@@ -528,8 +528,12 @@ func (h *TasksHandler) CreatePendingInlineTask(ctx context.Context, agent *store
 		// audit anchor.
 		h.logger.ErrorContext(ctx, "failed to create pending inline approval record; denying task to preserve audit invariant",
 			"task_id", task.ID, "err", err)
-		rollbackCtx := context.WithoutCancel(ctx)
-		if rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied"); rollbackErr != nil {
+		// Bounded detached context: WithoutCancel alone would let a
+		// stalled store backend hang the inbound request goroutine.
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied")
+		cancel()
+		if rollbackErr != nil {
 			h.logger.ErrorContext(ctx, "CRITICAL: pending approval record failed AND rollback failed; task is now orphaned pending",
 				"task_id", task.ID, "approval_err", err, "rollback_err", rollbackErr)
 		}
@@ -601,9 +605,14 @@ func (h *TasksHandler) ApproveInlineTask(ctx context.Context, taskID, userID str
 		// Mint failed AFTER the CAS landed. Roll the task back to
 		// denied so we don't leave an active task with no usable
 		// credentials. Detach the cancellation so a mid-request
-		// client disconnect doesn't strand an orphan active task.
-		rollbackCtx := context.WithoutCancel(ctx)
-		if rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied"); rollbackErr != nil {
+		// client disconnect doesn't strand an orphan active task,
+		// but cap with a 5s timeout — WithoutCancel alone strips
+		// the parent deadline too, so a stalled store backend
+		// would otherwise block this goroutine indefinitely.
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied")
+		cancel()
+		if rollbackErr != nil {
 			h.logger.ErrorContext(ctx, "CRITICAL: post-CAS credential mint failed AND rollback failed; task is now orphaned active",
 				"task_id", task.ID, "mint_err", err, "rollback_err", rollbackErr)
 		}

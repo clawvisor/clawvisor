@@ -131,7 +131,10 @@ func TestApproveInlineTask_TransitionsPendingToActive(t *testing.T) {
 	}
 
 	// Canonical record flipped from pending to approved.
-	recs, _ := st.ListPendingApprovalRecords(ctx, agent.UserID)
+	recs, err := st.ListPendingApprovalRecords(ctx, agent.UserID)
+	if err != nil {
+		t.Fatalf("ListPendingApprovalRecords: %v", err)
+	}
 	for _, r := range recs {
 		if r.TaskID != nil && *r.TaskID == taskID {
 			t.Errorf("pending approval record should be gone (resolved); got %+v", r)
