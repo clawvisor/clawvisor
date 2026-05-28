@@ -78,3 +78,40 @@ func TestMatchRuntimePolicyToolIgnoresReadOnlyShellSettingMarker(t *testing.T) {
 		t.Fatalf("read-only shell marker must not act as a normal tool allow rule, got %+v", got)
 	}
 }
+
+func TestMatchRuntimePolicyToolIgnoresSensitiveFileGuardMarker(t *testing.T) {
+	agentID := "agent-1"
+	// Cover both the enabled (deny) and disabled (allow) marker actions:
+	// neither must surface as a normal authorization decision for any
+	// same-class tool call.
+	for _, action := range []string{"deny", "allow"} {
+		t.Run(action, func(t *testing.T) {
+			rules := []*store.RuntimePolicyRule{{
+				ID:         "sensitive-file-guard-marker",
+				AgentID:    &agentID,
+				Kind:       "tool",
+				Action:     action,
+				ToolName:   "Bash",
+				InputShape: toolnames.SensitiveFileGuardSettingInputShape(),
+				Source:     toolnames.SensitiveFileGuardSettingSource,
+				Enabled:    true,
+			}}
+			// A normal Bash call (no marker key) must not be matched.
+			got, err := MatchRuntimePolicyTool(rules, agentID, "Bash", map[string]any{"command": "ls"})
+			if err != nil {
+				t.Fatalf("MatchRuntimePolicyTool: %v", err)
+			}
+			if got != nil {
+				t.Fatalf("sensitive-file-guard marker must not authorize ordinary tool calls, got %+v", got)
+			}
+			// And a probe carrying the marker key itself must also be ignored.
+			got, err = MatchRuntimePolicyTool(rules, agentID, "Bash", map[string]any{toolnames.SensitiveFileGuardSettingShapeKey: true})
+			if err != nil {
+				t.Fatalf("MatchRuntimePolicyTool: %v", err)
+			}
+			if got != nil {
+				t.Fatalf("sensitive-file-guard marker must not act as a normal tool rule, got %+v", got)
+			}
+		})
+	}
+}

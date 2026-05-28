@@ -20,6 +20,7 @@ import (
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/runtime/leases"
 	"github.com/clawvisor/clawvisor/pkg/runtime/review"
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -334,7 +335,8 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 				}
 			}
 		}
-		if reason, ok := allowSessionScopedToolDefault(st.Session, tu.Name, input); ok {
+		sensitiveFileGuard := toolnames.SensitiveFileGuardEnabled(tu.Name, st.Session.AgentID, rules)
+		if reason, ok := allowSessionScopedToolDefault(st.Session, tu.Name, input, sensitiveFileGuard); ok {
 			decisionState[key] = toolDecisionState{}
 			return conversation.ToolUseVerdict{Allowed: true, Reason: reason}
 		}

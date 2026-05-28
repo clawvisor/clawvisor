@@ -4,7 +4,59 @@ import (
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
+
+	"github.com/clawvisor/clawvisor/pkg/runtime/sensitivepaths"
 )
+
+// CommandReferencesSensitivePath parses cmd and returns the first
+// literal word that resolves to a sensitive file path (SSH key, .env,
+// cloud credential, …), along with a short reason. Words that are
+// dynamic (command substitution, parameter expansion, …) or that
+// fail to parse are skipped — those paths are already blocked by
+// IsReadOnlyBashCommand's safety walk.
+//
+// The check is intentionally a defense-in-depth gate on top of
+// IsReadOnlyBashCommand: even a structurally safe `cat ~/.ssh/id_rsa`
+// must fall through to task-scope matching and intent verification
+// rather than ride the read-only shell auto-allow.
+func CommandReferencesSensitivePath(cmd string) (token, reason string, ok bool) {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return "", "", false
+	}
+	file, err := syntax.NewParser().Parse(strings.NewReader(cmd), "")
+	if err != nil {
+		return "", "", false
+	}
+	var (
+		hitToken  string
+		hitReason string
+	)
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if hitReason != "" || node == nil {
+			return false
+		}
+		word, isWord := node.(*syntax.Word)
+		if !isWord {
+			return true
+		}
+		value, staticOK := staticWordValue(word)
+		if !staticOK {
+			return true
+		}
+		_, r, sensitive := sensitivepaths.FindSensitiveTokenInArgs([]string{value})
+		if sensitive {
+			hitToken = value
+			hitReason = r
+			return false
+		}
+		return true
+	})
+	if hitReason == "" {
+		return "", "", false
+	}
+	return hitToken, hitReason, true
+}
 
 // IsReadOnlyBashCommand reports whether cmd is composed entirely of
 // side-effect-free shell commands with no write redirects, substitutions, or

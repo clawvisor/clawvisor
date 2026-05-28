@@ -387,7 +387,7 @@ export default function Policy() {
     onSuccess: refreshRuntime,
   })
   const updateToolControlMut = useMutation({
-    mutationFn: (control: { agent_id: string; tool_name: string; action?: 'unset' | 'allow' | 'deny'; scope: 'global' | 'agent'; read_only_commands_allowed?: boolean }) => api.runtime.updateToolControl(control),
+    mutationFn: (control: { agent_id: string; tool_name: string; action?: 'unset' | 'allow' | 'deny'; scope: 'global' | 'agent'; read_only_commands_allowed?: boolean; sensitive_file_guard_enabled?: boolean }) => api.runtime.updateToolControl(control),
     onSuccess: refreshRuntime,
   })
 
@@ -493,6 +493,7 @@ export default function Policy() {
               busy={updateToolControlMut.isPending}
               onChange={(toolName, action, scope) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, action, scope })}
               onReadOnlyCommandsChange={(toolName, allowed, scope) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, read_only_commands_allowed: allowed, scope })}
+              onSensitiveFileGuardChange={(toolName, enabled, scope) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, sensitive_file_guard_enabled: enabled, scope })}
               ruleBusy={createRuleMut.isPending || updateRuleMut.isPending}
               onSaveRule={async (draft) => {
                 if (draft.id) await updateRuleMut.mutateAsync(draft)
@@ -605,6 +606,7 @@ function ProxyLiteToolControlsPanel({
   busy,
   onChange,
   onReadOnlyCommandsChange,
+  onSensitiveFileGuardChange,
   ruleBusy,
   onSaveRule,
   onToggleAdvanced,
@@ -618,6 +620,7 @@ function ProxyLiteToolControlsPanel({
   busy: boolean
   onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
   onReadOnlyCommandsChange: (toolName: string, allowed: boolean, scope: 'global' | 'agent') => void
+  onSensitiveFileGuardChange: (toolName: string, enabled: boolean, scope: 'global' | 'agent') => void
   ruleBusy: boolean
   onSaveRule: (draft: RuleDraft) => Promise<void>
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
@@ -625,7 +628,7 @@ function ProxyLiteToolControlsPanel({
 }) {
   const needsAgent = agentId === 'all'
   const globalControls = controls.filter(control =>
-    isShellLikeToolName(control.tool_name) || !!control.global_rule_id || (control.advanced_rules ?? []).some(rule => !rule.agent_id),
+    isShellLikeToolName(control.tool_name) || control.sensitive_file_guard_applies || !!control.global_rule_id || (control.advanced_rules ?? []).some(rule => !rule.agent_id),
   )
   const agentSelector = (
     <div className="flex items-center gap-2">
@@ -696,6 +699,7 @@ function ProxyLiteToolControlsPanel({
             ruleBusy={ruleBusy}
             onChange={onChange}
             onReadOnlyCommandsChange={onReadOnlyCommandsChange}
+            onSensitiveFileGuardChange={onSensitiveFileGuardChange}
             onSaveRule={onSaveRule}
             onToggleAdvanced={onToggleAdvanced}
             onDeleteAdvanced={onDeleteAdvanced}
@@ -713,6 +717,7 @@ function ProxyLiteToolControlsPanel({
             ruleBusy={ruleBusy}
             onChange={onChange}
             onReadOnlyCommandsChange={onReadOnlyCommandsChange}
+            onSensitiveFileGuardChange={onSensitiveFileGuardChange}
             onSaveRule={onSaveRule}
             onToggleAdvanced={onToggleAdvanced}
             onDeleteAdvanced={onDeleteAdvanced}
@@ -736,6 +741,7 @@ function ToolControlListSection({
   ruleBusy,
   onChange,
   onReadOnlyCommandsChange,
+  onSensitiveFileGuardChange,
   onSaveRule,
   onToggleAdvanced,
   onDeleteAdvanced,
@@ -752,6 +758,7 @@ function ToolControlListSection({
   ruleBusy: boolean
   onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
   onReadOnlyCommandsChange: (toolName: string, allowed: boolean, scope: 'global' | 'agent') => void
+  onSensitiveFileGuardChange: (toolName: string, enabled: boolean, scope: 'global' | 'agent') => void
   onSaveRule: (draft: RuleDraft) => Promise<void>
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
@@ -783,6 +790,7 @@ function ToolControlListSection({
               ruleBusy={ruleBusy}
               onChange={onChange}
               onReadOnlyCommandsChange={onReadOnlyCommandsChange}
+              onSensitiveFileGuardChange={onSensitiveFileGuardChange}
               onSaveRule={onSaveRule}
               onToggleAdvanced={onToggleAdvanced}
               onDeleteAdvanced={onDeleteAdvanced}
@@ -804,6 +812,7 @@ function ToolControlRow({
   ruleBusy,
   onChange,
   onReadOnlyCommandsChange,
+  onSensitiveFileGuardChange,
   onSaveRule,
   onToggleAdvanced,
   onDeleteAdvanced,
@@ -817,17 +826,19 @@ function ToolControlRow({
   ruleBusy: boolean
   onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
   onReadOnlyCommandsChange: (toolName: string, allowed: boolean, scope: 'global' | 'agent') => void
+  onSensitiveFileGuardChange: (toolName: string, enabled: boolean, scope: 'global' | 'agent') => void
   onSaveRule: (draft: RuleDraft) => Promise<void>
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
 }) {
   const [inlineDraft, setInlineDraft] = useState<RuleDraft | null>(null)
   const shellLike = isShellLikeToolName(control.tool_name)
+  const guardApplies = !!control.sensitive_file_guard_applies
   const advancedRules = (control.advanced_rules ?? []).filter(rule =>
     sectionScope === 'global' ? !rule.agent_id : !!rule.agent_id,
   )
   const action = sectionScope === 'global' ? control.global_action : control.agent_action
-  const showSimpleControl = sectionScope === 'agent' || shellLike || !!control.global_rule_id || advancedRules.length > 0
+  const showSimpleControl = sectionScope === 'agent' || shellLike || guardApplies || !!control.global_rule_id || advancedRules.length > 0
   if (!showSimpleControl && advancedRules.length === 0) return null
   const scopeLabel = sectionScope === 'global'
     ? control.global_rule_id ? 'Global policy' : 'No global policy'
@@ -838,6 +849,12 @@ function ToolControlRow({
   const readOnlyCommandsExplicit = sectionScope === 'global'
     ? control.global_read_only_commands_allowed !== undefined
     : control.agent_read_only_commands_allowed !== undefined
+  const sensitiveGuardEnabled = sectionScope === 'global'
+    ? control.global_sensitive_file_guard_enabled ?? true
+    : control.agent_sensitive_file_guard_enabled ?? control.global_sensitive_file_guard_enabled ?? true
+  const sensitiveGuardExplicit = sectionScope === 'global'
+    ? control.global_sensitive_file_guard_enabled !== undefined
+    : control.agent_sensitive_file_guard_enabled !== undefined
   return (
     <div className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -886,6 +903,28 @@ function ToolControlRow({
           </div>
           <span className={`rounded px-2 py-0.5 text-xs ${readOnlyCommandsAllowed ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>
             {readOnlyCommandsAllowed ? 'allowed' : 'reviewed'}
+          </span>
+        </div>
+      )}
+
+      {guardApplies && showSimpleControl && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-1 px-3 py-2">
+          <div>
+            <label className="flex items-center gap-2 text-sm text-text-primary">
+              <input
+                type="checkbox"
+                checked={sensitiveGuardEnabled}
+                disabled={busy}
+                onChange={e => onSensitiveFileGuardChange(control.tool_name, e.target.checked, sectionScope)}
+              />
+              Require approval to read sensitive files
+            </label>
+            <div className="mt-1 text-xs text-text-tertiary">
+              {sensitiveGuardExplicit ? 'Explicit policy' : 'Default on'} · routes reads of .env, ~/.ssh, ~/.aws, *.pem and similar through task scope / approval.
+            </div>
+          </div>
+          <span className={`rounded px-2 py-0.5 text-xs ${sensitiveGuardEnabled ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'}`}>
+            {sensitiveGuardEnabled ? 'guarded' : 'allowed'}
           </span>
         </div>
       )}

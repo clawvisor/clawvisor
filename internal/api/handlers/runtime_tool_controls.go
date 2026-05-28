@@ -16,24 +16,30 @@ import (
 )
 
 type runtimeToolControlResponse struct {
-	AgentID                       string                     `json:"agent_id"`
-	ToolName                      string                     `json:"tool_name"`
-	Action                        string                     `json:"action"`
-	RuleID                        string                     `json:"rule_id,omitempty"`
-	Source                        string                     `json:"source"`
-	Scope                         string                     `json:"scope,omitempty"`
-	GlobalAction                  string                     `json:"global_action"`
-	GlobalRuleID                  string                     `json:"global_rule_id,omitempty"`
-	AgentAction                   string                     `json:"agent_action"`
-	AgentRuleID                   string                     `json:"agent_rule_id,omitempty"`
-	ReadOnlyCommandsAllowed       bool                       `json:"read_only_commands_allowed"`
-	GlobalReadOnlyCommandsAllowed *bool                      `json:"global_read_only_commands_allowed,omitempty"`
-	GlobalReadOnlyCommandsRuleID  string                     `json:"global_read_only_commands_rule_id,omitempty"`
-	AgentReadOnlyCommandsAllowed  *bool                      `json:"agent_read_only_commands_allowed,omitempty"`
-	AgentReadOnlyCommandsRuleID   string                     `json:"agent_read_only_commands_rule_id,omitempty"`
-	LastSeenAt                    *time.Time                 `json:"last_seen_at,omitempty"`
-	AdvancedRuleCount             int                        `json:"advanced_rule_count"`
-	AdvancedRules                 []*store.RuntimePolicyRule `json:"advanced_rules"`
+	AgentID                         string                     `json:"agent_id"`
+	ToolName                        string                     `json:"tool_name"`
+	Action                          string                     `json:"action"`
+	RuleID                          string                     `json:"rule_id,omitempty"`
+	Source                          string                     `json:"source"`
+	Scope                           string                     `json:"scope,omitempty"`
+	GlobalAction                    string                     `json:"global_action"`
+	GlobalRuleID                    string                     `json:"global_rule_id,omitempty"`
+	AgentAction                     string                     `json:"agent_action"`
+	AgentRuleID                     string                     `json:"agent_rule_id,omitempty"`
+	ReadOnlyCommandsAllowed         bool                       `json:"read_only_commands_allowed"`
+	GlobalReadOnlyCommandsAllowed   *bool                      `json:"global_read_only_commands_allowed,omitempty"`
+	GlobalReadOnlyCommandsRuleID    string                     `json:"global_read_only_commands_rule_id,omitempty"`
+	AgentReadOnlyCommandsAllowed    *bool                      `json:"agent_read_only_commands_allowed,omitempty"`
+	AgentReadOnlyCommandsRuleID     string                     `json:"agent_read_only_commands_rule_id,omitempty"`
+	SensitiveFileGuardApplies       bool                       `json:"sensitive_file_guard_applies"`
+	SensitiveFileGuardEnabled       bool                       `json:"sensitive_file_guard_enabled"`
+	GlobalSensitiveFileGuardEnabled *bool                      `json:"global_sensitive_file_guard_enabled,omitempty"`
+	GlobalSensitiveFileGuardRuleID  string                     `json:"global_sensitive_file_guard_rule_id,omitempty"`
+	AgentSensitiveFileGuardEnabled  *bool                      `json:"agent_sensitive_file_guard_enabled,omitempty"`
+	AgentSensitiveFileGuardRuleID   string                     `json:"agent_sensitive_file_guard_rule_id,omitempty"`
+	LastSeenAt                      *time.Time                 `json:"last_seen_at,omitempty"`
+	AdvancedRuleCount               int                        `json:"advanced_rule_count"`
+	AdvancedRules                   []*store.RuntimePolicyRule `json:"advanced_rules"`
 }
 
 func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request) {
@@ -62,15 +68,17 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 		ctrl := controls[name]
 		if ctrl == nil {
 			ctrl = &runtimeToolControlResponse{
-				AgentID:                 agentID,
-				ToolName:                name,
-				Action:                  "unset",
-				Source:                  "default",
-				Scope:                   "unset",
-				GlobalAction:            "unset",
-				AgentAction:             "unset",
-				ReadOnlyCommandsAllowed: toolnames.IsShellToolName(name),
-				LastSeenAt:              nil,
+				AgentID:                   agentID,
+				ToolName:                  name,
+				Action:                    "unset",
+				Source:                    "default",
+				Scope:                     "unset",
+				GlobalAction:              "unset",
+				AgentAction:               "unset",
+				ReadOnlyCommandsAllowed:   toolnames.IsShellToolName(name),
+				SensitiveFileGuardApplies: toolnames.IsSensitiveFileGuardableTool(name),
+				SensitiveFileGuardEnabled: toolnames.IsSensitiveFileGuardableTool(name),
+				LastSeenAt:                nil,
 			}
 			controls[name] = ctrl
 		}
@@ -181,6 +189,20 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 			}
 			continue
 		}
+		if toolnames.IsSensitiveFileGuardSettingRule(rule) {
+			// allow-action marker = guard disabled; anything else = enabled.
+			enabled := !strings.EqualFold(strings.TrimSpace(rule.Action), "allow")
+			for _, ctrl := range sensitiveFileGuardSettingControls(controls, ensure, rule.ToolName) {
+				if rule.AgentID != nil {
+					ctrl.AgentSensitiveFileGuardEnabled = &enabled
+					ctrl.AgentSensitiveFileGuardRuleID = rule.ID
+				} else {
+					ctrl.GlobalSensitiveFileGuardEnabled = &enabled
+					ctrl.GlobalSensitiveFileGuardRuleID = rule.ID
+				}
+			}
+			continue
+		}
 		controlToolName := displayToolName(rule.ToolName)
 		ctrl := ensure(controlToolName)
 		if ctrl == nil {
@@ -227,6 +249,8 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 	out := make([]*runtimeToolControlResponse, 0, len(controls))
 	for _, ctrl := range controls {
 		ctrl.ReadOnlyCommandsAllowed = effectiveReadOnlyShellCommandsAllowed(ctrl)
+		ctrl.SensitiveFileGuardApplies = toolnames.IsSensitiveFileGuardableTool(ctrl.ToolName)
+		ctrl.SensitiveFileGuardEnabled = effectiveSensitiveFileGuardEnabled(ctrl)
 		out = append(out, ctrl)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -245,11 +269,12 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		AgentID                 string `json:"agent_id"`
-		ToolName                string `json:"tool_name"`
-		Action                  string `json:"action"`
-		Scope                   string `json:"scope"`
-		ReadOnlyCommandsAllowed *bool  `json:"read_only_commands_allowed"`
+		AgentID                   string `json:"agent_id"`
+		ToolName                  string `json:"tool_name"`
+		Action                    string `json:"action"`
+		Scope                     string `json:"scope"`
+		ReadOnlyCommandsAllowed   *bool  `json:"read_only_commands_allowed"`
+		SensitiveFileGuardEnabled *bool  `json:"sensitive_file_guard_enabled"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -269,7 +294,7 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "tool_name is required")
 		return
 	}
-	if action == "" && body.ReadOnlyCommandsAllowed == nil {
+	if action == "" && body.ReadOnlyCommandsAllowed == nil && body.SensitiveFileGuardEnabled == nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "action must be unset, allow, review, or deny")
 		return
 	}
@@ -290,7 +315,7 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update read-only shell setting")
 			return
 		}
-		if action == "" {
+		if action == "" && body.SensitiveFileGuardEnabled == nil {
 			resp := runtimeToolControlResponse{
 				AgentID:                 agentID,
 				ToolName:                toolName,
@@ -305,6 +330,44 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 				resp.GlobalReadOnlyCommandsAllowed = body.ReadOnlyCommandsAllowed
 			} else {
 				resp.AgentReadOnlyCommandsAllowed = body.ReadOnlyCommandsAllowed
+			}
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+	}
+	if body.SensitiveFileGuardEnabled != nil {
+		if !toolnames.IsSensitiveFileGuardableTool(toolName) {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "sensitive-file-guard setting does not apply to this tool")
+			return
+		}
+		if err := h.upsertSensitiveFileGuardSetting(r.Context(), user.ID, agentID, toolName, scope, *body.SensitiveFileGuardEnabled); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update sensitive-file-guard setting")
+			return
+		}
+		if action == "" {
+			resp := runtimeToolControlResponse{
+				AgentID:                   agentID,
+				ToolName:                  toolName,
+				Action:                    "unset",
+				Source:                    "default",
+				Scope:                     "unset",
+				GlobalAction:              "unset",
+				AgentAction:               "unset",
+				SensitiveFileGuardApplies: true,
+				SensitiveFileGuardEnabled: *body.SensitiveFileGuardEnabled,
+			}
+			if scope == "global" {
+				resp.GlobalSensitiveFileGuardEnabled = body.SensitiveFileGuardEnabled
+			} else {
+				resp.AgentSensitiveFileGuardEnabled = body.SensitiveFileGuardEnabled
+			}
+			if body.ReadOnlyCommandsAllowed != nil {
+				resp.ReadOnlyCommandsAllowed = *body.ReadOnlyCommandsAllowed
+				if scope == "global" {
+					resp.GlobalReadOnlyCommandsAllowed = body.ReadOnlyCommandsAllowed
+				} else {
+					resp.AgentReadOnlyCommandsAllowed = body.ReadOnlyCommandsAllowed
+				}
 			}
 			writeJSON(w, http.StatusOK, resp)
 			return
@@ -518,7 +581,7 @@ func isSimpleToolControlRule(rule *store.RuntimePolicyRule) bool {
 	if rule == nil || strings.TrimSpace(rule.InputRegex) != "" {
 		return false
 	}
-	if toolnames.IsReadOnlyShellSettingRule(rule) {
+	if toolnames.IsReadOnlyShellSettingRule(rule) || toolnames.IsSensitiveFileGuardSettingRule(rule) {
 		return false
 	}
 	return rawJSONEmptyObject(rule.InputShape)
@@ -536,6 +599,49 @@ func effectiveReadOnlyShellCommandsAllowed(ctrl *runtimeToolControlResponse) boo
 		allowed = *ctrl.AgentReadOnlyCommandsAllowed
 	}
 	return allowed
+}
+
+func effectiveSensitiveFileGuardEnabled(ctrl *runtimeToolControlResponse) bool {
+	if ctrl == nil || !toolnames.IsSensitiveFileGuardableTool(ctrl.ToolName) {
+		return false
+	}
+	enabled := true
+	if ctrl.GlobalSensitiveFileGuardEnabled != nil {
+		enabled = *ctrl.GlobalSensitiveFileGuardEnabled
+	}
+	if ctrl.AgentSensitiveFileGuardEnabled != nil {
+		enabled = *ctrl.AgentSensitiveFileGuardEnabled
+	}
+	return enabled
+}
+
+func sensitiveFileGuardSettingControls(controls map[string]*runtimeToolControlResponse, ensure func(string) *runtimeToolControlResponse, toolName string) []*runtimeToolControlResponse {
+	// Mirror readOnlyShellSettingControls: when the marker rule's
+	// ToolName is a shell-class tool, fan out to every discovered shell
+	// control. For non-shell guardable tools (Read/Glob/Grep/LS), the
+	// rule maps 1:1 to the matching control row.
+	if !toolnames.IsShellToolName(toolName) {
+		if ctrl := ensure(toolName); ctrl != nil {
+			return []*runtimeToolControlResponse{ctrl}
+		}
+		return nil
+	}
+	out := make([]*runtimeToolControlResponse, 0, 1)
+	for _, ctrl := range controls {
+		if ctrl != nil && toolnames.IsShellToolName(ctrl.ToolName) {
+			out = append(out, ctrl)
+		}
+	}
+	if len(out) > 0 {
+		sort.Slice(out, func(i, j int) bool {
+			return strings.ToLower(out[i].ToolName) < strings.ToLower(out[j].ToolName)
+		})
+		return out
+	}
+	if ctrl := ensure(toolName); ctrl != nil {
+		return []*runtimeToolControlResponse{ctrl}
+	}
+	return nil
 }
 
 func toolRuleNamesSameControl(ruleToolName, controlToolName string) bool {
@@ -590,6 +696,55 @@ func (h *RuntimeHandler) upsertReadOnlyShellSetting(ctx context.Context, userID,
 		InputShape: toolnames.ReadOnlyShellSettingInputShape(),
 		Reason:     reason,
 		Source:     toolnames.ReadOnlyShellSettingSource,
+		Enabled:    true,
+	})
+}
+
+func (h *RuntimeHandler) upsertSensitiveFileGuardSetting(ctx context.Context, userID, agentID, toolName, scope string, enabled bool) error {
+	ruleAgentID := &agentID
+	filterAgentID := agentID
+	if scope == "global" {
+		ruleAgentID = nil
+		filterAgentID = ""
+	}
+	rules, err := h.st.ListRuntimePolicyRules(ctx, userID, store.RuntimePolicyRuleFilter{
+		AgentID: filterAgentID,
+		Kind:    "tool",
+		Limit:   500,
+	})
+	if err != nil {
+		return err
+	}
+	for _, rule := range rules {
+		if rule == nil || !toolnames.IsSensitiveFileGuardSettingRule(rule) || !toolnames.ToolNamesSameClass(rule.ToolName, toolName) {
+			continue
+		}
+		if scope == "agent" && (rule.AgentID == nil || *rule.AgentID != agentID) {
+			continue
+		}
+		if scope == "global" && rule.AgentID != nil {
+			continue
+		}
+		if err := h.st.DeleteRuntimePolicyRule(ctx, rule.ID, userID); err != nil && err != store.ErrNotFound {
+			return err
+		}
+	}
+	action := "allow"
+	reason := "Allow reads of sensitive files (.env, SSH keys, …) without approval"
+	if enabled {
+		action = "deny"
+		reason = "Require task scope or approval for reads of sensitive files (.env, SSH keys, …)"
+	}
+	return h.st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:         uuid.NewString(),
+		UserID:     userID,
+		AgentID:    ruleAgentID,
+		Kind:       "tool",
+		Action:     action,
+		ToolName:   toolName,
+		InputShape: toolnames.SensitiveFileGuardSettingInputShape(),
+		Reason:     reason,
+		Source:     toolnames.SensitiveFileGuardSettingSource,
 		Enabled:    true,
 	})
 }

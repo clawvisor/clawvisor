@@ -450,6 +450,53 @@ func TestRuntimeHandlerToolControlsDiscoverAndUpsert(t *testing.T) {
 	if !foundReadOnlyDeny {
 		t.Fatalf("expected read-only shell deny setting, got %+v", rules)
 	}
+
+	disableGuardReq := httptest.NewRequest(http.MethodPut, "/api/runtime/tool-controls", bytes.NewReader([]byte(`{
+		"agent_id":"`+agent.ID+`",
+		"tool_name":"Bash",
+		"sensitive_file_guard_enabled":false
+	}`)))
+	disableGuardReq = disableGuardReq.WithContext(context.WithValue(disableGuardReq.Context(), middleware.UserContextKey, user))
+	disableGuardRes := httptest.NewRecorder()
+	h.UpsertToolControl(disableGuardRes, disableGuardReq)
+	if disableGuardRes.Code != http.StatusOK {
+		t.Fatalf("UpsertToolControl guard toggle status=%d body=%s", disableGuardRes.Code, disableGuardRes.Body.String())
+	}
+	rules, err = st.ListRuntimePolicyRules(ctx, user.ID, store.RuntimePolicyRuleFilter{AgentID: agent.ID, Kind: "tool"})
+	if err != nil {
+		t.Fatalf("ListRuntimePolicyRules after guard toggle: %v", err)
+	}
+	foundGuardAllow := false
+	for _, rule := range rules {
+		if rule.ToolName == "Bash" && rule.Source == toolnames.SensitiveFileGuardSettingSource && rule.Action == "allow" {
+			foundGuardAllow = true
+		}
+	}
+	if !foundGuardAllow {
+		t.Fatalf("expected sensitive-file-guard allow marker (=disabled), got %+v", rules)
+	}
+	if toolnames.SensitiveFileGuardEnabled("Bash", agent.ID, rules) {
+		t.Fatal("expected guard to be DISABLED after agent-scoped allow marker")
+	}
+
+	enableGuardReq := httptest.NewRequest(http.MethodPut, "/api/runtime/tool-controls", bytes.NewReader([]byte(`{
+		"agent_id":"`+agent.ID+`",
+		"tool_name":"Bash",
+		"sensitive_file_guard_enabled":true
+	}`)))
+	enableGuardReq = enableGuardReq.WithContext(context.WithValue(enableGuardReq.Context(), middleware.UserContextKey, user))
+	enableGuardRes := httptest.NewRecorder()
+	h.UpsertToolControl(enableGuardRes, enableGuardReq)
+	if enableGuardRes.Code != http.StatusOK {
+		t.Fatalf("UpsertToolControl re-enable guard status=%d body=%s", enableGuardRes.Code, enableGuardRes.Body.String())
+	}
+	rules, err = st.ListRuntimePolicyRules(ctx, user.ID, store.RuntimePolicyRuleFilter{AgentID: agent.ID, Kind: "tool"})
+	if err != nil {
+		t.Fatalf("ListRuntimePolicyRules after re-enable: %v", err)
+	}
+	if !toolnames.SensitiveFileGuardEnabled("Bash", agent.ID, rules) {
+		t.Fatal("expected guard ENABLED after re-enable toggle")
+	}
 }
 
 func TestRuntimeHandlerToolControlsPreferCurrentShellToolForReadOnlySetting(t *testing.T) {

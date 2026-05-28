@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/clawvisor/clawvisor/pkg/runtime/sensitivepaths"
 	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -17,18 +18,18 @@ type sessionToolDefaults struct {
 	ToolAllowedRoots []string `json:"tool_allowed_roots"`
 }
 
-func allowSessionScopedToolDefault(session *store.RuntimeSession, toolName string, input map[string]any) (string, bool) {
+func allowSessionScopedToolDefault(session *store.RuntimeSession, toolName string, input map[string]any, sensitiveFileGuardEnabled bool) (string, bool) {
 	defaults := sessionToolDefaultsFromSession(session)
 	if !isCodingStarterProfile(defaults.StarterProfile) {
 		return "", false
 	}
 	switch normalizeToolName(toolName) {
 	case "read", "read_file", "mcp__filesystem__read_file":
-		return allowFileToolInRoots(defaults, toolName, input, "read")
+		return allowFileToolInRoots(defaults, toolName, input, "read", sensitiveFileGuardEnabled)
 	case "write", "edit", "notebookedit", "write_file", "edit_file", "mcp__filesystem__write_file", "mcp__filesystem__edit_file":
-		return allowFileToolInRoots(defaults, toolName, input, "write")
+		return allowFileToolInRoots(defaults, toolName, input, "write", sensitiveFileGuardEnabled)
 	case "glob", "grep", "ls":
-		return allowSearchToolInRoots(defaults, toolName, input)
+		return allowSearchToolInRoots(defaults, toolName, input, sensitiveFileGuardEnabled)
 	default:
 		return "", false
 	}
@@ -72,13 +73,22 @@ func normalizeToolName(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
 }
 
-func allowFileToolInRoots(defaults sessionToolDefaults, toolName string, input map[string]any, mode string) (string, bool) {
+func allowFileToolInRoots(defaults sessionToolDefaults, toolName string, input map[string]any, mode string, sensitiveFileGuardEnabled bool) (string, bool) {
 	paths := referencedToolPaths(defaults, input)
 	if len(paths) == 0 {
 		return "", false
 	}
 	for _, p := range paths {
 		if !pathWithinAnyRoot(p, defaults.ToolAllowedRoots) {
+			return "", false
+		}
+	}
+	// Even inside the workspace, sensitive files (SSH keys, .env,
+	// cloud credentials …) should not auto-allow on the
+	// workspace-root default. Fall through to task scope / intent
+	// verification so the user gets a chance to authorize.
+	if mode == "read" && sensitiveFileGuardEnabled {
+		if _, _, hit := findSensitiveTargetPath(paths); hit {
 			return "", false
 		}
 	}
@@ -89,7 +99,7 @@ func allowFileToolInRoots(defaults sessionToolDefaults, toolName string, input m
 	return fmt.Sprintf("coding default: %s %s inside the current workspace or /tmp", action, summarizePathList(paths)), true
 }
 
-func allowSearchToolInRoots(defaults sessionToolDefaults, toolName string, input map[string]any) (string, bool) {
+func allowSearchToolInRoots(defaults sessionToolDefaults, toolName string, input map[string]any, sensitiveFileGuardEnabled bool) (string, bool) {
 	paths := referencedToolPaths(defaults, input)
 	if len(paths) == 0 {
 		return "coding default: search inside the current workspace", true
@@ -99,7 +109,23 @@ func allowSearchToolInRoots(defaults sessionToolDefaults, toolName string, input
 			return "", false
 		}
 	}
+	// grep/glob over a sensitive directory leaks the same content as
+	// reading the file (`grep -r SECRET ~/.ssh`). Apply the same gate.
+	if sensitiveFileGuardEnabled {
+		if _, _, hit := findSensitiveTargetPath(paths); hit {
+			return "", false
+		}
+	}
 	return fmt.Sprintf("coding default: search %s inside the current workspace or /tmp", summarizePathList(paths)), true
+}
+
+func findSensitiveTargetPath(paths []string) (path, reason string, ok bool) {
+	for _, p := range paths {
+		if reason, ok := sensitivepaths.IsSensitivePath(p); ok {
+			return p, reason, true
+		}
+	}
+	return "", "", false
 }
 
 func referencedToolPaths(defaults sessionToolDefaults, input map[string]any) []string {

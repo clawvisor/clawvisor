@@ -2,6 +2,48 @@ package inspector
 
 import "testing"
 
+func TestCommandReferencesSensitivePathFlagsCommonSecrets(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+	}{
+		{"cat home ssh key", "cat ~/.ssh/id_rsa"},
+		{"cat absolute ssh key", "cat /Users/eric/.ssh/id_ed25519"},
+		{"head .env", "head -n 5 .env"},
+		{"grep over aws dir", "grep -R access_key ~/.aws"},
+		{"cat pem", "cat certs/tls.pem"},
+		{"cat netrc", "cat ~/.netrc"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, reason, ok := CommandReferencesSensitivePath(tc.cmd)
+			if !ok {
+				t.Fatalf("expected %q to reference a sensitive path", tc.cmd)
+			}
+			if reason == "" {
+				t.Fatalf("expected non-empty reason for %q", tc.cmd)
+			}
+		})
+	}
+}
+
+func TestCommandReferencesSensitivePathIgnoresBenignCommands(t *testing.T) {
+	cases := []string{
+		"cat README.md",
+		"ls -la /tmp",
+		"grep TODO src/",
+		"find . -name '*.go'",
+		"cat .env.example", // committed template, not sensitive
+	}
+	for _, cmd := range cases {
+		t.Run(cmd, func(t *testing.T) {
+			if _, _, ok := CommandReferencesSensitivePath(cmd); ok {
+				t.Fatalf("expected %q to be benign", cmd)
+			}
+		})
+	}
+}
+
 func TestIsReadOnlyBashCommandAcceptsCommonReads(t *testing.T) {
 	cases := []string{
 		"pwd",

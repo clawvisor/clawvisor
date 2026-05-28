@@ -61,7 +61,7 @@ func MatchRuntimePolicyTool(rules []*store.RuntimePolicyRule, agentID, toolName 
 		if rule == nil || rule.Kind != "tool" || !toolNamesMatch(rule.ToolName, toolName) {
 			return false, 0, nil
 		}
-		if toolnames.IsReadOnlyShellSettingRule(rule) {
+		if toolnames.IsReadOnlyShellSettingRule(rule) || toolnames.IsSensitiveFileGuardSettingRule(rule) {
 			return false, 0, nil
 		}
 		if rule.InputRegex != "" {
