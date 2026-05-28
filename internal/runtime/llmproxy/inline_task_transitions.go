@@ -83,15 +83,20 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 	// just skip the side effect and still render the denial.
 	pendingCreator, hasPending := req.Creator.(InlineTaskPendingCreator)
 	if verb == "deny" {
-		if hasPending && resolved != nil && resolved.PendingTaskID != "" && req.Agent != nil {
-			if err := pendingCreator.DenyInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID); err != nil {
-				out.Reason = "deny failed: " + err.Error()
-			}
-		}
 		out.Decision = "deny"
 		out.Outcome = "inline_task_denied"
-		if out.Reason == "" {
-			out.Reason = "user denied inline task"
+		out.Reason = "user denied inline task"
+		if hasPending && resolved != nil && resolved.PendingTaskID != "" && req.Agent != nil {
+			if err := pendingCreator.DenyInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID); err != nil {
+				// Distinct outcome on rollback error so audit
+				// dashboards can spot a denial whose DB-side
+				// transition failed without scanning the reason
+				// string. The user-facing reply is still a
+				// denial — the user's decision stands; the side
+				// effect just didn't land.
+				out.Outcome = "inline_task_denied_with_rollback_error"
+				out.Reason = "user denied inline task; deny side-effect failed: " + err.Error()
+			}
 		}
 		return renderInlineTaskDenyReply(), out
 	}

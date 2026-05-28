@@ -714,8 +714,14 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 	cutoff := time.Now().UTC().Add(-llmproxy.InlineTaskApprovalHoldTTL)
 	abandoned, err := h.st.ListExpiredInlineChatPendingTasks(ctx, cutoff)
 	if err != nil {
+		// Log and skip THIS block, but don't return — any sweep
+		// added below us must still run. Today the inline-chat
+		// sweep happens to be the terminal step in
+		// expireTimedOut, but returning here would silently
+		// shadow any future sweep added under this one if the
+		// list query started failing intermittently.
 		h.logger.WarnContext(ctx, "inline-chat pending expiry sweep: list failed", "err", err)
-		return
+		abandoned = nil
 	}
 	for _, task := range abandoned {
 		// Mark as "expired" (not "denied") to stay consistent with

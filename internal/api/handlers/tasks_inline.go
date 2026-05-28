@@ -611,6 +611,23 @@ func (h *TasksHandler) ApproveInlineTask(ctx context.Context, taskID, userID str
 		// would otherwise block this goroutine indefinitely.
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied")
+		// Hydrate the in-memory task with the post-rollback state so
+		// resolveCanonicalTaskApproval reads a consistent status —
+		// the validator's pending → denied check sees what's actually
+		// landed in the row.
+		if rollbackErr == nil {
+			task.Status = "denied"
+		}
+		// Resolve the canonical approval_records row to deny/denied
+		// so the dashboard's pending-records list doesn't strand it
+		// (the chat-bound expiry sweep filters by
+		// status='pending_approval', so a "denied" task is invisible
+		// to it; without this resolve the canonical record would sit
+		// at "pending" forever, violating the audit invariant that
+		// every chat-bound task eventually has a terminal canonical
+		// resolution). Same detached+timeout context shape so a
+		// stalled store backend can't block here.
+		h.resolveCanonicalTaskApproval(rollbackCtx, task, "task_create", "deny", "denied")
 		cancel()
 		if rollbackErr != nil {
 			h.logger.ErrorContext(ctx, "CRITICAL: post-CAS credential mint failed AND rollback failed; task is now orphaned active",
