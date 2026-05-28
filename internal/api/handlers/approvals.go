@@ -16,6 +16,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -700,6 +701,92 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		h.decrementNotifierPolling(task.UserID)
 		h.publishTasksAndQueue(task.UserID)
 		h.logger.InfoContext(ctx, "task expired", "task_id", task.ID)
+	}
+
+	// Sweep abandoned chat-bound pending tasks. These never sat in
+	// the active-session pool ListExpiredTasks targets — their
+	// cache-side decide window is the llmproxy hold TTL, and after
+	// it lapses there's no way to resolve them (chat reply finds no
+	// cache hold; dashboard refuses via the INLINE_CHAT_BOUND
+	// guard). Auto-deny so they don't pile up forever in the
+	// dashboard's Tasks page. Notifier-polling and callback work is
+	// skipped — chat-bound tasks never went through either path.
+	cutoff := time.Now().UTC().Add(-llmproxy.InlineTaskApprovalHoldTTL)
+	abandoned, err := h.st.ListExpiredInlineChatPendingTasks(ctx, cutoff)
+	if err != nil {
+		// Log and skip THIS block, but don't return — any sweep
+		// added below us must still run. Today the inline-chat
+		// sweep happens to be the terminal step in
+		// expireTimedOut, but returning here would silently
+		// shadow any future sweep added under this one if the
+		// list query started failing intermittently.
+		h.logger.WarnContext(ctx, "inline-chat pending expiry sweep: list failed", "err", err)
+		abandoned = nil
+	}
+	for _, task := range abandoned {
+		// Mark as "expired" (not "denied") to stay consistent with
+		// the sibling active-session expiry loop above and to keep
+		// the distinction between user-driven denial and timeout in
+		// the dashboard's Tasks page.
+		won, statusErr := h.st.UpdateTaskStatusFrom(ctx, task.ID, "pending_approval", "expired")
+		if statusErr != nil {
+			h.logger.WarnContext(ctx, "inline-chat pending expiry sweep: status flip failed",
+				"task_id", task.ID, "err", statusErr)
+			continue
+		}
+		if !won {
+			// Another caller (the user actually replying in chat
+			// between our list and the CAS) terminated it. Nothing
+			// to do.
+			continue
+		}
+		h.resolvePendingTaskCanonicalRecord(ctx, task, "deny", "expired")
+		h.publishTasksAndQueue(task.UserID)
+		h.logger.InfoContext(ctx, "inline-chat pending task expired", "task_id", task.ID)
+	}
+}
+
+// resolvePendingTaskCanonicalRecord finds the canonical
+// approval_records row anchoring a pending task (kind=task_create,
+// status=pending) and transitions it to the given resolution/status.
+// Used by the inline-chat pending expiry sweep so abandoned chat-
+// bound tasks don't leave the audit trail with a pending row that
+// never resolves. Mirrors TasksHandler.resolveCanonicalTaskApproval
+// but lives here so the expiry sweeper (owned by ApprovalsHandler)
+// doesn't have to thread a TasksHandler reference through.
+func (h *ApprovalsHandler) resolvePendingTaskCanonicalRecord(ctx context.Context, task *store.Task, resolution, status string) {
+	if task == nil {
+		return
+	}
+	recs, err := h.st.ListPendingApprovalRecords(ctx, task.UserID)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "failed to list canonical records for inline-chat expiry", "task_id", task.ID, "err", err)
+		return
+	}
+	var latest *store.ApprovalRecord
+	for _, rec := range recs {
+		if rec.Kind != "task_create" || rec.TaskID == nil || *rec.TaskID != task.ID {
+			continue
+		}
+		if latest == nil || rec.CreatedAt.After(latest.CreatedAt) {
+			latest = rec
+		}
+	}
+	if latest == nil {
+		return
+	}
+	// Gate the resolve through the same transition validator the
+	// dashboard path uses so an unexpected canonical state (e.g.
+	// already-resolved due to a parallel resolver) is logged at
+	// Error and skipped rather than silently force-overwritten.
+	if err := validateApprovalRecordTransition(latest, resolution, status); err != nil {
+		h.logger.ErrorContext(ctx, "illegal canonical inline-chat task transition",
+			"task_id", task.ID, "approval_id", latest.ID, "kind", latest.Kind,
+			"from_status", latest.Status, "resolution", resolution, "status", status, "err", err)
+		return
+	}
+	if err := h.st.ResolveApprovalRecord(ctx, latest.ID, resolution, status, time.Now().UTC()); err != nil {
+		h.logger.ErrorContext(ctx, "failed to resolve canonical inline-chat task record", "task_id", task.ID, "approval_id", latest.ID, "err", err)
 	}
 }
 

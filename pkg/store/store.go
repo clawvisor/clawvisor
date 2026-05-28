@@ -182,6 +182,14 @@ type Store interface {
 	IncrementTaskRequestCount(ctx context.Context, id string) error
 	SetTaskPendingExpansion(ctx context.Context, id string, action *TaskAction, reason string) error
 	ListExpiredTasks(ctx context.Context) ([]*Task, error)
+	// ListExpiredInlineChatPendingTasks returns chat-bound pending
+	// tasks (status='pending_approval', approval_source='inline_chat')
+	// whose llmproxy cache hold has lapsed, i.e. created_at < cutoff.
+	// Used by the approval sweeper to auto-deny tasks the user
+	// abandoned in the chat surface (the cache hold expired so the
+	// chat path can no longer resolve it; dashboard is gated by the
+	// CHAT_APPROVAL_REQUIRED guard, so without this they sit forever).
+	ListExpiredInlineChatPendingTasks(ctx context.Context, cutoff time.Time) ([]*Task, error)
 	RevokeTask(ctx context.Context, id, userID string) error
 	RevokeTasksByAgent(ctx context.Context, agentID, userID string) (int, error)
 
@@ -789,7 +797,12 @@ type Task struct {
 	// RiskLevel is the LLM-assessed risk level ("low", "medium", "high", "critical", "unknown", or "").
 	RiskLevel   string          `json:"risk_level,omitempty"`
 	RiskDetails json.RawMessage `json:"risk_details,omitempty"`
-	// ApprovalSource indicates how the task was approved ("", "manual", "telegram_group", "telegram_button").
+	// ApprovalSource indicates how the task was approved ("",
+	// "manual", "telegram_group", "telegram_button", "inline_chat").
+	// "inline_chat" is also load-bearing pre-approval: it's set at
+	// pending-creation time by CreatePendingInlineTask and gates
+	// dashboard Approve/Deny (isInlineChatPending → 409
+	// INLINE_CHAT_BOUND) plus the chat-bound expiry sweep.
 	ApprovalSource    string          `json:"approval_source,omitempty"`
 	ApprovalRationale json.RawMessage `json:"approval_rationale,omitempty"`
 }

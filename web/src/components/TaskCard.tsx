@@ -361,27 +361,49 @@ export default function TaskCard({
               </div>
             )}
           </div>
-          <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
-            <button onClick={() => denyMut.mutate()} disabled={isPending}
-              className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50">
-              Deny
-            </button>
-            {isHighRisk && !confirmApprove ? (
-              <button onClick={() => setConfirmApprove(true)} disabled={isPending}
-                className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50">
-                Approve Task
+          {task.approval_source === 'inline_chat' ? (
+            // Chat-bound pending task: approval still has to happen
+            // in chat (the llmproxy cache hold owns the in-process
+            // resolution; dashboard Approve would 409 with
+            // INLINE_CHAT_BOUND). Deny is permitted from here so the
+            // user can dismiss a zombie task the agent has lost
+            // track of — the chat-side approve path detects an
+            // already-terminal task and renders an explanatory reply
+            // to the model.
+            <div className="border-t border-border-subtle">
+              <div className="px-4 py-3 text-sm text-text-secondary bg-surface-2">
+                Reply <span className="font-mono text-text-primary">approve</span> in the agent chat to grant scope, or dismiss it here.
+              </div>
+              <div className="px-4 py-3 flex items-center justify-end gap-2">
+                <button onClick={() => denyMut.mutate()} disabled={isPending}
+                  className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50">
+                  Deny
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
+              <button onClick={() => denyMut.mutate()} disabled={isPending}
+                className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50">
+                Deny
               </button>
-            ) : (
-              <button onClick={() => approveMut.mutate()} disabled={isPending}
-                className={`font-medium rounded px-5 py-1.5 text-sm disabled:opacity-50 ${
-                  confirmApprove
-                    ? 'bg-danger text-surface-0 hover:bg-danger/80'
-                    : 'bg-brand text-surface-0 hover:bg-brand-strong'
-                }`}>
-                {approveMut.isPending ? 'Approving...' : confirmApprove ? 'Confirm Approve' : 'Approve Task'}
-              </button>
-            )}
-          </div>
+              {isHighRisk && !confirmApprove ? (
+                <button onClick={() => setConfirmApprove(true)} disabled={isPending}
+                  className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50">
+                  Approve Task
+                </button>
+              ) : (
+                <button onClick={() => approveMut.mutate()} disabled={isPending}
+                  className={`font-medium rounded px-5 py-1.5 text-sm disabled:opacity-50 ${
+                    confirmApprove
+                      ? 'bg-danger text-surface-0 hover:bg-danger/80'
+                      : 'bg-brand text-surface-0 hover:bg-brand-strong'
+                  }`}>
+                  {approveMut.isPending ? 'Approving...' : confirmApprove ? 'Confirm Approve' : 'Approve Task'}
+                </button>
+              )}
+            </div>
+          )}
         </>
       )}
 

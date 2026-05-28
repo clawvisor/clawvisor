@@ -214,6 +214,13 @@ func TestCreateInlineApprovedTaskStandingLifetime(t *testing.T) {
 	if out.ExpiresAtRFC3339 != "" {
 		t.Errorf("standing task should have no expires_at; got %q", out.ExpiresAtRFC3339)
 	}
+	task, err := st.GetTask(ctx, out.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.ExpiresInSeconds != 0 {
+		t.Errorf("standing task ExpiresInSeconds=%d, want 0", task.ExpiresInSeconds)
+	}
 	rec, err := st.GetApprovalRecord(ctx, out.ApprovalRecordID)
 	if err != nil {
 		t.Fatalf("GetApprovalRecord: %v", err)

@@ -1440,6 +1440,28 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 	return scanTasks(rows)
 }
 
+// ListExpiredInlineChatPendingTasks returns chat-bound pending tasks
+// abandoned past the caller's cutoff. See store.go interface doc.
+func (s *Store) ListExpiredInlineChatPendingTasks(ctx context.Context, cutoff time.Time) ([]*store.Task, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, agent_id, purpose, status, authorized_actions,
+		       planned_calls, callback_url,
+		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
+		       pending_action, pending_reason, lifetime, risk_level, risk_details,
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		FROM tasks
+		WHERE status = 'pending_approval'
+		  AND approval_source = 'inline_chat'
+		  AND created_at < $1
+	`, cutoff.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
 func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 	var tasks []*store.Task
 	for rows.Next() {

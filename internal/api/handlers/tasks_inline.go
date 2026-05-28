@@ -105,12 +105,14 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 		return nil, fmt.Errorf("invalid lifetime %q (want session or standing)", req.Lifetime)
 	}
 
-	expiresIn := req.ExpiresInSeconds
-	if expiresIn <= 0 {
-		expiresIn = h.cfg.Task.DefaultExpirySeconds
-	}
 	if lifetime == "standing" && req.ExpiresInSeconds > 0 {
 		return nil, errors.New("expires_in_seconds cannot be set on a standing task")
+	}
+	expiresIn := req.ExpiresInSeconds
+	if lifetime == "standing" {
+		expiresIn = 0
+	} else if expiresIn <= 0 {
+		expiresIn = h.cfg.Task.DefaultExpirySeconds
 	}
 	requiredCredentials := req.RequiredCredentials
 
@@ -338,6 +340,492 @@ func inlineCredentialPlaceholders(placeholders []*store.RuntimePlaceholder) []ll
 		out = append(out, item)
 	}
 	return out
+}
+
+// CreatePendingInlineTask is the lite-proxy entry point invoked from
+// the inline-task intercept when the auto-approve gate refuses. Unlike
+// CreateInlineApprovedTask (which produces an already-active task on
+// the user's "approve" reply), this creates the task in
+// status="pending_approval" so the dashboard's Tasks page renders it
+// alongside any other awaiting-decision task. The actual approval
+// transition (status flip to active, credential placeholder mint,
+// canonical approval-record resolution) happens later when the user
+// replies "approve" in chat — via ApproveInlineTask below — or via
+// the existing dashboard Approve handler if the chat-bound guard is
+// ever lifted.
+//
+// ApprovalSource is set to "inline_chat" at pending-creation time so
+// the dashboard surface guard (TasksHandler.Approve / Deny) can
+// detect chat-bound rows and refuse with INLINE_CHAT_BOUND rather
+// than silently flipping the row without notifying the cache (the
+// model would never see the approval).
+//
+// Side effects:
+//   - Creates a store.Task with Status="pending_approval",
+//     ApprovalSource="inline_chat", RiskLevel/Details from the
+//     precomputed assessment when usable (or freshly computed).
+//   - Creates an ApprovalRecord with Kind="task_create",
+//     Surface="inline_chat", Status="pending" (no Resolution / no
+//     ResolvedAt yet — those land at approve time).
+//   - Publishes SSE 'tasks' event so the Tasks page refreshes.
+//
+// Explicitly NOT done here (deferred to the approve transition):
+//   - Mints credential placeholders.
+//   - Resolves the canonical approval record.
+//
+// Returns the new task ID so the caller can hand it into the
+// llmproxy cache hold (it lands in PendingLiteApproval.PendingTaskID).
+func (h *TasksHandler) CreatePendingInlineTask(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string, precomputed *taskrisk.RiskAssessment) (string, error) {
+	if agent == nil {
+		return "", errors.New("agent is required")
+	}
+	if req == nil {
+		return "", errors.New("task request is required")
+	}
+	if strings.TrimSpace(req.Purpose) == "" {
+		return "", errors.New("task purpose is required")
+	}
+
+	hasRuntimeEnvelope := len(req.ExpectedTools) > 0 || len(req.ExpectedEgress) > 0
+	if !hasRuntimeEnvelope {
+		return "", errors.New("inline task must declare expected_tools or expected_egress")
+	}
+
+	env := runtimetasks.Envelope{
+		ExpectedTools:          req.ExpectedTools,
+		ExpectedEgress:         req.ExpectedEgress,
+		RequiredCredentials:    req.RequiredCredentials,
+		IntentVerificationMode: req.IntentVerificationMode,
+		ExpectedUse:            req.ExpectedUse,
+		SchemaVersion:          req.SchemaVersion,
+	}
+	if env.SchemaVersion == 0 {
+		env.SchemaVersion = 2
+	}
+	if env.IntentVerificationMode == "" {
+		env.IntentVerificationMode = "strict"
+	}
+	if issues := runtimepolicy.ValidateTaskEnvelope(env); len(issues) > 0 {
+		var msgs []string
+		for _, issue := range issues {
+			msgs = append(msgs, issue.Field+": "+issue.Message)
+		}
+		return "", fmt.Errorf("task envelope invalid: %s", strings.Join(msgs, "; "))
+	}
+
+	lifetime := req.Lifetime
+	if lifetime == "" {
+		lifetime = "session"
+	}
+	if lifetime != "session" && lifetime != "standing" {
+		return "", fmt.Errorf("invalid lifetime %q (want session or standing)", req.Lifetime)
+	}
+
+	if lifetime == "standing" && req.ExpiresInSeconds > 0 {
+		return "", errors.New("expires_in_seconds cannot be set on a standing task")
+	}
+	expiresIn := req.ExpiresInSeconds
+	if lifetime == "standing" {
+		expiresIn = 0
+	} else if expiresIn <= 0 {
+		expiresIn = h.cfg.Task.DefaultExpirySeconds
+	}
+
+	task := &store.Task{
+		ID:                     uuid.New().String(),
+		UserID:                 agent.UserID,
+		AgentID:                agent.ID,
+		Purpose:                req.Purpose,
+		Status:                 "pending_approval",
+		Lifetime:               lifetime,
+		IntentVerificationMode: env.IntentVerificationMode,
+		ExpectedUse:            req.ExpectedUse,
+		SchemaVersion:          env.SchemaVersion,
+		ExpiresInSeconds:       expiresIn,
+		ApprovalSource:         "inline_chat",
+	}
+	if len(req.ExpectedTools) > 0 {
+		raw, err := json.Marshal(req.ExpectedTools)
+		if err != nil {
+			return "", fmt.Errorf("encode expected_tools: %w", err)
+		}
+		task.ExpectedTools = json.RawMessage(raw)
+	}
+	if len(req.ExpectedEgress) > 0 {
+		raw, err := json.Marshal(req.ExpectedEgress)
+		if err != nil {
+			return "", fmt.Errorf("encode expected_egress: %w", err)
+		}
+		task.ExpectedEgress = json.RawMessage(raw)
+	}
+	if len(req.RequiredCredentials) > 0 {
+		raw, err := json.Marshal(req.RequiredCredentials)
+		if err != nil {
+			return "", fmt.Errorf("encode required_credentials: %w", err)
+		}
+		task.RequiredCredentials = json.RawMessage(raw)
+	}
+	// Validate credential availability up front so the user doesn't
+	// see an approval prompt for a task that can't possibly authorize
+	// — matches the dashboard Create flow's behavior. Placeholder
+	// minting itself is deferred to the approve transition.
+	if err := h.validateTaskRequiredCredentials(ctx, task, req.RequiredCredentials); err != nil {
+		return "", err
+	}
+
+	// Stamp the original tool_use ID into ApprovalRationale so post-
+	// approval audit can correlate the chat gesture without joining
+	// across event tables.
+	if originalToolUseID != "" {
+		rationale, _ := json.Marshal(map[string]any{
+			"surface":              "inline_chat",
+			"original_approval_id": originalToolUseID,
+		})
+		task.ApprovalRationale = rationale
+	}
+
+	// Risk assessment: precomputed → use; otherwise compute. Same
+	// precedence rules as createInlineApprovedTask so the displayed
+	// RiskLevel is consistent across the two flows.
+	envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
+	finalAssessment := envelopeAssessment
+	precomputedRisk := ""
+	if precomputed != nil {
+		precomputedRisk = strings.ToLower(strings.TrimSpace(precomputed.RiskLevel))
+	}
+	usePrecomputed := precomputed != nil && precomputedRisk != "" && precomputedRisk != "unknown"
+	if usePrecomputed {
+		finalAssessment = precomputed
+	} else if h.assessor != nil {
+		llmAssessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
+			Purpose:                req.Purpose,
+			AgentName:              agent.Name,
+			UserID:                 agent.UserID,
+			ExpectedTools:          env.ExpectedTools,
+			ExpectedEgress:         env.ExpectedEgress,
+			RequiredCredentials:    env.RequiredCredentials,
+			IntentVerificationMode: env.IntentVerificationMode,
+			ExpectedUse:            env.ExpectedUse,
+		})
+		if err != nil {
+			h.logger.WarnContext(ctx, "inline pending task risk assessment failed", "error", err)
+		}
+		if llmAssessment != nil && !strings.EqualFold(llmAssessment.RiskLevel, "unknown") {
+			finalAssessment = mergeRiskAssessments(llmAssessment, envelopeAssessment)
+		}
+	}
+	if finalAssessment != nil {
+		task.RiskLevel = finalAssessment.RiskLevel
+		task.RiskDetails = taskrisk.MarshalAssessment(finalAssessment)
+	}
+
+	if err := h.st.CreateTask(ctx, task); err != nil {
+		return "", fmt.Errorf("create pending inline task: %w", err)
+	}
+
+	// Canonical approval_records row, surface=inline_chat, status=
+	// pending. Resolved at approve/deny time by the chat-side
+	// resolveCanonicalTaskApproval call. Without this row the audit
+	// trail couldn't account for "a chat-bound task sat pending."
+	if err := h.createCanonicalPendingInlineApprovalRecord(ctx, task); err != nil {
+		// Rollback to expired so we don't leave a pending task with no
+		// audit anchor. This is an operational failure before the user
+		// sees an approval prompt, not a user denial.
+		h.logger.ErrorContext(ctx, "failed to create pending inline approval record; expiring task to preserve audit invariant",
+			"task_id", task.ID, "err", err)
+		// Bounded detached context: WithoutCancel alone would let a
+		// stalled store backend hang the inbound request goroutine.
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "expired")
+		cancel()
+		if rollbackErr != nil {
+			h.logger.ErrorContext(ctx, "CRITICAL: pending approval record failed AND rollback failed; task is now orphaned pending",
+				"task_id", task.ID, "approval_err", err, "rollback_err", rollbackErr)
+		}
+		return "", fmt.Errorf("create pending inline approval record: %w", err)
+	}
+
+	if h.eventHub != nil {
+		h.eventHub.Publish(agent.UserID, events.Event{Type: "tasks"})
+	}
+	return task.ID, nil
+}
+
+// ApproveInlineTask flips a pending inline-chat task to active. Called
+// from the lite-proxy chat resolution path when the user's reply is
+// "approve". Bypasses the dashboard CHAT_APPROVAL_REQUIRED guard
+// because, by definition, this caller IS the chat surface — the model
+// is about to see the substituted approval reply. Returns the
+// InlineApprovedTask shape the caller hands to the LLM.
+func (h *TasksHandler) ApproveInlineTask(ctx context.Context, taskID, userID string) (*llmproxy.InlineApprovedTask, error) {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if task.UserID != userID {
+		return nil, errors.New("not your task")
+	}
+	// Detect the "dashboard already terminated this row" case explicitly.
+	// Deny via the dashboard is permitted on chat-bound pending rows so
+	// users can dismiss zombie tasks; when the model's "approve" reply
+	// races in afterwards we want a clean signal back to
+	// resolveInlineTaskApproval so it can render an explanatory reply
+	// instead of a generic "approve failed" creator error. Same for
+	// expired (24h sweep) and revoked (manual repair).
+	if task.ApprovalSource == "inline_chat" {
+		switch task.Status {
+		case "denied", "expired", "revoked":
+			return nil, &llmproxy.ErrInlineTaskAlreadyTerminal{Status: task.Status}
+		}
+	}
+	if task.Status != "pending_approval" || task.ApprovalSource != "inline_chat" {
+		return nil, fmt.Errorf("task is not a pending inline-chat task (status=%q, source=%q)", task.Status, task.ApprovalSource)
+	}
+
+	requiredCredentials, err := taskRequiredCredentials(task)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse required_credentials: %w", err)
+	}
+	if err := h.validateTaskRequiredCredentials(ctx, task, requiredCredentials); err != nil {
+		return nil, err
+	}
+
+	var expiresAt time.Time
+	if task.Lifetime == "standing" {
+		expiresAt = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	} else {
+		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+	}
+
+	// CAS pending → active FIRST, then mint placeholders. The expiry
+	// sweeper specifically targets approval_source='inline_chat'
+	// pending rows past the 24h hold TTL — running mint before the
+	// CAS would leave credential placeholders bound to a task the
+	// sweeper has just denied, with no cleanup path. Doing the CAS
+	// first means a lost race surfaces as "no longer pending"
+	// before any side effects fire. The minor cost is one extra
+	// rollback path when mint fails post-CAS, which we handle
+	// explicitly below.
+	won, err := h.st.UpdateTaskApprovedFrom(ctx, taskID, "pending_approval", expiresAt, task.AuthorizedActions)
+	if err != nil {
+		return nil, err
+	}
+	if !won {
+		// Lost the CAS to a concurrent resolver: dashboard Deny,
+		// the chat-bound expiry sweep, or eviction-driven Expire.
+		// Re-fetch so we can surface the typed terminal error if
+		// the row landed at a known terminal state — same UX as
+		// the pre-CAS early check above so the chat reply
+		// renders "the user dismissed elsewhere; ask for a fresh
+		// request" instead of a generic creator failure that
+		// invites the model to retry the same body. Fall back to
+		// the generic error if the re-fetch itself fails or the
+		// row landed somewhere unexpected.
+		if reread, rereadErr := h.st.GetTask(ctx, taskID); rereadErr == nil && reread != nil {
+			switch reread.Status {
+			case "denied", "expired", "revoked":
+				return nil, &llmproxy.ErrInlineTaskAlreadyTerminal{Status: reread.Status}
+			}
+		}
+		return nil, errors.New("task is no longer pending approval")
+	}
+	task.Status = "active"
+	now := time.Now().UTC()
+	task.ApprovedAt = &now
+	task.ExpiresAt = &expiresAt
+
+	placeholders, err := h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt)
+	if err != nil {
+		// Mint failed AFTER the CAS landed. Roll the task back to
+		// denied so we don't leave an active task with no usable
+		// credentials. Detach the cancellation so a mid-request
+		// client disconnect doesn't strand an orphan active task,
+		// but cap with 5s timeouts — WithoutCancel alone strips
+		// the parent deadline too, so a stalled store backend
+		// would otherwise block this goroutine indefinitely. Each
+		// step gets its OWN 5s budget so a slow task rollback
+		// can't starve the canonical resolve.
+		taskRollbackCtx, taskCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		rollbackErr := h.st.UpdateTaskStatus(taskRollbackCtx, task.ID, "denied")
+		taskCancel()
+		if rollbackErr != nil {
+			// Task rollback failed: the row is still "active". DO
+			// NOT also resolve the canonical record to deny/denied
+			// here — that would create an audit-trail inversion
+			// (record claims user denied, task row is active). The
+			// CRITICAL log below is the operator's cue to
+			// investigate; the canonical record stays pending
+			// until manual repair.
+			h.logger.ErrorContext(ctx, "CRITICAL: post-CAS credential mint failed AND rollback failed; task is now orphaned active",
+				"task_id", task.ID, "mint_err", err, "rollback_err", rollbackErr)
+			return nil, fmt.Errorf("mint credential placeholders: %w", err)
+		}
+		// Rollback succeeded — hydrate the in-memory task so the
+		// canonical resolve validator sees pending → denied, then
+		// flip the canonical record under its own bounded context.
+		// Without this resolve the pending canonical row would sit
+		// forever (the chat-bound expiry sweep filters by
+		// status='pending_approval', so a "denied" task is invisible
+		// to it), violating the audit invariant that every
+		// chat-bound task eventually has a terminal canonical
+		// resolution.
+		task.Status = "denied"
+		canonicalCtx, canonicalCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		h.resolveCanonicalTaskApproval(canonicalCtx, task, "task_create", "deny", "denied")
+		canonicalCancel()
+		return nil, fmt.Errorf("mint credential placeholders: %w", err)
+	}
+
+	// Snapshot the pending canonical record BEFORE resolve flips it;
+	// findPendingTaskApprovalRecord filters to status="pending" so a
+	// post-resolve lookup would return ErrNotFound and the
+	// InlineApprovedTask response wouldn't carry the record id.
+	rec, _ := h.findPendingTaskApprovalRecord(ctx, userID, taskID, "task_create")
+	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
+	}
+
+	out := &llmproxy.InlineApprovedTask{
+		ID:             task.ID,
+		Status:         task.Status,
+		Purpose:        task.Purpose,
+		Lifetime:       task.Lifetime,
+		ApprovalSource: task.ApprovalSource,
+	}
+	if rec != nil {
+		out.ApprovalRecordID = rec.ID
+	}
+	if task.ExpiresAt != nil {
+		out.ExpiresAtRFC3339 = task.ExpiresAt.Format(time.RFC3339)
+	}
+	out.Credentials = inlineCredentialPlaceholders(placeholders)
+	return out, nil
+}
+
+// DenyInlineTask transitions a pending inline-chat task to denied.
+// Symmetric to ApproveInlineTask: bypasses the dashboard guard
+// because the chat surface is doing the denial.
+func (h *TasksHandler) DenyInlineTask(ctx context.Context, taskID, userID string) error {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return errors.New("not your task")
+	}
+	// Idempotency: a task already in a terminal state matching the
+	// user's intent (denied / expired) is a successful no-op rather
+	// than an error. The common cause is the expiry sweeper having
+	// already denied the row between our GetTask and the CAS — the
+	// model still gets a "denied" reply, and we don't want to stuff
+	// "task is no longer pending" into out.Reason and the SSE log.
+	switch task.Status {
+	case "denied", "expired", "revoked":
+		return nil
+	case "pending_approval":
+		if task.ApprovalSource != "inline_chat" {
+			return fmt.Errorf("task is not a pending inline-chat task (source=%q)", task.ApprovalSource)
+		}
+	default:
+		return fmt.Errorf("task is not a pending inline-chat task (status=%q, source=%q)", task.Status, task.ApprovalSource)
+	}
+	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, "pending_approval", "denied")
+	if err != nil {
+		return err
+	}
+	if !won {
+		// Lost the CAS to another resolver (sweeper, parallel deny).
+		// The terminal state is what the user asked for, so report
+		// success — the side effects below would double-fire
+		// otherwise.
+		return nil
+	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_create", "deny", "denied")
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
+	}
+	return nil
+}
+
+// ExpireInlineTask transitions a pending inline-chat task to expired.
+// Called when the llmproxy cache evicts an awaiting_task_approval
+// hold under capacity pressure: the chat anchor is gone, so chat
+// approve can no longer resolve the row. Without this the dashboard
+// would keep showing the task as pending_approval with "reply in
+// chat" guidance that can never succeed. Distinct from
+// DenyInlineTask because the user didn't dismiss it — the system
+// did, for operational reasons; the canonical record resolution
+// reuses the same "deny"/"expired" shape the 24h sweeper uses.
+// Idempotent on already-terminal rows.
+func (h *TasksHandler) ExpireInlineTask(ctx context.Context, taskID, userID string) error {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return errors.New("not your task")
+	}
+	switch task.Status {
+	case "denied", "expired", "revoked":
+		return nil
+	case "pending_approval":
+		if task.ApprovalSource != "inline_chat" {
+			return fmt.Errorf("task is not a pending inline-chat task (source=%q)", task.ApprovalSource)
+		}
+	default:
+		return fmt.Errorf("task is not a pending inline-chat task (status=%q, source=%q)", task.Status, task.ApprovalSource)
+	}
+	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, "pending_approval", "expired")
+	if err != nil {
+		return err
+	}
+	if !won {
+		// Lost CAS to a concurrent resolver (sweeper or user
+		// reply landing during eviction). Terminal state was
+		// reached; report success so the eviction caller doesn't
+		// double-publish or double-log.
+		return nil
+	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_create", "deny", "expired")
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
+	}
+	return nil
+}
+
+// createCanonicalPendingInlineApprovalRecord writes the canonical
+// approval_records row anchoring a chat-bound pending task. Status is
+// "pending" with no Resolution/ResolvedAt — those land at chat-approve
+// time via resolveCanonicalTaskApproval, matching the dashboard path's
+// shape.
+func (h *TasksHandler) createCanonicalPendingInlineApprovalRecord(ctx context.Context, task *store.Task) error {
+	payload, err := json.Marshal(task)
+	if err != nil {
+		return err
+	}
+	summary := map[string]any{
+		"purpose":    task.Purpose,
+		"lifetime":   task.Lifetime,
+		"risk_level": task.RiskLevel,
+	}
+	summaryJSON, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+	rec := &store.ApprovalRecord{
+		ID:                  uuid.New().String(),
+		Kind:                "task_create",
+		UserID:              task.UserID,
+		AgentID:             &task.AgentID,
+		TaskID:              &task.ID,
+		Status:              "pending",
+		Surface:             "inline_chat",
+		SummaryJSON:         json.RawMessage(summaryJSON),
+		PayloadJSON:         json.RawMessage(payload),
+		ResolutionTransport: "inline_chat",
+	}
+	return h.st.CreateApprovalRecord(ctx, rec)
 }
 
 // createCanonicalInlineApprovalRecord writes the approval_records row

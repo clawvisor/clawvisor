@@ -183,10 +183,17 @@ func replayBufferedHolds(ctx context.Context, cfg PostprocessConfig, inner Pendi
 			return err
 		}
 		committed = append(committed, res.Pending.ID)
-		if res.Evicted != nil && cfg.Audit != nil && agent != nil && i < len(captures) {
-			use := captures[i].Use
-			v := captures[i].Inspector
-			cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, use, v, "block", "approval_evicted", "superseded pending approval "+res.Evicted.ID, captures[i].TaskID)
+		if res.Evicted != nil {
+			if cfg.Audit != nil && agent != nil && i < len(captures) {
+				use := captures[i].Use
+				v := captures[i].Inspector
+				cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, use, v, "block", "approval_evicted", "superseded pending approval "+res.Evicted.ID, captures[i].TaskID)
+			}
+			// If the evicted hold was an inline-task one, flip its
+			// store.Task row to "expired" so the dashboard stops
+			// showing the now-unresolvable "reply in chat" guidance.
+			// Safe no-op for non-inline evictions.
+			cleanupEvictedInlineTask(ctx, cfg, res.Evicted)
 		}
 	}
 	return nil

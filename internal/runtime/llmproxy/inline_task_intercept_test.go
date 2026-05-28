@@ -11,6 +11,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -166,11 +167,22 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 
 // capturingInlineCreator is a test InlineTaskCreator that records the
 // inputs and returns a canned response (or an error when fail is set,
-// so auto-approve gate fall-back paths can be exercised).
+// so auto-approve gate fall-back paths can be exercised). Implements
+// the InlineTaskPendingCreator extension so the human-prompt path's
+// pre-Hold CreatePendingInlineTask call lands in `pendingTaskID`.
 type capturingInlineCreator struct {
 	called bool
 	fail   bool
 	resp   *InlineApprovedTask
+
+	pendingCalled bool
+	pendingFail   bool
+	pendingTaskID string
+	approveCalled bool
+	denyCalled    bool
+	expireCalled  bool
+	expireFail    bool
+	expiredIDs    []string
 }
 
 func (c *capturingInlineCreator) CreateInlineApprovedTask(_ context.Context, _ *store.Agent, _ *runtimetasks.TaskCreateRequest, _ string) (*InlineApprovedTask, error) {
@@ -179,6 +191,40 @@ func (c *capturingInlineCreator) CreateInlineApprovedTask(_ context.Context, _ *
 		return nil, fmtErrorf("simulated inline creator failure")
 	}
 	return c.resp, nil
+}
+
+func (c *capturingInlineCreator) CreatePendingInlineTask(_ context.Context, _ *store.Agent, _ *runtimetasks.TaskCreateRequest, _ string, _ *taskrisk.RiskAssessment) (string, error) {
+	c.pendingCalled = true
+	if c.pendingFail {
+		return "", fmtErrorf("simulated pending creator failure")
+	}
+	if c.pendingTaskID == "" {
+		c.pendingTaskID = "task-stub-pending"
+	}
+	return c.pendingTaskID, nil
+}
+
+func (c *capturingInlineCreator) ApproveInlineTask(_ context.Context, _, _ string) (*InlineApprovedTask, error) {
+	c.approveCalled = true
+	c.called = true
+	if c.fail {
+		return nil, fmtErrorf("simulated inline approve failure")
+	}
+	return c.resp, nil
+}
+
+func (c *capturingInlineCreator) ExpireInlineTask(_ context.Context, taskID, _ string) error {
+	c.expireCalled = true
+	c.expiredIDs = append(c.expiredIDs, taskID)
+	if c.expireFail {
+		return fmtErrorf("simulated inline expire failure")
+	}
+	return nil
+}
+
+func (c *capturingInlineCreator) DenyInlineTask(_ context.Context, _, _ string) error {
+	c.denyCalled = true
+	return nil
 }
 
 // fmtErrorf is a tiny local helper to avoid adding an extra import for
@@ -263,6 +309,108 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 		t.Errorf("query-only intercept should leave AwaitingTaskFor empty; got %q", holds[0].AwaitingTaskFor)
 	}
 	_ = ctx
+}
+
+func TestMaybeInterceptInlineTaskDefinition_ExpiresEvictedInlineHold(t *testing.T) {
+	ctx := context.Background()
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache.max = 1
+	userID := "user-inline-evict"
+	agentID := "agent-inline-evict"
+
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:            "cv-oldevictedxxxxxxxxxxxxx",
+		UserID:        userID,
+		AgentID:       agentID,
+		Provider:      conversation.ProviderAnthropic,
+		Stage:         StageAwaitingTaskApproval,
+		PendingTaskID: "task-old-evicted",
+		ToolUse:       conversation.ToolUse{ID: "toolu_old", Name: "Bash"},
+	}); err != nil {
+		t.Fatalf("seed old inline hold: %v", err)
+	}
+
+	cmd := `curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' -H 'Content-Type: application/json' --data '` + inlineTaskBody + `'`
+	input, err := json.Marshal(map[string]string{"command": cmd})
+	if err != nil {
+		t.Fatalf("marshal tool input: %v", err)
+	}
+	tu := conversation.ToolUse{ID: "toolu_new", Name: "Bash", Input: input}
+	call, ok := ParseControlToolUse(tu)
+	if !ok {
+		t.Fatalf("control call did not parse")
+	}
+	creator := &capturingInlineCreator{pendingTaskID: "task-new-pending"}
+
+	_, handled := maybeInterceptInlineTaskDefinition(
+		httptest.NewRequest("POST", "/v1/messages", nil),
+		PostprocessConfig{
+			AgentUserID:       userID,
+			AgentID:           agentID,
+			PendingApprovals:  cache,
+			InlineTaskCreator: creator,
+		},
+		func(_, _, _ string) {},
+		func(string, ...any) {},
+		conversation.ProviderAnthropic,
+		tu,
+		call,
+	)
+	if !handled {
+		t.Fatalf("inline task definition was not intercepted")
+	}
+	if !creator.expireCalled {
+		t.Fatalf("ExpireInlineTask was not called for the evicted inline hold")
+	}
+	if len(creator.expiredIDs) != 1 || creator.expiredIDs[0] != "task-old-evicted" {
+		t.Fatalf("expired ids = %v, want [task-old-evicted]", creator.expiredIDs)
+	}
+}
+
+func TestMaybeInterceptInlineTaskDefinition_ExpiresPendingTaskOnHoldFailure(t *testing.T) {
+	inner := NewMemoryPendingApprovalCache(time.Minute)
+	cache := &flakyHoldFromCallN{inner: inner, failOnCall: 1}
+	userID := "user-inline-hold-fail"
+	agentID := "agent-inline-hold-fail"
+
+	cmd := `curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' -H 'Content-Type: application/json' --data '` + inlineTaskBody + `'`
+	input, err := json.Marshal(map[string]string{"command": cmd})
+	if err != nil {
+		t.Fatalf("marshal tool input: %v", err)
+	}
+	tu := conversation.ToolUse{ID: "toolu_new", Name: "Bash", Input: input}
+	call, ok := ParseControlToolUse(tu)
+	if !ok {
+		t.Fatalf("control call did not parse")
+	}
+	creator := &capturingInlineCreator{pendingTaskID: "task-hold-failed"}
+
+	_, handled := maybeInterceptInlineTaskDefinition(
+		httptest.NewRequest("POST", "/v1/messages", nil),
+		PostprocessConfig{
+			AgentUserID:       userID,
+			AgentID:           agentID,
+			PendingApprovals:  cache,
+			InlineTaskCreator: creator,
+		},
+		func(_, _, _ string) {},
+		func(string, ...any) {},
+		conversation.ProviderAnthropic,
+		tu,
+		call,
+	)
+	if handled {
+		t.Fatalf("hold failure should fall through to dashboard rewrite")
+	}
+	if !creator.expireCalled {
+		t.Fatalf("ExpireInlineTask was not called for operational hold failure")
+	}
+	if creator.denyCalled {
+		t.Fatalf("DenyInlineTask should not be used for operational hold failure")
+	}
+	if len(creator.expiredIDs) != 1 || creator.expiredIDs[0] != "task-hold-failed" {
+		t.Fatalf("expired ids = %v, want [task-hold-failed]", creator.expiredIDs)
+	}
 }
 
 func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
@@ -876,7 +1024,6 @@ func TestAutoApprove_FallsBackWhenCreatorMissing(t *testing.T) {
 		t.Error("missing creator must fall back to human prompt")
 	}
 }
-
 
 func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)

@@ -1,6 +1,7 @@
 package llmproxy
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -26,6 +27,13 @@ import (
 // 24h is chosen to comfortably cover an overnight decide gap while
 // still bounding stale-approval accumulation in the cache.
 const inlineTaskApprovalHoldTTL = 24 * time.Hour
+
+// InlineTaskApprovalHoldTTL exposes the cache hold's decide window so
+// callers outside llmproxy (notably the expiry sweeper in the
+// approvals handler) can use the same cutoff when reaping abandoned
+// chat-bound pending tasks. Lower-cased internal const remains the
+// canonical value to avoid drift; the exported alias just reflects it.
+const InlineTaskApprovalHoldTTL = inlineTaskApprovalHoldTTL
 
 // InlineSurfaceQueryParam is the query-string flag the model adds to
 // POST /api/control/tasks to opt in to the inline-approval flow when there
@@ -298,6 +306,36 @@ func maybeInterceptInlineTaskDefinition(
 		}
 	}
 
+	// Create the pending Task row BEFORE the cache hold so the
+	// dashboard's Tasks page renders this work as a pending task while
+	// the cache hold awaits the user's reply (status='pending_approval',
+	// approval_source='inline_chat'). The dashboard's Approve / Deny
+	// endpoints refuse to act on inline_chat-bound pending rows; the
+	// cache hold is the in-process resolution path.
+	//
+	// When the configured creator doesn't implement the pending-flow
+	// extension (legacy test stubs, runtimes wired before this
+	// change), skip the pending-task landing and fall back to the
+	// legacy create-on-approve flow — the prompt still renders and
+	// the chat path still resolves via resolved.TaskDefinition. The
+	// only loss is the dashboard's pending-task surface for those
+	// callers, which they didn't have before.
+	pendingCreator, _ := cfg.InlineTaskCreator.(InlineTaskPendingCreator)
+	var pendingTaskID string
+	if pendingCreator != nil {
+		agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, Name: cfg.AgentName}
+		created, pendingErr := pendingCreator.CreatePendingInlineTask(req.Context(), agentForCreate, parsed, tu.ID, assessment)
+		if pendingErr != nil {
+			// fallthrough (not block) — we return false, so the
+			// caller proceeds to the regular control-rewrite path.
+			// See the lines 99-106 comment for the rationale.
+			audit("fallthrough", "inline_task_pending_create_failed", pendingErr.Error()+"; deferring to dashboard rewrite")
+			trace("inline_task.pending_create_failed", "err", pendingErr.Error())
+			return conversation.ToolUseVerdict{}, false
+		}
+		pendingTaskID = created
+	}
+
 	now := time.Now().UTC()
 	innerHold, holdErr := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 		UserID:          cfg.AgentUserID,
@@ -309,17 +347,45 @@ func maybeInterceptInlineTaskDefinition(
 		Stage:           StageAwaitingTaskApproval,
 		TaskDefinition:  parsed,
 		PrecomputedRisk: assessment,
+		PendingTaskID:   pendingTaskID,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(inlineTaskApprovalHoldTTL),
 	})
 	if holdErr != nil {
-		audit("block", "inline_task_hold_failed", holdErr.Error())
+		// Cache hold failed. If we already landed a pending task in
+		// the DB, roll it back so the dashboard doesn't show an
+		// orphaned pending task whose cache anchor never existed.
+		// Use a detached context so a mid-request client disconnect
+		// (a plausible cause of cache misbehavior) doesn't cancel
+		// the rollback and strand the orphan for the full 24h TTL.
+		// Cap it at 5s so a stalled store backend can't block the
+		// inbound request goroutine indefinitely — WithoutCancel
+		// alone strips the parent deadline too.
+		if pendingCreator != nil && pendingTaskID != "" {
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 5*time.Second)
+			expireErr := pendingCreator.ExpireInlineTask(rollbackCtx, pendingTaskID, cfg.AgentUserID)
+			cancel()
+			if expireErr != nil {
+				trace("inline_task.pending_rollback_failed", "task_id", pendingTaskID, "err", expireErr.Error())
+			}
+		}
+		// fallthrough — see the audit-decision rationale above.
+		audit("fallthrough", "inline_task_hold_failed", holdErr.Error()+"; deferring to dashboard rewrite")
 		return conversation.ToolUseVerdict{}, false
+	}
+	if innerHold.Evicted != nil {
+		// This direct Hold path can displace an older inline-task
+		// approval when the bounded cache is full. Expire the evicted
+		// task's DB anchor so the dashboard doesn't keep showing
+		// "reply in chat" guidance for a hold that can no longer be
+		// resolved from chat.
+		cleanupEvictedInlineTask(req.Context(), cfg, innerHold.Evicted)
 	}
 
 	audit("approve", "pending", "inline_task_pending_approval: awaiting user yes/no on inline task definition (query)")
 	trace("inline_task.held",
 		"approval_id", innerHold.Pending.ID,
+		"task_id", pendingTaskID,
 		"purpose", parsed.Purpose,
 		"signal", "query",
 	)
@@ -328,6 +394,47 @@ func maybeInterceptInlineTaskDefinition(
 		Reason:         "Clawvisor: awaiting inline task approval",
 		SubstituteWith: renderTaskApprovalPromptWithRisk(parsed, innerHold.Pending.ID, assessment, cfg.DefaultTaskExpirySeconds),
 	}, true
+}
+
+// cleanupEvictedInlineTask expires the store.Task row anchoring an
+// evicted inline-task hold. The LRU cache only carries N holds per
+// (user, agent, provider, conversation) tuple; when a new Hold
+// displaces an older inline-task hold, the cache anchor is gone and
+// chat approve can never resolve the row. Without this the dashboard
+// would keep showing the row as pending_approval with a "reply in
+// chat" notice that can never succeed — exactly the zombie shape
+// the dashboard-deny escape hatch was meant to solve, but
+// automatically, since the user has no signal that the cache evicted
+// anything.
+//
+// No-op on holds without a PendingTaskID (non-inline holds, or
+// inline holds minted before the pending-task surface was wired),
+// or when the creator doesn't implement the pending extension.
+// Safe to call unconditionally on any eviction.
+func cleanupEvictedInlineTask(ctx context.Context, cfg PostprocessConfig, evicted *PendingLiteApproval) {
+	if evicted == nil || evicted.PendingTaskID == "" || evicted.UserID == "" {
+		return
+	}
+	pendingCreator, ok := cfg.InlineTaskCreator.(InlineTaskPendingCreator)
+	if !ok || pendingCreator == nil {
+		return
+	}
+	// Bounded detached context so a stalled store backend can't
+	// hang the inbound request goroutine, and a mid-request client
+	// disconnect doesn't strand the row at pending.
+	expireCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := pendingCreator.ExpireInlineTask(expireCtx, evicted.PendingTaskID, evicted.UserID); err != nil && cfg.Trace != nil {
+		cfg.Trace.Emit(map[string]any{
+			"event":       "inline_task.evicted_expire_failed",
+			"request_id":  cfg.RequestID,
+			"user_id":     evicted.UserID,
+			"agent_id":    evicted.AgentID,
+			"approval_id": evicted.ID,
+			"task_id":     evicted.PendingTaskID,
+			"err":         err.Error(),
+		})
+	}
 }
 
 // hasNonEmptyTurn reports whether the slice contains at least one

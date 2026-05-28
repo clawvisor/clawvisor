@@ -52,6 +52,71 @@ type InlineTaskCreatorWithAssessment interface {
 	) (*InlineApprovedTask, error)
 }
 
+// InlineTaskPendingCreator is the contract the inline-task intercept
+// uses to land a pending Task row in the dashboard's Tasks surface BEFORE
+// the user has replied in chat. The auto-approve gate continues to use
+// CreateInlineApprovedTask (which produces an already-active task in
+// one step); this interface is only for the human-prompt branch.
+//
+// Why split from InlineTaskCreator: the pending flow lives on a
+// separate timeline from the active-creation flow. The intercept calls
+// CreatePendingInlineTask once (returns the task id which lands in the
+// cache hold); later, when the user replies, the chat-resolve path
+// calls ApproveInlineTask or DenyInlineTask against that same task id.
+// All three are typically implemented by the same handler, but a
+// stripped-down test stub can implement just one. Returning the task
+// ID (not the full Task) keeps the llmproxy package independent of
+// store.Task's schema.
+type InlineTaskPendingCreator interface {
+	CreatePendingInlineTask(
+		ctx context.Context,
+		agent *store.Agent,
+		req *runtimetasks.TaskCreateRequest,
+		originalToolUseID string,
+		precomputed *taskrisk.RiskAssessment,
+	) (taskID string, err error)
+	// ApproveInlineTask transitions a pending inline-chat task to
+	// active and returns the InlineApprovedTask shape the chat path
+	// renders to the LLM. Bypasses the dashboard CHAT_APPROVAL_REQUIRED
+	// guard since the chat surface itself is doing the approval.
+	ApproveInlineTask(ctx context.Context, taskID, userID string) (*InlineApprovedTask, error)
+	// DenyInlineTask transitions a pending inline-chat task to
+	// denied. Symmetric to ApproveInlineTask.
+	DenyInlineTask(ctx context.Context, taskID, userID string) error
+	// ExpireInlineTask transitions a pending inline-chat task to
+	// expired. Distinct from Deny because the cause is operational
+	// (the LRU cache evicted the hold so the chat anchor is gone),
+	// not a user dismissal. Without this the dashboard would keep
+	// showing the row as pending_approval with "reply in chat to
+	// approve" guidance even though no chat reply can ever resolve
+	// it. Idempotent on already-terminal rows.
+	ExpireInlineTask(ctx context.Context, taskID, userID string) error
+}
+
+// ErrInlineTaskAlreadyTerminal is the typed error
+// ApproveInlineTask returns when the chat-side "approve" reply
+// arrives after the task has already been terminated through a
+// non-chat surface (dashboard or notifier Deny, the 24h expiry
+// sweep, manual revocation). It is intentionally a distinct shape
+// from the generic "task is not pending" string so
+// resolveInlineTaskApproval can detect this race specifically and
+// render an explanatory reply directing the model to ask the user
+// to create a fresh task, rather than surfacing a generic
+// "approve failed" creator error to the LLM.
+type ErrInlineTaskAlreadyTerminal struct {
+	// Status is the actual terminal status the row landed at
+	// ("denied" / "expired" / "revoked") so the rendered reply
+	// can match the user's mental model of what happened.
+	Status string
+}
+
+func (e *ErrInlineTaskAlreadyTerminal) Error() string {
+	if e == nil {
+		return "inline-chat task already terminal"
+	}
+	return "inline-chat task already terminal: " + e.Status
+}
+
 // InlineApprovedTask is the slice of the created task surfaced back
 // through the synthetic release response. The fields here are what the
 // model needs to see — it isn't a full store.Task because the LLM
