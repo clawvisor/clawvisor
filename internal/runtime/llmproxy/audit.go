@@ -226,8 +226,20 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 				CostMicros:       costMicros,
 			}
 			if err := e.Store.RecordLLMRequestCost(ctx, row); err != nil {
-				e.Logger.WarnContext(ctx, "lite-proxy: cost record failed",
-					"agent_id", agent.ID, "audit_id", entry.ID, "err", err.Error())
+				// ErrConflict on the cost insert is the expected,
+				// harmless path during dedup retries: the audit
+				// row got resolved to the canonical id above, but
+				// the cost row keyed on that same id is already
+				// present from the original call. Demote to Debug
+				// so routine retries don't fire alerts; surface
+				// real store errors at Warn.
+				if errors.Is(err, store.ErrConflict) {
+					e.Logger.DebugContext(ctx, "lite-proxy: cost record deduped (canonical cost row already exists)",
+						"agent_id", agent.ID, "audit_id", entry.ID)
+				} else {
+					e.Logger.WarnContext(ctx, "lite-proxy: cost record failed",
+						"agent_id", agent.ID, "audit_id", entry.ID, "err", err.Error())
+				}
 			}
 		}
 	}

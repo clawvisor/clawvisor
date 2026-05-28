@@ -9,6 +9,13 @@
 -- resolves the surviving canonical audit row's id via
 -- FindDedupCandidate before inserting the cost row, so the FK
 -- doesn't fire on the legitimate retry case.
+--
+-- Note: user_id / agent_id / task_id are NOT FKs into their parent
+-- tables. Cleanup on parent-row deletion is indirect via the
+-- audit_log CASCADE chain (audit retention sweep removes audit rows;
+-- this CASCADE takes the cost rows with them). Task soft-delete
+-- (status='revoked') deliberately preserves the cost history so
+-- the dashboard's per-task spend view keeps working post-revocation.
 CREATE TABLE IF NOT EXISTS llm_request_cost (
   audit_id            TEXT PRIMARY KEY REFERENCES audit_log(id) ON DELETE CASCADE,
   user_id             TEXT NOT NULL,

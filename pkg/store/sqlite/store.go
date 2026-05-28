@@ -958,6 +958,10 @@ func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.
 		ByModel:       []store.TaskCostByModelEntry{},
 		UnknownModels: []string{},
 	}
+	// `AND task_id IS NOT NULL` is redundant for a non-empty taskID
+	// but lets SQLite's planner reliably pick the partial index
+	// idx_llm_cost_user_task (WHERE task_id IS NOT NULL) without
+	// having to prove non-nullity from the equality predicate.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT model,
 		       COUNT(*) AS n,
@@ -968,7 +972,7 @@ func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.
 		       COALESCE(SUM(cost_micros), 0),
 		       SUM(CASE WHEN cost_micros IS NULL THEN 1 ELSE 0 END) AS unknown_rows
 		FROM llm_request_cost
-		WHERE user_id = ? AND task_id = ?
+		WHERE user_id = ? AND task_id = ? AND task_id IS NOT NULL
 		GROUP BY model
 		ORDER BY model`, userID, taskID)
 	if err != nil {

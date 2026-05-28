@@ -20,6 +20,15 @@
 -- canonical audit row's id before insert specifically to honor this).
 -- The SQLite store enables this with PRAGMA foreign_keys = ON in
 -- sqlite.New (migration 001 also sets it for new DBs).
+--
+-- Note: user_id / agent_id / task_id are NOT FKs into their parent
+-- tables. Cleanup of orphan cost rows when a task or agent is hard-
+-- deleted relies on the audit_log CASCADE chain — any audit row
+-- tied to the deleted parent will be removed by the audit_log
+-- retention sweep, and CASCADE on audit_id takes the cost row with
+-- it. Don't add direct FKs here without considering the read path:
+-- task soft-deletion (status='revoked') intentionally keeps the
+-- spend history visible on the dashboard.
 CREATE TABLE IF NOT EXISTS llm_request_cost (
   audit_id            TEXT PRIMARY KEY REFERENCES audit_log(id) ON DELETE CASCADE,
   user_id             TEXT NOT NULL,

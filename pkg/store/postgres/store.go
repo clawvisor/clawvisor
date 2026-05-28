@@ -805,6 +805,13 @@ func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.
 	// into int64. Cast each SUM back to bigint so the column type
 	// matches the destination. Token columns are INTEGER → SUM is
 	// BIGINT natively, so a cast there is harmless but explicit.
+	//
+	// `AND task_id IS NOT NULL` is redundant for a non-empty taskID
+	// at runtime but makes the partial index idx_llm_cost_user_task
+	// (WHERE task_id IS NOT NULL) reliably eligible at plan time —
+	// without it, Postgres has to prove the predicate from the
+	// equality, which it does for literals but not always for bound
+	// parameters.
 	rows, err := s.pool.Query(ctx, `
 		SELECT model,
 		       COUNT(*) AS n,
@@ -815,7 +822,7 @@ func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.
 		       COALESCE(SUM(cost_micros), 0)::bigint,
 		       SUM(CASE WHEN cost_micros IS NULL THEN 1 ELSE 0 END)::bigint AS unknown_rows
 		FROM llm_request_cost
-		WHERE user_id = $1 AND task_id = $2
+		WHERE user_id = $1 AND task_id = $2 AND task_id IS NOT NULL
 		GROUP BY model
 		ORDER BY model`, userID, taskID)
 	if err != nil {

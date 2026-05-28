@@ -1051,23 +1051,23 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				if contCT != "" && contCT != upstreamCT {
 					w.Header().Set("Content-Type", contCT)
 				}
-				// Reattribute the cost row to the task that the
-				// continuation was made for. The auto-approve gate
-				// in the first postprocess pass minted a new task
+				// Reattribute the cost row ONLY when no prior task
+				// attribution exists. The auto-approve gate in the
+				// first postprocess pass minted a new task
 				// (Verdict.CreatedTaskID) and the continuation does
-				// THAT task's work, so the cost belongs there — not
-				// on the pre-continuation checkout (which was
-				// resolved before the task existed and is often
-				// empty for the conversation's very first turn).
-				// Use the first decision that carried both
-				// ContinueWithToolResult (so it actually triggered a
-				// continuation) and a CreatedTaskID; multiple in one
-				// turn is rare, and any one is a strict improvement
-				// over NULL.
-				for _, dec := range processed.Decisions {
-					if dec.Verdict.ContinueWithToolResult != "" && dec.Verdict.CreatedTaskID != "" {
-						auditTaskID = dec.Verdict.CreatedTaskID
-						break
+				// THAT task's work, so when the conversation had no
+				// checkout yet (first turn) the cost belongs there
+				// rather than on NULL. But when the user already had
+				// a task checked out for this conversation,
+				// preferredTaskID populated auditTaskID earlier — a
+				// real, specific attribution we should preserve
+				// rather than overwrite with the just-minted task.
+				if auditTaskID == "" {
+					for _, dec := range processed.Decisions {
+						if dec.Verdict.ContinueWithToolResult != "" && dec.Verdict.CreatedTaskID != "" {
+							auditTaskID = dec.Verdict.CreatedTaskID
+							break
+						}
 					}
 				}
 				// Roll the continuation's tokens into the per-request
@@ -1648,14 +1648,14 @@ func (w *limitedCaptureWriter) Bytes() []byte {
 // are all collapsed by pricing.Normalize). Used to gate the
 // continuation token-merge so a continuation that resolves to a
 // different upstream model can't get billed at the first call's rate.
-// An empty model on either side is treated as "match unknown" — the
-// merge proceeds because the prior code path used to assume models
-// always match, and an empty model is almost always the first call
-// (extractor populated it from requestModel) and the continuation
-// (extractor saw the same body).
+// Returns false when either side is empty — without a known model we
+// can't prove a match, and silently merging unattributable tokens
+// risks mispricing if a future caller starts populating only one
+// side (the existing extractor path leaves Model empty only on
+// pathological responses that fail to surface a model at all).
 func pricingModelMatch(a, b string) bool {
 	if a == "" || b == "" {
-		return true
+		return false
 	}
 	return pricing.Normalize(a) == pricing.Normalize(b)
 }
