@@ -797,7 +797,12 @@ type Task struct {
 	// RiskLevel is the LLM-assessed risk level ("low", "medium", "high", "critical", "unknown", or "").
 	RiskLevel   string          `json:"risk_level,omitempty"`
 	RiskDetails json.RawMessage `json:"risk_details,omitempty"`
-	// ApprovalSource indicates how the task was approved ("", "manual", "telegram_group", "telegram_button").
+	// ApprovalSource indicates how the task was approved ("",
+	// "manual", "telegram_group", "telegram_button", "inline_chat").
+	// "inline_chat" is also load-bearing pre-approval: it's set at
+	// pending-creation time by CreatePendingInlineTask and gates
+	// dashboard Approve/Deny (isInlineChatPending → 409
+	// INLINE_CHAT_BOUND) plus the chat-bound expiry sweep.
 	ApprovalSource    string          `json:"approval_source,omitempty"`
 	ApprovalRationale json.RawMessage `json:"approval_rationale,omitempty"`
 }

@@ -73,6 +73,30 @@ func dropLinkedToolHold(ctx context.Context, cache PendingApprovalCache, agent *
 func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteRequest, resolved *PendingLiteApproval, verb string) (string, InlineApprovalRewriteResult) {
 	out := InlineApprovalRewriteResult{Body: req.Body}
 
+	// Deny is a guaranteed no-op success regardless of creator or
+	// resolved-hold state. The user typed "deny" — the model must see
+	// a denial reply, period. Surfacing "creator missing" or
+	// "definition missing" instead would tell the model that its
+	// approval failed for some operational reason when in fact the
+	// user explicitly rejected it. Optimistically transition the
+	// pending task when we have everything we need; missing pieces
+	// just skip the side effect and still render the denial.
+	pendingCreator, hasPending := req.Creator.(InlineTaskPendingCreator)
+	if verb == "deny" {
+		if hasPending && resolved != nil && resolved.PendingTaskID != "" && req.Agent != nil {
+			if err := pendingCreator.DenyInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID); err != nil {
+				out.Reason = "deny failed: " + err.Error()
+			}
+		}
+		out.Decision = "deny"
+		out.Outcome = "inline_task_denied"
+		if out.Reason == "" {
+			out.Reason = "user denied inline task"
+		}
+		return renderInlineTaskDenyReply(), out
+	}
+
+	// Approve path needs both a creator and a resolved hold.
 	switch {
 	case req.Creator == nil:
 		out.Decision = "deny"
@@ -88,31 +112,9 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 
 	// Prefer the new pending-task flow: the intercept already landed a
 	// store.Task at pending_approval; here we just transition it to
-	// active (approve) or denied (deny). This keeps the dashboard's
-	// Tasks page authoritative for "what awaits the user" and avoids
-	// a second create-with-assessment call. Legacy creators (test
-	// stubs without the extension) still drive the original
-	// create-on-approve path so we don't break those callers.
-	pendingCreator, hasPending := req.Creator.(InlineTaskPendingCreator)
-
-	if verb == "deny" {
-		if hasPending && resolved.PendingTaskID != "" && req.Agent != nil {
-			if err := pendingCreator.DenyInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID); err != nil {
-				// Log into the rewrite outcome; the user's chat reply
-				// still rewrites to a denial since the cache hold is
-				// already consumed.
-				out.Reason = "deny failed: " + err.Error()
-			}
-		}
-		out.Decision = "deny"
-		out.Outcome = "inline_task_denied"
-		if out.Reason == "" {
-			out.Reason = "user denied inline task"
-		}
-		return renderInlineTaskDenyReply(), out
-	}
-
-	// Approve path.
+	// active. Legacy creators (test stubs without the extension) still
+	// drive the original create-on-approve path so we don't break
+	// those callers.
 	switch {
 	case hasPending && resolved.PendingTaskID != "" && req.Agent != nil:
 		created, createErr := pendingCreator.ApproveInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID)

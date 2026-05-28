@@ -718,7 +718,11 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		return
 	}
 	for _, task := range abandoned {
-		won, statusErr := h.st.UpdateTaskStatusFrom(ctx, task.ID, "pending_approval", "denied")
+		// Mark as "expired" (not "denied") to stay consistent with
+		// the sibling active-session expiry loop above and to keep
+		// the distinction between user-driven denial and timeout in
+		// the dashboard's Tasks page.
+		won, statusErr := h.st.UpdateTaskStatusFrom(ctx, task.ID, "pending_approval", "expired")
 		if statusErr != nil {
 			h.logger.WarnContext(ctx, "inline-chat pending expiry sweep: status flip failed",
 				"task_id", task.ID, "err", statusErr)
@@ -763,6 +767,16 @@ func (h *ApprovalsHandler) resolvePendingTaskCanonicalRecord(ctx context.Context
 		}
 	}
 	if latest == nil {
+		return
+	}
+	// Gate the resolve through the same transition validator the
+	// dashboard path uses so an unexpected canonical state (e.g.
+	// already-resolved due to a parallel resolver) is logged at
+	// Error and skipped rather than silently force-overwritten.
+	if err := validateApprovalRecordTransition(latest, resolution, status); err != nil {
+		h.logger.ErrorContext(ctx, "illegal canonical inline-chat task transition",
+			"task_id", task.ID, "approval_id", latest.ID, "kind", latest.Kind,
+			"from_status", latest.Status, "resolution", resolution, "status", status, "err", err)
 		return
 	}
 	if err := h.st.ResolveApprovalRecord(ctx, latest.ID, resolution, status, time.Now().UTC()); err != nil {

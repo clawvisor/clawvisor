@@ -242,5 +242,4 @@ func TestApprove_HTTPRefusesInlineChatPending(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "INLINE_CHAT_BOUND") {
 		t.Errorf("Deny body missing INLINE_CHAT_BOUND; got %s", w.Body.String())
 	}
-	_ = ctx
 }
