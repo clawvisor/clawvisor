@@ -2041,6 +2041,11 @@ function hasProviderUpstreamKey(creds: LLMCredentialsStatus | undefined, provide
   return creds.credentials.some(c => c.provider === provider && (c.stored || c.agent_stored))
 }
 
+function hasProviderAgentKey(creds: LLMCredentialsStatus | undefined, provider: LLMProvider): boolean {
+  if (!creds) return false
+  return creds.credentials.some(c => c.provider === provider && c.agent_stored)
+}
+
 function isWizardStartActivity(entry: AuditEntry, startedAtMs: number): boolean {
   const ts = new Date(entry.timestamp).getTime()
   if (!Number.isFinite(ts) || ts < startedAtMs - 5000) return false
@@ -2417,6 +2422,8 @@ interface InstallerAnswers {
   llmProvider: LLMProvider
 }
 
+type InstallerCredentialScope = 'user' | 'agent'
+
 function defaultInstallerAnswers(target: InstallerTarget): InstallerAnswers {
   return {
     hermesConfig: 'env',
@@ -2452,9 +2459,11 @@ function InstallerSkillGuide({
   const [step, setStep] = useState(0)
   const [helper, setHelper] = useState<InstallerHelper>('claude')
   const [answers, setAnswers] = useState<InstallerAnswers>(() => defaultInstallerAnswers(target))
+  const [credentialScope, setCredentialScope] = useState<InstallerCredentialScope>('user')
   const startedAtRef = useRef(Date.now())
   useEffect(() => {
     setAnswers(defaultInstallerAnswers(target))
+    setCredentialScope('user')
   }, [target])
   const { data: agents } = useQuery({
     queryKey: ['agents', 'personal'],
@@ -2504,7 +2513,13 @@ function InstallerSkillGuide({
     queryKey: ['llm-credentials', 'user'],
     queryFn: () => api.llmCredentials.list(),
   })
-  const keyReady = hasProviderUpstreamKey(userCreds, answers.llmProvider)
+  const { data: agentCreds } = useQuery({
+    queryKey: ['llm-credentials', candidateAgent?.id ?? 'pending-agent'],
+    queryFn: () => api.llmCredentials.list(candidateAgent!.id),
+    enabled: credentialScope === 'agent' && !!candidateAgent?.id,
+  })
+  const userKeyReady = hasProviderUpstreamKey(userCreds, answers.llmProvider)
+  const agentKeyReady = hasProviderAgentKey(agentCreds, answers.llmProvider)
   // Claim takes precedence over user_id; passing both is harmless but the
   // server prefers the claim path and burns the code on consumption.
   const params = new URLSearchParams()
@@ -2520,7 +2535,7 @@ function InstallerSkillGuide({
   const wizardSteps: WizardStepDef[] = [
     { id: 'helper', title: 'Installer', done: step > 0 },
     { id: 'questions', title: 'Questions', done: step > 1 },
-    { id: 'key', title: 'API key', done: step > 2 && keyReady },
+    { id: 'key', title: 'API key', done: credentialScope === 'user' ? step > 2 && userKeyReady : agentKeyReady },
     { id: 'run', title: 'Run', done: step > 3 },
     { id: 'approve', title: 'Approve', done: step > 4 },
     { id: 'session', title: 'Start session', done: agentStarted || step > 5 },
@@ -2579,17 +2594,38 @@ function InstallerSkillGuide({
 
         {step === 2 && (
           <div className="mt-5 space-y-4">
-            <VaultKeyStep
-              provider={answers.llmProvider}
-              title={`Add ${providerLabel(answers.llmProvider)} API key`}
-              description={`${spec.label} sends model requests to Clawvisor with a cvis_ token. Clawvisor needs your upstream ${providerLabel(answers.llmProvider)} API key vaulted before ${spec.label} connects.`}
+            <QuestionToggleGroup
+              label="Which API key should Clawvisor use for this agent?"
+              value={credentialScope}
+              onChange={value => setCredentialScope(value as InstallerCredentialScope)}
+              options={[
+                ['user', 'Use user-level key'],
+                ['agent', 'Set agent-specific key'],
+              ]}
             />
+            {credentialScope === 'user' ? (
+              <VaultKeyStep
+                provider={answers.llmProvider}
+                title={`Use user-level ${providerLabel(answers.llmProvider)} key`}
+                description={`Clawvisor will use your user-level ${providerLabel(answers.llmProvider)} key for ${spec.label}. You can still add an agent-specific override later from the agent settings page.`}
+              />
+            ) : (
+              <div className="rounded border border-border-subtle bg-surface-0 px-3 py-2.5">
+                <p className="text-sm font-medium text-text-primary">Agent-specific key after approval</p>
+                <p className="text-xs text-text-tertiary mt-1 leading-relaxed">
+                  The agent-specific credential needs the new agent ID, so Clawvisor
+                  can only save it after you approve the connection request. Continue
+                  now; the wizard will ask for this {providerLabel(answers.llmProvider)}
+                  key before you start the first {spec.label} session.
+                </p>
+              </div>
+            )}
             <WizardNav
               canBack
-              canNext={keyReady}
+              canNext={credentialScope === 'agent' || userKeyReady}
               onBack={() => setStep(1)}
               onNext={() => setStep(3)}
-              nextDisabledHint={keyReady ? undefined : `Add a ${providerLabel(answers.llmProvider)} API key to continue`}
+              nextDisabledHint={credentialScope === 'user' && !userKeyReady ? `Add a user-level ${providerLabel(answers.llmProvider)} API key to continue` : undefined}
             />
           </div>
         )}
@@ -2625,7 +2661,9 @@ function InstallerSkillGuide({
             <div className="rounded border border-border-subtle bg-surface-0 px-3 py-2.5">
               <p className="text-xs font-medium text-text-primary">After approval</p>
               <p className="text-xs text-text-tertiary mt-1">
-                Start a fresh {spec.label} session to use Clawvisor-routed model calls.
+                {credentialScope === 'agent'
+                  ? `Save the agent-specific ${providerLabel(answers.llmProvider)} key, then start a fresh ${spec.label} session to use Clawvisor-routed model calls.`
+                  : `Start a fresh ${spec.label} session to use Clawvisor-routed model calls.`}
               </p>
             </div>
             <WizardNav
@@ -2643,24 +2681,44 @@ function InstallerSkillGuide({
             <div>
               <p className="text-sm font-medium text-text-primary">Start a {spec.label} session</p>
               <p className="text-xs text-text-tertiary mt-1 leading-relaxed">
-                Open the newly configured {spec.label} and send a short test
-                message through Clawvisor. This step updates when Clawvisor sees
-                routed activity from the new agent.
+                {credentialScope === 'agent' && !agentKeyReady
+                  ? `Save the agent-specific ${providerLabel(answers.llmProvider)} key first. Then open the newly configured ${spec.label} and send a short test message through Clawvisor.`
+                  : `Open the newly configured ${spec.label} and send a short test message through Clawvisor. This step updates when Clawvisor sees routed activity from the new agent.`}
               </p>
             </div>
-            <AgentStartStatus
-              liveSession={liveSession}
-              startActivity={startActivity}
-              waitingText={candidateAgent
-                ? `Watching ${candidateAgent.name} for routed activity.`
-                : 'Waiting for the approved agent to appear.'}
-            />
+            {credentialScope === 'agent' && (
+              candidateAgent ? (
+                <VaultKeyStep
+                  agentId={candidateAgent.id}
+                  provider={answers.llmProvider}
+                  title={`Set agent-specific ${providerLabel(answers.llmProvider)} key`}
+                  description={`This key will only be used for ${candidateAgent.name}. Clawvisor will prefer it over any user-level ${providerLabel(answers.llmProvider)} key.`}
+                />
+              ) : (
+                <div className="rounded border border-border-subtle bg-surface-0 px-3 py-2.5">
+                  <p className="text-xs font-medium text-text-primary">Waiting for approved agent</p>
+                  <p className="text-xs text-text-tertiary mt-1">
+                    Approve the connection request first; then Clawvisor can save an agent-specific key.
+                  </p>
+                </div>
+              )
+            )}
+            {(credentialScope !== 'agent' || agentKeyReady) && (
+              <AgentStartStatus
+                liveSession={liveSession}
+                startActivity={startActivity}
+                waitingText={candidateAgent
+                  ? `Watching ${candidateAgent.name} for routed activity.`
+                  : 'Waiting for the approved agent to appear.'}
+              />
+            )}
             <WizardNav
               canBack
-              canNext
+              canNext={credentialScope !== 'agent' || agentKeyReady}
               onBack={() => setStep(4)}
               onNext={() => setStep(6)}
               nextLabel={agentStarted ? 'Continue to settings' : "I've started it"}
+              nextDisabledHint={credentialScope === 'agent' && !agentKeyReady ? `Save an agent-specific ${providerLabel(answers.llmProvider)} key to continue` : undefined}
             />
           </div>
         )}
