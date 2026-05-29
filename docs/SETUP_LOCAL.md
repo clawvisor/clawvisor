@@ -212,7 +212,7 @@ To stop:    Ctrl+C in the server terminal
 
 Remind the user to:
 - Open the magic link to access the dashboard
-- Connect services under the **Services** tab:
+- Connect accounts under the **Accounts** tab:
   - Google (Gmail, Calendar, Drive, Contacts) — one OAuth connection covers
     all four. Requires Google OAuth credentials set via env vars — see
     [GOOGLE_OAUTH_SETUP.md](GOOGLE_OAUTH_SETUP.md).

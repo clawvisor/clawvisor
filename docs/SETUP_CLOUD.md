@@ -335,7 +335,7 @@ To connect:  ssh -L 25297:localhost:25297 user@<server-ip>
 ```
 
 Remind the user to:
-- Connect services under the **Services** tab:
+- Connect accounts under the **Accounts** tab:
   - Google (Gmail, Calendar, Drive, Contacts) — one OAuth connection covers
     all four
   - GitHub, Slack, Notion, Linear, Stripe, Twilio — activate with API

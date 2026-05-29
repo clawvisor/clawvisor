@@ -428,7 +428,7 @@ The frontend is a React 18 SPA built with Vite, TypeScript, Tailwind CSS, and sh
 
 - **Overview**: Pending approval count, quick actions
 - **Tasks**: Active/standing/pending tasks with approval controls, scope expansion management
-- **Services**: Activation status for all adapters, OAuth popup flow for Google, token input for API key services, deactivation
+- **Accounts**: Activation status for all adapters, OAuth popup flow for Google, token input for API key services, deactivation
 - **Restrictions**: Create and manage hard blocks on service/action pairs
 - **Agents**: Create agent tokens (shown once), delete agents
 - **Audit Log**: Searchable, filterable history of every gateway request

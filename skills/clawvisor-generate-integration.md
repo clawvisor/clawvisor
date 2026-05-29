@@ -65,4 +65,4 @@ Tell the user:
 1. The file path where it was saved
 2. How many actions were generated
 3. What auth setup is needed (e.g. "Set ACME_CLIENT_ID env var" or "Paste your API key when connecting")
-4. That they can connect the service on the Clawvisor dashboard Services page
+4. That they can connect the integration on the Clawvisor dashboard Accounts page

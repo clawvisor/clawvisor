@@ -241,9 +241,9 @@ Webhook:    clawvisor-webhook plugin enabled
 
 Remind the user to:
 - If Google services were configured, connect their Google account under
-  the Services tab (one OAuth connection covers Gmail, Calendar, Drive, and
+  the Accounts tab (one OAuth connection covers Gmail, Calendar, Drive, and
   Contacts)
 - For non-OAuth services (GitHub, Slack, Notion, etc.), activate them
-  under the Services tab using API keys
+  under the Accounts tab using API keys
 - Restart OpenClaw if it was already running so it picks up the new
   `.env` values and webhook plugin

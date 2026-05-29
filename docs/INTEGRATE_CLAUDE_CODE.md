@@ -123,7 +123,7 @@ curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
   "$CLAWVISOR_URL/api/skill/catalog" | head -20
 ```
 
-This should return a JSON catalog of available services. If it returns a 401,
+This should return a JSON catalog of available tools. If it returns a 401,
 the token is invalid. If it fails to connect, `CLAWVISOR_URL` is wrong or the
 server isn't running.
 
@@ -154,7 +154,7 @@ Explain how it works:
   to check status, then call `POST /api/gateway/request/{request_id}/execute`.
 
 Remind the user to:
-- Connect services in the Clawvisor dashboard under the **Services** tab
+- Connect accounts in the Clawvisor dashboard under the **Accounts** tab
   before asking Claude to use them
 - Approve tasks in the dashboard (or via Telegram) when Claude requests them
 - Optionally set restrictions in the dashboard to hard-block specific actions

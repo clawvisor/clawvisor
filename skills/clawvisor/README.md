@@ -30,7 +30,7 @@ Or deploy to Cloud Run — see `deploy/` in the repository.
 **2. Set up your account**
 
 Open http://localhost:25297, register, then:
-- **Services** → connect Google (covers Gmail, Calendar, Drive, Contacts) and/or GitHub
+- **Accounts** → connect Google (covers Gmail, Calendar, Drive, Contacts) and/or GitHub
 - **Agents** → create an agent, copy the token
 - **Policies** → optionally add policies to control what the agent can do
 
