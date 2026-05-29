@@ -52,7 +52,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	if req == nil {
 		return "Clawvisor wants to create a task.\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel." + suffix
 	}
-	purpose := strings.TrimSpace(req.Purpose)
+	purpose := sanitizeUserText(strings.TrimSpace(req.Purpose))
 	if purpose == "" {
 		return "Clawvisor wants to create a task: unnamed.\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel." + suffix
 	}
@@ -71,7 +71,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 			}
 			b.WriteString("\n  • ")
 			b.WriteString(name)
-			if why := strings.TrimSpace(tool.Why); why != "" {
+			if why := sanitizeUserText(strings.TrimSpace(tool.Why)); why != "" {
 				b.WriteString(" — ")
 				b.WriteString(wrapForPrompt(why, 80, "      "))
 			}
@@ -87,7 +87,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 			}
 			b.WriteString("\n  • ")
 			b.WriteString(host)
-			if why := strings.TrimSpace(eg.Why); why != "" {
+			if why := sanitizeUserText(strings.TrimSpace(eg.Why)); why != "" {
 				b.WriteString(" — ")
 				b.WriteString(wrapForPrompt(why, 80, "      "))
 			}
@@ -106,7 +106,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 			}
 			b.WriteString("\n  • ")
 			b.WriteString(name)
-			if why := strings.TrimSpace(cred.Why); why != "" {
+			if why := sanitizeUserText(strings.TrimSpace(cred.Why)); why != "" {
 				b.WriteString(" — ")
 				b.WriteString(wrapForPrompt(why, 80, "      "))
 			}
@@ -271,6 +271,24 @@ func humanizeExpiresIn(seconds int) string {
 	default:
 		return itoaShort(seconds) + " sec"
 	}
+}
+
+func sanitizeUserText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' {
+			return r
+		}
+		if r < 0x20 || r == 0x7F {
+			return -1
+		}
+		switch r {
+		case 0x200E, 0x200F,
+			0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+			0x2066, 0x2067, 0x2068, 0x2069:
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // wrapForPrompt soft-wraps text at column width, breaking on word
