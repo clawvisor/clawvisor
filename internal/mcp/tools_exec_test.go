@@ -88,6 +88,18 @@ func TestBuildInternalRequest_TimeoutParam(t *testing.T) {
 			wantContains: "timeout=120",
 		},
 		{
+			name:         "integer timeout value",
+			toolName:     "gateway_request",
+			extraArgs:    map[string]any{"wait": true, "timeout": 60},
+			wantContains: "timeout=60",
+		},
+		{
+			name:         "integer timeout get_task",
+			toolName:     "get_task",
+			extraArgs:    map[string]any{"task_id": "123", "wait": true, "timeout": 45},
+			wantContains: "timeout=45",
+		},
+		{
 			name:        "injection via ampersand in timeout",
 			toolName:    "gateway_request",
 			extraArgs:   map[string]any{"wait": true, "timeout": "120&admin=true"},

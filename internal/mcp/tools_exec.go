@@ -116,8 +116,14 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 			return ""
 		}
 		var s string
-		json.Unmarshal(v, &s)
-		return s
+		if err := json.Unmarshal(v, &s); err == nil {
+			return s
+		}
+		var n json.Number
+		if err := json.Unmarshal(v, &n); err == nil {
+			return n.String()
+		}
+		return ""
 	}
 
 	switch toolName {
