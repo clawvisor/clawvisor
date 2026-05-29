@@ -144,7 +144,8 @@ func TestInstallerHermesRender(t *testing.T) {
 	assertContainsAll(t, body,
 		"# Connect Hermes to Clawvisor",
 		"swap mode",
-		"vault their upstream",
+		"dashboard step before this skill",
+		"upstream OpenAI API key",
 		"OPENAI_BASE_URL=",
 		"/api/v1",
 		"~/.hermes/config.yaml",
@@ -165,6 +166,7 @@ func TestInstallerOpenClawRender(t *testing.T) {
 	assertContainsAll(t, body,
 		"# Connect OpenClaw to Clawvisor",
 		"LLM base URL",
+		"Anthropic API key",
 		"OpenClaw running mode: host",
 		"## 1. Confirm how to run OpenClaw onboarding",
 		"## 2. Check for an existing token",
@@ -194,7 +196,7 @@ func TestInstallerOpenClawRender(t *testing.T) {
 
 func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
-	body := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12&openclaw_mode=remote&policy_setup=after&task_approval=low")
+	body := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12&openclaw_mode=remote&task_approval=low")
 
 	assertContainsAll(t, body,
 		"Dashboard answers",

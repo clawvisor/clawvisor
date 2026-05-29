@@ -56,7 +56,6 @@ type installerCtx struct {
 	AliasMode       string
 	HermesConfig    string
 	OpenClawMode    string
-	PolicySetup     string
 	TaskApproval    string
 }
 
@@ -82,7 +81,6 @@ func (h *InstallerHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	ctx.AliasMode = queryChoice(r, "alias_mode", "safe", "none", "safe", "yolo")
 	ctx.HermesConfig = queryChoice(r, "hermes_config", "env", "env", "file")
 	ctx.OpenClawMode = queryChoice(r, "openclaw_mode", "host", "host", "docker", "remote")
-	ctx.PolicySetup = queryChoice(r, "policy_setup", "after", "after", "later")
 	ctx.TaskApproval = queryChoice(r, "task_approval", "manual", "manual", "low", "medium")
 
 	var body string
@@ -237,9 +235,6 @@ func sectionDashboardAnswers(ctx installerCtx, lines ...string) string {
 		if line != "" {
 			fmt.Fprintf(&b, "- %s\n", line)
 		}
-	}
-	if ctx.PolicySetup == "after" {
-		fmt.Fprintf(&b, "- After installation, remind the user to configure restrictions in the Clawvisor dashboard.\n")
 	}
 	switch ctx.TaskApproval {
 	case "low":
@@ -587,8 +582,8 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "remove yourself.\n\n")
 	fmt.Fprintf(&b, "Hermes runs in **swap mode**: Hermes is OpenAI-compatible and presents the\n")
 	fmt.Fprintf(&b, "Clawvisor agent token as `OPENAI_API_KEY`; Clawvisor swaps in the user's\n")
-	fmt.Fprintf(&b, "*vaulted upstream key* on each call. **The user must vault their upstream\n")
-	fmt.Fprintf(&b, "OpenAI key in the Clawvisor dashboard before Hermes can make any calls.**\n\n")
+	fmt.Fprintf(&b, "*vaulted upstream key* on each call. The dashboard step before this skill\n")
+	fmt.Fprintf(&b, "collects the user's upstream OpenAI API key.\n\n")
 	fmt.Fprintf(&b, "Set the endpoint:\n\n```bash\nexport CLAWVISOR_URL=%s\n```\n\n", ctx.ClawvisorURL)
 
 	b.WriteString(sectionProbe("hermes", nil))
@@ -596,26 +591,9 @@ func renderHermesInstaller(ctx installerCtx) string {
 	b.WriteString(sectionMint("hermes", ctx.ClawvisorURL, ctx.Claim, ctx.UserID))
 	b.WriteString(sectionPersistToken("hermes", "hermes"))
 
-	fmt.Fprintf(&b, "## 5. Ask the user to vault their upstream key\n\n")
-	fmt.Fprintf(&b, "Hermes can't pass through to OpenAI without a vaulted upstream key. Direct\n")
-	fmt.Fprintf(&b, "the user to the dashboard:\n\n")
-	fmt.Fprintf(&b, "    %s/dashboard/agents (find the just-approved `hermes` agent → \"Vault upstream key\")\n\n", ctx.ClawvisorURL)
-	fmt.Fprintf(&b, "Poll the agent's credential status until it reports at least one stored key:\n\n")
-	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "AGENT_ID=$(echo \"$RESPONSE\" | jq -r .agent_id)  # captured at mint time\n")
-	fmt.Fprintf(&b, "while :; do\n")
-	fmt.Fprintf(&b, "  STORED=$(curl -sf -H \"X-Clawvisor-Agent-Token: $TOKEN\" \\\n")
-	fmt.Fprintf(&b, "    \"%s/api/agents/$AGENT_ID/llm-credentials\" | jq '[.credentials[] | select(.stored or .agent_stored)] | length')\n", ctx.ClawvisorURL)
-	fmt.Fprintf(&b, "  [ \"${STORED:-0}\" -gt 0 ] && break\n")
-	fmt.Fprintf(&b, "  sleep 3\n")
-	fmt.Fprintf(&b, "done\n")
-	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "If the user wants to skip vaulting (e.g. they'll do it later or use a\n")
-	fmt.Fprintf(&b, "user-level credential), let them — just warn that calls will fail until\n")
-	fmt.Fprintf(&b, "a key is stored.\n\n")
 	b.WriteString(sectionDashboardAnswers(ctx, "Hermes configuration mode: "+ctx.HermesConfig))
 
-	fmt.Fprintf(&b, "## 6. Configure Hermes\n\n")
+	fmt.Fprintf(&b, "## 5. Configure Hermes\n\n")
 	fmt.Fprintf(&b, "Hermes reads `~/.hermes/config.yaml`. Use the env-var run pattern for\n")
 	fmt.Fprintf(&b, "dynamic token rotation, or persist the config for set-and-forget. Offer\n")
 	fmt.Fprintf(&b, "both — the user picks.\n\n")
@@ -642,7 +620,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "The config-file path bakes the current token into the file; re-bootstrapping\n")
 	fmt.Fprintf(&b, "the same agent rotates the token and the user must re-run this snippet.\n\n")
 
-	fmt.Fprintf(&b, "## 6.5. Offer a shell alias\n\n")
+	fmt.Fprintf(&b, "## 5.5. Offer a shell alias\n\n")
 	fmt.Fprintf(&b, "If they went the env-var route, a shell function keeps it ergonomic:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "cat >> ~/.zshrc <<'EOF'\n")
@@ -662,7 +640,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 2. Remove the alias from your shell rc file if you added one.
 3. Delete the token file: `+"`rm ~/.clawvisor/agents/hermes.json`"+`.
 4. Revoke the agent in the Clawvisor dashboard under Agents → hermes → Delete.
-5. Optional: remove the vaulted upstream key from the agent's credentials panel.
+5. Optional: remove the user-level OpenAI key from Clawvisor credentials if no other agents use it.
 `))
 
 	b.WriteString(sectionSelfUninstall("hermes", helperInstallerCleanupCommands()))
@@ -678,7 +656,8 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "running Clawvisor at `%s`. The setup is intentionally simple: point\n", ctx.ClawvisorURL)
 	fmt.Fprintf(&b, "OpenClaw's LLM base URL at Clawvisor's Anthropic-compatible endpoint and\n")
 	fmt.Fprintf(&b, "use the minted Clawvisor agent token as the custom API key. This skill is\n")
-	fmt.Fprintf(&b, "one-shot.\n\n")
+	fmt.Fprintf(&b, "one-shot. The dashboard step before this skill collects the user's upstream\n")
+	fmt.Fprintf(&b, "Anthropic API key so Clawvisor can forward OpenClaw's model calls.\n\n")
 	fmt.Fprintf(&b, "Set the endpoint:\n\n```bash\nexport CLAWVISOR_URL=%s\n```\n\n", ctx.ClawvisorURL)
 	b.WriteString(sectionDashboardAnswers(ctx, "OpenClaw running mode: "+ctx.OpenClawMode))
 

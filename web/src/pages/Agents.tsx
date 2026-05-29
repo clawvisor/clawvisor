@@ -1763,6 +1763,8 @@ client = OpenAI(
 // Pending Connections card. Completion is detected via the existing
 // ['agents'] query: the step becomes done when an agent matching the chosen
 // name exists.
+type LLMProvider = 'anthropic' | 'openai'
+
 function BootstrapApproveStep({
   clawvisorURL, claim, agentName, setAgentName, onCopy, onAdvance,
 }: {
@@ -1915,19 +1917,34 @@ function BootstrapApproveStep({
   )
 }
 
+type LLMCredentialsStatus = { credentials: { provider: string; stored: boolean; agent_stored?: boolean; agent_id?: string }[] }
+
+function providerLabel(provider: LLMProvider): string {
+  return provider === 'anthropic' ? 'Anthropic' : 'OpenAI'
+}
+
 // VaultKeyStep collects the upstream Anthropic / OpenAI key that the proxy
-// swaps in when forwarding requests for swap-mode harnesses. Completion
-// requires at least one provider to have a key stored (user-level OR
-// agent-scoped). The user can also skip if they've vaulted the key
-// elsewhere (or via the agent detail page) — but the step warns them.
-function VaultKeyStep({ agentId }: { agentId: string }) {
+// swaps in when forwarding requests. With an agentId, it stores an
+// agent-scoped override; without one, it stores the user-level key needed
+// before swap-mode agents connect.
+function VaultKeyStep({
+  agentId,
+  provider,
+  title = 'Vault upstream key',
+  description,
+}: {
+  agentId?: string
+  provider?: LLMProvider
+  title?: string
+  description?: string
+}) {
   const qc = useQueryClient()
   const [editingProvider, setEditingProvider] = useState<string | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const { data: creds } = useQuery({
-    queryKey: ['llm-credentials', agentId],
+    queryKey: ['llm-credentials', agentId ?? 'user'],
     queryFn: () => api.llmCredentials.list(agentId),
   })
 
@@ -1935,25 +1952,36 @@ function VaultKeyStep({ agentId }: { agentId: string }) {
     mutationFn: (params: { provider: string; key: string }) =>
       api.llmCredentials.set(params.provider, params.key, agentId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['llm-credentials', agentId] })
+      qc.invalidateQueries({ queryKey: ['llm-credentials', agentId ?? 'user'] })
       setEditingProvider(null)
       setApiKey('')
       setError(null)
     },
     onError: (err: Error) => setError(err.message),
   })
+  const visibleCreds = provider
+    ? creds?.credentials.filter(c => c.provider === provider)
+    : creds?.credentials
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-text-secondary">
-        Clawvisor swaps your <code className="font-mono">cvis_…</code> token for an upstream
-        Anthropic or OpenAI key on each call. Vault at least one key — either now (agent-scoped)
-        or globally on the <a href="/dashboard/credentials" className="text-brand hover:underline">Credentials</a> page.
-      </p>
+      <div>
+        <p className="text-sm font-medium text-text-primary">{title}</p>
+        {description ? (
+          <p className="text-sm text-text-secondary mt-1">{description}</p>
+        ) : (
+          <p className="text-sm text-text-secondary mt-1">
+            Clawvisor swaps your <code className="font-mono">cvis_…</code> token for an upstream
+            Anthropic or OpenAI key on each call. Vault at least one key — either now
+            {agentId ? ' for this agent' : ' as a user-level key'}
+            {' '}or globally on the <a href="/dashboard/credentials" className="text-brand hover:underline">Credentials</a> page.
+          </p>
+        )}
+      </div>
 
       {error && <p className="text-xs text-danger">{error}</p>}
 
-      {creds?.credentials.map(c => (
+      {visibleCreds?.map(c => (
         <div key={c.provider} className="rounded border border-border-default bg-surface-1 p-3 space-y-2">
           <div className="flex items-center justify-between">
             <div>
@@ -1972,7 +2000,7 @@ function VaultKeyStep({ agentId }: { agentId: string }) {
               onClick={() => { setEditingProvider(c.provider); setApiKey(''); setError(null) }}
               className="text-xs px-3 py-1 rounded border border-brand/30 text-brand hover:bg-brand/10"
             >
-              {c.agent_stored ? 'Replace' : c.stored ? 'Override for this agent' : 'Set key'}
+              {c.agent_stored ? 'Replace' : c.stored ? (agentId ? 'Override for this agent' : 'Replace') : 'Set key'}
             </button>
           </div>
           {editingProvider === c.provider && (
@@ -2009,9 +2037,14 @@ function VaultKeyStep({ agentId }: { agentId: string }) {
 
 // Whether the upstream-key step is satisfied: at least one provider has a key
 // available, whether scoped to this agent or inherited from the user.
-function hasAnyUpstreamKey(creds: { credentials: { stored: boolean; agent_stored?: boolean }[] } | undefined): boolean {
+function hasAnyUpstreamKey(creds: LLMCredentialsStatus | undefined): boolean {
   if (!creds) return false
   return creds.credentials.some(c => c.stored || c.agent_stored)
+}
+
+function hasProviderUpstreamKey(creds: LLMCredentialsStatus | undefined, provider: LLMProvider): boolean {
+  if (!creds) return false
+  return creds.credentials.some(c => c.provider === provider && (c.stored || c.agent_stored))
 }
 
 function isWizardStartActivity(entry: AuditEntry, startedAtMs: number): boolean {
@@ -2020,6 +2053,12 @@ function isWizardStartActivity(entry: AuditEntry, startedAtMs: number): boolean 
   if (entry.activity_kind === 'runtime') return true
   if (entry.action?.startsWith('lite_proxy.')) return true
   return false
+}
+
+function isUpstreamCredentialIssue(entry: AuditEntry): boolean {
+  return entry.outcome === 'upstream_auth_missing_for_passthrough' ||
+    entry.outcome === 'upstream_key_missing' ||
+    entry.error_msg?.includes('API key configured') === true
 }
 
 function useAgentStartActivity(agentId: string | null | undefined, startedAtMs: number) {
@@ -2128,6 +2167,14 @@ function ManualProxyCLISetupGuide({
   }, [agentId, sessions])
   const startActivity = useAgentStartActivity(agentId, startedAtRef.current)
   const agentStarted = !!liveSession || !!startActivity
+  const upstreamProvider: LLMProvider = target === 'codex' ? 'openai' : 'anthropic'
+  const authIssueActivity = startActivity && isUpstreamCredentialIssue(startActivity) ? startActivity : undefined
+  const { data: userCreds } = useQuery({
+    queryKey: ['llm-credentials', 'user'],
+    queryFn: () => api.llmCredentials.list(),
+    enabled: !!authIssueActivity,
+  })
+  const authIssueKeyReady = hasProviderUpstreamKey(userCreds, upstreamProvider)
 
   const tokenPath = `~/.clawvisor/agents/${agentName}.json`
   const configureCommand = `mkdir -p ~/.codex
@@ -2240,13 +2287,30 @@ EOF`
                 startActivity={startActivity}
                 waitingText="Run the command above and send a short message. This updates automatically once Clawvisor sees the request."
               />
+              {authIssueActivity && (
+                <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-3">
+                  <p className="text-sm font-medium text-text-primary">API key needed</p>
+                  <p className="text-xs text-text-secondary mt-1">
+                    {meta.label} reached Clawvisor, but the first model request did not include usable upstream auth.
+                    Add a {providerLabel(upstreamProvider)} API key, then run the session command again.
+                  </p>
+                  <div className="mt-3">
+                    <VaultKeyStep
+                      provider={upstreamProvider}
+                      title={`Add ${providerLabel(upstreamProvider)} API key`}
+                      description={`Clawvisor will use this user-level ${providerLabel(upstreamProvider)} key only when ${meta.label}'s own upstream auth is unavailable.`}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
             <WizardNav
               canBack
-              canNext
+              canNext={!authIssueActivity || authIssueKeyReady}
               onBack={() => setStep(target === 'codex' ? 1 : 0)}
               onNext={() => setStep(3)}
               nextLabel={agentStarted ? 'Continue to alias & settings' : "I've started it"}
+              nextDisabledHint={authIssueActivity && !authIssueKeyReady ? `Add a ${providerLabel(upstreamProvider)} API key to continue` : undefined}
             />
           </>
         )}
@@ -2313,16 +2377,19 @@ type InstallerHelper = 'claude' | 'codex'
 interface InstallerSpec {
   label: string
   baseName: string
+  provider: LLMProvider
 }
 
 const INSTALLER_SPECS: Record<InstallerTarget, InstallerSpec> = {
   hermes: {
     label: 'Hermes',
     baseName: 'hermes',
+    provider: 'openai',
   },
   openclaw: {
     label: 'OpenClaw',
     baseName: 'openclaw',
+    provider: 'anthropic',
   },
 }
 
@@ -2353,7 +2420,6 @@ const INSTALLER_HELPERS: Record<InstallerHelper, {
 interface InstallerAnswers {
   hermesConfig: 'env' | 'file'
   openclawMode: 'host' | 'docker' | 'remote'
-  policySetup: 'later' | 'after'
   taskApproval: 'manual' | 'low' | 'medium'
 }
 
@@ -2361,13 +2427,11 @@ function defaultInstallerAnswers(): InstallerAnswers {
   return {
     hermesConfig: 'env',
     openclawMode: 'host',
-    policySetup: 'after',
     taskApproval: 'manual',
   }
 }
 
 function applyInstallerAnswerParams(params: URLSearchParams, target: InstallerTarget, answers: InstallerAnswers) {
-  params.set('policy_setup', answers.policySetup)
   params.set('task_approval', answers.taskApproval)
   if (target === 'hermes') params.set('hermes_config', answers.hermesConfig)
   if (target === 'openclaw') params.set('openclaw_mode', answers.openclawMode)
@@ -2419,6 +2483,11 @@ function InstallerSkillGuide({
   }, [candidateAgent?.id, sessions])
   const startActivity = useAgentStartActivity(candidateAgent?.id, startedAtRef.current)
   const agentStarted = !!liveSession || !!startActivity
+  const { data: userCreds } = useQuery({
+    queryKey: ['llm-credentials', 'user'],
+    queryFn: () => api.llmCredentials.list(),
+  })
+  const keyReady = hasProviderUpstreamKey(userCreds, spec.provider)
   // Claim takes precedence over user_id; passing both is harmless but the
   // server prefers the claim path and burns the code on consumption.
   const params = new URLSearchParams()
@@ -2434,10 +2503,11 @@ function InstallerSkillGuide({
   const wizardSteps: WizardStepDef[] = [
     { id: 'helper', title: 'Installer', done: step > 0 },
     { id: 'questions', title: 'Questions', done: step > 1 },
-    { id: 'run', title: 'Run', done: step > 2 },
-    { id: 'approve', title: 'Approve', done: step > 3 },
-    { id: 'session', title: 'Start session', done: agentStarted || step > 4 },
-    { id: 'settings', title: 'Settings', done: step > 5 },
+    { id: 'key', title: 'API key', done: keyReady },
+    { id: 'run', title: 'Run', done: step > 3 },
+    { id: 'approve', title: 'Approve', done: step > 4 },
+    { id: 'session', title: 'Start session', done: agentStarted || step > 5 },
+    { id: 'settings', title: 'Settings', done: step > 6 },
   ]
 
   return (
@@ -2504,6 +2574,23 @@ function InstallerSkillGuide({
 
         {step === 2 && (
           <div className="mt-5 space-y-4">
+            <VaultKeyStep
+              provider={spec.provider}
+              title={`Add ${providerLabel(spec.provider)} API key`}
+              description={`${spec.label} sends model requests to Clawvisor with a cvis_ token. Clawvisor needs your upstream ${providerLabel(spec.provider)} API key vaulted before ${spec.label} connects.`}
+            />
+            <WizardNav
+              canBack
+              canNext={keyReady}
+              onBack={() => setStep(1)}
+              onNext={() => setStep(3)}
+              nextDisabledHint={keyReady ? undefined : `Add a ${providerLabel(spec.provider)} API key to continue`}
+            />
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="mt-5 space-y-4">
             <div>
               <p className="text-sm font-medium text-text-primary">{helperSpec.title}</p>
               <p className="text-xs text-text-tertiary mt-1">{helperSpec.hint(spec.label)}</p>
@@ -2512,14 +2599,14 @@ function InstallerSkillGuide({
             <WizardNav
               canBack
               canNext
-              onBack={() => setStep(1)}
-              onNext={() => setStep(3)}
+              onBack={() => setStep(2)}
+              onNext={() => setStep(4)}
               nextLabel="I've run this"
             />
           </div>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <div className="mt-5 space-y-4">
             <div>
               <p className="text-sm font-medium text-text-primary">Approve and let the helper finish</p>
@@ -2539,14 +2626,14 @@ function InstallerSkillGuide({
             <WizardNav
               canBack
               canNext
-              onBack={() => setStep(2)}
-              onNext={() => setStep(4)}
+              onBack={() => setStep(3)}
+              onNext={() => setStep(5)}
               nextLabel="Continue"
             />
           </div>
         )}
 
-        {step === 4 && (
+        {step === 5 && (
           <div className="mt-5 space-y-4">
             <div>
               <p className="text-sm font-medium text-text-primary">Start a {spec.label} session</p>
@@ -2566,14 +2653,14 @@ function InstallerSkillGuide({
             <WizardNav
               canBack
               canNext
-              onBack={() => setStep(3)}
-              onNext={() => setStep(5)}
+              onBack={() => setStep(4)}
+              onNext={() => setStep(6)}
               nextLabel={agentStarted ? 'Continue to settings' : "I've started it"}
             />
           </div>
         )}
 
-        {step === 5 && (
+        {step === 6 && (
           <div className="mt-5 space-y-4">
             <div className="rounded border border-border-subtle bg-surface-0 px-3 py-2.5">
               <p className="text-xs font-medium text-text-primary">Configure settings</p>
@@ -2591,18 +2678,18 @@ function InstallerSkillGuide({
             <WizardNav
               canBack
               canNext
-              onBack={() => setStep(4)}
-              onNext={() => setStep(6)}
+              onBack={() => setStep(5)}
+              onNext={() => setStep(7)}
               nextLabel="Done"
             />
           </div>
         )}
 
-        {step >= 6 && (
+        {step >= 7 && (
           <div className="mt-5 rounded border border-success/30 bg-success/10 px-4 py-3">
             <p className="text-sm font-medium text-success">Setup flow complete.</p>
             <button
-              onClick={() => setStep(5)}
+              onClick={() => setStep(6)}
               className="mt-2 text-xs text-brand hover:underline"
             >
               Show settings again
@@ -2637,7 +2724,7 @@ function InstallerSetupQuestions({
   }
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+      <div>
         <div>
           <p className="text-sm font-medium text-text-primary">Answer setup questions</p>
           <p className="text-xs text-text-tertiary mt-1">
@@ -2645,12 +2732,6 @@ function InstallerSetupQuestions({
             follows your preferences instead of asking again.
           </p>
         </div>
-        <Link
-          to="/dashboard/policy"
-          className="text-xs font-medium text-brand hover:text-brand-hover whitespace-nowrap"
-        >
-          Open restrictions
-        </Link>
       </div>
 
       {target === 'hermes' && (
@@ -2678,15 +2759,6 @@ function InstallerSetupQuestions({
         />
       )}
 
-      <QuestionSelect
-        label="When should restrictions be configured?"
-        value={answers.policySetup}
-        onChange={value => set('policySetup', value as InstallerAnswers['policySetup'])}
-        options={[
-          ['after', 'Show policy setup after install'],
-          ['later', 'Skip for now'],
-        ]}
-      />
       <QuestionSelect
         label="Task auto-approval default"
         value={answers.taskApproval}
@@ -2759,7 +2831,16 @@ function ClaudeDesktopProfileGuide() {
   const qc = useQueryClient()
   const [isDownloading, setIsDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
+  const { data: userCreds } = useQuery({
+    queryKey: ['llm-credentials', 'user'],
+    queryFn: () => api.llmCredentials.list(),
+  })
+  const keyReady = hasProviderUpstreamKey(userCreds, 'anthropic')
   const downloadProfile = async () => {
+    if (!keyReady) {
+      setDownloadError('Add an Anthropic API key before downloading the profile.')
+      return
+    }
     setIsDownloading(true)
     setDownloadError(null)
     try {
@@ -2790,25 +2871,27 @@ function ClaudeDesktopProfileGuide() {
         the agent and bakes the token into the file.
       </p>
 
-      <div className="rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-text-secondary">
-        <p>
-          <strong>Before installing:</strong> vault your upstream Anthropic key
-          under <strong>Your Agents</strong> below. Claude Desktop runs in swap
-          mode — Clawvisor needs the upstream key to forward the call. Without
-          one, inference fails until you add it.
-        </p>
-      </div>
-
       <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-5">
         <div className="flex items-start gap-3">
           <StepNumber n={1} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <VaultKeyStep
+              provider="anthropic"
+              title="Add Anthropic API key"
+              description="Claude Desktop uses a configuration profile and sends model requests to Clawvisor with a cvis_ token. Clawvisor needs your upstream Anthropic API key vaulted before the profile is installed."
+            />
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <StepNumber n={2} />
           <div className="space-y-1.5 min-w-0 flex-1">
             <p className="text-sm font-medium text-text-primary">Download the profile</p>
             <button
               type="button"
               onClick={downloadProfile}
-              disabled={isDownloading}
-              className="inline-block bg-brand text-surface-0 font-medium rounded px-5 py-2 text-sm hover:bg-brand-strong"
+              disabled={isDownloading || !keyReady}
+              className="inline-block bg-brand text-surface-0 font-medium rounded px-5 py-2 text-sm hover:bg-brand-strong disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isDownloading ? 'Preparing Profile…' : 'Download Configuration Profile'}
             </button>
@@ -2824,7 +2907,7 @@ function ClaudeDesktopProfileGuide() {
         </div>
 
         <div className="flex items-start gap-3">
-          <StepNumber n={2} />
+          <StepNumber n={3} />
           <div className="space-y-1.5 min-w-0 flex-1">
             <p className="text-sm font-medium text-text-primary">Open the file</p>
             <p className="text-xs text-text-tertiary">
@@ -2837,7 +2920,7 @@ function ClaudeDesktopProfileGuide() {
         </div>
 
         <div className="flex items-start gap-3">
-          <StepNumber n={3} />
+          <StepNumber n={4} />
           <div className="space-y-1.5 min-w-0 flex-1">
             <p className="text-sm font-medium text-text-primary">Restart Claude Desktop</p>
             <p className="text-xs text-text-tertiary">
