@@ -51,6 +51,7 @@ type installerCtx struct {
 	UserID          string // optional; rendered into the install context fallback path
 	Claim           string // optional; rendered into the mint URL
 	IsLocal         bool
+	LLMProvider     string
 	ClaudeScope     string
 	ClaudeCurlAllow string
 	AliasMode       string
@@ -81,6 +82,11 @@ func (h *InstallerHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	ctx.AliasMode = queryChoice(r, "alias_mode", "safe", "none", "safe", "yolo")
 	ctx.HermesConfig = queryChoice(r, "hermes_config", "env", "env", "file")
 	ctx.OpenClawMode = queryChoice(r, "openclaw_mode", "host", "host", "docker", "remote")
+	defaultProvider := "anthropic"
+	if target == InstallerHermes {
+		defaultProvider = "openai"
+	}
+	ctx.LLMProvider = queryChoice(r, "llm_provider", defaultProvider, "anthropic", "openai")
 	ctx.TaskApproval = queryChoice(r, "task_approval", "manual", "manual", "low", "medium")
 
 	var body string
@@ -110,6 +116,41 @@ func queryChoice(r *http.Request, key, fallback string, allowed ...string) strin
 		}
 	}
 	return fallback
+}
+
+func installerProviderDisplayName(provider string) string {
+	if provider == "openai" {
+		return "OpenAI"
+	}
+	return "Anthropic"
+}
+
+func providerBasePath(provider string) string {
+	if provider == "openai" {
+		return "/api/v1"
+	}
+	return "/api"
+}
+
+func providerDefaultModel(provider string) string {
+	if provider == "openai" {
+		return "gpt-5.4"
+	}
+	return "claude-sonnet-4-6"
+}
+
+func providerBaseEnv(provider string) string {
+	if provider == "openai" {
+		return "OPENAI_BASE_URL"
+	}
+	return "ANTHROPIC_BASE_URL"
+}
+
+func providerKeyEnv(provider string) string {
+	if provider == "openai" {
+		return "OPENAI_API_KEY"
+	}
+	return "ANTHROPIC_API_KEY"
 }
 
 func (h *InstallerHandler) resolveURL(r *http.Request) string {
@@ -575,15 +616,19 @@ func renderCodexInstaller(ctx installerCtx) string {
 
 func renderHermesInstaller(ctx installerCtx) string {
 	var b strings.Builder
+	providerName := installerProviderDisplayName(ctx.LLMProvider)
+	basePath := providerBasePath(ctx.LLMProvider)
+	baseEnv := providerBaseEnv(ctx.LLMProvider)
+	keyEnv := providerKeyEnv(ctx.LLMProvider)
 	b.WriteString(installerFrontmatter("Hermes"))
 	fmt.Fprintf(&b, "# Connect Hermes to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are walking the user through connecting Hermes (Nous Research) to a\n")
 	fmt.Fprintf(&b, "running Clawvisor instance at `%s`. One-shot — do, verify, offer to\n", ctx.ClawvisorURL)
 	fmt.Fprintf(&b, "remove yourself.\n\n")
-	fmt.Fprintf(&b, "Hermes runs in **swap mode**: Hermes is OpenAI-compatible and presents the\n")
-	fmt.Fprintf(&b, "Clawvisor agent token as `OPENAI_API_KEY`; Clawvisor swaps in the user's\n")
+	fmt.Fprintf(&b, "Hermes runs in **swap mode**: Hermes presents the Clawvisor agent token as\n")
+	fmt.Fprintf(&b, "`%s`; Clawvisor swaps in the user's\n", keyEnv)
 	fmt.Fprintf(&b, "*vaulted upstream key* on each call. The dashboard step before this skill\n")
-	fmt.Fprintf(&b, "collects the user's upstream OpenAI API key.\n\n")
+	fmt.Fprintf(&b, "collects the user's upstream %s API key.\n\n", providerName)
 	fmt.Fprintf(&b, "Set the endpoint:\n\n```bash\nexport CLAWVISOR_URL=%s\n```\n\n", ctx.ClawvisorURL)
 
 	b.WriteString(sectionProbe("hermes", nil))
@@ -591,7 +636,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 	b.WriteString(sectionMint("hermes", ctx.ClawvisorURL, ctx.Claim, ctx.UserID))
 	b.WriteString(sectionPersistToken("hermes", "hermes"))
 
-	b.WriteString(sectionDashboardAnswers(ctx, "Hermes configuration mode: "+ctx.HermesConfig))
+	b.WriteString(sectionDashboardAnswers(ctx, "LLM provider: "+providerName, "Hermes configuration mode: "+ctx.HermesConfig))
 
 	fmt.Fprintf(&b, "## 5. Configure Hermes\n\n")
 	fmt.Fprintf(&b, "Hermes reads `~/.hermes/config.yaml`. Use the env-var run pattern for\n")
@@ -604,8 +649,8 @@ func renderHermesInstaller(ctx installerCtx) string {
 	}
 	fmt.Fprintf(&b, "**Env-var (dynamic, recommended):**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "OPENAI_BASE_URL=%s/api/v1 \\\n", ctx.ClawvisorURL)
-	fmt.Fprintf(&b, "OPENAI_API_KEY=$(jq -r .token ~/.clawvisor/agents/hermes.json) \\\n")
+	fmt.Fprintf(&b, "%s=%s%s \\\n", baseEnv, ctx.ClawvisorURL, basePath)
+	fmt.Fprintf(&b, "%s=$(jq -r .token ~/.clawvisor/agents/hermes.json) \\\n", keyEnv)
 	fmt.Fprintf(&b, "hermes chat\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**Config file (persistent):**\n\n")
@@ -613,7 +658,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "mkdir -p ~/.hermes && cat > ~/.hermes/config.yaml <<EOF\n")
 	fmt.Fprintf(&b, "model:\n")
 	fmt.Fprintf(&b, "  provider: custom\n")
-	fmt.Fprintf(&b, "  base_url: \"%s/api/v1\"\n", ctx.ClawvisorURL)
+	fmt.Fprintf(&b, "  base_url: \"%s%s\"\n", ctx.ClawvisorURL, basePath)
 	fmt.Fprintf(&b, "  api_key: \"$(jq -r .token ~/.clawvisor/agents/hermes.json)\"\n")
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "```\n\n")
@@ -625,8 +670,8 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "cat >> ~/.zshrc <<'EOF'\n")
 	fmt.Fprintf(&b, "hermes-cv() {\n")
-	fmt.Fprintf(&b, "  OPENAI_BASE_URL=%s/api/v1 \\\n", ctx.ClawvisorURL)
-	fmt.Fprintf(&b, "  OPENAI_API_KEY=$(jq -r .token ~/.clawvisor/agents/hermes.json) \\\n")
+	fmt.Fprintf(&b, "  %s=%s%s \\\n", baseEnv, ctx.ClawvisorURL, basePath)
+	fmt.Fprintf(&b, "  %s=$(jq -r .token ~/.clawvisor/agents/hermes.json) \\\n", keyEnv)
 	fmt.Fprintf(&b, "  hermes \"$@\"\n")
 	fmt.Fprintf(&b, "}\n")
 	fmt.Fprintf(&b, "EOF\n")
@@ -636,11 +681,11 @@ func renderHermesInstaller(ctx installerCtx) string {
 
 	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL))
 
-	b.WriteString(sectionUninstallDoc("hermes", `1. Remove the `+"`model:`"+` block from `+"`~/.hermes/config.yaml`"+` (or unset OPENAI_BASE_URL/OPENAI_API_KEY if you used env vars).
+	b.WriteString(sectionUninstallDoc("hermes", `1. Remove the `+"`model:`"+` block from `+"`~/.hermes/config.yaml`"+` (or unset `+"`"+baseEnv+"`"+`/`+"`"+keyEnv+"`"+` if you used env vars).
 2. Remove the alias from your shell rc file if you added one.
 3. Delete the token file: `+"`rm ~/.clawvisor/agents/hermes.json`"+`.
 4. Revoke the agent in the Clawvisor dashboard under Agents → hermes → Delete.
-5. Optional: remove the user-level OpenAI key from Clawvisor credentials if no other agents use it.
+5. Optional: remove the user-level `+providerName+` key from Clawvisor credentials if no other agents use it.
 `))
 
 	b.WriteString(sectionSelfUninstall("hermes", helperInstallerCleanupCommands()))
@@ -650,21 +695,22 @@ func renderHermesInstaller(ctx installerCtx) string {
 
 func renderOpenClawInstaller(ctx installerCtx) string {
 	var b strings.Builder
+	providerName := installerProviderDisplayName(ctx.LLMProvider)
 	b.WriteString(installerFrontmatter("OpenClaw"))
 	fmt.Fprintf(&b, "# Connect OpenClaw to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are walking the user through connecting an OpenClaw instance to a\n")
 	fmt.Fprintf(&b, "running Clawvisor at `%s`. The setup is intentionally simple: point\n", ctx.ClawvisorURL)
-	fmt.Fprintf(&b, "OpenClaw's LLM base URL at Clawvisor's Anthropic-compatible endpoint and\n")
+	fmt.Fprintf(&b, "OpenClaw's LLM base URL at Clawvisor's %s-compatible endpoint and\n", providerName)
 	fmt.Fprintf(&b, "use the minted Clawvisor agent token as the custom API key. This skill is\n")
 	fmt.Fprintf(&b, "one-shot. The dashboard step before this skill collects the user's upstream\n")
-	fmt.Fprintf(&b, "Anthropic API key so Clawvisor can forward OpenClaw's model calls.\n\n")
+	fmt.Fprintf(&b, "%s API key so Clawvisor can forward OpenClaw's model calls.\n\n", providerName)
 	fmt.Fprintf(&b, "Set the endpoint:\n\n```bash\nexport CLAWVISOR_URL=%s\n```\n\n", ctx.ClawvisorURL)
-	b.WriteString(sectionDashboardAnswers(ctx, "OpenClaw running mode: "+ctx.OpenClawMode))
+	b.WriteString(sectionDashboardAnswers(ctx, "LLM provider: "+providerName, "OpenClaw running mode: "+ctx.OpenClawMode))
 
 	if ctx.OpenClawMode == "remote" {
-		b.WriteString(sectionOpenClawRemoteProbe())
+		b.WriteString(sectionOpenClawRemoteProbe(ctx.LLMProvider))
 	} else {
-		b.WriteString(sectionOpenClawLocalProbe(ctx.OpenClawMode))
+		b.WriteString(sectionOpenClawLocalProbe(ctx.OpenClawMode, ctx.LLMProvider))
 	}
 
 	b.WriteString(sectionReuseCheck("openclaw", ctx.ClawvisorURL))
@@ -674,9 +720,9 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	b.WriteString(sectionPersistToken("openclaw", "openclaw"))
 
 	if ctx.OpenClawMode == "remote" {
-		b.WriteString(sectionOpenClawRemoteConfigure(ctx.ClawvisorURL))
+		b.WriteString(sectionOpenClawRemoteConfigure(ctx.ClawvisorURL, ctx.LLMProvider))
 	} else {
-		b.WriteString(sectionOpenClawLocalConfigure(ctx.ClawvisorURL))
+		b.WriteString(sectionOpenClawLocalConfigure(ctx.ClawvisorURL, ctx.LLMProvider))
 	}
 
 	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL))
@@ -691,8 +737,10 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	return b.String()
 }
 
-func sectionOpenClawLocalProbe(mode string) string {
+func sectionOpenClawLocalProbe(mode, provider string) string {
 	var b strings.Builder
+	model := providerDefaultModel(provider)
+	providerName := installerProviderDisplayName(provider)
 	fmt.Fprintf(&b, "## 1. Confirm how to run OpenClaw onboarding\n\n")
 	fmt.Fprintf(&b, "Do not install extra OpenClaw components. Only determine how the user runs\n")
 	fmt.Fprintf(&b, "OpenClaw's existing onboarding command.\n\n")
@@ -703,7 +751,7 @@ func sectionOpenClawLocalProbe(mode string) string {
 		fmt.Fprintf(&b, "- **Host command** — confirm `openclaw-cli` is available on this machine.\n")
 		fmt.Fprintf(&b, "- **Docker fallback** — if OpenClaw is actually containerized, use the Docker command in Step 5 instead.\n")
 	}
-	fmt.Fprintf(&b, "- **Model id** — default to `claude-sonnet-4-6` unless the user prefers another Clawvisor-routed Anthropic model.\n")
+	fmt.Fprintf(&b, "- **Model id** — default to `%s` unless the user prefers another Clawvisor-routed %s model.\n", model, providerName)
 	fmt.Fprintf(&b, "- **Shell** — zsh, bash, or fish, only if you need to save a convenience command.\n\n")
 	fmt.Fprintf(&b, "Keep what you learned in a JSON object for `install_context`:\n\n")
 	fmt.Fprintf(&b, "```json\n")
@@ -714,15 +762,17 @@ func sectionOpenClawLocalProbe(mode string) string {
 	} else {
 		fmt.Fprintf(&b, "  \"install_mode\": \"host\",\n")
 	}
-	fmt.Fprintf(&b, "  \"model_id\": \"claude-sonnet-4-6\",\n")
+	fmt.Fprintf(&b, "  \"model_id\": %q,\n", model)
+	fmt.Fprintf(&b, "  \"provider\": %q,\n", provider)
 	fmt.Fprintf(&b, "  \"auth_mode\": \"custom-api-key\"\n")
 	fmt.Fprintf(&b, "}\n")
 	fmt.Fprintf(&b, "```\n\n")
 	return b.String()
 }
 
-func sectionOpenClawRemoteProbe() string {
+func sectionOpenClawRemoteProbe(provider string) string {
 	var b strings.Builder
+	model := providerDefaultModel(provider)
 	fmt.Fprintf(&b, "## 1. Confirm remote OpenClaw access\n\n")
 	fmt.Fprintf(&b, "The user selected **remote host** in the dashboard. Do **not** probe the\n")
 	fmt.Fprintf(&b, "local machine for OpenClaw files or Docker containers;\n")
@@ -747,64 +797,69 @@ func sectionOpenClawRemoteProbe() string {
 	fmt.Fprintf(&b, "  \"install_mode\": \"remote\",\n")
 	fmt.Fprintf(&b, "  \"remote_host\": \"<hostname or description>\",\n")
 	fmt.Fprintf(&b, "  \"host_os\": \"darwin | linux | windows\",\n")
-	fmt.Fprintf(&b, "  \"model_id\": \"claude-sonnet-4-6\",\n")
+	fmt.Fprintf(&b, "  \"model_id\": %q,\n", model)
+	fmt.Fprintf(&b, "  \"provider\": %q,\n", provider)
 	fmt.Fprintf(&b, "  \"auth_mode\": \"custom-api-key\"\n")
 	fmt.Fprintf(&b, "}\n")
 	fmt.Fprintf(&b, "```\n\n")
 	return b.String()
 }
 
-func sectionOpenClawLocalConfigure(clawvisorURL string) string {
+func sectionOpenClawLocalConfigure(clawvisorURL, provider string) string {
 	var b strings.Builder
+	basePath := "/api/v1"
+	model := providerDefaultModel(provider)
 	fmt.Fprintf(&b, "## 5. Point OpenClaw at Clawvisor\n\n")
 	fmt.Fprintf(&b, "Run OpenClaw's onboarding command and select a custom API key provider.\n")
-	fmt.Fprintf(&b, "Use Clawvisor's Anthropic-compatible base URL and the minted `cvis_...`\n")
+	fmt.Fprintf(&b, "Use Clawvisor's %s-compatible base URL and the minted `cvis_...`\n", installerProviderDisplayName(provider))
 	fmt.Fprintf(&b, "agent token. For Docker, use a host-reachable URL such as\n")
-	fmt.Fprintf(&b, "`http://host.docker.internal:25297/api/v1` when Clawvisor is on the host.\n\n")
+	fmt.Fprintf(&b, "`http://host.docker.internal:25297%s` when Clawvisor is on the host.\n\n", basePath)
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "# Host OpenClaw:\n")
 	fmt.Fprintf(&b, "openclaw-cli onboard --non-interactive \\\n")
 	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
-	fmt.Fprintf(&b, "  --custom-base-url \"%s/api/v1\" \\\n", clawvisorURL)
-	fmt.Fprintf(&b, "  --custom-model-id \"claude-sonnet-4-6\" \\\n")
+	fmt.Fprintf(&b, "  --custom-base-url \"%s%s\" \\\n", clawvisorURL, basePath)
+	fmt.Fprintf(&b, "  --custom-model-id \"%s\" \\\n", model)
 	fmt.Fprintf(&b, "  --custom-api-key \"$TOKEN\" \\\n")
-	fmt.Fprintf(&b, "  --custom-compatibility anthropic --accept-risk\n\n")
+	fmt.Fprintf(&b, "  --custom-compatibility %s --accept-risk\n\n", provider)
 	fmt.Fprintf(&b, "# Docker OpenClaw, when Clawvisor is running on the host:\n")
 	fmt.Fprintf(&b, "docker compose run --rm openclaw-cli onboard --non-interactive \\\n")
 	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
-	fmt.Fprintf(&b, "  --custom-base-url \"http://host.docker.internal:25297/api/v1\" \\\n")
-	fmt.Fprintf(&b, "  --custom-model-id \"claude-sonnet-4-6\" \\\n")
+	fmt.Fprintf(&b, "  --custom-base-url \"http://host.docker.internal:25297%s\" \\\n", basePath)
+	fmt.Fprintf(&b, "  --custom-model-id \"%s\" \\\n", model)
 	fmt.Fprintf(&b, "  --custom-api-key \"$TOKEN\" \\\n")
-	fmt.Fprintf(&b, "  --custom-compatibility anthropic --accept-risk\n")
+	fmt.Fprintf(&b, "  --custom-compatibility %s --accept-risk\n", provider)
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "If Clawvisor is not on the host, replace the base URL with the URL that\n")
-	fmt.Fprintf(&b, "the OpenClaw process can reach. The important part is `/api/v1`.\n\n")
+	fmt.Fprintf(&b, "the OpenClaw process can reach. The important part is `%s`.\n\n", basePath)
 	return b.String()
 }
 
-func sectionOpenClawRemoteConfigure(clawvisorURL string) string {
+func sectionOpenClawRemoteConfigure(clawvisorURL, provider string) string {
 	var b strings.Builder
+	basePath := "/api/v1"
+	model := providerDefaultModel(provider)
 	fmt.Fprintf(&b, "## 5. Point remote OpenClaw at Clawvisor\n\n")
 	fmt.Fprintf(&b, "Because OpenClaw is remote, `localhost` on that host is not this helper\n")
 	fmt.Fprintf(&b, "machine. Pick a Clawvisor URL the remote host can actually reach. The\n")
 	fmt.Fprintf(&b, "dashboard rendered `%s`; if that is a localhost URL, replace it with a\n", clawvisorURL)
 	fmt.Fprintf(&b, "relay, public, VPN, or LAN URL reachable from `$OPENCLAW_REMOTE`.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "export OPENCLAW_CLAWVISOR_BASE_URL='<remote-reachable Clawvisor URL>/api/v1'\n\n")
+	fmt.Fprintf(&b, "export OPENCLAW_CLAWVISOR_BASE_URL='<remote-reachable Clawvisor URL>%s'\n\n", basePath)
 	fmt.Fprintf(&b, "# Remote host OpenClaw:\n")
 	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"openclaw-cli onboard --non-interactive \\\n")
 	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
 	fmt.Fprintf(&b, "  --custom-base-url '$OPENCLAW_CLAWVISOR_BASE_URL' \\\n")
-	fmt.Fprintf(&b, "  --custom-model-id 'claude-sonnet-4-6' \\\n")
+	fmt.Fprintf(&b, "  --custom-model-id '%s' \\\n", model)
 	fmt.Fprintf(&b, "  --custom-api-key '$TOKEN' \\\n")
-	fmt.Fprintf(&b, "  --custom-compatibility anthropic --accept-risk\"\n\n")
+	fmt.Fprintf(&b, "  --custom-compatibility %s --accept-risk\"\n\n", provider)
 	fmt.Fprintf(&b, "# Remote Docker OpenClaw, if OpenClaw is containerized on that host:\n")
 	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"docker compose run --rm openclaw-cli onboard --non-interactive \\\n")
 	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
 	fmt.Fprintf(&b, "  --custom-base-url '$OPENCLAW_CLAWVISOR_BASE_URL' \\\n")
-	fmt.Fprintf(&b, "  --custom-model-id 'claude-sonnet-4-6' \\\n")
+	fmt.Fprintf(&b, "  --custom-model-id '%s' \\\n", model)
 	fmt.Fprintf(&b, "  --custom-api-key '$TOKEN' \\\n")
-	fmt.Fprintf(&b, "  --custom-compatibility anthropic --accept-risk\"\n")
+	fmt.Fprintf(&b, "  --custom-compatibility %s --accept-risk\"\n", provider)
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "The important invariant is that OpenClaw's model requests go to Clawvisor\n")
 	fmt.Fprintf(&b, "and use the minted `cvis_...` token.\n\n")

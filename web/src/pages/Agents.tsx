@@ -2377,19 +2377,19 @@ type InstallerHelper = 'claude' | 'codex'
 interface InstallerSpec {
   label: string
   baseName: string
-  provider: LLMProvider
+  defaultProvider: LLMProvider
 }
 
 const INSTALLER_SPECS: Record<InstallerTarget, InstallerSpec> = {
   hermes: {
     label: 'Hermes',
     baseName: 'hermes',
-    provider: 'openai',
+    defaultProvider: 'openai',
   },
   openclaw: {
     label: 'OpenClaw',
     baseName: 'openclaw',
-    provider: 'anthropic',
+    defaultProvider: 'anthropic',
   },
 }
 
@@ -2420,18 +2420,21 @@ const INSTALLER_HELPERS: Record<InstallerHelper, {
 interface InstallerAnswers {
   hermesConfig: 'env' | 'file'
   openclawMode: 'host' | 'docker' | 'remote'
+  llmProvider: LLMProvider
   taskApproval: 'manual' | 'low' | 'medium'
 }
 
-function defaultInstallerAnswers(): InstallerAnswers {
+function defaultInstallerAnswers(target: InstallerTarget): InstallerAnswers {
   return {
     hermesConfig: 'env',
     openclawMode: 'host',
+    llmProvider: INSTALLER_SPECS[target].defaultProvider,
     taskApproval: 'manual',
   }
 }
 
 function applyInstallerAnswerParams(params: URLSearchParams, target: InstallerTarget, answers: InstallerAnswers) {
+  params.set('llm_provider', answers.llmProvider)
   params.set('task_approval', answers.taskApproval)
   if (target === 'hermes') params.set('hermes_config', answers.hermesConfig)
   if (target === 'openclaw') params.set('openclaw_mode', answers.openclawMode)
@@ -2457,8 +2460,11 @@ function InstallerSkillGuide({
   const spec = INSTALLER_SPECS[target]
   const [step, setStep] = useState(0)
   const [helper, setHelper] = useState<InstallerHelper>('claude')
-  const [answers, setAnswers] = useState<InstallerAnswers>(() => defaultInstallerAnswers())
+  const [answers, setAnswers] = useState<InstallerAnswers>(() => defaultInstallerAnswers(target))
   const startedAtRef = useRef(Date.now())
+  useEffect(() => {
+    setAnswers(defaultInstallerAnswers(target))
+  }, [target])
   const { data: agents } = useQuery({
     queryKey: ['agents', 'personal'],
     queryFn: () => api.agents.list(),
@@ -2487,7 +2493,7 @@ function InstallerSkillGuide({
     queryKey: ['llm-credentials', 'user'],
     queryFn: () => api.llmCredentials.list(),
   })
-  const keyReady = hasProviderUpstreamKey(userCreds, spec.provider)
+  const keyReady = hasProviderUpstreamKey(userCreds, answers.llmProvider)
   // Claim takes precedence over user_id; passing both is harmless but the
   // server prefers the claim path and burns the code on consumption.
   const params = new URLSearchParams()
@@ -2575,16 +2581,16 @@ function InstallerSkillGuide({
         {step === 2 && (
           <div className="mt-5 space-y-4">
             <VaultKeyStep
-              provider={spec.provider}
-              title={`Add ${providerLabel(spec.provider)} API key`}
-              description={`${spec.label} sends model requests to Clawvisor with a cvis_ token. Clawvisor needs your upstream ${providerLabel(spec.provider)} API key vaulted before ${spec.label} connects.`}
+              provider={answers.llmProvider}
+              title={`Add ${providerLabel(answers.llmProvider)} API key`}
+              description={`${spec.label} sends model requests to Clawvisor with a cvis_ token. Clawvisor needs your upstream ${providerLabel(answers.llmProvider)} API key vaulted before ${spec.label} connects.`}
             />
             <WizardNav
               canBack
               canNext={keyReady}
               onBack={() => setStep(1)}
               onNext={() => setStep(3)}
-              nextDisabledHint={keyReady ? undefined : `Add a ${providerLabel(spec.provider)} API key to continue`}
+              nextDisabledHint={keyReady ? undefined : `Add a ${providerLabel(answers.llmProvider)} API key to continue`}
             />
           </div>
         )}
@@ -2733,6 +2739,16 @@ function InstallerSetupQuestions({
           </p>
         </div>
       </div>
+
+      <QuestionSelect
+        label="Which upstream LLM provider should Clawvisor use?"
+        value={answers.llmProvider}
+        onChange={value => set('llmProvider', value as InstallerAnswers['llmProvider'])}
+        options={[
+          ['anthropic', 'Anthropic'],
+          ['openai', 'OpenAI'],
+        ]}
+      />
 
       {target === 'hermes' && (
         <QuestionSelect

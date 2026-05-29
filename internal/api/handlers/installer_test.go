@@ -159,6 +159,27 @@ func TestInstallerHermesRender(t *testing.T) {
 	}
 }
 
+func TestInstallerHermesAnthropicProviderRender(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	body := installerGetQuery(t, h, "hermes", "llm_provider=anthropic")
+
+	assertContainsAll(t, body,
+		"LLM provider: Anthropic",
+		"upstream Anthropic API key",
+		"ANTHROPIC_BASE_URL=http://",
+		"/api \\",
+		"ANTHROPIC_API_KEY=$(jq -r .token ~/.clawvisor/agents/hermes.json)",
+	)
+	for _, forbidden := range []string{
+		"OPENAI_BASE_URL=",
+		"OPENAI_API_KEY=$(jq -r .token ~/.clawvisor/agents/hermes.json)",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("Hermes Anthropic setup should not contain OpenAI command text %q", forbidden)
+		}
+	}
+}
+
 func TestInstallerOpenClawRender(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "openclaw", "CLAIMOPEN12")
@@ -190,6 +211,30 @@ func TestInstallerOpenClawRender(t *testing.T) {
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("OpenClaw LLM-proxy setup should not contain callback/webhook text %q", forbidden)
+		}
+	}
+}
+
+func TestInstallerOpenClawOpenAIProviderRender(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	body := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12&llm_provider=openai")
+
+	assertContainsAll(t, body,
+		"LLM provider: OpenAI",
+		"OpenAI API key",
+		"--custom-base-url \"http://",
+		"/api/v1",
+		"--custom-model-id \"gpt-5.4\"",
+		"--custom-compatibility openai",
+		"host.docker.internal:25297/api/v1",
+	)
+	for _, forbidden := range []string{
+		"--custom-model-id \"claude-sonnet-4-6\"",
+		"--custom-compatibility anthropic",
+		"host.docker.internal:25297/api\"",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("OpenClaw OpenAI setup should not contain Anthropic command text %q", forbidden)
 		}
 	}
 }
