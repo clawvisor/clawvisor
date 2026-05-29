@@ -1,6 +1,7 @@
 package inspector
 
 import (
+	"bytes"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -10,10 +11,9 @@ import (
 
 // CommandReferencesSensitivePath parses cmd and returns the first
 // literal word that resolves to a sensitive file path (SSH key, .env,
-// cloud credential, …), along with a short reason. Words that are
-// dynamic (command substitution, parameter expansion, …) or that
-// fail to parse are skipped — those paths are already blocked by
-// IsReadOnlyBashCommand's safety walk.
+// cloud credential, …), along with a short reason. For words containing
+// unresolved shell expansions, the rendered shell token is still checked
+// so common forms like $HOME/.ssh/id_rsa cannot ride a pass-through path.
 //
 // The check is intentionally a defense-in-depth gate on top of
 // IsReadOnlyBashCommand: even a structurally safe `cat ~/.ssh/id_rsa`
@@ -42,7 +42,10 @@ func CommandReferencesSensitivePath(cmd string) (token, reason string, ok bool) 
 		}
 		value, staticOK := staticWordValue(word)
 		if !staticOK {
-			return true
+			value = renderedWordValue(word)
+			if value == "" {
+				return true
+			}
 		}
 		_, r, sensitive := sensitivepaths.FindSensitiveTokenInArgs([]string{value})
 		if sensitive {
@@ -56,6 +59,17 @@ func CommandReferencesSensitivePath(cmd string) (token, reason string, ok bool) 
 		return "", "", false
 	}
 	return hitToken, hitReason, true
+}
+
+func renderedWordValue(word *syntax.Word) string {
+	if word == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := syntax.NewPrinter().Print(&buf, word); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(buf.String())
 }
 
 // IsReadOnlyBashCommand reports whether cmd is composed entirely of

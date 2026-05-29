@@ -86,6 +86,16 @@ func TestFindSensitiveTokenInArgsFindsSshKey(t *testing.T) {
 	}
 }
 
+func TestFindSensitiveTokenInArgsFindsOptionValuePath(t *testing.T) {
+	tok, reason, ok := FindSensitiveTokenInArgs([]string{"rg", "--ignore-file=.env"})
+	if !ok {
+		t.Fatal("expected --ignore-file=.env to be flagged")
+	}
+	if tok != "--ignore-file=.env" || reason == "" {
+		t.Fatalf("expected original token and reason, got token=%q reason=%q", tok, reason)
+	}
+}
+
 func TestFindSensitiveTokenInArgsIgnoresBenignTokens(t *testing.T) {
 	if _, _, ok := FindSensitiveTokenInArgs([]string{"ls", "-la", "/tmp"}); ok {
 		t.Fatal("expected benign args to be ignored")

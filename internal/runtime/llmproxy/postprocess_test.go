@@ -253,6 +253,32 @@ func TestPostprocess_ReadOnlyBashBypassesTaskScopeByDefault(t *testing.T) {
 	}
 }
 
+func TestPostprocess_SensitiveShellPathRequiresApprovalWithoutPolicyConfig(t *testing.T) {
+	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"cat $HOME/.ssh/id_rsa"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		Audit:            NewAuditEmitter(st, nil, nil),
+		RequestID:        "req-bash-sensitive-default",
+		PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+		Posture:          runtimedecision.PostureEnforce,
+	})
+	if !got.Rewritten {
+		t.Fatalf("sensitive shell path should require approval even without policy config")
+	}
+	if text := anthropicResponseText(t, got.Body); !strings.Contains(text, "no matching task scope") {
+		t.Fatalf("approval prompt missing scope reason: %s", text)
+	}
+}
+
 func TestPostprocess_ReadOnlyBashCanBeDisabledByPolicy(t *testing.T) {
 	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"ls -la /tmp"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)

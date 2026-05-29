@@ -9,7 +9,10 @@ func TestCommandReferencesSensitivePathFlagsCommonSecrets(t *testing.T) {
 	}{
 		{"cat home ssh key", "cat ~/.ssh/id_rsa"},
 		{"cat absolute ssh key", "cat /Users/eric/.ssh/id_ed25519"},
+		{"cat home expansion ssh key", "cat $HOME/.ssh/id_rsa"},
+		{"cat braced home expansion ssh key", "cat ${HOME}/.ssh/id_ed25519"},
 		{"head .env", "head -n 5 .env"},
+		{"rg option value env file", "rg --ignore-file=.env SECRET ."},
 		{"grep over aws dir", "grep -R access_key ~/.aws"},
 		{"cat pem", "cat certs/tls.pem"},
 		{"cat netrc", "cat ~/.netrc"},

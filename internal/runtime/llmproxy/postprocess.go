@@ -533,24 +533,27 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		// is no credential rewrite to perform, but shared authorization
 		// still sees ordinary tool_use calls such as Bash/Read.
 		if v.Source == inspector.SourceTriggerMiss {
-			if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil {
-				readOnlyShellCommand := false
-				if toolnames.IsShellToolName(tu.Name) && readOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
-					if cmd := shellCommandFromInput(tu.Input); cmd != "" {
-						readOnlyShellCommand, _ = inspector.IsReadOnlyBashCommand(cmd)
-						if readOnlyShellCommand && toolnames.SensitiveFileGuardEnabled(tu.Name, cfg.AgentID, cfg.ToolRules) {
-							// A read-only command that reads a sensitive
-							// path (SSH key, .env, cloud creds) must NOT
-							// ride the readonly_shell_pass_through bypass.
-							// Force fall-through to task-scope matching
-							// and intent verification.
-							if tok, reason, hit := inspector.CommandReferencesSensitivePath(cmd); hit {
-								readOnlyShellCommand = false
-								audit("block", "sensitive_path_in_read_only_shell", "command references sensitive path "+tok+" ("+reason+")")
-							}
+			readOnlyShellCommand := false
+			sensitiveShellPath := false
+			if toolnames.IsShellToolName(tu.Name) && readOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
+				if cmd := shellCommandFromInput(tu.Input); cmd != "" {
+					readOnlyShellCommand, _ = inspector.IsReadOnlyBashCommand(cmd)
+					if toolnames.SensitiveFileGuardEnabled(tu.Name, cfg.AgentID, cfg.ToolRules) {
+						// A shell command that references a sensitive path
+						// (SSH key, .env, cloud creds) must NOT ride the
+						// generic trigger-miss pass-through or the
+						// readonly_shell_pass_through bypass. Force
+						// fall-through to task-scope matching and intent
+						// verification.
+						if tok, reason, hit := inspector.CommandReferencesSensitivePath(cmd); hit {
+							sensitiveShellPath = true
+							readOnlyShellCommand = false
+							audit("block", "sensitive_path_in_read_only_shell", "command references sensitive path "+tok+" ("+reason+")")
 						}
 					}
 				}
+			}
+			if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil || sensitiveShellPath {
 				decisionInput := runtimedecision.AuthorizationInput{
 					ToolUse:                tu,
 					UserID:                 cfg.AgentUserID,

@@ -190,10 +190,11 @@ func FindSensitiveTokenInArgs(args []string) (token, reason string, ok bool) {
 }
 
 // normalizeShellPathArg expands a leading ~ (the most common form by
-// far) and trims surrounding quotes left over from incomplete shell
-// parsing. We deliberately do NOT expand $VAR — the inspector already
-// rejects command substitution, and unresolved env vars trip the
-// dynamic-command-name guard upstream.
+// far), trims surrounding quotes left over from incomplete shell
+// parsing, and handles option values like --env-file=.env. We
+// deliberately do NOT expand $VAR — callers that care about shell
+// expansions should pass the rendered shell token through this same
+// classifier so literal sensitive components still match.
 func normalizeShellPathArg(arg string) string {
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
@@ -202,6 +203,11 @@ func normalizeShellPathArg(arg string) string {
 	if (strings.HasPrefix(arg, "\"") && strings.HasSuffix(arg, "\"") && len(arg) >= 2) ||
 		(strings.HasPrefix(arg, "'") && strings.HasSuffix(arg, "'") && len(arg) >= 2) {
 		arg = arg[1 : len(arg)-1]
+	}
+	if strings.HasPrefix(arg, "-") {
+		if _, value, ok := strings.Cut(arg, "="); ok {
+			arg = strings.TrimSpace(value)
+		}
 	}
 	if strings.HasPrefix(arg, "~/") {
 		arg = arg[2:]
