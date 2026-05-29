@@ -1313,7 +1313,7 @@ function LegacyOtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
             <StepNumber n={3} />
             <div className="space-y-1.5 min-w-0 flex-1">
               <p className="text-sm font-medium text-text-primary">Verify</p>
-              <CodeBlock>{`curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
+              <CodeBlock>{`curl -sf -H "X-Clawvisor-Agent-Token: $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
               <p className="text-xs text-text-tertiary">
                 Should return a JSON catalog of available services. See{' '}
                 <code className="font-mono text-text-secondary">{clawvisorURL}/skill/SKILL.md</code>{' '}
@@ -1734,7 +1734,7 @@ client = OpenAI(
                 <StepNumber n={3} />
                 <div className="space-y-1.5 min-w-0 flex-1">
                   <p className="text-sm font-medium text-text-primary">Verify</p>
-                  <CodeBlock>{`curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
+                  <CodeBlock>{`curl -sf -H "X-Clawvisor-Agent-Token: $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
                   <p className="text-xs text-text-tertiary">
                     Should return a JSON catalog of available services. See{' '}
                     <code className="font-mono text-text-secondary">{clawvisorURL}/skill/SKILL.md</code>{' '}

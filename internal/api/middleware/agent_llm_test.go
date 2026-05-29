@@ -86,6 +86,28 @@ func TestRequireAgentLLM_AcceptsAuthorizationBearer(t *testing.T) {
 	}
 }
 
+func TestRequireAgent_AcceptsClawvisorAgentTokenHeader(t *testing.T) {
+	st, agent, raw := newSeededAgent(t)
+
+	var seenAgent *store.Agent
+	handler := RequireAgent(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAgent = AgentFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skill/catalog", nil)
+	req.Header.Set(AgentTokenHeader, raw)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with %s auth, got %d (%s)", AgentTokenHeader, rec.Code, rec.Body.String())
+	}
+	if seenAgent == nil || seenAgent.ID != agent.ID {
+		t.Fatalf("expected agent in context")
+	}
+}
+
 func TestRequireAgentLLM_AcceptsXAPIKey(t *testing.T) {
 	st, agent, raw := newSeededAgent(t)
 
@@ -144,12 +166,12 @@ func TestRequireAgentLLM_AcceptsClawvisorAgentTokenHeaderForPassthrough(t *testi
 
 func TestRequireAgentLLM_RecordsCallerAuthSourceForEachHeader(t *testing.T) {
 	cases := []struct {
-		name    string
-		header  string
-		value   func(raw string) string
-		want    string
-		setRaw  bool
-		extra   func(*http.Request, string)
+		name   string
+		header string
+		value  func(raw string) string
+		want   string
+		setRaw bool
+		extra  func(*http.Request, string)
 	}{
 		{
 			name:   "Authorization",

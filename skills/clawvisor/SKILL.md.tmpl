@@ -85,7 +85,7 @@ At the start of each session, fetch your personalized service catalog:
 
 ```
 GET $CLAWVISOR_URL/api/skill/catalog
-Authorization: Bearer $CLAWVISOR_AGENT_TOKEN
+X-Clawvisor-Agent-Token: $CLAWVISOR_AGENT_TOKEN
 ```
 
 This returns the services available to you, their supported actions, which

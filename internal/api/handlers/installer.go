@@ -345,11 +345,13 @@ func sectionSmokeTest(clawvisorURL string) string {
 	fmt.Fprintf(&b, "lives in the agent's *first real use*, not in this skill, because **this\n")
 	fmt.Fprintf(&b, "skill isn't running through Clawvisor**. The agent you just configured is.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "curl -sf -H \"X-Clawvisor-Agent-Token: $TOKEN\" \\\n")
-	fmt.Fprintf(&b, "  \"%s/api/skill/catalog\" | jq '.services[0:3]'\n", clawvisorURL)
+	fmt.Fprintf(&b, "AGENT_JSON=${AGENT_JSON:-$HOME/.clawvisor/agents/<picked name>.json}\n")
+	fmt.Fprintf(&b, "TOK=$(jq -r .token \"$AGENT_JSON\") && \\\n")
+	fmt.Fprintf(&b, "  curl -sf -H \"X-Clawvisor-Agent-Token: $TOK\" \\\n")
+	fmt.Fprintf(&b, "    \"%s/api/skill/catalog\" -o /dev/null && echo OK || echo REVOKED\n", clawvisorURL)
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "If you get a JSON service catalog back, the connection works. If you get a\n")
-	fmt.Fprintf(&b, "401, the token is wrong — re-check Step 4 wrote the right value.\n\n")
+	fmt.Fprintf(&b, "If you get `OK`, the connection works. If you get `REVOKED`, the token is\n")
+	fmt.Fprintf(&b, "wrong or no longer active — re-check Step 4 wrote the right file and token.\n\n")
 	return b.String()
 }
 

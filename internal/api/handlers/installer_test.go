@@ -106,6 +106,7 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 		"claude-cv()",
 		"## 7. Connectivity smoke test",
 		"/api/skill/catalog",
+		"-o /dev/null && echo OK || echo REVOKED",
 		"## 8. Save an uninstall reference",
 		"## 9. Self-uninstall automatically",
 		"rm -f ~/.claude/commands/clawvisor-install.md",
@@ -210,6 +211,7 @@ func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
 		"--custom-base-url",
 		"--custom-api-key '$TOKEN'",
 		"--custom-compatibility anthropic",
+		"-o /dev/null && echo OK || echo REVOKED",
 	)
 
 	for _, forbidden := range []string{

@@ -260,7 +260,7 @@ func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Reque
 	stepNum++
 	fmt.Fprintf(&b, "### %d. Verify\n\n", stepNum)
 	b.WriteString("```bash\n")
-	fmt.Fprintf(&b, "curl -sf -H \"Authorization: Bearer $CLAWVISOR_AGENT_TOKEN\" \\\n  %s/api/skill/catalog | head -20\n", clawvisorURL)
+	fmt.Fprintf(&b, "curl -sf -H \"X-Clawvisor-Agent-Token: $CLAWVISOR_AGENT_TOKEN\" \\\n  %s/api/skill/catalog | head -20\n", clawvisorURL)
 	b.WriteString("```\n\n")
 	b.WriteString("This should return a JSON service catalog. If it returns 401, the token is\n")
 	if h.isLocal {

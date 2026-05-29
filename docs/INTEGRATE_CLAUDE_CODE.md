@@ -119,7 +119,7 @@ export CLAWVISOR_AGENT_TOKEN=<token from Step 2>
 Confirm Claude Code can reach Clawvisor by testing the agent token:
 
 ```bash
-curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
+curl -sf -H "X-Clawvisor-Agent-Token: $CLAWVISOR_AGENT_TOKEN" \
   "$CLAWVISOR_URL/api/skill/catalog" | head -20
 ```
 
