@@ -818,7 +818,7 @@ const AGENT_META: Record<AgentTab, AgentMeta> = {
   },
   openclaw: {
     label: 'OpenClaw',
-    tagline: 'OpenClaw workspace with webhook callbacks',
+    tagline: 'OpenClaw workspace',
     primitive: 'Skill',
   },
   'claude-desktop': {
