@@ -319,7 +319,6 @@ export interface InstallContext {
   container_id?: string
   auth_mode?: string // passthrough | swap
   alias_intent?: string // none | safe | yolo
-  reuse?: boolean
 }
 
 export interface ConnectionRequest {

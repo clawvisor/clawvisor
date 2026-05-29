@@ -88,13 +88,13 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 		"passthrough mode",
 		"## 1. Check the local CLI",
 		"install_mode\": \"local\"",
-		"## 2. Check for an existing token",
-		"## 3. Mint a connection request",
+		"## 2. Mint a connection request",
+		"Do not reuse a token",
 		"claim=ABCDEFGHIJ",
 		"wait=true",
-		"## 4. Persist the token",
+		"## 3. Persist the token",
 		"~/.clawvisor/agents/claude-code.json",
-		"## 5. Configure Claude Code",
+		"## 4. Configure Claude Code",
 		"ANTHROPIC_BASE_URL",
 		"ANTHROPIC_CUSTOM_HEADERS",
 		"X-Clawvisor-Agent-Token",
@@ -102,16 +102,19 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 		"Claude Code routing scope: alias",
 		"The user chose **scoped routing**",
 		"Leave permissions unchanged",
-		"## 6. Offer a shell alias",
+		"## 5. Offer a shell alias",
 		"claude-cv()",
-		"## 7. Connectivity smoke test",
+		"## 6. Connectivity smoke test",
 		"/api/skill/catalog",
 		"-o /dev/null && echo OK || echo REVOKED",
-		"## 8. Save an uninstall reference",
-		"## 9. Self-uninstall automatically",
+		"## 7. Save an uninstall reference",
+		"## 8. Self-uninstall automatically",
 		"rm -f ~/.claude/commands/clawvisor-install.md",
 		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
+	if strings.Contains(body, "Check for an existing token") {
+		t.Errorf("installer should not offer to reuse an existing token")
+	}
 }
 
 func TestInstallerCodexRender(t *testing.T) {
@@ -124,7 +127,10 @@ func TestInstallerCodexRender(t *testing.T) {
 		"codex login",
 		"## 1. Check the local CLI",
 		"install_mode\": \"local\"",
+		"## 2. Mint a connection request",
+		"Do not reuse a token",
 		"claim=CLAIMCODE0",
+		"## 4. Configure Codex",
 		"[model_providers.clawvisor]",
 		`base_url = "http://`,
 		`/api/v1"`,
@@ -135,6 +141,9 @@ func TestInstallerCodexRender(t *testing.T) {
 		"codex-cv()",
 		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
+	if strings.Contains(body, "Check for an existing token") {
+		t.Errorf("installer should not offer to reuse an existing token")
+	}
 }
 
 func TestInstallerHermesRender(t *testing.T) {
@@ -146,6 +155,7 @@ func TestInstallerHermesRender(t *testing.T) {
 		"swap mode",
 		"dashboard step before this skill",
 		"upstream OpenAI API key",
+		"Do not reuse a token",
 		"OPENAI_BASE_URL=",
 		"/api/v1",
 		"~/.hermes/config.yaml",
@@ -156,6 +166,9 @@ func TestInstallerHermesRender(t *testing.T) {
 	// No claim → mint URL should not contain `claim=` or `user_id=`.
 	if strings.Contains(body, "&claim=") {
 		t.Errorf("body should not embed a claim when none was supplied")
+	}
+	if strings.Contains(body, "Check for an existing token") {
+		t.Errorf("installer should not offer to reuse an existing token")
 	}
 }
 
@@ -190,7 +203,9 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"Anthropic API key",
 		"OpenClaw running mode: host",
 		"## 1. Confirm how to run OpenClaw onboarding",
-		"## 2. Check for an existing token",
+		"## 2. Mint a connection request",
+		"Do not reuse a token",
+		"## 4. Point OpenClaw at Clawvisor",
 		"openclaw-cli onboard --non-interactive",
 		"--auth-choice custom-api-key",
 		"--custom-base-url",
@@ -202,6 +217,7 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
 	for _, forbidden := range []string{
+		"Check for an existing token",
 		"callback_secret",
 		"callback secret",
 		"CLAWVISOR_CALLBACK_SECRET",
@@ -267,6 +283,7 @@ func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
 		"check `~/.openclaw/` on the host",
 		"# Host install:",
 		"Both OpenClaw and Clawvisor in Docker on same host",
+		"Check for an existing token",
 		"callback_secret",
 		"callback secret",
 		"CLAWVISOR_CALLBACK_SECRET",

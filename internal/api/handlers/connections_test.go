@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
 type testNotifier struct {
@@ -176,7 +176,6 @@ func TestConnectionsStoreInstallContextRoundTrip(t *testing.T) {
 		ContainerID:    "abc123",
 		AuthMode:       "passthrough",
 		AliasIntent:    "safe",
-		Reuse:          false,
 	}
 	req := &store.ConnectionRequest{
 		UserID:         user.ID,

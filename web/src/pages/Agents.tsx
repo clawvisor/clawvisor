@@ -1858,7 +1858,7 @@ function BootstrapApproveStep({
           Determines both the agent's name in Clawvisor and the on-disk file:{' '}
           <code className="font-mono text-text-secondary">{filePath}</code>
           {myAgent && !myPending && (
-            <span className="ml-1 text-warning">— an agent with this name already exists; pick a different name to bootstrap a fresh one, or reuse it below.</span>
+            <span className="ml-1 text-warning">An agent with this name already exists; pick a different name to create a fresh connection.</span>
           )}
         </p>
       </div>
@@ -1899,14 +1899,8 @@ function BootstrapApproveStep({
       ) : myAgent ? (
         <div className="rounded border border-border-default bg-surface-0 px-4 py-3 space-y-2">
           <p className="text-sm text-text-secondary">
-            Reuse the existing agent (token still on disk if you previously bootstrapped this name), or rename to bootstrap a fresh one.
+            Pick a different name to create a fresh connection request. Clawvisor will issue a new token after you approve it.
           </p>
-          <button
-            onClick={() => onAdvance(myAgent.id)}
-            className="bg-brand text-surface-0 font-medium rounded px-4 py-1.5 text-sm hover:bg-brand-strong"
-          >
-            Use existing “{myAgent.name}”
-          </button>
         </div>
       ) : (
         <p className="text-xs text-text-tertiary">
@@ -2974,7 +2968,6 @@ function InstallContextSummary({ ctx }: { ctx: InstallContext }) {
   if (ctx.alias_intent === 'yolo') pieces.push('alias: --yolo')
   else if (ctx.alias_intent === 'safe') pieces.push('alias: safe')
   if (ctx.auth_mode === 'swap') pieces.push('swap mode')
-  if (ctx.reuse) pieces.push('reusing existing token')
   if (pieces.length === 0) return null
   return (
     <div className="mt-2 text-xs text-text-tertiary flex flex-wrap gap-x-2 gap-y-1">

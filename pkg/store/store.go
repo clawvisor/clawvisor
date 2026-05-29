@@ -1138,14 +1138,13 @@ type ConnectionRequest struct {
 // and persisted on the connection request for downstream debugging. Every
 // field is optional — the skill sends as much as it knows.
 type InstallContext struct {
-	Harness        string `json:"harness,omitempty"`         // claude-code | codex | hermes | openclaw | claude-desktop
+	Harness        string `json:"harness,omitempty"` // claude-code | codex | hermes | openclaw | claude-desktop
 	HarnessVersion string `json:"harness_version,omitempty"`
 	InstallMode    string `json:"install_mode,omitempty"` // local | docker | cloud
 	HostOS         string `json:"host_os,omitempty"`      // darwin | linux | windows
 	ContainerID    string `json:"container_id,omitempty"` // populated when install_mode=docker
 	AuthMode       string `json:"auth_mode,omitempty"`    // passthrough | swap
 	AliasIntent    string `json:"alias_intent,omitempty"` // none | safe | yolo
-	Reuse          bool   `json:"reuse,omitempty"`        // true when the agent reused a pre-existing on-disk token
 }
 
 // OAuthClient is a dynamically registered OAuth 2.1 client (RFC 7591).

@@ -199,8 +199,8 @@ description: Install Clawvisor into %s — probe the environment, mint and appro
 
 // ── Shared markdown helpers ──────────────────────────────────────────────────
 //
-// Every installer skill follows the same outline: probe → reuse-check → mint →
-// persist → configure → alias → smoke test → uninstall reference →
+// Every installer skill follows the same outline: probe → mint → persist →
+// configure → alias → smoke test → uninstall reference →
 // self-uninstall. The shared helpers render the steps that don't vary; the
 // per-target functions slot in their own configure/alias/self-uninstall.
 
@@ -289,35 +289,13 @@ func sectionDashboardAnswers(ctx installerCtx, lines ...string) string {
 	return b.String()
 }
 
-func sectionReuseCheck(harness, clawvisorURL string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "## 2. Check for an existing token (skip Step 3 if you reuse)\n\n")
-	fmt.Fprintf(&b, "If the user already minted a token for this harness previously, reuse it\n")
-	fmt.Fprintf(&b, "rather than minting a fresh one — it avoids cluttering Clawvisor with\n")
-	fmt.Fprintf(&b, "duplicate agent records.\n\n")
-	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "ls ~/.clawvisor/agents/*.json 2>/dev/null\n")
-	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "For each file, peek at the `harness` field. A candidate matches when:\n\n")
-	fmt.Fprintf(&b, "- the file's `harness` value equals `%s`, OR\n", harness)
-	fmt.Fprintf(&b, "- the filename starts with `%s` and the file has no `harness` field (older format).\n\n", harness)
-	fmt.Fprintf(&b, "Verify the candidate token is still live:\n\n")
-	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "TOK=$(jq -r .token ~/.clawvisor/agents/<name>.json)\n")
-	fmt.Fprintf(&b, "curl -sf -H \"X-Clawvisor-Agent-Token: $TOK\" \\\n")
-	fmt.Fprintf(&b, "  \"%s/api/skill/catalog\" -o /dev/null && echo OK || echo REVOKED\n", clawvisorURL)
-	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "If OK: ask the user whether to reuse this token or mint a new one. On reuse,\n")
-	fmt.Fprintf(&b, "set `TOKEN=$TOK`, set `reuse: true` in `install_context`, and jump to Step 4.\n")
-	fmt.Fprintf(&b, "If REVOKED: fall through and mint fresh.\n\n")
-	return b.String()
-}
-
 func sectionMint(harness, clawvisorURL, claim, userID string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## 3. Mint a connection request\n\n")
+	fmt.Fprintf(&b, "## 2. Mint a connection request\n\n")
 	fmt.Fprintf(&b, "Pick a short, kebab-case name. The default `%s` is fine; suffix with a\n", harness)
 	fmt.Fprintf(&b, "number (e.g. `%s-2`) if the user already has one with that name.\n\n", harness)
+	fmt.Fprintf(&b, "Always mint a fresh connection request for this setup. Do not reuse a token\n")
+	fmt.Fprintf(&b, "found on disk; the user is approving a new agent connection in the dashboard.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	url := clawvisorURL + "/api/agents/connect?wait=true&timeout=120"
 	switch {
@@ -353,9 +331,9 @@ func sectionMint(harness, clawvisorURL, claim, userID string) string {
 
 func sectionPersistToken(harness, name string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## 4. Persist the token\n\n")
+	fmt.Fprintf(&b, "## 3. Persist the token\n\n")
 	fmt.Fprintf(&b, "Store the token on disk so the configure step (and future re-runs of this\n")
-	fmt.Fprintf(&b, "skill) can read it back without re-minting. The file is `chmod 600`.\n\n")
+	fmt.Fprintf(&b, "target agent) can read it. The file is `chmod 600`.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "mkdir -p ~/.clawvisor/agents\n")
 	fmt.Fprintf(&b, "AGENT_JSON=~/.clawvisor/agents/%s.json    # use the picked name\n", name)
@@ -369,13 +347,12 @@ func sectionPersistToken(harness, name string) string {
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "chmod 600 \"$AGENT_JSON\"\n")
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "Reuse path (Step 2): you already have `$TOKEN` and the file — skip this step.\n\n")
 	return b.String()
 }
 
-func sectionSmokeTest(clawvisorURL string) string {
+func sectionSmokeTest(clawvisorURL string, step int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## 7. Connectivity smoke test\n\n")
+	fmt.Fprintf(&b, "## %d. Connectivity smoke test\n\n", step)
 	fmt.Fprintf(&b, "Verify the token works. This is a *connectivity* check only — the policy-\n")
 	fmt.Fprintf(&b, "enforcement demo (try an out-of-scope action and watch Clawvisor deny it)\n")
 	fmt.Fprintf(&b, "lives in the agent's *first real use*, not in this skill, because **this\n")
@@ -391,9 +368,9 @@ func sectionSmokeTest(clawvisorURL string) string {
 	return b.String()
 }
 
-func sectionUninstallDoc(harness, uninstallSteps string) string {
+func sectionUninstallDoc(harness, uninstallSteps string, step int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## 8. Save an uninstall reference\n\n")
+	fmt.Fprintf(&b, "## %d. Save an uninstall reference\n\n", step)
 	fmt.Fprintf(&b, "Write a short doc the user can refer back to if they want to turn Clawvisor\n")
 	fmt.Fprintf(&b, "off. Trust is built by making the exit easy.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
@@ -405,9 +382,9 @@ func sectionUninstallDoc(harness, uninstallSteps string) string {
 	return b.String()
 }
 
-func sectionSelfUninstall(harness, skillRemovePath string) string {
+func sectionSelfUninstall(harness, skillRemovePath string, step int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## 9. Self-uninstall automatically\n\n")
+	fmt.Fprintf(&b, "## %d. Self-uninstall automatically\n\n", step)
 	fmt.Fprintf(&b, "Setup is done. Remove this installer skill now; it is one-shot setup\n")
 	fmt.Fprintf(&b, "scaffolding and is not needed after the target agent is configured.\n")
 	fmt.Fprintf(&b, "Run the command that matches the helper agent currently executing this\n")
@@ -450,11 +427,10 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	b.WriteString(sectionLocalCLIProbe("claude-code", "claude --version", "", []string{
 		"**Existing alias state** — does `~/.zshrc`/`~/.bashrc` already have a `claude-cv` function from a prior install?",
 	}))
-	b.WriteString(sectionReuseCheck("claude-code", ctx.ClawvisorURL))
 	b.WriteString(sectionMint("claude-code", ctx.ClawvisorURL, ctx.Claim, ctx.UserID))
 	b.WriteString(sectionPersistToken("claude-code", "claude-code"))
 
-	fmt.Fprintf(&b, "## 5. Configure Claude Code\n\n")
+	fmt.Fprintf(&b, "## 4. Configure Claude Code\n\n")
 	fmt.Fprintf(&b, "Claude Code reads `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, and\n")
 	fmt.Fprintf(&b, "`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` from the environment. We point\n")
 	fmt.Fprintf(&b, "the base URL at Clawvisor and forward the agent token in a custom header;\n")
@@ -477,7 +453,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 		fmt.Fprintf(&b, "won't pick up changes until restarted — say so.\n\n")
 	} else {
 		fmt.Fprintf(&b, "The user chose **scoped routing**. Do not edit `~/.claude/settings.json`;\n")
-		fmt.Fprintf(&b, "configure the `claude-cv` alias in Step 6 instead.\n\n")
+		fmt.Fprintf(&b, "configure the `claude-cv` alias in Step 5 instead.\n\n")
 	}
 	if ctx.ClaudeCurlAllow == "yes" {
 		fmt.Fprintf(&b, "The user chose to add a Clawvisor curl allow rule. Merge this into\n")
@@ -495,7 +471,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 		fmt.Fprintf(&b, "The user chose not to add a Claude Code curl allow rule. Leave permissions unchanged.\n\n")
 	}
 
-	fmt.Fprintf(&b, "## 6. Offer a shell alias\n\n")
+	fmt.Fprintf(&b, "## 5. Offer a shell alias\n\n")
 	if ctx.AliasMode == "none" {
 		fmt.Fprintf(&b, "The user chose not to create an alias. Skip this step.\n\n")
 	} else {
@@ -519,16 +495,16 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 		fmt.Fprintf(&b, "fish (the function syntax is different — translate).\n\n")
 	}
 
-	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL))
+	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL, 6))
 
 	b.WriteString(sectionUninstallDoc("claude-code", `1. If you chose global routing, remove env vars from `+"`~/.claude/settings.json`"+` (delete the four ANTHROPIC_* keys we added).
 2. If you added it, remove the permission allow rule for `+"`Bash(curl *<clawvisor-url>/*)`"+`.
 3. Remove the alias from your shell rc file if you added one: search for `+"`claude-cv()`"+` and delete that block.
 4. Delete the token file: `+"`rm ~/.clawvisor/agents/claude-code.json`"+`.
 5. Revoke the agent in the Clawvisor dashboard under Agents → claude-code → Delete.
-`))
+`, 7))
 
-	b.WriteString(sectionSelfUninstall("claude-code", helperInstallerCleanupCommands()))
+	b.WriteString(sectionSelfUninstall("claude-code", helperInstallerCleanupCommands(), 8))
 
 	return b.String()
 }
@@ -550,11 +526,10 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "If `auth.json` is missing, stop and ask the user to run `codex login`.\n\n")
 
 	b.WriteString(sectionLocalCLIProbe("codex", "codex --version", "test -f ~/.codex/auth.json", nil))
-	b.WriteString(sectionReuseCheck("codex", ctx.ClawvisorURL))
 	b.WriteString(sectionMint("codex", ctx.ClawvisorURL, ctx.Claim, ctx.UserID))
 	b.WriteString(sectionPersistToken("codex", "codex"))
 
-	fmt.Fprintf(&b, "## 5. Configure Codex\n\n")
+	fmt.Fprintf(&b, "## 4. Configure Codex\n\n")
 	fmt.Fprintf(&b, "Codex reads `~/.codex/config.toml`. We add a `[model_providers.clawvisor]`\n")
 	fmt.Fprintf(&b, "block that points at Clawvisor, asks Codex to keep using the user's\n")
 	fmt.Fprintf(&b, "existing OpenAI auth (`requires_openai_auth = true`), and forwards the\n")
@@ -581,7 +556,7 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "  codex -c model_provider=clawvisor\n")
 	fmt.Fprintf(&b, "```\n\n")
 
-	fmt.Fprintf(&b, "## 6. Offer a shell alias\n\n")
+	fmt.Fprintf(&b, "## 5. Offer a shell alias\n\n")
 	if ctx.AliasMode == "none" {
 		fmt.Fprintf(&b, "The user chose not to create an alias. Skip this step.\n\n")
 	} else {
@@ -601,15 +576,15 @@ func renderCodexInstaller(ctx installerCtx) string {
 		fmt.Fprintf(&b, "Translate for bash/fish as needed.\n\n")
 	}
 
-	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL))
+	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL, 6))
 
 	b.WriteString(sectionUninstallDoc("codex", `1. Remove the `+"`[model_providers.clawvisor]`"+` block from `+"`~/.codex/config.toml`"+`.
 2. Remove the alias from your shell rc file if you added one: search for `+"`codex-cv()`"+` and delete.
 3. Delete the token file: `+"`rm ~/.clawvisor/agents/codex.json`"+`.
 4. Revoke the agent in the Clawvisor dashboard under Agents → codex → Delete.
-`))
+`, 7))
 
-	b.WriteString(sectionSelfUninstall("codex", helperInstallerCleanupCommands()))
+	b.WriteString(sectionSelfUninstall("codex", helperInstallerCleanupCommands(), 8))
 
 	return b.String()
 }
@@ -632,13 +607,12 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "Set the endpoint:\n\n```bash\nexport CLAWVISOR_URL=%s\n```\n\n", ctx.ClawvisorURL)
 
 	b.WriteString(sectionProbe("hermes", nil))
-	b.WriteString(sectionReuseCheck("hermes", ctx.ClawvisorURL))
 	b.WriteString(sectionMint("hermes", ctx.ClawvisorURL, ctx.Claim, ctx.UserID))
 	b.WriteString(sectionPersistToken("hermes", "hermes"))
 
 	b.WriteString(sectionDashboardAnswers(ctx, "LLM provider: "+providerName, "Hermes configuration mode: "+ctx.HermesConfig))
 
-	fmt.Fprintf(&b, "## 5. Configure Hermes\n\n")
+	fmt.Fprintf(&b, "## 4. Configure Hermes\n\n")
 	fmt.Fprintf(&b, "Hermes reads `~/.hermes/config.yaml`. Use the env-var run pattern for\n")
 	fmt.Fprintf(&b, "dynamic token rotation, or persist the config for set-and-forget. Offer\n")
 	fmt.Fprintf(&b, "both — the user picks.\n\n")
@@ -665,7 +639,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "The config-file path bakes the current token into the file; re-bootstrapping\n")
 	fmt.Fprintf(&b, "the same agent rotates the token and the user must re-run this snippet.\n\n")
 
-	fmt.Fprintf(&b, "## 5.5. Offer a shell alias\n\n")
+	fmt.Fprintf(&b, "## 5. Offer a shell alias\n\n")
 	fmt.Fprintf(&b, "If they went the env-var route, a shell function keeps it ergonomic:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "cat >> ~/.zshrc <<'EOF'\n")
@@ -679,16 +653,16 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "Hermes doesn't ship a documented bypass-prompts flag — skip the YOLO\n")
 	fmt.Fprintf(&b, "question unless the user volunteers one they know about.\n\n")
 
-	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL))
+	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL, 6))
 
 	b.WriteString(sectionUninstallDoc("hermes", `1. Remove the `+"`model:`"+` block from `+"`~/.hermes/config.yaml`"+` (or unset `+"`"+baseEnv+"`"+`/`+"`"+keyEnv+"`"+` if you used env vars).
 2. Remove the alias from your shell rc file if you added one.
 3. Delete the token file: `+"`rm ~/.clawvisor/agents/hermes.json`"+`.
 4. Revoke the agent in the Clawvisor dashboard under Agents → hermes → Delete.
 5. Optional: remove the user-level `+providerName+` key from Clawvisor credentials if no other agents use it.
-`))
+`, 7))
 
-	b.WriteString(sectionSelfUninstall("hermes", helperInstallerCleanupCommands()))
+	b.WriteString(sectionSelfUninstall("hermes", helperInstallerCleanupCommands(), 8))
 
 	return b.String()
 }
@@ -713,8 +687,6 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 		b.WriteString(sectionOpenClawLocalProbe(ctx.OpenClawMode, ctx.LLMProvider))
 	}
 
-	b.WriteString(sectionReuseCheck("openclaw", ctx.ClawvisorURL))
-
 	b.WriteString(sectionMint("openclaw", ctx.ClawvisorURL, ctx.Claim, ctx.UserID))
 
 	b.WriteString(sectionPersistToken("openclaw", "openclaw"))
@@ -725,14 +697,14 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 		b.WriteString(sectionOpenClawLocalConfigure(ctx.ClawvisorURL, ctx.LLMProvider))
 	}
 
-	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL))
+	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL, 5))
 
 	b.WriteString(sectionUninstallDoc("openclaw", `1. Re-run OpenClaw onboarding and choose your previous non-Clawvisor provider/base URL.
 2. Delete the token file: `+"`rm ~/.clawvisor/agents/openclaw.json`"+`.
 3. Revoke the agent in the Clawvisor dashboard under Agents → openclaw → Delete.
-`))
+`, 6))
 
-	b.WriteString(sectionSelfUninstall("openclaw", helperInstallerCleanupCommands()))
+	b.WriteString(sectionSelfUninstall("openclaw", helperInstallerCleanupCommands(), 7))
 
 	return b.String()
 }
@@ -749,7 +721,7 @@ func sectionOpenClawLocalProbe(mode, provider string) string {
 		fmt.Fprintf(&b, "- **Docker command** — confirm the compose service/working directory for `openclaw-cli`.\n")
 	} else {
 		fmt.Fprintf(&b, "- **Host command** — confirm `openclaw-cli` is available on this machine.\n")
-		fmt.Fprintf(&b, "- **Docker fallback** — if OpenClaw is actually containerized, use the Docker command in Step 5 instead.\n")
+		fmt.Fprintf(&b, "- **Docker fallback** — if OpenClaw is actually containerized, use the Docker command in Step 4 instead.\n")
 	}
 	fmt.Fprintf(&b, "- **Model id** — default to `%s` unless the user prefers another Clawvisor-routed %s model.\n", model, providerName)
 	fmt.Fprintf(&b, "- **Shell** — zsh, bash, or fish, only if you need to save a convenience command.\n\n")
@@ -809,7 +781,7 @@ func sectionOpenClawLocalConfigure(clawvisorURL, provider string) string {
 	var b strings.Builder
 	basePath := "/api/v1"
 	model := providerDefaultModel(provider)
-	fmt.Fprintf(&b, "## 5. Point OpenClaw at Clawvisor\n\n")
+	fmt.Fprintf(&b, "## 4. Point OpenClaw at Clawvisor\n\n")
 	fmt.Fprintf(&b, "Run OpenClaw's onboarding command and select a custom API key provider.\n")
 	fmt.Fprintf(&b, "Use Clawvisor's %s-compatible base URL and the minted `cvis_...`\n", installerProviderDisplayName(provider))
 	fmt.Fprintf(&b, "agent token. For Docker, use a host-reachable URL such as\n")
@@ -839,7 +811,7 @@ func sectionOpenClawRemoteConfigure(clawvisorURL, provider string) string {
 	var b strings.Builder
 	basePath := "/api/v1"
 	model := providerDefaultModel(provider)
-	fmt.Fprintf(&b, "## 5. Point remote OpenClaw at Clawvisor\n\n")
+	fmt.Fprintf(&b, "## 4. Point remote OpenClaw at Clawvisor\n\n")
 	fmt.Fprintf(&b, "Because OpenClaw is remote, `localhost` on that host is not this helper\n")
 	fmt.Fprintf(&b, "machine. Pick a Clawvisor URL the remote host can actually reach. The\n")
 	fmt.Fprintf(&b, "dashboard rendered `%s`; if that is a localhost URL, replace it with a\n", clawvisorURL)
