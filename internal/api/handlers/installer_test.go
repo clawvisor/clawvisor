@@ -213,6 +213,11 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"--custom-compatibility anthropic",
 		"docker compose run --rm openclaw-cli onboard",
 		"host.docker.internal",
+		"OPENCLAW_MODEL_CONTEXT_WINDOW=1000000",
+		"OPENCLAW_MAX_TOKENS=8192",
+		"models.json",
+		"contextWindow: $contextWindow",
+		"maxTokens: $maxTokens",
 		"rm -f ~/.claude/commands/clawvisor-install.md",
 		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
@@ -243,6 +248,8 @@ func TestInstallerOpenClawOpenAIProviderRender(t *testing.T) {
 		"--custom-model-id \"gpt-5.4\"",
 		"--custom-compatibility openai",
 		"host.docker.internal:25297/api/v1",
+		"OPENCLAW_MODEL_ID=\"gpt-5.4\"",
+		"OPENCLAW_MODEL_CONTEXT_WINDOW=1000000",
 	)
 	for _, forbidden := range []string{
 		"--custom-model-id \"claude-sonnet-4-6\"",
@@ -274,6 +281,9 @@ func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
 		"--custom-base-url",
 		"--custom-api-key '$TOKEN'",
 		"--custom-compatibility anthropic",
+		"REMOTE_OPENCLAW_PATCH",
+		"OPENCLAW_MODEL_CONTEXT_WINDOW=1000000",
+		"OPENCLAW_MAX_TOKENS=8192",
 		"-o /dev/null && echo OK || echo REVOKED",
 	)
 

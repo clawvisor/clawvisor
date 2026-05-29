@@ -139,6 +139,14 @@ func providerDefaultModel(provider string) string {
 	return "claude-sonnet-4-6"
 }
 
+func providerDefaultContextWindow(provider string) int {
+	return 1000000
+}
+
+func openClawDefaultMaxTokens() int {
+	return 8192
+}
+
 func providerBaseEnv(provider string) string {
 	if provider == "openai" {
 		return "OPENAI_BASE_URL"
@@ -781,6 +789,8 @@ func sectionOpenClawLocalConfigure(clawvisorURL, provider string) string {
 	var b strings.Builder
 	basePath := "/api/v1"
 	model := providerDefaultModel(provider)
+	contextWindow := providerDefaultContextWindow(provider)
+	maxTokens := openClawDefaultMaxTokens()
 	fmt.Fprintf(&b, "## 4. Point OpenClaw at Clawvisor\n\n")
 	fmt.Fprintf(&b, "Run OpenClaw's onboarding command and select a custom API key provider.\n")
 	fmt.Fprintf(&b, "Use Clawvisor's %s-compatible base URL and the minted `cvis_...`\n", installerProviderDisplayName(provider))
@@ -802,6 +812,43 @@ func sectionOpenClawLocalConfigure(clawvisorURL, provider string) string {
 	fmt.Fprintf(&b, "  --custom-api-key \"$TOKEN\" \\\n")
 	fmt.Fprintf(&b, "  --custom-compatibility %s --accept-risk\n", provider)
 	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Then patch OpenClaw's custom-provider model metadata so it does not keep\n")
+	fmt.Fprintf(&b, "the low fallback context window written by some OpenClaw versions. Run the\n")
+	fmt.Fprintf(&b, "patch in the same environment that owns OpenClaw's `models.json` (host for\n")
+	fmt.Fprintf(&b, "host installs; the OpenClaw container/volume for Docker installs). If you\n")
+	fmt.Fprintf(&b, "changed the model ID above, set `OPENCLAW_MODEL_CONTEXT_WINDOW` to that\n")
+	fmt.Fprintf(&b, "model's native maximum before running the patch.\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "OPENCLAW_MODEL_ID=%q\n", model)
+	fmt.Fprintf(&b, "OPENCLAW_MODEL_CONTEXT_WINDOW=%d\n", contextWindow)
+	fmt.Fprintf(&b, "OPENCLAW_MAX_TOKENS=%d\n", maxTokens)
+	fmt.Fprintf(&b, "OPENCLAW_MODELS_JSON=${OPENCLAW_MODELS_JSON:-$(find \"${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/agents\" -path '*/agent/models.json' -print | sort | tail -n 1)}\n")
+	fmt.Fprintf(&b, "test -n \"$OPENCLAW_MODELS_JSON\" && test -f \"$OPENCLAW_MODELS_JSON\"\n")
+	fmt.Fprintf(&b, "tmp=$(mktemp)\n")
+	fmt.Fprintf(&b, "jq --arg model \"$OPENCLAW_MODEL_ID\" \\\n")
+	fmt.Fprintf(&b, "  --argjson contextWindow \"$OPENCLAW_MODEL_CONTEXT_WINDOW\" \\\n")
+	fmt.Fprintf(&b, "  --argjson maxTokens \"$OPENCLAW_MAX_TOKENS\" '\n")
+	fmt.Fprintf(&b, "  def patchProvider:\n")
+	fmt.Fprintf(&b, "    .models |= ((. // []) | map(if .id == $model then . + {\n")
+	fmt.Fprintf(&b, "      contextWindow: $contextWindow,\n")
+	fmt.Fprintf(&b, "      maxTokens: $maxTokens\n")
+	fmt.Fprintf(&b, "    } else . end));\n")
+	fmt.Fprintf(&b, "  if .models.providers then\n")
+	fmt.Fprintf(&b, "    .models.providers |= with_entries(.value |= patchProvider)\n")
+	fmt.Fprintf(&b, "  elif .providers then\n")
+	fmt.Fprintf(&b, "    .providers |= with_entries(.value |= patchProvider)\n")
+	fmt.Fprintf(&b, "  else\n")
+	fmt.Fprintf(&b, "    error(\"No OpenClaw provider registry found\")\n")
+	fmt.Fprintf(&b, "  end\n")
+	fmt.Fprintf(&b, "' \"$OPENCLAW_MODELS_JSON\" > \"$tmp\" && mv \"$tmp\" \"$OPENCLAW_MODELS_JSON\"\n")
+	fmt.Fprintf(&b, "jq -e --arg model \"$OPENCLAW_MODEL_ID\" \\\n")
+	fmt.Fprintf(&b, "  --argjson contextWindow \"$OPENCLAW_MODEL_CONTEXT_WINDOW\" \\\n")
+	fmt.Fprintf(&b, "  --argjson maxTokens \"$OPENCLAW_MAX_TOKENS\" '\n")
+	fmt.Fprintf(&b, "  (if .models.providers then .models.providers elif .providers then .providers else {} end)\n")
+	fmt.Fprintf(&b, "  | to_entries\n")
+	fmt.Fprintf(&b, "  | any(.[]; any(.value.models[]?; .id == $model and .contextWindow == $contextWindow and .maxTokens == $maxTokens))\n")
+	fmt.Fprintf(&b, "' \"$OPENCLAW_MODELS_JSON\" >/dev/null\n")
+	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "If Clawvisor is not on the host, replace the base URL with the URL that\n")
 	fmt.Fprintf(&b, "the OpenClaw process can reach. The important part is `%s`.\n\n", basePath)
 	return b.String()
@@ -811,6 +858,8 @@ func sectionOpenClawRemoteConfigure(clawvisorURL, provider string) string {
 	var b strings.Builder
 	basePath := "/api/v1"
 	model := providerDefaultModel(provider)
+	contextWindow := providerDefaultContextWindow(provider)
+	maxTokens := openClawDefaultMaxTokens()
 	fmt.Fprintf(&b, "## 4. Point remote OpenClaw at Clawvisor\n\n")
 	fmt.Fprintf(&b, "Because OpenClaw is remote, `localhost` on that host is not this helper\n")
 	fmt.Fprintf(&b, "machine. Pick a Clawvisor URL the remote host can actually reach. The\n")
@@ -832,6 +881,41 @@ func sectionOpenClawRemoteConfigure(clawvisorURL, provider string) string {
 	fmt.Fprintf(&b, "  --custom-model-id '%s' \\\n", model)
 	fmt.Fprintf(&b, "  --custom-api-key '$TOKEN' \\\n")
 	fmt.Fprintf(&b, "  --custom-compatibility %s --accept-risk\"\n", provider)
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Then patch the remote OpenClaw custom-provider model metadata so it does\n")
+	fmt.Fprintf(&b, "not keep the low fallback context window written by some OpenClaw versions.\n")
+	fmt.Fprintf(&b, "If you changed the model ID above, set `OPENCLAW_MODEL_CONTEXT_WINDOW` to\n")
+	fmt.Fprintf(&b, "that model's native maximum before running the patch.\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'OPENCLAW_MODEL_ID=%q OPENCLAW_MODEL_CONTEXT_WINDOW=%d OPENCLAW_MAX_TOKENS=%d sh -s' <<'REMOTE_OPENCLAW_PATCH'\n", model, contextWindow, maxTokens)
+	fmt.Fprintf(&b, "set -eu\n")
+	fmt.Fprintf(&b, "OPENCLAW_MODELS_JSON=${OPENCLAW_MODELS_JSON:-$(find \"${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/agents\" -path '*/agent/models.json' -print | sort | tail -n 1)}\n")
+	fmt.Fprintf(&b, "test -n \"$OPENCLAW_MODELS_JSON\" && test -f \"$OPENCLAW_MODELS_JSON\"\n")
+	fmt.Fprintf(&b, "tmp=$(mktemp)\n")
+	fmt.Fprintf(&b, "jq --arg model \"$OPENCLAW_MODEL_ID\" \\\n")
+	fmt.Fprintf(&b, "  --argjson contextWindow \"$OPENCLAW_MODEL_CONTEXT_WINDOW\" \\\n")
+	fmt.Fprintf(&b, "  --argjson maxTokens \"$OPENCLAW_MAX_TOKENS\" '\n")
+	fmt.Fprintf(&b, "  def patchProvider:\n")
+	fmt.Fprintf(&b, "    .models |= ((. // []) | map(if .id == $model then . + {\n")
+	fmt.Fprintf(&b, "      contextWindow: $contextWindow,\n")
+	fmt.Fprintf(&b, "      maxTokens: $maxTokens\n")
+	fmt.Fprintf(&b, "    } else . end));\n")
+	fmt.Fprintf(&b, "  if .models.providers then\n")
+	fmt.Fprintf(&b, "    .models.providers |= with_entries(.value |= patchProvider)\n")
+	fmt.Fprintf(&b, "  elif .providers then\n")
+	fmt.Fprintf(&b, "    .providers |= with_entries(.value |= patchProvider)\n")
+	fmt.Fprintf(&b, "  else\n")
+	fmt.Fprintf(&b, "    error(\"No OpenClaw provider registry found\")\n")
+	fmt.Fprintf(&b, "  end\n")
+	fmt.Fprintf(&b, "' \"$OPENCLAW_MODELS_JSON\" > \"$tmp\" && mv \"$tmp\" \"$OPENCLAW_MODELS_JSON\"\n")
+	fmt.Fprintf(&b, "jq -e --arg model \"$OPENCLAW_MODEL_ID\" \\\n")
+	fmt.Fprintf(&b, "  --argjson contextWindow \"$OPENCLAW_MODEL_CONTEXT_WINDOW\" \\\n")
+	fmt.Fprintf(&b, "  --argjson maxTokens \"$OPENCLAW_MAX_TOKENS\" '\n")
+	fmt.Fprintf(&b, "  (if .models.providers then .models.providers elif .providers then .providers else {} end)\n")
+	fmt.Fprintf(&b, "  | to_entries\n")
+	fmt.Fprintf(&b, "  | any(.[]; any(.value.models[]?; .id == $model and .contextWindow == $contextWindow and .maxTokens == $maxTokens))\n")
+	fmt.Fprintf(&b, "' \"$OPENCLAW_MODELS_JSON\" >/dev/null\n")
+	fmt.Fprintf(&b, "REMOTE_OPENCLAW_PATCH\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "The important invariant is that OpenClaw's model requests go to Clawvisor\n")
 	fmt.Fprintf(&b, "and use the minted `cvis_...` token.\n\n")
