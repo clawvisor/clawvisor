@@ -135,3 +135,28 @@ func TestReplayBufferedHolds_EvictionExpiresInlineTask(t *testing.T) {
 		t.Fatalf("expired ids = %v, want [task-stranded] (PendingTaskID of the evicted hold)", creator.expiredIDs)
 	}
 }
+
+func TestRollbackBufferedPendingTasks_ExpiresOnlyInlineTaskHolds(t *testing.T) {
+	ctx := context.Background()
+	creator := &capturingInlineCreator{}
+	sink := &capturedHoldSink{
+		holds: []capturedHold{
+			{Pending: PendingLiteApproval{UserID: "u", PendingTaskID: "task-pending-1"}},
+			{Pending: PendingLiteApproval{UserID: "u"}},
+			{Pending: PendingLiteApproval{UserID: "u", PendingTaskID: "task-pending-2"}},
+		},
+	}
+
+	rollbackBufferedPendingTasks(ctx, PostprocessConfig{InlineTaskCreator: creator}, sink)
+
+	if !creator.expireCalled {
+		t.Fatalf("ExpireInlineTask was not called for buffered inline-task holds")
+	}
+	want := []string{"task-pending-1", "task-pending-2"}
+	if strings.Join(creator.expiredIDs, ",") != strings.Join(want, ",") {
+		t.Fatalf("expired ids = %v, want %v", creator.expiredIDs, want)
+	}
+	if creator.denyCalled {
+		t.Fatalf("rollback should expire operational orphans, not deny them as user action")
+	}
+}

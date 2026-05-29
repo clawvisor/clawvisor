@@ -909,6 +909,14 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		captures = append(captures, c)
 		return v
 	}
+	failClosed := func(reason string) PostprocessResult {
+		rollbackBufferedPendingTasks(req.Context(), cfg, holdSink)
+		return PostprocessResult{
+			Body:          nil,
+			ContentType:   contentType,
+			SkippedReason: reason,
+		}
+	}
 
 	result, err := rewriter.Rewrite(body, contentType, eval)
 	if err != nil {
@@ -918,11 +926,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		// literal placeholder) to the harness. Drop the body and surface
 		// a non-empty SkippedReason; the handler checks SkippedReason to
 		// emit a 502 instead of writing the upstream body unchanged.
-		return PostprocessResult{
-			Body:          nil,
-			ContentType:   contentType,
-			SkippedReason: "rewriter error: " + err.Error(),
-		}
+		return failClosed("rewriter error: " + err.Error())
 	}
 
 	// Coalesce decision. When the turn carries multiple tool_uses and
@@ -1040,11 +1044,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		// would have happened, and the SkippedReason adds the
 		// approval-hold-storage row separately.
 		flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
-		return PostprocessResult{
-			Body:          nil,
-			ContentType:   contentType,
-			SkippedReason: "approval hold storage failed: " + replayErr.Error(),
-		}
+		return failClosed("approval hold storage failed: " + replayErr.Error())
 	}
 	flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
 
@@ -1053,6 +1053,28 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		ContentType: contentType,
 		Rewritten:   result.Rewritten,
 		Decisions:   result.Decisions,
+	}
+}
+
+// rollbackBufferedPendingTasks expires any pending inline tasks created during
+// the evaluation pass when the turn fails before its cache holds are safely
+// committed. The task row is an operational orphan in this path, not a user
+// denial, so use ExpireInlineTask to match eviction cleanup semantics.
+func rollbackBufferedPendingTasks(ctx context.Context, cfg PostprocessConfig, sink *capturedHoldSink) {
+	if sink == nil || len(sink.holds) == 0 {
+		return
+	}
+	pendingCreator, ok := cfg.InlineTaskCreator.(InlineTaskPendingCreator)
+	if !ok || pendingCreator == nil {
+		return
+	}
+	for _, h := range sink.holds {
+		if h.Pending.PendingTaskID == "" || h.Pending.UserID == "" {
+			continue
+		}
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		_ = pendingCreator.ExpireInlineTask(rollbackCtx, h.Pending.PendingTaskID, h.Pending.UserID)
+		cancel()
 	}
 }
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -233,6 +235,56 @@ func TestDenyInlineTask_FlipsPendingToDenied(t *testing.T) {
 	}
 	if got.Status != "denied" {
 		t.Errorf("task.Status=%q after deny, want denied", got.Status)
+	}
+}
+
+func TestPostprocess_ReplayFailureExpiresPendingInlineTask(t *testing.T) {
+	h, st, _, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	taskBody := `{"purpose":"Rollback user's replay failure task","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"Create files"}]}`
+	req := httptest.NewRequest("POST", "/api/v1/messages?beta=true", nil)
+	cache := &failingInlineTaskHoldCache{err: errors.New("simulated replay hold failure")}
+	result := llmproxy.Postprocess(req, anthropicInlineTaskPostBody(t, taskBody), "application/json", llmproxy.PostprocessConfig{
+		Inspector:         inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+		RewriteOpts:       inspector.DefaultRewriteOpts("http://localhost:25297"),
+		AgentUserID:       agent.UserID,
+		AgentID:           agent.ID,
+		AgentName:         agent.Name,
+		ControlBaseURL:    "http://localhost:25297",
+		PendingApprovals:  cache,
+		InlineTaskCreator: h,
+	})
+
+	if result.Body != nil {
+		t.Fatalf("Postprocess should fail closed after replay failure; got %d body bytes", len(result.Body))
+	}
+	if !strings.Contains(result.SkippedReason, "approval hold storage failed") {
+		t.Fatalf("SkippedReason=%q, want approval hold storage failure", result.SkippedReason)
+	}
+	if cache.holdCalls != 1 {
+		t.Fatalf("underlying cache Hold calls=%d, want replay to hit failing cache once", cache.holdCalls)
+	}
+
+	tasks, _, err := st.ListTasks(ctx, agent.UserID, store.TaskFilter{})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	var got *store.Task
+	for _, task := range tasks {
+		if task.Purpose == "Rollback user's replay failure task" {
+			got = task
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("expected pending inline task row to be created before replay failure")
+	}
+	if got.Status != "expired" {
+		t.Fatalf("task status=%q, want expired rollback state", got.Status)
+	}
+	if got.ApprovalSource != "inline_chat" {
+		t.Fatalf("approval_source=%q, want inline_chat", got.ApprovalSource)
 	}
 }
 
@@ -520,4 +572,58 @@ func TestApproveInlineTask_ReturnsAlreadyTerminalAfterDashboardDeny(t *testing.T
 	if got.Status != "denied" {
 		t.Errorf("status=%q after racing approve, want denied (unchanged)", got.Status)
 	}
+}
+
+func anthropicInlineTaskPostBody(t *testing.T, taskBody string) []byte {
+	t.Helper()
+	if !json.Valid([]byte(taskBody)) {
+		t.Fatalf("task body is not valid JSON: %s", taskBody)
+	}
+	input, err := json.Marshal(map[string]any{
+		"url":    "https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline",
+		"method": "POST",
+		"body":   json.RawMessage(taskBody),
+	})
+	if err != nil {
+		t.Fatalf("marshal tool input: %v", err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"id":          "msg_inline_rollback",
+		"type":        "message",
+		"role":        "assistant",
+		"model":       "claude-haiku-4-5",
+		"stop_reason": "tool_use",
+		"content": []map[string]any{{
+			"type":  "tool_use",
+			"id":    "toolu_inline_rollback",
+			"name":  "Bash",
+			"input": json.RawMessage(input),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal anthropic response: %v", err)
+	}
+	return body
+}
+
+type failingInlineTaskHoldCache struct {
+	err       error
+	holdCalls int
+}
+
+func (c *failingInlineTaskHoldCache) Hold(context.Context, llmproxy.PendingLiteApproval) (llmproxy.HoldResult, error) {
+	c.holdCalls++
+	return llmproxy.HoldResult{}, c.err
+}
+
+func (c *failingInlineTaskHoldCache) Peek(context.Context, llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
+	return nil, nil
+}
+
+func (c *failingInlineTaskHoldCache) Resolve(context.Context, llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
+	return nil, nil
+}
+
+func (c *failingInlineTaskHoldCache) Drop(context.Context, llmproxy.ResolveRequest) error {
+	return nil
 }
