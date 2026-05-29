@@ -2509,7 +2509,7 @@ function InstallerSkillGuide({
   const wizardSteps: WizardStepDef[] = [
     { id: 'helper', title: 'Installer', done: step > 0 },
     { id: 'questions', title: 'Questions', done: step > 1 },
-    { id: 'key', title: 'API key', done: keyReady },
+    { id: 'key', title: 'API key', done: step > 2 && keyReady },
     { id: 'run', title: 'Run', done: step > 3 },
     { id: 'approve', title: 'Approve', done: step > 4 },
     { id: 'session', title: 'Start session', done: agentStarted || step > 5 },
