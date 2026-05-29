@@ -23,7 +23,7 @@ export default function OrgAdapters() {
       </h2>
       <p className="text-sm text-text-secondary">
         Register custom HTTP API adapters for your organization's internal APIs.
-        Service IDs must start with <code className="font-mono text-xs bg-surface-0 px-1 rounded">custom.</code>
+        Adapter IDs must start with <code className="font-mono text-xs bg-surface-0 px-1 rounded">custom.</code>
       </p>
 
       <div className="space-y-2">

@@ -105,7 +105,7 @@ export default function OAuthAuthorize() {
         <div className="bg-surface-2 border border-border-strong rounded-md p-4 mb-6">
           <p className="text-sm text-text-secondary mb-2">This will allow the application to:</p>
           <ul className="text-sm text-text-secondary space-y-1">
-            <li>View your service catalog</li>
+            <li>View your account catalog</li>
             <li>Create and manage tasks</li>
             <li>Make gateway requests (subject to your approval settings)</li>
           </ul>

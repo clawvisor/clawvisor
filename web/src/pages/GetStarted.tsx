@@ -51,7 +51,7 @@ function LoadingState() {
           <h2 className="text-xl font-semibold text-text-primary">Checking your setup&hellip;</h2>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <SkeletonCard label="Services" />
+          <SkeletonCard label="Accounts" />
           <SkeletonCard label="Agents" />
         </div>
       </section>
@@ -123,7 +123,7 @@ function Hero({
         <p className="text-sm text-text-tertiary">Loading your setup&hellip;</p>
       ) : ready ? (
         <p className="text-sm text-text-tertiary">
-          {services.length} service{services.length === 1 ? '' : 's'} connected · {agents.length}{' '}
+          {services.length} account{services.length === 1 ? '' : 's'} connected · {agents.length}{' '}
           agent{agents.length === 1 ? '' : 's'} registered
         </p>
       ) : null}
@@ -153,7 +153,7 @@ function SetupSteps({
       </p>
 
       <div className="space-y-3">
-        <SetupStepCard num={1} done={hasService} title="Connect a service" loading={isLoading}>
+        <SetupStepCard num={1} done={hasService} title="Connect an account" loading={isLoading}>
           <p className="text-sm text-text-secondary mb-3">
             Link an API like Gmail, GitHub, Slack, or Linear so your agents have something to act
             on. Credentials stay in Clawvisor's vault — agents never see them.
@@ -171,7 +171,7 @@ function SetupSteps({
                 to="/dashboard/accounts"
                 className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:text-brand-strong px-3 py-1.5 rounded-md border border-brand/40 bg-brand-muted transition-colors"
               >
-                Browse all services
+                Browse all integrations
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path d="M9 5l7 7-7 7" />
                 </svg>
@@ -326,7 +326,7 @@ function YourSetupSection({ services, agents }: { services: WelcomeService[]; ag
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-lg border border-border-subtle bg-surface-1 p-4">
           <div className="flex items-baseline justify-between mb-3">
-            <h3 className="font-medium text-text-primary">Services</h3>
+            <h3 className="font-medium text-text-primary">Accounts</h3>
             <Link to="/dashboard/accounts" className="text-xs text-brand hover:text-brand-strong font-medium">
               Manage →
             </Link>

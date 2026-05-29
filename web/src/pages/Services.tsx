@@ -288,7 +288,7 @@ function LegacyVaultInventorySection({
       <div className="space-y-2">
         {activeServices.length === 0 && (
           <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-            No connected services yet.
+            No connected accounts yet.
           </div>
         )}
         {activeServices.map(service => (
@@ -355,7 +355,7 @@ function ShadowTokensSection({
   return (
     <AccountSection
       title="Shadow Tokens"
-      description="Mint revocable shadow tokens for a specific agent and connected service. Agents can use these placeholders in config or prompts without ever seeing the real credential."
+      description="Mint revocable shadow tokens for a specific agent and connected account. Agents can use these placeholders in config or prompts without ever seeing the real credential."
     >
       <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
         <select
@@ -373,7 +373,7 @@ function ShadowTokensSection({
           onChange={e => setServiceId(e.target.value)}
           className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
         >
-          <option value="">Choose connected service</option>
+          <option value="">Choose connected account</option>
           {tokenServices.map(service => {
             const value = service.alias ? `${service.id}:${service.alias}` : service.id
             return (
@@ -445,12 +445,12 @@ function CredentialActivitySection({ entries }: { entries: AuditEntry[] }) {
   return (
     <AccountSection
       title="Credential Activity"
-      description="Recent account and credential-related activity touching your connected services."
+      description="Recent account and credential-related activity touching your connected accounts."
     >
       <div className="space-y-2">
         {entries.length === 0 && (
           <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-            No recent service activity.
+            No recent account activity.
           </div>
         )}
         {entries.map(entry => (
@@ -598,13 +598,13 @@ function VaultServiceActions({ svc }: { svc: ServiceInfo }) {
       const { affected_task_count } = await api.services.deactivatePreflight(svc.id, alias)
       const name = serviceName(svc.id, svc.alias)
       const taskWarning = affected_task_count > 0
-        ? `\n\nThis will revoke ${affected_task_count} active task${affected_task_count === 1 ? '' : 's'} that use${affected_task_count === 1 ? 's' : ''} this service.`
+        ? `\n\nThis will revoke ${affected_task_count} active task${affected_task_count === 1 ? '' : 's'} that use${affected_task_count === 1 ? 's' : ''} this account.`
         : ''
       if (!confirm(`Disconnect ${name}? Your agents will lose access.${taskWarning}`)) return
       await api.services.deactivate(svc.id, alias)
       refreshAccountData()
     } catch (e: any) {
-      setError(e.message ?? 'Failed to disconnect service')
+      setError(e.message ?? 'Failed to disconnect account')
     }
   }
 
@@ -966,13 +966,13 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
       const { affected_task_count } = await api.services.deactivatePreflight(svc.id, alias)
       const name = serviceName(svc.id, svc.alias)
       const taskWarning = affected_task_count > 0
-        ? `\n\nThis will revoke ${affected_task_count} active task${affected_task_count === 1 ? '' : 's'} that use${affected_task_count === 1 ? 's' : ''} this service.`
+        ? `\n\nThis will revoke ${affected_task_count} active task${affected_task_count === 1 ? '' : 's'} that use${affected_task_count === 1 ? 's' : ''} this account.`
         : ''
       if (!confirm(`Deactivate ${name}? Your agents will lose access.${taskWarning}`)) return
       await api.services.deactivate(svc.id, alias)
       qc.invalidateQueries({ queryKey: ['services'] })
     } catch (e: any) {
-      setError(e.message ?? 'Failed to deactivate service')
+      setError(e.message ?? 'Failed to deactivate account')
     }
   }
 
@@ -1337,7 +1337,7 @@ function AddServiceModal({
       qc.invalidateQueries({ queryKey: ['services'] })
       onSuccess(serviceId)
     } catch (e: any) {
-      setError(e.message ?? 'Failed to activate service')
+      setError(e.message ?? 'Failed to activate account')
     }
   }
 
@@ -1497,7 +1497,7 @@ function AddServiceModal({
       {/* Modal */}
       <div className="relative bg-surface-1 border border-border-default rounded-lg w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col shadow-xl">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-default">
-          <h2 className="text-lg font-semibold text-text-primary">Connect a service</h2>
+          <h2 className="text-lg font-semibold text-text-primary">Connect an account</h2>
           <button
             onClick={onClose}
             className="text-text-tertiary hover:text-text-primary text-xl leading-none"
@@ -1511,7 +1511,7 @@ function AddServiceModal({
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search services..."
+            placeholder="Search accounts..."
             className="w-full text-sm px-3 py-2 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
             autoFocus
           />
@@ -1757,7 +1757,7 @@ function AddServiceModal({
           </div>
 
           {serviceTypes.length === 0 && (
-            <p className="text-sm text-text-tertiary py-4">No services available.</p>
+            <p className="text-sm text-text-tertiary py-4">No accounts available.</p>
           )}
         </div>
       </div>
@@ -1781,7 +1781,7 @@ function OrgServicesView({ orgId, orgName }: { orgId: string; orgName: string })
       <div>
         <h1 className="text-2xl font-bold text-text-primary">{orgName} Accounts</h1>
         <p className="text-sm text-text-tertiary mt-1">
-          Org-wide shared credentials and per-user service activation.
+          Org-wide shared credentials and per-user account activation.
         </p>
       </div>
 
@@ -1804,7 +1804,7 @@ function OrgServicesView({ orgId, orgName }: { orgId: string; orgName: string })
         ))}
         {services.length === 0 && (
           <div className="text-sm text-text-tertiary py-8 text-center">
-            No services configured for this organization.
+            No accounts configured for this organization.
           </div>
         )}
       </div>
@@ -2092,7 +2092,7 @@ export default function Services() {
             onClick={() => setShowModal(true)}
             className="px-4 py-2 rounded-md bg-brand text-surface-0 text-sm font-medium hover:bg-brand-strong shadow-sm"
           >
-            Connect service
+            Connect account
           </button>
         </div>
       </div>
@@ -2118,7 +2118,7 @@ export default function Services() {
           <div>
             <p className="text-sm font-medium text-text-primary">Google OAuth not configured</p>
             <p className="text-xs text-text-secondary mt-0.5">
-              Google services (Gmail, Calendar, Drive, Contacts) require OAuth credentials.{' '}
+              Google accounts (Gmail, Calendar, Drive, Contacts) require OAuth credentials.{' '}
               <a href="/dashboard/settings" className="text-brand hover:underline">Go to Settings</a>{' '}
               to configure your Google Client ID and Client Secret.
             </p>
@@ -2132,7 +2132,7 @@ export default function Services() {
           <div>
             <p className="text-sm font-medium text-text-primary">Microsoft OAuth not configured</p>
             <p className="text-xs text-text-secondary mt-0.5">
-              Microsoft services (Outlook, OneDrive, Teams) require OAuth credentials.{' '}
+              Microsoft accounts (Outlook, OneDrive, Teams) require OAuth credentials.{' '}
               <a href="/dashboard/settings" className="text-brand hover:underline">Go to Settings</a>{' '}
               to configure your Microsoft Client ID and Client Secret.
             </p>
@@ -2141,7 +2141,7 @@ export default function Services() {
       )}
 
       {isLoading && <div className="text-sm text-text-tertiary">Loading…</div>}
-      {error && <div className="text-sm text-danger">Failed to load services.</div>}
+      {error && <div className="text-sm text-danger">Failed to load accounts.</div>}
 
       {!orgId && !isLoading && !error && (
         <>
@@ -2182,7 +2182,7 @@ export default function Services() {
             </svg>
           </div>
           <div className="text-center">
-            <p className="text-sm font-medium text-text-primary">Connect your first service</p>
+            <p className="text-sm font-medium text-text-primary">Connect your first account</p>
             <p className="text-xs text-text-tertiary mt-0.5">Slack, GitHub, Gmail, and more</p>
           </div>
         </button>

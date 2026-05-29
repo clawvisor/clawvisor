@@ -130,7 +130,7 @@ export default function Agents() {
     <div className="p-4 sm:p-8 space-y-8">
       <h1 className="text-2xl font-bold text-text-primary">Agents</h1>
       <p className="text-sm text-text-tertiary">
-        An agent is any AI system (Claude, a custom bot, etc.) that you want to give controlled access to your services.
+        An agent is any AI system (Claude, a custom bot, etc.) that you want to give controlled access to your accounts.
         Each agent gets a unique token — paste it into your agent's configuration to connect it to Clawvisor.
       </p>
 
@@ -466,11 +466,11 @@ function AgentPolicyPanel({
     <section className="rounded border border-border-subtle bg-surface-1 p-5 space-y-4">
       <div>
         <h2 className="text-lg font-semibold text-text-primary">Applied Policy</h2>
-        <p className="text-sm text-text-tertiary mt-1">Current starter profile, service presets, and effective runtime restrictions for this agent.</p>
+        <p className="text-sm text-text-tertiary mt-1">Current starter profile, account presets, and effective runtime restrictions for this agent.</p>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <AgentMetric label="Starter profile" value={starterProfile === 'none' ? 'None' : starterProfile} />
-        <AgentMetric label="Service presets" value={String(inferredPresets.size)} />
+        <AgentMetric label="Account presets" value={String(inferredPresets.size)} />
         <AgentMetric label="Effective runtime rules" value={String(rules.length)} />
       </div>
       <div className="grid gap-4 md:grid-cols-2">
@@ -478,7 +478,7 @@ function AgentPolicyPanel({
           <div className="text-sm font-medium text-text-primary">Presets</div>
           <div className="mt-2 space-y-2 text-sm text-text-secondary">
             <div>Harness profile: <span className="text-text-primary">{starterProfile === 'none' ? 'None' : starterProfile}</span></div>
-            <div>Service presets: <span className="text-text-primary">{inferredPresets.size === 0 ? 'None detected' : Array.from(inferredPresets).join(', ')}</span></div>
+            <div>Account presets: <span className="text-text-primary">{inferredPresets.size === 0 ? 'None detected' : Array.from(inferredPresets).join(', ')}</span></div>
           </div>
         </div>
         <div className="rounded border border-border-subtle bg-surface-0 p-4">
@@ -1076,7 +1076,7 @@ function LegacyClaudeDesktopGuide({ isLocal, onCopy }: { isLocal: boolean; onCop
             Clawvisor — e.g. "check my Gmail" or "list my GitHub issues." Claude will create a task,
             ask you to approve, and execute through Clawvisor.{' '}
             {isLocal &&
-              <>Open the dashboard with <code className="font-mono text-text-secondary">clawvisor tui</code> or visit <code className="font-mono text-text-secondary">http://localhost:25297</code> to manage services, approvals, and restrictions.</>
+              <>Open the dashboard with <code className="font-mono text-text-secondary">clawvisor tui</code> or visit <code className="font-mono text-text-secondary">http://localhost:25297</code> to manage accounts, approvals, and restrictions.</>
             }
           </p>
         </div>
@@ -1232,7 +1232,7 @@ function LegacyOtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
               <p className="text-sm font-medium text-text-primary">Verify</p>
               <CodeBlock>{`curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
               <p className="text-xs text-text-tertiary">
-                Should return a JSON catalog of available services. See{' '}
+                Should return a JSON catalog of available tools. See{' '}
                 <code className="font-mono text-text-secondary">{clawvisorURL}/skill/SKILL.md</code>{' '}
                 for the full protocol reference.
               </p>
@@ -2262,7 +2262,7 @@ function ClaudeDesktopGuide({ clawvisorURL, llmBaseURL, claim, newToken, isLocal
                 Clawvisor — e.g. "check my Gmail" or "list my GitHub issues." Claude will create a task,
                 ask you to approve, and execute through Clawvisor.{' '}
                 {isLocal &&
-                  <>Open the dashboard with <code className="font-mono text-text-secondary">clawvisor tui</code> or visit <code className="font-mono text-text-secondary">http://localhost:25297</code> to manage services, approvals, and restrictions.</>
+                  <>Open the dashboard with <code className="font-mono text-text-secondary">clawvisor tui</code> or visit <code className="font-mono text-text-secondary">http://localhost:25297</code> to manage accounts, approvals, and restrictions.</>
                 }
               </p>
             </div>
@@ -2870,7 +2870,7 @@ client = OpenAI(
                   <p className="text-sm font-medium text-text-primary">Verify</p>
                   <CodeBlock>{`curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
                   <p className="text-xs text-text-tertiary">
-                    Should return a JSON catalog of available services. See{' '}
+                    Should return a JSON catalog of available tools. See{' '}
                     <code className="font-mono text-text-secondary">{clawvisorURL}/skill/SKILL.md</code>{' '}
                     for the full protocol reference.
                   </p>
