@@ -2464,6 +2464,26 @@ function InstallerSkillGuide({
     queryFn: () => api.agents.list(),
     refetchInterval: 3000,
   })
+  const { data: connections } = useQuery({
+    queryKey: ['connections'],
+    queryFn: () => api.connections.list(),
+    refetchInterval: 3000,
+  })
+  const pendingInstallRequest = useMemo(() => {
+    const cutoff = startedAtRef.current - 5000
+    return (connections ?? [])
+      .filter(cr => cr.status === 'pending')
+      .filter(cr => new Date(cr.created_at).getTime() >= cutoff)
+      .filter(cr =>
+        cr.install_context?.harness === target ||
+        cr.name === spec.baseName ||
+        cr.name.startsWith(`${spec.baseName}-`),
+      )
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+  }, [connections, spec.baseName, target])
+  useEffect(() => {
+    if (pendingInstallRequest && step === 3) setStep(4)
+  }, [pendingInstallRequest, step])
   const candidateAgent = useMemo(() => {
     const cutoff = startedAtRef.current - 5000
     return (agents ?? [])
