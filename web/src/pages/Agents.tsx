@@ -2719,6 +2719,7 @@ function InstallerSetupQuestions({
   answers: InstallerAnswers
   onChange: (answers: InstallerAnswers) => void
 }) {
+  const targetLabel = INSTALLER_SPECS[target].label
   const set = <K extends keyof InstallerAnswers>(key: K, value: InstallerAnswers[K]) => {
     onChange({ ...answers, [key]: value })
   }
@@ -2735,7 +2736,7 @@ function InstallerSetupQuestions({
       </div>
 
       <QuestionSelect
-        label="Which upstream LLM provider should Clawvisor use?"
+        label={`Which upstream LLM provider should ${targetLabel} use?`}
         value={answers.llmProvider}
         onChange={value => set('llmProvider', value as InstallerAnswers['llmProvider'])}
         options={[
