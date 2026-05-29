@@ -123,7 +123,7 @@ curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
   "$CLAWVISOR_URL/api/skill/catalog" | head -20
 ```
 
-This should return a JSON catalog of available tools. If it returns a 401,
+This should return a JSON catalog of available services. If it returns a 401,
 the token is invalid. If it fails to connect, `CLAWVISOR_URL` is wrong or the
 server isn't running.
 
