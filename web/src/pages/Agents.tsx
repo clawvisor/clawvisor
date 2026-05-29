@@ -2544,36 +2544,24 @@ function InstallerSkillGuide({
             <div>
               <p className="text-sm font-medium text-text-primary">Choose the installer skill</p>
               <p className="text-xs text-text-tertiary mt-1">
-                This does not change the target agent. It only chooses which assistant
-                helps configure {spec.label}.
+                This chooses which assistant helps configure {spec.label}; the target agent stays the same.
               </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid max-w-2xl grid-cols-1 sm:grid-cols-2 gap-2">
               {(Object.keys(INSTALLER_HELPERS) as InstallerHelper[]).map(option => {
                 const optionSpec = INSTALLER_HELPERS[option]
-                const selected = helper === option
                 return (
                   <button
                     key={option}
-                    onClick={() => setHelper(option)}
-                    className={`text-left rounded-md border px-4 py-3 transition-colors ${
-                      selected
-                        ? 'border-brand bg-brand/5'
-                        : 'border-border-subtle bg-surface-0 hover:border-brand/60'
-                    }`}
+                    onClick={() => { setHelper(option); setStep(1) }}
+                    className="text-left rounded-md border border-border-subtle bg-surface-0 hover:border-brand hover:bg-surface-1 px-3 py-2.5 transition-colors group"
                   >
-                    <p className="text-sm font-medium text-text-primary">{optionSpec.label}</p>
-                    <p className="text-xs text-text-tertiary mt-1 leading-relaxed">{optionSpec.title}</p>
+                    <p className="text-sm font-medium text-text-primary group-hover:text-brand">{optionSpec.label}</p>
+                    <p className="text-xs text-text-tertiary mt-1 leading-snug">{optionSpec.title}</p>
                   </button>
                 )
               })}
             </div>
-            <WizardNav
-              canBack={false}
-              canNext
-              onBack={() => undefined}
-              onNext={() => setStep(1)}
-            />
           </div>
         )}
 
