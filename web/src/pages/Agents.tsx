@@ -2795,7 +2795,7 @@ function QuestionToggleGroup({
       <div
         role="group"
         aria-label={label}
-        className="mt-1 inline-flex max-w-full flex-wrap gap-0.5 rounded-md border border-border-subtle bg-surface-0 p-0.5"
+        className="mt-1 inline-flex max-w-full flex-wrap rounded-md border border-border-default bg-surface-0 p-1"
       >
         {options.map(([optionValue, optionLabel]) => (
           <button
@@ -2803,10 +2803,10 @@ function QuestionToggleGroup({
             type="button"
             onClick={() => onChange(optionValue)}
             aria-pressed={value === optionValue}
-            className={`min-h-8 rounded px-3 py-1.5 text-sm font-medium leading-snug transition-colors ${
+            className={`rounded px-3 py-1.5 text-sm font-medium leading-snug transition ${
               value === optionValue
-                ? 'bg-brand text-surface-0'
-                : 'text-text-secondary hover:bg-surface-1 hover:text-text-primary'
+                ? 'bg-surface-1 text-text-primary shadow-sm'
+                : 'text-text-tertiary hover:text-text-primary'
             }`}
           >
             {optionLabel}
