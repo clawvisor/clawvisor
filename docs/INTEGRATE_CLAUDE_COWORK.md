@@ -111,7 +111,7 @@ issues." Claude should create a task, prompt for approval, and execute
 through Clawvisor.
 
 You can also call the `fetch_catalog` MCP tool directly to confirm the
-connection is working. It should return the list of available tools. If
+connection is working. It should return the list of available services. If
 it returns an auth error, repeat Step 5. If it fails to connect, the
 connector points at the wrong instance or Clawvisor isn't running — ask the
 user to check.
