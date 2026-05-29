@@ -682,19 +682,34 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "Set the endpoint:\n\n```bash\nexport CLAWVISOR_URL=%s\n```\n\n", ctx.ClawvisorURL)
 	b.WriteString(sectionDashboardAnswers(ctx, "OpenClaw running mode: "+ctx.OpenClawMode))
 
-	b.WriteString(sectionProbe("openclaw", []string{
-		"**Container vs host** — `docker ps --format '{{.Names}}\\t{{.Image}}' | grep -i openclaw`. Capture the container name if found; otherwise check `~/.openclaw/` on the host.",
-		"**Gateway port** — read `~/.openclaw/openclaw.json` (or `<container>:/.openclaw/openclaw.json`); the gateway's `port` defaults to 18789 but the user may have changed it.",
-	}))
+	if ctx.OpenClawMode == "remote" {
+		b.WriteString(sectionOpenClawRemoteProbe())
+	} else {
+		b.WriteString(sectionProbe("openclaw", []string{
+			"**Container vs host** — `docker ps --format '{{.Names}}\\t{{.Image}}' | grep -i openclaw`. Capture the container name if found; otherwise check `~/.openclaw/` on the host.",
+			"**Gateway port** — read `~/.openclaw/openclaw.json` (or `<container>:/.openclaw/openclaw.json`); the gateway's `port` defaults to 18789 but the user may have changed it.",
+		}))
+	}
 
 	fmt.Fprintf(&b, "## 2. Check for an existing agent\n\n")
 	fmt.Fprintf(&b, "OpenClaw needs a *callback secret* in addition to the agent token (so\n")
 	fmt.Fprintf(&b, "the webhook plugin can verify Clawvisor callbacks). The standard reuse\n")
 	fmt.Fprintf(&b, "check (Step 2 of the other harnesses) doesn't apply cleanly — the\n")
 	fmt.Fprintf(&b, "callback secret isn't stored in `~/.clawvisor/agents/*.json`.\n\n")
-	fmt.Fprintf(&b, "If `~/.openclaw/workspace/.env` already has `CLAWVISOR_AGENT_TOKEN` set,\n")
-	fmt.Fprintf(&b, "ask the user whether to reuse the existing OpenClaw integration or\n")
-	fmt.Fprintf(&b, "rotate. Reuse path: skip to Step 7 to verify the integration still works.\n\n")
+	if ctx.OpenClawMode == "remote" {
+		fmt.Fprintf(&b, "Do not check the local filesystem for an existing OpenClaw integration.\n")
+		fmt.Fprintf(&b, "Use the remote access details from Step 1 and check the remote workspace:\n\n")
+		fmt.Fprintf(&b, "```bash\n")
+		fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'test -f ~/.openclaw/workspace/.env && grep -n \"^CLAWVISOR_AGENT_TOKEN=\" ~/.openclaw/workspace/.env || true'\n")
+		fmt.Fprintf(&b, "```\n\n")
+		fmt.Fprintf(&b, "If the remote workspace already has `CLAWVISOR_AGENT_TOKEN` set, ask the\n")
+		fmt.Fprintf(&b, "user whether to reuse the existing OpenClaw integration or rotate it.\n")
+		fmt.Fprintf(&b, "Reuse path: skip to Step 7 to verify the integration still works.\n\n")
+	} else {
+		fmt.Fprintf(&b, "If `~/.openclaw/workspace/.env` already has `CLAWVISOR_AGENT_TOKEN` set,\n")
+		fmt.Fprintf(&b, "ask the user whether to reuse the existing OpenClaw integration or\n")
+		fmt.Fprintf(&b, "rotate. Reuse path: skip to Step 7 to verify the integration still works.\n\n")
+	}
 
 	b.WriteString(sectionMint("openclaw", ctx.ClawvisorURL, ctx.Claim, ctx.UserID))
 
@@ -707,6 +722,64 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 
 	b.WriteString(sectionPersistToken("openclaw", "openclaw"))
 
+	if ctx.OpenClawMode == "remote" {
+		b.WriteString(sectionOpenClawRemoteConfigure(ctx.ClawvisorURL))
+	} else {
+		b.WriteString(sectionOpenClawLocalConfigure(ctx.ClawvisorURL))
+	}
+
+	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL))
+
+	b.WriteString(sectionUninstallDoc("openclaw", `1. Strip Clawvisor lines from `+"`~/.openclaw/workspace/.env`"+`: `+"`grep -v '^CLAWVISOR_\\|^OPENCLAW_HOOKS_URL=' ~/.openclaw/workspace/.env`"+`.
+2. Disable the webhook plugin: edit `+"`~/.openclaw/openclaw.json`"+` and set `+"`plugins.entries[\"clawvisor-webhook\"].enabled = false`"+` (or delete the entry).
+3. Optional: remove the extension directory: `+"`rm -rf ~/.openclaw/extensions/clawvisor-webhook`"+`.
+4. Optional: uninstall the workspace skill: `+"`npx clawhub uninstall clawvisor`"+`.
+5. Delete the token file: `+"`rm ~/.clawvisor/agents/openclaw.json`"+`.
+6. Revoke the agent in the Clawvisor dashboard under Agents → openclaw → Delete.
+7. Restart OpenClaw.
+`))
+
+	b.WriteString(sectionSelfUninstall("openclaw", helperInstallerCleanupCommands()))
+
+	return b.String()
+}
+
+func sectionOpenClawRemoteProbe() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## 1. Confirm remote OpenClaw access\n\n")
+	fmt.Fprintf(&b, "The user selected **remote host** in the dashboard. Do **not** probe the\n")
+	fmt.Fprintf(&b, "local machine for OpenClaw files, Docker containers, or gateway ports;\n")
+	fmt.Fprintf(&b, "that would inspect the helper agent's machine, not the OpenClaw host.\n\n")
+	fmt.Fprintf(&b, "Ask the user for the remote access details you need, then keep them in\n")
+	fmt.Fprintf(&b, "shell variables for the commands below:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "export OPENCLAW_REMOTE='<ssh host, for example user@example.com>'\n")
+	fmt.Fprintf(&b, "export OPENCLAW_WORKSPACE='~/.openclaw/workspace'\n")
+	fmt.Fprintf(&b, "export OPENCLAW_GATEWAY_WS='ws://127.0.0.1:18789'\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "If SSH is unavailable, do not invent local commands. Give the user the\n")
+	fmt.Fprintf(&b, "remote commands from later steps to run on the OpenClaw host and ask them\n")
+	fmt.Fprintf(&b, "to paste back any output or errors.\n\n")
+	fmt.Fprintf(&b, "Verify only the remote host:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'uname -s; test -d ~/.openclaw && echo openclaw-dir-present || true; test -f ~/.openclaw/openclaw.json && cat ~/.openclaw/openclaw.json || true'\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Keep what you learned in a JSON object for `install_context`:\n\n")
+	fmt.Fprintf(&b, "```json\n")
+	fmt.Fprintf(&b, "{\n")
+	fmt.Fprintf(&b, "  \"harness\": \"openclaw\",\n")
+	fmt.Fprintf(&b, "  \"install_mode\": \"remote\",\n")
+	fmt.Fprintf(&b, "  \"remote_host\": \"<hostname or description>\",\n")
+	fmt.Fprintf(&b, "  \"host_os\": \"darwin | linux | windows\",\n")
+	fmt.Fprintf(&b, "  \"gateway_ws_url\": \"<ws://...>\",\n")
+	fmt.Fprintf(&b, "  \"auth_mode\": \"swap\"\n")
+	fmt.Fprintf(&b, "}\n")
+	fmt.Fprintf(&b, "```\n\n")
+	return b.String()
+}
+
+func sectionOpenClawLocalConfigure(clawvisorURL string) string {
+	var b strings.Builder
 	fmt.Fprintf(&b, "## 5. Install the clawvisor skill in the OpenClaw workspace\n\n")
 	fmt.Fprintf(&b, "Use clawhub from the host (or inside the OpenClaw container if that's where\n")
 	fmt.Fprintf(&b, "OpenClaw runs):\n\n")
@@ -745,7 +818,7 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "**Pick the Clawvisor URL OpenClaw can actually reach:**\n\n")
 	fmt.Fprintf(&b, "- Both OpenClaw and Clawvisor in Docker on same host: `http://host.docker.internal:25297`\n")
 	fmt.Fprintf(&b, "- OpenClaw in Docker, Clawvisor on host: `http://host.docker.internal:25297`\n")
-	fmt.Fprintf(&b, "- Both on host: `http://localhost:25297` (or whatever `$CLAWVISOR_URL` is)\n\n")
+	fmt.Fprintf(&b, "- Both on host: `%s` (or whatever `$CLAWVISOR_URL` is)\n\n", clawvisorURL)
 	fmt.Fprintf(&b, "Same logic for `OPENCLAW_HOOKS_URL` (gateway port on the same axis).\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "grep -v '^CLAWVISOR_\\|^OPENCLAW_HOOKS_URL=' ~/.openclaw/workspace/.env > /tmp/env.tmp 2>/dev/null || true\n")
@@ -760,19 +833,74 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "OpenClaw must be restarted to pick up the new `.env` and webhook plugin —\n")
 	fmt.Fprintf(&b, "tell the user.\n\n")
+	return b.String()
+}
 
-	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL))
+func sectionOpenClawRemoteConfigure(clawvisorURL string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## 5. Install the clawvisor skill on the remote OpenClaw host\n\n")
+	fmt.Fprintf(&b, "Run the install on the remote host, not locally. If OpenClaw runs inside\n")
+	fmt.Fprintf(&b, "a container on the remote host, run the Docker command through SSH on\n")
+	fmt.Fprintf(&b, "that host.\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "# Remote host install:\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'npx clawhub install clawvisor --force'\n\n")
+	fmt.Fprintf(&b, "# Remote Docker install, only if OpenClaw is containerized on that host:\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'docker exec <OPENCLAW_CONTAINER> npx clawhub install clawvisor --force --workdir /home/node/.openclaw/workspace'\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Verify on the remote host: `ssh \"$OPENCLAW_REMOTE\" 'ls ~/.openclaw/workspace/skills/clawvisor/SKILL.md'`.\n\n")
 
-	b.WriteString(sectionUninstallDoc("openclaw", `1. Strip Clawvisor lines from `+"`~/.openclaw/workspace/.env`"+`: `+"`grep -v '^CLAWVISOR_\\|^OPENCLAW_HOOKS_URL=' ~/.openclaw/workspace/.env`"+`.
-2. Disable the webhook plugin: edit `+"`~/.openclaw/openclaw.json`"+` and set `+"`plugins.entries[\"clawvisor-webhook\"].enabled = false`"+` (or delete the entry).
-3. Optional: remove the extension directory: `+"`rm -rf ~/.openclaw/extensions/clawvisor-webhook`"+`.
-4. Optional: uninstall the workspace skill: `+"`npx clawhub uninstall clawvisor`"+`.
-5. Delete the token file: `+"`rm ~/.clawvisor/agents/openclaw.json`"+`.
-6. Revoke the agent in the Clawvisor dashboard under Agents → openclaw → Delete.
-7. Restart OpenClaw.
-`))
+	fmt.Fprintf(&b, "## 5.5. Install and enable the webhook plugin on the remote host\n\n")
+	fmt.Fprintf(&b, "Install the webhook extension on the same remote host where OpenClaw runs:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" '\n")
+	fmt.Fprintf(&b, "set -e\n")
+	fmt.Fprintf(&b, "EXT_DST=~/.openclaw/extensions/clawvisor-webhook\n")
+	fmt.Fprintf(&b, "mkdir -p \"$EXT_DST\"\n")
+	fmt.Fprintf(&b, "cd \"$EXT_DST\"\n")
+	fmt.Fprintf(&b, "npm init -y >/dev/null\n")
+	fmt.Fprintf(&b, "npm install clawvisor-webhook --production\n")
+	fmt.Fprintf(&b, "'\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Enable it in the remote `~/.openclaw/openclaw.json` — **read, merge,\n")
+	fmt.Fprintf(&b, "write back; don't overwrite the file**:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" '\n")
+	fmt.Fprintf(&b, "jq --arg ws \"$OPENCLAW_GATEWAY_WS\" '\\''\n")
+	fmt.Fprintf(&b, ".plugins.entries[\"clawvisor-webhook\"] = {\n")
+	fmt.Fprintf(&b, "  \"enabled\": true,\n")
+	fmt.Fprintf(&b, "  \"config\": {\"gatewayWsUrl\": $ws}\n")
+	fmt.Fprintf(&b, "}'\\'' ~/.openclaw/openclaw.json > /tmp/openclaw.json.tmp\n")
+	fmt.Fprintf(&b, "mv /tmp/openclaw.json.tmp ~/.openclaw/openclaw.json\n")
+	fmt.Fprintf(&b, "'\n")
+	fmt.Fprintf(&b, "```\n\n")
 
-	b.WriteString(sectionSelfUninstall("openclaw", helperInstallerCleanupCommands()))
-
+	fmt.Fprintf(&b, "## 6. Write environment variables on the remote OpenClaw host\n\n")
+	fmt.Fprintf(&b, "Because OpenClaw is remote, `localhost` on that host is not this helper\n")
+	fmt.Fprintf(&b, "machine. Pick a Clawvisor URL the remote host can actually reach. The\n")
+	fmt.Fprintf(&b, "dashboard rendered `%s`; if that is a localhost URL, replace it with a\n", clawvisorURL)
+	fmt.Fprintf(&b, "relay, public, VPN, or LAN URL reachable from `$OPENCLAW_REMOTE`.\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "export OPENCLAW_CLAWVISOR_URL='<remote-reachable Clawvisor URL>'\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"curl -sf -H 'X-Clawvisor-Agent-Token: $TOKEN' '$OPENCLAW_CLAWVISOR_URL/api/skill/catalog' >/dev/null\"\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Then write the remote workspace `.env`:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"\n")
+	fmt.Fprintf(&b, "set -e\n")
+	fmt.Fprintf(&b, "mkdir -p ~/.openclaw/workspace\n")
+	fmt.Fprintf(&b, "grep -v '^CLAWVISOR_\\|^OPENCLAW_HOOKS_URL=' ~/.openclaw/workspace/.env > /tmp/env.tmp 2>/dev/null || true\n")
+	fmt.Fprintf(&b, "mv /tmp/env.tmp ~/.openclaw/workspace/.env 2>/dev/null || true\n")
+	fmt.Fprintf(&b, "cat >> ~/.openclaw/workspace/.env <<EOF\n")
+	fmt.Fprintf(&b, "CLAWVISOR_URL=$OPENCLAW_CLAWVISOR_URL\n")
+	fmt.Fprintf(&b, "CLAWVISOR_AGENT_TOKEN=$TOKEN\n")
+	fmt.Fprintf(&b, "CLAWVISOR_CALLBACK_SECRET=$CALLBACK_SECRET\n")
+	fmt.Fprintf(&b, "OPENCLAW_HOOKS_URL=$OPENCLAW_GATEWAY_WS\n")
+	fmt.Fprintf(&b, "EOF\n")
+	fmt.Fprintf(&b, "chmod 600 ~/.openclaw/workspace/.env\n")
+	fmt.Fprintf(&b, "\"\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Restart OpenClaw on the remote host after writing `.env` and enabling the\n")
+	fmt.Fprintf(&b, "webhook plugin.\n\n")
 	return b.String()
 }

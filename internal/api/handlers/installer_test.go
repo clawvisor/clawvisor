@@ -16,6 +16,20 @@ func installerGet(t *testing.T, h *InstallerHandler, target, claim string) strin
 	if claim != "" {
 		path += "?claim=" + claim
 	}
+	return installerGetPath(t, h, path)
+}
+
+func installerGetQuery(t *testing.T, h *InstallerHandler, target, query string) string {
+	t.Helper()
+	path := "/skill/install/" + target + ".md"
+	if query != "" {
+		path += "?" + query
+	}
+	return installerGetPath(t, h, path)
+}
+
+func installerGetPath(t *testing.T, h *InstallerHandler, path string) string {
+	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /skill/install/{target}", h.Setup)
 	srv := httptest.NewServer(mux)
@@ -151,6 +165,8 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"# Connect OpenClaw to Clawvisor",
 		"tool gateway",
 		"INTEGRATE_OPENCLAW.md",
+		"OpenClaw running mode: host",
+		"## 1. Probe the environment",
 		"clawhub install clawvisor",
 		"clawvisor-webhook",
 		"CLAWVISOR_CALLBACK_SECRET",
@@ -160,6 +176,37 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"rm -f ~/.claude/commands/clawvisor-install.md",
 		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
+}
+
+func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	body := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12&openclaw_mode=remote&policy_setup=after&task_approval=low")
+
+	assertContainsAll(t, body,
+		"Dashboard answers",
+		"OpenClaw running mode: remote",
+		"Preferred task auto-approval default: low-risk conversation updates.",
+		"## 1. Confirm remote OpenClaw access",
+		"Do **not** probe the",
+		"export OPENCLAW_REMOTE=",
+		"install_mode\": \"remote\"",
+		"Do not check the local filesystem",
+		"ssh \"$OPENCLAW_REMOTE\"",
+		"remote-reachable Clawvisor URL",
+		"OPENCLAW_CLAWVISOR_URL",
+	)
+
+	for _, forbidden := range []string{
+		"## 1. Probe the environment",
+		"`docker ps",
+		"check `~/.openclaw/` on the host",
+		"# Host install:",
+		"Both OpenClaw and Clawvisor in Docker on same host",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("remote-mode body should not contain local-mode text %q", forbidden)
+		}
+	}
 }
 
 // TestInstallerAllTargetsHaveFrontmatter — Codex rejects skills without YAML
