@@ -188,7 +188,7 @@ The agent never sees the real PAT. The user pastes the placeholder once; Clawvis
 
 Two paths:
 
-- **Dashboard.** Open the Services page → connect the service (vaults the real credential). Then the "Shadow Tokens" panel → pick an agent + service → "Mint token". Copy the `autovault_…` string.
+- **Dashboard.** Open the Accounts page → connect the account (vaults the real credential). Then the "Shadow Tokens" panel → pick an agent + integration/account → "Mint token". Copy the `autovault_…` string.
 - **API.** `POST /api/runtime/placeholders/mint` with `{"agent_id": "...", "service": "github"}`. Returns the placeholder.
 
 The `secret_vault` feature flag controls the Shadow Tokens UI visibility. Lite-proxy alone is enough to surface it; you don't need to also enable the runtime proxy:

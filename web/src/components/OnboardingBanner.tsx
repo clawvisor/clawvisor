@@ -30,7 +30,7 @@ export default function OnboardingBanner() {
   if (hasService && hasAgent) return null
 
   const missing: string[] = []
-  if (!hasService) missing.push('a service')
+  if (!hasService) missing.push('an account')
   if (!hasAgent) missing.push('an agent')
   const missingText = missing.join(' and ')
 

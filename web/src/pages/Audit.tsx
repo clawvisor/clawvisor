@@ -16,7 +16,7 @@ function escapeCsvField(value: string): string {
 }
 
 function entriesToCsv(entries: AuditEntry[]): string {
-  const headers = ['Timestamp', 'Service', 'Action', 'Decision', 'Outcome', 'Duration (ms)', 'Reason', 'Data Origin', 'Error', 'Policy', 'Safety Flagged', 'Safety Reason', 'Request ID']
+  const headers = ['Timestamp', 'Account', 'Action', 'Decision', 'Outcome', 'Duration (ms)', 'Reason', 'Data Origin', 'Error', 'Policy', 'Safety Flagged', 'Safety Reason', 'Request ID']
   const rows = entries.map(e => [
     e.timestamp,
     serviceName(e.service),
@@ -51,7 +51,7 @@ const ACTIVITY_TYPES = [
   { value: 'runtime_egress', label: 'Runtime egress' },
   { value: 'runtime_tool_use', label: 'Runtime tool use' },
   { value: 'runtime', label: 'Other runtime activity' },
-  { value: 'service', label: 'Service activity' },
+  { value: 'service', label: 'Account activity' },
 ] as const
 
 const OUTCOME_STYLE: Record<string, string> = {
@@ -373,7 +373,7 @@ function CreateRuleModal({
 
         {!isRuntimeRule && (
           <div className="rounded border border-border-subtle bg-surface-0 p-3 text-sm text-text-secondary">
-            This activity currently creates a service restriction entry. Runtime allow / review / deny actions are only available for runtime egress and tool-use rows.
+            This activity currently creates an account restriction entry. Runtime allow / review / deny actions are only available for runtime egress and tool-use rows.
           </div>
         )}
 
@@ -915,7 +915,7 @@ export default function Activity() {
         <input
           value={serviceFilter}
           onChange={e => { setServiceFilter(e.target.value); setOffset(0) }}
-          placeholder="Filter by service…"
+          placeholder="Filter by account…"
           className="text-sm rounded border border-border-default bg-surface-0 text-text-primary px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
         />
       </div>

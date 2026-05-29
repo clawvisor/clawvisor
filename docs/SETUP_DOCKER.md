@@ -182,7 +182,7 @@ To stop:  docker compose -f deploy/docker-compose.yml down
 
 Remind the user to:
 - Open the magic link to access the dashboard
-- Connect services under the **Services** tab:
+- Connect accounts under the **Accounts** tab:
   - Google (Gmail, Calendar, Drive, Contacts) — one OAuth connection covers
     all four. Requires Google OAuth credentials from Step 3.
   - GitHub, Slack, Notion, Linear, Stripe, Twilio — activate with API

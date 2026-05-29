@@ -250,7 +250,7 @@ function DocsTab() {
       <p className="text-xs text-text-tertiary">
         Claude will research the API docs, generate the integration YAML with risk classification, and save it to{' '}
         <code className="px-1 py-0.5 rounded bg-surface-2 font-mono">~/.clawvisor/adapters/</code>.
-        The integration will appear on the Services page immediately.
+        The integration will appear on the Accounts page immediately.
       </p>
     </div>
   )
@@ -366,7 +366,7 @@ export default function AdapterGen() {
             <div className="flex gap-4">
               <div className="flex-1">
                 <label className="block text-xs font-medium text-text-secondary mb-1">
-                  Service ID <span className="text-text-tertiary">(optional)</span>
+                  Adapter ID <span className="text-text-tertiary">(optional)</span>
                 </label>
                 <input
                   type="text"

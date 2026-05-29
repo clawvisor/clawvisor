@@ -154,7 +154,7 @@ Explain how it works:
   to check status, then call `POST /api/gateway/request/{request_id}/execute`.
 
 Remind the user to:
-- Connect services in the Clawvisor dashboard under the **Services** tab
+- Connect accounts in the Clawvisor dashboard under the **Accounts** tab
   before asking Claude to use them
 - Approve tasks in the dashboard (or via Telegram) when Claude requests them
 - Optionally set restrictions in the dashboard to hard-block specific actions

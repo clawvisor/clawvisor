@@ -403,7 +403,7 @@ function OAuthCredentialsSection() {
       <div>
         <h2 className="text-lg font-semibold text-text-primary">OAuth Credentials</h2>
         <p className="text-sm text-text-tertiary mt-0.5">
-          Configure OAuth app credentials for services that require browser-based authorization.
+          Configure OAuth app credentials for accounts that require browser-based authorization.
         </p>
       </div>
 
@@ -1745,7 +1745,7 @@ function DaemonCard({ daemon, onDelete, deleting, enabledServiceIds }: {
       {daemon.connected && services.length > 0 && (
         <div className="mt-4 pt-4 border-t border-border-default">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">Services</p>
+            <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">Accounts</p>
             <button
               onClick={() => navigate('/dashboard/accounts')}
               className="text-xs text-brand hover:underline"

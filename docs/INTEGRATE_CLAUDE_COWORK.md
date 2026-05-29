@@ -90,14 +90,14 @@ If the OAuth flow does not complete:
 
 ---
 
-## Step 6: Connect services
+## Step 6: Connect accounts
 
-Before Claude can use a service, it must be activated in Clawvisor. Direct
+Before Claude can use an integration, it must be connected in Clawvisor. Direct
 the user to:
 
 1. Open the Clawvisor dashboard
-2. Go to the **Services** tab
-3. Connect the services they want Claude to access (Gmail, GitHub, Slack, etc.)
+2. Go to the **Accounts** tab
+3. Connect the accounts they want Claude to access (Gmail, GitHub, Slack, etc.)
 
 Each service has its own OAuth flow or API key configuration.
 
@@ -140,7 +140,7 @@ Explain how it works:
 - All actions are logged in the audit trail. Credentials never leave Clawvisor.
 
 Remind the user to:
-- Connect services in the Clawvisor dashboard under the **Services** tab
+- Connect accounts in the Clawvisor dashboard under the **Accounts** tab
   before asking Claude to use them
 - Approve tasks in the dashboard (or via Telegram) when Claude requests them
 - Optionally set restrictions in the dashboard to hard-block specific actions

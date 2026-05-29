@@ -430,8 +430,8 @@ export default function Policy() {
             {proxyLiteOnly
               ? 'Configure harness tool access and connected account restrictions.'
               : runtimePolicyUI || servicePresetsUI
-                ? 'Configure presets, runtime rules, defaults, and legacy service restrictions from one control surface.'
-              : 'Configure service restrictions for your connected adapters and integrations.'}
+                ? 'Configure presets, runtime rules, defaults, and legacy account restrictions from one control surface.'
+                : 'Configure account restrictions for your connected adapters and integrations.'}
           </p>
         </div>
       </div>
@@ -1121,13 +1121,13 @@ function AccountControlsPanel({
 
       {!isLoading && allServices.length === 0 && (
         <div className="text-sm text-text-tertiary py-8 text-center">
-          No services registered. Add adapters in the server configuration to manage policy.
+          No integrations registered. Add adapters in the server configuration to manage policy.
         </div>
       )}
 
       {!isLoading && allServices.length > 0 && activated.length === 0 && (
         <div className="text-sm text-text-tertiary py-8 text-center">
-          Activate a service first to manage account controls.{' '}
+          Connect an account first to manage controls.{' '}
           <Link to="/dashboard/accounts" className="text-brand hover:underline">Go to Accounts</Link>
         </div>
       )}
@@ -1149,7 +1149,7 @@ function AccountControlsPanel({
             onClick={onToggleShowAll}
             className="text-sm text-text-tertiary hover:text-text-primary"
           >
-            {showAll ? 'Hide unactivated services' : `Show all services (${unactivated.length} not activated)`}
+            {showAll ? 'Hide unactivated integrations' : `Show all integrations (${unactivated.length} not activated)`}
           </button>
           {showAll && (
             <div className="space-y-4 opacity-50">
@@ -1585,7 +1585,7 @@ function PolicyRulesPanel({
   onDeleteRule: (rule: RuntimePolicyRule) => void
 }) {
   const tabs: Array<{ id: 'service' | 'egress' | 'tool'; label: string; count: number }> = [
-    { id: 'service', label: 'Service', count: serviceRuleCount },
+    { id: 'service', label: 'Account', count: serviceRuleCount },
     ...(runtimePolicyUI
       ? [
           { id: 'egress' as const, label: 'Egress', count: egressRuleCount },
@@ -1601,8 +1601,8 @@ function PolicyRulesPanel({
           <h2 className="text-lg font-semibold text-text-primary">Rules</h2>
           <p className="text-sm text-text-tertiary mt-1">
             {runtimePolicyUI
-              ? 'Switch between service, egress, and tool policy without bouncing across separate sections.'
-              : 'Manage service-level policy for connected adapters and integrations.'}
+              ? 'Switch between account, egress, and tool policy without bouncing across separate sections.'
+              : 'Manage account-level policy for connected adapters and integrations.'}
           </p>
         </div>
         <div className="inline-flex rounded-lg border border-border-default bg-surface-0 p-1">
@@ -1718,7 +1718,7 @@ function ServicePresetsPanel({
     <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-text-primary">Service Presets</h2>
+          <h2 className="text-lg font-semibold text-text-primary">Account Presets</h2>
           <p className="text-sm text-text-tertiary mt-1">
             Apply narrow allowlists for common integrations without hand-authoring every runtime rule.
           </p>

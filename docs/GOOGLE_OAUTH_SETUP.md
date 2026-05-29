@@ -81,7 +81,7 @@ export GOOGLE_CLIENT_SECRET="your-client-secret"
 ## 6. Connect your account
 
 1. Start Clawvisor: `CONFIG_FILE="$HOME/.clawvisor/config.yaml" make run`
-2. Open the dashboard and go to **Services**
+2. Open the dashboard and go to **Accounts**
 3. Click **Connect** next to Google
 4. You'll be redirected to Google's consent screen — authorize with your account
 5. You may see a "This app isn't verified" warning — click **Advanced** then

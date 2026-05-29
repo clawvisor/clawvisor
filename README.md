@@ -409,7 +409,7 @@ The web UI provides:
 
 - **Overview** — pending approvals queue, activity charts, and notification setup
 - **Tasks** — view active/standing tasks, approve/deny/revoke task scopes, filterable by status
-- **Services** — activate services via OAuth (Google) or API key (GitHub, Slack, Notion, etc.), re-authenticate, manage aliases
+- **Accounts** — activate integrations/accounts via OAuth (Google) or API key (GitHub, Slack, Notion, etc.), re-authenticate, manage aliases
 - **Restrictions** — toggle hard blocks on service/action pairs
 - **Agents** — create agent tokens, manage connection requests
 - **Gateway log** — searchable audit trail of every gateway request with outcomes and verification results
