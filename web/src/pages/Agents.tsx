@@ -975,22 +975,22 @@ function AgentPickerGrid({ agents, onPick }: {
   onPick: (next: AgentTab) => void
 }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+    <div className="grid max-w-3xl grid-cols-1 sm:grid-cols-2 gap-2">
       {agents.map(id => {
         const m = AGENT_META[id]
         return (
           <button
             key={id}
             onClick={() => onPick(id)}
-            className="text-left rounded-md border border-border-default bg-surface-0 hover:border-brand hover:bg-surface-1 px-4 py-4 transition-colors group"
+            className="text-left rounded-md border border-border-default bg-surface-0 hover:border-brand hover:bg-surface-1 px-3 py-2.5 transition-colors group"
           >
-            <div className="flex items-start justify-between gap-2">
-              <span className="font-medium text-text-primary group-hover:text-brand">{m.label}</span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-text-primary group-hover:text-brand">{m.label}</span>
               <span className="text-xs text-text-tertiary bg-surface-1 group-hover:bg-surface-0 px-1.5 py-0.5 rounded whitespace-nowrap">
                 {m.primitive}
               </span>
             </div>
-            <p className="text-xs text-text-tertiary mt-1.5">{m.tagline}</p>
+            <p className="text-xs text-text-tertiary mt-1 leading-snug">{m.tagline}</p>
           </button>
         )
       })}
@@ -2752,7 +2752,7 @@ function InstallerSetupQuestions({
         </div>
       </div>
 
-      <QuestionSelect
+      <QuestionToggleGroup
         label={`Which upstream LLM provider should ${targetLabel} use?`}
         value={answers.llmProvider}
         onChange={value => set('llmProvider', value as InstallerAnswers['llmProvider'])}
@@ -2763,7 +2763,7 @@ function InstallerSetupQuestions({
       />
 
       {target === 'hermes' && (
-        <QuestionSelect
+        <QuestionToggleGroup
           label="How should Hermes store its Clawvisor settings?"
           value={answers.hermesConfig}
           onChange={value => set('hermesConfig', value as InstallerAnswers['hermesConfig'])}
@@ -2775,7 +2775,7 @@ function InstallerSetupQuestions({
       )}
 
       {target === 'openclaw' && (
-        <QuestionSelect
+        <QuestionToggleGroup
           label="Where is OpenClaw running?"
           value={answers.openclawMode}
           onChange={value => set('openclawMode', value as InstallerAnswers['openclawMode'])}
@@ -2790,7 +2790,7 @@ function InstallerSetupQuestions({
   )
 }
 
-function QuestionSelect({
+function QuestionToggleGroup({
   label,
   value,
   options,
@@ -2802,18 +2802,30 @@ function QuestionSelect({
   onChange: (value: string) => void
 }) {
   return (
-    <label className="block">
-      <span className="text-xs font-medium text-text-primary">{label}</span>
-      <select
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        className="mt-1 w-full rounded border border-border-subtle bg-surface-0 px-3 py-2 text-sm text-text-primary"
+    <div>
+      <p className="text-xs font-medium text-text-primary">{label}</p>
+      <div
+        role="group"
+        aria-label={label}
+        className="mt-1 inline-flex max-w-full flex-wrap gap-0.5 rounded-md border border-border-subtle bg-surface-0 p-0.5"
       >
         {options.map(([optionValue, optionLabel]) => (
-          <option key={optionValue} value={optionValue}>{optionLabel}</option>
+          <button
+            key={optionValue}
+            type="button"
+            onClick={() => onChange(optionValue)}
+            aria-pressed={value === optionValue}
+            className={`min-h-8 rounded px-3 py-1.5 text-sm font-medium leading-snug transition-colors ${
+              value === optionValue
+                ? 'bg-brand text-surface-0'
+                : 'text-text-secondary hover:bg-surface-1 hover:text-text-primary'
+            }`}
+          >
+            {optionLabel}
+          </button>
         ))}
-      </select>
-    </label>
+      </div>
+    </div>
   )
 }
 
