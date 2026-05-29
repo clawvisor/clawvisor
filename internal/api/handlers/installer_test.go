@@ -163,13 +163,17 @@ func TestInstallerOpenClawRender(t *testing.T) {
 
 	assertContainsAll(t, body,
 		"# Connect OpenClaw to Clawvisor",
-		"LLM gateway",
-		"INTEGRATE_OPENCLAW.md",
+		"LLM base URL",
 		"OpenClaw running mode: host",
-		"## 1. Probe the environment",
-		"clawhub install clawvisor",
+		"## 1. Confirm how to run OpenClaw onboarding",
+		"## 2. Check for an existing token",
+		"openclaw-cli onboard --non-interactive",
+		"--auth-choice custom-api-key",
+		"--custom-base-url",
+		"--custom-api-key \"$TOKEN\"",
+		"--custom-compatibility anthropic",
+		"docker compose run --rm openclaw-cli onboard",
 		"host.docker.internal",
-		"CLAWVISOR_AGENT_TOKEN=$TOKEN",
 		"rm -f ~/.claude/commands/clawvisor-install.md",
 		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
@@ -179,6 +183,7 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"CLAWVISOR_CALLBACK_SECRET",
 		"OPENCLAW_HOOKS_URL",
 		"clawvisor-webhook",
+		"clawhub install",
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("OpenClaw LLM-proxy setup should not contain callback/webhook text %q", forbidden)
@@ -198,11 +203,13 @@ func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
 		"Do **not** probe the",
 		"export OPENCLAW_REMOTE=",
 		"install_mode\": \"remote\"",
-		"Do not check the local filesystem",
+		"Do **not** probe the",
 		"ssh \"$OPENCLAW_REMOTE\"",
 		"remote-reachable Clawvisor URL",
-		"OPENCLAW_CLAWVISOR_URL",
-		"CLAWVISOR_AGENT_TOKEN=$TOKEN",
+		"OPENCLAW_CLAWVISOR_BASE_URL",
+		"--custom-base-url",
+		"--custom-api-key '$TOKEN'",
+		"--custom-compatibility anthropic",
 	)
 
 	for _, forbidden := range []string{
@@ -216,6 +223,8 @@ func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
 		"CLAWVISOR_CALLBACK_SECRET",
 		"OPENCLAW_HOOKS_URL",
 		"clawvisor-webhook",
+		"clawhub install",
+		"CLAWVISOR_AGENT_TOKEN",
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("remote-mode body should not contain local-mode text %q", forbidden)

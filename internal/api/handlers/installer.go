@@ -146,7 +146,7 @@ func (h *InstallerHandler) resolveURL(r *http.Request) string {
 
 // installerFrontmatter emits the YAML frontmatter every target's skill loader
 // expects. Codex *requires* `name` + `description` (rejects skills without it
-// at startup); Hermes and the openclaw clawhub format use the same shape; Claude
+// at startup); Hermes/OpenClaw skills use the same shape; Claude
 // Code slash commands accept a `description` (shown in the slash-command
 // picker). One shared block keeps the four renders in sync.
 func installerFrontmatter(harness string) string {
@@ -673,39 +673,20 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	b.WriteString(installerFrontmatter("OpenClaw"))
 	fmt.Fprintf(&b, "# Connect OpenClaw to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are walking the user through connecting an OpenClaw instance to a\n")
-	fmt.Fprintf(&b, "running Clawvisor at `%s`. OpenClaw uses Clawvisor as an LLM gateway;\n", ctx.ClawvisorURL)
-	fmt.Fprintf(&b, "Clawvisor identifies the agent with the minted agent token. This skill is\n")
+	fmt.Fprintf(&b, "running Clawvisor at `%s`. The setup is intentionally simple: point\n", ctx.ClawvisorURL)
+	fmt.Fprintf(&b, "OpenClaw's LLM base URL at Clawvisor's Anthropic-compatible endpoint and\n")
+	fmt.Fprintf(&b, "use the minted Clawvisor agent token as the custom API key. This skill is\n")
 	fmt.Fprintf(&b, "one-shot.\n\n")
-	fmt.Fprintf(&b, "**Prerequisite:** the dedicated guide at `docs/INTEGRATE_OPENCLAW.md` in\n")
-	fmt.Fprintf(&b, "the Clawvisor repo is the canonical source for the configure-side steps.\n")
-	fmt.Fprintf(&b, "If you want the full reasoning behind any decision below, read it.\n\n")
 	fmt.Fprintf(&b, "Set the endpoint:\n\n```bash\nexport CLAWVISOR_URL=%s\n```\n\n", ctx.ClawvisorURL)
 	b.WriteString(sectionDashboardAnswers(ctx, "OpenClaw running mode: "+ctx.OpenClawMode))
 
 	if ctx.OpenClawMode == "remote" {
 		b.WriteString(sectionOpenClawRemoteProbe())
 	} else {
-		b.WriteString(sectionProbe("openclaw", []string{
-			"**Container vs host** — `docker ps --format '{{.Names}}\\t{{.Image}}' | grep -i openclaw`. Capture the container name if found; otherwise check `~/.openclaw/` on the host.",
-			"**Gateway port** — read `~/.openclaw/openclaw.json` (or `<container>:/.openclaw/openclaw.json`); the gateway's `port` defaults to 18789 but the user may have changed it.",
-		}))
+		b.WriteString(sectionOpenClawLocalProbe(ctx.OpenClawMode))
 	}
 
-	fmt.Fprintf(&b, "## 2. Check for an existing agent\n\n")
-	if ctx.OpenClawMode == "remote" {
-		fmt.Fprintf(&b, "Do not check the local filesystem for an existing OpenClaw integration.\n")
-		fmt.Fprintf(&b, "Use the remote access details from Step 1 and check the remote workspace:\n\n")
-		fmt.Fprintf(&b, "```bash\n")
-		fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'test -f ~/.openclaw/workspace/.env && grep -n \"^CLAWVISOR_AGENT_TOKEN=\" ~/.openclaw/workspace/.env || true'\n")
-		fmt.Fprintf(&b, "```\n\n")
-		fmt.Fprintf(&b, "If the remote workspace already has `CLAWVISOR_AGENT_TOKEN` set, ask the\n")
-		fmt.Fprintf(&b, "user whether to reuse the existing OpenClaw integration or rotate it.\n")
-		fmt.Fprintf(&b, "Reuse path: skip to Step 7 to verify the integration still works.\n\n")
-	} else {
-		fmt.Fprintf(&b, "If `~/.openclaw/workspace/.env` already has `CLAWVISOR_AGENT_TOKEN` set,\n")
-		fmt.Fprintf(&b, "ask the user whether to reuse the existing OpenClaw integration or\n")
-		fmt.Fprintf(&b, "rotate. Reuse path: skip to Step 7 to verify the integration still works.\n\n")
-	}
+	b.WriteString(sectionReuseCheck("openclaw", ctx.ClawvisorURL))
 
 	b.WriteString(sectionMint("openclaw", ctx.ClawvisorURL, ctx.Claim, ctx.UserID))
 
@@ -719,11 +700,9 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 
 	b.WriteString(sectionSmokeTest(ctx.ClawvisorURL))
 
-	b.WriteString(sectionUninstallDoc("openclaw", `1. Strip Clawvisor lines from `+"`~/.openclaw/workspace/.env`"+`: `+"`grep -v '^CLAWVISOR_' ~/.openclaw/workspace/.env`"+`.
-2. Optional: uninstall the workspace skill: `+"`npx clawhub uninstall clawvisor`"+`.
-3. Delete the token file: `+"`rm ~/.clawvisor/agents/openclaw.json`"+`.
-4. Revoke the agent in the Clawvisor dashboard under Agents → openclaw → Delete.
-5. Restart OpenClaw.
+	b.WriteString(sectionUninstallDoc("openclaw", `1. Re-run OpenClaw onboarding and choose your previous non-Clawvisor provider/base URL.
+2. Delete the token file: `+"`rm ~/.clawvisor/agents/openclaw.json`"+`.
+3. Revoke the agent in the Clawvisor dashboard under Agents → openclaw → Delete.
 `))
 
 	b.WriteString(sectionSelfUninstall("openclaw", helperInstallerCleanupCommands()))
@@ -731,11 +710,41 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	return b.String()
 }
 
+func sectionOpenClawLocalProbe(mode string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## 1. Confirm how to run OpenClaw onboarding\n\n")
+	fmt.Fprintf(&b, "Do not install extra OpenClaw components. Only determine how the user runs\n")
+	fmt.Fprintf(&b, "OpenClaw's existing onboarding command.\n\n")
+	fmt.Fprintf(&b, "Determine:\n\n")
+	if mode == "docker" {
+		fmt.Fprintf(&b, "- **Docker command** — confirm the compose service/working directory for `openclaw-cli`.\n")
+	} else {
+		fmt.Fprintf(&b, "- **Host command** — confirm `openclaw-cli` is available on this machine.\n")
+		fmt.Fprintf(&b, "- **Docker fallback** — if OpenClaw is actually containerized, use the Docker command in Step 5 instead.\n")
+	}
+	fmt.Fprintf(&b, "- **Model id** — default to `claude-sonnet-4-6` unless the user prefers another Clawvisor-routed Anthropic model.\n")
+	fmt.Fprintf(&b, "- **Shell** — zsh, bash, or fish, only if you need to save a convenience command.\n\n")
+	fmt.Fprintf(&b, "Keep what you learned in a JSON object for `install_context`:\n\n")
+	fmt.Fprintf(&b, "```json\n")
+	fmt.Fprintf(&b, "{\n")
+	fmt.Fprintf(&b, "  \"harness\": \"openclaw\",\n")
+	if mode == "docker" {
+		fmt.Fprintf(&b, "  \"install_mode\": \"docker\",\n")
+	} else {
+		fmt.Fprintf(&b, "  \"install_mode\": \"host\",\n")
+	}
+	fmt.Fprintf(&b, "  \"model_id\": \"claude-sonnet-4-6\",\n")
+	fmt.Fprintf(&b, "  \"auth_mode\": \"custom-api-key\"\n")
+	fmt.Fprintf(&b, "}\n")
+	fmt.Fprintf(&b, "```\n\n")
+	return b.String()
+}
+
 func sectionOpenClawRemoteProbe() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## 1. Confirm remote OpenClaw access\n\n")
 	fmt.Fprintf(&b, "The user selected **remote host** in the dashboard. Do **not** probe the\n")
-	fmt.Fprintf(&b, "local machine for OpenClaw files, Docker containers, or gateway ports;\n")
+	fmt.Fprintf(&b, "local machine for OpenClaw files or Docker containers;\n")
 	fmt.Fprintf(&b, "that would inspect the helper agent's machine, not the OpenClaw host.\n\n")
 	fmt.Fprintf(&b, "Ask the user for the remote access details you need, then keep them in\n")
 	fmt.Fprintf(&b, "shell variables for the commands below:\n\n")
@@ -746,9 +755,9 @@ func sectionOpenClawRemoteProbe() string {
 	fmt.Fprintf(&b, "If SSH is unavailable, do not invent local commands. Give the user the\n")
 	fmt.Fprintf(&b, "remote commands from later steps to run on the OpenClaw host and ask them\n")
 	fmt.Fprintf(&b, "to paste back any output or errors.\n\n")
-	fmt.Fprintf(&b, "Verify only the remote host:\n\n")
+	fmt.Fprintf(&b, "Verify only how onboarding is run on the remote host:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'uname -s; test -d ~/.openclaw && echo openclaw-dir-present || true; test -f ~/.openclaw/openclaw.json && cat ~/.openclaw/openclaw.json || true'\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'uname -s; command -v openclaw-cli || true; docker compose ps 2>/dev/null || true'\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Keep what you learned in a JSON object for `install_context`:\n\n")
 	fmt.Fprintf(&b, "```json\n")
@@ -757,7 +766,8 @@ func sectionOpenClawRemoteProbe() string {
 	fmt.Fprintf(&b, "  \"install_mode\": \"remote\",\n")
 	fmt.Fprintf(&b, "  \"remote_host\": \"<hostname or description>\",\n")
 	fmt.Fprintf(&b, "  \"host_os\": \"darwin | linux | windows\",\n")
-	fmt.Fprintf(&b, "  \"auth_mode\": \"swap\"\n")
+	fmt.Fprintf(&b, "  \"model_id\": \"claude-sonnet-4-6\",\n")
+	fmt.Fprintf(&b, "  \"auth_mode\": \"custom-api-key\"\n")
 	fmt.Fprintf(&b, "}\n")
 	fmt.Fprintf(&b, "```\n\n")
 	return b.String()
@@ -765,77 +775,57 @@ func sectionOpenClawRemoteProbe() string {
 
 func sectionOpenClawLocalConfigure(clawvisorURL string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## 5. Install the clawvisor skill in the OpenClaw workspace\n\n")
-	fmt.Fprintf(&b, "Use clawhub from the host (or inside the OpenClaw container if that's where\n")
-	fmt.Fprintf(&b, "OpenClaw runs):\n\n")
+	fmt.Fprintf(&b, "## 5. Point OpenClaw at Clawvisor\n\n")
+	fmt.Fprintf(&b, "Run OpenClaw's onboarding command and select a custom API key provider.\n")
+	fmt.Fprintf(&b, "Use Clawvisor's Anthropic-compatible base URL and the minted `cvis_...`\n")
+	fmt.Fprintf(&b, "agent token. For Docker, use a host-reachable URL such as\n")
+	fmt.Fprintf(&b, "`http://host.docker.internal:25297/api/v1` when Clawvisor is on the host.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "# Host install:\n")
-	fmt.Fprintf(&b, "npx clawhub install clawvisor --force\n\n")
-	fmt.Fprintf(&b, "# Docker install:\n")
-	fmt.Fprintf(&b, "docker exec <OPENCLAW_CONTAINER> npx clawhub install clawvisor --force \\\n")
-	fmt.Fprintf(&b, "  --workdir /home/node/.openclaw/workspace\n")
+	fmt.Fprintf(&b, "# Host OpenClaw:\n")
+	fmt.Fprintf(&b, "openclaw-cli onboard --non-interactive \\\n")
+	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
+	fmt.Fprintf(&b, "  --custom-base-url \"%s/api/v1\" \\\n", clawvisorURL)
+	fmt.Fprintf(&b, "  --custom-model-id \"claude-sonnet-4-6\" \\\n")
+	fmt.Fprintf(&b, "  --custom-api-key \"$TOKEN\" \\\n")
+	fmt.Fprintf(&b, "  --custom-compatibility anthropic --accept-risk\n\n")
+	fmt.Fprintf(&b, "# Docker OpenClaw, when Clawvisor is running on the host:\n")
+	fmt.Fprintf(&b, "docker compose run --rm openclaw-cli onboard --non-interactive \\\n")
+	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
+	fmt.Fprintf(&b, "  --custom-base-url \"http://host.docker.internal:25297/api/v1\" \\\n")
+	fmt.Fprintf(&b, "  --custom-model-id \"claude-sonnet-4-6\" \\\n")
+	fmt.Fprintf(&b, "  --custom-api-key \"$TOKEN\" \\\n")
+	fmt.Fprintf(&b, "  --custom-compatibility anthropic --accept-risk\n")
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "Verify: `ls ~/.openclaw/workspace/skills/clawvisor/SKILL.md`.\n\n")
-
-	fmt.Fprintf(&b, "## 6. Write environment variables\n\n")
-	fmt.Fprintf(&b, "OpenClaw reads `~/.openclaw/workspace/.env` (non-overriding semantics —\n")
-	fmt.Fprintf(&b, "shell env wins). Strip prior Clawvisor lines first so re-runs are\n")
-	fmt.Fprintf(&b, "idempotent, then append fresh values.\n\n")
-	fmt.Fprintf(&b, "**Pick the Clawvisor URL OpenClaw can actually reach:**\n\n")
-	fmt.Fprintf(&b, "- Both OpenClaw and Clawvisor in Docker on same host: `http://host.docker.internal:25297`\n")
-	fmt.Fprintf(&b, "- OpenClaw in Docker, Clawvisor on host: `http://host.docker.internal:25297`\n")
-	fmt.Fprintf(&b, "- Both on host: `%s` (or whatever `$CLAWVISOR_URL` is)\n\n", clawvisorURL)
-	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "grep -v '^CLAWVISOR_' ~/.openclaw/workspace/.env > /tmp/env.tmp 2>/dev/null || true\n")
-	fmt.Fprintf(&b, "mv /tmp/env.tmp ~/.openclaw/workspace/.env 2>/dev/null || true\n")
-	fmt.Fprintf(&b, "cat >> ~/.openclaw/workspace/.env <<EOF\n")
-	fmt.Fprintf(&b, "CLAWVISOR_URL=<resolved URL>\n")
-	fmt.Fprintf(&b, "CLAWVISOR_AGENT_TOKEN=$TOKEN\n")
-	fmt.Fprintf(&b, "EOF\n")
-	fmt.Fprintf(&b, "chmod 600 ~/.openclaw/workspace/.env\n")
-	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "OpenClaw must be restarted to pick up the new `.env` —\n")
-	fmt.Fprintf(&b, "tell the user.\n\n")
+	fmt.Fprintf(&b, "If Clawvisor is not on the host, replace the base URL with the URL that\n")
+	fmt.Fprintf(&b, "the OpenClaw process can reach. The important part is `/api/v1`.\n\n")
 	return b.String()
 }
 
 func sectionOpenClawRemoteConfigure(clawvisorURL string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## 5. Install the clawvisor skill on the remote OpenClaw host\n\n")
-	fmt.Fprintf(&b, "Run the install on the remote host, not locally. If OpenClaw runs inside\n")
-	fmt.Fprintf(&b, "a container on the remote host, run the Docker command through SSH on\n")
-	fmt.Fprintf(&b, "that host.\n\n")
-	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "# Remote host install:\n")
-	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'npx clawhub install clawvisor --force'\n\n")
-	fmt.Fprintf(&b, "# Remote Docker install, only if OpenClaw is containerized on that host:\n")
-	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'docker exec <OPENCLAW_CONTAINER> npx clawhub install clawvisor --force --workdir /home/node/.openclaw/workspace'\n")
-	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "Verify on the remote host: `ssh \"$OPENCLAW_REMOTE\" 'ls ~/.openclaw/workspace/skills/clawvisor/SKILL.md'`.\n\n")
-
-	fmt.Fprintf(&b, "## 6. Write environment variables on the remote OpenClaw host\n\n")
+	fmt.Fprintf(&b, "## 5. Point remote OpenClaw at Clawvisor\n\n")
 	fmt.Fprintf(&b, "Because OpenClaw is remote, `localhost` on that host is not this helper\n")
 	fmt.Fprintf(&b, "machine. Pick a Clawvisor URL the remote host can actually reach. The\n")
 	fmt.Fprintf(&b, "dashboard rendered `%s`; if that is a localhost URL, replace it with a\n", clawvisorURL)
 	fmt.Fprintf(&b, "relay, public, VPN, or LAN URL reachable from `$OPENCLAW_REMOTE`.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "export OPENCLAW_CLAWVISOR_URL='<remote-reachable Clawvisor URL>'\n")
-	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"curl -sf -H 'X-Clawvisor-Agent-Token: $TOKEN' '$OPENCLAW_CLAWVISOR_URL/api/skill/catalog' >/dev/null\"\n")
+	fmt.Fprintf(&b, "export OPENCLAW_CLAWVISOR_BASE_URL='<remote-reachable Clawvisor URL>/api/v1'\n\n")
+	fmt.Fprintf(&b, "# Remote host OpenClaw:\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"openclaw-cli onboard --non-interactive \\\n")
+	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
+	fmt.Fprintf(&b, "  --custom-base-url '$OPENCLAW_CLAWVISOR_BASE_URL' \\\n")
+	fmt.Fprintf(&b, "  --custom-model-id 'claude-sonnet-4-6' \\\n")
+	fmt.Fprintf(&b, "  --custom-api-key '$TOKEN' \\\n")
+	fmt.Fprintf(&b, "  --custom-compatibility anthropic --accept-risk\"\n\n")
+	fmt.Fprintf(&b, "# Remote Docker OpenClaw, if OpenClaw is containerized on that host:\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"docker compose run --rm openclaw-cli onboard --non-interactive \\\n")
+	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
+	fmt.Fprintf(&b, "  --custom-base-url '$OPENCLAW_CLAWVISOR_BASE_URL' \\\n")
+	fmt.Fprintf(&b, "  --custom-model-id 'claude-sonnet-4-6' \\\n")
+	fmt.Fprintf(&b, "  --custom-api-key '$TOKEN' \\\n")
+	fmt.Fprintf(&b, "  --custom-compatibility anthropic --accept-risk\"\n")
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "Then write the remote workspace `.env`:\n\n")
-	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"\n")
-	fmt.Fprintf(&b, "set -e\n")
-	fmt.Fprintf(&b, "mkdir -p ~/.openclaw/workspace\n")
-	fmt.Fprintf(&b, "grep -v '^CLAWVISOR_' ~/.openclaw/workspace/.env > /tmp/env.tmp 2>/dev/null || true\n")
-	fmt.Fprintf(&b, "mv /tmp/env.tmp ~/.openclaw/workspace/.env 2>/dev/null || true\n")
-	fmt.Fprintf(&b, "cat >> ~/.openclaw/workspace/.env <<EOF\n")
-	fmt.Fprintf(&b, "CLAWVISOR_URL=$OPENCLAW_CLAWVISOR_URL\n")
-	fmt.Fprintf(&b, "CLAWVISOR_AGENT_TOKEN=$TOKEN\n")
-	fmt.Fprintf(&b, "EOF\n")
-	fmt.Fprintf(&b, "chmod 600 ~/.openclaw/workspace/.env\n")
-	fmt.Fprintf(&b, "\"\n")
-	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "Restart OpenClaw on the remote host after writing `.env`.\n\n")
+	fmt.Fprintf(&b, "The important invariant is that OpenClaw's model requests go to Clawvisor\n")
+	fmt.Fprintf(&b, "and use the minted `cvis_...` token.\n\n")
 	return b.String()
 }
