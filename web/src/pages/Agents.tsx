@@ -2415,7 +2415,6 @@ interface InstallerAnswers {
   hermesConfig: 'env' | 'file'
   openclawMode: 'host' | 'docker' | 'remote'
   llmProvider: LLMProvider
-  taskApproval: 'manual' | 'low' | 'medium'
 }
 
 function defaultInstallerAnswers(target: InstallerTarget): InstallerAnswers {
@@ -2423,13 +2422,11 @@ function defaultInstallerAnswers(target: InstallerTarget): InstallerAnswers {
     hermesConfig: 'env',
     openclawMode: 'host',
     llmProvider: INSTALLER_SPECS[target].defaultProvider,
-    taskApproval: 'manual',
   }
 }
 
 function applyInstallerAnswerParams(params: URLSearchParams, target: InstallerTarget, answers: InstallerAnswers) {
   params.set('llm_provider', answers.llmProvider)
-  params.set('task_approval', answers.taskApproval)
   if (target === 'hermes') params.set('hermes_config', answers.hermesConfig)
   if (target === 'openclaw') params.set('openclaw_mode', answers.openclawMode)
 }
@@ -2789,17 +2786,6 @@ function InstallerSetupQuestions({
           ]}
         />
       )}
-
-      <QuestionSelect
-        label="Task auto-approval default"
-        value={answers.taskApproval}
-        onChange={value => set('taskApproval', value as InstallerAnswers['taskApproval'])}
-        options={[
-          ['manual', 'Manual approval'],
-          ['low', 'Auto-approve low risk'],
-          ['medium', 'Auto-approve low and medium risk'],
-        ]}
-      />
     </div>
   )
 }

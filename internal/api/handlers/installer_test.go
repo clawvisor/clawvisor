@@ -266,12 +266,11 @@ func TestInstallerOpenClawOpenAIProviderRender(t *testing.T) {
 
 func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
-	body := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12&openclaw_mode=remote&task_approval=low")
+	body := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12&openclaw_mode=remote")
 
 	assertContainsAll(t, body,
 		"Dashboard answers",
 		"OpenClaw running mode: remote",
-		"Preferred task auto-approval default: low-risk conversation updates.",
 		"## 1. Confirm remote OpenClaw access",
 		"Do **not** probe the",
 		"export OPENCLAW_REMOTE=",
@@ -296,6 +295,7 @@ func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
 		"# Host install:",
 		"Both OpenClaw and Clawvisor in Docker on same host",
 		"Check for an existing token",
+		"Preferred task auto-approval default",
 		"callback_secret",
 		"callback secret",
 		"CLAWVISOR_CALLBACK_SECRET",

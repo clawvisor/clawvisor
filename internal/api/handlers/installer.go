@@ -57,7 +57,6 @@ type installerCtx struct {
 	AliasMode       string
 	HermesConfig    string
 	OpenClawMode    string
-	TaskApproval    string
 }
 
 // Setup handles GET /skill/install/{target}. The route captures the whole
@@ -87,7 +86,6 @@ func (h *InstallerHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		defaultProvider = "openai"
 	}
 	ctx.LLMProvider = queryChoice(r, "llm_provider", defaultProvider, "anthropic", "openai")
-	ctx.TaskApproval = queryChoice(r, "task_approval", "manual", "manual", "low", "medium")
 
 	var body string
 	switch target {
@@ -295,14 +293,6 @@ func sectionDashboardAnswers(ctx installerCtx, lines ...string) string {
 		if line != "" {
 			fmt.Fprintf(&b, "- %s\n", line)
 		}
-	}
-	switch ctx.TaskApproval {
-	case "low":
-		fmt.Fprintf(&b, "- Preferred task auto-approval default: low-risk conversation updates.\n")
-	case "medium":
-		fmt.Fprintf(&b, "- Preferred task auto-approval default: low- and medium-risk conversation updates.\n")
-	default:
-		fmt.Fprintf(&b, "- Preferred task auto-approval default: manual approval.\n")
 	}
 	fmt.Fprintf(&b, "\n")
 	return b.String()
