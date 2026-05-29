@@ -140,16 +140,18 @@ func providerDefaultModel(provider string) string {
 }
 
 func providerDefaultContextWindow(provider string) int {
-	if provider == "openai" {
+	return modelContextWindow(providerDefaultModel(provider))
+}
+
+func modelContextWindow(model string) int {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "gpt-5.4":
 		return 1000000
-	}
-	// Claude Sonnet 4's generally available context window is 200K. Some
-	// Anthropic accounts/models can use 1M beta context, but the installer
-	// should not assume that by default.
-	if provider == "anthropic" {
+	default:
+		// Use 200K as the conservative floor for modern Clawvisor-routed
+		// models. Add known larger model IDs above as we validate them.
 		return 200000
 	}
-	return 1000000
 }
 
 func openClawDefaultMaxTokens() int {
@@ -826,9 +828,10 @@ func sectionOpenClawLocalConfigure(clawvisorURL, provider string) string {
 	fmt.Fprintf(&b, "patch in the same environment that owns OpenClaw's `models.json` (host for\n")
 	fmt.Fprintf(&b, "host installs; the OpenClaw container/volume for Docker installs). If you\n")
 	fmt.Fprintf(&b, "changed the model ID above, set `OPENCLAW_MODEL_CONTEXT_WINDOW` to that\n")
-	fmt.Fprintf(&b, "model's native maximum before running the patch. For Claude Sonnet 4's 1M\n")
-	fmt.Fprintf(&b, "beta context, only set `1000000` if the user's Anthropic org and request\n")
-	fmt.Fprintf(&b, "headers support it.\n\n")
+	fmt.Fprintf(&b, "model's native maximum before running the patch. Clawvisor uses 200K as a\n")
+	fmt.Fprintf(&b, "reasonable floor for modern models, with higher values only for known model\n")
+	fmt.Fprintf(&b, "IDs. For Claude Sonnet 4's 1M beta context, only set `1000000` if the user's\n")
+	fmt.Fprintf(&b, "Anthropic org and request headers support it.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "OPENCLAW_MODEL_ID=%q\n", model)
 	fmt.Fprintf(&b, "OPENCLAW_MODEL_CONTEXT_WINDOW=%d\n", contextWindow)
@@ -896,9 +899,10 @@ func sectionOpenClawRemoteConfigure(clawvisorURL, provider string) string {
 	fmt.Fprintf(&b, "Then patch the remote OpenClaw custom-provider model metadata so it does\n")
 	fmt.Fprintf(&b, "not keep the low fallback context window written by some OpenClaw versions.\n")
 	fmt.Fprintf(&b, "If you changed the model ID above, set `OPENCLAW_MODEL_CONTEXT_WINDOW` to\n")
-	fmt.Fprintf(&b, "that model's native maximum before running the patch. For Claude Sonnet 4's\n")
-	fmt.Fprintf(&b, "1M beta context, only set `1000000` if the user's Anthropic org and request\n")
-	fmt.Fprintf(&b, "headers support it.\n\n")
+	fmt.Fprintf(&b, "that model's native maximum before running the patch. Clawvisor uses 200K\n")
+	fmt.Fprintf(&b, "as a reasonable floor for modern models, with higher values only for known\n")
+	fmt.Fprintf(&b, "model IDs. For Claude Sonnet 4's 1M beta context, only set `1000000` if the\n")
+	fmt.Fprintf(&b, "user's Anthropic org and request headers support it.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'OPENCLAW_MODEL_ID=%q OPENCLAW_MODEL_CONTEXT_WINDOW=%d OPENCLAW_MAX_TOKENS=%d sh -s' <<'REMOTE_OPENCLAW_PATCH'\n", model, contextWindow, maxTokens)
 	fmt.Fprintf(&b, "set -eu\n")

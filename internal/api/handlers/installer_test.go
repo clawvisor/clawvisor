@@ -215,6 +215,7 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"host.docker.internal",
 		"OPENCLAW_MODEL_CONTEXT_WINDOW=200000",
 		"OPENCLAW_MAX_TOKENS=8192",
+		"reasonable floor",
 		"Claude Sonnet 4's 1M",
 		"models.json",
 		"contextWindow: $contextWindow",
