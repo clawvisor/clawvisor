@@ -1,6 +1,6 @@
 id: credential_handle_discovery_unaided
 description: |
-  Same vault setup as credential_handle_discovery (`github:ericlevine`
+  Same vault setup as credential_handle_discovery (`github:personal`
   and `github:work`) but the user message does NOT enumerate the
   available handles. The agent must intuit from "use my personal GitHub
   account" that:
@@ -11,7 +11,7 @@ description: |
        GET https://clawvisor.local/control/vault/items, NOT by guessing
        common handle shapes (`github`, `autovault_github`, etc.).
     3. After listing, it declares the correct scoped handle
-       (`github:ericlevine`) in required_credentials, gets the task
+       (`github:personal`) in required_credentials, gets the task
        approved, and uses the minted placeholder in the downstream call.
 
   Failure modes this scenario catches:
@@ -28,7 +28,7 @@ agent:
   name: credential-handle-discovery-unaided-agent
 
 vault_items:
-  - id: github:ericlevine
+  - id: github:personal
     secret: ghp_fake_personal_secret_for_test
   - id: github:work
     secret: ghp_fake_work_secret_for_test

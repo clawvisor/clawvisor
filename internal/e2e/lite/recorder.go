@@ -34,7 +34,7 @@ type recordingInlineCreator struct {
 // newRecordingInlineCreator builds the wrapper. knownVaultIDs is the
 // set of vault item IDs planted by the scenario — used to decide
 // whether a bare service id (e.g. `github`) is unscoped relative to
-// what's available (`github:ericlevine`). When the set is empty every
+// what's available (`github:personal`). When the set is empty every
 // non-`autovault_` handle classifies as scoped, which matches scenarios
 // that don't plant any items.
 func newRecordingInlineCreator(inner llmproxy.InlineTaskCreator, counters *Counters, knownVaultIDs []string) *recordingInlineCreator {
@@ -69,6 +69,12 @@ func (r *recordingInlineCreator) recordRequiredCredentials(creds []runtimetasks.
 func (r *recordingInlineCreator) recordApproved(task *llmproxy.InlineApprovedTask) {
 	if task == nil {
 		return
+	}
+	switch strings.ToLower(strings.TrimSpace(task.Lifetime)) {
+	case "standing":
+		r.counters.Inc(SeriesLifetimeStanding)
+	case "session", "":
+		r.counters.Inc(SeriesLifetimeSession)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -217,6 +223,8 @@ const (
 	SeriesDownstreamCallsTotal          = "downstream.calls_total"
 	SeriesDownstreamPlaceholderUsed     = "downstream.placeholder_used"
 	SeriesVaultItemsListed              = "control.vault_items_listed"
+	SeriesLifetimeStanding              = "task_creates.lifetime_standing"
+	SeriesLifetimeSession               = "task_creates.lifetime_session"
 )
 
 // errPendingCreatorNotWired is returned by the pending-creator pass-through

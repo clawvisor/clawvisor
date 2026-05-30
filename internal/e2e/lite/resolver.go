@@ -167,7 +167,7 @@ func swapHeaderPlaceholders(ctx context.Context, st store.Store, v vault.Vault, 
 					return "", err
 				}
 				// VaultItemID is the planted vault entry id (e.g.
-				// "github:ericlevine") which is also the vault storage
+				// "github:personal") which is also the vault storage
 				// key in our lite memoryVault.
 				secret, err := v.Get(ctx, userID, ph.VaultItemID)
 				if err != nil {

@@ -32,7 +32,7 @@ type Scenario struct {
 
 // VaultItem is a non-LLM credential planted in the harness vault before
 // the scenario runs. ID is the public vault item id the agent should
-// declare in required_credentials (e.g. "github:ericlevine"); Secret is
+// declare in required_credentials (e.g. "github:personal"); Secret is
 // the raw value Clawvisor would substitute behind the placeholder. The
 // scenario YAML keeps Secret as plain text — these are throwaway fakes,
 // not real tokens.
@@ -145,6 +145,10 @@ type HardExpect struct {
 //     GET /api/control/vault/items. Proves the agent discovered the
 //     available vault items via the control plane rather than guessing
 //     handle shapes.
+//   - task_creates.lifetime_standing — approved tasks whose lifetime
+//     came back as `standing` (no expiry, reusable across follow-ups).
+//   - task_creates.lifetime_session — approved tasks whose lifetime
+//     was `session` (or empty, which defaults to session).
 type CountExpect struct {
 	Series string `yaml:"series"`
 	GTE    *int   `yaml:"gte,omitempty"`

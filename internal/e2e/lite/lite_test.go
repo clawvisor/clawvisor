@@ -34,6 +34,7 @@ var scenarioDirs = []string{
 	"credential_handle_discovery",
 	"credential_handle_discovery_unaided",
 	"credential_multi_service_at_scale",
+	"credential_standing_task",
 	"no_invented_placeholder",
 	"credential_not_needed_for_local",
 }

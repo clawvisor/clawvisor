@@ -14,14 +14,14 @@ description: |
   conjured.
 
   This scenario also plants a github vault item so that an agent's
-  reflexive "github" or "github:ericlevine" handle would not silently
+  reflexive "github" or "github:personal" handle would not silently
   fail validation — it would succeed and be visible in the counters.
 
 agent:
   name: credential-not-needed-agent
 
 vault_items:
-  - id: github:ericlevine
+  - id: github:personal
     secret: ghp_fake_personal_secret_for_test
 
 script:
