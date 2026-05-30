@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
@@ -65,6 +67,19 @@ type Harness struct {
 	Workspace  string
 	Counters   *Counters
 	Logger     *slog.Logger
+
+	// MockUpstream is an httptest server scenarios direct the agent to
+	// for a "downstream" call after a credentialed task has been
+	// approved. Every incoming request increments
+	// downstream.calls_total, and requests whose headers contain one
+	// of the minted credential placeholders increment
+	// downstream.placeholder_used.
+	MockUpstream *httptest.Server
+
+	// recorder is the InlineTaskCreator wrapper used by the mock
+	// upstream to recognize minted placeholders. Exposed so test
+	// helpers can also inspect what was minted.
+	recorder *recordingInlineCreator
 }
 
 // Start boots the harness for one scenario × driver run. The workspace
@@ -109,6 +124,21 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 			return nil, err
 		}
 	}
+	plantedVaultIDs := make([]string, 0, len(scn.VaultItems))
+	plantedSecrets := make([]string, 0, len(scn.VaultItems))
+	for _, item := range scn.VaultItems {
+		id := item.ID
+		if id == "" {
+			return nil, errors.New("scenario vault_items entry missing id")
+		}
+		if err := v.Set(ctx, user.ID, id, []byte(item.Secret)); err != nil {
+			return nil, err
+		}
+		plantedVaultIDs = append(plantedVaultIDs, id)
+		if item.Secret != "" {
+			plantedSecrets = append(plantedSecrets, item.Secret)
+		}
+	}
 
 	logger := slog.New(slog.NewTextHandler(testLogWriter{t: t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
@@ -122,10 +152,13 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 
 	tasksHandler := handlers.NewTasksHandler(st, v, reg, nil /*notify*/, cfg, logger, "" /*baseURL*/, hub, assessor)
 
+	counters := NewCounters()
+	recorder := newRecordingInlineCreator(tasksHandler, counters, plantedVaultIDs)
+
 	h := handlers.NewLLMEndpointHandler(st, v, logger)
 	h.Forwarder = llmproxy.NewForwarder(v)
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	h.InlineTaskCreator = tasksHandler
+	h.InlineTaskCreator = recorder
 	h.TaskScope = llmproxy.NewStoreTaskScopeChecker(st)
 
 	mux := http.NewServeMux()
@@ -135,12 +168,49 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	mux.Handle("POST /v1/chat/completions", mw(http.HandlerFunc(h.ChatCompletions)))
 	mux.Handle("POST /v1/responses", mw(http.HandlerFunc(h.Responses)))
 
+	// /api/control/vault/items: the only control-plane GET the lite
+	// harness needs the agent to be able to discover available vault
+	// items unaided. The proxy's control rewriter (postprocess.go)
+	// converts `https://clawvisor.local/control/vault/items` in a
+	// bash tool_use into `<ControlBaseURL>/api/control/vault/items`
+	// with a freshly-minted nonce in X-Clawvisor-Caller. The mount
+	// below shares h.CallerNonces so the nonce consumed here is the
+	// same one the rewriter minted.
+	vaultHandler := handlers.NewVaultHandler(st, v, reg)
+	nonceMW := middleware.RequireAgentLLMNonce(st, h.CallerNonces, logger)
+	listVaultItems := nonceMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counters.Inc(SeriesVaultItemsListed)
+		vaultHandler.ListForAgent(w, r)
+	}))
+	mux.Handle("GET /api/control/vault/items", listVaultItems)
+
+	// Mock upstream stands up before the resolver mount so the
+	// resolver's custom DialContext can target it directly.
+	mockUpstream := newMockUpstream(counters, recorder.PlaceholderSnapshot, plantedSecrets)
+	t.Cleanup(mockUpstream.Close)
+	mockAddr, err := mockUpstreamDialAddr(mockUpstream.URL)
+	if err != nil {
+		return nil, err
+	}
+
+	// /api/proxy/ — the credentialed-resolver path. The proxy's
+	// rewriter intercepts the agent's outbound credentialed curl and
+	// redirects it to `<ResolverBaseURL>/<upstream-path>` with the
+	// upstream host moved to X-Clawvisor-Target-Host. A thin in-process
+	// resolver below swaps the placeholder for the real secret and
+	// forwards over HTTP. Its custom DialContext redirects every
+	// outbound dial to the mock upstream, so scenarios can name real
+	// production hosts (e.g. https://api.github.com) without the
+	// harness having to extend the bound-service allowlist.
+	mux.Handle("/api/proxy/", nonceMW(newLiteResolver(st, v, logger, mockAddr)))
+
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	// ControlBaseURL needs to be syntactically valid; the inline-approval
-	// intercept fires before rewrite for our scenarios, so this URL is
-	// only used for the non-inline fallthrough path we don't exercise.
+	// Point both the control rewriter and the credentialed-resolver
+	// rewriter at the lite mux so the agent's curl tool_uses against
+	// clawvisor.local resolve in-process.
 	h.ControlBaseURL = srv.URL
+	h.ResolverBaseURL = srv.URL + "/api/proxy"
 
 	workspace := filepath.Join(dataDir, "workspace")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
@@ -156,15 +226,78 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	}
 
 	return &Harness{
-		Store:      st,
-		Endpoint:   srv,
-		UserID:     user.ID,
-		AgentID:    agent.ID,
-		AgentToken: rawToken,
-		Workspace:  workspace,
-		Counters:   NewCounters(),
-		Logger:     logger,
+		Store:        st,
+		Endpoint:     srv,
+		UserID:       user.ID,
+		AgentID:      agent.ID,
+		AgentToken:   rawToken,
+		Workspace:    workspace,
+		Counters:     counters,
+		Logger:       logger,
+		MockUpstream: mockUpstream,
+		recorder:     recorder,
 	}, nil
+}
+
+// newMockUpstream returns an httptest server that records every
+// incoming request into the counters and looks for one of the
+// minted placeholders OR one of the planted real secrets in any
+// header value. Either match counts toward
+// downstream.placeholder_used — the harness can't tell whether the
+// proxy's placeholder swap fired or not (we don't have the resolver
+// wired to bump a separate "swap_observed" counter), so a downstream
+// call that carries either the placeholder substring (no swap) or
+// the planted secret (post-swap) is treated as legitimate use of a
+// Clawvisor-supplied credential. A call carrying a string the agent
+// invented (e.g. the user-supplied fake `autovault_github_abcdef`)
+// matches neither and stays out of the counter.
+func newMockUpstream(counters *Counters, placeholderSnapshot func() []string, plantedSecrets []string) *httptest.Server {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counters.Inc(SeriesDownstreamCallsTotal)
+		needles := append([]string{}, placeholderSnapshot()...)
+		needles = append(needles, plantedSecrets...)
+		if requestContainsAnyNeedle(r, needles) {
+			counters.Inc(SeriesDownstreamPlaceholderUsed)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	return srv
+}
+
+// mockUpstreamDialAddr extracts the bare host:port from httptest's
+// randomly-assigned URL so the lite resolver's custom DialContext can
+// reach the mock without parsing the URL on every request.
+func mockUpstreamDialAddr(serverURL string) (string, error) {
+	parsed, err := url.Parse(serverURL)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Host == "" {
+		return "", errors.New("mock upstream URL has no host:port")
+	}
+	return parsed.Host, nil
+}
+
+// requestContainsAnyNeedle is true iff any header value on the
+// incoming request contains one of the supplied needles as a
+// substring. Substring (not equality) so an `Authorization: Bearer
+// <needle>` header still matches.
+func requestContainsAnyNeedle(r *http.Request, needles []string) bool {
+	if len(needles) == 0 {
+		return false
+	}
+	for _, values := range r.Header {
+		for _, v := range values {
+			for _, n := range needles {
+				if n != "" && strings.Contains(v, n) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // EndpointURL is the in-process lite-proxy URL. Drivers append the

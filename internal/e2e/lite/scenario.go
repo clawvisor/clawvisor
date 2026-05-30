@@ -11,22 +11,34 @@ import (
 
 // Scenario is the on-disk YAML shape for one lite-proxy scenario.
 type Scenario struct {
-	ID          string       `yaml:"id"`
-	Description string       `yaml:"description"`
-	Agent       AgentSpec    `yaml:"agent"`
+	ID          string    `yaml:"id"`
+	Description string    `yaml:"description"`
+	Agent       AgentSpec `yaml:"agent"`
 	// SetupShell runs in the workspace tempdir after the workspace
 	// fixture is copied but before the script starts. Use this for
 	// shape that can't live in tracked files (e.g. `git init && commit`).
-	SetupShell  string       `yaml:"setup_shell,omitempty"`
-	Script      []Step       `yaml:"script"`
-	Approvals   Approvals    `yaml:"approvals"`
-	Budget      Budget       `yaml:"budget"`
-	Expects     Expectations `yaml:"expectations"`
+	SetupShell string       `yaml:"setup_shell,omitempty"`
+	VaultItems []VaultItem  `yaml:"vault_items,omitempty"`
+	Script     []Step       `yaml:"script"`
+	Approvals  Approvals    `yaml:"approvals"`
+	Budget     Budget       `yaml:"budget"`
+	Expects    Expectations `yaml:"expectations"`
 
 	// Dir is the directory this scenario was loaded from (populated by
 	// LoadScenario). The workspace lives at filepath.Join(Dir,
 	// "workspace") and is copied to t.TempDir() at run start.
 	Dir string `yaml:"-"`
+}
+
+// VaultItem is a non-LLM credential planted in the harness vault before
+// the scenario runs. ID is the public vault item id the agent should
+// declare in required_credentials (e.g. "github:ericlevine"); Secret is
+// the raw value Clawvisor would substitute behind the placeholder. The
+// scenario YAML keeps Secret as plain text — these are throwaway fakes,
+// not real tokens.
+type VaultItem struct {
+	ID     string `yaml:"id"`
+	Secret string `yaml:"secret"`
 }
 
 // AgentSpec carries advisory fields about the agent identity. Tools
@@ -115,6 +127,24 @@ type HardExpect struct {
 //   - approvals.deny
 //   - lite_proxy.tool_use.block
 //   - tool_calls
+//   - task_creates.credential_fabricated_autovault — agent declared a
+//     `required_credentials` entry whose vault_item_id (or handle) starts
+//     with `autovault_` (a placeholder it invented from prior context
+//     rather than a real vault item id).
+//   - task_creates.credential_unscoped — agent declared a bare service
+//     id (e.g. `github`) that doesn't match a planted vault item.
+//   - task_creates.credential_scoped — agent declared an id that matches
+//     a planted vault item exactly.
+//   - downstream.calls_total — total calls received by the harness's
+//     mock upstream server.
+//   - downstream.placeholder_used — calls whose headers contained one of
+//     the placeholders minted by an inline-approved task; proves the
+//     agent used the placeholder Clawvisor returned rather than a
+//     fabricated string.
+//   - control.vault_items_listed — number of times the agent fetched
+//     GET /api/control/vault/items. Proves the agent discovered the
+//     available vault items via the control plane rather than guessing
+//     handle shapes.
 type CountExpect struct {
 	Series string `yaml:"series"`
 	GTE    *int   `yaml:"gte,omitempty"`

@@ -290,10 +290,16 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 		"create a task before any tool call that is not on the ALLOWED WITHOUT A TASK list",
 		"Don't wait for a tool call to be refused",
 		// Vault-placeholder steer: tell the model these are SAFE to use
-		// directly, not raw credentials it should refuse to handle.
+		// directly. They are Clawvisor-minted, not raw secrets, and
+		// the model must not fabricate its own `autovault_*` strings.
 		"VAULT PLACEHOLDERS",
 		"autovault_",
-		"NOT raw credentials",
+		"only exist when Clawvisor mints them",
+		// Escape-stable substring of the "no fabricated autovault" rule.
+		// (The full sentence contains `<` which gets JSON-escaped on the
+		// wire; matching on the leading clause keeps the assertion
+		// independent of that encoding.)
+		"NEVER write your own `autovault_",
 		// Steer model to the actual shell tool + curl (Claude Code's WebFetch can't carry
 		// the headers/body the control plane needs).
 		"`Bash` with curl",

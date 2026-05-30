@@ -31,6 +31,10 @@ var scenarioDirs = []string{
 	"bug_fix_workflow",
 	"clarification_then_task",
 	"cross_file_inspection",
+	"credential_handle_discovery",
+	"credential_handle_discovery_unaided",
+	"no_invented_placeholder",
+	"credential_not_needed_for_local",
 }
 
 // allDrivers is every CLI driver the harness knows about. Each is
