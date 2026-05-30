@@ -51,6 +51,11 @@ type Store interface {
 	GetAgent(ctx context.Context, agentID string) (*Agent, error)
 	ListAgents(ctx context.Context, userID string) ([]*Agent, error)
 	UpdateAgentDescription(ctx context.Context, agentID, userID, description string) error
+	// SetAgentInstallContext stamps the install context onto an existing
+	// agent. Called from the connection-request approve flow so the dashboard
+	// can still tell "this is an OpenClaw install" after the request has
+	// dropped out of the pending list. Pass nil to clear.
+	SetAgentInstallContext(ctx context.Context, agentID string, ic *InstallContext) error
 	GetAgentRuntimeSettings(ctx context.Context, agentID string) (*AgentRuntimeSettings, error)
 	UpsertAgentRuntimeSettings(ctx context.Context, settings *AgentRuntimeSettings) error
 	DeleteAgent(ctx context.Context, id, userID string) error
@@ -532,6 +537,12 @@ type Agent struct {
 	ActiveTaskCount int                   `json:"active_task_count"`
 	LastTaskAt      *time.Time            `json:"last_task_at,omitempty"`
 	RuntimeSettings *AgentRuntimeSettings `json:"runtime_settings,omitempty"`
+	// InstallContext is denormalized from the approved connection request so
+	// the dashboard can show the harness type and rebuild reinstall
+	// instructions long after the connection request has aged out. nil for
+	// agents minted by paths that don't carry install context (legacy
+	// /api/agents POST, MCP/relay pairing, etc.).
+	InstallContext *InstallContext `json:"install_context,omitempty"`
 }
 
 type AgentRuntimeSettings struct {
@@ -1119,17 +1130,139 @@ type PairedDevice struct {
 
 // ConnectionRequest represents an agent's request to connect to this daemon.
 type ConnectionRequest struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	CallbackURL string    `json:"callback_url,omitempty"`
-	Status      string    `json:"status"`             // pending | approved | denied | expired
-	AgentID     string    `json:"agent_id,omitempty"` // set on approval
-	Token       string    `json:"token,omitempty"`    // raw token, set on approval (never persisted)
-	IPAddress   string    `json:"ip_address"`
-	CreatedAt   time.Time `json:"created_at"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	ID             string          `json:"id"`
+	UserID         string          `json:"user_id"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	CallbackURL    string          `json:"callback_url,omitempty"`
+	Status         string          `json:"status"`             // pending | approved | denied | expired
+	AgentID        string          `json:"agent_id,omitempty"` // set on approval
+	Token          string          `json:"token,omitempty"`    // raw token, set on approval (never persisted)
+	IPAddress      string          `json:"ip_address"`
+	CreatedAt      time.Time       `json:"created_at"`
+	ExpiresAt      time.Time       `json:"expires_at"`
+	InstallContext *InstallContext `json:"install_context,omitempty"`
+}
+
+// InstallContext captures non-PII facts the installer skill discovered about
+// the calling environment. Set at mint time, displayed on the approval card,
+// and persisted on the connection request for downstream debugging. Every
+// field is optional — the skill sends as much as it knows.
+//
+// The typed fields below are the ones the dashboard + handlers explicitly
+// read. Anything else a caller emits (e.g. a future probe section that adds
+// a per-harness `model_id` or `tunnel_kind`) is preserved in `Extra` and
+// round-trips through Marshal/Unmarshal, so the store never silently drops
+// setup context the helper went to the trouble of gathering.
+type InstallContext struct {
+	Harness        string `json:"harness,omitempty"` // claude-code | codex | hermes | openclaw | claude-desktop
+	HarnessVersion string `json:"harness_version,omitempty"`
+	InstallMode    string `json:"install_mode,omitempty"` // host | docker | remote
+	HostOS         string `json:"host_os,omitempty"`      // darwin | linux | windows
+	ContainerID    string `json:"container_id,omitempty"` // populated when install_mode=docker
+	AuthMode       string `json:"auth_mode,omitempty"`    // passthrough | swap
+	AliasIntent    string `json:"alias_intent,omitempty"` // none | safe | yolo
+	// Extra is a passthrough bag for unrecognized JSON keys. Hand-handled by
+	// the (Un)MarshalJSON pair below; never accessed via the typed Go API.
+	Extra map[string]any `json:"-"`
+}
+
+// IsEmpty reports whether every typed field is the zero value AND Extra is
+// empty. Used in place of `ic == InstallContext{}` checks — the addition of
+// the Extra map made the struct non-comparable with `==`.
+func (ic InstallContext) IsEmpty() bool {
+	return ic.Harness == "" &&
+		ic.HarnessVersion == "" &&
+		ic.InstallMode == "" &&
+		ic.HostOS == "" &&
+		ic.ContainerID == "" &&
+		ic.AuthMode == "" &&
+		ic.AliasIntent == "" &&
+		len(ic.Extra) == 0
+}
+
+// installContextKnownFields is the set of JSON keys handled by the typed
+// fields above. Keep this in sync with the struct tags — if you add a
+// field, add its JSON name here so `Extra` doesn't accidentally duplicate
+// it.
+var installContextKnownFields = map[string]struct{}{
+	"harness":         {},
+	"harness_version": {},
+	"install_mode":    {},
+	"host_os":         {},
+	"container_id":    {},
+	"auth_mode":       {},
+	"alias_intent":    {},
+}
+
+// UnmarshalJSON decodes into the typed fields while siphoning unknown keys
+// into Extra. We don't reject unknown keys (`Decoder.DisallowUnknownFields`)
+// because the whole point of Extra is to be forward-compatible with
+// installer additions we haven't deployed yet.
+func (ic *InstallContext) UnmarshalJSON(data []byte) error {
+	// Decode known fields via an alias type to avoid recursing into this
+	// custom UnmarshalJSON. (`type alias InstallContext` strips the method
+	// set, leaving stdlib JSON decoding to handle the struct tags.)
+	type alias InstallContext
+	var typed alias
+	if err := json.Unmarshal(data, &typed); err != nil {
+		return err
+	}
+	*ic = InstallContext(typed)
+	ic.Extra = nil
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		// Top-level isn't an object (e.g. `null`). The typed pass above
+		// will have produced the zero value; nothing more to capture.
+		return nil
+	}
+	for k, v := range raw {
+		if _, known := installContextKnownFields[k]; known {
+			continue
+		}
+		var val any
+		if err := json.Unmarshal(v, &val); err != nil {
+			// Skip undecodable extras silently — they'd be unusable to
+			// downstream consumers anyway, and rejecting a whole install
+			// context for one weird key is worse than dropping the key.
+			continue
+		}
+		if ic.Extra == nil {
+			ic.Extra = make(map[string]any, len(raw))
+		}
+		ic.Extra[k] = val
+	}
+	return nil
+}
+
+// MarshalJSON emits the typed fields plus any Extra keys at the same level.
+// Typed fields win on name collision (Extra can't shadow a known field).
+func (ic InstallContext) MarshalJSON() ([]byte, error) {
+	type alias InstallContext
+	typedBytes, err := json.Marshal(alias(ic))
+	if err != nil {
+		return nil, err
+	}
+	if len(ic.Extra) == 0 {
+		return typedBytes, nil
+	}
+	// Merge: re-decode the typed output to a map, layer Extra under it
+	// (typed takes precedence), then re-encode.
+	merged := make(map[string]any, len(ic.Extra)+7)
+	if err := json.Unmarshal(typedBytes, &merged); err != nil {
+		return nil, err
+	}
+	for k, v := range ic.Extra {
+		if _, known := installContextKnownFields[k]; known {
+			continue
+		}
+		if _, exists := merged[k]; exists {
+			continue
+		}
+		merged[k] = v
+	}
+	return json.Marshal(merged)
 }
 
 // OAuthClient is a dynamically registered OAuth 2.1 client (RFC 7591).

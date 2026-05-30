@@ -151,7 +151,7 @@ type catalogEntry struct {
 //
 // GET /api/skill/catalog
 // GET /api/skill/catalog?service=google.gmail   (detailed single-service view)
-// Auth: agent bearer token
+// Auth: agent token via Authorization bearer or X-Clawvisor-Agent-Token.
 func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

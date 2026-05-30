@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type Agent, type ApprovalRecord, type AgentRuntimeSettings, type AuditEntry, type RuntimePolicyRule, type RuntimeSession } from '../api/client'
-import type { ConnectionRequest } from '../api/client'
+import type { ConnectionRequest, InstallContext } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
@@ -17,6 +17,12 @@ export default function Agents() {
   const liveSessionsUI = !orgId && !!features?.agent_live_sessions
   const runtimePolicyUI = !orgId && !!features?.runtime_policy_ui
   const proxyLiteUI = !orgId && !!features?.proxy_lite
+  // The Connect-an-Agent wizard owns its step via `?agent=<harness>`. While
+  // a harness is picked, hide the global Pending Connections section —
+  // the wizard renders its own copy inline so the user sees their request
+  // in the same scroll position as the install instructions.
+  const [topLevelSearchParams] = useSearchParams()
+  const wizardActive = !orgId && !!topLevelSearchParams.get('agent')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [newToken, setNewToken] = useState<string | null>(null)
@@ -137,8 +143,11 @@ export default function Agents() {
       {/* Connect an Agent guide (personal context only) */}
       {!orgId && <ConnectAgentGuide newToken={newToken} />}
 
-      {/* Pending connection requests (personal context only) */}
-      {!orgId && pending.length > 0 && (
+      {/* Pending connection requests (personal context only).
+          Hidden while the wizard is mid-flight — the wizard renders its
+          own copy of these cards inline so the user can approve without
+          scrolling. */}
+      {!orgId && !wizardActive && pending.length > 0 && (
         <section>
           <div className="flex items-center gap-3 mb-3">
             <h2 className="text-lg font-semibold text-text-primary">Pending Connections</h2>
@@ -403,6 +412,10 @@ function AgentDetailView({
         </Link>
       </div>
 
+      {agent.install_context?.harness && (
+        <AgentConnectionDetailsPanel agent={agent} />
+      )}
+
       {showAgentSettings && <AgentRuntimePanel agentId={agent.id} defaultOpen showRuntimeControls={showRuntimeSettings} />}
 
       {proxyLiteActive && <AgentLiteProxyPanel agentId={agent.id} />}
@@ -550,6 +563,77 @@ function AgentMetric({ label, value }: { label: string; value: string }) {
     <div className="rounded border border-border-subtle bg-surface-1 p-4">
       <div className="text-xs uppercase tracking-wider text-text-tertiary">{label}</div>
       <div className="mt-1 text-lg font-semibold text-text-primary">{value}</div>
+    </div>
+  )
+}
+
+// Shows the harness / install mode this agent came from, plus a "Reinstall"
+// shortcut back to the wizard. Surfaced on the agent detail page so the user
+// can recognize an OpenClaw vs. Claude Code install without remembering
+// what they named it, and can rebuild the bootstrap from the agent.
+function AgentConnectionDetailsPanel({ agent }: { agent: Agent }) {
+  const ic = agent.install_context
+  if (!ic?.harness) return null
+
+  // Map server-side harness slugs back to the wizard's picker target so the
+  // Reinstall link drops the user back into the right flow. Currently only
+  // hermes/openclaw round-trip through the installer wizard; other targets
+  // (claude-code, codex, claude-desktop) have separate flows that aren't
+  // resumable by URL today.
+  const wizardableHarnesses = new Set(['openclaw', 'hermes'])
+  const reinstallTarget = wizardableHarnesses.has(ic.harness) ? ic.harness : null
+  const label = ic.harness === 'openclaw'
+    ? 'OpenClaw'
+    : ic.harness === 'hermes'
+      ? 'Hermes'
+      : ic.harness === 'claude-code'
+        ? 'Claude Code'
+        : ic.harness === 'codex'
+          ? 'Codex'
+          : ic.harness === 'claude-desktop'
+            ? 'Claude Desktop'
+            : ic.harness
+
+  return (
+    <div className="rounded border border-border-default bg-surface-1 px-5 py-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-sm font-medium text-text-primary">Connection</h3>
+          <p className="text-xs text-text-tertiary mt-0.5">How this agent was registered.</p>
+        </div>
+        {reinstallTarget && (
+          <Link
+            to={`/dashboard/agents?agent=${encodeURIComponent(reinstallTarget)}`}
+            className="text-xs rounded border border-border-default px-3 py-1.5 text-text-secondary hover:bg-surface-2"
+          >
+            Reinstall instructions →
+          </Link>
+        )}
+      </div>
+      <dl className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-xs">
+        <div>
+          <dt className="text-text-tertiary">Harness</dt>
+          <dd className="text-text-primary font-medium">{label}</dd>
+        </div>
+        {ic.install_mode && (
+          <div>
+            <dt className="text-text-tertiary">Install mode</dt>
+            <dd className="text-text-primary font-medium">{ic.install_mode}</dd>
+          </div>
+        )}
+        {ic.host_os && (
+          <div>
+            <dt className="text-text-tertiary">Host OS</dt>
+            <dd className="text-text-primary font-medium">{ic.host_os}</dd>
+          </div>
+        )}
+        {ic.harness_version && (
+          <div>
+            <dt className="text-text-tertiary">Harness version</dt>
+            <dd className="text-text-primary font-mono">{ic.harness_version}</dd>
+          </div>
+        )}
+      </dl>
     </div>
   )
 }
@@ -766,36 +850,86 @@ function SwitchControl({
   )
 }
 
-// ── Connect an Agent guide ───────────────────────────────────────────────────
+// ── Connect an Agent wizard ──────────────────────────────────────────────────
+//
+// Step 1: pick the agent (card grid).
+// Step 2: install — per-target instructions, with a "back to picker" affordance
+//         and an inline copy of the pending connections card so the user can
+//         approve without scrolling.
+//
+// Wizard step is derived from `?agent=<harness>` so it survives reloads, deep
+// links land directly on step 2, and the browser back button rewinds the
+// wizard naturally.
 
 type AgentTab = 'openclaw' | 'hermes' | 'claude-code' | 'codex' | 'claude-desktop' | 'other'
 
 const PROXY_LITE_AGENT_TABS: AgentTab[] = ['openclaw', 'hermes', 'claude-code', 'codex', 'claude-desktop', 'other']
 const LEGACY_AGENT_TABS: AgentTab[] = ['openclaw', 'claude-code', 'claude-desktop', 'other']
 
+interface AgentMeta {
+  label: string
+  tagline: string
+  // primitive is the install mechanism — shown as a small tag so the user
+  // knows up front whether they're running a skill, downloading a config
+  // profile, or doing it manually. Sets expectations on effort.
+  primitive: 'Skill' | 'Configuration profile' | 'Manual'
+}
+
+const AGENT_META: Record<AgentTab, AgentMeta> = {
+  'claude-code': {
+    label: 'Claude Code',
+    tagline: "Anthropic's CLI coding agent",
+    primitive: 'Skill',
+  },
+  codex: {
+    label: 'Codex',
+    tagline: "OpenAI's CLI coding agent",
+    primitive: 'Skill',
+  },
+  hermes: {
+    label: 'Hermes',
+    tagline: 'Nous Research general-purpose agent',
+    primitive: 'Skill',
+  },
+  openclaw: {
+    label: 'OpenClaw',
+    tagline: 'Open-source Claude Code workspace',
+    primitive: 'Skill',
+  },
+  'claude-desktop': {
+    label: 'Claude Desktop',
+    tagline: 'Anthropic desktop app (macOS)',
+    primitive: 'Configuration profile',
+  },
+  other: {
+    label: 'Other agent',
+    tagline: 'Custom HTTP clients, harnesses without skill support',
+    primitive: 'Manual',
+  },
+}
+
 function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const { user, features } = useAuth()
   const proxyLiteUI = !!features?.proxy_lite
   const agentTabs = proxyLiteUI ? PROXY_LITE_AGENT_TABS : LEGACY_AGENT_TABS
-  const initialTab = (agentTabs.includes(searchParams.get('agent') as AgentTab)
-    ? (searchParams.get('agent') as AgentTab)
-    : proxyLiteUI ? 'claude-code' : 'openclaw')
-  const [tab, setTabState] = useState<AgentTab>(initialTab)
-  useEffect(() => {
-    if (!agentTabs.includes(tab)) {
-      setTabState(agentTabs[0])
-    }
-  }, [agentTabs, tab])
-  const setTab = (next: AgentTab) => {
-    setTabState(next)
+
+  // Wizard step is derived from the URL: no param → picker; valid param →
+  // install. Invalid params resolve to the picker so a stale deep link
+  // doesn't strand the user in a broken state.
+  const paramTarget = searchParams.get('agent') as AgentTab | null
+  const picked: AgentTab | null = paramTarget && agentTabs.includes(paramTarget) ? paramTarget : null
+
+  const setPicked = (next: AgentTab | null) => {
     const params = new URLSearchParams(searchParams)
-    params.set('agent', next)
-    setSearchParams(params, { replace: true })
+    if (next) params.set('agent', next)
+    else params.delete('agent')
+    // `push` not `replace` so the browser back button rewinds the wizard.
+    setSearchParams(params)
   }
-  // `?mode=skill` opens each tab with its skill-based escape hatch expanded
-  // by default — useful for support / docs deep links. Otherwise tabs lead
-  // with the proxy-lite (passthrough or vaulted) setup.
+
+  // `?mode=skill` opens the fallback path with its skill escape hatch expanded
+  // by default — useful for support / docs deep links.
   const showSkillDefault = !proxyLiteUI || searchParams.get('mode') === 'skill'
   const [copied, setCopied] = useState(false)
 
@@ -807,12 +941,20 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
     queryKey: ['public-config'],
     queryFn: () => api.config.public(),
   })
+  const { data: connections } = useQuery({
+    queryKey: ['connections'],
+    queryFn: () => api.connections.list(),
+  })
+  // Installer-driven wizards (hermes / openclaw) render the pending connection
+  // inline at their approve step, so suppress the duplicate below the wizard
+  // for those targets.
+  const isInstallerWizard = picked === 'hermes' || picked === 'openclaw'
+  const pendingForWizard = (connections ?? []).filter(c => c.status === 'pending')
+  const showOuterPending = !isInstallerWizard && pendingForWizard.length > 0
 
   // Mint a single-use claim code so the bootstrap curl never has to embed
-  // the user's ID. BootstrapApproveStep invalidates this query after the
-  // claim is consumed (via the inline Approve mutation) so re-bootstrapping
-  // in the same session always has a fresh code. Codes expire server-side
-  // at claimCodeTTL (5 min); refetch every 4 min to keep the visible curl warm.
+  // the user's ID. Codes expire server-side at claimCodeTTL (5 min); refetch
+  // every 4 min to keep the visible curl warm.
   const { data: claim } = useQuery({
     queryKey: ['connection-claim'],
     queryFn: () => api.connections.mintClaim(),
@@ -824,9 +966,6 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
   const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   const hasRelay = !!(pairInfo?.daemon_id && pairInfo?.relay_host)
 
-  // When accessed locally, agents should talk to the daemon directly rather
-  // than routing through the relay. Use the relay URL only when the dashboard
-  // itself is being accessed remotely (cloud-hosted).
   const clawvisorURL = isLocal
     ? window.location.origin
     : hasRelay
@@ -848,70 +987,103 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const tabs: { id: AgentTab; label: string }[] = [
-    ...(proxyLiteUI
-      ? [
-          { id: 'openclaw' as const, label: 'OpenClaw' },
-          { id: 'hermes' as const, label: 'Hermes' },
-          { id: 'claude-code' as const, label: 'Claude Code' },
-          { id: 'codex' as const, label: 'Codex' },
-          { id: 'claude-desktop' as const, label: 'Claude Desktop' },
-          { id: 'other' as const, label: 'Other Agents' },
-        ]
-      : [
-          { id: 'openclaw' as const, label: 'OpenClaw / Hermes' },
-          { id: 'claude-code' as const, label: 'Claude Code' },
-          { id: 'claude-desktop' as const, label: 'Claude Desktop' },
-          { id: 'other' as const, label: 'Other Agents' },
-        ]),
-  ]
-
   return (
     <section className="bg-surface-1 border border-border-default rounded-md overflow-hidden">
-      <div className="px-5 pt-5 pb-0">
+      <div className="px-5 pt-5 pb-4">
         <h2 className="text-lg font-semibold text-text-primary">Connect an Agent</h2>
         <p className="text-sm text-text-tertiary mt-1">
-          Follow the steps below to connect a coding agent to Clawvisor.
+          {picked
+            ? <>Connecting <strong className="text-text-primary">{AGENT_META[picked].label}</strong> to Clawvisor.</>
+            : 'Pick the agent you want to connect.'}
         </p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-0 px-5 mt-4 border-b border-border-subtle overflow-x-auto">
-        {tabs.map(t => (
-          <button
-            key={t.id}
-            onClick={() => { setTab(t.id); setCopied(false) }}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              tab === t.id
-                ? 'border-brand text-brand'
-                : 'border-transparent text-text-tertiary hover:text-text-secondary'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="p-5">
-        {proxyLiteUI ? (
+      <div className="p-5 pt-0">
+        {picked ? (
           <>
-            {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
-            {tab === 'hermes' && <HermesGuide clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} onCopy={copyText} />}
-            {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} newToken={newToken} onCopy={copyText} showSkillDefault={showSkillDefault} />}
-            {tab === 'codex' && <CodexGuide clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} onCopy={copyText} />}
-            {tab === 'claude-desktop' && <ClaudeDesktopGuide clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} isLocal={isLocal} onCopy={copyText} showSkillDefault={showSkillDefault} />}
-            {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+            <button
+              onClick={() => {
+                // Backing out to the picker is the escape hatch: clear any
+                // in-flight installer progress for this target so re-picking
+                // the same harness starts fresh at Configure.
+                if (picked === 'openclaw' || picked === 'hermes') {
+                  clearInstallerProgress(picked)
+                }
+                setPicked(null)
+                setCopied(false)
+              }}
+              className="text-xs text-text-tertiary hover:text-text-primary mb-4 inline-flex items-center gap-1"
+            >
+              ← Choose a different agent
+            </button>
+
+            {proxyLiteUI ? (
+              <>
+                {picked === 'openclaw' && <InstallerSkillGuide target="openclaw" installerBaseURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
+                {picked === 'hermes' && <InstallerSkillGuide target="hermes" installerBaseURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
+                {picked === 'claude-code' && <ManualProxyCLISetupGuide target="claude-code" clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} onCopy={copyText} />}
+                {picked === 'codex' && <ManualProxyCLISetupGuide target="codex" clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} onCopy={copyText} />}
+                {picked === 'claude-desktop' && <ClaudeDesktopProfileGuide />}
+                {picked === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+              </>
+            ) : (
+              <>
+                {picked === 'openclaw' && <LegacyOpenClawGuide setupURL={setupURL} copied={copied} onCopy={copyText} />}
+                {picked === 'claude-code' && <LegacyClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
+                {picked === 'claude-desktop' && <LegacyClaudeDesktopGuide isLocal={isLocal} onCopy={copyText} />}
+                {picked === 'other' && <LegacyOtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
+              </>
+            )}
+
+            {showOuterPending && (
+              <div className="mt-6 pt-5 border-t border-border-subtle">
+                <div className="flex items-center gap-2 mb-3">
+                  <h3 className="text-sm font-medium text-text-primary">Pending Connections</h3>
+                  <span className="bg-warning text-surface-0 text-xs font-bold rounded px-2 py-0.5 font-mono">
+                    {pendingForWizard.length}
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  {pendingForWizard.map(cr => (
+                    <ConnectionCard key={cr.id} request={cr} />
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         ) : (
-          <>
-            {tab === 'openclaw' && <LegacyOpenClawGuide setupURL={setupURL} copied={copied} onCopy={copyText} />}
-            {tab === 'claude-code' && <LegacyClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
-            {tab === 'claude-desktop' && <LegacyClaudeDesktopGuide isLocal={isLocal} onCopy={copyText} />}
-            {tab === 'other' && <LegacyOtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
-          </>
+          <AgentPickerGrid agents={agentTabs} onPick={setPicked} />
         )}
       </div>
     </section>
+  )
+}
+
+function AgentPickerGrid({ agents, onPick }: {
+  agents: AgentTab[]
+  onPick: (next: AgentTab) => void
+}) {
+  return (
+    <div className="grid max-w-3xl grid-cols-1 sm:grid-cols-2 gap-2">
+      {agents.map(id => {
+        const m = AGENT_META[id]
+        return (
+          <button
+            key={id}
+            onClick={() => onPick(id)}
+            className="text-left rounded-md border border-border-default bg-surface-0 hover:border-brand hover:bg-surface-1 px-3 py-2.5 transition-colors group"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-text-primary group-hover:text-brand">{m.label}</span>
+              <span className="text-xs text-text-tertiary bg-surface-1 group-hover:bg-surface-0 px-1.5 py-0.5 rounded whitespace-nowrap">
+                {m.primitive}
+              </span>
+            </div>
+            <p className="text-xs text-text-tertiary mt-1 leading-snug">{m.tagline}</p>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -924,32 +1096,65 @@ function StepNumber({ n }: { n: number }) {
 }
 
 function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = () => {
+    if (!onCopy) return
+    onCopy()
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
   return (
-    <div className="relative group bg-surface-0 border border-border-subtle rounded overflow-hidden">
+    <div className="bg-surface-0 border border-border-subtle rounded overflow-hidden">
       <pre className="px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
         {children}
       </pre>
       {onCopy && (
-        <>
-          {/* Desktop: inline overlay */}
+        <div className="border-t border-border-subtle bg-surface-1/60 px-2 py-1.5 flex justify-end">
           <button
-            onClick={onCopy}
-            className="hidden sm:block absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1 opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={handleCopy}
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-0"
           >
-            Copy
+            <span aria-hidden="true">{copied ? '✓' : '⧉'}</span>
+            {copied ? 'Copied' : 'Copy'}
           </button>
-          {/* Mobile: footer bar */}
-          <div className="sm:hidden border-t border-border-subtle px-3 py-1.5 flex justify-end">
-            <button
-              onClick={onCopy}
-              className="text-xs px-2.5 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
-            >
-              Copy
-            </button>
-          </div>
-        </>
+        </div>
       )}
     </div>
+  )
+}
+
+// Renders a compact opt-in checkbox that toggles
+// `--dangerously-skip-permissions` (Claude Code) or its Codex equivalent into
+// the test-connection and alias commands above. The flag is dangerous on
+// purpose — the label spells out what's being bypassed so users can't
+// flip it accidentally and then forget. Kept as a thin wrapper around a
+// native `<input type="checkbox">` so it inherits the form-control styling
+// the dashboard already ships.
+function SkipPermissionsCheckbox({
+  checked,
+  onChange,
+  flag,
+  label,
+}: {
+  checked: boolean
+  onChange: (next: boolean) => void
+  flag: string
+  label: string
+}) {
+  return (
+    <label className="flex items-start gap-2 text-xs text-text-secondary cursor-pointer select-none">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={e => onChange(e.target.checked)}
+        className="mt-0.5 h-3.5 w-3.5 rounded border-border-default text-brand focus:ring-brand/30"
+      />
+      <span>
+        Skip permission prompts in {label} (
+        <code className="font-mono text-text-secondary">{flag}</code>
+        ). Dangerous — the agent will run shell commands without asking you first.
+      </span>
+    </label>
   )
 }
 
@@ -1230,7 +1435,7 @@ function LegacyOtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
             <StepNumber n={3} />
             <div className="space-y-1.5 min-w-0 flex-1">
               <p className="text-sm font-medium text-text-primary">Verify</p>
-              <CodeBlock>{`curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
+              <CodeBlock>{`curl -sf -H "X-Clawvisor-Agent-Token: $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
               <p className="text-xs text-text-tertiary">
                 Should return a JSON catalog of available services. See{' '}
                 <code className="font-mono text-text-secondary">{clawvisorURL}/skill/SKILL.md</code>{' '}
@@ -1309,9 +1514,14 @@ function buildBootstrapCommand(clawvisorURL: string, claim: string | undefined, 
   // --remove-on-error guarantees the partial/error body never lands on disk.
   // Without --remove-on-error, a failed retry would silently overwrite the
   // previous good JSON with the error response.
-  const claimParam = claim ? `&claim=${claim}` : ''
+  //
+  // `URLSearchParams` handles URL-encoding so a future claim format that
+  // contains `&` / `=` / `#` / space doesn't silently break the curl. The
+  // newer `buildConnectCommand` uses the same pattern.
+  const qs = new URLSearchParams({ wait: 'true', name: agentName })
+  if (claim) qs.set('claim', claim)
   return `mkdir -p ~/.clawvisor/agents && curl -sf --remove-on-error -X POST \\
-  "${clawvisorURL}/api/agents/connect?wait=true&name=${agentName}${claimParam}" \\
+  "${clawvisorURL}/api/agents/connect?${qs.toString()}" \\
   -o ~/.clawvisor/agents/${agentName}.json \\
   && chmod 600 ~/.clawvisor/agents/${agentName}.json`
 }
@@ -1332,11 +1542,14 @@ function StepBar({ steps, activeIndex }: { steps: WizardStepDef[]; activeIndex: 
       {steps.map((s, i) => {
         const isActive = i === activeIndex
         const isDone = s.done
-        const circleClass = isDone
+        // Active always gets a ring so the "you are here" marker survives
+        // even when the step is also done (criteria met before reaching it).
+        const baseClass = isDone
           ? 'bg-brand text-surface-0 border-brand'
           : isActive
-            ? 'bg-surface-0 text-brand border-brand ring-2 ring-brand/30'
+            ? 'bg-surface-0 text-brand border-brand'
             : 'bg-surface-0 text-text-tertiary border-border-default'
+        const ringClass = isActive ? ' ring-2 ring-brand/30' : ''
         const labelClass = isActive ? 'text-text-primary font-medium' : 'text-text-tertiary'
         return (
           <Fragment key={s.id}>
@@ -1344,7 +1557,7 @@ function StepBar({ steps, activeIndex }: { steps: WizardStepDef[]; activeIndex: 
               <div className={`h-px w-6 ${steps[i - 1].done ? 'bg-brand' : 'bg-border-default'}`} />
             )}
             <li className="flex items-center gap-2 whitespace-nowrap">
-              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border transition-colors ${circleClass}`}>
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border transition-colors ${baseClass}${ringClass}`}>
                 {i + 1}
               </div>
               <span className={labelClass}>{s.title}</span>
@@ -1405,1224 +1618,6 @@ function WizardNav({
   )
 }
 
-// BootstrapApproveStep handles step 1 for every harness: name input, the
-// bootstrap curl, and (when the curl runs) inline Approve / Deny buttons for
-// the pending connection request — so the user never has to scroll up to the
-// Pending Connections card. Completion is detected via the existing
-// ['agents'] query: the step becomes done when an agent matching the chosen
-// name exists.
-function BootstrapApproveStep({
-  clawvisorURL, claim, agentName, setAgentName, onCopy, onAdvance,
-}: {
-  clawvisorURL: string
-  claim: string | undefined
-  agentName: string
-  setAgentName: (n: string) => void
-  onCopy: (text: string) => void
-  onAdvance: (agentId: string) => void
-}) {
-  const qc = useQueryClient()
-  const { data: connections } = useQuery({
-    queryKey: ['connections'],
-    queryFn: () => api.connections.list(),
-    refetchInterval: 3000,
-  })
-  const { data: agents } = useQuery({
-    queryKey: ['agents', 'personal'],
-    queryFn: () => api.agents.list(),
-    refetchInterval: 3000,
-  })
-
-  const myAgent = useMemo(
-    () => agents?.find(a => a.name === agentName),
-    [agents, agentName],
-  )
-  const myPending = useMemo(
-    () => connections?.find(c => c.name === agentName && c.status === 'pending'),
-    [connections, agentName],
-  )
-
-  // Any time a previously-tracked pending request disappears (approved,
-  // denied via the inline buttons, or server-expired after a wait-timeout)
-  // the claim that produced it has been burned. Mint a fresh one so the
-  // visible curl in the UI is immediately retry-able. The mutation
-  // onSuccess handlers also invalidate, but this effect is the only thing
-  // that catches the server-expired case where the dashboard wasn't the
-  // driver of the resolution.
-  const hadPendingRef = useRef(false)
-  useEffect(() => {
-    if (hadPendingRef.current && !myPending) {
-      qc.invalidateQueries({ queryKey: ['connection-claim'] })
-    }
-    hadPendingRef.current = !!myPending
-  }, [myPending, qc])
-
-  const [actionError, setActionError] = useState<string | null>(null)
-  const approveMut = useMutation({
-    mutationFn: (id: string) => api.connections.approve(id),
-    onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['connections'] })
-      qc.invalidateQueries({ queryKey: ['agents', 'personal'] })
-      qc.invalidateQueries({ queryKey: ['agents'] })
-      qc.invalidateQueries({ queryKey: ['welcome'] })
-      qc.invalidateQueries({ queryKey: ['overview'] })
-      // Claim is consumed once the curl POSTs; re-mint so a follow-up
-      // bootstrap in this session always has a fresh code.
-      qc.invalidateQueries({ queryKey: ['connection-claim'] })
-      if (data.agent_id) onAdvance(data.agent_id)
-    },
-    onError: (err: Error) => setActionError(err.message),
-  })
-  const denyMut = useMutation({
-    mutationFn: (id: string) => api.connections.deny(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['connections'] })
-      qc.invalidateQueries({ queryKey: ['overview'] })
-      // The claim was burned by the bootstrap curl that produced this
-      // request; pasting the same command again would 401. Mint a fresh
-      // one so the visible curl is immediately retry-able.
-      qc.invalidateQueries({ queryKey: ['connection-claim'] })
-    },
-    onError: (err: Error) => setActionError(err.message),
-  })
-
-  const bootstrapCmd = buildBootstrapCommand(clawvisorURL, claim, agentName)
-  const filePath = `~/.clawvisor/agents/${agentName}.json`
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <label className="text-xs uppercase tracking-wider text-text-tertiary">Name this agent</label>
-        <input
-          type="text"
-          value={agentName}
-          onChange={e => setAgentName(sanitizeAgentName(e.target.value))}
-          disabled={!!myPending}
-          className="mt-1 block w-full max-w-xs text-sm font-mono rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand disabled:opacity-60"
-        />
-        <p className="text-xs text-text-tertiary mt-1">
-          Determines both the agent's name in Clawvisor and the on-disk file:{' '}
-          <code className="font-mono text-text-secondary">{filePath}</code>
-          {myAgent && !myPending && (
-            <span className="ml-1 text-warning">— an agent with this name already exists; pick a different name to bootstrap a fresh one, or reuse it below.</span>
-          )}
-        </p>
-      </div>
-
-      <div className="space-y-1.5">
-        <p className="text-sm font-medium text-text-primary">Run this in your terminal</p>
-        <CodeBlock onCopy={() => onCopy(bootstrapCmd)}>{bootstrapCmd}</CodeBlock>
-      </div>
-
-      {myPending ? (
-        <div className="rounded border border-brand/30 bg-brand/5 px-4 py-3 space-y-2">
-          <div>
-            <p className="text-sm font-medium text-text-primary">Connection request received.</p>
-            <p className="text-xs text-text-secondary mt-1">
-              From <code className="font-mono">{myPending.ip_address}</code> ·{' '}
-              requested {formatDistanceToNow(new Date(myPending.created_at), { addSuffix: true })}.
-              Approve to release the curl with a fresh token.
-            </p>
-          </div>
-          {actionError && <p className="text-xs text-danger">{actionError}</p>}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => { setActionError(null); approveMut.mutate(myPending.id) }}
-              disabled={approveMut.isPending || denyMut.isPending}
-              className="bg-brand text-surface-0 font-medium rounded px-4 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
-            >
-              {approveMut.isPending ? 'Approving…' : 'Approve'}
-            </button>
-            <button
-              onClick={() => { setActionError(null); denyMut.mutate(myPending.id) }}
-              disabled={approveMut.isPending || denyMut.isPending}
-              className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
-            >
-              Deny
-            </button>
-          </div>
-        </div>
-      ) : myAgent ? (
-        <div className="rounded border border-border-default bg-surface-0 px-4 py-3 space-y-2">
-          <p className="text-sm text-text-secondary">
-            Reuse the existing agent (token still on disk if you previously bootstrapped this name), or rename to bootstrap a fresh one.
-          </p>
-          <button
-            onClick={() => onAdvance(myAgent.id)}
-            className="bg-brand text-surface-0 font-medium rounded px-4 py-1.5 text-sm hover:bg-brand-strong"
-          >
-            Use existing “{myAgent.name}”
-          </button>
-        </div>
-      ) : (
-        <p className="text-xs text-text-tertiary">
-          Waiting for you to run the curl above. Once it lands, an Approve button shows up right here.
-        </p>
-      )}
-    </div>
-  )
-}
-
-// VaultKeyStep collects the upstream Anthropic / OpenAI key that the proxy
-// swaps in when forwarding requests for swap-mode harnesses. Completion
-// requires at least one provider to have a key stored (user-level OR
-// agent-scoped). The user can also skip if they've vaulted the key
-// elsewhere (or via the agent detail page) — but the step warns them.
-function VaultKeyStep({ agentId }: { agentId: string }) {
-  const qc = useQueryClient()
-  const [editingProvider, setEditingProvider] = useState<string | null>(null)
-  const [apiKey, setApiKey] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  const { data: creds } = useQuery({
-    queryKey: ['llm-credentials', agentId],
-    queryFn: () => api.llmCredentials.list(agentId),
-  })
-
-  const setMut = useMutation({
-    mutationFn: (params: { provider: string; key: string }) =>
-      api.llmCredentials.set(params.provider, params.key, agentId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['llm-credentials', agentId] })
-      setEditingProvider(null)
-      setApiKey('')
-      setError(null)
-    },
-    onError: (err: Error) => setError(err.message),
-  })
-
-  return (
-    <div className="space-y-3">
-      <p className="text-sm text-text-secondary">
-        Clawvisor swaps your <code className="font-mono">cvis_…</code> token for an upstream
-        Anthropic or OpenAI key on each call. Vault at least one key — either now (agent-scoped)
-        or globally on the <a href="/dashboard/credentials" className="text-brand hover:underline">Credentials</a> page.
-      </p>
-
-      {error && <p className="text-xs text-danger">{error}</p>}
-
-      {creds?.credentials.map(c => (
-        <div key={c.provider} className="rounded border border-border-default bg-surface-1 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-medium text-text-primary capitalize">{c.provider}</div>
-              <div className="text-xs text-text-tertiary mt-0.5">
-                {c.agent_stored ? (
-                  <span className="text-success">Agent-scoped key set</span>
-                ) : c.stored ? (
-                  <span className="text-success">Using user-level key</span>
-                ) : (
-                  <span className="text-warning">No key configured</span>
-                )}
-              </div>
-            </div>
-            <button
-              onClick={() => { setEditingProvider(c.provider); setApiKey(''); setError(null) }}
-              className="text-xs px-3 py-1 rounded border border-brand/30 text-brand hover:bg-brand/10"
-            >
-              {c.agent_stored ? 'Replace' : c.stored ? 'Override for this agent' : 'Set key'}
-            </button>
-          </div>
-          {editingProvider === c.provider && (
-            <div className="space-y-2 pt-2 border-t border-border-subtle">
-              <input
-                type="password"
-                value={apiKey}
-                onChange={e => { setApiKey(e.target.value); setError(null) }}
-                placeholder={c.provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
-                className="block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-              />
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => { if (!apiKey) { setError('API key is required'); return } setMut.mutate({ provider: c.provider, key: apiKey }) }}
-                  disabled={setMut.isPending || !apiKey}
-                  className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
-                >
-                  {setMut.isPending ? 'Saving…' : 'Save'}
-                </button>
-                <button
-                  onClick={() => { setEditingProvider(null); setApiKey(''); setError(null) }}
-                  className="text-xs text-text-tertiary hover:text-text-primary"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// Whether the upstream-key step is satisfied: at least one provider has a key
-// available, whether scoped to this agent or inherited from the user.
-function hasAnyUpstreamKey(creds: { credentials: { stored: boolean; agent_stored?: boolean }[] } | undefined): boolean {
-  if (!creds) return false
-  return creds.credentials.some(c => c.stored || c.agent_stored)
-}
-
-function ClaudeCodeGuide({ clawvisorURL, llmBaseURL, claim, userIdParam, newToken, onCopy, showSkillDefault }: {
-  clawvisorURL: string
-  llmBaseURL: string
-  claim: string | undefined
-  userIdParam: string
-  newToken: string | null
-  onCopy: (text: string) => void
-  showSkillDefault: boolean
-}) {
-  const [step, setStep] = useState(0)
-  const { data: agents } = useQuery({
-    queryKey: ['agents', 'personal'],
-    queryFn: () => api.agents.list(),
-    refetchInterval: 3000,
-  })
-  const [agentName, setAgentName] = useSequencedAgentName('claude-code', agents)
-  const connected = !!agents?.find(a => a.name === agentName)
-
-  const jsonPath = `~/.clawvisor/agents/${agentName}.json`
-  const runCmd = `ANTHROPIC_BASE_URL=${llmBaseURL}/api \\
-ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${jsonPath})" \\
-ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
-claude`
-  const zshrcSnippet = `cat >> ~/.zshrc <<'EOF'
-claude-cv() {
-  ANTHROPIC_BASE_URL=${llmBaseURL}/api \\
-  ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${jsonPath})" \\
-  ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
-  claude "$@"
-}
-EOF`
-  const tokenValue = newToken ?? 'cvis_<your-token>'
-  const manualRunCmd = `ANTHROPIC_BASE_URL=${llmBaseURL}/api \\
-ANTHROPIC_CUSTOM_HEADERS='X-Clawvisor-Agent-Token: ${tokenValue}' \\
-ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
-claude`
-  const installCmd = `curl -sf "${clawvisorURL}/skill/clawvisor-setup.md${userIdParam}" \\\n  --create-dirs -o ~/.claude/commands/clawvisor-setup.md`
-
-  const wizardSteps: WizardStepDef[] = [
-    { id: 'bootstrap', title: 'Bootstrap agent', done: connected },
-    { id: 'use', title: 'Run Claude Code', done: step > 1 },
-  ]
-
-  return (
-    <div className="space-y-5">
-      <p className="text-sm text-text-secondary">
-        Claude Code runs in <strong>passthrough mode</strong>: your existing Anthropic login
-        (subscription or API key) authenticates upstream, and Clawvisor only identifies the
-        agent. Two steps — bootstrap, then run.
-      </p>
-
-      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-4">
-        <StepBar steps={wizardSteps} activeIndex={step} />
-
-      {step === 0 && (
-        <BootstrapApproveStep
-          clawvisorURL={clawvisorURL}
-          claim={claim}
-          agentName={agentName}
-          setAgentName={setAgentName}
-          onCopy={onCopy}
-          onAdvance={() => setStep(1)}
-        />
-      )}
-
-      {step === 1 && (
-        <>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-text-primary">Run Claude Code through Clawvisor</p>
-              <CodeBlock onCopy={() => onCopy(runCmd)}>{runCmd}</CodeBlock>
-              <p className="text-xs text-text-tertiary">
-                Needs <code className="font-mono text-text-secondary">jq</code> (<code className="font-mono text-text-secondary">brew install jq</code> on macOS).
-              </p>
-            </div>
-
-            <details className="group">
-              <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-                Optional: persist as a shell function (naked <code className="font-mono">claude-cv</code> works)
-              </summary>
-              <div className="mt-3 space-y-1.5">
-                <CodeBlock onCopy={() => onCopy(zshrcSnippet)}>{zshrcSnippet}</CodeBlock>
-                <p className="text-xs text-text-tertiary">
-                  After running, open a new shell or <code className="font-mono text-text-secondary">source ~/.zshrc</code>.
-                  The function re-reads the JSON on every call.
-                </p>
-              </div>
-            </details>
-          </div>
-          <WizardNav
-            canBack
-            canNext
-            onBack={() => setStep(0)}
-            onNext={() => setStep(2)}
-            nextLabel="Done"
-          />
-        </>
-      )}
-
-      {step >= 2 && (
-        <div className="rounded border border-success/30 bg-success/10 px-4 py-3">
-          <p className="text-sm font-medium text-success">All set.</p>
-          <p className="text-xs text-text-secondary mt-1">
-            Re-run the curl any time you need to rotate the token (pick the same name).
-          </p>
-          <button
-            onClick={() => setStep(1)}
-            className="mt-2 text-xs text-brand hover:underline"
-          >
-            Show the run command again
-          </button>
-        </div>
-      )}
-      </div>
-
-      <details className="group">
-        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-          Manual setup (env vars without an on-disk file)
-        </summary>
-        <div className="mt-3 space-y-1.5">
-          <p className="text-xs text-text-tertiary">
-            If you don't want a JSON file on disk, create an agent in <strong>Your Agents</strong>{' '}
-            below and inline the token directly:
-          </p>
-          <CodeBlock onCopy={() => onCopy(manualRunCmd)}>{manualRunCmd}</CodeBlock>
-          {!newToken && (
-            <p className="text-xs text-text-tertiary">
-              The placeholder fills in automatically after you create an agent.
-            </p>
-          )}
-        </div>
-      </details>
-
-      <details className="group" open={showSkillDefault}>
-        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-          Skill-based setup (use Clawvisor's native skill protocol instead)
-        </summary>
-        <div className="mt-4 space-y-4">
-          <p className="text-sm text-text-secondary">
-            Install a slash command, then run it in Claude Code. It handles agent registration,
-            skill installation, environment setup, and a smoke test — all interactively.
-          </p>
-
-          <div className="flex items-start gap-3">
-            <StepNumber n={1} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Install the setup command</p>
-              <p className="text-xs text-text-tertiary">
-                Run this in your terminal to install the{' '}
-                <code className="font-mono text-text-secondary">/clawvisor-setup</code> slash command:
-              </p>
-              <CodeBlock onCopy={() => onCopy(installCmd)}>{installCmd}</CodeBlock>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-3">
-            <StepNumber n={2} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Run /clawvisor-setup in Claude Code</p>
-              <p className="text-xs text-text-tertiary">
-                Open Claude Code and type{' '}
-                <code className="font-mono text-text-secondary">/clawvisor-setup</code>.
-                Claude will walk you through the setup — registering as an agent, configuring
-                environment variables, and verifying the connection.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-3">
-            <StepNumber n={3} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Approve the connection</p>
-              <p className="text-xs text-text-tertiary">
-                During setup, Claude Code sends a connection request. Approve it in the{' '}
-                <strong>Pending Connections</strong> section above. Once approved, Claude Code
-                finishes setup automatically and runs a smoke test.
-              </p>
-            </div>
-          </div>
-        </div>
-      </details>
-    </div>
-  )
-}
-
-function CodexGuide({ clawvisorURL, llmBaseURL, claim, newToken, onCopy }: {
-  clawvisorURL: string
-  llmBaseURL: string
-  claim: string | undefined
-  newToken: string | null
-  onCopy: (text: string) => void
-}) {
-  const [step, setStep] = useState(0)
-  const { data: agents } = useQuery({
-    queryKey: ['agents', 'personal'],
-    queryFn: () => api.agents.list(),
-    refetchInterval: 3000,
-  })
-  const [agentName, setAgentName] = useSequencedAgentName('codex', agents)
-  const connected = !!agents?.find(a => a.name === agentName)
-
-  const jsonPath = `~/.clawvisor/agents/${agentName}.json`
-  // Idempotent: skip the append when [model_providers.clawvisor] is already
-  // in the file. Re-running the snippet otherwise creates a duplicate-table
-  // entry that Codex rejects on startup.
-  const configWrite = `mkdir -p ~/.codex && grep -q '^\\[model_providers\\.clawvisor\\]' ~/.codex/config.toml 2>/dev/null || cat >> ~/.codex/config.toml <<'EOF'
-
-[model_providers.clawvisor]
-name = "Clawvisor"
-base_url = "${llmBaseURL}/api/v1"
-wire_api = "responses"
-requires_openai_auth = true
-
-[model_providers.clawvisor.env_http_headers]
-X-Clawvisor-Agent-Token = "CLAWVISOR_AGENT_TOKEN"
-EOF`
-  const runCmd = `CLAWVISOR_AGENT_TOKEN=$(jq -r .token ${jsonPath}) \\
-codex -c model_provider=clawvisor`
-  const zshrcSnippet = `cat >> ~/.zshrc <<'EOF'
-codex-cv() {
-  CLAWVISOR_AGENT_TOKEN=$(jq -r .token ${jsonPath}) \\
-  codex -c model_provider=clawvisor "$@"
-}
-EOF`
-  const tokenValue = newToken ?? 'cvis_<your-token>'
-  const manualRunCmd = `CLAWVISOR_AGENT_TOKEN=${tokenValue} \\
-codex -c model_provider=clawvisor`
-
-  const wizardSteps: WizardStepDef[] = [
-    { id: 'bootstrap', title: 'Bootstrap agent', done: connected },
-    { id: 'configure', title: 'Configure & run', done: step > 1 },
-  ]
-
-  return (
-    <div className="space-y-5">
-      <p className="text-sm text-text-secondary">
-        Codex runs in <strong>passthrough mode</strong>: your ChatGPT login (via{' '}
-        <code className="font-mono text-text-secondary">codex login</code>) authenticates
-        upstream, Clawvisor only identifies the agent. Two steps — bootstrap, then configure.
-      </p>
-
-      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-4">
-        <StepBar steps={wizardSteps} activeIndex={step} />
-
-      {step === 0 && (
-        <BootstrapApproveStep
-          clawvisorURL={clawvisorURL}
-          claim={claim}
-          agentName={agentName}
-          setAgentName={setAgentName}
-          onCopy={onCopy}
-          onAdvance={() => setStep(1)}
-        />
-      )}
-
-      {step === 1 && (
-        <>
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-text-primary">Add the provider block (one time)</p>
-              <CodeBlock onCopy={() => onCopy(configWrite)}>{configWrite}</CodeBlock>
-              <p className="text-xs text-text-tertiary">
-                Appends a <code className="font-mono text-text-secondary">[model_providers.clawvisor]</code>{' '}
-                block to <code className="font-mono text-text-secondary">~/.codex/config.toml</code>.{' '}
-                <code className="font-mono text-text-secondary">requires_openai_auth=true</code> tells Codex
-                to authenticate the call to Clawvisor with your existing ChatGPT login.
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-text-primary">Run Codex through Clawvisor</p>
-              <CodeBlock onCopy={() => onCopy(runCmd)}>{runCmd}</CodeBlock>
-              <p className="text-xs text-text-tertiary">
-                Needs <code className="font-mono text-text-secondary">jq</code> (<code className="font-mono text-text-secondary">brew install jq</code> on macOS).
-                Make sure you've run <code className="font-mono text-text-secondary">codex login</code> at
-                least once first.
-              </p>
-            </div>
-
-            <details className="group">
-              <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-                Optional: persist as a shell function (naked <code className="font-mono">codex-cv</code> works)
-              </summary>
-              <div className="mt-3 space-y-1.5">
-                <CodeBlock onCopy={() => onCopy(zshrcSnippet)}>{zshrcSnippet}</CodeBlock>
-                <p className="text-xs text-text-tertiary">
-                  After running, open a new shell or <code className="font-mono text-text-secondary">source ~/.zshrc</code>.
-                </p>
-              </div>
-            </details>
-          </div>
-          <WizardNav
-            canBack
-            canNext
-            onBack={() => setStep(0)}
-            onNext={() => setStep(2)}
-            nextLabel="Done"
-          />
-        </>
-      )}
-
-      {step >= 2 && (
-        <div className="rounded border border-success/30 bg-success/10 px-4 py-3">
-          <p className="text-sm font-medium text-success">All set.</p>
-          <p className="text-xs text-text-secondary mt-1">
-            Re-run the bootstrap curl any time you need to rotate the token (pick the same name).
-          </p>
-          <button
-            onClick={() => setStep(1)}
-            className="mt-2 text-xs text-brand hover:underline"
-          >
-            Show the configure & run commands again
-          </button>
-        </div>
-      )}
-      </div>
-
-      <details className="group">
-        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-          Manual setup (env var without an on-disk file)
-        </summary>
-        <div className="mt-3 space-y-1.5">
-          <p className="text-xs text-text-tertiary">
-            If you don't want a JSON file on disk, create an agent in <strong>Your Agents</strong>{' '}
-            below and inline the token directly:
-          </p>
-          <CodeBlock onCopy={() => onCopy(manualRunCmd)}>{manualRunCmd}</CodeBlock>
-          {!newToken && (
-            <p className="text-xs text-text-tertiary">
-              The placeholder fills in automatically after you create an agent.
-            </p>
-          )}
-        </div>
-      </details>
-    </div>
-  )
-}
-
-function ClaudeDesktopGuide({ clawvisorURL, llmBaseURL, claim, newToken, isLocal, onCopy, showSkillDefault }: {
-  clawvisorURL: string
-  llmBaseURL: string
-  claim: string | undefined
-  newToken: string | null
-  isLocal: boolean
-  onCopy: (text: string) => void
-  showSkillDefault: boolean
-}) {
-  const [step, setStep] = useState(0)
-  const { data: agents } = useQuery({
-    queryKey: ['agents', 'personal'],
-    queryFn: () => api.agents.list(),
-    refetchInterval: 3000,
-  })
-  const [agentName, setAgentName] = useSequencedAgentName('claude-desktop', agents)
-  const myAgent = agents?.find(a => a.name === agentName)
-  const connected = !!myAgent
-  const { data: creds } = useQuery({
-    queryKey: ['llm-credentials', myAgent?.id ?? ''],
-    queryFn: () => api.llmCredentials.list(myAgent!.id),
-    enabled: !!myAgent,
-  })
-  const keyReady = hasAnyUpstreamKey(creds)
-
-  const jsonPath = `~/.clawvisor/agents/${agentName}.json`
-  const printTokenCmd = `cat ${jsonPath} | jq -r .token`
-  const tokenValue = newToken ?? 'cvis_<your-token>'
-  const marketplaceSlug = 'clawvisor/cowork-plugins'
-  const pluginLabel = isLocal ? 'Clawvisor Local' : 'Clawvisor'
-
-  const wizardSteps: WizardStepDef[] = [
-    { id: 'bootstrap', title: 'Bootstrap agent', done: connected },
-    { id: 'key', title: 'Vault upstream key', done: keyReady },
-    { id: 'configure', title: 'Configure Desktop', done: step > 2 },
-  ]
-
-  return (
-    <div className="space-y-5">
-      <p className="text-sm text-text-secondary">
-        Claude Desktop runs in <strong>swap mode</strong>: the GUI presents the Clawvisor token
-        as its API key, and Clawvisor swaps in your vaulted upstream Anthropic key on each call.
-        Three steps — bootstrap, vault, configure.
-      </p>
-
-      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-4">
-        <StepBar steps={wizardSteps} activeIndex={step} />
-
-      {step === 0 && (
-        <BootstrapApproveStep
-          clawvisorURL={clawvisorURL}
-          claim={claim}
-          agentName={agentName}
-          setAgentName={setAgentName}
-          onCopy={onCopy}
-          onAdvance={() => setStep(1)}
-        />
-      )}
-
-      {step === 1 && myAgent && (
-        <>
-          <VaultKeyStep agentId={myAgent.id} />
-          <WizardNav
-            canBack
-            canNext={keyReady}
-            onBack={() => setStep(0)}
-            onNext={() => setStep(2)}
-            onSkip={() => setStep(2)}
-            skipLabel="Skip — I'll vault one elsewhere"
-            nextDisabledHint={keyReady ? undefined : 'Vault at least one provider key to continue'}
-          />
-        </>
-      )}
-
-      {step === 2 && (
-        <>
-          <div className="space-y-4">
-            <div className="flex items-start gap-3">
-              <StepNumber n={1} />
-              <div className="space-y-1.5 min-w-0 flex-1">
-                <p className="text-sm font-medium text-text-primary">Enable Developer Mode</p>
-                <p className="text-xs text-text-tertiary">
-                  In Claude Desktop, open <strong>Help → Troubleshooting</strong> and turn on{' '}
-                  <strong>Enable Developer Mode</strong>.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-3">
-              <StepNumber n={2} />
-              <div className="space-y-1.5 min-w-0 flex-1">
-                <p className="text-sm font-medium text-text-primary">Open the inference config panel</p>
-                <p className="text-xs text-text-tertiary">
-                  From the new <strong>Developer</strong> menu, select{' '}
-                  <strong>Configure Third-Party Inference…</strong> and set{' '}
-                  <strong>Backend Type</strong> to <strong>Gateway (Anthropic-compatible)</strong>.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-3">
-              <StepNumber n={3} />
-              <div className="space-y-1.5 min-w-0 flex-1">
-                <p className="text-sm font-medium text-text-primary">Fill in the gateway fields</p>
-                <div className="space-y-2">
-                  <div>
-                    <div className="text-xs uppercase tracking-wider text-text-tertiary">Gateway base URL</div>
-                    <div className="mt-1 flex items-center gap-2">
-                      <code className="flex-1 px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-0 text-text-primary break-all">{llmBaseURL}</code>
-                      <button
-                        onClick={() => onCopy(llmBaseURL)}
-                        className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase tracking-wider text-text-tertiary">Gateway API key</div>
-                    <p className="text-xs text-text-tertiary mt-1">
-                      Print the token from the JSON file, then paste it into the field:
-                    </p>
-                    <div className="mt-1">
-                      <CodeBlock onCopy={() => onCopy(printTokenCmd)}>{printTokenCmd}</CodeBlock>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase tracking-wider text-text-tertiary">Gateway auth scheme</div>
-                    <code className="mt-1 inline-block px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-0 text-text-primary">bearer</code>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-3">
-              <StepNumber n={4} />
-              <div className="space-y-1.5 min-w-0 flex-1">
-                <p className="text-sm font-medium text-text-primary">Apply & restart</p>
-                <p className="text-xs text-text-tertiary">
-                  Click <strong>Apply locally</strong>, then fully quit and reopen Claude Desktop.
-                  Inference now routes through Clawvisor.
-                </p>
-              </div>
-            </div>
-          </div>
-          <WizardNav
-            canBack
-            canNext
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
-            nextLabel="Done"
-          />
-        </>
-      )}
-
-      {step >= 3 && (
-        <div className="rounded border border-success/30 bg-success/10 px-4 py-3">
-          <p className="text-sm font-medium text-success">All set.</p>
-          <button
-            onClick={() => setStep(2)}
-            className="mt-2 text-xs text-brand hover:underline"
-          >
-            Show the configure steps again
-          </button>
-        </div>
-      )}
-      </div>
-
-      <details className="group">
-        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-          Manual setup (use a token created via the dashboard)
-        </summary>
-        <div className="mt-3 space-y-2">
-          <p className="text-xs text-text-tertiary">
-            Skip the bootstrap and create an agent in <strong>Your Agents</strong> below. Paste
-            its token directly into the Gateway API key field:
-          </p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-0 text-text-primary break-all">{tokenValue}</code>
-            <button
-              onClick={() => onCopy(tokenValue)}
-              className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
-            >
-              Copy
-            </button>
-          </div>
-          {!newToken && (
-            <p className="text-xs text-text-tertiary">
-              The placeholder fills in automatically after you create an agent.
-            </p>
-          )}
-        </div>
-      </details>
-
-      <details className="group" open={showSkillDefault}>
-        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-          Skill-based setup (use the Clawvisor Cowork plugin instead)
-        </summary>
-        <div className="mt-4 space-y-4">
-          <p className="text-sm text-text-secondary">
-            {isLocal
-              ? 'Connect Claude Cowork to your local Clawvisor instance via the Cowork plugin.'
-              : 'Connect Claude Cowork to your Clawvisor cloud account via the Cowork plugin.'}
-          </p>
-
-          <div className="flex items-start gap-3">
-            <StepNumber n={1} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Open the plugin manager</p>
-              <p className="text-xs text-text-tertiary">
-                In Claude Desktop, navigate to <strong>Claude Cowork</strong>, click{' '}
-                <strong>Customize</strong> in the sidebar, then press the <strong>+</strong> next to{' '}
-                <strong>Personal plugins</strong>.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-3">
-            <StepNumber n={2} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Add the marketplace</p>
-              <p className="text-xs text-text-tertiary">
-                Under <strong>Create plugin</strong>, select <strong>Add marketplace</strong> and paste:
-              </p>
-              <CodeBlock onCopy={() => onCopy(marketplaceSlug)}>{marketplaceSlug}</CodeBlock>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-3">
-            <StepNumber n={3} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Install the {pluginLabel} plugin</p>
-              <p className="text-xs text-text-tertiary">
-                Open the <strong>Personal</strong> tab, switch to the <strong>cowork-plugins</strong> tab,
-                then select <strong>{pluginLabel}</strong> to install.
-              </p>
-            </div>
-          </div>
-
-          {!isLocal && (
-            <div className="flex items-start gap-3">
-              <StepNumber n={4} />
-              <div className="space-y-1.5 min-w-0 flex-1">
-                <p className="text-sm font-medium text-text-primary">Connect the Clawvisor connector</p>
-                <p className="text-xs text-text-tertiary">
-                  Under the <strong>Clawvisor</strong> plugin, select <strong>Connectors</strong>, click the{' '}
-                  <strong>clawvisor</strong> connector, and connect. Authorize Claude Cowork in your browser
-                  when prompted.
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-start gap-3">
-            <StepNumber n={isLocal ? 4 : 5} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Start using it</p>
-              <p className="text-xs text-text-tertiary">
-                Create a new Claude Cowork session and ask your agent to use a connected account via
-                Clawvisor — e.g. "check my Gmail" or "list my GitHub issues." Claude will create a task,
-                ask you to approve, and execute through Clawvisor.{' '}
-                {isLocal &&
-                  <>Open the dashboard with <code className="font-mono text-text-secondary">clawvisor tui</code> or visit <code className="font-mono text-text-secondary">http://localhost:25297</code> to manage services, approvals, and restrictions.</>
-                }
-              </p>
-            </div>
-          </div>
-        </div>
-      </details>
-    </div>
-  )
-}
-
-function OpenClawGuide({ setupURL, clawvisorURL, llmBaseURL, claim, newToken, copied, onCopy, showSkillDefault }: {
-  setupURL: string
-  clawvisorURL: string
-  llmBaseURL: string
-  claim: string | undefined
-  newToken: string | null
-  copied: boolean
-  onCopy: (text: string) => void
-  showSkillDefault: boolean
-}) {
-  const [step, setStep] = useState(0)
-  const { data: agents } = useQuery({
-    queryKey: ['agents', 'personal'],
-    queryFn: () => api.agents.list(),
-    refetchInterval: 3000,
-  })
-  const [agentName, setAgentName] = useSequencedAgentName('openclaw', agents)
-  const myAgent = agents?.find(a => a.name === agentName)
-  const connected = !!myAgent
-  const { data: creds } = useQuery({
-    queryKey: ['llm-credentials', myAgent?.id ?? ''],
-    queryFn: () => api.llmCredentials.list(myAgent!.id),
-    enabled: !!myAgent,
-  })
-  const keyReady = hasAnyUpstreamKey(creds)
-
-  const jsonPath = `~/.clawvisor/agents/${agentName}.json`
-  const onboardCmd = `openclaw onboard --non-interactive \\
-  --auth-choice custom-api-key \\
-  --custom-base-url "${llmBaseURL}/api/v1" \\
-  --custom-model-id "claude-sonnet-4-6" \\
-  --custom-api-key "$(jq -r .token ${jsonPath})" \\
-  --custom-compatibility anthropic`
-  const tokenValue = newToken ?? 'cvis_<your-token>'
-  const manualOnboardCmd = `openclaw onboard --non-interactive \\
-  --auth-choice custom-api-key \\
-  --custom-base-url "${llmBaseURL}/api/v1" \\
-  --custom-model-id "claude-sonnet-4-6" \\
-  --custom-api-key "${tokenValue}" \\
-  --custom-compatibility anthropic`
-  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
-
-  const wizardSteps: WizardStepDef[] = [
-    { id: 'bootstrap', title: 'Bootstrap agent', done: connected },
-    { id: 'key', title: 'Vault upstream key', done: keyReady },
-    { id: 'onboard', title: 'Onboard OpenClaw', done: step > 2 },
-  ]
-
-  return (
-    <div className="space-y-5">
-      <p className="text-sm text-text-secondary">
-        OpenClaw runs in <strong>swap mode</strong>: Clawvisor swaps your{' '}
-        <code className="font-mono text-text-secondary">cvis_…</code> token for a vaulted
-        upstream Anthropic key on each call. Three steps — bootstrap, vault, onboard.
-      </p>
-
-      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-4">
-        <StepBar steps={wizardSteps} activeIndex={step} />
-
-      {step === 0 && (
-        <BootstrapApproveStep
-          clawvisorURL={clawvisorURL}
-          claim={claim}
-          agentName={agentName}
-          setAgentName={setAgentName}
-          onCopy={onCopy}
-          onAdvance={() => setStep(1)}
-        />
-      )}
-
-      {step === 1 && myAgent && (
-        <>
-          <VaultKeyStep agentId={myAgent.id} />
-          <WizardNav
-            canBack
-            canNext={keyReady}
-            onBack={() => setStep(0)}
-            onNext={() => setStep(2)}
-            onSkip={() => setStep(2)}
-            skipLabel="Skip — I'll vault one elsewhere"
-            nextDisabledHint={keyReady ? undefined : 'Vault at least one provider key to continue'}
-          />
-        </>
-      )}
-
-      {step === 2 && (
-        <>
-          <div className="space-y-1.5">
-            <p className="text-sm font-medium text-text-primary">Onboard OpenClaw</p>
-            <CodeBlock onCopy={() => onCopy(onboardCmd)}>{onboardCmd}</CodeBlock>
-            <p className="text-xs text-text-tertiary">
-              After this finishes, OpenClaw remembers the config — naked{' '}
-              <code className="font-mono text-text-secondary">openclaw</code> goes through Clawvisor.
-              Needs <code className="font-mono text-text-secondary">jq</code>.
-            </p>
-          </div>
-          <WizardNav
-            canBack
-            canNext
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
-            nextLabel="Done"
-          />
-        </>
-      )}
-
-      {step >= 3 && (
-        <div className="rounded border border-success/30 bg-success/10 px-4 py-3">
-          <p className="text-sm font-medium text-success">All set.</p>
-          <button
-            onClick={() => setStep(2)}
-            className="mt-2 text-xs text-brand hover:underline"
-          >
-            Show the onboard command again
-          </button>
-        </div>
-      )}
-      </div>
-
-      <details className="group">
-        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-          Manual setup (paste a token created via the dashboard)
-        </summary>
-        <div className="mt-3 space-y-1.5">
-          <p className="text-xs text-text-tertiary">
-            If you don't want a JSON file on disk, create an agent in <strong>Your Agents</strong>{' '}
-            below and inline the token directly:
-          </p>
-          <CodeBlock onCopy={() => onCopy(manualOnboardCmd)}>{manualOnboardCmd}</CodeBlock>
-          {!newToken && (
-            <p className="text-xs text-text-tertiary">
-              The placeholder fills in automatically after you create an agent.
-            </p>
-          )}
-        </div>
-      </details>
-
-      <details className="group" open={showSkillDefault}>
-        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-          Skill-based setup (let your agent self-register via the Clawvisor skill)
-        </summary>
-        <div className="mt-4 space-y-4">
-          <p className="text-sm text-text-secondary">
-            Paste the setup prompt below into your agent — it will self-register and wait for your approval.
-          </p>
-
-          <div className="flex items-start gap-3">
-            <StepNumber n={1} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
-              <div className="relative group bg-surface-0 border border-brand/20 rounded overflow-hidden">
-                <pre className="px-3 py-2.5 sm:pr-16 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-words">
-                  {prompt}
-                </pre>
-                <button
-                  onClick={() => onCopy(prompt)}
-                  className="hidden sm:block absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
-                >
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
-                <div className="sm:hidden border-t border-brand/20 px-3 py-1.5 flex justify-end">
-                  <button
-                    onClick={() => onCopy(prompt)}
-                    className="text-xs px-2.5 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
-                  >
-                    {copied ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-              </div>
-              <p className="text-xs text-text-tertiary">
-                Your agent will follow the setup instructions — registering itself
-                and installing the Clawvisor skill.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-3">
-            <StepNumber n={2} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Approve the connection</p>
-              <p className="text-xs text-text-tertiary">
-                A connection request will appear in the <strong>Pending Connections</strong> section above.
-                Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
-                and is ready to go.
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-surface-0 border border-border-subtle rounded-md px-4 py-3">
-            <p className="text-sm text-text-secondary">
-              <strong>Using Telegram?</strong> If you talk to your agent via Telegram, you can set up a
-              group chat with Clawvisor to get inline approval notifications and auto-approvals.{' '}
-              <a href="/dashboard/settings" className="text-brand hover:underline">Set it up in Settings &rarr; Telegram</a>.
-            </p>
-          </div>
-        </div>
-      </details>
-    </div>
-  )
-}
-
-function HermesGuide({ clawvisorURL, llmBaseURL, claim, newToken, onCopy }: {
-  clawvisorURL: string
-  llmBaseURL: string
-  claim: string | undefined
-  newToken: string | null
-  onCopy: (text: string) => void
-}) {
-  const [step, setStep] = useState(0)
-  const { data: agents } = useQuery({
-    queryKey: ['agents', 'personal'],
-    queryFn: () => api.agents.list(),
-    refetchInterval: 3000,
-  })
-  const [agentName, setAgentName] = useSequencedAgentName('hermes', agents)
-  const myAgent = agents?.find(a => a.name === agentName)
-  const connected = !!myAgent
-  const { data: creds } = useQuery({
-    queryKey: ['llm-credentials', myAgent?.id ?? ''],
-    queryFn: () => api.llmCredentials.list(myAgent!.id),
-    enabled: !!myAgent,
-  })
-  const keyReady = hasAnyUpstreamKey(creds)
-
-  const jsonPath = `~/.clawvisor/agents/${agentName}.json`
-  const envCmd = `OPENAI_BASE_URL=${llmBaseURL}/api/v1 \\
-OPENAI_API_KEY=$(jq -r .token ${jsonPath}) \\
-hermes chat`
-  const configCmd = `mkdir -p ~/.hermes && cat > ~/.hermes/config.yaml <<EOF
-model:
-  provider: custom
-  base_url: "${llmBaseURL}/api/v1"
-  api_key: "$(jq -r .token ${jsonPath})"
-EOF`
-  const tokenValue = newToken ?? 'cvis_<your-token>'
-  const manualEnvCmd = `OPENAI_BASE_URL=${llmBaseURL}/api/v1 \\
-OPENAI_API_KEY=${tokenValue} \\
-hermes chat`
-
-  const wizardSteps: WizardStepDef[] = [
-    { id: 'bootstrap', title: 'Bootstrap agent', done: connected },
-    { id: 'key', title: 'Vault upstream key', done: keyReady },
-    { id: 'use', title: 'Run Hermes', done: step > 2 },
-  ]
-
-  return (
-    <div className="space-y-5">
-      <p className="text-sm text-text-secondary">
-        Hermes runs in <strong>swap mode</strong>: Hermes presents the Clawvisor token via{' '}
-        <code className="font-mono text-text-secondary">OPENAI_API_KEY</code>, and Clawvisor
-        swaps in your vaulted upstream key on each call. Three steps — bootstrap, vault, run.
-      </p>
-
-      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-4">
-        <StepBar steps={wizardSteps} activeIndex={step} />
-
-      {step === 0 && (
-        <BootstrapApproveStep
-          clawvisorURL={clawvisorURL}
-          claim={claim}
-          agentName={agentName}
-          setAgentName={setAgentName}
-          onCopy={onCopy}
-          onAdvance={() => setStep(1)}
-        />
-      )}
-
-      {step === 1 && myAgent && (
-        <>
-          <VaultKeyStep agentId={myAgent.id} />
-          <WizardNav
-            canBack
-            canNext={keyReady}
-            onBack={() => setStep(0)}
-            onNext={() => setStep(2)}
-            onSkip={() => setStep(2)}
-            skipLabel="Skip — I'll vault one elsewhere"
-            nextDisabledHint={keyReady ? undefined : 'Vault at least one provider key to continue'}
-          />
-        </>
-      )}
-
-      {step === 2 && (
-        <>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-text-primary">Run Hermes via env vars</p>
-              <CodeBlock onCopy={() => onCopy(envCmd)}>{envCmd}</CodeBlock>
-              <p className="text-xs text-text-tertiary">
-                Re-reads the token on every invocation. Needs{' '}
-                <code className="font-mono text-text-secondary">jq</code>.
-              </p>
-            </div>
-
-            <details className="group">
-              <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-                Optional: persist as <code className="font-mono">~/.hermes/config.yaml</code>
-              </summary>
-              <div className="mt-3 space-y-1.5">
-                <CodeBlock onCopy={() => onCopy(configCmd)}>{configCmd}</CodeBlock>
-                <p className="text-xs text-text-tertiary">
-                  Bakes the current token into the file. If you re-bootstrap the same agent name,
-                  re-run this snippet to pick up the new token.
-                </p>
-              </div>
-            </details>
-          </div>
-          <WizardNav
-            canBack
-            canNext
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
-            nextLabel="Done"
-          />
-        </>
-      )}
-
-      {step >= 3 && (
-        <div className="rounded border border-success/30 bg-success/10 px-4 py-3">
-          <p className="text-sm font-medium text-success">All set.</p>
-          <button
-            onClick={() => setStep(2)}
-            className="mt-2 text-xs text-brand hover:underline"
-          >
-            Show the run command again
-          </button>
-        </div>
-      )}
-      </div>
-
-      <details className="group">
-        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-          Manual setup (inline a token created via the dashboard)
-        </summary>
-        <div className="mt-3 space-y-1.5">
-          <p className="text-xs text-text-tertiary">
-            If you don't want a JSON file on disk, create an agent in <strong>Your Agents</strong>{' '}
-            below and inline the token directly:
-          </p>
-          <CodeBlock onCopy={() => onCopy(manualEnvCmd)}>{manualEnvCmd}</CodeBlock>
-          {!newToken && (
-            <p className="text-xs text-text-tertiary">
-              The placeholder fills in automatically after you create an agent.
-            </p>
-          )}
-        </div>
-      </details>
-    </div>
-  )
-}
 
 function OtherAgentGuide({ setupURL, clawvisorURL, llmBaseURL, claim, newToken, copied, onCopy, showSkillDefault }: {
   setupURL: string
@@ -2691,9 +1686,10 @@ client = OpenAI(
   return (
     <div className="space-y-5">
       <p className="text-sm text-text-secondary">
-        Any Anthropic- or OpenAI-compatible client works in <strong>swap mode</strong>:
-        Clawvisor swaps your <code className="font-mono text-text-secondary">cvis_…</code> token
-        for a vaulted upstream key on each call. Three steps — bootstrap, vault, use.
+        If the agent lets you change its Anthropic or OpenAI-compatible LLM
+        gateway URL, it can use Clawvisor. Clawvisor swaps your{' '}
+        <code className="font-mono text-text-secondary">cvis_…</code> token for
+        a vaulted upstream key on each call. Three steps — bootstrap, vault, use.
       </p>
 
       <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-4">
@@ -2868,7 +1864,7 @@ client = OpenAI(
                 <StepNumber n={3} />
                 <div className="space-y-1.5 min-w-0 flex-1">
                   <p className="text-sm font-medium text-text-primary">Verify</p>
-                  <CodeBlock>{`curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
+                  <CodeBlock>{`curl -sf -H "X-Clawvisor-Agent-Token: $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
                   <p className="text-xs text-text-tertiary">
                     Should return a JSON catalog of available services. See{' '}
                     <code className="font-mono text-text-secondary">{clawvisorURL}/skill/SKILL.md</code>{' '}
@@ -2884,7 +1880,1658 @@ client = OpenAI(
   )
 }
 
+// ── Wizard helpers shared by the fallback OtherAgentGuide ────────────────────
+//
+// BootstrapApproveStep, VaultKeyStep, and hasAnyUpstreamKey were once used by
+// every per-harness guide. The new installer-skill flow handles minting
+// inside the agent, so they only survive for OtherAgentGuide — the fallback
+// path for agents that can't redirect their LLM endpoint.
+
+// BootstrapApproveStep handles step 1 for every harness: name input, the
+// bootstrap curl, and (when the curl runs) inline Approve / Deny buttons for
+// the pending connection request — so the user never has to scroll up to the
+// Pending Connections card. Completion is detected via the existing
+// ['agents'] query: the step becomes done when an agent matching the chosen
+// name exists.
+type LLMProvider = 'anthropic' | 'openai'
+
+function BootstrapApproveStep({
+  clawvisorURL, claim, agentName, setAgentName, onCopy, onAdvance,
+}: {
+  clawvisorURL: string
+  claim: string | undefined
+  agentName: string
+  setAgentName: (n: string) => void
+  onCopy: (text: string) => void
+  onAdvance: (agentId: string) => void
+}) {
+  const qc = useQueryClient()
+  const { data: connections } = useQuery({
+    queryKey: ['connections'],
+    queryFn: () => api.connections.list(),
+    refetchInterval: 3000,
+  })
+  const { data: agents } = useQuery({
+    queryKey: ['agents', 'personal'],
+    queryFn: () => api.agents.list(),
+    refetchInterval: 3000,
+  })
+
+  const myAgent = useMemo(
+    () => agents?.find(a => a.name === agentName),
+    [agents, agentName],
+  )
+  const myPending = useMemo(
+    () => connections?.find(c => c.name === agentName && c.status === 'pending'),
+    [connections, agentName],
+  )
+
+  // Any time a previously-tracked pending request disappears (approved,
+  // denied via the inline buttons, or server-expired after a wait-timeout)
+  // the claim that produced it has been burned. Mint a fresh one so the
+  // visible curl in the UI is immediately retry-able. The mutation
+  // onSuccess handlers also invalidate, but this effect is the only thing
+  // that catches the server-expired case where the dashboard wasn't the
+  // driver of the resolution.
+  const hadPendingRef = useRef(false)
+  useEffect(() => {
+    if (hadPendingRef.current && !myPending) {
+      qc.invalidateQueries({ queryKey: ['connection-claim'] })
+    }
+    hadPendingRef.current = !!myPending
+  }, [myPending, qc])
+
+  const [actionError, setActionError] = useState<string | null>(null)
+  const approveMut = useMutation({
+    mutationFn: (id: string) => api.connections.approve(id),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['connections'] })
+      qc.invalidateQueries({ queryKey: ['agents', 'personal'] })
+      qc.invalidateQueries({ queryKey: ['agents'] })
+      qc.invalidateQueries({ queryKey: ['welcome'] })
+      qc.invalidateQueries({ queryKey: ['overview'] })
+      // Claim is consumed once the curl POSTs; re-mint so a follow-up
+      // bootstrap in this session always has a fresh code.
+      qc.invalidateQueries({ queryKey: ['connection-claim'] })
+      if (data.agent_id) onAdvance(data.agent_id)
+    },
+    onError: (err: Error) => setActionError(err.message),
+  })
+  const denyMut = useMutation({
+    mutationFn: (id: string) => api.connections.deny(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['connections'] })
+      qc.invalidateQueries({ queryKey: ['overview'] })
+      // The claim was burned by the bootstrap curl that produced this
+      // request; pasting the same command again would 401. Mint a fresh
+      // one so the visible curl is immediately retry-able.
+      qc.invalidateQueries({ queryKey: ['connection-claim'] })
+    },
+    onError: (err: Error) => setActionError(err.message),
+  })
+
+  const bootstrapCmd = buildBootstrapCommand(clawvisorURL, claim, agentName)
+  const filePath = `~/.clawvisor/agents/${agentName}.json`
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="text-xs uppercase tracking-wider text-text-tertiary">Name this agent</label>
+        <input
+          type="text"
+          value={agentName}
+          onChange={e => setAgentName(sanitizeAgentName(e.target.value))}
+          disabled={!!myPending}
+          className="mt-1 block w-full max-w-xs text-sm font-mono rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand disabled:opacity-60"
+        />
+        <p className="text-xs text-text-tertiary mt-1">
+          Determines both the agent's name in Clawvisor and the on-disk file:{' '}
+          <code className="font-mono text-text-secondary">{filePath}</code>
+          {myAgent && !myPending && (
+            <span className="ml-1 text-warning">An agent with this name already exists; pick a different name to create a fresh connection.</span>
+          )}
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium text-text-primary">Run this in your terminal</p>
+        <CodeBlock onCopy={() => onCopy(bootstrapCmd)}>{bootstrapCmd}</CodeBlock>
+      </div>
+
+      {myPending ? (
+        <div className="rounded border border-brand/30 bg-brand/5 px-4 py-3 space-y-2">
+          <div>
+            <p className="text-sm font-medium text-text-primary">Connection request received.</p>
+            <p className="text-xs text-text-secondary mt-1">
+              From <code className="font-mono">{myPending.ip_address}</code> ·{' '}
+              requested {formatDistanceToNow(new Date(myPending.created_at), { addSuffix: true })}.
+              Approve to release the curl with a fresh token.
+            </p>
+          </div>
+          {actionError && <p className="text-xs text-danger">{actionError}</p>}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setActionError(null); approveMut.mutate(myPending.id) }}
+              disabled={approveMut.isPending || denyMut.isPending}
+              className="bg-brand text-surface-0 font-medium rounded px-4 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
+            >
+              {approveMut.isPending ? 'Approving…' : 'Approve'}
+            </button>
+            <button
+              onClick={() => { setActionError(null); denyMut.mutate(myPending.id) }}
+              disabled={approveMut.isPending || denyMut.isPending}
+              className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
+            >
+              Deny
+            </button>
+          </div>
+        </div>
+      ) : myAgent ? (
+        <div className="rounded border border-border-default bg-surface-0 px-4 py-3 space-y-2">
+          <p className="text-sm text-text-secondary">
+            Pick a different name to create a fresh connection request. Clawvisor will issue a new token after you approve it.
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-text-tertiary">
+          Waiting for you to run the curl above. Once it lands, an Approve button shows up right here.
+        </p>
+      )}
+    </div>
+  )
+}
+
+type LLMCredentialsStatus = { credentials: { provider: string; stored: boolean; agent_stored?: boolean; agent_id?: string }[] }
+
+function providerLabel(provider: LLMProvider): string {
+  return provider === 'anthropic' ? 'Anthropic' : 'OpenAI'
+}
+
+// VaultKeyStep collects the upstream Anthropic / OpenAI key that the proxy
+// swaps in when forwarding requests. With an agentId, it stores an
+// agent-scoped override; without one, it stores the user-level key needed
+// before swap-mode agents connect.
+function VaultKeyStep({
+  agentId,
+  provider,
+  title = 'Vault upstream key',
+  description,
+}: {
+  agentId?: string
+  provider?: LLMProvider
+  title?: string
+  description?: string
+}) {
+  const qc = useQueryClient()
+  const [editingProvider, setEditingProvider] = useState<string | null>(null)
+  const [apiKey, setApiKey] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const { data: creds } = useQuery({
+    queryKey: ['llm-credentials', agentId ?? 'user'],
+    queryFn: () => api.llmCredentials.list(agentId),
+  })
+
+  const setMut = useMutation({
+    mutationFn: (params: { provider: string; key: string }) =>
+      api.llmCredentials.set(params.provider, params.key, agentId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['llm-credentials', agentId ?? 'user'] })
+      setEditingProvider(null)
+      setApiKey('')
+      setError(null)
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+  const visibleCreds = provider
+    ? creds?.credentials.filter(c => c.provider === provider)
+    : creds?.credentials
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-sm font-medium text-text-primary">{title}</p>
+        {description ? (
+          <p className="text-sm text-text-secondary mt-1">{description}</p>
+        ) : (
+          <p className="text-sm text-text-secondary mt-1">
+            Clawvisor swaps your <code className="font-mono">cvis_…</code> token for an upstream
+            Anthropic or OpenAI key on each call. Vault at least one key — either now
+            {agentId ? ' for this agent' : ' as a user-level key'}
+            {' '}or globally on the <a href="/dashboard/credentials" className="text-brand hover:underline">Credentials</a> page.
+          </p>
+        )}
+      </div>
+
+      {error && <p className="text-xs text-danger">{error}</p>}
+
+      {visibleCreds?.map(c => (
+        <div key={c.provider} className="rounded border border-border-default bg-surface-1 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-text-primary capitalize">{c.provider}</div>
+              <div className="text-xs text-text-tertiary mt-0.5">
+                {c.agent_stored ? (
+                  <span className="text-success">Agent-scoped key set</span>
+                ) : c.stored ? (
+                  <span className="text-success">Using user-level key</span>
+                ) : (
+                  <span className="text-warning">No key configured</span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => { setEditingProvider(c.provider); setApiKey(''); setError(null) }}
+              className="text-xs px-3 py-1 rounded border border-brand/30 text-brand hover:bg-brand/10"
+            >
+              {c.agent_stored ? 'Replace' : c.stored ? (agentId ? 'Override for this agent' : 'Replace') : 'Set key'}
+            </button>
+          </div>
+          {editingProvider === c.provider && (
+            <div className="space-y-2 pt-2 border-t border-border-subtle">
+              <input
+                type="password"
+                value={apiKey}
+                onChange={e => { setApiKey(e.target.value); setError(null) }}
+                placeholder={c.provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
+                className="block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { if (!apiKey) { setError('API key is required'); return } setMut.mutate({ provider: c.provider, key: apiKey }) }}
+                  disabled={setMut.isPending || !apiKey}
+                  className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                >
+                  {setMut.isPending ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  onClick={() => { setEditingProvider(null); setApiKey(''); setError(null) }}
+                  className="text-xs text-text-tertiary hover:text-text-primary"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Whether the upstream-key step is satisfied: at least one provider has a key
+// available, whether scoped to this agent or inherited from the user.
+function hasAnyUpstreamKey(creds: LLMCredentialsStatus | undefined): boolean {
+  if (!creds) return false
+  return creds.credentials.some(c => c.stored || c.agent_stored)
+}
+
+function hasProviderUpstreamKey(creds: LLMCredentialsStatus | undefined, provider: LLMProvider): boolean {
+  if (!creds) return false
+  return creds.credentials.some(c => c.provider === provider && (c.stored || c.agent_stored))
+}
+
+function hasProviderAgentKey(creds: LLMCredentialsStatus | undefined, provider: LLMProvider): boolean {
+  if (!creds) return false
+  return creds.credentials.some(c => c.provider === provider && c.agent_stored)
+}
+
+function isWizardStartActivity(entry: AuditEntry, startedAtMs: number): boolean {
+  const ts = new Date(entry.timestamp).getTime()
+  if (!Number.isFinite(ts) || ts < startedAtMs - 5000) return false
+  if (entry.activity_kind === 'runtime') return true
+  if (entry.action?.startsWith('lite_proxy.')) return true
+  return false
+}
+
+function isUpstreamCredentialIssue(entry: AuditEntry): boolean {
+  return entry.outcome === 'upstream_auth_missing_for_passthrough' ||
+    entry.outcome === 'upstream_key_missing' ||
+    entry.error_msg?.includes('API key configured') === true
+}
+
+function useAgentStartActivity(agentId: string | null | undefined, startedAtMs: number, polling: boolean = true) {
+  const { data } = useQuery({
+    queryKey: ['audit', 'install-wizard-start', agentId ?? 'none', startedAtMs],
+    queryFn: () => api.audit.list({ agent_id: agentId ?? undefined, limit: 8 }),
+    enabled: !!agentId && polling,
+    refetchInterval: polling ? 3000 : false,
+    retry: false,
+  })
+  return useMemo(
+    () => (data?.entries ?? []).find(entry => isWizardStartActivity(entry, startedAtMs)),
+    [data, startedAtMs],
+  )
+}
+
+function AgentStartStatus({
+  liveSession,
+  startActivity,
+  waitingText,
+}: {
+  liveSession?: RuntimeSession
+  startActivity?: AuditEntry
+  waitingText: string
+}) {
+  const detected = !!liveSession || !!startActivity
+  if (detected) {
+    return (
+      <div className="rounded-md border border-success/30 bg-success/10 px-3 py-3">
+        <div className="flex items-start gap-2.5">
+          <span className="mt-1 h-2.5 w-2.5 rounded-full bg-success shadow-[0_0_0_3px_rgba(34,197,94,0.16)]" />
+          <div>
+            <p className="text-sm font-medium text-success">
+              {liveSession ? 'Live session detected' : 'Routed activity detected'}
+            </p>
+            <p className="text-xs text-text-secondary mt-1">
+              Clawvisor is seeing traffic for this agent. Continue when you're ready to finish setup.
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="rounded-md border border-border-subtle bg-surface-0 px-3 py-3">
+      <div className="flex items-start gap-2.5">
+        <span className="mt-1 h-2.5 w-2.5 rounded-full bg-text-tertiary" />
+        <div>
+          <p className="text-sm font-medium text-text-primary">Waiting for Clawvisor traffic</p>
+          <p className="text-xs text-text-tertiary mt-1">{waitingText}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Manual proxy setup path (Claude Code / Codex) ────────────────────────────
+
+type ManualProxyTarget = 'claude-code' | 'codex'
+
+const MANUAL_PROXY_META: Record<ManualProxyTarget, { label: string; baseName: string }> = {
+  'claude-code': { label: 'Claude Code', baseName: 'claude-code' },
+  codex: { label: 'Codex', baseName: 'codex' },
+}
+
+function ManualProxyCLISetupGuide({
+  target,
+  clawvisorURL,
+  llmBaseURL,
+  claim,
+  onCopy,
+}: {
+  target: ManualProxyTarget
+  clawvisorURL: string
+  llmBaseURL: string
+  claim: string | undefined
+  onCopy: (text: string) => void
+}) {
+  const meta = MANUAL_PROXY_META[target]
+  const [step, setStep] = useState(0)
+  const startedAtRef = useRef(Date.now())
+  const { data: agents } = useQuery({
+    queryKey: ['agents', 'personal'],
+    queryFn: () => api.agents.list(),
+    refetchInterval: 3000,
+  })
+  const [agentName, setAgentName] = useSequencedAgentName(meta.baseName, agents)
+  const [agentId, setAgentId] = useState<string | null>(null)
+  const selectedAgent = useMemo(
+    () => agentId ? agents?.find(a => a.id === agentId) : agents?.find(a => a.name === agentName),
+    [agentId, agentName, agents],
+  )
+  useEffect(() => {
+    if (selectedAgent && selectedAgent.id !== agentId) setAgentId(selectedAgent.id)
+  }, [agentId, selectedAgent])
+
+  const { data: sessions } = useQuery({
+    queryKey: ['runtime-sessions', 'install-wizard', agentId ?? 'none'],
+    queryFn: () => api.runtime.listSessions(),
+    enabled: !!agentId,
+    refetchInterval: 3000,
+    retry: false,
+  })
+  const liveSession = useMemo(() => {
+    return (sessions?.entries ?? []).find(session => session.agent_id === agentId && isActiveRuntimeSession(session))
+  }, [agentId, sessions])
+  const startActivity = useAgentStartActivity(agentId, startedAtRef.current)
+  const agentStarted = !!liveSession || !!startActivity
+  const upstreamProvider: LLMProvider = target === 'codex' ? 'openai' : 'anthropic'
+  const authIssueActivity = startActivity && isUpstreamCredentialIssue(startActivity) ? startActivity : undefined
+  const { data: userCreds } = useQuery({
+    queryKey: ['llm-credentials', 'user'],
+    queryFn: () => api.llmCredentials.list(),
+    enabled: !!authIssueActivity,
+  })
+  const authIssueKeyReady = hasProviderUpstreamKey(userCreds, upstreamProvider)
+
+  const tokenPath = `~/.clawvisor/agents/${agentName}.json`
+  // Opt-in flag that disables the harness's interactive permission prompts.
+  // For Claude Code: `--dangerously-skip-permissions`. For Codex: the
+  // equivalent `--dangerously-bypass-approvals-and-sandbox`. Applied to BOTH
+  // the test-connection (`startCommand`) and the alias (`aliasCommand`) so
+  // the user's everyday `claude-cv` / `codex-cv` invocations stay consistent
+  // with what they verified in the wizard.
+  const [skipPermissions, setSkipPermissions] = useState(false)
+  const skipPermsFlag = target === 'codex'
+    ? '--dangerously-bypass-approvals-and-sandbox'
+    : '--dangerously-skip-permissions'
+  const skipPermsClaude = skipPermissions ? ` ${skipPermsFlag}` : ''
+  const skipPermsCodex = skipPermissions ? ` ${skipPermsFlag}` : ''
+
+  const configureCommand = `mkdir -p ~/.codex
+grep -q '^\\[model_providers\\.clawvisor\\]' ~/.codex/config.toml 2>/dev/null || cat >> ~/.codex/config.toml <<'EOF'
+
+[model_providers.clawvisor]
+name = "Clawvisor"
+base_url = "${llmBaseURL}/api/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.clawvisor.env_http_headers]
+X-Clawvisor-Agent-Token = "CLAWVISOR_AGENT_TOKEN"
+EOF`
+  const startCommand = target === 'codex'
+    ? `CLAWVISOR_AGENT_TOKEN=$(jq -r .token ${tokenPath}) codex${skipPermsCodex} -c model_provider=clawvisor`
+    : `ANTHROPIC_BASE_URL=${llmBaseURL}/api \\
+ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${tokenPath})" \\
+ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
+claude${skipPermsClaude}`
+  const aliasCommand = target === 'codex'
+    ? `cat >> ~/.zshrc <<'EOF'
+codex-cv() {
+  CLAWVISOR_AGENT_TOKEN=$(jq -r .token ${tokenPath}) codex${skipPermsCodex} -c model_provider=clawvisor "$@"
+}
+EOF`
+    : `cat >> ~/.zshrc <<'EOF'
+claude-cv() {
+  ANTHROPIC_BASE_URL=${llmBaseURL}/api \\
+  ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${tokenPath})" \\
+  ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
+  claude${skipPermsClaude} "$@"
+}
+EOF`
+  const settingsLink = selectedAgent ? `/dashboard/agents/${encodeURIComponent(selectedAgent.id)}` : '/dashboard/agents'
+
+  const wizardSteps: WizardStepDef[] = target === 'codex'
+    ? [
+        { id: 'token', title: 'Token', done: !!agentId },
+        { id: 'configure', title: 'Configure', done: step > 1 },
+        { id: 'session', title: 'Start session', done: agentStarted || step > 2 },
+        { id: 'alias', title: 'Alias & settings', done: step > 3 },
+      ]
+    : [
+        { id: 'token', title: 'Token', done: !!agentId },
+        { id: 'session', title: 'Start session', done: agentStarted || step > 2 },
+        { id: 'alias', title: 'Alias & settings', done: step > 3 },
+      ]
+  const activeStepIndex = target === 'codex' ? step : Math.max(0, step - 1)
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Set up {meta.label} manually for the local machine. First mint an agent
+        token, then start one Clawvisor-routed session. When Clawvisor sees
+        traffic, the wizard will show that you're ready for alias and settings.
+      </p>
+      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-4">
+        <div className="overflow-x-auto pb-1">
+          <StepBar steps={wizardSteps} activeIndex={activeStepIndex} />
+        </div>
+
+        {step === 0 && (
+          <>
+            <BootstrapApproveStep
+              clawvisorURL={clawvisorURL}
+              claim={claim}
+              agentName={agentName}
+              setAgentName={setAgentName}
+              onCopy={onCopy}
+              onAdvance={(id) => {
+                setAgentId(id)
+                setStep(target === 'codex' ? 1 : 2)
+              }}
+            />
+          </>
+        )}
+
+        {target === 'codex' && step === 1 && (
+          <>
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-text-primary">Configure {meta.label}</p>
+              <p className="text-xs text-text-tertiary">
+                This uses the token file created in the previous step:{' '}
+                <code className="font-mono text-text-secondary">{tokenPath}</code>.
+              </p>
+              <CodeBlock onCopy={() => onCopy(configureCommand)}>{configureCommand}</CodeBlock>
+            </div>
+            <WizardNav
+              canBack
+              canNext
+              onBack={() => setStep(0)}
+              onNext={() => setStep(2)}
+              nextLabel="Continue"
+            />
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-text-primary">Start a Clawvisor-routed session</p>
+              <p className="text-xs text-text-tertiary">
+                Run this and send a short test message. This step updates when
+                Clawvisor sees routed activity from this agent.
+              </p>
+              <SkipPermissionsCheckbox
+                checked={skipPermissions}
+                onChange={setSkipPermissions}
+                flag={skipPermsFlag}
+                label={meta.label}
+              />
+              <CodeBlock onCopy={() => onCopy(startCommand)}>{startCommand}</CodeBlock>
+              <AgentStartStatus
+                liveSession={liveSession}
+                startActivity={startActivity}
+                waitingText="Run the command above and send a short message. This updates automatically once Clawvisor sees the request."
+              />
+              {authIssueActivity && (
+                <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-3">
+                  <p className="text-sm font-medium text-text-primary">API key needed</p>
+                  <p className="text-xs text-text-secondary mt-1">
+                    {meta.label} reached Clawvisor, but the first model request did not include usable upstream auth.
+                    Add a {providerLabel(upstreamProvider)} API key, then run the session command again.
+                  </p>
+                  <div className="mt-3">
+                    <VaultKeyStep
+                      provider={upstreamProvider}
+                      title={`Add ${providerLabel(upstreamProvider)} API key`}
+                      description={`Clawvisor will use this user-level ${providerLabel(upstreamProvider)} key only when ${meta.label}'s own upstream auth is unavailable.`}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            <WizardNav
+              canBack
+              canNext={!authIssueActivity || authIssueKeyReady}
+              onBack={() => setStep(target === 'codex' ? 1 : 0)}
+              onNext={() => setStep(3)}
+              nextLabel={agentStarted ? 'Continue to alias & settings' : "I've started it"}
+              nextDisabledHint={authIssueActivity && !authIssueKeyReady ? `Add a ${providerLabel(upstreamProvider)} API key to continue` : undefined}
+            />
+          </>
+        )}
+
+        {step === 3 && (
+          <>
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-medium text-text-primary">Create an alias</p>
+                <p className="text-xs text-text-tertiary mt-1">
+                  Add this to zsh. Use the same shape in bash/fish if needed.
+                </p>
+                <div className="mt-2 space-y-2">
+                  <SkipPermissionsCheckbox
+                    checked={skipPermissions}
+                    onChange={setSkipPermissions}
+                    flag={skipPermsFlag}
+                    label={meta.label}
+                  />
+                  <CodeBlock onCopy={() => onCopy(aliasCommand)}>{aliasCommand}</CodeBlock>
+                </div>
+              </div>
+              <div className="rounded border border-border-subtle bg-surface-0 px-3 py-2.5">
+                <p className="text-xs font-medium text-text-primary">Configure settings</p>
+                <p className="text-xs text-text-tertiary mt-1">
+                  Open this agent’s settings to tune runtime mode, restrictions,
+                  secret detection, and task auto-approval.
+                </p>
+                <Link to={settingsLink} className="mt-2 inline-block text-xs font-medium text-brand hover:underline">
+                  Open agent settings
+                </Link>
+              </div>
+            </div>
+            <WizardNav
+              canBack
+              canNext
+              onBack={() => setStep(2)}
+              onNext={() => setStep(4)}
+              nextLabel="Done"
+            />
+          </>
+        )}
+
+        {step >= 4 && (
+          <div className="rounded border border-success/30 bg-success/10 px-4 py-3">
+            <p className="text-sm font-medium text-success">{meta.label} setup complete.</p>
+            <button
+              onClick={() => setStep(3)}
+              className="mt-2 text-xs text-brand hover:underline"
+            >
+              Show alias and settings again
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Installer-skill driven path (Hermes / OpenClaw) ─────────────────────────
+//
+// The dashboard hands the actual install off to an agent-side skill. Each
+// target is what will be connected to Clawvisor. The helper is the agent that
+// walks the user through the setup. Claude Code and Codex can both run the
+// same target-specific installer markdown.
+
+type InstallerTarget = 'hermes' | 'openclaw'
+type InstallerHelper = 'claude' | 'codex'
+
+interface InstallerSpec {
+  label: string
+  baseName: string
+  defaultProvider: LLMProvider
+}
+
+const INSTALLER_SPECS: Record<InstallerTarget, InstallerSpec> = {
+  hermes: {
+    label: 'Hermes',
+    baseName: 'hermes',
+    defaultProvider: 'openai',
+  },
+  openclaw: {
+    label: 'OpenClaw',
+    baseName: 'openclaw',
+    defaultProvider: 'anthropic',
+  },
+}
+
+const INSTALLER_HELPERS: Record<InstallerHelper, {
+  // shortName is the agent's product name on its own (used in body copy);
+  // pillLabel is what shows on the helper-toggle in the Run step;
+  // skillPath/invokeCommand are spliced into the bootstrap script.
+  shortName: string
+  pillLabel: string
+  skillPath: string
+  invokeCommand: string
+}> = {
+  claude: {
+    shortName: 'Claude Code',
+    pillLabel: 'Claude Code skill',
+    skillPath: '~/.claude/commands/clawvisor-install.md',
+    invokeCommand: 'claude /clawvisor-install',
+  },
+  codex: {
+    shortName: 'Codex',
+    pillLabel: 'Codex skill',
+    skillPath: '~/.codex/skills/clawvisor-install/SKILL.md',
+    invokeCommand: "codex '$clawvisor-install'",
+  },
+}
+
+// Bootstrap is two distinct commands the user pastes in order:
+//
+//   1. buildConnectCommand: POST /api/agents/connect with wait=true. Curl
+//      blocks until the user approves the request in the wizard, then writes
+//      the JSON response (which includes the token) directly to disk via
+//      `-o`. `--remove-on-error` keeps a denied/expired response from
+//      leaving a partial file behind.
+//   2. buildHelperCommand: download the installer skill markdown and invoke
+//      the helper agent. The helper reads the token from disk.
+//
+// We keep them as separate copy-paste blocks rather than chaining with `&&`
+// so each step's purpose is obvious and the long-polling curl is its own
+// concern. The user sees "this one blocks until I approve in the dashboard"
+// distinct from "this one runs the helper".
+function buildConnectCommand(opts: {
+  name: string
+  baseURL: string
+  claim: string | undefined
+  // Install context the server stamps onto the connection request (and, on
+  // approval, onto the resulting agent). Passed as query params so the
+  // bootstrap curl stays body-less.
+  harness?: string
+  mode?: string
+}): string {
+  const { name, baseURL, claim, harness, mode } = opts
+  const qs = new URLSearchParams({ wait: 'true', name })
+  if (claim) qs.set('claim', claim)
+  if (harness) qs.set('harness', harness)
+  if (mode) qs.set('mode', mode)
+  const connectURL = `${baseURL}/api/agents/connect?${qs.toString()}`
+  return [
+    `mkdir -p ~/.clawvisor/agents && curl -sf --remove-on-error -X POST \\`,
+    `  "${connectURL}" \\`,
+    `  -o ~/.clawvisor/agents/${name}.json \\`,
+    `  && chmod 600 ~/.clawvisor/agents/${name}.json`,
+  ].join('\n')
+}
+
+function buildHelperCommand(opts: {
+  skillURL: string
+  helper: InstallerHelper
+}): string {
+  const helperSpec = INSTALLER_HELPERS[opts.helper]
+  return [
+    `curl -sf "${opts.skillURL}" \\`,
+    `  --create-dirs -o ${helperSpec.skillPath} \\`,
+    `  && ${helperSpec.invokeCommand}`,
+  ].join('\n')
+}
+
+interface InstallerAnswers {
+  hermesConfig: 'env' | 'file'
+  hermesMode: 'host' | 'docker' | 'remote'
+  openclawMode: 'host' | 'docker' | 'remote'
+  llmProvider: LLMProvider
+}
+
+type InstallerCredentialScope = 'user' | 'agent'
+
+function defaultInstallerAnswers(target: InstallerTarget): InstallerAnswers {
+  return {
+    hermesConfig: 'env',
+    hermesMode: 'host',
+    openclawMode: 'host',
+    llmProvider: INSTALLER_SPECS[target].defaultProvider,
+  }
+}
+
+function applyInstallerAnswerParams(params: URLSearchParams, target: InstallerTarget, answers: InstallerAnswers) {
+  params.set('llm_provider', answers.llmProvider)
+  if (target === 'hermes') {
+    params.set('hermes_config', answers.hermesConfig)
+    params.set('hermes_mode', answers.hermesMode)
+  }
+  if (target === 'openclaw') params.set('openclaw_mode', answers.openclawMode)
+}
+
+// State model for the installer wizard.
+//
+// Two phases, two sets of rules:
+//
+//   Phase 1 (`'configure' | 'apiKey'`) is purely user-driven. Local React
+//   state advanced by Next clicks.
+//
+//   Phase 1 = `'past'` means the user has clicked through to the connection
+//   stage. From here on, the active screen is **derived from server state**:
+//
+//     • If an agent matching the target was created since the user entered
+//       phase 'past' → `verify` (or `success` once we see routed activity).
+//     • Else if there's a pending matching connection request → `approve`.
+//     • Else → `watching` (waiting for the helper to ask Clawvisor for a
+//       token).
+//
+//   Agent existence is checked because the connections list endpoint only
+//   exposes pending requests — once approved, the connection drops out and
+//   the only durable record is the new agent.
+//
+//   `pastSinceMs` is the timestamp the user entered phase 'past'; we only
+//   match agents created after that, so stale ones from prior installs
+//   don't trigger a false success.
+//
+//   Phase and pastSinceMs are persisted to sessionStorage so reloading
+//   mid-install resumes where the user left off.
+
+type InstallerPhase = 'configure' | 'past'
+
+type InstallerScreen =
+  | { kind: 'configure' }
+  | { kind: 'register' }                       // user pastes command 1
+  | { kind: 'approve'; req: ConnectionRequest }
+  | { kind: 'apiKey'; agent: Agent }            // post-approval; the key is written against the real agent id
+  | { kind: 'runHelper'; agent: Agent }        // user pastes command 2
+  | { kind: 'success'; agent: Agent }
+
+function deriveInstallerScreen(
+  phase: InstallerPhase,
+  pendingReq: ConnectionRequest | undefined,
+  approvedAgent: Agent | undefined,
+  apiKeyReady: boolean,
+  apiKeyAcknowledged: boolean,
+  verifyReady: boolean,
+): InstallerScreen {
+  if (phase === 'configure') return { kind: 'configure' }
+  if (approvedAgent) {
+    if (verifyReady) return { kind: 'success', agent: approvedAgent }
+    if (apiKeyReady && apiKeyAcknowledged) return { kind: 'runHelper', agent: approvedAgent }
+    return { kind: 'apiKey', agent: approvedAgent }
+  }
+  if (pendingReq) return { kind: 'approve', req: pendingReq }
+  return { kind: 'register' }
+}
+
+function InstallerSkillGuide({
+  target,
+  installerBaseURL,
+  claim,
+  userIdParam,
+  onCopy,
+}: {
+  target: InstallerTarget
+  // installerBaseURL is the **management** host the dashboard talks to —
+  // where /skill/install/<harness>.md and /api/agents/connect live. In split
+  // deployments this is *not* the same as `proxy_lite_public_url`, which
+  // serves only model traffic (no /skill, no /api/agents/*). Passing the
+  // proxy URL here would 404 the skill fetch and the connect POST before
+  // setup even starts. The proxy URL the helper uses for model traffic is
+  // embedded by the server-side installer renderer (`resolveURL`), not from
+  // this prop, so a configured public_url still propagates into the skill
+  // markdown end to end without the dashboard knowing about it.
+  installerBaseURL: string
+  claim: string | undefined
+  userIdParam: string
+  onCopy: (text: string) => void
+}) {
+  const qc = useQueryClient()
+  const spec = INSTALLER_SPECS[target]
+
+  // ─── Persisted state (phase + phase-2 entry timestamp) ──────────────────
+  // Persisted across reloads so an in-flight install resumes where the user
+  // left off. The escape hatch is "← Choose a different agent" in the parent
+  // wizard: that path clears these keys so re-picking the same target starts
+  // fresh at Configure. `pastSinceMs` bounds the "approved agent created
+  // during this install" check so we don't false-match a pre-existing agent.
+  const phaseKey = `installer:${target}:phase`
+  const sinceKey = `installer:${target}:pastSinceMs`
+  const [phase, setPhaseState] = useState<InstallerPhase>(() => readInstallerPhase(target))
+  const [pastSinceMs, setPastSinceMsState] = useState<number | null>(() => readInstallerSince(target))
+
+  const setPhase = (next: InstallerPhase) => {
+    setPhaseState(next)
+    try { sessionStorage.setItem(phaseKey, next) } catch {}
+    if (next === 'past' && pastSinceMs == null) {
+      const ts = Date.now()
+      setPastSinceMsState(ts)
+      try { sessionStorage.setItem(sinceKey, String(ts)) } catch {}
+    } else if (next !== 'past') {
+      setPastSinceMsState(null)
+      try { sessionStorage.removeItem(sinceKey) } catch {}
+    }
+  }
+
+  // Restore on target change (different harness, different stored state).
+  useEffect(() => {
+    setPhaseState(readInstallerPhase(target))
+    setPastSinceMsState(readInstallerSince(target))
+  }, [target])
+
+  // ─── Form state (not part of the state machine) ─────────────────────────
+  const [helper, setHelper] = useState<InstallerHelper>('claude')
+  const [answers, setAnswers] = useState<InstallerAnswers>(() => defaultInstallerAnswers(target))
+  const [credentialScope, setCredentialScope] = useState<InstallerCredentialScope>('user')
+  // apiKeyAcknowledged is the local "user clicked Continue on the API-key
+  // screen" flag that lets the wizard advance to Run Helper. It exists so
+  // the user can deliberately walk past the API-key screen rather than
+  // having the wizard skip it the moment `userKeyReady` first becomes true.
+  const [apiKeyAcknowledged, setApiKeyAcknowledged] = useState(false)
+  const startedAtRef = useRef(Date.now())
+  useEffect(() => {
+    setAnswers(defaultInstallerAnswers(target))
+    setCredentialScope('user')
+    setApiKeyAcknowledged(false)
+  }, [target])
+  useEffect(() => {
+    // Provider change invalidates a previous "I confirmed my key" click —
+    // the relevant `userKeyReady` / `agentKeyReady` flips on the new provider.
+    setApiKeyAcknowledged(false)
+  }, [answers.llmProvider])
+
+  // ─── Polling gate ───────────────────────────────────────────────────────
+  // The wizard's four polling queries (agents, connections, sessions, audit)
+  // are only useful while we're actively waiting on a server signal. Phase 1
+  // doesn't depend on any of them changing during the wizard — agents is
+  // needed once for the name picker, but a 3s refetch buys nothing — and
+  // once the install reaches `success`, the wizard is terminal until the
+  // user clicks "Connect another" (which resets phase). `installComplete`
+  // is sticky on purpose: a single useEffect flips it when verifyReady
+  // fires, after which background polling stops cold instead of cycling
+  // four endpoints at 3s forever.
+  const [installComplete, setInstallComplete] = useState(false)
+  const pollingActive = phase === 'past' && !installComplete
+
+  // ─── Server state ────────────────────────────────────────────────────────
+  const { data: agents } = useQuery({
+    queryKey: ['agents', 'personal'],
+    queryFn: () => api.agents.list(),
+    refetchInterval: pollingActive ? 3000 : false,
+  })
+  const { data: connections } = useQuery({
+    queryKey: ['connections'],
+    queryFn: () => api.connections.list(),
+    refetchInterval: pollingActive ? 3000 : false,
+  })
+
+  // The server's /api/agents/connections endpoint only returns *pending*
+  // requests — approved/denied/expired drop out of the list. So we use two
+  // different signals for the two phase-2 states:
+  //
+  //   • `pendingInstallRequest`: a pending request matching this target.
+  //   • `approvedAgent`: an agent matching this target that was created
+  //     after the user entered phase 'past'. This is how we detect that the
+  //     pending request was approved (the agent gets minted on approval).
+  // Two matching predicates. The strong signal is `install_context.harness
+  // === target`, denormalized onto both connection requests and agents by
+  // the bootstrap-curl change. Name-prefix matching is a *bootstrap-only*
+  // fallback for pending connection requests that came in without
+  // install_context (e.g. a hand-rolled curl from an older harness). It is
+  // deliberately NOT applied to the agents list: a pre-existing
+  // `openclaw-prod` agent shares the `openclaw-` prefix but is not the
+  // install we're tracking, and matching on prefix would jump the wizard to
+  // "success" the moment that agent's `created_at` floats past
+  // `pastSinceMs-5000` (e.g. clock skew, or a refetch landing right at the
+  // edge).
+  const matchesTargetPending = (name: string, harness?: string) =>
+    harness === target ||
+    (!harness && (name === spec.baseName || name.startsWith(`${spec.baseName}-`)))
+
+  const pendingInstallRequest = useMemo(() => {
+    if (!connections) return undefined
+    return connections
+      .filter(cr => matchesTargetPending(cr.name, cr.install_context?.harness))
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connections, spec.baseName, target])
+
+  const approvedAgent = useMemo(() => {
+    if (!agents || pastSinceMs == null) return undefined
+    const cutoff = pastSinceMs - 5000
+    return agents
+      .filter(a => a.install_context?.harness === target)
+      .filter(a => new Date(a.created_at).getTime() >= cutoff)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+  }, [agents, pastSinceMs, target])
+
+  // Whenever a previously-tracked pending request disappears (approved or
+  // denied via ConnectionCard, or server-expired after 5 minutes without
+  // action), the claim that produced it has been burned. ConnectionCard's
+  // mutations cover the in-session approve/deny path; this effect is the
+  // only thing that catches the expiry case where the dashboard wasn't the
+  // driver of the resolution. Without it, a "Connect another" / retry in
+  // the same session would render the cached (now-consumed) claim until
+  // the 4-minute mintClaim refetch and the next POST would 401 with
+  // INVALID_CLAIM.
+  const hadPendingInstallRef = useRef(false)
+  useEffect(() => {
+    if (hadPendingInstallRef.current && !pendingInstallRequest) {
+      qc.invalidateQueries({ queryKey: ['connection-claim'] })
+    }
+    hadPendingInstallRef.current = !!pendingInstallRequest
+  }, [pendingInstallRequest, qc])
+
+  const candidateAgent = approvedAgent
+
+  // Pick the agent name the wizard uses in the curl and skill URL. Order
+  // matters:
+  //
+  //   1. If we already have an approved agent for this install, lock to
+  //      its name. Otherwise the helper command (rendered on the Run
+  //      Helper screen) would point at the next free slot — e.g. user
+  //      registered openclaw-8, approved it, and the helper would then
+  //      look up openclaw-9.json because the next-available bumped one
+  //      slot after the new agent appeared.
+  //   2. If we've already minted a pending request, lock to its name.
+  //      Same logic for the in-flight phase.
+  //   3. Otherwise, suggest the next-available variant of the base name.
+  const agentName = useMemo(() => {
+    if (approvedAgent) return approvedAgent.name
+    if (pendingInstallRequest) return pendingInstallRequest.name
+    return nextAvailableName(spec.baseName, agents)
+  }, [approvedAgent, pendingInstallRequest, spec.baseName, agents])
+
+  const { data: sessions } = useQuery({
+    queryKey: ['runtime-sessions', 'install-wizard', candidateAgent?.id ?? 'none'],
+    queryFn: () => api.runtime.listSessions(),
+    enabled: !!candidateAgent?.id && pollingActive,
+    refetchInterval: pollingActive ? 3000 : false,
+    retry: false,
+  })
+  const liveSession = useMemo(() =>
+    (sessions?.entries ?? []).find(s => s.agent_id === candidateAgent?.id && isActiveRuntimeSession(s)),
+  [candidateAgent?.id, sessions])
+  const startActivity = useAgentStartActivity(candidateAgent?.id, startedAtRef.current, pollingActive)
+  const verifyReady = !!liveSession || !!startActivity
+  // Flip the sticky `installComplete` flag the moment we see the first
+  // routed call. Subsequent renders read `pollingActive = false` and the
+  // four polling queries above unwind to a no-op.
+  useEffect(() => {
+    if (verifyReady && !installComplete) setInstallComplete(true)
+  }, [verifyReady, installComplete])
+  // Reset on a "Connect another" / target switch / explicit start-over so the
+  // next install actually polls and the user re-confirms the API key step.
+  useEffect(() => {
+    if (phase !== 'past') {
+      if (installComplete) setInstallComplete(false)
+      if (apiKeyAcknowledged) setApiKeyAcknowledged(false)
+    }
+  }, [phase, installComplete, apiKeyAcknowledged])
+
+  const { data: userCreds } = useQuery({
+    queryKey: ['llm-credentials', 'user'],
+    queryFn: () => api.llmCredentials.list(),
+  })
+  const { data: agentCreds } = useQuery({
+    queryKey: ['llm-credentials', candidateAgent?.id ?? 'pending-agent'],
+    queryFn: () => api.llmCredentials.list(candidateAgent!.id),
+    enabled: credentialScope === 'agent' && !!candidateAgent?.id,
+  })
+  const userKeyReady = hasProviderUpstreamKey(userCreds, answers.llmProvider)
+  const agentKeyReady = hasProviderAgentKey(agentCreds, answers.llmProvider)
+  // `apiKeyReady` gates the post-approval API key screen. We now write the
+  // key directly against the (already-minted) agent_id rather than holding a
+  // user-typed string in browser memory until approval, so the readiness
+  // check is straightforward — no separate "staged but not yet applied"
+  // bookkeeping.
+  const apiKeyReady = credentialScope === 'user' ? userKeyReady : agentKeyReady
+
+  // ─── URL params for the installer skill ──────────────────────────────────
+  // Claim takes precedence over user_id; passing both is harmless but the
+  // server prefers the claim path and burns the code on consumption.
+  const reqUrlParams = new URLSearchParams()
+  if (claim) reqUrlParams.set('claim', claim)
+  else if (userIdParam) {
+    new URLSearchParams(userIdParam.replace(/^\?/, '')).forEach((value, key) => reqUrlParams.set(key, value))
+  }
+  applyInstallerAnswerParams(reqUrlParams, target, answers)
+  if (agentName && agentName !== spec.baseName) {
+    reqUrlParams.set('agent_name', agentName)
+  }
+  const skillURL = `${installerBaseURL}/skill/install/${target}.md${reqUrlParams.toString() ? `?${reqUrlParams.toString()}` : ''}`
+  const helperSpec = INSTALLER_HELPERS[helper]
+  const connectCommand = buildConnectCommand({
+    name: agentName,
+    baseURL: installerBaseURL,
+    claim,
+    harness: target,
+    mode: target === 'openclaw' ? answers.openclawMode
+        : target === 'hermes' ? answers.hermesMode
+        : undefined,
+  })
+  const helperCommand = buildHelperCommand({ skillURL, helper })
+  const dashboardIsLocalhost = /^(https?:\/\/)?(localhost|127\.0\.0\.1)([:/]|$)/i.test(installerBaseURL)
+  const targetMode = target === 'openclaw' ? answers.openclawMode
+                   : target === 'hermes' ? answers.hermesMode
+                   : undefined
+  const remoteWithLocalhost = targetMode === 'remote' && dashboardIsLocalhost
+
+  // ─── Derived screen + StepBar ───────────────────────────────────────────
+  const screen = deriveInstallerScreen(phase, pendingInstallRequest, approvedAgent, apiKeyReady, apiKeyAcknowledged, verifyReady)
+  const activeIndex = screenToStepIndex(screen)
+  const isPastApiKey = screen.kind === 'runHelper' || screen.kind === 'success'
+  const wizardSteps: WizardStepDef[] = [
+    { id: 'configure', title: 'Configure', done: phase !== 'configure' },
+    { id: 'register', title: 'Register', done: phase === 'past' && screen.kind !== 'register' },
+    { id: 'approve', title: 'Approve', done: phase === 'past' && screen.kind !== 'register' && screen.kind !== 'approve' },
+    { id: 'apiKey', title: 'API key', done: phase === 'past' && isPastApiKey },
+    { id: 'runHelper', title: 'Run helper', done: phase === 'past' && screen.kind === 'success' },
+    { id: 'success', title: 'Done', done: phase === 'past' && screen.kind === 'success' },
+  ]
+
+  const startOver = () => setPhase('configure')
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Walk Claude Code or Codex through connecting {spec.label} to Clawvisor.
+        Answer a couple of questions, run one command, approve, and you're done.
+      </p>
+
+      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5">
+        <div className="overflow-x-auto pb-1">
+          <StepBar steps={wizardSteps} activeIndex={activeIndex} />
+        </div>
+
+        {screen.kind === 'configure' && (
+          <div className="mt-5">
+            <InstallerSetupQuestions target={target} answers={answers} onChange={setAnswers} />
+            {remoteWithLocalhost && (
+              <div className="mt-4 rounded border border-warning/30 bg-warning/10 px-3 py-2.5">
+                <p className="text-xs font-medium text-warning">Dashboard URL isn't reachable from another machine</p>
+                <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                  This dashboard is on <code className="font-mono">{installerBaseURL}</code>, which the remote
+                  OpenClaw host can't reach. Set <code className="font-mono">Server.PublicURL</code> (or a
+                  relay) in Clawvisor settings before running the installer, otherwise the curl below will
+                  hit the wrong host.
+                </p>
+              </div>
+            )}
+            <WizardNav
+              canBack={false}
+              canNext
+              onBack={() => {}}
+              onNext={() => setPhase('past')}
+            />
+          </div>
+        )}
+
+        {screen.kind === 'apiKey' && (
+          <div className="mt-5 space-y-4">
+            <div>
+              <p className="text-sm font-medium text-text-primary">Set the {providerLabel(answers.llmProvider)} key for {screen.agent.name}</p>
+              <p className="text-xs text-text-tertiary mt-1 leading-relaxed">
+                Clawvisor swaps your <code className="font-mono">cvis_…</code> token for an upstream
+                {' '}{providerLabel(answers.llmProvider)} key on each call. Pick a scope and save the key
+                — it's written directly against this agent, not held in the browser.
+              </p>
+            </div>
+            <QuestionToggleGroup
+              label="Which API key should Clawvisor use for this agent?"
+              value={credentialScope}
+              onChange={value => setCredentialScope(value as InstallerCredentialScope)}
+              options={[
+                ['user', `Use user-level ${providerLabel(answers.llmProvider)} key`],
+                ['agent', `Set agent-specific ${providerLabel(answers.llmProvider)} key`],
+              ]}
+            />
+            {credentialScope === 'user' ? (
+              <VaultKeyStep
+                provider={answers.llmProvider}
+                title={`Use user-level ${providerLabel(answers.llmProvider)} key`}
+                description={`Clawvisor will use your user-level ${providerLabel(answers.llmProvider)} key for ${screen.agent.name}. You can override with an agent-specific key later from the agent settings page.`}
+              />
+            ) : (
+              <VaultKeyStep
+                agentId={screen.agent.id}
+                provider={answers.llmProvider}
+                title={`Set agent-specific ${providerLabel(answers.llmProvider)} key`}
+                description={`Saved directly to ${screen.agent.name}. Only this agent uses this key — other agents fall through to your user-level vault.`}
+              />
+            )}
+            <WizardNav
+              canBack={false}
+              canNext={apiKeyReady}
+              onBack={() => {}}
+              onNext={() => setApiKeyAcknowledged(true)}
+              nextLabel="Continue"
+              nextDisabledHint={apiKeyReady
+                ? undefined
+                : credentialScope === 'agent'
+                  ? `Save an agent-specific ${providerLabel(answers.llmProvider)} key above to continue`
+                  : `Add a user-level ${providerLabel(answers.llmProvider)} key above to continue`}
+            />
+          </div>
+        )}
+
+        {screen.kind === 'register' && (
+          <div className="mt-5 space-y-4">
+            <div>
+              <p className="text-sm font-medium text-text-primary">Register the agent</p>
+              <p className="text-xs text-text-tertiary mt-1">
+                Paste this into your terminal. It blocks until you approve the
+                request in the wizard, then saves the token to
+                {' '}<code className="font-mono text-text-secondary">~/.clawvisor/agents/{agentName}.json</code>.
+                {agentName !== spec.baseName && (
+                  <>
+                    {' '}<span className="text-warning">A previous {spec.label} install used <code className="font-mono">{spec.baseName}</code>; this one will register as <code className="font-mono">{agentName}</code>.</span>
+                  </>
+                )}
+              </p>
+            </div>
+            {remoteWithLocalhost && (
+              <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2.5">
+                <p className="text-xs font-medium text-warning">Localhost URL won't work on the remote host</p>
+                <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                  The command below points at <code className="font-mono">{installerBaseURL}</code>. The remote
+                  {' '}{spec.label} host can't reach that. Configure a public/relay URL in Clawvisor settings, then
+                  reload this page so the URL updates.
+                </p>
+              </div>
+            )}
+            <CodeBlock onCopy={() => onCopy(connectCommand)}>{connectCommand}</CodeBlock>
+            <div className="rounded border border-border-subtle bg-surface-0 px-3 py-2.5 flex items-start gap-2.5">
+              <span className="mt-1 h-2.5 w-2.5 rounded-full bg-text-tertiary animate-pulse" />
+              <p className="text-xs text-text-tertiary">
+                Watching for the connection request — this screen updates the moment Clawvisor sees it.
+              </p>
+            </div>
+            <div className="flex items-center pt-3 border-t border-border-subtle">
+              <button
+                onClick={() => setPhase('configure')}
+                className="text-sm text-text-secondary hover:text-text-primary"
+              >
+                ← Back
+              </button>
+            </div>
+          </div>
+        )}
+
+        {screen.kind === 'approve' && (
+          <div className="mt-5 space-y-4">
+            <div>
+              <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+              <p className="text-xs text-text-tertiary mt-1 leading-relaxed">
+                Your terminal is blocked on the registration curl. Approving here
+                unblocks it and writes the token to disk so the helper agent can
+                pick it up in the next step.
+              </p>
+            </div>
+            <ConnectionCard request={screen.req} />
+          </div>
+        )}
+
+        {screen.kind === 'runHelper' && (
+          <div className="mt-5 space-y-4">
+            <div>
+              <p className="text-sm font-medium text-text-primary">Install and run the helper</p>
+              <p className="text-xs text-text-tertiary mt-1 leading-relaxed">
+                Paste this into your terminal. {helperSpec.shortName} reads the token from disk and configures {spec.label}.
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-text-tertiary mb-1.5">Which helper agent is running this?</p>
+              <QuestionToggleGroup
+                label=""
+                value={helper}
+                onChange={value => setHelper(value as InstallerHelper)}
+                options={(Object.keys(INSTALLER_HELPERS) as InstallerHelper[]).map(h => [h, INSTALLER_HELPERS[h].pillLabel])}
+              />
+            </div>
+            <CodeBlock onCopy={() => onCopy(helperCommand)}>{helperCommand}</CodeBlock>
+            <AgentStartStatus
+              liveSession={liveSession}
+              startActivity={startActivity}
+              waitingText={candidateAgent
+                ? `Watching ${candidateAgent.name} for the helper's smoke test.`
+                : 'Waiting for the helper to make its first Clawvisor-routed call.'}
+            />
+          </div>
+        )}
+
+        {screen.kind === 'success' && (
+          <div className="mt-5 space-y-4">
+            <div className="rounded border border-success/30 bg-success/10 px-4 py-3">
+              <p className="text-sm font-medium text-success">{spec.label} is connected to Clawvisor.</p>
+              <p className="text-xs text-text-secondary mt-1">
+                {candidateAgent
+                  ? <>It registered as <code className="font-mono">{candidateAgent.name}</code>. Every model call from this agent now flows through Clawvisor.</>
+                  : <>Every model call from this agent now flows through Clawvisor.</>}
+              </p>
+            </div>
+            <div className="rounded border border-border-subtle bg-surface-0 px-3 py-3">
+              <p className="text-xs font-medium text-text-primary mb-2">What you can do next</p>
+              <ul className="space-y-1.5 text-xs text-text-secondary">
+                {candidateAgent && (
+                  <li>
+                    <Link to={`/dashboard/agents/${encodeURIComponent(candidateAgent.id)}`} className="text-brand hover:underline">
+                      Open {candidateAgent.name} settings
+                    </Link>
+                    {' '}— runtime mode, restrictions, secret detection, task auto-approval.
+                  </li>
+                )}
+                <li>
+                  <Link
+                    to={candidateAgent ? `/dashboard/activity?agent_id=${encodeURIComponent(candidateAgent.id)}` : '/dashboard/activity'}
+                    className="text-brand hover:underline"
+                  >
+                    View activity
+                  </Link>
+                  {' '}— see Clawvisor-routed calls and policy decisions for this agent.
+                </li>
+                <li>
+                  <Link
+                    to={candidateAgent ? `/dashboard/policy?agent_id=${encodeURIComponent(candidateAgent.id)}` : '/dashboard/policy'}
+                    className="text-brand hover:underline"
+                  >
+                    Edit policy
+                  </Link>
+                  {' '}— set defaults for what {spec.label} can do without asking.
+                </li>
+                <li className="text-text-tertiary">
+                  Uninstall reference saved at <code className="font-mono">~/.clawvisor/uninstall-{target}.md</code> on the helper's machine.
+                </li>
+              </ul>
+            </div>
+            <div className="flex items-center justify-end pt-2">
+              <button
+                onClick={startOver}
+                className="text-xs text-text-tertiary hover:text-text-primary"
+              >
+                Connect another {spec.label} →
+              </button>
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      <details className="group">
+        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
+          Preview what the skill will do
+        </summary>
+        <div className="mt-3">
+          <InstallerSkillPreview url={skillURL} />
+        </div>
+      </details>
+    </div>
+  )
+}
+
+function readInstallerPhase(target: InstallerTarget): InstallerPhase {
+  try {
+    const v = sessionStorage.getItem(`installer:${target}:phase`)
+    if (v === 'past') return 'past'
+    // 'apiKey' is a legacy phase value from the pre-this-refactor wizard;
+    // map it to 'past' so a reload during an in-flight install resumes at
+    // Register rather than restarting at Configure.
+    if (v === 'apiKey') return 'past'
+  } catch {}
+  return 'configure'
+}
+
+function readInstallerSince(target: InstallerTarget): number | null {
+  try {
+    const v = sessionStorage.getItem(`installer:${target}:pastSinceMs`)
+    if (!v) return null
+    const n = parseInt(v, 10)
+    return Number.isFinite(n) ? n : null
+  } catch { return null }
+}
+
+function clearInstallerProgress(target: InstallerTarget) {
+  try {
+    sessionStorage.removeItem(`installer:${target}:phase`)
+    sessionStorage.removeItem(`installer:${target}:pastSinceMs`)
+  } catch {}
+}
+
+function screenToStepIndex(screen: InstallerScreen): number {
+  switch (screen.kind) {
+    case 'configure': return 0
+    case 'register': return 1
+    case 'approve': return 2
+    case 'apiKey': return 3
+    case 'runHelper': return 4
+    case 'success': return 5
+  }
+}
+
+function InstallerSetupQuestions({
+  target,
+  answers,
+  onChange,
+}: {
+  target: InstallerTarget
+  answers: InstallerAnswers
+  onChange: (answers: InstallerAnswers) => void
+}) {
+  const targetLabel = INSTALLER_SPECS[target].label
+  const set = <K extends keyof InstallerAnswers>(key: K, value: InstallerAnswers[K]) => {
+    onChange({ ...answers, [key]: value })
+  }
+  return (
+    <div className="space-y-4">
+      <div>
+        <div>
+          <p className="text-sm font-medium text-text-primary">Answer setup questions</p>
+          <p className="text-xs text-text-tertiary mt-1">
+            These answers are baked into the installer skill URL, so the helper
+            follows your preferences instead of asking again.
+          </p>
+        </div>
+      </div>
+
+      <QuestionToggleGroup
+        label={`Which upstream LLM provider should ${targetLabel} use?`}
+        value={answers.llmProvider}
+        onChange={value => set('llmProvider', value as InstallerAnswers['llmProvider'])}
+        options={[
+          ['anthropic', 'Anthropic'],
+          ['openai', 'OpenAI'],
+        ]}
+      />
+
+      {target === 'hermes' && (
+        <>
+          <QuestionToggleGroup
+            label="Where is Hermes running?"
+            value={answers.hermesMode}
+            onChange={value => set('hermesMode', value as InstallerAnswers['hermesMode'])}
+            options={[
+              ['host', 'On this machine'],
+              ['docker', 'In Docker on this machine'],
+              ['remote', 'On another machine'],
+            ]}
+          />
+          <QuestionToggleGroup
+            label="How should Hermes store its Clawvisor settings?"
+            value={answers.hermesConfig}
+            onChange={value => set('hermesConfig', value as InstallerAnswers['hermesConfig'])}
+            options={[
+              ['env', 'Environment-variable launch command'],
+              ['file', 'Persistent ~/.hermes/config.yaml'],
+            ]}
+          />
+        </>
+      )}
+
+      {target === 'openclaw' && (
+        <QuestionToggleGroup
+          label="Where is OpenClaw running?"
+          value={answers.openclawMode}
+          onChange={value => set('openclawMode', value as InstallerAnswers['openclawMode'])}
+          options={[
+            ['host', 'On this machine'],
+            ['docker', 'In Docker on this machine'],
+            ['remote', 'On another machine'],
+          ]}
+        />
+      )}
+    </div>
+  )
+}
+
+function QuestionToggleGroup({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: Array<[string, string]>
+  onChange: (value: string) => void
+}) {
+  return (
+    <div>
+      {label && <p className="text-xs font-medium text-text-primary">{label}</p>}
+      <div
+        role="group"
+        aria-label={label || undefined}
+        className={`${label ? 'mt-1 ' : ''}inline-flex max-w-full flex-wrap rounded-md border border-border-default bg-surface-0 p-1`}
+      >
+        {options.map(([optionValue, optionLabel]) => (
+          <button
+            key={optionValue}
+            type="button"
+            onClick={() => onChange(optionValue)}
+            aria-pressed={value === optionValue}
+            className={`rounded px-3 py-1.5 text-sm font-medium leading-snug transition ${
+              value === optionValue
+                ? 'bg-surface-1 text-text-primary shadow-sm'
+                : 'text-text-tertiary hover:text-text-primary'
+            }`}
+          >
+            {optionLabel}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function InstallerSkillPreview({ url }: { url: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['installer-skill-preview', url],
+    queryFn: async () => {
+      const r = await fetch(url)
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return r.text()
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+  if (isLoading) return <p className="text-xs text-text-tertiary">Loading preview…</p>
+  if (error) return <p className="text-xs text-danger">Couldn't load preview.</p>
+  return (
+    <pre className="text-xs font-mono whitespace-pre-wrap text-text-secondary bg-surface-0 border border-border-subtle rounded p-3 max-h-96 overflow-y-auto">
+      {data}
+    </pre>
+  )
+}
+
+// ── Claude Desktop configuration-profile path ────────────────────────────────
+//
+// Claude Desktop reads a macOS managed configuration profile rather than env
+// vars or a skill — Anthropic ships com.anthropic.claudefordesktop payloads
+// with inferenceProvider/inferenceGatewayBaseUrl/inferenceGatewayApiKey keys.
+// The dashboard download endpoint mints a fresh agent and bakes its token
+// into the plist at request time; the user double-clicks the file to install.
+
+function ClaudeDesktopProfileGuide() {
+  const qc = useQueryClient()
+  const [isDownloading, setIsDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const { data: userCreds } = useQuery({
+    queryKey: ['llm-credentials', 'user'],
+    queryFn: () => api.llmCredentials.list(),
+  })
+  const keyReady = hasProviderUpstreamKey(userCreds, 'anthropic')
+  const downloadProfile = async () => {
+    if (!keyReady) {
+      setDownloadError('Add an Anthropic API key before downloading the profile.')
+      return
+    }
+    setIsDownloading(true)
+    setDownloadError(null)
+    try {
+      const { blob, filename } = await api.installer.downloadClaudeDesktopProfile()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename ?? 'claude-desktop.mobileconfig'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      // Defer the revoke a tick: Safari (and historically Firefox) dispatch
+      // the download asynchronously, and revoking the blob URL on the same
+      // tick as `.click()` can cancel the download or land an empty file.
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+      qc.invalidateQueries({ queryKey: ['agents', 'personal'] })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not download configuration profile'
+      setDownloadError(message)
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Claude Desktop reads a macOS configuration profile to discover its
+        inference gateway. Download the profile below, open it, and macOS
+        installs it via System Settings → Profiles. The download itself mints
+        the agent and bakes the token into the file.
+      </p>
+
+      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-5">
+        <div className="flex items-start gap-3">
+          <StepNumber n={1} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <VaultKeyStep
+              provider="anthropic"
+              title="Add Anthropic API key"
+              description="Claude Desktop uses a configuration profile and sends model requests to Clawvisor with a cvis_ token. Clawvisor needs your upstream Anthropic API key vaulted before the profile is installed."
+            />
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <StepNumber n={2} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Download the profile</p>
+            <button
+              type="button"
+              onClick={downloadProfile}
+              disabled={isDownloading || !keyReady}
+              className="inline-block bg-brand text-surface-0 font-medium rounded px-5 py-2 text-sm hover:bg-brand-strong disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isDownloading ? 'Preparing Profile…' : 'Download Configuration Profile'}
+            </button>
+            {downloadError && (
+              <p className="text-xs text-danger mt-1">{downloadError}</p>
+            )}
+            <p className="text-xs text-text-tertiary">
+              Each download mints a fresh agent. Re-downloading creates a
+              sequenced agent (claude-desktop-2, …) — older installs keep
+              working until you revoke them under <strong>Your Agents</strong>.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <StepNumber n={3} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Open the file</p>
+            <p className="text-xs text-text-tertiary">
+              Double-click{' '}
+              <code className="font-mono text-text-secondary">claude-desktop.mobileconfig</code>{' '}
+              in your Downloads folder. macOS opens <strong>System Settings → Profiles</strong>;
+              click <strong>Install</strong> and enter your password.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <StepNumber n={4} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Restart Claude Desktop</p>
+            <p className="text-xs text-text-tertiary">
+              Quit Claude Desktop fully (⌘Q, not just close the window) and
+              reopen. Your next message routes through Clawvisor.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <details className="group">
+        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
+          How do I remove it later?
+        </summary>
+        <div className="mt-3 text-xs text-text-tertiary space-y-2">
+          <p>
+            macOS: System Settings → Privacy & Security → Profiles → select
+            "Claude Desktop Third-Party Inference" → Remove. Then revoke the
+            agent under <strong>Your Agents</strong> in this dashboard.
+          </p>
+        </div>
+      </details>
+    </div>
+  )
+}
+
 // ── Connection request card ──────────────────────────────────────────────────
+
+function InstallContextSummary({ ctx }: { ctx: InstallContext }) {
+  const pieces: string[] = []
+  if (ctx.harness) pieces.push(ctx.harness)
+  if (ctx.harness_version) pieces.push(`v${ctx.harness_version}`)
+  if (ctx.install_mode && ctx.install_mode !== 'host') pieces.push(ctx.install_mode)
+  if (ctx.host_os) pieces.push(ctx.host_os)
+  if (ctx.alias_intent === 'yolo') pieces.push('alias: --yolo')
+  else if (ctx.alias_intent === 'safe') pieces.push('alias: safe')
+  if (ctx.auth_mode === 'swap') pieces.push('swap mode')
+  if (pieces.length === 0) return null
+  return (
+    <div className="mt-2 text-xs text-text-tertiary flex flex-wrap gap-x-2 gap-y-1">
+      {pieces.map((p) => (
+        <span key={p} className="inline-block bg-surface-2 rounded px-1.5 py-0.5">
+          {p}
+        </span>
+      ))}
+    </div>
+  )
+}
 
 function ConnectionCard({ request: cr }: { request: ConnectionRequest }) {
   const qc = useQueryClient()
@@ -2898,6 +3545,12 @@ function ConnectionCard({ request: cr }: { request: ConnectionRequest }) {
       qc.invalidateQueries({ queryKey: ['agents'] })
       qc.invalidateQueries({ queryKey: ['overview'] })
       qc.invalidateQueries({ queryKey: ['welcome'] })
+      // Approval burns the bootstrap claim that produced this request. A
+      // follow-up "Connect another" in the same session would otherwise
+      // render the cached (now-consumed) claim in the curl until the 4-min
+      // refetch — and the next POST to /api/agents/connect would 401 with
+      // INVALID_CLAIM.
+      qc.invalidateQueries({ queryKey: ['connection-claim'] })
     },
     onError: (err: Error) => setResult(`Failed: ${err.message}`),
   })
@@ -2908,6 +3561,8 @@ function ConnectionCard({ request: cr }: { request: ConnectionRequest }) {
       setResult('Denied')
       qc.invalidateQueries({ queryKey: ['connections'] })
       qc.invalidateQueries({ queryKey: ['overview'] })
+      // See approveMut: deny also burns the claim.
+      qc.invalidateQueries({ queryKey: ['connection-claim'] })
     },
     onError: (err: Error) => setResult(`Failed: ${err.message}`),
   })
@@ -2941,6 +3596,7 @@ function ConnectionCard({ request: cr }: { request: ConnectionRequest }) {
         {cr.description && (
           <p className="text-sm text-text-secondary mt-1.5">{cr.description}</p>
         )}
+        {cr.install_context && <InstallContextSummary ctx={cr.install_context} />}
         <div className="flex items-center gap-3 mt-2 text-xs text-text-tertiary">
           <span>IP: <code className="font-mono">{cr.ip_address}</code></span>
           <span>Requested {formatDistanceToNow(new Date(cr.created_at), { addSuffix: true })}</span>

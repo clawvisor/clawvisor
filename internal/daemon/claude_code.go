@@ -80,7 +80,7 @@ setup.
 ### 4. Verify
 
 ` + "```bash" + `
-curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
+curl -sf -H "X-Clawvisor-Agent-Token: $CLAWVISOR_AGENT_TOKEN" \
   http://localhost:25297/api/skill/catalog | head -20
 ` + "```" + `
 

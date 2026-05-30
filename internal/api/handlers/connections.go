@@ -97,10 +97,11 @@ func (h *ConnectionsHandler) SetClaimCodeCache(cc ClaimCodeCache) {
 // An agent calls this to request access to the daemon.
 func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		CallbackURL string `json:"callback_url"`
-		UserID      string `json:"user_id"`
+		Name           string                `json:"name"`
+		Description    string                `json:"description"`
+		CallbackURL    string                `json:"callback_url"`
+		UserID         string                `json:"user_id"`
+		InstallContext *store.InstallContext `json:"install_context"`
 	}
 	// decodeJSON tolerates an empty body so callers can send everything as
 	// query params and skip the Content-Type / -d flags entirely.
@@ -117,6 +118,45 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Install context may also arrive as query params so the body-less
+	// bootstrap curl can carry it. Body wins if both are set. The dashboard
+	// wizard fills these in from the answers the user gave (harness, mode)
+	// before clicking past API key, so the resulting agent record knows
+	// which harness it came from. See pkg/store.InstallContext for the
+	// canonical field list.
+	//
+	// `body.InstallContext == nil` alone is not enough: a client posting
+	// `{"install_context": {}}` decodes to a non-nil pointer at a zero-value
+	// struct, which would silently skip the query-param fallback. Treat that
+	// case the same as "not provided" so the URL-supplied harness/mode aren't
+	// dropped on the floor.
+	if body.InstallContext == nil || body.InstallContext.IsEmpty() {
+		q := r.URL.Query()
+		ic := store.InstallContext{
+			Harness:        q.Get("harness"),
+			HarnessVersion: q.Get("harness_version"),
+			InstallMode:    q.Get("mode"),
+			HostOS:         q.Get("host_os"),
+			ContainerID:    q.Get("container_id"),
+			AuthMode:       q.Get("auth_mode"),
+			AliasIntent:    q.Get("alias_intent"),
+		}
+		if !ic.IsEmpty() {
+			body.InstallContext = &ic
+		}
+	}
+
+	// Bound every install_context field server-side. This endpoint is gated
+	// only by claim/user_id, so a hostile (or buggy) harness could otherwise
+	// push megabytes into a string field and balloon the connection_requests
+	// row (and, on approval, the denormalized copy on the agents row). The
+	// caps are generous for legitimate values: harness identifiers and
+	// enum-shaped fields are short by design; container IDs are typically
+	// 12-64 hex chars and we allow 128.
+	if body.InstallContext != nil {
+		clampInstallContext(body.InstallContext)
+	}
+
 	// Resolve the target user. A `?claim=<code>` query param (minted by an
 	// authenticated dashboard session) takes precedence and avoids leaking
 	// user_id into the bootstrap curl URL.
@@ -130,9 +170,9 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 	// Fallback paths: user_id in the body (legacy callers, skill-based
 	// setup flow) or admin@local in single-tenant mode.
 	var (
-		owner          *store.User
-		err            error
-		pendingClaim   string // non-empty when we owe a Consume after validation
+		owner        *store.User
+		err          error
+		pendingClaim string // non-empty when we owe a Consume after validation
 	)
 	if claim := r.URL.Query().Get("claim"); claim != "" {
 		userID, ok := h.claimCache.Peek(claim)
@@ -218,13 +258,14 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 	}
 
 	req := &store.ConnectionRequest{
-		UserID:      owner.ID,
-		Name:        body.Name,
-		Description: body.Description,
-		CallbackURL: body.CallbackURL,
-		Status:      "pending",
-		IPAddress:   r.RemoteAddr,
-		ExpiresAt:   time.Now().Add(connectionRequestExpiry),
+		UserID:         owner.ID,
+		Name:           body.Name,
+		Description:    body.Description,
+		CallbackURL:    body.CallbackURL,
+		Status:         "pending",
+		IPAddress:      r.RemoteAddr,
+		ExpiresAt:      time.Now().Add(connectionRequestExpiry),
+		InstallContext: body.InstallContext,
 	}
 	if err := h.st.CreateConnectionRequest(r.Context(), req); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create connection request")
@@ -334,6 +375,38 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		"poll_url":      "/api/agents/connect/" + req.ID + "/status",
 		"expires_at":    req.ExpiresAt,
 	})
+}
+
+// clampInstallContext truncates every string field on the install context
+// to its per-field cap. Mutates in place. The caller passes a non-nil
+// pointer.
+//
+// The caps are deliberately generous for legitimate values — enum-shaped
+// fields like `harness`, `install_mode`, `host_os`, `auth_mode`,
+// `alias_intent` are typically <16 chars; `harness_version` is semver-ish;
+// `container_id` is usually 12-64 hex chars. Anything past the cap is the
+// caller misusing the field; chop instead of rejecting so a single noisy
+// field doesn't kill an otherwise valid connect request.
+func clampInstallContext(ic *store.InstallContext) {
+	const (
+		shortCap     = 64
+		versionCap   = 64
+		containerCap = 128
+	)
+	ic.Harness = clampString(ic.Harness, shortCap)
+	ic.HarnessVersion = clampString(ic.HarnessVersion, versionCap)
+	ic.InstallMode = clampString(ic.InstallMode, shortCap)
+	ic.HostOS = clampString(ic.HostOS, shortCap)
+	ic.ContainerID = clampString(ic.ContainerID, containerCap)
+	ic.AuthMode = clampString(ic.AuthMode, shortCap)
+	ic.AliasIntent = clampString(ic.AliasIntent, shortCap)
+}
+
+func clampString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // MintClaim handles POST /api/agents/connect/claim (user JWT). It mints a
@@ -608,6 +681,17 @@ func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string)
 	if cr.Description != "" {
 		if err := h.st.UpdateAgentDescription(ctx, agent.ID, userID, cr.Description); err != nil {
 			return "", fmt.Errorf("save agent description: %w", err)
+		}
+	}
+	// Denormalize the install context onto the agent so the dashboard can
+	// still tell "this is an OpenClaw install" after the connection request
+	// drops out of the pending list. Best-effort: nil install_context means
+	// nothing to copy (legacy or unenriched flows), an Update failure on a
+	// fresh agent is harmless metadata loss.
+	if cr.InstallContext != nil {
+		if err := h.st.SetAgentInstallContext(ctx, agent.ID, cr.InstallContext); err != nil {
+			h.logger.WarnContext(ctx, "approve: failed to copy install_context to agent",
+				"err", err.Error(), "agent_id", agent.ID, "connection_id", cr.ID)
 		}
 	}
 

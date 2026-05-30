@@ -1,6 +1,10 @@
 package store
 
-import "testing"
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+)
 
 func TestValidateConversationAutoApproveThreshold(t *testing.T) {
 	cases := []struct {
@@ -84,5 +88,101 @@ func TestConversationAutoApproveCovers(t *testing.T) {
 					tc.threshold, tc.risk, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestInstallContextRoundTripsUnknownFields(t *testing.T) {
+	// A caller posts a richer install_context than the typed schema knows
+	// about — e.g. a future probe section adds model_id/provider/remote_host.
+	// The typed fields should populate as usual; the unknown fields should
+	// land in Extra; the round-tripped JSON should contain both.
+	in := []byte(`{
+		"harness": "openclaw",
+		"install_mode": "remote",
+		"host_os": "darwin",
+		"model_id": "claude-sonnet-4-6",
+		"provider": "anthropic",
+		"remote_host": "user@host.example.com",
+		"weird_bool": true,
+		"weird_array": [1, 2, 3]
+	}`)
+
+	var ic InstallContext
+	if err := json.Unmarshal(in, &ic); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if ic.Harness != "openclaw" || ic.InstallMode != "remote" || ic.HostOS != "darwin" {
+		t.Fatalf("typed fields not populated: %+v", ic)
+	}
+	wantExtra := map[string]any{
+		"model_id":    "claude-sonnet-4-6",
+		"provider":    "anthropic",
+		"remote_host": "user@host.example.com",
+		"weird_bool":  true,
+		"weird_array": []any{float64(1), float64(2), float64(3)},
+	}
+	if !reflect.DeepEqual(ic.Extra, wantExtra) {
+		t.Fatalf("Extra mismatch:\n want: %#v\n got:  %#v", wantExtra, ic.Extra)
+	}
+
+	// Marshal should preserve every input key.
+	out, err := json.Marshal(ic)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var round map[string]any
+	if err := json.Unmarshal(out, &round); err != nil {
+		t.Fatalf("round-trip Unmarshal: %v", err)
+	}
+	for _, want := range []string{"harness", "install_mode", "host_os", "model_id", "provider", "remote_host", "weird_bool", "weird_array"} {
+		if _, ok := round[want]; !ok {
+			t.Errorf("round-tripped JSON missing key %q; got %v", want, round)
+		}
+	}
+
+	// Re-decode the marshaled output and check the second hop preserves
+	// shape — this is the actual code path the store layer uses.
+	var ic2 InstallContext
+	if err := json.Unmarshal(out, &ic2); err != nil {
+		t.Fatalf("Unmarshal round 2: %v", err)
+	}
+	if ic2.Harness != ic.Harness || ic2.InstallMode != ic.InstallMode || ic2.HostOS != ic.HostOS {
+		t.Fatalf("typed fields lost on second decode:\n want: %+v\n got:  %+v", ic, ic2)
+	}
+	if !reflect.DeepEqual(ic2.Extra, ic.Extra) {
+		t.Fatalf("Extra lost on second decode:\n want: %#v\n got:  %#v", ic.Extra, ic2.Extra)
+	}
+}
+
+func TestInstallContextExtraCannotShadowKnownFields(t *testing.T) {
+	// Even if a caller stuffs a "harness" key into Extra by hand (the typed
+	// API allows it), Marshal should not let it overwrite the typed field on
+	// the way out.
+	ic := InstallContext{
+		Harness: "openclaw",
+		Extra:   map[string]any{"harness": "hijack", "install_mode": "hijack"},
+	}
+	out, err := json.Marshal(ic)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var round map[string]any
+	if err := json.Unmarshal(out, &round); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if round["harness"] != "openclaw" {
+		t.Errorf("expected harness=openclaw, got %v", round["harness"])
+	}
+}
+
+func TestInstallContextIsEmpty(t *testing.T) {
+	if !(InstallContext{}).IsEmpty() {
+		t.Errorf("zero value should be empty")
+	}
+	if (InstallContext{Harness: "openclaw"}).IsEmpty() {
+		t.Errorf("populated typed field should not be empty")
+	}
+	if (InstallContext{Extra: map[string]any{"k": "v"}}).IsEmpty() {
+		t.Errorf("populated Extra should not be empty")
 	}
 }

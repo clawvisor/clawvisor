@@ -112,6 +112,57 @@ const put = <T>(path: string, body: unknown) => request<T>('PUT', path, body)
 const patch = <T>(path: string, body: unknown) => request<T>('PATCH', path, body)
 const del = <T>(path: string, body?: unknown) => request<T>('DELETE', path, body)
 
+async function download(path: string): Promise<{ blob: Blob; filename?: string }> {
+  const headers: Record<string, string> = {}
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+  if (currentOrgId) headers['X-Org-Id'] = currentOrgId
+
+  const run = (requestHeaders: Record<string, string>) => fetch(path, {
+    method: 'GET',
+    headers: requestHeaders,
+    credentials: 'include',
+  })
+
+  let res = await run(headers)
+  if (res.status === 401 && _refreshFn) {
+    const newToken = await doRefreshOnce()
+    res = await run({ ...headers, Authorization: `Bearer ${newToken}` })
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new APIError(res.status, err.error ?? res.statusText, err.code, err)
+  }
+
+  const disposition = res.headers.get('Content-Disposition') ?? ''
+  const filename = parseContentDispositionFilename(disposition)
+  return { blob: await res.blob(), filename }
+}
+
+function parseContentDispositionFilename(disposition: string): string | undefined {
+  // RFC 5987 `filename*=UTF-8''<percent-encoded>` is checked first because
+  // servers that send both prefer the encoded form for non-ASCII names;
+  // only fall back to the plain `filename=` parameter when the encoded
+  // form is missing or undecodable.
+  const ext = /filename\*=\s*(?:([A-Za-z0-9_-]+)'[A-Za-z-]*')?([^;]+)/i.exec(disposition)
+  if (ext) {
+    const charset = (ext[1] || 'utf-8').toLowerCase()
+    const encoded = ext[2].trim().replace(/^["']|["']$/g, '')
+    if (charset === 'utf-8' || charset === 'iso-8859-1' || charset === 'us-ascii') {
+      try {
+        const cleaned = decodeURIComponent(encoded).replace(/[\\/]/g, '-')
+        if (cleaned) return cleaned
+      } catch {
+        // Malformed percent-encoding — fall through to the plain form.
+      }
+    }
+  }
+  const match = /filename="([^"]+)"/i.exec(disposition) ?? /filename=([^;]+)/i.exec(disposition)
+  const raw = match?.[1]?.trim()
+  if (!raw) return undefined
+  const cleaned = raw.replace(/^["']|["']$/g, '').replace(/[\\/]/g, '-')
+  return cleaned || undefined
+}
+
 // Request with an explicit bearer token (for setup/pending tokens, not the session token)
 async function requestWithToken<T>(
   method: string,
@@ -257,6 +308,12 @@ export interface Agent {
   active_task_count: number
   last_task_at?: string
   runtime_settings?: AgentRuntimeSettings
+  // Denormalized from the connection request that minted this agent. Lets
+  // the dashboard show harness type / install mode on the agent detail page
+  // and rebuild reinstall instructions. Absent for legacy agents minted
+  // before this field existed and for paths that don't carry install
+  // context (POST /api/agents, MCP/relay pairing, etc.).
+  install_context?: InstallContext
 }
 
 export interface AgentRuntimeSettings {
@@ -277,6 +334,16 @@ export interface AgentRuntimeSettings {
   updated_at?: string
 }
 
+export interface InstallContext {
+  harness?: string // claude-code | codex | hermes | openclaw | claude-desktop
+  harness_version?: string
+  install_mode?: string // host | docker | remote
+  host_os?: string // darwin | linux | windows
+  container_id?: string
+  auth_mode?: string // passthrough | swap
+  alias_intent?: string // none | safe | yolo
+}
+
 export interface ConnectionRequest {
   id: string
   user_id: string
@@ -288,6 +355,7 @@ export interface ConnectionRequest {
   ip_address: string
   created_at: string
   expires_at: string
+  install_context?: InstallContext
 }
 
 export interface ServiceActionInfo {
@@ -1216,6 +1284,12 @@ export const api = {
       post<{ status: string }>(`/api/agents/connect/${id}/deny`, {}),
     mintClaim: () =>
       post<{ code: string; expires_at: string }>('/api/agents/connect/claim', {}),
+  },
+  installer: {
+    downloadClaudeDesktopProfile: (name?: string) => {
+      const base = '/api/agents/install/claude-desktop.mobileconfig'
+      return download(name ? `${base}?name=${encodeURIComponent(name)}` : base)
+    },
   },
   services: {
     list: async () => {

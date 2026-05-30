@@ -76,7 +76,7 @@ container environment, etc.
 Confirm the agent can reach Clawvisor:
 
 ```bash
-curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
+curl -sf -H "X-Clawvisor-Agent-Token: $CLAWVISOR_AGENT_TOKEN" \
   "$CLAWVISOR_URL/api/skill/catalog" | head -20
 ```
 

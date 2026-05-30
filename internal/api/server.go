@@ -1000,7 +1000,22 @@ func (s *Server) routes() http.Handler {
 		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal())
 		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
 		mux.HandleFunc("GET /skill/clawvisor-setup.md", onboardingHandler.ClaudeCodeSetup)
+
+		// Per-harness installer skills — one markdown doc per target (claude-code,
+		// codex, hermes, openclaw). Each renders with a pre-filled CLAWVISOR_URL
+		// and optional ?claim=<code> so the embedded mint curl doesn't need a
+		// user_id. The Other Agents fallback path still uses /skill/setup.
+		installerHandler := handlers.NewInstallerHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal(), s.cfg.ProxyLite.PublicURL, s.cfg.Server.PublicURL)
+		mux.HandleFunc("GET /skill/install/{target}", installerHandler.Setup)
 	}
+
+	// Claude Desktop configuration profile (.mobileconfig) — the user
+	// downloads the file, double-clicks it, macOS installs the managed
+	// config and Claude Desktop reads it. The endpoint mints a fresh agent
+	// + token at request time; the download itself is the consent gate, so
+	// it requires the user JWT.
+	mobileConfigHandler := handlers.NewMobileConfigHandler(s.store, relayHostFromCfg(s.cfg.Relay.URL), s.daemonID, s.cfg.Server.IsLocal(), s.cfg.ProxyLite.PublicURL)
+	mux.Handle("GET /api/agents/install/claude-desktop.mobileconfig", user(mobileConfigHandler.ClaudeDesktop))
 	// skillRenderOpts builds RenderOptions based on whether the request
 	// arrived directly (local) or via the relay (cloud).
 	skillRenderOpts := func(r *http.Request) skillfiles.RenderOptions {
