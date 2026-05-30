@@ -245,10 +245,11 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	a := &store.Agent{}
 	var orgID *string
 	var tokenExpiresAt *time.Time
+	var installContext string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, description, token_hash, created_at, org_id, token_expires_at FROM agents WHERE token_hash = $1 AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id, token_expires_at, install_context FROM agents WHERE token_hash = $1 AND deleted_at IS NULL`,
 		tokenHash,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID, &tokenExpiresAt)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID, &tokenExpiresAt, &installContext)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -258,6 +259,11 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	if tokenExpiresAt != nil {
 		a.TokenExpiresAt = tokenExpiresAt
 	}
+	ic, icErr := unmarshalInstallContext(installContext)
+	if icErr != nil {
+		return nil, fmt.Errorf("unmarshal install_context: %w", icErr)
+	}
+	a.InstallContext = ic
 	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
 		a.RuntimeSettings = settings
 	} else if settingsErr != store.ErrNotFound {
@@ -269,7 +275,7 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT a.id, a.user_id, a.name, a.token_hash, a.created_at, a.org_id,
-		       a.description,
+		       a.description, a.install_context,
 		       COALESCE((SELECT COUNT(*) FROM tasks t
 		                 WHERE t.agent_id = a.id
 		                   AND t.status IN ('active','pending_approval','pending_scope_expansion')), 0),
@@ -427,10 +433,11 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	a := &store.Agent{}
 	var orgID *string
 	var tokenExpiresAt *time.Time
+	var installContext string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, description, token_hash, created_at, org_id, token_expires_at FROM agents WHERE id = $1 AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id, token_expires_at, install_context FROM agents WHERE id = $1 AND deleted_at IS NULL`,
 		id,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID, &tokenExpiresAt)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID, &tokenExpiresAt, &installContext)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -440,12 +447,35 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	if tokenExpiresAt != nil {
 		a.TokenExpiresAt = tokenExpiresAt
 	}
+	ic, icErr := unmarshalInstallContext(installContext)
+	if icErr != nil {
+		return nil, fmt.Errorf("unmarshal install_context: %w", icErr)
+	}
+	a.InstallContext = ic
 	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
 		a.RuntimeSettings = settings
 	} else if settingsErr != store.ErrNotFound {
 		return nil, settingsErr
 	}
 	return a, err
+}
+
+func (s *Store) SetAgentInstallContext(ctx context.Context, agentID string, ic *store.InstallContext) error {
+	raw, err := marshalInstallContext(ic)
+	if err != nil {
+		return fmt.Errorf("marshal install_context: %w", err)
+	}
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE agents SET install_context = $1 WHERE id = $2 AND deleted_at IS NULL`,
+		raw, agentID,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
@@ -3343,6 +3373,7 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 	for rows.Next() {
 		a := &store.Agent{}
 		var orgID *string
+		var installContext string
 		var settingsAgentID *string
 		var settingsEnabled *bool
 		var settingsMode *string
@@ -3354,6 +3385,7 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 		var settingsCreatedAt *time.Time
 		var settingsUpdatedAt *time.Time
 		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID, &a.Description,
+			&installContext,
 			&a.ActiveTaskCount, &a.LastTaskAt, &settingsAgentID, &settingsEnabled, &settingsMode,
 			&settingsProfile, &settingsOutbound, &settingsInject, &settingsLiteProxySecretDetectionDisabled,
 			&settingsConversationAutoApprove,
@@ -3363,6 +3395,11 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 		if orgID != nil {
 			a.OrgID = *orgID
 		}
+		ic, err := unmarshalInstallContext(installContext)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal install_context: %w", err)
+		}
+		a.InstallContext = ic
 		if settingsAgentID != nil {
 			a.RuntimeSettings = &store.AgentRuntimeSettings{
 				AgentID: *settingsAgentID,

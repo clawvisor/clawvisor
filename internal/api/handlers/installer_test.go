@@ -87,7 +87,7 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 		"# Connect Claude Code to Clawvisor",
 		"passthrough mode",
 		"## 1. Check the local CLI",
-		"install_mode\": \"local\"",
+		"install_mode\": \"host\"",
 		"## 2. Mint a connection request",
 		"Do not reuse a token",
 		"claim=ABCDEFGHIJ",
@@ -126,7 +126,7 @@ func TestInstallerCodexRender(t *testing.T) {
 		"passthrough mode",
 		"codex login",
 		"## 1. Check the local CLI",
-		"install_mode\": \"local\"",
+		"install_mode\": \"host\"",
 		"## 2. Mint a connection request",
 		"Do not reuse a token",
 		"claim=CLAIMCODE0",
@@ -155,7 +155,9 @@ func TestInstallerHermesRender(t *testing.T) {
 		"swap mode",
 		"dashboard step before this skill",
 		"upstream OpenAI API key",
-		"Do not reuse a token",
+		// Token is already on disk; the skill reads it from there.
+		"already been minted",
+		"~/.clawvisor/agents/hermes.json",
 		"OPENAI_BASE_URL=",
 		"/api/v1",
 		"~/.hermes/config.yaml",
@@ -163,9 +165,16 @@ func TestInstallerHermesRender(t *testing.T) {
 		"rm -f ~/.claude/commands/clawvisor-install.md",
 		"rm -rf ~/.codex/skills/clawvisor-install",
 	)
-	// No claim → mint URL should not contain `claim=` or `user_id=`.
-	if strings.Contains(body, "&claim=") {
-		t.Errorf("body should not embed a claim when none was supplied")
+	// The mint step has been moved to the dashboard's bootstrap script; the
+	// skill should NOT contain a fresh `POST /api/agents/connect` block.
+	for _, forbidden := range []string{
+		"## 2. Mint a connection request",
+		"Do not reuse a token",
+		"RESPONSE=$(curl",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("Hermes skill should no longer mint a connection request: contains %q", forbidden)
+		}
 	}
 	if strings.Contains(body, "Check for an existing token") {
 		t.Errorf("installer should not offer to reuse an existing token")
@@ -203,9 +212,23 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"Anthropic API key",
 		"OpenClaw running mode: host",
 		"## 1. Confirm how to run OpenClaw onboarding",
-		"## 2. Mint a connection request",
-		"Do not reuse a token",
-		"## 4. Point OpenClaw at Clawvisor",
+		// The bootstrap script writes the token to disk first; the configure
+		// step now reads it instead of minting a new connection request.
+		"already been minted",
+		"~/.clawvisor/agents/openclaw.json",
+		// Preflight runs before the onboard command so OpenClaw's
+		// connectivity to Clawvisor is verified from OpenClaw's own
+		// execution context (helper shell, docker container, etc.) before
+		// the URL gets baked into OpenClaw's config.
+		"## 2. Preflight: confirm OpenClaw can reach Clawvisor",
+		"docker compose run --rm",
+		"-H \"X-Clawvisor-Agent-Token: $CLAWVISOR_TOKEN\"",
+		// dockerHostURL substitutes host.docker.internal for the resolved URL's
+		// localhost host; the port comes from httptest, so don't assert on it.
+		"host.docker.internal:",
+		"/api/skill/catalog",
+		"## 3. Point OpenClaw at Clawvisor",
+		"TOKEN=$(jq -r .token ~/.clawvisor/agents/openclaw.json)",
 		"openclaw-cli onboard --non-interactive",
 		"--auth-choice custom-api-key",
 		"--custom-base-url",
@@ -249,14 +272,16 @@ func TestInstallerOpenClawOpenAIProviderRender(t *testing.T) {
 		"/api/v1",
 		"--custom-model-id \"gpt-5.4\"",
 		"--custom-compatibility openai",
-		"host.docker.internal:25297/api/v1",
+		// dockerHostURL renders host.docker.internal with httptest's
+		// ephemeral port, so assert on the host:port-agnostic suffix.
+		"host.docker.internal:",
+		"/api/v1\"",
 		"OPENCLAW_MODEL_ID=\"gpt-5.4\"",
 		"OPENCLAW_MODEL_CONTEXT_WINDOW=1000000",
 	)
 	for _, forbidden := range []string{
 		"--custom-model-id \"claude-sonnet-4-6\"",
 		"--custom-compatibility anthropic",
-		"host.docker.internal:25297/api\"",
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("OpenClaw OpenAI setup should not contain Anthropic command text %q", forbidden)
@@ -274,18 +299,25 @@ func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
 		"## 1. Confirm remote OpenClaw access",
 		"Do **not** probe the",
 		"export OPENCLAW_REMOTE=",
-		"install_mode\": \"remote\"",
 		"Do **not** probe the",
 		"ssh \"$OPENCLAW_REMOTE\"",
 		"remote-reachable Clawvisor URL",
-		"OPENCLAW_CLAWVISOR_BASE_URL",
+		// Preflight defines `OPENCLAW_CLAWVISOR_URL` (base, no path);
+		// configure step appends `/api/v1` when building the onboard call.
+		"export OPENCLAW_CLAWVISOR_URL",
+		"$OPENCLAW_CLAWVISOR_URL/api/v1",
 		"--custom-base-url",
 		"--custom-api-key '$TOKEN'",
 		"--custom-compatibility anthropic",
 		"REMOTE_OPENCLAW_PATCH",
 		"OPENCLAW_MODEL_CONTEXT_WINDOW=200000",
 		"OPENCLAW_MAX_TOKENS=8192",
-		"-o /dev/null && echo OK || echo REVOKED",
+		// Preflight (step 2) runs from the remote host's perspective before
+		// onboarding, so the URL OpenClaw will use is proven reachable
+		// before it gets baked into OpenClaw's config.
+		"## 2. Preflight: confirm OpenClaw can reach Clawvisor",
+		"ssh \"$OPENCLAW_REMOTE\" \"curl -fsSL",
+		"$OPENCLAW_CLAWVISOR_URL/api/skill/catalog",
 	)
 
 	for _, forbidden := range []string{

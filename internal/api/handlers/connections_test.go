@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 
@@ -195,7 +196,7 @@ func TestConnectionsStoreInstallContextRoundTrip(t *testing.T) {
 	if got.InstallContext == nil {
 		t.Fatalf("install context unset after round-trip")
 	}
-	if *got.InstallContext != *want {
+	if !installContextEqual(got.InstallContext, want) {
 		t.Fatalf("install context mismatch:\n want: %+v\n got:  %+v", *want, *got.InstallContext)
 	}
 
@@ -229,7 +230,33 @@ func TestConnectionsStoreInstallContextRoundTrip(t *testing.T) {
 			seen = r.InstallContext
 		}
 	}
-	if seen == nil || *seen != *want {
+	if seen == nil || !installContextEqual(seen, want) {
 		t.Fatalf("install context not surfaced by List: got %+v", seen)
 	}
+}
+
+// installContextEqual compares two install contexts by typed fields and by
+// Extra-map shape; the map field made the struct non-comparable with `==`.
+func installContextEqual(a, b *store.InstallContext) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Harness != b.Harness ||
+		a.HarnessVersion != b.HarnessVersion ||
+		a.InstallMode != b.InstallMode ||
+		a.HostOS != b.HostOS ||
+		a.ContainerID != b.ContainerID ||
+		a.AuthMode != b.AuthMode ||
+		a.AliasIntent != b.AliasIntent {
+		return false
+	}
+	if len(a.Extra) != len(b.Extra) {
+		return false
+	}
+	for k, v := range a.Extra {
+		if !reflect.DeepEqual(v, b.Extra[k]) {
+			return false
+		}
+	}
+	return true
 }

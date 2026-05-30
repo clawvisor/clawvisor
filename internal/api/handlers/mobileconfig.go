@@ -41,8 +41,15 @@ func NewMobileConfigHandler(st store.Store, relayHost, daemonID string, isLocal 
 
 // agentNameSafe constrains user-supplied names to a small, filesystem-safe
 // shape — they show up in the plist's PayloadDisplayName and (URL-encoded)
-// in the Content-Disposition filename. Same shape as the dashboard's
-// useSequencedAgentName pattern.
+// in the Content-Disposition filename.
+//
+// NOTE: this is intentionally stricter than the dashboard's
+// `sanitizeAgentName` / `validAgentName` (`^[a-zA-Z0-9_.-]{1,64}$`).
+// Dashboard-generated defaults (`claude-desktop`, `claude-desktop-2`, …)
+// fall inside this regex, but a user-typed name like `My_Agent` or
+// `claude.desktop` passes the dashboard validator and is then rejected
+// here. Consolidating the validators is a follow-up — keep that in mind
+// before relaxing either side.
 var agentNameSafe = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
 
 // ClaudeDesktop handles GET /api/agents/install/claude-desktop.mobileconfig.
@@ -90,6 +97,14 @@ func (h *MobileConfigHandler) ClaudeDesktop(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/x-apple-aspen-config")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+chosen+`.mobileconfig"`)
+	// The response body embeds `rawToken` directly. Without explicit no-store
+	// headers, browsers and intermediate proxies are free to cache the
+	// response (mobileconfig downloads look like static file downloads to
+	// most caches), and the token then sits in cache directories where any
+	// other process with disk access can read it. Pragma is here for the
+	// handful of HTTP/1.0 caches still in the wild.
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
 	_, _ = w.Write([]byte(plist))
 }
 
@@ -150,6 +165,18 @@ func (h *MobileConfigHandler) resolveURL(r *http.Request) string {
 func renderClaudeDesktopMobileConfig(token, gatewayURL, agentName string) string {
 	payloadUUID := uuid.New().String()
 	profileUUID := uuid.New().String()
+	// macOS keys profile install/replace on PayloadIdentifier. If every
+	// download emitted the same identifier, the second download (which
+	// mints a fresh `claude-desktop-2` agent server-side) would silently
+	// replace the first install — the user ends up with two server-side
+	// agents but only the second is bound to Claude Desktop, and the first
+	// agent's token sits orphaned in the DB until it's manually revoked.
+	// Suffix the per-payload AND outer profile identifiers with the agent
+	// name so distinct downloads coexist on the user's machine; agentName
+	// is already validated by `agentNameSafe` (`^[a-z0-9-]{1,40}$`), so
+	// it's safe to splice into a reverse-DNS identifier as-is.
+	settingsIdentifier := "com.anthropic.claudefordesktop.settings." + agentName
+	profileIdentifier := "com.anthropic.claudefordesktop.profile." + agentName
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -160,7 +187,7 @@ func renderClaudeDesktopMobileConfig(token, gatewayURL, agentName string) string
 				<key>PayloadType</key>
 				<string>com.anthropic.claudefordesktop</string>
 				<key>PayloadIdentifier</key>
-				<string>com.anthropic.claudefordesktop.settings</string>
+				<string>%s</string>
 				<key>PayloadUUID</key>
 				<string>%s</string>
 				<key>PayloadVersion</key>
@@ -180,7 +207,7 @@ func renderClaudeDesktopMobileConfig(token, gatewayURL, agentName string) string
 		<key>PayloadDisplayName</key>
 		<string>Claude Desktop Third-Party Inference</string>
 		<key>PayloadIdentifier</key>
-		<string>com.anthropic.claudefordesktop.profile</string>
+		<string>%s</string>
 		<key>PayloadType</key>
 		<string>Configuration</string>
 		<key>PayloadUUID</key>
@@ -191,7 +218,7 @@ func renderClaudeDesktopMobileConfig(token, gatewayURL, agentName string) string
 		<string>User</string>
 	</dict>
 </plist>
-`, payloadUUID, escapeXML(agentName), escapeXML(gatewayURL), escapeXML(token), profileUUID)
+`, settingsIdentifier, payloadUUID, escapeXML(agentName), escapeXML(gatewayURL), escapeXML(token), profileIdentifier, profileUUID)
 }
 
 // escapeXML handles the minimum of plist-required escaping for the values we

@@ -139,6 +139,23 @@ async function download(path: string): Promise<{ blob: Blob; filename?: string }
 }
 
 function parseContentDispositionFilename(disposition: string): string | undefined {
+  // RFC 5987 `filename*=UTF-8''<percent-encoded>` is checked first because
+  // servers that send both prefer the encoded form for non-ASCII names;
+  // only fall back to the plain `filename=` parameter when the encoded
+  // form is missing or undecodable.
+  const ext = /filename\*=\s*(?:([A-Za-z0-9_-]+)'[A-Za-z-]*')?([^;]+)/i.exec(disposition)
+  if (ext) {
+    const charset = (ext[1] || 'utf-8').toLowerCase()
+    const encoded = ext[2].trim().replace(/^["']|["']$/g, '')
+    if (charset === 'utf-8' || charset === 'iso-8859-1' || charset === 'us-ascii') {
+      try {
+        const cleaned = decodeURIComponent(encoded).replace(/[\\/]/g, '-')
+        if (cleaned) return cleaned
+      } catch {
+        // Malformed percent-encoding — fall through to the plain form.
+      }
+    }
+  }
   const match = /filename="([^"]+)"/i.exec(disposition) ?? /filename=([^;]+)/i.exec(disposition)
   const raw = match?.[1]?.trim()
   if (!raw) return undefined
@@ -291,6 +308,12 @@ export interface Agent {
   active_task_count: number
   last_task_at?: string
   runtime_settings?: AgentRuntimeSettings
+  // Denormalized from the connection request that minted this agent. Lets
+  // the dashboard show harness type / install mode on the agent detail page
+  // and rebuild reinstall instructions. Absent for legacy agents minted
+  // before this field existed and for paths that don't carry install
+  // context (POST /api/agents, MCP/relay pairing, etc.).
+  install_context?: InstallContext
 }
 
 export interface AgentRuntimeSettings {
@@ -314,7 +337,7 @@ export interface AgentRuntimeSettings {
 export interface InstallContext {
   harness?: string // claude-code | codex | hermes | openclaw | claude-desktop
   harness_version?: string
-  install_mode?: string // local | docker | cloud
+  install_mode?: string // host | docker | remote
   host_os?: string // darwin | linux | windows
   container_id?: string
   auth_mode?: string // passthrough | swap
@@ -1263,10 +1286,6 @@ export const api = {
       post<{ code: string; expires_at: string }>('/api/agents/connect/claim', {}),
   },
   installer: {
-    claudeDesktopProfileURL: (name?: string) => {
-      const base = '/api/agents/install/claude-desktop.mobileconfig'
-      return name ? `${base}?name=${encodeURIComponent(name)}` : base
-    },
     downloadClaudeDesktopProfile: (name?: string) => {
       const base = '/api/agents/install/claude-desktop.mobileconfig'
       return download(name ? `${base}?name=${encodeURIComponent(name)}` : base)
