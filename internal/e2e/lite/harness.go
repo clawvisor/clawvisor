@@ -167,6 +167,16 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	mux.Handle("POST /v1/messages/count_tokens", mw(http.HandlerFunc(h.Messages)))
 	mux.Handle("POST /v1/chat/completions", mw(http.HandlerFunc(h.ChatCompletions)))
 	mux.Handle("POST /v1/responses", mw(http.HandlerFunc(h.Responses)))
+	// /v1/models — the codex CLI polls this periodically to refresh
+	// its model list. With no handler it 404s, and the CLI's
+	// codex_models_manager retries indefinitely; under load it can
+	// outrun the actual scenario work and trip the codex run's
+	// context deadline, killing the subprocess mid-scenario. A
+	// minimal openai-shaped stub keeps the manager happy.
+	mux.Handle("GET /v1/models", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"gpt-5-codex","object":"model","owned_by":"clawvisor-test"}]}`))
+	}))
 
 	// /api/control/vault/items: the only control-plane GET the lite
 	// harness needs the agent to be able to discover available vault
