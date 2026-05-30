@@ -892,7 +892,7 @@ func assertNoAnthropicSSEIndex(t *testing.T, stream string, forbidden int) {
 			Index *int `json:"index"`
 		}
 		if err := json.Unmarshal([]byte(event.Data), &payload); err != nil {
-			continue
+			t.Fatalf("malformed SSE event data in %q: %v", event.Event, err)
 		}
 		if payload.Index != nil && *payload.Index == forbidden {
 			t.Fatalf("stream contains forbidden index %d in event %q: %s", forbidden, event.Event, stream)

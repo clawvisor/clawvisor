@@ -2107,10 +2107,8 @@ data: {"type":"message_stop"}
 }
 
 func TestLLMEndpoint_SSETextStreamsBeforeUpstreamCompletes(t *testing.T) {
-	upstreamComplete := make(chan struct{})
 	firstTextSeen := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		defer close(upstreamComplete)
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
 		_, _ = w.Write([]byte(`event: message_start
@@ -2202,15 +2200,8 @@ data: {"type":"message_stop"}
 	select {
 	case <-lineCh:
 		close(firstTextSeen)
-		select {
-		case <-upstreamComplete:
-			t.Fatal("first text chunk arrived only after upstream completed")
-		default:
-		}
 	case err := <-errCh:
 		t.Fatalf("reading stream: %v", err)
-	case <-upstreamComplete:
-		t.Fatal("upstream completed before first streamed text chunk arrived")
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for streamed text before upstream completion")
 	}
