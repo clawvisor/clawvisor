@@ -291,6 +291,8 @@ func TestRenderTaskApprovalPromptSanitizesAllUserFields(t *testing.T) {
 		},
 		RequiredCredentials: []runtimetasks.RequiredCredential{
 			{VaultItemID: "github\u202d", Why: "post\x00comment"},
+			// VaultItemID empty → falls back to VaultItemHandle path.
+			{VaultItemHandle: "fallback\u202e", Why: "handle path"},
 		},
 	}, "")
 	for _, r := range []rune{0x00, 0x07, 0x1b, 0x7f, 0x200b, 0x202d, 0x202e} {
@@ -309,5 +311,8 @@ func TestRenderTaskApprovalPromptSanitizesAllUserFields(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "github") {
 		t.Errorf("credential id (sans override) missing: %q", prompt)
+	}
+	if !strings.Contains(prompt, "fallback") {
+		t.Errorf("credential handle (sans RLO) missing: %q", prompt)
 	}
 }
