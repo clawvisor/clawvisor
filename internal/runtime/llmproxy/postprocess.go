@@ -666,9 +666,20 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		}
 		if v.Ambiguous || !v.IsAPICall {
 			audit("block", "ambiguous", v.Reason)
+			// ContinueWithToolResult preserves the agent's actual
+			// tool_use in conversation history and feeds the rejection
+			// back as a synthetic tool_result — the canonical Anthropic
+			// shape for "your tool call failed, here's why." The model's
+			// own emitted input is right above the synthetic user turn,
+			// so it can see exactly what shape got rejected. The
+			// SubstituteWith fallback is what gets rendered if the
+			// handler can't perform the continuation call (older
+			// provider, recursion bound reached, upstream outage).
+			reason := "Clawvisor: ambiguous credentialed call refused — " + v.Reason
 			return conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: ambiguous credentialed call refused — " + v.Reason,
+				Allowed:                false,
+				Reason:                 reason,
+				ContinueWithToolResult: reason,
 			}
 		}
 
@@ -685,9 +696,11 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		)
 		if !boundaryOK {
 			audit("block", "boundary_check_failed", boundaryReason)
+			reason := "Clawvisor: target host outside placeholder bound-service — " + boundaryReason
 			return conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: target host outside placeholder bound-service — " + boundaryReason,
+				Allowed:                false,
+				Reason:                 reason,
+				ContinueWithToolResult: reason,
 			}
 		}
 

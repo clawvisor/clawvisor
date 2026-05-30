@@ -538,7 +538,7 @@ func extractCredentialedCurlSegment(cmd string) (credentialedCurlSegment, string
 		return credentialedCurlSegment{}, ""
 	}
 	if len(matched) > 1 {
-		return credentialedCurlSegment{}, "bash: multiple credentialed commands; refusing to rewrite"
+		return credentialedCurlSegment{}, "bash: only one credentialed call per tool_use. Emit each credentialed call as a separate parallel tool_use; they will be approved together."
 	}
 	ce := matched[0]
 	start := int(ce.Pos().Offset())

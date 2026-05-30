@@ -22,6 +22,7 @@ func TestLoadAllLibraryScenarios(t *testing.T) {
 		"cross_file_inspection",
 		"credential_handle_discovery",
 		"credential_handle_discovery_unaided",
+		"credential_multi_service_at_scale",
 		"no_invented_placeholder",
 		"credential_not_needed_for_local",
 	} {

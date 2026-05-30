@@ -28,6 +28,13 @@ func (a *scriptedApprover) Reply(kind, _ string) (reply, outcomeLabel string) {
 		// approval kind (e.g. "tool_use" rule), but for now there's
 		// no use case for it in the library.
 		return "task", "escalate"
+	case "tool_use_hard_block":
+		// A hard-block reply tells the agent to read the proxy's
+		// stated reason (already in its conversation history) and
+		// retry with a different tool_use shape. Models the natural
+		// "your last command got refused — try a different approach"
+		// nudge a real user would give.
+		return "The proxy rejected that tool_use — read the block reason above and retry with a different shape (one credentialed curl per tool_use if you were chaining).", "retry"
 	}
 	return "", ""
 }

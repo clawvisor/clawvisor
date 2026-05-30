@@ -14,22 +14,34 @@ import (
 )
 
 const (
-	claudeBinary             = "claude"
-	taskApprovalPromptMark   = "Clawvisor wants to create a task"
-	toolUseBlockSingleMark   = "Clawvisor paused this tool call for approval"
-	toolUseBlockTurnMark     = "Clawvisor paused this turn for approval"
+	claudeBinary           = "claude"
+	taskApprovalPromptMark = "Clawvisor wants to create a task"
+	toolUseBlockSingleMark = "Clawvisor paused this tool call for approval"
+	toolUseBlockTurnMark   = "Clawvisor paused this turn for approval"
+	// toolUseHardBlockMark is the proxy's hard-refusal text — distinct
+	// from the "paused for approval" flow. The agent's tool_use was
+	// rejected outright (malformed bash, ambiguous credentialed call,
+	// unregistered placeholder, etc.) and the response stream replaced
+	// the tool_result with a prose explanation. Recovery is on the
+	// agent: read the reason, emit a different tool_use.
+	toolUseHardBlockMark = "Tool use was blocked by the Clawvisor proxy"
 )
 
 // approvalPromptKind classifies an assistant-text turn as one of the
 // lite-proxy's substituted approval prompts, or returns "" if the
 // text is the agent's final answer for the step.
 //
-//   - "task_approval"  → "Clawvisor wants to create a task" — inline
+//   - "task_approval"       → "Clawvisor wants to create a task" — inline
 //     task intercept; the approver decides yes/no.
-//   - "tool_use_block" → "Clawvisor paused this tool call/turn for
+//   - "tool_use_block"      → "Clawvisor paused this tool call/turn for
 //     approval" — the agent ran a tool without scope; the approver
 //     decides whether to escalate ("task"), approve once ("yes"), or
 //     deny ("no").
+//   - "tool_use_hard_block" → "Tool use was blocked by the Clawvisor
+//     proxy" — the proxy hard-refused the tool_use. We feed a generic
+//     "retry, addressing the block" reply back to the agent so a real
+//     production retry loop is simulated rather than ending the step at
+//     the first hard block.
 func approvalPromptKind(text string) string {
 	switch {
 	case strings.Contains(text, taskApprovalPromptMark):
@@ -37,6 +49,8 @@ func approvalPromptKind(text string) string {
 	case strings.Contains(text, toolUseBlockSingleMark),
 		strings.Contains(text, toolUseBlockTurnMark):
 		return "tool_use_block"
+	case strings.Contains(text, toolUseHardBlockMark):
+		return "tool_use_hard_block"
 	}
 	return ""
 }
@@ -147,6 +161,8 @@ func (s *claudeSession) Send(ctx context.Context, message string) (*StepOutcome,
 					outcome.TaskApprovalPromptsDenied++
 				}
 			case "tool_use_block":
+				outcome.ToolUseBlocksSeen++
+			case "tool_use_hard_block":
 				outcome.ToolUseBlocksSeen++
 			}
 			current = reply

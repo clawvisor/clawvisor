@@ -85,6 +85,8 @@ func (s *codexSession) Send(ctx context.Context, message string) (*StepOutcome, 
 				}
 			case "tool_use_block":
 				outcome.ToolUseBlocksSeen++
+			case "tool_use_hard_block":
+				outcome.ToolUseBlocksSeen++
 			}
 			current = reply
 			continue
