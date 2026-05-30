@@ -94,12 +94,10 @@
     --color-warning-border-light: rgba(245, 158, 11, 0.3);
     --color-warning-border-subtle: rgba(245, 158, 11, 0.15);
   }
-
   html {
     background-color: rgb(var(--color-surface-0));
     color: rgb(var(--color-text-primary));
   }
-
   body {
     @apply bg-surface-0 text-text-primary antialiased;
   }
