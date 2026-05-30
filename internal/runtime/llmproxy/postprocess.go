@@ -348,7 +348,210 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 	auditSink := &capturedAuditSink{}
 	var captures []evalCapture
 
-	innerEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+	innerEval := newToolUseEvaluator(req, cfg, rewriter.Name(), auditSink)
+
+	// Outer eval wraps innerEval and records the kind + decision
+	// context for the coalesce post-pass. Two side channels feed the
+	// capture:
+	//   * holdSink.holds — populated by the (buffered) PendingApprovals.Hold
+	//     wrapper when innerEval creates a per-tool hold. Carries the
+	//     hold ID, stage, and the full inspector/fingerprint/reason
+	//     bundle the eval body assembled before calling Hold.
+	//   * auditSink.entries — populated by the (buffered) audit closure
+	//     on every audit() call inside innerEval. The last entry for
+	//     this call carries the inspector verdict and the final reason
+	//     even when no hold was created (auto-allow, auto-rewrite,
+	//     hard deny). Without this, coalesced sibling release audit
+	//     rows would have empty target_host/method/path because no
+	//     hold captured them.
+	// Fingerprint is captured only via the hold sink, because the
+	// release path's EquivalentFingerprint check only fires for
+	// HeldKindApproval entries — non-approval siblings either pass
+	// through, deny outright, or fail-closed with "re-prompt needed."
+	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		holdsBefore, auditsBefore := 0, 0
+		if holdSink != nil {
+			holdsBefore = len(holdSink.holds)
+		}
+		if auditSink != nil {
+			auditsBefore = len(auditSink.entries)
+		}
+		v := innerEval(tu)
+		c := evalCapture{Use: tu, Kind: classifyVerdict(v)}
+		if holdSink != nil && len(holdSink.holds) > holdsBefore {
+			h := holdSink.holds[len(holdSink.holds)-1]
+			c.HoldID = h.Pending.ID
+			c.Stage = h.Pending.Stage
+			c.Inspector = h.Pending.Inspector
+			c.Fingerprint = h.Pending.Fingerprint
+			c.Reason = h.Pending.Reason
+		} else if auditSink != nil && len(auditSink.entries) > auditsBefore {
+			last := auditSink.entries[len(auditSink.entries)-1]
+			c.Inspector = last.Verdict
+			c.Reason = last.Reason
+		}
+		// TaskID is sourced from the audit sink (not the hold sink)
+		// because the hold sink doesn't carry it — the matched task
+		// is recorded by the audit closure right after EvaluateAuthorization
+		// or TaskScope.Check resolves it. Both the held and the
+		// non-held branches above leave any matched task on the most
+		// recent audit entry, so reading it here picks it up
+		// regardless of whether a hold was created.
+		if auditSink != nil && len(auditSink.entries) > auditsBefore {
+			c.TaskID = auditSink.entries[len(auditSink.entries)-1].TaskID
+		}
+		captures = append(captures, c)
+		return v
+	}
+
+	result, err := rewriter.Rewrite(body, contentType, eval)
+	if err != nil {
+		// Fail closed: the rewriter failed mid-body so we don't know
+		// whether a credentialed placeholder survived into the response.
+		// Returning the original body would pass it (or worse, the
+		// literal placeholder) to the harness. Drop the body and surface
+		// a non-empty SkippedReason; the handler checks SkippedReason to
+		// emit a 502 instead of writing the upstream body unchanged.
+		return PostprocessResult{
+			Body:          nil,
+			ContentType:   contentType,
+			SkippedReason: "rewriter error: " + err.Error(),
+		}
+	}
+
+	// Coalesce decision. When the turn carries multiple tool_uses and
+	// at least one needs approval (and the inline-task flow is not in
+	// play), replace the buffered per-tool holds with one coalesced
+	// hold covering the whole turn and rewrite the buffered audit so
+	// it reports the calls as "coalesced approval pending" rather
+	// than as if they had executed. A single user yes/no then
+	// releases (or denies) all sibling calls together.
+	if originalPendingApprovals != nil && shouldCoalesceTurn(captures) {
+		coalesced := coalesceFromCaptures(captures)
+		coalesced.UserID = cfg.AgentUserID
+		coalesced.AgentID = cfg.AgentID
+		coalesced.Provider = rewriter.Name()
+		coalesced.ConversationID = cfg.ConversationID
+		held, holdErr := originalPendingApprovals.Hold(req.Context(), coalesced)
+		if holdErr == nil {
+			// Coalesced hold committed. The buffered per-tool holds
+			// were never inserted into the underlying cache, so
+			// there's nothing to drop here — that closes the
+			// bounded-cache eviction hazard for the buffered side.
+			// The buffered audit rows are deliberately discarded:
+			// they would have reported "allow"/"rewrite" for
+			// siblings whose calls are now being held under the
+			// coalesced approval, which is false in the audit
+			// trail. We emit one "coalesced_approval_pending" row
+			// per held tool_use instead so dashboards see what
+			// actually happened.
+			//
+			// The coalesced Hold itself, though, CAN displace an
+			// older inline-task hold from the underlying cache —
+			// the bounded-cache hazard applies to this insert too.
+			// Audit the eviction and terminate the displaced
+			// inline-task row's DB anchor so the dashboard doesn't
+			// strand it at pending_approval forever.
+			if held.Evicted != nil {
+				if cfg.Audit != nil && auditAgent != nil && len(captures) > 0 {
+					// Attach the audit row to the first held
+					// tool_use in the coalesced turn so dashboards
+					// have a non-empty linkage; the reason string
+					// names the evicted hold explicitly.
+					first := captures[0]
+					cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, first.Use, first.Inspector, "block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, first.TaskID)
+				}
+				cleanupEvictedInlineTask(req.Context(), cfg, held.Evicted)
+			}
+			emitCoalescedPendingAuditRows(req.Context(), cfg, auditAgent, captures, held.Pending.ID)
+			// Re-run the rewriter with a coalesced eval. Every
+			// tool_use returns Allowed:false; the first carries the
+			// combined prompt as SubstituteWith, the rest carry
+			// empty SubstituteWith so the rewriter's join produces
+			// one prompt (not N copies).
+			coalescedPrompt := coalescedApprovalPrompt(held.Pending.AllHolds())
+			firstReplaced := false
+			coalescedEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+				out := conversation.ToolUseVerdict{
+					Allowed: false,
+					Reason:  "Clawvisor: approval required (coalesced turn) — " + held.Pending.Reason,
+				}
+				if !firstReplaced {
+					out.SubstituteWith = coalescedPrompt
+					firstReplaced = true
+				}
+				return out
+			}
+			coalescedResult, coalescedErr := rewriter.Rewrite(body, contentType, coalescedEval)
+			if coalescedErr == nil {
+				return PostprocessResult{
+					Body:        coalescedResult.Body,
+					ContentType: contentType,
+					Rewritten:   true,
+					Decisions:   coalescedResult.Decisions,
+				}
+			}
+			// Coalesced re-run failed but the coalesced hold exists.
+			// The first-pass body still references per-tool prompts
+			// that no longer correspond to cache state (the
+			// per-tool holds were never committed and the coalesced
+			// hold is the only one now). Fall through to flush the
+			// buffered audit (the rows describe what would have
+			// happened) and return the first-pass body. Degraded
+			// but recoverable: a user yes/no resolves the coalesced
+			// hold via LIFO and the release synth emits every
+			// approved call.
+			flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
+			return PostprocessResult{
+				Body:        result.Body,
+				ContentType: contentType,
+				Rewritten:   result.Rewritten,
+				Decisions:   result.Decisions,
+			}
+		}
+		// Hold-failure path: the coalesced hold could not be
+		// committed. Fall through to legacy replay: write the
+		// buffered per-tool holds to the underlying cache and flush
+		// the buffered audit rows. The first-pass body already
+		// describes those per-tool prompts; once they exist in the
+		// cache the user's yes/no resolves them one by one (the
+		// pre-coalesce path).
+	}
+
+	// Legacy replay: no coalescence happened (either shouldCoalesceTurn
+	// said no, or the coalesced Hold failed). Commit the buffered
+	// per-tool holds to the underlying cache and emit the buffered
+	// audit rows as-is.
+	if replayErr := replayBufferedHolds(req.Context(), cfg, originalPendingApprovals, holdSink, auditAgent, captures); replayErr != nil {
+		// Fail closed: the first-pass body references approval
+		// prompts whose holds couldn't be committed to the cache.
+		// Returning the body would invite the user to type "yes" at
+		// a prompt that resolves to nothing. Drop the body and
+		// surface a non-empty SkippedReason so the handler emits
+		// 502 — matches the pre-buffering eval path that returned
+		// "Clawvisor: approval unavailable" inline when Hold failed.
+		// Buffered audits are still flushed: they describe what
+		// would have happened, and the SkippedReason adds the
+		// approval-hold-storage row separately.
+		flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
+		return PostprocessResult{
+			Body:          nil,
+			ContentType:   contentType,
+			SkippedReason: "approval hold storage failed: " + replayErr.Error(),
+		}
+	}
+	flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
+
+	return PostprocessResult{
+		Body:        result.Body,
+		ContentType: contentType,
+		Rewritten:   result.Rewritten,
+		Decisions:   result.Decisions,
+	}
+}
+
+func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, auditSink *capturedAuditSink) conversation.ToolUseEvaluator {
+	return func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		var v inspector.Verdict
 		// matchedTaskID is set by branches that resolve a task scope
 		// (EvaluateAuthorization with a matched task, or
@@ -422,7 +625,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			// "yes" creates the task pre-approved and the
 			// follow-up turn auto-releases the original tool call.
 			if inlineVerdict, inlineHandled := maybeInterceptInlineTaskDefinition(
-				req, cfg, audit, trace, rewriter.Name(), tu, call,
+				req, cfg, audit, trace, provider, tu, call,
 			); inlineHandled {
 				return inlineVerdict
 			}
@@ -640,7 +843,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 						held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 							UserID:         cfg.AgentUserID,
 							AgentID:        cfg.AgentID,
-							Provider:       rewriter.Name(),
+							Provider:       provider,
 							ConversationID: cfg.ConversationID,
 							ToolUse:        tu,
 							Inspector:      v,
@@ -761,7 +964,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 						UserID:         cfg.AgentUserID,
 						AgentID:        cfg.AgentID,
-						Provider:       rewriter.Name(),
+						Provider:       provider,
 						ConversationID: cfg.ConversationID,
 						ToolUse:        tu,
 						Inspector:      v,
@@ -881,205 +1084,6 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			Allowed:      true,
 			RewriteInput: rewritten,
 		}
-	}
-
-	// Outer eval wraps innerEval and records the kind + decision
-	// context for the coalesce post-pass. Two side channels feed the
-	// capture:
-	//   * holdSink.holds — populated by the (buffered) PendingApprovals.Hold
-	//     wrapper when innerEval creates a per-tool hold. Carries the
-	//     hold ID, stage, and the full inspector/fingerprint/reason
-	//     bundle the eval body assembled before calling Hold.
-	//   * auditSink.entries — populated by the (buffered) audit closure
-	//     on every audit() call inside innerEval. The last entry for
-	//     this call carries the inspector verdict and the final reason
-	//     even when no hold was created (auto-allow, auto-rewrite,
-	//     hard deny). Without this, coalesced sibling release audit
-	//     rows would have empty target_host/method/path because no
-	//     hold captured them.
-	// Fingerprint is captured only via the hold sink, because the
-	// release path's EquivalentFingerprint check only fires for
-	// HeldKindApproval entries — non-approval siblings either pass
-	// through, deny outright, or fail-closed with "re-prompt needed."
-	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
-		holdsBefore, auditsBefore := 0, 0
-		if holdSink != nil {
-			holdsBefore = len(holdSink.holds)
-		}
-		if auditSink != nil {
-			auditsBefore = len(auditSink.entries)
-		}
-		v := innerEval(tu)
-		c := evalCapture{Use: tu, Kind: classifyVerdict(v)}
-		if holdSink != nil && len(holdSink.holds) > holdsBefore {
-			h := holdSink.holds[len(holdSink.holds)-1]
-			c.HoldID = h.Pending.ID
-			c.Stage = h.Pending.Stage
-			c.Inspector = h.Pending.Inspector
-			c.Fingerprint = h.Pending.Fingerprint
-			c.Reason = h.Pending.Reason
-		} else if auditSink != nil && len(auditSink.entries) > auditsBefore {
-			last := auditSink.entries[len(auditSink.entries)-1]
-			c.Inspector = last.Verdict
-			c.Reason = last.Reason
-		}
-		// TaskID is sourced from the audit sink (not the hold sink)
-		// because the hold sink doesn't carry it — the matched task
-		// is recorded by the audit closure right after EvaluateAuthorization
-		// or TaskScope.Check resolves it. Both the held and the
-		// non-held branches above leave any matched task on the most
-		// recent audit entry, so reading it here picks it up
-		// regardless of whether a hold was created.
-		if auditSink != nil && len(auditSink.entries) > auditsBefore {
-			c.TaskID = auditSink.entries[len(auditSink.entries)-1].TaskID
-		}
-		captures = append(captures, c)
-		return v
-	}
-
-	result, err := rewriter.Rewrite(body, contentType, eval)
-	if err != nil {
-		// Fail closed: the rewriter failed mid-body so we don't know
-		// whether a credentialed placeholder survived into the response.
-		// Returning the original body would pass it (or worse, the
-		// literal placeholder) to the harness. Drop the body and surface
-		// a non-empty SkippedReason; the handler checks SkippedReason to
-		// emit a 502 instead of writing the upstream body unchanged.
-		return PostprocessResult{
-			Body:          nil,
-			ContentType:   contentType,
-			SkippedReason: "rewriter error: " + err.Error(),
-		}
-	}
-
-	// Coalesce decision. When the turn carries multiple tool_uses and
-	// at least one needs approval (and the inline-task flow is not in
-	// play), replace the buffered per-tool holds with one coalesced
-	// hold covering the whole turn and rewrite the buffered audit so
-	// it reports the calls as "coalesced approval pending" rather
-	// than as if they had executed. A single user yes/no then
-	// releases (or denies) all sibling calls together.
-	if originalPendingApprovals != nil && shouldCoalesceTurn(captures) {
-		coalesced := coalesceFromCaptures(captures)
-		coalesced.UserID = cfg.AgentUserID
-		coalesced.AgentID = cfg.AgentID
-		coalesced.Provider = rewriter.Name()
-		coalesced.ConversationID = cfg.ConversationID
-		held, holdErr := originalPendingApprovals.Hold(req.Context(), coalesced)
-		if holdErr == nil {
-			// Coalesced hold committed. The buffered per-tool holds
-			// were never inserted into the underlying cache, so
-			// there's nothing to drop here — that closes the
-			// bounded-cache eviction hazard for the buffered side.
-			// The buffered audit rows are deliberately discarded:
-			// they would have reported "allow"/"rewrite" for
-			// siblings whose calls are now being held under the
-			// coalesced approval, which is false in the audit
-			// trail. We emit one "coalesced_approval_pending" row
-			// per held tool_use instead so dashboards see what
-			// actually happened.
-			//
-			// The coalesced Hold itself, though, CAN displace an
-			// older inline-task hold from the underlying cache —
-			// the bounded-cache hazard applies to this insert too.
-			// Audit the eviction and terminate the displaced
-			// inline-task row's DB anchor so the dashboard doesn't
-			// strand it at pending_approval forever.
-			if held.Evicted != nil {
-				if cfg.Audit != nil && auditAgent != nil && len(captures) > 0 {
-					// Attach the audit row to the first held
-					// tool_use in the coalesced turn so dashboards
-					// have a non-empty linkage; the reason string
-					// names the evicted hold explicitly.
-					first := captures[0]
-					cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, first.Use, first.Inspector, "block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, first.TaskID)
-				}
-				cleanupEvictedInlineTask(req.Context(), cfg, held.Evicted)
-			}
-			emitCoalescedPendingAuditRows(req.Context(), cfg, auditAgent, captures, held.Pending.ID)
-			// Re-run the rewriter with a coalesced eval. Every
-			// tool_use returns Allowed:false; the first carries the
-			// combined prompt as SubstituteWith, the rest carry
-			// empty SubstituteWith so the rewriter's join produces
-			// one prompt (not N copies).
-			coalescedPrompt := coalescedApprovalPrompt(held.Pending.AllHolds())
-			firstReplaced := false
-			coalescedEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
-				out := conversation.ToolUseVerdict{
-					Allowed: false,
-					Reason:  "Clawvisor: approval required (coalesced turn) — " + held.Pending.Reason,
-				}
-				if !firstReplaced {
-					out.SubstituteWith = coalescedPrompt
-					firstReplaced = true
-				}
-				return out
-			}
-			coalescedResult, coalescedErr := rewriter.Rewrite(body, contentType, coalescedEval)
-			if coalescedErr == nil {
-				return PostprocessResult{
-					Body:        coalescedResult.Body,
-					ContentType: contentType,
-					Rewritten:   true,
-					Decisions:   coalescedResult.Decisions,
-				}
-			}
-			// Coalesced re-run failed but the coalesced hold exists.
-			// The first-pass body still references per-tool prompts
-			// that no longer correspond to cache state (the
-			// per-tool holds were never committed and the coalesced
-			// hold is the only one now). Fall through to flush the
-			// buffered audit (the rows describe what would have
-			// happened) and return the first-pass body. Degraded
-			// but recoverable: a user yes/no resolves the coalesced
-			// hold via LIFO and the release synth emits every
-			// approved call.
-			flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
-			return PostprocessResult{
-				Body:        result.Body,
-				ContentType: contentType,
-				Rewritten:   result.Rewritten,
-				Decisions:   result.Decisions,
-			}
-		}
-		// Hold-failure path: the coalesced hold could not be
-		// committed. Fall through to legacy replay: write the
-		// buffered per-tool holds to the underlying cache and flush
-		// the buffered audit rows. The first-pass body already
-		// describes those per-tool prompts; once they exist in the
-		// cache the user's yes/no resolves them one by one (the
-		// pre-coalesce path).
-	}
-
-	// Legacy replay: no coalescence happened (either shouldCoalesceTurn
-	// said no, or the coalesced Hold failed). Commit the buffered
-	// per-tool holds to the underlying cache and emit the buffered
-	// audit rows as-is.
-	if replayErr := replayBufferedHolds(req.Context(), cfg, originalPendingApprovals, holdSink, auditAgent, captures); replayErr != nil {
-		// Fail closed: the first-pass body references approval
-		// prompts whose holds couldn't be committed to the cache.
-		// Returning the body would invite the user to type "yes" at
-		// a prompt that resolves to nothing. Drop the body and
-		// surface a non-empty SkippedReason so the handler emits
-		// 502 — matches the pre-buffering eval path that returned
-		// "Clawvisor: approval unavailable" inline when Hold failed.
-		// Buffered audits are still flushed: they describe what
-		// would have happened, and the SkippedReason adds the
-		// approval-hold-storage row separately.
-		flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
-		return PostprocessResult{
-			Body:          nil,
-			ContentType:   contentType,
-			SkippedReason: "approval hold storage failed: " + replayErr.Error(),
-		}
-	}
-	flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
-
-	return PostprocessResult{
-		Body:        result.Body,
-		ContentType: contentType,
-		Rewritten:   result.Rewritten,
-		Decisions:   result.Decisions,
 	}
 }
 
@@ -1642,383 +1646,7 @@ func PostprocessStream(
 	auditSink := &capturedAuditSink{}
 	var captures []evalCapture
 
-	innerEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
-		var v inspector.Verdict
-		var matchedTaskID string
-		audit := func(decision, outcome, reason string) {
-			auditSink.entries = append(auditSink.entries, bufferedAudit{
-				ToolUse:  tu,
-				Verdict:  v,
-				Decision: decision,
-				Outcome:  outcome,
-				Reason:   reason,
-				TaskID:   matchedTaskID,
-			})
-		}
-		trace := func(event string, kv ...any) {
-			if cfg.Trace == nil {
-				return
-			}
-			m := map[string]any{
-				"event":       event,
-				"request_id":  cfg.RequestID,
-				"user_id":     cfg.AgentUserID,
-				"agent_id":    cfg.AgentID,
-				"tool_use_id": tu.ID,
-				"tool_name":   tu.Name,
-			}
-			for i := 0; i+1 < len(kv); i += 2 {
-				key, ok := kv[i].(string)
-				if !ok {
-					continue
-				}
-				m[key] = kv[i+1]
-			}
-			cfg.Trace.Emit(m)
-		}
-		trace(TraceEventToolUseEntry,
-			"input_preview", truncateForTrace(string(tu.Input), traceInputPreviewLimit),
-			"input_bytes", len(tu.Input),
-			"trigger_hit", inspector.TriggerHits(inspector.ToolUse{ID: tu.ID, Name: tu.Name, Input: tu.Input}),
-		)
-
-		if call, ok := ParseControlToolUseWithBase(tu, cfg.ControlBaseURL); ok {
-			v = call.Verdict
-			if inlineVerdict, inlineHandled := maybeInterceptInlineTaskDefinition(
-				req, cfg, audit, trace, provider, tu, call,
-			); inlineHandled {
-				return inlineVerdict
-			}
-			if cfg.CallerNonces == nil {
-				audit("block", "caller_nonce_unavailable", "caller nonce cache not configured")
-				return conversation.ToolUseVerdict{
-					Allowed: false,
-					Reason:  "Clawvisor: caller nonce cache not configured; refusing to embed agent token in control tool_use",
-				}
-			}
-			nonce, mintErr := cfg.CallerNonces.Mint(req.Context(), cfg.AgentID, NonceTarget{
-				Host:   v.Host,
-				Method: v.Method,
-				Path:   v.Path,
-			})
-			if mintErr != nil {
-				audit("block", "caller_nonce_mint_failed", mintErr.Error())
-				return conversation.ToolUseVerdict{
-					Allowed: false,
-					Reason:  "Clawvisor: caller nonce mint failed — " + mintErr.Error(),
-				}
-			}
-			rewritten, _, rewriteOK, err := RewriteControlToolUse(tu, cfg.ControlBaseURL, nonce)
-			if !rewriteOK {
-				audit("block", "control_unavailable", "no control rewrite base URL configured")
-				return conversation.ToolUseVerdict{
-					Allowed: false,
-					Reason:  "Clawvisor: control endpoint unavailable",
-				}
-			}
-			if err != nil {
-				audit("block", "control_rewriter_error", err.Error())
-				return conversation.ToolUseVerdict{
-					Allowed: false,
-					Reason:  "Clawvisor: control endpoint rewrite refused — " + err.Error(),
-				}
-			}
-			audit("rewrite", "clawvisor_control", v.Reason)
-			return conversation.ToolUseVerdict{
-				Allowed:      true,
-				RewriteInput: rewritten,
-			}
-		} else if controlToolUseMentionsEndpoint(tu, cfg.ControlBaseURL) {
-			reason := "malformed_control_command"
-			if cfg.CallerNonces != nil {
-				nonce, mintErr := cfg.CallerNonces.Mint(req.Context(), cfg.AgentID, NonceTarget{
-					Host:   ControlSyntheticHost,
-					Method: "POST",
-					Path:   "/api/control/failure",
-				})
-				if mintErr != nil {
-					audit("block", "caller_nonce_mint_failed", mintErr.Error())
-					return conversation.ToolUseVerdict{
-						Allowed: false,
-						Reason:  "Clawvisor: caller nonce mint failed — " + mintErr.Error(),
-					}
-				}
-				if rewritten, ok, err := RewriteControlFailureToolUse(tu, cfg.ControlBaseURL, nonce, reason); ok {
-					if err != nil {
-						audit("block", "control_rewriter_error", err.Error())
-						return conversation.ToolUseVerdict{
-							Allowed: false,
-							Reason:  "Clawvisor: control endpoint failure rewrite refused — " + err.Error(),
-						}
-					}
-					audit("rewrite", "clawvisor_control_failure", "malformed control endpoint command")
-					return conversation.ToolUseVerdict{
-						Allowed:      true,
-						RewriteInput: rewritten,
-					}
-				}
-			} else {
-				audit("block", "caller_nonce_unavailable", "caller nonce cache not configured")
-			}
-			audit("block", "control_rewriter_error", "control endpoint command must be a single foreground curl with no pipes, subshells, or extra shell commands")
-			return conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: control endpoint rewrite refused — use a single foreground curl to the control endpoint, with no pipes, subshells, redirects to output files, or extra shell commands",
-			}
-		}
-
-		v = cfg.Inspector.Inspect(req.Context(), inspector.ToolUse{
-			ID:    tu.ID,
-			Name:  tu.Name,
-			Input: tu.Input,
-		})
-
-		if v.Source != inspector.SourceTriggerMiss && inspector.AllPlaceholdersAreStubs(v.Placeholders) {
-			audit("allow", "stub_placeholder", "placeholders below realistic length floor")
-			v = inspector.Verdict{
-				IsAPICall: false,
-				Source:    inspector.SourceTriggerMiss,
-				Reason:    "placeholders are stub-length (no real vault reference)",
-			}
-		}
-
-		if v.Source == inspector.SourceTriggerMiss {
-			readOnlyShellCommand := false
-			sensitiveShellPath := false
-			if toolnames.IsShellToolName(tu.Name) && readOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
-				if cmd := shellCommandFromInput(tu.Input); cmd != "" {
-					readOnlyShellCommand, _ = inspector.IsReadOnlyBashCommand(cmd)
-					if toolnames.SensitiveFileGuardEnabled(tu.Name, cfg.AgentID, cfg.ToolRules) {
-						if tok, reason, hit := inspector.CommandReferencesSensitivePath(cmd); hit {
-							sensitiveShellPath = true
-							readOnlyShellCommand = false
-							audit("block", "sensitive_path_in_read_only_shell", "command references sensitive path "+tok+" ("+reason+")")
-						}
-					}
-				}
-			}
-			if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil || sensitiveShellPath {
-				decisionInput := runtimedecision.AuthorizationInput{
-					ToolUse:                tu,
-					UserID:                 cfg.AgentUserID,
-					AgentID:                cfg.AgentID,
-					Posture:                cfg.Posture,
-					CandidateTasks:         cfg.CandidateTasks,
-					ToolRules:              cfg.ToolRules,
-					EgressRules:            cfg.EgressRules,
-					PreferredTaskID:        cfg.PreferredTaskID,
-					IntentVerifier:         decisionIntentVerifier{inner: cfg.IntentVerifier},
-					SkipIntentVerification: readOnlyShellCommand,
-				}
-				dec, err := runtimedecision.EvaluateAuthorization(req.Context(), decisionInput)
-				if err != nil {
-					audit("block", "decision_error", err.Error())
-					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: authorization failed — " + err.Error()}
-				}
-				matchedTaskID = taskIDFromDecision(dec)
-				switch dec.Kind {
-				case runtimedecision.VerdictAllow:
-					audit("allow", string(dec.Source), dec.Reason)
-					return conversation.ToolUseVerdict{Allowed: true}
-				case runtimedecision.VerdictDeny:
-					audit("block", string(dec.Source), dec.Reason)
-					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: " + dec.Reason}
-				case runtimedecision.VerdictNeedsApproval:
-					if dec.Source == runtimedecision.SourceTaskScopeMissing && isShellPollTool(tu.Name, tu.Input) {
-						audit("allow", "shell_poll_pass_through", "background-shell poll ("+tu.Name+")")
-						return conversation.ToolUseVerdict{Allowed: true}
-					}
-					if dec.Source == runtimedecision.SourceTaskScopeMissing && readOnlyShellCommand {
-						audit("allow", "readonly_shell_pass_through", "read-only shell command")
-						return conversation.ToolUseVerdict{Allowed: true}
-					}
-					var approvalID string
-					if cfg.PendingApprovals != nil {
-						held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
-							UserID:         cfg.AgentUserID,
-							AgentID:        cfg.AgentID,
-							Provider:       provider,
-							ConversationID: cfg.ConversationID,
-							ToolUse:        tu,
-							Inspector:      v,
-							Fingerprint:    runtimedecision.Fingerprint(dec, decisionInput),
-							Reason:         dec.Reason,
-						})
-						if err != nil {
-							audit("block", "approval_hold_error", err.Error())
-							return conversation.ToolUseVerdict{
-								Allowed: false,
-								Reason:  "Clawvisor: approval unavailable — " + err.Error(),
-							}
-						}
-						if held.Evicted != nil {
-							audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID)
-							cleanupEvictedInlineTask(req.Context(), cfg, held.Evicted)
-						}
-						approvalID = held.Pending.ID
-					}
-					audit("block", string(dec.Source), dec.Reason)
-					return conversation.ToolUseVerdict{
-						Allowed:        false,
-						Reason:         "Clawvisor: approval required — " + dec.Reason,
-						SubstituteWith: approvalPrompt(tu, dec.Reason, approvalID),
-					}
-				}
-			}
-			audit("allow", "pass_through", "no credential trigger")
-			return conversation.ToolUseVerdict{Allowed: true}
-		}
-
-		if v.Ambiguous || !v.IsAPICall {
-			audit("block", "ambiguous", v.Reason)
-			return conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: ambiguous credentialed call refused — " + v.Reason,
-			}
-		}
-
-		boundaryReason, boundaryOK := boundaryCheckVerdict(req, cfg, v)
-		if !boundaryOK {
-			audit("block", "boundary_check_failed", boundaryReason)
-			return conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: target host outside placeholder bound-service — " + boundaryReason,
-			}
-		}
-
-		decisionHandled := false
-		if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil {
-			resolved := ResolvedAction{}
-			if cfg.Catalog != nil {
-				resolved, _ = cfg.Catalog.Resolve(v.Host, v.Method, v.Path)
-			}
-			decisionInput := runtimedecision.AuthorizationInput{
-				ToolUse:         tu,
-				UserID:          cfg.AgentUserID,
-				AgentID:         cfg.AgentID,
-				Posture:         cfg.Posture,
-				Target:          runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
-				Service:         resolved.ServiceID,
-				Action:          resolved.ActionID,
-				CandidateTasks:  cfg.CandidateTasks,
-				ToolRules:       cfg.ToolRules,
-				EgressRules:     cfg.EgressRules,
-				PreferredTaskID: cfg.PreferredTaskID,
-				IntentVerifier:  decisionIntentVerifier{inner: cfg.IntentVerifier},
-			}
-			dec, err := runtimedecision.EvaluateAuthorization(req.Context(), decisionInput)
-			if err != nil {
-				audit("block", "decision_error", err.Error())
-				return conversation.ToolUseVerdict{
-					Allowed: false,
-					Reason:  "Clawvisor: authorization failed — " + err.Error(),
-				}
-			}
-			matchedTaskID = taskIDFromDecision(dec)
-			switch dec.Kind {
-			case runtimedecision.VerdictAllow:
-				decisionHandled = true
-			case runtimedecision.VerdictDeny:
-				audit("block", string(dec.Source), dec.Reason)
-				return conversation.ToolUseVerdict{
-					Allowed: false,
-					Reason:  "Clawvisor: " + dec.Reason,
-				}
-			case runtimedecision.VerdictNeedsApproval:
-				var approvalID string
-				if cfg.PendingApprovals != nil {
-					held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
-						UserID:         cfg.AgentUserID,
-						AgentID:        cfg.AgentID,
-						Provider:       provider,
-						ConversationID: cfg.ConversationID,
-						ToolUse:        tu,
-						Inspector:      v,
-						Fingerprint:    runtimedecision.Fingerprint(dec, decisionInput),
-						Reason:         dec.Reason,
-					})
-					if err != nil {
-						audit("block", "approval_hold_error", err.Error())
-						return conversation.ToolUseVerdict{
-							Allowed: false,
-							Reason:  "Clawvisor: approval unavailable — " + err.Error(),
-						}
-					}
-					if held.Evicted != nil {
-						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID)
-						cleanupEvictedInlineTask(req.Context(), cfg, held.Evicted)
-					}
-					approvalID = held.Pending.ID
-				}
-				audit("block", string(dec.Source), dec.Reason)
-				return conversation.ToolUseVerdict{
-					Allowed:        false,
-					Reason:         "Clawvisor: approval required — " + dec.Reason,
-					SubstituteWith: approvalPrompt(tu, dec.Reason, approvalID),
-				}
-			}
-		}
-
-		if !decisionHandled && cfg.Catalog != nil && cfg.TaskScope != nil {
-			if resolved, ok := cfg.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
-				dec := cfg.TaskScope.Check(req.Context(), cfg.AgentUserID, cfg.AgentID, resolved.ServiceID, resolved.ActionID)
-				if !dec.Allowed {
-					audit("block", "task_scope_denied", dec.Reason)
-					return conversation.ToolUseVerdict{
-						Allowed: false,
-						Reason:  "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
-					}
-				}
-				matchedTaskID = dec.TaskID
-				if reason, ok := runIntentVerify(req.Context(), cfg, dec, resolved, tu); !ok {
-					audit("block", "intent_verification_failed", reason)
-					return conversation.ToolUseVerdict{
-						Allowed: false,
-						Reason:  "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason,
-					}
-				}
-			}
-		}
-
-		if cfg.CallerNonces == nil {
-			audit("block", "caller_nonce_unavailable", "caller nonce cache not configured")
-			return conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: caller nonce cache not configured; refusing to embed agent token in tool_use",
-			}
-		}
-		nonce, mintErr := cfg.CallerNonces.Mint(req.Context(), cfg.AgentID, NonceTarget{
-			Host:   v.Host,
-			Method: v.Method,
-			Path:   v.Path,
-		})
-		if mintErr != nil {
-			audit("block", "caller_nonce_mint_failed", mintErr.Error())
-			return conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: caller nonce mint failed — " + mintErr.Error(),
-			}
-		}
-		opts := cfg.RewriteOpts
-		opts.CallerToken = nonce
-		rewritten, err := inspector.Rewrite(inspector.ToolUse{
-			ID:    tu.ID,
-			Name:  tu.Name,
-			Input: tu.Input,
-		}, v, opts)
-		if err != nil {
-			audit("block", "rewriter_error", err.Error())
-			return conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: rewriter refused — " + err.Error(),
-			}
-		}
-		audit("rewrite", "success", v.Reason)
-		return conversation.ToolUseVerdict{
-			Allowed:      true,
-			RewriteInput: rewritten,
-		}
-	}
+	innerEval := newToolUseEvaluator(req, cfg, provider, auditSink)
 
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		holdsBefore, auditsBefore := 0, 0

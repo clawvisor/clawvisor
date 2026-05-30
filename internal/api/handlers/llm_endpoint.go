@@ -957,7 +957,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 						w.Header().Set("Content-Type", contCT)
 					}
 					if contUsage != nil {
-						mergeAuditUsage(&auditUsage, auditParams, contUsage, h.Logger, r.Context(), requestID, agent.ID, "streaming_continuation")
+						mergeAuditUsage(&auditUsage, auditParams, contUsage, r.Context(), h.Logger, requestID, agent.ID, "streaming_continuation")
 					}
 					if len(contFinal.Body) > 0 {
 						continuationBody, spliceErr := spliceStreamingContinuationBody(provider, originalStreamResult, contCT, contFinal.Body)
@@ -988,7 +988,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			if resp.StatusCode < 400 {
 				if usage := llmproxy.ExtractUsage(provider, firstUpstreamCT, capturedUpstream.Bytes(), reqSummary.Model); usage.Found {
 					u := usage
-					mergeAuditUsage(&auditUsage, auditParams, &u, h.Logger, r.Context(), requestID, agent.ID, "streaming")
+					mergeAuditUsage(&auditUsage, auditParams, &u, r.Context(), h.Logger, requestID, agent.ID, "streaming")
 				}
 			}
 			if auditUsage != nil {
@@ -2133,7 +2133,7 @@ func pricingModelMatch(a, b string) bool {
 	return pricing.Normalize(a) == pricing.Normalize(b)
 }
 
-func mergeAuditUsage(dst **llmproxy.ExtractUsageResult, auditParams map[string]any, next *llmproxy.ExtractUsageResult, logger *slog.Logger, ctx context.Context, requestID string, agentID string, label string) {
+func mergeAuditUsage(dst **llmproxy.ExtractUsageResult, auditParams map[string]any, next *llmproxy.ExtractUsageResult, ctx context.Context, logger *slog.Logger, requestID string, agentID string, label string) {
 	if next == nil {
 		return
 	}
@@ -2163,6 +2163,9 @@ func mergeAuditUsage(dst **llmproxy.ExtractUsageResult, auditParams map[string]a
 	auditParams[label+"_usage_dropped_model_mismatch"] = true
 }
 
+// spliceStreamingContinuationBody only consumes SSE bodies produced by
+// Clawvisor's own continuation rewriters. Those helpers JSON-encode every
+// data payload, so raw "\n\n" event separators cannot appear inside data.
 func spliceStreamingContinuationBody(provider conversation.Provider, result conversation.StreamingRewriteResult, contentType string, body []byte) ([]byte, error) {
 	if !conversation.IsSSEContentType(contentType) {
 		return body, nil
