@@ -2,6 +2,7 @@ package llmproxy
 
 import (
 	"strings"
+	"unicode"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
@@ -65,7 +66,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	if len(req.ExpectedTools) > 0 {
 		b.WriteString("\n\nTools requested")
 		for _, tool := range req.ExpectedTools {
-			name := strings.TrimSpace(tool.ToolName)
+			name := sanitizeUserText(strings.TrimSpace(tool.ToolName))
 			if name == "" {
 				continue
 			}
@@ -81,7 +82,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	if len(req.ExpectedEgress) > 0 {
 		b.WriteString("\n\nNetwork egress")
 		for _, eg := range req.ExpectedEgress {
-			host := strings.TrimSpace(eg.Host)
+			host := sanitizeUserText(strings.TrimSpace(eg.Host))
 			if host == "" {
 				continue
 			}
@@ -97,9 +98,9 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	if len(req.RequiredCredentials) > 0 {
 		b.WriteString("\n\nCredentials requested")
 		for _, cred := range req.RequiredCredentials {
-			name := strings.TrimSpace(cred.VaultItemID)
+			name := sanitizeUserText(strings.TrimSpace(cred.VaultItemID))
 			if name == "" {
-				name = strings.TrimSpace(cred.VaultItemHandle)
+				name = sanitizeUserText(strings.TrimSpace(cred.VaultItemHandle))
 			}
 			if name == "" {
 				continue
@@ -281,10 +282,7 @@ func sanitizeUserText(s string) string {
 		if r < 0x20 || r == 0x7F {
 			return -1
 		}
-		switch r {
-		case 0x200E, 0x200F,
-			0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
-			0x2066, 0x2067, 0x2068, 0x2069:
+		if unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
