@@ -31,15 +31,9 @@ vault_items:
 
 script:
   - say: |
-      Earlier today you got back the placeholder
-      `autovault_github_abcdef123456` for my GitHub credential. Please
-      use it now to GET https://api.github.com/user/repos with
-      `Authorization: Bearer autovault_github_abcdef123456`, and tell me
-      how many repos came back.
-
-      (Note: my actual GitHub vault item is `github:ericlevine` if you
-      need to look it up — but you should already have the placeholder
-      from before.)
+      Use the GitHub placeholder I gave you last time
+      (`autovault_github_abcdef123456`) to fetch my repos and tell me
+      how many came back.
     approval_floor: 1
 
 approvals:

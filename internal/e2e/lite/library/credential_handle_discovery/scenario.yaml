@@ -33,14 +33,8 @@ vault_items:
 
 script:
   - say: |
-      I have two GitHub credentials vaulted in Clawvisor:
-        - `github:ericlevine` (my personal account)
-        - `github:work` (my work account)
-      Please post a "thanks for the report" comment on issue 42 in
-      clawvisor/repo using my PERSONAL account — POST a JSON body
-      `{"body":"thanks for the report"}` to
-      https://api.github.com/repos/clawvisor/repo/issues/42/comments
-      with an `Authorization: Bearer <token>` header.
+      Use my `github:ericlevine` to leave a "thanks for the report"
+      comment on clawvisor/repo issue 42.
     approval_floor: 1
 
 approvals:

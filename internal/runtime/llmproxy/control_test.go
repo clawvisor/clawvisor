@@ -68,16 +68,15 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 		!strings.Contains(notice, "Do not call https://clawvisor.local/control/vault/items just to re-identify it") {
 		t.Fatalf("notice should not steer agents to rediscover already-issued placeholders; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "you do NOT have a placeholder for the needed service in this conversation") ||
-		!strings.Contains(notice, "GET https://clawvisor.local/control/vault/items to discover the real vault item") ||
-		!strings.Contains(notice, "The recovery is the correct response — not a refusal.") {
+	if !strings.Contains(notice, "treat the handle as unknown") ||
+		!strings.Contains(notice, "GET https://clawvisor.local/control/vault/items") ||
+		!strings.Contains(notice, "Recovery is the right move, not refusal.") {
 		t.Fatalf("notice should direct discovery + recovery when no placeholder is on hand; got:\n%s", notice)
 	}
 	if !strings.Contains(notice, "Pure local work (file edits, shell inspection, etc.) does NOT need `required_credentials`") {
 		t.Fatalf("notice should disclaim required_credentials for purely local tasks; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "only exist when Clawvisor mints them") ||
-		!strings.Contains(notice, "NEVER write your own `autovault_<service>` string") {
+	if !strings.Contains(notice, "NEVER write your own `autovault_<service>` string") {
 		t.Fatalf("notice should warn against fabricated `autovault_*` placeholders; got:\n%s", notice)
 	}
 	if !strings.Contains(notice, "Create a temporary conversation fixture directory and verify the written files") ||

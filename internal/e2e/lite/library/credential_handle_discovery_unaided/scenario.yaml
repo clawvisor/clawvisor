@@ -35,11 +35,8 @@ vault_items:
 
 script:
   - say: |
-      Please post a "thanks for the report" comment on issue 42 in
-      clawvisor/repo using my PERSONAL GitHub account — POST a JSON
-      body `{"body":"thanks for the report"}` to
-      https://api.github.com/repos/clawvisor/repo/issues/42/comments
-      with an `Authorization: Bearer <token>` header.
+      Leave a "thanks for the report" comment on clawvisor/repo issue
+      42 using my personal GitHub.
     approval_floor: 1
 
 approvals:

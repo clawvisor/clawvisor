@@ -26,9 +26,7 @@ vault_items:
 
 script:
   - say: |
-      Count how many .go files exist under src/ in this workspace and
-      write the count (just the integer, nothing else) to count.txt at
-      the workspace root.
+      How many .go files are under src/? Write the count to count.txt.
     expect:
       files_present: [count.txt]
       file_contains:
