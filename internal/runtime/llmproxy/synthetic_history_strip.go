@@ -8,9 +8,8 @@ import (
 )
 
 type SyntheticApprovalHistoryStripRequest struct {
-	Provider                       conversation.Provider
-	Body                           []byte
-	AllowAnthropicCompatModelPatch bool
+	Provider conversation.Provider
+	Body     []byte
 }
 
 type SyntheticApprovalHistoryStripResult struct {
@@ -32,16 +31,6 @@ func StripSyntheticApprovalHistory(req SyntheticApprovalHistoryStripRequest) (Sy
 	body := req.Body
 	modified := false
 	if req.Provider == conversation.ProviderAnthropic {
-		if req.AllowAnthropicCompatModelPatch {
-			strippedBody, ok, err := stripAnthropicCacheControl(body)
-			if err != nil {
-				return SyntheticApprovalHistoryStripResult{Body: body}, err
-			}
-			if ok {
-				body = strippedBody
-				modified = true
-			}
-		}
 		res, err := stripAnthropicSyntheticApprovalHistory(body)
 		if err != nil {
 			return SyntheticApprovalHistoryStripResult{Body: body}, err
@@ -53,76 +42,6 @@ func StripSyntheticApprovalHistory(req SyntheticApprovalHistoryStripRequest) (Sy
 		return SyntheticApprovalHistoryStripResult{Body: body, Modified: modified}, nil
 	}
 	return SyntheticApprovalHistoryStripResult{Body: body}, nil
-}
-
-func stripAnthropicCacheControl(body []byte) ([]byte, bool, error) {
-	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return body, false, nil
-	}
-	model, _ := raw["model"].(string)
-	if model != "" && !strings.Contains(strings.ToLower(model), "claude") {
-		modified := false
-		if _, ok := raw["thinking"]; ok {
-			delete(raw, "thinking")
-			modified = true
-		}
-		if stripAnthropicCompatCacheControl(raw["system"]) {
-			modified = true
-		}
-		if stripAnthropicCompatMessageCacheControl(raw["messages"]) {
-			modified = true
-		}
-		if !modified {
-			return body, false, nil
-		}
-		encoded, err := json.Marshal(raw)
-		if err != nil {
-			return body, false, err
-		}
-		return encoded, true, nil
-	}
-	return body, false, nil
-}
-
-func stripAnthropicCompatCacheControl(val any) bool {
-	switch v := val.(type) {
-	case []any:
-		modified := false
-		for _, item := range v {
-			if block, ok := item.(map[string]any); ok {
-				if _, exists := block["cache_control"]; exists {
-					delete(block, "cache_control")
-					modified = true
-				}
-			}
-		}
-		return modified
-	case map[string]any:
-		if _, exists := v["cache_control"]; exists {
-			delete(v, "cache_control")
-			return true
-		}
-	}
-	return false
-}
-
-func stripAnthropicCompatMessageCacheControl(val any) bool {
-	msgs, ok := val.([]any)
-	if !ok {
-		return false
-	}
-	modified := false
-	for _, msg := range msgs {
-		m, ok := msg.(map[string]any)
-		if !ok {
-			continue
-		}
-		if stripAnthropicCompatCacheControl(m["content"]) {
-			modified = true
-		}
-	}
-	return modified
 }
 
 func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHistoryStripResult, error) {

@@ -810,6 +810,40 @@ func TestReplayBufferedHolds_PartialFailureRollsBackCommitted(t *testing.T) {
 	}
 }
 
+func TestHoldCapturingApprovalCacheBuffersThenReplayCommitsOnce(t *testing.T) {
+	ctx := context.Background()
+	inner := NewMemoryPendingApprovalCache(time.Minute)
+	counting := &countingHoldCache{inner: inner}
+	sink := &capturedHoldSink{}
+	cache := newHoldCapturingApprovalCache(counting, sink)
+
+	pending := PendingLiteApproval{
+		UserID:   "u",
+		AgentID:  "a",
+		Provider: conversation.ProviderAnthropic,
+		ToolUse:  conversation.ToolUse{ID: "toolu_1", Name: "Bash"},
+	}
+	if _, err := cache.Hold(ctx, pending); err != nil {
+		t.Fatalf("capturing Hold: %v", err)
+	}
+	if counting.holdCalls != 0 {
+		t.Fatalf("capturing cache must not commit immediately, got %d inner Hold calls", counting.holdCalls)
+	}
+	if len(sink.holds) != 1 {
+		t.Fatalf("expected one buffered hold, got %d", len(sink.holds))
+	}
+	if err := replayBufferedHolds(ctx, PostprocessConfig{}, counting, sink, nil, []evalCapture{{Use: pending.ToolUse}}); err != nil {
+		t.Fatalf("replayBufferedHolds: %v", err)
+	}
+	if counting.holdCalls != 1 {
+		t.Fatalf("replay must commit exactly once, got %d inner Hold calls", counting.holdCalls)
+	}
+	final := inner.snapshotHoldsForTest("u", "a", conversation.ProviderAnthropic)
+	if len(final) != 1 {
+		t.Fatalf("expected one committed hold, got %d: %+v", len(final), final)
+	}
+}
+
 // flakyHoldFromCallN fails the N-th Hold call only and otherwise
 // passes through. Lets tests target a specific replay step.
 type flakyHoldFromCallN struct {
@@ -832,6 +866,25 @@ func (c *flakyHoldFromCallN) Resolve(ctx context.Context, r ResolveRequest) (*Pe
 	return c.inner.Resolve(ctx, r)
 }
 func (c *flakyHoldFromCallN) Drop(ctx context.Context, r ResolveRequest) error {
+	return c.inner.Drop(ctx, r)
+}
+
+type countingHoldCache struct {
+	inner     PendingApprovalCache
+	holdCalls int
+}
+
+func (c *countingHoldCache) Hold(ctx context.Context, p PendingLiteApproval) (HoldResult, error) {
+	c.holdCalls++
+	return c.inner.Hold(ctx, p)
+}
+func (c *countingHoldCache) Peek(ctx context.Context, r ResolveRequest) (*PendingLiteApproval, error) {
+	return c.inner.Peek(ctx, r)
+}
+func (c *countingHoldCache) Resolve(ctx context.Context, r ResolveRequest) (*PendingLiteApproval, error) {
+	return c.inner.Resolve(ctx, r)
+}
+func (c *countingHoldCache) Drop(ctx context.Context, r ResolveRequest) error {
 	return c.inner.Drop(ctx, r)
 }
 

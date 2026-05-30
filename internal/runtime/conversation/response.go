@@ -93,6 +93,7 @@ type StreamingRewriteResult struct {
 	Role                      string
 	StreamFormat              string
 	NextAnthropicContentIndex int
+	NextOpenAIOutputIndex     int
 }
 
 type ResponseRewriter interface {

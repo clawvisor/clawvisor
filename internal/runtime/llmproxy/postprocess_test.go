@@ -165,24 +165,6 @@ func anthropicSSEIndexContaining(stream, needle string) (int, bool) {
 	return 0, false
 }
 
-func TestWriteStreamingContinuationFallbackIsNoopAfterInlineEmission(t *testing.T) {
-	var output bytes.Buffer
-	err := WriteStreamingContinuationFallback(&output, PostprocessResult{
-		StreamingProvider: conversation.ProviderAnthropic,
-		StreamingResult: conversation.StreamingRewriteResult{
-			StreamID:                  "msg_1",
-			StreamFormat:              "anthropic_messages",
-			NextAnthropicContentIndex: 2,
-		},
-	})
-	if err != nil {
-		t.Fatalf("WriteStreamingContinuationFallback: %v", err)
-	}
-	if out := output.String(); out != "" {
-		t.Fatalf("fallback is emitted by PostprocessStream, legacy writer should be noop; got %s", out)
-	}
-}
-
 func TestPostprocessStream_NoStreamingRewriterPassesThrough(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/unknown", nil)
 	input := "data: hello\n\n"
@@ -1370,6 +1352,9 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	if !strings.Contains(out, "function_call_arguments.done") {
 		t.Fatalf("function_call_arguments.done missing — Codex needs this signal:\n%s", out)
 	}
+	if got := strings.Count(out, "event: response.completed"); got != 1 {
+		t.Fatalf("response.completed count=%d, want 1:\n%s", got, out)
+	}
 }
 
 func TestPostprocess_OpenAIResponsesSSEAuditsCustomToolCall(t *testing.T) {
@@ -1428,6 +1413,56 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	input, ok := params["tool_input"].(map[string]any)
 	if !ok || !strings.Contains(input["input"].(string), "/tmp/hello.sh") {
 		t.Fatalf("tool_input=%v, want patch preview", params["tool_input"])
+	}
+}
+
+func TestPostprocessStream_OpenAIResponsesCustomToolCallIsInspectedAndBlocked(t *testing.T) {
+	placeholder := "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	st, userID, agentID := seedPostprocessStore(t, placeholder)
+	req := httptest.NewRequest("POST", "/v1/responses", nil)
+	input := strings.Join([]string{
+		`event: response.created`,
+		`data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}`,
+		``,
+		`event: response.output_item.added`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"ctc_1","type":"custom_tool_call","status":"in_progress","call_id":"call_custom","name":"WebFetch"}}`,
+		``,
+		`event: response.output_item.done`,
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"id":"ctc_1","type":"custom_tool_call","status":"completed","call_id":"call_custom","name":"WebFetch","input":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"Authorization\":\"Bearer ` + placeholder + `\"}}"}}`,
+		``,
+		`event: response.completed`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}`,
+		``,
+	}, "\n")
+
+	var output bytes.Buffer
+	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", PostprocessConfig{
+		Inspector:   inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+	})
+	if err != nil {
+		t.Fatalf("PostprocessStream: %v", err)
+	}
+	if len(result.Decisions) != 1 {
+		t.Fatalf("expected custom tool call to be inspected once, got %+v", result.Decisions)
+	}
+	if result.Decisions[0].ToolUse.ID != "call_custom" || result.Decisions[0].ToolUse.Name != "WebFetch" {
+		t.Fatalf("unexpected inspected tool use: %+v", result.Decisions[0].ToolUse)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected blocked custom tool call to rewrite stream")
+	}
+	out := output.String()
+	if strings.Contains(out, `"custom_tool_call"`) {
+		t.Fatalf("custom tool call leaked before inspection: %s", out)
+	}
+	if !strings.Contains(out, "Tool use was blocked by the Clawvisor proxy") {
+		t.Fatalf("blocked prompt missing: %s", out)
+	}
+	if got := strings.Count(out, "event: response.completed"); got != 1 {
+		t.Fatalf("response.completed count=%d, want 1: %s", got, out)
 	}
 }
 

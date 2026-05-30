@@ -695,6 +695,17 @@ func TestAnthropicStreamRewriteDropsNonClaudeThinkingBlocks(t *testing.T) {
 	}
 }
 
+func TestAnthropicStreamRewriteKeepsThinkingForClaudeOnlyNames(t *testing.T) {
+	t.Parallel()
+
+	if isNonClaudeModel("anthropic/claude-3-5-sonnet") {
+		t.Fatal("provider-qualified claude model should be treated as Claude")
+	}
+	if !isNonClaudeModel("myclaude-clone") {
+		t.Fatal("myclaude-clone must not be treated as Claude")
+	}
+}
+
 func TestAnthropicStreamRewriteStopsOnContextCancellation(t *testing.T) {
 	t.Parallel()
 

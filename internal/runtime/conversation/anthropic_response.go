@@ -1403,5 +1403,12 @@ func firstNonToolIndex(nextContentIndex, firstBufferedToolIndex int, hasBuffered
 
 func isNonClaudeModel(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
-	return model != "" && !strings.Contains(model, "claude")
+	if model == "" {
+		return false
+	}
+	name := model
+	if slash := strings.LastIndex(name, "/"); slash >= 0 {
+		name = name[slash+1:]
+	}
+	return !strings.HasPrefix(name, "claude-")
 }

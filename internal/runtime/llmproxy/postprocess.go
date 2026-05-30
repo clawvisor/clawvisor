@@ -2129,10 +2129,6 @@ func PostprocessStream(
 	}
 
 	if len(continuationResults) > 0 {
-		fallbackText := streamingContinuationFallbackText(decisions)
-		if err := writeProviderBlockedPrompt(w, provider, streamResult, fallbackText, streamingBlockedPromptIndex(provider, streamResult, captures)); err != nil {
-			return PostprocessResult{}, err
-		}
 		return PostprocessResult{
 			ContentType:             contentType,
 			Rewritten:               true,
@@ -2166,31 +2162,6 @@ func PostprocessStream(
 		Rewritten:   anyRewritten || anyBlocked,
 		Decisions:   decisions,
 	}, nil
-}
-
-func streamingContinuationFallbackText(decisions []conversation.ToolUseDecisionRecord) string {
-	var parts []string
-	for _, dec := range decisions {
-		text := strings.TrimSpace(dec.Verdict.SubstituteWith)
-		if text == "" {
-			text = strings.TrimSpace(dec.Verdict.ContinueWithToolResult)
-		}
-		if text != "" {
-			parts = append(parts, text)
-		}
-	}
-	if len(parts) > 0 {
-		return strings.Join(parts, "\n\n")
-	}
-	text := conversation.BlockedReasonText(decisions)
-	if strings.TrimSpace(text) == "" {
-		return "Tool use was blocked by the Clawvisor proxy."
-	}
-	return text
-}
-
-func WriteStreamingContinuationFallback(w io.Writer, processed PostprocessResult) error {
-	return nil
 }
 
 func streamingBlockedPromptIndex(provider conversation.Provider, result conversation.StreamingRewriteResult, captures []evalCapture) int {

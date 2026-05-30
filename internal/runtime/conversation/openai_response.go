@@ -1416,6 +1416,21 @@ func rawOpenAICustomToolInput(input string) json.RawMessage {
 	return raw
 }
 
+func rawOpenAICustomToolInputFromAny(input any) json.RawMessage {
+	switch v := input.(type) {
+	case nil:
+		return nil
+	case string:
+		return rawOpenAICustomToolInput(v)
+	default:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return nil
+		}
+		return raw
+	}
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if strings.TrimSpace(v) != "" {
@@ -1642,6 +1657,8 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 	var orderedItems []orderedResponsesItem
 	var lastEvent string
 	var dataLns []string
+	withheldTool := false
+	streamID := "resp_clawvisor_rewrite"
 
 	flushEvent := func() error {
 		if len(dataLns) == 0 {
@@ -1658,6 +1675,17 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 		}
 
 		switch event {
+		case "response.created":
+			var raw struct {
+				Response struct {
+					ID string `json:"id"`
+				} `json:"response"`
+			}
+			if err := json.Unmarshal([]byte(data), &raw); err == nil && raw.Response.ID != "" {
+				streamID = raw.Response.ID
+			}
+			return writeSSE(w, event, data)
+
 		case "response.output_item.added":
 			var raw struct {
 				OutputIndex int                      `json:"output_index"`
@@ -1673,6 +1701,7 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 				}
 				return writeSSE(w, event, data)
 			case "function_call":
+				withheldTool = true
 				pc := &pendingCall{
 					itemID:      raw.Item.ID,
 					callID:      firstNonEmpty(raw.Item.CallID, raw.Item.ID),
@@ -1683,6 +1712,9 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 					pc.arguments.WriteString(args)
 				}
 				pending[raw.Item.ID] = pc
+				return nil
+			case "custom_tool_call":
+				withheldTool = true
 				return nil
 			}
 			return writeSSE(w, event, data)
@@ -1774,6 +1806,7 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 				})
 				return nil
 			case "custom_tool_call":
+				withheldTool = true
 				tu, ok := toolUseFromOpenAICustomToolCall(raw.Item, 0)
 				if !ok {
 					return writeSSE(w, event, data)
@@ -1786,7 +1819,7 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 					name:             tu.Name,
 					customInput:      customToolInputForReemit(raw.Item.Input, raw.Item.Arguments),
 				})
-				return writeSSE(w, event, data)
+				return nil
 			default:
 				if len(rawItem.Item) > 0 {
 					orderedItems = append(orderedItems, orderedResponsesItem{
@@ -1799,7 +1832,7 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 			}
 
 		case "response.completed":
-			if len(pending) == 0 {
+			if !withheldTool {
 				return writeSSE(w, event, data)
 			}
 			return nil
@@ -1838,7 +1871,11 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 	var tus []ToolUse
 	var frags []assistantFragment
 	index := 0
+	nextOutputIndex := 0
 	for _, item := range orderedItems {
+		if item.outputIndex >= nextOutputIndex {
+			nextOutputIndex = item.outputIndex + 1
+		}
 		if item.isText {
 			frags = append(frags, assistantFragment{Text: item.text})
 			continue
@@ -1847,10 +1884,18 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 			continue
 		}
 		if item.isCustomToolCall {
+			inputRaw := rawOpenAICustomToolInputFromAny(item.customInput)
+			tus = append(tus, ToolUse{
+				ID:    firstNonEmpty(item.callID, item.itemID),
+				Index: index,
+				Name:  item.name,
+				Input: inputRaw,
+			})
+			index++
 			frags = append(frags, assistantFragment{
 				IsTool:   true,
 				ToolName: item.name,
-				ToolArgs: rawOpenAICustomToolInput(fmt.Sprintf("%v", item.customInput)),
+				ToolArgs: inputRaw,
 			})
 			continue
 		}
@@ -1879,10 +1924,11 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 	}
 
 	return StreamingRewriteResult{
-		ToolUses:      tus,
-		AssistantTurn: turn,
-		StreamID:      "resp_clawvisor_rewrite",
-		StreamFormat:  "openai_responses",
+		ToolUses:              tus,
+		AssistantTurn:         turn,
+		StreamID:              streamID,
+		StreamFormat:          "openai_responses",
+		NextOpenAIOutputIndex: nextOutputIndex,
 	}, nil
 }
 

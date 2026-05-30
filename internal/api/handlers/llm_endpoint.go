@@ -890,7 +890,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			streamResp.Commit()
 
 			h.Logger.DebugContext(r.Context(), "lite-proxy streaming postprocess complete",
 				"request_id", requestID,
@@ -911,34 +910,98 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if resp.StatusCode < 400 {
-				if usage := llmproxy.ExtractUsage(provider, upstreamCT, capturedUpstream.Bytes(), reqSummary.Model); usage.Found {
-					u := usage
-					if auditUsage == nil {
-						auditUsage = &u
-					} else if pricingModelMatch(auditUsage.Model, u.Model) {
-						auditUsage.Usage.InputTokens += u.Usage.InputTokens
-						auditUsage.Usage.OutputTokens += u.Usage.OutputTokens
-						auditUsage.Usage.CacheReadTokens += u.Usage.CacheReadTokens
-						auditUsage.Usage.CacheWriteTokens += u.Usage.CacheWriteTokens
-						auditUsage.Usage.CacheWrite1hTokens += u.Usage.CacheWrite1hTokens
-					} else {
-						h.Logger.WarnContext(r.Context(), "lite-proxy streaming usage dropped: model mismatch with continuation usage",
+			firstUpstreamCT := upstreamCT
+			streamStatus := resp.StatusCode
+			if len(processed.ContinuationToolResults) > 0 {
+				contFinal, contStatus, contCT, contUsage, contErr := h.tryContinuation(r, agent, provider, requestID, body, capturedUpstream.Bytes(), upstreamCT, resp.StatusCode, processed, cfg)
+				switch {
+				case contErr != nil:
+					h.Logger.WarnContext(r.Context(), "lite-proxy streaming continuation failed",
+						"request_id", requestID, "agent_id", agent.ID, "err", contErr.Error())
+					if !streamResp.WroteHeader() {
+						clearHeaders(w.Header())
+						auditStatus = http.StatusBadGateway
+						auditOutcome = "streaming_continuation_failed"
+						auditReason = contErr.Error()
+						h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "STREAMING_CONTINUATION_FAILED",
+							"couldn't continue the streamed tool result. Please retry; details are in the Clawvisor audit log.")
+					}
+					return
+				case contFinal != nil:
+					if contFinal.SkippedReason != "" {
+						h.Logger.WarnContext(r.Context(), "lite-proxy streaming continuation postprocess reported SkippedReason",
 							"request_id", requestID,
 							"agent_id", agent.ID,
-							"original_model", u.Model,
-							"continuation_model", auditUsage.Model,
+							"skipped_reason", contFinal.SkippedReason,
+							"body_bytes", len(contFinal.Body),
 						)
-						auditParams["streaming_usage_dropped_model_mismatch"] = true
+						if !streamResp.WroteHeader() {
+							clearHeaders(w.Header())
+							auditStatus = http.StatusBadGateway
+							auditOutcome = "streaming_continuation_postprocess_error"
+							auditReason = contFinal.SkippedReason
+							h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "STREAMING_CONTINUATION_POSTPROCESS_ERROR",
+								"couldn't process the streamed continuation response. Please retry; details are in the Clawvisor audit log.")
+						}
+						return
 					}
-					auditParams["usage_input_tokens"] = usage.Usage.InputTokens
-					auditParams["usage_output_tokens"] = usage.Usage.OutputTokens
-					if usage.Usage.CacheReadTokens > 0 {
-						auditParams["usage_cache_read_tokens"] = usage.Usage.CacheReadTokens
+					originalStreamResult := processed.StreamingResult
+					processed = *contFinal
+					if contStatus != 0 {
+						streamStatus = contStatus
+						auditStatus = contStatus
+						auditOutcome = outcomeFromStatus(contStatus)
 					}
-					if usage.Usage.CacheWriteTokens > 0 {
-						auditParams["usage_cache_write_tokens"] = usage.Usage.CacheWriteTokens
+					if contCT != "" && contCT != upstreamCT && !streamResp.WroteHeader() {
+						upstreamCT = contCT
+						w.Header().Set("Content-Type", contCT)
 					}
+					if contUsage != nil {
+						mergeAuditUsage(&auditUsage, auditParams, contUsage, h.Logger, r.Context(), requestID, agent.ID, "streaming_continuation")
+					}
+					if len(contFinal.Body) > 0 {
+						continuationBody, spliceErr := spliceStreamingContinuationBody(provider, originalStreamResult, contCT, contFinal.Body)
+						if spliceErr != nil {
+							h.Logger.WarnContext(r.Context(), "lite-proxy streaming continuation splice failed",
+								"request_id", requestID, "agent_id", agent.ID, "err", spliceErr.Error())
+							if !streamResp.WroteHeader() {
+								clearHeaders(w.Header())
+								auditStatus = http.StatusBadGateway
+								auditOutcome = "streaming_continuation_splice_failed"
+								auditReason = spliceErr.Error()
+								h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "STREAMING_CONTINUATION_SPLICE_FAILED",
+									"couldn't merge the streamed continuation response. Please retry; details are in the Clawvisor audit log.")
+							}
+							return
+						}
+						if _, writeErr := streamW.Write(continuationBody); writeErr != nil {
+							h.Logger.WarnContext(r.Context(), "lite-proxy streaming continuation write failed",
+								"request_id", requestID, "agent_id", agent.ID, "err", writeErr.Error())
+							return
+						}
+					}
+				}
+			}
+
+			streamResp.Commit()
+
+			if resp.StatusCode < 400 {
+				if usage := llmproxy.ExtractUsage(provider, firstUpstreamCT, capturedUpstream.Bytes(), reqSummary.Model); usage.Found {
+					u := usage
+					mergeAuditUsage(&auditUsage, auditParams, &u, h.Logger, r.Context(), requestID, agent.ID, "streaming")
+				}
+			}
+			if auditUsage != nil {
+				auditParams["usage_input_tokens"] = auditUsage.Usage.InputTokens
+				auditParams["usage_output_tokens"] = auditUsage.Usage.OutputTokens
+				if auditUsage.Usage.CacheReadTokens > 0 {
+					auditParams["usage_cache_read_tokens"] = auditUsage.Usage.CacheReadTokens
+				}
+				if auditUsage.Usage.CacheWriteTokens > 0 {
+					auditParams["usage_cache_write_tokens"] = auditUsage.Usage.CacheWriteTokens
+				}
+				if auditUsage.Usage.CacheWrite1hTokens > 0 {
+					auditParams["usage_cache_write_1h_tokens"] = auditUsage.Usage.CacheWrite1hTokens
 				}
 			}
 
@@ -957,7 +1020,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					Provider:     string(provider),
 					Method:       r.Method,
 					Path:         r.URL.RequestURI(),
-					Status:       resp.StatusCode,
+					Status:       streamStatus,
 					ContentType:  upstreamCT,
 					Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
 					Body:         bodyStr,
@@ -967,9 +1030,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 
-			auditStatus = resp.StatusCode
+			auditStatus = streamStatus
 			if auditOutcome == "" {
-				auditOutcome = outcomeFromStatus(resp.StatusCode)
+				auditOutcome = outcomeFromStatus(streamStatus)
 			}
 			return
 		}
@@ -1870,6 +1933,7 @@ type streamingTimingWriter struct {
 	sawWrite          bool
 	sawTextStart      bool
 	sawTextDelta      bool
+	eventBuf          string
 }
 
 func newStreamingTimingWriter(w io.Writer, logger *slog.Logger, requestID, provider string, upstreamHeadersMs int64) io.Writer {
@@ -1907,24 +1971,106 @@ func (tw *streamingTimingWriter) observe(p []byte) {
 			"chunk_bytes", len(p),
 		)
 	}
-	if !tw.sawTextStart && bytes.Contains(p, []byte(`"type":"text"`)) {
-		tw.sawTextStart = true
-		tw.logger.InfoContext(context.Background(), "lite-proxy stream forwarded text block start",
-			"request_id", tw.requestID,
-			"provider", tw.provider,
-			"elapsed_ms", elapsedMs,
-			"ttfb_headers_ms", tw.upstreamHeadersMs,
-		)
+	tw.observeSSETextEvents(p, elapsedMs)
+}
+
+func (tw *streamingTimingWriter) observeSSETextEvents(p []byte, elapsedMs int64) {
+	tw.eventBuf += strings.ReplaceAll(string(p), "\r\n", "\n")
+	for {
+		idx := strings.Index(tw.eventBuf, "\n\n")
+		if idx < 0 {
+			if len(tw.eventBuf) > 64<<10 {
+				tw.eventBuf = tw.eventBuf[len(tw.eventBuf)-(32<<10):]
+			}
+			return
+		}
+		rawEvent := tw.eventBuf[:idx]
+		tw.eventBuf = tw.eventBuf[idx+2:]
+		var eventName string
+		var dataLines []string
+		for _, line := range strings.Split(rawEvent, "\n") {
+			line = strings.TrimSpace(line)
+			switch {
+			case strings.HasPrefix(line, "event:"):
+				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "data:"):
+				dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			}
+		}
+		if len(dataLines) == 0 {
+			continue
+		}
+		data := strings.Join(dataLines, "\n")
+		if !tw.sawTextStart && sseEventIsTextStart(eventName, data) {
+			tw.sawTextStart = true
+			tw.logger.InfoContext(context.Background(), "lite-proxy stream forwarded text block start",
+				"request_id", tw.requestID,
+				"provider", tw.provider,
+				"elapsed_ms", elapsedMs,
+				"ttfb_headers_ms", tw.upstreamHeadersMs,
+			)
+		}
+		if !tw.sawTextDelta && sseEventIsTextDelta(eventName, data) {
+			tw.sawTextDelta = true
+			tw.logger.InfoContext(context.Background(), "lite-proxy stream forwarded first text delta",
+				"request_id", tw.requestID,
+				"provider", tw.provider,
+				"elapsed_ms", elapsedMs,
+				"ttfb_headers_ms", tw.upstreamHeadersMs,
+			)
+		}
 	}
-	if !tw.sawTextDelta && bytes.Contains(p, []byte(`"type":"text_delta"`)) {
-		tw.sawTextDelta = true
-		tw.logger.InfoContext(context.Background(), "lite-proxy stream forwarded first text delta",
-			"request_id", tw.requestID,
-			"provider", tw.provider,
-			"elapsed_ms", elapsedMs,
-			"ttfb_headers_ms", tw.upstreamHeadersMs,
-		)
+}
+
+func sseEventIsTextStart(eventName, data string) bool {
+	switch eventName {
+	case "content_block_start":
+		var payload struct {
+			ContentBlock struct {
+				Type string `json:"type"`
+			} `json:"content_block"`
+		}
+		return json.Unmarshal([]byte(data), &payload) == nil && payload.ContentBlock.Type == "text"
+	case "response.content_part.added":
+		var payload struct {
+			Part struct {
+				Type string `json:"type"`
+			} `json:"part"`
+		}
+		return json.Unmarshal([]byte(data), &payload) == nil && payload.Part.Type == "output_text"
 	}
+	return false
+}
+
+func sseEventIsTextDelta(eventName, data string) bool {
+	switch eventName {
+	case "content_block_delta":
+		var payload struct {
+			Delta struct {
+				Type string `json:"type"`
+			} `json:"delta"`
+		}
+		return json.Unmarshal([]byte(data), &payload) == nil && payload.Delta.Type == "text_delta"
+	case "response.output_text.delta":
+		return true
+	case "":
+		var payload struct {
+			Choices []struct {
+				Delta struct {
+					Content any `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal([]byte(data), &payload) != nil {
+			return false
+		}
+		for _, choice := range payload.Choices {
+			if choice.Delta.Content != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // readResponseLimited mirrors readLimited for upstream responses. Default
@@ -1985,6 +2131,174 @@ func pricingModelMatch(a, b string) bool {
 		return false
 	}
 	return pricing.Normalize(a) == pricing.Normalize(b)
+}
+
+func mergeAuditUsage(dst **llmproxy.ExtractUsageResult, auditParams map[string]any, next *llmproxy.ExtractUsageResult, logger *slog.Logger, ctx context.Context, requestID string, agentID string, label string) {
+	if next == nil {
+		return
+	}
+	if *dst == nil {
+		*dst = next
+		auditParams[label+"_usage_recorded"] = true
+		return
+	}
+	if pricingModelMatch((*dst).Model, next.Model) {
+		(*dst).Usage.InputTokens += next.Usage.InputTokens
+		(*dst).Usage.OutputTokens += next.Usage.OutputTokens
+		(*dst).Usage.CacheReadTokens += next.Usage.CacheReadTokens
+		(*dst).Usage.CacheWriteTokens += next.Usage.CacheWriteTokens
+		(*dst).Usage.CacheWrite1hTokens += next.Usage.CacheWrite1hTokens
+		auditParams[label+"_usage_recorded"] = true
+		return
+	}
+	if logger != nil {
+		logger.WarnContext(ctx, "lite-proxy usage dropped: model mismatch",
+			"request_id", requestID,
+			"agent_id", agentID,
+			"label", label,
+			"existing_model", (*dst).Model,
+			"dropped_model", next.Model,
+		)
+	}
+	auditParams[label+"_usage_dropped_model_mismatch"] = true
+}
+
+func spliceStreamingContinuationBody(provider conversation.Provider, result conversation.StreamingRewriteResult, contentType string, body []byte) ([]byte, error) {
+	if !conversation.IsSSEContentType(contentType) {
+		return body, nil
+	}
+	switch provider {
+	case conversation.ProviderAnthropic:
+		return spliceAnthropicContinuationSSE(result.NextAnthropicContentIndex, body)
+	case conversation.ProviderOpenAI:
+		if result.StreamFormat == "openai_responses" {
+			return spliceOpenAIResponsesContinuationSSE(result.StreamID, result.NextOpenAIOutputIndex, body)
+		}
+		return body, nil
+	default:
+		return body, nil
+	}
+}
+
+type liteProxySSEEvent struct {
+	event string
+	data  string
+}
+
+func parseLiteProxySSE(body []byte) []liteProxySSEEvent {
+	normalized := strings.ReplaceAll(string(body), "\r\n", "\n")
+	blocks := strings.Split(normalized, "\n\n")
+	events := make([]liteProxySSEEvent, 0, len(blocks))
+	for _, block := range blocks {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+		var ev liteProxySSEEvent
+		var dataLines []string
+		for _, line := range strings.Split(block, "\n") {
+			line = strings.TrimSpace(line)
+			switch {
+			case strings.HasPrefix(line, "event:"):
+				ev.event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "data:"):
+				dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			}
+		}
+		if len(dataLines) == 0 {
+			continue
+		}
+		ev.data = strings.Join(dataLines, "\n")
+		events = append(events, ev)
+	}
+	return events
+}
+
+func appendLiteProxySSEEvent(b *bytes.Buffer, event string, payload any) error {
+	var data []byte
+	switch v := payload.(type) {
+	case string:
+		data = []byte(v)
+	default:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		data = raw
+	}
+	if event != "" {
+		b.WriteString("event: ")
+		b.WriteString(event)
+		b.WriteByte('\n')
+	}
+	b.WriteString("data: ")
+	b.Write(data)
+	b.WriteString("\n\n")
+	return nil
+}
+
+func spliceAnthropicContinuationSSE(indexOffset int, body []byte) ([]byte, error) {
+	var out bytes.Buffer
+	for _, ev := range parseLiteProxySSE(body) {
+		if ev.data == "[DONE]" || ev.event == "message_start" {
+			continue
+		}
+		switch ev.event {
+		case "content_block_start", "content_block_delta", "content_block_stop":
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(ev.data), &payload); err != nil {
+				return nil, err
+			}
+			if idx, ok := numericJSONIndex(payload["index"]); ok {
+				payload["index"] = idx + indexOffset
+			}
+			if err := appendLiteProxySSEEvent(&out, ev.event, payload); err != nil {
+				return nil, err
+			}
+		default:
+			if err := appendLiteProxySSEEvent(&out, ev.event, ev.data); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return out.Bytes(), nil
+}
+
+func spliceOpenAIResponsesContinuationSSE(responseID string, outputIndexOffset int, body []byte) ([]byte, error) {
+	var out bytes.Buffer
+	for _, ev := range parseLiteProxySSE(body) {
+		if ev.data == "[DONE]" || ev.event == "response.created" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(ev.data), &payload); err != nil {
+			return nil, err
+		}
+		if idx, ok := numericJSONIndex(payload["output_index"]); ok {
+			payload["output_index"] = idx + outputIndexOffset
+		}
+		if ev.event == "response.completed" && responseID != "" {
+			if resp, ok := payload["response"].(map[string]any); ok {
+				resp["id"] = responseID
+			}
+		}
+		if err := appendLiteProxySSEEvent(&out, ev.event, payload); err != nil {
+			return nil, err
+		}
+	}
+	out.WriteString("data: [DONE]\n\n")
+	return out.Bytes(), nil
+}
+
+func numericJSONIndex(v any) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	default:
+		return 0, false
+	}
 }
 
 // actionForRoute maps a request path to an audit-log action label.

@@ -125,7 +125,6 @@ func TestTryContinuation_PostsSecondCallWithToolResult(t *testing.T) {
 			AgentUserID: agent.UserID,
 			AgentID:     agent.ID,
 		},
-
 	)
 	if err != nil {
 		t.Fatalf("tryContinuation: %v", err)
@@ -191,6 +190,224 @@ func TestTryContinuation_PostsSecondCallWithToolResult(t *testing.T) {
 	}
 	if strings.Contains(string(final.Body), "substitute-fallback-text") {
 		t.Errorf("final body should NOT contain the fallback substitute text, got: %s", final.Body)
+	}
+}
+
+func TestTryContinuation_PostsSecondCallWithSSEToolResult(t *testing.T) {
+	var seenBodies [][]byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		seenBodies = append(seenBodies, b)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			"event: message_start",
+			`data: {"type":"message_start","message":{"id":"msg_second","type":"message","role":"assistant","model":"claude-sonnet-4","content":[]}}`,
+			"",
+			"event: content_block_start",
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			"",
+			"event: content_block_delta",
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"continued from tool result"}}`,
+			"",
+			"event: content_block_stop",
+			`data: {"type":"content_block_stop","index":0}`,
+			"",
+			"event: message_delta",
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":7}}`,
+			"",
+			"event: message_stop",
+			`data: {"type":"message_stop"}`,
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	h, _, _, _ := newSeededHandler(t, upstream.URL)
+	agent := firstSeededAgent(t, h.Store)
+	inboundBody := []byte(`{
+		"model": "claude-sonnet-4",
+		"stream": true,
+		"messages": [{"role": "user", "content": "make /tmp/blah.txt"}],
+		"max_tokens": 1024
+	}`)
+	firstUpstreamBody := []byte(strings.Join([]string{
+		"event: message_start",
+		`data: {"type":"message_start","message":{"id":"msg_first","type":"message","role":"assistant","model":"claude-sonnet-4","content":[]}}`,
+		"",
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_auto","name":"Bash","input":{}}}`,
+		"",
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"curl https://clawvisor.local/control/tasks\"}"}}`,
+		"",
+		"event: content_block_stop",
+		`data: {"type":"content_block_stop","index":0}`,
+		"",
+		"event: message_delta",
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":4}}`,
+		"",
+		"event: message_stop",
+		`data: {"type":"message_stop"}`,
+		"",
+	}, "\n"))
+	processed := llmproxy.PostprocessResult{
+		Body:        []byte("substitute-fallback-text"),
+		ContentType: "text/event-stream",
+		Decisions: []conversation.ToolUseDecisionRecord{{
+			ToolUse: conversation.ToolUse{ID: "toolu_auto", Name: "Bash"},
+			Verdict: conversation.ToolUseVerdict{
+				Allowed:                false,
+				SubstituteWith:         "[Clawvisor: task was approved]",
+				ContinueWithToolResult: "[Clawvisor: task was approved]",
+			},
+		}},
+		ContinuationToolResults: []conversation.ContinuationToolResult{{
+			ToolUseID: "toolu_auto",
+			Content:   "[Clawvisor: task was approved]",
+		}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages", strings.NewReader(string(inboundBody)))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(store.WithAgent(req.Context(), agent))
+
+	final, status, ct, _, err := h.tryContinuation(
+		req,
+		agent,
+		conversation.ProviderAnthropic,
+		"req-stream-continuation",
+		inboundBody,
+		firstUpstreamBody,
+		"text/event-stream",
+		http.StatusOK,
+		processed,
+		llmproxy.PostprocessConfig{
+			Inspector:   h.Inspector,
+			RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
+			Store:       h.Store,
+			AgentUserID: agent.UserID,
+			AgentID:     agent.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("tryContinuation: %v", err)
+	}
+	if final == nil {
+		t.Fatal("expected non-nil final result")
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status=%d, want %d", status, http.StatusOK)
+	}
+	if ct != "text/event-stream" {
+		t.Fatalf("content type=%q, want text/event-stream", ct)
+	}
+	if len(seenBodies) != 1 {
+		t.Fatalf("expected one continuation upstream call, got %d", len(seenBodies))
+	}
+	var contReq map[string]any
+	if err := json.Unmarshal(seenBodies[0], &contReq); err != nil {
+		t.Fatalf("continuation body not JSON: %v\n%s", err, seenBodies[0])
+	}
+	msgs, ok := contReq["messages"].([]any)
+	if !ok || len(msgs) != 3 {
+		t.Fatalf("messages=%v, want three-message continuation body", contReq["messages"])
+	}
+	last := msgs[2].(map[string]any)
+	content := last["content"].([]any)
+	toolResult := content[0].(map[string]any)
+	if toolResult["type"] != "tool_result" || toolResult["tool_use_id"] != "toolu_auto" {
+		t.Fatalf("last continuation block=%v, want tool_result for toolu_auto", toolResult)
+	}
+	out := string(final.Body)
+	if !strings.Contains(out, "continued from tool result") {
+		t.Fatalf("final streamed continuation body missing model continuation: %s", out)
+	}
+	if strings.Contains(out, "substitute-fallback-text") {
+		t.Fatalf("streaming continuation returned fallback text instead of second upstream body: %s", out)
+	}
+}
+
+func TestSpliceAnthropicStreamingContinuationKeepsSingleMessageEnvelope(t *testing.T) {
+	body := []byte(strings.Join([]string{
+		"event: message_start",
+		`data: {"type":"message_start","message":{"id":"msg_second","type":"message","role":"assistant","model":"claude-sonnet-4","content":[]}}`,
+		"",
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		"",
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"continued"}}`,
+		"",
+		"event: content_block_stop",
+		`data: {"type":"content_block_stop","index":0}`,
+		"",
+		"event: message_delta",
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}`,
+		"",
+		"event: message_stop",
+		`data: {"type":"message_stop"}`,
+		"",
+	}, "\n"))
+
+	spliced, err := spliceStreamingContinuationBody(conversation.ProviderAnthropic, conversation.StreamingRewriteResult{
+		StreamFormat:              "anthropic_messages",
+		NextAnthropicContentIndex: 2,
+	}, "text/event-stream", body)
+	if err != nil {
+		t.Fatalf("spliceStreamingContinuationBody: %v", err)
+	}
+	out := string(spliced)
+	if strings.Contains(out, "event: message_start") {
+		t.Fatalf("spliced Anthropic continuation must not start a second message: %s", out)
+	}
+	if got := strings.Count(out, "event: message_stop"); got != 1 {
+		t.Fatalf("message_stop count=%d, want 1: %s", got, out)
+	}
+	if !strings.Contains(out, `"index":2`) {
+		t.Fatalf("continuation content block was not offset to the next safe index: %s", out)
+	}
+}
+
+func TestSpliceOpenAIResponsesStreamingContinuationKeepsSingleLifecycle(t *testing.T) {
+	body := []byte(strings.Join([]string{
+		"event: response.created",
+		`data: {"type":"response.created","response":{"id":"resp_second","status":"in_progress"}}`,
+		"",
+		"event: response.output_item.added",
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_second","type":"message","role":"assistant","status":"in_progress"}}`,
+		"",
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","item_id":"msg_second","output_index":0,"content_index":0,"delta":"continued"}`,
+		"",
+		"event: response.output_item.done",
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_second","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"continued"}]}}`,
+		"",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"id":"resp_second","status":"completed"}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n"))
+
+	spliced, err := spliceStreamingContinuationBody(conversation.ProviderOpenAI, conversation.StreamingRewriteResult{
+		StreamID:              "resp_first",
+		StreamFormat:          "openai_responses",
+		NextOpenAIOutputIndex: 1,
+	}, "text/event-stream", body)
+	if err != nil {
+		t.Fatalf("spliceStreamingContinuationBody: %v", err)
+	}
+	out := string(spliced)
+	if strings.Contains(out, "event: response.created") {
+		t.Fatalf("spliced Responses continuation must not create a second response: %s", out)
+	}
+	if got := strings.Count(out, "event: response.completed"); got != 1 {
+		t.Fatalf("response.completed count=%d, want 1: %s", got, out)
+	}
+	if !strings.Contains(out, `"output_index":1`) {
+		t.Fatalf("continuation output item was not offset to the next safe index: %s", out)
+	}
+	if !strings.Contains(out, `"id":"resp_first"`) {
+		t.Fatalf("response.completed id was not rewritten to the already-open response id: %s", out)
 	}
 }
 
@@ -280,7 +497,6 @@ func TestTryContinuation_RefreshesCandidateTasksFromStore(t *testing.T) {
 			CallerNonces:     h.CallerNonces,
 			PendingApprovals: h.PendingApprovals,
 		},
-
 	)
 	if err != nil {
 		t.Fatalf("tryContinuation: %v", err)
@@ -362,7 +578,6 @@ func TestTryContinuation_PrependsUserFacingNotice(t *testing.T) {
 			AgentUserID: agent.UserID,
 			AgentID:     agent.ID,
 		},
-
 	)
 	if err != nil {
 		t.Fatalf("tryContinuation: %v", err)
@@ -484,7 +699,6 @@ func TestServe_ContinuationClearsStaleContentLengthHeader(t *testing.T) {
 			AgentUserID: agent.UserID,
 			AgentID:     agent.ID,
 		},
-
 	)
 	if err != nil {
 		t.Fatalf("tryContinuation: %v", err)
