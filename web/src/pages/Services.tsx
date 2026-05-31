@@ -9,7 +9,7 @@ import { ServiceIconBadge } from '../components/ServiceIcon'
 
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
 
-function openOAuthUrl(url: string) {
+export function openOAuthUrl(url: string) {
   if (isMobile) {
     window.location.href = url
     return
@@ -880,7 +880,7 @@ function VaultMetric({ label, value }: { label: string; value: string }) {
 
 // ── Active Service Row ───────────────────────────────────────────────────────
 
-function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
+export function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
   const qc = useQueryClient()
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [showKeyInput, setShowKeyInput] = useState(false)

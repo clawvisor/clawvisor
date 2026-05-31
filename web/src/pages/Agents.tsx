@@ -6,7 +6,9 @@ import type { ConnectionRequest, InstallContext } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
+import TaskCard from '../components/TaskCard'
 import { RuntimeApprovalsPanel, RuntimeSessionsPanel, filterLiveRuntimeApprovals, isActiveRuntimeSession } from './Runtime'
+import { ActiveServiceRow, openOAuthUrl } from './Services'
 
 export default function Agents() {
   const { currentOrg, features } = useAuth()
@@ -861,9 +863,13 @@ function SwitchControl({
 // links land directly on step 2, and the browser back button rewinds the
 // wizard naturally.
 
-type AgentTab = 'openclaw' | 'hermes' | 'claude-code' | 'codex' | 'claude-desktop' | 'other'
+type AgentTab = 'openclaw' | 'hermes' | 'claude-code' | 'codex' | 'claude-desktop' | 'gbrain' | 'cloud-agent' | 'other'
 
-const PROXY_LITE_AGENT_TABS: AgentTab[] = ['openclaw', 'hermes', 'claude-code', 'codex', 'claude-desktop', 'other']
+// `gbrain` and `cloud-agent` are escape hatches from the LLM-proxy default:
+// both mint an agent token + standing task without trying to wire model
+// traffic through Clawvisor. Surfaced only when the LLM proxy is on, since
+// that's the regime where they need a discoverable path.
+const PROXY_LITE_AGENT_TABS: AgentTab[] = ['openclaw', 'hermes', 'claude-code', 'codex', 'claude-desktop', 'gbrain', 'cloud-agent', 'other']
 const LEGACY_AGENT_TABS: AgentTab[] = ['openclaw', 'claude-code', 'claude-desktop', 'other']
 
 interface AgentMeta {
@@ -900,6 +906,16 @@ const AGENT_META: Record<AgentTab, AgentMeta> = {
     label: 'Claude Desktop',
     tagline: 'Anthropic desktop app (macOS)',
     primitive: 'Configuration profile',
+  },
+  gbrain: {
+    label: 'GBrain',
+    tagline: 'Personal-brain data pipeline — no LLM proxy, just a token',
+    primitive: 'Skill',
+  },
+  'cloud-agent': {
+    label: 'Cloud agent',
+    tagline: "Perplexity Computer, hosted ChatGPT — agents you can't reconfigure",
+    primitive: 'Manual',
   },
   other: {
     label: 'Other agent',
@@ -1024,6 +1040,8 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
                 {picked === 'claude-code' && <ManualProxyCLISetupGuide target="claude-code" clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} onCopy={copyText} />}
                 {picked === 'codex' && <ManualProxyCLISetupGuide target="codex" clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} onCopy={copyText} />}
                 {picked === 'claude-desktop' && <ClaudeDesktopProfileGuide />}
+                {picked === 'gbrain' && <GBrainStreamlinedGuide clawvisorURL={clawvisorURL} onCopy={copyText} />}
+                {picked === 'cloud-agent' && <CloudAgentPromptGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
                 {picked === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
               </>
             ) : (
@@ -1505,7 +1523,7 @@ function normalizePublicURL(url: string | null | undefined): string | null {
   return trimmed || null
 }
 
-function buildBootstrapCommand(clawvisorURL: string, claim: string | undefined, agentName: string): string {
+function buildBootstrapCommand(clawvisorURL: string, claim: string | undefined, agentName: string, harness?: string): string {
   // Name and claim ride on the URL so the curl is body-less — no -H, no -d.
   // The claim code (minted by an authenticated dashboard session) attributes
   // this curl to the user without leaking user_id into the URL. mkdir + chmod
@@ -1518,8 +1536,15 @@ function buildBootstrapCommand(clawvisorURL: string, claim: string | undefined, 
   // `URLSearchParams` handles URL-encoding so a future claim format that
   // contains `&` / `=` / `#` / space doesn't silently break the curl. The
   // newer `buildConnectCommand` uses the same pattern.
+  //
+  // `harness` is the install-context tag the server stamps onto the resulting
+  // agent (see connections.go); the gateway-only guides set it to identify
+  // GBrain / cloud-agent connections distinctly from the generic "other"
+  // path. Omitted means no tag — preserves prior behavior for callers that
+  // don't care.
   const qs = new URLSearchParams({ wait: 'true', name: agentName })
   if (claim) qs.set('claim', claim)
+  if (harness) qs.set('harness', harness)
   return `mkdir -p ~/.clawvisor/agents && curl -sf --remove-on-error -X POST \\
   "${clawvisorURL}/api/agents/connect?${qs.toString()}" \\
   -o ~/.clawvisor/agents/${agentName}.json \\
@@ -1896,7 +1921,7 @@ client = OpenAI(
 type LLMProvider = 'anthropic' | 'openai'
 
 function BootstrapApproveStep({
-  clawvisorURL, claim, agentName, setAgentName, onCopy, onAdvance,
+  clawvisorURL, claim, agentName, setAgentName, onCopy, onAdvance, harness,
 }: {
   clawvisorURL: string
   claim: string | undefined
@@ -1904,6 +1929,11 @@ function BootstrapApproveStep({
   setAgentName: (n: string) => void
   onCopy: (text: string) => void
   onAdvance: (agentId: string) => void
+  // `harness` is stamped onto the connection request's install_context so the
+  // resulting agent record carries which gateway-only path created it
+  // (gbrain / cloud-agent). Existing callers omit this and get an untagged
+  // connection, same as before.
+  harness?: string
 }) {
   const qc = useQueryClient()
   const { data: connections } = useQuery({
@@ -1970,7 +2000,7 @@ function BootstrapApproveStep({
     onError: (err: Error) => setActionError(err.message),
   })
 
-  const bootstrapCmd = buildBootstrapCommand(clawvisorURL, claim, agentName)
+  const bootstrapCmd = buildBootstrapCommand(clawvisorURL, claim, agentName, harness)
   const filePath = `~/.clawvisor/agents/${agentName}.json`
 
   return (
@@ -3508,6 +3538,534 @@ function ClaudeDesktopProfileGuide() {
       </details>
     </div>
   )
+}
+
+// ── Cloud-agent connect path ────────────────────────────────────────────────
+//
+// Escape hatch from the LLM-proxy default for vendor-locked chat agents
+// (Perplexity Computer, hosted ChatGPT, etc.) where the user can't redirect
+// the model endpoint *and* doesn't have a terminal in the conversation.
+// What they do have is a chat box — so we follow the same primitive the
+// legacy non-proxy OpenClaw / Other-agent flow uses: hand the user a prompt
+// to paste in, the agent fetches /skill/setup.md, self-registers via the
+// standard Clawvisor skill, the user approves the resulting connection in
+// the Pending Connections section below the wizard.
+//
+// Differs from LegacyOpenClawGuide only in framing (cloud-specific copy +
+// LLM-proxy-stays-with-vendor explainer) so the experience is otherwise
+// the same battle-tested path that's been working for non-proxy users.
+
+function CloudAgentPromptGuide({
+  setupURL,
+  clawvisorURL,
+  copied,
+  onCopy,
+}: {
+  setupURL: string
+  clawvisorURL: string
+  copied: boolean
+  onCopy: (text: string) => void
+}) {
+  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        For hosted agents (Perplexity Computer, hosted ChatGPT, any harness
+        where you can't change the LLM endpoint). Paste the prompt below into
+        your agent — it will fetch the setup instructions, register itself,
+        and wait for your approval. Your LLM traffic stays with the vendor;
+        Clawvisor only intermediates external service calls.
+      </p>
+
+      <div className="space-y-4">
+        <div className="flex items-start gap-3">
+          <StepNumber n={1} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
+            <LegacyPromptBlock prompt={prompt} copied={copied} onCopy={onCopy} />
+            <p className="text-xs text-text-tertiary">
+              The agent follows the setup instructions at that URL — registers
+              itself, sets up E2E encryption, and installs the Clawvisor skill.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <StepNumber n={2} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+            <p className="text-xs text-text-tertiary">
+              A connection request will appear in the <strong>Pending Connections</strong>{' '}
+              section below. Click <strong>Approve</strong> to grant the agent a token. It
+              receives the token automatically and is ready to go.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <details className="group">
+        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
+          Manual setup (token + environment variables)
+        </summary>
+        <div className="mt-4 space-y-4 pl-0">
+          <div className="flex items-start gap-3">
+            <StepNumber n={1} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Create an agent token</p>
+              <p className="text-xs text-text-tertiary">
+                Use the <strong>Create Agent</strong> form below. Copy the token — it's shown only once.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <StepNumber n={2} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Configure the agent's environment</p>
+              <p className="text-xs text-text-tertiary">
+                Paste these into wherever the agent reads credentials (vendor settings UI,
+                integration token slot, etc.):
+              </p>
+              <CodeBlock>{`CLAWVISOR_URL=${clawvisorURL}\nCLAWVISOR_AGENT_TOKEN=<your token>`}</CodeBlock>
+            </div>
+          </div>
+        </div>
+      </details>
+    </div>
+  )
+}
+
+// ── GBrain streamlined connect path ─────────────────────────────────────────
+//
+// The fully-inline GBrain wizard: mint an agent (token returned to the
+// dashboard), activate Gmail / Calendar / Contacts via OAuth popups, create
+// a standing task with the recipe-canonical expansive purpose + lenient
+// strictness, approve it inline, then hand the user three env vars
+// (CLAWVISOR_URL / CLAWVISOR_AGENT_TOKEN / CLAWVISOR_TASK_ID) ready to paste
+// to a downstream agent that will write them into GBrain's environment.
+//
+// Why not the bootstrap-curl path? GBrain is already installed on the user's
+// machine — the dashboard creating the agent directly is one fewer
+// terminal-paste, and we need the token in browser memory anyway to call
+// POST /api/tasks as the agent.
+
+const GBRAIN_AGENT_NAME = 'gbrain'
+const GBRAIN_AGENT_DESCRIPTION = 'GBrain personal-brain data pipeline'
+const GBRAIN_PURPOSE = 'Full executive assistant access to Gmail, Calendar, and Contacts including inbox triage, event listing, contact lookup, and historical data access for all connected Google accounts.'
+// Service IDs match the adapter slugs in internal/adapters/google/*/adapter.go.
+// Wildcard action with auto_execute + lenient verification mirrors the
+// "expansive access" posture the credential-gateway recipe expects — GBrain
+// reads a lot of methods across each service, and per-call intent
+// verification would block the pipeline.
+const GBRAIN_SERVICES: { id: string; label: string }[] = [
+  { id: 'google.gmail', label: 'Gmail' },
+  { id: 'google.calendar', label: 'Google Calendar' },
+  { id: 'google.contacts', label: 'Google Contacts' },
+]
+
+type GBrainStep = 'mint' | 'services' | 'task' | 'env'
+
+function GBrainStreamlinedGuide({
+  clawvisorURL,
+  onCopy,
+}: {
+  clawvisorURL: string
+  onCopy: (text: string) => void
+}) {
+  const qc = useQueryClient()
+  const [step, setStep] = useState<GBrainStep>('mint')
+  // agentToken is held in component state only — never persisted. If the
+  // user reloads mid-flow they have to delete the orphan agent and start
+  // over; that's the right trade for not leaking the token into storage.
+  const [agent, setAgent] = useState<Agent | null>(null)
+  const [taskId, setTaskId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const { data: agents } = useQuery({
+    queryKey: ['agents', 'personal'],
+    queryFn: () => api.agents.list(),
+  })
+
+  // Poll services while we're on the activate step so the cards flip to
+  // "activated" the moment the OAuth popup completes. Refetch-on-focus
+  // would also work but is racier — explicit 2s polling is cheap and lands
+  // the UI within a second of the user returning to the dashboard tab.
+  const { data: servicesData } = useQuery({
+    queryKey: ['services'],
+    queryFn: () => api.services.list(),
+    refetchInterval: step === 'services' ? 2000 : false,
+  })
+
+  const services = servicesData?.services ?? []
+  // The services list is flattened per (service_id, alias) connection — one
+  // entry per activated account. So Gmail with two accounts shows as two
+  // ServiceInfo entries with the same id but different alias. Group them
+  // back into (service → list of activated aliases) so we can render
+  // multi-account rows + qualify task scopes correctly.
+  //
+  // Bare entries (alias undefined/"") are returned for the canonical
+  // "default" connection — the gateway error message normalizes those to
+  // alias "default" in its ALIAS_NOT_FOUND response, so we mirror that
+  // normalization here so the task POST sends the same identifier the
+  // gateway will accept.
+  const connectedAliases = useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const s of services) {
+      if (s.status !== 'activated') continue
+      const target = GBRAIN_SERVICES.find(g => g.id === s.id)
+      if (!target) continue
+      const alias = (s.alias && s.alias.trim()) || 'default'
+      const list = map.get(s.id) ?? []
+      if (!list.includes(alias)) list.push(alias)
+      map.set(s.id, list)
+    }
+    return map
+  }, [services])
+  const aliasesFor = (id: string) => connectedAliases.get(id) ?? []
+  const allServicesHaveAccount = GBRAIN_SERVICES.every(s => aliasesFor(s.id).length > 0)
+
+  const mintMutation = useMutation({
+    mutationFn: async () => {
+      const name = nextAvailableName(GBRAIN_AGENT_NAME, agents)
+      return api.agents.create(name, GBRAIN_AGENT_DESCRIPTION)
+    },
+    onSuccess: (a) => {
+      setAgent(a)
+      qc.invalidateQueries({ queryKey: ['agents', 'personal'] })
+      qc.invalidateQueries({ queryKey: ['agents'] })
+      setStep('services')
+    },
+    onError: (e: Error) => setError(e.message),
+  })
+
+  // Expand (service, alias) pairs into qualified `service:alias` strings the
+  // gateway accepts. The gateway requires an alias-qualified service field
+  // whenever any aliases beyond a single bare connection exist for the
+  // service (ALIAS_NOT_FOUND otherwise). Sending the qualified form
+  // unconditionally is safe — it's also the disambiguation form the gateway
+  // error message itself recommends.
+  const qualifiedAuthorizedActions = useMemo(() => {
+    const out: { service: string; action: string; auto_execute: boolean; verification: string }[] = []
+    for (const target of GBRAIN_SERVICES) {
+      for (const alias of aliasesFor(target.id)) {
+        out.push({
+          service: `${target.id}:${alias}`,
+          action: '*',
+          auto_execute: true,
+          verification: 'lenient',
+        })
+      }
+    }
+    return out
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectedAliases])
+
+  const createTaskMutation = useMutation({
+    mutationFn: async () => {
+      if (!agent?.token) throw new Error('Agent token missing — restart the wizard')
+      if (qualifiedAuthorizedActions.length === 0) {
+        throw new Error('No connected accounts found — go back and authorize at least one account per service')
+      }
+      const body = {
+        purpose: GBRAIN_PURPOSE,
+        authorized_actions: qualifiedAuthorizedActions,
+        intent_verification_mode: 'lenient',
+        lifetime: 'standing',
+        schema_version: 2,
+      }
+      // POST /api/tasks requires an agent bearer token (tasks.go Create
+      // pulls the agent from request context via middleware.AgentFromContext).
+      // The dashboard's normal `api` client uses session auth, so this is a
+      // one-off fetch with the in-memory cvis_… token.
+      const res = await fetch(`${clawvisorURL}/api/tasks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${agent.token}`,
+        },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const txt = await res.text()
+        throw new Error(`Task creation failed (${res.status}): ${txt}`)
+      }
+      return await res.json() as { task_id: string; status: string }
+    },
+    onSuccess: (data) => {
+      setTaskId(data.task_id)
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+    },
+    onError: (e: Error) => setError(e.message),
+  })
+
+  // Two callers: first-time activation (newAccount undefined) and "Add
+  // another account" on an already-activated service (newAccount=true).
+  // The newAccount=true variant tells the OAuth handler to bypass the
+  // already_authorized shortcut and force a fresh consent so a different
+  // Google account can be selected — same flag the Services page uses.
+  // Delegates to Services.openOAuthUrl so mobile redirect / popup fallback
+  // matches the canonical flow.
+  const openServiceOAuth = async (serviceId: string, newAccount = false) => {
+    setError(null)
+    try {
+      const resp = await api.services.oauthGetUrl(serviceId, undefined, undefined, newAccount)
+      if (resp.already_authorized) {
+        qc.invalidateQueries({ queryKey: ['services'] })
+        return
+      }
+      if (resp.url) openOAuthUrl(resp.url)
+    } catch (e) {
+      setError((e as Error).message ?? 'Failed to start OAuth flow')
+    }
+  }
+
+  // Poll the tasks list while we're on the approve step so the wizard
+  // auto-advances when the user clicks Approve inside TaskCard. We don't
+  // own the approve mutation here — TaskCard does — so the status change
+  // is the only signal we have that approval landed. List is filtered to
+  // the agent_id so we don't refetch the whole user's task history at 2s.
+  const { data: tasksData } = useQuery({
+    queryKey: ['tasks', 'gbrain-wizard', agent?.id ?? 'none'],
+    queryFn: () => api.tasks.list({ limit: 100 }),
+    enabled: !!taskId && step === 'task',
+    refetchInterval: step === 'task' ? 2000 : false,
+  })
+  const currentTask = useMemo(
+    () => (taskId ? tasksData?.tasks.find(t => t.id === taskId) : undefined),
+    [tasksData, taskId],
+  )
+
+  // TaskCard owns the approve mutation; we watch for the status to flip to
+  // active and advance the wizard. `denied` is a terminal failure mode the
+  // user has to recover from by going back to authorize step (which leaves
+  // the orphan denied task in their list — they can revoke it from /tasks).
+  useEffect(() => {
+    if (step !== 'task') return
+    if (currentTask?.status === 'active') setStep('env')
+  }, [currentTask?.status, step])
+
+  const wizardSteps: WizardStepDef[] = [
+    { id: 'mint', title: 'Create agent', done: !!agent },
+    { id: 'services', title: 'Authorize Google', done: allServicesHaveAccount && !!agent },
+    { id: 'task', title: 'Approve task', done: step === 'env' },
+    { id: 'env', title: 'Env vars', done: step === 'env' },
+  ]
+  const activeIndex = step === 'mint' ? 0 : step === 'services' ? 1 : step === 'task' ? 2 : 3
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Set up GBrain end to end without leaving this page. We'll mint a
+        Clawvisor agent, authorize Gmail / Calendar / Contacts, approve a
+        standing task with expansive access, and hand you three environment
+        variables to paste to GBrain. None of GBrain's own LLM keys are touched.
+      </p>
+
+      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-4">
+        <div className="overflow-x-auto pb-1">
+          <StepBar steps={wizardSteps} activeIndex={activeIndex} />
+        </div>
+
+        {error && (
+          <div className="rounded border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            {error}
+          </div>
+        )}
+
+        {step === 'mint' && (
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-medium text-text-primary">Create a Clawvisor agent for GBrain</p>
+              <p className="text-xs text-text-tertiary mt-1">
+                We'll register a new agent named <code className="font-mono">{nextAvailableName(GBRAIN_AGENT_NAME, agents)}</code>{' '}
+                with a fresh token. The token stays in this browser tab — if you reload, you'll
+                start over.
+              </p>
+            </div>
+            <button
+              onClick={() => { setError(null); mintMutation.mutate() }}
+              disabled={mintMutation.isPending}
+              className="bg-brand text-surface-0 font-medium rounded px-4 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
+            >
+              {mintMutation.isPending ? 'Creating…' : 'Create GBrain agent'}
+            </button>
+          </div>
+        )}
+
+        {step === 'services' && agent && (
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-medium text-text-primary">Authorize Google services</p>
+              <p className="text-xs text-text-tertiary mt-1">
+                Connect at least one Google account for each service. You can connect multiple
+                accounts to the same service — every account you add will be in scope for the
+                standing task on the next step. The rows below are the same connection cards
+                as the Services page; rename, re-authorize, or deactivate from here.
+              </p>
+            </div>
+            {GBRAIN_SERVICES.map(target => {
+              const activated = services.filter(s => s.id === target.id && s.status === 'activated')
+              const hasAny = activated.length > 0
+              return (
+                <div key={target.id} className="rounded border border-border-default bg-surface-0 overflow-hidden">
+                  <div className="flex items-center justify-between px-5 py-3 bg-surface-1 border-b border-border-subtle">
+                    <div className="flex items-center gap-2.5">
+                      <span className={`h-2 w-2 rounded-full ${hasAny ? 'bg-success' : 'bg-text-tertiary'}`} />
+                      <div>
+                        <p className="text-sm font-medium text-text-primary">{target.label}</p>
+                        <p className="text-xs text-text-tertiary font-mono">{target.id}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => openServiceOAuth(target.id, hasAny)}
+                      className="text-xs font-medium px-3 py-1.5 rounded border border-border-default text-text-primary bg-surface-1 hover:bg-surface-2"
+                    >
+                      {hasAny ? '+ Add account' : 'Authorize →'}
+                    </button>
+                  </div>
+                  {hasAny ? (
+                    <div className="divide-y divide-border-subtle">
+                      {activated.map(svc => (
+                        <ActiveServiceRow key={`${svc.id}:${svc.alias ?? 'default'}`} svc={svc} />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="px-5 py-3 text-xs text-text-tertiary">
+                      No accounts connected yet. Click <strong>Authorize →</strong> to connect one.
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+            <WizardNav
+              canBack={false}
+              canNext={allServicesHaveAccount}
+              onBack={() => {}}
+              onNext={() => { setError(null); setStep('task'); createTaskMutation.mutate() }}
+              nextLabel="Continue"
+              nextDisabledHint={allServicesHaveAccount ? undefined : 'Connect at least one account for each service to continue'}
+            />
+          </div>
+        )}
+
+        {step === 'task' && agent && (
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-medium text-text-primary">Approve the standing task</p>
+              <p className="text-xs text-text-tertiary mt-1">
+                This is the standard task approval card — the same one you'd see on the
+                overview page if GBrain were already calling. We've prefilled the task with
+                the credential-gateway recipe's purpose and posture; review the scope and
+                approve when ready.
+              </p>
+            </div>
+
+            <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2.5">
+              <p className="text-xs font-medium text-warning">Read what you're approving</p>
+              <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                GBrain will have standing access to read every message in your Gmail, every
+                event on your Calendar, and every contact in your address book, across all
+                connected Google accounts. Intent verification is set to <strong>lenient</strong>,
+                which means GBrain's reads won't be challenged on a per-call basis. This is
+                appropriate for a personal-brain pipeline that ingests everything; it would not
+                be appropriate for an interactive agent. You can revoke at any time from the
+                task's page.
+              </p>
+            </div>
+
+            {createTaskMutation.isPending && (
+              <p className="text-xs text-text-tertiary">Creating task…</p>
+            )}
+
+            {currentTask && currentTask.status !== 'denied' && currentTask.status !== 'revoked' && (
+              <TaskCard task={currentTask} agentName={agent.name} />
+            )}
+
+            {currentTask?.status === 'denied' && (
+              <div className="rounded border border-danger/30 bg-danger/10 px-3 py-2.5 space-y-2">
+                <p className="text-xs font-medium text-danger">Task denied.</p>
+                <p className="text-xs text-text-secondary">
+                  Go back to the authorize step to adjust accounts, or revoke the denied task
+                  from <Link to="/dashboard/tasks" className="text-brand hover:underline">Tasks</Link>{' '}
+                  and re-run the wizard.
+                </p>
+                <button
+                  onClick={() => { setError(null); setStep('services'); setTaskId(null) }}
+                  className="text-xs font-medium px-3 py-1.5 rounded border border-border-default text-text-primary bg-surface-1 hover:bg-surface-2"
+                >
+                  ← Back to authorize
+                </button>
+              </div>
+            )}
+
+            {taskId && !currentTask && !createTaskMutation.isPending && (
+              <p className="text-xs text-text-tertiary">Fetching task…</p>
+            )}
+          </div>
+        )}
+
+        {step === 'env' && agent && agent.token && taskId && (
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-medium text-text-primary">Hand these to GBrain</p>
+              <p className="text-xs text-text-tertiary mt-1">
+                Three env vars. Paste them to the agent that will write them into GBrain's
+                environment — the gateway requires <code className="font-mono">CLAWVISOR_TASK_ID</code>{' '}
+                on every call, so all three are needed.
+              </p>
+            </div>
+            <GBrainEnvExport
+              clawvisorURL={clawvisorURL}
+              token={agent.token}
+              taskId={taskId}
+              onCopy={onCopy}
+            />
+            <div className="rounded border border-border-subtle bg-surface-0 px-3 py-3">
+              <p className="text-xs font-medium text-text-primary mb-2">What you can do next</p>
+              <ul className="space-y-1.5 text-xs text-text-secondary">
+                <li>
+                  <Link to={`/dashboard/agents/${encodeURIComponent(agent.id)}`} className="text-brand hover:underline">
+                    Open {agent.name} settings
+                  </Link>
+                  {' '}— restrictions, secret detection, runtime mode.
+                </li>
+                <li>
+                  <Link to={`/dashboard/tasks/${encodeURIComponent(taskId)}`} className="text-brand hover:underline">
+                    Open the task
+                  </Link>
+                  {' '}— revoke, edit scope, or watch activity.
+                </li>
+                <li>
+                  <Link to={`/dashboard/activity?agent_id=${encodeURIComponent(agent.id)}`} className="text-brand hover:underline">
+                    View activity
+                  </Link>
+                  {' '}— gateway calls GBrain has made.
+                </li>
+              </ul>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function GBrainEnvExport({
+  clawvisorURL,
+  token,
+  taskId,
+  onCopy,
+}: {
+  clawvisorURL: string
+  token: string
+  taskId: string
+  onCopy: (text: string) => void
+}) {
+  const block = `export CLAWVISOR_URL="${clawvisorURL}"
+export CLAWVISOR_AGENT_TOKEN="${token}"
+export CLAWVISOR_TASK_ID="${taskId}"`
+  return <CodeBlock onCopy={() => onCopy(block)}>{block}</CodeBlock>
 }
 
 // ── Connection request card ──────────────────────────────────────────────────
