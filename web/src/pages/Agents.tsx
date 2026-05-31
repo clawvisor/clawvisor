@@ -3978,6 +3978,30 @@ function GBrainStreamlinedGuide({
               <p className="text-xs text-text-tertiary">Creating task…</p>
             )}
 
+            {/* createTaskMutation failed: no taskId, not pending. Without an
+                inline recovery the user is stranded — the outer error banner
+                explains what went wrong, but the only escape is the
+                "Choose a different agent" link which loses the minted agent
+                and connected accounts. Offer Retry (re-run with the same
+                qualified scopes) and Back (return to authorize step where
+                they can adjust accounts before retrying). */}
+            {!taskId && !createTaskMutation.isPending && createTaskMutation.isError && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setError(null); createTaskMutation.mutate() }}
+                  className="bg-brand text-surface-0 font-medium rounded px-4 py-1.5 text-sm hover:bg-brand-strong"
+                >
+                  Retry
+                </button>
+                <button
+                  onClick={() => { setError(null); setStep('services') }}
+                  className="text-sm text-text-secondary hover:text-text-primary"
+                >
+                  ← Back to authorize
+                </button>
+              </div>
+            )}
+
             {currentTask && currentTask.status !== 'denied' && currentTask.status !== 'revoked' && (
               <TaskCard task={currentTask} agentName={agent.name} />
             )}
