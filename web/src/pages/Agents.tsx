@@ -420,7 +420,7 @@ function AgentDetailView({
 
       {showAgentSettings && <AgentRuntimePanel agentId={agent.id} defaultOpen showRuntimeControls={showRuntimeSettings} />}
 
-      {proxyLiteActive && <AgentLiteProxyPanel agentId={agent.id} harness={agent.install_context?.harness} />}
+      {proxyLiteActive && <AgentLiteProxyPanel agent={agent} />}
       {proxyLiteActive && <AgentLLMCredentialsPanel agentId={agent.id} />}
 
       {runtimePolicyUI && (
@@ -4373,12 +4373,13 @@ function AgentLLMCredentialsPanel({ agentId }: { agentId: string }) {
 
 // ── Connect-this-agent panel ────────────────────────────────────────────────
 //
-// Surfaces the URLs and env vars an agent harness needs to point at this
-// daemon's lite-proxy (vs. running through the runtime-proxy CONNECT
-// path). Filters the snippet list to the harness the agent was registered
-// with, falling back to all snippets for unknown / manual harnesses.
-function AgentLiteProxyPanel({ agentId: _agentId, harness }: { agentId: string; harness?: string }) {
+// Surfaces the commands an agent harness needs to point at this daemon's
+// lite-proxy. Snippets mirror the Connect-an-Agent flow, including the
+// token-file lookup written by the bootstrap step.
+function AgentLiteProxyPanel({ agent }: { agent: Agent }) {
   const [open, setOpen] = useState(false)
+  const [skipPermissions, setSkipPermissions] = useState(false)
+  const harness = agent.install_context?.harness
   const { data: pairInfo } = useQuery({
     queryKey: ['pairInfo'],
     queryFn: () => api.devices.pairInfo(),
@@ -4400,88 +4401,125 @@ function AgentLiteProxyPanel({ agentId: _agentId, harness }: { agentId: string; 
     : !isLocal && hasRelay
       ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}`
     : window.location.origin
-  const [copied, setCopied] = useState<string | null>(null)
-
-  function copy(label: string, value: string) {
-    // navigator.clipboard is undefined in insecure (http://) or sandboxed
-    // contexts. Calling .writeText on undefined throws synchronously, so
-    // the .catch handler below never runs. Guard before dispatching.
-    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
-      setCopied(`${label}-failed`)
-      setTimeout(() => setCopied(null), 2000)
-      return
+  const tokenPath = `~/.clawvisor/agents/${agent.name}.json`
+  const copySnippet = (value: string) => {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      void navigator.clipboard.writeText(value)
     }
-    navigator.clipboard.writeText(value)
-      .then(() => {
-        setCopied(label)
-        setTimeout(() => setCopied(null), 2000)
-      })
-      .catch(() => {
-        // writeText can also reject asynchronously (permission denied,
-        // user gesture missing on Safari, etc.).
-        setCopied(`${label}-failed`)
-        setTimeout(() => setCopied(null), 2000)
-      })
   }
 
-  // Anthropic SDK + Claude CLI: env var is the API family base; the SDK appends
-  // `/v1/messages` itself. OpenAI SDK + Codex: base URL includes `/api/v1`
-  // because the client appends just the action path (`/chat/completions`).
-  const claudeCode = `ANTHROPIC_BASE_URL=${baseURL}/api ANTHROPIC_CUSTOM_HEADERS='X-Clawvisor-Agent-Token: cvis_<this-agent-token>' ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= claude`
-  const codex = `CLAWVISOR_AGENT_TOKEN=cvis_<this-agent-token> codex exec \\
-  -c model_provider=clawvisor \\
-  -c 'model_providers.clawvisor.base_url="${baseURL}/api/v1"' \\
-  -c 'model_providers.clawvisor.wire_api="responses"' \\
-  -c 'model_providers.clawvisor.requires_openai_auth=true' \\
-  -c 'model_providers.clawvisor.env_http_headers={"X-Clawvisor-Agent-Token"="CLAWVISOR_AGENT_TOKEN"}' \\
-  -c 'model="gpt-4o-mini"'`
-  const openaiSDK = `from openai import OpenAI
-client = OpenAI(
-    base_url="${baseURL}/api/v1",
-    api_key="cvis_<this-agent-token>",
-)`
-  const anthropicSDK = `import anthropic
+  const claudeSkipFlag = '--dangerously-skip-permissions'
+  const codexSkipFlag = '--dangerously-bypass-approvals-and-sandbox'
+  const isCodexHarness = harness === 'codex'
+  const skipPermsFlag = isCodexHarness ? codexSkipFlag : claudeSkipFlag
+  const skipPermsClaude = skipPermissions ? ` ${claudeSkipFlag}` : ''
+  const skipPermsCodex = skipPermissions ? ` ${codexSkipFlag}` : ''
+  const claudeStartCommand = `ANTHROPIC_BASE_URL=${baseURL}/api \\
+ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${tokenPath})" \\
+ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
+claude${skipPermsClaude}`
+  const claudeAliasCommand = `cat >> ~/.zshrc <<'EOF'
+claude-cv() {
+  ANTHROPIC_BASE_URL=${baseURL}/api \\
+  ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${tokenPath})" \\
+  ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
+  claude${skipPermsClaude} "$@"
+}
+EOF`
+  const codexConfigureCommand = `mkdir -p ~/.codex
+grep -q '^\\[model_providers\\.clawvisor\\]' ~/.codex/config.toml 2>/dev/null || cat >> ~/.codex/config.toml <<'EOF'
+
+[model_providers.clawvisor]
+name = "Clawvisor"
+base_url = "${baseURL}/api/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.clawvisor.env_http_headers]
+X-Clawvisor-Agent-Token = "CLAWVISOR_AGENT_TOKEN"
+EOF`
+  const codexStartCommand = `CLAWVISOR_AGENT_TOKEN=$(jq -r .token ${tokenPath}) codex${skipPermsCodex} -c model_provider=clawvisor`
+  const codexAliasCommand = `cat >> ~/.zshrc <<'EOF'
+codex-cv() {
+  CLAWVISOR_AGENT_TOKEN=$(jq -r .token ${tokenPath}) codex${skipPermsCodex} -c model_provider=clawvisor "$@"
+}
+EOF`
+  const anthropicSDK = `import anthropic, json, os
+data = json.load(open(os.path.expanduser("${tokenPath}")))
 client = anthropic.Anthropic(
     base_url="${baseURL}/api",
-    api_key="cvis_<this-agent-token>",
+    api_key=data["token"],
 )`
-  const clawvisorEnv = `CLAWVISOR_URL=${baseURL}
-CLAWVISOR_AGENT_TOKEN=cvis_<this-agent-token>`
+  const openaiSDK = `from openai import OpenAI
+import json, os
+data = json.load(open(os.path.expanduser("${tokenPath}")))
+client = OpenAI(
+    base_url="${baseURL}/api/v1",
+    api_key=data["token"],
+)`
+  const clawvisorEnv = `export CLAWVISOR_URL="${baseURL}"
+export CLAWVISOR_AGENT_TOKEN="$(jq -r .token ${tokenPath})"`
 
-  const allSnippets = [
-    { label: 'Claude Code', key: 'claude', body: claudeCode },
-    { label: 'Codex CLI', key: 'codex', body: codex },
-    { label: 'OpenAI Python SDK', key: 'oai', body: openaiSDK },
-    { label: 'Anthropic Python SDK', key: 'ant', body: anthropicSDK },
-    { label: 'Clawvisor env vars', key: 'clawvisor', body: clawvisorEnv },
-  ]
-
-  // Filter snippets to what the harness used at connect time actually needs.
-  // openclaw / hermes both run Claude Code under the hood, so they take the
-  // same Claude Code snippet. gbrain / cloud-agent don't use the LLM proxy at
-  // all — they only need the Clawvisor URL + token. Unknown / manual harnesses
-  // (`other`, or no install_context) fall through to showing everything.
-  const harnessSnippetKeys: Record<string, string[]> = {
-    'claude-code': ['claude'],
-    'codex': ['codex'],
-    'openclaw': ['claude'],
-    'hermes': ['claude'],
-    'gbrain': ['clawvisor'],
-    'cloud-agent': ['clawvisor'],
+  type ConnectionSnippet = {
+    label: string
+    body: string
+    description?: string
   }
-  const visibleKeys = harness && harnessSnippetKeys[harness]
-    ? harnessSnippetKeys[harness]
-    : ['claude', 'codex', 'oai', 'ant']
-  const visibleSnippets = allSnippets.filter(s => visibleKeys.includes(s.key))
+  let snippets: ConnectionSnippet[]
+  if (harness === 'codex') {
+    snippets = [
+      {
+        label: 'Configure Codex',
+        description: `Uses ${tokenPath} for the agent token header.`,
+        body: codexConfigureCommand,
+      },
+      {
+        label: 'Start a session',
+        body: codexStartCommand,
+      },
+      {
+        label: 'Create an alias',
+        description: 'Add this to zsh. Use the same shape in bash/fish if needed.',
+        body: codexAliasCommand,
+      },
+    ]
+  } else if (harness === 'claude-code' || harness === 'openclaw' || harness === 'hermes') {
+    snippets = [
+      {
+        label: 'Start a session',
+        body: claudeStartCommand,
+      },
+      {
+        label: 'Create an alias',
+        description: 'Add this to zsh. Use the same shape in bash/fish if needed.',
+        body: claudeAliasCommand,
+      },
+    ]
+  } else if (harness === 'gbrain' || harness === 'cloud-agent') {
+    snippets = [
+      {
+        label: 'Environment variables',
+        description: `Reads the token from ${tokenPath}.`,
+        body: clawvisorEnv,
+      },
+    ]
+  } else {
+    snippets = [
+      {
+        label: 'Anthropic SDK (Python)',
+        body: anthropicSDK,
+      },
+      {
+        label: 'OpenAI SDK (Python)',
+        body: openaiSDK,
+      },
+    ]
+  }
 
   // Claude Desktop installs via configuration profile — there's no shell
   // snippet that re-creates the install. Direct the user back to the
   // wizard's profile download instead.
   const isClaudeDesktop = harness === 'claude-desktop'
-  // Lite-proxy harnesses talk to ${baseURL}/api/v1; the env-var harnesses
-  // (gbrain / cloud-agent) want the plain ${baseURL} as CLAWVISOR_URL.
-  const usesLLMProxyBase = !isClaudeDesktop && harness !== 'gbrain' && harness !== 'cloud-agent'
-  const displayBaseURL = usesLLMProxyBase ? `${baseURL}/api/v1` : baseURL
 
   return (
     <div className="mt-3 rounded border border-border-subtle bg-surface-0">
@@ -4509,34 +4547,31 @@ CLAWVISOR_AGENT_TOKEN=cvis_<this-agent-token>`
               wizard — each download mints a fresh agent.
             </div>
           ) : (
-            <div>
-              <div className="text-xs uppercase tracking-wider text-text-tertiary">Base URL</div>
-              <div className="mt-1 flex items-center gap-2">
-                <code className="flex-1 px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-1 text-text-primary">{displayBaseURL}</code>
-                <button
-                  onClick={() => copy('base', displayBaseURL)}
-                  className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
-                >
-                  {copied === 'base' ? 'Copied!' : copied === 'base-failed' ? 'Copy failed' : 'Copy'}
-                </button>
-              </div>
+            <div className="space-y-4">
+              {(harness === 'codex' || harness === 'claude-code' || harness === 'openclaw' || harness === 'hermes') && (
+                <SkipPermissionsCheckbox
+                  checked={skipPermissions}
+                  onChange={setSkipPermissions}
+                  flag={skipPermsFlag}
+                  label={harness === 'codex' ? 'Codex' : 'Claude Code'}
+                />
+              )}
+              <p className="text-xs text-text-tertiary">
+                Commands expect the token file at <code className="font-mono text-text-secondary">{tokenPath}</code>.
+              </p>
+              {snippets.map(snippet => (
+                <div key={snippet.label} className="space-y-1.5">
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-text-tertiary">{snippet.label}</div>
+                    {snippet.description && (
+                      <p className="mt-1 text-xs text-text-tertiary">{snippet.description}</p>
+                    )}
+                  </div>
+                  <CodeBlock onCopy={() => copySnippet(snippet.body)}>{snippet.body}</CodeBlock>
+                </div>
+              ))}
             </div>
           )}
-
-          {!isClaudeDesktop && visibleSnippets.map(snippet => (
-            <div key={snippet.key}>
-              <div className="flex items-center justify-between">
-                <div className="text-xs uppercase tracking-wider text-text-tertiary">{snippet.label}</div>
-                <button
-                  onClick={() => copy(snippet.key, snippet.body)}
-                  className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
-                >
-                  {copied === snippet.key ? 'Copied!' : copied === `${snippet.key}-failed` ? 'Copy failed' : 'Copy'}
-                </button>
-              </div>
-              <pre className="mt-1 px-3 py-2 text-xs font-mono rounded border border-border-default bg-surface-1 text-text-primary overflow-x-auto whitespace-pre-wrap">{snippet.body}</pre>
-            </div>
-          ))}
         </div>
       )}
     </div>
