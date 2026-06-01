@@ -79,6 +79,11 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if !strings.Contains(notice, "NEVER write your own `autovault_<service>` string") {
 		t.Fatalf("notice should warn against fabricated `autovault_*` placeholders; got:\n%s", notice)
 	}
+	if !strings.Contains(notice, "one curl per tool_use") ||
+		!strings.Contains(notice, "Do NOT put `autovault_*` placeholders inside Python/Node scripts, heredocs, or shell loops") ||
+		!strings.Contains(notice, "multiple parallel tool_uses") {
+		t.Fatalf("notice should steer credentialed scripts toward supported one-call tool shapes; got:\n%s", notice)
+	}
 	if !strings.Contains(notice, "Create a temporary conversation fixture directory and verify the written files") ||
 		!strings.Contains(notice, "Create a GitHub issue summarizing the failing deployment check") ||
 		!strings.Contains(notice, `--data @- <<'JSON'`) ||

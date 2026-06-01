@@ -73,6 +73,14 @@ func anthropicJSONWithNamedToolUse(name, input string) []byte {
 	}`)
 }
 
+type postprocessFakeValidator struct {
+	verdict inspector.Verdict
+}
+
+func (v postprocessFakeValidator) Validate(context.Context, inspector.ToolUse) (inspector.Verdict, error) {
+	return v.verdict, nil
+}
+
 func TestPostprocessStream_BlockedAnthropicPromptUsesNextContentIndex(t *testing.T) {
 	placeholder := "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 	st, userID, agentID := seedPostprocessStore(t, placeholder)
@@ -266,6 +274,72 @@ func TestPostprocess_JSONNoTrigger(t *testing.T) {
 	}
 	if string(got.Body) != string(body) {
 		t.Fatalf("body should be unchanged when nothing triggers")
+	}
+}
+
+func TestPostprocess_RewriterErrorContinuesWithActionableScriptRecovery(t *testing.T) {
+	placeholder := "autovault_google_gmail_eric_clawvisor_com_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	st, userID, agentID := seedPostprocessStoreWithService(t, placeholder, "google.gmail")
+	cmd := `python3 <<'PY'
+import json, urllib.request
+
+TOKEN = '` + placeholder + `'
+mid = 'abc123'
+url = f'https://gmail.googleapis.com/gmail/v1/users/me/messages/{mid}?format=metadata'
+req = urllib.request.Request(url, headers={'Authorization': f'Bearer {TOKEN}'})
+with urllib.request.urlopen(req) as r:
+    print(json.load(r))
+PY`
+	body := anthropicJSONWithNamedToolUse("Bash", `{"command":`+jsonString(cmd)+`,"description":"Fetch Gmail metadata with python"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, postprocessFakeValidator{verdict: inspector.Verdict{
+		IsAPICall: true,
+		Method:    "GET",
+		Host:      "gmail.googleapis.com",
+		Path:      "/gmail/v1/users/me/messages/{mid}?format=metadata",
+		CredentialLocations: []inspector.CredentialLocation{{
+			Kind:   "header",
+			Name:   "Authorization",
+			Scheme: "Bearer",
+		}},
+		Reason: "python urllib with autovault bearer",
+	}})
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
+	})
+
+	if !got.Rewritten {
+		t.Fatal("unsupported credentialed script should rewrite to a block result")
+	}
+	if len(got.Decisions) != 1 {
+		t.Fatalf("expected one tool decision, got %d", len(got.Decisions))
+	}
+	reason := got.Decisions[0].Verdict.ContinueWithToolResult
+	if reason == "" {
+		t.Fatal("rewriter error must populate ContinueWithToolResult for model recovery")
+	}
+	for _, want := range []string{
+		"detected credentialed API access",
+		"tool shape cannot be rewritten",
+		"GET gmail.googleapis.com/gmail/v1/users/me/messages/{mid}?format=metadata",
+		"one credentialed curl per tool_use",
+		"multiple parallel tool_uses",
+	} {
+		if !strings.Contains(reason, want) {
+			t.Fatalf("recovery reason missing %q:\n%s", want, reason)
+		}
+	}
+	if strings.Contains(reason, placeholder) {
+		t.Fatalf("recovery reason should not echo full placeholder:\n%s", reason)
+	}
+	if !strings.Contains(string(got.Body), "one credentialed curl per tool_use") {
+		t.Fatalf("fallback body should include actionable recovery guidance:\n%s", got.Body)
 	}
 }
 

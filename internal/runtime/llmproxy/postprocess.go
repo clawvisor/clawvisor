@@ -1124,9 +1124,11 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 		}, v, opts)
 		if err != nil {
 			audit("block", "rewriter_error", err.Error())
+			reason := credentialedRewriteRecoveryReason(v, err)
 			return conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: rewriter refused — " + err.Error(),
+				Allowed:                false,
+				Reason:                 reason,
+				ContinueWithToolResult: reason,
 			}
 		}
 		audit("rewrite", "success", v.Reason)
@@ -1143,6 +1145,31 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 			RewriteInput: rewritten,
 		}
 	}
+}
+
+func credentialedRewriteRecoveryReason(v inspector.Verdict, err error) string {
+	if err == nil {
+		return "Clawvisor: rewriter refused"
+	}
+	if strings.Contains(err.Error(), "no rewriter for tool input shape") {
+		var b strings.Builder
+		b.WriteString("Clawvisor: detected credentialed API access, but this tool shape cannot be rewritten. ")
+		b.WriteString("Detected ")
+		b.WriteString(firstNonEmpty(v.Method, "HTTP"))
+		if v.Host != "" {
+			b.WriteString(" ")
+			b.WriteString(v.Host)
+		}
+		if v.Path != "" {
+			b.WriteString(v.Path)
+		}
+		if len(v.CredentialLocations) > 0 || len(v.Placeholders) > 0 {
+			b.WriteString(" using an autovault placeholder")
+		}
+		b.WriteString(". Retry as one credentialed curl per tool_use; for multiple requests, emit multiple parallel tool_uses instead of a Python, Node, heredoc, or shell-loop script.")
+		return b.String()
+	}
+	return "Clawvisor: rewriter refused — " + err.Error()
 }
 
 // coalesceFromCaptures builds the single PendingLiteApproval covering
