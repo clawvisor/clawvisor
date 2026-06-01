@@ -93,7 +93,7 @@ export default function UserMenu() {
             <SidebarMenuItem
               icon={<FileTextIcon />}
               label="Terms of service"
-              onClick={() => { navigate('terms'); setOpen(false) }}
+              onClick={() => { navigate('/terms'); setOpen(false) }}
               external
             />
             <SidebarMenuItem
