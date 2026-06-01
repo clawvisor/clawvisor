@@ -47,6 +47,11 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// recognized as a forgery surface: anyone learning the callback URL
 		// could impersonate a "result" to the agent.
 		WithCallbackSecret *bool `json:"with_callback_secret"`
+		// InstallContext lets dashboard flows that mint agents directly (vs.
+		// the bootstrap-curl connection-request path) tag which harness they
+		// came from. Same field shape as /api/agents/connect; clamped server-
+		// side to bound the row size.
+		InstallContext *store.InstallContext `json:"install_context"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -54,6 +59,9 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.Name == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "name is required")
 		return
+	}
+	if body.InstallContext != nil {
+		clampInstallContext(body.InstallContext)
 	}
 
 	rawToken, err := auth.GenerateAgentToken()
@@ -73,6 +81,13 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		agent.Description = body.Description
+	}
+	if body.InstallContext != nil && !body.InstallContext.IsEmpty() {
+		if err := h.st.SetAgentInstallContext(r.Context(), agent.ID, body.InstallContext); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not stamp install context")
+			return
+		}
+		agent.InstallContext = body.InstallContext
 	}
 
 	resp := map[string]any{

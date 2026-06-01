@@ -420,7 +420,7 @@ function AgentDetailView({
 
       {showAgentSettings && <AgentRuntimePanel agentId={agent.id} defaultOpen showRuntimeControls={showRuntimeSettings} />}
 
-      {proxyLiteActive && <AgentLiteProxyPanel agentId={agent.id} />}
+      {proxyLiteActive && <AgentLiteProxyPanel agentId={agent.id} harness={agent.install_context?.harness} />}
       {proxyLiteActive && <AgentLLMCredentialsPanel agentId={agent.id} />}
 
       {runtimePolicyUI && (
@@ -1337,7 +1337,8 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
   copied: boolean
   onCopy: (text: string) => void
 }) {
-  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
+  const taggedSetupURL = withHarness(setupURL, 'openclaw')
+  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${taggedSetupURL}`
 
   return (
     <div className="space-y-5">
@@ -1388,7 +1389,8 @@ function LegacyOtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
   copied: boolean
   onCopy: (text: string) => void
 }) {
-  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
+  const taggedSetupURL = withHarness(setupURL, 'other')
+  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${taggedSetupURL}`
 
   return (
     <div className="space-y-5">
@@ -1521,6 +1523,16 @@ function useSequencedAgentName(base: string, agents: Agent[] | undefined): [stri
 function normalizePublicURL(url: string | null | undefined): string | null {
   const trimmed = url?.trim().replace(/\/+$/, '')
   return trimmed || null
+}
+
+// withHarness appends `?harness=<slug>` (or `&harness=…` if the URL already
+// has a query string) to a /skill/setup URL. The handler at /skill/setup
+// reads the value and bakes it into the example connect curl's JSON body as
+// `install_context.harness`, so the agent's self-register POST tags the
+// resulting agent record with the harness it came from.
+function withHarness(url: string, harness: string): string {
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}harness=${encodeURIComponent(harness)}`
 }
 
 function buildBootstrapCommand(clawvisorURL: string, claim: string | undefined, agentName: string, harness?: string): string {
@@ -1700,7 +1712,8 @@ client = OpenAI(
     base_url="${llmBaseURL}/api/v1",
     api_key="${tokenValue}",
 )`
-  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
+  const taggedSetupURL = withHarness(setupURL, 'other')
+  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${taggedSetupURL}`
 
   const wizardSteps: WizardStepDef[] = [
     { id: 'bootstrap', title: 'Bootstrap agent', done: connected },
@@ -1727,6 +1740,7 @@ client = OpenAI(
           agentName={agentName}
           setAgentName={setAgentName}
           onCopy={onCopy}
+          harness="other"
           onAdvance={() => setStep(1)}
         />
       )}
@@ -2417,6 +2431,7 @@ EOF`
               agentName={agentName}
               setAgentName={setAgentName}
               onCopy={onCopy}
+              harness={target}
               onAdvance={(id) => {
                 setAgentId(id)
                 setStep(target === 'codex' ? 1 : 2)
@@ -3566,7 +3581,13 @@ function CloudAgentPromptGuide({
   copied: boolean
   onCopy: (text: string) => void
 }) {
-  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
+  // Tag the setup URL with the harness slug the dashboard knows the user
+  // picked. The /skill/setup handler reads `?harness=` and splices it into
+  // the example connect curl as `install_context.harness`, so the agent's
+  // self-register call stamps the resulting agent record with the harness
+  // and the agent-detail "Connect this agent" panel renders the right snippet.
+  const taggedSetupURL = withHarness(setupURL, 'cloud-agent')
+  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${taggedSetupURL}`
 
   return (
     <div className="space-y-5">
@@ -3728,7 +3749,7 @@ function GBrainStreamlinedGuide({
   const mintMutation = useMutation({
     mutationFn: async () => {
       const name = nextAvailableName(GBRAIN_AGENT_NAME, agents)
-      return api.agents.create(name, GBRAIN_AGENT_DESCRIPTION)
+      return api.agents.create(name, GBRAIN_AGENT_DESCRIPTION, { harness: 'gbrain' })
     },
     onSuccess: (a) => {
       setAgent(a)
@@ -4268,7 +4289,7 @@ function AgentLLMCredentialsPanel({ agentId }: { agentId: string }) {
         className="flex w-full items-center justify-between px-4 py-3 text-left"
       >
         <div>
-          <div className="text-sm font-medium text-text-primary">Lite-proxy LLM credentials</div>
+          <div className="text-sm font-medium text-text-primary">LLM credentials</div>
           <div className="text-xs text-text-tertiary">
             Per-agent override for the upstream Anthropic / OpenAI API key the proxy swaps in. Falls back to your user-level key.
           </div>
@@ -4350,13 +4371,13 @@ function AgentLLMCredentialsPanel({ agentId }: { agentId: string }) {
   )
 }
 
-// ── Lite-proxy connection details panel ─────────────────────────────────────
+// ── Connect-this-agent panel ────────────────────────────────────────────────
 //
 // Surfaces the URLs and env vars an agent harness needs to point at this
 // daemon's lite-proxy (vs. running through the runtime-proxy CONNECT
-// path). Covers the three flagship harnesses: Claude Code, Codex CLI,
-// and a generic OpenAI/Anthropic SDK.
-function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
+// path). Filters the snippet list to the harness the agent was registered
+// with, falling back to all snippets for unknown / manual harnesses.
+function AgentLiteProxyPanel({ agentId: _agentId, harness }: { agentId: string; harness?: string }) {
   const [open, setOpen] = useState(false)
   const { data: pairInfo } = useQuery({
     queryKey: ['pairInfo'],
@@ -4424,6 +4445,43 @@ client = anthropic.Anthropic(
     base_url="${baseURL}/api",
     api_key="cvis_<this-agent-token>",
 )`
+  const clawvisorEnv = `CLAWVISOR_URL=${baseURL}
+CLAWVISOR_AGENT_TOKEN=cvis_<this-agent-token>`
+
+  const allSnippets = [
+    { label: 'Claude Code', key: 'claude', body: claudeCode },
+    { label: 'Codex CLI', key: 'codex', body: codex },
+    { label: 'OpenAI Python SDK', key: 'oai', body: openaiSDK },
+    { label: 'Anthropic Python SDK', key: 'ant', body: anthropicSDK },
+    { label: 'Clawvisor env vars', key: 'clawvisor', body: clawvisorEnv },
+  ]
+
+  // Filter snippets to what the harness used at connect time actually needs.
+  // openclaw / hermes both run Claude Code under the hood, so they take the
+  // same Claude Code snippet. gbrain / cloud-agent don't use the LLM proxy at
+  // all — they only need the Clawvisor URL + token. Unknown / manual harnesses
+  // (`other`, or no install_context) fall through to showing everything.
+  const harnessSnippetKeys: Record<string, string[]> = {
+    'claude-code': ['claude'],
+    'codex': ['codex'],
+    'openclaw': ['claude'],
+    'hermes': ['claude'],
+    'gbrain': ['clawvisor'],
+    'cloud-agent': ['clawvisor'],
+  }
+  const visibleKeys = harness && harnessSnippetKeys[harness]
+    ? harnessSnippetKeys[harness]
+    : ['claude', 'codex', 'oai', 'ant']
+  const visibleSnippets = allSnippets.filter(s => visibleKeys.includes(s.key))
+
+  // Claude Desktop installs via configuration profile — there's no shell
+  // snippet that re-creates the install. Direct the user back to the
+  // wizard's profile download instead.
+  const isClaudeDesktop = harness === 'claude-desktop'
+  // Lite-proxy harnesses talk to ${baseURL}/api/v1; the env-var harnesses
+  // (gbrain / cloud-agent) want the plain ${baseURL} as CLAWVISOR_URL.
+  const usesLLMProxyBase = !isClaudeDesktop && harness !== 'gbrain' && harness !== 'cloud-agent'
+  const displayBaseURL = usesLLMProxyBase ? `${baseURL}/api/v1` : baseURL
 
   return (
     <div className="mt-3 rounded border border-border-subtle bg-surface-0">
@@ -4432,34 +4490,40 @@ client = anthropic.Anthropic(
         className="flex w-full items-center justify-between px-4 py-3 text-left"
       >
         <div>
-          <div className="text-sm font-medium text-text-primary">Lite-proxy connection</div>
+          <div className="text-sm font-medium text-text-primary">Connect this agent</div>
           <div className="text-xs text-text-tertiary">
-            Point an agent harness at this daemon's LLM endpoint. Clawvisor authenticates the agent and either preserves upstream auth or swaps in a vaulted provider key.
+            How to point this harness at Clawvisor. Clawvisor authenticates the agent and either preserves upstream auth or swaps in a vaulted provider key.
           </div>
         </div>
         <span className="text-xs text-text-tertiary">{open ? 'Hide' : 'Show'}</span>
       </button>
       {open && (
         <div className="border-t border-border-subtle px-4 py-4 space-y-4">
-          <div>
-            <div className="text-xs uppercase tracking-wider text-text-tertiary">Base URL</div>
-            <div className="mt-1 flex items-center gap-2">
-              <code className="flex-1 px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-1 text-text-primary">{baseURL}/api/v1</code>
-              <button
-                onClick={() => copy('base', `${baseURL}/api/v1`)}
-                className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
-              >
-                {copied === 'base' ? 'Copied!' : copied === 'base-failed' ? 'Copy failed' : 'Copy'}
-              </button>
+          {isClaudeDesktop ? (
+            <div className="text-sm text-text-secondary">
+              Claude Desktop is installed via a macOS configuration profile.
+              Re-download the profile from the{' '}
+              <Link to="/dashboard/agents?agent=claude-desktop" className="text-brand hover:underline">
+                Connect an Agent
+              </Link>{' '}
+              wizard — each download mints a fresh agent.
             </div>
-          </div>
+          ) : (
+            <div>
+              <div className="text-xs uppercase tracking-wider text-text-tertiary">Base URL</div>
+              <div className="mt-1 flex items-center gap-2">
+                <code className="flex-1 px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-1 text-text-primary">{displayBaseURL}</code>
+                <button
+                  onClick={() => copy('base', displayBaseURL)}
+                  className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
+                >
+                  {copied === 'base' ? 'Copied!' : copied === 'base-failed' ? 'Copy failed' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          )}
 
-          {[
-            { label: 'Claude Code', key: 'claude', body: claudeCode },
-            { label: 'Codex CLI', key: 'codex', body: codex },
-            { label: 'OpenAI Python SDK', key: 'oai', body: openaiSDK },
-            { label: 'Anthropic Python SDK', key: 'ant', body: anthropicSDK },
-          ].map(snippet => (
+          {!isClaudeDesktop && visibleSnippets.map(snippet => (
             <div key={snippet.key}>
               <div className="flex items-center justify-between">
                 <div className="text-xs uppercase tracking-wider text-text-tertiary">{snippet.label}</div>

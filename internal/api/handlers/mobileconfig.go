@@ -87,8 +87,23 @@ func (h *MobileConfigHandler) ClaudeDesktop(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate token")
 		return
 	}
-	if _, err := h.st.CreateAgent(r.Context(), user.ID, chosen, auth.HashToken(rawToken)); err != nil {
+	agent, err := h.st.CreateAgent(r.Context(), user.ID, chosen, auth.HashToken(rawToken))
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create agent")
+		return
+	}
+	// Stamp the install context so the dashboard's agent detail page can
+	// render the harness-appropriate "Connect this agent" panel — and so
+	// re-download / revoke flows can recognize claude-desktop installs.
+	// auth_mode=swap because the mobileconfig path always vaults an upstream
+	// Anthropic key (Claude Desktop hands us a cvis_ token; we swap it in).
+	if err := h.st.SetAgentInstallContext(r.Context(), agent.ID, &store.InstallContext{
+		Harness:     "claude-desktop",
+		InstallMode: "host",
+		HostOS:      "darwin",
+		AuthMode:    "swap",
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not stamp install context")
 		return
 	}
 

@@ -1269,8 +1269,12 @@ export const api = {
   },
   agents: {
     list: () => get<Agent[]>('/api/agents'),
-    create: (name: string, description?: string) =>
-      post<Agent>('/api/agents', { name, ...(description ? { description } : {}) }),
+    create: (name: string, description?: string, installContext?: InstallContext) =>
+      post<Agent>('/api/agents', {
+        name,
+        ...(description ? { description } : {}),
+        ...(installContext ? { install_context: installContext } : {}),
+      }),
     delete: (id: string) => del<{ revoked_tasks: number }>(`/api/agents/${id}`),
     getRuntimeSettings: (id: string) => get<AgentRuntimeSettings>(`/api/agents/${id}/runtime-settings`),
     updateRuntimeSettings: (id: string, settings: AgentRuntimeSettings) =>

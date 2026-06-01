@@ -11,6 +11,12 @@ import (
 
 var validUserID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+// validHarnessSlug bounds the `?harness=` query param the dashboard appends
+// to /skill/setup so the value spliced into the rendered curl JSON body is
+// always a short enum-shaped slug. Mirrors the harness identifiers used in
+// pkg/store.InstallContext.
+var validHarnessSlug = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
 // OnboardingHandler serves the agent onboarding document at GET /setup.
 // The document is self-contained markdown that tells an agent how to register,
 // authenticate, set up E2E encryption, and verify the connection.
@@ -51,6 +57,18 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		userID = ""
 	}
 
+	// harness is an optional tag the dashboard appends when it knows which
+	// connect flow seeded this skill fetch (cloud-agent, other). Splicing it
+	// into the example body means the agent's POST carries
+	// install_context.harness, so the resulting agent record knows which
+	// harness path created it — same denormalization other flows already
+	// rely on. Validated against a short slug pattern; ignored on mismatch
+	// so a stale/junky query param doesn't leak into the rendered markdown.
+	harness := r.URL.Query().Get("harness")
+	if harness != "" && !validHarnessSlug.MatchString(harness) {
+		harness = ""
+	}
+
 	if h.isLocal {
 		fmt.Fprintf(&b, "## %d. Register with the daemon and wait for approval\n\n", stepNum)
 	} else {
@@ -71,6 +89,9 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "    \"name\": \"<your agent name>\",\n")
 	if userID != "" {
 		fmt.Fprintf(&b, "    \"user_id\": \"%s\",\n", userID)
+	}
+	if harness != "" {
+		fmt.Fprintf(&b, "    \"install_context\": {\"harness\": \"%s\"},\n", harness)
 	}
 	fmt.Fprintf(&b, "    \"description\": \"<brief description of what you do>\"\n")
 	fmt.Fprintf(&b, "  }'\n")
