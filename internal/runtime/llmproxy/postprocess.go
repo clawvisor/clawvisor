@@ -257,6 +257,15 @@ type PostprocessConfig struct {
 	// via cfg.ProxyLite.TraceLogPath. Calls on a nil *TraceLogger are
 	// no-ops, so production code doesn't branch.
 	Trace *TraceLogger
+
+	// FirstTurnNotice, when non-empty, is the assistant-text notice the
+	// streaming postprocess path prepends to the response so the user
+	// sees a one-liner ("[Clawvisor] Routing this conversation…")
+	// before the model's first content on a fresh conversation. Only
+	// consulted by PostprocessStream; the buffered Postprocess path
+	// keeps its existing inline prepend at the handler level. Empty
+	// disables injection.
+	FirstTurnNotice string
 }
 
 // PostprocessResult reports what happened during postprocess. The handler
@@ -1685,6 +1694,28 @@ func PostprocessStream(
 	}
 
 	provider := streamingRewriter.Name()
+
+	// First-turn routing notice. Wrap the destination so the per-event
+	// SSE state machine in the rewriter emits through an injector
+	// that prepends the notice block at index 0 and shifts the rest
+	// by +1. Mirrors the buffered path's PrependAssistantNotice call
+	// in the handler — kept here (not in the handler) so the rewriter
+	// itself doesn't need to grow a notice parameter, and so any
+	// future streaming caller picks up the behavior automatically.
+	if cfg.FirstTurnNotice != "" {
+		shape := conversation.DetectStreamShape(req, provider)
+		noticeW := conversation.NewStreamingFirstTurnNoticeWriter(w, shape, cfg.FirstTurnNotice)
+		// The injector buffers partial SSE events; ensure trailing
+		// state flushes when StreamRewrite returns. Closer-only
+		// callers (Close()-implementing wrappers) flush; the no-op
+		// case (StreamShapeUnknown / blank notice) returns dest
+		// unchanged and is not closeable.
+		if closer, ok := noticeW.(io.Closer); ok {
+			defer func() { _ = closer.Close() }()
+		}
+		w = noticeW
+	}
+
 	auditAgent := auditAgentForCfg(cfg)
 
 	originalPendingApprovals := cfg.PendingApprovals

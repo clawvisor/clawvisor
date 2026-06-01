@@ -858,6 +858,16 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				Checkouts:                        h.TaskCheckouts,
 				DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
 			}
+			// First-turn routing notice. Mirrors the buffered path's
+			// invocation below (search "first-turn routing notice").
+			// The streaming SSE injector inside PostprocessStream wraps
+			// the writer so the notice surfaces as the leading content
+			// block / output_item and downstream indices are shifted by
+			// +1. Skip on non-200 — error bodies aren't shaped to take
+			// the prepend and would be soft no-ops anyway.
+			if resp.StatusCode == http.StatusOK && firstTurn {
+				cfg.FirstTurnNotice = llmproxy.RenderAgentRoutingNotice(agent.Name, mintedConversationID)
+			}
 
 			w.Header().Del("Content-Length")
 			w.Header().Del("Content-Encoding")
