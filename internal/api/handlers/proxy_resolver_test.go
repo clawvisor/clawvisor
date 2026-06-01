@@ -269,6 +269,98 @@ func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) 
 	}
 }
 
+// Malformed `expiry` in a stored OAuth credential must fail closed with
+// OAUTH_CREDENTIAL_INVALID rather than silently falling back to the
+// legacy ExtractCredentialValue path, which would lift the stale
+// access_token verbatim and ship it upstream (disabling refresh).
+func TestResolver_MalformedOAuthExpiryFailsClosed(t *testing.T) {
+	var refreshRequests int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshRequests++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"fresh-access-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenSrv.Close()
+
+	var upstreamCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	h, st, user, agent, nonces, _ := newSeededResolver(t)
+	reg := adapters.NewRegistry()
+	reg.Register(resolverOAuthTestAdapter{serviceID: "google.gmail", tokenURL: tokenSrv.URL})
+	h.AdapterReg = reg
+	h.Client = upstream.Client()
+	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
+
+	// Hand-rolled JSON so `expiry` is an unparseable string — encoding/json
+	// would otherwise emit a valid RFC3339 timestamp for a time.Time field.
+	credential := []byte(`{"type":"oauth2","access_token":"expired-access-token","refresh_token":"refresh-token","expiry":"not-a-date"}`)
+	const vaultKey = "google:eric@example.com"
+	if err := h.Vault.Set(context.Background(), user.ID, vaultKey, credential); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	const grantID = "grant-google"
+	if err := st.CreateCredentialAuthorization(context.Background(), &store.CredentialAuthorization{
+		ID:            grantID,
+		UserID:        user.ID,
+		AgentID:       agent.ID,
+		Scope:         "session",
+		CredentialRef: vaultKey,
+		Service:       "google.gmail:eric@example.com",
+		Host:          "gmail.googleapis.com",
+		HeaderName:    "authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+		ExpiresAt:     &expiresAt,
+	}); err != nil {
+		t.Fatalf("CreateCredentialAuthorization: %v", err)
+	}
+	placeholder, err := autovault.GeneratePlaceholder(autovault.PlaceholderPrefix("google.gmail:eric@example.com"))
+	if err != nil {
+		t.Fatalf("GeneratePlaceholder: %v", err)
+	}
+	if err := st.CreateRuntimePlaceholder(context.Background(), &store.RuntimePlaceholder{
+		Placeholder:       placeholder,
+		UserID:            user.ID,
+		AgentID:           agent.ID,
+		ServiceID:         "google.gmail:eric@example.com",
+		VaultItemID:       "google.gmail:eric@example.com",
+		CredentialGrantID: grantID,
+		ExpiresAt:         &expiresAt,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePlaceholder: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/gmail/v1/users/me/messages", nil)
+	req.Header.Set("X-Clawvisor-Target-Host", "gmail.googleapis.com")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+	req.Header.Set("Authorization", "Bearer "+placeholder)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "OAUTH_CREDENTIAL_INVALID") {
+		t.Fatalf("expected OAUTH_CREDENTIAL_INVALID in body, got %q", rec.Body.String())
+	}
+	if refreshRequests != 0 {
+		t.Fatalf("expected no refresh attempt on unparseable credential, got %d", refreshRequests)
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("stale access_token must not be forwarded upstream, got %d calls", upstreamCalls)
+	}
+}
+
 // An explicit port on X-Clawvisor-Target-Host must pass the bound-service
 // allowlist check (allowlist entries are hostnames) without losing the
 // port for the actual upstream dial. Before the fix, the boundary check

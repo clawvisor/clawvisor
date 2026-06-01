@@ -577,12 +577,26 @@ func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.
 	if oauthCfg == nil {
 		return "", false, nil
 	}
+	// Past this point the adapter has declared itself OAuth via
+	// OAuthConfig(), so the stored credential MUST be OAuth-shaped.
+	// A parse failure here (e.g. malformed `expiry`) is not a signal
+	// to fall back to ExtractCredentialValue — that path would pull
+	// the stale access_token verbatim and ship it upstream, silently
+	// disabling refresh. Fail closed with a distinct error code.
 	var stored oauthCredentialForResolver
 	if err := json.Unmarshal(raw, &stored); err != nil {
-		return "", false, nil
+		return "", true, &resolverAPIError{
+			status: http.StatusUnauthorized,
+			code:   "OAUTH_CREDENTIAL_INVALID",
+			msg:    "stored OAuth credential could not be parsed",
+		}
 	}
 	if stored.AccessToken == "" && stored.RefreshToken == "" {
-		return "", false, nil
+		return "", true, &resolverAPIError{
+			status: http.StatusUnauthorized,
+			code:   "OAUTH_CREDENTIAL_INVALID",
+			msg:    "stored OAuth credential has no access or refresh token",
+		}
 	}
 	token, err := oauthCfg.TokenSource(ctx, &oauth2.Token{
 		AccessToken:  stored.AccessToken,
