@@ -6,10 +6,30 @@ import (
 	"strings"
 )
 
-var placeholderPrefixReplacer = strings.NewReplacer(".", "_", ":", "_", "-", "_", "/", "_")
+// sanitizePlaceholderPrefix folds the lowercased service id to the
+// [a-z0-9_] allowlist — everything outside becomes `_`. This must stay
+// a strict subset of the inspector's placeholder character class
+// (inspector/inspector.go shadowPlaceholderExtractRE,
+// parser/parser.go autovaultPlaceholderRE) so any placeholder we
+// generate round-trips through detection. A denylist of known
+// separators ("." ":" "-" "/") had let chars like "@" survive into
+// stored placeholders that the inspector then truncated mid-string.
+func sanitizePlaceholderPrefix(s string) string {
+	b := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '_':
+			b[i] = c
+		default:
+			b[i] = '_'
+		}
+	}
+	return string(b)
+}
 
 func PlaceholderPrefix(service string) string {
-	safe := placeholderPrefixReplacer.Replace(strings.ToLower(strings.TrimSpace(service)))
+	safe := sanitizePlaceholderPrefix(strings.ToLower(strings.TrimSpace(service)))
 	if safe == "" {
 		safe = "unknown"
 	}
