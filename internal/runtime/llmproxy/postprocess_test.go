@@ -184,6 +184,68 @@ func TestPostprocessStream_NoStreamingRewriterPassesThrough(t *testing.T) {
 	}
 }
 
+// TestPostprocessStream_FirstTurnNoticeInjectsWithoutInspector covers
+// the inspector-disabled pass-through path. The buffered Postprocess
+// injects the routing notice independently of inspector state, so the
+// streaming path should match for symmetry.
+func TestPostprocessStream_FirstTurnNoticeInjectsWithoutInspector(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	input := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_x","role":"assistant","model":"claude-sonnet-4"}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}` + "\n\n"
+	var output bytes.Buffer
+
+	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", PostprocessConfig{
+		Inspector:       nil,
+		FirstTurnNotice: "[Clawvisor] routing notice",
+	})
+	if err != nil {
+		t.Fatalf("PostprocessStream: %v", err)
+	}
+	if result.SkippedReason != "no inspector configured" {
+		t.Fatalf("expected inspector-skipped result; got %q", result.SkippedReason)
+	}
+	got := output.String()
+	if !strings.Contains(got, "[Clawvisor] routing notice") {
+		t.Fatalf("notice should surface even without inspector:\n%s", got)
+	}
+	// Upstream "hi" delta should shift to index 1 since the injected
+	// notice occupies index 0.
+	if !strings.Contains(got, `"index":1`) {
+		t.Errorf("upstream content_block_delta should be shifted to index 1:\n%s", got)
+	}
+}
+
+// TestPostprocessStream_FirstTurnNoticeSkippedWithoutRewriter covers
+// the route-without-streaming-rewriter early return: we can't derive
+// a wire shape, so the injector is bypassed and the body passes
+// through unchanged.
+func TestPostprocessStream_FirstTurnNoticeSkippedWithoutRewriter(t *testing.T) {
+	req := httptest.NewRequest("POST", "/api/unknown", nil)
+	input := "data: hello\n\n"
+	var output bytes.Buffer
+
+	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", PostprocessConfig{
+		Inspector:       inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+		FirstTurnNotice: "[Clawvisor] routing notice",
+	})
+	if err != nil {
+		t.Fatalf("PostprocessStream: %v", err)
+	}
+	if result.SkippedReason == "" {
+		t.Fatal("expected skipped reason")
+	}
+	if output.String() != input {
+		t.Fatalf("expected raw passthrough when no rewriter; got %q", output.String())
+	}
+	if strings.Contains(output.String(), "routing notice") {
+		t.Errorf("notice should not surface without a known wire shape:\n%s", output.String())
+	}
+}
+
 func TestPostprocess_JSONNoTrigger(t *testing.T) {
 	body := anthropicJSONWithToolUse(`{"url":"https://example.com/foo"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
