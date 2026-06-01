@@ -1286,6 +1286,7 @@ func (s *Server) registerLiteProxyRoutes(
 		)
 
 		resolverHandler := handlers.NewProxyResolverHandler(s.store, s.vault, s.logger)
+		resolverHandler.AdapterReg = s.adapterReg
 		resolverHandler.SelfHostnames = s.cfg.ProxyLite.SelfHostnames
 		resolverHandler.AllowPrivateNetworks = s.cfg.ProxyLite.AllowPrivateNetworks
 		resolverHandler.AuditEmitter = auditEmitter

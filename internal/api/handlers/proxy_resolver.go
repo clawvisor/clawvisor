@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,8 +18,10 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+	"golang.org/x/oauth2"
 )
 
 // ProxyResolverHandler is the lite-proxy reverse-proxy. The agent harness
@@ -30,10 +33,11 @@ import (
 // v1 scope: header-credential placeholders only. Body / query / cookie
 // placeholder mutation is Phase 4.
 type ProxyResolverHandler struct {
-	Store  store.Store
-	Vault  vault.Vault
-	Client *http.Client
-	Logger *slog.Logger
+	Store      store.Store
+	Vault      vault.Vault
+	AdapterReg *adapters.Registry
+	Client     *http.Client
+	Logger     *slog.Logger
 
 	// AuditEmitter writes one audit_log row per resolver request +
 	// per placeholder swapped. nil disables audit logging.
@@ -463,9 +467,9 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 			}
 			return "", err
 		}
-		extracted, err := autovault.ExtractCredentialValue(raw)
+		extracted, err := h.extractRuntimeCredentialValue(r.Context(), ph, raw)
 		if err != nil {
-			return "", fmt.Errorf("extract credential: %w", err)
+			return "", err
 		}
 		go func(id string) {
 			// Fire-and-forget: detach cancellation but cap so a stuck DB
@@ -535,6 +539,72 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 		out[canonical] = swapped
 	}
 	return out, allReplaced, nil
+}
+
+type oauthCredentialForResolver struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	Expiry       time.Time `json:"expiry"`
+}
+
+func (h *ProxyResolverHandler) extractRuntimeCredentialValue(ctx context.Context, ph *store.RuntimePlaceholder, raw []byte) (string, error) {
+	if token, ok, err := h.oauthAccessTokenForRuntimeCredential(ctx, ph, raw); ok || err != nil {
+		if err != nil {
+			return "", err
+		}
+		return token, nil
+	}
+	extracted, err := autovault.ExtractCredentialValue(raw)
+	if err != nil {
+		return "", fmt.Errorf("extract credential: %w", err)
+	}
+	return extracted, nil
+}
+
+func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.Context, ph *store.RuntimePlaceholder, raw []byte) (string, bool, error) {
+	if h.AdapterReg == nil || ph == nil {
+		return "", false, nil
+	}
+	serviceID, _ := splitServiceScopedVaultItemID(ph.ServiceID)
+	if serviceID == "" {
+		return "", false, nil
+	}
+	adapter, ok := h.AdapterReg.GetForUser(ctx, serviceID, ph.UserID)
+	if !ok {
+		return "", false, nil
+	}
+	oauthCfg := adapter.OAuthConfig()
+	if oauthCfg == nil {
+		return "", false, nil
+	}
+	var stored oauthCredentialForResolver
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return "", false, nil
+	}
+	if stored.AccessToken == "" && stored.RefreshToken == "" {
+		return "", false, nil
+	}
+	token, err := oauthCfg.TokenSource(ctx, &oauth2.Token{
+		AccessToken:  stored.AccessToken,
+		RefreshToken: stored.RefreshToken,
+		Expiry:       stored.Expiry,
+		TokenType:    "Bearer",
+	}).Token()
+	if err != nil {
+		return "", true, &resolverAPIError{
+			status: http.StatusUnauthorized,
+			code:   "OAUTH_REFRESH_FAILED",
+			msg:    "could not refresh OAuth credential",
+		}
+	}
+	if token.AccessToken == "" {
+		return "", true, &resolverAPIError{
+			status: http.StatusUnauthorized,
+			code:   "OAUTH_REFRESH_FAILED",
+			msg:    "OAuth credential did not return an access token",
+		}
+	}
+	return token.AccessToken, true, nil
 }
 
 // resolverHopByHopHeaders is the canonical set of hop-by-hop headers

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -16,8 +17,10 @@ import (
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
+	"golang.org/x/oauth2"
 )
 
 func newSeededResolver(t *testing.T) (*ProxyResolverHandler, store.Store, *store.User, *store.Agent, llmproxy.CallerNonceCache, string) {
@@ -96,6 +99,31 @@ func nonceForRequest(t *testing.T, nonces llmproxy.CallerNonceCache, agentID str
 	)
 }
 
+type resolverOAuthTestAdapter struct {
+	serviceID string
+	tokenURL  string
+}
+
+func (a resolverOAuthTestAdapter) ServiceID() string { return a.serviceID }
+func (a resolverOAuthTestAdapter) SupportedActions() []string {
+	return []string{"list_messages"}
+}
+func (a resolverOAuthTestAdapter) Execute(context.Context, adapters.Request) (*adapters.Result, error) {
+	return nil, nil
+}
+func (a resolverOAuthTestAdapter) OAuthConfig() *oauth2.Config {
+	return &oauth2.Config{
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		Endpoint: oauth2.Endpoint{
+			TokenURL: a.tokenURL,
+		},
+	}
+}
+func (a resolverOAuthTestAdapter) CredentialFromToken(*oauth2.Token) ([]byte, error) { return nil, nil }
+func (a resolverOAuthTestAdapter) ValidateCredential([]byte) error                   { return nil }
+func (a resolverOAuthTestAdapter) RequiredScopes() []string                          { return nil }
+
 func TestResolver_HappyPath(t *testing.T) {
 	var seenHost, seenPath, seenAuth string
 	var seenBody []byte
@@ -142,6 +170,103 @@ func TestResolver_HappyPath(t *testing.T) {
 		t.Fatalf("expected upstream Authorization=Bearer real-gh-token, got %q", seenAuth)
 	}
 	_ = seenBody
+}
+
+func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) {
+	var refreshRequests int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshRequests++
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm: %v", err)
+		}
+		if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "refresh-token" {
+			t.Fatalf("unexpected refresh request form: %v", r.Form)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"fresh-access-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenSrv.Close()
+
+	var seenAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	h, st, user, agent, nonces, _ := newSeededResolver(t)
+	reg := adapters.NewRegistry()
+	reg.Register(resolverOAuthTestAdapter{serviceID: "google.gmail", tokenURL: tokenSrv.URL})
+	h.AdapterReg = reg
+	h.Client = upstream.Client()
+	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
+
+	credential, err := json.Marshal(map[string]any{
+		"type":          "oauth2",
+		"access_token":  "expired-access-token",
+		"refresh_token": "refresh-token",
+		"expiry":        time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("Marshal credential: %v", err)
+	}
+	const vaultKey = "google:eric@example.com"
+	if err := h.Vault.Set(context.Background(), user.ID, vaultKey, credential); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	const grantID = "grant-google"
+	if err := st.CreateCredentialAuthorization(context.Background(), &store.CredentialAuthorization{
+		ID:            grantID,
+		UserID:        user.ID,
+		AgentID:       agent.ID,
+		Scope:         "session",
+		CredentialRef: vaultKey,
+		Service:       "google.gmail:eric@example.com",
+		Host:          "gmail.googleapis.com",
+		HeaderName:    "authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+		ExpiresAt:     &expiresAt,
+	}); err != nil {
+		t.Fatalf("CreateCredentialAuthorization: %v", err)
+	}
+	placeholder, err := autovault.GeneratePlaceholder(autovault.PlaceholderPrefix("google.gmail:eric@example.com"))
+	if err != nil {
+		t.Fatalf("GeneratePlaceholder: %v", err)
+	}
+	if err := st.CreateRuntimePlaceholder(context.Background(), &store.RuntimePlaceholder{
+		Placeholder:       placeholder,
+		UserID:            user.ID,
+		AgentID:           agent.ID,
+		ServiceID:         "google.gmail:eric@example.com",
+		VaultItemID:       "google.gmail:eric@example.com",
+		CredentialGrantID: grantID,
+		ExpiresAt:         &expiresAt,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePlaceholder: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/gmail/v1/users/me/messages", nil)
+	req.Header.Set("X-Clawvisor-Target-Host", "gmail.googleapis.com")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+	req.Header.Set("Authorization", "Bearer "+placeholder)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if refreshRequests != 1 {
+		t.Fatalf("expected one refresh request, got %d", refreshRequests)
+	}
+	if seenAuth != "Bearer fresh-access-token" {
+		t.Fatalf("expected refreshed access token upstream, got %q", seenAuth)
+	}
 }
 
 // An explicit port on X-Clawvisor-Target-Host must pass the bound-service
