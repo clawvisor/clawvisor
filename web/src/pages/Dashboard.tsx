@@ -12,6 +12,7 @@ import Agents from './Agents'
 import Settings from './Settings'
 import Overview from './Overview'
 import GetStarted from './GetStarted'
+import HowItWorks from './HowItWorks'
 import Tasks from './Tasks'
 import AdapterGen from './AdapterGen'
 import OrgSettings from './OrgSettings'
@@ -23,6 +24,7 @@ import OrgSelector from '../components/OrgSelector'
 import OnboardingBanner from '../components/OnboardingBanner'
 
 const navItems = [
+  { to: '/dashboard/how-it-works', label: 'How it works', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg> },
   { to: '/dashboard', label: 'Overview', end: true, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> },
   { to: '/dashboard/get-started', label: 'Get Started', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg> },
   { to: '/dashboard/tasks', label: 'Tasks', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> },
@@ -159,7 +161,14 @@ export default function Dashboard() {
           </span>
         </div>
         <ul className="flex-1 py-2 overflow-y-auto">
-          {[...navItems, ...(features?.billing ? [billingNavItem] : [])].map(({ to, label, end, icon }) => (
+          {[
+            ...navItems.filter((i) => {
+              if (i.to === '/dashboard/how-it-works') return !!features?.proxy_lite
+              if (i.to === '/dashboard/get-started') return !features?.proxy_lite
+              return true
+            }),
+            ...(features?.billing ? [billingNavItem] : []),
+          ].map(({ to, label, end, icon }) => (
             <li key={to}>
               <NavLink
                 to={to}
@@ -340,6 +349,8 @@ export default function Dashboard() {
         )}
         <Routes>
           <Route index element={<Overview />} />
+          <Route path="how-it-works" element={<HowItWorks />} />
+          <Route path="what-is-clawvisor" element={<Navigate to="/dashboard/how-it-works" replace />} />
           <Route path="get-started" element={<GetStarted />} />
           <Route path="tasks" element={<Tasks />} />
           <Route path="accounts" element={<Services />} />
