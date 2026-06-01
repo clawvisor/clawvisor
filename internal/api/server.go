@@ -1373,6 +1373,10 @@ func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
 		fs = s.featuresHook(r.Context(), middleware.UserFromContext(r.Context()), fs)
 	}
 	w.Header().Set("Content-Type", "application/json")
+	// The response varies per-user (via featuresHook). Without no-store, a
+	// browser may cache the anonymous response and serve it back after the
+	// user logs in, since Authorization is not part of the default cache key.
+	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(fs)
 }
 
