@@ -22,6 +22,10 @@ export default function OnboardingBanner() {
 
   if (dismissed) return null
   if (services === undefined || agents === undefined) return null
+  // Wait for features to load before branching, so we don't flash the
+  // legacy CTA in proxy-lite deployments and let a dismiss-during-flash
+  // strand the user on the wrong onboarding state.
+  if (features === null) return null
 
   const hasService = (services.services ?? []).some(
     (s: { status: string; requires_activation?: boolean }) =>
