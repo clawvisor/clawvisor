@@ -167,6 +167,20 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	// memory registry; the wrapper forwards to it.
 	h.ScopeDrifts = NewCountingScopeDriftRegistry(h.ScopeDrifts, counters)
 
+	// Optional: live intent verifier. Without the right env vars
+	// (CLAWVISOR_E2E_VERIFIER_PROVIDER=gemini etc.) this stays nil
+	// and the lite-proxy skips intent verification — drifts can only
+	// originate from the task_scope check. With Gemini ADC available,
+	// the verifier runs against gemini-3.1-flash-lite-preview by
+	// default and the /justify path becomes reachable.
+	verifier, _, vErr := verifierConfigFromEnv(logger)
+	if vErr != nil {
+		return nil, vErr
+	}
+	if verifier != nil {
+		h.IntentVerifier = llmproxy.NewIntentVerifierAdapter(verifier)
+	}
+
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLM(st)
 	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
