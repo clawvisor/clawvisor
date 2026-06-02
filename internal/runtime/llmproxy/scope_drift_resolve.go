@@ -5,6 +5,8 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 )
 
 // scopeDriftDecisionPattern matches a single
@@ -190,7 +192,7 @@ func insideInlineCodeSpan(body []byte, offset int) bool {
 // degrades to a status message in the body rather than failing the
 // whole turn. Pre-clears for the original tool call are only inserted
 // on a successful resolution.
-func applyScopeDriftDecisions(ctx context.Context, cfg PostprocessConfig, body []byte) []byte {
+func applyScopeDriftDecisions(ctx context.Context, cfg PostprocessConfig, provider conversation.Provider, body []byte) []byte {
 	if cfg.ScopeDrifts == nil || len(body) == 0 {
 		return body
 	}
@@ -202,7 +204,7 @@ func applyScopeDriftDecisions(ctx context.Context, cfg PostprocessConfig, body [
 	// later byte offsets.
 	for i := len(decisions) - 1; i >= 0; i-- {
 		d := decisions[i]
-		status := resolveScopeDriftDecision(ctx, cfg, d)
+		status := resolveScopeDriftDecision(ctx, cfg, provider, d)
 		body = spliceBytes(body, d.Start, d.End, []byte(status))
 	}
 	return body
@@ -212,7 +214,7 @@ func applyScopeDriftDecisions(ctx context.Context, cfg PostprocessConfig, body [
 // the JSON-safe status string to substitute for the markup. Every code
 // path returns a string — even on errors — so the body substitution
 // always produces valid JSON content.
-func resolveScopeDriftDecision(ctx context.Context, cfg PostprocessConfig, d scopeDriftDecision) string {
+func resolveScopeDriftDecision(ctx context.Context, cfg PostprocessConfig, provider conversation.Provider, d scopeDriftDecision) string {
 	drift, err := cfg.ScopeDrifts.Get(ctx, d.DriftID)
 	if err != nil {
 		return scopeDriftStatus("Clawvisor: drift " + d.DriftID + " not found (it may have expired). Re-emit the original tool call to get a fresh menu.")
@@ -228,7 +230,7 @@ func resolveScopeDriftDecision(ctx context.Context, cfg PostprocessConfig, d sco
 	case "justify":
 		return resolveJustify(ctx, cfg, drift, d.Body)
 	case "one-off", "one_off", "oneoff":
-		return resolveOneOff(ctx, cfg, drift, d.Body)
+		return resolveOneOff(ctx, cfg, provider, drift, d.Body)
 	default:
 		return scopeDriftStatus("Clawvisor: unknown decision option \"" + sanitizeStatusValue(d.Option) + "\". Valid values: justify, one-off.")
 	}
@@ -312,7 +314,7 @@ func resolveJustify(ctx context.Context, cfg PostprocessConfig, drift ScopeDrift
 // Failure paths degrade to a status string so the body substitution
 // always produces valid content; the pre-clear is only inserted when
 // the user actually approves the one-off (via the reply rewriter).
-func resolveOneOff(ctx context.Context, cfg PostprocessConfig, drift ScopeDrift, agentNote string) string {
+func resolveOneOff(ctx context.Context, cfg PostprocessConfig, provider conversation.Provider, drift ScopeDrift, agentNote string) string {
 	if cfg.PendingApprovals == nil {
 		return scopeDriftStatus("Clawvisor: pending-approval cache is not configured on this daemon. Option (c) cannot complete — pick option (a) expand, (b) new task, or (d) justify instead.")
 	}
@@ -327,6 +329,7 @@ func resolveOneOff(ctx context.Context, cfg PostprocessConfig, drift ScopeDrift,
 	hold, holdErr := cfg.PendingApprovals.Hold(ctx, PendingLiteApproval{
 		UserID:              cfg.AgentUserID,
 		AgentID:             cfg.AgentID,
+		Provider:            provider,
 		ConversationID:      cfg.ConversationID,
 		Stage:               StageAwaitingScopeDriftOneOff,
 		ToolUse:             claimed.ToolUse,

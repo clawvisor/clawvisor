@@ -1862,8 +1862,15 @@ func TestLLMEndpoint_RequiresApprovalForOpenAIToolUseWithoutScope(t *testing.T) 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Reply `yes` or `y`") {
-		t.Fatalf("expected approval prompt, got %s", rec.Body.String())
+	// As of the scope-drift menu integration, scope-rejected
+	// VerdictNeedsApproval cases substitute the four-option menu in
+	// place of the legacy yes/no approvalPrompt. The menu's stable
+	// markers ("outside your current task scope" + "Drift ID:") are
+	// what the test now keys on. The audit row check below proves the
+	// underlying reason (task_scope_missing) is unchanged.
+	if !strings.Contains(rec.Body.String(), "is outside your current task scope") ||
+		!strings.Contains(rec.Body.String(), "Drift ID:") {
+		t.Fatalf("expected scope-drift menu substitution, got %s", rec.Body.String())
 	}
 
 	user, _ := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")

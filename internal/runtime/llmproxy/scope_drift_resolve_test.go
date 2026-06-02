@@ -145,7 +145,7 @@ func TestApplyScopeDriftDecisions_JustifyAccepted_InsertsPreClear(t *testing.T) 
 
 	body := []byte(`{"text":"sure: <clawvisor:decision drift=\"` + drift.ID +
 		`\" option=\"justify\">the call extends the existing audit purpose by reading a related issue</clawvisor:decision>"}`)
-	out := applyScopeDriftDecisions(ctx, cfg, body)
+	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 
 	// Markup must be substituted.
 	if strings.Contains(string(out), "<clawvisor:decision") {
@@ -191,7 +191,7 @@ func TestApplyScopeDriftDecisions_JustifyRejected_NoPreClearMarksFallback(t *tes
 	}
 
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="justify">it fits because</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, body)
+	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	if strings.Contains(string(out), "<clawvisor:decision") {
 		t.Errorf("markup not substituted:\n%s", out)
 	}
@@ -224,7 +224,7 @@ func TestApplyScopeDriftDecisions_JustifyOnTaskScopeDriftRefusesWithoutClaim(t *
 	}
 
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="justify">i swear</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, body)
+	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	if !strings.Contains(string(out), "only applies when the block source is intent_verification") {
 		t.Errorf("status message did not explain the source mismatch:\n%s", out)
 	}
@@ -253,7 +253,7 @@ func TestApplyScopeDriftDecisions_JustifyVerifierErrorMarksFallbackNoPreClear(t 
 	}
 
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="justify">argument</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, body)
+	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	if !strings.Contains(string(out), "verifier was unreachable") {
 		t.Errorf("status message did not surface verifier error:\n%s", out)
 	}
@@ -285,7 +285,7 @@ func TestApplyScopeDriftDecisions_OneOffCreatesUserApprovalHold(t *testing.T) {
 	}
 
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="one-off">quick diagnostic check, not repeated</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, body)
+	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	// The user-facing approval prompt is substituted into the body
 	// in place of the markup.
 	if !strings.Contains(string(out), "Clawvisor: the agent requested a one-off execution") {
@@ -308,12 +308,14 @@ func TestApplyScopeDriftDecisions_OneOffCreatesUserApprovalHold(t *testing.T) {
 	}
 	// A pending approval hold should have been created so the user's
 	// "yes"/"no" reply can route to the scope-drift reply rewriter.
-	if got := snapshotPendingApprovals(pending, "user-1", "agent-1"); len(got) != 1 {
+	if got := snapshotPendingApprovals(pending, "user-1", "agent-1", conversation.ProviderAnthropic); len(got) != 1 {
 		t.Fatalf("expected exactly 1 pending hold, got %d", len(got))
 	} else if got[0].Stage != StageAwaitingScopeDriftOneOff {
 		t.Errorf("hold has wrong stage: %q", got[0].Stage)
 	} else if got[0].ScopeDriftID != drift.ID {
 		t.Errorf("hold's ScopeDriftID doesn't match: %q", got[0].ScopeDriftID)
+	} else if got[0].Provider != conversation.ProviderAnthropic {
+		t.Errorf("hold has wrong provider: %q (the reply rewriter peeks by provider, so a mismatch here means the user's yes/no reply can't find the hold)", got[0].Provider)
 	}
 }
 
@@ -330,7 +332,7 @@ func TestApplyScopeDriftDecisions_OneOffWithoutCacheDegradesGracefully(t *testin
 		// PendingApprovals deliberately nil
 	}
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="one-off">x</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, body)
+	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	if !strings.Contains(string(out), "pending-approval cache is not configured") {
 		t.Errorf("expected misconfiguration status, got:\n%s", out)
 	}
@@ -341,15 +343,68 @@ func TestApplyScopeDriftDecisions_OneOffWithoutCacheDegradesGracefully(t *testin
 	}
 }
 
+// TestStreamingDriftSubstitution_RoundTrips reproduces the live e2e
+// streaming path's expectations: an AssistantTurn carrying the
+// markup, a wired registry + pending-approval cache, and a provider.
+// Asserts that streamingDriftSubstitution returns the user-facing
+// approval prompt (so the streaming write path can append it as a
+// follow-up text block) AND that the pending hold lands with the
+// right Provider so the reply rewriter on the next turn can find it.
+func TestStreamingDriftSubstitution_RoundTrips(t *testing.T) {
+	reg := NewMemoryScopeDriftRegistry(0)
+	pending := NewMemoryPendingApprovalCache(0)
+	ctx := context.Background()
+	drift, _ := reg.Register(ctx, ScopeDrift{
+		AgentID: "agent-1",
+		UserID:  "user-1",
+		Service: "github",
+		Action:  "add_issue_comment",
+		Source:  ScopeDriftSourceIntentVerification,
+	})
+	cfg := PostprocessConfig{
+		AgentID:          "agent-1",
+		AgentUserID:      "user-1",
+		ScopeDrifts:      reg,
+		PendingApprovals: pending,
+	}
+
+	// Mirrors the agent's assembled assistant-text content as it
+	// would appear in streamResult.AssistantTurn.Content after the
+	// stream parser concatenates fragments.
+	turn := &conversation.Turn{
+		Role:    conversation.RoleAssistant,
+		Content: `You asked for a one-off, so I'll go with **(c)**:` + "\n\n" + `<clawvisor:decision drift="` + drift.ID + `" option="one-off">Single courtesy comment on one issue.</clawvisor:decision>`,
+	}
+
+	out := streamingDriftSubstitution(ctx, cfg, conversation.ProviderAnthropic, turn)
+	if out == "" {
+		t.Fatal("expected non-empty substitution")
+	}
+	if !strings.Contains(out, "Clawvisor: the agent requested a one-off execution") {
+		t.Errorf("substitution missing one-off prompt header:\n%s", out)
+	}
+
+	// The pending hold MUST carry Provider matching the streaming
+	// path's value so the reply rewriter's bare-yes/no lookup
+	// resolves to this hold rather than miss.
+	holds := snapshotPendingApprovals(pending, "user-1", "agent-1", conversation.ProviderAnthropic)
+	if len(holds) != 1 {
+		t.Fatalf("expected 1 hold under ProviderAnthropic, got %d", len(holds))
+	}
+	if holds[0].Stage != StageAwaitingScopeDriftOneOff {
+		t.Errorf("wrong stage: %q", holds[0].Stage)
+	}
+}
+
 // snapshotPendingApprovals exposes the cache's holds for assertions in
 // tests. The production code path doesn't need this — release/peek
 // are the supported lookup surfaces.
-func snapshotPendingApprovals(cache PendingApprovalCache, userID, agentID string) []PendingLiteApproval {
+func snapshotPendingApprovals(cache PendingApprovalCache, userID, agentID string, provider conversation.Provider) []PendingLiteApproval {
 	mem, ok := cache.(*MemoryPendingApprovalCache)
 	if !ok {
 		return nil
 	}
-	return mem.snapshotHoldsForTest(userID, agentID, "")
+	return mem.snapshotHoldsForTest(userID, agentID, provider)
 }
 
 func TestApplyScopeDriftDecisions_CrossAgentDriftRefused(t *testing.T) {
@@ -365,7 +420,7 @@ func TestApplyScopeDriftDecisions_CrossAgentDriftRefused(t *testing.T) {
 	}
 
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="justify">x</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, body)
+	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	if !strings.Contains(string(out), "minted for a different agent") {
 		t.Errorf("status message did not flag cross-agent claim:\n%s", out)
 	}
@@ -379,7 +434,7 @@ func TestApplyScopeDriftDecisions_NoMarkupReturnsUnchanged(t *testing.T) {
 	reg := NewMemoryScopeDriftRegistry(0)
 	cfg := PostprocessConfig{AgentID: "agent-1", ScopeDrifts: reg}
 	in := []byte(`{"content":[{"type":"text","text":"plain assistant text with no markup"}]}`)
-	out := applyScopeDriftDecisions(context.Background(), cfg, in)
+	out := applyScopeDriftDecisions(context.Background(), cfg, conversation.ProviderAnthropic, in)
 	if string(out) != string(in) {
 		t.Errorf("body mutated unexpectedly:\nin : %s\nout: %s", in, out)
 	}
@@ -388,7 +443,7 @@ func TestApplyScopeDriftDecisions_NoMarkupReturnsUnchanged(t *testing.T) {
 func TestApplyScopeDriftDecisions_NoRegistryIsNoOp(t *testing.T) {
 	cfg := PostprocessConfig{AgentID: "agent-1"} // ScopeDrifts nil
 	in := []byte(`<clawvisor:decision drift="x" option="justify">y</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(context.Background(), cfg, in)
+	out := applyScopeDriftDecisions(context.Background(), cfg, conversation.ProviderAnthropic, in)
 	if string(out) != string(in) {
 		t.Errorf("nil registry should be a no-op; got mutation")
 	}

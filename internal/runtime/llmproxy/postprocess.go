@@ -1,6 +1,7 @@
 package llmproxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -572,7 +573,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 	// Options (a)/(b) require no special handling — they're plain
 	// /control/tasks{,/expand} tool_uses already covered by the
 	// rewriter pass above.
-	finalBody := applyScopeDriftDecisions(req.Context(), cfg, result.Body)
+	finalBody := applyScopeDriftDecisions(req.Context(), cfg, rewriter.Name(), result.Body)
 
 	return PostprocessResult{
 		Body:        finalBody,
@@ -900,6 +901,19 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 						trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "readonly_shell_pass_through", "reason", "read-only shell command", "cmd_preview", truncateForTrace(shellCommandFromInput(tu.Input), 200))
 						return conversation.ToolUseVerdict{Allowed: true}
 					}
+					// Scope-drift menu: when the decision source is a
+					// task-scope or intent-verification rejection, hand
+					// the recovery decision to the model via the
+					// four-option menu instead of the legacy yes/no
+					// approvalPrompt. Trigger_miss tools (Bash, Edit,
+					// etc.) don't catalog-resolve, so the menu shows
+					// "this tool call" as the subject and steers the
+					// agent toward (b) "create a new task" — which is
+					// the natural fix for "no task covers this work".
+					if verdict, fired := scopeDriftVerdictFromDecision(req, cfg, tu, v, ResolvedAction{}, dec); fired {
+						audit("block", string(dec.Source), dec.Reason)
+						return verdict
+					}
 					// Hold before rendering so the approval ID can be
 					// embedded in the substitute message footer. The
 					// agent's NEXT turn will carry that marker in
@@ -1037,6 +1051,20 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 					Reason:  "Clawvisor: " + dec.Reason,
 				}
 			case runtimedecision.VerdictNeedsApproval:
+				// Scope-drift menu (credentialed path): catalog-
+				// resolved tools surface as github.create_issue (or
+				// similar) so the menu prompt's "X is outside your
+				// current task scope" line names the specific
+				// action. Same source check as the trigger_miss
+				// branch above — only task-scope and intent-refusal
+				// sources route to the menu; rule-review and
+				// ambiguous-task cases keep the legacy
+				// approvalPrompt because the user, not the agent,
+				// is the right decision-maker for those.
+				if verdict, fired := scopeDriftVerdictFromDecision(req, cfg, tu, v, resolved, dec); fired {
+					audit("block", string(dec.Source), dec.Reason)
+					return verdict
+				}
 				// Hold first so the assigned approval ID can be
 				// embedded in the substitute prompt footer; see the
 				// trigger-miss branch above for the same pattern.
@@ -1676,6 +1704,191 @@ func scopeDriftFingerprint(agentID, service, action, host, method, path string) 
 	return strings.Join([]string{agentID, service, action, host, method, path}, "|")
 }
 
+// scopeDriftFlatTarget returns a human-readable subject for the
+// flat-error string the drift verdict's Reason field carries. The
+// preference order — service.action > tool name > "this tool call" —
+// keeps the audit log readable both for credentialed catalog-resolved
+// tools (most informative) and for plain local tools like Bash where
+// the catalog can't resolve.
+func scopeDriftFlatTarget(resolved ResolvedAction, tu conversation.ToolUse) string {
+	if resolved.ServiceID != "" && resolved.ActionID != "" {
+		return resolved.ServiceID + "." + resolved.ActionID
+	}
+	if resolved.ServiceID != "" {
+		return resolved.ServiceID
+	}
+	if name := strings.TrimSpace(tu.Name); name != "" {
+		return name
+	}
+	return "this tool call"
+}
+
+// scopeDriftSourceFromDecision maps an authorization decision's source
+// onto the ScopeDriftSource the menu / verifier-replay path keys on.
+// Returns ("", false) for sources that aren't scope-drift triggers
+// (rule_review, ambiguous-task-scope, etc.) — those keep the legacy
+// approvalPrompt flow because the decision evaluator's intent there is
+// "ask the human a yes/no", not "agent picks a recovery option".
+func scopeDriftSourceFromDecision(source runtimedecision.DecisionSource) (ScopeDriftSource, bool) {
+	switch source {
+	case runtimedecision.SourceTaskScope, runtimedecision.SourceTaskScopeMissing:
+		return ScopeDriftSourceTaskScope, true
+	case runtimedecision.SourceIntentRefusal:
+		return ScopeDriftSourceIntentVerification, true
+	default:
+		return "", false
+	}
+}
+
+// stopHoldingWriter wraps an io.Writer and buffers SSE events at and
+// after the upstream's terminal markers (`message_stop` for Anthropic,
+// `response.completed` / `data: [DONE]` for OpenAI), so PostprocessStream
+// can insert a drift-substitution text block AFTER the agent's text
+// content but BEFORE the message-terminal markers the harness sees.
+//
+// The text-only Anthropic streaming path passes `message_stop` through
+// the rewriter unchanged (anthropic_response.go's message_delta /
+// message_stop case for orderedTUs == 0). Without this wrapper, our
+// appended content_block lands after `message_stop` — which the claude
+// CLI consumes as out-of-band noise and silently drops. With the
+// wrapper, the held bytes get flushed AFTER our substitution writes,
+// so the SSE shape stays well-formed and the appended block is
+// visible to the harness.
+type stopHoldingWriter struct {
+	inner   io.Writer
+	provider conversation.Provider
+	// held buffers raw SSE bytes from the upstream once the terminal
+	// marker has been seen. Pre-marker bytes are forwarded to inner.
+	held    []byte
+	holding bool
+}
+
+func newStopHoldingWriter(w io.Writer, provider conversation.Provider) *stopHoldingWriter {
+	return &stopHoldingWriter{inner: w, provider: provider}
+}
+
+// Write forwards bytes to inner until it detects the provider's
+// terminal SSE marker; after that, bytes accumulate in held instead.
+// The detection is byte-substring based to keep the wrapper agnostic
+// of the SSE event boundaries — once any terminal marker substring
+// appears in a write, all subsequent bytes (including the marker
+// itself and trailing newlines) are buffered.
+func (w *stopHoldingWriter) Write(p []byte) (int, error) {
+	if w.holding {
+		w.held = append(w.held, p...)
+		return len(p), nil
+	}
+	if idx := w.terminalMarkerIndex(p); idx >= 0 {
+		var nFwd int
+		if idx > 0 {
+			n, err := w.inner.Write(p[:idx])
+			if err != nil {
+				return n, err
+			}
+			nFwd = n
+		}
+		w.held = append(w.held, p[idx:]...)
+		w.holding = true
+		return nFwd + len(p[idx:]), nil
+	}
+	return w.inner.Write(p)
+}
+
+// Flush writes the held bytes to inner. Safe to call when nothing was
+// held (no-op).
+func (w *stopHoldingWriter) Flush() error {
+	if len(w.held) == 0 {
+		return nil
+	}
+	_, err := w.inner.Write(w.held)
+	w.held = nil
+	w.holding = false
+	return err
+}
+
+// terminalMarkerIndex returns the byte offset where the provider's
+// SSE terminal marker first appears in p, or -1 if no marker is
+// present. The Anthropic marker is the `event: message_stop` line;
+// the OpenAI marker covers both the `response.completed` event used
+// by the Responses API and the `[DONE]` sentinel used by Chat
+// Completions.
+func (w *stopHoldingWriter) terminalMarkerIndex(p []byte) int {
+	switch w.provider {
+	case conversation.ProviderAnthropic:
+		return bytes.Index(p, []byte("event: message_stop"))
+	case conversation.ProviderOpenAI:
+		if i := bytes.Index(p, []byte("event: response.completed")); i >= 0 {
+			return i
+		}
+		return bytes.Index(p, []byte("data: [DONE]"))
+	}
+	return -1
+}
+
+// streamingDriftSubstitution scans the assembled assistant text for
+// <clawvisor:decision> markup and, when found, runs the resolver
+// (claims the drift, opens any required user-approval hold, re-runs
+// the verifier for (d)). Returns the concatenated substitution status
+// the caller appends to the SSE stream as an additional text block.
+// Returns "" when no markup is present or the registry is unwired.
+//
+// Distinct from applyScopeDriftDecisions (used by the buffered path)
+// because we don't mutate the streamed body — the raw markup deltas
+// have already left the proxy. The substitution rides as a follow-up
+// text block so the user / harness driver sees the proxy's response
+// inline.
+func streamingDriftSubstitution(ctx context.Context, cfg PostprocessConfig, provider conversation.Provider, turn *conversation.Turn) string {
+	if cfg.ScopeDrifts == nil || turn == nil || turn.Content == "" {
+		return ""
+	}
+	decisions := parseScopeDriftDecisions([]byte(turn.Content))
+	if len(decisions) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, d := range decisions {
+		status := resolveScopeDriftDecision(ctx, cfg, provider, d)
+		if status != "" {
+			parts = append(parts, status)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// scopeDriftVerdictFromDecision is the integration point between the
+// runtime decision evaluator and the four-option scope-drift menu.
+// When the evaluator emits VerdictNeedsApproval with a source that
+// indicates a task-scope or intent-verification rejection, we build a
+// ScopeDrift record (carrying the matched task's id + the failing
+// service/action) and substitute the four-option menu for the legacy
+// yes/no approvalPrompt. The menu hands the recovery decision back to
+// the model — pick (a)/(b) by hitting the existing /control/tasks
+// endpoints, or (c)/(d) by emitting <clawvisor:decision> markup.
+//
+// Returns (verdict, true) when the menu fired; (zero, false) when the
+// caller should fall through to the legacy approvalPrompt path. The
+// false branch lets the existing inline-approval Hold + prompt path
+// keep working for non-drift NeedsApproval cases (rule_review, etc).
+func scopeDriftVerdictFromDecision(req *http.Request, cfg PostprocessConfig, tu conversation.ToolUse, v inspector.Verdict, resolved ResolvedAction, dec runtimedecision.AuthorizationDecision) (conversation.ToolUseVerdict, bool) {
+	if cfg.ScopeDrifts == nil {
+		return conversation.ToolUseVerdict{}, false
+	}
+	source, ok := scopeDriftSourceFromDecision(dec.Source)
+	if !ok {
+		return conversation.ToolUseVerdict{}, false
+	}
+	taskID := taskIDFromDecision(dec)
+	taskPurpose := ""
+	expectedUse := ""
+	if dec.Task != nil {
+		taskPurpose = dec.Task.Purpose
+	}
+	if dec.Action != nil {
+		expectedUse = dec.Action.ExpectedUse
+	}
+	return scopeDriftVerdictWithTask(req, cfg, tu, resolved, v, taskID, taskPurpose, expectedUse, source, dec.Reason), true
+}
+
 // scopeDriftVerdict registers a drift record for a task_scope_denied
 // block and returns the ToolUseVerdict that substitutes the
 // agent-facing menu for the legacy flat error. When the registry is
@@ -1689,14 +1902,15 @@ func scopeDriftVerdictWithTask(req *http.Request, cfg PostprocessConfig, tu conv
 	// Preserve the original per-source wording so audit text and the
 	// pre-drift fallback path stay byte-stable. Tests + dashboards key
 	// off these strings; the menu prompt below is additive context.
+	target := scopeDriftFlatTarget(resolved, tu)
 	var flatReason string
 	switch source {
 	case ScopeDriftSourceTaskScope:
-		flatReason = "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason
+		flatReason = "Clawvisor: no active task scope covers " + target + " — " + reason
 	case ScopeDriftSourceIntentVerification:
-		flatReason = "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason
+		flatReason = "Clawvisor: intent verification refused " + target + " — " + reason
 	default:
-		flatReason = "Clawvisor: " + string(source) + " refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason
+		flatReason = "Clawvisor: " + string(source) + " refused " + target + " — " + reason
 	}
 	if cfg.ScopeDrifts == nil {
 		// No registry wired — degrade to the legacy verdict the
@@ -1923,11 +2137,52 @@ func PostprocessStream(
 		return v
 	}
 
-	streamResult, err := streamingRewriter.StreamRewrite(ctx, r, w)
+	// Wrap the writer so we can intercept the upstream's terminal
+	// SSE marker (Anthropic's `message_stop`, OpenAI's
+	// `response.completed` / `[DONE]`). This lets us inject a
+	// drift-substitution text block AFTER the agent's text content
+	// but BEFORE the message terminates — without this, the
+	// substitution lands after `message_stop` and the harness CLI
+	// drops it as out-of-band.
+	stopHolder := newStopHoldingWriter(w, provider)
+	streamResult, err := streamingRewriter.StreamRewrite(ctx, r, stopHolder)
 	if err != nil {
 		return PostprocessResult{}, err
 	}
 	if len(streamResult.ToolUses) == 0 {
+		// Text-only assistant turn: the agent may have emitted a
+		// <clawvisor:decision> markup block. Run the scope-drift
+		// resolver for its side effects (claim drift, open user-
+		// approval hold, re-run verifier for (d)) and append the
+		// resolver's status as a follow-up text block so the
+		// harness driver sees the proxy's response inline.
+		if cfg.ScopeDrifts != nil && streamResult.AssistantTurn != nil {
+			if driftText := streamingDriftSubstitution(req.Context(), cfg, provider, streamResult.AssistantTurn); driftText != "" {
+				idx := streamingBlockedPromptIndex(provider, streamResult, nil)
+				// stopHolder has already buffered the upstream's
+				// terminal marker; write the appended block to the
+				// inner writer (w) so it lands BEFORE the buffered
+				// marker. Flush releases the held bytes afterwards,
+				// producing a well-formed message_stop tail.
+				if err := writeProviderTextBlock(w, provider, streamResult, driftText, idx); err != nil {
+					return PostprocessResult{}, err
+				}
+			}
+		}
+		// Commit any buffered scope-drift holds to the underlying
+		// cache. PostprocessStream wraps PendingApprovals with a
+		// hold-capturing decorator (line ~2087) so the coalesce
+		// post-pass can reshape the held set; for the text-only
+		// early-return path there's no tool_use coalesce, so we
+		// replay the buffered holds directly. Without this commit,
+		// the user's "yes"/"no" reply on the next turn would find
+		// no matching hold and fail with "approval no longer valid".
+		if err := replayBufferedHolds(req.Context(), cfg, originalPendingApprovals, holdSink, auditAgent, nil); err != nil {
+			return PostprocessResult{}, err
+		}
+		if err := stopHolder.Flush(); err != nil {
+			return PostprocessResult{}, err
+		}
 		return PostprocessResult{
 			ContentType: contentType,
 		}, nil
@@ -2026,6 +2281,24 @@ func PostprocessStream(
 		if err := writeProviderToolUses(w, provider, streamResult, streamResult.ToolUses, rewrittenInput); err != nil {
 			return PostprocessResult{}, err
 		}
+		// Scope-drift markup substitution: if the agent's assistant
+		// text content carried a <clawvisor:decision> block, the
+		// resolver runs server-side (claims drift, creates pending
+		// approval hold, calls verifier for (d), etc.). The text
+		// deltas containing the raw markup have already been
+		// streamed; we append the resolver's status as a follow-up
+		// text block so the user / harness driver sees the proxy's
+		// response inline rather than just the raw markup. The next
+		// turn's reply rewriter handles the user's approval gesture.
+		if cfg.ScopeDrifts != nil && streamResult.AssistantTurn != nil {
+			driftText := streamingDriftSubstitution(req.Context(), cfg, provider, streamResult.AssistantTurn)
+			if driftText != "" {
+				idx := streamingBlockedPromptIndex(provider, streamResult, captures)
+				if err := writeProviderTextBlock(w, provider, streamResult, driftText, idx); err != nil {
+					return PostprocessResult{}, err
+				}
+			}
+		}
 		if err := writeProviderStop(w, provider, streamResult); err != nil {
 			return PostprocessResult{}, err
 		}
@@ -2043,6 +2316,68 @@ func streamingBlockedPromptIndex(provider conversation.Provider, result conversa
 		return result.NextAnthropicContentIndex
 	}
 	return len(captures)
+}
+
+// writeProviderTextBlock emits a single assistant-text content block
+// without a stop event. Used to APPEND drift-substitution status text
+// to an existing streamed turn — the original markup the agent emitted
+// is already on the wire, so the substitution rides as a follow-up
+// block. Callers are responsible for writing the stop event afterward.
+//
+// Mirrors writeProviderBlockedPrompt's per-provider wire shape but
+// stops short of the terminal stop/[DONE] markers.
+func writeProviderTextBlock(w io.Writer, provider conversation.Provider, result conversation.StreamingRewriteResult, text string, contentIndex int) error {
+	switch provider {
+	case conversation.ProviderAnthropic:
+		start := map[string]any{
+			"type":  "content_block_start",
+			"index": contentIndex,
+			"content_block": map[string]any{
+				"type": "text",
+				"text": "",
+			},
+		}
+		if err := writeSSE(w, "content_block_start", start); err != nil {
+			return err
+		}
+		delta := map[string]any{
+			"type":  "content_block_delta",
+			"index": contentIndex,
+			"delta": map[string]any{
+				"type": "text_delta",
+				"text": text,
+			},
+		}
+		if err := writeSSE(w, "content_block_delta", delta); err != nil {
+			return err
+		}
+		stop := map[string]any{
+			"type":  "content_block_stop",
+			"index": contentIndex,
+		}
+		return writeSSE(w, "content_block_stop", stop)
+
+	case conversation.ProviderOpenAI:
+		if result.StreamFormat == "openai_responses" {
+			_, err := w.Write(conversation.SynthOpenAIResponsesTextSSE(text))
+			return err
+		}
+		chunk := map[string]any{
+			"id":     firstNonEmpty(result.StreamID, "chatcmpl-clawvisor"),
+			"object": "chat.completion.chunk",
+			"choices": []any{
+				map[string]any{
+					"index": 0,
+					"delta": map[string]any{
+						"role":    "assistant",
+						"content": text,
+					},
+				},
+			},
+		}
+		return writeOpenAIData(w, chunk)
+	}
+	return nil
 }
 
 func writeProviderBlockedPrompt(w io.Writer, provider conversation.Provider, result conversation.StreamingRewriteResult, text string, contentIndex int) error {
