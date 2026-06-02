@@ -53,6 +53,25 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 		return RewriteResult{Body: body}, nil
 	}
 
+	// Extended-thinking sentinel: when the assistant message has a
+	// thinking or redacted_thinking block, the model's signature
+	// covers every sibling block including tool_use.input. Rewriting
+	// the input in place would invalidate the signature, and the
+	// agent's NEXT request — which echoes this assistant message
+	// back to Anthropic with the rewritten input — would 400 with
+	// "thinking blocks in the latest assistant message cannot be
+	// modified." Detect the case here and convert any
+	// rewrite-bearing verdict into a structured block result so the
+	// downstream block-rendering path emits a Clawvisor refusal in
+	// place of the broken rewrite.
+	hasThinking := false
+	for _, block := range resp.Content {
+		if block.Type == "thinking" || block.Type == "redacted_thinking" {
+			hasThinking = true
+			break
+		}
+	}
+
 	var decisions []ToolUseDecisionRecord
 	var frags []assistantFragment
 	anyBlocked := false
@@ -73,6 +92,9 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 			}
 			index++
 			verdict := eval(tu)
+			if hasThinking && verdict.Allowed && len(verdict.RewriteInput) > 0 {
+				verdict = ThinkingRewriteRefusal(verdict)
+			}
 			decisions = append(decisions, ToolUseDecisionRecord{
 				ToolUse:          tu,
 				Verdict:          verdict,
@@ -254,6 +276,17 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		}
 	}
 
+	// Extended-thinking sentinel — mirror the rewriteJSON guard. See
+	// the comment there for why an in-place rewrite under thinking
+	// breaks the agent's next request.
+	hasThinking := false
+	for _, pb := range orderedAll {
+		if pb.blockType == "thinking" || pb.blockType == "redacted_thinking" {
+			hasThinking = true
+			break
+		}
+	}
+
 	var decisions []ToolUseDecisionRecord
 	anyBlocked := false
 	anyRewritten := false
@@ -270,6 +303,9 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 			Input: inputRaw,
 		}
 		verdict := eval(tu)
+		if hasThinking && verdict.Allowed && len(verdict.RewriteInput) > 0 {
+			verdict = ThinkingRewriteRefusal(verdict)
+		}
 		decisions = append(decisions, ToolUseDecisionRecord{
 			ToolUse:          tu,
 			Verdict:          verdict,
@@ -1092,6 +1128,7 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 	nextContentIndex := 0
 	nextOutboundIndex := 0
 	firstBufferedToolIndex := -1
+	hasThinking := false
 
 	writeSSE := func(event string, data string) error {
 		var err error
@@ -1155,6 +1192,12 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 				return writeSSE(event, data)
 			}
 			inboundIndex := cbs.Index
+			if cbs.ContentBlock.Type == "thinking" || cbs.ContentBlock.Type == "redacted_thinking" {
+				// Note presence even for blocks we don't filter — the
+				// post-stream rewrite loop needs to know to decline
+				// any in-place tool_use input rewrite on this turn.
+				hasThinking = true
+			}
 			if cbs.ContentBlock.Type == "thinking" && isNonClaudeModel(msgModel) {
 				blocks[inboundIndex] = &pendingBlock{
 					index:     -1,
@@ -1391,6 +1434,7 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 		Role:                      msgRole,
 		StreamFormat:              "anthropic_messages",
 		NextAnthropicContentIndex: firstNonToolIndex(nextContentIndex, firstBufferedToolIndex, len(orderedTUs) > 0),
+		HasThinking:               hasThinking,
 	}, nil
 }
 

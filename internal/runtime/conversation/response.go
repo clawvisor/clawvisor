@@ -67,6 +67,44 @@ type ToolUseDecisionRecord struct {
 	ToolInputPreview string
 }
 
+// ThinkingRewriteRefusal converts a verdict that wanted to rewrite a
+// tool_use input into a blocked verdict, used by Anthropic response
+// rewriters (both buffered and streaming) when the assistant message
+// contains a thinking or redacted_thinking block.
+//
+// Anthropic's signature on a thinking block covers every sibling
+// block in the assistant message, including each tool_use.input.
+// Modifying an input in place invalidates the signature; the agent
+// CLI then echoes the modified content back on the next turn and
+// Anthropic returns:
+//
+//	400 invalid_request_error: `thinking` or `redacted_thinking` blocks
+//	in the latest assistant message cannot be modified.
+//
+// The refusal carries the SAME message in Reason and
+// ContinueWithToolResult so the recovery surfaces both as a
+// refusal-text and as a synthetic tool_result on the continuation
+// path — same shape the rewriter failure path already uses for the
+// no-rewriter-for-shape case.
+//
+// Exported so the lite-proxy's streaming postprocess loop (which
+// applies rewrites AFTER StreamRewrite returns) can call it with the
+// same shape as the buffered rewriters.
+func ThinkingRewriteRefusal(orig ToolUseVerdict) ToolUseVerdict {
+	const reason = "Clawvisor: credentialed rewrite declined — extended thinking is active on this assistant turn. " +
+		"Rewriting the tool_use input in place would invalidate the model's thinking-block signature, " +
+		"and Anthropic would 400 the next request with `thinking blocks in the latest assistant message cannot be modified`. " +
+		"To proceed: retry without extended thinking, or restructure so the credentialed call doesn't need an in-place rewrite (e.g. have the agent construct the proxy URL itself rather than calling the upstream host directly)."
+	return ToolUseVerdict{
+		Allowed:                false,
+		Reason:                 reason,
+		ContinueWithToolResult: reason,
+		// Carry through any CreatedTaskID so audit linkage stays
+		// intact even though the rewrite was declined.
+		CreatedTaskID: orig.CreatedTaskID,
+	}
+}
+
 const toolInputPreviewLimit = 512
 
 func MakeToolInputPreview(in json.RawMessage) string {
@@ -94,6 +132,18 @@ type StreamingRewriteResult struct {
 	StreamFormat              string
 	NextAnthropicContentIndex int
 	NextOpenAIOutputIndex     int
+
+	// HasThinking is true when the streamed assistant turn included a
+	// thinking or redacted_thinking content block. The post-stream
+	// rewrite loop in lite-proxy MUST NOT apply any tool_use input
+	// rewrite when this is set — the model's signature covers every
+	// sibling block, including tool_use inputs, so an in-place rewrite
+	// invalidates it and the agent's NEXT request 400s with
+	// "thinking blocks in the latest assistant message cannot be
+	// modified." Callers should convert any RewriteInput-bearing
+	// verdict into a ThinkingRewriteRefusal-style block result when
+	// this is true.
+	HasThinking bool
 }
 
 type ResponseRewriter interface {

@@ -1809,6 +1809,19 @@ func PostprocessStream(
 
 	for _, tu := range streamResult.ToolUses {
 		v := eval(tu)
+		// Mirror the buffered-rewriter guard: when the streamed
+		// assistant turn includes a thinking or redacted_thinking
+		// block, the model's signature covers every sibling block.
+		// Applying an in-place tool_use input rewrite would
+		// invalidate it, and the agent's NEXT request would 400 with
+		// "thinking blocks in the latest assistant message cannot
+		// be modified." Convert any rewrite-bearing verdict to a
+		// blocked refusal verdict whose Reason + ContinueWithToolResult
+		// explain the cause; the downstream block-rendering path
+		// surfaces the refusal in place of the (broken) rewrite.
+		if streamResult.HasThinking && v.Allowed && len(v.RewriteInput) > 0 {
+			v = conversation.ThinkingRewriteRefusal(v)
+		}
 		decisions = append(decisions, conversation.ToolUseDecisionRecord{
 			ToolUse:          tu,
 			Verdict:          v,

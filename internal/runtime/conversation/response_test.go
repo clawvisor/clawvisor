@@ -121,6 +121,125 @@ func TestAnthropicResponseRewriterBlocksToolUseJSON(t *testing.T) {
 	}
 }
 
+// TestAnthropicResponseRewriterDeclinesRewriteUnderThinkingJSON exercises
+// the extended-thinking guard: when the assistant message contains a
+// thinking (or redacted_thinking) block, any rewrite-bearing verdict is
+// converted to a blocked refusal verdict. Without this guard the proxy
+// would mutate tool_use.input in place, the agent CLI would echo the
+// rewritten content back to Anthropic on its next turn, and Anthropic
+// would 400 with "thinking blocks in the latest assistant message
+// cannot be modified."
+func TestAnthropicResponseRewriterDeclinesRewriteUnderThinkingJSON(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+	  "id":"msg_t1",
+	  "type":"message",
+	  "role":"assistant",
+	  "model":"claude-test",
+	  "content":[
+	    {"type":"thinking","thinking":"i should curl gmail","signature":"sig_abc"},
+	    {"type":"tool_use","id":"toolu_t1","name":"Bash","input":{"command":"curl https://gmail.googleapis.com/gmail/v1/users/me/messages -H 'Authorization: Bearer autovault_x'"}}
+	  ],
+	  "stop_reason":"tool_use"
+	}`)
+
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "application/json", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:      true,
+			RewriteInput: json.RawMessage(`{"command":"curl http://localhost/api/proxy/gmail/v1/users/me/messages -H 'X-Clawvisor-Caller: cv-nonce-xxx'"}`),
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected refusal to mark the response rewritten")
+	}
+	if len(result.Decisions) != 1 {
+		t.Fatalf("expected one decision, got %d", len(result.Decisions))
+	}
+	d := result.Decisions[0]
+	if d.Verdict.Allowed {
+		t.Fatal("verdict must be Allowed=false when thinking is present")
+	}
+	if len(d.Verdict.RewriteInput) != 0 {
+		t.Fatalf("verdict must not carry RewriteInput when thinking is present; got %s", d.Verdict.RewriteInput)
+	}
+	if d.Verdict.Reason == "" || d.Verdict.ContinueWithToolResult == "" {
+		t.Fatalf("verdict must populate Reason and ContinueWithToolResult; got %+v", d.Verdict)
+	}
+	for _, want := range []string{"extended thinking", "thinking-block signature", "credentialed rewrite declined"} {
+		if !strings.Contains(d.Verdict.Reason, want) {
+			t.Fatalf("recovery reason missing %q:\n%s", want, d.Verdict.Reason)
+		}
+	}
+}
+
+// TestAnthropicResponseRewriterDeclinesRewriteUnderRedactedThinkingJSON
+// covers the redacted variant Anthropic emits for sensitive thinking
+// content. Same guard, different block type.
+func TestAnthropicResponseRewriterDeclinesRewriteUnderRedactedThinkingJSON(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+	  "id":"msg_t2",
+	  "type":"message",
+	  "role":"assistant",
+	  "model":"claude-test",
+	  "content":[
+	    {"type":"redacted_thinking","data":"opaque_blob"},
+	    {"type":"tool_use","id":"toolu_t2","name":"Bash","input":{"command":"curl https://gmail.googleapis.com -H 'Authorization: Bearer autovault_x'"}}
+	  ],
+	  "stop_reason":"tool_use"
+	}`)
+
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "application/json", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:      true,
+			RewriteInput: json.RawMessage(`{"command":"rewritten"}`),
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten || len(result.Decisions) != 1 {
+		t.Fatalf("expected one declined decision, got %+v", result.Decisions)
+	}
+	if result.Decisions[0].Verdict.Allowed {
+		t.Fatal("verdict must be Allowed=false under redacted_thinking")
+	}
+}
+
+// TestAnthropicResponseRewriterAllowsRewriteWithoutThinkingJSON guards
+// against the guard over-triggering: a response with no thinking block
+// must still admit the original rewrite verdict unmodified.
+func TestAnthropicResponseRewriterAllowsRewriteWithoutThinkingJSON(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+	  "id":"msg_norew",
+	  "type":"message",
+	  "role":"assistant",
+	  "model":"claude-test",
+	  "content":[
+	    {"type":"tool_use","id":"toolu_norew","name":"Bash","input":{"command":"curl https://gmail.googleapis.com -H 'Authorization: Bearer autovault_x'"}}
+	  ],
+	  "stop_reason":"tool_use"
+	}`)
+
+	rewrite := json.RawMessage(`{"command":"rewritten"}`)
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "application/json", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{Allowed: true, RewriteInput: rewrite}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten || len(result.Decisions) != 1 || !result.Decisions[0].Verdict.Allowed {
+		t.Fatalf("expected the rewrite to go through unchanged when no thinking blocks present; got %+v", result.Decisions)
+	}
+}
+
 func TestAnthropicResponseRewriterOmitsEmptyTextBlocksWhenRewritingSSE(t *testing.T) {
 	t.Parallel()
 
