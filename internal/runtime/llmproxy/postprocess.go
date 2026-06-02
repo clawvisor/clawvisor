@@ -565,8 +565,17 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 	}
 	flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
 
+	// Scope-drift decisions (options c/d) ride on a <clawvisor:decision>
+	// markup the model emits in its assistant text after seeing the
+	// menu. We resolve them here, after the existing tool_use rewrites
+	// have settled the body, so the substitution sees the final shape.
+	// Options (a)/(b) require no special handling — they're plain
+	// /control/tasks{,/expand} tool_uses already covered by the
+	// rewriter pass above.
+	finalBody := applyScopeDriftDecisions(req.Context(), cfg, result.Body)
+
 	return PostprocessResult{
-		Body:        result.Body,
+		Body:        finalBody,
 		ContentType: contentType,
 		Rewritten:   result.Rewritten,
 		Decisions:   result.Decisions,

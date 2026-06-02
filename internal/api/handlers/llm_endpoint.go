@@ -480,6 +480,51 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditParams["approval_task_rewritten"] = true
 	}
 
+	// Scope-drift one-off approval: when the user's "approve"/"deny"
+	// reply resolves an awaiting_scope_drift_one_off hold, flip the
+	// drift outcome (succeeded → pre-clear inserted; denied → drift
+	// closed) and rewrite the user message so the model sees a
+	// synthesized status line rather than a bare "yes"/"no". Run
+	// BEFORE the inline-task rewriter — both probe the most-recent
+	// hold and dispatch by stage; running scope-drift first means
+	// that if the newest hold is a scope-drift one-off, it gets
+	// handled here and the inline-task rewriter falls through cleanly.
+	if scopeDriftRewrite, scopeDriftErr := llmproxy.RewriteScopeDriftOneOffApprovalReply(r.Context(), llmproxy.ScopeDriftReplyRewriteRequest{
+		HTTPRequest:     r,
+		Provider:        provider,
+		Body:            body,
+		Agent:           agent,
+		ConversationID:  conversationID,
+		PendingApproval: h.PendingApprovals,
+		ScopeDrifts:     h.ScopeDrifts,
+		Logger:          h.Logger,
+	}); scopeDriftErr != nil {
+		auditStatus = http.StatusBadRequest
+		auditDecide = "deny"
+		auditOutcome = "malformed_request"
+		auditReason = scopeDriftErr.Error()
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the scope-drift one-off reply: "+scopeDriftErr.Error()+". Please retry.")
+		return
+	} else if scopeDriftRewrite.Rewritten {
+		body = scopeDriftRewrite.Body
+		if _, err := parser.ParseRequest(body); err != nil {
+			auditStatus = http.StatusBadRequest
+			auditDecide = "deny"
+			auditOutcome = "malformed_request"
+			auditReason = err.Error()
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
+			return
+		}
+		auditParams["scope_drift_one_off_rewritten"] = true
+		auditParams["scope_drift_one_off_outcome"] = scopeDriftRewrite.Outcome
+		if scopeDriftRewrite.DriftID != "" {
+			auditParams["scope_drift_id"] = scopeDriftRewrite.DriftID
+		}
+		if scopeDriftRewrite.Reason != "" {
+			auditParams["scope_drift_one_off_reason"] = scopeDriftRewrite.Reason
+		}
+	}
+
 	// Inline task approval: when the user's "approve"/"deny" reply
 	// resolves an awaiting_task_approval hold, create the task and
 	// rewrite the user message so the LLM gets clean context (rather

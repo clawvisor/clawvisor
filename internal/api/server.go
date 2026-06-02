@@ -1365,14 +1365,14 @@ func (s *Server) registerLiteProxyRoutes(
 		mux.Handle("GET /api/control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
 		mux.Handle("GET /api/control/vault/items/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.GetForAgent))))
 
-		// Scope-drift endpoints (option (c) one-off, option (d) justify,
-		// and the GET status route the agent polls when (c) is in flight).
-		// The handler degrades to 503 when ScopeDrifts is nil, so wiring
-		// is safe even on legacy configs without the registry.
-		scopeDriftHandler := handlers.NewScopeDriftHandler(s.scopeDrifts, verifier, s.logger)
-		mux.Handle("GET /api/control/scope-drift/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(scopeDriftHandler.Get))))
-		mux.Handle("POST /api/control/scope-drift/{id}/one-off", requireAgentLLMCaller(e2e(http.HandlerFunc(scopeDriftHandler.OneOff))))
-		mux.Handle("POST /api/control/scope-drift/{id}/justify", requireAgentLLMCaller(e2e(http.HandlerFunc(scopeDriftHandler.Justify))))
+		// Scope-drift options (c) one-off and (d) justify are NOT served by
+		// dedicated control endpoints — instead the lite-proxy parses a
+		// <clawvisor:decision drift="..." option="..."> markup the agent
+		// emits in its assistant text response and resolves it server-side.
+		// See internal/runtime/llmproxy/scope_drift_resolve.go. Options (a)
+		// and (b) continue to reuse /control/tasks/{id}/expand and
+		// /control/tasks; the verifier and registry are wired into the
+		// lite-proxy postprocess path so no new HTTP surface is needed.
 
 		mux.Handle("/api/control/", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.NotFound))))
 

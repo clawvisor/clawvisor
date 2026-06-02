@@ -44,6 +44,14 @@ const (
 	// links back to the original tool hold. We're waiting for the user
 	// to yes/no.
 	StageAwaitingTaskApproval PendingApprovalStage = "awaiting_task_approval"
+	// StageAwaitingScopeDriftOneOff — the agent emitted a
+	// <clawvisor:decision option="one-off"> markup against a blocked
+	// tool_use and the lite-proxy registered this hold so the user can
+	// approve a single execution. The hold's ScopeDriftID points at
+	// the registry entry whose outcome flips on user yes/no; there is
+	// no held ToolUse to release because the drift's pre-clear
+	// mechanism handles the agent's retry of the original call.
+	StageAwaitingScopeDriftOneOff PendingApprovalStage = "awaiting_scope_drift_one_off"
 )
 
 type PendingLiteApproval struct {
@@ -94,6 +102,21 @@ type PendingLiteApproval struct {
 	// nil at stages other than StageAwaitingTaskApproval, and may be nil
 	// at that stage if the assessor wasn't configured or returned unknown.
 	PrecomputedRisk *taskrisk.RiskAssessment
+
+	// ScopeDriftID, when non-empty, ties this hold to a ScopeDrift
+	// record. Only set on StageAwaitingScopeDriftOneOff holds. On
+	// user approve, the reply rewriter calls
+	// ScopeDriftRegistry.SetOutcome(ScopeDriftID, succeeded) to insert
+	// the pre-clear that lets the agent's retry of the original
+	// blocked tool_use pass scope+intent verification once. On deny,
+	// the outcome is flipped to denied and no pre-clear is inserted.
+	ScopeDriftID string
+
+	// ScopeDriftAgentNote carries the agent_note from the original
+	// <clawvisor:decision> markup so the inline approval prompt
+	// renderer can show the user the agent's stated reason. Only set
+	// on StageAwaitingScopeDriftOneOff holds.
+	ScopeDriftAgentNote string
 
 	// PendingTaskID is the ID of the store.Task row the inline-task
 	// intercept landed at status="pending_approval" BEFORE calling

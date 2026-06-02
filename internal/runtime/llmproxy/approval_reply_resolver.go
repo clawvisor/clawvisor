@@ -14,6 +14,13 @@ const (
 	approvalReplyActionStartInlineTaskDefinition approvalReplyActionKind = "start_inline_task_definition"
 	approvalReplyActionApproveInlineTask         approvalReplyActionKind = "approve_inline_task"
 	approvalReplyActionDenyInlineTask            approvalReplyActionKind = "deny_inline_task"
+	// Scope-drift one-off approvals (option (c) in the menu) are
+	// dispatched separately from inline-task approvals because the
+	// resolution side-effect is different — flipping a drift's
+	// outcome to insert a pre-clear, not creating or activating a
+	// task. The hold type lives in StageAwaitingScopeDriftOneOff.
+	approvalReplyActionApproveScopeDriftOneOff approvalReplyActionKind = "approve_scope_drift_one_off"
+	approvalReplyActionDenyScopeDriftOneOff    approvalReplyActionKind = "deny_scope_drift_one_off"
 )
 
 type approvalReplyAction struct {
@@ -79,15 +86,21 @@ func resolveApprovalReplyAction(ctx context.Context, req approvalReplyRoutingReq
 	case "task":
 		action.Kind = approvalReplyActionStartInlineTaskDefinition
 	case "approve":
-		if hold.Stage == StageAwaitingTaskApproval {
+		switch hold.Stage {
+		case StageAwaitingTaskApproval:
 			action.Kind = approvalReplyActionApproveInlineTask
-		} else {
+		case StageAwaitingScopeDriftOneOff:
+			action.Kind = approvalReplyActionApproveScopeDriftOneOff
+		default:
 			action.Kind = approvalReplyActionReleaseTool
 		}
 	case "deny":
-		if hold.Stage == StageAwaitingTaskApproval {
+		switch hold.Stage {
+		case StageAwaitingTaskApproval:
 			action.Kind = approvalReplyActionDenyInlineTask
-		} else {
+		case StageAwaitingScopeDriftOneOff:
+			action.Kind = approvalReplyActionDenyScopeDriftOneOff
+		default:
 			action.Kind = approvalReplyActionReleaseTool
 		}
 	}

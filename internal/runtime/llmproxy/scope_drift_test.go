@@ -111,7 +111,7 @@ func TestScopeDriftRegistry_TTLExpiry(t *testing.T) {
 	}
 }
 
-func TestRenderScopeDriftMenu_VisibleOptions(t *testing.T) {
+func TestRenderScopeDriftMenu_AllFourOptions(t *testing.T) {
 	out := renderScopeDriftMenu(MenuFields{
 		DriftID:    "drift-abc",
 		Service:    "github",
@@ -125,31 +125,33 @@ func TestRenderScopeDriftMenu_VisibleOptions(t *testing.T) {
 		"Drift ID: drift-abc",
 		"github.create_issue",
 		"params violate scope",
+		// (a) and (b) reuse existing endpoints — full URLs.
 		"(a) Expand the active task",
-		"/control/tasks/task-1/expand?surface=inline",
+		"/control/tasks/task-1/expand",
 		"(b) Create a new task",
 		"/control/tasks?surface=inline",
+		// (c) and (d) are emitted as markup the lite-proxy parses.
+		"(c) One-off",
+		`<clawvisor:decision drift="drift-abc" option="one-off">`,
 		"(d) False positive",
-		"/control/scope-drift/drift-abc/justify",
-		"You do not get to retry against another option",
+		`<clawvisor:decision drift="drift-abc" option="justify">`,
+		"Each drift_id resolves exactly once",
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(out, s) {
 			t.Errorf("menu missing substring %q\n--- rendered ---\n%s", s, out)
 		}
 	}
-	// Option (c) is documented in the control skill schema but
-	// deliberately omitted from the rendered menu on this build —
-	// the user-approval channel that flips its outcome is not yet
-	// wired, so advertising it would invite the agent to burn the
-	// one-shot cap on a path that cannot complete.
+	// The new design replaced the per-option HTTP endpoints with
+	// markup; assert none of the deleted control-plane routes leak
+	// into the menu prompt.
 	mustNotContain := []string{
-		"(c) One-off",
 		"/control/scope-drift/drift-abc/one-off",
+		"/control/scope-drift/drift-abc/justify",
 	}
 	for _, s := range mustNotContain {
 		if strings.Contains(out, s) {
-			t.Errorf("menu unexpectedly contains substring %q\n--- rendered ---\n%s", s, out)
+			t.Errorf("menu unexpectedly contains deleted endpoint %q\n--- rendered ---\n%s", s, out)
 		}
 	}
 }

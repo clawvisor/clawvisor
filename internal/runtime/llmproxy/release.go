@@ -233,6 +233,18 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 			Reason:     "couldn't process this approval (internal: inline-task preprocess missing). Please retry your original request.",
 		}
 	}
+	if action.Kind == approvalReplyActionApproveScopeDriftOneOff || action.Kind == approvalReplyActionDenyScopeDriftOneOff {
+		// Same defensive pattern: a scope-drift one-off hold must be
+		// resolved by the dedicated preprocess rewriter, not here.
+		req.logRelease(ctx, peeked, "deny", "blocked", "scope-drift one-off hold reached release path; preprocess not wired")
+		return ReleaseResult{
+			Handled:    true,
+			HTTPStatus: http.StatusServiceUnavailable,
+			Decision:   "deny",
+			Outcome:    "scope_drift_one_off_preprocess_missing",
+			Reason:     "couldn't process this approval (internal: scope-drift one-off preprocess missing). Please retry your original request.",
+		}
+	}
 	// Resolve the SAME hold we inspected, by explicit ID. Calling
 	// Resolve with a bare (no-ID) request again would re-run the LIFO
 	// selection at a fresh lock acquisition — a concurrent Hold
