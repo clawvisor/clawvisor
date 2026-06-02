@@ -1766,55 +1766,159 @@ func scopeDriftSourceFromDecision(source runtimedecision.DecisionSource) (ScopeD
 // so the SSE shape stays well-formed and the appended block is
 // visible to the harness.
 type stopHoldingWriter struct {
-	inner   io.Writer
+	inner    io.Writer
 	provider conversation.Provider
 	// held buffers raw SSE bytes from the upstream once the terminal
 	// marker has been seen. Pre-marker bytes are forwarded to inner.
 	held    []byte
 	holding bool
+	// pending holds the trailing bytes of recent writes that haven't
+	// yet been confirmed safe to forward. Each Write speculatively
+	// retains up to maxMarkerLen-1 trailing bytes here in case the
+	// next write completes a marker that straddles the boundary.
+	// Once enough new bytes have arrived to prove the speculation
+	// safe, the leading portion of pending is forwarded to inner.
+	pending []byte
 }
 
 func newStopHoldingWriter(w io.Writer, provider conversation.Provider) *stopHoldingWriter {
 	return &stopHoldingWriter{inner: w, provider: provider}
 }
 
-// Write forwards bytes to inner until it detects the provider's
-// terminal SSE marker; after that, bytes accumulate in held instead.
-// The detection is byte-substring based to keep the wrapper agnostic
-// of the SSE event boundaries — once any terminal marker substring
-// appears in a write, all subsequent bytes (including the marker
-// itself and trailing newlines) are buffered.
+// Write speculatively withholds only those trailing bytes that COULD
+// be a prefix of a terminal marker, forwarding everything else
+// promptly. This preserves the streaming-text contract (text deltas
+// must reach the client without waiting for more bytes) while still
+// catching markers that straddle Write boundaries: a chunk ending in
+// "event: messa" gets that suffix held back, but ordinary text ending
+// in "hello world\n" forwards immediately because no marker starts
+// with "world\n".
 func (w *stopHoldingWriter) Write(p []byte) (int, error) {
 	if w.holding {
 		w.held = append(w.held, p...)
 		return len(p), nil
 	}
-	if idx := w.terminalMarkerIndex(p); idx >= 0 {
-		var nFwd int
+	combined := append(w.pending, p...)
+	w.pending = nil
+	if idx := w.terminalMarkerIndex(combined); idx >= 0 {
 		if idx > 0 {
-			n, err := w.inner.Write(p[:idx])
-			if err != nil {
-				return n, err
+			if _, err := w.inner.Write(combined[:idx]); err != nil {
+				return 0, err
 			}
-			nFwd = n
 		}
-		w.held = append(w.held, p[idx:]...)
+		w.held = append(w.held, combined[idx:]...)
 		w.holding = true
-		return nFwd + len(p[idx:]), nil
+		return len(p), nil
 	}
-	return w.inner.Write(p)
+	// Find the longest suffix of combined that is a prefix of some
+	// marker. Only that suffix needs to wait for the next chunk;
+	// everything before it is safe to forward now.
+	holdLen := w.longestMarkerPrefixSuffix(combined)
+	safeLen := len(combined) - holdLen
+	if safeLen > 0 {
+		if _, err := w.inner.Write(combined[:safeLen]); err != nil {
+			return 0, err
+		}
+	}
+	if holdLen > 0 {
+		w.pending = append(w.pending, combined[safeLen:]...)
+	}
+	return len(p), nil
 }
 
-// Flush writes the held bytes to inner. Safe to call when nothing was
-// held (no-op).
-func (w *stopHoldingWriter) Flush() error {
-	if len(w.held) == 0 {
-		return nil
+// longestMarkerPrefixSuffix returns the length of the longest suffix
+// of buf that matches a prefix of any marker the writer recognises
+// for the current provider. Returns 0 when no suffix can possibly
+// extend into a marker — that's the prompt-forward case for ordinary
+// streamed text.
+func (w *stopHoldingWriter) longestMarkerPrefixSuffix(buf []byte) int {
+	markers := w.markers()
+	if len(markers) == 0 || len(buf) == 0 {
+		return 0
 	}
-	_, err := w.inner.Write(w.held)
-	w.held = nil
-	w.holding = false
-	return err
+	// Check decreasing suffix lengths bounded by the longest marker;
+	// take the FIRST match (which is the longest possible because we
+	// iterate longest→shortest).
+	maxLen := w.maxMarkerLen() - 1
+	if maxLen <= 0 {
+		return 0
+	}
+	if maxLen > len(buf) {
+		maxLen = len(buf)
+	}
+	for n := maxLen; n >= 1; n-- {
+		suffix := buf[len(buf)-n:]
+		for _, m := range markers {
+			if len(suffix) > len(m) {
+				continue
+			}
+			if bytes.HasPrefix(m, suffix) {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// markers returns the list of byte sequences that, when seen in the
+// stream, mark the start of held bytes for the current provider.
+func (w *stopHoldingWriter) markers() [][]byte {
+	switch w.provider {
+	case conversation.ProviderAnthropic:
+		return [][]byte{[]byte("event: message_stop")}
+	case conversation.ProviderOpenAI:
+		return [][]byte{[]byte("event: response.completed"), []byte("data: [DONE]")}
+	}
+	return nil
+}
+
+// maxMarkerLen returns the longest marker string this writer needs to
+// recognise for the current provider. Used to size the cross-write
+// tail buffer.
+func (w *stopHoldingWriter) maxMarkerLen() int {
+	switch w.provider {
+	case conversation.ProviderAnthropic:
+		return len("event: message_stop")
+	case conversation.ProviderOpenAI:
+		// The two OpenAI markers are different lengths; take the
+		// larger so neither can split across writes without
+		// detection.
+		a := len("event: response.completed")
+		b := len("data: [DONE]")
+		if a > b {
+			return a
+		}
+		return b
+	}
+	return 0
+}
+
+// Flush writes any speculatively-buffered pending bytes followed by
+// any post-marker held bytes to inner. Safe to call when nothing was
+// held (no-op). After Flush the writer's buffers are cleared so
+// subsequent Writes start fresh.
+//
+// Pending is drained before held so callers that wrote a follow-up
+// substitution block via inner (between the marker arrival and the
+// Flush) see the correct ordering: substitution → previously-pending
+// stream bytes → held marker tail. In practice pending is usually
+// empty by the time Flush runs because the marker triggered the
+// holding branch and the pending buffer got pulled into held there.
+func (w *stopHoldingWriter) Flush() error {
+	if len(w.pending) > 0 {
+		if _, err := w.inner.Write(w.pending); err != nil {
+			return err
+		}
+		w.pending = nil
+	}
+	if len(w.held) > 0 {
+		if _, err := w.inner.Write(w.held); err != nil {
+			return err
+		}
+		w.held = nil
+		w.holding = false
+	}
+	return nil
 }
 
 // terminalMarkerIndex returns the byte offset where the provider's
@@ -2167,14 +2271,25 @@ func PostprocessStream(
 		// approval hold, re-run verifier for (d)) and append the
 		// resolver's status as a follow-up text block so the
 		// harness driver sees the proxy's response inline.
+		//
+		// Defer Flush so the buffered terminal marker always lands
+		// on the wire, even when writeProviderTextBlock or
+		// replayBufferedHolds returns an error. Without the defer,
+		// a mid-stream error would leave the SSE stream truncated
+		// (no message_stop / [DONE]) and the harness CLI hangs
+		// waiting for it. Flush errors that arise after our own
+		// error are swallowed — the caller already has a better
+		// error to surface.
+		defer func() { _ = stopHolder.Flush() }()
 		if cfg.ScopeDrifts != nil && streamResult.AssistantTurn != nil {
 			if driftText := streamingDriftSubstitution(req.Context(), cfg, provider, streamResult.AssistantTurn); driftText != "" {
 				idx := streamingBlockedPromptIndex(provider, streamResult, nil)
 				// stopHolder has already buffered the upstream's
 				// terminal marker; write the appended block to the
 				// inner writer (w) so it lands BEFORE the buffered
-				// marker. Flush releases the held bytes afterwards,
-				// producing a well-formed message_stop tail.
+				// marker. The deferred Flush releases the held
+				// bytes afterwards, producing a well-formed
+				// message_stop tail.
 				if err := writeProviderTextBlock(w, provider, streamResult, driftText, idx); err != nil {
 					return PostprocessResult{}, err
 				}
@@ -2189,9 +2304,6 @@ func PostprocessStream(
 		// the user's "yes"/"no" reply on the next turn would find
 		// no matching hold and fail with "approval no longer valid".
 		if err := replayBufferedHolds(req.Context(), cfg, originalPendingApprovals, holdSink, auditAgent, nil); err != nil {
-			return PostprocessResult{}, err
-		}
-		if err := stopHolder.Flush(); err != nil {
 			return PostprocessResult{}, err
 		}
 		return PostprocessResult{
@@ -2304,7 +2416,13 @@ func PostprocessStream(
 		if cfg.ScopeDrifts != nil && streamResult.AssistantTurn != nil {
 			driftText := streamingDriftSubstitution(req.Context(), cfg, provider, streamResult.AssistantTurn)
 			if driftText != "" {
-				idx := streamingBlockedPromptIndex(provider, streamResult, captures)
+				// writeProviderToolUses just emitted N tool_use
+				// blocks starting at NextAnthropicContentIndex; the
+				// next free index is past the last tool_use. Using
+				// streamingBlockedPromptIndex here would land the
+				// drift text block at the SAME index as the first
+				// tool_use, producing an invalid SSE stream.
+				idx := streamingAppendedTextIndex(provider, streamResult)
 				if err := writeProviderTextBlock(w, provider, streamResult, driftText, idx); err != nil {
 					return PostprocessResult{}, err
 				}
@@ -2320,6 +2438,27 @@ func PostprocessStream(
 		Rewritten:   anyRewritten || anyBlocked,
 		Decisions:   decisions,
 	}, nil
+}
+
+// streamingAppendedTextIndex returns the next free content_block index
+// to use AFTER tool_uses have been written. streamingBlockedPromptIndex
+// returns the FIRST tool index (the index where the blocked-prompt
+// substitution REPLACES the tool list), but for the drift-text-after-
+// tools case we need the index just past the LAST tool so the
+// appended block doesn't collide with one of the just-emitted
+// tool_uses. For OpenAI providers the index space is flat and the
+// same helper is fine; for Anthropic we compute max(tool_use.Index)+1.
+func streamingAppendedTextIndex(provider conversation.Provider, result conversation.StreamingRewriteResult) int {
+	if provider != conversation.ProviderAnthropic {
+		return streamingBlockedPromptIndex(provider, result, nil)
+	}
+	maxIdx := result.NextAnthropicContentIndex - 1
+	for _, tu := range result.ToolUses {
+		if tu.Index > maxIdx {
+			maxIdx = tu.Index
+		}
+	}
+	return maxIdx + 1
 }
 
 func streamingBlockedPromptIndex(provider conversation.Provider, result conversation.StreamingRewriteResult, captures []evalCapture) int {

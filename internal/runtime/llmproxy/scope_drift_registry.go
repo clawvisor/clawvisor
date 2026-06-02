@@ -123,9 +123,17 @@ func (d ScopeDrift) Fingerprint() string {
 
 // scopeDriftFingerprintFromParts is the canonical fingerprint
 // computation, shared between ScopeDrift.Fingerprint and the
-// postprocess pre-clear lookup so the two cannot drift. A nil input
-// hashes the same as []byte("null") (JSON canonical for no input),
-// which is fine because retries reproduce the same JSON.
+// postprocess pre-clear lookup so the two cannot drift.
+//
+// A nil/empty input hashes as sha256 of zero bytes; a literal
+// []byte("null") (4 bytes) hashes differently. The two are NOT
+// interchangeable — but they don't need to be: ScopeDrift records
+// the agent's tool_use.Input verbatim at block time, and the agent's
+// retry reproduces the same bytes. As long as both sides see the same
+// concrete encoding, the fingerprints match. Two agents serializing
+// the same logical "no input" to different byte sequences would NOT
+// collide (which is the safety we want — pre-clear is scoped to the
+// exact tool_use that the user / verifier approved).
 func scopeDriftFingerprintFromParts(agentID, conversationID, service, action, host, method, path string, input []byte) string {
 	sum := sha256.Sum256(input)
 	inputHash := hex.EncodeToString(sum[:8])
