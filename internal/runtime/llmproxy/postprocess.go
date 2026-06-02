@@ -100,6 +100,11 @@ type IntentVerifyRequest struct {
 	Reason      string
 	TaskID      string
 	Lenient     bool
+	// AgentJustification is set ONLY by the /control/scope-drift/{id}/justify
+	// second-pass call. Empty on the initial verification path inside
+	// runIntentVerify. The intent package's prompts.go threads it into
+	// the verifier's user message under a labelled slot.
+	AgentJustification string
 }
 
 // IntentVerdict mirrors intent.VerificationVerdict (Allow + Explanation
@@ -193,6 +198,15 @@ type PostprocessConfig struct {
 	PreferredTaskID string
 
 	PendingApprovals PendingApprovalCache
+
+	// ScopeDrifts holds the short-lived records minted when a tool call
+	// fails task scope or intent verification. Required for the four-
+	// choice agent menu (expand / new task / one-off / justify); when
+	// nil, postprocess falls back to the legacy flat-error verdicts and
+	// the agent has no structured recourse. Production wires a
+	// memoryScopeDriftRegistry; tests pass nil to keep the existing
+	// flat-error expectations stable.
+	ScopeDrifts ScopeDriftRegistry
 
 	// TaskRiskAssessor scores a task envelope via LLM at inline-approval
 	// time so the approval prompt carries an evaluated risk read.
@@ -1060,25 +1074,45 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 		// surfaces (always_ask / approval queue) are wired in #33.
 		if !decisionHandled && cfg.Catalog != nil && cfg.TaskScope != nil {
 			if resolved, ok := cfg.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
-				dec := cfg.TaskScope.Check(req.Context(), cfg.AgentUserID, cfg.AgentID, resolved.ServiceID, resolved.ActionID)
-				if !dec.Allowed {
-					audit("block", "task_scope_denied", dec.Reason)
-					return conversation.ToolUseVerdict{
-						Allowed: false,
-						Reason:  "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
+				// Pre-clear check: when a previous drift on this exact
+				// (agent, service, action, host, method, path) was
+				// resolved positively (option a/b user-approved,
+				// option c user-approved, or option d verifier-
+				// re-accepted), the registry holds a one-shot
+				// pre-clear authorising this single re-attempt.
+				// Honouring it here lets the agent retry the original
+				// tool_use unchanged without re-entering the menu.
+				preCleared := false
+				if cfg.ScopeDrifts != nil {
+					fp := scopeDriftFingerprint(cfg.AgentID, resolved.ServiceID, resolved.ActionID, v.Host, v.Method, v.Path)
+					if driftID, ok := cfg.ScopeDrifts.LookupPreClear(req.Context(), cfg.AgentID, fp); ok {
+						audit("allow", "scope_drift_pre_cleared", driftID)
+						preCleared = true
 					}
 				}
-				matchedTaskID = dec.TaskID
-				// Intent verification: when the matched TaskAction's
-				// Verification mode opts in (strict | lenient | empty)
-				// and an IntentVerifier is configured, the LLM compares
-				// the request's params + tool_use shape to the matched
-				// expected_use. Off mode and missing verifier skip silently.
-				if reason, ok := runIntentVerify(req.Context(), cfg, dec, resolved, tu); !ok {
-					audit("block", "intent_verification_failed", reason)
-					return conversation.ToolUseVerdict{
-						Allowed: false,
-						Reason:  "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason,
+				if !preCleared {
+					dec := cfg.TaskScope.Check(req.Context(), cfg.AgentUserID, cfg.AgentID, resolved.ServiceID, resolved.ActionID)
+					if !dec.Allowed {
+						audit("block", "task_scope_denied", dec.Reason)
+						return scopeDriftVerdict(req, cfg, tu, resolved, v, "", "", ScopeDriftSourceTaskScope, dec.Reason)
+					}
+					matchedTaskID = dec.TaskID
+					// Intent verification: when the matched TaskAction's
+					// Verification mode opts in (strict | lenient | empty)
+					// and an IntentVerifier is configured, the LLM compares
+					// the request's params + tool_use shape to the matched
+					// expected_use. Off mode and missing verifier skip silently.
+					if reason, ok := runIntentVerify(req.Context(), cfg, dec, resolved, tu); !ok {
+						audit("block", "intent_verification_failed", reason)
+						taskPurpose := ""
+						expectedUse := ""
+						if dec.MatchedTask != nil {
+							taskPurpose = dec.MatchedTask.Purpose
+						}
+						if dec.MatchedAction != nil {
+							expectedUse = dec.MatchedAction.ExpectedUse
+						}
+						return scopeDriftVerdictWithTask(req, cfg, tu, resolved, v, dec.TaskID, taskPurpose, expectedUse, ScopeDriftSourceIntentVerification, reason)
 					}
 				}
 				// Sliding lifetime: each authorized tool_use bumps a
@@ -1623,6 +1657,77 @@ func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.
 		}
 	}
 	return "", true
+}
+
+// scopeDriftFingerprint is the stable identifier the registry uses to
+// match a pre-cleared drift to its retry. Mirrors ScopeDrift.Fingerprint
+// — kept as a free function so the postprocess pre-clear check can
+// compute it without manufacturing a temporary drift record.
+func scopeDriftFingerprint(agentID, service, action, host, method, path string) string {
+	return strings.Join([]string{agentID, service, action, host, method, path}, "|")
+}
+
+// scopeDriftVerdict registers a drift record for a task_scope_denied
+// block and returns the ToolUseVerdict that substitutes the
+// agent-facing menu for the legacy flat error. When the registry is
+// not configured (tests, older deployments), falls back to the
+// original flat-error shape so existing expectations stay stable.
+func scopeDriftVerdict(req *http.Request, cfg PostprocessConfig, tu conversation.ToolUse, resolved ResolvedAction, v inspector.Verdict, taskID, taskPurpose string, source ScopeDriftSource, reason string) conversation.ToolUseVerdict {
+	return scopeDriftVerdictWithTask(req, cfg, tu, resolved, v, taskID, taskPurpose, "", source, reason)
+}
+
+func scopeDriftVerdictWithTask(req *http.Request, cfg PostprocessConfig, tu conversation.ToolUse, resolved ResolvedAction, v inspector.Verdict, taskID, taskPurpose, expectedUse string, source ScopeDriftSource, reason string) conversation.ToolUseVerdict {
+	// Preserve the original per-source wording so audit text and the
+	// pre-drift fallback path stay byte-stable. Tests + dashboards key
+	// off these strings; the menu prompt below is additive context.
+	var flatReason string
+	switch source {
+	case ScopeDriftSourceTaskScope:
+		flatReason = "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason
+	case ScopeDriftSourceIntentVerification:
+		flatReason = "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason
+	default:
+		flatReason = "Clawvisor: " + string(source) + " refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason
+	}
+	if cfg.ScopeDrifts == nil {
+		// No registry wired — degrade to the legacy verdict the
+		// pre-drift flow returned. Tests that don't exercise the
+		// menu still see the same blocking error shape.
+		return conversation.ToolUseVerdict{
+			Allowed: false,
+			Reason:  flatReason,
+		}
+	}
+	drift, err := cfg.ScopeDrifts.Register(req.Context(), ScopeDrift{
+		UserID:         cfg.AgentUserID,
+		AgentID:        cfg.AgentID,
+		ConversationID: cfg.ConversationID,
+		ToolUse:        tu,
+		Service:        resolved.ServiceID,
+		Action:         resolved.ActionID,
+		Host:           v.Host,
+		Method:         v.Method,
+		Path:           v.Path,
+		TaskID:         taskID,
+		TaskPurpose:    taskPurpose,
+		ExpectedUse:    expectedUse,
+		Source:         source,
+		ReasonText:     reason,
+	})
+	if err != nil {
+		// Registry write failed — fall back to flat error rather
+		// than emit a menu with no usable drift_id.
+		return conversation.ToolUseVerdict{
+			Allowed: false,
+			Reason:  flatReason + " (drift registry unavailable: " + err.Error() + ")",
+		}
+	}
+	prompt := renderScopeDriftMenu(drift.MenuFields(), cfg.ControlBaseURL)
+	return conversation.ToolUseVerdict{
+		Allowed:        false,
+		Reason:         flatReason,
+		SubstituteWith: prompt,
+	}
 }
 
 // runIntentVerify runs LLM intent verification when the matched TaskAction

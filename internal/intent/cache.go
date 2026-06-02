@@ -71,7 +71,13 @@ func (c *verdictCache) Cleanup() {
 	}
 }
 
-// buildCacheKey builds a cache key from (taskID, service, action, sha256(params), sha256(reason), sha256(chainFacts)?, prompt mode).
+// buildCacheKey builds a cache key from (taskID, service, action, sha256(params), sha256(reason), sha256(chainFacts)?, sha256(justification)?, prompt mode).
+//
+// AgentJustification is folded into the key so a second-pass /justify
+// call doesn't pick up the first pass's Allow=false from cache — the
+// whole point of the second pass is to give the verifier a new piece
+// of input. Empty justification keeps the original key shape so the
+// initial-pass cache hit rate is unaffected.
 func buildCacheKey(req VerifyRequest) cacheKey {
 	paramsBytes, _ := json.Marshal(req.Params)
 	paramsHash := sha256.Sum256(paramsBytes)
@@ -89,13 +95,19 @@ func buildCacheKey(req VerifyRequest) cacheKey {
 		mode += "p"
 	}
 
+	var justificationSuffix string
+	if req.AgentJustification != "" {
+		justificationHash := sha256.Sum256([]byte(req.AgentJustification))
+		justificationSuffix = fmt.Sprintf("|j:%x", justificationHash[:8])
+	}
+
 	if len(req.ChainFacts) > 0 {
 		factsBytes, _ := json.Marshal(req.ChainFacts)
 		factsHash := sha256.Sum256(factsBytes)
-		return cacheKey(fmt.Sprintf("%s|%s|%s|%x|%x|%x|%s|%s",
-			req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], factsHash[:8], optOut, mode))
+		return cacheKey(fmt.Sprintf("%s|%s|%s|%x|%x|%x|%s|%s%s",
+			req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], factsHash[:8], optOut, mode, justificationSuffix))
 	}
 
-	return cacheKey(fmt.Sprintf("%s|%s|%s|%x|%x|%s|%s",
-		req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], optOut, mode))
+	return cacheKey(fmt.Sprintf("%s|%s|%s|%x|%x|%s|%s%s",
+		req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], optOut, mode, justificationSuffix))
 }

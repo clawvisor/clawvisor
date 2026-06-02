@@ -110,6 +110,7 @@ type Server struct {
 	liteApprovals      llmproxy.PendingApprovalCache
 	liteOutcomes       llmproxy.InlineApprovalOutcomeStore
 	taskCheckouts      llmproxy.TaskCheckoutStore
+	scopeDrifts        llmproxy.ScopeDriftRegistry
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 
@@ -1303,6 +1304,16 @@ func (s *Server) registerLiteProxyRoutes(
 			llmHandler.PendingSecrets = s.pendingSecrets
 		}
 
+		// Scope drift registry — keeps short-lived records of tool calls
+		// that failed task scope or intent verification so the agent can
+		// claim one of four resolution options via /control/scope-drift/
+		// endpoints. Defaults to an in-process memory implementation;
+		// production multi-instance deploys would substitute a shared
+		// store the same way liteApprovals is wired.
+		if s.scopeDrifts == nil {
+			s.scopeDrifts = llmproxy.NewMemoryScopeDriftRegistry(60 * time.Second)
+		}
+		llmHandler.ScopeDrifts = s.scopeDrifts
 		if s.liteApprovals != nil {
 			llmHandler.PendingApprovals = s.liteApprovals
 		} else if s.logger != nil && strings.EqualFold(strings.TrimSpace(s.cfg.Server.RouteSet), "proxy_lite") {
@@ -1353,6 +1364,16 @@ func (s *Server) registerLiteProxyRoutes(
 		mux.Handle("POST /api/control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
 		mux.Handle("GET /api/control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
 		mux.Handle("GET /api/control/vault/items/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.GetForAgent))))
+
+		// Scope-drift endpoints (option (c) one-off, option (d) justify,
+		// and the GET status route the agent polls when (c) is in flight).
+		// The handler degrades to 503 when ScopeDrifts is nil, so wiring
+		// is safe even on legacy configs without the registry.
+		scopeDriftHandler := handlers.NewScopeDriftHandler(s.scopeDrifts, verifier, s.logger)
+		mux.Handle("GET /api/control/scope-drift/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(scopeDriftHandler.Get))))
+		mux.Handle("POST /api/control/scope-drift/{id}/one-off", requireAgentLLMCaller(e2e(http.HandlerFunc(scopeDriftHandler.OneOff))))
+		mux.Handle("POST /api/control/scope-drift/{id}/justify", requireAgentLLMCaller(e2e(http.HandlerFunc(scopeDriftHandler.Justify))))
+
 		mux.Handle("/api/control/", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.NotFound))))
 
 		mux.Handle("/api/proxy/", requireAgentLLMCaller(http.HandlerFunc(resolverHandler.Forward)))

@@ -46,6 +46,15 @@ type VerifyRequest struct {
 	ChainContextEnabled bool // chain context tracking is enabled in config
 	Lenient             bool // use lenient verification prompt (give agent benefit of the doubt)
 	ProxyLite           bool // include proxy-lite-specific verifier guidance
+	// AgentJustification is the agent's post-rejection argument that the
+	// initial verdict was wrong. Populated only on the second pass
+	// triggered by /control/scope-drift/{id}/justify; empty on the
+	// initial verification. Threaded into the user message under a
+	// labelled slot so the verifier can weigh it against the approved
+	// task scope without confusing it for an authorization source. See
+	// the system prompt for the strictness rules — confident assertion
+	// alone does not dissolve a drift.
+	AgentJustification string
 }
 
 // Verifier checks whether a gateway request is consistent with the approved task.

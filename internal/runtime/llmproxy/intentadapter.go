@@ -28,15 +28,16 @@ func NewIntentVerifierAdapter(v intent.Verifier) IntentVerifier {
 // returned VerificationVerdict onto the lite-proxy's narrower IntentVerdict.
 func (a *intentVerifierAdapter) Verify(ctx context.Context, req IntentVerifyRequest) (*IntentVerdict, error) {
 	verdict, err := a.v.Verify(ctx, intent.VerifyRequest{
-		TaskPurpose: req.TaskPurpose,
-		ExpectedUse: req.ExpectedUse,
-		Service:     req.Service,
-		Action:      req.Action,
-		Params:      req.Params,
-		Reason:      req.Reason,
-		TaskID:      req.TaskID,
-		Lenient:     req.Lenient,
-		ProxyLite:   true,
+		TaskPurpose:        req.TaskPurpose,
+		ExpectedUse:        req.ExpectedUse,
+		Service:            req.Service,
+		Action:             req.Action,
+		Params:             req.Params,
+		Reason:             req.Reason,
+		TaskID:             req.TaskID,
+		Lenient:            req.Lenient,
+		AgentJustification: req.AgentJustification,
+		ProxyLite:          true,
 	})
 	if err != nil {
 		return nil, err

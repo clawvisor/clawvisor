@@ -91,6 +91,14 @@ type LLMEndpointHandler struct {
 	// approve/deny replies per user/agent/provider.
 	PendingApprovals llmproxy.PendingApprovalCache
 
+	// ScopeDrifts is the short-lived registry of tool_uses blocked by
+	// task scope or intent verification. The four-choice menu agent-
+	// facing prompt embeds the registry's minted drift_id; the
+	// /control/scope-drift/{id}/... endpoints look up + claim records
+	// here. Optional: when nil, postprocess falls back to the legacy
+	// flat-error verdicts.
+	ScopeDrifts llmproxy.ScopeDriftRegistry
+
 	// PendingSecrets buffers inbound requests that appear to contain raw
 	// secrets until the user decides whether to vault, discard, allow
 	// once, or mark them as non-secrets.
@@ -188,6 +196,7 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		Parsers:                conversation.DefaultRegistry(),
 		Logger:                 logger,
 		PendingApprovals:       llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
+		ScopeDrifts:            llmproxy.NewMemoryScopeDriftRegistry(60 * time.Second),
 		PendingSecrets:         llmproxy.NewMemoryPendingSecretDecisionCache(10 * time.Minute),
 		InlineApprovalOutcomes: llmproxy.NewMemoryInlineApprovalOutcomeStore(24 * time.Hour),
 		TaskCheckouts:          llmproxy.NewMemoryTaskCheckoutStore(24 * time.Hour),
@@ -847,6 +856,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				EgressRules:                      egressRules,
 				PreferredTaskID:                  preferredTaskID,
 				PendingApprovals:                 h.PendingApprovals,
+				ScopeDrifts:                      h.ScopeDrifts,
 				ControlBaseURL:                   h.ControlBaseURL,
 				CallerNonces:                     h.CallerNonces,
 				Trace:                            h.TraceLogger,
@@ -1224,6 +1234,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			EgressRules:      egressRules,
 			PreferredTaskID:  preferredTaskID,
 			PendingApprovals: h.PendingApprovals,
+			ScopeDrifts:      h.ScopeDrifts,
 			ControlBaseURL:   h.ControlBaseURL,
 			// Per-tool-use nonce minting overrides RewriteOpts.CallerToken
 			// inside the credentialed rewrite path so the agent's raw
@@ -1281,6 +1292,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				EgressRules:                      egressRules,
 				PreferredTaskID:                  preferredTaskID,
 				PendingApprovals:                 h.PendingApprovals,
+				ScopeDrifts:                      h.ScopeDrifts,
 				ControlBaseURL:                   h.ControlBaseURL,
 				CallerNonces:                     h.CallerNonces,
 				Trace:                            h.TraceLogger,

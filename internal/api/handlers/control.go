@@ -40,6 +40,9 @@ func (h *LLMControlHandler) Capabilities(w http.ResponseWriter, r *http.Request)
 			{"method": "POST", "path": "/control/task/checkout", "purpose": "Set the current task focus for disambiguating later tool use."},
 			{"method": "GET", "path": "/control/tasks/{id}", "purpose": "Fetch task status."},
 			{"method": "POST", "path": "/control/tasks/{id}/expand", "purpose": "Request additional scope for an existing task."},
+			{"method": "GET", "path": "/control/scope-drift/{id}", "purpose": "Poll the status of a scope drift after picking option (c) or (d)."},
+			{"method": "POST", "path": "/control/scope-drift/{id}/one-off", "purpose": "Option (c): mark a drifted call as a throwaway and ask the user to approve once."},
+			{"method": "POST", "path": "/control/scope-drift/{id}/justify", "purpose": "Option (d): argue the verifier was wrong; same verifier re-evaluates with your justification."},
 		},
 	})
 }
@@ -96,6 +99,37 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 				"auto_execute": true,
 				"reason":       "Explain why the existing task scope is insufficient.",
 			},
+		},
+		"scope_drift_menu": map[string]any{
+			"description": "When a tool_use is blocked by task scope or intent verification, Clawvisor returns a synthetic tool result documenting the available options keyed by a `drift_id`. Each option below references the same `drift_id` so the one-shot cap can match the agent's choice to the original block.",
+			"options": map[string]any{
+				"a_expand":   "Reuse /control/tasks/{task_id}/expand with body.drift_id set — agent argues the active task's purpose still describes this work.",
+				"b_new_task": "Reuse /control/tasks with body.drift_id set — agent declares a genuinely different goal that should be bucketed separately.",
+				"c_one_off":  "RESERVED / NOT IMPLEMENTED ON THIS BUILD. The endpoint exists at /control/scope-drift/{drift_id}/one-off but returns 501 because the user-approval channel isn't wired yet. Use (a), (b), or (d) instead.",
+				"d_justify":  "POST /control/scope-drift/{drift_id}/justify — agent argues the verifier was wrong; the same verifier re-evaluates with the agent's justification threaded in.",
+			},
+			"one_shot": "Each drift_id may be claimed exactly once. Claiming a second option returns 409. If your chosen option fails (a/b user-denied, d verifier-rejected), do not retry under the same drift_id.",
+			"on_success": "Re-emit the original tool call unchanged. Clawvisor pre-clears it once on the matching (agent, service, action, host, method, path) fingerprint.",
+		},
+		"scope_drift_one_off": map[string]any{
+			"method":        "POST",
+			"path":          "/control/scope-drift/{drift_id}/one-off",
+			"status":        "not_implemented",
+			"returns":       "501",
+			"avoid":         true,
+			"recommendation": "Use option (a) expand, (b) new task, or (d) justify. This endpoint returns 501 with a redirection message.",
+		},
+		"scope_drift_justify": map[string]any{
+			"method": "POST",
+			"path":   "/control/scope-drift/{drift_id}/justify",
+			"body": map[string]any{
+				"justification": "Articulate the concrete connection between this call and the active task purpose. Confident assertion alone will be rejected.",
+			},
+		},
+		"scope_drift_status": map[string]any{
+			"method":  "GET",
+			"path":    "/control/scope-drift/{drift_id}",
+			"purpose": "Return the current chosen_option and outcome for a drift. Poll when (c) or a rejected (d) is awaiting user approval.",
 		},
 		"checkout_task": map[string]any{
 			"method": "POST",
@@ -328,6 +362,9 @@ func (h *LLMControlHandler) NotFound(w http.ResponseWriter, r *http.Request) {
 			"POST /control/task/checkout",
 			"GET /control/tasks/{id}",
 			"POST /control/tasks/{id}/expand",
+			"GET /control/scope-drift/{id}",
+			"POST /control/scope-drift/{id}/one-off",
+			"POST /control/scope-drift/{id}/justify",
 		},
 		"hint": "For new placeholders, /control/vault/items returns the complete list of vault item IDs. If you already have an autovault_ placeholder, create the task and use that placeholder after approval.",
 	})
