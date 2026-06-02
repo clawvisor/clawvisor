@@ -106,6 +106,7 @@ type Server struct {
 	verdictCache       intent.VerdictCacher
 	extractionTracker  handlers.ExtractionTracker
 	callerNonces       llmproxy.CallerNonceCache
+	scriptSessions     llmproxy.ScriptSessionCache
 	pendingSecrets     llmproxy.PendingSecretDecisionCache
 	liteApprovals      llmproxy.PendingApprovalCache
 	liteOutcomes       llmproxy.InlineApprovalOutcomeStore
@@ -348,6 +349,15 @@ func WithExtractionTracker(t handlers.ExtractionTracker) ServerOption {
 // consumed on another.
 func WithCallerNonceCache(c llmproxy.CallerNonceCache) ServerOption {
 	return func(s *Server) { s.callerNonces = c }
+}
+
+// WithScriptSessionCache overrides the default in-memory script-session
+// cache used by the autovault script-session control endpoint and the
+// resolver. The default is single-process; multi-instance deployments
+// should supply a shared backing cache so a session minted on one
+// daemon can be authorized on another.
+func WithScriptSessionCache(c llmproxy.ScriptSessionCache) ServerOption {
+	return func(s *Server) { s.scriptSessions = c }
 }
 
 // WithPendingSecretDecisionCache overrides the default in-memory proxy-lite
@@ -1299,6 +1309,15 @@ func (s *Server) registerLiteProxyRoutes(
 			}
 		}
 		llmHandler.CallerNonces = callerNonces
+
+		scriptSessions := s.scriptSessions
+		if scriptSessions == nil {
+			scriptSessions = llmproxy.NewMemoryScriptSessionCache()
+			if s.logger != nil && strings.EqualFold(strings.TrimSpace(s.cfg.Server.RouteSet), "proxy_lite") {
+				s.logger.Warn("lite-proxy: ScriptSessionCache not configured — autovault script sessions are process-local; use a shared backing cache for multi-instance proxy deployments")
+			}
+		}
+		resolverHandler.ScriptSessions = scriptSessions
 		if s.pendingSecrets != nil {
 			llmHandler.PendingSecrets = s.pendingSecrets
 		}
@@ -1326,13 +1345,15 @@ func (s *Server) registerLiteProxyRoutes(
 		controlHandler.Store = s.store
 		controlHandler.TaskCheckouts = llmHandler.TaskCheckouts
 		controlHandler.Audit = auditEmitter
+		controlHandler.ScriptSessions = scriptSessions
+		controlHandler.IntentVerifier = verifier
 		requireAgentLLM := middleware.RequireAgentLLM(s.store)
 		requireAgentLLMRL := func(h http.HandlerFunc) http.Handler {
 			agentLimited := middleware.RateLimit(gatewayRL, llmAgentKeyFn, gatewayLimit)(http.HandlerFunc(h))
 			authenticated := requireAgentLLM(agentLimited)
 			return middleware.RateLimit(gatewayRL, llmPreAuthKeyFn, gatewayLimit)(authenticated)
 		}
-		nonceMW := middleware.RequireAgentLLMNonce(s.store, callerNonces, s.logger)
+		nonceMW := middleware.RequireAgentLLMNonce(s.store, callerNonces, scriptSessions, s.logger)
 		requireAgentLLMCaller := func(h http.Handler) http.Handler {
 			return middleware.RateLimit(gatewayRL, llmPreAuthKeyFn, gatewayLimit)(nonceMW(h))
 		}
@@ -1353,6 +1374,18 @@ func (s *Server) registerLiteProxyRoutes(
 		mux.Handle("POST /api/control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
 		mux.Handle("GET /api/control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
 		mux.Handle("GET /api/control/vault/items/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.GetForAgent))))
+		// AutovaultScriptDocs is intentionally unauthenticated, matching
+		// the other static documentation surfaces on the control plane
+		// (/api/control, /api/control/capabilities, /api/control/skill).
+		// The payload is purely static metadata about the script-session
+		// protocol — endpoint shapes, hard-limit constants, example
+		// headers. It reveals the deployment's resolver base URL
+		// (derived from h.BaseURL) and the cap constants, both of which
+		// are also discoverable from the LLM-control-notice text any
+		// authenticated agent already sees. Caller-auth on this route
+		// would just add latency without adding confidentiality.
+		mux.Handle("GET /api/control/autovault/script", http.HandlerFunc(controlHandler.AutovaultScriptDocs))
+		mux.Handle("POST /api/control/autovault/script-session", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.MintScriptSession))))
 		mux.Handle("/api/control/", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.NotFound))))
 
 		mux.Handle("/api/proxy/", requireAgentLLMCaller(http.HandlerFunc(resolverHandler.Forward)))

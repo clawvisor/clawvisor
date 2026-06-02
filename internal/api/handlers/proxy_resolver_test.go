@@ -142,7 +142,7 @@ func TestResolver_HappyPath(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	// Target host: api.github.com (in the github bound-service allowlist).
@@ -248,7 +248,7 @@ func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) 
 	}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/gmail/v1/users/me/messages", nil)
@@ -337,7 +337,7 @@ func TestResolver_MalformedOAuthExpiryFailsClosed(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/gmail/v1/users/me/messages", nil)
@@ -376,7 +376,7 @@ func TestResolver_AcceptsTargetHostWithExplicitPort(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/repos/x/y/issues", nil)
@@ -395,7 +395,7 @@ func TestResolver_RejectsMissingTargetHost(t *testing.T) {
 	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
@@ -425,7 +425,7 @@ func TestResolver_RejectsSelfTarget(t *testing.T) {
 	h.SelfHostnames = []string{"clawvisor.example"}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
@@ -466,7 +466,7 @@ func TestResolver_RejectsForeignPlaceholder(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
@@ -510,7 +510,7 @@ func TestResolver_RejectsUnknownServicePlaceholderToArbitraryHost(t *testing.T) 
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/collect", nil)
@@ -532,7 +532,7 @@ func TestResolver_RejectsCallWithoutPlaceholder(t *testing.T) {
 	h, st, _, agent, nonces, _ := newSeededResolver(t)
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
@@ -552,7 +552,7 @@ func TestResolver_RejectsHostOutsideBoundService(t *testing.T) {
 	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/api.test/path", nil)
@@ -621,7 +621,7 @@ func TestResolver_AllowsUnknownServiceHostBoundByCredentialGrant(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/proxy/v1/calls", strings.NewReader(`{"to":"+15555550123"}`))
@@ -652,7 +652,7 @@ func TestResolver_StripsXClawvisorPrefixOnOutbound(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
@@ -696,7 +696,7 @@ func TestResolver_StripsForwardedHeadersOnOutbound(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
@@ -738,7 +738,7 @@ func TestResolver_StripsCallerAuthFromOutbound(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
@@ -770,7 +770,7 @@ func TestResolver_RejectsSelfTargetWithPort(t *testing.T) {
 	h.SelfHostnames = []string{"clawvisor.example"}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	for _, target := range []string{"clawvisor.example:443", "clawvisor.example:8080", "Clawvisor.Example:443"} {
@@ -809,7 +809,7 @@ func TestResolver_DoesNotFollowRedirects(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
 	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)

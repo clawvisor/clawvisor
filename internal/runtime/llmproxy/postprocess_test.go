@@ -324,12 +324,24 @@ PY`
 	if reason == "" {
 		t.Fatal("rewriter error must populate ContinueWithToolResult for model recovery")
 	}
+	// Recovery guidance now redirects credentialed-fan-out failures
+	// to the autovault script-session path (the supported recovery
+	// route for shapes the bash rewriter can't safely parse). The
+	// older "emit multiple parallel tool_uses" advice paid the per-
+	// call rewriter cost for every request and didn't compose with
+	// the script-session machinery the rest of the proxy now relies
+	// on; the new message includes the mint endpoint, the verdict-
+	// derived host/method/path so the agent can fill the request
+	// without guessing, and the docs URL.
 	for _, want := range []string{
 		"detected credentialed API access",
 		"tool shape cannot be rewritten",
 		"GET gmail.googleapis.com/gmail/v1/users/me/messages/{mid}?format=metadata",
-		"one credentialed curl per tool_use",
-		"multiple parallel tool_uses",
+		"/autovault/script-session",
+		"target_host:\"gmail.googleapis.com\"",
+		"methods:[\"GET\"]",
+		"X-Clawvisor-Caller: Bearer <caller_token>",
+		"/autovault/script",
 	} {
 		if !strings.Contains(reason, want) {
 			t.Fatalf("recovery reason missing %q:\n%s", want, reason)
@@ -338,8 +350,8 @@ PY`
 	if strings.Contains(reason, placeholder) {
 		t.Fatalf("recovery reason should not echo full placeholder:\n%s", reason)
 	}
-	if !strings.Contains(string(got.Body), "one credentialed curl per tool_use") {
-		t.Fatalf("fallback body should include actionable recovery guidance:\n%s", got.Body)
+	if !strings.Contains(string(got.Body), "/autovault/script-session") {
+		t.Fatalf("fallback body should include actionable script-session recovery guidance:\n%s", got.Body)
 	}
 }
 

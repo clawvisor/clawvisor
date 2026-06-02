@@ -14,6 +14,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
@@ -49,7 +50,7 @@ import (
 //
 // The agent must be present on the request context (placed there by the
 // nonce middleware); otherwise we return 401 to match production shape.
-func newLiteResolver(st store.Store, v vault.Vault, logger *slog.Logger, mockUpstreamAddr string) http.Handler {
+func newLiteResolver(st store.Store, v vault.Vault, scriptSessions llmproxy.ScriptSessionCache, logger *slog.Logger, mockUpstreamAddr string) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -76,6 +77,24 @@ func newLiteResolver(st store.Store, v vault.Vault, logger *slog.Logger, mockUps
 		if agent == nil {
 			writeResolverError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing agent token")
 			return
+		}
+		// Release the optimistic per-request byte reservation that
+		// the nonce middleware's Authorize() took for script-session
+		// requests. The harness counts uses via the
+		// countingScriptSessionCache wrapper (incremented on
+		// Authorize), so we want to release the BYTE reservation
+		// without rolling back the use — RecordBytes(0) does
+		// exactly that. ReleaseAuthorize would also undo UsedCount
+		// inside the inner cache, which would be wrong (the request
+		// actually executed). Production uses RecordBytes(respBytes)
+		// to also account for real bytes; the harness uses 0 because
+		// it doesn't measure (see script_sessions.go for the
+		// implications). Detached context so a cancelled request
+		// still releases.
+		if _, token, scriptActive := middleware.ScriptSessionFromContext(r.Context()); scriptActive && scriptSessions != nil {
+			defer func() {
+				_, _ = scriptSessions.RecordBytes(context.WithoutCancel(r.Context()), token, 0)
+			}()
 		}
 		targetHost := strings.TrimSpace(r.Header.Get("X-Clawvisor-Target-Host"))
 		if targetHost == "" {

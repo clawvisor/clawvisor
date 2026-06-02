@@ -1,0 +1,92 @@
+id: script_session_credentialed_fanout
+description: |
+  Naturalistic triage prompt: the user asks the agent for a rundown of
+  recent activity on a GitHub repo. The instruction is goal-shaped
+  ("catch me up") with no mention of endpoints, no per-call scaffolding,
+  and no count — the agent has to figure out on its own that this
+  involves (a) listing issues, then (b) fetching details for several
+  of them, and decide whether to batch the per-issue fetches under one
+  autovault script session or pay the per-call inspector/rewriter cost
+  N times.
+
+  The point of the scenario is NOT to prove the agent reaches for
+  script sessions — it's to observe whether the prompt-only signal
+  (control notice + per-call latency) is enough to push it that way
+  on a real-shaped request. Hard expectations focus on the proxy
+  mechanics that are ground truth regardless of which path the agent
+  picked; soft expectations document the preferred behavior so a
+  regression in agent prompt compliance shows up in scenario reports.
+
+  Failure modes this scenario surfaces:
+    - Agent ignores the credentialed-fan-out guidance and emits N
+      separate curls — script_session.mint == 0 AND the agent paid
+      N rewrite latencies for what could have been one mint + N
+      passthroughs. Visible in soft-expect review.
+    - Agent mints a session but the resolver rejects it on use —
+      script_session.mint >= 1 AND script_session.use == 0. Indicates
+      the mint endpoint accepted a scope the resolver then refused
+      (placeholder ownership drift, host normalization mismatch, ...).
+    - Agent mints a session and then bypasses it (uses a one-shot
+      curl shape for a fetch that was meant to ride the session) —
+      script_session.mint >= 1 AND script_session.use < (intended
+      fan-out size). Visible in the use/mint ratio.
+
+agent:
+  name: triage-agent
+
+vault_items:
+  - id: github:personal
+    secret: ghp_fake_personal_secret_for_test
+
+script:
+  - say: |
+      Can you catch me up on what's been happening with the issues on
+      github.com/anthropics/example-repo? I've been heads-down all week
+      and just want a quick read on which ones folks are paying
+      attention to and the gist of each — five or so is plenty.
+    approval_floor: 1
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns_per_step: 18
+  max_tool_calls_total: 40
+  wall_clock_seconds: 420
+
+expectations:
+  hard:
+    # The user-visible outcome: the credentialed task got approved
+    # and the agent reached the upstream at all. The mock returns
+    # `{"ok":true}` for every request, which a careful agent will
+    # recognize as a synthetic environment and stop early on rather
+    # than burn API calls on what looks like fake data — so the
+    # floor is "at least one credentialed call landed," not "the
+    # full fan-out completed." The use/mint ratio in soft-expect
+    # is what tells us whether the agent took the script-session
+    # path; downstream.calls_total just confirms the credential
+    # path is intact.
+    - count:
+        series: approvals.allow_session
+        gte: 1
+    - count:
+        series: downstream.calls_total
+        gte: 1
+    # Stay-in-scope: every credentialed call should land inside
+    # whatever prefix the agent chose. A non-zero mismatch here
+    # means the agent minted something tighter than its actual
+    # fan-out plan.
+    - count:
+        series: script_session.scope_mismatch
+        eq: 0
+  soft:
+    - "Preferred: agent recognized the credentialed fan-out and minted ONE script session whose path_prefixes covered its planned per-issue fetches, then issued each fetch against /api/proxy/... with the script-session caller token. Visible as script_session.mint >= 1 AND script_session.use >= script_session.mint (each minted session was actually used)."
+    - "Acceptable fallback: agent emitted one credentialed curl per fetch and let the inspector/rewriter mint a per-call nonce. Visible as script_session.mint == 0 AND downstream.calls_total > 0. Less efficient but produces correct results."
+    - "Anti-pattern (caught here): agent minted a script session and then BYPASSED it — followed up with one-shot credentialed curls instead of routing through the session it just paid for. Visible as script_session.mint >= 1 AND script_session.use == 0 (and corresponding downstream calls still happen via the one-shot path). The control notice tells the agent how to mint; the prompt must also nudge it to actually USE the token in subsequent tool_uses."
+    - "When the agent did mint a session, the chosen max_uses and ttl_seconds should be proportional to what it actually planned to do (a five-issue triage doesn't need max_uses: 50, ttl: 120). Over-broad caps normalize blanket grants and make the audit row less useful."
+    - "If the agent listed issues first and then fanned out, the list call may be one-shot (different path prefix from the per-issue gets) — that's fine and doesn't count against the script-session path."

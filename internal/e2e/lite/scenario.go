@@ -149,6 +149,21 @@ type HardExpect struct {
 //     came back as `standing` (no expiry, reusable across follow-ups).
 //   - task_creates.lifetime_session — approved tasks whose lifetime
 //     was `session` (or empty, which defaults to session).
+//   - script_session.mint — POST /api/control/autovault/script-session
+//     minted a session. Counts agent-driven decisions to batch
+//     credentialed fan-out under a single cap rather than per-call
+//     rewrites.
+//   - script_session.use — resolver Authorize() admitted an inbound
+//     request under a script-session token. Each upstream call under
+//     a session contributes one row.
+//   - script_session.scope_mismatch — resolver Authorize() rejected
+//     a request whose host/method/path/placeholder fell outside the
+//     session's approved scope. Non-zero in scenarios that probe the
+//     enforcement boundary; zero in scenarios that stay in scope.
+//   - script_session.exhausted — resolver Authorize() rejected a
+//     request because max_uses was already reached. Useful for
+//     scenarios that intentionally drain a session to verify the
+//     cap is enforced rather than silently widening.
 type CountExpect struct {
 	Series string `yaml:"series"`
 	GTE    *int   `yaml:"gte,omitempty"`

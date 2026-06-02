@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,6 +59,14 @@ type ProxyResolverHandler struct {
 	// targets are reachable. Defaults to false; flip in self-host
 	// development environments.
 	AllowPrivateNetworks bool
+
+	// ScriptSessions accounts response bytes against the inbound
+	// script-session token (set by the auth middleware) so the
+	// session's aggregate byte cap is enforced across multiple
+	// resolver requests. nil disables byte accounting; the per-
+	// request cap is enforced via the session's MaxRequestBytes
+	// field independently of this cache.
+	ScriptSessions llmproxy.ScriptSessionCache
 }
 
 // NewProxyResolverHandler builds the handler with sensible defaults. The
@@ -183,6 +192,122 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing agent token")
 		return
 	}
+
+	// Script-session post-processing: pulled to the top of Forward
+	// so that EVERY exit path releases the optimistic reservation
+	// Authorize took at middleware time. Without this, early-exit
+	// paths (body-too-large, swap error, upstream timeout, the
+	// scope-mismatch defense-in-depth check, etc.) would leak the
+	// per-request reservation permanently — after a handful of
+	// transient errors the session's aggregate budget exhausts even
+	// though zero bytes were actually streamed (cubic round-3 P1).
+	//
+	// The defer also unifies the script_session.use audit emission
+	// across all exit paths (cubic round-3 P3 #2): respBytes defaults
+	// to 0, useAuditOutcome / useAuditDecision pick sensible defaults,
+	// and individual paths override them when they need scope-specific
+	// vocabulary on the use-row.
+	scriptSess, scriptToken, scriptActive := middleware.ScriptSessionFromContext(r.Context())
+	var (
+		respBytes        int64
+		useAuditOutcome  string
+		useAuditDecision string
+		useAuditReason   string
+	)
+	if scriptActive && h.ScriptSessions == nil {
+		// Wiring invariant: when the middleware admits a script-session
+		// token (scriptActive == true), the resolver MUST share the
+		// same ScriptSessionCache instance so it can release the
+		// optimistic reservation. server.go wires both off the same
+		// `scriptSessions` variable; a divergence is a deployment
+		// misconfiguration. Fail closed (500) rather than proceeding —
+		// every leaked reservation would silently exhaust the session
+		// in ~10 calls, surfacing later as a confusing
+		// SCRIPT_SESSION_BYTES_EXCEEDED error against a healthy-looking
+		// session.
+		h.Logger.ErrorContext(r.Context(), "lite-proxy resolver: script-session token authenticated but resolver has no ScriptSessionCache; refusing to proceed (wiring bug — middleware + resolver must share the same cache)",
+			"agent_id", agent.ID, "script_session_id", scriptSess.ID)
+		auditStatus = http.StatusInternalServerError
+		auditDecide = "deny"
+		auditOutcome = "script_session_cache_misconfigured"
+		writeJSONError(w, http.StatusInternalServerError, "SCRIPT_SESSION_CACHE_MISCONFIGURED",
+			"proxy is misconfigured: script-session token authenticated but resolver has no cache to release the reservation; contact your operator")
+		return
+	}
+	if scriptActive && h.ScriptSessions != nil {
+		defer func() {
+			// Detach from r.Context() — if the client disconnects mid-
+			// stream, the request context is cancelled, and a Redis-
+			// backed ScriptSessionCache would skip the RecordBytes call
+			// (the in-memory impl ignores ctx so it works either way).
+			// Without detaching, an unreliable client could leak the
+			// per-request reservation by cancelling after Authorize
+			// but before RecordBytes. The middleware's reservation
+			// release uses context.WithoutCancel for the same reason.
+			ctx := context.WithoutCancel(r.Context())
+			updated, bytesErr := h.ScriptSessions.RecordBytes(ctx, scriptToken, respBytes)
+			// Fall back to the snapshot + actual when the cache lost
+			// the session (revoked mid-flight). Subtract the
+			// reservation that's no longer trackable so the audit row
+			// doesn't double-count it.
+			var totalBytes int64
+			var useCount int
+			if updated.ID != "" {
+				totalBytes = updated.TotalBytesUsed
+				useCount = updated.UsedCount
+			} else {
+				// Cache lost the session mid-flight. Reconstruct
+				// from the authorized snapshot + actual bytes; only
+				// subtract the reservation when one was actually
+				// taken (Authorize takes a reservation iff BOTH
+				// MaxRequestBytes and MaxTotalBytes are set; see
+				// script_session.go). Subtracting MaxRequestBytes
+				// unconditionally would underflow for sessions that
+				// only set MaxRequestBytes (no aggregate cap → no
+				// reservation), producing misleading audit numbers.
+				totalBytes = scriptSess.TotalBytesUsed + respBytes
+				if scriptSess.MaxRequestBytes > 0 && scriptSess.MaxTotalBytes > 0 {
+					totalBytes -= scriptSess.MaxRequestBytes
+				}
+				if totalBytes < 0 {
+					totalBytes = 0
+				}
+				useCount = scriptSess.UsedCount
+			}
+			decision := useAuditDecision
+			if decision == "" {
+				decision = auditDecide
+			}
+			outcome := useAuditOutcome
+			if outcome == "" {
+				outcome = auditOutcome
+			}
+			reason := useAuditReason
+			if reason == "" {
+				reason = auditReason
+			}
+			if bytesErr != nil && errors.Is(bytesErr, llmproxy.ErrScriptSessionBytesExceeded) {
+				// Surface the cap breach in the audit row's outcome/reason
+				// without flipping decision to "deny" — the resolver
+				// already streamed bytes to the client (possibly a 200
+				// response). Lying about decision here would say the
+				// proxy denied a request the client actually received.
+				// The post-cap state is what the NEXT Authorize sees;
+				// THAT call will be the "deny" event in audit. Keep this
+				// row aligned with the HTTP outcome and use the
+				// post_cap_breach outcome to flag the operational
+				// significance (the session is now over budget) without
+				// misrepresenting the decision.
+				outcome = "script_session_total_cap_after_stream"
+				reason = bytesErr.Error()
+			}
+			if h.AuditEmitter != nil {
+				h.AuditEmitter.LogScriptSessionUse(ctx, agent, requestID, scriptSess,
+					auditTargetPath, r.Method, auditStatus, decision, outcome, reason,
+					respBytes, totalBytes, useCount, time.Since(start))
+			}
+		}()
+	}
 	auditAgent = agent
 
 	targetHost := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Clawvisor-Target-Host")))
@@ -277,6 +402,37 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Script-session defense-in-depth: when a script session is in
+	// context, every placeholder we swapped must equal the session's
+	// bound placeholder. The middleware also enforces this against the
+	// Authorization / X-Api-Key header it sees, but swapHeaderPlaceholders
+	// scans ALL headers — so an off-header placeholder that snuck past
+	// the middleware extractor would still be swapped here. Fail closed
+	// rather than silently honoring the request.
+	if scriptActive {
+		for _, p := range replacedPlaceholders {
+			if p != scriptSess.Placeholder {
+				auditStatus = http.StatusForbidden
+				auditDecide = "deny"
+				// Resolver_swap row: keep the outcome generic because
+				// the swap stage itself succeeded; the denial happened
+				// on the downstream script-session check.
+				auditOutcome = "post_swap_denied"
+				auditReason = "request placeholder does not match script session bound placeholder"
+				// Script_session.use row (emitted by the defer at top
+				// of Forward): override the use-row vocabulary with
+				// the specific reason so the script-session audit
+				// channel carries the actionable code.
+				useAuditDecision = "deny"
+				useAuditOutcome = "script_session_scope_mismatch"
+				useAuditReason = auditReason
+				writeJSONError(w, http.StatusForbidden, "SCRIPT_SESSION_SCOPE_MISMATCH",
+					"placeholder in request does not match the script session's bound placeholder")
+				return
+			}
+		}
+	}
+
 	// Build and send the upstream request.
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(),
 		bytes.NewReader(body))
@@ -317,11 +473,76 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 	auditStatus = resp.StatusCode
 	auditOutcome = outcomeFromStatus(resp.StatusCode)
 
+	// streamCap is the most bytes we may stream on THIS request:
+	// the min of the per-request cap and the session's remaining
+	// aggregate budget. Computing it up-front means the streaming
+	// loop never overshoots either cap — without folding the
+	// aggregate budget in here, a session at (MaxTotalBytes - 100)
+	// could still receive a full MaxRequestBytes payload before
+	// Authorize blocks the NEXT call, busting the aggregate cap by
+	// up to one per-request budget.
+	//
+	// We pair streamCap with a `capped` bool rather than overloading
+	// the int64 value. The polarity matters: an int64 of 0 can mean
+	// "no cap configured" (treat as unlimited) OR "cap reached, truncate
+	// to zero bytes" — two cases with opposite truncation behavior.
+	// Without the bool, an exhausted aggregate budget (remainingTotal=0)
+	// would fall through the `if streamCap > 0` guard and silently write
+	// the full upstream body.
+	var (
+		streamCap int64
+		capped    bool
+	)
+	if scriptActive {
+		capped = true
+		streamCap = scriptSess.MaxRequestBytes
+		perReqCapped := streamCap > 0
+		switch {
+		case perReqCapped:
+			// Authorize reserved MaxRequestBytes from the aggregate
+			// budget for THIS call (see script_session.go). The
+			// reservation guarantees we can stream up to that much
+			// without crossing MaxTotalBytes — no further subtraction
+			// from sess.TotalBytesUsed needed. Doing so would clamp
+			// streamCap incorrectly: the second of two concurrent
+			// reservations would see TotalBytesUsed = 2×reservation
+			// and compute remainingTotal = 0, even though its own
+			// reservation entitles it to MaxRequestBytes worth.
+		case scriptSess.MaxTotalBytes > 0:
+			// Legacy snapshot path — no per-request cap, so no
+			// reservation happened. Fold the aggregate budget into
+			// streamCap based on the snapshot. Race window exists
+			// here (cubic round-3 P2 #1 only applies when MaxRequestBytes
+			// is unset); v1 mints always set MaxRequestBytes so this
+			// path isn't reached for the default-shaped session.
+			remainingTotal := scriptSess.MaxTotalBytes - scriptSess.TotalBytesUsed
+			if remainingTotal < 0 {
+				remainingTotal = 0
+			}
+			streamCap = remainingTotal
+		default:
+			// No caps on this session — stream freely.
+			capped = false
+		}
+	}
+
 	for name, values := range resp.Header {
 		switch http.CanonicalHeaderKey(name) {
 		case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
 			"Te", "Trailer", "Transfer-Encoding", "Upgrade":
 			continue
+		case "Content-Length":
+			// When script-session truncation may apply, the upstream
+			// Content-Length would lie to the client about how many
+			// bytes are coming — Go would write fewer bytes than the
+			// header advertises, and the client would hang waiting for
+			// the rest (or treat the connection as a short-read error).
+			// Drop the header when the upstream's declared size exceeds
+			// our effective cap and let Go fall back to chunked
+			// transfer encoding (HTTP/1.1) or HTTP/2 framing.
+			if capped && upstreamContentLengthExceeds(values, streamCap) {
+				continue
+			}
 		}
 		for _, v := range values {
 			w.Header().Add(name, v)
@@ -331,23 +552,69 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 
 	flusher, _ := w.(http.Flusher)
 	buf := make([]byte, 4096)
+	// respBytes is declared at the top of Forward so the deferred
+	// script-session post-processor can read its final value on
+	// every exit path (including early errors that never reach this
+	// streaming loop).
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				return
+			if capped && respBytes+int64(n) > streamCap {
+				// Truncate at the cap to stay within the session's
+				// budget (per-request and aggregate, whichever is
+				// tighter). The agent sees a partial response and a
+				// SCRIPT_SESSION_* hint in audit; streaming further
+				// would be a silent budget violation. streamCap == 0
+				// (fully exhausted session) writes zero bytes — the
+				// allowed-bytes math below clamps to 0 cleanly.
+				allowed := streamCap - respBytes
+				if allowed > 0 {
+					if _, writeErr := w.Write(buf[:allowed]); writeErr != nil {
+						break
+					}
+					respBytes += allowed
+					if flusher != nil {
+						flusher.Flush()
+					}
+				}
+				// Disambiguate by which cap actually clipped us.
+				// Reservation path (MaxRequestBytes > 0): streamCap
+				// == MaxRequestBytes means per-request was the
+				// binding constraint; streamCap < MaxRequestBytes
+				// means the aggregate budget was tighter.
+				// Legacy snapshot path (MaxRequestBytes == 0): the
+				// only configured cap is the aggregate one, so any
+				// truncation IS the aggregate cap firing.
+				if scriptActive && (scriptSess.MaxRequestBytes == 0 ||
+					streamCap < scriptSess.MaxRequestBytes) {
+					auditOutcome = "script_session_total_cap"
+				} else {
+					auditOutcome = "script_session_per_request_cap"
+				}
+				break
 			}
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				break
+			}
+			respBytes += int64(n)
 			if flusher != nil {
 				flusher.Flush()
 			}
 		}
 		if readErr == io.EOF {
-			return
+			break
 		}
 		if readErr != nil {
-			return
+			break
 		}
 	}
+
+	// Script-session post-stream RecordBytes + use-row audit emission
+	// happens in the defer at the top of Forward. Keeping it there
+	// means every exit path — happy, body-too-large, swap error,
+	// upstream error, scope-mismatch, etc. — runs the same release
+	// + audit, so the optimistic reservation is always trued up and
+	// the audit-row count matches UsedCount.
 }
 
 // resolverAPIError is an internal sentinel that swap routes can throw when
@@ -671,6 +938,31 @@ func resolverConnectionScopedHeaders(src http.Header) map[string]struct{} {
 		}
 	}
 	return out
+}
+
+// upstreamContentLengthExceeds reports whether any value in the upstream
+// Content-Length header parses to an integer greater than `cap`. Used
+// to decide whether to strip the header before forwarding a possibly-
+// truncated body. The caller has already determined that a cap is in
+// effect (capped == true at the call site), so cap == 0 here means
+// "truncate to zero bytes" and any non-zero Content-Length advertised
+// by the upstream is misleading — strip it. We treat unparseable
+// values as "exceeds" so a malformed header doesn't trick us into
+// honoring it.
+func upstreamContentLengthExceeds(values []string, cap int64) bool {
+	if cap < 0 {
+		return false
+	}
+	for _, v := range values {
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return true
+		}
+		if n > cap {
+			return true
+		}
+	}
+	return false
 }
 
 // looksLikeCallerAuthValue reports whether a header value carries the

@@ -85,13 +85,22 @@ func Rewrite(t ToolUse, v Verdict, opts RewriteOpts) ([]byte, error) {
 	if out, ok, err := rewriteBash(t, v, resolverURL, opts); ok {
 		return out, err
 	}
-	return nil, errors.New("inspector: no rewriter for tool input shape")
+	return nil, ErrNoRewriter
 }
 
 // ErrAmbiguous indicates the rewriter declined because the verdict was
 // ambiguous or the call was classified as a non-API-call. The caller should
 // emit a synthetic error block in the response stream.
 var ErrAmbiguous = errors.New("inspector: ambiguous verdict, refusing to rewrite")
+
+// ErrNoRewriter indicates the inspector classified the input as a
+// credentialed API call but had no rewriter for the tool's input shape
+// (e.g. a multi-statement shell script that wraps a credentialed curl
+// in logic the bash rewriter can't safely parse). Callers should
+// translate this into a synthetic tool result that points the agent at
+// the autovault script-session path — that's the supported recovery
+// route for shapes the rewriter declines.
+var ErrNoRewriter = errors.New("inspector: no rewriter for tool input shape")
 
 // rewriteStructured handles tools with a top-level `url` field.
 func rewriteStructured(t ToolUse, _ Verdict, resolver *url.URL, opts RewriteOpts) ([]byte, bool, error) {

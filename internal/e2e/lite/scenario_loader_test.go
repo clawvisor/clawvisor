@@ -26,6 +26,8 @@ func TestLoadAllLibraryScenarios(t *testing.T) {
 		"credential_standing_task",
 		"no_invented_placeholder",
 		"credential_not_needed_for_local",
+		"script_session_credentialed_fanout",
+		"script_session_scope_mismatch_recovery",
 	} {
 		name := name
 		t.Run(name, func(t *testing.T) {

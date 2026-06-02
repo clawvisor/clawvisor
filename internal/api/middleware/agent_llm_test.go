@@ -251,7 +251,7 @@ func TestRequireAgentLLMNonce_RejectsExpiredNonceBoundAgent(t *testing.T) {
 		t.Fatalf("Mint: %v", err)
 	}
 
-	handler := RequireAgentLLMNonce(st, nonces, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RequireAgentLLMNonce(st, nonces, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not run for an expired nonce-bound agent")
 	}))
 
@@ -288,7 +288,7 @@ func TestRequireAgentLLMNonce_AcceptsExplicitPortInTargetHostHeader(t *testing.T
 	}
 
 	handlerCalled := false
-	handler := RequireAgentLLMNonce(st, nonces, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RequireAgentLLMNonce(st, nonces, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 		w.WriteHeader(http.StatusOK)
 	}))

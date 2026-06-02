@@ -8,16 +8,23 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/google/uuid"
 )
 
 type LLMControlHandler struct {
-	BaseURL       string
-	Store         store.Store
-	TaskCheckouts llmproxy.TaskCheckoutStore
-	Audit         *llmproxy.AuditEmitter
+	BaseURL        string
+	Store          store.Store
+	TaskCheckouts  llmproxy.TaskCheckoutStore
+	Audit          *llmproxy.AuditEmitter
+	ScriptSessions llmproxy.ScriptSessionCache
+	// IntentVerifier is consulted before minting a script session so
+	// that the derived capability (placeholder + host + methods +
+	// path prefixes) is checked against the active task scope. nil
+	// falls back to a deterministic check only.
+	IntentVerifier intent.Verifier
 }
 
 func NewLLMControlHandler(baseURL string) *LLMControlHandler {

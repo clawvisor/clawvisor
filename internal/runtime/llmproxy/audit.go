@@ -627,6 +627,134 @@ func (e *AuditEmitter) LogResolverSwap(ctx context.Context, agent *store.Agent, 
 	}
 }
 
+// LogScriptSessionMint records one autovault script-session mint. The
+// row captures the structured capability the verifier evaluated against
+// (placeholder, host, methods, prefixes, caps) so a future incident
+// reconstruction can see exactly what the agent was granted.
+func (e *AuditEmitter) LogScriptSessionMint(ctx context.Context, agent *store.Agent, sess ScriptSession, statusCode int, decision, outcome, reason string) {
+	if e == nil || e.Store == nil || agent == nil {
+		return
+	}
+	params := map[string]any{
+		"event":             "lite_proxy.script_session.mint",
+		"script_session_id": sess.ID,
+		"task_id":           sess.TaskID,
+		"placeholder":       sess.Placeholder,
+		"bound_service":     sess.ServiceID,
+		"target_host":       sess.TargetHost,
+		"methods":           sess.Methods,
+		"path_prefixes":     sess.PathPrefixes,
+		"max_uses":          sess.MaxUses,
+		"max_request_bytes": sess.MaxRequestBytes,
+		"max_total_bytes":   sess.MaxTotalBytes,
+		"expires_at":        sess.ExpiresAt.UTC().Format(time.RFC3339),
+		"why":               sess.Why,
+		"http_status":       statusCode,
+		"build_sha":         buildSHA(),
+		"clawvisor_version": version.Version,
+	}
+	paramsJSON, _ := json.Marshal(params)
+	taskIDPtr := nilIfEmpty(sess.TaskID)
+	// DedupKey: keyed on (session_id, outcome) for successful mints
+	// (sess.ID is the unique session UUID). For deny-path rows
+	// where sess.ID is empty (mint failed before session creation —
+	// e.g. invalid_json, placeholder_required), the (sess.ID,
+	// outcome) tuple collapses to ("", outcome) and ALL distinct
+	// denials of the same kind by the same user would dedupe to a
+	// single row. Tiebreak with a fresh UUID in that case — the
+	// row is effectively un-deduped, which is the right outcome
+	// for distinct denial attempts.
+	dedupSessKey := sess.ID
+	if dedupSessKey == "" {
+		dedupSessKey = uuid.NewString()
+	}
+	dedupKey := liteProxyEventDedupKey("script_session_mint", dedupSessKey, outcome)
+	entry := &store.AuditEntry{
+		ID:         uuid.NewString(),
+		UserID:     agent.UserID,
+		AgentID:    &agent.ID,
+		TaskID:     taskIDPtr,
+		DedupKey:   &dedupKey,
+		Timestamp:  time.Now().UTC(),
+		Service:    sess.ServiceID,
+		Action:     "autovault.script_session.mint",
+		ParamsSafe: paramsJSON,
+		Decision:   decision,
+		Outcome:    outcome,
+		Reason:     nilIfEmpty(reason),
+	}
+	if err := e.Store.LogAudit(ctx, entry); err != nil && !errors.Is(err, store.ErrConflict) {
+		e.Logger.WarnContext(ctx, "lite-proxy: script-session mint audit failed",
+			"agent_id", agent.ID, "session_id", sess.ID, "err", err.Error())
+	}
+}
+
+// LogScriptSessionUse records one resolver request authorized by a
+// script-session token. Each row links to the parent session id so the
+// dashboard can roll up uses + bytes per session. resp_bytes is the
+// upstream response size in bytes; total_bytes is the post-update
+// aggregate as returned by ScriptSessionCache.RecordBytes.
+func (e *AuditEmitter) LogScriptSessionUse(ctx context.Context, agent *store.Agent, requestID string, sess ScriptSession, targetPath, method string, statusCode int, decision, outcome, reason string, respBytes, totalBytes int64, useCount int, duration time.Duration) {
+	if e == nil || e.Store == nil || agent == nil {
+		return
+	}
+	params := map[string]any{
+		"event":             "lite_proxy.script_session.use",
+		"script_session_id": sess.ID,
+		"task_id":           sess.TaskID,
+		"placeholder":       sess.Placeholder,
+		"bound_service":     sess.ServiceID,
+		"target_host":       sess.TargetHost,
+		"target_path":       targetPath,
+		"method":            method,
+		"http_status":       statusCode,
+		"use_count":         useCount,
+		"max_uses":          sess.MaxUses,
+		"resp_bytes":        respBytes,
+		"total_bytes":       totalBytes,
+		"max_total_bytes":   sess.MaxTotalBytes,
+		"build_sha":         buildSHA(),
+		"clawvisor_version": version.Version,
+	}
+	paramsJSON, _ := json.Marshal(params)
+	// DedupKey: keyed on (request_id, session_id, path, method) to
+	// dedupe retries of the SAME logical request. When requestID is
+	// empty (inbound request had no X-Request-Id header), all
+	// concurrent uses of the same session against the same path
+	// would otherwise collide on one dedup bucket and the store
+	// would drop legitimate distinct rows. Use the audit row's own
+	// UUID as a tiebreaker in that case — it disables dedup but
+	// preserves correctness.
+	dedupReqKey := requestID
+	if dedupReqKey == "" {
+		dedupReqKey = uuid.NewString()
+	}
+	dedupKey := liteProxyEventDedupKey("script_session_use", dedupReqKey, sess.ID, targetPath, method)
+	// TaskID on the column (not just ParamsSafe JSON) so a "show all
+	// activity for task X" query joins these rows alongside the mint
+	// row. Mirrors LogScriptSessionMint's column population.
+	entry := &store.AuditEntry{
+		ID:         uuid.NewString(),
+		UserID:     agent.UserID,
+		AgentID:    &agent.ID,
+		TaskID:     nilIfEmpty(sess.TaskID),
+		RequestID:  requestID,
+		DedupKey:   &dedupKey,
+		Timestamp:  time.Now().UTC(),
+		Service:    sess.ServiceID,
+		Action:     "autovault.script_session.use." + method,
+		ParamsSafe: paramsJSON,
+		Decision:   decision,
+		Outcome:    outcome,
+		Reason:     nilIfEmpty(reason),
+		DurationMS: int(duration.Milliseconds()),
+	}
+	if err := e.Store.LogAudit(ctx, entry); err != nil && !errors.Is(err, store.ErrConflict) {
+		e.Logger.WarnContext(ctx, "lite-proxy: script-session use audit failed",
+			"agent_id", agent.ID, "session_id", sess.ID, "err", err.Error())
+	}
+}
+
 func nilIfEmpty(s string) *string {
 	if s == "" {
 		return nil

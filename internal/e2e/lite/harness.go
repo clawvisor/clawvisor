@@ -161,6 +161,15 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	h.InlineTaskCreator = recorder
 	h.TaskScope = llmproxy.NewStoreTaskScopeChecker(st)
 
+	// Script sessions: the agent can mint one via the control
+	// endpoint and use it as caller-auth on later resolver calls. We
+	// instrument the cache + mint handler so scenarios can assert on
+	// SeriesScriptSessionMint / SeriesScriptSessionUse counters.
+	scriptSessions := &countingScriptSessionCache{
+		inner:    llmproxy.NewMemoryScriptSessionCache(),
+		counters: counters,
+	}
+
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLM(st)
 	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
@@ -187,12 +196,23 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	// below shares h.CallerNonces so the nonce consumed here is the
 	// same one the rewriter minted.
 	vaultHandler := handlers.NewVaultHandler(st, v, reg)
-	nonceMW := middleware.RequireAgentLLMNonce(st, h.CallerNonces, logger)
+	nonceMW := middleware.RequireAgentLLMNonce(st, h.CallerNonces, scriptSessions, logger)
 	listVaultItems := nonceMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		counters.Inc(SeriesVaultItemsListed)
 		vaultHandler.ListForAgent(w, r)
 	}))
 	mux.Handle("GET /api/control/vault/items", listVaultItems)
+
+	// Mint endpoint for autovault script sessions. Constructed
+	// inline rather than via the production wiring so the harness
+	// stays self-contained — no intent verifier (scenarios are
+	// behavior-driven; verifier round-trips would add cost and
+	// flakiness for tests that should just exercise the mechanism).
+	controlHandler := handlers.NewLLMControlHandler("")
+	controlHandler.Store = st
+	controlHandler.ScriptSessions = scriptSessions
+	mux.Handle("POST /api/control/autovault/script-session", nonceMW(http.HandlerFunc(controlHandler.MintScriptSession)))
+	mux.Handle("GET /api/control/autovault/script", http.HandlerFunc(controlHandler.AutovaultScriptDocs))
 
 	// Mock upstream stands up before the resolver mount so the
 	// resolver's custom DialContext can target it directly.
@@ -212,7 +232,7 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	// outbound dial to the mock upstream, so scenarios can name real
 	// production hosts (e.g. https://api.github.com) without the
 	// harness having to extend the bound-service allowlist.
-	mux.Handle("/api/proxy/", nonceMW(newLiteResolver(st, v, logger, mockAddr)))
+	mux.Handle("/api/proxy/", nonceMW(newLiteResolver(st, v, scriptSessions, logger, mockAddr)))
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
