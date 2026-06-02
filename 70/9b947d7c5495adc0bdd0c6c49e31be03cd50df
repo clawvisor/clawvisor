@@ -1,0 +1,25 @@
+internal/runtime/llmproxy/secret_detection.go
+  s_5690062ed6cda8::t_8712bfed17356e 260-262
+internal/runtime/llmproxy/secret_detection_test.go
+  s_5690062ed6cda8::t_a7417e8c57216c 1-64
+pkg/runtime/proxy/inbound_secret_runtime_test.go
+  s_5690062ed6cda8::t_8b58e2009ca5d7 85-123
+pkg/runtime/proxy/inbound_secret_runtime.go
+  s_5690062ed6cda8::t_ffae72b281827a 302-305
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "709b947d7c5495adc0bdd0c6c49e31be03cd50df",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

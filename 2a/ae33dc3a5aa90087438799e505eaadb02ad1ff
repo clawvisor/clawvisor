@@ -1,0 +1,31 @@
+web/src/pages/Agents.tsx
+  8de9dcae61d3e38a 2687-2699
+internal/api/server.go
+  s_8de9dcae61d3e3::t_7b0b6fdc8887af 905,908,921,923-936,959,1004,945,951,1008
+  s_8f3d790934e389::t_fa390b916ed2db 909,962,968,976,988,993,1020,1024,1030,1035,1050,1055,1062,1017,296
+  s_8de9dcae61d3e3::t_8b31f83b147ad9 912-919,922
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "2aae33dc3a5aa90087438799e505eaadb02ad1ff",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

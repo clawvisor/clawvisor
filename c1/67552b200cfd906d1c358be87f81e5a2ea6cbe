@@ -1,0 +1,36 @@
+cmd/clawvisor/cmd_agent_lite_test.go
+  s_b7635082fff64b::t_374ce4647758f8 64-65,163-165
+cmd/clawvisor/cmd_agent_lite.go
+  s_b7635082fff64b::t_13ac886897dfaa 263-265
+web/src/pages/Agents.tsx
+  s_b7635082fff64b::t_2b5f59a5806804 1384,1387-1389,1411
+internal/runtime/llmproxy/forward_test.go
+  s_b7635082fff64b::t_4ecde8b5de6b3e 163-185,187-197
+  s_b7635082fff64b::t_c5729f11727cf8 186
+internal/runtime/llmproxy/forward.go
+  s_b7635082fff64b::t_9153f0858a9a8c 158-167,236,252-254
+  s_b7635082fff64b::t_0e95e740418804 267-268
+  s_b7635082fff64b::t_3c218e7b2ec558 3-6,116-119
+internal/api/handlers/llm_endpoint.go
+  s_b7635082fff64b::t_384bcb56ed0392 32-33
+internal/runtime/llmproxy/auth_context.go
+  s_b7635082fff64b::t_5c5bead258a567 10-11,17
+internal/api/middleware/agent_llm.go
+  s_b7635082fff64b::t_a4a80049f2501b 20-21,211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "c167552b200cfd906d1c358be87f81e5a2ea6cbe",
+  "prompts": {},
+  "sessions": {
+    "s_b7635082fff64b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e32a6-368e-7c40-a4de-d67d7171c8f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
