@@ -3,7 +3,9 @@ package llmproxy
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base32"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,9 +110,26 @@ type ScopeDrift struct {
 
 // Fingerprint is a stable identifier for the blocked tool call. The
 // pre-clear path uses this to recognise the agent's retry of the same
-// call after a successful option resolution.
+// call after a successful option resolution. The key includes the
+// conversation, tool/route shape, AND a hash of the tool_use input so
+// a successful drift on one call body cannot bypass scope checks for
+// a different request on the same endpoint with different params.
+// Two calls with byte-identical inputs in the same conversation share
+// a fingerprint — that's the retry case the pre-clear targets — and
+// nothing else does.
 func (d ScopeDrift) Fingerprint() string {
-	return strings.Join([]string{d.AgentID, d.Service, d.Action, d.Host, d.Method, d.Path}, "|")
+	return scopeDriftFingerprintFromParts(d.AgentID, d.ConversationID, d.Service, d.Action, d.Host, d.Method, d.Path, d.ToolUse.Input)
+}
+
+// scopeDriftFingerprintFromParts is the canonical fingerprint
+// computation, shared between ScopeDrift.Fingerprint and the
+// postprocess pre-clear lookup so the two cannot drift. A nil input
+// hashes the same as []byte("null") (JSON canonical for no input),
+// which is fine because retries reproduce the same JSON.
+func scopeDriftFingerprintFromParts(agentID, conversationID, service, action, host, method, path string, input []byte) string {
+	sum := sha256.Sum256(input)
+	inputHash := hex.EncodeToString(sum[:8])
+	return strings.Join([]string{agentID, conversationID, service, action, host, method, path, inputHash}, "|")
 }
 
 // MenuFields is the subset of drift state the menu prompt renders.

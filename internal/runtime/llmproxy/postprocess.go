@@ -1121,8 +1121,15 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 				// tool_use unchanged without re-entering the menu.
 				preCleared := false
 				if cfg.ScopeDrifts != nil {
-					fp := scopeDriftFingerprint(cfg.AgentID, resolved.ServiceID, resolved.ActionID, v.Host, v.Method, v.Path)
+					fp := scopeDriftFingerprint(cfg.AgentID, cfg.ConversationID, resolved.ServiceID, resolved.ActionID, v.Host, v.Method, v.Path, tu.Input)
 					if driftID, ok := cfg.ScopeDrifts.LookupPreClear(req.Context(), cfg.AgentID, fp); ok {
+						// Carry the original drift's task association into
+						// downstream audit so the "rewrite" event for a
+						// pre-cleared tool use can be correlated by
+						// task_id, not just by drift_id.
+						if drift, err := cfg.ScopeDrifts.Get(req.Context(), driftID); err == nil && drift.TaskID != "" {
+							matchedTaskID = drift.TaskID
+						}
 						audit("allow", "scope_drift_pre_cleared", driftID)
 						preCleared = true
 					}
@@ -1697,11 +1704,15 @@ func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.
 }
 
 // scopeDriftFingerprint is the stable identifier the registry uses to
-// match a pre-cleared drift to its retry. Mirrors ScopeDrift.Fingerprint
-// — kept as a free function so the postprocess pre-clear check can
-// compute it without manufacturing a temporary drift record.
-func scopeDriftFingerprint(agentID, service, action, host, method, path string) string {
-	return strings.Join([]string{agentID, service, action, host, method, path}, "|")
+// match a pre-cleared drift to its retry. Delegates to the canonical
+// helper in scope_drift_registry.go so the registry's
+// ScopeDrift.Fingerprint and the postprocess pre-clear lookup can
+// never disagree on the shape. Passing tu.Input + conversationID
+// tightens the key beyond (service, action, host, method, path):
+// without these, a different conversation or a different params body
+// could consume the pre-clear minted for the original call.
+func scopeDriftFingerprint(agentID, conversationID, service, action, host, method, path string, input []byte) string {
+	return scopeDriftFingerprintFromParts(agentID, conversationID, service, action, host, method, path, input)
 }
 
 // scopeDriftFlatTarget returns a human-readable subject for the

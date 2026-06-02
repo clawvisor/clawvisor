@@ -168,7 +168,11 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	// scenario YAML's `service_catalog:` block names which built-in
 	// catalogs to load (today only "github" is defined); without it
 	// the catalog stays empty and tests behave as before.
-	if defs := scenarioServiceCatalogDefs(scn); len(defs) > 0 {
+	defs, defsErr := scenarioServiceCatalogDefs(scn)
+	if defsErr != nil {
+		return nil, defsErr
+	}
+	if len(defs) > 0 {
 		h.Catalog = llmproxy.NewLazyServiceCatalog(defs)
 	}
 	// Replace the default in-process scope-drift registry with a

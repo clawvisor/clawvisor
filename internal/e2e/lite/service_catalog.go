@@ -1,6 +1,9 @@
 package lite
 
 import (
+	"fmt"
+	"sort"
+
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 )
 
@@ -18,18 +21,35 @@ import (
 // curls scenarios make. The full production adapter wiring (auth,
 // risk metadata, response shapes) is intentionally absent — the
 // harness doesn't need it.
-func scenarioServiceCatalogDefs(scn *Scenario) []yamldef.ServiceDef {
+//
+// Unknown IDs return an error rather than silently no-op'ing — a typo
+// like `gitub` would otherwise disable catalog wiring (and therefore
+// the whole scope-drift code path the scenario means to exercise)
+// without any signal in the harness logs.
+func scenarioServiceCatalogDefs(scn *Scenario) ([]yamldef.ServiceDef, error) {
 	if scn == nil || len(scn.ServiceCatalog) == 0 {
-		return nil
+		return nil, nil
 	}
 	defs := make([]yamldef.ServiceDef, 0, len(scn.ServiceCatalog))
 	for _, id := range scn.ServiceCatalog {
 		switch id {
 		case "github":
 			defs = append(defs, githubServiceDef())
+		default:
+			return nil, fmt.Errorf("scenario %q: unknown service_catalog id %q (known: %v)", scn.ID, id, knownServiceCatalogIDs())
 		}
 	}
-	return defs
+	return defs, nil
+}
+
+// knownServiceCatalogIDs lists every id scenarioServiceCatalogDefs
+// recognises. Kept centralised so adding a new built-in def in this
+// file only requires one change, and so the error message above can
+// surface the candidate set for typo-correction.
+func knownServiceCatalogIDs() []string {
+	ids := []string{"github"}
+	sort.Strings(ids)
+	return ids
 }
 
 // githubServiceDef returns a minimal github ServiceDef with just enough
