@@ -365,6 +365,17 @@ func WithLiteApprovalCache(c llmproxy.PendingApprovalCache) ServerOption {
 	return func(s *Server) { s.liteApprovals = c }
 }
 
+// WithScopeDriftRegistry overrides the default in-process scope-drift
+// registry. Required for multi-instance deployments so the user's "yes"/"no"
+// reply on a scope-drift one-off prompt can resolve the drift minted by
+// another instance; required across restarts when an operator runs the
+// daemon under a process supervisor that restarts the process mid-drift.
+// Without this, a deploy-bounce or load-balancer reroute drops the drift
+// record and the agent's recovery path fails with "drift not found".
+func WithScopeDriftRegistry(r llmproxy.ScopeDriftRegistry) ServerOption {
+	return func(s *Server) { s.scopeDrifts = r }
+}
+
 // WithLiteApprovalOutcomeStore overrides the default in-memory lite-proxy
 // inline approval outcome store. Use a shared implementation in multi-instance
 // deployments so later turns can see approvals resolved by another instance.
