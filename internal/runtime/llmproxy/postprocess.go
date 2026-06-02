@@ -1008,7 +1008,37 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 			if cfg.Catalog != nil {
 				resolved, _ = cfg.Catalog.Resolve(v.Host, v.Method, v.Path)
 			}
-			decisionInput := runtimedecision.AuthorizationInput{
+			// Scope-drift pre-clear: when a previous drift on this
+			// exact (agent, conversation, service, action, host,
+			// method, path, input-hash) was resolved positively, the
+			// registry holds a one-shot pre-clear authorising this
+			// single re-attempt. The decision evaluator below would
+			// otherwise re-run the verifier and re-reject the
+			// retry, leaving the user's approval (or the verifier's
+			// second-pass acceptance) inert. Honouring the pre-clear
+			// here lets the agent's retry land on the wire exactly
+			// once after a successful drift resolution.
+			preCleared := false
+			if cfg.ScopeDrifts != nil {
+				fp := scopeDriftFingerprint(cfg.AgentID, cfg.ConversationID, resolved.ServiceID, resolved.ActionID, v.Host, v.Method, v.Path, tu.Input)
+				if driftID, ok := cfg.ScopeDrifts.LookupPreClear(req.Context(), cfg.AgentID, fp); ok {
+					if drift, err := cfg.ScopeDrifts.Get(req.Context(), driftID); err == nil && drift.TaskID != "" {
+						matchedTaskID = drift.TaskID
+					}
+					audit("allow", "scope_drift_pre_cleared", driftID)
+					decisionHandled = true
+					preCleared = true
+				}
+			}
+			if preCleared {
+				// Skip the decision evaluator entirely; pre-clear
+				// authorises this single retry. decisionHandled is
+				// already true so the legacy task-scope branch
+				// below also skips, and we fall through to the
+				// credential rewrite path as if VerdictAllow had
+				// been returned.
+			} else {
+				decisionInput := runtimedecision.AuthorizationInput{
 				ToolUse:         tu,
 				UserID:          cfg.AgentUserID,
 				AgentID:         cfg.AgentID,
@@ -1100,6 +1130,7 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 					Allowed:        false,
 					Reason:         "Clawvisor: approval required — " + dec.Reason,
 					SubstituteWith: approvalPrompt(tu, dec.Reason, approvalID),
+				}
 				}
 			}
 		}
