@@ -1082,10 +1082,10 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 					}
 				}
 				// Sliding lifetime: each authorized tool_use bumps a
-				// session-lifetime task's expiry forward. Standing
-				// tasks and store failures are no-ops here — see
-				// slideSessionTaskExpiry's contract.
-				if newExp, slid, slideErr := slideSessionTaskExpiry(req.Context(), cfg.Store, dec.MatchedTask, time.Now().UTC()); slideErr != nil {
+				// sliding-lifetime task's expiry forward. Session and
+				// standing tasks (and store failures) are no-ops
+				// here — see slideTaskExpiry's contract.
+				if newExp, slid, slideErr := slideTaskExpiry(req.Context(), cfg.Store, dec.MatchedTask, time.Now().UTC()); slideErr != nil {
 					trace(TraceEventTaskSlide,
 						"task_id", dec.TaskID,
 						"result", "error",

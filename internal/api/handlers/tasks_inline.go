@@ -101,8 +101,8 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 	if lifetime == "" {
 		lifetime = "session"
 	}
-	if lifetime != "session" && lifetime != "standing" {
-		return nil, fmt.Errorf("invalid lifetime %q (want session or standing)", req.Lifetime)
+	if lifetime != "session" && lifetime != "standing" && lifetime != "sliding" {
+		return nil, fmt.Errorf("invalid lifetime %q (want session, sliding, or standing)", req.Lifetime)
 	}
 
 	if lifetime == "standing" && req.ExpiresInSeconds > 0 {
@@ -417,8 +417,8 @@ func (h *TasksHandler) CreatePendingInlineTask(ctx context.Context, agent *store
 	if lifetime == "" {
 		lifetime = "session"
 	}
-	if lifetime != "session" && lifetime != "standing" {
-		return "", fmt.Errorf("invalid lifetime %q (want session or standing)", req.Lifetime)
+	if lifetime != "session" && lifetime != "standing" && lifetime != "sliding" {
+		return "", fmt.Errorf("invalid lifetime %q (want session, sliding, or standing)", req.Lifetime)
 	}
 
 	if lifetime == "standing" && req.ExpiresInSeconds > 0 {

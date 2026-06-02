@@ -786,7 +786,7 @@ type Task struct {
 	AgentID                string          `json:"agent_id"`
 	Purpose                string          `json:"purpose"`
 	Status                 string          `json:"status"`   // pending_approval | active | completed | expired | denied | cancelled | pending_scope_expansion | revoked
-	Lifetime               string          `json:"lifetime"` // session | standing
+	Lifetime               string          `json:"lifetime"` // session | sliding | standing
 	AuthorizedActions      []TaskAction    `json:"authorized_actions"`
 	PlannedCalls           []PlannedCall   `json:"planned_calls,omitempty"`
 	ExpectedTools          json.RawMessage `json:"expected_tools,omitempty"`

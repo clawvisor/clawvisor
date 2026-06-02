@@ -101,7 +101,7 @@ func toolDefs() []Tool {
 					"expected_use": {"type": "string", "description": "Top-level intended use summary for runtime-backed tasks"},
 					"schema_version": {"type": "integer", "enum": [1, 2], "description": "Task schema version. Use 2 when sending expected_tools, expected_egress, intent_verification_mode, or expected_use."},
 					"expires_in_seconds": {"type": "integer", "description": "Session task expiry in seconds (default 1800)"},
-					"lifetime": {"type": "string", "enum": ["session", "standing"], "description": "Task lifetime: session (expires) or standing (no expiry)"},
+					"lifetime": {"type": "string", "enum": ["session", "sliding", "standing"], "description": "Task lifetime: session (fixed expiry), sliding (expiry auto-extends 10 min on each authorized tool_use), or standing (no expiry)"},
 					"wait": {"type": "boolean", "description": "Block until the task is approved or denied (default true)"},
 					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
 				},

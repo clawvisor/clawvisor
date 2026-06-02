@@ -386,8 +386,8 @@ func (h *RuntimeHandler) PromoteEventToTask(w http.ResponseWriter, r *http.Reque
 	if body.Lifetime == "" {
 		body.Lifetime = "session"
 	}
-	if body.Lifetime != "session" && body.Lifetime != "standing" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "lifetime must be session or standing")
+	if body.Lifetime != "session" && body.Lifetime != "standing" && body.Lifetime != "sliding" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "lifetime must be session, sliding, or standing")
 		return
 	}
 	task, err := h.createTaskFromRuntimeEvent(r.Context(), event, body.Lifetime)
@@ -417,7 +417,7 @@ func (h *RuntimeHandler) createTaskFromRuntimeEvent(ctx context.Context, event *
 	}
 	now := time.Now().UTC()
 	task.ApprovedAt = &now
-	if lifetime == "session" {
+	if lifetime != "standing" {
 		expiresIn := h.taskExpirySeconds()
 		task.ExpiresInSeconds = expiresIn
 		expiresAt := now.Add(time.Duration(expiresIn) * time.Second)

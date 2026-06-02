@@ -26,7 +26,7 @@ func (s *stubExpirySetter) UpdateTaskExpiresAt(_ context.Context, id string, exp
 	return nil
 }
 
-func TestSlideSessionTaskExpiry(t *testing.T) {
+func TestSlideTaskExpiry(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	farFuture := now.Add(30 * time.Minute)
 	soonExpiring := now.Add(2 * time.Minute)
@@ -45,29 +45,34 @@ func TestSlideSessionTaskExpiry(t *testing.T) {
 			wantNoCalls: true,
 		},
 		{
-			name:        "standing lifetime skips slide",
-			task:        &store.Task{ID: "t1", Lifetime: "standing", ExpiresAt: &soonExpiring},
+			name:        "session lifetime skips slide — opt-in only",
+			task:        &store.Task{ID: "t1", Lifetime: "session", ExpiresAt: &soonExpiring},
 			wantNoCalls: true,
 		},
 		{
-			name:        "session task with nil expiry skips slide",
-			task:        &store.Task{ID: "t2", Lifetime: "session", ExpiresAt: nil},
+			name:        "standing lifetime skips slide",
+			task:        &store.Task{ID: "t2", Lifetime: "standing", ExpiresAt: &soonExpiring},
+			wantNoCalls: true,
+		},
+		{
+			name:        "sliding task with nil expiry skips slide",
+			task:        &store.Task{ID: "t3", Lifetime: "sliding", ExpiresAt: nil},
 			wantNoCalls: true,
 		},
 		{
 			name:        "current expiry already past slide window is a no-op",
-			task:        &store.Task{ID: "t3", Lifetime: "session", ExpiresAt: &farFuture},
+			task:        &store.Task{ID: "t4", Lifetime: "sliding", ExpiresAt: &farFuture},
 			wantNoCalls: true,
 		},
 		{
-			name:       "session task within slide window gets bumped",
-			task:       &store.Task{ID: "t4", Lifetime: "session", ExpiresAt: &soonExpiring},
+			name:       "sliding task within slide window gets bumped",
+			task:       &store.Task{ID: "t5", Lifetime: "sliding", ExpiresAt: &soonExpiring},
 			wantWrite:  true,
-			wantNewExp: now.Add(SessionTaskSlide),
+			wantNewExp: now.Add(SlidingTaskSlide),
 		},
 		{
 			name:        "nil store is a no-op",
-			task:        &store.Task{ID: "t5", Lifetime: "session", ExpiresAt: &soonExpiring},
+			task:        &store.Task{ID: "t6", Lifetime: "sliding", ExpiresAt: &soonExpiring},
 			nilStore:    true,
 			wantNoCalls: true,
 		},
@@ -80,7 +85,7 @@ func TestSlideSessionTaskExpiry(t *testing.T) {
 			if tt.nilStore {
 				setter = nil
 			}
-			newExp, slid, err := slideSessionTaskExpiry(context.Background(), setter, tt.task, now)
+			newExp, slid, err := slideTaskExpiry(context.Background(), setter, tt.task, now)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -114,13 +119,13 @@ func TestSlideSessionTaskExpiry(t *testing.T) {
 	}
 }
 
-func TestSlideSessionTaskExpiry_StoreError(t *testing.T) {
+func TestSlideTaskExpiry_StoreError(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	soonExpiring := now.Add(2 * time.Minute)
 	stub := &stubExpirySetter{err: errors.New("boom")}
-	task := &store.Task{ID: "t", Lifetime: "session", ExpiresAt: &soonExpiring}
+	task := &store.Task{ID: "t", Lifetime: "sliding", ExpiresAt: &soonExpiring}
 
-	_, slid, err := slideSessionTaskExpiry(context.Background(), stub, task, now)
+	_, slid, err := slideTaskExpiry(context.Background(), stub, task, now)
 	if err == nil {
 		t.Fatalf("expected store error to propagate")
 	}

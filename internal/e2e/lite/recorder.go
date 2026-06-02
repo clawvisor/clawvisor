@@ -73,6 +73,8 @@ func (r *recordingInlineCreator) recordApproved(task *llmproxy.InlineApprovedTas
 	switch strings.ToLower(strings.TrimSpace(task.Lifetime)) {
 	case "standing":
 		r.counters.Inc(SeriesLifetimeStanding)
+	case "sliding":
+		r.counters.Inc(SeriesLifetimeSliding)
 	case "session", "":
 		r.counters.Inc(SeriesLifetimeSession)
 	}
@@ -224,6 +226,7 @@ const (
 	SeriesDownstreamPlaceholderUsed     = "downstream.placeholder_used"
 	SeriesVaultItemsListed              = "control.vault_items_listed"
 	SeriesLifetimeStanding              = "task_creates.lifetime_standing"
+	SeriesLifetimeSliding               = "task_creates.lifetime_sliding"
 	SeriesLifetimeSession               = "task_creates.lifetime_session"
 )
 

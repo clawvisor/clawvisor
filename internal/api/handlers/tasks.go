@@ -141,7 +141,7 @@ type createTaskRequest struct {
 	SchemaVersion          int                               `json:"schema_version,omitempty"`
 	ExpiresInSeconds       int                               `json:"expires_in_seconds"`
 	CallbackURL            string                            `json:"callback_url"`
-	Lifetime               string                            `json:"lifetime"` // "session" (default) or "standing"
+	Lifetime               string                            `json:"lifetime"` // "session" (default), "sliding", or "standing"
 }
 
 // Create declares a new task scope.
@@ -448,12 +448,12 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if lifetime == "" {
 		lifetime = "session"
 	}
-	if lifetime != "session" && lifetime != "standing" {
+	if lifetime != "session" && lifetime != "standing" && lifetime != "sliding" {
 		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 			Error:     fmt.Sprintf("invalid lifetime %q", req.Lifetime),
 			Code:      "INVALID_REQUEST",
-			Hint:      "Session tasks expire after a timeout. Standing tasks persist until revoked.",
-			Available: []string{"session", "standing"},
+			Hint:      "Session tasks expire after a fixed timeout. Sliding tasks expire after a timeout that auto-extends on each authorized tool_use. Standing tasks persist until revoked.",
+			Available: []string{"session", "sliding", "standing"},
 		})
 		return
 	}

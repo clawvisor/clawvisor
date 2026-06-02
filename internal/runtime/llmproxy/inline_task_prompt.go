@@ -196,13 +196,16 @@ func extractApprovalIDFromPrompt(text string) string {
 const defaultSessionTaskDurationSeconds = 1800
 
 // durationLine returns the (label, value) pair describing how long the
-// task will be active once approved. The two lifetime modes render with
-// different labels because they answer different user questions:
+// task will be active once approved. The three lifetime modes render
+// with different labels because they answer different user questions:
 //
 //   - session (the common case): "Duration: 30 min" — how long the
 //     scope is usable. Empty expires_in_seconds falls back to the
 //     caller-provided default (daemon config), and then to
 //     defaultSessionTaskDurationSeconds if that's also unset.
+//   - sliding: "Duration: 30 min (auto-extends while active)" —
+//     same initial window as session, plus a hint that the deadline
+//     bumps forward on each authorized tool_use.
 //   - standing: "Lifetime: always" — standing tasks reject
 //     expires_in_seconds (see tasks_inline.go), so there is no duration
 //     to show; the label conveys "no time cap" instead.
@@ -220,6 +223,15 @@ func durationLine(lifetime string, expiresInSeconds, defaultExpirySeconds int) (
 			secs = defaultSessionTaskDurationSeconds
 		}
 		return "Duration", humanizeExpiresIn(secs)
+	case "sliding":
+		secs := expiresInSeconds
+		if secs <= 0 {
+			secs = defaultExpirySeconds
+		}
+		if secs <= 0 {
+			secs = defaultSessionTaskDurationSeconds
+		}
+		return "Duration", humanizeExpiresIn(secs) + " (auto-extends while active)"
 	case "standing":
 		return "Lifetime", "always"
 	default:

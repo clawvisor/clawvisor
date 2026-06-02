@@ -187,7 +187,7 @@ type Task struct {
 	AgentID                string           `json:"agent_id"`
 	AgentName              string           `json:"agent_name,omitempty"`
 	Purpose                string           `json:"purpose"`
-	Lifetime               string           `json:"lifetime"` // "session" or "standing"
+	Lifetime               string           `json:"lifetime"` // "session", "sliding", or "standing"
 	Status                 string           `json:"status"`
 	AuthorizedActions      []TaskAction     `json:"authorized_actions"`
 	PlannedCalls           []PlannedCall    `json:"planned_calls,omitempty"`

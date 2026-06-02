@@ -167,6 +167,12 @@ recurring workflows like cron-triggered triage. Every gateway request on a
 standing task **must** include a `session_id` — omitting it is a hard error
 (`MISSING_SESSION_ID`).
 
+Sliding tasks (`lifetime: "sliding"`) sit between session and standing: they
+expire after `expires_in_seconds` like a session task, but every authorized
+tool_use bumps the deadline forward by 10 minutes. The task expires only when
+the agent has been idle long enough for the slide window to lapse. Use this
+for long-running workflows whose total duration isn't predictable up front.
+
 The `session_id` is a UUID that scopes chain context (the facts extracted from
 prior requests). Generate one per workflow invocation and reuse it across all
 requests in that invocation.
