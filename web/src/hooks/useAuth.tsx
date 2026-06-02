@@ -136,7 +136,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Fetch features on mount and whenever the authenticated user changes, so
   // the server can return per-user feature gates (e.g. plan-based gating).
-  // The cancel flag drops stale responses if `user` changes again before the
+  // Also refetch when onboarding completes: /api/features returns 403
+  // ONBOARDING_REQUIRED during signup, so the post-login fetch fails until
+  // onboarding finishes — without this dep the dashboard renders against
+  // stale (or null) features until the user reloads.
+  // The cancel flag drops stale responses if deps change again before the
   // in-flight request resolves — without it a slow anonymous request could
   // clobber a fast per-user response on login.
   useEffect(() => {
@@ -145,7 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((f) => { if (!cancelled) setFeatures(f) })
       .catch((e) => console.warn('useAuth: failed to fetch features', e))
     return () => { cancelled = true }
-  }, [user])
+  }, [user, onboardingComplete])
 
   // Register a refresh callback so the API client can silently handle 401s on
   // data endpoints (expired access token) without logging the user out.
