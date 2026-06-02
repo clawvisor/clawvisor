@@ -25,7 +25,7 @@ func TestVerifierConfigFromEnv_GeminiHappyPath(t *testing.T) {
 	t.Setenv(EnvVerifierProvider, "gemini")
 	t.Setenv(EnvGeminiProject, "my-project")
 	t.Setenv(EnvGeminiRegion, "us-central1")
-	t.Setenv(EnvGeminiModel, "gemini-3.1-flash-lite-preview")
+	t.Setenv(EnvGeminiModel, "gemini-3.1-flash-lite")
 
 	if !VerifierConfiguredFromEnv() {
 		t.Fatal("VerifierConfiguredFromEnv should be true when provider+project are set")
@@ -47,7 +47,7 @@ func TestVerifierConfigFromEnv_GeminiHappyPath(t *testing.T) {
 	if got.Provider != "gemini" {
 		t.Errorf("provider=%q, want gemini", got.Provider)
 	}
-	if got.Project != "my-project" || got.Region != "us-central1" || got.Model != "gemini-3.1-flash-lite-preview" {
+	if got.Project != "my-project" || got.Region != "us-central1" || got.Model != "gemini-3.1-flash-lite" {
 		t.Errorf("gemini fields wrong: %+v", got)
 	}
 }

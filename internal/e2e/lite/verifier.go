@@ -18,7 +18,7 @@ import (
 // Gemini is the only provider wired today because:
 //   - it supports Application Default Credentials (no token to manage
 //     in the env), which keeps test setup ergonomic;
-//   - gemini-3.1-flash-lite-preview is fast and cheap enough that
+//   - gemini-3.1-flash-lite is fast and cheap enough that
 //     leaving the verifier on during a CI scenario run doesn't slow
 //     the matrix to a crawl;
 //   - the existing verifier prompts/caches already have a Gemini
@@ -32,12 +32,12 @@ const (
 	EnvVerifierProvider = "CLAWVISOR_E2E_VERIFIER_PROVIDER" // "gemini" or "" (default: disabled)
 	EnvGeminiProject    = "CLAWVISOR_E2E_GEMINI_PROJECT"
 	EnvGeminiRegion     = "CLAWVISOR_E2E_GEMINI_REGION" // default "global"
-	EnvGeminiModel      = "CLAWVISOR_E2E_GEMINI_MODEL"  // default "gemini-3.1-flash-lite-preview"
+	EnvGeminiModel      = "CLAWVISOR_E2E_GEMINI_MODEL"  // default "gemini-3.1-flash-lite"
 )
 
 const (
 	defaultGeminiRegion = "global"
-	defaultGeminiModel  = "gemini-3.1-flash-lite-preview"
+	defaultGeminiModel  = "gemini-3.1-flash-lite"
 )
 
 // verifierConfigFromEnv returns a configured intent.Verifier and the
