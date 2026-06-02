@@ -631,6 +631,9 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 	fmt.Fprintf(&b, "  chain_context:\n")
 	fmt.Fprintf(&b, "    enabled: %t\n", cfg.chainContextEnabled)
 
+	fmt.Fprintf(&b, "\nproxy_lite:\n")
+	fmt.Fprintf(&b, "  enabled: true\n")
+
 	fmt.Fprintf(&b, "\ntelemetry:\n")
 	fmt.Fprintf(&b, "  enabled: %t\n", cfg.telemetryEnabled)
 
