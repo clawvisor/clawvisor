@@ -15,6 +15,7 @@ func TestLoadAllLibraryScenarios(t *testing.T) {
 		"pure_inspection",
 		"scope_drift_followup",
 		"scope_drift_oneoff_markup",
+		"scope_drift_github_drift",
 		"pivot_mid_execution",
 		"denied_then_explain",
 		"incremental_within_scope",

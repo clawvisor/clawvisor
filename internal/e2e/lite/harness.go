@@ -160,6 +160,17 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	h.InlineTaskCreator = recorder
 	h.TaskScope = llmproxy.NewStoreTaskScopeChecker(st)
+	// Catalog gives the lite-proxy a way to reverse-resolve the
+	// (host, method, path) of a credentialed call to a known
+	// (service, action). Without this the scope-drift menu is
+	// unreachable in the harness because the path that mints drifts
+	// requires `cfg.Catalog != nil && cfg.TaskScope != nil`. The
+	// scenario YAML's `service_catalog:` block names which built-in
+	// catalogs to load (today only "github" is defined); without it
+	// the catalog stays empty and tests behave as before.
+	if defs := scenarioServiceCatalogDefs(scn); len(defs) > 0 {
+		h.Catalog = llmproxy.NewLazyServiceCatalog(defs)
+	}
 	// Replace the default in-process scope-drift registry with a
 	// counting wrapper so scenario expectations can assert on drift
 	// lifecycle events (minted, option chosen, outcome, pre-clear).

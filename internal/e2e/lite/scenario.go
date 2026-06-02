@@ -19,10 +19,19 @@ type Scenario struct {
 	// shape that can't live in tracked files (e.g. `git init && commit`).
 	SetupShell string       `yaml:"setup_shell,omitempty"`
 	VaultItems []VaultItem  `yaml:"vault_items,omitempty"`
-	Script     []Step       `yaml:"script"`
-	Approvals  Approvals    `yaml:"approvals"`
-	Budget     Budget       `yaml:"budget"`
-	Expects    Expectations `yaml:"expectations"`
+	// ServiceCatalog opts the scenario into a populated lite-proxy
+	// service catalog. Values are built-in service ids the harness
+	// knows about (see internal/e2e/lite/service_catalog.go); each
+	// listed id adds a minimal yamldef.ServiceDef so the proxy can
+	// reverse-resolve credentialed (host, method, path) to
+	// (service, action). Unset (or empty) leaves the catalog
+	// uninitialized — the scope-drift menu won't fire and behavior
+	// matches the harness's pre-catalog state.
+	ServiceCatalog []string     `yaml:"service_catalog,omitempty"`
+	Script         []Step       `yaml:"script"`
+	Approvals      Approvals    `yaml:"approvals"`
+	Budget         Budget       `yaml:"budget"`
+	Expects        Expectations `yaml:"expectations"`
 
 	// Dir is the directory this scenario was loaded from (populated by
 	// LoadScenario). The workspace lives at filepath.Join(Dir,
