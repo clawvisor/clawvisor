@@ -1412,6 +1412,18 @@ func (s *Store) UpdateTaskActions(ctx context.Context, id string, actions []stor
 	return nil
 }
 
+func (s *Store) UpdateTaskExpiresAt(ctx context.Context, id string, expiresAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE tasks SET expires_at = $1 WHERE id = $2`, expiresAt, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) IncrementTaskRequestCount(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE tasks SET request_count = request_count + 1 WHERE id = $1`, id)

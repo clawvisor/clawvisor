@@ -183,6 +183,10 @@ type Store interface {
 	UpdateTaskApprovedFrom(ctx context.Context, id, fromStatus string, expiresAt time.Time, authorizedActions []TaskAction) (bool, error)
 	UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []TaskAction) error
 	UpdateTaskActions(ctx context.Context, id string, actions []TaskAction, expiresAt time.Time) error
+	// UpdateTaskExpiresAt sets expires_at unconditionally. Callers are
+	// responsible for choosing the new value (e.g., the sliding-lifetime
+	// path in llmproxy uses max(current, now+slide) before calling).
+	UpdateTaskExpiresAt(ctx context.Context, id string, expiresAt time.Time) error
 	IncrementTaskRequestCount(ctx context.Context, id string) error
 	SetTaskPendingExpansion(ctx context.Context, id string, action *TaskAction, reason string) error
 	ListExpiredTasks(ctx context.Context) ([]*Task, error)

@@ -84,6 +84,7 @@ const (
 	TraceEventNonceMint      = "nonce_mint"
 	TraceEventRewriteApplied = "rewrite_applied"
 	TraceEventSecretPipeline = "secret_pipeline"
+	TraceEventTaskSlide      = "task_slide"
 )
 
 const (

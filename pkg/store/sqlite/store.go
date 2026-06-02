@@ -1682,6 +1682,20 @@ func (s *Store) UpdateTaskActions(ctx context.Context, id string, actions []stor
 	return nil
 }
 
+func (s *Store) UpdateTaskExpiresAt(ctx context.Context, id string, expiresAt time.Time) error {
+	exp := expiresAt.UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET expires_at = ? WHERE id = ?`, exp, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) IncrementTaskRequestCount(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tasks SET request_count = request_count + 1 WHERE id = ?`, id)

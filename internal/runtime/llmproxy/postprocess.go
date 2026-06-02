@@ -1081,6 +1081,23 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 						Reason:  "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason,
 					}
 				}
+				// Sliding lifetime: each authorized tool_use bumps a
+				// session-lifetime task's expiry forward. Standing
+				// tasks and store failures are no-ops here — see
+				// slideSessionTaskExpiry's contract.
+				if newExp, slid, slideErr := slideSessionTaskExpiry(req.Context(), cfg.Store, dec.MatchedTask, time.Now().UTC()); slideErr != nil {
+					trace(TraceEventTaskSlide,
+						"task_id", dec.TaskID,
+						"result", "error",
+						"error", slideErr.Error(),
+					)
+				} else if slid {
+					trace(TraceEventTaskSlide,
+						"task_id", dec.TaskID,
+						"result", "extended",
+						"new_expires_at", newExp.Format(time.RFC3339),
+					)
+				}
 			}
 			// Catalog miss: log via audit reason field but don't block.
 			// The fact that the (host, method, path) didn't resolve to a
