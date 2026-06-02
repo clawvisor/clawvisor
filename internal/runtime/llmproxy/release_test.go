@@ -10,6 +10,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -496,3 +497,92 @@ func TestRewriteTaskApprovalReplyRewritesAndDropsHold(t *testing.T) {
 		t.Fatalf("task reply must drop the hold; got resolved=%+v", resolved)
 	}
 }
+
+func TestTryReleasePendingApproval_ParallelPreferredTaskID(t *testing.T) {
+	ctx := context.Background()
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+
+	// Setup a mock store and agent context
+	st, userID, agentID := seedPostprocessStoreWithService(t, "autovault_github_test", "github")
+	
+	// Create two tasks: Task A and Task B
+	taskA := &store.Task{
+		ID:            "task-A",
+		UserID:        userID,
+		AgentID:       agentID,
+		Status:        "active",
+		ExpectedTools: json.RawMessage(`[{"tool_name":"Bash","why":"Scope for Task A"}]`),
+	}
+	taskB := &store.Task{
+		ID:            "task-B",
+		UserID:        userID,
+		AgentID:       agentID,
+		Status:        "active",
+		ExpectedTools: json.RawMessage(`[{"tool_name":"Bash","why":"Scope for Task B"}]`),
+	}
+
+	// Create a hold that was originally matched and fingerprinted under Task A context
+	toolUse := conversation.ToolUse{
+		ID:    "toolu_github",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command":"curl -sS https://github.com/v1/agents"}`),
+	}
+
+	// Compute fingerprint mimicking evaluate authorization under Task A
+	decisionInput := runtimedecision.AuthorizationInput{
+		ToolUse:         toolUse,
+		UserID:          userID,
+		AgentID:         agentID,
+		Posture:         runtimedecision.PostureEnforce,
+		CandidateTasks:  []*store.Task{taskA, taskB},
+		PreferredTaskID: "task-A",
+	}
+	dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-githubtestxxxxxxxxxxxxxxx",
+		UserID:   userID,
+		AgentID:  agentID,
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageTool,
+		ToolUse:  toolUse,
+		Fingerprint: runtimedecision.Fingerprint(dec, decisionInput),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Now try to release the hold. Provide both Task A and Task B in candidate tasks.
+	// We want to verify that even if there are multiple active tasks, it resolves
+	// correctly because PreferredTaskID is restored to "task-A" during recheck.
+	result := TryReleasePendingApproval(ctx, ReleaseRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            []byte(`{"messages":[{"role":"user","content":"approve"}]}`),
+		Agent:           &store.Agent{ID: agentID, UserID: userID},
+		PendingApproval: cache,
+		Inspector:       inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+		Store:           st,
+		RewriteOpts:     inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces:    NewMemoryCallerNonceCache(time.Minute),
+		CandidateTasks:  []*store.Task{taskA, taskB},
+		IntentVerifier:  &stubIntentVerifier{verdict: &IntentVerdict{Allow: true, Explanation: "fits task"}},
+	})
+
+	if !result.Handled || result.Decision != "allow" || result.Outcome != "approval_released" {
+		t.Fatalf("expected release to be allowed under the original Task A context, got: %+v (Reason: %s)", result, result.Reason)
+	}
+
+	// Ensure the hold was consumed
+	peeked, _ := cache.Peek(ctx, ResolveRequest{
+		UserID: userID, AgentID: agentID,
+		Provider: conversation.ProviderAnthropic, ApprovalID: held.Pending.ID,
+	})
+	if peeked != nil {
+		t.Fatal("expected the hold to be resolved and consumed")
+	}
+}
+
