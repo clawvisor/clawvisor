@@ -71,6 +71,7 @@ var table = map[string]ModelPricing{
 	// Anthropic — current generation (Claude 4.x). CacheWrite1hPerM
 	// is 2x InputPerM (Anthropic's 1-hour cache premium); 5-minute
 	// writes are at 1.25x.
+	"claude-opus-4-8":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)},
 	"claude-opus-4-7":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: lastBulkPricedAt},
 	"claude-opus-4-6":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: lastBulkPricedAt},
 	"claude-opus-4-5":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: lastBulkPricedAt},
