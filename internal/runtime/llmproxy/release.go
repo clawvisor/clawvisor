@@ -327,8 +327,8 @@ func rewriteApprovedHeldToolUse(ctx context.Context, req ReleaseRequest, held He
 			CandidateTasks:    req.CandidateTasks,
 			ToolRules:         req.ToolRules,
 			EgressRules:       req.EgressRules,
-			PreferredTaskID:   held.Fingerprint.TaskID,
 			IntentVerifier:    decisionIntentVerifier{inner: req.IntentVerifier},
+			PreferredTaskID:   held.Fingerprint.TaskID,
 			AllowMissingScope: true,
 		}
 		dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
@@ -373,8 +373,8 @@ func rewriteApprovedHeldToolUse(ctx context.Context, req ReleaseRequest, held He
 		CandidateTasks:  req.CandidateTasks,
 		ToolRules:       req.ToolRules,
 		EgressRules:     req.EgressRules,
-		PreferredTaskID: held.Fingerprint.TaskID,
 		IntentVerifier:  decisionIntentVerifier{inner: req.IntentVerifier},
+		PreferredTaskID: held.Fingerprint.TaskID,
 	}
 	dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 	if err != nil {

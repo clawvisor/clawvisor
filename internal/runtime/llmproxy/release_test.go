@@ -498,13 +498,13 @@ func TestRewriteTaskApprovalReplyRewritesAndDropsHold(t *testing.T) {
 	}
 }
 
-func TestTryReleasePendingApproval_ParallelPreferredTaskID(t *testing.T) {
+func TestTryReleasePendingApproval_ParallelPreferredTaskID_TriggerMiss(t *testing.T) {
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 
 	// Setup a mock store and agent context
 	st, userID, agentID := seedPostprocessStoreWithService(t, "autovault_github_test", "github")
-	
+
 	// Create two tasks: Task A and Task B
 	taskA := &store.Task{
 		ID:            "task-A",
@@ -521,12 +521,15 @@ func TestTryReleasePendingApproval_ParallelPreferredTaskID(t *testing.T) {
 		ExpectedTools: json.RawMessage(`[{"tool_name":"Bash","why":"Scope for Task B"}]`),
 	}
 
-	// Create a hold that was originally matched and fingerprinted under Task A context
+	// Create a hold that was originally matched and fingerprinted under Task A context.
+	// This is a trigger-miss command (no autovault placeholder is present in the command).
 	toolUse := conversation.ToolUse{
-		ID:    "toolu_github",
+		ID:    "toolu_trigger_miss",
 		Name:  "Bash",
-		Input: json.RawMessage(`{"command":"curl -sS https://github.com/v1/agents"}`),
+		Input: json.RawMessage(`{"command":"ls /tmp"}`),
 	}
+
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "needs approval"}}
 
 	// Compute fingerprint mimicking evaluate authorization under Task A
 	decisionInput := runtimedecision.AuthorizationInput{
@@ -536,6 +539,7 @@ func TestTryReleasePendingApproval_ParallelPreferredTaskID(t *testing.T) {
 		Posture:         runtimedecision.PostureEnforce,
 		CandidateTasks:  []*store.Task{taskA, taskB},
 		PreferredTaskID: "task-A",
+		IntentVerifier:  decisionIntentVerifier{inner: verifier},
 	}
 	dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 	if err != nil {
@@ -543,21 +547,21 @@ func TestTryReleasePendingApproval_ParallelPreferredTaskID(t *testing.T) {
 	}
 
 	held, err := cache.Hold(ctx, PendingLiteApproval{
-		ID:       "cv-githubtestxxxxxxxxxxxxxxx",
-		UserID:   userID,
-		AgentID:  agentID,
-		Provider: conversation.ProviderAnthropic,
-		Stage:    StageTool,
-		ToolUse:  toolUse,
+		ID:          "cv-triggermisstestxxxxxxxxxx",
+		UserID:      userID,
+		AgentID:     agentID,
+		Provider:    conversation.ProviderAnthropic,
+		Stage:       StageTool,
+		ToolUse:     toolUse,
 		Fingerprint: runtimedecision.Fingerprint(dec, decisionInput),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Now try to release the hold. Provide both Task A and Task B in candidate tasks.
-	// We want to verify that even if there are multiple active tasks, it resolves
-	// correctly because PreferredTaskID is restored to "task-A" during recheck.
+	// Now try to release the hold. Provide [Task B, Task A] at release time to simulate a focus shift.
+	// We want to verify that even with the focus shift, it resolves correctly because
+	// PreferredTaskID is restored to "task-A" during recheck.
 	result := TryReleasePendingApproval(ctx, ReleaseRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
@@ -568,8 +572,8 @@ func TestTryReleasePendingApproval_ParallelPreferredTaskID(t *testing.T) {
 		Store:           st,
 		RewriteOpts:     inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:    NewMemoryCallerNonceCache(time.Minute),
-		CandidateTasks:  []*store.Task{taskA, taskB},
-		IntentVerifier:  &stubIntentVerifier{verdict: &IntentVerdict{Allow: true, Explanation: "fits task"}},
+		CandidateTasks:  []*store.Task{taskB, taskA},
+		IntentVerifier:  verifier,
 	})
 
 	if !result.Handled || result.Decision != "allow" || result.Outcome != "approval_released" {
@@ -586,3 +590,108 @@ func TestTryReleasePendingApproval_ParallelPreferredTaskID(t *testing.T) {
 	}
 }
 
+func TestTryReleasePendingApproval_ParallelPreferredTaskID_Credentialed(t *testing.T) {
+	ctx := context.Background()
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+
+	// Setup a mock store and agent context with a credential
+	placeholder := "autovault_github_test"
+	st, userID, agentID := seedPostprocessStore(t, placeholder)
+
+	// Create two tasks: Task A and Task B, both with ExpectedTools but NO ExpectedEgress
+	// to ensure it falls back to tool verification (which invokes the intent verifier).
+	taskA := &store.Task{
+		ID:            "task-A",
+		UserID:        userID,
+		AgentID:       agentID,
+		Status:        "active",
+		ExpectedTools: json.RawMessage(`[{"tool_name":"Bash","why":"Scope for Task A"}]`),
+	}
+	taskB := &store.Task{
+		ID:            "task-B",
+		UserID:        userID,
+		AgentID:       agentID,
+		Status:        "active",
+		ExpectedTools: json.RawMessage(`[{"tool_name":"Bash","why":"Scope for Task B"}]`),
+	}
+
+	// Create a credentialed tool use (targets api.github.com with placeholder)
+	toolUse := conversation.ToolUse{
+		ID:    "toolu_github",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command":"curl -sS https://api.github.com/v1/agents \\\n  -H \"Authorization: Bearer ` + placeholder + `\"","description":"List github agents"}`),
+	}
+
+	// Parse the inspector verdict (must not trigger-miss)
+	isp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	verdict := isp.Inspect(ctx, inspector.ToolUse{
+		ID:    toolUse.ID,
+		Name:  toolUse.Name,
+		Input: toolUse.Input,
+	})
+	if verdict.Source == inspector.SourceTriggerMiss {
+		t.Fatal("expected credential trigger hit")
+	}
+
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "needs approval"}}
+
+	// Compute fingerprint mimicking evaluate authorization under Task A
+	decisionInput := runtimedecision.AuthorizationInput{
+		ToolUse:         toolUse,
+		UserID:          userID,
+		AgentID:         agentID,
+		Posture:         runtimedecision.PostureEnforce,
+		Target:          runtimedecision.TargetRequest{Host: verdict.Host, Method: verdict.Method, Path: verdict.Path},
+		CandidateTasks:  []*store.Task{taskA, taskB},
+		PreferredTaskID: "task-A",
+		IntentVerifier:  decisionIntentVerifier{inner: verifier},
+	}
+	dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:          "cv-githubtestxxxxxxxxxxxxxxx",
+		UserID:      userID,
+		AgentID:     agentID,
+		Provider:    conversation.ProviderAnthropic,
+		Stage:       StageTool,
+		ToolUse:     toolUse,
+		Inspector:   verdict,
+		Fingerprint: runtimedecision.Fingerprint(dec, decisionInput),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Now try to release the hold. Provide [Task B, Task A] at release time to simulate a focus shift.
+	// We want to verify that even with the focus shift, it resolves correctly because
+	// PreferredTaskID is restored to "task-A" during recheck.
+	result := TryReleasePendingApproval(ctx, ReleaseRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            []byte(`{"messages":[{"role":"user","content":"approve"}]}`),
+		Agent:           &store.Agent{ID: agentID, UserID: userID},
+		PendingApproval: cache,
+		Inspector:       isp,
+		Store:           st,
+		RewriteOpts:     inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces:    NewMemoryCallerNonceCache(time.Minute),
+		CandidateTasks:  []*store.Task{taskB, taskA},
+		IntentVerifier:  verifier,
+	})
+
+	if !result.Handled || result.Decision != "allow" || result.Outcome != "approval_released" {
+		t.Fatalf("expected release to be allowed under the original Task A context, got: %+v (Reason: %s)", result, result.Reason)
+	}
+
+	// Ensure the hold was consumed
+	peeked, _ := cache.Peek(ctx, ResolveRequest{
+		UserID: userID, AgentID: agentID,
+		Provider: conversation.ProviderAnthropic, ApprovalID: held.Pending.ID,
+	})
+	if peeked != nil {
+		t.Fatal("expected the hold to be resolved and consumed")
+	}
+}
