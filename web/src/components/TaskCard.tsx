@@ -199,7 +199,6 @@ export default function TaskCard({
       status: task.status,
       decision: needsApproval || needsExpansion ? 'needs_approval' : task.status,
       reason: task.pending_reason
-        || task.risk_details?.explanation
         || (task.approval_source === 'inline_chat'
           ? 'The agent requested task scope before running a reviewed tool.'
           : 'This task needs approval before the agent can continue.'),
@@ -208,7 +207,7 @@ export default function TaskCard({
       agent_id: task.agent_id,
       risk_level: task.risk_level,
     }
-  }, [expectedTools, needsApproval, needsExpansion, task.agent_id, task.approval_source, task.id, task.pending_reason, task.risk_details?.explanation, task.risk_level, task.status])
+  }, [expectedTools, needsApproval, needsExpansion, task.agent_id, task.approval_source, task.id, task.pending_reason, task.risk_level, task.status])
 
   const [showPlannedCalls, setShowPlannedCalls] = useState(() => {
     if (totalPlanned === 0) return false
