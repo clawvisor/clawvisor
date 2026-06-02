@@ -83,6 +83,15 @@ func (s *codexSession) Send(ctx context.Context, message string) (*StepOutcome, 
 				case "deny":
 					outcome.TaskApprovalPromptsDenied++
 				}
+			case "scope_drift_one_off_approval":
+				switch outcomeLabel {
+				case "approve":
+					outcome.TaskApprovalPromptsApproved++
+				case "deny":
+					outcome.TaskApprovalPromptsDenied++
+				}
+			case "scope_drift_menu":
+				outcome.ToolUseBlocksSeen++
 			case "tool_use_block":
 				outcome.ToolUseBlocksSeen++
 			case "tool_use_hard_block":

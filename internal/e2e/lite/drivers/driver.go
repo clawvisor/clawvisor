@@ -52,13 +52,19 @@ type Config struct {
 
 // Approver decides how to reply to an approval prompt the lite-proxy
 // substituted into an assistant turn. Kind is one of:
-//   - "task_approval" — "Clawvisor wants to create a task…"
-//   - "tool_use_block" — "Clawvisor paused this tool call/turn…"
+//   - "task_approval"               — "Clawvisor wants to create a task…"
+//   - "tool_use_block"              — "Clawvisor paused this tool call/turn…"
+//   - "scope_drift_menu"            — the four-option menu the proxy
+//     substitutes when a tool_use fails task scope or intent
+//     verification. The approver returns a brief "continue" nudge.
+//   - "scope_drift_one_off_approval" — "Clawvisor: the agent requested
+//     a one-off execution…" yes/no gesture against a drift hold.
 //
 // Reply must be one of:
 //   - "yes" → approve
 //   - "no"  → deny
 //   - "task" → escalate a tool-use block into a task definition
+//   - free-form prose → forwarded as the next user message
 //
 // Drivers call this per prompt; the harness provides the scenario's
 // scripted policy.
@@ -74,6 +80,10 @@ func (DefaultApprover) Reply(kind, _ string) (string, string) {
 	switch kind {
 	case "task_approval":
 		return "yes", "approve"
+	case "scope_drift_one_off_approval":
+		return "yes", "approve"
+	case "scope_drift_menu":
+		return "Pick a resolution option from the scope-drift menu above and proceed.", "continue"
 	case "tool_use_block":
 		return "task", "escalate"
 	}

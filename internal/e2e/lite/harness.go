@@ -160,6 +160,12 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	h.InlineTaskCreator = recorder
 	h.TaskScope = llmproxy.NewStoreTaskScopeChecker(st)
+	// Replace the default in-process scope-drift registry with a
+	// counting wrapper so scenario expectations can assert on drift
+	// lifecycle events (minted, option chosen, outcome, pre-clear).
+	// NewLLMEndpointHandler already populated h.ScopeDrifts with a
+	// memory registry; the wrapper forwards to it.
+	h.ScopeDrifts = NewCountingScopeDriftRegistry(h.ScopeDrifts, counters)
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLM(st)

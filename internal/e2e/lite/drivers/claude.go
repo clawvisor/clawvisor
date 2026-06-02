@@ -25,6 +25,21 @@ const (
 	// the tool_result with a prose explanation. Recovery is on the
 	// agent: read the reason, emit a different tool_use.
 	toolUseHardBlockMark = "Tool use was blocked by the Clawvisor proxy"
+	// scopeDriftMenuMark fires when the lite-proxy substitutes a
+	// blocked tool_use result with the four-option scope-drift menu.
+	// The menu IS the resolution prompt: the agent picks (a)/(b) by
+	// making the corresponding /control/tasks{,/expand} call on its
+	// next turn, or (c)/(d) by emitting a <clawvisor:decision> markup
+	// block. No approver gesture is needed at this point; the
+	// classifier exists so the driver loop can recognise the menu and
+	// continue the conversation rather than treat it as the agent's
+	// final answer.
+	scopeDriftMenuMark = "is outside your current task scope"
+	// scopeDriftOneOffMark is the user-facing approval prompt the
+	// proxy substitutes in place of an `option=one-off` markup block.
+	// Same gesture surface as task_approval (the user types yes/no),
+	// so the approver replies with the same vocabulary.
+	scopeDriftOneOffMark = "Clawvisor: the agent requested a one-off execution"
 )
 
 // approvalPromptKind classifies an assistant-text turn as one of the
@@ -46,6 +61,13 @@ func approvalPromptKind(text string) string {
 	switch {
 	case strings.Contains(text, taskApprovalPromptMark):
 		return "task_approval"
+	// Scope-drift one-off has to be checked BEFORE the general
+	// scope-drift-menu mark, because the one-off prompt also contains
+	// "outside your current task scope" verbatim. Order matters.
+	case strings.Contains(text, scopeDriftOneOffMark):
+		return "scope_drift_one_off_approval"
+	case strings.Contains(text, scopeDriftMenuMark):
+		return "scope_drift_menu"
 	case strings.Contains(text, toolUseBlockSingleMark),
 		strings.Contains(text, toolUseBlockTurnMark):
 		return "tool_use_block"
@@ -160,6 +182,27 @@ func (s *claudeSession) Send(ctx context.Context, message string) (*StepOutcome,
 				case "deny":
 					outcome.TaskApprovalPromptsDenied++
 				}
+			case "scope_drift_one_off_approval":
+				// Track the user gesture independently of
+				// task_approval — the approval shape is the same
+				// (yes/no) but the side-effects target a different
+				// resolution path (drift outcome, pre-clear) rather
+				// than task creation. Reuse the task counters so a
+				// scenario asserting on total user-approve gestures
+				// doesn't need to know about both kinds.
+				switch outcomeLabel {
+				case "approve":
+					outcome.TaskApprovalPromptsApproved++
+				case "deny":
+					outcome.TaskApprovalPromptsDenied++
+				}
+			case "scope_drift_menu":
+				// Not an approval gesture — the menu IS the
+				// substituted tool_use result. The driver feeds the
+				// approver's "continue" reply back so the agent gets
+				// a chance to pick an option (a/b/c/d). Tracked as a
+				// tool-use block for the per-step block count.
+				outcome.ToolUseBlocksSeen++
 			case "tool_use_block":
 				outcome.ToolUseBlocksSeen++
 			case "tool_use_hard_block":

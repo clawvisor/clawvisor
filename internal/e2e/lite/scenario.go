@@ -149,6 +149,29 @@ type HardExpect struct {
 //     came back as `standing` (no expiry, reusable across follow-ups).
 //   - task_creates.lifetime_session — approved tasks whose lifetime
 //     was `session` (or empty, which defaults to session).
+//   - scope_drift.minted — tool_uses blocked by task scope or intent
+//     verification that produced a scope-drift menu. Each block mints
+//     one record. A non-zero count proves the menu fired in this run.
+//   - scope_drift.option_chosen.one_off — agent emitted a
+//     <clawvisor:decision option="one-off"> markup block whose drift
+//     claim succeeded.
+//   - scope_drift.option_chosen.justify — agent emitted a
+//     <clawvisor:decision option="justify"> markup block whose drift
+//     claim succeeded.
+//   - scope_drift.outcome.succeeded — drift resolved positively. For
+//     (c) this means user-approved the one-off; for (d) this means
+//     the verifier accepted the agent's justification. Triggers
+//     pre-clear insertion.
+//   - scope_drift.outcome.denied — drift resolved negatively. User
+//     denied the one-off or verifier rejected the justification.
+//   - scope_drift.outcome.fell_back — drift transitioned to
+//     fell-back-to-oneoff (verifier outage on the second pass). A
+//     healthy production run should never see this.
+//   - scope_drift.pre_clear_consumed — the agent's retry of the
+//     original blocked tool_use consumed the one-shot pre-clear and
+//     passed scope+verification. A drift outcome of succeeded that
+//     produces no pre-clear consumption usually means the agent
+//     never retried (gave up or pivoted).
 type CountExpect struct {
 	Series string `yaml:"series"`
 	GTE    *int   `yaml:"gte,omitempty"`
