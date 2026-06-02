@@ -199,13 +199,14 @@ const defaultSessionTaskDurationSeconds = 1800
 // task will be active once approved. The three lifetime modes render
 // with different labels because they answer different user questions:
 //
-//   - session (the common case): "Duration: 30 min" — how long the
-//     scope is usable. Empty expires_in_seconds falls back to the
-//     caller-provided default (daemon config), and then to
+//   - session: "Duration: 30 min" — a hard window with no extension.
+//     Empty expires_in_seconds falls back to the caller-provided
+//     default (daemon config), and then to
 //     defaultSessionTaskDurationSeconds if that's also unset.
-//   - sliding: "Duration: 30 min (auto-extends while active)" —
-//     same initial window as session, plus a hint that the deadline
-//     bumps forward on each authorized tool_use.
+//   - sliding (the inline default; empty lifetime renders here too):
+//     "Duration: 30 min (auto-extends while active)" — same initial
+//     window as session, plus a hint that the deadline bumps forward
+//     by 10 min on each authorized tool_use.
 //   - standing: "Lifetime: always" — standing tasks reject
 //     expires_in_seconds (see tasks_inline.go), so there is no duration
 //     to show; the label conveys "no time cap" instead.
@@ -214,7 +215,7 @@ const defaultSessionTaskDurationSeconds = 1800
 // omit the line entirely rather than printing something misleading.
 func durationLine(lifetime string, expiresInSeconds, defaultExpirySeconds int) (label, value string) {
 	switch strings.TrimSpace(lifetime) {
-	case "", "session":
+	case "session":
 		secs := expiresInSeconds
 		if secs <= 0 {
 			secs = defaultExpirySeconds
@@ -223,7 +224,10 @@ func durationLine(lifetime string, expiresInSeconds, defaultExpirySeconds int) (
 			secs = defaultSessionTaskDurationSeconds
 		}
 		return "Duration", humanizeExpiresIn(secs)
-	case "sliding":
+	case "", "sliding":
+		// Empty lifetime defaults to sliding for inline (proxy-
+		// mediated) tasks; render the same label so the approval
+		// prompt accurately reflects what will be stored.
 		secs := expiresInSeconds
 		if secs <= 0 {
 			secs = defaultExpirySeconds

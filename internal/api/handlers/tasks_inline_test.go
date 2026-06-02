@@ -144,14 +144,14 @@ func TestCreateInlineApprovedTaskHappyPath(t *testing.T) {
 	if out.ApprovalSource != "inline_chat" {
 		t.Errorf("approval_source=%q, want inline_chat", out.ApprovalSource)
 	}
-	if out.Lifetime != "session" {
-		t.Errorf("lifetime=%q, want session (default)", out.Lifetime)
+	if out.Lifetime != "sliding" {
+		t.Errorf("lifetime=%q, want sliding (inline default)", out.Lifetime)
 	}
 	if out.ApprovalRecordID == "" {
 		t.Error("expected non-empty approval_record_id")
 	}
 	if out.ExpiresAtRFC3339 == "" {
-		t.Error("expected expires_at on a session task")
+		t.Error("expected expires_at on a sliding task")
 	}
 
 	// Task row persisted with active status + inline_chat source.

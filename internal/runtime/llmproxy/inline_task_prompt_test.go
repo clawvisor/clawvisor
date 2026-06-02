@@ -82,8 +82,10 @@ func TestRenderTaskApprovalPromptDefaultsDurationWhenExpiryUnset(t *testing.T) {
 		Purpose:          "x",
 		ExpiresInSeconds: 0,
 	}, "")
-	if !strings.Contains(prompt, "Duration: 30 min") {
-		t.Errorf("expected default 30 min duration when seconds<=0, got %q", prompt)
+	// Empty lifetime defaults to sliding for inline (proxy-mediated)
+	// tasks, so the rendered duration includes the auto-extends hint.
+	if !strings.Contains(prompt, "Duration: 30 min (auto-extends while active)") {
+		t.Errorf("expected default 30 min sliding duration when seconds<=0, got %q", prompt)
 	}
 	if strings.Contains(prompt, "Expires:") {
 		t.Errorf("legacy Expires label leaked, got %q", prompt)
@@ -213,9 +215,11 @@ func TestDurationLine(t *testing.T) {
 		{"session explicit overrides default", "session", 600, 1800, "Duration", "10 min"},
 		{"session default from config", "session", 0, 3600, "Duration", "1 hour"},
 		{"session falls back to const when no default", "session", 0, 0, "Duration", "30 min"},
-		{"empty lifetime + zero default uses const", "", 0, 0, "Duration", "30 min"},
-		{"empty lifetime + config default", "", 0, 7200, "Duration", "2 hours"},
-		{"empty lifetime + explicit duration", "", 3600, 0, "Duration", "1 hour"},
+		{"empty lifetime renders as sliding (inline default)", "", 0, 0, "Duration", "30 min (auto-extends while active)"},
+		{"empty lifetime + config default renders as sliding", "", 0, 7200, "Duration", "2 hours (auto-extends while active)"},
+		{"empty lifetime + explicit duration renders as sliding", "", 3600, 0, "Duration", "1 hour (auto-extends while active)"},
+		{"sliding explicit", "sliding", 600, 1800, "Duration", "10 min (auto-extends while active)"},
+		{"sliding default from config", "sliding", 0, 3600, "Duration", "1 hour (auto-extends while active)"},
 		{"standing ignores seconds and default", "standing", 0, 3600, "Lifetime", "always"},
 		{"standing ignores nonzero seconds", "standing", 600, 1800, "Lifetime", "always"},
 		{"unknown lifetime omits line", "weird", 0, 0, "", ""},
