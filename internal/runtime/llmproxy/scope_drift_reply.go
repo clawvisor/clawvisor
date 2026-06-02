@@ -131,12 +131,25 @@ func RewriteScopeDriftOneOffApprovalReply(ctx context.Context, req ScopeDriftRep
 			// pre-clear. Surface a denial so the model gets honest
 			// feedback rather than thinking the call is cleared
 			// when it isn't.
+			//
+			// Best-effort flip to Denied so the drift_id isn't left
+			// stranded at ChosenOption=one_off, Outcome=pending —
+			// without this, future status polls would report the
+			// drift as still in-flight even though the user has
+			// already replied, and the agent could be misled into
+			// thinking another approval is coming. If the Denied
+			// write also fails, the drift will TTL out (~60s) so
+			// the dead-end window is bounded.
 			logger.ErrorContext(ctx, "scope-drift one-off approval pre-clear write failed",
 				"drift_id", resolved.ScopeDriftID, "err", err)
+			if denyErr := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, ScopeDriftOutcomeDenied); denyErr != nil {
+				logger.WarnContext(ctx, "scope-drift one-off post-failure denied write also failed; drift will TTL out",
+					"drift_id", resolved.ScopeDriftID, "err", denyErr)
+			}
 			out.Decision = "deny"
 			out.Outcome = "scope_drift_pre_clear_failed"
 			out.Reason = err.Error()
-			replacement = "[Clawvisor scope-drift] Pre-clear write failed (" + sanitizeStatusValue(err.Error()) + "). The drift is closed; re-emit the original tool call to start over."
+			replacement = "[Clawvisor scope-drift] Pre-clear write failed (" + sanitizeStatusValue(err.Error()) + "). The drift is closed; re-emit the original tool call to start over with a fresh drift_id."
 		} else {
 			out.Decision = "allow"
 			out.Outcome = "scope_drift_one_off_approved"
