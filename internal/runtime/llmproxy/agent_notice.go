@@ -34,12 +34,17 @@ func RenderAgentRoutingNotice(agentName, mintedConversationID string) string {
 	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
 	cleaned = strings.ReplaceAll(cleaned, "\n", " ")
 	cleaned = truncateRunes(cleaned, agentNoticeMaxNameRunes)
-	var notice string
+	var body string
 	if cleaned == "" {
-		notice = "[Clawvisor] Routing this conversation through Clawvisor."
+		body = "Routing this conversation through Clawvisor."
 	} else {
-		notice = fmt.Sprintf("[Clawvisor] Routing this conversation through Clawvisor as agent %q.", cleaned)
+		body = fmt.Sprintf("Routing this conversation through Clawvisor as agent %q.", cleaned)
 	}
+	notice := Render(NoticeKindRouting, body)
+	// The conversation-id marker is appended OUTSIDE the notice element
+	// so the existing scanner (which finds the bracketed footer in
+	// assistant text) keeps working unchanged. Inside the element it
+	// would be XML-escaped, which would break the round-trip.
 	if id := strings.TrimSpace(mintedConversationID); id != "" {
 		notice += " " + conversation.RenderConversationIDMarker(id)
 	}

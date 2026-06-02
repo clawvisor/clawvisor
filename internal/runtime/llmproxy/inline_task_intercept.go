@@ -486,9 +486,9 @@ func autoApproveUserNotice(purpose string) string {
 		cleaned = cleaned[:cutByte] + "…"
 	}
 	if cleaned == "" {
-		return "[Clawvisor] Auto-approved a task based on your request."
+		return Render(NoticeKindAutoApproved, "Task auto-approved based on recent user request.")
 	}
-	return "[Clawvisor] Auto-approved task: " + cleaned
+	return Render(NoticeKindAutoApproved, "Task auto-approved: "+cleaned)
 }
 
 // autoApproveFromConversation reports whether the conversation-based

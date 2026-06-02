@@ -52,7 +52,7 @@ func TestLLMEndpoint_ChatCompletions_FirstTurnMintsConversationIDMarker(t *testi
 	// first choice. PrependOpenAIChatAssistantText inserts the notice
 	// at the head of the existing content string.
 	respText := rec.Body.String()
-	if !strings.Contains(respText, "[Clawvisor] Routing this conversation through Clawvisor") {
+	if !strings.Contains(respText, "Routing this conversation through Clawvisor") {
 		t.Errorf("response missing routing notice: %s", respText)
 	}
 	if !strings.Contains(respText, conversation.ConversationIDMarker+conversation.ConversationIDPrefix) {
@@ -235,7 +235,7 @@ func TestLLMEndpoint_Anthropic_NoConversationIDMarker(t *testing.T) {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	respText := rec.Body.String()
-	if !strings.Contains(respText, "[Clawvisor] Routing this conversation through Clawvisor") {
+	if !strings.Contains(respText, "Routing this conversation through Clawvisor") {
 		t.Errorf("Anthropic response missing routing notice: %s", respText)
 	}
 	if strings.Contains(respText, conversation.ConversationIDMarker) {

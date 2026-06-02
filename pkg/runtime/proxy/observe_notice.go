@@ -15,13 +15,29 @@ import (
 	"github.com/elazarl/goproxy"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 const observeNoticeEventType = "runtime.observe.notice"
 
 var observeNoticeInterval = 24 * time.Hour
-var observeNoticePrefixRE = regexp.MustCompile(`^(?:\(\[Clawvisor system message\]: Clawvisor is currently running in observe mode\. Actions are being analyzed and logged, but not blocked\.(?: Change this in Clawvisor: [^)]+)?\)|\(Clawvisor is in observe mode\. Actions are being analyzed and logged, but not blocked\.\)|Clawvisor is in observe mode\. Actions are being analyzed and logged, but not blocked\.)(?:(?:\s*\n\s*\n|\s+)|$)`)
+
+// observeNoticePrefixRE matches an observe-mode notice anchored at the
+// start of an assistant text so the inbound scrubber can strip it from
+// echoed history. Three forms are recognized:
+//
+//  1. New tag form: `<clawvisor-notice kind="observe-mode">…</clawvisor-notice>`
+//     emitted by `observeModeInjectedUserNotice` after the notice-tag
+//     migration. Body contents never contain raw `<` (XML-escaped at
+//     render time), so `[^<]*` safely captures the body.
+//  2. Legacy bracketed form: `([Clawvisor system message]: …)` with an
+//     optional dashboard-link suffix.
+//  3. Legacy bare/parenthesised forms predating the dashboard link.
+//
+// Legacy alternatives stay in the union so in-flight conversations
+// whose history already contains the old wording continue to scrub.
+var observeNoticePrefixRE = regexp.MustCompile(`^(?:<clawvisor-notice kind="observe-mode">[^<]*</clawvisor-notice>|\(\[Clawvisor system message\]: Clawvisor is currently running in observe mode\. Actions are being analyzed and logged, but not blocked\.(?: Change this in Clawvisor: [^)]+)?\)|\(Clawvisor is in observe mode\. Actions are being analyzed and logged, but not blocked\.\)|Clawvisor is in observe mode\. Actions are being analyzed and logged, but not blocked\.)(?:(?:\s*\n\s*\n|\s+)|$)`)
 
 type responseNotice struct {
 	Kind string
@@ -62,10 +78,11 @@ func (s *Server) InstallObserveNoticeRequestScrubber() {
 
 func observeModeInjectedUserNotice(agentID, dashboardBaseURL string) string {
 	link := observeModeDashboardLink(agentID, dashboardBaseURL)
-	if link == "" {
-		return "([Clawvisor system message]: Clawvisor is currently running in observe mode. Actions are being analyzed and logged, but not blocked.)"
+	body := "Clawvisor is running in observe mode. Actions are logged, not blocked."
+	if link != "" {
+		body += " Change this in Clawvisor: " + link
 	}
-	return "([Clawvisor system message]: Clawvisor is currently running in observe mode. Actions are being analyzed and logged, but not blocked. Change this in Clawvisor: " + link + ")"
+	return llmproxy.Render(llmproxy.NoticeKindObserveMode, body)
 }
 
 func scrubHistoricalResponseNoticesFromRequest(req *http.Request, body []byte) ([]byte, bool) {

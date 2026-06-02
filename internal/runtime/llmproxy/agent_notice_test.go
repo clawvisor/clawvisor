@@ -11,7 +11,7 @@ import (
 
 func TestRenderAgentRoutingNotice_NamedAgent(t *testing.T) {
 	got := RenderAgentRoutingNotice("My Laptop", "")
-	want := `[Clawvisor] Routing this conversation through Clawvisor as agent "My Laptop".`
+	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor as agent "My Laptop".</clawvisor-notice>`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -19,7 +19,7 @@ func TestRenderAgentRoutingNotice_NamedAgent(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_EmptyName(t *testing.T) {
 	got := RenderAgentRoutingNotice("", "")
-	want := `[Clawvisor] Routing this conversation through Clawvisor.`
+	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor.</clawvisor-notice>`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -27,7 +27,7 @@ func TestRenderAgentRoutingNotice_EmptyName(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_WhitespaceName(t *testing.T) {
 	got := RenderAgentRoutingNotice("   \t  ", "")
-	want := `[Clawvisor] Routing this conversation through Clawvisor.`
+	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor.</clawvisor-notice>`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -35,7 +35,7 @@ func TestRenderAgentRoutingNotice_WhitespaceName(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_StripsControlChars(t *testing.T) {
 	got := RenderAgentRoutingNotice("Line1\nLine2\rEnd", "")
-	want := `[Clawvisor] Routing this conversation through Clawvisor as agent "Line1 Line2 End".`
+	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor as agent "Line1 Line2 End".</clawvisor-notice>`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -72,7 +72,7 @@ func TestRenderAgentRoutingNotice_TruncatesMultibyteRunes(t *testing.T) {
 func TestRenderAgentRoutingNotice_AppendsConversationIDMarker(t *testing.T) {
 	id := "cv-conv-abcdefghijklmnopqrstuvwxyz"
 	got := RenderAgentRoutingNotice("My Laptop", id)
-	want := `[Clawvisor] Routing this conversation through Clawvisor as agent "My Laptop". [clawvisor:conversation=cv-conv-abcdefghijklmnopqrstuvwxyz]`
+	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor as agent "My Laptop".</clawvisor-notice> [clawvisor:conversation=cv-conv-abcdefghijklmnopqrstuvwxyz]`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -80,7 +80,7 @@ func TestRenderAgentRoutingNotice_AppendsConversationIDMarker(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_AppendsMarkerToNameLessFallback(t *testing.T) {
 	got := RenderAgentRoutingNotice("", "cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa")
-	want := `[Clawvisor] Routing this conversation through Clawvisor. [clawvisor:conversation=cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa]`
+	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor.</clawvisor-notice> [clawvisor:conversation=cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa]`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -90,7 +90,7 @@ func TestRenderAgentRoutingNotice_WhitespaceMintedIDOmitsMarker(t *testing.T) {
 	// Empty/whitespace mintedConversationID must not produce an empty
 	// "[clawvisor:conversation=]" footer.
 	got := RenderAgentRoutingNotice("agent", "   ")
-	want := `[Clawvisor] Routing this conversation through Clawvisor as agent "agent".`
+	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor as agent "agent".</clawvisor-notice>`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

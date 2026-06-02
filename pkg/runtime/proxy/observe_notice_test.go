@@ -132,6 +132,72 @@ func TestScrubHistoricalResponseNoticesFromOpenAIChatRequest(t *testing.T) {
 	}
 }
 
+// TestScrubHistoricalResponseNoticesFromAnthropicRequest_NewTagForm
+// exercises the `<clawvisor-notice kind="observe-mode">…</clawvisor-notice>`
+// branch of observeNoticePrefixRE. Production now emits this form, so
+// a regression in the regex would leave the notice accumulating in
+// echoed history on every turn — silently spamming the model. The
+// legacy variants already have coverage in the test above; this one
+// pins the new shape end-to-end through scrubHistoricalResponseNoticesFromRequest.
+func TestScrubHistoricalResponseNoticesFromAnthropicRequest_NewTagForm(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	// Build the body via json.Marshal so escaping is unambiguous. The
+	// emitted notice contains XML-escaped angle brackets in the body
+	// only via the renderer's escapeXMLText — for an observe-mode
+	// notice the body has none, so the regex's `[^<]*` body capture
+	// matches the literal content.
+	noticeWithSuffix := observeModeInjectedUserNotice("agent_123", "http://127.0.0.1:25297") + "\n\nHi there."
+	standaloneNotice := observeModeInjectedUserNotice("agent_123", "")
+	userQuoted := "Why does Clawvisor inject `<clawvisor-notice kind=\"observe-mode\">…</clawvisor-notice>` into my history?"
+
+	bodyMap := map[string]any{
+		"messages": []map[string]any{
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": standaloneNotice},
+			}},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": noticeWithSuffix},
+			}},
+			{"role": "user", "content": []map[string]any{
+				{"type": "text", "text": userQuoted},
+			}},
+		},
+	}
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rewritten, changed := scrubHistoricalResponseNoticesFromRequest(req, body)
+	if !changed {
+		t.Fatal("expected new-form notice to be scrubbed")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rewritten, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	messages, _ := payload["messages"].([]any)
+	first, _ := messages[0].(map[string]any)
+	firstContent, _ := first["content"].([]any)
+	if len(firstContent) != 0 {
+		t.Fatalf("expected standalone new-form notice block to be removed, got %d blocks", len(firstContent))
+	}
+	second, _ := messages[1].(map[string]any)
+	secondContent, _ := second["content"].([]any)
+	block, _ := secondContent[0].(map[string]any)
+	if got, _ := block["text"].(string); got != "Hi there." {
+		t.Fatalf("expected new-form notice prefix to be removed, got %q", got)
+	}
+	third, _ := messages[2].(map[string]any)
+	thirdContent, _ := third["content"].([]any)
+	userBlock, _ := thirdContent[0].(map[string]any)
+	if got, _ := userBlock["text"].(string); got != userQuoted {
+		t.Fatalf("expected user-authored quoted text mentioning the tag to be preserved, got %q", got)
+	}
+}
+
 func TestScrubHistoricalResponseNoticeTextPreservesSimilarButNonExactPrefix(t *testing.T) {
 	t.Parallel()
 
@@ -176,7 +242,7 @@ func TestAnthropicResponseNoticeStreamInjectsBeforeStop(t *testing.T) {
 		t.Fatalf("ReadAll: %v", err)
 	}
 	got := string(out)
-	if !strings.Contains(got, notice) || !strings.Contains(got, `"text":"`) || !strings.Contains(got, `hello`) {
+	if !strings.Contains(got, jsonEncodedSubstring(t, notice)) || !strings.Contains(got, `"text":"`) || !strings.Contains(got, `hello`) {
 		t.Fatalf("expected stream to contain observe notice, got:\n%s", got)
 	}
 	if strings.Contains(got, `"index":1`) {
@@ -209,7 +275,7 @@ func TestOpenAIResponsesNoticeStreamInjectsBeforeCompleted(t *testing.T) {
 		t.Fatalf("ReadAll: %v", err)
 	}
 	got := string(out)
-	if !strings.Contains(got, notice) || !strings.Contains(got, `"delta":"`) || !strings.Contains(got, `hello`) {
+	if !strings.Contains(got, jsonEncodedSubstring(t, notice)) || !strings.Contains(got, `"delta":"`) || !strings.Contains(got, `hello`) {
 		t.Fatalf("expected stream to contain observe notice, got:\n%s", got)
 	}
 	if strings.Contains(got, `"output_index":1`) {
@@ -282,6 +348,23 @@ func TestShouldEmitObserveNoticeIgnoresUnrelatedEventFlood(t *testing.T) {
 	if srv.shouldEmitObserveNotice(ctx, st, runtimeSession) {
 		t.Fatal("expected recent observe notice to suppress another emit even after unrelated event flood")
 	}
+}
+
+// jsonEncodedSubstring returns the JSON-string encoding of s with the
+// surrounding double quotes stripped. Use it to look for a string
+// inside a serialized SSE event — Go's json.Marshal escapes `<`, `>`,
+// and `&` to `<` / `>` / `&`, so a raw `strings.Contains`
+// against the unencoded form misses tag bodies that contain these.
+func jsonEncodedSubstring(t *testing.T, s string) string {
+	t.Helper()
+	encoded, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if len(encoded) < 2 {
+		t.Fatalf("unexpected json encoding for %q: %q", s, encoded)
+	}
+	return string(encoded[1 : len(encoded)-1])
 }
 
 func TestShouldEmitObserveNoticeSuppressesConcurrentPendingEmit(t *testing.T) {

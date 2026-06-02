@@ -2,6 +2,7 @@ package llmproxy
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -247,6 +248,14 @@ func isClawvisorInternalUserText(text string) bool {
 	if strings.HasPrefix(strings.TrimSpace(text), "[Clawvisor]") {
 		return true
 	}
+	// Same defense-in-depth posture for the structured notice tag.
+	// Strict shape match only: the entire trimmed message must be a
+	// single well-formed <clawvisor-notice kind="..."> element. A
+	// substring filter would be a footgun — a user asking "what is
+	// <clawvisor-notice>?" would have their message silently dropped.
+	if isExactClawvisorNoticeShape(text) {
+		return true
+	}
 	// Only filter when the user's ENTIRE trimmed message is a bare
 	// approval verb (or an id-bound verb). A multi-line genuine
 	// instruction whose last line happens to end in "yes" is the
@@ -256,6 +265,30 @@ func isClawvisorInternalUserText(text string) bool {
 	// from the auto-approve assessor's view and the deterministic
 	// floor forced the manual prompt.
 	return isExactApprovalReplyShape(text)
+}
+
+// exactClawvisorNoticeRE matches the entire string as a single
+// well-formed <clawvisor-notice kind="..."> element, optionally
+// followed by the bracketed conversation-ID footer the routing notice
+// appends on OpenAI Chat Completions. Kind is constrained to the same
+// alphabet as the renderer's validator (`^[a-z0-9-]+$`); the body is
+// non-greedy and forbidden from containing `<` so a body that contains
+// a forged extra `</clawvisor-notice>` substring cannot trick the
+// matcher into accepting trailing user text. The renderer XML-escapes
+// `<` in bodies, so this restriction never rejects a genuine proxy-
+// emitted notice. The optional `[clawvisor:conversation=cv-...]` tail
+// mirrors the legacy prefix-filter's reach: a user-role message that
+// is exactly the routing notice (tag + footer) is still recognized as
+// proxy-internal and stripped from the human-turn extractor.
+var exactClawvisorNoticeRE = regexp.MustCompile(`^<clawvisor-notice kind="[a-z0-9-]+">[^<]*</clawvisor-notice>(?: \[clawvisor:conversation=cv-[a-z0-9-]+\])?$`)
+
+// isExactClawvisorNoticeShape reports whether the entire trimmed text
+// is exactly one well-formed Clawvisor notice element. Trailing or
+// leading content makes it NOT a match — a user-role message that
+// merely mentions the tag (e.g. a question about it) stays a fresh
+// human turn.
+func isExactClawvisorNoticeShape(text string) bool {
+	return exactClawvisorNoticeRE.MatchString(strings.TrimSpace(text))
 }
 
 // isExactApprovalReplyShape reports whether the supplied text, when

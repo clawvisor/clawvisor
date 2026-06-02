@@ -694,8 +694,11 @@ func TestAutoApproveUserNotice_TruncatesByRune(t *testing.T) {
 	if strings.Contains(got, "�") {
 		t.Errorf("notice contains U+FFFD; truncation split a rune mid-sequence:\n%s", got)
 	}
-	if !strings.HasSuffix(got, "…") {
-		t.Errorf("notice should end with ellipsis when truncated; got: %s", got)
+	// The truncated purpose body sits inside the notice envelope, so
+	// the ellipsis appears immediately before the closing tag rather
+	// than at the very end of the rendered string.
+	if !strings.Contains(got, "…</clawvisor-notice>") {
+		t.Errorf("notice body should end with ellipsis when truncated; got: %s", got)
 	}
 }
 
