@@ -11,7 +11,7 @@ import (
 
 func TestRenderAgentRoutingNotice_NamedAgent(t *testing.T) {
 	got := RenderAgentRoutingNotice("My Laptop", "")
-	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor as agent "My Laptop".</clawvisor-notice>`
+	want := "`[Clawvisor] Routing this conversation through Clawvisor as agent \"My Laptop\".`"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -19,7 +19,7 @@ func TestRenderAgentRoutingNotice_NamedAgent(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_EmptyName(t *testing.T) {
 	got := RenderAgentRoutingNotice("", "")
-	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor.</clawvisor-notice>`
+	want := "`[Clawvisor] Routing this conversation through Clawvisor.`"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -27,7 +27,7 @@ func TestRenderAgentRoutingNotice_EmptyName(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_WhitespaceName(t *testing.T) {
 	got := RenderAgentRoutingNotice("   \t  ", "")
-	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor.</clawvisor-notice>`
+	want := "`[Clawvisor] Routing this conversation through Clawvisor.`"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -35,7 +35,7 @@ func TestRenderAgentRoutingNotice_WhitespaceName(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_StripsControlChars(t *testing.T) {
 	got := RenderAgentRoutingNotice("Line1\nLine2\rEnd", "")
-	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor as agent "Line1 Line2 End".</clawvisor-notice>`
+	want := "`[Clawvisor] Routing this conversation through Clawvisor as agent \"Line1 Line2 End\".`"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -52,6 +52,21 @@ func TestRenderAgentRoutingNotice_TruncatesLongName(t *testing.T) {
 	// rune length directly.
 	if strings.Count(got, "z") != agentNoticeMaxNameRunes {
 		t.Errorf("expected %d z's, got %d (notice=%q)", agentNoticeMaxNameRunes, strings.Count(got, "z"), got)
+	}
+}
+
+// TestRenderAgentRoutingNotice_StripsBackticks pins the defense that
+// keeps an agent name from terminating the markdown inline-code span
+// the notice is wrapped in. The agent name is operator-controlled so
+// this is defense-in-depth, but a stray backtick would still leak
+// the trailing guidance as prose.
+func TestRenderAgentRoutingNotice_StripsBackticks(t *testing.T) {
+	got := RenderAgentRoutingNotice("agent`name`with`ticks", "")
+	if strings.Count(got, "`") != 2 {
+		t.Errorf("expected exactly the two wrapping backticks; got %q", got)
+	}
+	if strings.Contains(got, "agent`") {
+		t.Errorf("expected backticks stripped from agent name; got %q", got)
 	}
 }
 
@@ -72,7 +87,7 @@ func TestRenderAgentRoutingNotice_TruncatesMultibyteRunes(t *testing.T) {
 func TestRenderAgentRoutingNotice_AppendsConversationIDMarker(t *testing.T) {
 	id := "cv-conv-abcdefghijklmnopqrstuvwxyz"
 	got := RenderAgentRoutingNotice("My Laptop", id)
-	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor as agent "My Laptop".</clawvisor-notice> [clawvisor:conversation=cv-conv-abcdefghijklmnopqrstuvwxyz]`
+	want := "`[Clawvisor] Routing this conversation through Clawvisor as agent \"My Laptop\".` [clawvisor:conversation=cv-conv-abcdefghijklmnopqrstuvwxyz]"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -80,7 +95,7 @@ func TestRenderAgentRoutingNotice_AppendsConversationIDMarker(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_AppendsMarkerToNameLessFallback(t *testing.T) {
 	got := RenderAgentRoutingNotice("", "cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa")
-	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor.</clawvisor-notice> [clawvisor:conversation=cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa]`
+	want := "`[Clawvisor] Routing this conversation through Clawvisor.` [clawvisor:conversation=cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa]"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -90,7 +105,7 @@ func TestRenderAgentRoutingNotice_WhitespaceMintedIDOmitsMarker(t *testing.T) {
 	// Empty/whitespace mintedConversationID must not produce an empty
 	// "[clawvisor:conversation=]" footer.
 	got := RenderAgentRoutingNotice("agent", "   ")
-	want := `<clawvisor-notice kind="routing">Routing this conversation through Clawvisor as agent "agent".</clawvisor-notice>`
+	want := "`[Clawvisor] Routing this conversation through Clawvisor as agent \"agent\".`"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

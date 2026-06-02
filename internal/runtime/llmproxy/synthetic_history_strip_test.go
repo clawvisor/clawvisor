@@ -68,7 +68,7 @@ func TestStripSyntheticApprovalHistory_KeepsInlineOutcomeContext(t *testing.T) {
 	if strings.Contains(text, InlineApprovalSubstitutedPromptMarker) {
 		t.Fatalf("approval prompt leaked upstream: %s", text)
 	}
-	if !strings.Contains(text, InlineApprovalAugmentationMarker) {
+	if !strings.Contains(text, inlineTaskNoticeOpenPrefixJSON) {
 		t.Fatalf("inline outcome context should remain: %s", text)
 	}
 	var decoded struct {
@@ -169,7 +169,7 @@ func TestStripSyntheticApprovalHistory_PreservesMixedAnthropicContentWithoutResh
 	if err := json.Unmarshal(decoded.Messages[1].Content, &outcome); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(outcome, InlineApprovalAugmentationMarker) {
+	if !strings.Contains(outcome, inlineTaskNoticeOpenPrefix) {
 		t.Fatalf("inline outcome context missing from second message: %q", outcome)
 	}
 }

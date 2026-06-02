@@ -33,18 +33,24 @@ func RenderAgentRoutingNotice(agentName, mintedConversationID string) string {
 	cleaned := strings.TrimSpace(agentName)
 	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
 	cleaned = strings.ReplaceAll(cleaned, "\n", " ")
+	// Strip backticks so a name with one can't end the markdown
+	// inline-code span the notice is wrapped in. The agent name is
+	// operator-controlled (low risk in practice) but the cost of
+	// dropping a stray backtick is nil.
+	cleaned = strings.ReplaceAll(cleaned, "`", "")
 	cleaned = truncateRunes(cleaned, agentNoticeMaxNameRunes)
-	var body string
+	// Backticks wrap the proxy status line so it renders as inline
+	// code in markdown UIs — visually distinct from the assistant's
+	// own prose. This notice lands in the assistant turn (human-facing),
+	// so the prefix shape is `[Clawvisor]` rather than the structured
+	// `<clawvisor-notice>` tag, which is reserved for user-role
+	// injections the LLM reads.
+	var notice string
 	if cleaned == "" {
-		body = "Routing this conversation through Clawvisor."
+		notice = "`[Clawvisor] Routing this conversation through Clawvisor.`"
 	} else {
-		body = fmt.Sprintf("Routing this conversation through Clawvisor as agent %q.", cleaned)
+		notice = fmt.Sprintf("`[Clawvisor] Routing this conversation through Clawvisor as agent %q.`", cleaned)
 	}
-	notice := Render(NoticeKindRouting, body)
-	// The conversation-id marker is appended OUTSIDE the notice element
-	// so the existing scanner (which finds the bracketed footer in
-	// assistant text) keeps working unchanged. Inside the element it
-	// would be XML-escaped, which would break the round-trip.
 	if id := strings.TrimSpace(mintedConversationID); id != "" {
 		notice += " " + conversation.RenderConversationIDMarker(id)
 	}

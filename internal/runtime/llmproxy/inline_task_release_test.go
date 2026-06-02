@@ -142,7 +142,7 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 		t.Errorf("creator gotOrigID=%q, want %q", creator.gotOrigID, outerID)
 	}
 	rewrittenBody := string(out.Body)
-	if !strings.Contains(rewrittenBody, "task was created and approved by the user") {
+	if !strings.Contains(strings.ToLower(rewrittenBody), "task was created and approved by the user") {
 		t.Errorf("rewritten body missing canonical augmentation context: %s", rewrittenBody)
 	}
 	if !strings.Contains(strings.ToLower(rewrittenBody), "do not post /control/tasks") {

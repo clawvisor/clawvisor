@@ -129,9 +129,9 @@ func TestExtractRecentHumanTurns_AnthropicMultiLineEndingInBareVerb(t *testing.T
 func TestExtractRecentHumanTurns_AnthropicSkipsAugmentedReply(t *testing.T) {
 	// When the proxy augments a user's "yes" with an internal marker
 	// payload, the resulting user-role text is Clawvisor-internal and
-	// must be filtered. We test with the literal augmented marker
-	// string so we don't bake assumptions about the exact wording.
-	augmented := "yes" + "\n\n" + InlineTaskDenyMarker + "cv-task-abc]"
+	// must be filtered. We use renderInlineTaskDenyReply so the test
+	// reflects exactly what the proxy emits today.
+	augmented := "yes\n\n" + renderInlineTaskDenyReply()
 	body := mustMarshal(t, map[string]any{
 		"messages": []map[string]any{
 			{"role": "user", "content": "the real ask"},

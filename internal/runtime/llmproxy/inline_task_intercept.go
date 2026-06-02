@@ -464,6 +464,10 @@ func autoApproveUserNotice(purpose string) string {
 	cleaned := strings.TrimSpace(purpose)
 	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
 	cleaned = strings.ReplaceAll(cleaned, "\n", " ")
+	// Backticks would terminate the markdown inline-code span the
+	// notice is wrapped in and leak the remainder as prose. The
+	// purpose is model-authored, so strip them defensively.
+	cleaned = strings.ReplaceAll(cleaned, "`", "")
 	// Truncate by rune count, not bytes. Slicing a multibyte UTF-8
 	// string at an arbitrary byte index splits a rune mid-sequence
 	// and the resulting invalid UTF-8 renders as U+FFFD once JSON-
@@ -485,10 +489,14 @@ func autoApproveUserNotice(purpose string) string {
 		}
 		cleaned = cleaned[:cutByte] + "…"
 	}
+	// Backticked `[Clawvisor]` form: lands in the assistant turn, so
+	// it's user-facing — the human reading the chat needs a clear,
+	// code-styled status line. The `<clawvisor-notice>` tag is reserved
+	// for user-role injections the LLM reads.
 	if cleaned == "" {
-		return Render(NoticeKindAutoApproved, "Task auto-approved based on recent user request.")
+		return "`[Clawvisor] Task auto-approved based on your recent request.`"
 	}
-	return Render(NoticeKindAutoApproved, "Task auto-approved: "+cleaned)
+	return "`[Clawvisor] Task auto-approved: " + cleaned + "`"
 }
 
 // autoApproveFromConversation reports whether the conversation-based

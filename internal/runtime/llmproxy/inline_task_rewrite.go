@@ -223,24 +223,27 @@ func inlineApprovalOutcomeFromRewrite(requestID string, out InlineApprovalRewrit
 // re-injected on every subsequent request.
 const InlineApprovalSubstitutedPromptMarker = "Clawvisor wants to create a task to cover this work:"
 
-// InlineApprovalAugmentationMarker is a tag we embed in the rewritten
-// user message so subsequent passes can detect that a turn was
-// already augmented and skip it. Avoids double-augmentation across
-// retries / multi-step preprocess pipelines.
-const InlineApprovalAugmentationMarker = "[Clawvisor: task"
-
-// LegacyInlineApprovalAugmentationMarker keeps older synthetic history
-// recognizable after the user-visible wording was shortened.
-const LegacyInlineApprovalAugmentationMarker = "[Clawvisor: inline task"
-
+// Notice kinds for the user-role injections the proxy substitutes into
+// inline-task approval turns. These land in user-role messages the LLM
+// reads (not in assistant text the human sees), so the structured
+// <clawvisor-notice> envelope is the right wire shape: it lets the
+// model recognize the channel as proxy-emitted control-plane state
+// distinct from anything the user actually typed.
 const (
-	InlineTaskDenyMarker         = "[Clawvisor: the user denied the task-creation request."
-	InlineTaskCreatorErrorMarker = "[Clawvisor: task creation failed"
+	NoticeKindTaskApproved NoticeKind = "task-approved"
+	NoticeKindTaskDenied   NoticeKind = "task-denied"
+	NoticeKindTaskError    NoticeKind = "task-error"
 )
 
+// inlineTaskNoticeOpenPrefix is the literal substring every inline-task
+// notice begins with. Used by containsInlineApprovalAugmentationMarker
+// and the human-turn filter to recognize that a user-role turn has
+// already been rewritten by the proxy, so it should not be re-augmented
+// and should not be classified as a fresh human instruction.
+const inlineTaskNoticeOpenPrefix = `<clawvisor-notice kind="task-`
+
 func containsInlineApprovalAugmentationMarker(text string) bool {
-	return strings.Contains(text, InlineApprovalAugmentationMarker) ||
-		strings.Contains(text, LegacyInlineApprovalAugmentationMarker)
+	return strings.Contains(text, inlineTaskNoticeOpenPrefix)
 }
 
 // AugmentApprovedInlineTasksInHistory walks the conversation history
@@ -307,25 +310,23 @@ func augmentationContextForOutcome(key InlineApprovalOutcomeKey, store InlineApp
 // the previously-approved task was NOT created so it doesn't proceed
 // as if scope were granted.
 func inlineFailedReplyAugmentationContext(reason string) string {
-	reason = sanitizeFailureReasonForBracketEnvelope(reason)
+	reason = sanitizeInlineTaskNoticeBody(reason)
 	if reason == "" {
 		reason = "creation failed"
 	}
-	return InlineApprovalAugmentationMarker + " creation was NOT completed (" + reason + "). No task is active; the originally-requested tool call is still out of scope. Acknowledge the failure to the user; do not retry without changes.]"
+	body := "Task creation was NOT completed (" + reason + "). No task is active; the originally-requested tool call is still out of scope. Acknowledge the failure to the user; do not retry without changes."
+	return Render(NoticeKindTaskError, body)
 }
 
-// sanitizeFailureReasonForBracketEnvelope strips characters that would
-// break the bracket envelope the augmentation context lives inside.
-// FailureReason comes from createErr.Error() — which can include
-// model-controlled strings (task purpose, command echoes) — and a
-// stray `]` would prematurely close the [Clawvisor: …] wrapper the
-// LLM sees, fragmenting the message. Newlines are also dropped so
-// the parser's line-by-line scan can't pick up a stray verb line.
-// Also caps length to keep one runaway error from drowning the model
-// in noise.
-func sanitizeFailureReasonForBracketEnvelope(reason string) string {
+// sanitizeInlineTaskNoticeBody trims and length-caps model-controlled
+// strings before they're rendered inside a <clawvisor-notice> body.
+// Newlines collapse to spaces so the parser's line-by-line scan can't
+// pick up a stray verb line from an embedded paragraph break, and the
+// length cap keeps one runaway error from drowning the model in noise.
+// XML escaping of `<`, `>`, `&` is handled by Render; this sanitizer
+// is purely about layout / size.
+func sanitizeInlineTaskNoticeBody(reason string) string {
 	reason = strings.TrimSpace(reason)
-	reason = strings.ReplaceAll(reason, "]", "")
 	reason = strings.ReplaceAll(reason, "\r", " ")
 	reason = strings.ReplaceAll(reason, "\n", " ")
 	const maxLen = 256
@@ -360,12 +361,14 @@ func inlineApprovedReplyAugmentation() string {
 	return inlineApprovedReplyAugmentationContext("", false, nil)
 }
 
-// inlineApprovedReplyAugmentationContext is the bracketed body shared
-// between the one-shot rewrite and the persistent augmenter.
+// inlineApprovedReplyAugmentationContext is the body shared between
+// the one-shot rewrite and the persistent augmenter. Wrapped in a
+// <clawvisor-notice kind="task-approved"> envelope by Render so the
+// LLM recognizes the substituted user-role turn as proxy-emitted
+// control-plane state rather than a fresh user instruction.
 func inlineApprovedReplyAugmentationContext(taskID string, checkedOut bool, credentials []InlineTaskCredentialPlaceholder) string {
 	var b strings.Builder
-	b.WriteString(InlineApprovalAugmentationMarker)
-	b.WriteString(" was created and approved by the user. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work. If an earlier tool_use already completed successfully, do NOT re-emit it; move on to the next step using the results above.")
+	b.WriteString("Task was created and approved by the user. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work. If an earlier tool_use already completed successfully, do NOT re-emit it; move on to the next step using the results above.")
 	if strings.TrimSpace(taskID) != "" {
 		b.WriteString(" Task ID: ")
 		b.WriteString(strings.TrimSpace(taskID))
@@ -397,8 +400,7 @@ func inlineApprovedReplyAugmentationContext(taskID string, checkedOut bool, cred
 		}
 		b.WriteString(" use these exact placeholder values in Authorization headers or curl arguments.")
 	}
-	b.WriteString("]")
-	return b.String()
+	return Render(NoticeKindTaskApproved, b.String())
 }
 
 // renderInlineTaskDenyReply is the user-message text the LLM sees
@@ -406,7 +408,7 @@ func inlineApprovedReplyAugmentationContext(taskID string, checkedOut bool, cred
 // retry the task-creation request. No leading verb — see the
 // inlineApprovedReplyAugmentation comment for why.
 func renderInlineTaskDenyReply() string {
-	return InlineTaskDenyMarker + " Do not retry. Acknowledge the denial; stop unless the user issues a new request.]"
+	return Render(NoticeKindTaskDenied, "The user denied the task-creation request. Do not retry. Acknowledge the denial; stop unless the user issues a new request.")
 }
 
 // renderInlineTaskCreatorErrorReply is used when the user approved
@@ -414,7 +416,8 @@ func renderInlineTaskDenyReply() string {
 // missing creator wiring). The LLM should treat this as a denial and
 // surface the failure to the user.
 func renderInlineTaskCreatorErrorReply(msg string) string {
-	return fmt.Sprintf(InlineTaskCreatorErrorMarker+" — %s. Acknowledge the failure to the user; do not retry without changes.]", msg)
+	msg = sanitizeInlineTaskNoticeBody(msg)
+	return Render(NoticeKindTaskError, fmt.Sprintf("Task creation failed — %s. Acknowledge the failure to the user; do not retry without changes.", msg))
 }
 
 // renderInlineTaskAlreadyTerminalReply is used when the chat-side
@@ -432,5 +435,5 @@ func renderInlineTaskAlreadyTerminalReply(status string) string {
 	case "revoked":
 		verb = "revoked"
 	}
-	return fmt.Sprintf(InlineTaskCreatorErrorMarker+" — the user %s this task on another surface (dashboard or notifier) before your approval landed. Acknowledge to the user that the task is gone; if they still want the work done, ask them to issue a fresh request — do NOT retry the same task body.]", verb)
+	return Render(NoticeKindTaskError, fmt.Sprintf("Task creation failed — the user %s this task on another surface (dashboard or notifier) before your approval landed. Acknowledge to the user that the task is gone; if they still want the work done, ask them to issue a fresh request — do NOT retry the same task body.", verb))
 }

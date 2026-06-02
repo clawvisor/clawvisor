@@ -232,26 +232,19 @@ func flattenOpenAIChatContent(raw json.RawMessage) string {
 // content-shape level (see extractAnthropicUserText), so this helper
 // only needs to recognize the conversational-verb cases.
 func isClawvisorInternalUserText(text string) bool {
-	if containsInlineApprovalAugmentationMarker(text) ||
-		strings.Contains(text, InlineTaskDenyMarker) ||
-		strings.Contains(text, InlineTaskCreatorErrorMarker) {
+	// containsInlineApprovalAugmentationMarker catches the user-side
+	// task-approved / task-denied / task-error notices the proxy
+	// substitutes when an inline approval resolves. It looks for the
+	// `<clawvisor-notice kind="task-` literal anywhere in the text —
+	// since the augmenter REPLACES the user's verb with the notice
+	// (not appends), an inbound user turn containing this substring
+	// is by construction the proxy's own emission.
+	if containsInlineApprovalAugmentationMarker(text) {
 		return true
 	}
-	// Defense in depth: any user-role text whose first non-whitespace
-	// content is the [Clawvisor] proxy prefix is not a fresh human
-	// turn. Today the only [Clawvisor] injections happen on the
-	// assistant side (auto-approval notice), so this filter is a
-	// no-op in production. Adding it now so a future codepath that
-	// (intentionally or by mistake) routes proxy-prefixed text
-	// through the user role can't smuggle authorization into the
-	// auto-approve gate.
-	if strings.HasPrefix(strings.TrimSpace(text), "[Clawvisor]") {
-		return true
-	}
-	// Same defense-in-depth posture for the structured notice tag.
-	// Strict shape match only: the entire trimmed message must be a
-	// single well-formed <clawvisor-notice kind="..."> element. A
-	// substring filter would be a footgun — a user asking "what is
+	// Strict-shape match for any proxy-emitted <clawvisor-notice>
+	// element (routing-style minted markers, future user-role notices).
+	// Substring matching would be a footgun — a user asking "what is
 	// <clawvisor-notice>?" would have their message silently dropped.
 	if isExactClawvisorNoticeShape(text) {
 		return true
@@ -268,19 +261,14 @@ func isClawvisorInternalUserText(text string) bool {
 }
 
 // exactClawvisorNoticeRE matches the entire string as a single
-// well-formed <clawvisor-notice kind="..."> element, optionally
-// followed by the bracketed conversation-ID footer the routing notice
-// appends on OpenAI Chat Completions. Kind is constrained to the same
-// alphabet as the renderer's validator (`^[a-z0-9-]+$`); the body is
-// non-greedy and forbidden from containing `<` so a body that contains
-// a forged extra `</clawvisor-notice>` substring cannot trick the
+// well-formed <clawvisor-notice kind="..."> element. Kind is constrained
+// to the same alphabet as the renderer's validator (`^[a-z0-9-]+$`);
+// the body is forbidden from containing `<` so a body that holds a
+// forged extra `</clawvisor-notice>` substring cannot trick the
 // matcher into accepting trailing user text. The renderer XML-escapes
 // `<` in bodies, so this restriction never rejects a genuine proxy-
-// emitted notice. The optional `[clawvisor:conversation=cv-...]` tail
-// mirrors the legacy prefix-filter's reach: a user-role message that
-// is exactly the routing notice (tag + footer) is still recognized as
-// proxy-internal and stripped from the human-turn extractor.
-var exactClawvisorNoticeRE = regexp.MustCompile(`^<clawvisor-notice kind="[a-z0-9-]+">[^<]*</clawvisor-notice>(?: \[clawvisor:conversation=cv-[a-z0-9-]+\])?$`)
+// emitted notice.
+var exactClawvisorNoticeRE = regexp.MustCompile(`^<clawvisor-notice kind="[a-z0-9-]+">[^<]*</clawvisor-notice>$`)
 
 // isExactClawvisorNoticeShape reports whether the entire trimmed text
 // is exactly one well-formed Clawvisor notice element. Trailing or

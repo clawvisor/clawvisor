@@ -470,13 +470,15 @@ func secretAssignmentEntropy(value string) float64 {
 
 func stripClawvisorGeneratedMarkers(value string) string {
 	value = clawvisorFooterMarkerRE.ReplaceAllString(value, " ")
+	// noticeOpenTagRE matches the full opening element of any
+	// <clawvisor-notice ...> regardless of kind, so a future kind
+	// added via Render is scrubbed without revisiting this list. The
+	// matching closing-tag literal is stripped separately.
+	value = noticeOpenTagRE.ReplaceAllString(value, " ")
+	value = strings.ReplaceAll(value, noticeTagClose, " ")
 	markers := []string{
 		InlineApprovalIDMarker,
 		InlineApprovalSubstitutedPromptMarker,
-		InlineApprovalAugmentationMarker,
-		LegacyInlineApprovalAugmentationMarker,
-		InlineTaskDenyMarker,
-		InlineTaskCreatorErrorMarker,
 		SecretDecisionIDMarker,
 		SecretDecisionPromptMarker,
 		ClawvisorManagedMarker,
@@ -489,6 +491,14 @@ func stripClawvisorGeneratedMarkers(value string) string {
 	}
 	return value
 }
+
+// noticeOpenTagRE matches any <clawvisor-notice ...> opening element
+// so the secret scrubber can strip the envelope cleanly regardless of
+// the kind attribute. The body is captured non-greedily but stays
+// inside the attribute list — the closing `>` ends the match before
+// the body, which is left in place for downstream English/entropy
+// analysis (the envelope itself carries no secret-bearing tokens).
+var noticeOpenTagRE = regexp.MustCompile(`<clawvisor-notice[^>]*>`)
 
 var secretRedactionMarkerRE = regexp.MustCompile(`\[redacted secret:[^\]]+\]`)
 

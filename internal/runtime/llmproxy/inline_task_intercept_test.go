@@ -147,7 +147,7 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 	if !creator.called {
 		t.Fatal("Creator should have been invoked")
 	}
-	if !strings.Contains(string(rewrite.Body), "task was created and approved by the user") {
+	if !strings.Contains(strings.ToLower(string(rewrite.Body)), "task was created and approved by the user") {
 		t.Fatalf("rewritten body missing canonical augmentation context: %s", rewrite.Body)
 	}
 	if rewrite.TaskID != "task-uuid-final" {
@@ -694,11 +694,27 @@ func TestAutoApproveUserNotice_TruncatesByRune(t *testing.T) {
 	if strings.Contains(got, "�") {
 		t.Errorf("notice contains U+FFFD; truncation split a rune mid-sequence:\n%s", got)
 	}
-	// The truncated purpose body sits inside the notice envelope, so
-	// the ellipsis appears immediately before the closing tag rather
-	// than at the very end of the rendered string.
-	if !strings.Contains(got, "…</clawvisor-notice>") {
-		t.Errorf("notice body should end with ellipsis when truncated; got: %s", got)
+	// The truncated purpose body sits inside the backticked envelope,
+	// so the ellipsis appears immediately before the closing backtick
+	// rather than at the very end of the rendered string.
+	if !strings.Contains(got, "…`") {
+		t.Errorf("notice body should end with ellipsis before the closing backtick; got: %s", got)
+	}
+}
+
+// TestAutoApproveUserNotice_StripsBackticksFromPurpose pins the
+// defense that keeps a model-authored purpose from terminating the
+// inline-code span the notice is wrapped in. Without the strip, a
+// purpose like "fix the `foo` helper" would render the trailing
+// guidance as prose instead of code, and any embedded backticks
+// would leak the wrapping in chat UIs.
+func TestAutoApproveUserNotice_StripsBackticksFromPurpose(t *testing.T) {
+	got := autoApproveUserNotice("fix the `foo` helper")
+	if strings.Count(got, "`") != 2 {
+		t.Errorf("expected exactly the two wrapping backticks; got %q", got)
+	}
+	if !strings.Contains(got, "fix the foo helper") {
+		t.Errorf("expected purpose with backticks stripped; got %q", got)
 	}
 }
 
