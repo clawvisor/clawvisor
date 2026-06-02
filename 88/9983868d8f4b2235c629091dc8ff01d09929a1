@@ -1,0 +1,46 @@
+internal/e2e/lite/drivers/driver.go
+  s_48544d04b3a3f6::t_1752977f9af6cd 55-61,67,83-86
+internal/e2e/lite/drivers/codex.go
+  s_48544d04b3a3f6::t_9fdee6bfbb773a 86-94
+internal/e2e/lite/library/scope_drift_oneoff_markup/workspace/src/stale.go
+  s_48544d04b3a3f6::t_b8fc2f21e2f319 1-11
+internal/e2e/lite/scenario.go
+  s_48544d04b3a3f6::t_e22c7e82c34f12 152-174
+internal/e2e/lite/library/scope_drift_oneoff_markup/workspace/go.mod
+  s_48544d04b3a3f6::t_58d2489f717cd0 1-3
+internal/e2e/lite/scope_drift_counters.go
+  s_48544d04b3a3f6::t_78de301b7e95dc 1-93
+internal/e2e/lite/harness.go
+  s_48544d04b3a3f6::t_3c238b6a02e05a 163-168
+internal/e2e/lite/lite_test.go
+  s_48544d04b3a3f6::t_68db0fb0d1df3f 22
+internal/e2e/lite/scenario_loader_test.go
+  s_48544d04b3a3f6::t_299a1cf3a6deee 17
+internal/e2e/lite/approver.go
+  s_48544d04b3a3f6::t_daf0f930a45554 25-41
+  s_48544d04b3a3f6::t_ad8b852f3a32fb 75-88
+internal/e2e/lite/drivers/claude.go
+  s_48544d04b3a3f6::t_4afd7503fa991d 28-42
+  s_48544d04b3a3f6::t_10576dc5b4bf34 64-70
+  s_48544d04b3a3f6::t_4d30ce57e71da5 185-205
+internal/e2e/lite/library/scope_drift_oneoff_markup/workspace/src/foo.go
+  s_48544d04b3a3f6::t_712339c00cd73e 1-15
+internal/e2e/lite/library/scope_drift_oneoff_markup/scenario.yaml
+  s_48544d04b3a3f6::t_fd153f8903d7a1 1-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "889983868d8f4b2235c629091dc8ff01d09929a1",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
