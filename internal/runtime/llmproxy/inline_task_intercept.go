@@ -558,18 +558,11 @@ func autoApproveFromConversation(cfg PostprocessConfig, assessment *taskrisk.Ris
 	return true, "risk=" + assessment.RiskLevel + ", intent_match=yes, threshold=" + cfg.ConversationAutoApproveThreshold, ""
 }
 
-// assessInlineTaskRisk runs the LLM-backed risk assessor (when configured) and
-// merges its verdict with the deterministic envelope-shape policy. The
-// envelope policy is the floor — it catches structural risk (wildcard hosts,
-// regex matchers, intent-verification off) that the LLM may underweight or
-// miss. The LLM verdict supplies the user-facing explanation and any extra
-// factors when its level is at least as high as the floor.
-//
-// Returns the deterministic envelope assessment alone when the assessor is
-// nil, returns nil-from-LLM (e.g. spend cap exhausted), or returns an
-// "unknown"/error result. This keeps the inline approval prompt rendering
-// even if the LLM call fails — the user still sees the deterministic risk
-// read, just without the LLM's explanation.
+// assessInlineTaskRisk returns the LLM-backed risk assessor's verdict when
+// it is configured and produces a usable answer; otherwise it falls back to
+// the deterministic envelope-shape policy. The envelope policy is only the
+// fallback path now — when the LLM verdict comes back, it is taken as the
+// truth and the deterministic read is discarded.
 func assessInlineTaskRisk(
 	req *http.Request,
 	cfg PostprocessConfig,
@@ -577,9 +570,8 @@ func assessInlineTaskRisk(
 	env runtimetasks.Envelope,
 	trace func(event string, kv ...any),
 ) *taskrisk.RiskAssessment {
-	envelopeAssessment := runtimepolicy.AssessTaskEnvelope(parsed.Purpose, env)
 	if cfg.TaskRiskAssessor == nil {
-		return envelopeAssessment
+		return runtimepolicy.AssessTaskEnvelope(parsed.Purpose, env)
 	}
 
 	llmVerdict := cfg.TaskRiskAssessor.AssessEnvelope(req.Context(), TaskRiskAssessRequest{
@@ -595,12 +587,9 @@ func assessInlineTaskRisk(
 	})
 	if llmVerdict == nil || strings.EqualFold(strings.TrimSpace(llmVerdict.RiskLevel), "unknown") {
 		trace("inline_task.risk_llm_unavailable")
-		return envelopeAssessment
+		return runtimepolicy.AssessTaskEnvelope(parsed.Purpose, env)
 	}
 
-	// Lift the lite-proxy projection of conflicts back into the
-	// taskrisk shape so the merge + auto-approve gate can read them
-	// uniformly. The intent_match fields are preserved verbatim.
 	conflicts := make([]taskrisk.ConflictDetail, 0, len(llmVerdict.Conflicts))
 	for _, c := range llmVerdict.Conflicts {
 		conflicts = append(conflicts, taskrisk.ConflictDetail{
@@ -609,7 +598,7 @@ func assessInlineTaskRisk(
 			Severity:    c.Severity,
 		})
 	}
-	llmAssessment := &taskrisk.RiskAssessment{
+	return &taskrisk.RiskAssessment{
 		RiskLevel:              llmVerdict.RiskLevel,
 		Explanation:            llmVerdict.Explanation,
 		Factors:                llmVerdict.Factors,
@@ -617,44 +606,6 @@ func assessInlineTaskRisk(
 		IntentMatch:            llmVerdict.IntentMatch,
 		IntentMatchExplanation: llmVerdict.IntentMatchExplanation,
 	}
-	return mergeInlineRisk(llmAssessment, envelopeAssessment)
-}
-
-// mergeInlineRisk picks the higher of the two risk levels and prefers the
-// LLM explanation when it set the ceiling; the envelope policy supplies the
-// explanation only when it raised the level above the LLM's read. Factors
-// from both are concatenated.
-func mergeInlineRisk(llm, envelope *taskrisk.RiskAssessment) *taskrisk.RiskAssessment {
-	if llm == nil {
-		return envelope
-	}
-	if envelope == nil {
-		return llm
-	}
-	out := *llm
-	if riskRank(envelope.RiskLevel) > riskRank(llm.RiskLevel) {
-		out.RiskLevel = envelope.RiskLevel
-		if envelope.Explanation != "" {
-			out.Explanation = envelope.Explanation
-		}
-	}
-	out.Factors = append(append([]string{}, llm.Factors...), envelope.Factors...)
-	out.Conflicts = append(append([]taskrisk.ConflictDetail{}, llm.Conflicts...), envelope.Conflicts...)
-	return &out
-}
-
-func riskRank(level string) int {
-	switch strings.ToLower(strings.TrimSpace(level)) {
-	case "low":
-		return 0
-	case "medium":
-		return 1
-	case "high":
-		return 2
-	case "critical":
-		return 3
-	}
-	return -1
 }
 
 func inlineTaskValidationReason(issues []runtimepolicy.ValidationIssue) string {
