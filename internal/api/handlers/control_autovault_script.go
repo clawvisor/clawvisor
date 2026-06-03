@@ -367,7 +367,11 @@ func (h *LLMControlHandler) AutovaultScriptDocs(w http.ResponseWriter, r *http.R
 			},
 		},
 		"example_request": map[string]any{
-			"url":     "https://clawvisor.local/control/autovault/script-session",
+			// Agent-facing URL convention: the rewriter intercepts
+			// https://clawvisor.local/control/... and forwards to the
+			// real /api/control/... handler. The agent emits the
+			// synthetic URL; it should never type the real /api path.
+			"url":     "https://" + llmproxy.ControlSyntheticHost + llmproxy.ControlSyntheticPath + "/autovault/script-session",
 			"method":  "POST",
 			"headers": map[string]string{"Content-Type": "application/json"},
 			"body": map[string]any{

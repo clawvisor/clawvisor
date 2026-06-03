@@ -60,13 +60,6 @@ type ProxyResolverHandler struct {
 	// development environments.
 	AllowPrivateNetworks bool
 
-	// ScriptSessions accounts response bytes against the inbound
-	// script-session token (set by the auth middleware) so the
-	// session's aggregate byte cap is enforced across multiple
-	// resolver requests. nil disables byte accounting; the per-
-	// request cap is enforced via the session's MaxRequestBytes
-	// field independently of this cache.
-	ScriptSessions llmproxy.ScriptSessionCache
 }
 
 // NewProxyResolverHandler builds the handler with sensible defaults. The
@@ -207,34 +200,21 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 	// to 0, useAuditOutcome / useAuditDecision pick sensible defaults,
 	// and individual paths override them when they need scope-specific
 	// vocabulary on the use-row.
-	scriptSess, scriptToken, scriptActive := middleware.ScriptSessionFromContext(r.Context())
+	// scriptCache is the SAME ScriptSessionCache instance the auth
+	// middleware authorized against (it's threaded through the request
+	// context). Pulling it from context — rather than from a separately-
+	// wired handler field — makes the wiring invariant structural: the
+	// release here always targets the cache that holds the reservation,
+	// so a mis-wired handler field can no longer silently leak
+	// reservations into a different cache.
+	scriptSess, scriptToken, scriptCache, scriptActive := middleware.ScriptSessionFromContext(r.Context())
 	var (
 		respBytes        int64
 		useAuditOutcome  string
 		useAuditDecision string
 		useAuditReason   string
 	)
-	if scriptActive && h.ScriptSessions == nil {
-		// Wiring invariant: when the middleware admits a script-session
-		// token (scriptActive == true), the resolver MUST share the
-		// same ScriptSessionCache instance so it can release the
-		// optimistic reservation. server.go wires both off the same
-		// `scriptSessions` variable; a divergence is a deployment
-		// misconfiguration. Fail closed (500) rather than proceeding —
-		// every leaked reservation would silently exhaust the session
-		// in ~10 calls, surfacing later as a confusing
-		// SCRIPT_SESSION_BYTES_EXCEEDED error against a healthy-looking
-		// session.
-		h.Logger.ErrorContext(r.Context(), "lite-proxy resolver: script-session token authenticated but resolver has no ScriptSessionCache; refusing to proceed (wiring bug — middleware + resolver must share the same cache)",
-			"agent_id", agent.ID, "script_session_id", scriptSess.ID)
-		auditStatus = http.StatusInternalServerError
-		auditDecide = "deny"
-		auditOutcome = "script_session_cache_misconfigured"
-		writeJSONError(w, http.StatusInternalServerError, "SCRIPT_SESSION_CACHE_MISCONFIGURED",
-			"proxy is misconfigured: script-session token authenticated but resolver has no cache to release the reservation; contact your operator")
-		return
-	}
-	if scriptActive && h.ScriptSessions != nil {
+	if scriptActive {
 		defer func() {
 			// Detach from r.Context() — if the client disconnects mid-
 			// stream, the request context is cancelled, and a Redis-
@@ -245,7 +225,7 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 			// but before RecordBytes. The middleware's reservation
 			// release uses context.WithoutCancel for the same reason.
 			ctx := context.WithoutCancel(r.Context())
-			updated, bytesErr := h.ScriptSessions.RecordBytes(ctx, scriptToken, respBytes)
+			updated, bytesErr := scriptCache.RecordBytes(ctx, scriptToken, respBytes)
 			// Fall back to the snapshot + actual when the cache lost
 			// the session (revoked mid-flight). Subtract the
 			// reservation that's no longer trackable so the audit row

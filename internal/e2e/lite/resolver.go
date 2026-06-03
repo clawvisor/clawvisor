@@ -91,9 +91,9 @@ func newLiteResolver(st store.Store, v vault.Vault, scriptSessions llmproxy.Scri
 		// it doesn't measure (see script_sessions.go for the
 		// implications). Detached context so a cancelled request
 		// still releases.
-		if _, token, scriptActive := middleware.ScriptSessionFromContext(r.Context()); scriptActive && scriptSessions != nil {
+		if _, token, ctxCache, scriptActive := middleware.ScriptSessionFromContext(r.Context()); scriptActive && ctxCache != nil {
 			defer func() {
-				_, _ = scriptSessions.RecordBytes(context.WithoutCancel(r.Context()), token, 0)
+				_, _ = ctxCache.RecordBytes(context.WithoutCancel(r.Context()), token, 0)
 			}()
 		}
 		targetHost := strings.TrimSpace(r.Header.Get("X-Clawvisor-Target-Host"))

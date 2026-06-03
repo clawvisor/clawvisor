@@ -288,24 +288,33 @@ type scriptSessionContextKey struct{}
 type scriptSessionContext struct {
 	Session llmproxy.ScriptSession
 	Token   string
+	// Cache is the SAME ScriptSessionCache instance the middleware
+	// called Authorize on. Carrying it forward in context lets the
+	// resolver release the optimistic reservation against the right
+	// cache without depending on a separately-wired handler field —
+	// a mis-wiring there would silently leak reservations into the
+	// middleware's cache.
+	Cache llmproxy.ScriptSessionCache
 }
 
-// WithScriptSession attaches a script-session snapshot to ctx. Exposed
-// for tests; production code uses the middleware below.
-func WithScriptSession(ctx context.Context, sess llmproxy.ScriptSession, token string) context.Context {
-	return context.WithValue(ctx, scriptSessionContextKey{}, &scriptSessionContext{Session: sess, Token: token})
+// WithScriptSession attaches a script-session snapshot (and the cache
+// it lives in) to ctx. Exposed for tests; production code uses the
+// middleware below.
+func WithScriptSession(ctx context.Context, sess llmproxy.ScriptSession, token string, cache llmproxy.ScriptSessionCache) context.Context {
+	return context.WithValue(ctx, scriptSessionContextKey{}, &scriptSessionContext{Session: sess, Token: token, Cache: cache})
 }
 
 // ScriptSessionFromContext returns the active script-session
-// snapshot (and its token, for RecordBytes post-response) attached by
-// the middleware. (Session, token, true) when present; zero/empty/false
-// when the request did not authenticate via a script-session token.
-func ScriptSessionFromContext(ctx context.Context) (llmproxy.ScriptSession, string, bool) {
+// snapshot, its token (for RecordBytes post-response), and the cache
+// the middleware authorized against. (Session, token, cache, true)
+// when present; zero/empty/nil/false when the request did not
+// authenticate via a script-session token.
+func ScriptSessionFromContext(ctx context.Context) (llmproxy.ScriptSession, string, llmproxy.ScriptSessionCache, bool) {
 	v, ok := ctx.Value(scriptSessionContextKey{}).(*scriptSessionContext)
 	if !ok || v == nil {
-		return llmproxy.ScriptSession{}, "", false
+		return llmproxy.ScriptSession{}, "", nil, false
 	}
-	return v.Session, v.Token, true
+	return v.Session, v.Token, v.Cache, true
 }
 
 // handleScriptSessionAuth validates a `cv-script-…` caller-auth token
@@ -414,7 +423,7 @@ func handleScriptSessionAuth(w http.ResponseWriter, r *http.Request, st store.St
 		return
 	}
 	ctx := store.WithAgent(r.Context(), agent)
-	ctx = WithScriptSession(ctx, sess, token)
+	ctx = WithScriptSession(ctx, sess, token, scriptCache)
 	AddLogField(ctx, "agent_id", agent.ID)
 	AddLogField(ctx, "user_id", agent.UserID)
 	AddLogField(ctx, "script_session_id", sess.ID)

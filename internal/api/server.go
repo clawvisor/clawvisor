@@ -1317,7 +1317,10 @@ func (s *Server) registerLiteProxyRoutes(
 				s.logger.Warn("lite-proxy: ScriptSessionCache not configured — autovault script sessions are process-local; use a shared backing cache for multi-instance proxy deployments")
 			}
 		}
-		resolverHandler.ScriptSessions = scriptSessions
+		// resolver no longer holds a ScriptSessionCache field — it
+		// receives the cache via the request context (attached by the
+		// nonce middleware below), so the cache used to release the
+		// reservation is structurally the same one that took it.
 		if s.pendingSecrets != nil {
 			llmHandler.PendingSecrets = s.pendingSecrets
 		}

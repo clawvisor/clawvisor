@@ -29,7 +29,6 @@ func TestResolver_ScriptSession_HappyPath(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	scripts := llmproxy.NewMemoryScriptSessionCache()
-	h.ScriptSessions = scripts
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, scripts, slog.Default())
@@ -76,7 +75,6 @@ func TestResolver_ScriptSession_ScopeMismatch(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	scripts := llmproxy.NewMemoryScriptSessionCache()
-	h.ScriptSessions = scripts
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, scripts, slog.Default())
@@ -125,7 +123,6 @@ func TestResolver_ScriptSession_Exhausted(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	scripts := llmproxy.NewMemoryScriptSessionCache()
-	h.ScriptSessions = scripts
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, scripts, slog.Default())
@@ -193,7 +190,6 @@ func TestResolver_ScriptSession_AggregateCapBoundsCrossingRequest(t *testing.T) 
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	scripts := llmproxy.NewMemoryScriptSessionCache()
-	h.ScriptSessions = scripts
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, scripts, slog.Default())
@@ -266,7 +262,6 @@ func TestResolver_ScriptSession_StripsTruncatingContentLength(t *testing.T) {
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	scripts := llmproxy.NewMemoryScriptSessionCache()
-	h.ScriptSessions = scripts
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, scripts, slog.Default())
