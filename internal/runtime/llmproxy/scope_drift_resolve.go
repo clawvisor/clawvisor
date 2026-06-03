@@ -386,7 +386,12 @@ func spliceBytes(body []byte, start, end int, replacement []byte) []byte {
 	if start < 0 || end > len(body) || start > end {
 		return body
 	}
-	out := make([]byte, 0, len(body)-(end-start)+len(replacement))
+	// Let append size the backing array. A manual capacity hint here
+	// (len(body)-(end-start)+len(replacement)) was flagged by CodeQL
+	// as a potential overflow if replacement is pathologically large;
+	// our SSE bodies are small enough that the extra grow cost is
+	// negligible, and skipping the arithmetic sidesteps the warning.
+	var out []byte
 	out = append(out, body[:start]...)
 	out = append(out, replacement...)
 	out = append(out, body[end:]...)
