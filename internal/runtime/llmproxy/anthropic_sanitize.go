@@ -55,6 +55,13 @@ func SanitizeAnthropicRequest(body []byte) ([]byte, bool, error) {
 		msgsBytes := out[msgsStart:msgsEnd]
 		messages, ok := flattenJSONArray(msgsBytes)
 		if !ok {
+			// Preserve the previous behavior of surfacing a parse
+			// error so the caller can return a 400. `messages`
+			// present but not an array is malformed input we should
+			// not silently accept.
+			if err := json.Unmarshal(msgsBytes, &messages); err != nil {
+				return nil, false, err
+			}
 			if !changed {
 				return body, false, nil
 			}

@@ -3,6 +3,7 @@ package llmproxy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 )
 
 // Byte-faithful surgical edits on JSON byte slices.
@@ -27,39 +28,73 @@ import (
 // the raw JSON value, or (_, _, false) if data isn't a JSON object or
 // the key isn't present.
 func findJSONFieldValue(data []byte, key string) (int, int, bool) {
+	_, valueStart, valueEnd, ok := findJSONFieldSpan(data, key)
+	return valueStart, valueEnd, ok
+}
+
+// findJSONFieldSpan locates byte ranges for both the key string and
+// the value of a top-level field. Returns (keyOpenQuote, valueStart,
+// valueEnd, true) on success where data[keyOpenQuote] == '"' is the
+// opening quote of the JSON-encoded key. Used by DeleteJSONField so
+// it can locate the start of the key without a backward scan
+// (which is brittle when the key contains escaped quotes).
+func findJSONFieldSpan(data []byte, key string) (int, int, int, bool) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	tok, err := dec.Token()
 	if err != nil {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	if d, ok := tok.(json.Delim); !ok || d != '{' {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	for dec.More() {
 		keyTok, err := dec.Token()
 		if err != nil {
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
 		k, ok := keyTok.(string)
 		if !ok {
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
+		keyEnd := int(dec.InputOffset()) // just past closing quote of key
 		if k != key {
 			var skip json.RawMessage
 			if err := dec.Decode(&skip); err != nil {
-				return 0, 0, false
+				return 0, 0, 0, false
 			}
 			continue
 		}
-		// dec.InputOffset() sits just past the closing quote of the
-		// matched key. Scan forward past ':' and whitespace to find
-		// where the value begins.
-		p := int(dec.InputOffset())
+		// Walk backward from the closing quote to find the matching
+		// opening quote, accounting for escaped quotes. `\"` inside
+		// the key string must not terminate the backward scan.
+		closeQuote := keyEnd - 1 // position of `"` that closes the key
+		openQuote := closeQuote - 1
+		for openQuote >= 0 {
+			if data[openQuote] != '"' {
+				openQuote--
+				continue
+			}
+			// Count consecutive backslashes immediately before this
+			// quote; an odd count means it's escaped.
+			bs := 0
+			for q := openQuote - 1; q >= 0 && data[q] == '\\'; q-- {
+				bs++
+			}
+			if bs%2 == 0 {
+				break
+			}
+			openQuote--
+		}
+		if openQuote < 0 {
+			return 0, 0, 0, false
+		}
+		// Scan forward past ':' and whitespace to find value start.
+		p := keyEnd
 		for p < len(data) && data[p] != ':' {
 			p++
 		}
 		if p >= len(data) {
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
 		p++ // past ':'
 		for p < len(data) && isJSONWS(data[p]) {
@@ -68,11 +103,11 @@ func findJSONFieldValue(data []byte, key string) (int, int, bool) {
 		valueStart := p
 		var skip json.RawMessage
 		if err := dec.Decode(&skip); err != nil {
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
-		return valueStart, int(dec.InputOffset()), true
+		return openQuote, valueStart, int(dec.InputOffset()), true
 	}
-	return 0, 0, false
+	return 0, 0, 0, false
 }
 
 // SetJSONField returns data with the value at the given top-level key
@@ -97,46 +132,20 @@ func SetJSONField(data []byte, key string, newValue []byte) ([]byte, error) {
 // DeleteJSONField returns data with the named top-level field
 // removed. If the key isn't present, data is returned unchanged.
 func DeleteJSONField(data []byte, key string) ([]byte, bool) {
-	valueStart, valueEnd, ok := findJSONFieldValue(data, key)
+	keyOpenQuote, _, valueEnd, ok := findJSONFieldSpan(data, key)
 	if !ok {
 		return data, false
 	}
-	// Walk backward from valueStart past the colon and the key string
-	// to find the start of `"<key>"`.
-	keyStart := valueStart
-	for keyStart > 0 && data[keyStart-1] != '"' {
-		keyStart--
-	}
-	if keyStart <= 0 {
-		return data, false
-	}
-	// Now keyStart points one past a closing quote of the key. Walk
-	// past `:` and whitespace backward.
-	p := keyStart - 1 // closing quote
-	// Walk back across the key string itself.
-	for p > 0 && data[p-1] != '"' {
-		p--
-	}
-	if p == 0 {
-		return data, false
-	}
-	keyOpenQuote := p - 1 // position of opening quote of key
-	// Now decide what to remove on either side. We want to remove
-	// either a leading comma (if this isn't the first field) or a
-	// trailing comma (if it is). Skip whitespace.
 	removeStart := keyOpenQuote
 	removeEnd := valueEnd
-	// Skip whitespace before the key opening quote.
+	// Eat surrounding whitespace, then decide whether to consume a
+	// leading or trailing comma so the resulting object stays valid.
 	for removeStart > 0 && isJSONWS(data[removeStart-1]) {
 		removeStart--
 	}
-	// Skip whitespace after the value.
 	for removeEnd < len(data) && isJSONWS(data[removeEnd]) {
 		removeEnd++
 	}
-	// Now: if data[removeStart-1] == ',' → drop leading comma.
-	// Else if data[removeEnd] == ',' → drop trailing comma.
-	// Else this was the only field (don't drop anything else).
 	if removeStart > 0 && data[removeStart-1] == ',' {
 		removeStart--
 	} else if removeEnd < len(data) && data[removeEnd] == ',' {
@@ -205,13 +214,7 @@ func isJSONWS(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }
 
-var jsonNotObjectErr = &jsonSurgeryError{msg: "JSON value is not an object"}
-
-type jsonSurgeryError struct {
-	msg string
-}
-
-func (e *jsonSurgeryError) Error() string { return e.msg }
+var jsonNotObjectErr = errors.New("JSON value is not an object")
 
 // jsonObjectIsArray reports whether the leading non-whitespace
 // character of data is `[`.

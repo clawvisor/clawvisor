@@ -119,6 +119,21 @@ func TestFindJSONFieldValueByteRange(t *testing.T) {
 	}
 }
 
+func TestDeleteJSONFieldKeyWithEscapedQuote(t *testing.T) {
+	t.Parallel()
+	// Key `a"b` is JSON-encoded as `"a\"b"`. A naive backward walk for
+	// the first `"` would stop at the escaped inner quote and pick
+	// the wrong boundary.
+	in := `{"a\"b":1,"c":2}`
+	got, ok := DeleteJSONField([]byte(in), `a"b`)
+	if !ok {
+		t.Fatalf("expected key to be found")
+	}
+	if string(got) != `{"c":2}` {
+		t.Errorf("got %q want %q", got, `{"c":2}`)
+	}
+}
+
 func TestDeleteJSONField(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

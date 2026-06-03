@@ -448,7 +448,7 @@ func injectAnthropicControlNotice(body []byte, notice string) ([]byte, bool, err
 	// downstream, which can corrupt cryptographically-signed thinking
 	// blocks across turns).
 	sysStart, sysEnd, present := findJSONFieldValue(body, "system")
-	if !present || sysEnd-sysStart == 0 {
+	if !present {
 		encoded, _ := json.Marshal(notice)
 		out, err := SetJSONField(body, "system", encoded)
 		return out, err == nil, err

@@ -1,7 +1,6 @@
 package llmproxy
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -161,8 +160,5 @@ func TestRequestPreprocessingChainPreservesThinkingBlockBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SanitizeInboundHistory: %v", err)
 	}
-	final := inbound.Body
-	assertThinkingBlockPreserved(t, final)
-
-	_ = context.Background()
+	assertThinkingBlockPreserved(t, inbound.Body)
 }
