@@ -3,6 +3,7 @@ package lite
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,12 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/e2e/lite/drivers"
 )
+
+// EnvRunLiteProxyE2E gates the (expensive, LLM-driven) lite-proxy
+// scenario matrix. The matrix calls real upstream Anthropic/OpenAI
+// APIs and can take minutes to run, so it stays off in `go test ./...`
+// unless the caller explicitly opts in.
+const EnvRunLiteProxyE2E = "CLAWVISOR_LITE_PROXY_E2E"
 
 // scenarioDirs is the explicit list of scenarios under library/ that
 // the runner exercises. Kept explicit (vs. globbing) so a half-written
@@ -53,6 +60,9 @@ func allDrivers() []drivers.Driver {
 // against every available driver as a sub-test, so a single test
 // invocation produces a (scenario × driver) matrix.
 func TestLiteProxyScenarios(t *testing.T) {
+	if os.Getenv(EnvRunLiteProxyE2E) != "1" {
+		t.Skipf("set %s=1 to run lite-proxy scenarios", EnvRunLiteProxyE2E)
+	}
 	anthropicKey := ResolveAnthropicKey()
 	openaiKey := ResolveOpenAIKey()
 	if anthropicKey == "" && openaiKey == "" {
