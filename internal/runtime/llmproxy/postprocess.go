@@ -2288,7 +2288,7 @@ func scriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
 	if len(input) == 0 || resolverBaseURL == "" {
 		return false
 	}
-	proxyHost := resolverPassthroughHost(resolverBaseURL)
+	proxyHost, proxyPath := resolverPassthroughTarget(resolverBaseURL)
 	if proxyHost == "" {
 		return false
 	}
@@ -2311,7 +2311,7 @@ func scriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
 	// structured payload AND an off-proxy cmd would otherwise pass
 	// here while shell execution carries the credentials elsewhere.
 	cmdShadow := raw.Cmd != "" || raw.Command != ""
-	if !cmdShadow && headerHasScriptSessionToken(raw.Headers) && urlHostMatches(raw.URL, proxyHost) {
+	if !cmdShadow && headerHasScriptSessionToken(raw.Headers) && urlTargetsResolver(raw.URL, proxyHost, proxyPath) {
 		return true
 	}
 	// Symmetric guard: when the bash branch is about to fire, also
@@ -2320,7 +2320,7 @@ func scriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
 	// proxy-shaped cmd would otherwise pass the bash branch's URL
 	// gate even though a harness preferring the structured `url`
 	// over the `cmd` would dispatch credentials to the attacker.
-	if raw.URL != "" && !urlHostMatches(raw.URL, proxyHost) {
+	if raw.URL != "" && !urlTargetsResolver(raw.URL, proxyHost, proxyPath) {
 		return false
 	}
 	// Bash/exec shape: a curl invocation that ships the script-
@@ -2345,7 +2345,7 @@ func scriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
 		return false
 	}
 	for _, u := range urls {
-		if !urlHostMatches(u, proxyHost) {
+		if !urlTargetsResolver(u, proxyHost, proxyPath) {
 			// Any non-proxy URL on the same curl invocation is
 			// disqualifying — curl runs them all, so even one
 			// off-proxy target would exfiltrate the credentials.
@@ -2534,14 +2534,17 @@ func parseCurlArgs(cmd string) (urls []string, headers []string, ok bool) {
 	return urls, headers, true
 }
 
-// resolverPassthroughHost returns the host:port we want passthrough
-// curls to target. Empty when resolverBaseURL doesn't parse.
-func resolverPassthroughHost(baseURL string) string {
+// resolverPassthroughTarget returns the (host:port, path-prefix) pair
+// we require passthrough curls to target. Empty host disables
+// passthrough — the caller should treat that as "no match." The path
+// prefix has any trailing slash stripped so the urlTargetsResolver
+// caller can apply its own "/"-or-exact-equality boundary rule.
+func resolverPassthroughTarget(baseURL string) (host, pathPrefix string) {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return u.Host
+	return u.Host, strings.TrimRight(u.Path, "/")
 }
 
 // headerHasScriptSessionToken reports whether the JSON-decoded headers
@@ -2562,9 +2565,20 @@ func headerHasScriptSessionToken(headers map[string]json.RawMessage) bool {
 	return false
 }
 
-// urlHostMatches reports whether the URL's host (host:port) equals
-// the proxy host. Empty / unparseable URLs are not matches.
-func urlHostMatches(rawURL, proxyHost string) bool {
+// urlTargetsResolver reports whether the URL points at our resolver:
+// host:port matches AND the path falls under the resolver mount
+// (e.g. "/api/proxy"). Path-prefix matching matters because a
+// host-only check would let the passthrough fire for
+// http://proxy-host/admin/whatever — same host, but the agent's curl
+// would skip the inspector while routing somewhere that isn't the
+// resolver at all. Empty / unparseable URLs are not matches.
+//
+// The boundary rule is "exact prefix or prefix + '/'", so
+// "/api/proxy/foo" matches but "/api/proxyfoo" does NOT. An empty
+// pathPrefix degenerates to "any path on the host", which is the
+// correct behavior when the configured resolver base has no path
+// component.
+func urlTargetsResolver(rawURL, proxyHost, pathPrefix string) bool {
 	if rawURL == "" || proxyHost == "" {
 		return false
 	}
@@ -2572,7 +2586,17 @@ func urlHostMatches(rawURL, proxyHost string) bool {
 	if err != nil {
 		return false
 	}
-	return strings.EqualFold(u.Host, proxyHost)
+	if !strings.EqualFold(u.Host, proxyHost) {
+		return false
+	}
+	if pathPrefix == "" {
+		return true
+	}
+	p := u.Path
+	if p == pathPrefix {
+		return true
+	}
+	return strings.HasPrefix(p, pathPrefix+"/")
 }
 
 // hasScriptSessionToken reports whether v is a script-session caller-

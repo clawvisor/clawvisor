@@ -211,6 +211,36 @@ func TestScriptSessionToolUse_RecognizesCallerHeader(t *testing.T) {
 			want:  false,
 		},
 
+		// --- Same-host, off-resolver path bypass (cubic round-12 P1) ---
+		// urlHostMatches used to accept ANY path on the proxy host.
+		// urlTargetsResolver now requires the path to fall under the
+		// resolver mount, so /api/control/*, /admin/*, /, etc. on the
+		// SAME host:port no longer get the inspector-skip pass.
+		{
+			name:  "curl at proxy host but /api/control/* path must NOT bypass inspector",
+			input: `{"command":"curl http://localhost:25297/api/control/tasks -H 'X-Clawvisor-Caller: Bearer cv-script-abc' -H 'Authorization: Bearer autovault_y'"}`,
+			base:  proxyBase,
+			want:  false,
+		},
+		{
+			name:  "structured tool at proxy host but admin path must NOT bypass inspector",
+			input: `{"url":"http://localhost:25297/admin/foo","headers":{"X-Clawvisor-Caller":"Bearer cv-script-abc"}}`,
+			base:  proxyBase,
+			want:  false,
+		},
+		{
+			name:  "path prefix boundary: /api/proxyfoo must NOT match /api/proxy",
+			input: `{"command":"curl http://localhost:25297/api/proxyfoo -H 'X-Clawvisor-Caller: Bearer cv-script-abc' -H 'Authorization: Bearer autovault_y'"}`,
+			base:  proxyBase,
+			want:  false,
+		},
+		{
+			name:  "exact /api/proxy with no trailing path still matches the mount",
+			input: `{"command":"curl http://localhost:25297/api/proxy -H 'X-Clawvisor-Caller: Bearer cv-script-abc' -H 'Authorization: Bearer autovault_y'"}`,
+			base:  proxyBase,
+			want:  true,
+		},
+
 		// --- Edge cases ---
 		{
 			name:  "empty input",
