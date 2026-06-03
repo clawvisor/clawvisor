@@ -1,6 +1,7 @@
 package llmproxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -316,6 +317,63 @@ func TestApplyScopeDriftDecisions_OneOffCreatesUserApprovalHold(t *testing.T) {
 		t.Errorf("hold's ScopeDriftID doesn't match: %q", got[0].ScopeDriftID)
 	} else if got[0].Provider != conversation.ProviderAnthropic {
 		t.Errorf("hold has wrong provider: %q (the reply rewriter peeks by provider, so a mismatch here means the user's yes/no reply can't find the hold)", got[0].Provider)
+	}
+}
+
+// TestApplyScopeDriftDecisions_AgentNoteSpecialCharsKeepBodyValidJSON
+// proves the substitution is JSON-escaped when spliced back into the
+// response body. Without escaping, an agent note containing `"` or
+// `\` would close the surrounding JSON string and corrupt the body
+// the client deserializes — leaving the user with a parse error
+// instead of the proxy's prompt.
+func TestApplyScopeDriftDecisions_AgentNoteSpecialCharsKeepBodyValidJSON(t *testing.T) {
+	reg := NewMemoryScopeDriftRegistry(0)
+	pending := NewMemoryPendingApprovalCache(0)
+	ctx := context.Background()
+	drift, _ := reg.Register(ctx, ScopeDrift{
+		AgentID: "agent-1",
+		UserID:  "user-1",
+		Service: "github",
+		Action:  "create_issue",
+		Source:  ScopeDriftSourceIntentVerification,
+	})
+	cfg := PostprocessConfig{
+		AgentID:          "agent-1",
+		AgentUserID:      "user-1",
+		ScopeDrifts:      reg,
+		PendingApprovals: pending,
+	}
+	// Agent note carries every char class likely to bite a naive
+	// splicer: bare quotes, backslash, newline, tab. Encode the JSON
+	// string field manually with an encoder that leaves `<` / `>`
+	// alone — Anthropic's API does not HTML-escape, and using the
+	// stdlib json.Marshal here would produce `<` for `<`, hiding
+	// the markup from the parser pattern (which is a separate
+	// concern from the splice safety this test guards).
+	note := `quote " then \backslash and ` + "\n" + ` newline ` + "\t" + ` tab`
+	innerText := `<clawvisor:decision drift="` + drift.ID + `" option="one-off">` + note + `</clawvisor:decision>`
+	var jsonBuf bytes.Buffer
+	enc := json.NewEncoder(&jsonBuf)
+	enc.SetEscapeHTML(false)
+	if mErr := enc.Encode(innerText); mErr != nil {
+		t.Fatalf("encode inner text: %v", mErr)
+	}
+	// json.Encoder.Encode appends a newline; trim it so the bytes are
+	// suitable for substitution into a larger document.
+	encoded := bytes.TrimRight(jsonBuf.Bytes(), "\n")
+	body := []byte(`{"content":[{"type":"text","text":` + string(encoded) + `}]}`)
+	out, _ := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
+	var probe struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(out, &probe); err != nil {
+		t.Fatalf("substituted body is not valid JSON: %v\nbody:\n%s", err, out)
+	}
+	if len(probe.Content) == 0 || !strings.Contains(probe.Content[0].Text, "the agent requested a one-off") {
+		t.Errorf("substitution header missing from decoded text: %#v", probe)
 	}
 }
 

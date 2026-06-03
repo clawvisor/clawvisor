@@ -566,6 +566,18 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 	}
 	flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
 
+	// Restore the real PendingApprovals before the drift resolver
+	// runs. The hold-capturing wrapper was specifically for the
+	// rewriter's evaluator pass — any new Hold made afterwards (e.g.
+	// option (c) creating a user-visible one-off prompt) must land
+	// directly in the real cache so the user's next yes/no reply can
+	// resolve it. Without this, the drift resolver's Hold would
+	// silently dead-letter into holdSink and the user would type yes
+	// at a prompt that has nothing to resolve.
+	if originalPendingApprovals != nil {
+		cfg.PendingApprovals = originalPendingApprovals
+	}
+
 	// Scope-drift decisions (options c/d) ride on a <clawvisor:decision>
 	// markup the model emits in its assistant text after seeing the
 	// menu. We resolve them here, after the existing tool_use rewrites
@@ -854,6 +866,28 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 				}
 			}
 			if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil || sensitiveShellPath {
+				// Pre-clear: a previous drift on this exact tool_use
+				// (matched by agent + conversation + tool input hash)
+				// that was resolved positively (option a/b/c approved
+				// or d re-verified) holds a one-shot pre-clear. Honour
+				// it here so the agent's retry passes through unchanged
+				// — without this, trigger-miss tools (Bash, Edit, etc.)
+				// re-run the decision evaluator and re-reject, minting
+				// a fresh drift_id every retry and trapping the agent
+				// in an unresolvable loop. Host/Method/Path are empty
+				// for trigger-miss tools; the input hash carries the
+				// uniqueness.
+				if cfg.ScopeDrifts != nil {
+					fp := scopeDriftFingerprint(cfg.AgentID, cfg.ConversationID, "", "", v.Host, v.Method, v.Path, tu.Input)
+					if driftID, ok := cfg.ScopeDrifts.LookupPreClear(req.Context(), cfg.AgentID, fp); ok {
+						if drift, dErr := cfg.ScopeDrifts.Get(req.Context(), driftID); dErr == nil && drift.TaskID != "" {
+							matchedTaskID = drift.TaskID
+						}
+						audit("allow", "scope_drift_pre_cleared", driftID)
+						trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "scope_drift_pre_cleared", "drift_id", driftID)
+						return conversation.ToolUseVerdict{Allowed: true}
+					}
+				}
 				decisionInput := runtimedecision.AuthorizationInput{
 					ToolUse:                tu,
 					UserID:                 cfg.AgentUserID,
@@ -884,6 +918,24 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 					audit("allow", string(dec.Source), dec.Reason)
 					return conversation.ToolUseVerdict{Allowed: true}
 				case runtimedecision.VerdictDeny:
+					// Same intent as the credentialed-path VerdictDeny
+					// handler below: try the scope-drift menu before
+					// the flat error so the agent gets the c/d
+					// recovery path on an intent-refusal deny.
+					if verdict, driftID, fired := scopeDriftVerdictFromDecision(req, cfg, tu, v, ResolvedAction{}, dec); fired {
+						auditReason := dec.Reason
+						if driftID != "" {
+							auditReason += " [drift_id=" + driftID + "]"
+							trace(TraceEventScopeDriftRegistered,
+								"path", "trigger_miss_deny",
+								"drift_id", driftID,
+								"source", string(dec.Source),
+								"reason", dec.Reason,
+							)
+						}
+						audit("block", string(dec.Source), auditReason)
+						return verdict
+					}
 					audit("block", string(dec.Source), dec.Reason)
 					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: " + dec.Reason}
 				case runtimedecision.VerdictNeedsApproval:
@@ -1085,6 +1137,30 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 				// Continue to credential rewrite below.
 				decisionHandled = true
 			case runtimedecision.VerdictDeny:
+				// Scope-drift menu first: an intent-refusal verdict
+				// (or a task-scope deny) is exactly the case the menu
+				// was built for — fire it before falling back to the
+				// flat error so the agent has the c/d recovery path.
+				// The menu source check inside
+				// scopeDriftVerdictFromDecision filters out non-drift
+				// sources (rule_review, etc.) so hard-fail denies still
+				// surface as a clean block.
+				if verdict, driftID, fired := scopeDriftVerdictFromDecision(req, cfg, tu, v, resolved, dec); fired {
+					auditReason := dec.Reason
+					if driftID != "" {
+						auditReason += " [drift_id=" + driftID + "]"
+						trace(TraceEventScopeDriftRegistered,
+							"path", "credentialed_deny",
+							"drift_id", driftID,
+							"source", string(dec.Source),
+							"service", resolved.ServiceID,
+							"action", resolved.ActionID,
+							"reason", dec.Reason,
+						)
+					}
+					audit("block", string(dec.Source), auditReason)
+					return verdict
+				}
 				audit("block", string(dec.Source), dec.Reason)
 				return conversation.ToolUseVerdict{
 					Allowed: false,

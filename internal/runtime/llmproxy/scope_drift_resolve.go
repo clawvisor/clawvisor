@@ -2,6 +2,7 @@ package llmproxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -205,9 +206,35 @@ func applyScopeDriftDecisions(ctx context.Context, cfg PostprocessConfig, provid
 	for i := len(decisions) - 1; i >= 0; i-- {
 		d := decisions[i]
 		status := resolveScopeDriftDecision(ctx, cfg, provider, d)
-		body = spliceBytes(body, d.Start, d.End, []byte(status))
+		// The markup byte range we replace sits INSIDE a JSON string
+		// field (the assistant text content of the response body). Raw
+		// status bytes containing `"`, `\`, or control characters
+		// would break that enclosing string and corrupt the whole
+		// response. The option-(c) one-off prompt embeds the agent's
+		// note verbatim and can carry both. JSON-escape the substitute
+		// before splicing so the body stays well-formed.
+		body = spliceBytes(body, d.Start, d.End, jsonEscapeForStringBody(status))
 	}
 	return body, true
+}
+
+// jsonEscapeForStringBody returns the JSON-string-encoded form of s
+// WITHOUT the surrounding double quotes — suitable for splicing
+// inside an existing JSON string field. json.Marshal handles all the
+// edge cases (control chars, surrogate pairs, the standard set of
+// special chars), so we lean on the stdlib rather than re-implementing
+// the escape table. On Marshal error (shouldn't happen for a string
+// input), fall back to a conservative strip via sanitizeStatusValue
+// so we still produce valid-JSON bytes.
+func jsonEscapeForStringBody(s string) []byte {
+	encoded, err := json.Marshal(s)
+	if err != nil {
+		return []byte(sanitizeStatusValue(s))
+	}
+	if len(encoded) < 2 {
+		return encoded
+	}
+	return encoded[1 : len(encoded)-1]
 }
 
 // resolveScopeDriftDecision claims and acts on one decision, returning
@@ -259,11 +286,26 @@ func resolveJustify(ctx context.Context, cfg PostprocessConfig, drift ScopeDrift
 		return scopeDriftStatus("Clawvisor: could not claim drift " + drift.ID + ": " + sanitizeStatusValue(err.Error()))
 	}
 
+	// Re-verify with the ORIGINAL tool_use's parameters. Without
+	// these, the second pass sees only service/action + the agent's
+	// justification, so a verifier that initially rejected based on
+	// the actual request shape (target repo, path, body, etc.) would
+	// be re-asked a strictly weaker question and could pre-clear an
+	// exact call whose arguments were never rechecked. Parse-failure
+	// is non-fatal: we still want the verifier to weigh the
+	// justification (rejecting if the link is hollow), just with the
+	// params field empty — same as the initial pass when the tool's
+	// input parser couldn't extract structured params.
+	var params map[string]any
+	if len(claimed.ToolUse.Input) > 0 {
+		_ = json.Unmarshal(claimed.ToolUse.Input, &params)
+	}
 	verdict, verifyErr := cfg.IntentVerifier.Verify(ctx, IntentVerifyRequest{
 		TaskPurpose:        claimed.TaskPurpose,
 		ExpectedUse:        claimed.ExpectedUse,
 		Service:            claimed.Service,
 		Action:             claimed.Action,
+		Params:             params,
 		Reason:             "lite-proxy tool_use " + claimed.ToolUse.Name + " - second-pass verification via scope-drift justify",
 		TaskID:             claimed.TaskID,
 		AgentJustification: justification,
