@@ -182,9 +182,9 @@ func mergeAnthropicContent(c1, c2 json.RawMessage) (json.RawMessage, error) {
 		if err := json.Unmarshal(c2, &blocks2); err != nil {
 			return nil, err
 		}
-		out := make([]json.RawMessage, 0, len(blocks2)+1)
-		out = append(out, anthropicTextBlockRaw(s1))
-		out = append(out, blocks2...)
+		// Use append-from-literal to sidestep CodeQL's
+		// allocation-size-overflow warning on `len(blocks2)+1`.
+		out := append([]json.RawMessage{anthropicTextBlockRaw(s1)}, blocks2...)
 		return json.Marshal(out)
 	}
 

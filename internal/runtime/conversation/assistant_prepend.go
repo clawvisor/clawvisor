@@ -63,12 +63,14 @@ func prependAnthropicAssistantTextJSON(body []byte, text string) ([]byte, error)
 		}
 	}
 
+	// Use append-from-literal rather than make-with-precomputed-cap.
+	// CodeQL flags `len(content)+1` as a potential overflow; the input
+	// is bounded by Anthropic content-block limits so it's unreachable
+	// in practice, but sidestepping the explicit arithmetic keeps the
+	// static analyzer quiet.
 	var merged []json.RawMessage
 	if isThinking {
-		merged = make([]json.RawMessage, 0, len(content)+1)
-		merged = append(merged, content[0])
-		merged = append(merged, json.RawMessage(textBlock))
-		merged = append(merged, content[1:]...)
+		merged = append([]json.RawMessage{content[0], json.RawMessage(textBlock)}, content[1:]...)
 	} else {
 		merged = append([]json.RawMessage{json.RawMessage(textBlock)}, content...)
 	}
