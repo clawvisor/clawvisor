@@ -43,7 +43,7 @@ func stripAnthropicSecretDecisionHistory(body []byte) (SecretDecisionHistoryStri
 	if !ok {
 		return SecretDecisionHistoryStripResult{Body: body}, nil
 	}
-	out, modified := stripSecretDecisionMessagesRaw(messages, func(msg json.RawMessage) (string, string) {
+	out, modified := stripSecretDecisionMessages(messages, func(msg json.RawMessage) (string, string) {
 		role := extractMessageRole(msg)
 		return role, flattenAnthropicTaskReplyText(extractMessageContent(msg))
 	})
@@ -115,40 +115,8 @@ func stripOpenAISecretDecisionHistory(body []byte) (SecretDecisionHistoryStripRe
 	return SecretDecisionHistoryStripResult{Body: out, Modified: true}, nil
 }
 
-func stripSecretDecisionMessages(messages []map[string]json.RawMessage, text func(map[string]json.RawMessage) (string, string)) ([]map[string]json.RawMessage, bool) {
-	out := make([]map[string]json.RawMessage, 0, len(messages))
-	modified := false
-	skipDecisionIndex := -1
-	for i := 0; i < len(messages); i++ {
-		if i == skipDecisionIndex {
-			modified = true
-			continue
-		}
-		role, content := text(messages[i])
-		if role == "assistant" && strings.Contains(content, SecretDecisionIDMarker) {
-			modified = true
-			for j := i + 1; j < len(messages); j++ {
-				nextRole, nextContent := text(messages[j])
-				if nextRole != "user" {
-					continue
-				}
-				if ParseSecretDecisionReply(nextContent).Action != SecretDecisionNone {
-					skipDecisionIndex = j
-				}
-				break
-			}
-			continue
-		}
-		out = append(out, messages[i])
-	}
-	return out, modified
-}
-
-// stripSecretDecisionMessagesRaw is the byte-faithful analogue of
-// stripSecretDecisionMessages: messages are passed as raw bytes so
-// surviving entries pass through verbatim.
-func stripSecretDecisionMessagesRaw(messages []json.RawMessage, text func(json.RawMessage) (string, string)) ([]json.RawMessage, bool) {
-	out := make([]json.RawMessage, 0, len(messages))
+func stripSecretDecisionMessages[T any](messages []T, text func(T) (string, string)) ([]T, bool) {
+	out := make([]T, 0, len(messages))
 	modified := false
 	skipDecisionIndex := -1
 	for i := 0; i < len(messages); i++ {

@@ -121,7 +121,7 @@ func TestStripSecretDecisionHistoryPreservesThinkingBlockBytes(t *testing.T) {
 		t.Fatalf("StripSecretDecisionHistory: %v", err)
 	}
 	if !res.Modified {
-		t.Skip("strip path didn't fire — unrelated to byte fidelity")
+		t.Fatalf("expected strip path to fire — the test fixture is explicitly constructed to trigger it; a regression that no longer fires would silently bypass byte-fidelity assertions")
 	}
 	assertThinkingBlockPreserved(t, res.Body)
 }

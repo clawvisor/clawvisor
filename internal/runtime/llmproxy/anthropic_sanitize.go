@@ -16,13 +16,13 @@ import (
 // `unmarshal → map → marshal` round-trip alphabetizes keys and trips
 // "thinking blocks cannot be modified" 400s on subsequent requests.
 func SanitizeAnthropicRequest(body []byte) ([]byte, bool, error) {
-	if !looksLikeJSONObject(body) {
-		// Match the previous behavior: surface parse errors so the caller
-		// can return a 400.
-		var ignored map[string]json.RawMessage
-		if err := json.Unmarshal(body, &ignored); err != nil {
-			return nil, false, err
-		}
+	// Eagerly validate the body is parseable JSON. The previous
+	// implementation did the same via `json.Unmarshal(body, &raw)` at
+	// the top, and callers depend on this to surface a 400 for
+	// malformed bodies before they reach the upstream provider.
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return nil, false, err
 	}
 	out := body
 	changed := false
@@ -55,10 +55,8 @@ func SanitizeAnthropicRequest(body []byte) ([]byte, bool, error) {
 		msgsBytes := out[msgsStart:msgsEnd]
 		messages, ok := flattenJSONArray(msgsBytes)
 		if !ok {
-			// Preserve the previous behavior of surfacing a parse
-			// error so the caller can return a 400. `messages`
-			// present but not an array is malformed input we should
-			// not silently accept.
+			// `messages` present but not an array — malformed input.
+			// Surface the parse error so the caller can return a 400.
 			if err := json.Unmarshal(msgsBytes, &messages); err != nil {
 				return nil, false, err
 			}
@@ -229,12 +227,3 @@ func isEmptyTextBlock(block json.RawMessage) bool {
 	return strings.TrimSpace(text) == ""
 }
 
-func looksLikeJSONObject(data []byte) bool {
-	for _, b := range data {
-		if isJSONWS(b) {
-			continue
-		}
-		return b == '{'
-	}
-	return false
-}
