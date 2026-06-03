@@ -1824,6 +1824,13 @@ func newStopHoldingWriter(w io.Writer, provider conversation.Provider) *stopHold
 // "event: messa" gets that suffix held back, but ordinary text ending
 // in "hello world\n" forwards immediately because no marker starts
 // with "world\n".
+//
+// The returned (int, error) follows io.Writer semantics: n is how
+// many bytes from p were either forwarded to inner or absorbed into
+// our internal buffers (pending / held). When inner.Write fails
+// mid-call, n reports how many bytes from p we managed to consume
+// before the failure so the caller can resume cleanly. We never
+// return an n greater than len(p).
 func (w *stopHoldingWriter) Write(p []byte) (int, error) {
 	if w.holding {
 		w.held = append(w.held, p...)
@@ -1831,12 +1838,26 @@ func (w *stopHoldingWriter) Write(p []byte) (int, error) {
 	}
 	combined := append(w.pending, p...)
 	w.pending = nil
+	pendingLen := len(combined) - len(p) // bytes from prior pending (not from p)
 	if idx := w.terminalMarkerIndex(combined); idx >= 0 {
 		if idx > 0 {
 			if _, err := w.inner.Write(combined[:idx]); err != nil {
+				// inner.Write failed partway through forwarding
+				// the combined pre-marker bytes. The bytes from
+				// the OLD pending are gone — they were never
+				// p's responsibility. Report how many bytes from
+				// p we consumed before failure (0, since we
+				// haven't touched p's tail yet; everything we
+				// tried to write was pending+leading-p but we
+				// can't partial-credit p without knowing how far
+				// inner got).
 				return 0, err
 			}
 		}
+		// Everything from the marker onward becomes held. This
+		// fully consumes p — the post-marker bytes were either
+		// in p (most cases) or in pending (rare; marker started
+		// in the prior call's leftover).
 		w.held = append(w.held, combined[idx:]...)
 		w.holding = true
 		return len(p), nil
@@ -1847,8 +1868,17 @@ func (w *stopHoldingWriter) Write(p []byte) (int, error) {
 	holdLen := w.longestMarkerPrefixSuffix(combined)
 	safeLen := len(combined) - holdLen
 	if safeLen > 0 {
-		if _, err := w.inner.Write(combined[:safeLen]); err != nil {
-			return 0, err
+		n, err := w.inner.Write(combined[:safeLen])
+		if err != nil {
+			// inner.Write may have partially written. n counts
+			// bytes from combined that landed; map back to bytes
+			// from p — only those past the prior pending count
+			// as p-bytes consumed.
+			pBytesWritten := n - pendingLen
+			if pBytesWritten < 0 {
+				pBytesWritten = 0
+			}
+			return pBytesWritten, err
 		}
 	}
 	if holdLen > 0 {
@@ -2194,7 +2224,7 @@ func PostprocessStream(
 	w io.Writer,
 	contentType string,
 	cfg PostprocessConfig,
-) (PostprocessResult, error) {
+) (result PostprocessResult, err error) {
 	registry := cfg.ResponseRegistry
 	if registry == nil {
 		registry = conversation.DefaultResponseRegistry()
@@ -2308,10 +2338,30 @@ func PostprocessStream(
 		// replayBufferedHolds returns an error. Without the defer,
 		// a mid-stream error would leave the SSE stream truncated
 		// (no message_stop / [DONE]) and the harness CLI hangs
-		// waiting for it. Flush errors that arise after our own
-		// error are swallowed — the caller already has a better
-		// error to surface.
-		defer func() { _ = stopHolder.Flush() }()
+		// waiting for it.
+		//
+		// A Flush error means the stream-finalization write itself
+		// failed (the inner writer's Write returned an error while
+		// emitting the buffered marker). Propagate it via the
+		// named return when the function would otherwise have
+		// returned success — silently dropping it would let
+		// callers treat a truncated stream as a clean completion.
+		// If the function is ALREADY returning an error, keep
+		// that one (it's the original cause) and just record the
+		// flush failure in the audit emitter when available.
+		defer func() {
+			fe := stopHolder.Flush()
+			if fe == nil {
+				return
+			}
+			if err == nil {
+				err = fe
+				return
+			}
+			if cfg.Audit != nil && auditAgent != nil {
+				cfg.Audit.LogEndpointCall(req.Context(), auditAgent, cfg.RequestID, "lite_proxy", "stream_flush_error", 0, "block", "stream_flush_after_error", fe.Error(), 0, nil, EndpointCallExtras{})
+			}
+		}()
 		if cfg.ScopeDrifts != nil && streamResult.AssistantTurn != nil {
 			if driftText := streamingDriftSubstitution(req.Context(), cfg, provider, streamResult.AssistantTurn); driftText != "" {
 				idx := streamingBlockedPromptIndex(provider, streamResult, nil)

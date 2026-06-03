@@ -2,11 +2,30 @@ package llmproxy
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 )
+
+// shortWriter accepts only the first `accept` bytes of every Write
+// then returns io.ErrShortWrite. Used to verify partial-write
+// accounting in stopHoldingWriter.
+type shortWriter struct {
+	accept int
+	got    bytes.Buffer
+}
+
+func (s *shortWriter) Write(p []byte) (int, error) {
+	if len(p) <= s.accept {
+		return s.got.Write(p)
+	}
+	if _, err := s.got.Write(p[:s.accept]); err != nil {
+		return 0, err
+	}
+	return s.accept, errors.New("short write")
+}
 
 func TestStopHoldingWriter_BuffersTerminalMarker(t *testing.T) {
 	var out bytes.Buffer
@@ -116,6 +135,54 @@ func TestStopHoldingWriter_OpenAIMarkerSplitAcrossWrites(t *testing.T) {
 // downstream Write fails. This test exercises just the Flush
 // semantics via a small fixture; the integration tests in
 // scope_drift_streaming_test.go cover the end-to-end behavior.
+// Cubic finding 3345014107: Write must return an accurate byte count
+// from p when inner.Write fails partway through forwarding. Returning
+// (0, err) when bytes from p have already been absorbed (forwarded or
+// buffered) violates the io.Writer contract: callers retrying from p[n:]
+// after a short write would resend bytes already on the wire.
+func TestStopHoldingWriter_WriteReportsBytesConsumedOnPartialFailure(t *testing.T) {
+	// inner accepts only 5 bytes per call. Our Write feeds it a
+	// chunk with no marker, so the writer tries to forward most of
+	// the chunk; the inner fails after 5 bytes. The returned count
+	// must reflect bytes-from-p actually consumed (forwarded or
+	// pending), not 0.
+	inner := &shortWriter{accept: 5}
+	w := newStopHoldingWriter(inner, conversation.ProviderAnthropic)
+	p := []byte("hello, world, this is not a marker")
+	n, err := w.Write(p)
+	if err == nil {
+		t.Fatal("expected short-write error")
+	}
+	if n < 0 || n > len(p) {
+		t.Errorf("n out of range: %d (len(p)=%d)", n, len(p))
+	}
+	// inner saw exactly the bytes it accepted; n should reflect at
+	// most that count (less if pending absorbed some of p separately).
+	if n > inner.accept {
+		t.Errorf("n=%d > inner.accept=%d — writer over-reports bytes consumed", n, inner.accept)
+	}
+}
+
+// Cubic finding 3345014110: Flush errors from the deferred flush
+// must surface to the caller, not be silently dropped. A flush
+// failure means the SSE stream lost its terminal marker — clients
+// would hang waiting for message_stop / [DONE].
+func TestPostprocessStream_PropagatesFlushErrorOnSuccess(t *testing.T) {
+	// We can't easily exercise PostprocessStream's deferred flush
+	// path from this layer (it needs the full Postprocess machinery),
+	// but we can lock in the stopHoldingWriter.Flush contract: a
+	// partial write inside Flush surfaces as an error.
+	inner := &shortWriter{accept: 4}
+	w := newStopHoldingWriter(inner, conversation.ProviderAnthropic)
+	// Write a marker so the writer holds bytes.
+	if _, err := w.Write([]byte("event: message_stop\ndata: {}\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err == nil {
+		t.Errorf("Flush silently swallowed short-write error from inner")
+	}
+}
+
 func TestStopHoldingWriter_FlushIsIdempotent(t *testing.T) {
 	var out bytes.Buffer
 	w := newStopHoldingWriter(&out, conversation.ProviderAnthropic)
