@@ -234,3 +234,60 @@ func TestMintScriptSession_PersistsSessionForResolver(t *testing.T) {
 		t.Errorf("session expired immediately: %v", got.ExpiresAt)
 	}
 }
+
+// TestTaskApprovedToolNames covers the helper that surfaces the
+// task's approved tool list in the mint response — the nudge that
+// keeps the agent from emitting the credentialed curl from a tool
+// the task didn't authorize (Write/Edit), which would otherwise fail
+// the inspector's boundary check.
+func TestTaskApprovedToolNames(t *testing.T) {
+	cases := []struct {
+		name string
+		task *store.Task
+		want []string
+	}{
+		{
+			name: "nil task → nil",
+			task: nil,
+			want: nil,
+		},
+		{
+			name: "empty ExpectedTools → nil",
+			task: &store.Task{},
+			want: nil,
+		},
+		{
+			name: "single tool",
+			task: &store.Task{ExpectedTools: json.RawMessage(`[{"tool_name":"Bash","why":"curl"}]`)},
+			want: []string{"Bash"},
+		},
+		{
+			name: "multiple tools deduplicated and ordered by first occurrence",
+			task: &store.Task{ExpectedTools: json.RawMessage(`[{"tool_name":"Bash","why":"x"},{"tool_name":"Write","why":"y"},{"tool_name":"Bash","why":"z"}]`)},
+			want: []string{"Bash", "Write"},
+		},
+		{
+			name: "malformed JSON → nil (no panic, no leakage)",
+			task: &store.Task{ExpectedTools: json.RawMessage(`{not json`)},
+			want: nil,
+		},
+		{
+			name: "entries with empty tool_name are skipped",
+			task: &store.Task{ExpectedTools: json.RawMessage(`[{"tool_name":"","why":"x"},{"tool_name":"Bash"}]`)},
+			want: []string{"Bash"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := taskApprovedToolNames(tc.task)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("idx %d: got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}

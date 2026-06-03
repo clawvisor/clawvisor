@@ -318,7 +318,7 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 	}
 
 	resolverBase := strings.TrimRight(h.BaseURL, "/") + "/api/proxy"
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"script_session_id":  sess.ID,
 		"base_url":           resolverBase,
 		"target_host":        body.TargetHost,
@@ -333,7 +333,19 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 		"max_request_bytes":  scriptSessionMaxRequestBytes,
 		"max_total_bytes":    scriptSessionMaxTotalBytes,
 		"next_step":          "Use the caller_token in X-Clawvisor-Caller and the placeholder in Authorization on each request to base_url + path. See GET /api/control/autovault/script for the full request shape.",
-	})
+	}
+	// Surface the task's approved tool surface so the agent stays
+	// within it when executing the fan-out. Without this hint, agents
+	// sometimes write the curl loop to a file via Write/Edit and try
+	// to execute it from there — the inspector's boundary check
+	// rejects that because the credentialed call is being emitted
+	// from a tool the task didn't authorize. Echoing the names back
+	// after mint nudges the agent to run the curls inline via the
+	// same tool the task already covers (typically Bash).
+	if names := taskApprovedToolNames(task); len(names) > 0 {
+		resp["reminder_approved_tools"] = "Approved tools for this task: " + strings.Join(names, ", ") + ". Execute the credentialed curl(s) directly via one of these — emitting them from a different tool surface will fail the credential boundary check."
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // AutovaultScriptDocs handles GET /api/control/autovault/script. Returns
@@ -400,6 +412,39 @@ func (h *LLMControlHandler) AutovaultScriptDocs(w http.ResponseWriter, r *http.R
 			"SCRIPT_SESSION_NOT_FOUND":      "Token unknown or revoked. Mint a fresh session.",
 		},
 	})
+}
+
+// taskApprovedToolNames returns the deduplicated tool_name list from
+// task.ExpectedTools. Surfaced in the mint response so the agent can
+// see "the task that approved this scope expects you to run via X" —
+// useful when the inspector boundary check rejects a credentialed
+// call emitted from a different tool surface (e.g. Write) than the
+// task declared. Best-effort parse: malformed JSON or missing field
+// returns nil, callers decide whether to omit the field.
+func taskApprovedToolNames(task *store.Task) []string {
+	if task == nil || len(task.ExpectedTools) == 0 {
+		return nil
+	}
+	var raw []struct {
+		ToolName string `json:"tool_name"`
+	}
+	if err := json.Unmarshal(task.ExpectedTools, &raw); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	seen := map[string]struct{}{}
+	for _, t := range raw {
+		name := strings.TrimSpace(t.ToolName)
+		if name == "" {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
 }
 
 // taskExpectedUse extracts a flat string describing the task's
