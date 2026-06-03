@@ -2456,7 +2456,16 @@ func parseCurlArgs(cmd string) (urls []string, headers []string, ok bool) {
 	for i := 1; i < len(call.Args); i++ {
 		v, wOk := staticShellWord(call.Args[i])
 		if !wOk {
-			continue
+			// Non-static arg — variable expansion ($VAR),
+			// command substitution ($(...) or backticks),
+			// parameter expansion (${...}), etc. We can't reason
+			// about what this expands to at runtime; if it
+			// expanded to e.g. `--proxy http://attacker` or
+			// another URL-redirecting curl arg, the passthrough
+			// would have admitted the call without seeing it.
+			// Fail closed: any unresolvable arg disqualifies the
+			// passthrough and the inspector takes over.
+			return nil, nil, false
 		}
 		// Long-flag `--flag=value` form.
 		if eq := strings.IndexByte(v, '='); eq > 0 && strings.HasPrefix(v, "--") {
@@ -2475,12 +2484,20 @@ func parseCurlArgs(cmd string) (urls []string, headers []string, ok bool) {
 		}
 		// Flag-then-value (-H "value" / --header "value" / etc.).
 		if _, takesValue := valueTakingFlags[v]; takesValue {
-			if i+1 < len(call.Args) {
-				if next, nextOk := staticShellWord(call.Args[i+1]); nextOk {
-					if v == "-H" || v == "--header" {
-						headers = append(headers, next)
-					}
-				}
+			if i+1 >= len(call.Args) {
+				// Trailing flag with no value is malformed; fail
+				// closed rather than admit an incomplete curl.
+				return nil, nil, false
+			}
+			next, nextOk := staticShellWord(call.Args[i+1])
+			if !nextOk {
+				// Non-static value (e.g. `-H "$HDR"`) — same
+				// reasoning as the outer non-static guard. Fail
+				// closed.
+				return nil, nil, false
+			}
+			if v == "-H" || v == "--header" {
+				headers = append(headers, next)
 			}
 			i++
 			continue
