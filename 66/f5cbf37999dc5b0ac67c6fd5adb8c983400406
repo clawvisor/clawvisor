@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/control.go
+  s_9d2636c1f87777::t_d5e4662a83bcc1 106
+internal/api/handlers/control_autovault_script.go
+  s_9d2636c1f87777::t_318b0484d3caff 380,382-392
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "66f5cbf37999dc5b0ac67c6fd5adb8c983400406",
+  "prompts": {},
+  "sessions": {
+    "s_9d2636c1f87777": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "faef0cc8-ea1a-4b2c-a659-bbe6a39635b1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
