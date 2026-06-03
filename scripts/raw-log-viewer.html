@@ -861,40 +861,57 @@
     }
 
     function mergeTranscriptTurns(before, after) {
-      const out = [];
-      let i = 0, j = 0;
-      while (i < before.length || j < after.length) {
-        if (i >= before.length) {
-          out.push(transcriptAddedTurn(after[j++]));
-          continue;
+      // LCS on full turn content (identity + text) to anchor exact matches.
+      // Items between anchors are paired positionally by identity so that a
+      // substituted-in-place turn renders as "modified" with a word diff,
+      // while pure drops/insertions render as deleted/added.
+      const n = before.length, m = after.length;
+      const fullKey = (t) => turnIdentity(t) + "\x1e" + (t.text || "");
+      const A = before.map(fullKey);
+      const B = after.map(fullKey);
+      const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+      for (let i = n - 1; i >= 0; i--) {
+        const row = dp[i];
+        const next = dp[i + 1];
+        for (let j = m - 1; j >= 0; j--) {
+          row[j] = A[i] === B[j] ? next[j + 1] + 1 : Math.max(next[j], row[j + 1]);
         }
-        if (j >= after.length) {
-          out.push(transcriptDeletedTurn(before[i++]));
-          continue;
-        }
-        const left = before[i];
-        const right = after[j];
-        if (turnIdentity(left) === turnIdentity(right)) {
-          out.push(transcriptMergedTurn(left, right));
-          i++;
-          j++;
-          continue;
-        }
-        if (j + 1 < after.length && turnIdentity(left) === turnIdentity(after[j + 1])) {
-          out.push(transcriptAddedTurn(right));
-          j++;
-          continue;
-        }
-        if (i + 1 < before.length && turnIdentity(before[i + 1]) === turnIdentity(right)) {
-          out.push(transcriptDeletedTurn(left));
-          i++;
-          continue;
-        }
-        out.push(transcriptDeletedTurn(left));
-        out.push(transcriptAddedTurn(right));
-        i++;
-        j++;
       }
+      const out = [];
+      let pendingDel = [];
+      let pendingAdd = [];
+      const flushPending = () => {
+        const paired = Math.min(pendingDel.length, pendingAdd.length);
+        for (let p = 0; p < paired; p++) {
+          const d = pendingDel[p], a = pendingAdd[p];
+          if (turnIdentity(d) === turnIdentity(a)) {
+            out.push(transcriptMergedTurn(d, a));
+          } else {
+            out.push(transcriptDeletedTurn(d));
+            out.push(transcriptAddedTurn(a));
+          }
+        }
+        for (let p = paired; p < pendingDel.length; p++) out.push(transcriptDeletedTurn(pendingDel[p]));
+        for (let p = paired; p < pendingAdd.length; p++) out.push(transcriptAddedTurn(pendingAdd[p]));
+        pendingDel = [];
+        pendingAdd = [];
+      };
+      let i = 0, j = 0;
+      while (i < n && j < m) {
+        if (A[i] === B[j]) {
+          flushPending();
+          out.push(transcriptMergedTurn(before[i], after[j]));
+          i++;
+          j++;
+        } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+          pendingDel.push(before[i++]);
+        } else {
+          pendingAdd.push(after[j++]);
+        }
+      }
+      while (i < n) pendingDel.push(before[i++]);
+      while (j < m) pendingAdd.push(after[j++]);
+      flushPending();
       return out;
     }
 
