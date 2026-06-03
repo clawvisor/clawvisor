@@ -192,13 +192,13 @@ func insideInlineCodeSpan(body []byte, offset int) bool {
 // degrades to a status message in the body rather than failing the
 // whole turn. Pre-clears for the original tool call are only inserted
 // on a successful resolution.
-func applyScopeDriftDecisions(ctx context.Context, cfg PostprocessConfig, provider conversation.Provider, body []byte) []byte {
+func applyScopeDriftDecisions(ctx context.Context, cfg PostprocessConfig, provider conversation.Provider, body []byte) ([]byte, bool) {
 	if cfg.ScopeDrifts == nil || len(body) == 0 {
-		return body
+		return body, false
 	}
 	decisions := parseScopeDriftDecisions(body)
 	if len(decisions) == 0 {
-		return body
+		return body, false
 	}
 	// Walk right-to-left so earlier substitutions don't invalidate
 	// later byte offsets.
@@ -207,7 +207,7 @@ func applyScopeDriftDecisions(ctx context.Context, cfg PostprocessConfig, provid
 		status := resolveScopeDriftDecision(ctx, cfg, provider, d)
 		body = spliceBytes(body, d.Start, d.End, []byte(status))
 	}
-	return body
+	return body, true
 }
 
 // resolveScopeDriftDecision claims and acts on one decision, returning

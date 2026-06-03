@@ -573,12 +573,12 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 	// Options (a)/(b) require no special handling — they're plain
 	// /control/tasks{,/expand} tool_uses already covered by the
 	// rewriter pass above.
-	finalBody := applyScopeDriftDecisions(req.Context(), cfg, rewriter.Name(), result.Body)
+	finalBody, driftRewrote := applyScopeDriftDecisions(req.Context(), cfg, rewriter.Name(), result.Body)
 
 	return PostprocessResult{
 		Body:        finalBody,
 		ContentType: contentType,
-		Rewritten:   result.Rewritten,
+		Rewritten:   result.Rewritten || driftRewrote,
 		Decisions:   result.Decisions,
 	}
 }

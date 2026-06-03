@@ -91,9 +91,33 @@ func RewriteScopeDriftOneOffApprovalReply(ctx context.Context, req ScopeDriftRep
 		return out, probeErr
 	}
 	if !canRewrite {
+		// The drift's pending hold is still alive (the inline-task
+		// pattern leaves it for a fixed retry), but the drift
+		// registry would otherwise sit at ChosenOption=one_off /
+		// Outcome=pending until TTL — masking a real failure as
+		// "still waiting for the user." Flip it to Denied so a
+		// status poll surfaces the dead-end, and so the agent's
+		// next turn (after the body-shape issue is fixed) starts
+		// from a fresh drift instead of finding ErrDriftAlreadyResolved
+		// on the original.
+		driftID := ""
+		if action.Hold != nil {
+			driftID = action.Hold.ScopeDriftID
+		}
+		if driftID != "" && req.ScopeDrifts != nil {
+			if denyErr := req.ScopeDrifts.SetOutcome(ctx, driftID, ScopeDriftOutcomeDenied); denyErr != nil {
+				logger := req.Logger
+				if logger == nil {
+					logger = slog.Default()
+				}
+				logger.WarnContext(ctx, "scope-drift body-rewrite-unsupported denied write failed; drift will TTL out",
+					"drift_id", driftID, "err", denyErr)
+			}
+		}
 		out.Decision = "deny"
 		out.Outcome = "scope_drift_body_rewrite_unsupported"
 		out.Reason = "could not rewrite user message in current request body shape"
+		out.DriftID = driftID
 		return out, nil
 	}
 

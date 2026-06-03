@@ -145,7 +145,7 @@ func TestApplyScopeDriftDecisions_JustifyAccepted_InsertsPreClear(t *testing.T) 
 
 	body := []byte(`{"text":"sure: <clawvisor:decision drift=\"` + drift.ID +
 		`\" option=\"justify\">the call extends the existing audit purpose by reading a related issue</clawvisor:decision>"}`)
-	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
+	out, _ := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 
 	// Markup must be substituted.
 	if strings.Contains(string(out), "<clawvisor:decision") {
@@ -191,7 +191,7 @@ func TestApplyScopeDriftDecisions_JustifyRejected_NoPreClearMarksFallback(t *tes
 	}
 
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="justify">it fits because</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
+	out, _ := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	if strings.Contains(string(out), "<clawvisor:decision") {
 		t.Errorf("markup not substituted:\n%s", out)
 	}
@@ -224,7 +224,7 @@ func TestApplyScopeDriftDecisions_JustifyOnTaskScopeDriftRefusesWithoutClaim(t *
 	}
 
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="justify">i swear</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
+	out, _ := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	if !strings.Contains(string(out), "only applies when the block source is intent_verification") {
 		t.Errorf("status message did not explain the source mismatch:\n%s", out)
 	}
@@ -253,7 +253,7 @@ func TestApplyScopeDriftDecisions_JustifyVerifierErrorMarksFallbackNoPreClear(t 
 	}
 
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="justify">argument</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
+	out, _ := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	if !strings.Contains(string(out), "verifier was unreachable") {
 		t.Errorf("status message did not surface verifier error:\n%s", out)
 	}
@@ -285,7 +285,7 @@ func TestApplyScopeDriftDecisions_OneOffCreatesUserApprovalHold(t *testing.T) {
 	}
 
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="one-off">quick diagnostic check, not repeated</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
+	out, _ := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	// The user-facing approval prompt is substituted into the body
 	// in place of the markup.
 	if !strings.Contains(string(out), "Clawvisor: the agent requested a one-off execution") {
@@ -332,7 +332,7 @@ func TestApplyScopeDriftDecisions_OneOffWithoutCacheDegradesGracefully(t *testin
 		// PendingApprovals deliberately nil
 	}
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="one-off">x</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
+	out, _ := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	if !strings.Contains(string(out), "pending-approval cache is not configured") {
 		t.Errorf("expected misconfiguration status, got:\n%s", out)
 	}
@@ -420,7 +420,7 @@ func TestApplyScopeDriftDecisions_CrossAgentDriftRefused(t *testing.T) {
 	}
 
 	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="justify">x</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
+	out, _ := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
 	if !strings.Contains(string(out), "minted for a different agent") {
 		t.Errorf("status message did not flag cross-agent claim:\n%s", out)
 	}
@@ -434,7 +434,7 @@ func TestApplyScopeDriftDecisions_NoMarkupReturnsUnchanged(t *testing.T) {
 	reg := NewMemoryScopeDriftRegistry(0)
 	cfg := PostprocessConfig{AgentID: "agent-1", ScopeDrifts: reg}
 	in := []byte(`{"content":[{"type":"text","text":"plain assistant text with no markup"}]}`)
-	out := applyScopeDriftDecisions(context.Background(), cfg, conversation.ProviderAnthropic, in)
+	out, _ := applyScopeDriftDecisions(context.Background(), cfg, conversation.ProviderAnthropic, in)
 	if string(out) != string(in) {
 		t.Errorf("body mutated unexpectedly:\nin : %s\nout: %s", in, out)
 	}
@@ -443,7 +443,7 @@ func TestApplyScopeDriftDecisions_NoMarkupReturnsUnchanged(t *testing.T) {
 func TestApplyScopeDriftDecisions_NoRegistryIsNoOp(t *testing.T) {
 	cfg := PostprocessConfig{AgentID: "agent-1"} // ScopeDrifts nil
 	in := []byte(`<clawvisor:decision drift="x" option="justify">y</clawvisor:decision>`)
-	out := applyScopeDriftDecisions(context.Background(), cfg, conversation.ProviderAnthropic, in)
+	out, _ := applyScopeDriftDecisions(context.Background(), cfg, conversation.ProviderAnthropic, in)
 	if string(out) != string(in) {
 		t.Errorf("nil registry should be a no-op; got mutation")
 	}
