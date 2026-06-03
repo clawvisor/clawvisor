@@ -153,46 +153,25 @@ func RewriteScopeDriftOneOffApprovalReply(ctx context.Context, req ScopeDriftRep
 		logger = slog.Default()
 	}
 
-	var replacement string
+	// Build the replacement and decide the would-be outcome BEFORE
+	// the final body rewrite. We defer the SetOutcome write until
+	// after ReplaceLatestUserText succeeds so the drift's terminal
+	// state reflects what actually landed on the wire — if the
+	// rewrite fails (a rare race between probe and final rewrite),
+	// the model would otherwise see a bare "yes" while the drift
+	// claimed "approved", and the agent's retry would consume a
+	// pre-clear that the user never actually saw approved.
+	var (
+		replacement   string
+		intendedOutcome ScopeDriftOutcome
+	)
 	if verb == "approve" {
-		// SetOutcome(Succeeded) inserts the one-shot pre-clear keyed
-		// by (agent, fingerprint). The agent's next attempt of the
-		// original blocked tool_use will consume it and pass scope+
-		// intent verification.
-		if err := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, ScopeDriftOutcomeSucceeded); err != nil {
-			// The hold is already consumed and we can't insert the
-			// pre-clear. Surface a denial so the model gets honest
-			// feedback rather than thinking the call is cleared
-			// when it isn't.
-			//
-			// Best-effort flip to Denied so the drift_id isn't left
-			// stranded at ChosenOption=one_off, Outcome=pending —
-			// without this, future status polls would report the
-			// drift as still in-flight even though the user has
-			// already replied, and the agent could be misled into
-			// thinking another approval is coming. If the Denied
-			// write also fails, the drift will TTL out (~60s) so
-			// the dead-end window is bounded.
-			logger.ErrorContext(ctx, "scope-drift one-off approval pre-clear write failed",
-				"drift_id", resolved.ScopeDriftID, "err", err)
-			if denyErr := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, ScopeDriftOutcomeDenied); denyErr != nil {
-				logger.WarnContext(ctx, "scope-drift one-off post-failure denied write also failed; drift will TTL out",
-					"drift_id", resolved.ScopeDriftID, "err", denyErr)
-			}
-			out.Decision = "deny"
-			out.Outcome = "scope_drift_pre_clear_failed"
-			out.Reason = err.Error()
-			replacement = "[Clawvisor scope-drift] Pre-clear write failed (" + sanitizeStatusValue(err.Error()) + "). The drift is closed; re-emit the original tool call to start over with a fresh drift_id."
-		} else {
-			out.Decision = "allow"
-			out.Outcome = "scope_drift_one_off_approved"
-			replacement = "[Clawvisor scope-drift] Your one-off approval landed for drift " + resolved.ScopeDriftID + ". Re-emit the original tool call unchanged — Clawvisor pre-clears it once on this drift_id."
-		}
+		intendedOutcome = ScopeDriftOutcomeSucceeded
+		out.Decision = "allow"
+		out.Outcome = "scope_drift_one_off_approved"
+		replacement = "[Clawvisor scope-drift] Your one-off approval landed for drift " + resolved.ScopeDriftID + ". Re-emit the original tool call unchanged — Clawvisor pre-clears it once on this drift_id."
 	} else {
-		if err := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, ScopeDriftOutcomeDenied); err != nil {
-			logger.WarnContext(ctx, "scope-drift one-off deny outcome write failed",
-				"drift_id", resolved.ScopeDriftID, "err", err)
-		}
+		intendedOutcome = ScopeDriftOutcomeDenied
 		out.Decision = "deny"
 		out.Outcome = "scope_drift_one_off_denied"
 		replacement = "[Clawvisor scope-drift] The one-off was denied. This drift_id is now closed. Do not retry under it — re-emit the original tool call only after you have a new plan (a fresh expand, a new task, or a different approach)."
@@ -200,10 +179,57 @@ func RewriteScopeDriftOneOffApprovalReply(ctx context.Context, req ScopeDriftRep
 
 	rewritten, ok, err := editor.ReplaceLatestUserText(verb, resolved.ID, replacement)
 	if err != nil {
+		// Final rewrite failed mid-flight. Hold is consumed; flip
+		// the drift to Denied so it isn't stranded at pending. The
+		// model will see the bare verb in the body — annoying but
+		// not stuck — and the agent's poll/retry shows the drift
+		// terminal.
+		if denyErr := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, ScopeDriftOutcomeDenied); denyErr != nil {
+			logger.WarnContext(ctx, "scope-drift outcome denied write failed after rewrite error; drift will TTL out",
+				"drift_id", resolved.ScopeDriftID, "err", denyErr)
+		}
 		return out, err
 	}
 	if !ok {
+		// Rewrite was unsupported by the body shape between probe
+		// and final call (rare; the probe just passed). Same
+		// reasoning as the error branch above — close the drift so
+		// it's not stranded.
+		if denyErr := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, ScopeDriftOutcomeDenied); denyErr != nil {
+			logger.WarnContext(ctx, "scope-drift outcome denied write failed after rewrite returned not-ok; drift will TTL out",
+				"drift_id", resolved.ScopeDriftID, "err", denyErr)
+		}
+		out.Decision = "deny"
+		out.Outcome = "scope_drift_body_rewrite_unsupported"
+		out.Reason = "body shape changed between probe and rewrite"
 		return out, nil
+	}
+
+	// Rewrite committed. NOW write the drift outcome — on approve,
+	// this is the SetOutcome(Succeeded) that inserts the one-shot
+	// pre-clear keyed by (agent, fingerprint) so the agent's next
+	// attempt of the original blocked tool_use passes scope+intent
+	// verification. On deny, this is the SetOutcome(Denied) that
+	// surfaces the terminal state to status pollers.
+	if err := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, intendedOutcome); err != nil {
+		// Body is already rewritten; the model will see the
+		// success/denial message but the registry write failed.
+		// On the succeed path this means the agent's retry will
+		// re-block at the same drift; on deny it just means a
+		// later poll reports pending until TTL. Either way, log
+		// loudly and best-effort-Deny so the drift can't be left
+		// claiming "succeeded" when the pre-clear never landed.
+		logger.ErrorContext(ctx, "scope-drift outcome write failed after body rewrite committed",
+			"drift_id", resolved.ScopeDriftID, "intended_outcome", intendedOutcome, "err", err)
+		if intendedOutcome == ScopeDriftOutcomeSucceeded {
+			if denyErr := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, ScopeDriftOutcomeDenied); denyErr != nil {
+				logger.WarnContext(ctx, "scope-drift post-failure denied write also failed; drift will TTL out",
+					"drift_id", resolved.ScopeDriftID, "err", denyErr)
+			}
+			out.Decision = "deny"
+			out.Outcome = "scope_drift_pre_clear_failed"
+			out.Reason = err.Error()
+		}
 	}
 	out.Body = rewritten
 	out.Rewritten = true
