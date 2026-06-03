@@ -1492,3 +1492,57 @@ func staticShellWordParts(parts []syntax.WordPart) (string, bool) {
 	}
 	return b.String(), true
 }
+
+// shellWordLiteralPrefix returns the longest static prefix of a word,
+// stopping at the first non-literal part (variable expansion, command
+// substitution, etc.). Returns the empty string when the word begins
+// with a non-literal. Unlike staticShellWord, this never fails — it
+// gives callers the static portion they CAN reason about and lets them
+// decide whether that's enough.
+//
+// Used by the script-session passthrough's URL/header detection so a
+// curl like `curl http://localhost:25297/api/proxy/users/${id}` yields
+// the literal "http://localhost:25297/api/proxy/users/" — enough to
+// confirm the call targets our resolver mount even though the path
+// suffix expands at runtime.
+func shellWordLiteralPrefix(word *syntax.Word) string {
+	if word == nil {
+		return ""
+	}
+	return shellWordPartsLiteralPrefix(word.Parts)
+}
+
+func shellWordPartsLiteralPrefix(parts []syntax.WordPart) string {
+	var b strings.Builder
+	for _, part := range parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			b.WriteString(p.Value)
+		case *syntax.SglQuoted:
+			b.WriteString(p.Value)
+		case *syntax.DblQuoted:
+			b.WriteString(shellWordPartsLiteralPrefix(p.Parts))
+			// DblQuoted with a non-literal mid-string part stops
+			// accumulation inside; we conservatively return what
+			// we have so far rather than walking past the boundary.
+			if !dblQuotedFullyLiteral(p.Parts) {
+				return b.String()
+			}
+		default:
+			return b.String()
+		}
+	}
+	return b.String()
+}
+
+func dblQuotedFullyLiteral(parts []syntax.WordPart) bool {
+	for _, part := range parts {
+		switch part.(type) {
+		case *syntax.Lit, *syntax.SglQuoted:
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}

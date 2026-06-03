@@ -2262,28 +2262,37 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// scriptSessionToolUse reports whether a tool_use input is a valid
-// script-session passthrough: an agent-constructed call that already
-// targets our resolver with a credential-shaped script-session caller
-// token. Returns true only when ALL three are present:
+// scriptSessionToolUse reports whether a tool_use input looks like a
+// legitimate script-session call: a curl (or structured tool_use) that
+// carries a cv-script-prefixed caller token AND targets our resolver
+// mount. When true the inspector is skipped — the resolver enforces
+// session scope on every actual request.
 //
-//  1. the input parses as JSON (structured or cmd-bearing shape),
-//  2. a value at the X-Clawvisor-Caller header position carries a
-//     ScriptSessionPrefix-prefixed token (bare or `Bearer …` form),
-//  3. the request URL points at our resolver (host + port match
-//     resolverBaseURL).
+// The threat model accepts that the AGENT could construct mischief
+// with their cv-script token (use --proxy attacker, pipe to a remote
+// sink, etc.). The mitigation for that lives at the mint-time intent
+// verifier, which evaluates the agent's stated `why` against the
+// task's purpose before issuing the token, and the resolver, which
+// enforces scope on every actual request. Parser-level checks on the
+// agent's curl shape (single-curl-only, no variable expansion, flag
+// allowlists) don't add real defense — the agent could use any of
+// python/node/perl/etc. to achieve the same effect, and the parser
+// only knows curl. The asymmetry was creating friction (rejecting
+// legitimate `while read id; do curl …/${id}; done` loops) without a
+// matching security benefit.
 //
-// The URL gate matters independently from the header pattern: a
-// model-emitted curl that ships the cv-script- header to an off-proxy
-// URL (e.g. an attacker host) would also pass (1) and (2), and skipping
-// the inspector on that shape would bypass the boundary check, the
-// task-scope evaluation, the egress filter, and the shell-injection
-// sanitization. Only the URL gate keeps the passthrough narrow enough
-// to be safe to opt out of inspector evaluation.
+// What this function still enforces:
+//   - a cv-script-prefixed token must appear at the X-Clawvisor-Caller
+//     header position (so we don't skip the inspector on a tool_use
+//     that merely mentions the prefix in a string literal), AND
+//   - at least one curl URL literal prefix must target our resolver
+//     mount (host:port + path-prefix, with traversal rejection). This
+//     is recognition, not enforcement: if the URL doesn't look like
+//     ours, we let the inspector run as usual; we're not claiming the
+//     call is safe.
 //
-// resolverBaseURL is the proxy's own /api/proxy mount (e.g.
-// "http://localhost:25297/api/proxy"). Empty resolverBaseURL disables
-// passthrough — there's no host to compare against.
+// resolverBaseURL is the proxy's /api/proxy mount (e.g.
+// "http://localhost:25297/api/proxy"). Empty disables passthrough.
 func scriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
 	if len(input) == 0 || resolverBaseURL == "" {
 		return false
@@ -2293,43 +2302,25 @@ func scriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
 		return false
 	}
 	var raw struct {
-		// Structured tool shape: top-level `url` + `headers` map.
 		Headers map[string]json.RawMessage `json:"headers,omitempty"`
 		URL     string                     `json:"url,omitempty"`
-		// Bash/exec variants.
-		Cmd     string `json:"cmd,omitempty"`
-		Command string `json:"command,omitempty"`
+		Cmd     string                     `json:"cmd,omitempty"`
+		Command string                     `json:"command,omitempty"`
 	}
 	if err := json.Unmarshal(input, &raw); err != nil {
 		return false
 	}
-	// Structured shape: agent put the caller token in a headers map
-	// AND the top-level URL points at our resolver host AND there's
-	// no shadow cmd that would also execute. The cmd-coexistence
-	// check matches the bash branch's "any non-proxy URL disqualifies"
-	// rule: a malformed tool_use that ships BOTH a proxy-shaped
-	// structured payload AND an off-proxy cmd would otherwise pass
-	// here while shell execution carries the credentials elsewhere.
-	cmdShadow := raw.Cmd != "" || raw.Command != ""
-	if !cmdShadow && headerHasScriptSessionToken(raw.Headers) && urlTargetsResolver(raw.URL, proxyHost, proxyPath) {
+	// Structured tool shape: top-level `url` + `headers` map.
+	if headerHasScriptSessionToken(raw.Headers) && urlTargetsResolver(raw.URL, proxyHost, proxyPath) {
 		return true
 	}
-	// Symmetric guard: when the bash branch is about to fire, also
-	// reject if a top-level `url` field exists and points at a
-	// non-proxy host. A tool_use that ships `url=attacker` + a
-	// proxy-shaped cmd would otherwise pass the bash branch's URL
-	// gate even though a harness preferring the structured `url`
-	// over the `cmd` would dispatch credentials to the attacker.
-	if raw.URL != "" && !urlTargetsResolver(raw.URL, proxyHost, proxyPath) {
-		return false
-	}
-	// Bash/exec shape: a curl invocation that ships the script-
-	// session header AND whose URL arguments all point at our
-	// resolver host. Parse the cmd with mvdan/sh so we can inspect
-	// real curl args (URLs, -H values) rather than substring/regex
-	// matching on the raw cmd string. The URL parse closes the
-	// query-string-smuggle bypass; the header parse handles
-	// `--header=value` and other shapes the prior regex missed.
+	// Bash/exec shape: walk the parsed cmd for any curl invocation
+	// with a cv-script caller header AND a URL whose literal prefix
+	// targets our resolver mount. Variable expansion after the
+	// literal prefix is fine — the resolver enforces scope on the
+	// actual expanded URL. Pipelines, multi-statement scripts,
+	// redirects, and additional shell wrappers are all allowed; the
+	// resolver is the perimeter.
 	cmd := raw.Cmd
 	if cmd == "" {
 		cmd = raw.Command
@@ -2337,22 +2328,19 @@ func scriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
 	if cmd == "" {
 		return false
 	}
-	urls, headers, ok := parseCurlArgs(cmd)
-	if !ok || len(urls) == 0 || len(headers) == 0 {
+	urls, headers := extractCurlIntent(cmd)
+	if len(urls) == 0 || len(headers) == 0 {
 		return false
 	}
 	if !headerValuesHaveScriptSessionToken(headers) {
 		return false
 	}
 	for _, u := range urls {
-		if !urlTargetsResolver(u, proxyHost, proxyPath) {
-			// Any non-proxy URL on the same curl invocation is
-			// disqualifying — curl runs them all, so even one
-			// off-proxy target would exfiltrate the credentials.
-			return false
+		if urlTargetsResolver(u, proxyHost, proxyPath) {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // headerValuesHaveScriptSessionToken reports whether any
@@ -2386,152 +2374,106 @@ func splitHeaderArg(raw string) (name, value string, ok bool) {
 	return strings.TrimSpace(raw[:i]), strings.TrimSpace(raw[i+1:]), true
 }
 
-// parseCurlArgs parses a bash command and returns the URL positional
-// arguments AND the values of every -H/--header flag (in both `-H X`,
-// `--header X`, and `--header=X` forms). Returns ok=false when cmd
-// isn't a simple curl statement (multi-statement scripts, pipes,
-// subshells, var expansion in args, etc.) — in which case the
-// passthrough must not fire and the inspector should run as usual.
+// extractCurlIntent walks a bash command's AST for ANY curl invocation
+// (across pipelines, multi-statement scripts, subshells, while-loops,
+// etc.) and returns the URL literal-prefixes + -H/--header values it
+// finds. "Literal prefix" means the leading static portion of each
+// arg — variable expansion, command substitution, etc. just cut the
+// prefix short rather than disqualify the arg.
 //
-// Header values cover all three flag shapes so the script-session
-// header check works regardless of how the model wrote the curl.
-// Cubic round-5 P3 noted that a regex anchored on `\s+` after
-// `--header` missed the `=value` form; switching to a real parser
-// covers all forms naturally.
-func parseCurlArgs(cmd string) (urls []string, headers []string, ok bool) {
+// Best-effort by design: this is recognition for the script-session
+// passthrough, not security enforcement. The mint-time intent verifier
+// and the resolver's per-request scope check are the actual gates;
+// this function only decides "does this tool_use look like a legit
+// script-session call to our resolver, so we can skip the inspector?"
+//
+// Parse errors return empty slices — caller treats that as "no match,"
+// and the inspector runs as usual.
+func extractCurlIntent(cmd string) (urls []string, headers []string) {
 	file, err := syntax.NewParser().Parse(strings.NewReader(cmd), "")
-	if err != nil || len(file.Stmts) != 1 {
-		return nil, nil, false
+	if err != nil {
+		return nil, nil
 	}
-	call, callOk := file.Stmts[0].Cmd.(*syntax.CallExpr)
-	if !callOk || len(call.Args) == 0 {
-		return nil, nil, false
-	}
-	head, wordOk := staticShellWord(call.Args[0])
-	if !wordOk || head != "curl" {
-		return nil, nil, false
-	}
-	// Curl flags that take a value as the next positional arg
-	// (when the value isn't already embedded as --flag=value).
-	valueTakingFlags := map[string]struct{}{
-		"-H": {}, "--header": {},
-		"-d": {}, "--data": {}, "--data-raw": {}, "--data-binary": {}, "--data-urlencode": {},
-		"-X": {}, "--request": {},
-		"-o": {}, "--output": {},
-		"-u": {}, "--user": {},
-		"-A": {}, "--user-agent": {},
-		"-e": {}, "--referer": {},
-		"-b": {}, "--cookie": {},
-		"-c": {}, "--cookie-jar": {},
-		"--cacert": {}, "--cert": {}, "--key": {},
-		"--connect-timeout": {}, "--max-time": {}, "-m": {},
-	}
-	// Flags that introduce URLs or read curl options from elsewhere
-	// (config file, redirect, proxy, multi-URL). ANY appearance
-	// disqualifies the passthrough — we can't reliably enumerate the
-	// URLs they may produce, and we don't want the script-session
-	// header + placeholder to leak to a URL outside the cmd we just
-	// parsed. Fail closed: return ok=false so the inspector runs.
-	//
-	// `--url`/`--url=…` smuggles a target URL that our positional-arg
-	// scan would miss. `-K`/`--config` reads option lines from a
-	// file. `-L`/`--location` follows 3xx redirects (could land off-
-	// proxy after the gate passed). `-x`/`--proxy` rewires the
-	// target. `--next` chains additional requests in one invocation.
-	// `--connect-to` overrides DNS. `--resolve` does too.
-	disqualifyingFlags := map[string]struct{}{
-		"--url":               {},
-		"-K":                  {}, "--config": {},
-		"-L":                  {}, "--location": {},
-		"--location-trusted":  {}, // like --location but forwards auth on redirect — strictly worse
-		"-x":                  {}, "--proxy": {},
-		"--socks4":            {}, "--socks5": {}, "--socks5-hostname": {},
-		"--preproxy":          {},
-		"--next":              {},
-		"--connect-to":        {},
-		"--resolve":           {},
-		"--dns-servers":       {}, // custom resolver
-		"-T":                  {}, "--upload-file": {}, // reads arbitrary file
-	}
-	for i := 1; i < len(call.Args); i++ {
-		v, wOk := staticShellWord(call.Args[i])
-		if !wOk {
-			// Non-static arg — variable expansion ($VAR),
-			// command substitution ($(...) or backticks),
-			// parameter expansion (${...}), etc. We can't reason
-			// about what this expands to at runtime; if it
-			// expanded to e.g. `--proxy http://attacker` or
-			// another URL-redirecting curl arg, the passthrough
-			// would have admitted the call without seeing it.
-			// Fail closed: any unresolvable arg disqualifies the
-			// passthrough and the inspector takes over.
-			return nil, nil, false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		call, ok := node.(*syntax.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
 		}
-		// Long-flag `--flag=value` form.
-		if eq := strings.IndexByte(v, '='); eq > 0 && strings.HasPrefix(v, "--") {
-			flag := v[:eq]
-			if _, dis := disqualifyingFlags[flag]; dis {
-				return nil, nil, false
-			}
-			if flag == "--header" {
-				headers = append(headers, v[eq+1:])
+		// Extract from any CallExpr's args — not just ones where
+		// the head is "curl". Real script patterns wrap curl in
+		// xargs / parallel / find -exec / shell functions, all of
+		// which put "curl" somewhere other than args[0]. As long
+		// as a URL targeting our resolver and a cv-script -H both
+		// appear in the same arg list, recognition is fine — the
+		// resolver still enforces on the actual request.
+		extractFromCurlArgs(call.Args, &urls, &headers)
+		return true
+	})
+	return urls, headers
+}
+
+// extractFromCurlArgs collects URL literal-prefixes and -H/--header
+// values from a single curl call's arg list. It handles space-
+// separated (`-H "X: y"`) and equals-attached (`--header=X: y`) forms
+// for headers, and treats any non-flag positional starting with
+// http:// or https:// as a URL.
+func extractFromCurlArgs(args []*syntax.Word, urls, headers *[]string) {
+	for i := 0; i < len(args); i++ {
+		prefix := shellWordLiteralPrefix(args[i])
+
+		// `--header=value` / `--url=value` form: literal prefix
+		// includes the flag name + `=` + the start of the value.
+		if strings.HasPrefix(prefix, "--header=") {
+			*headers = append(*headers, prefix[len("--header="):])
+			continue
+		}
+		if strings.HasPrefix(prefix, "--url=") {
+			candidate := prefix[len("--url="):]
+			if strings.HasPrefix(candidate, "http://") || strings.HasPrefix(candidate, "https://") {
+				*urls = append(*urls, candidate)
 			}
 			continue
 		}
-		// Disqualifying flag (space-separated form).
-		if _, dis := disqualifyingFlags[v]; dis {
-			return nil, nil, false
-		}
-		// Flag-then-value (-H "value" / --header "value" / etc.).
-		if _, takesValue := valueTakingFlags[v]; takesValue {
-			if i+1 >= len(call.Args) {
-				// Trailing flag with no value is malformed; fail
-				// closed rather than admit an incomplete curl.
-				return nil, nil, false
+
+		// Flag-then-value form: `-H value`, `--header value`,
+		// `--url value`. Only headers + url need value capture;
+		// other flags are ignored.
+		if prefix == "-H" || prefix == "--header" {
+			if i+1 < len(args) {
+				*headers = append(*headers, shellWordLiteralPrefix(args[i+1]))
+				i++
 			}
-			next, nextOk := staticShellWord(call.Args[i+1])
-			if !nextOk {
-				// Non-static value (e.g. `-H "$HDR"`) — same
-				// reasoning as the outer non-static guard. Fail
-				// closed.
-				return nil, nil, false
-			}
-			if v == "-H" || v == "--header" {
-				headers = append(headers, next)
-			}
-			i++
 			continue
 		}
-		// Combined short flags (e.g. -sS, -Lk) or short flag with
-		// attached value (-Hheader, -dvalue). curl accepts both
-		// shapes. Walk each char and reject if any matches a
-		// disqualifying short flag (-L, -K, -x, -T) — the agent
-		// can rewrite to long-form (--header=…) to avoid this.
-		// Not extracting -H header values from the combined form
-		// here: if the agent uses `-H X-Clawvisor-Caller: …`
-		// they must space-separate (the common shape) for the
-		// passthrough to detect the token. Combined-short with
-		// attached header just falls through to the inspector.
-		if strings.HasPrefix(v, "-") && !strings.HasPrefix(v, "--") && len(v) > 2 {
-			for _, c := range v[1:] {
-				if c == 'L' || c == 'K' || c == 'x' || c == 'T' {
-					return nil, nil, false
+		if prefix == "--url" {
+			if i+1 < len(args) {
+				candidate := shellWordLiteralPrefix(args[i+1])
+				if strings.HasPrefix(candidate, "http://") || strings.HasPrefix(candidate, "https://") {
+					*urls = append(*urls, candidate)
 				}
+				i++
 			}
 			continue
 		}
-		// Other flag (no value or unknown). Skip — many boolean
-		// curl flags (-s, -v, --fail, --compressed, etc.) don't
-		// affect URL routing.
-		if strings.HasPrefix(v, "-") {
+
+		// Any other flag — skip without value capture. We
+		// deliberately don't track flag-arity for non-header/url
+		// flags; over-capturing a "value" as a URL is fine because
+		// the http:// / https:// prefix check filters it out, and
+		// over-capturing a value as a separate arg is harmless
+		// since we don't enforce anything about extra args.
+		if strings.HasPrefix(prefix, "-") {
 			continue
 		}
-		// Positional arg — treat as a curl target if URL-shaped.
-		if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") {
-			urls = append(urls, v)
+
+		// Positional. If it parses as a URL, record the literal
+		// prefix — enough for urlTargetsResolver to confirm the
+		// resolver host + path-prefix even when a suffix like
+		// `${id}` expands at runtime.
+		if strings.HasPrefix(prefix, "http://") || strings.HasPrefix(prefix, "https://") {
+			*urls = append(*urls, prefix)
 		}
 	}
-	return urls, headers, true
 }
 
 // resolverPassthroughTarget returns the (host:port, path-prefix) pair

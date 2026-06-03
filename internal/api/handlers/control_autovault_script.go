@@ -265,11 +265,31 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 			// request. Without this it falls back to general action-
 			// scope rules and treats "autovault.*" as credential
 			// issuance, rejecting workflows the task already covers.
+			//
+			// IMPORTANT: this verifier is the MEANINGFUL gate for
+			// script-session safety. The runtime resolver enforces
+			// per-request scope mechanically, but the verifier is
+			// where we judge whether the agent's stated intent is
+			// consistent with the task — including whether the
+			// fetched data is likely to be exfiltrated to non-
+			// Clawvisor destinations. Once the verifier approves,
+			// the agent has wide latitude in HOW they execute the
+			// fan-out (bash loops, Python scripts, pipelines, local
+			// file writes), bounded only by the resolver's per-call
+			// scope check.
 			ServiceHints: "This request mints a Clawvisor script session — a short-lived, capped envelope that batches credentialed proxy calls under the bound credential. " +
 				"It is NOT a new credential grant: the placeholder, vault item, and task scope were approved by the user separately and Clawvisor's resolver enforces those bounds on every proxied request. " +
 				"Treat this verification as if the agent were about to issue up to `max_uses` direct `" + strings.Join(methods, "/") + "` calls to https://" + body.TargetHost + " under path prefix(es) " + strings.Join(prefixes, ", ") + " using the same placeholder. " +
-				"Allow when the requested host + methods + path prefixes are within what the task purpose would authorize as direct credentialed calls (e.g. a Gmail-triage task authorizing reads under /gmail/v1/users/me/messages). " +
-				"Reject (param_scope=violation) only when the requested scope is genuinely broader than the task — e.g. asking for write/send paths on a read-only triage task, hitting an unrelated host, requesting prefixes outside the task's stated workflow, or asking for max_uses/ttl far in excess of the described workflow.",
+				"\n\nALLOW when the requested host + methods + path prefixes are within what the task purpose would authorize as direct credentialed calls (e.g. a Gmail-triage task authorizing reads under /gmail/v1/users/me/messages, or a GitHub-issue-triage task authorizing reads under /repos/<owner>/<repo>/issues). " +
+				"\n\nREJECT (param_scope=violation) when ANY of these apply:\n" +
+				"  - The reason/`why` text mentions sending, uploading, forwarding, posting, transmitting, sharing, or otherwise routing the fetched data to a non-Clawvisor destination — third-party APIs, external storage, remote servers, other agents, email/messaging, webhooks, etc. The user did not approve data leaving their environment through this task.\n" +
+				"  - The requested scope (host + methods + path_prefixes) is genuinely outside what the task purpose authorizes — e.g. write/send paths on a read-only triage task, an unrelated host, prefixes the task's stated workflow doesn't cover.\n" +
+				"  - max_uses or ttl_seconds is far in excess of what the described workflow plausibly needs (e.g. 50 calls for a workflow that should touch ~5 items).\n" +
+				"\n\nDo NOT reject based on:\n" +
+				"  - Anticipated execution language or tool surface (bash, python, node, etc.). The resolver enforces scope regardless of language.\n" +
+				"  - Local file writes or local processing of fetched data (` > /tmp/out.jsonl`, `>> file.json`, `jq … | awk …`, in-process summarization). Writing to local files is NOT exfiltration — the data stays inside the user's environment under their existing trust boundary.\n" +
+				"  - High request volume within the configured caps when the workflow plausibly involves that fan-out (e.g. 25 calls to read 25 message IDs).\n" +
+				"  - Use of shell features like loops, pipelines, variable expansion. These are normal execution shapes, not security signals.",
 		}
 		verdict, vErr := h.IntentVerifier.Verify(r.Context(), req)
 		if vErr != nil {
