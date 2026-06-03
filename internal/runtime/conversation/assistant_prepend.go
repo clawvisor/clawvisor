@@ -934,7 +934,10 @@ func shiftAnthropicEventIndex(event, data string, delta int) ([]byte, bool) {
 		return nil, false
 	}
 	b := []byte(data)
-	out := make([]byte, 0, len(b)+8)
+	// Drop the explicit capacity hint — CodeQL flags `len()+N`
+	// arithmetic as potential overflow; bounded inputs make it
+	// unreachable in practice but the analyzer can't see that.
+	var out []byte
 	out = append(out, b[:valueStart]...)
 	out = strconv.AppendInt(out, int64(current+delta), 10)
 	out = append(out, b[valueEnd:]...)

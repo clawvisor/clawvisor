@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 )
 
 // Byte-faithful surgical edits on JSON byte slices.
@@ -120,11 +121,7 @@ func findJSONFieldSpan(data []byte, key string) (int, int, int, bool) {
 // single value, never via json.Marshal of an envelope.
 func SetJSONField(data []byte, key string, newValue []byte) ([]byte, error) {
 	if start, end, ok := findJSONFieldValue(data, key); ok {
-		out := make([]byte, 0, len(data)+len(newValue)-(end-start))
-		out = append(out, data[:start]...)
-		out = append(out, newValue...)
-		out = append(out, data[end:]...)
-		return out, nil
+		return slices.Concat(data[:start], newValue, data[end:]), nil
 	}
 	return appendJSONField(data, key, newValue)
 }
@@ -151,10 +148,7 @@ func DeleteJSONField(data []byte, key string) ([]byte, bool) {
 	} else if removeEnd < len(data) && data[removeEnd] == ',' {
 		removeEnd++
 	}
-	out := make([]byte, 0, len(data)-(removeEnd-removeStart))
-	out = append(out, data[:removeStart]...)
-	out = append(out, data[removeEnd:]...)
-	return out, true
+	return slices.Concat(data[:removeStart], data[removeEnd:]), true
 }
 
 // appendJSONField inserts `"key":<newValue>` just before the closing
@@ -196,18 +190,14 @@ func appendJSONField(data []byte, key string, newValue []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	insert := make([]byte, 0, len(encodedKey)+1+len(newValue)+1)
+	var insert []byte
 	if hasExistingFields {
 		insert = append(insert, ',')
 	}
 	insert = append(insert, encodedKey...)
 	insert = append(insert, ':')
 	insert = append(insert, newValue...)
-	out := make([]byte, 0, len(data)+len(insert))
-	out = append(out, data[:closeBracePos]...)
-	out = append(out, insert...)
-	out = append(out, data[closeBracePos:]...)
-	return out, nil
+	return slices.Concat(data[:closeBracePos], insert, data[closeBracePos:]), nil
 }
 
 func isJSONWS(b byte) bool {
