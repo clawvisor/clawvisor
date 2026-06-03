@@ -377,11 +377,19 @@ func (h *LLMControlHandler) AutovaultScriptDocs(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name":        "clawvisor-autovault-script",
 		"description": "Credentialed scripts call Clawvisor's proxy with a short-lived script session token, not the upstream API directly. Clawvisor mints the token after verifying the requested scope is within the active task; the resolver enforces scope on every request.",
+		"when_to_use": "≥ 3 credentialed requests to the SAME host using the SAME placeholder under the SAME task (e.g. listing then fetching N Gmail message metadatas, paging through GitHub issues). One-shot credentialed calls (single message fetch, one-off API hit) DO NOT need a session — use direct `curl` with the placeholder in Authorization and let Clawvisor rewrite it.",
 		"flow": []string{
-			"Create a task that declares the credential and tool you intend to use (see /control/skill).",
-			"POST /api/control/autovault/script-session with placeholder, target_host, methods, path_prefixes, max_uses, ttl_seconds, why.",
-			"Take the returned caller_token. Send it in X-Clawvisor-Caller on every request from your script.",
-			"Send the autovault_… placeholder in Authorization (or X-Api-Key) as usual; Clawvisor swaps it server-side.",
+			"1. Create a task that declares the credential and the tool you intend to use (see /control/skill). The task is what the verifier evaluates the session's scope against.",
+			"2. Run the DISCOVERY/LIST call first as a normal one-shot credentialed curl (e.g. GET /messages?q=…) to learn the actual fan-out size N. Don't guess N — read it from the list response.",
+			"3. POST /api/control/autovault/script-session with `{placeholder, target_host, methods, path_prefixes, max_uses, ttl_seconds, why}`. Set `max_uses` to N + a small retry buffer (~2-3), not the hard cap. Set `path_prefixes` to the narrowest prefix that covers the follow-up calls.",
+			"4. Take the returned `caller_token`. Send it in `X-Clawvisor-Caller: Bearer <caller_token>` on every follow-up request.",
+			"5. Send the `autovault_…` placeholder in `Authorization: Bearer <placeholder>` as usual; Clawvisor swaps it server-side.",
+			"6. Send `X-Clawvisor-Target-Host: <target_host>` on every follow-up request so the resolver knows which upstream to dial.",
+		},
+		"sizing_guidance": map[string]string{
+			"too_small": "Mid-flight `SCRIPT_SESSION_EXHAUSTED`. You'll have to mint a fresh session, which costs another verifier round-trip and may surface another approval prompt to the user.",
+			"too_large": "The verifier evaluates `max_uses` against the task's stated workflow. Asking for 50 uses when the task plausibly needs 25 will trigger `scope_denied` with a verifier explanation. Match the request to the discovered N.",
+			"right_size": "N (the count from the discovery call) plus 2-3 for retries. If you don't know N, you're not ready to mint yet.",
 		},
 		"hard_limits": map[string]any{
 			"ttl_seconds":       scriptSessionMaxTTLSeconds,
