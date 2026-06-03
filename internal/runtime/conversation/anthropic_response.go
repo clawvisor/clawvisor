@@ -1251,11 +1251,6 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 				}
 				return nil
 			}
-			cbd.Index = pb.index
-			rewrittenData, err := json.Marshal(cbd)
-			if err != nil {
-				return err
-			}
 			switch cbd.Delta.Type {
 			case "text_delta":
 				pb.text.WriteString(cbd.Delta.Text)
@@ -1264,7 +1259,21 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 			case "signature_delta":
 				pb.signature += cbd.Delta.Signature
 			}
-			return writeSSE(event, string(rewrittenData))
+			// Pass the original delta data through byte-for-byte, only
+			// rewriting the index field. Re-marshalling via the typed
+			// struct above would drop empty payload fields due to
+			// `omitempty` — e.g. a `thinking_delta` with `"thinking":""`
+			// becomes `{"type":"thinking_delta"}`, which the harness then
+			// reads as `delta.thinking === undefined` and concatenates as
+			// the literal string "undefined" into stored history.
+			if pb.index == cbd.Index {
+				return writeSSE(event, data)
+			}
+			shifted, ok := shiftAnthropicEventIndex(event, data, pb.index-cbd.Index)
+			if !ok {
+				return writeSSE(event, data)
+			}
+			return writeSSE(event, string(shifted))
 
 		case "content_block_stop":
 			var cbs struct {

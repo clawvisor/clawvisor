@@ -638,6 +638,63 @@ func TestAnthropicStreamRewritePreservesThinkingBlocks(t *testing.T) {
 	}
 }
 
+// Regression: a thinking_delta event with an empty `thinking` field must
+// be passed through with the field intact. Previously the rewriter
+// round-tripped the delta through a typed struct where `Thinking` had
+// `,omitempty`, so an empty value was dropped on re-marshal. Claude
+// Code's harness reads `delta.thinking` unconditionally on
+// thinking_delta events; a missing field reads as `undefined`, which
+// JS coerces to the literal string "undefined" and concatenates into
+// the stored thinking text — corrupting the assistant turn and
+// triggering Anthropic's "thinking blocks cannot be modified" 400 on
+// the next request that includes the turn.
+func TestAnthropicStreamRewritePreservesEmptyThinkingDeltaField(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_x","type":"message","role":"assistant","model":"claude-3-5-sonnet","content":[]}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig123"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hi"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":1}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	var output bytes.Buffer
+	if _, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output); err != nil {
+		t.Fatalf("StreamRewrite: %v", err)
+	}
+	out := output.String()
+
+	if !strings.Contains(out, `"type":"thinking_delta","thinking":""`) {
+		t.Fatalf("thinking_delta should retain explicit empty `thinking` field, got:\n%s", out)
+	}
+}
+
 func TestAnthropicStreamRewriteDropsNonClaudeThinkingBlocks(t *testing.T) {
 	t.Parallel()
 
