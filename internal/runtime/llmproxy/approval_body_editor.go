@@ -245,27 +245,38 @@ func replaceOpenAIResponsesApprovalReply(body []byte, expectedVerb, expectedAppr
 }
 
 func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOutcomeStore, userID, agentID string) ([]byte, bool, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return body, false, err
-	}
-	rawMessages, ok := raw["messages"]
+	// Byte fidelity invariant: unchanged messages pass through verbatim.
+	// Only the user message whose content we're augmenting is reshaped.
+	// Top-level body keys keep their incoming order. See SanitizeAnthropicRequest
+	// for why this matters.
+	msgsStart, msgsEnd, ok := findJSONFieldValue(body, "messages")
 	if !ok {
 		return body, false, nil
 	}
-	var messages []map[string]json.RawMessage
-	if err := json.Unmarshal(rawMessages, &messages); err != nil {
-		return body, false, err
+	messages, ok := flattenJSONArray(body[msgsStart:msgsEnd])
+	if !ok {
+		return body, false, nil
 	}
-
+	newMessages := make([]json.RawMessage, len(messages))
+	copy(newMessages, messages)
 	changed := false
 
 	for i := 1; i < len(messages); i++ {
-		var role string
-		if err := json.Unmarshal(messages[i]["role"], &role); err != nil || role != "user" {
+		msg := messages[i]
+		roleStart, roleEnd, ok := findJSONFieldValue(msg, "role")
+		if !ok {
 			continue
 		}
-		userText := flattenAnthropicTaskReplyText(messages[i]["content"])
+		var role string
+		if err := json.Unmarshal(msg[roleStart:roleEnd], &role); err != nil || role != "user" {
+			continue
+		}
+		contentStart, contentEnd, ok := findJSONFieldValue(msg, "content")
+		if !ok {
+			continue
+		}
+		content := msg[contentStart:contentEnd]
+		userText := flattenAnthropicTaskReplyText(content)
 		verb, _ := conversation.ParseApprovalReplyText(userText)
 		if verb != "approve" {
 			continue
@@ -274,11 +285,20 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 			continue
 		}
 
-		var priorRole string
-		if err := json.Unmarshal(messages[i-1]["role"], &priorRole); err != nil || priorRole != "assistant" {
+		priorMsg := messages[i-1]
+		priorRoleStart, priorRoleEnd, ok := findJSONFieldValue(priorMsg, "role")
+		if !ok {
 			continue
 		}
-		priorText := flattenAnthropicTaskReplyText(messages[i-1]["content"])
+		var priorRole string
+		if err := json.Unmarshal(priorMsg[priorRoleStart:priorRoleEnd], &priorRole); err != nil || priorRole != "assistant" {
+			continue
+		}
+		priorContentStart, priorContentEnd, ok := findJSONFieldValue(priorMsg, "content")
+		if !ok {
+			continue
+		}
+		priorText := flattenAnthropicTaskReplyText(priorMsg[priorContentStart:priorContentEnd])
 		if !strings.Contains(priorText, InlineApprovalSubstitutedPromptMarker) {
 			continue
 		}
@@ -293,23 +313,26 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 			continue
 		}
 
-		updated, ok := augmentUserContent(messages[i]["content"], verb, note)
+		updatedContent, ok := augmentUserContent(content, verb, note)
 		if !ok {
 			continue
 		}
-		messages[i]["content"] = updated
+		newMsg, err := SetJSONField(msg, "content", updatedContent)
+		if err != nil {
+			continue
+		}
+		newMessages[i] = newMsg
 		changed = true
 	}
 
 	if !changed {
 		return body, false, nil
 	}
-	updatedMessages, err := json.Marshal(messages)
+	newMsgsBytes, err := json.Marshal(newMessages)
 	if err != nil {
 		return body, false, err
 	}
-	raw["messages"] = updatedMessages
-	out, err := json.Marshal(raw)
+	out, err := SetJSONField(body, "messages", newMsgsBytes)
 	if err != nil {
 		return body, false, err
 	}

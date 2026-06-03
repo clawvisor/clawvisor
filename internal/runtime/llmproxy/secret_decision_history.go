@@ -32,18 +32,20 @@ func StripSecretDecisionHistory(req SecretDecisionHistoryStripRequest) (SecretDe
 }
 
 func stripAnthropicSecretDecisionHistory(body []byte) (SecretDecisionHistoryStripResult, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
+	// Byte fidelity: this strips entire messages by index but never
+	// modifies a surviving message's content, so we can preserve each
+	// survivor's bytes verbatim via []json.RawMessage.
+	msgsStart, msgsEnd, ok := findJSONFieldValue(body, "messages")
+	if !ok {
 		return SecretDecisionHistoryStripResult{Body: body}, nil
 	}
-	var messages []map[string]json.RawMessage
-	if err := json.Unmarshal(raw["messages"], &messages); err != nil {
+	messages, ok := flattenJSONArray(body[msgsStart:msgsEnd])
+	if !ok {
 		return SecretDecisionHistoryStripResult{Body: body}, nil
 	}
-	out, modified := stripSecretDecisionMessages(messages, func(msg map[string]json.RawMessage) (string, string) {
-		var role string
-		_ = json.Unmarshal(msg["role"], &role)
-		return role, flattenAnthropicTaskReplyText(msg["content"])
+	out, modified := stripSecretDecisionMessagesRaw(messages, func(msg json.RawMessage) (string, string) {
+		role := extractMessageRole(msg)
+		return role, flattenAnthropicTaskReplyText(extractMessageContent(msg))
 	})
 	if !modified {
 		return SecretDecisionHistoryStripResult{Body: body}, nil
@@ -52,12 +54,11 @@ func stripAnthropicSecretDecisionHistory(body []byte) (SecretDecisionHistoryStri
 	if err != nil {
 		return SecretDecisionHistoryStripResult{Body: body}, err
 	}
-	raw["messages"] = encoded
-	body, err = json.Marshal(raw)
+	newBody, err := SetJSONField(body, "messages", encoded)
 	if err != nil {
 		return SecretDecisionHistoryStripResult{Body: body}, err
 	}
-	return SecretDecisionHistoryStripResult{Body: body, Modified: true}, nil
+	return SecretDecisionHistoryStripResult{Body: newBody, Modified: true}, nil
 }
 
 func stripOpenAISecretDecisionHistory(body []byte) (SecretDecisionHistoryStripResult, error) {
@@ -116,6 +117,38 @@ func stripOpenAISecretDecisionHistory(body []byte) (SecretDecisionHistoryStripRe
 
 func stripSecretDecisionMessages(messages []map[string]json.RawMessage, text func(map[string]json.RawMessage) (string, string)) ([]map[string]json.RawMessage, bool) {
 	out := make([]map[string]json.RawMessage, 0, len(messages))
+	modified := false
+	skipDecisionIndex := -1
+	for i := 0; i < len(messages); i++ {
+		if i == skipDecisionIndex {
+			modified = true
+			continue
+		}
+		role, content := text(messages[i])
+		if role == "assistant" && strings.Contains(content, SecretDecisionIDMarker) {
+			modified = true
+			for j := i + 1; j < len(messages); j++ {
+				nextRole, nextContent := text(messages[j])
+				if nextRole != "user" {
+					continue
+				}
+				if ParseSecretDecisionReply(nextContent).Action != SecretDecisionNone {
+					skipDecisionIndex = j
+				}
+				break
+			}
+			continue
+		}
+		out = append(out, messages[i])
+	}
+	return out, modified
+}
+
+// stripSecretDecisionMessagesRaw is the byte-faithful analogue of
+// stripSecretDecisionMessages: messages are passed as raw bytes so
+// surviving entries pass through verbatim.
+func stripSecretDecisionMessagesRaw(messages []json.RawMessage, text func(json.RawMessage) (string, string)) ([]json.RawMessage, bool) {
+	out := make([]json.RawMessage, 0, len(messages))
 	modified := false
 	skipDecisionIndex := -1
 	for i := 0; i < len(messages); i++ {

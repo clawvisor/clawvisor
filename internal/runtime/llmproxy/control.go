@@ -443,31 +443,42 @@ func rawSystemContains(raw json.RawMessage, needle string) bool {
 }
 
 func injectAnthropicControlNotice(body []byte, notice string) ([]byte, bool, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, false, err
-	}
-	sys, ok := raw["system"]
-	if !ok || len(sys) == 0 || string(sys) == "null" {
+	// Use byte-faithful surgery so we don't reorder top-level keys
+	// (alphabetizing the body re-shapes assistant turn content blocks
+	// downstream, which can corrupt cryptographically-signed thinking
+	// blocks across turns).
+	sysStart, sysEnd, present := findJSONFieldValue(body, "system")
+	if !present || sysEnd-sysStart == 0 {
 		encoded, _ := json.Marshal(notice)
-		raw["system"] = encoded
-		return marshalInjected(raw)
+		out, err := SetJSONField(body, "system", encoded)
+		return out, err == nil, err
+	}
+	sys := body[sysStart:sysEnd]
+	if string(trimJSONWS(sys)) == "null" {
+		encoded, _ := json.Marshal(notice)
+		out, err := SetJSONField(body, "system", encoded)
+		return out, err == nil, err
 	}
 	var s string
 	if err := json.Unmarshal(sys, &s); err == nil {
 		encoded, _ := json.Marshal(appendNotice(s, notice))
-		raw["system"] = encoded
-		return marshalInjected(raw)
+		out, err := SetJSONField(body, "system", encoded)
+		return out, err == nil, err
 	}
-	var blocks []map[string]any
-	if err := json.Unmarshal(sys, &blocks); err == nil {
-		blocks = append(blocks, map[string]any{"type": "text", "text": notice})
-		encoded, err := json.Marshal(blocks)
+	// System is a content-blocks array. Append a text block to it.
+	// Preserve existing blocks' bytes via []json.RawMessage round-trip.
+	if elems, ok := flattenJSONArray(sys); ok {
+		newBlock, err := json.Marshal(map[string]any{"type": "text", "text": notice})
 		if err != nil {
 			return nil, false, err
 		}
-		raw["system"] = encoded
-		return marshalInjected(raw)
+		elems = append(elems, json.RawMessage(newBlock))
+		encoded, err := json.Marshal(elems)
+		if err != nil {
+			return nil, false, err
+		}
+		out, err := SetJSONField(body, "system", encoded)
+		return out, err == nil, err
 	}
 	return body, false, nil
 }

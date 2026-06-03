@@ -48,24 +48,24 @@ func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHisto
 	if !strings.Contains(string(body), "Clawvisor") {
 		return SyntheticApprovalHistoryStripResult{Body: body}, nil
 	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return SyntheticApprovalHistoryStripResult{Body: body}, nil
-	}
-	rawMessages, ok := raw["messages"]
+	// Byte fidelity invariant: surviving messages pass through verbatim.
+	// Top-level body keys keep their order. Only messages we merge get
+	// re-marshalled — and those are user messages, never assistants
+	// carrying thinking blocks, so signature verification is unaffected.
+	msgsStart, msgsEnd, ok := findJSONFieldValue(body, "messages")
 	if !ok {
 		return SyntheticApprovalHistoryStripResult{Body: body}, nil
 	}
-	var messages []map[string]json.RawMessage
-	if err := json.Unmarshal(rawMessages, &messages); err != nil {
+	messages, ok := flattenJSONArray(body[msgsStart:msgsEnd])
+	if !ok {
 		return SyntheticApprovalHistoryStripResult{Body: body}, nil
 	}
-	out := make([]map[string]json.RawMessage, 0, len(messages))
+	survivors := make([]json.RawMessage, 0, len(messages))
 	modified := false
 	skipNextBareApprovalReply := false
 	for _, msg := range messages {
-		role := rawMessageString(msg["role"])
-		contentText := flattenAnthropicTaskReplyText(msg["content"])
+		role := extractMessageRole(msg)
+		contentText := flattenAnthropicTaskReplyText(extractMessageContent(msg))
 		if skipNextBareApprovalReply {
 			skipNextBareApprovalReply = false
 			if role == "user" && isBareSyntheticApprovalReply(contentText) {
@@ -78,45 +78,68 @@ func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHisto
 			skipNextBareApprovalReply = true
 			continue
 		}
-		out = append(out, msg)
+		survivors = append(survivors, msg)
 	}
-	if !modified || len(out) == 0 {
+	if !modified || len(survivors) == 0 {
 		return SyntheticApprovalHistoryStripResult{Body: body}, nil
 	}
 
-	// Merge consecutive messages with the same role (especially user messages
-	// that become adjacent after stripping an assistant approval prompt).
-	var mergedOut []map[string]json.RawMessage
-	for _, msg := range out {
-		if len(mergedOut) == 0 {
-			mergedOut = append(mergedOut, msg)
+	// Merge consecutive user messages that became adjacent after the strip.
+	var merged []json.RawMessage
+	for _, msg := range survivors {
+		if len(merged) == 0 {
+			merged = append(merged, msg)
 			continue
 		}
-		prev := mergedOut[len(mergedOut)-1]
-		prevRole := rawMessageString(prev["role"])
-		currRole := rawMessageString(msg["role"])
-		if prevRole == currRole && currRole == "user" && canMergeAnthropicContent(prev["content"], msg["content"]) {
-			mergedContent, err := mergeAnthropicContent(prev["content"], msg["content"])
-			if err != nil {
-				return SyntheticApprovalHistoryStripResult{Body: body}, err
+		prev := merged[len(merged)-1]
+		prevRole := extractMessageRole(prev)
+		currRole := extractMessageRole(msg)
+		if prevRole == currRole && currRole == "user" {
+			prevContent := extractMessageContent(prev)
+			currContent := extractMessageContent(msg)
+			if canMergeAnthropicContent(prevContent, currContent) {
+				mergedContent, err := mergeAnthropicContent(prevContent, currContent)
+				if err != nil {
+					return SyntheticApprovalHistoryStripResult{Body: body}, err
+				}
+				newPrev, err := SetJSONField(prev, "content", mergedContent)
+				if err != nil {
+					return SyntheticApprovalHistoryStripResult{Body: body}, err
+				}
+				merged[len(merged)-1] = newPrev
+				continue
 			}
-			prev["content"] = mergedContent
-		} else {
-			mergedOut = append(mergedOut, msg)
 		}
+		merged = append(merged, msg)
 	}
-	out = mergedOut
 
-	encoded, err := json.Marshal(out)
+	newMsgsBytes, err := json.Marshal(merged)
 	if err != nil {
 		return SyntheticApprovalHistoryStripResult{Body: body}, err
 	}
-	raw["messages"] = json.RawMessage(encoded)
-	next, err := json.Marshal(raw)
+	next, err := SetJSONField(body, "messages", newMsgsBytes)
 	if err != nil {
 		return SyntheticApprovalHistoryStripResult{Body: body}, err
 	}
 	return SyntheticApprovalHistoryStripResult{Body: next, Modified: true}, nil
+}
+
+func extractMessageRole(msg json.RawMessage) string {
+	start, end, ok := findJSONFieldValue(msg, "role")
+	if !ok {
+		return ""
+	}
+	var s string
+	_ = json.Unmarshal(msg[start:end], &s)
+	return s
+}
+
+func extractMessageContent(msg json.RawMessage) json.RawMessage {
+	start, end, ok := findJSONFieldValue(msg, "content")
+	if !ok {
+		return nil
+	}
+	return msg[start:end]
 }
 
 func canMergeAnthropicContent(c1, c2 json.RawMessage) bool {

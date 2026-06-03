@@ -81,74 +81,103 @@ func inboundLooksRewritten(body []byte) bool {
 
 // sanitizeAnthropicInbound walks messages[].content[] looking for
 // tool_use blocks and rewrites the inner cmd / command field.
+//
+// Byte fidelity invariant: unchanged messages and unchanged content
+// blocks pass through with their original bytes intact. Top-level
+// body keys, message keys, and block keys keep their incoming order.
+// Critical because Anthropic verifies thinking-block signatures across
+// turns; any reshape on the request path can corrupt them.
 func sanitizeAnthropicInbound(req SanitizeInboundRequest) (SanitizeInboundResult, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(req.Body, &raw); err != nil {
-		return SanitizeInboundResult{Body: req.Body}, nil
-	}
-	msgsRaw, ok := raw["messages"]
+	body := req.Body
+	msgsStart, msgsEnd, ok := findJSONFieldValue(body, "messages")
 	if !ok {
-		return SanitizeInboundResult{Body: req.Body}, nil
+		return SanitizeInboundResult{Body: body}, nil
 	}
-	var messages []map[string]json.RawMessage
-	if err := json.Unmarshal(msgsRaw, &messages); err != nil {
-		return SanitizeInboundResult{Body: req.Body}, nil
+	messages, ok := flattenJSONArray(body[msgsStart:msgsEnd])
+	if !ok {
+		return SanitizeInboundResult{Body: body}, nil
 	}
-	modified := false
-	for _, msg := range messages {
-		roleRaw := msg["role"]
-		var role string
-		_ = json.Unmarshal(roleRaw, &role)
-		if role != "assistant" {
-			continue
-		}
-		contentRaw, ok := msg["content"]
-		if !ok {
-			continue
-		}
-		var blocks []map[string]json.RawMessage
-		if err := json.Unmarshal(contentRaw, &blocks); err != nil {
-			continue
-		}
-		blockChanged := false
-		for _, block := range blocks {
-			typeRaw := block["type"]
-			var typ string
-			_ = json.Unmarshal(typeRaw, &typ)
-			if typ != "tool_use" {
-				continue
-			}
-			inputRaw, ok := block["input"]
-			if !ok {
-				continue
-			}
-			sanitized, changed := sanitizeToolUseInput(inputRaw, req)
-			if changed {
-				block["input"] = sanitized
-				blockChanged = true
-			}
-		}
-		if blockChanged {
-			encoded, err := json.Marshal(blocks)
-			if err == nil {
-				msg["content"] = encoded
-				modified = true
-			}
+	anyChanged := false
+	newMessages := make([]json.RawMessage, len(messages))
+	for i, msg := range messages {
+		newMsg, changed := sanitizeAnthropicInboundMessage(msg, req)
+		newMessages[i] = newMsg
+		if changed {
+			anyChanged = true
 		}
 	}
-	if !modified {
-		return SanitizeInboundResult{Body: req.Body}, nil
+	if !anyChanged {
+		return SanitizeInboundResult{Body: body}, nil
 	}
-	encodedMsgs, err := json.Marshal(messages)
+	newMsgsBytes, err := json.Marshal(newMessages)
 	if err != nil {
-		return SanitizeInboundResult{Body: req.Body}, nil
+		return SanitizeInboundResult{Body: body}, nil
 	}
-	raw["messages"] = encodedMsgs
-	out, err := json.Marshal(raw)
+	out, err := SetJSONField(body, "messages", newMsgsBytes)
 	if err != nil {
-		return SanitizeInboundResult{Body: req.Body}, nil
+		return SanitizeInboundResult{Body: body}, nil
 	}
 	return SanitizeInboundResult{Body: out, Modified: true}, nil
+}
+
+// sanitizeAnthropicInboundMessage rewrites a single message's
+// assistant tool_use input commands while preserving byte fidelity
+// for everything else (other blocks, the message envelope).
+func sanitizeAnthropicInboundMessage(msg json.RawMessage, req SanitizeInboundRequest) (json.RawMessage, bool) {
+	roleStart, roleEnd, ok := findJSONFieldValue(msg, "role")
+	if !ok {
+		return msg, false
+	}
+	var role string
+	if err := json.Unmarshal(msg[roleStart:roleEnd], &role); err != nil || role != "assistant" {
+		return msg, false
+	}
+	contentStart, contentEnd, ok := findJSONFieldValue(msg, "content")
+	if !ok {
+		return msg, false
+	}
+	content := msg[contentStart:contentEnd]
+	blocks, ok := flattenJSONArray(content)
+	if !ok {
+		return msg, false
+	}
+	anyChanged := false
+	newBlocks := make([]json.RawMessage, len(blocks))
+	for i, block := range blocks {
+		if extractBlockType(block) != "tool_use" {
+			newBlocks[i] = block
+			continue
+		}
+		inputStart, inputEnd, ok := findJSONFieldValue(block, "input")
+		if !ok {
+			newBlocks[i] = block
+			continue
+		}
+		sanitized, changed := sanitizeToolUseInput(block[inputStart:inputEnd], req)
+		if !changed {
+			newBlocks[i] = block
+			continue
+		}
+		newBlock, err := SetJSONField(block, "input", sanitized)
+		if err != nil {
+			newBlocks[i] = block
+			continue
+		}
+		newBlocks[i] = newBlock
+		anyChanged = true
+	}
+	if !anyChanged {
+		return msg, false
+	}
+	newContentBytes, err := json.Marshal(newBlocks)
+	if err != nil {
+		return msg, false
+	}
+	newMsg, err := SetJSONField(msg, "content", newContentBytes)
+	if err != nil {
+		return msg, false
+	}
+	return newMsg, true
 }
 
 // sanitizeOpenAIInbound walks messages[].tool_calls[].function.arguments

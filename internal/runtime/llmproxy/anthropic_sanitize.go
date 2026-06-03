@@ -8,14 +8,28 @@ import (
 // SanitizeAnthropicRequest removes empty text content blocks that Anthropic
 // rejects on the request path. Some harnesses preserve zero-length streamed
 // text blocks in conversation history after a tool-use response.
+//
+// Byte fidelity invariant: any content block we are not actively removing
+// passes through with its original bytes. Top-level body keys, message
+// keys, and block keys keep their incoming order. This matters because
+// Anthropic verifies thinking-block signatures across turns; an
+// `unmarshal → map → marshal` round-trip alphabetizes keys and trips
+// "thinking blocks cannot be modified" 400s on subsequent requests.
 func SanitizeAnthropicRequest(body []byte) ([]byte, bool, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, false, err
+	if !looksLikeJSONObject(body) {
+		// Match the previous behavior: surface parse errors so the caller
+		// can return a 400.
+		var ignored map[string]json.RawMessage
+		if err := json.Unmarshal(body, &ignored); err != nil {
+			return nil, false, err
+		}
 	}
+	out := body
 	changed := false
 
-	if sys, ok := raw["system"]; ok {
+	// system field.
+	if sysStart, sysEnd, ok := findJSONFieldValue(out, "system"); ok {
+		sys := out[sysStart:sysEnd]
 		sanitized, fieldChanged, empty, err := sanitizeAnthropicContent(sys)
 		if err != nil {
 			return nil, false, err
@@ -23,94 +37,133 @@ func SanitizeAnthropicRequest(body []byte) ([]byte, bool, error) {
 		if fieldChanged {
 			changed = true
 			if empty {
-				delete(raw, "system")
+				if deleted, ok := DeleteJSONField(out, "system"); ok {
+					out = deleted
+				}
 			} else {
-				raw["system"] = sanitized
+				replaced, err := SetJSONField(out, "system", sanitized)
+				if err != nil {
+					return nil, false, err
+				}
+				out = replaced
 			}
 		}
 	}
 
-	if msgsRaw, ok := raw["messages"]; ok {
-		var messages []map[string]json.RawMessage
-		if err := json.Unmarshal(msgsRaw, &messages); err != nil {
-			return nil, false, err
+	// messages field.
+	if msgsStart, msgsEnd, ok := findJSONFieldValue(out, "messages"); ok {
+		msgsBytes := out[msgsStart:msgsEnd]
+		messages, ok := flattenJSONArray(msgsBytes)
+		if !ok {
+			if !changed {
+				return body, false, nil
+			}
+			return out, true, nil
 		}
-		out := make([]map[string]json.RawMessage, 0, len(messages))
+		newMessages := make([]json.RawMessage, 0, len(messages))
+		msgsChanged := false
 		for _, msg := range messages {
-			content, ok := msg["content"]
-			if !ok {
-				out = append(out, msg)
-				continue
-			}
-			sanitized, fieldChanged, empty, err := sanitizeAnthropicContent(content)
+			newMsg, msgChanged, drop, err := sanitizeAnthropicMessage(msg)
 			if err != nil {
 				return nil, false, err
 			}
-			if fieldChanged {
-				changed = true
+			if msgChanged {
+				msgsChanged = true
 			}
-			if empty {
+			if drop {
 				continue
 			}
-			if fieldChanged {
-				msg["content"] = sanitized
-			}
-			out = append(out, msg)
+			newMessages = append(newMessages, newMsg)
 		}
-		if len(out) != len(messages) {
+		if msgsChanged || len(newMessages) != len(messages) {
 			changed = true
-		}
-		if changed {
-			encoded, err := json.Marshal(out)
+			newMsgsBytes, err := json.Marshal(newMessages)
 			if err != nil {
 				return nil, false, err
 			}
-			raw["messages"] = encoded
+			replaced, err := SetJSONField(out, "messages", newMsgsBytes)
+			if err != nil {
+				return nil, false, err
+			}
+			out = replaced
 		}
 	}
 
 	if !changed {
 		return body, false, nil
 	}
-	out, err := json.Marshal(raw)
-	return out, err == nil, err
+	return out, true, nil
 }
 
-func sanitizeAnthropicContent(raw json.RawMessage) (json.RawMessage, bool, bool, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return raw, false, false, nil
+// sanitizeAnthropicMessage applies sanitization to a single message's
+// content. Returns (newBytes, contentChanged, dropMessage, err).
+// When dropMessage is true, the caller should omit the message from
+// the parent array.
+func sanitizeAnthropicMessage(msg json.RawMessage) (json.RawMessage, bool, bool, error) {
+	contentStart, contentEnd, ok := findJSONFieldValue(msg, "content")
+	if !ok {
+		return msg, false, false, nil
 	}
-	var text string
-	if err := json.Unmarshal(raw, &text); err == nil {
-		if strings.TrimSpace(text) == "" {
-			return nil, true, true, nil
-		}
-		return raw, false, false, nil
+	content := msg[contentStart:contentEnd]
+	sanitized, contentChanged, empty, err := sanitizeAnthropicContent(content)
+	if err != nil {
+		return nil, false, false, err
 	}
+	if !contentChanged {
+		return msg, false, false, nil
+	}
+	if empty {
+		return nil, true, true, nil
+	}
+	newMsg, err := SetJSONField(msg, "content", sanitized)
+	if err != nil {
+		return nil, false, false, err
+	}
+	return newMsg, true, false, nil
+}
 
-	var blocks []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &blocks); err != nil {
+// sanitizeAnthropicContent returns the sanitized content payload. The
+// shape mirrors the original API: (newBytes, changed, empty, err).
+// When empty is true the caller should remove the surrounding field
+// (or drop the parent message).
+func sanitizeAnthropicContent(raw json.RawMessage) (json.RawMessage, bool, bool, error) {
+	if len(raw) == 0 {
 		return raw, false, false, nil
 	}
-	changed := false
-	out := make([]map[string]json.RawMessage, 0, len(blocks))
-	for _, block := range blocks {
-		var typ string
-		_ = json.Unmarshal(block["type"], &typ)
-		if typ == "text" {
-			// Only treat as empty when `text` decodes as a string AND
-			// that string is whitespace-only. A malformed or non-string
-			// `text` (e.g. number, object) is left alone — dropping it
-			// silently risks losing real content the model emitted.
-			var blockText string
-			if err := json.Unmarshal(block["text"], &blockText); err == nil {
-				if strings.TrimSpace(blockText) == "" {
-					changed = true
-					continue
-				}
+	trimmed := trimJSONWS(raw)
+	if string(trimmed) == "null" {
+		return raw, false, false, nil
+	}
+	// String content: empty/whitespace → drop. Otherwise preserve.
+	if looksLikeJSONString(raw) {
+		var text string
+		if err := json.Unmarshal(raw, &text); err == nil {
+			if strings.TrimSpace(text) == "" {
+				return nil, true, true, nil
 			}
 		}
-		if nested, ok := block["content"]; ok {
+		return raw, false, false, nil
+	}
+	// Array content: walk blocks, preserve unchanged ones byte-for-byte.
+	blocks, ok := flattenJSONArray(raw)
+	if !ok {
+		return raw, false, false, nil
+	}
+	newBlocks := make([]json.RawMessage, 0, len(blocks))
+	changed := false
+	for _, block := range blocks {
+		// Inspect type to decide whether to keep/modify.
+		blockType := extractBlockType(block)
+		if blockType == "text" {
+			if isEmptyTextBlock(block) {
+				changed = true
+				continue
+			}
+		}
+		// Recurse into nested content (e.g. tool_result blocks whose
+		// `content` field is itself a list of content blocks).
+		if nestedStart, nestedEnd, ok := findJSONFieldValue(block, "content"); ok {
+			nested := block[nestedStart:nestedEnd]
 			sanitized, nestedChanged, empty, err := sanitizeAnthropicContent(nested)
 			if err != nil {
 				return nil, false, false, err
@@ -118,20 +171,63 @@ func sanitizeAnthropicContent(raw json.RawMessage) (json.RawMessage, bool, bool,
 			if nestedChanged {
 				changed = true
 				if empty {
-					delete(block, "content")
+					deleted, ok := DeleteJSONField(block, "content")
+					if ok {
+						block = deleted
+					}
 				} else {
-					block["content"] = sanitized
+					replaced, err := SetJSONField(block, "content", sanitized)
+					if err != nil {
+						return nil, false, false, err
+					}
+					block = replaced
 				}
 			}
 		}
-		out = append(out, block)
+		newBlocks = append(newBlocks, block)
 	}
 	if !changed {
 		return raw, false, false, nil
 	}
-	if len(out) == 0 {
+	if len(newBlocks) == 0 {
 		return nil, true, true, nil
 	}
-	encoded, err := json.Marshal(out)
+	encoded, err := json.Marshal(newBlocks)
 	return encoded, true, false, err
+}
+
+func extractBlockType(block json.RawMessage) string {
+	start, end, ok := findJSONFieldValue(block, "type")
+	if !ok {
+		return ""
+	}
+	var typ string
+	if err := json.Unmarshal(block[start:end], &typ); err != nil {
+		return ""
+	}
+	return typ
+}
+
+func isEmptyTextBlock(block json.RawMessage) bool {
+	start, end, ok := findJSONFieldValue(block, "text")
+	if !ok {
+		return false
+	}
+	var text string
+	if err := json.Unmarshal(block[start:end], &text); err != nil {
+		// Malformed `text` (number, object) — leave alone; dropping
+		// silently risks losing real content the model emitted.
+		return false
+	}
+	return strings.TrimSpace(text) == ""
+}
+
+func looksLikeJSONObject(data []byte) bool {
+	for _, b := range data {
+		if isJSONWS(b) {
+			continue
+		}
+		return b == '{'
+	}
+	return false
 }
