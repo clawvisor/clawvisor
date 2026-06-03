@@ -241,6 +241,30 @@ func TestScriptSessionToolUse_RecognizesCallerHeader(t *testing.T) {
 			want:  true,
 		},
 
+		// --- Traversal-shaped paths under the resolver mount must NOT match ---
+		// A literal "/api/proxy/../admin/foo" satisfies the prefix
+		// check but resolves to "/admin/foo" after server-side
+		// normalization — passthrough would skip the inspector for a
+		// URL that doesn't hit the resolver at all.
+		{
+			name:  "traversal segment under /api/proxy must NOT match (resolves to non-resolver path)",
+			input: `{"command":"curl http://localhost:25297/api/proxy/../admin/foo -H 'X-Clawvisor-Caller: Bearer cv-script-abc' -H 'Authorization: Bearer autovault_y'"}`,
+			base:  proxyBase,
+			want:  false,
+		},
+		{
+			name:  "percent-encoded traversal must NOT match",
+			input: `{"command":"curl http://localhost:25297/api/proxy/%2e%2e/admin/foo -H 'X-Clawvisor-Caller: Bearer cv-script-abc' -H 'Authorization: Bearer autovault_y'"}`,
+			base:  proxyBase,
+			want:  false,
+		},
+		{
+			name:  "structured tool with traversal in URL must NOT match",
+			input: `{"url":"http://localhost:25297/api/proxy/../admin","headers":{"X-Clawvisor-Caller":"Bearer cv-script-abc"}}`,
+			base:  proxyBase,
+			want:  false,
+		},
+
 		// --- Edge cases ---
 		{
 			name:  "empty input",

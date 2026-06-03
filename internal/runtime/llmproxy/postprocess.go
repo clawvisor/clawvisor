@@ -2589,6 +2589,16 @@ func urlTargetsResolver(rawURL, proxyHost, pathPrefix string) bool {
 	if !strings.EqualFold(u.Host, proxyHost) {
 		return false
 	}
+	// Reject traversal-shaped paths BEFORE the prefix check. A literal
+	// "/api/proxy/../admin/x" satisfies HasPrefix on "/api/proxy/" but
+	// resolves to "/admin/x" after server-side normalization — so the
+	// passthrough would skip the inspector for a URL that doesn't
+	// actually hit the resolver. Percent-encoded forms (%2e%2e, etc.)
+	// matter for downstream decoders that normalize differently than
+	// net/url; checking EscapedPath catches both shapes.
+	if pathHasTraversal(u.Path) || pathHasTraversal(u.EscapedPath()) {
+		return false
+	}
 	if pathPrefix == "" {
 		return true
 	}
