@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -909,35 +910,114 @@ func shiftOpenAIResponsesEventIndex(data string, delta int) ([]byte, bool) {
 	return out, true
 }
 
-// shiftAnthropicEventIndex re-serialises a content_block_* event with
-// its `index` field bumped by delta. The event data is preserved
-// byte-for-byte except for the index field. Returns (nil, false) if
-// the data isn't a JSON object with an integer index — the caller
-// passes the original event through unchanged in that case.
+// shiftAnthropicEventIndex returns a copy of data with the top-level
+// integer `index` field bumped by delta. Every other byte —
+// including key order, whitespace, and any fields we don't model
+// (estimated_tokens, future additions) — is preserved verbatim.
+//
+// Byte fidelity matters because Anthropic enforces a cryptographic
+// signature over thinking blocks across turns: any reordering or
+// stripping in the assistant turn causes "thinking blocks cannot be
+// modified" 400s on the next request that includes that turn.
+//
+// Returns (nil, false) if the data isn't a JSON object with an integer
+// top-level `index` — the caller passes the original event through
+// unchanged in that case.
 func shiftAnthropicEventIndex(event, data string, delta int) ([]byte, bool) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(data), &obj); err != nil {
-		return nil, false
+	if delta == 0 {
+		return []byte(data), true
 	}
-	idxRaw, ok := obj["index"]
+	valueStart, valueEnd, current, ok := findTopLevelIndexBytes(data)
 	if !ok {
 		return nil, false
 	}
-	var idx int
-	if err := json.Unmarshal(idxRaw, &idx); err != nil {
-		return nil, false
-	}
-	idx += delta
-	newIdx, err := json.Marshal(idx)
-	if err != nil {
-		return nil, false
-	}
-	obj["index"] = newIdx
-	out, err := json.Marshal(obj)
-	if err != nil {
-		return nil, false
-	}
+	b := []byte(data)
+	out := make([]byte, 0, len(b)+8)
+	out = append(out, b[:valueStart]...)
+	out = strconv.AppendInt(out, int64(current+delta), 10)
+	out = append(out, b[valueEnd:]...)
 	return out, true
+}
+
+// setAnthropicEventIndex returns a copy of data with the top-level
+// integer `index` field replaced by newIndex. Byte fidelity is
+// preserved for all other content. See [shiftAnthropicEventIndex] for
+// rationale.
+func setAnthropicEventIndex(data string, newIndex int) ([]byte, bool) {
+	valueStart, valueEnd, current, ok := findTopLevelIndexBytes(data)
+	if !ok {
+		return nil, false
+	}
+	if current == newIndex {
+		return []byte(data), true
+	}
+	b := []byte(data)
+	out := make([]byte, 0, len(b)+8)
+	out = append(out, b[:valueStart]...)
+	out = strconv.AppendInt(out, int64(newIndex), 10)
+	out = append(out, b[valueEnd:]...)
+	return out, true
+}
+
+// findTopLevelIndexBytes locates the byte range of the integer value
+// of the top-level `index` field in a JSON object. Returns
+// (valueStart, valueEnd, currentValue, true) where data[valueStart:valueEnd]
+// is the encoded integer, or (_, _, _, false) on parse failure / missing
+// field / non-integer value. Uses json.Decoder so nested "index"
+// fields inside e.g. a tool_use's input object are not misidentified.
+func findTopLevelIndexBytes(data string) (int, int, int, bool) {
+	dec := json.NewDecoder(strings.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return 0, 0, 0, false
+	}
+	b := []byte(data)
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return 0, 0, 0, false
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return 0, 0, 0, false
+		}
+		if key != "index" {
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				return 0, 0, 0, false
+			}
+			continue
+		}
+		// dec.InputOffset() now sits just past the closing quote of
+		// the "index" key. Scan forward past ':' and whitespace to
+		// find the start of the value.
+		p := int(dec.InputOffset())
+		for p < len(b) && b[p] != ':' {
+			p++
+		}
+		if p >= len(b) {
+			return 0, 0, 0, false
+		}
+		p++ // past ':'
+		for p < len(b) && (b[p] == ' ' || b[p] == '\t' || b[p] == '\n' || b[p] == '\r') {
+			p++
+		}
+		valueStart := p
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return 0, 0, 0, false
+		}
+		valueEnd := int(dec.InputOffset())
+		var idx int
+		if err := json.Unmarshal(raw, &idx); err != nil {
+			return 0, 0, 0, false
+		}
+		return valueStart, valueEnd, idx, true
+	}
+	return 0, 0, 0, false
 }
 
 func isFirstBlockThinking(events []sseEvent) bool {

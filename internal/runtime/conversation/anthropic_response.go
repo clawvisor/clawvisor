@@ -1173,11 +1173,6 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 				outboundIndex = nextOutboundIndex
 				nextOutboundIndex++
 				nextContentIndex = nextOutboundIndex
-				cbs.Index = outboundIndex
-			}
-			rewrittenData, err := json.Marshal(cbs)
-			if err != nil {
-				return err
 			}
 			pb := &pendingBlock{
 				index:     outboundIndex,
@@ -1207,7 +1202,21 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 			if pb.index < 0 {
 				return nil
 			}
-			return writeSSE(event, string(rewrittenData))
+			// Pass the upstream event through with byte fidelity,
+			// rewriting only the integer index field. Avoid
+			// json.Marshal of the typed struct above — it reorders
+			// keys, drops fields we don't model (estimated_tokens,
+			// etc.), and applies `omitempty` to empty values.
+			// Anthropic enforces a signature over the thinking block
+			// across turns; any reshaping causes downstream 400s.
+			if pb.index == inboundIndex {
+				return writeSSE(event, data)
+			}
+			shifted, ok := setAnthropicEventIndex(data, pb.index)
+			if !ok {
+				return writeSSE(event, data)
+			}
+			return writeSSE(event, string(shifted))
 
 		case "content_block_delta":
 			var cbd struct {
@@ -1296,15 +1305,17 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 			if pb.index < 0 {
 				return nil
 			}
-			cbs.Index = pb.index
-			rewrittenData, err := json.Marshal(cbs)
-			if err != nil {
-				return err
-			}
 			if pb.isTU {
 				return nil
 			}
-			return writeSSE(event, string(rewrittenData))
+			if pb.index == cbs.Index {
+				return writeSSE(event, data)
+			}
+			shifted, ok := setAnthropicEventIndex(data, pb.index)
+			if !ok {
+				return writeSSE(event, data)
+			}
+			return writeSSE(event, string(shifted))
 
 		case "message_delta", "message_stop":
 			if len(orderedTUs) == 0 {

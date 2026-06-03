@@ -635,3 +635,56 @@ func TestPrependAnthropicAssistantText_SSE_ThinkingOnly(t *testing.T) {
 		t.Errorf("there should be no model text block, got index %d", textIndex)
 	}
 }
+
+func TestShiftAnthropicEventIndexPreservesBytes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		data  string
+		delta int
+		want  string
+	}{
+		{
+			name:  "preserves trailing whitespace",
+			data:  `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}       `,
+			delta: 1,
+			want:  `{"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":""}}       `,
+		},
+		{
+			name:  "preserves unmodelled fields like estimated_tokens",
+			data:  `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"","estimated_tokens":50}}`,
+			delta: 2,
+			want:  `{"type":"content_block_delta","index":2,"delta":{"type":"thinking_delta","thinking":"","estimated_tokens":50}}`,
+		},
+		{
+			name:  "preserves key order (does not sort)",
+			data:  `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+			delta: 1,
+			want:  `{"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+		},
+		{
+			name:  "ignores nested index in tool_use input",
+			data:  `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Foo","input":{"index":99}}}`,
+			delta: 1,
+			want:  `{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"Foo","input":{"index":99}}}`,
+		},
+		{
+			name:  "delta zero returns input byte-equal",
+			data:  `{"type":"content_block_stop","index":5}`,
+			delta: 0,
+			want:  `{"type":"content_block_stop","index":5}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := shiftAnthropicEventIndex("content_block_delta", tc.data, tc.delta)
+			if !ok {
+				t.Fatalf("shiftAnthropicEventIndex returned ok=false for input: %s", tc.data)
+			}
+			if string(got) != tc.want {
+				t.Errorf("byte mismatch\n got: %q\nwant: %q", got, tc.want)
+			}
+		})
+	}
+}

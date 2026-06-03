@@ -695,6 +695,61 @@ func TestAnthropicStreamRewritePreservesEmptyThinkingDeltaField(t *testing.T) {
 	}
 }
 
+// Anthropic enforces a cryptographic signature over thinking blocks
+// across turns: any reshape of the assistant turn — reordered keys,
+// dropped unknown fields, stripped whitespace — corrupts the
+// downstream verification and causes 400s with "thinking or
+// redacted_thinking blocks ... cannot be modified".
+//
+// This test pins byte fidelity for thinking-related events through
+// StreamRewrite when no index shift is needed: the upstream bytes
+// must come through unchanged, key order preserved, including fields
+// the rewriter does not model (e.g. estimated_tokens) and trailing
+// SSE whitespace.
+func TestAnthropicStreamRewriteThinkingEventsAreBytePreserved(t *testing.T) {
+	t.Parallel()
+
+	// Mimic the exact byte shape Anthropic emits for an opus thinking
+	// stream — including the `estimated_tokens` field the rewriter
+	// has no struct field for, and trailing whitespace on the data
+	// payload that an inadvertent re-marshal would strip.
+	upstreamEvents := []struct{ event, data string }{
+		{"message_start", `{"type":"message_start","message":{"id":"msg_x","type":"message","role":"assistant","model":"claude-opus-4-7","content":[]}}`},
+		{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`},
+		{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"","estimated_tokens":50}}`},
+		{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"abc123"}}`},
+		{"content_block_stop", `{"type":"content_block_stop","index":0}`},
+		{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}`},
+		{"message_stop", `{"type":"message_stop"}`},
+	}
+
+	var sb strings.Builder
+	for _, ev := range upstreamEvents {
+		sb.WriteString("event: ")
+		sb.WriteString(ev.event)
+		sb.WriteString("\ndata: ")
+		sb.WriteString(ev.data)
+		sb.WriteString("\n\n")
+	}
+	input := sb.String()
+
+	var output bytes.Buffer
+	if _, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output); err != nil {
+		t.Fatalf("StreamRewrite: %v", err)
+	}
+	out := output.String()
+
+	// Each upstream event's data line must appear verbatim in the
+	// output — same key order, same trailing whitespace, same
+	// unmodelled fields.
+	for _, ev := range upstreamEvents {
+		expected := "data: " + ev.data + "\n\n"
+		if !strings.Contains(out, expected) {
+			t.Errorf("event %q data not byte-preserved.\n  want: %q\n  output: %s", ev.event, ev.data, out)
+		}
+	}
+}
+
 func TestAnthropicStreamRewriteDropsNonClaudeThinkingBlocks(t *testing.T) {
 	t.Parallel()
 
