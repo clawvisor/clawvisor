@@ -441,3 +441,197 @@ func TestPrependAnthropicAssistantText_SSE_NoMessageStartFallsThrough(t *testing
 		t.Errorf("notice should not be inserted into malformed stream (no message_start)")
 	}
 }
+
+func TestPrependAnthropicAssistantText_JSON_WithThinking(t *testing.T) {
+	body := []byte(`{
+		"id": "msg_abc",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-sonnet-4",
+		"content": [
+			{"type": "thinking", "thinking": "reasoning here"},
+			{"type": "text", "text": "hello"}
+		],
+		"stop_reason": "end_turn"
+	}`)
+
+	out, err := PrependAnthropicAssistantText("application/json", body, "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("PrependAnthropicAssistantText: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("output not JSON: %v\n%s", err, out)
+	}
+
+	content, ok := parsed["content"].([]any)
+	if !ok || len(content) != 3 {
+		t.Fatalf("expected 3 content blocks; got %d: %v", len(content), content)
+	}
+
+	// First block must remain thinking
+	thinking := content[0].(map[string]any)
+	if thinking["type"] != "thinking" || thinking["thinking"] != "reasoning here" {
+		t.Errorf("thinking block should remain at index 0, got %v", thinking)
+	}
+
+	// Second block must be notice
+	notice := content[1].(map[string]any)
+	if notice["type"] != "text" || notice["text"] != "[Clawvisor] approved" {
+		t.Errorf("notice block should be at index 1, got %v", notice)
+	}
+
+	// Third block must be original text
+	text := content[2].(map[string]any)
+	if text["type"] != "text" || text["text"] != "hello" {
+		t.Errorf("original text block should be shifted to index 2, got %v", text)
+	}
+}
+
+func TestPrependAnthropicAssistantText_SSE_WithThinking(t *testing.T) {
+	sse := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_x","role":"assistant","model":"claude-sonnet-4","content":[]}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"thinking text"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hello"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":1}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	out, err := PrependAnthropicAssistantText("text/event-stream", []byte(sse), "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("PrependAnthropicAssistantText: %v", err)
+	}
+
+	events, err := parseSSEEvents(out)
+	if err != nil {
+		t.Fatalf("parseSSEEvents: %v", err)
+	}
+
+	var noticeIndex, thinkingIndex, textIndex int
+	noticeIndex, thinkingIndex, textIndex = -1, -1, -1
+
+	for _, ev := range events {
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(ev.Data), &obj); err != nil {
+			continue
+		}
+		if ev.Event == "content_block_start" {
+			cb, _ := obj["content_block"].(map[string]any)
+			idx := numAsInt(obj["index"])
+			if cb != nil {
+				switch cb["type"] {
+				case "text":
+					if noticeIndex == -1 {
+						noticeIndex = idx
+					} else {
+						textIndex = idx
+					}
+				case "thinking":
+					thinkingIndex = idx
+				}
+			}
+		}
+	}
+
+	if thinkingIndex != 0 {
+		t.Errorf("thinking block should remain at index 0, got %d", thinkingIndex)
+	}
+	if noticeIndex != 1 {
+		t.Errorf("notice block should be injected at index 1, got %d", noticeIndex)
+	}
+	if textIndex != 2 {
+		t.Errorf("model text block should be shifted to index 2, got %d", textIndex)
+	}
+}
+
+func TestPrependAnthropicAssistantText_SSE_ThinkingOnly(t *testing.T) {
+	sse := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_x","role":"assistant","model":"claude-sonnet-4","content":[]}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"thinking text"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	out, err := PrependAnthropicAssistantText("text/event-stream", []byte(sse), "[Clawvisor] approved")
+	if err != nil {
+		t.Fatalf("PrependAnthropicAssistantText: %v", err)
+	}
+
+	events, err := parseSSEEvents(out)
+	if err != nil {
+		t.Fatalf("parseSSEEvents: %v", err)
+	}
+
+	var noticeIndex, thinkingIndex, textIndex int
+	noticeIndex, thinkingIndex, textIndex = -1, -1, -1
+
+	for _, ev := range events {
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(ev.Data), &obj); err != nil {
+			continue
+		}
+		if ev.Event == "content_block_start" {
+			cb, _ := obj["content_block"].(map[string]any)
+			idx := numAsInt(obj["index"])
+			if cb != nil {
+				switch cb["type"] {
+				case "text":
+					if noticeIndex == -1 {
+						noticeIndex = idx
+					} else {
+						textIndex = idx
+					}
+				case "thinking":
+					thinkingIndex = idx
+				}
+			}
+		}
+	}
+
+	if thinkingIndex != 0 {
+		t.Errorf("thinking block should remain at index 0, got %d", thinkingIndex)
+	}
+	if noticeIndex != 1 {
+		t.Errorf("notice block should be injected at index 1, got %d", noticeIndex)
+	}
+	if textIndex != -1 {
+		t.Errorf("there should be no model text block, got index %d", textIndex)
+	}
+}

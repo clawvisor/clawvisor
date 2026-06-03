@@ -48,13 +48,29 @@ func prependAnthropicAssistantTextJSON(body []byte, text string) ([]byte, error)
 	if err != nil {
 		return nil, fmt.Errorf("prepend anthropic text: marshal text block: %w", err)
 	}
-	// Use append-from-literal rather than make with a pre-computed
-	// cap. CodeQL flags `len(content)+1` as a potential overflow in
-	// the allocation size; the input is bounded by upstream
-	// MaxResponseBytes so the overflow is unreachable in practice,
-	// but sidestepping the explicit arithmetic keeps the static
-	// analyzer quiet without buying us anything in exchange.
-	merged := append([]json.RawMessage{json.RawMessage(textBlock)}, content...)
+	// Inspect the first content block. If it is a thinking block or redacted_thinking
+	// block, we insert the notice block at index 1 instead of index 0.
+	isThinking := false
+	if len(content) > 0 {
+		var firstBlock struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(content[0], &firstBlock); err == nil {
+			if firstBlock.Type == "thinking" || firstBlock.Type == "redacted_thinking" {
+				isThinking = true
+			}
+		}
+	}
+
+	var merged []json.RawMessage
+	if isThinking {
+		merged = make([]json.RawMessage, 0, len(content)+1)
+		merged = append(merged, content[0])
+		merged = append(merged, json.RawMessage(textBlock))
+		merged = append(merged, content[1:]...)
+	} else {
+		merged = append([]json.RawMessage{json.RawMessage(textBlock)}, content...)
+	}
 	mergedRaw, err := json.Marshal(merged)
 	if err != nil {
 		return nil, fmt.Errorf("prepend anthropic text: marshal content: %w", err)
@@ -96,7 +112,38 @@ func prependAnthropicAssistantTextSSE(body []byte, text string) ([]byte, error) 
 		return nil
 	}
 
-	textBlockInserted := false
+	delayNotice := isFirstBlockThinking(events)
+	noticeInserted := false
+	maxIndexSeen := 0
+
+	emitNotice := func(idx int) error {
+		if err := emit("content_block_start", map[string]any{
+			"type":  "content_block_start",
+			"index": idx,
+			"content_block": map[string]any{
+				"type": "text",
+				"text": "",
+			},
+		}); err != nil {
+			return err
+		}
+		if err := emit("content_block_delta", map[string]any{
+			"type":  "content_block_delta",
+			"index": idx,
+			"delta": map[string]any{"type": "text_delta", "text": text},
+		}); err != nil {
+			return err
+		}
+		if err := emit("content_block_stop", map[string]any{
+			"type":  "content_block_stop",
+			"index": idx,
+		}); err != nil {
+			return err
+		}
+		noticeInserted = true
+		return nil
+	}
+
 	for _, ev := range events {
 		switch ev.Event {
 		case "message_start":
@@ -106,58 +153,127 @@ func prependAnthropicAssistantTextSSE(body []byte, text string) ([]byte, error) 
 			out.WriteString("\ndata: ")
 			out.WriteString(ev.Data)
 			out.WriteString("\n\n")
-			// Inject our text block immediately after message_start so
-			// the harness renders the notice before any tool_use the
-			// upstream emitted.
-			if err := emit("content_block_start", map[string]any{
-				"type":  "content_block_start",
-				"index": 0,
-				"content_block": map[string]any{
-					"type": "text",
-					"text": "",
-				},
-			}); err != nil {
-				return body, nil
+
+			if !delayNotice {
+				if err := emitNotice(0); err != nil {
+					return body, nil
+				}
 			}
-			if err := emit("content_block_delta", map[string]any{
-				"type":  "content_block_delta",
-				"index": 0,
-				"delta": map[string]any{"type": "text_delta", "text": text},
-			}); err != nil {
-				return body, nil
+		case "content_block_start":
+			var cbs struct {
+				Index int `json:"index"`
 			}
-			if err := emit("content_block_stop", map[string]any{
-				"type":  "content_block_stop",
-				"index": 0,
-			}); err != nil {
-				return body, nil
+			_ = json.Unmarshal([]byte(ev.Data), &cbs)
+			if cbs.Index > maxIndexSeen {
+				maxIndexSeen = cbs.Index
 			}
-			textBlockInserted = true
-		case "content_block_start", "content_block_delta", "content_block_stop":
-			if !textBlockInserted {
-				// No message_start observed yet (malformed stream). Pass
-				// through unchanged; we'd rather render a broken
-				// notice than corrupt the original event order.
+
+			if delayNotice {
+				if !noticeInserted {
+					if cbs.Index == 0 {
+						// Pass through the thinking block verbatim.
+						out.WriteString("event: ")
+						out.WriteString(ev.Event)
+						out.WriteString("\ndata: ")
+						out.WriteString(ev.Data)
+						out.WriteString("\n\n")
+					} else {
+						// Inject notice block at index 1
+						if err := emitNotice(1); err != nil {
+							return body, nil
+						}
+						// Shift this block to index 2
+						shifted, ok := shiftAnthropicEventIndex(ev.Event, ev.Data, 1)
+						if !ok {
+							return body, nil
+						}
+						out.WriteString("event: ")
+						out.WriteString(ev.Event)
+						out.WriteString("\ndata: ")
+						out.Write(shifted)
+						out.WriteString("\n\n")
+					}
+				} else {
+					shifted, ok := shiftAnthropicEventIndex(ev.Event, ev.Data, 1)
+					if !ok {
+						return body, nil
+					}
+					out.WriteString("event: ")
+					out.WriteString(ev.Event)
+					out.WriteString("\ndata: ")
+					out.Write(shifted)
+					out.WriteString("\n\n")
+				}
+			} else {
+				if !noticeInserted {
+					// No message_start observed yet. Pass through unchanged.
+					out.WriteString("event: ")
+					out.WriteString(ev.Event)
+					out.WriteString("\ndata: ")
+					out.WriteString(ev.Data)
+					out.WriteString("\n\n")
+					continue
+				}
+				shifted, ok := shiftAnthropicEventIndex(ev.Event, ev.Data, 1)
+				if !ok {
+					return body, nil
+				}
 				out.WriteString("event: ")
 				out.WriteString(ev.Event)
 				out.WriteString("\ndata: ")
-				out.WriteString(ev.Data)
+				out.Write(shifted)
 				out.WriteString("\n\n")
-				continue
 			}
-			shifted, ok := shiftAnthropicEventIndex(ev.Event, ev.Data, 1)
-			if !ok {
+		case "content_block_delta", "content_block_stop":
+			if delayNotice {
+				if !noticeInserted {
+					// Must be index 0 (thinking block). Pass through verbatim.
+					out.WriteString("event: ")
+					out.WriteString(ev.Event)
+					out.WriteString("\ndata: ")
+					out.WriteString(ev.Data)
+					out.WriteString("\n\n")
+				} else {
+					shifted, ok := shiftAnthropicEventIndex(ev.Event, ev.Data, 1)
+					if !ok {
+						return body, nil
+					}
+					out.WriteString("event: ")
+					out.WriteString(ev.Event)
+					out.WriteString("\ndata: ")
+					out.Write(shifted)
+					out.WriteString("\n\n")
+				}
+			} else {
+				if !noticeInserted {
+					out.WriteString("event: ")
+					out.WriteString(ev.Event)
+					out.WriteString("\ndata: ")
+					out.WriteString(ev.Data)
+					out.WriteString("\n\n")
+					continue
+				}
+				shifted, ok := shiftAnthropicEventIndex(ev.Event, ev.Data, 1)
+				if !ok {
+					return body, nil
+				}
 				out.WriteString("event: ")
 				out.WriteString(ev.Event)
 				out.WriteString("\ndata: ")
-				out.WriteString(ev.Data)
+				out.Write(shifted)
 				out.WriteString("\n\n")
-				continue
+			}
+		case "message_delta", "message_stop":
+			if delayNotice && !noticeInserted {
+				// Inject notice block at index 1 before message delta/stop
+				if err := emitNotice(1); err != nil {
+					return body, nil
+				}
 			}
 			out.WriteString("event: ")
 			out.WriteString(ev.Event)
 			out.WriteString("\ndata: ")
-			out.Write(shifted)
+			out.WriteString(ev.Data)
 			out.WriteString("\n\n")
 		default:
 			out.WriteString("event: ")
@@ -165,6 +281,12 @@ func prependAnthropicAssistantTextSSE(body []byte, text string) ([]byte, error) 
 			out.WriteString("\ndata: ")
 			out.WriteString(ev.Data)
 			out.WriteString("\n\n")
+		}
+	}
+
+	if delayNotice && !noticeInserted {
+		if err := emitNotice(maxIndexSeen + 1); err != nil {
+			return body, nil
 		}
 	}
 	return out.Bytes(), nil
@@ -816,4 +938,21 @@ func shiftAnthropicEventIndex(event, data string, delta int) ([]byte, bool) {
 		return nil, false
 	}
 	return out, true
+}
+
+func isFirstBlockThinking(events []sseEvent) bool {
+	for _, ev := range events {
+		if ev.Event == "content_block_start" {
+			var cbs struct {
+				ContentBlock struct {
+					Type string `json:"type"`
+				} `json:"content_block"`
+			}
+			if err := json.Unmarshal([]byte(ev.Data), &cbs); err == nil {
+				return cbs.ContentBlock.Type == "thinking" || cbs.ContentBlock.Type == "redacted_thinking"
+			}
+			break
+		}
+	}
+	return false
 }

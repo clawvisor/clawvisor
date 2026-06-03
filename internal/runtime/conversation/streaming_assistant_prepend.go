@@ -98,6 +98,10 @@ type streamingPrependWriter struct {
 	// after we've emitted the leading notice events; from then on we
 	// shift downstream indices.
 	noticeInjected bool
+
+	// State for Anthropic thinking fallback
+	hasSeenAnyBlock bool
+	maxIndexSeen    int
 }
 
 func (s *streamingPrependWriter) Write(p []byte) (int, error) {
@@ -138,6 +142,10 @@ func (s *streamingPrependWriter) Close() error {
 	if s.shape == StreamShapeOpenAIChat && !s.noticeInjected {
 		s.emitSyntheticChatNotice()
 		s.noticeInjected = true
+	}
+	// Anthropic fallback — if the stream ended without notice being injected (e.g. thinking-only stream)
+	if s.shape == StreamShapeAnthropicMessages && !s.noticeInjected {
+		s.injectAnthropicFallbackNotice()
 	}
 	return nil
 }
@@ -246,6 +254,31 @@ func (s *streamingPrependWriter) emitJSON(event string, payload any) {
 
 // --- Anthropic ---------------------------------------------------------
 
+func (s *streamingPrependWriter) injectAnthropicFallbackNotice() {
+	idx := 0
+	if s.hasSeenAnyBlock {
+		idx = s.maxIndexSeen + 1
+	}
+	s.emitJSON("content_block_start", map[string]any{
+		"type":  "content_block_start",
+		"index": idx,
+		"content_block": map[string]any{
+			"type": "text",
+			"text": "",
+		},
+	})
+	s.emitJSON("content_block_delta", map[string]any{
+		"type":  "content_block_delta",
+		"index": idx,
+		"delta": map[string]any{"type": "text_delta", "text": s.text},
+	})
+	s.emitJSON("content_block_stop", map[string]any{
+		"type":  "content_block_stop",
+		"index": idx,
+	})
+	s.noticeInjected = true
+}
+
 func (s *streamingPrependWriter) flushAnthropic(event, data string) {
 	switch event {
 	case "message_start":
@@ -260,10 +293,16 @@ func (s *streamingPrependWriter) flushAnthropic(event, data string) {
 				} `json:"content_block"`
 			}
 			err := json.Unmarshal([]byte(data), &cbs)
-			if err == nil && cbs.ContentBlock.Type == "thinking" {
-				// Keep thinking block at index 0, do not inject notice yet.
-				s.passThrough(event, data)
-				return
+			if err == nil {
+				s.hasSeenAnyBlock = true
+				if cbs.Index > s.maxIndexSeen {
+					s.maxIndexSeen = cbs.Index
+				}
+				if cbs.ContentBlock.Type == "thinking" || cbs.ContentBlock.Type == "redacted_thinking" {
+					// Keep thinking block at index 0, do not inject notice yet.
+					s.passThrough(event, data)
+					return
+				}
 			}
 
 			// We need to inject the notice block at the current index.
@@ -320,6 +359,12 @@ func (s *streamingPrependWriter) flushAnthropic(event, data string) {
 			return
 		}
 		s.emitEvent(event, string(shifted))
+
+	case "message_delta", "message_stop":
+		if !s.noticeInjected {
+			s.injectAnthropicFallbackNotice()
+		}
+		s.passThrough(event, data)
 
 	default:
 		s.passThrough(event, data)
