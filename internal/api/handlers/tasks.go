@@ -510,6 +510,12 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.ChainExtractionMode != "" {
 		dedupParts = append(dedupParts, "chain_extraction_mode", req.ChainExtractionMode)
 	}
+	if req.MaxCostMicros != nil {
+		dedupParts = append(dedupParts, "max_cost_micros", *req.MaxCostMicros)
+	}
+	if req.MaxTokens != nil {
+		dedupParts = append(dedupParts, "max_tokens", *req.MaxTokens)
+	}
 	taskDedupKey := buildDedupKey(dedupParts...)
 	if cached, ok := h.contentDedup.Get(taskDedupKey); ok {
 		resp := cached.(map[string]any)

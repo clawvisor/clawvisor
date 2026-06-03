@@ -246,7 +246,9 @@ func EvaluateBudget(ctx context.Context, db store.Store, approvals PendingApprov
 			ExpiresAt:      time.Now().Add(10 * time.Minute),
 			PendingTaskID:  taskID,
 		}
-		_, _ = approvals.Hold(ctx, hold)
+		if _, err := approvals.Hold(ctx, hold); err != nil {
+			return EvaluateBudgetResult{}, err
+		}
 
 		return EvaluateBudgetResult{
 			Blocked:    true,

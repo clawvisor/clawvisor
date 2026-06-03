@@ -2287,6 +2287,9 @@ func TestLLMEndpoint_BudgetLimits(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
+	if upstreamHits != 0 {
+		t.Fatalf("expected upstream NOT to be hit on soft-block budget warning, got hits=%d", upstreamHits)
+	}
 	bodyStr := rec.Body.String()
 	if !strings.Contains(bodyStr, "Clawvisor: Task budget is at 90%") {
 		t.Fatalf("expected budget warning in response, got %s", bodyStr)

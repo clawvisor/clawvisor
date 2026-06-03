@@ -731,7 +731,13 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 	budgetCheck, err := llmproxy.EvaluateBudget(r.Context(), h.Store, h.PendingApprovals, h.BudgetOverrides, agent, activeTaskID, provider, conversationID)
 	if err != nil {
-		h.Logger.WarnContext(r.Context(), "budget check failed", "err", err)
+		h.Logger.WarnContext(r.Context(), "budget check failed; continuing under fail-open posture",
+			"err", err,
+			"agent_id", agent.ID,
+			"task_id", activeTaskID,
+			"provider", string(provider),
+			"conversation_id", conversationID,
+		)
 	} else if budgetCheck.Blocked {
 		auditStatus = http.StatusOK
 		auditDecide = "deny"
