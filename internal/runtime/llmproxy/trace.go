@@ -85,6 +85,11 @@ const (
 	TraceEventRewriteApplied = "rewrite_applied"
 	TraceEventSecretPipeline = "secret_pipeline"
 	TraceEventTaskSlide      = "task_slide"
+	// TraceEventScopeDriftRegistered fires once per scope-drift menu
+	// emission, carrying the minted drift_id and the source/reason that
+	// triggered the menu. Lets operators correlate a "menu fired"
+	// audit row with the registry record the agent will resolve.
+	TraceEventScopeDriftRegistered = "scope_drift_registered"
 )
 
 const (

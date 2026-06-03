@@ -910,8 +910,18 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 					// "this tool call" as the subject and steers the
 					// agent toward (b) "create a new task" — which is
 					// the natural fix for "no task covers this work".
-					if verdict, fired := scopeDriftVerdictFromDecision(req, cfg, tu, v, ResolvedAction{}, dec); fired {
-						audit("block", string(dec.Source), dec.Reason)
+					if verdict, driftID, fired := scopeDriftVerdictFromDecision(req, cfg, tu, v, ResolvedAction{}, dec); fired {
+						auditReason := dec.Reason
+						if driftID != "" {
+							auditReason += " [drift_id=" + driftID + "]"
+							trace(TraceEventScopeDriftRegistered,
+								"path", "trigger_miss",
+								"drift_id", driftID,
+								"source", string(dec.Source),
+								"reason", dec.Reason,
+							)
+						}
+						audit("block", string(dec.Source), auditReason)
 						return verdict
 					}
 					// Hold before rendering so the approval ID can be
@@ -1091,8 +1101,20 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 				// ambiguous-task cases keep the legacy
 				// approvalPrompt because the user, not the agent,
 				// is the right decision-maker for those.
-				if verdict, fired := scopeDriftVerdictFromDecision(req, cfg, tu, v, resolved, dec); fired {
-					audit("block", string(dec.Source), dec.Reason)
+				if verdict, driftID, fired := scopeDriftVerdictFromDecision(req, cfg, tu, v, resolved, dec); fired {
+					auditReason := dec.Reason
+					if driftID != "" {
+						auditReason += " [drift_id=" + driftID + "]"
+						trace(TraceEventScopeDriftRegistered,
+							"path", "credentialed",
+							"drift_id", driftID,
+							"source", string(dec.Source),
+							"service", resolved.ServiceID,
+							"action", resolved.ActionID,
+							"reason", dec.Reason,
+						)
+					}
+					audit("block", string(dec.Source), auditReason)
 					return verdict
 				}
 				// Hold first so the assigned approval ID can be
@@ -1168,8 +1190,21 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 				if !preCleared {
 					dec := cfg.TaskScope.Check(req.Context(), cfg.AgentUserID, cfg.AgentID, resolved.ServiceID, resolved.ActionID)
 					if !dec.Allowed {
-						audit("block", "task_scope_denied", dec.Reason)
-						return scopeDriftVerdict(req, cfg, tu, resolved, v, "", "", ScopeDriftSourceTaskScope, dec.Reason)
+						verdict, driftID := scopeDriftVerdict(req, cfg, tu, resolved, v, "", "", ScopeDriftSourceTaskScope, dec.Reason)
+						auditReason := dec.Reason
+						if driftID != "" {
+							auditReason += " [drift_id=" + driftID + "]"
+							trace(TraceEventScopeDriftRegistered,
+								"path", "task_scope_legacy",
+								"drift_id", driftID,
+								"source", string(ScopeDriftSourceTaskScope),
+								"service", resolved.ServiceID,
+								"action", resolved.ActionID,
+								"reason", dec.Reason,
+							)
+						}
+						audit("block", "task_scope_denied", auditReason)
+						return verdict
 					}
 					matchedTaskID = dec.TaskID
 					// Intent verification: when the matched TaskAction's
@@ -1178,7 +1213,6 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 					// the request's params + tool_use shape to the matched
 					// expected_use. Off mode and missing verifier skip silently.
 					if reason, ok := runIntentVerify(req.Context(), cfg, dec, resolved, tu); !ok {
-						audit("block", "intent_verification_failed", reason)
 						taskPurpose := ""
 						expectedUse := ""
 						if dec.MatchedTask != nil {
@@ -1187,7 +1221,21 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 						if dec.MatchedAction != nil {
 							expectedUse = dec.MatchedAction.ExpectedUse
 						}
-						return scopeDriftVerdictWithTask(req, cfg, tu, resolved, v, dec.TaskID, taskPurpose, expectedUse, ScopeDriftSourceIntentVerification, reason)
+						verdict, driftID := scopeDriftVerdictWithTask(req, cfg, tu, resolved, v, dec.TaskID, taskPurpose, expectedUse, ScopeDriftSourceIntentVerification, reason)
+						auditReason := reason
+						if driftID != "" {
+							auditReason += " [drift_id=" + driftID + "]"
+							trace(TraceEventScopeDriftRegistered,
+								"path", "intent_verify_legacy",
+								"drift_id", driftID,
+								"source", string(ScopeDriftSourceIntentVerification),
+								"service", resolved.ServiceID,
+								"action", resolved.ActionID,
+								"reason", reason,
+							)
+						}
+						audit("block", "intent_verification_failed", auditReason)
+						return verdict
 					}
 					// Sliding lifetime: each authorized tool_use bumps a
 					// sliding-lifetime task's expiry forward. Session and
@@ -2044,17 +2092,19 @@ func streamingDriftSubstitution(ctx context.Context, cfg PostprocessConfig, prov
 // the model — pick (a)/(b) by hitting the existing /control/tasks
 // endpoints, or (c)/(d) by emitting <clawvisor:decision> markup.
 //
-// Returns (verdict, true) when the menu fired; (zero, false) when the
-// caller should fall through to the legacy approvalPrompt path. The
-// false branch lets the existing inline-approval Hold + prompt path
-// keep working for non-drift NeedsApproval cases (rule_review, etc).
-func scopeDriftVerdictFromDecision(req *http.Request, cfg PostprocessConfig, tu conversation.ToolUse, v inspector.Verdict, resolved ResolvedAction, dec runtimedecision.AuthorizationDecision) (conversation.ToolUseVerdict, bool) {
+// Returns (verdict, drift_id, true) when the menu fired (drift_id is
+// "" if Register failed but the verdict still substitutes); (zero,
+// "", false) when the caller should fall through to the legacy
+// approvalPrompt path. The false branch lets the existing
+// inline-approval Hold + prompt path keep working for non-drift
+// NeedsApproval cases (rule_review, etc).
+func scopeDriftVerdictFromDecision(req *http.Request, cfg PostprocessConfig, tu conversation.ToolUse, v inspector.Verdict, resolved ResolvedAction, dec runtimedecision.AuthorizationDecision) (conversation.ToolUseVerdict, string, bool) {
 	if cfg.ScopeDrifts == nil {
-		return conversation.ToolUseVerdict{}, false
+		return conversation.ToolUseVerdict{}, "", false
 	}
 	source, ok := scopeDriftSourceFromDecision(dec.Source)
 	if !ok {
-		return conversation.ToolUseVerdict{}, false
+		return conversation.ToolUseVerdict{}, "", false
 	}
 	taskID := taskIDFromDecision(dec)
 	taskPurpose := ""
@@ -2065,19 +2115,24 @@ func scopeDriftVerdictFromDecision(req *http.Request, cfg PostprocessConfig, tu 
 	if dec.Action != nil {
 		expectedUse = dec.Action.ExpectedUse
 	}
-	return scopeDriftVerdictWithTask(req, cfg, tu, resolved, v, taskID, taskPurpose, expectedUse, source, dec.Reason), true
+	verdict, driftID := scopeDriftVerdictWithTask(req, cfg, tu, resolved, v, taskID, taskPurpose, expectedUse, source, dec.Reason)
+	return verdict, driftID, true
 }
 
 // scopeDriftVerdict registers a drift record for a task_scope_denied
 // block and returns the ToolUseVerdict that substitutes the
-// agent-facing menu for the legacy flat error. When the registry is
-// not configured (tests, older deployments), falls back to the
-// original flat-error shape so existing expectations stay stable.
-func scopeDriftVerdict(req *http.Request, cfg PostprocessConfig, tu conversation.ToolUse, resolved ResolvedAction, v inspector.Verdict, taskID, taskPurpose string, source ScopeDriftSource, reason string) conversation.ToolUseVerdict {
+// agent-facing menu for the legacy flat error, plus the minted
+// drift_id (empty when the registry is unwired or Register failed).
+// Callers should thread the drift_id into their audit/trace lines so
+// operators can correlate the block row with the registry record.
+// When the registry is not configured (tests, older deployments),
+// falls back to the original flat-error shape so existing
+// expectations stay stable.
+func scopeDriftVerdict(req *http.Request, cfg PostprocessConfig, tu conversation.ToolUse, resolved ResolvedAction, v inspector.Verdict, taskID, taskPurpose string, source ScopeDriftSource, reason string) (conversation.ToolUseVerdict, string) {
 	return scopeDriftVerdictWithTask(req, cfg, tu, resolved, v, taskID, taskPurpose, "", source, reason)
 }
 
-func scopeDriftVerdictWithTask(req *http.Request, cfg PostprocessConfig, tu conversation.ToolUse, resolved ResolvedAction, v inspector.Verdict, taskID, taskPurpose, expectedUse string, source ScopeDriftSource, reason string) conversation.ToolUseVerdict {
+func scopeDriftVerdictWithTask(req *http.Request, cfg PostprocessConfig, tu conversation.ToolUse, resolved ResolvedAction, v inspector.Verdict, taskID, taskPurpose, expectedUse string, source ScopeDriftSource, reason string) (conversation.ToolUseVerdict, string) {
 	// Preserve the original per-source wording so audit text and the
 	// pre-drift fallback path stay byte-stable. Tests + dashboards key
 	// off these strings; the menu prompt below is additive context.
@@ -2098,7 +2153,7 @@ func scopeDriftVerdictWithTask(req *http.Request, cfg PostprocessConfig, tu conv
 		return conversation.ToolUseVerdict{
 			Allowed: false,
 			Reason:  flatReason,
-		}
+		}, ""
 	}
 	drift, err := cfg.ScopeDrifts.Register(req.Context(), ScopeDrift{
 		UserID:         cfg.AgentUserID,
@@ -2122,7 +2177,7 @@ func scopeDriftVerdictWithTask(req *http.Request, cfg PostprocessConfig, tu conv
 		return conversation.ToolUseVerdict{
 			Allowed: false,
 			Reason:  flatReason + " (drift registry unavailable: " + err.Error() + ")",
-		}
+		}, ""
 	}
 	prompt := renderScopeDriftMenu(drift.MenuFields(), cfg.ControlBaseURL)
 	// ContinueWithToolResult is what routes the menu to the model
@@ -2139,7 +2194,7 @@ func scopeDriftVerdictWithTask(req *http.Request, cfg PostprocessConfig, tu conv
 		Reason:                 flatReason,
 		SubstituteWith:         prompt,
 		ContinueWithToolResult: prompt,
-	}
+	}, drift.ID
 }
 
 // runIntentVerify runs LLM intent verification when the matched TaskAction
