@@ -451,6 +451,13 @@ func buildVerificationUserMessage(req VerifyRequest) string {
 			"<assistant>", "</assistant>",
 			"<user>", "</user>",
 			"<prompt>", "</prompt>",
+			// Agent justification rides under <justification>...</justification>
+			// (see justificationLine builder below). Without stripping the
+			// closing tag here, a justification body containing
+			// </justification> would prematurely close the wrapper and let
+			// subsequent text leak out of the labelled-untrusted slot the
+			// system prompt teaches the verifier to discount.
+			"<justification>", "</justification>",
 		} {
 			for {
 				i := strings.Index(lower, tag)

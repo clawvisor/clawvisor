@@ -488,6 +488,36 @@ func TestApplyScopeDriftDecisions_CrossAgentDriftRefused(t *testing.T) {
 	}
 }
 
+// TestApplyScopeDriftDecisions_CrossConversationDriftRefused pins the
+// conversation-scope check: a drift minted for the same agent in
+// conversation A must not be claimable from conversation B (e.g. an
+// agent that finds the drift_id in stale assistant history copied
+// across sessions). Without the check, the claim would consume the
+// one-shot cap and burn the drift on the wrong session.
+func TestApplyScopeDriftDecisions_CrossConversationDriftRefused(t *testing.T) {
+	reg := NewMemoryScopeDriftRegistry(0)
+	ctx := context.Background()
+	drift, _ := reg.Register(ctx, ScopeDrift{
+		AgentID:        "agent-1",
+		ConversationID: "conv-A",
+		Source:         ScopeDriftSourceIntentVerification,
+	})
+	cfg := PostprocessConfig{
+		AgentID:        "agent-1",
+		ConversationID: "conv-B",
+		ScopeDrifts:    reg,
+	}
+	body := []byte(`<clawvisor:decision drift="` + drift.ID + `" option="justify">x</clawvisor:decision>`)
+	out, _ := applyScopeDriftDecisions(ctx, cfg, conversation.ProviderAnthropic, body)
+	if !strings.Contains(string(out), "different conversation") {
+		t.Errorf("status message did not flag cross-conversation claim:\n%s", out)
+	}
+	updated, _ := reg.Get(ctx, drift.ID)
+	if updated.ChosenOption != "" {
+		t.Errorf("cross-conversation path burned the one-shot cap (ChosenOption=%q)", updated.ChosenOption)
+	}
+}
+
 func TestApplyScopeDriftDecisions_NoMarkupReturnsUnchanged(t *testing.T) {
 	reg := NewMemoryScopeDriftRegistry(0)
 	cfg := PostprocessConfig{AgentID: "agent-1", ScopeDrifts: reg}

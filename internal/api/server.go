@@ -1323,6 +1323,9 @@ func (s *Server) registerLiteProxyRoutes(
 		// store the same way liteApprovals is wired.
 		if s.scopeDrifts == nil {
 			s.scopeDrifts = llmproxy.NewMemoryScopeDriftRegistry(60 * time.Second)
+			if s.logger != nil && strings.EqualFold(strings.TrimSpace(s.cfg.Server.RouteSet), "proxy_lite") {
+				s.logger.Warn("lite-proxy: ScopeDriftRegistry not configured — scope-drift menus are process-local; use Redis for multi-instance proxy deployments")
+			}
 		}
 		llmHandler.ScopeDrifts = s.scopeDrifts
 		if s.liteApprovals != nil {

@@ -252,6 +252,20 @@ func resolveScopeDriftDecision(ctx context.Context, cfg PostprocessConfig, provi
 		// sessions.
 		return scopeDriftStatus("Clawvisor: drift " + d.DriftID + " was minted for a different agent and cannot be resolved here.")
 	}
+	// Conversation scoping: same-agent drifts from a DIFFERENT
+	// conversation must not be claimable here. Without this check, an
+	// agent that finds a drift_id in stale assistant history (copied
+	// across sessions, or surfaced from a parallel conversation) could
+	// claim it from the wrong conversation and consume the pre-clear
+	// against an unrelated tool_use. The fingerprint already includes
+	// ConversationID so the pre-clear wouldn't match — but the claim
+	// itself would still close the original drift and emit a status
+	// the wrong session reads. Refuse the claim outright when the
+	// conversation differs (empty cfg.ConversationID matches an empty
+	// drift one, which preserves pre-conversation-id deployments).
+	if drift.ConversationID != cfg.ConversationID {
+		return scopeDriftStatus("Clawvisor: drift " + d.DriftID + " belongs to a different conversation and cannot be resolved here.")
+	}
 
 	switch d.Option {
 	case "justify":
