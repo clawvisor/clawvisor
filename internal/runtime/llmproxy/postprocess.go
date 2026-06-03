@@ -2125,10 +2125,20 @@ func scopeDriftVerdictWithTask(req *http.Request, cfg PostprocessConfig, tu conv
 		}
 	}
 	prompt := renderScopeDriftMenu(drift.MenuFields(), cfg.ControlBaseURL)
+	// ContinueWithToolResult is what routes the menu to the model
+	// rather than the user. Without it, the handler terminates the
+	// turn with the menu as assistant text — the user sees a wall of
+	// options and the model never gets a chance to pick one. With it,
+	// the proxy synthesizes a user-role tool_result carrying the menu,
+	// the upstream LLM is re-called, and the model emits its next
+	// tool_use (curl POST for option a/b, <clawvisor:decision> markup
+	// for c/d). SubstituteWith stays populated as the fallback shown
+	// to the user if the continuation round-trip fails.
 	return conversation.ToolUseVerdict{
-		Allowed:        false,
-		Reason:         flatReason,
-		SubstituteWith: prompt,
+		Allowed:                false,
+		Reason:                 flatReason,
+		SubstituteWith:         prompt,
+		ContinueWithToolResult: prompt,
 	}
 }
 
