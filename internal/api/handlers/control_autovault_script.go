@@ -382,7 +382,7 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 		"max_request_bytes":  scriptSessionMaxRequestBytes,
 		"max_total_bytes":    scriptSessionTotalBytesFor(maxUses),
 		"example_request":    exampleCurl,
-		"next_step": "Use the shape in `example_request` for every follow-up call: route through " + resolverBase + " (NOT the upstream host directly), include all three headers above, and substitute the upstream path under one of your `path_prefixes`. Calling the upstream URL with just the placeholder bypasses this session and falls back to the one-shot rewrite path, which is fragile for batch operations. See GET /api/control/autovault/script for full schema + error recovery.",
+		"next_step": "Write any shape of script you want for the fan-out — `while read id; do … done`, `xargs`, Python, jq pipelines, parallel curls, multi-statement bash, etc. — as long as EVERY credentialed request inside it has the SAME shape as `example_request`: route through " + resolverBase + " (NOT the upstream host directly), include all three headers above, and substitute the upstream path under one of your `path_prefixes`. The script-session passthrough is permissive on script shape because the resolver enforces scope on every actual request. Calling the upstream URL with just the placeholder bypasses this session entirely and falls back to the one-shot rewrite path, which IS shape-restricted (no loops, no --config, no pipelines). See GET /api/control/autovault/script for full schema + error recovery.",
 	}
 	// Surface the task's approved tool surface so the agent stays
 	// within it when executing the fan-out. Without this hint, agents
