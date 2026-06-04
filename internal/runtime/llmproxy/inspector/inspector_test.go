@@ -725,11 +725,15 @@ func TestDefaultParser_BashProcessSubstitutionRefused(t *testing.T) {
 }
 
 func TestAllPlaceholdersAreStubs(t *testing.T) {
-	// Real placeholders look like autovault_<service>_<32-char-base64>.
-	real1 := "autovault_github_" + strings.Repeat("a", 32)
-	real2 := "autovault_resend_" + strings.Repeat("b", 32)
-	shortestReal := "autovault_x_" + strings.Repeat("c", 32)
-	oneCharTooShort := "autovault_x_" + strings.Repeat("c", 31)
+	// Real placeholders look like autovault_<service>_<16-char-base64>.
+	// The stub threshold sits a couple chars below the nominal
+	// suffix length (12 chars instead of 16) so a one-char LLM-
+	// tokenizer truncation doesn't reclassify a real placeholder
+	// as a stub.
+	real1 := "autovault_github_" + strings.Repeat("a", 16)
+	real2 := "autovault_resend_" + strings.Repeat("b", 16)
+	shortestReal := "autovault_x_" + strings.Repeat("c", 12)
+	oneCharTooShort := "autovault_x_" + strings.Repeat("c", 11)
 	cases := []struct {
 		name string
 		in   []string
@@ -738,8 +742,8 @@ func TestAllPlaceholdersAreStubs(t *testing.T) {
 		{"empty list — nothing to suppress", nil, false},
 		{"single short stub", []string{"autovault_github_xxx"}, true},
 		{"all short stubs", []string{"autovault_github_xxx", "autovault_resend_abc"}, true},
-		{"43 chars is still a stub", []string{oneCharTooShort}, true},
-		{"44 chars is the shortest realistic placeholder", []string{shortestReal}, false},
+		{"23 chars is still a stub", []string{oneCharTooShort}, true},
+		{"24 chars is the shortest realistic placeholder", []string{shortestReal}, false},
 		{"single real placeholder", []string{real1}, false},
 		{"mixed — one real, one stub", []string{real1, "autovault_github_xxx"}, false},
 		{"all real", []string{real1, real2}, false},
