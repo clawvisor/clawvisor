@@ -1545,7 +1545,7 @@ function buildBootstrapCommand(clawvisorURL: string, claim: string | undefined, 
   const qs = new URLSearchParams({ wait: 'true', name: agentName })
   if (claim) qs.set('claim', claim)
   if (harness) qs.set('harness', harness)
-  return `mkdir -p ~/.clawvisor/agents && curl -sf --remove-on-error -X POST \\
+  return `mkdir -p ~/.clawvisor/agents && printf '\\nApprove the connection request on your Clawvisor dashboard...\\n\\n' && curl -sf --remove-on-error -X POST \\
   "${clawvisorURL}/api/agents/connect?${qs.toString()}" \\
   -o ~/.clawvisor/agents/${agentName}.json \\
   && chmod 600 ~/.clawvisor/agents/${agentName}.json`
@@ -2631,7 +2631,7 @@ function buildConnectCommand(opts: {
   if (mode) qs.set('mode', mode)
   const connectURL = `${baseURL}/api/agents/connect?${qs.toString()}`
   return [
-    `mkdir -p ~/.clawvisor/agents && curl -sf --remove-on-error -X POST \\`,
+    `mkdir -p ~/.clawvisor/agents && printf '\\nApprove the connection request on your Clawvisor dashboard...\\n\\n' && curl -sf --remove-on-error -X POST \\`,
     `  "${connectURL}" \\`,
     `  -o ~/.clawvisor/agents/${name}.json \\`,
     `  && chmod 600 ~/.clawvisor/agents/${name}.json`,
