@@ -14,10 +14,21 @@ import (
 // upstream call. Zero values mean the feature was inactive (e.g. non-streaming
 // response or thinking not requested).
 type MultiThinkingRetryStats struct {
-	Retries      int  // additional upstream calls made beyond the first
-	Detected     bool // true if at least one multi-thinking response was discarded
-	Exhausted    bool // true if we hit the retry cap and gave up (last response returned anyway)
-	PeekedBytes  int  // bytes buffered before commit decision (≈ first thinking block + second block_start event)
+	// Retries is the count of additional upstream calls made beyond
+	// the initial attempt. 0 means the first response was used.
+	// Bounded above by MultiThinkingRetryConfig.MaxRetries.
+	Retries int
+	// Detected is true if at least one multi-thinking response was
+	// observed (and discarded if a retry budget was available).
+	Detected bool
+	// Exhausted is true if the retry cap was hit and we ended up
+	// returning a still-multi-thinking response. The caller is
+	// expected to fall back (e.g. drop the second thinking block in
+	// the relay path). The response body is intact in this case.
+	Exhausted bool
+	// PeekedBytes is the number of bytes buffered before the commit
+	// decision (≈ first thinking block + second block_start event).
+	PeekedBytes int
 }
 
 // MultiThinkingRetryConfig tunes the wrapper. Default cap of 2 retries
@@ -59,7 +70,6 @@ func ForwardWithMultiThinkingRetry(
 		cfg.MaxRetries = 0
 	}
 	stats := MultiThinkingRetryStats{}
-	var lastResp *http.Response
 	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
 		resp, err := forwardFn()
 		if err != nil {
@@ -83,38 +93,26 @@ func ForwardWithMultiThinkingRetry(
 			resp.Body = wrapBodyWithPrefix(prefix, resp.Body)
 			return resp, stats, nil
 		}
-		// Multi-thinking detected — discard this response and retry.
 		stats.Detected = true
-		if lastResp != nil {
-			_ = lastResp.Body.Close()
+		if attempt == cfg.MaxRetries {
+			// Retries exhausted. Return the still-multi-thinking
+			// response with its full body intact (prefix + rest)
+			// so the caller can fall back to the relay-path drop.
+			// Without this, the handler would stream a truncated
+			// SSE that ends mid-block.
+			stats.Exhausted = true
+			resp.Body = wrapBodyWithPrefix(prefix, resp.Body)
+			return resp, stats, nil
 		}
-		// Hold this response for fallback in case we exhaust retries.
-		// We close the body here (since we've already buffered the
-		// prefix and won't replay the rest) and reconstruct on
-		// fallback if needed.
+		// Budget remaining — discard this response and try again.
 		_ = resp.Body.Close()
-		lastResp = &http.Response{
-			Status:        resp.Status,
-			StatusCode:    resp.StatusCode,
-			Header:        resp.Header.Clone(),
-			Body:          io.NopCloser(bytes.NewReader(prefix)),
-			ContentLength: int64(len(prefix)),
-			Request:       resp.Request,
-			Proto:         resp.Proto,
-			ProtoMajor:    resp.ProtoMajor,
-			ProtoMinor:    resp.ProtoMinor,
-		}
 		stats.Retries = attempt + 1
-		// Honor cancellation.
 		if err := ctx.Err(); err != nil {
-			return lastResp, stats, err
+			return nil, stats, err
 		}
 	}
-	// Out of retries — return the last response we saw. The caller is
-	// expected to handle this as a degraded case (e.g. drop the
-	// second thinking block in the relay path).
-	stats.Exhausted = true
-	return lastResp, stats, nil
+	// Loop bounds guarantee a return inside the loop; defensive.
+	return nil, stats, nil
 }
 
 // isAnthropicSSEResponse reports whether the response Content-Type is

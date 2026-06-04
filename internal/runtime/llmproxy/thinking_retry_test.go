@@ -199,6 +199,11 @@ func TestForwardExhaustsRetries(t *testing.T) {
 		[2]string{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`},
 		[2]string{"content_block_stop", `{"type":"content_block_stop","index":0}`},
 		[2]string{"content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":""}}`},
+		[2]string{"content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"signature_delta","signature":"sig"}}`},
+		[2]string{"content_block_stop", `{"type":"content_block_stop","index":1}`},
+		[2]string{"content_block_start", `{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","name":"Bash"}}`},
+		[2]string{"message_delta", `{"type":"message_delta"}`},
+		[2]string{"message_stop", `{"type":"message_stop"}`},
 	)
 	// Three multi-thinking responses in a row, retry cap of 2.
 	fwd := fakeForward(multiThinking, multiThinking, multiThinking)
@@ -209,12 +214,24 @@ func TestForwardExhaustsRetries(t *testing.T) {
 	if !stats.Exhausted {
 		t.Errorf("stats.Exhausted = false, expected true after retry cap")
 	}
-	if stats.Retries != 3 {
-		t.Errorf("stats.Retries = %d, expected 3 (the initial + 2 retries)", stats.Retries)
+	// Retries is the count of additional upstream calls beyond the
+	// first. With MaxRetries=2 and three failed responses we performed
+	// 2 retries before giving up.
+	if stats.Retries != 2 {
+		t.Errorf("stats.Retries = %d, expected 2 (additional retries beyond the first)", stats.Retries)
 	}
-	// We should still return a usable response so the caller can fall back to drop.
 	if resp == nil {
 		t.Fatalf("expected non-nil resp after exhausted retries")
+	}
+	// Critical: the returned body must contain the full upstream
+	// stream (prefix + rest), not just the buffered prefix. Without
+	// this the caller would relay a truncated SSE that ends mid-block.
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(got) != multiThinking {
+		t.Errorf("exhausted response truncated.\n got len=%d\nwant len=%d", len(got), len(multiThinking))
 	}
 }
 
