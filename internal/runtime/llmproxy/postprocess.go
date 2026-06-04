@@ -2376,10 +2376,11 @@ func splitHeaderArg(raw string) (name, value string, ok bool) {
 
 // extractCurlIntent walks a bash command's AST for ANY curl invocation
 // (across pipelines, multi-statement scripts, subshells, while-loops,
-// etc.) and returns the URL literal-prefixes + -H/--header values it
-// finds. "Literal prefix" means the leading static portion of each
-// arg — variable expansion, command substitution, etc. just cut the
-// prefix short rather than disqualify the arg.
+// xargs/parallel/find-exec/sh -c wrappers, etc.) and returns the URL
+// literal-prefixes + -H/--header values it finds. "Literal prefix"
+// means the leading static portion of each arg — variable expansion,
+// command substitution, etc. just cut the prefix short rather than
+// disqualify the arg.
 //
 // Best-effort by design: this is recognition for the script-session
 // passthrough, not security enforcement. The mint-time intent verifier
@@ -2390,9 +2391,23 @@ func splitHeaderArg(raw string) (name, value string, ok bool) {
 // Parse errors return empty slices — caller treats that as "no match,"
 // and the inspector runs as usual.
 func extractCurlIntent(cmd string) (urls []string, headers []string) {
+	extractCurlIntentInto(cmd, &urls, &headers, 0)
+	return urls, headers
+}
+
+// extractCurlIntentMaxDepth bounds the recursion through `sh -c` /
+// `bash -c` wrappers. Three is enough for any realistic agent
+// pattern (`xargs … sh -c '… sh -c "…"'` would already be
+// pathological); it prevents accidental runaway from crafted inputs.
+const extractCurlIntentMaxDepth = 3
+
+func extractCurlIntentInto(cmd string, urls, headers *[]string, depth int) {
+	if depth > extractCurlIntentMaxDepth {
+		return
+	}
 	file, err := syntax.NewParser().Parse(strings.NewReader(cmd), "")
 	if err != nil {
-		return nil, nil
+		return
 	}
 	syntax.Walk(file, func(node syntax.Node) bool {
 		call, ok := node.(*syntax.CallExpr)
@@ -2406,18 +2421,34 @@ func extractCurlIntent(cmd string) (urls []string, headers []string) {
 		// as a URL targeting our resolver and a cv-script -H both
 		// appear in the same arg list, recognition is fine — the
 		// resolver still enforces on the actual request.
-		extractFromCurlArgs(call.Args, &urls, &headers)
+		extractFromCurlArgs(call.Args, urls, headers, depth)
 		return true
 	})
-	return urls, headers
+}
+
+// isShellInvocation reports whether the given literal could be the
+// invocation of a POSIX-ish shell that takes a `-c <command>` arg
+// whose value is itself a shell script. Used to detect the
+// `xargs … sh -c '…'`, `bash -c '…'`, `find . -exec sh -c '…' \;`
+// patterns so we can recurse into the nested script.
+func isShellInvocation(prefix string) bool {
+	switch prefix {
+	case "sh", "bash", "zsh", "dash", "ash", "ksh",
+		"/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash",
+		"/usr/bin/sh", "/usr/bin/bash", "/usr/bin/env":
+		return true
+	}
+	return false
 }
 
 // extractFromCurlArgs collects URL literal-prefixes and -H/--header
 // values from a single curl call's arg list. It handles space-
 // separated (`-H "X: y"`) and equals-attached (`--header=X: y`) forms
 // for headers, and treats any non-flag positional starting with
-// http:// or https:// as a URL.
-func extractFromCurlArgs(args []*syntax.Word, urls, headers *[]string) {
+// http:// or https:// as a URL. When it sees a `(sh|bash) -c <arg>`
+// pattern, it recursively parses <arg> as bash to discover curl
+// invocations nested inside `xargs … sh -c '…'` and similar shapes.
+func extractFromCurlArgs(args []*syntax.Word, urls, headers *[]string, depth int) {
 	for i := 0; i < len(args); i++ {
 		prefix := shellWordLiteralPrefix(args[i])
 
@@ -2464,6 +2495,28 @@ func extractFromCurlArgs(args []*syntax.Word, urls, headers *[]string) {
 		// since we don't enforce anything about extra args.
 		if strings.HasPrefix(prefix, "-") {
 			continue
+		}
+
+		// Shell-spawning pattern: `(sh|bash) -c <script>`. The
+		// nested <script> is itself a bash command that may contain
+		// the curl invocation. Common forms we want to support:
+		//   xargs -I {} sh -c 'curl …'
+		//   bash -c 'curl …'
+		//   find . -exec sh -c 'curl …' \;
+		// Look ahead for `-c <next>` and recurse into <next>.
+		// We do this OPPORTUNISTICALLY — even if recursion finds
+		// nothing useful, we still let the surrounding loop handle
+		// this arg as a positional below.
+		if isShellInvocation(prefix) {
+			for j := i + 1; j < len(args)-1; j++ {
+				if shellWordLiteralPrefix(args[j]) == "-c" {
+					nested := shellWordLiteralPrefix(args[j+1])
+					if nested != "" {
+						extractCurlIntentInto(nested, urls, headers, depth+1)
+					}
+					break
+				}
+			}
 		}
 
 		// Positional. If it parses as a URL, record the literal

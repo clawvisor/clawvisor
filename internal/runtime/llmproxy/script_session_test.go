@@ -99,6 +99,28 @@ func TestScriptSessionToolUse_RecognizesCallerHeader(t *testing.T) {
 			base:  proxyBase,
 			want:  true,
 		},
+		{
+			// Real production pattern: agent puts the curl inside a
+			// single-quoted sh -c so xargs can run it in parallel.
+			// The curl invocation is buried in a string literal, not
+			// a direct AST arg, so we have to recurse into the -c arg.
+			name:  "xargs -P N -I {} sh -c '<curl …>' is allowed (recurse into sh -c arg)",
+			input: `{"command":"cat /tmp/ids.txt | xargs -P 12 -I {} sh -c 'curl -sS \"http://localhost:25297/api/proxy/users/{}\" -H \"Authorization: Bearer autovault_y\" -H \"X-Clawvisor-Target-Host: api.example.com\" -H \"X-Clawvisor-Caller: Bearer cv-script-abc\" > /tmp/out/{}.json'"}`,
+			base:  proxyBase,
+			want:  true,
+		},
+		{
+			name:  "direct bash -c '<curl …>' is allowed",
+			input: `{"command":"bash -c 'curl http://localhost:25297/api/proxy/x -H \"X-Clawvisor-Caller: Bearer cv-script-abc\" -H \"Authorization: Bearer autovault_y\"'"}`,
+			base:  proxyBase,
+			want:  true,
+		},
+		{
+			name:  "find . -exec sh -c '<curl …>' \\; is allowed",
+			input: `{"command":"find /tmp/ids -type f -exec sh -c 'curl http://localhost:25297/api/proxy/x -H \"X-Clawvisor-Caller: Bearer cv-script-abc\" -H \"Authorization: Bearer autovault_y\"' \\;"}`,
+			base:  proxyBase,
+			want:  true,
+		},
 
 		// --- Off-proxy URL: still rejected (recognition fails) ---
 		// These are NOT classified as script-session calls because no
