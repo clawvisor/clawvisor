@@ -64,48 +64,48 @@ func OpenAIApprovalReply(body []byte) (verb, id string) {
 	if len(probe.Input) > 0 {
 		var items []openAIInputItem
 		if err := json.Unmarshal(probe.Input, &items); err == nil {
-			// Find the latest message,role=user. If a tool-call or
-			// tool-output item appears more recently than that user
-			// message, the conversation has already moved past the
-			// approval turn (the held call was approved, executed, and
-			// the model has spoken since) — the "y" is stale history,
-			// not a fresh release. Bail so we pass through to upstream
-			// instead of denying with "approval no longer valid".
+			// The user's approval reply must sit at the tail of the
+			// input array. If any item appears after it
+			// (function_call, function_call_output, custom_tool_call,
+			// reasoning, Codex's tool_search round-trip
+			// tool_search_call/tool_search_output, any of the
+			// Responses built-in tool calls, or a later assistant
+			// message), the conversation has moved past the
+			// approval turn — the held call was approved, executed,
+			// and the model has already spoken since. The "y" is
+			// stale history, not a fresh release; bail so we pass
+			// through to upstream instead of denying with "approval
+			// no longer valid".
 			//
-			// This mirrors Anthropic's natural shape: tool_result there
-			// is a role=user message whose flattened text is empty, so
-			// the existing latest-user-text scan silently goes quiet
-			// once a tool runs. The Responses API splits message and
-			// function_call_output into separate item types, so we have
-			// to skip past them explicitly to get the same behavior.
+			// Inverting the test (latest item must be a user
+			// message) rather than enumerating every
+			// staleness-signal item type avoids silently re-firing
+			// the release path when OpenAI introduces a new
+			// Responses item type — the previous enumeration missed
+			// tool_search_call/tool_search_output (Codex's built-in
+			// tool-discovery items) and reasoning items, both of
+			// which Codex round-trips on continuation requests.
 			//
-			// custom_tool_call is included because Responses round-trips
-			// it as an input-acceptable item type (see
-			// sanitizeResponsesItemForInput); a released custom tool
-			// call sitting after the stale "y" would otherwise re-fire
-			// this scan the same way function_call did.
-			itemUserIdx := -1
-			for i := len(items) - 1; i >= 0; i-- {
-				switch items[i].Type {
-				case "function_call", "function_call_output", "custom_tool_call":
-					return "", ""
-				case "message":
-					if items[i].Role == "user" {
-						itemUserIdx = i
-					}
-				}
-				if itemUserIdx >= 0 {
-					break
-				}
-			}
-			if itemUserIdx < 0 {
+			// This mirrors Anthropic's natural shape: tool_result
+			// there is a role=user message whose flattened text is
+			// empty, so the existing latest-user-text scan silently
+			// goes quiet once a tool runs. The Responses API splits
+			// message and tool items into separate item types, so
+			// we have to make the "moved past the reply" check
+			// explicit.
+			n := len(items)
+			if n == 0 {
 				return "", ""
 			}
-			verb, id = ParseApprovalReplyText(flattenOpenAIContent(items[itemUserIdx].Content))
+			last := items[n-1]
+			if last.Type != "message" || last.Role != "user" {
+				return "", ""
+			}
+			verb, id = ParseApprovalReplyText(flattenOpenAIContent(last.Content))
 			if verb == "" || id != "" {
 				return verb, id
 			}
-			for i := itemUserIdx - 1; i >= 0; i-- {
+			for i := n - 2; i >= 0; i-- {
 				if items[i].Type != "message" || items[i].Role != "assistant" {
 					continue
 				}

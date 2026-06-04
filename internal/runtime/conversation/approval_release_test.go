@@ -163,6 +163,52 @@ func TestOpenAIApprovalReplyResponsesInputStaleAfterCustomToolCall(t *testing.T)
 	}
 }
 
+func TestOpenAIApprovalReplyResponsesInputStaleAfterToolSearch(t *testing.T) {
+	// Regression: Codex's built-in tool-discovery emits tool_search_call
+	// and tool_search_output items, which Codex round-trips on
+	// continuation requests. A tool_search round-trip sitting after the
+	// user's "y" — together with the assistant commentary and reasoning
+	// items the model emitted post-approval — means the conversation has
+	// moved past the approval turn. Before the fix the proxy missed
+	// these item types and re-fired the release path on every
+	// follow-up, denying with "approval no longer valid" once the hold
+	// had already been consumed.
+	body := []byte(`{
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "search happenstance"}]},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "paused [clawvisor:approval=cv-iiiiiiiiiiii]"}]},
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "y"}]},
+			{"type": "reasoning", "summary": []},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I'll look for the available tools first."}]},
+			{"type": "tool_search_call", "call_id": "call_ts_1", "status": "completed", "arguments": {"query": "happenstance"}},
+			{"type": "tool_search_output", "call_id": "call_ts_1", "status": "completed", "tools": []}
+		]
+	}`)
+	verb, id := OpenAIApprovalReply(body)
+	if verb != "" || id != "" {
+		t.Fatalf("verb=%q id=%q, want empty (conversation moved past approval turn)", verb, id)
+	}
+}
+
+func TestOpenAIApprovalReplyResponsesInputStaleAfterAssistantMessage(t *testing.T) {
+	// Even without any tool activity, an assistant message appearing
+	// after the user's "y" means the model has already responded —
+	// the release happened on a prior request and the bare "y" lingering
+	// in history is stale.
+	body := []byte(`{
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "do the thing"}]},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "paused [clawvisor:approval=cv-jjjjjjjjjjjj]"}]},
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "y"}]},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "OK, working on it."}]}
+		]
+	}`)
+	verb, id := OpenAIApprovalReply(body)
+	if verb != "" || id != "" {
+		t.Fatalf("verb=%q id=%q, want empty (assistant already spoke past approval)", verb, id)
+	}
+}
+
 func TestOpenAIApprovalReplyResponsesInputHeldCallBeforeReplyStillFires(t *testing.T) {
 	// Inverse of the stale case: when the held function_call sits BEFORE
 	// the "y" (the model emitted it on the prior turn, it was held, then
