@@ -701,7 +701,40 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	forwardStart := time.Now()
-	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, body)
+	// Anthropic occasionally emits assistant turns with consecutive
+	// `thinking` blocks under interleaved-thinking + effort betas, and
+	// then rejects those same turns when they appear as conversation
+	// history on the next request ("thinking blocks cannot be modified"
+	// 400). When detected we silently retry upstream — observed
+	// multi-thinking emission rate is ≈0% over 50 sampled attempts so
+	// the retry is overwhelmingly cheap and the budget is small.
+	var resp *http.Response
+	if provider == conversation.ProviderAnthropic && llmproxy.RequestWantsThinking(body) {
+		var retryStats llmproxy.MultiThinkingRetryStats
+		resp, retryStats, err = llmproxy.ForwardWithMultiThinkingRetry(
+			r.Context(),
+			func() (*http.Response, error) {
+				return h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, body)
+			},
+			llmproxy.MultiThinkingRetryConfig{MaxRetries: 2},
+		)
+		if retryStats.Detected {
+			auditParams["multi_thinking_retried"] = true
+			auditParams["multi_thinking_retries"] = retryStats.Retries
+			if retryStats.Exhausted {
+				auditParams["multi_thinking_retry_exhausted"] = true
+				h.Logger.WarnContext(r.Context(), "lite-proxy multi-thinking retry exhausted",
+					"request_id", requestID, "agent_id", agent.ID,
+					"retries", retryStats.Retries)
+			} else {
+				h.Logger.InfoContext(r.Context(), "lite-proxy multi-thinking response retried",
+					"request_id", requestID, "agent_id", agent.ID,
+					"retries", retryStats.Retries)
+			}
+		}
+	} else {
+		resp, err = h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, body)
+	}
 	if err != nil {
 		// Distinguish client-cancelled from genuine upstream failures
 		// so the audit / log signal is unambiguous when chasing
