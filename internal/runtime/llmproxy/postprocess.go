@@ -1246,7 +1246,7 @@ func credentialedRewriteRecoveryReason(v inspector.Verdict, err error) string {
 		} else {
 			b.WriteString("the requests you are making")
 		}
-		b.WriteString(">], max_uses, ttl_seconds, why}` (hard limits: TTL ≤ 120s, max_uses ≤ 50, GET-only initially). ")
+		b.WriteString(">], max_uses, ttl_seconds, why}` (hard limits: TTL ≤ 120s, max_uses ≤ 200, GET-only initially). ")
 		b.WriteString("Then from your script call `base_url + <upstream path>` with `X-Clawvisor-Caller: Bearer <caller_token>` and `Authorization: Bearer <placeholder>` on each request. ")
 		b.WriteString("See GET ")
 		b.WriteString("https://" + ControlSyntheticHost + ControlSyntheticPath + "/autovault/script")

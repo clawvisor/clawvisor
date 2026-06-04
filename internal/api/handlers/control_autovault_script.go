@@ -24,7 +24,7 @@ import (
 // to avoid silently widening blast radius on cap drift.
 const (
 	scriptSessionMaxTTLSeconds     = 120
-	scriptSessionMaxUses           = 50
+	scriptSessionMaxUses           = 200
 	scriptSessionMaxRequestBytes   = 1 << 20  // 1 MiB
 	scriptSessionMaxTotalBytes     = 10 << 20 // 10 MiB
 	scriptSessionMaxPathPrefixes   = 5
@@ -284,7 +284,7 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 				"\n\nREJECT (param_scope=violation) when ANY of these apply:\n" +
 				"  - The reason/`why` text mentions sending, uploading, forwarding, posting, transmitting, sharing, or otherwise routing the fetched data to a non-Clawvisor destination — third-party APIs, external storage, remote servers, other agents, email/messaging, webhooks, etc. The user did not approve data leaving their environment through this task.\n" +
 				"  - The requested scope (host + methods + path_prefixes) is genuinely outside what the task purpose authorizes — e.g. write/send paths on a read-only triage task, an unrelated host, prefixes the task's stated workflow doesn't cover.\n" +
-				"  - max_uses or ttl_seconds is far in excess of what the described workflow plausibly needs (e.g. 50 calls for a workflow that should touch ~5 items).\n" +
+				"  - max_uses or ttl_seconds is far in excess of what the described workflow plausibly needs. The conservative baseline for a session is ~50 uses; requests well above that (especially anywhere near the hard ceiling of 200) MUST be backed by a concrete count in the agent's `why` (e.g. \"I just listed 120 thread IDs and need 120 + buffer\"). If `max_uses` exceeds 50 and the `why` doesn't state a discovered N that justifies it, reject as scope_denied.\n" +
 				"\n\nDo NOT reject based on:\n" +
 				"  - Anticipated execution language or tool surface (bash, python, node, etc.). The resolver enforces scope regardless of language.\n" +
 				"  - Local file writes or local processing of fetched data (` > /tmp/out.jsonl`, `>> file.json`, `jq … | awk …`, in-process summarization). Writing to local files is NOT exfiltration — the data stays inside the user's environment under their existing trust boundary.\n" +
@@ -388,7 +388,7 @@ func (h *LLMControlHandler) AutovaultScriptDocs(w http.ResponseWriter, r *http.R
 		},
 		"sizing_guidance": map[string]string{
 			"too_small": "Mid-flight `SCRIPT_SESSION_EXHAUSTED`. You'll have to mint a fresh session, which costs another verifier round-trip and may surface another approval prompt to the user.",
-			"too_large": "The verifier evaluates `max_uses` against the task's stated workflow. Asking for 50 uses when the task plausibly needs 25 will trigger `scope_denied` with a verifier explanation. Match the request to the discovered N.",
+			"too_large": "The verifier evaluates `max_uses` against the task's stated workflow and the count you state in `why`. Asking for many more than your workflow needs — or asking for >50 without naming a discovered N in `why` — triggers `scope_denied`. Match the request to the discovered N (plus a small retry buffer).",
 			"right_size": "N (the count from the discovery call) plus 2-3 for retries. If you don't know N, you're not ready to mint yet.",
 		},
 		"hard_limits": map[string]any{
