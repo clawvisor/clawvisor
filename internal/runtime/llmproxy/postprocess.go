@@ -485,7 +485,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			// combined prompt as SubstituteWith, the rest carry
 			// empty SubstituteWith so the rewriter's join produces
 			// one prompt (not N copies).
-			coalescedPrompt := coalescedApprovalPrompt(held.Pending.AllHolds())
+			coalescedPrompt := coalescedApprovalPrompt(held.Pending.AllHolds(), held.Pending.ID)
 			firstReplaced := false
 			coalescedEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 				out := conversation.ToolUseVerdict{
@@ -1377,9 +1377,17 @@ func approvalPrompt(tu conversation.ToolUse, reason, approvalID string) string {
 // batch into a durable scope in one gesture instead of approving
 // each call individually.
 //
+// approvalID is appended as the parseable [clawvisor:approval=<id>]
+// footer so that a bare "y"/"n" reply on the next turn pins to THIS
+// hold rather than the LIFO latest. Without the footer, a stale
+// inline-task approval marker further back in the transcript would
+// claim the reply, surfacing as approval_not_found / "this approval
+// is no longer valid" when the older approval has already been
+// consumed.
+//
 // The kinds slice parallels uses: each entry tags whether that use was
 // the trigger for approval or held alongside (auto-allow / auto-rewrite).
-func coalescedApprovalPrompt(uses []HeldToolUse) string {
+func coalescedApprovalPrompt(uses []HeldToolUse, approvalID string) string {
 	var b strings.Builder
 	b.WriteString("Clawvisor paused this turn for approval (")
 	b.WriteString(strconv.Itoa(len(uses)))
@@ -1414,6 +1422,7 @@ func coalescedApprovalPrompt(uses []HeldToolUse) string {
 		}
 	}
 	b.WriteString("\n\nReply `yes` or `y` to approve all calls and run them in order, `no` or `n` to deny the whole turn, or `task` to scope this work under a Clawvisor task that covers every call above.")
+	b.WriteString(approvalIDFooter(approvalID))
 	return b.String()
 }
 
@@ -1924,7 +1933,7 @@ func PostprocessStream(
 			}
 			emitCoalescedPendingAuditRows(req.Context(), cfg, auditAgent, captures, held.Pending.ID)
 
-			coalescedPrompt := coalescedApprovalPrompt(held.Pending.AllHolds())
+			coalescedPrompt := coalescedApprovalPrompt(held.Pending.AllHolds(), held.Pending.ID)
 			if err := writeProviderBlockedPrompt(w, provider, streamResult, coalescedPrompt, streamingBlockedPromptIndex(provider, streamResult, captures)); err != nil {
 				return PostprocessResult{}, err
 			}

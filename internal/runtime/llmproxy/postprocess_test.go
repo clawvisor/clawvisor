@@ -1249,6 +1249,16 @@ func TestPostprocess_CoalescesMultipleApprovalsIntoSingleHold(t *testing.T) {
 		t.Fatalf("expected exactly one coalesced hold, got %d: %+v", len(holds), holds)
 	}
 	hold := holds[0]
+	// Regression: the coalesced prompt must embed the [clawvisor:approval=<id>]
+	// footer for the hold it represents. Without it, a bare "y" reply on the
+	// next turn falls back to scanning earlier assistant messages for any
+	// marker — picking up a stale inline-task approval and producing
+	// approval_not_found / "this approval is no longer valid" when that
+	// older hold has already been consumed.
+	expectedMarker := "[clawvisor:approval=" + hold.ID + "]"
+	if !strings.Contains(out, expectedMarker) {
+		t.Fatalf("coalesced prompt must embed approval marker %q so bare-reply release pins to this hold; got: %s", expectedMarker, out)
+	}
 	if !hold.IsCoalesced() {
 		t.Fatalf("expected hold.IsCoalesced() true; got primary=%s additional=%d", hold.ToolUse.ID, len(hold.Additional))
 	}
