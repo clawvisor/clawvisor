@@ -350,6 +350,23 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 	}
 
 	resolverBase := strings.TrimRight(h.BaseURL, "/") + "/api/proxy"
+	// Concrete copy-paste shape for the next request. Agents that
+	// only see "use caller_token in X-Clawvisor-Caller" sometimes
+	// fall back to calling the UPSTREAM URL directly
+	// (https://gmail.googleapis.com/...) with just the placeholder
+	// header — that routes through the one-shot rewrite path,
+	// re-mints a nonce per call, breaks on multi-statement bash,
+	// and rejects --config / loops / pipelines. Showing the
+	// resolver URL + all three headers literally in the mint
+	// response makes the right shape unmissable.
+	examplePath := "<upstream-path>"
+	if len(prefixes) > 0 {
+		examplePath = strings.TrimRight(prefixes[0], "/") + "/<id-or-suffix>"
+	}
+	exampleCurl := "curl -sS '" + resolverBase + examplePath + "'" +
+		" -H 'Authorization: Bearer " + body.Placeholder + "'" +
+		" -H 'X-Clawvisor-Target-Host: " + body.TargetHost + "'" +
+		" -H 'X-Clawvisor-Caller: Bearer " + token + "'"
 	resp := map[string]any{
 		"script_session_id":  sess.ID,
 		"base_url":           resolverBase,
@@ -364,7 +381,8 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 		"expires_at":         sess.ExpiresAt.UTC().Format(time.RFC3339),
 		"max_request_bytes":  scriptSessionMaxRequestBytes,
 		"max_total_bytes":    scriptSessionTotalBytesFor(maxUses),
-		"next_step":          "Use the caller_token in X-Clawvisor-Caller and the placeholder in Authorization on each request to base_url + path. See GET /api/control/autovault/script for the full request shape.",
+		"example_request":    exampleCurl,
+		"next_step": "Use the shape in `example_request` for every follow-up call: route through " + resolverBase + " (NOT the upstream host directly), include all three headers above, and substitute the upstream path under one of your `path_prefixes`. Calling the upstream URL with just the placeholder bypasses this session and falls back to the one-shot rewrite path, which is fragile for batch operations. See GET /api/control/autovault/script for full schema + error recovery.",
 	}
 	// Surface the task's approved tool surface so the agent stays
 	// within it when executing the fan-out. Without this hint, agents
