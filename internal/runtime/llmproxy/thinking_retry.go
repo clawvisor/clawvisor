@@ -22,9 +22,14 @@ type MultiThinkingRetryStats struct {
 	// observed (and discarded if a retry budget was available).
 	Detected bool
 	// Exhausted is true if the retry cap was hit and we ended up
-	// returning a still-multi-thinking response. The caller is
-	// expected to fall back (e.g. drop the second thinking block in
-	// the relay path). The response body is intact in this case.
+	// returning a still-multi-thinking response. The response body
+	// is intact (prefix + remainder) so the caller can stream it
+	// through normally. There is no automatic relay-side fallback
+	// today: when this fires, the harness stores the multi-thinking
+	// turn and the next request will trip the same Anthropic 400.
+	// With MaxRetries=2 and the observed ~0% emission rate this is
+	// vanishingly rare; if it becomes load-bearing, add a drop pass
+	// in the response rewriter.
 	Exhausted bool
 	// PeekedBytes is the number of bytes buffered before the commit
 	// decision (≈ first thinking block + second block_start event).
@@ -148,18 +153,26 @@ const (
 )
 
 // peekForConsecutiveThinking reads SSE events from body until it can
-// decide whether the response contains *consecutive* thinking blocks
-// (the multi-thinking pattern that triggers Anthropic's "thinking
-// blocks cannot be modified" 400 on replay).
+// decide whether the response opens with *consecutive* thinking
+// blocks (the multi-thinking pattern that triggers Anthropic's
+// "thinking blocks cannot be modified" 400 on replay).
 //
 // Decision points:
 //   - We see a content_block_start whose type is thinking AND the
 //     immediately preceding content_block_start was also thinking →
 //     return ("retry").
 //   - We see a non-thinking content_block_start, or message_delta, or
-//     message_stop → return ("commit"). The response is safe.
+//     message_stop → return ("commit").
 //   - We hit EOF before a decision → return ("commit") since a
 //     well-formed response would have hit message_stop by then.
+//
+// Limitation: detection commits at the first non-thinking block, so
+// patterns like `thinking → text → thinking → thinking` aren't caught
+// here. Every multi-thinking 400 we've observed in production had the
+// consecutive-thinking pair at the front of the assistant turn, so
+// expanding to a full-response scan would force buffering the entire
+// stream (regressing streaming UX) for a case we have no evidence of.
+// Revisit if a non-leading pattern is observed.
 //
 // The returned prefix contains every byte read from body so the
 // caller can prepend it to the rest of the stream and let downstream
@@ -198,7 +211,7 @@ func peekForConsecutiveThinking(body io.Reader) ([]byte, string, error) {
 				if isThinkingType(blockType) && isThinkingType(prev) {
 					return buf.Bytes(), peekDecisionRetry, nil
 				}
-				if !isThinkingType(blockType) && len(blockTypes) >= 1 {
+				if !isThinkingType(blockType) {
 					return buf.Bytes(), peekDecisionCommit, nil
 				}
 			case "message_delta", "message_stop":
