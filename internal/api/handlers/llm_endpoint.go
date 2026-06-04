@@ -995,6 +995,16 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 			streamResp.Commit()
 
+			if resp.StatusCode >= 400 {
+				h.Logger.WarnContext(r.Context(), "lite-proxy streaming upstream error body",
+					"request_id", requestID,
+					"agent_id", agent.ID,
+					"provider", string(provider),
+					"status", resp.StatusCode,
+					"body_preview", truncateForLog(capturedUpstream.String(), 2048),
+				)
+			}
+
 			if resp.StatusCode < 400 {
 				if usage := llmproxy.ExtractUsage(provider, firstUpstreamCT, capturedUpstream.Bytes(), reqSummary.Model); usage.Found {
 					u := usage
@@ -1114,7 +1124,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if resp.StatusCode >= 400 {
-			h.Logger.DebugContext(r.Context(), "lite-proxy upstream error body",
+			h.Logger.WarnContext(r.Context(), "lite-proxy upstream error body",
 				"request_id", requestID,
 				"agent_id", agent.ID,
 				"provider", string(provider),
@@ -2687,7 +2697,13 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 			w.Header().Add(name, v)
 		}
 	}
-	if h.RawIOLogger != nil {
+	// Capture the response body whenever the upstream returned an error
+	// status so we can surface its content in slog (forensic visibility
+	// without needing RawIOLogger turned on). On 2xx, only capture if
+	// RawIOLogger is configured to avoid buffering large streamed bodies
+	// for no reason.
+	captureForError := resp.StatusCode >= 400
+	if h.RawIOLogger != nil || captureForError {
 		capture := newLimitedCaptureWriter(h.MaxResponseBytes)
 		w.WriteHeader(resp.StatusCode)
 		_, copyErr := io.Copy(io.MultiWriter(w, capture), resp.Body)
@@ -2696,23 +2712,34 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 			*auditReason = copyErr.Error()
 		}
 		full := capture.Bytes()
-		bodyStr, bodyEnc := llmproxy.EncodeBody(full)
-		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
-			Phase:        "harness_response",
-			RequestID:    requestID,
-			UserID:       agent.UserID,
-			AgentID:      agent.ID,
-			Provider:     string(provider),
-			Method:       r.Method,
-			Path:         r.URL.RequestURI(),
-			Status:       resp.StatusCode,
-			ContentType:  resp.Header.Get("Content-Type"),
-			Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
-			Body:         bodyStr,
-			BodyEncoding: bodyEnc,
-			BodyBytes:    len(full),
-			Marker:       "break_glass_passthrough",
-		})
+		if captureForError {
+			h.Logger.WarnContext(r.Context(), "lite-proxy passthrough upstream error body",
+				"request_id", requestID,
+				"agent_id", agent.ID,
+				"provider", string(provider),
+				"status", resp.StatusCode,
+				"body_preview", truncateForLog(string(full), 2048),
+			)
+		}
+		if h.RawIOLogger != nil {
+			bodyStr, bodyEnc := llmproxy.EncodeBody(full)
+			h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+				Phase:        "harness_response",
+				RequestID:    requestID,
+				UserID:       agent.UserID,
+				AgentID:      agent.ID,
+				Provider:     string(provider),
+				Method:       r.Method,
+				Path:         r.URL.RequestURI(),
+				Status:       resp.StatusCode,
+				ContentType:  resp.Header.Get("Content-Type"),
+				Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
+				Body:         bodyStr,
+				BodyEncoding: bodyEnc,
+				BodyBytes:    len(full),
+				Marker:       "break_glass_passthrough",
+			})
+		}
 		return
 	}
 	w.WriteHeader(resp.StatusCode)
