@@ -25,8 +25,15 @@ import (
 const (
 	scriptSessionMaxTTLSeconds     = 120
 	scriptSessionMaxUses           = 200
-	scriptSessionMaxRequestBytes   = 1 << 20  // 1 MiB
-	scriptSessionMaxTotalBytes     = 10 << 20 // 10 MiB
+	scriptSessionMaxRequestBytes = 1 << 20 // 1 MiB per response
+	// scriptSessionMinTotalBytes is the floor for the aggregate byte
+	// cap. We scale MaxTotalBytes with MaxUses (= max_uses * per-
+	// request cap) so a 200-call fan-out can have every response near
+	// the per-request ceiling without the aggregate cap binding
+	// arbitrarily. The floor keeps small sessions (max_uses = 3) from
+	// being trivially throttled — even a tiny session gets at least
+	// 10 MiB of aggregate headroom, which covers any reasonable workflow.
+	scriptSessionMinTotalBytes = 10 << 20 // 10 MiB
 	scriptSessionMaxPathPrefixes   = 5
 )
 
@@ -323,9 +330,14 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 		PathPrefixes:    prefixes,
 		MaxUses:         maxUses,
 		MaxRequestBytes: scriptSessionMaxRequestBytes,
-		MaxTotalBytes:   scriptSessionMaxTotalBytes,
-		Why:             body.Why,
-		ExpiresAt:       now.Add(ttl),
+		// Scale aggregate cap with max_uses so a 200-call fan-out
+		// isn't artificially throttled by a 10 MiB ceiling that only
+		// makes sense for small sessions. Per-request cap remains the
+		// authoritative bound on any single response; aggregate
+		// just sums up to what the session was sized for.
+		MaxTotalBytes: scriptSessionTotalBytesFor(maxUses),
+		Why:           body.Why,
+		ExpiresAt:     now.Add(ttl),
 	}
 	token, err := h.ScriptSessions.Mint(r.Context(), sess)
 	if err != nil {
@@ -351,7 +363,7 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 		"max_uses":           maxUses,
 		"expires_at":         sess.ExpiresAt.UTC().Format(time.RFC3339),
 		"max_request_bytes":  scriptSessionMaxRequestBytes,
-		"max_total_bytes":    scriptSessionMaxTotalBytes,
+		"max_total_bytes":    scriptSessionTotalBytesFor(maxUses),
 		"next_step":          "Use the caller_token in X-Clawvisor-Caller and the placeholder in Authorization on each request to base_url + path. See GET /api/control/autovault/script for the full request shape.",
 	}
 	// Surface the task's approved tool surface so the agent stays
@@ -395,7 +407,8 @@ func (h *LLMControlHandler) AutovaultScriptDocs(w http.ResponseWriter, r *http.R
 			"ttl_seconds":       scriptSessionMaxTTLSeconds,
 			"max_uses":          scriptSessionMaxUses,
 			"max_request_bytes": scriptSessionMaxRequestBytes,
-			"max_total_bytes":   scriptSessionMaxTotalBytes,
+			"max_total_bytes_formula": "max(" + strconv.Itoa(scriptSessionMinTotalBytes) + ", max_uses × max_request_bytes) — aggregate cap scales with your requested fan-out so a 200-call session isn't artificially throttled by a small static ceiling.",
+			"max_total_bytes_floor": scriptSessionMinTotalBytes,
 			"methods":           AllowedScriptSessionMethods,
 			"target_hosts_per_session": 1,
 			"placeholders_per_session": 1,
@@ -577,6 +590,20 @@ func normalizeMintPrefixes(in []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// scriptSessionTotalBytesFor scales the aggregate byte cap with the
+// requested max_uses: each call may consume up to
+// scriptSessionMaxRequestBytes, so the natural ceiling on aggregate
+// bytes is the product. We floor at scriptSessionMinTotalBytes so a
+// 3-use session still has reasonable aggregate headroom for any
+// individual response that exceeds expectation.
+func scriptSessionTotalBytesFor(maxUses int) int64 {
+	scaled := int64(maxUses) * int64(scriptSessionMaxRequestBytes)
+	if scaled < int64(scriptSessionMinTotalBytes) {
+		return int64(scriptSessionMinTotalBytes)
+	}
+	return scaled
 }
 
 func clampMintMaxUses(raw int) (int, error) {
