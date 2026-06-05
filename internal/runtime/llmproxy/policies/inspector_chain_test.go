@@ -11,10 +11,12 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 )
 
-// TestInspectorChain_AllowsMatchedAPICall verifies the happy path:
-// recognized API call + host in allowlist → Allow with both
-// inspector and boundary check audit fields.
-func TestInspectorChain_AllowsMatchedAPICall(t *testing.T) {
+// TestInspectorChain_SkipsOnMatchedAPICall verifies the credentialed
+// pass-through: recognized API call + host in allowlist → Skip so
+// downstream stages (TaskScope, IntentVerify, CredentialRewrite) can
+// run the authorization + rewrite flow. Audit fields still carry the
+// inspector + boundary-check surface for downstream emission.
+func TestInspectorChain_SkipsOnMatchedAPICall(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	resolver := func(_ context.Context, _ string) []string {
 		return []string{"api.github.com"}
@@ -34,8 +36,8 @@ func TestInspectorChain_AllowsMatchedAPICall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("Outcome = %q, want Allow (audit: %+v)", v.Outcome, v.AuditFields)
+	if v.Outcome != pipeline.OutcomeSkip {
+		t.Errorf("Outcome = %q, want Skip (audit: %+v)", v.Outcome, v.AuditFields)
 	}
 	if v.AuditFields["inspector_is_api"] != true {
 		t.Errorf("inspector_is_api = %v, want true", v.AuditFields["inspector_is_api"])

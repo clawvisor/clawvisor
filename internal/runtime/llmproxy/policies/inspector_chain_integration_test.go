@@ -81,14 +81,19 @@ func TestInspectorChainIntegration_RecognizedAPICallFlowsThroughChain(t *testing
 	if v.Outcome != pipeline.OutcomeAllow {
 		t.Errorf("Outcome = %q, want Allow (full result: %+v)", v.Outcome, result)
 	}
-	// The first-non-Skip rule means InspectorChain wins this tool_use
-	// (it returns Allow for a recognized + allowlisted call).
-	// Later evaluators don't run because the first non-Skip claimed
-	// it. That's correct per the EvaluateToolUses contract.
-	if got := len(result.Evaluations); got != 1 {
-		// One evaluator ran for one tool_use because InspectorChain
-		// returned Allow (the first-non-Skip-wins rule short-circuits).
-		t.Errorf("expected 1 evaluation, got %d: %+v", got, result.Evaluations)
+	// InspectorChain returns Skip on credentialed boundary-pass so
+	// downstream stages (TaskScope here) run the authorization. With
+	// scopeResolver returning Allow, TaskScopeEvaluator claims the
+	// tool_use; IntentVerify runs next and returns Allow too. So the
+	// trail is inspector_chain (Skip) → task_scope (Allow) — 2
+	// evaluations on the trail, but TaskScope is the winner.
+	if got := len(result.Evaluations); got != 2 {
+		t.Errorf("expected 2 evaluations on trail, got %d: %+v", got, result.Evaluations)
+	}
+	// The winning evaluator should be task_scope (downstream of
+	// InspectorChain's Skip).
+	if got := result.Evaluations[len(result.Evaluations)-1].EvaluatorName; got != "task_scope" {
+		t.Errorf("winning evaluator = %q, want task_scope", got)
 	}
 }
 

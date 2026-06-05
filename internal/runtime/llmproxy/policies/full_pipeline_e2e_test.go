@@ -125,31 +125,28 @@ func TestFullPipeline_E2E_HappyPath(t *testing.T) {
 		t.Fatalf("EvaluateToolUses: %v", err)
 	}
 
-	// toolu_1 (WebFetch to allowlisted host) → InspectorChain Allows.
-	if v := toolResult.PerToolUse["toolu_1"]; v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("toolu_1 Outcome = %q, want Allow", v.Outcome)
+	// toolu_1 (WebFetch to allowlisted host) → InspectorChain Skips
+	// on credentialed boundary-pass, TaskScope runs and Holds because
+	// scopeResolver returns Allowed:false → needs_task_toolu_1.
+	if v := toolResult.PerToolUse["toolu_1"]; v.Outcome != pipeline.OutcomeHold {
+		t.Errorf("toolu_1 Outcome = %q, want Hold (from TaskScope after InspectorChain Skip)", v.Outcome)
 	}
 
-	// toolu_2 (Bash, trigger miss) → InspectorChain Skips,
-	// TaskScopeEvaluator Holds with needs_task_toolu_2.
+	// toolu_2 (Bash, trigger miss) → InspectorChain Skips (no
+	// trigger-miss authorizer configured), TaskScopeEvaluator Holds
+	// with needs_task_toolu_2.
 	if v := toolResult.PerToolUse["toolu_2"]; v.Outcome != pipeline.OutcomeHold {
 		t.Errorf("toolu_2 Outcome = %q, want Hold", v.Outcome)
 	}
 
 	// --- Phase 5: Coalesce decision + groups ---
 
-	// Only one Hold present (toolu_2). ShouldCoalesce requires
-	// multiple tool_uses *with Holds* — actually no, it requires
-	// multiple tool_uses period + at least one Hold. Two tools
-	// (toolu_1 Allow, toolu_2 Hold) satisfies that count, but the
-	// coalescing data transform only groups Holds — so the
-	// CoalescedHold list will have one entry (just toolu_2).
+	// Both tools Hold; both have different per-tool HoldKeys
+	// (needs_task_toolu_1, needs_task_toolu_2). CoalesceHolds groups
+	// by HoldKey, so 2 distinct keys → 2 groups.
 	groups := pipeline.CoalesceHolds(toolResult)
-	if len(groups) != 1 {
-		t.Errorf("expected 1 hold group, got %d", len(groups))
-	}
-	if len(groups) > 0 && groups[0].HoldKey != "needs_task_toolu_2" {
-		t.Errorf("group HoldKey = %q, want needs_task_toolu_2", groups[0].HoldKey)
+	if len(groups) != 2 {
+		t.Errorf("expected 2 hold groups, got %d", len(groups))
 	}
 
 	// ShouldCoalesce: multi-tool + at least one Hold + no Deny + no

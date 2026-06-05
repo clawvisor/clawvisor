@@ -144,19 +144,21 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 		}, nil
 	}
 
-	// Boundary check requires a resolver to look up the placeholder's
-	// allowed hosts. Without one, can't enforce the boundary — fall back
-	// to Allow with a marker so the absent enforcement is visible.
+	// Credentialed API call. Boundary check decides whether to fail
+	// closed; Allow paths return Skip so downstream stages
+	// (TaskScopeEvaluator + IntentVerifyEvaluator + CredentialRewriteEvaluator)
+	// can run the credentialed authorization + rewrite flow.
 	if c.allowedHostsFor == nil {
+		// Without a resolver we can't enforce boundary, but the call is
+		// credentialed — let downstream rewrite the tool_use. Marking
+		// the audit field documents the gap.
 		fields["boundary_check_skipped"] = "no_resolver"
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeAllow,
+			Outcome:     pipeline.OutcomeSkip,
 			AuditFields: fields,
 		}, nil
 	}
 
-	// Resolve allowed hosts for the first placeholder; the boundary
-	// check uses this against the inspected host.
 	var allowedHosts []string
 	if len(v.Placeholders) > 0 {
 		allowedHosts = c.allowedHostsFor(ctx, v.Placeholders[0])
@@ -175,8 +177,10 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 		}, nil
 	}
 
+	// Boundary passed — let downstream stages handle credentialed
+	// authorization + rewrite.
 	return pipeline.ToolUseVerdict{
-		Outcome:     pipeline.OutcomeAllow,
+		Outcome:     pipeline.OutcomeSkip,
 		AuditFields: fields,
 	}, nil
 }

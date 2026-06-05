@@ -1047,6 +1047,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			}
 
 			cfg := llmproxy.PostprocessConfig{
+				ToolUseEvaluatorFactory:          pipelineToolUseEvaluatorFactory,
 				Inspector:                        h.Inspector,
 				RewriteOpts:                      opts,
 				Store:                            h.Store,
