@@ -98,7 +98,7 @@ var pipelineToolUseEvaluatorFactory llmproxy.ToolUseEvaluatorFactory = func(
 	}
 
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
-		Control:         buildPipelineControlResolver(cfg),
+		Control:         buildPipelineControlResolver(req, cfg, provider, emit),
 		ScriptSession:   buildPipelineScriptSessionResolver(cfg),
 		Inspector:       cfg.Inspector,
 		AllowedHostsFor: nil, // boundary-check fall-through for now
@@ -271,7 +271,7 @@ func (r *singletonToolUseResponse) ToolUses() []conversation.ToolUse {
 	return []conversation.ToolUse{r.tu}
 }
 
-func buildPipelineControlResolver(cfg llmproxy.PostprocessConfig) policies.ControlToolUseResolver {
+func buildPipelineControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, emit func(llmproxy.BufferedAudit)) policies.ControlToolUseResolver {
 	if cfg.ControlBaseURL == "" {
 		return nil
 	}
@@ -280,10 +280,25 @@ func buildPipelineControlResolver(cfg llmproxy.PostprocessConfig) policies.Contr
 	cache := cfg.CallerNonces
 	return func(_ context.Context, _ conversation.ToolUse) *policies.ControlToolUseInputs {
 		return &policies.ControlToolUseInputs{
-			ControlBaseURL:  controlBaseURL,
-			AgentID:         agentID,
-			CallerNonces:    cache,
-			InterceptInline: nil,
+			ControlBaseURL: controlBaseURL,
+			AgentID:        agentID,
+			CallerNonces:   cache,
+			InterceptInline: func(_ context.Context, tu conversation.ToolUse, call llmproxy.ControlCall) (pipeline.ToolUseVerdict, bool) {
+				auditFn := func(decision, outcome, reason string) {
+					emit(llmproxy.BufferedAudit{
+						ToolUse:  tu,
+						Decision: decision,
+						Outcome:  outcome,
+						Reason:   reason,
+					})
+				}
+				traceFn := func(_ string, _ ...any) {}
+				convV, claimed := llmproxy.MaybeInterceptInlineTaskDefinition(req, cfg, auditFn, traceFn, provider, tu, call)
+				if !claimed {
+					return pipeline.ToolUseVerdict{}, false
+				}
+				return delegatePipelineVerdict(convV), true
+			},
 		}
 	}
 }

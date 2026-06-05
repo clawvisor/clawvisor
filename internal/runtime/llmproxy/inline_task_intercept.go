@@ -66,6 +66,24 @@ const InlineSurfaceQueryValue = "inline"
 // parse, or the path isn't POST /api/control/tasks — callers should
 // fall through to the regular control-rewrite path so headless task
 // creation still routes through the dashboard handler unchanged.
+// MaybeInterceptInlineTaskDefinition is the exported entry point for
+// inline task-definition interception. Used by the handler-side
+// pipeline factory's ControlToolUseEvaluator InterceptInline hook;
+// also called by the legacy newToolUseEvaluator. Audit + trace
+// callbacks are supplied per-call so the caller routes events into
+// whichever sink it owns.
+func MaybeInterceptInlineTaskDefinition(
+	req *http.Request,
+	cfg PostprocessConfig,
+	audit func(decision, outcome, reason string),
+	trace func(event string, kv ...any),
+	provider conversation.Provider,
+	tu conversation.ToolUse,
+	call ControlCall,
+) (conversation.ToolUseVerdict, bool) {
+	return maybeInterceptInlineTaskDefinition(req, cfg, audit, trace, provider, tu, call)
+}
+
 func maybeInterceptInlineTaskDefinition(
 	req *http.Request,
 	cfg PostprocessConfig,
