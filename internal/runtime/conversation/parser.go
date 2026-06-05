@@ -21,6 +21,7 @@ func DefaultRegistry() *Registry {
 	return &Registry{parsers: []Parser{
 		&AnthropicParser{},
 		&OpenAIParser{},
+		&GoogleParser{},
 	}}
 }
 
