@@ -73,14 +73,10 @@ func (e *AuditEmitter) enqueue(fn func()) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			e.Logger.Warn("AuditEmitter: failed to enqueue audit event (channel closed or full)")
+			e.Logger.Warn("AuditEmitter: failed to enqueue audit event (channel closed)")
 		}
 	}()
-	select {
-	case e.queue <- fn:
-	default:
-		e.Logger.Warn("AuditEmitter: queue full, dropping audit write")
-	}
+	e.queue <- fn
 }
 
 func (e *AuditEmitter) worker() {

@@ -886,7 +886,10 @@ func TestResolver_SQLiteHighVolumeContention(t *testing.T) {
 	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 	// Enable AuditEmitter to force DB writes on every request!
 	h.AuditEmitter = llmproxy.NewAuditEmitter(st, nil, nil)
-	t.Cleanup(func() { h.AuditEmitter.Close() })
+	t.Cleanup(func() {
+		h.AuditEmitter.Close()
+		h.Close()
+	})
 	h.Client = upstream.Client()
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
@@ -929,5 +932,17 @@ func TestResolver_SQLiteHighVolumeContention(t *testing.T) {
 	}
 	if len(errs) > 0 {
 		t.Fatalf("encountered errors under contention: %v", errs)
+	}
+
+	// Explicitly close the handler to flush all enqueued touch events to the DB
+	h.Close()
+
+	// Verify the placeholder use_count in the DB is exactly equal to numRequests
+	ph, err := st.GetRuntimePlaceholder(context.Background(), placeholder)
+	if err != nil {
+		t.Fatalf("GetRuntimePlaceholder error: %v", err)
+	}
+	if ph.UseCount != numRequests {
+		t.Errorf("expected placeholder use_count to be %d, got %d", numRequests, ph.UseCount)
 	}
 }

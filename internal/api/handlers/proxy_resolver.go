@@ -61,8 +61,9 @@ type ProxyResolverHandler struct {
 	// development environments.
 	AllowPrivateNetworks bool
 
-	touchedMutex sync.Mutex
-	touchedMap   map[string]time.Time
+	touchQueue chan string
+	touchWg    sync.WaitGroup
+	closeOnce  sync.Once
 }
 
 // NewProxyResolverHandler builds the handler with sensible defaults. The
@@ -80,8 +81,10 @@ func NewProxyResolverHandler(st store.Store, v vault.Vault, logger *slog.Logger)
 		Vault:           v,
 		Logger:          logger,
 		MaxRequestBytes: 34 << 20,
-		touchedMap:      make(map[string]time.Time),
+		touchQueue:      make(chan string, 10000),
 	}
+	h.touchWg.Add(1)
+	go h.touchWorker()
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	transport.DialContext = h.safeDialContext
@@ -722,36 +725,7 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 		if err != nil {
 			return "", err
 		}
-		go func(id string) {
-			h.touchedMutex.Lock()
-			if h.touchedMap == nil {
-				h.touchedMap = make(map[string]time.Time)
-			}
-			lastTouch, ok := h.touchedMap[id]
-			now := time.Now().UTC()
-			if ok && now.Sub(lastTouch) < 5*time.Second {
-				h.touchedMutex.Unlock()
-				return
-			}
-			h.touchedMap[id] = now
-			h.touchedMutex.Unlock()
-
-			// Fire-and-forget: detach cancellation but cap so a stuck DB
-			// can't leak goroutines forever. Recover from panics so an
-			// unexpected store impl bug doesn't crash the process.
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
-			defer cancel()
-			defer func() {
-				if rec := recover(); rec != nil {
-					h.Logger.ErrorContext(ctx, "lite-proxy resolver: touch placeholder panicked",
-						"placeholder", id, "recover", fmt.Sprintf("%v", rec))
-				}
-			}()
-			if err := h.Store.TouchRuntimePlaceholder(ctx, id, time.Now().UTC()); err != nil {
-				h.Logger.WarnContext(ctx, "lite-proxy resolver: touch placeholder failed",
-					"placeholder", id, "err", err.Error())
-			}
-		}(placeholder)
+		h.enqueueTouch(placeholder)
 		return extracted, nil
 	}
 
@@ -1037,4 +1011,81 @@ func isPrivateIP(ip net.IP) bool {
 	cgnat := &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 	return ip.IsLoopback() || ip.IsPrivate() || cgnat.Contains(ip) || ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast()
+}
+
+func (h *ProxyResolverHandler) Close() {
+	h.closeOnce.Do(func() {
+		if h.touchQueue != nil {
+			close(h.touchQueue)
+			h.touchWg.Wait()
+		}
+	})
+}
+
+func (h *ProxyResolverHandler) enqueueTouch(placeholder string) {
+	if h.touchQueue == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			h.Logger.Warn("ProxyResolverHandler: failed to enqueue placeholder touch (channel closed)")
+		}
+	}()
+	h.touchQueue <- placeholder
+}
+
+type pendingTouch struct {
+	usedAt time.Time
+	count  int
+}
+
+func (h *ProxyResolverHandler) touchWorker() {
+	defer h.touchWg.Done()
+
+	for {
+		placeholder, ok := <-h.touchQueue
+		if !ok {
+			return
+		}
+
+		batch := make(map[string]*pendingTouch)
+		batch[placeholder] = &pendingTouch{
+			usedAt: time.Now().UTC(),
+			count:  1,
+		}
+
+		// Brief sleep to allow concurrent touches for the same placeholder to accumulate
+		time.Sleep(50 * time.Millisecond)
+
+	drainLoop:
+		for {
+			select {
+			case nextPh, nextOk := <-h.touchQueue:
+				if !nextOk {
+					break drainLoop
+				}
+				pt, exists := batch[nextPh]
+				if !exists {
+					batch[nextPh] = &pendingTouch{
+						usedAt: time.Now().UTC(),
+						count:  1,
+					}
+				} else {
+					pt.count++
+					pt.usedAt = time.Now().UTC()
+				}
+			default:
+				break drainLoop
+			}
+		}
+
+		for ph, pt := range batch {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := h.Store.TouchRuntimePlaceholder(ctx, ph, pt.usedAt, pt.count); err != nil {
+				h.Logger.WarnContext(ctx, "lite-proxy resolver: touch placeholder failed",
+					"placeholder", ph, "count", pt.count, "err", err.Error())
+			}
+			cancel()
+		}
+	}
 }

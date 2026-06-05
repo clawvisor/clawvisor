@@ -298,7 +298,7 @@ type Store interface {
 	GetRuntimePlaceholder(ctx context.Context, placeholder string) (*RuntimePlaceholder, error)
 	ListRuntimePlaceholders(ctx context.Context, userID string) ([]*RuntimePlaceholder, error)
 	DeleteRuntimePlaceholder(ctx context.Context, placeholder, userID string) error
-	TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error
+	TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time, count int) error
 	CreateCredentialAuthorization(ctx context.Context, auth *CredentialAuthorization) error
 	GetCredentialAuthorization(ctx context.Context, id string) (*CredentialAuthorization, error)
 	ConsumeMatchingCredentialAuthorization(ctx context.Context, match CredentialAuthorizationMatch, now time.Time) (*CredentialAuthorization, error)

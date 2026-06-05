@@ -114,11 +114,10 @@ type Server struct {
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 
-	// taskRiskAssessor scores task envelopes at creation time. Shared
-	// between the dashboard task-create path (via TasksHandler) and the
-	// lite-proxy inline-approval intercept so both surfaces see the
-	// same LLM-judged risk read.
 	taskRiskAssessor taskrisk.Assessor
+
+	liteResolverHandler *handlers.ProxyResolverHandler
+	liteAuditEmitter    *llmproxy.AuditEmitter
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.
@@ -1287,6 +1286,7 @@ func (s *Server) registerLiteProxyRoutes(
 		}
 
 		auditEmitter := llmproxy.NewAuditEmitter(s.store, s.logger, nil)
+		s.liteAuditEmitter = auditEmitter
 		llmHandler.AuditEmitter = auditEmitter
 		llmHandler.Catalog = llmproxy.NewLazyServiceCatalog(llmproxy.DefsFromRegistry(s.adapterReg))
 		llmHandler.TaskScope = llmproxy.NewStoreTaskScopeChecker(s.store)
@@ -1296,6 +1296,7 @@ func (s *Server) registerLiteProxyRoutes(
 		)
 
 		resolverHandler := handlers.NewProxyResolverHandler(s.store, s.vault, s.logger)
+		s.liteResolverHandler = resolverHandler
 		resolverHandler.AdapterReg = s.adapterReg
 		resolverHandler.SelfHostnames = s.cfg.ProxyLite.SelfHostnames
 		resolverHandler.AllowPrivateNetworks = s.cfg.ProxyLite.AllowPrivateNetworks
@@ -1600,6 +1601,12 @@ func (s *Server) Run(ctx context.Context) error {
 		// races into a final delivery attempt.
 		if s.cbDispatcher != nil {
 			s.cbDispatcher.Stop()
+		}
+		if s.liteResolverHandler != nil {
+			s.liteResolverHandler.Close()
+		}
+		if s.liteAuditEmitter != nil {
+			s.liteAuditEmitter.Close()
 		}
 		s.store.Close()
 		if !s.cfg.Server.IsLocal() {

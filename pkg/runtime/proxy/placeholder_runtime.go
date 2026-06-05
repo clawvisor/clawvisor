@@ -108,7 +108,7 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 				}
 				replacedValues[i] = replaced
 				for _, placeholder := range placeholders {
-					_ = hooks.Store.TouchRuntimePlaceholder(req.Context(), placeholder, time.Now().UTC())
+					_ = hooks.Store.TouchRuntimePlaceholder(req.Context(), placeholder, time.Now().UTC(), 1)
 				}
 				if len(placeholders) > 0 {
 					continue
