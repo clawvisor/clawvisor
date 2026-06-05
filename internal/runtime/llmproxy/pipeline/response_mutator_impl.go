@@ -83,11 +83,16 @@ func (m *streamingResponseMutator) Commit() error {
 	m.committed = true
 
 	if m.hasSubstitute {
-		// SubstituteEntireResponse takes precedence over Prepend —
-		// the whole response is being replaced. For now this path
-		// returns ErrUnimplemented; the policies that need substitute
-		// (inline_task_intercept) port in Phase 4.
-		return fmt.Errorf("SubstituteEntireResponse commit not yet implemented")
+		// SubstituteEntireResponse takes precedence over Prepend — the
+		// upstream response is discarded and replaced with a synthetic
+		// one-text-block stream carrying the substitute text. Used by
+		// inline_task_intercept's postprocess half (Phase 4).
+		switch m.shape {
+		case conversation.StreamShapeAnthropicMessages:
+			return stream.SubstituteAnthropicResponse(m.dst, m.src, m.substituteText)
+		default:
+			return fmt.Errorf("SubstituteEntireResponse not yet wired for shape %v", m.shape)
+		}
 	}
 
 	if m.prependText == "" {
