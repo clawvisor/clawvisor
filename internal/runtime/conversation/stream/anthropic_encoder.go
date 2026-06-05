@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/jsonpatch"
 )
 
 // AnthropicEncoder writes a sequence of canonical Events to an SSE
@@ -126,7 +126,7 @@ func applyJSONPathPatch(data []byte, patch FieldPatch) ([]byte, error) {
 			return nil, fmt.Errorf("nested JSONPath %q not yet supported (Phase 2 starts top-level only)", patch.JSONPath)
 		}
 	}
-	return llmproxy.SetJSONField(data, patch.JSONPath, patch.NewValue)
+	return jsonpatch.SetTopLevelField(data, patch.JSONPath, patch.NewValue)
 }
 
 // emitReplaced serializes a REPLACED-state event from its Parsed
