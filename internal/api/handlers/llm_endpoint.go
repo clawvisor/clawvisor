@@ -2941,26 +2941,39 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 }
 
 func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, extraSuppressed map[string]struct{}, liteProxySecretDetectionDisabled bool, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, bool) {
-	if stripped, err := llmproxy.StripSecretDecisionHistory(llmproxy.SecretDecisionHistoryStripRequest{
-		Provider: provider,
-		Body:     body,
-	}); err != nil {
-		h.emitLiteSecretPipelineTrace(requestID, agent, "history_strip_error", map[string]any{
-			"provider": string(provider),
-			"body_sha": liteSecretBodySHA(body),
-			"err":      err.Error(),
-		})
-		h.Logger.WarnContext(r.Context(), "lite-proxy secret decision history strip failed",
-			"agent_id", agent.ID, "err", err.Error())
-	} else if stripped.Modified {
-		h.emitLiteSecretPipelineTrace(requestID, agent, "history_stripped", map[string]any{
-			"provider":        string(provider),
-			"body_sha_before": liteSecretBodySHA(body),
-			"body_sha_after":  liteSecretBodySHA(stripped.Body),
-			"body_bytes":      len(stripped.Body),
-		})
-		body = stripped.Body
-		auditParams["secret_decision_history_stripped"] = true
+	// Eleventh migrated call site through pipeline: SecretHistoryStrip.
+	// The policy emits secret_history_stripped:true on rewrite; for
+	// compatibility with the legacy audit-flag name, we map it back to
+	// secret_decision_history_stripped at the handler boundary.
+	{
+		preBodySHA := liteSecretBodySHA(body)
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewSecretHistoryStrip())
+		if err != nil {
+			h.emitLiteSecretPipelineTrace(requestID, agent, "history_strip_error", map[string]any{
+				"provider": string(provider),
+				"body_sha": preBodySHA,
+				"err":      err.Error(),
+			})
+			h.Logger.WarnContext(r.Context(), "lite-proxy secret decision history strip pipeline failed",
+				"agent_id", agent.ID, "err", err.Error())
+		} else if string(result.FinalBody) != string(body) {
+			h.emitLiteSecretPipelineTrace(requestID, agent, "history_stripped", map[string]any{
+				"provider":        string(provider),
+				"body_sha_before": preBodySHA,
+				"body_sha_after":  liteSecretBodySHA(result.FinalBody),
+				"body_bytes":      len(result.FinalBody),
+			})
+			body = result.FinalBody
+			// Keep the legacy audit-flag name for dashboard compatibility.
+			auditParams["secret_decision_history_stripped"] = true
+		}
 	}
 	if liteProxySecretDetectionDisabled {
 		h.emitLiteSecretPipelineTrace(requestID, agent, "lite_proxy_secret_detection_skipped", map[string]any{
