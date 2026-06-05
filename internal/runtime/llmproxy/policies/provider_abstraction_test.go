@@ -7,6 +7,53 @@ import (
 	"testing"
 )
 
+// TestProviderAbstraction_PipelinePackageIsProviderAgnostic verifies
+// the pipeline package itself contains no provider-specific
+// comparisons. Pipeline orchestrators (RunPre, RunPost,
+// EvaluateToolUses, CoalesceHolds, ShouldCoalesce) must work for any
+// provider — adding a new one should not require touching pipeline/.
+func TestProviderAbstraction_PipelinePackageIsProviderAgnostic(t *testing.T) {
+	pipelineDir := "../pipeline"
+	entries, err := os.ReadDir(pipelineDir)
+	if err != nil {
+		t.Fatalf("read pipeline dir: %v", err)
+	}
+
+	checked := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(pipelineDir, name))
+		if err != nil {
+			t.Fatalf("read pipeline/%s: %v", name, err)
+		}
+		body := string(data)
+		checked++
+
+		for _, marker := range []string{
+			"conversation.ProviderAnthropic",
+			"conversation.ProviderOpenAI",
+		} {
+			if strings.Contains(body, marker) {
+				// One legitimate exception: response_mutator_impl.go
+				// dispatches per-shape; that's the boundary where
+				// provider-awareness belongs (it's a wire-format dispatch,
+				// not a policy gate).
+				if name == "response_mutator_impl.go" {
+					continue
+				}
+				t.Errorf("pipeline/%s mentions %s — pipeline package must remain provider-agnostic.\nProvider dispatch belongs in conversation/stream/ codecs or in response_mutator_impl.go's switch.", name, marker)
+			}
+		}
+	}
+
+	if checked == 0 {
+		t.Errorf("no pipeline files were checked — test infrastructure broken")
+	}
+}
+
 // TestProviderAbstraction_PoliciesDontMentionSpecificProviders
 // validates the Phase 6 invariant: adding a new provider shouldn't
 // require touching any policies/*.go file.
