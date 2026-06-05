@@ -1,5 +1,6 @@
 [
   {
+    "service": "anthropic",
     "action": "lite_proxy.messages.create",
     "decision": "allow",
     "outcome": "success",

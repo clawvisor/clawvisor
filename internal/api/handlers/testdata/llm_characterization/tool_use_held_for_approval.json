@@ -1,0 +1,68 @@
+[
+  {
+    "service": "runtime.tool_use",
+    "action": "lite_proxy.tool_use.block",
+    "decision": "block",
+    "outcome": "task_scope_missing",
+    "used_active_task_context": false,
+    "used_lease_bias": false,
+    "has_tool_use_id": true,
+    "params": {
+      "ambiguous": false,
+      "build_sha": "dev",
+      "clawvisor_version": "dev",
+      "event": "lite_proxy.tool_use_inspected",
+      "is_api_call": false,
+      "parent_request_id": "\u003cnormalized\u003e",
+      "parser_version": "lite-proxy-parser/v1",
+      "placeholders": null,
+      "target_host": "",
+      "target_method": "",
+      "target_path": "",
+      "tool_input": {
+        "command": "mkdir /tmp/needs-task"
+      },
+      "tool_name": "Bash",
+      "tool_target": "mkdir /tmp/needs-task",
+      "tool_use_id": "toolu_1",
+      "validator_prompt": "",
+      "verdict_source": "trigger_miss"
+    }
+  },
+  {
+    "service": "anthropic",
+    "action": "lite_proxy.messages.create",
+    "decision": "allow",
+    "outcome": "success",
+    "used_active_task_context": false,
+    "used_lease_bias": false,
+    "params": {
+      "available_tools": [
+        "Bash"
+      ],
+      "build_sha": "dev",
+      "caller_auth_source": "authorization",
+      "clawvisor_version": "dev",
+      "conversation_id_source": "empty",
+      "event": "lite_proxy.endpoint_call",
+      "first_turn": true,
+      "http_status": 200,
+      "method": "POST",
+      "model": "claude-haiku-4-5",
+      "parser_version": "lite-proxy-parser/v1",
+      "path": "/v1/messages",
+      "provider": "anthropic",
+      "query": "",
+      "request_body_bytes": "\u003cnormalized\u003e",
+      "route": "messages.create",
+      "stream": false,
+      "ttfb_headers_ms": "\u003cnormalized\u003e",
+      "upstream_body_bytes": "\u003cnormalized\u003e",
+      "upstream_read_ms": "\u003cnormalized\u003e",
+      "upstream_ttfb_body_ms": "\u003cnormalized\u003e",
+      "usage_input_tokens": 5,
+      "usage_output_tokens": 2,
+      "validator_prompt": ""
+    }
+  }
+]

@@ -1,5 +1,6 @@
 [
   {
+    "service": "anthropic",
     "action": "lite_proxy.messages.create",
     "decision": "deny",
     "outcome": "malformed_request",

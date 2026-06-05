@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -93,6 +94,7 @@ func runCharacterizationScenario(t *testing.T, sc characterizationScenario) []no
 // upstream URL length, durations) are dropped or replaced with stable
 // placeholders. Params keys are sorted at JSON serialization time.
 type normalizedAuditRow struct {
+	Service              string                 `json:"service"`
 	Action               string                 `json:"action"`
 	Decision             string                 `json:"decision"`
 	Outcome              string                 `json:"outcome"`
@@ -102,6 +104,7 @@ type normalizedAuditRow struct {
 	HasTaskID            bool                   `json:"has_task_id,omitempty"`
 	HasLeaseID           bool                   `json:"has_lease_id,omitempty"`
 	HasMatchedTaskID     bool                   `json:"has_matched_task_id,omitempty"`
+	HasToolUseID         bool                   `json:"has_tool_use_id,omitempty"`
 	HasIntentVerdict     bool                   `json:"has_intent_verdict,omitempty"`
 	HasPolicyID          bool                   `json:"has_policy_id,omitempty"`
 	HasRuleID            bool                   `json:"has_rule_id,omitempty"`
@@ -114,6 +117,7 @@ type normalizedAuditRow struct {
 // policy behavior.
 func normalizeAuditRow(row store.AuditEntry) normalizedAuditRow {
 	out := normalizedAuditRow{
+		Service:               row.Service,
 		Action:                row.Action,
 		Decision:              row.Decision,
 		Outcome:               row.Outcome,
@@ -123,6 +127,7 @@ func normalizeAuditRow(row store.AuditEntry) normalizedAuditRow {
 		HasTaskID:             row.TaskID != nil,
 		HasLeaseID:            row.LeaseID != nil,
 		HasMatchedTaskID:      row.MatchedTaskID != nil,
+		HasToolUseID:          row.ToolUseID != nil,
 		HasIntentVerdict:      row.IntentVerdict != nil,
 		HasPolicyID:           row.PolicyID != nil,
 		HasRuleID:             row.RuleID != nil,
@@ -159,7 +164,10 @@ func normalizeParams(p map[string]any) map[string]any {
 			"upstream_body_bytes",
 			// Conversation ID — minted by crypto/rand for OpenAI Chat
 			// first-turn requests.
-			"conversation_id":
+			"conversation_id",
+			// Parent request ID — UUID minted per inbound request,
+			// emitted onto child tool_use rows in postprocess.
+			"parent_request_id":
 			out[k] = "<normalized>"
 		default:
 			out[k] = v
@@ -283,6 +291,81 @@ func TestCharacterization_PassthroughCleanOpenAIChat(t *testing.T) {
 		},
 	})
 	compareToGolden(t, "passthrough_clean_openai_chat", rows)
+}
+
+// TestCharacterization_ToolUseHeldForApproval pins the postprocess
+// audit-row shape when the upstream returns a tool_use the Inspector
+// flags as needing approval (mutating Bash command, no matching task
+// scope). The handler responds with an approval prompt and emits a
+// `runtime.tool_use` block row alongside the normal `lite_proxy.forward`
+// row. This is the canary for any postprocess restructure: both rows
+// and their key fields (Outcome=task_scope_missing, HasToolUseID,
+// would_prompt_inline=true) must remain stable.
+func TestCharacterization_ToolUseHeldForApproval(t *testing.T) {
+	rows := runCharacterizationScenario(t, characterizationScenario{
+		name: "tool_use_held_for_approval",
+		upstreamHandler: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"id":"msg_1","type":"message","role":"assistant","model":"claude-haiku-4-5",
+				"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"mkdir /tmp/needs-task"}}],
+				"stop_reason":"tool_use",
+				"usage":{"input_tokens":5,"output_tokens":2}
+			}`))
+		},
+		configure: func(_ *testing.T, h *LLMEndpointHandler) {
+			h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+		},
+		request: func(t *testing.T, rawToken string) *http.Request {
+			t.Helper()
+			body := `{"model":"claude-haiku-4-5","max_tokens":10,"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"make a dir"}]}`
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+rawToken)
+			req.Header.Set("Content-Type", "application/json")
+			return req
+		},
+	})
+	compareToGolden(t, "tool_use_held_for_approval", rows)
+}
+
+// TestCharacterization_ToolUseCredentialRewrite pins the postprocess
+// audit-row shape for the credentialed-tool_use rewrite path: upstream
+// returns a WebFetch tool_use carrying an `autovault_…` placeholder; the
+// inspector recognizes the credentialed call, mints a nonce, and rewrites
+// the URL to point at the resolver. The audit row captures the
+// rewrite-allow path with target_host/target_method populated.
+func TestCharacterization_ToolUseCredentialRewrite(t *testing.T) {
+	rows := runCharacterizationScenario(t, characterizationScenario{
+		name: "tool_use_credential_rewrite",
+		upstreamHandler: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"id":"msg_1","type":"message","role":"assistant","model":"claude-haiku-4-5",
+				"content":[
+					{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{
+						"url":"https://api.github.com/repos/x/y/issues",
+						"method":"POST",
+						"headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+					}}
+				],
+				"stop_reason":"tool_use",
+				"usage":{"input_tokens":8,"output_tokens":12}
+			}`))
+		},
+		configure: func(_ *testing.T, h *LLMEndpointHandler) {
+			h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+			h.ResolverBaseURL = "https://clawvisor.example/api/proxy"
+		},
+		request: func(t *testing.T, rawToken string) *http.Request {
+			t.Helper()
+			body := `{"model":"claude-haiku-4-5","max_tokens":10,"messages":[{"role":"user","content":"create issue"}]}`
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+rawToken)
+			req.Header.Set("Content-Type", "application/json")
+			return req
+		},
+	})
+	compareToGolden(t, "tool_use_credential_rewrite", rows)
 }
 
 // TestCharacterization_MalformedRequest pins the deny path: a body that

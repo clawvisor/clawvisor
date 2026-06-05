@@ -1,5 +1,6 @@
 [
   {
+    "service": "openai",
     "action": "lite_proxy.chat.completions.create",
     "decision": "allow",
     "outcome": "success",
