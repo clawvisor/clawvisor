@@ -3105,7 +3105,226 @@ func agentConversationAutoApproveThreshold(agent *store.Agent) string {
 	return store.ConversationAutoApproveOff
 }
 
+// liteSecretDecisionAttempt is the result-returning shape of the
+// secret-decision adjudication. Used by both the legacy
+// maybeHandleLiteSecretDecision method (which writes the response
+// from this struct) and the SecretDecision pipeline policy (which
+// converts it into Allow/ShortCircuit verdicts).
+type liteSecretDecisionAttempt struct {
+	// Handled is true when the decision was acted on (verb recognized,
+	// pending bound). False = no-op pass-through.
+	Handled bool
+	// Action is the recognized decision verb.
+	Action llmproxy.SecretDecisionAction
+	// ModifiedBody is the post-decision body when no error. May be
+	// nil when IsError=true (error response replaces the request).
+	ModifiedBody []byte
+	// Suppressed is the fingerprint set to add to extraSuppressed.
+	Suppressed map[string]struct{}
+	// DecisionID + FindingsCount populate audit_params.
+	DecisionID    string
+	FindingsCount int
+	// AuditStatusOverride sets *auditStatus when non-zero (vault paths
+	// use this to record the error status code; success paths leave
+	// status untouched).
+	AuditStatusOverride int
+	// IsError flags the vault error paths.
+	IsError       bool
+	ErrorCode     string
+	ErrorMessage  string
+	ErrorReason   string
+	ErrorOutcome  string
+}
+
+// tryHandleLiteSecretDecision runs the adjudication without writing
+// to the response. Returns liteSecretDecisionAttempt; the caller
+// either applies the result (write error response or use modified
+// body) or short-circuits via the SecretDecision pipeline policy.
+func (h *LLMEndpointHandler) tryHandleLiteSecretDecision(r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte) liteSecretDecisionAttempt {
+	if h == nil || h.PendingSecrets == nil || agent == nil {
+		return liteSecretDecisionAttempt{}
+	}
+	reply := llmproxy.SecretDecisionReplyFromBody(provider, body)
+	if reply.Action == llmproxy.SecretDecisionNone {
+		return liteSecretDecisionAttempt{}
+	}
+	pendingID := llmproxy.LatestAssistantSecretDecisionID(provider, body)
+	var (
+		pending *llmproxy.PendingSecretDecision
+		err     error
+	)
+	if pendingID != "" {
+		pending, err = h.PendingSecrets.ResolveSecretID(r.Context(), agent.UserID, agent.ID, provider, pendingID)
+	} else {
+		pending, err = h.PendingSecrets.ResolveSecret(r.Context(), agent.UserID, agent.ID, provider)
+	}
+	if err != nil {
+		h.Logger.WarnContext(r.Context(), "lite-proxy pending secret decision consume failed",
+			"agent_id", agent.ID, "provider", string(provider), "err", err.Error())
+		return liteSecretDecisionAttempt{}
+	}
+	if pending == nil {
+		return liteSecretDecisionAttempt{}
+	}
+	h.emitLiteSecretPipelineTrace(requestID, agent, "decision_received", map[string]any{
+		"provider":           string(provider),
+		"decision":           string(reply.Action),
+		"decision_id":        pending.ID,
+		"pending_findings":   len(pending.Findings),
+		"findings":           liteSecretFindingTraceSummaries(pending.Findings),
+		"original_body_sha":  liteSecretBodySHA(pending.OriginalBody),
+		"redacted_body_sha":  liteSecretBodySHA(pending.RedactedBody),
+		"decision_body_sha":  liteSecretBodySHA(body),
+		"decision_body_size": len(body),
+	})
+	base := liteSecretDecisionAttempt{
+		Handled:       true,
+		Action:        reply.Action,
+		DecisionID:    pending.ID,
+		FindingsCount: len(pending.Findings),
+	}
+	switch reply.Action {
+	case llmproxy.SecretDecisionAllowOnce:
+		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
+			"provider":   string(provider),
+			"decision":   string(reply.Action),
+			"body_sha":   liteSecretBodySHA(pending.OriginalBody),
+			"body_bytes": len(pending.OriginalBody),
+		})
+		base.ModifiedBody = pending.OriginalBody
+		base.Suppressed = secretFindingFingerprintSet(pending.Findings)
+		return base
+	case llmproxy.SecretDecisionNotSecret:
+		h.rememberNotSecretFindings(r.Context(), agent, pending.Findings)
+		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
+			"provider":                string(provider),
+			"decision":                string(reply.Action),
+			"suppressed_fingerprints": liteSecretFindingFingerprintPrefixes(pending.Findings),
+			"body_sha":                liteSecretBodySHA(pending.OriginalBody),
+			"body_bytes":              len(pending.OriginalBody),
+		})
+		base.ModifiedBody = pending.OriginalBody
+		return base
+	case llmproxy.SecretDecisionDiscard:
+		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
+			"provider":   string(provider),
+			"decision":   string(reply.Action),
+			"body_sha":   liteSecretBodySHA(pending.RedactedBody),
+			"body_bytes": len(pending.RedactedBody),
+		})
+		base.ModifiedBody = pending.RedactedBody
+		return base
+	case llmproxy.SecretDecisionVault:
+		name := strings.TrimSpace(reply.VaultName)
+		if name == "" && len(pending.Findings) > 0 {
+			name = pending.Findings[0].SuggestedName
+		}
+		if name == "" {
+			name = "secret"
+		}
+		vaulted := make([]liteSecretVaultedFinding, 0, len(pending.Findings))
+		for i, finding := range pending.Findings {
+			vaultName := name
+			if len(pending.Findings) > 1 {
+				vaultName = fmt.Sprintf("%s_%d", name, i+1)
+			}
+			placeholder, authID, vaultCreated, err := h.vaultFindingAndMintSessionPlaceholder(r.Context(), agent, vaultName, finding)
+			if err != nil {
+				h.rollbackPartialSecretVaults(r.Context(), agent, vaulted)
+				h.requeuePendingSecretDecision(r.Context(), pending)
+				base.IsError = true
+				base.ErrorReason = err.Error()
+				if errors.Is(err, errSecretVaultNameConflict) {
+					base.AuditStatusOverride = http.StatusConflict
+					base.ErrorOutcome = "secret_vault_name_conflict"
+					base.ErrorCode = "SECRET_VAULT_NAME_CONFLICT"
+					base.ErrorMessage = "a vault item with that name already exists with a different value. Please choose a different name and retry."
+				} else {
+					base.AuditStatusOverride = http.StatusInternalServerError
+					base.ErrorOutcome = "secret_vault_failed"
+					base.ErrorCode = "SECRET_VAULT_FAILED"
+					base.ErrorMessage = "couldn't save the detected secret to your vault. Please retry."
+				}
+				return base
+			}
+			vaulted = append(vaulted, liteSecretVaultedFinding{
+				vaultName:       vaultName,
+				resolvedVaultID: resolvedSecretVaultItemID(vaultName, finding),
+				finding:         finding,
+				placeholder:     placeholder,
+				authID:          authID,
+				vaultCreated:    vaultCreated,
+			})
+		}
+		resumeBody := append([]byte{}, pending.OriginalBody...)
+		for _, item := range vaulted {
+			h.emitLiteSecretPipelineTrace(requestID, agent, "decision_vaulted_finding", map[string]any{
+				"provider":           string(provider),
+				"decision_id":        pending.ID,
+				"vault_item_id":      item.resolvedVaultID,
+				"finding":            liteSecretFindingTraceSummary(item.finding),
+				"placeholder_prefix": liteSecretPlaceholderPrefix(item.placeholder),
+			})
+			rewrittenBody, modified, rewriteErr := rewriteJSONStrings(resumeBody, map[string]string{item.finding.Value: item.placeholder})
+			if rewriteErr != nil || !modified {
+				h.rollbackPartialSecretVaults(r.Context(), agent, vaulted)
+				h.requeuePendingSecretDecision(r.Context(), pending)
+				base.IsError = true
+				base.AuditStatusOverride = http.StatusInternalServerError
+				base.ErrorOutcome = "secret_vault_failed"
+				base.ErrorCode = "SECRET_VAULT_FAILED"
+				base.ErrorMessage = "couldn't substitute the detected secret into the request. Please retry."
+				if rewriteErr != nil {
+					base.ErrorReason = rewriteErr.Error()
+				} else {
+					base.ErrorReason = "detected secret was not present in request JSON"
+				}
+				return base
+			}
+			resumeBody = rewrittenBody
+		}
+		for _, item := range vaulted {
+			h.rememberVaultedSecretRewrite(r.Context(), agent, item.vaultName, item.finding, item.placeholder)
+		}
+		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
+			"provider":   string(provider),
+			"decision":   string(reply.Action),
+			"body_sha":   liteSecretBodySHA(resumeBody),
+			"body_bytes": len(resumeBody),
+		})
+		base.ModifiedBody = resumeBody
+		return base
+	}
+	return liteSecretDecisionAttempt{}
+}
+
 func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, llmproxy.SecretDecisionAction, map[string]struct{}, bool) {
+	attempt := h.tryHandleLiteSecretDecision(r, agent, provider, requestID, body)
+	if !attempt.Handled {
+		return nil, "", nil, false
+	}
+	if auditParams != nil && attempt.DecisionID != "" {
+		auditParams["secret_decision_id"] = attempt.DecisionID
+		auditParams["secret_findings"] = attempt.FindingsCount
+	}
+	if attempt.IsError {
+		*auditStatus = attempt.AuditStatusOverride
+		*auditDecide = "deny"
+		*auditOutcome = attempt.ErrorOutcome
+		*auditReason = attempt.ErrorReason
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, attempt.AuditStatusOverride, attempt.ErrorCode, attempt.ErrorMessage)
+		return nil, attempt.Action, nil, true
+	}
+	if attempt.Action == llmproxy.SecretDecisionAllowOnce {
+		*auditStatus = 0
+	}
+	return attempt.ModifiedBody, attempt.Action, attempt.Suppressed, true
+}
+
+// Legacy body of maybeHandleLiteSecretDecision retained below for
+// reference during the migration; the function above is the new
+// thin wrapper around tryHandleLiteSecretDecision.
+func (h *LLMEndpointHandler) maybeHandleLiteSecretDecisionLegacy(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, llmproxy.SecretDecisionAction, map[string]struct{}, bool) {
 	if h == nil || h.PendingSecrets == nil || agent == nil {
 		return nil, "", nil, false
 	}
