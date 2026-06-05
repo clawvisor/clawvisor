@@ -131,3 +131,68 @@ func TestInspectorChain_NilInspectorSkips(t *testing.T) {
 		t.Errorf("nil inspector → Outcome = %q, want Skip", v.Outcome)
 	}
 }
+
+// TestInspectorChain_StubPlaceholdersDowngradedToTriggerMiss pins the
+// behavior where short autovault_… literals (test fixtures, doc
+// snippets) are downgraded to trigger-miss instead of being refused as
+// ambiguous. Without this, prose mentions of autovault_x or
+// autovault_github_short in tool inputs would block legitimate edits.
+func TestInspectorChain_StubPlaceholdersDowngradedToTriggerMiss(t *testing.T) {
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	chain := policies.NewInspectorChain(insp, nil)
+
+	// "autovault_x" is well below the realistic length floor — no real
+	// vault reference. Should downgrade to trigger-miss → Skip.
+	tu := conversation.ToolUse{
+		ID:    "toolu_stub",
+		Name:  "Edit",
+		Input: json.RawMessage(`{"file_path":"/tmp/test.md","new_string":"the placeholder is autovault_x"}`),
+	}
+	v, err := chain.Evaluate(context.Background(), nil, tu, evalToolUseMutator{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Outcome != pipeline.OutcomeSkip {
+		t.Errorf("stub-length placeholder → Outcome = %q, want Skip", v.Outcome)
+	}
+}
+
+// TestInspectorChain_TriggerMissDelegatesToAuthorizer pins that
+// configuring a TriggerMissAuthorizer makes the chain delegate the
+// trigger-miss path to the closure rather than returning Skip.
+func TestInspectorChain_TriggerMissDelegatesToAuthorizer(t *testing.T) {
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	var called bool
+	auth := func(_ context.Context, _ conversation.ToolUse, _ pipeline.ToolUseMutator) pipeline.ToolUseVerdict {
+		called = true
+		return pipeline.ToolUseVerdict{
+			Outcome:     pipeline.OutcomeHold,
+			Reason:      "approval needed",
+			AuditFields: map[string]any{"path": "trigger_miss_needs_approval"},
+		}
+	}
+	chain := policies.NewInspectorChain(insp, nil).WithTriggerMissAuthorizer(auth)
+	tu := conversation.ToolUse{
+		ID:    "toolu_tm",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command":"mkdir /tmp/x"}`),
+	}
+	v, err := chain.Evaluate(context.Background(), nil, tu, evalToolUseMutator{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if !called {
+		t.Error("authorizer was not invoked")
+	}
+	if v.Outcome != pipeline.OutcomeHold {
+		t.Errorf("Outcome = %q, want Hold (from authorizer)", v.Outcome)
+	}
+	// Inspector audit fields should merge in.
+	if v.AuditFields["inspector_source"] == nil {
+		t.Errorf("inspector audit fields not merged: %+v", v.AuditFields)
+	}
+	// Authorizer's own audit fields should take precedence.
+	if v.AuditFields["path"] != "trigger_miss_needs_approval" {
+		t.Errorf("authorizer path field = %v", v.AuditFields["path"])
+	}
+}
