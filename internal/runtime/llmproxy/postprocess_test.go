@@ -881,6 +881,128 @@ func TestPostprocess_ToolTaskIntentRefusalRequiresApproval(t *testing.T) {
 	}
 }
 
+// TestPostprocess_SlidingTaskExpiryBumpsOnAuthorizedToolUse guards the
+// wiring between EvaluateAuthorization's VerdictAllow and slideTaskExpiry.
+// Before this test was added, the slide only fired on the legacy
+// cfg.TaskScope.Check fall-through branch; the trigger-miss and
+// credentialed paths (which carry CandidateTasks and therefore go through
+// EvaluateAuthorization) both returned VerdictAllow without ever bumping
+// expires_at, so sliding tasks expired on a fixed window in production.
+func TestPostprocess_SlidingTaskExpiryBumpsOnAuthorizedToolUse(t *testing.T) {
+	body := anthropicJSONWithNamedToolUse("Write", `{"file_path":"/tmp/hello.py","content":"print('hi')\n"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	// Sliding task with an expiry well inside the slide window so the
+	// slide will move expires_at forward to ~now+SlidingTaskSlide.
+	soonExpiring := time.Now().UTC().Add(2 * time.Minute)
+	task := &store.Task{
+		ID:                     "task-slide-1",
+		UserID:                 userID,
+		AgentID:                agentID,
+		Purpose:                "Create /tmp/hello.py",
+		Status:                 "active",
+		Lifetime:               "sliding",
+		ExpiresAt:              &soonExpiring,
+		IntentVerificationMode: "off",
+		ExpectedTools:          json.RawMessage(`[{"tool_name":"Write","why":"create and refactor /tmp/hello.py"}]`),
+	}
+	if err := st.CreateTask(req.Context(), task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		CandidateTasks:   []*store.Task{task},
+		ToolRules:        []*store.RuntimePolicyRule{},
+		EgressRules:      []*store.RuntimePolicyRule{},
+		PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+		Posture:          runtimedecision.PostureEnforce,
+	})
+
+	if got.Rewritten {
+		t.Fatalf("authorized tool_use should pass through, got rewrite: %s", got.Body)
+	}
+
+	persisted, err := st.GetTask(req.Context(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if persisted.ExpiresAt == nil {
+		t.Fatalf("expires_at should remain non-nil after slide")
+	}
+	if !persisted.ExpiresAt.After(soonExpiring) {
+		t.Fatalf("expires_at should have been bumped forward: was %v, persisted %v",
+			soonExpiring, *persisted.ExpiresAt)
+	}
+	expectedMin := time.Now().UTC().Add(SlidingTaskSlide - 30*time.Second)
+	if persisted.ExpiresAt.Before(expectedMin) {
+		t.Fatalf("expected expires_at near now+%v, got %v", SlidingTaskSlide, *persisted.ExpiresAt)
+	}
+}
+
+// TestPostprocess_SessionTaskExpiryDoesNotBumpOnAuthorizedToolUse is the
+// negative counterpart: session-lifetime tasks must NOT slide on each
+// authorized call. Sliding is opt-in only; session preserves a fixed
+// deadline so dashboard-displayed expiries remain stable.
+func TestPostprocess_SessionTaskExpiryDoesNotBumpOnAuthorizedToolUse(t *testing.T) {
+	body := anthropicJSONWithNamedToolUse("Write", `{"file_path":"/tmp/hello.py","content":"print('hi')\n"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	soonExpiring := time.Now().UTC().Add(2 * time.Minute)
+	task := &store.Task{
+		ID:                     "task-session-1",
+		UserID:                 userID,
+		AgentID:                agentID,
+		Purpose:                "Create /tmp/hello.py",
+		Status:                 "active",
+		Lifetime:               "session",
+		ExpiresAt:              &soonExpiring,
+		IntentVerificationMode: "off",
+		ExpectedTools:          json.RawMessage(`[{"tool_name":"Write","why":"create and refactor /tmp/hello.py"}]`),
+	}
+	if err := st.CreateTask(req.Context(), task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		CandidateTasks:   []*store.Task{task},
+		ToolRules:        []*store.RuntimePolicyRule{},
+		EgressRules:      []*store.RuntimePolicyRule{},
+		PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+		Posture:          runtimedecision.PostureEnforce,
+	})
+
+	persisted, err := st.GetTask(req.Context(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if persisted.ExpiresAt == nil {
+		t.Fatalf("session expires_at must remain non-nil")
+	}
+	// sqlite stores expires_at at second precision, so equal-to-the-
+	// nanosecond won't hold. Allow ±1 second drift from the original
+	// while asserting the slide didn't push it toward now+SlidingTaskSlide.
+	delta := persisted.ExpiresAt.Sub(soonExpiring)
+	if delta > time.Second || delta < -time.Second {
+		t.Fatalf("session expires_at must not move: was %v, persisted %v (delta=%v)", soonExpiring, *persisted.ExpiresAt, delta)
+	}
+}
+
 func anthropicResponseText(t *testing.T, body []byte) string {
 	t.Helper()
 	var resp struct {
