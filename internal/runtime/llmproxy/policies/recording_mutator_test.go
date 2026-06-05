@@ -69,19 +69,20 @@ var _ pipeline.RequestMutator = (*recordingRequestMutator)(nil)
 // fields. Used in policy tests where the policy only needs to know
 // the provider and the raw body.
 type stubReadOnlyRequest struct {
-	provider  conversation.Provider
-	shape     conversation.StreamShape
-	rawBody   []byte
-	firstTurn bool
-	convID    string
-	userID    string
-	agentID   string
+	provider        conversation.Provider
+	shape           conversation.StreamShape
+	rawBody         []byte
+	firstTurn       bool
+	convID          string
+	userID          string
+	agentID         string
+	httpReqOverride *http.Request
 }
 
 func (s *stubReadOnlyRequest) Provider() conversation.Provider       { return s.provider }
 func (s *stubReadOnlyRequest) StreamShape() conversation.StreamShape { return s.shape }
 func (s *stubReadOnlyRequest) Turns() []conversation.Turn            { return nil }
-func (s *stubReadOnlyRequest) HTTPRequest() *http.Request            { return nil }
+func (s *stubReadOnlyRequest) HTTPRequest() *http.Request            { return s.httpReqOverride }
 func (s *stubReadOnlyRequest) RawBody() []byte                       { return s.rawBody }
 func (s *stubReadOnlyRequest) IsFirstTurn() bool                     { return s.firstTurn }
 func (s *stubReadOnlyRequest) ConversationID() string                { return s.convID }
