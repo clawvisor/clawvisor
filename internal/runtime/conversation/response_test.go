@@ -434,6 +434,74 @@ func TestOpenAIResponseRewriterPreservesLeadingTextOnChatRewrite(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseRewriterPreservesPostToolTextOnChatRewrite(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(strings.Join([]string{
+		`data: {"id":"chatcmpl_x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Looking up your repo. "},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"github","arguments":"{\"repo\":\"acme\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: {"id":"chatcmpl_x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"And here is some trailing text."},"finish_reason":null}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n"))
+
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{Allowed: true, RewriteInput: []byte(`{"repo":"acme/rewritten"}`)}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatalf("expected rewrite to fire")
+	}
+
+	events := parseTestSSEEvents(t, string(result.Body))
+	var eventOrder []string
+	for _, ev := range events {
+		var payload struct {
+			Choices []struct {
+				Delta struct {
+					Content   any   `json:"content"`
+					ToolCalls []any `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
+			continue
+		}
+		for _, c := range payload.Choices {
+			if txt := flattenOpenAIContentFromAny(c.Delta.Content); txt != "" {
+				eventOrder = append(eventOrder, txt)
+			}
+			if len(c.Delta.ToolCalls) > 0 {
+				eventOrder = append(eventOrder, "tool_calls")
+			}
+		}
+	}
+
+	// We expect precisely: ["Looking up your repo. ", "tool_calls", "And here is some trailing text."]
+	expected := []string{"Looking up your repo. ", "tool_calls", "And here is some trailing text."}
+	if len(eventOrder) != len(expected) {
+		t.Fatalf("expected sequence %v, got %v", expected, eventOrder)
+	}
+	for i, val := range expected {
+		if eventOrder[i] != val {
+			t.Fatalf("at index %d: expected %q, got %q", i, val, eventOrder[i])
+		}
+	}
+}
+
 func TestOpenAIResponseRewriterSortsStreamingChatToolCallsByIndex(t *testing.T) {
 	t.Parallel()
 
@@ -1267,5 +1335,412 @@ func TestOpenAIResponseRewriterDoesNotMutateUnrelatedChoicesChatJSON(t *testing.
 	}
 	if c1["finish_reason"] != "tool_calls" {
 		t.Fatalf("expected Choice 1 finish_reason to be tool_calls, got %q", c1["finish_reason"])
+	}
+}
+
+func TestOpenAIResponseRewriterDoesNotMutateUnrelatedChoicesChatSSE(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(strings.Join([]string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null},{"index":1,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Bash","arguments":"{\"command\":\"rm\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":1,"delta":{"tool_calls":[{"index":0,"id":"call_2","type":"function","function":{"name":"WebFetch","arguments":"{\"url\":\"https://safe.test\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":1,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n"))
+
+	// Block Bash on Choice 0, allow WebFetch on Choice 1
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		if tu.Name == "Bash" {
+			return ToolUseVerdict{Allowed: false, Reason: "requires approval"}
+		}
+		return ToolUseVerdict{Allowed: true}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten response")
+	}
+
+	t.Logf("rewritten body:\n%s", string(result.Body))
+	events := parseTestSSEEvents(t, string(result.Body))
+	
+	// We expect the rewritten events to synthesize both choices separately.
+	// Let's verify that the choice 0 gets finish_reason stop/blocked content,
+	// while choice 1 gets finish_reason tool_calls with its tool call preserved.
+	var choice0Finished, choice1Finished bool
+	var choice0HasContent, choice0HasToolCalls bool
+	var choice1HasContent, choice1HasToolCalls bool
+
+	for _, ev := range events {
+		var payload struct {
+			Choices []struct {
+				Index int `json:"index"`
+				Delta struct {
+					Content   any   `json:"content"`
+					ToolCalls []any `json:"tool_calls"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
+			continue
+		}
+		for _, c := range payload.Choices {
+			if c.Index == 0 {
+				if c.Delta.Content != nil {
+					choice0HasContent = true
+					txt := flattenOpenAIContentFromAny(c.Delta.Content)
+					if !strings.Contains(txt, "requires approval") {
+						t.Fatalf("expected Choice 0 content to contain block message, got %q", txt)
+					}
+				}
+				if len(c.Delta.ToolCalls) > 0 {
+					choice0HasToolCalls = true
+				}
+				if c.FinishReason == "stop" {
+					choice0Finished = true
+				}
+			} else if c.Index == 1 {
+				if c.Delta.Content != nil {
+					choice1HasContent = true
+				}
+				if len(c.Delta.ToolCalls) > 0 {
+					choice1HasToolCalls = true
+				}
+				if c.FinishReason == "tool_calls" {
+					choice1Finished = true
+				}
+			}
+		}
+	}
+
+	if !choice0Finished {
+		t.Fatal("expected Choice 0 to finish with stop")
+	}
+	if !choice0HasContent {
+		t.Fatal("expected Choice 0 to have injected block text")
+	}
+	if choice0HasToolCalls {
+		t.Fatal("expected Choice 0 to have no tool calls in rewrite")
+	}
+	if !choice1Finished {
+		t.Fatal("expected Choice 1 to finish with tool_calls")
+	}
+	if !choice1HasToolCalls {
+		t.Fatal("expected Choice 1 to retain its tool calls")
+	}
+	if choice1HasContent {
+		t.Fatal("expected Choice 1 to have no injected block text")
+	}
+}
+
+func TestOpenAIResponseRewriterPreservesInterleavingChatSSE(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(strings.Join([]string{
+		`data: {"id":"chatcmpl_interleave","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"leading0"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_interleave","object":"chat.completion.chunk","choices":[{"index":1,"delta":{"content":"leading1"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_interleave","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"Bash","arguments":"{\"command\":\"rm\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_interleave","object":"chat.completion.chunk","choices":[{"index":1,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"WebFetch","arguments":"{\"url\":\"https://safe.test\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_interleave","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: {"id":"chatcmpl_interleave","object":"chat.completion.chunk","choices":[{"index":1,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: {"id":"chatcmpl_interleave","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"trailing0"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_interleave","object":"chat.completion.chunk","choices":[{"index":1,"delta":{"content":"trailing1"},"finish_reason":null}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n"))
+
+	// Block Bash on Choice 0, allow WebFetch on Choice 1
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		if tu.Name == "Bash" {
+			return ToolUseVerdict{Allowed: false, Reason: "requires approval"}
+		}
+		return ToolUseVerdict{Allowed: true}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten response")
+	}
+
+	events := parseTestSSEEvents(t, string(result.Body))
+	var sequence []string
+
+	for _, ev := range events {
+		var payload struct {
+			Choices []struct {
+				Index int `json:"index"`
+				Delta struct {
+					Content   any   `json:"content"`
+					ToolCalls []any `json:"tool_calls"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
+			continue
+		}
+		for _, c := range payload.Choices {
+			if txt := flattenOpenAIContentFromAny(c.Delta.Content); txt != "" {
+				sequence = append(sequence, fmt.Sprintf("content_%d_%s", c.Index, txt))
+			}
+			if len(c.Delta.ToolCalls) > 0 {
+				sequence = append(sequence, fmt.Sprintf("tool_calls_%d", c.Index))
+			}
+			if c.FinishReason == "tool_calls" {
+				sequence = append(sequence, fmt.Sprintf("finish_tool_calls_%d", c.Index))
+			}
+			if c.FinishReason == "stop" {
+				sequence = append(sequence, fmt.Sprintf("finish_stop_%d", c.Index))
+			}
+		}
+	}
+
+	// The expected sequence preserves exact relative order of events:
+	expected := []string{
+		"content_0_leading0",
+		"content_1_leading1",
+		"tool_calls_1",
+		"content_0_Tool 'Bash' was blocked by Clawvisor policy: requires approval",
+		"finish_stop_0",
+		"finish_tool_calls_1",
+		"content_0_trailing0",
+		"content_1_trailing1",
+	}
+
+	if len(sequence) != len(expected) {
+		t.Fatalf("expected sequence length %d, got %d. Sequence:\n%v", len(expected), len(sequence), sequence)
+	}
+	for i, val := range expected {
+		if sequence[i] != val {
+			t.Fatalf("at index %d: expected %q, got %q", i, val, sequence[i])
+		}
+	}
+
+	if result.AssistantTurn == nil {
+		t.Fatal("expected AssistantTurn to be populated")
+	}
+	expectedTurnContent := strings.Join([]string{
+		"leading0",
+		"Tool 'Bash' was blocked by Clawvisor policy: requires approval",
+		"trailing0",
+		"leading1",
+		`<tool_use name=WebFetch input={"url":"https://safe.test"}>`,
+		"trailing1",
+	}, "\n")
+	if result.AssistantTurn.Content != expectedTurnContent {
+		t.Errorf("expected AssistantTurn content:\n%q\n\ngot:\n%q", expectedTurnContent, result.AssistantTurn.Content)
+	}
+}
+
+func TestOpenAIResponseRewriterMixedToolCallsChatSSE(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(strings.Join([]string{
+		`data: {"id":"chatcmpl_mixed","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_mixed","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Bash","arguments":"{\"command\":\"rm\"}"}},{"index":1,"id":"call_2","type":"function","function":{"name":"WebFetch","arguments":"{\"url\":\"https://safe.test\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_mixed","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n"))
+
+	// Block Bash, allow WebFetch
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		if tu.Name == "Bash" {
+			return ToolUseVerdict{Allowed: false, Reason: "requires approval"}
+		}
+		return ToolUseVerdict{Allowed: true}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten response")
+	}
+
+	events := parseTestSSEEvents(t, string(result.Body))
+	var choice0Finished bool
+	var choice0HasContent, choice0HasToolCalls bool
+
+	for _, ev := range events {
+		var payload struct {
+			Choices []struct {
+				Index int `json:"index"`
+				Delta struct {
+					Content   any   `json:"content"`
+					ToolCalls []any `json:"tool_calls"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
+			continue
+		}
+		for _, c := range payload.Choices {
+			if c.Index == 0 {
+				if c.Delta.Content != nil {
+					choice0HasContent = true
+					txt := flattenOpenAIContentFromAny(c.Delta.Content)
+					if !strings.Contains(txt, "requires approval") {
+						t.Fatalf("expected Choice 0 content to contain block message, got %q", txt)
+					}
+				}
+				if len(c.Delta.ToolCalls) > 0 {
+					choice0HasToolCalls = true
+					// Check that only WebFetch is present, Bash is stripped
+					tcMap := c.Delta.ToolCalls[0].(map[string]any)
+					fn := tcMap["function"].(map[string]any)
+					name := fn["name"].(string)
+					if name != "WebFetch" {
+						t.Fatalf("expected only WebFetch allowed tool call, got %q", name)
+					}
+				}
+				if c.FinishReason == "tool_calls" {
+					choice0Finished = true
+				}
+			}
+		}
+	}
+
+	if !choice0Finished {
+		t.Fatal("expected Choice 0 to finish with tool_calls")
+	}
+	if !choice0HasContent {
+		t.Fatal("expected Choice 0 to have injected block text")
+	}
+	if !choice0HasToolCalls {
+		t.Fatal("expected Choice 0 to have allowed tool call")
+	}
+}
+
+func TestOpenAIResponseRewriterIncrementalArgumentsChatSSE(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(strings.Join([]string{
+		`data: {"id":"chatcmpl_inc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_inc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"WebFetch","arguments":""}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_inc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"url\":"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_inc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"https://unsafe.test\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_inc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n"))
+
+	// Rewrite input from unsafe.test to safe.test
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		if tu.Name == "WebFetch" {
+			return ToolUseVerdict{
+				Allowed:      true,
+				RewriteInput: []byte(`{"url":"https://safe.test"}`),
+			}
+		}
+		return ToolUseVerdict{Allowed: true}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten response")
+	}
+
+	events := parseTestSSEEvents(t, string(result.Body))
+	var argumentDeltas []string
+
+	for _, ev := range events {
+		var payload struct {
+			Choices []struct {
+				Index int `json:"index"`
+				Delta struct {
+					ToolCalls []struct {
+						Function struct {
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
+			continue
+		}
+		for _, c := range payload.Choices {
+			for _, tc := range c.Delta.ToolCalls {
+				if tc.Function.Arguments != "" {
+					argumentDeltas = append(argumentDeltas, tc.Function.Arguments)
+				}
+			}
+		}
+	}
+
+	// The original arguments had deltas of length: 7 (`{"url":`) and 21 (`"https://unsafe.test"}`).
+	// Total length = 28.
+	// The rewritten arguments have length 26 (`{"url":"https://safe.test"}`).
+	// Proportion for chunk 1: 7/28 = 0.25. 26 * 0.25 = 6.5 -> 6 bytes.
+	// Chunk 1 rewritten arguments should be 6 bytes: `{"url"`
+	// Chunk 2 rewritten arguments should be the rest: `:"https://safe.test"}`
+	if len(argumentDeltas) != 2 {
+		t.Fatalf("expected 2 argument deltas, got %v", argumentDeltas)
+	}
+
+	joined := strings.Join(argumentDeltas, "")
+	if joined != `{"url":"https://safe.test"}` {
+		t.Errorf("expected joined arguments %q, got %q", `{"url":"https://safe.test"}`, joined)
+	}
+
+	// Verify individual deltas are proportional
+	if argumentDeltas[0] != `{"url"` {
+		t.Errorf("expected delta 0 to be %q, got %q", `{"url"`, argumentDeltas[0])
+	}
+	if argumentDeltas[1] != `:"https://safe.test"}` {
+		t.Errorf("expected delta 1 to be %q, got %q", `:"https://safe.test"}`, argumentDeltas[1])
 	}
 }
