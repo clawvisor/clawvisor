@@ -1,0 +1,32 @@
+[
+  {
+    "action": "lite_proxy.chat.completions.create",
+    "decision": "allow",
+    "outcome": "success",
+    "used_active_task_context": false,
+    "used_lease_bias": false,
+    "params": {
+      "available_tools": null,
+      "build_sha": "dev",
+      "caller_auth_source": "authorization",
+      "clawvisor_version": "dev",
+      "conversation_id": "\u003cnormalized\u003e",
+      "conversation_id_minted": true,
+      "conversation_id_source": "minted",
+      "event": "lite_proxy.endpoint_call",
+      "first_turn": true,
+      "http_status": 200,
+      "method": "POST",
+      "model": "gpt-4o-mini",
+      "parser_version": "lite-proxy-parser/v1",
+      "path": "/v1/chat/completions",
+      "provider": "openai",
+      "query": "",
+      "request_body_bytes": "\u003cnormalized\u003e",
+      "route": "chat.completions.create",
+      "stream": false,
+      "ttfb_headers_ms": "\u003cnormalized\u003e",
+      "validator_prompt": ""
+    }
+  }
+]

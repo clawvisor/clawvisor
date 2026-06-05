@@ -1,0 +1,23 @@
+[
+  {
+    "action": "lite_proxy.messages.create",
+    "decision": "deny",
+    "outcome": "malformed_request",
+    "used_active_task_context": false,
+    "used_lease_bias": false,
+    "params": {
+      "build_sha": "dev",
+      "caller_auth_source": "authorization",
+      "clawvisor_version": "dev",
+      "event": "lite_proxy.endpoint_call",
+      "http_status": 400,
+      "method": "POST",
+      "parser_version": "lite-proxy-parser/v1",
+      "path": "/v1/messages",
+      "provider": "anthropic",
+      "query": "",
+      "route": "messages.create",
+      "validator_prompt": ""
+    }
+  }
+]

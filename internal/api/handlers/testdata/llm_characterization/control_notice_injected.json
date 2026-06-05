@@ -1,0 +1,33 @@
+[
+  {
+    "action": "lite_proxy.messages.create",
+    "decision": "allow",
+    "outcome": "success",
+    "used_active_task_context": false,
+    "used_lease_bias": false,
+    "params": {
+      "available_tools": [
+        "Bash"
+      ],
+      "build_sha": "dev",
+      "caller_auth_source": "authorization",
+      "clawvisor_version": "dev",
+      "control_notice_injected": true,
+      "conversation_id_source": "empty",
+      "event": "lite_proxy.endpoint_call",
+      "first_turn": true,
+      "http_status": 200,
+      "method": "POST",
+      "model": "claude-sonnet-4",
+      "parser_version": "lite-proxy-parser/v1",
+      "path": "/v1/messages",
+      "provider": "anthropic",
+      "query": "",
+      "request_body_bytes": "\u003cnormalized\u003e",
+      "route": "messages.create",
+      "stream": false,
+      "ttfb_headers_ms": "\u003cnormalized\u003e",
+      "validator_prompt": ""
+    }
+  }
+]
