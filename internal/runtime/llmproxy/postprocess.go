@@ -2209,6 +2209,14 @@ func firstNonEmpty(values ...string) string {
 //
 // resolverBaseURL is the proxy's /api/proxy mount (e.g.
 // "http://localhost:25297/api/proxy"). Empty disables passthrough.
+// ScriptSessionToolUse reports whether a tool_use is the agent's
+// already-shaped script-session call (cv-script caller token + URL
+// targeting our resolver mount). Exposed for the
+// policies.ScriptSessionEvaluator wrapper.
+func ScriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
+	return scriptSessionToolUse(input, resolverBaseURL)
+}
+
 func scriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
 	if len(input) == 0 || resolverBaseURL == "" {
 		return false
