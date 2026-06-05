@@ -239,8 +239,8 @@ func (f *Forwarder) lookupVaultKey(ctx context.Context, userID, agentID string, 
 }
 
 // injectUpstreamAuth writes the upstream-specific auth header using the raw
-// API key bytes. Handles both Anthropic (x-api-key + anthropic-version) and
-// OpenAI (Authorization: Bearer).
+// API key bytes. Handles Anthropic (x-api-key + anthropic-version), OpenAI
+// (Authorization: Bearer), and Google Gemini (x-goog-api-key).
 //
 // Validates the key bytes contain no CR/LF/NUL so a corrupted vault entry
 // (or one that round-tripped through a system that did its own escaping)
@@ -261,6 +261,12 @@ func injectUpstreamAuth(req *http.Request, provider conversation.Provider, key [
 		}
 	case conversation.ProviderOpenAI:
 		req.Header.Set("Authorization", "Bearer "+keyStr)
+	case conversation.ProviderGoogle:
+		// Gemini uses x-goog-api-key for credential auth (not
+		// Authorization: Bearer). Strip the caller's Authorization
+		// header so it doesn't double-up.
+		req.Header.Set("x-goog-api-key", keyStr)
+		req.Header.Del("Authorization")
 	default:
 		return fmt.Errorf("llmproxy: unknown provider %q", provider)
 	}
