@@ -13,6 +13,15 @@ import "encoding/json"
 // synthetic_history_strip, secret_detection) will exercise. Methods are
 // added migration-by-migration with contract tests scoped to each.
 type RequestMutator interface {
+	// ReplaceBody swaps the entire request body bytes. Used by
+	// transformations that produce a whole-body output (e.g.,
+	// anthropic_sanitize). Later policies see the replaced body.
+	// Returns an error if the new body fails the per-provider parse
+	// check — that's also the legacy handler's behavior on every
+	// inline body swap.
+	ReplaceBody(newBody []byte) error
+
+
 	// InjectSystemNotice appends to the system prompt for both providers.
 	InjectSystemNotice(text string) error
 
