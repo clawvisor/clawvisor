@@ -654,6 +654,33 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 			}
 			cfg.Trace.Emit(m)
 		}
+		// slideAndTrace bumps a sliding-lifetime task's expires_at on
+		// each authorized tool_use and records the outcome. Sliding is
+		// the only lifetime that moves; non-sliding tasks and no-op
+		// slides (current expiry already past the slide window) return
+		// without writing. Store failures are non-blocking — see
+		// slideTaskExpiry's contract.
+		slideAndTrace := func(task *store.Task) {
+			if task == nil {
+				return
+			}
+			newExp, slid, err := slideTaskExpiry(req.Context(), cfg.Store, task, time.Now().UTC())
+			if err != nil {
+				trace(TraceEventTaskSlide,
+					"task_id", task.ID,
+					"result", "error",
+					"error", err.Error(),
+				)
+				return
+			}
+			if slid {
+				trace(TraceEventTaskSlide,
+					"task_id", task.ID,
+					"result", "extended",
+					"new_expires_at", newExp.Format(time.RFC3339),
+				)
+			}
+		}
 		trace(TraceEventToolUseEntry,
 			"input_preview", truncateForTrace(string(tu.Input), traceInputPreviewLimit),
 			"input_bytes", len(tu.Input),
@@ -892,6 +919,7 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 				)
 				switch dec.Kind {
 				case runtimedecision.VerdictAllow:
+					slideAndTrace(dec.Task)
 					audit("allow", string(dec.Source), dec.Reason)
 					return conversation.ToolUseVerdict{Allowed: true}
 				case runtimedecision.VerdictDeny:
@@ -1040,6 +1068,7 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 			)
 			switch dec.Kind {
 			case runtimedecision.VerdictAllow:
+				slideAndTrace(dec.Task)
 				// Continue to credential rewrite below.
 				decisionHandled = true
 			case runtimedecision.VerdictDeny:
@@ -1116,23 +1145,7 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 						Reason:  "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason,
 					}
 				}
-				// Sliding lifetime: each authorized tool_use bumps a
-				// sliding-lifetime task's expiry forward. Session and
-				// standing tasks (and store failures) are no-ops
-				// here — see slideTaskExpiry's contract.
-				if newExp, slid, slideErr := slideTaskExpiry(req.Context(), cfg.Store, dec.MatchedTask, time.Now().UTC()); slideErr != nil {
-					trace(TraceEventTaskSlide,
-						"task_id", dec.TaskID,
-						"result", "error",
-						"error", slideErr.Error(),
-					)
-				} else if slid {
-					trace(TraceEventTaskSlide,
-						"task_id", dec.TaskID,
-						"result", "extended",
-						"new_expires_at", newExp.Format(time.RFC3339),
-					)
-				}
+				slideAndTrace(dec.MatchedTask)
 			}
 			// Catalog miss: log via audit reason field but don't block.
 			// The fact that the (host, method, path) didn't resolve to a
