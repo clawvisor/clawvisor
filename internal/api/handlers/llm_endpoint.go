@@ -3845,20 +3845,24 @@ func syntheticLiteTextResponse(r *http.Request, provider conversation.Provider, 
 	}
 }
 
-func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID, conversationID string, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
+// tryApprovalRelease runs the release attempt and returns the result
+// without writing to the response. Used by both the legacy
+// maybeHandleLiteApprovalRelease method and the policies.ApprovalRelease
+// pipeline policy — the latter calls this via a constructor closure.
+//
+// Returns a sentinel ReleaseResult with HTTPStatus=503 +
+// Outcome=decision_input_load_failed when the decision-input load
+// fails; the caller maps that to a 503 response.
+func (h *LLMEndpointHandler) tryApprovalRelease(r *http.Request, agent *store.Agent, provider conversation.Provider, requestID, conversationID string, body []byte) llmproxy.ReleaseResult {
 	candidateTasks, toolRules, egressRules, decisionLoadErr := h.loadLiteProxyDecisionInputs(r.Context(), agent)
 	if decisionLoadErr != nil {
-		// Approval-release path also authorizes; same fail-closed rule
-		// as the main serve() path applies.
-		h.Logger.WarnContext(r.Context(), "lite-proxy approval-release decision-input load failed; failing closed",
-			"request_id", requestID, "agent_id", agent.ID, "err", decisionLoadErr.Error())
-		*auditStatus = http.StatusServiceUnavailable
-		*auditDecide = "deny"
-		*auditOutcome = "decision_input_load_failed"
-		*auditReason = decisionLoadErr.Error()
-		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
-			"couldn't load authorization data right now. Please retry in a moment.")
-		return true
+		return llmproxy.ReleaseResult{
+			Handled:    true,
+			HTTPStatus: http.StatusServiceUnavailable,
+			Decision:   "deny",
+			Outcome:    "decision_input_load_failed",
+			Reason:     decisionLoadErr.Error(),
+		}
 	}
 	var catalogIface interface {
 		Resolve(host, method, path string) (llmproxy.ResolvedAction, bool)
@@ -3868,7 +3872,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 	}
 	opts := inspector.DefaultRewriteOpts(h.ResolverBaseURL)
 	opts.CallerToken = inboundAgentToken(r)
-	result := llmproxy.TryReleasePendingApproval(r.Context(), llmproxy.ReleaseRequest{
+	return llmproxy.TryReleasePendingApproval(r.Context(), llmproxy.ReleaseRequest{
 		HTTPRequest:     r,
 		RequestID:       requestID,
 		Provider:        provider,
@@ -3890,6 +3894,21 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		// this release by an arbitrary amount, so any old nonce is gone.
 		CallerNonces: h.CallerNonces,
 	})
+}
+
+func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID, conversationID string, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
+	result := h.tryApprovalRelease(r, agent, provider, requestID, conversationID, body)
+	if result.Outcome == "decision_input_load_failed" {
+		h.Logger.WarnContext(r.Context(), "lite-proxy approval-release decision-input load failed; failing closed",
+			"request_id", requestID, "agent_id", agent.ID, "err", result.Reason)
+		*auditStatus = result.HTTPStatus
+		*auditDecide = result.Decision
+		*auditOutcome = result.Outcome
+		*auditReason = result.Reason
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, result.HTTPStatus, "DECISION_INPUT_UNAVAILABLE",
+			"couldn't load authorization data right now. Please retry in a moment.")
+		return true
+	}
 	if result.Handled {
 		h.Logger.DebugContext(r.Context(), "lite-proxy approval release handled",
 			"request_id", requestID,
