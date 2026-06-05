@@ -1,0 +1,112 @@
+package pipeline
+
+import (
+	"fmt"
+	"io"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation/stream"
+)
+
+// streamingResponseMutator is the real ResponseMutator implementation
+// for the streaming path. It collects mutation intent (one prepend
+// text today; substitute later) and applies the result at Commit time
+// by piping the upstream body through the per-shape stream codec.
+//
+// Construct one per response. Call mutator methods to queue mutations
+// during the post-phase, then call Commit to stream the transformed
+// bytes to the client.
+type streamingResponseMutator struct {
+	dst   io.Writer
+	src   io.Reader
+	shape conversation.StreamShape
+
+	prependText        string
+	substituteText     string
+	hasSubstitute      bool
+	committed          bool
+}
+
+// NewStreamingResponseMutator wires a ResponseMutator that mutates
+// the streaming response body via the canonical event-stream model.
+// dst is the client connection writer; src is the upstream response
+// body reader; shape is the SSE wire shape.
+//
+// Returns an error for unsupported shapes — only Anthropic Messages
+// is fully wired today. OpenAI Chat and Responses follow as their
+// shape-specific prepend ports land.
+func NewStreamingResponseMutator(dst io.Writer, src io.Reader, shape conversation.StreamShape) (ResponseMutator, error) {
+	if dst == nil || src == nil {
+		return nil, fmt.Errorf("streaming response mutator: dst and src required")
+	}
+	switch shape {
+	case conversation.StreamShapeAnthropicMessages:
+		// supported
+	case conversation.StreamShapeOpenAIChat, conversation.StreamShapeOpenAIResponses:
+		// codec exists, but prepend not yet ported — fall back to
+		// PanicMutator caller responsibility.
+		return nil, fmt.Errorf("streaming response mutator: shape %v has codec but no prepend impl yet", shape)
+	default:
+		return nil, fmt.Errorf("streaming response mutator: unknown shape %v", shape)
+	}
+	return &streamingResponseMutator{
+		dst:   dst,
+		src:   src,
+		shape: shape,
+	}, nil
+}
+
+func (m *streamingResponseMutator) PrependAssistantText(text string) error {
+	if m.committed {
+		return fmt.Errorf("PrependAssistantText after Commit")
+	}
+	if m.prependText != "" {
+		return fmt.Errorf("PrependAssistantText already queued (multiple calls not yet supported)")
+	}
+	m.prependText = text
+	return nil
+}
+
+func (m *streamingResponseMutator) SubstituteEntireResponse(text string) error {
+	if m.committed {
+		return fmt.Errorf("SubstituteEntireResponse after Commit")
+	}
+	m.hasSubstitute = true
+	m.substituteText = text
+	return nil
+}
+
+// Commit applies the queued mutations and streams the transformed
+// response to dst. Safe to call once.
+func (m *streamingResponseMutator) Commit() error {
+	if m.committed {
+		return fmt.Errorf("Commit called twice")
+	}
+	m.committed = true
+
+	if m.hasSubstitute {
+		// SubstituteEntireResponse takes precedence over Prepend —
+		// the whole response is being replaced. For now this path
+		// returns ErrUnimplemented; the policies that need substitute
+		// (inline_task_intercept) port in Phase 4.
+		return fmt.Errorf("SubstituteEntireResponse commit not yet implemented")
+	}
+
+	if m.prependText == "" {
+		// No mutations queued — copy upstream verbatim.
+		_, err := io.Copy(m.dst, m.src)
+		return err
+	}
+
+	switch m.shape {
+	case conversation.StreamShapeAnthropicMessages:
+		return stream.PrependAnthropicAssistantNotice(m.dst, m.src, m.prependText)
+	default:
+		return fmt.Errorf("streaming response mutator: prepend not wired for shape %v", m.shape)
+	}
+}
+
+// Compile-time assertion: streamingResponseMutator satisfies the
+// ResponseMutator interface. The check breaks the build if the
+// interface grows without this implementation following.
+var _ ResponseMutator = (*streamingResponseMutator)(nil)
