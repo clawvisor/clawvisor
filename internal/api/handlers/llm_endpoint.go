@@ -686,7 +686,95 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// the same turn). A single user "approve" must only resolve one
 	// hold.
 	if !inlineApprovalConsumed {
-		if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, conversationID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
+		// Eighth migrated call site through pipeline:
+		// ApprovalRelease wraps the tryApprovalRelease helper extracted
+		// from the legacy maybeHandleLiteApprovalRelease method.
+		// ShortCircuit fires when a release is handled; the handler
+		// writes the synthesized response and returns.
+		pipeReq := &pipelineReadOnlyRequest{
+			provider:       provider,
+			httpReq:        r,
+			body:           body,
+			userID:         agent.UserID,
+			agentID:        agent.ID,
+			conversationID: conversationID,
+		}
+		resolver := func(ctx context.Context) llmproxy.ReleaseResult {
+			return h.tryApprovalRelease(r, agent, provider, requestID, conversationID, body)
+		}
+		preResult, err := runSinglePolicy(r.Context(), pipeReq, policies.NewApprovalRelease(resolver))
+		if err != nil {
+			auditStatus = http.StatusInternalServerError
+			auditDecide = "deny"
+			auditOutcome = "pipeline_error"
+			auditReason = err.Error()
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
+			return
+		}
+		for k, v := range preResult.AuditFields {
+			auditParams[k] = v
+		}
+		if sc := preResult.ShortCircuit; sc != nil {
+			// Translate the synthesized response into the handler's
+			// response-write protocol. Mirrors what the legacy
+			// maybeHandleLiteApprovalRelease method did inline.
+			auditStatus = sc.StatusCode
+			if decision, _ := preResult.AuditFields["approval_release_decision"].(string); decision != "" {
+				auditDecide = decision
+			}
+			if outcome, _ := preResult.AuditFields["approval_release_outcome"].(string); outcome != "" {
+				auditOutcome = outcome
+			}
+			if reason, _ := preResult.AuditFields["approval_release_reason"].(string); reason != "" {
+				auditReason = reason
+			}
+			// The decision-input-load-failed sentinel translates to the
+			// DECISION_INPUT_UNAVAILABLE error response shape.
+			if auditOutcome == "decision_input_load_failed" {
+				h.Logger.WarnContext(r.Context(), "lite-proxy approval-release decision-input load failed; failing closed",
+					"request_id", requestID, "agent_id", agent.ID, "err", auditReason)
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, sc.StatusCode, "DECISION_INPUT_UNAVAILABLE",
+					"couldn't load authorization data right now. Please retry in a moment.")
+				return
+			}
+			h.Logger.DebugContext(r.Context(), "lite-proxy approval release handled (via pipeline)",
+				"request_id", requestID,
+				"agent_id", agent.ID,
+				"provider", string(provider),
+				"http_status", sc.StatusCode,
+				"decision", auditDecide,
+				"outcome", auditOutcome,
+				"reason", auditReason,
+			)
+			if len(sc.Body) == 0 {
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, sc.StatusCode, "APPROVAL_RELEASE_ERROR", auditReason)
+				return
+			}
+			for k, v := range sc.Headers {
+				w.Header().Set(k, v)
+			}
+			w.Header().Set("Cache-Control", "no-cache")
+			if h.RawIOLogger != nil {
+				bodyStr, bodyEnc := llmproxy.EncodeBody(sc.Body)
+				h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+					Phase:        "harness_response",
+					RequestID:    requestID,
+					UserID:       agent.UserID,
+					AgentID:      agent.ID,
+					Provider:     string(provider),
+					Method:       r.Method,
+					Path:         r.URL.RequestURI(),
+					Status:       sc.StatusCode,
+					ContentType:  sc.Headers["Content-Type"],
+					Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
+					Body:         bodyStr,
+					BodyEncoding: bodyEnc,
+					BodyBytes:    len(sc.Body),
+					Marker:       "synth_release_" + auditOutcome,
+				})
+			}
+			w.WriteHeader(sc.StatusCode)
+			_, _ = io.Copy(w, bytes.NewReader(sc.Body))
 			return
 		}
 	}
