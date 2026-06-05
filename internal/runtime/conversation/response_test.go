@@ -261,7 +261,7 @@ func TestOpenAIResponseRewriterBlocksChatToolCallsSSE(t *testing.T) {
 		t.Fatal("expected rewritten SSE response")
 	}
 	out := string(result.Body)
-	if !strings.Contains(out, "Bash: requires approval") {
+	if !strings.Contains(out, "Tool 'Bash' was blocked by Clawvisor policy: requires approval") {
 		t.Fatalf("expected block text in SSE output, got %q", out)
 	}
 	if strings.Contains(out, `"tool_calls"`) {
@@ -1081,4 +1081,191 @@ func parseTestSSEEvents(t *testing.T, stream string) []sseEvent {
 		t.Fatalf("parse SSE events: %v", err)
 	}
 	return events
+}
+
+func TestOpenAIResponseRewriterPreservesMultimodalChatJSON(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(`{
+	  "id": "chatcmpl_multimodal",
+	  "choices": [{
+	    "index": 0,
+	    "message": {
+	      "role": "assistant",
+	      "content": [
+	        {"type": "text", "text": "Here is the image you asked for."},
+	        {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}
+	      ],
+	      "tool_calls": [
+	        {"id": "call_1", "type": "function", "function": {"name": "Bash", "arguments": "{\"command\":\"rm\"}"}}
+	      ]
+	    }
+	  }]
+	}`)
+
+	result, err := rewriter.Rewrite(body, "application/json", func(tu ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{Allowed: false, Reason: "requires approval"}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten response")
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result.Body, &out); err != nil {
+		t.Fatalf("unmarshal rewritten response: %v", err)
+	}
+	choices := out["choices"].([]any)
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	content := msg["content"].([]any)
+
+	if len(content) != 3 {
+		t.Fatalf("expected 3 content parts, got %d: %+v", len(content), content)
+	}
+	if content[0].(map[string]any)["type"] != "text" || content[0].(map[string]any)["text"] != "Here is the image you asked for." {
+		t.Fatalf("unexpected first part: %+v", content[0])
+	}
+	if content[1].(map[string]any)["type"] != "image_url" {
+		t.Fatalf("unexpected second part (image_url): %+v", content[1])
+	}
+	if content[2].(map[string]any)["type"] != "text" || !strings.Contains(content[2].(map[string]any)["text"].(string), "requires approval") {
+		t.Fatalf("unexpected third part (blocked prompt): %+v", content[2])
+	}
+}
+
+func TestOpenAIResponseRewriterClearsStaleOutputTextResponsesJSON(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(`{
+	  "id": "resp_stale",
+	  "object": "response",
+	  "output": [
+	    {"id": "fc_1", "type": "function_call", "status": "completed", "call_id": "call_1", "name": "Bash", "arguments": "{\"command\":\"rm\"}"}
+	  ],
+	  "output_text": "I am about to run a command"
+	}`)
+
+	result, err := rewriter.Rewrite(body, "application/json", func(tu ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{Allowed: true, RewriteInput: []byte(`{"command":"ls"}`)}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten response")
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result.Body, &out); err != nil {
+		t.Fatalf("unmarshal rewritten response: %v", err)
+	}
+	outputText, _ := out["output_text"].(string)
+	if outputText != "" {
+		t.Fatalf("expected output_text to be cleared/empty, got %q", outputText)
+	}
+}
+
+func TestOpenAIResponseRewriterDoesNotMutateUnrelatedChoicesChatJSON(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(`{
+	  "id": "chatcmpl_multi_choice",
+	  "choices": [
+	    {
+	      "index": 0,
+	      "message": {
+	        "role": "assistant",
+	        "content": "Choice 0",
+	        "tool_calls": [
+	          {"id": "call_1", "type": "function", "function": {"name": "Bash", "arguments": "{\"command\":\"rm\"}"}}
+	        ]
+	      },
+	      "finish_reason": "tool_calls"
+	    },
+	    {
+	      "index": 1,
+	      "message": {
+	        "role": "assistant",
+	        "content": "Choice 1",
+	        "tool_calls": [
+	          {"id": "call_2", "type": "function", "function": {"name": "WebFetch", "arguments": "{\"url\":\"https://safe.test\"}"}}
+	        ]
+	      },
+	      "finish_reason": "tool_calls"
+	    }
+	  ]
+	}`)
+
+	// Only block Choice 0 (the Bash tool), keep Choice 1 (WebFetch) allowed
+	result, err := rewriter.Rewrite(body, "application/json", func(tu ToolUse) ToolUseVerdict {
+		if tu.Name == "Bash" {
+			return ToolUseVerdict{Allowed: false, Reason: "requires approval"}
+		}
+		return ToolUseVerdict{Allowed: true}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten response")
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result.Body, &out); err != nil {
+		t.Fatalf("unmarshal rewritten response: %v", err)
+	}
+	choices := out["choices"].([]any)
+	if len(choices) != 2 {
+		t.Fatalf("expected 2 choices, got %d", len(choices))
+	}
+
+	// Choice 0 should be rewritten (Bash tool call blocked/removed, content modified)
+	c0 := choices[0].(map[string]any)
+	c0Msg := c0["message"].(map[string]any)
+	c0Calls, _ := c0Msg["tool_calls"].([]any)
+	if len(c0Calls) != 0 {
+		t.Fatalf("expected Choice 0 tool_calls to be removed, got %v", c0Calls)
+	}
+	c0Content := c0Msg["content"].(string)
+	if !strings.Contains(c0Content, "requires approval") {
+		t.Fatalf("expected Choice 0 content to contain block message, got %q", c0Content)
+	}
+	if c0["finish_reason"] != "stop" {
+		t.Fatalf("expected Choice 0 finish_reason to be stop, got %q", c0["finish_reason"])
+	}
+
+	// Choice 1 should remain untouched (WebFetch tool call allowed and intact)
+	c1 := choices[1].(map[string]any)
+	c1Msg := c1["message"].(map[string]any)
+	c1Calls, _ := c1Msg["tool_calls"].([]any)
+	if len(c1Calls) != 1 {
+		t.Fatalf("expected Choice 1 tool_calls to be preserved, got %v", c1Calls)
+	}
+	c1Content := c1Msg["content"].(string)
+	if c1Content != "Choice 1" {
+		t.Fatalf("expected Choice 1 content to be Choice 1, got %q", c1Content)
+	}
+	if c1["finish_reason"] != "tool_calls" {
+		t.Fatalf("expected Choice 1 finish_reason to be tool_calls, got %q", c1["finish_reason"])
+	}
 }

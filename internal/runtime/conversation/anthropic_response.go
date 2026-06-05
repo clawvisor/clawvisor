@@ -58,12 +58,14 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 	anyBlocked := false
 	anyRewritten := false
 	index := 0
-	for i, block := range resp.Content {
+	newContent := make([]anthropicJSONContent, 0, len(resp.Content))
+	for _, block := range resp.Content {
 		switch block.Type {
 		case "text":
 			if block.Text != "" {
 				frags = append(frags, assistantFragment{Text: block.Text})
 			}
+			newContent = append(newContent, block)
 		case "tool_use":
 			tu := ToolUse{
 				ID:    block.ID,
@@ -78,26 +80,56 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 				Verdict:          verdict,
 				ToolInputPreview: MakeToolInputPreview(block.Input),
 			})
+			finalInput := block.Input
 			if !verdict.Allowed {
 				anyBlocked = true
-			}
-			finalInput := block.Input
-			if verdict.Allowed && len(verdict.RewriteInput) > 0 {
-				resp.Content[i].Input = verdict.RewriteInput
-				finalInput = verdict.RewriteInput
-				anyRewritten = true
+				txt := verdict.SubstituteWith
+				if txt == "" {
+					reason := verdict.Reason
+					if reason == "" {
+						reason = "blocked by policy"
+					}
+					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", block.Name, reason)
+				}
+				if txt != "" {
+					newContent = append(newContent, anthropicJSONContent{
+						Type: "text",
+						Text: txt,
+					})
+				}
+			} else {
+				if len(verdict.RewriteInput) > 0 {
+					block.Input = verdict.RewriteInput
+					finalInput = verdict.RewriteInput
+					anyRewritten = true
+				}
+				newContent = append(newContent, block)
 			}
 			frags = append(frags, assistantFragment{
 				IsTool:   true,
 				ToolName: block.Name,
 				ToolArgs: finalInput,
 			})
+		default:
+			newContent = append(newContent, block)
 		}
 	}
 
 	turn := assistantTurnFromFragments(frags, decisions)
-	if !anyBlocked && anyRewritten {
-		// Re-marshal the response with mutated tool_use inputs in place.
+	if anyBlocked || anyRewritten {
+		resp.Content = newContent
+		hasToolUse := false
+		for _, c := range newContent {
+			if c.Type == "tool_use" {
+				hasToolUse = true
+				break
+			}
+		}
+		if hasToolUse {
+			resp.StopReason = "tool_use"
+		} else {
+			resp.StopReason = "end_turn"
+		}
 		rewritten, err := json.Marshal(resp)
 		if err != nil {
 			return RewriteResult{}, fmt.Errorf("anthropic: marshal rewritten response: %w", err)
@@ -109,31 +141,8 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 			AssistantTurn: turn,
 		}, nil
 	}
-	if !anyBlocked {
-		return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
-	}
 
-	out := anthropicJSONResponse{
-		ID:    resp.ID,
-		Type:  "message",
-		Role:  resp.Role,
-		Model: resp.Model,
-		Content: []anthropicJSONContent{
-			{Type: "text", Text: blockedReasonTextForAssistant(decisions)},
-		},
-		StopReason: "end_turn",
-		Usage:      resp.Usage,
-	}
-	rewritten, err := json.Marshal(out)
-	if err != nil {
-		return RewriteResult{}, fmt.Errorf("anthropic: marshal rewritten response: %w", err)
-	}
-	return RewriteResult{
-		Body:          rewritten,
-		Decisions:     decisions,
-		Rewritten:     true,
-		AssistantTurn: turn,
-	}, nil
+	return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 }
 
 type sseEvent struct {
@@ -258,6 +267,7 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 	anyBlocked := false
 	anyRewritten := false
 	rewrittenInput := map[*pendingBlock]json.RawMessage{}
+	verdicts := map[*pendingBlock]ToolUseVerdict{}
 	for _, pb := range orderedTUs {
 		var inputRaw json.RawMessage
 		if pb.input.Len() > 0 {
@@ -275,6 +285,7 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 			Verdict:          verdict,
 			ToolInputPreview: MakeToolInputPreview(inputRaw),
 		})
+		verdicts[pb] = verdict
 		if !verdict.Allowed {
 			anyBlocked = true
 		}
@@ -305,10 +316,35 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		}
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
-	if !anyBlocked && anyRewritten {
-		// Re-emit the entire turn as SSE with the rewritten input bytes
-		// substituted for the affected tool_use blocks.
-		assembled, err := buildAnthropicMultiBlockSSE(msgID, msgModel, msgRole, orderedAll, rewrittenInput)
+	if anyBlocked || anyRewritten {
+		for _, pb := range orderedTUs {
+			verdict := verdicts[pb]
+			if !verdict.Allowed {
+				txt := verdict.SubstituteWith
+				if txt == "" {
+					reason := verdict.Reason
+					if reason == "" {
+						reason = "blocked by policy"
+					}
+					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", pb.name, reason)
+				}
+				pb.isTU = false
+				pb.blockType = "text"
+				pb.text.Reset()
+				if txt != "" {
+					pb.text.WriteString(txt)
+				} else {
+					pb.filtered = true
+				}
+			}
+		}
+		var activeBlocks []*pendingBlock
+		for _, pb := range orderedAll {
+			if !pb.filtered {
+				activeBlocks = append(activeBlocks, pb)
+			}
+		}
+		assembled, err := buildAnthropicMultiBlockSSE(msgID, msgModel, msgRole, activeBlocks, rewrittenInput)
 		if err != nil {
 			return RewriteResult{}, err
 		}
@@ -319,16 +355,8 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 			AssistantTurn: turn,
 		}, nil
 	}
-	if !anyBlocked {
-		return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
-	}
 
-	return RewriteResult{
-		Body:          synthAnthropicTextSSE(msgID, msgModel, msgRole, blockedReasonTextForAssistant(decisions)),
-		Decisions:     decisions,
-		Rewritten:     true,
-		AssistantTurn: turn,
-	}, nil
+	return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 }
 
 // buildAnthropicMultiBlockSSE re-emits a buffered Anthropic streamed
