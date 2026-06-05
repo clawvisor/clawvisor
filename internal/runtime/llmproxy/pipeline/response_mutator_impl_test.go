@@ -115,7 +115,6 @@ func TestStreamingResponseMutator_RejectsCommitTwice(t *testing.T) {
 // arrive once their shape-specific prepend ports land.
 func TestStreamingResponseMutator_RejectsUnsupportedShape(t *testing.T) {
 	for _, shape := range []conversation.StreamShape{
-		conversation.StreamShapeOpenAIChat,
 		conversation.StreamShapeOpenAIResponses,
 		conversation.StreamShapeUnknown,
 	} {
@@ -123,5 +122,44 @@ func TestStreamingResponseMutator_RejectsUnsupportedShape(t *testing.T) {
 		if err == nil {
 			t.Errorf("shape %v: expected error, got nil", shape)
 		}
+	}
+}
+
+// TestStreamingResponseMutator_PrependOpenAIChatNotice exercises the
+// new OpenAI Chat prepend wiring: a chat completions stream gets a
+// synthetic leading chunk carrying the notice; upstream chunks pass
+// through verbatim.
+func TestStreamingResponseMutator_PrependOpenAIChatNotice(t *testing.T) {
+	upstream := strings.Join([]string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	const notice = "[Clawvisor] notice"
+
+	var dst bytes.Buffer
+	m, err := pipeline.NewStreamingResponseMutator(&dst, strings.NewReader(upstream), conversation.StreamShapeOpenAIChat)
+	if err != nil {
+		t.Fatalf("NewStreamingResponseMutator: %v", err)
+	}
+	if err := m.PrependAssistantText(notice); err != nil {
+		t.Fatalf("PrependAssistantText: %v", err)
+	}
+	if committer, ok := m.(interface{ Commit() error }); ok {
+		if err := committer.Commit(); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+	}
+
+	got := dst.String()
+	if !strings.Contains(got, notice) {
+		t.Errorf("notice missing:\n%s", got)
+	}
+	if strings.Index(got, notice) >= strings.Index(got, `"hi"`) {
+		t.Errorf("notice did not precede upstream content:\n%s", got)
+	}
+	if !strings.Contains(got, "data: [DONE]") {
+		t.Errorf("upstream DONE sentinel lost:\n%s", got)
 	}
 }

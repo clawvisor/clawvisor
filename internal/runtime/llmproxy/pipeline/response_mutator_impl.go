@@ -40,11 +40,11 @@ func NewStreamingResponseMutator(dst io.Writer, src io.Reader, shape conversatio
 		return nil, fmt.Errorf("streaming response mutator: dst and src required")
 	}
 	switch shape {
-	case conversation.StreamShapeAnthropicMessages:
+	case conversation.StreamShapeAnthropicMessages, conversation.StreamShapeOpenAIChat:
 		// supported
-	case conversation.StreamShapeOpenAIChat, conversation.StreamShapeOpenAIResponses:
-		// codec exists, but prepend not yet ported — fall back to
-		// PanicMutator caller responsibility.
+	case conversation.StreamShapeOpenAIResponses:
+		// codec exists, but prepend not yet ported — error at
+		// construction so callers don't get a silent no-op.
 		return nil, fmt.Errorf("streaming response mutator: shape %v has codec but no prepend impl yet", shape)
 	default:
 		return nil, fmt.Errorf("streaming response mutator: unknown shape %v", shape)
@@ -101,6 +101,8 @@ func (m *streamingResponseMutator) Commit() error {
 	switch m.shape {
 	case conversation.StreamShapeAnthropicMessages:
 		return stream.PrependAnthropicAssistantNotice(m.dst, m.src, m.prependText)
+	case conversation.StreamShapeOpenAIChat:
+		return stream.PrependOpenAIChatAssistantNotice(m.dst, m.src, m.prependText)
 	default:
 		return fmt.Errorf("streaming response mutator: prepend not wired for shape %v", m.shape)
 	}
