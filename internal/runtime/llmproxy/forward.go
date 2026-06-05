@@ -26,6 +26,7 @@ import (
 var DefaultUpstream = UpstreamSelector{
 	AnthropicBaseURL: "https://api.anthropic.com",
 	OpenAIBaseURL:    "https://api.openai.com",
+	GoogleBaseURL:    "https://generativelanguage.googleapis.com",
 }
 
 // UpstreamSelector resolves a (provider, path) pair to a concrete upstream
@@ -34,6 +35,7 @@ var DefaultUpstream = UpstreamSelector{
 type UpstreamSelector struct {
 	AnthropicBaseURL string
 	OpenAIBaseURL    string
+	GoogleBaseURL    string
 }
 
 // URL returns the upstream URL the lite-proxy should forward to for a given
@@ -44,6 +46,8 @@ func (s UpstreamSelector) URL(provider conversation.Provider, path string) (*url
 		return joinURL(s.AnthropicBaseURL, path)
 	case conversation.ProviderOpenAI:
 		return joinURL(s.OpenAIBaseURL, path)
+	case conversation.ProviderGoogle:
+		return joinURL(s.GoogleBaseURL, path)
 	}
 	return nil, fmt.Errorf("llmproxy: unknown provider %q", provider)
 }
