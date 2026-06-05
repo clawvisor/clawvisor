@@ -19,6 +19,7 @@ import (
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
@@ -352,19 +353,40 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 	// Validate that the body parses for the selected provider. Surfaces
 	// schema errors as a 400 before we burn an upstream call.
-	if provider == conversation.ProviderAnthropic {
-		sanitizedBody, sanitized, sanitizeErr := llmproxy.SanitizeAnthropicRequest(body)
-		if sanitizeErr != nil {
+	//
+	// First migrated call site through internal/runtime/llmproxy/pipeline:
+	// runs the anthropic_sanitize policy via Pipeline.RunPre. Other
+	// migrated policies (inbound_sanitize, control_notice, etc.) still
+	// run inline below; full consolidation arrives once all preprocess
+	// policies migrate.
+	{
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewAnthropicSanitize())
+		if err != nil {
+			auditStatus = http.StatusInternalServerError
+			auditDecide = "deny"
+			auditOutcome = "pipeline_error"
+			auditReason = err.Error()
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
+			return
+		}
+		if result.DenyReason != "" {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
-			auditReason = sanitizeErr.Error()
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+sanitizeErr.Error()+". This usually means a client bug; please retry.")
+			auditReason = result.DenyReason
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+result.DenyReason+". This usually means a client bug; please retry.")
 			return
 		}
-		if sanitized {
-			body = sanitizedBody
-			auditParams["anthropic_empty_text_sanitized"] = true
+		body = result.FinalBody
+		for k, v := range result.AuditFields {
+			auditParams[k] = v
 		}
 	}
 	if _, err := parser.ParseRequest(body); err != nil {
