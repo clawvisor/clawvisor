@@ -1,0 +1,76 @@
+package policies
+
+import (
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
+)
+
+// ToolUseChainConfig bundles the resolvers + dependencies needed to
+// assemble the six-stage tool_use evaluator chain that replaces
+// newToolUseEvaluator in postprocess.go.
+//
+// All fields are optional in the sense that nil resolvers degrade
+// gracefully (the corresponding evaluator emits Skip). The handler
+// supplies non-nil resolvers for the capabilities it actually wants
+// active for the current call:
+//
+//	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
+//	    Control:         buildControlResolver(h),
+//	    ScriptSession:   buildScriptSessionResolver(h),
+//	    Inspector:       h.Inspector,
+//	    AllowedHostsFor: buildAllowedHostsResolver(h),
+//	    TriggerMissAuth: buildTriggerMissAuthorizer(h),
+//	    TaskScope:       buildCredentialedTaskScopeResolver(h),
+//	    IntentVerify:    buildIntentVerifyResolver(h),
+//	    Rewrite:         buildCredentialRewriteResolver(h),
+//	})
+//	eval, _, err := pipeline.BridgeToolUseEvaluator(ctx, res, toolUses, chain)
+type ToolUseChainConfig struct {
+	// Control claims tool_uses that target the control plane (clawvisor.local).
+	Control ControlToolUseResolver
+	// ScriptSession claims tool_uses pre-shaped for the resolver mount.
+	ScriptSession ScriptSessionResolver
+	// Inspector + AllowedHostsFor + TriggerMissAuth drive the
+	// inspect → ambiguous → boundary-check → trigger-miss-authorization
+	// chain stage.
+	Inspector       *inspector.Inspector
+	AllowedHostsFor AllowedHostsResolver
+	TriggerMissAuth TriggerMissAuthorizer
+	// TaskScope authorizes credentialed tool_uses against the agent's
+	// active task scopes (the handler wraps EvaluateAuthorization +
+	// catalog resolution into the TaskScopeResolver closure).
+	TaskScope TaskScopeResolver
+	// IntentVerify runs the LLM-backed intent check for matched tasks.
+	IntentVerify IntentVerifyResolver
+	// Rewrite mints the per-tool nonce and rewrites the tool_use's URL
+	// + caller-token header so the call routes through the resolver.
+	Rewrite CredentialRewriteResolver
+}
+
+// ComposeToolUseEvaluatorChain assembles the six-stage tool_use
+// evaluator chain in the order the legacy newToolUseEvaluator runs them:
+//
+//  1. ControlToolUseEvaluator — claims control-plane tool_uses (with
+//     inline-task interception when configured).
+//  2. ScriptSessionEvaluator — claims tool_uses already shaped for the
+//     resolver mount via a script-session token.
+//  3. InspectorChain — inspect + ambiguous + stub-placeholder downgrade
+//     + boundary check + trigger-miss authorization.
+//  4. TaskScopeEvaluator — credentialed-path task-scope authorization.
+//  5. IntentVerifyEvaluator — LLM-backed intent check for matched tasks.
+//  6. CredentialRewriteEvaluator — nonce mint + URL rewrite.
+//
+// Earlier evaluators short-circuit later ones via the orchestrator's
+// "first non-Skip wins" semantic. Nil resolvers degrade to Skip so the
+// chain works in partial configurations (e.g., a deployment without
+// task scopes still gets the inspector + rewrite path).
+func ComposeToolUseEvaluatorChain(cfg ToolUseChainConfig) []pipeline.ToolUseEvaluator {
+	chain := make([]pipeline.ToolUseEvaluator, 0, 6)
+	chain = append(chain, NewControlToolUseEvaluator(cfg.Control))
+	chain = append(chain, NewScriptSessionEvaluator(cfg.ScriptSession))
+	chain = append(chain, NewInspectorChain(cfg.Inspector, cfg.AllowedHostsFor).WithTriggerMissAuthorizer(cfg.TriggerMissAuth))
+	chain = append(chain, NewTaskScopeEvaluator(cfg.TaskScope))
+	chain = append(chain, NewIntentVerifyEvaluator(cfg.IntentVerify))
+	chain = append(chain, NewCredentialRewriteEvaluator(cfg.Rewrite))
+	return chain
+}
