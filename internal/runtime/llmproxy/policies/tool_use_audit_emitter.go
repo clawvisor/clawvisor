@@ -96,6 +96,22 @@ func EmitToolUseAuditRows(
 		row.Decision = decisionFromOutcome(v.Outcome)
 		row.Outcome = outcomeNameFor(winnerEvaluator[tu.ID], v)
 		row.TaskID = taskIDFromAuditFields(v.AuditFields)
+		if row.TaskID == "" {
+			// matched_task_id may have been recorded on an earlier
+			// Skip evaluation (e.g. TaskScopeEvaluator on a credentialed
+			// rewrite path returns Skip + matched_task_id, and the
+			// downstream CredentialRewriteEvaluator wins the verdict).
+			// Walk the trail and take the first matched_task_id found.
+			for _, ev := range result.Evaluations {
+				if ev.ToolUseID != tu.ID {
+					continue
+				}
+				if id := taskIDFromAuditFields(ev.Verdict.AuditFields); id != "" {
+					row.TaskID = id
+					break
+				}
+			}
+		}
 		sink(ctx, row)
 	}
 }

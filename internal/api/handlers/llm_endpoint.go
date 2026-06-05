@@ -1438,6 +1438,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		})
 		autoApproveThreshold := agentConversationAutoApproveThreshold(agent)
 		processed := llmproxy.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
+			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
 			Inspector:        h.Inspector,
 			RewriteOpts:      opts,
 			Store:            h.Store,
@@ -1495,6 +1496,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		// terminal assistant text), so the harness never sees an empty body.
 		{
 			contFinal, contStatus, contCT, contUsage, contErr := h.tryContinuation(r, agent, provider, requestID, body, full, upstreamCT, resp.StatusCode, processed, llmproxy.PostprocessConfig{
+				ToolUseEvaluatorFactory:          pipelineToolUseEvaluatorFactory,
 				Inspector:                        h.Inspector,
 				RewriteOpts:                      opts,
 				Store:                            h.Store,

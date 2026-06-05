@@ -6,8 +6,10 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
+	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 )
 
 // pipelineToolUseEvaluatorFactory is the handler's implementation of
@@ -75,7 +77,17 @@ var pipelineToolUseEvaluatorFactory llmproxy.ToolUseEvaluatorFactory = func(
 		// policies emitter to avoid double-emit. Otherwise the
 		// pipeline stages need their emit pass.
 		if !triggerMissAuthorizerFired(result, tu.ID) {
+			// Pre-lookup matched_task_id for the credentialed-rewrite
+			// path: when CredentialRewriteEvaluator wins, the audit row
+			// should carry the matched task ID like the legacy code
+			// did. The legacy code derived this from TaskScope.Check
+			// after the inspector classified the call. Mirror it here:
+			// look up the task scope using the same dependencies.
+			matchedTaskID := lookupMatchedTaskID(ctx, cfg, tu)
 			policies.EmitToolUseAuditRows(ctx, result, []conversation.ToolUse{tu}, cfg.Inspector, func(_ context.Context, row policies.ToolUseAuditRow) {
+				if row.TaskID == "" && matchedTaskID != "" {
+					row.TaskID = matchedTaskID
+				}
 				emit(llmproxy.BufferedAudit{
 					ToolUse:  row.ToolUse,
 					Verdict:  row.Verdict,
@@ -88,6 +100,62 @@ var pipelineToolUseEvaluatorFactory llmproxy.ToolUseEvaluatorFactory = func(
 		}
 		return evalFn(tu)
 	}
+}
+
+// lookupMatchedTaskID mirrors the legacy newToolUseEvaluator's
+// credentialed-path task resolution: inspect the tool_use, resolve
+// (host, method, path) → (service, action) via the catalog, then run
+// the decision engine (EvaluateAuthorization with the agent's
+// candidate tasks) to identify the matched task. Returns empty when
+// any input is missing or no task matches.
+func lookupMatchedTaskID(ctx context.Context, cfg llmproxy.PostprocessConfig, tu conversation.ToolUse) string {
+	if cfg.Inspector == nil {
+		return ""
+	}
+	v := cfg.Inspector.Inspect(ctx, inspector.ToolUse{
+		ID:    tu.ID,
+		Name:  tu.Name,
+		Input: tu.Input,
+	})
+	if !v.IsAPICall || v.Ambiguous || v.Host == "" {
+		return ""
+	}
+	var serviceID, actionID string
+	if cfg.Catalog != nil {
+		if resolved, ok := cfg.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
+			serviceID = resolved.ServiceID
+			actionID = resolved.ActionID
+		}
+	}
+	if cfg.CandidateTasks == nil && cfg.ToolRules == nil && cfg.EgressRules == nil {
+		// Legacy fallback: cfg.TaskScope when decision-engine inputs aren't wired.
+		if cfg.TaskScope == nil || serviceID == "" || actionID == "" {
+			return ""
+		}
+		dec := cfg.TaskScope.Check(ctx, cfg.AgentUserID, cfg.AgentID, serviceID, actionID)
+		return dec.TaskID
+	}
+	decisionInput := runtimedecision.AuthorizationInput{
+		ToolUse:         tu,
+		UserID:          cfg.AgentUserID,
+		AgentID:         cfg.AgentID,
+		Posture:         cfg.Posture,
+		Target:          runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
+		Service:         serviceID,
+		Action:          actionID,
+		CandidateTasks:  cfg.CandidateTasks,
+		ToolRules:       cfg.ToolRules,
+		EgressRules:     cfg.EgressRules,
+		PreferredTaskID: cfg.PreferredTaskID,
+	}
+	dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
+	if err != nil {
+		return ""
+	}
+	if dec.Task != nil {
+		return dec.Task.ID
+	}
+	return ""
 }
 
 func delegatePipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolUseVerdict {
