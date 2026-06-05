@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -1855,3 +1856,146 @@ func TestPostprocess_AmbiguousFailsClosed(t *testing.T) {
 		t.Fatalf("expected blocked-explanation text, got %q", string(got.Body))
 	}
 }
+
+func TestPostprocessStream_MidStreamDropReturnsProviderAndResult(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "")
+
+	input := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_test_123","type":"message","role":"assistant","model":"claude-3-opus","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1}}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		// Connection lost mid-stream
+	}, "\n")
+
+	var output bytes.Buffer
+	r := &postprocessErroringReader{data: []byte(input), err: io.ErrUnexpectedEOF}
+	result, err := PostprocessStream(context.Background(), req, r, &output, "text/event-stream", PostprocessConfig{
+		Inspector:   insp,
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+	})
+
+	if err == nil {
+		t.Fatal("expected PostprocessStream to fail due to early EOF")
+	}
+	if result.StreamingProvider != conversation.ProviderAnthropic {
+		t.Errorf("expected StreamingProvider %q, got %q", conversation.ProviderAnthropic, result.StreamingProvider)
+	}
+	if result.StreamingResult.StreamID != "msg_test_123" {
+		t.Errorf("expected StreamID %q, got %q", "msg_test_123", result.StreamingResult.StreamID)
+	}
+}
+
+func TestWriteStreamError_Anthropic(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	res := conversation.StreamingRewriteResult{
+		StreamID:     "msg_123",
+		Model:        "claude-3",
+		StreamFormat: "anthropic_messages",
+	}
+
+	WriteStreamError(&buf, req, conversation.ProviderAnthropic, res, "test error message")
+	got := buf.String()
+
+	if !strings.Contains(got, "event: error") {
+		t.Errorf("expected event: error, got %q", got)
+	}
+	if !strings.Contains(got, "test error message") {
+		t.Errorf("expected error message in data payload, got %q", got)
+	}
+	if !strings.Contains(got, `"type":"stream_interrupted"`) {
+		t.Errorf("expected stream_interrupted type, got %q", got)
+	}
+}
+
+func TestWriteStreamError_OpenAIChat(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	res := conversation.StreamingRewriteResult{
+		StreamID:     "chatcmpl_123",
+		Model:        "gpt-4",
+		StreamFormat: "openai_chat",
+	}
+
+	WriteStreamError(&buf, req, conversation.ProviderOpenAI, res, "test error message")
+	got := buf.String()
+
+	if !strings.Contains(got, "chatcmpl_123") {
+		t.Errorf("expected stream id chatcmpl_123, got %q", got)
+	}
+	if !strings.Contains(got, "gpt-4") {
+		t.Errorf("expected model gpt-4, got %q", got)
+	}
+	if !strings.Contains(got, "test error message") {
+		t.Errorf("expected error message, got %q", got)
+	}
+	if !strings.Contains(got, "data: [DONE]") {
+		t.Errorf("expected DONE event, got %q", got)
+	}
+}
+
+func TestWriteStreamError_OpenAIResponses(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	req := httptest.NewRequest("POST", "/v1/responses", nil)
+	res := conversation.StreamingRewriteResult{
+		StreamID:     "resp_123",
+		StreamFormat: "openai_responses",
+	}
+
+	WriteStreamError(&buf, req, conversation.ProviderOpenAI, res, "test error message")
+	got := buf.String()
+
+	if !strings.Contains(got, "event: response.failed") {
+		t.Errorf("expected event: response.failed, got %q", got)
+	}
+	if !strings.Contains(got, "resp_123") {
+		t.Errorf("expected stream id resp_123, got %q", got)
+	}
+	if !strings.Contains(got, "test error message") {
+		t.Errorf("expected error message, got %q", got)
+	}
+	if !strings.Contains(got, "data: [DONE]") {
+		t.Errorf("expected DONE event, got %q", got)
+	}
+}
+
+func TestWriteStreamError_Unknown(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	req := httptest.NewRequest("POST", "/v1/unknown", nil)
+	res := conversation.StreamingRewriteResult{}
+
+	WriteStreamError(&buf, req, conversation.Provider("unknown"), res, "test\nerror\nmessage")
+	got := buf.String()
+
+	want := ": test\n: error\n: message\n\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+type postprocessErroringReader struct {
+	data []byte
+	off  int
+	err  error
+}
+
+func (r *postprocessErroringReader) Read(p []byte) (n int, err error) {
+	if r.off >= len(r.data) {
+		return 0, r.err
+	}
+	n = copy(p, r.data[r.off:])
+	r.off += n
+	return n, nil
+}
+

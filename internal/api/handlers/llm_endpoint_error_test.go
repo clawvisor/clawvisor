@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -133,3 +136,70 @@ func TestWriteLiteProxyErrorClearsMirroredUpstreamHeaders(t *testing.T) {
 		t.Fatalf("Anthropic-Request-Id leaked from upstream: %q", id)
 	}
 }
+
+func TestLLMEndpoint_StreamErrorAfterHeaderCommit(t *testing.T) {
+	// Set up an upstream server that starts sending a stream, flushes a few events,
+	// and then abruptly closes the connection (simulating a mid-stream drop).
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		flusher, ok := w.(http.Flusher)
+		if ok {
+			flusher.Flush()
+		}
+
+		_, _ = w.Write([]byte(`event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+`))
+		if ok {
+			flusher.Flush()
+		}
+
+		// Abruptly close the connection using hijacking
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("webserver doesn't support hijacking")
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("hijack failed: %v", err)
+			return
+		}
+		_ = conn.Close() // Close connection abruptly
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	body := []byte(`{"model":"claude-sonnet-4","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	// Since headers were committed, status code is 200.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	got := rec.Body.String()
+	// Check that our WriteStreamError appended the error block to the stream.
+	if !strings.Contains(got, "event: error") {
+		t.Fatalf("expected event: error in output, got:\n%s", got)
+	}
+	if !strings.Contains(got, "The upstream connection was lost before the response completed") {
+		t.Fatalf("expected Clawvisor error message in output, got:\n%s", got)
+	}
+}
+

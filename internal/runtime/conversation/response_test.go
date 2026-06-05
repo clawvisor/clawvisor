@@ -1880,3 +1880,101 @@ func TestOpenAIResponseRewriterInvalidUTF8BinaryStreamingChatSSE(t *testing.T) {
 		t.Fatalf("detected Unicode replacement character (silently corrupted bytes) in output: %q", result.Body)
 	}
 }
+
+func TestAnthropicStreamRewriteMidStreamDropSignalsError(t *testing.T) {
+	t.Parallel()
+	input := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_test_123","type":"message","role":"assistant","model":"claude-3-opus","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1}}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`,
+		// Upstream drops here, no message_stop or message_delta
+	}, "\n")
+
+	var output bytes.Buffer
+	r := &testErroringReader{data: []byte(input), err: io.ErrUnexpectedEOF}
+	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), r, &output)
+	if err == nil {
+		t.Fatal("expected StreamRewrite to fail due to early EOF")
+	}
+	if res.StreamID != "msg_test_123" {
+		t.Errorf("expected StreamID %q, got %q", "msg_test_123", res.StreamID)
+	}
+	if res.Model != "claude-3-opus" {
+		t.Errorf("expected Model %q, got %q", "claude-3-opus", res.Model)
+	}
+	if res.StreamFormat != "anthropic_messages" {
+		t.Errorf("expected StreamFormat %q, got %q", "anthropic_messages", res.StreamFormat)
+	}
+}
+
+func TestOpenAIChatStreamRewriteMidStreamDropSignalsError(t *testing.T) {
+	t.Parallel()
+	input := strings.Join([]string{
+		`data: {"id":"chatcmpl_test_123","object":"chat.completion.chunk","created":1677652288,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_test_123","object":"chat.completion.chunk","created":1677652289,"model":"gpt-4","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}`,
+		// Connection lost, no data: [DONE]
+	}, "\n")
+
+	var output bytes.Buffer
+	r := &testErroringReader{data: []byte(input), err: io.ErrUnexpectedEOF}
+	res, err := (OpenAIResponseRewriter{}).StreamRewrite(context.Background(), r, &output)
+	if err == nil {
+		t.Fatal("expected StreamRewrite to fail due to early EOF")
+	}
+	if res.StreamID != "chatcmpl_test_123" {
+		t.Errorf("expected StreamID %q, got %q", "chatcmpl_test_123", res.StreamID)
+	}
+	if res.Model != "gpt-4" {
+		t.Errorf("expected Model %q, got %q", "gpt-4", res.Model)
+	}
+	if res.StreamFormat != "openai_chat" {
+		t.Errorf("expected StreamFormat %q, got %q", "openai_chat", res.StreamFormat)
+	}
+}
+
+func TestOpenAIResponsesStreamRewriteMidStreamDropSignalsError(t *testing.T) {
+	t.Parallel()
+	input := strings.Join([]string{
+		`event: response.created`,
+		`data: {"type":"response.created","response":{"id":"resp_test_123","status":"in_progress"}}`,
+		``,
+		`event: response.output_item.added`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","role":"assistant","content":[]}}`,
+		// Connection lost, no response.completed or data: [DONE]
+	}, "\n")
+
+	var output bytes.Buffer
+	r := &testErroringReader{data: []byte(input), err: io.ErrUnexpectedEOF}
+	res, err := (OpenAIResponseRewriter{}).StreamRewrite(context.Background(), r, &output)
+	if err == nil {
+		t.Fatal("expected StreamRewrite to fail due to early EOF")
+	}
+	if res.StreamID != "resp_test_123" {
+		t.Errorf("expected StreamID %q, got %q", "resp_test_123", res.StreamID)
+	}
+	if res.StreamFormat != "openai_responses" {
+		t.Errorf("expected StreamFormat %q, got %q", "openai_responses", res.StreamFormat)
+	}
+}
+
+type testErroringReader struct {
+	data []byte
+	off  int
+	err  error
+}
+
+func (r *testErroringReader) Read(p []byte) (n int, err error) {
+	if r.off >= len(r.data) {
+		return 0, r.err
+	}
+	n = copy(p, r.data[r.off:])
+	r.off += n
+	return n, nil
+}
+

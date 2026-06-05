@@ -897,6 +897,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					clearHeaders(w.Header())
 					h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "POSTPROCESS_STREAM_ERROR",
 						"couldn't process the upstream stream. Please retry; details are in the Clawvisor audit log.")
+				} else {
+					llmproxy.WriteStreamError(streamW, r, provider, processed.StreamingResult,
+						"[Clawvisor] The upstream connection was lost before the response completed. The content above may be incomplete. Please retry.")
 				}
 				return
 			}

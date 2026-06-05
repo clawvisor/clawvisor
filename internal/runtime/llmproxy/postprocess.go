@@ -1902,7 +1902,10 @@ func PostprocessStream(
 
 	streamResult, err := streamingRewriter.StreamRewrite(ctx, r, w)
 	if err != nil {
-		return PostprocessResult{}, err
+		return PostprocessResult{
+			StreamingProvider: provider,
+			StreamingResult:   streamResult,
+		}, err
 	}
 	if len(streamResult.ToolUses) == 0 {
 		return PostprocessResult{
@@ -2639,5 +2642,92 @@ func hasScriptSessionToken(v string) bool {
 		v = strings.TrimSpace(v[len(bearer):])
 	}
 	return strings.HasPrefix(v, ScriptSessionPrefix)
+}
+
+// WriteStreamError appends a provider-appropriate error signal to a
+// partially-written SSE stream. Called when the upstream connection
+// drops after HTTP 200 has been committed. The harness sees the error
+// instead of a clean EOF.
+//
+// Note: Write operations in this function are performed on a best-effort basis
+// as the underlying connection is already presumed broken.
+func WriteStreamError(
+	w io.Writer,
+	req *http.Request,
+	provider conversation.Provider,
+	streamResult conversation.StreamingRewriteResult,
+	errMsg string,
+) {
+	shape := conversation.DetectStreamShape(req, provider)
+	switch shape {
+	case conversation.StreamShapeAnthropicMessages:
+		payload := map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "stream_interrupted",
+				"message": errMsg,
+			},
+		}
+		raw, _ := json.Marshal(payload)
+		_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(raw))
+
+	case conversation.StreamShapeOpenAIChat:
+		id := streamResult.StreamID
+		if id == "" {
+			id = "chatcmpl_error"
+		}
+		model := streamResult.Model
+		if model == "" {
+			model = "unknown"
+		}
+		payload := map[string]any{
+			"id":     id,
+			"object": "chat.completion.chunk",
+			"model":  model,
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"delta": map[string]any{
+						"content": errMsg,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		raw, _ := json.Marshal(payload)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", string(raw))
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+
+	case conversation.StreamShapeOpenAIResponses:
+		id := streamResult.StreamID
+		if id == "" {
+			id = "resp_error"
+		}
+		payload := map[string]any{
+			"type": "response.failed",
+			"response": map[string]any{
+				"id":     id,
+				"status": "incomplete",
+				"status_details": map[string]any{
+					"type": "error",
+					"error": map[string]any{
+						"message": errMsg,
+					},
+				},
+			},
+		}
+		raw, _ := json.Marshal(payload)
+		_, _ = fmt.Fprintf(w, "event: response.failed\ndata: %s\n\n", string(raw))
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+
+	default:
+		// Fallback comment for unrecognized shapes — ensure newlines are
+		// prefixed with ":" so they cannot inject SSE frames.
+		lines := strings.Split(strings.ReplaceAll(errMsg, "\r", ""), "\n")
+		for _, line := range lines {
+			_, _ = fmt.Fprintf(w, ": %s\n", line)
+		}
+		_, _ = fmt.Fprint(w, "\n")
+	}
 }
 

@@ -1356,18 +1356,20 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
-			return StreamingRewriteResult{}, err
+			return StreamingRewriteResult{StreamID: msgID, Model: msgModel, Role: msgRole, StreamFormat: "anthropic_messages"}, err
 		}
 		line := scanner.Text()
 		trimmed := strings.TrimRight(line, "\r")
 		if trimmed == "" {
 			if err := flushEvent(); err != nil {
-				return StreamingRewriteResult{}, err
+				return StreamingRewriteResult{StreamID: msgID, Model: msgModel, Role: msgRole, StreamFormat: "anthropic_messages"}, err
 			}
 			continue
 		}
 		if strings.HasPrefix(trimmed, ":") {
-			_, _ = fmt.Fprintln(w, line)
+			if _, err := fmt.Fprintln(w, line); err != nil {
+				return StreamingRewriteResult{StreamID: msgID, Model: msgModel, Role: msgRole, StreamFormat: "anthropic_messages"}, err
+			}
 			continue
 		}
 		if strings.HasPrefix(trimmed, "event:") {
@@ -1379,10 +1381,10 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return StreamingRewriteResult{}, err
+		return StreamingRewriteResult{StreamID: msgID, Model: msgModel, Role: msgRole, StreamFormat: "anthropic_messages"}, err
 	}
 	if err := flushEvent(); err != nil {
-		return StreamingRewriteResult{}, err
+		return StreamingRewriteResult{StreamID: msgID, Model: msgModel, Role: msgRole, StreamFormat: "anthropic_messages"}, err
 	}
 
 	var tus []ToolUse
