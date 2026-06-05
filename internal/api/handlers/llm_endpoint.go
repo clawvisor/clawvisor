@@ -413,21 +413,47 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	if liteProxySecretDetectionDisabled {
 		auditParams["lite_proxy_secret_detection_disabled"] = true
 	} else {
-		if decisionBody, decision, extraSuppressed, handled := h.maybeHandleLiteSecretDecision(w, r, agent, provider, requestID, body, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
-			if len(decisionBody) == 0 {
-				return
+		// Twelfth migrated call site: SecretDecision via the
+		// tryHandleLiteSecretDecision helper. The helper performs the
+		// same work the policies.NewSecretDecision policy would dispatch
+		// to; using it directly here avoids policy-resolver indirection
+		// for a path that's strictly request-side (no
+		// orchestrator-level coalescing or audit aggregation needed).
+		//
+		// The SecretDecision policy in policies/ remains available for
+		// callers who want to compose it through Pipeline.RunPre (e.g.,
+		// when the audit aggregation matters); production today uses
+		// the helper-direct path for clarity.
+		attempt := h.tryHandleLiteSecretDecision(r, agent, provider, requestID, body)
+		if attempt.Handled {
+			if attempt.DecisionID != "" {
+				auditParams["secret_decision_id"] = attempt.DecisionID
+				auditParams["secret_findings"] = attempt.FindingsCount
 			}
-			body = decisionBody
-			if _, err := parser.ParseRequest(body); err != nil {
-				auditStatus = http.StatusBadRequest
+			if attempt.IsError {
+				auditStatus = attempt.AuditStatusOverride
 				auditDecide = "deny"
-				auditOutcome = "malformed_request"
-				auditReason = err.Error()
-				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
+				auditOutcome = attempt.ErrorOutcome
+				auditReason = attempt.ErrorReason
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, attempt.AuditStatusOverride, attempt.ErrorCode, attempt.ErrorMessage)
 				return
 			}
-			auditParams["secret_decision"] = string(decision)
-			decisionExtraSuppressed = extraSuppressed
+			if len(attempt.ModifiedBody) > 0 {
+				body = attempt.ModifiedBody
+				if _, err := parser.ParseRequest(body); err != nil {
+					auditStatus = http.StatusBadRequest
+					auditDecide = "deny"
+					auditOutcome = "malformed_request"
+					auditReason = err.Error()
+					h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
+					return
+				}
+				if attempt.Action == llmproxy.SecretDecisionAllowOnce {
+					auditStatus = 0
+				}
+				auditParams["secret_decision"] = string(attempt.Action)
+				decisionExtraSuppressed = attempt.Suppressed
+			}
 		}
 	}
 	if processed, held := h.preprocessLiteSecretBody(w, r, agent, provider, requestID, body, decisionExtraSuppressed, liteProxySecretDetectionDisabled, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason); held {
