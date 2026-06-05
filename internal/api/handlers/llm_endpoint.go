@@ -440,20 +440,30 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// this, models pattern-match from their own history and start
 	// emitting `cv-nonce-…` / proxy headers / rewritten URLs verbatim
 	// on subsequent turns, bypassing the rewrite path entirely.
-	if sanitized, sanitizeErr := llmproxy.SanitizeInboundHistory(llmproxy.SanitizeInboundRequest{
-		Provider:        provider,
-		Body:            body,
-		ResolverBaseURL: h.ResolverBaseURL,
-		ControlBaseURL:  h.ControlBaseURL,
-	}); sanitizeErr != nil {
-		// Sanitization is best-effort; a failure here means the
-		// model sees the un-sanitized history but the request still
-		// works. Log and continue.
-		h.Logger.WarnContext(r.Context(), "lite-proxy inbound sanitize failed",
-			"agent_id", agent.ID, "err", sanitizeErr.Error())
-	} else if sanitized.Modified {
-		body = sanitized.Body
-		auditParams["inbound_history_sanitized"] = true
+	//
+	// Second migrated call site through pipeline.
+	{
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewInboundSanitize(h.ResolverBaseURL, h.ControlBaseURL))
+		if err != nil {
+			// inbound_sanitize uses best-effort semantics today —
+			// a pipeline failure here was a hard failure (panic on
+			// PanicMutator method). Log and continue with the
+			// un-sanitized body so the request still works.
+			h.Logger.WarnContext(r.Context(), "lite-proxy inbound sanitize pipeline failed",
+				"agent_id", agent.ID, "err", err.Error())
+		} else {
+			body = result.FinalBody
+			for k, v := range result.AuditFields {
+				auditParams[k] = v
+			}
+		}
 	}
 	// Extract per-conversation identifier from the inbound body once. It
 	// scopes pending approvals + task checkout to a single conversation
@@ -548,12 +558,27 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// the context is lost and the model duplicates work
 	// (re-POSTs /api/control/tasks, re-emits tool_use). Walk conversation
 	// history and re-inject the persistent context on every request.
-	if augBody, augmented, augErr := llmproxy.AugmentApprovedInlineTasksInHistory(body, provider, h.InlineApprovalOutcomes, agent.UserID, agent.ID); augErr != nil {
-		h.Logger.WarnContext(r.Context(), "lite-proxy inline task augmentation failed",
-			"request_id", requestID, "agent_id", agent.ID, "err", augErr.Error())
-	} else if augmented {
-		body = augBody
-		auditParams["inline_task_history_augmented"] = true
+	//
+	// Fourth migrated call site through pipeline.
+	{
+		pipeReq := &pipelineReadOnlyRequest{
+			provider:       provider,
+			httpReq:        r,
+			body:           body,
+			userID:         agent.UserID,
+			agentID:        agent.ID,
+			conversationID: conversationID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewInlineTaskAugment(h.InlineApprovalOutcomes))
+		if err != nil {
+			h.Logger.WarnContext(r.Context(), "lite-proxy inline task augmentation pipeline failed",
+				"request_id", requestID, "agent_id", agent.ID, "err", err.Error())
+		} else {
+			body = result.FinalBody
+			for k, v := range result.AuditFields {
+				auditParams[k] = v
+			}
+		}
 	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	h.ensureDefaultToolRules(r.Context(), agent, reqSummary.AvailableTools)
@@ -669,16 +694,29 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	auditParams["first_turn"] = firstTurn
 	auditParams["conversation_id_source"] = liteProxyConversationIDSource(provider, r, conversationID, mintedConversationID)
-	if stripped, stripErr := llmproxy.StripSyntheticApprovalHistory(llmproxy.SyntheticApprovalHistoryStripRequest{
-		Provider: provider,
-		Body:     body,
-	}); stripErr != nil {
-		h.Logger.WarnContext(r.Context(), "lite-proxy synthetic approval history strip failed",
-			"request_id", requestID, "agent_id", agent.ID, "err", stripErr.Error())
-	} else if stripped.Modified {
-		body = stripped.Body
-		auditParams["synthetic_approval_history_stripped"] = true
-		reqSummary = liteProxyRequestDebugSummary(provider, body)
+	// Third migrated call site through pipeline.
+	{
+		pipeReq := &pipelineReadOnlyRequest{
+			provider:       provider,
+			httpReq:        r,
+			body:           body,
+			userID:         agent.UserID,
+			agentID:        agent.ID,
+			conversationID: conversationID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewSyntheticHistoryStrip())
+		if err != nil {
+			h.Logger.WarnContext(r.Context(), "lite-proxy synthetic approval history strip pipeline failed",
+				"request_id", requestID, "agent_id", agent.ID, "err", err.Error())
+		} else {
+			if string(result.FinalBody) != string(body) {
+				body = result.FinalBody
+				reqSummary = liteProxyRequestDebugSummary(provider, body)
+			}
+			for k, v := range result.AuditFields {
+				auditParams[k] = v
+			}
+		}
 	}
 
 	upstreamURL := ""
