@@ -476,31 +476,47 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	if conversationID != "" {
 		auditParams["conversation_id"] = conversationID
 	}
-	if taskRewrite, taskErr := llmproxy.RewriteTaskApprovalReply(r.Context(), llmproxy.TaskReplyRewriteRequest{
-		HTTPRequest:     r,
-		Provider:        provider,
-		Body:            body,
-		Agent:           agent,
-		ConversationID:  conversationID,
-		PendingApproval: h.PendingApprovals,
-	}); taskErr != nil {
-		auditStatus = http.StatusBadRequest
-		auditDecide = "deny"
-		auditOutcome = "malformed_request"
-		auditReason = taskErr.Error()
-		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the task-approval reply: "+taskErr.Error()+". Please retry.")
-		return
-	} else if taskRewrite.Rewritten {
-		body = taskRewrite.Body
-		if _, err := parser.ParseRequest(body); err != nil {
+	// Sixth migrated call site through pipeline: task_approval_reply.
+	{
+		pipeReq := &pipelineReadOnlyRequest{
+			provider:       provider,
+			httpReq:        r,
+			body:           body,
+			userID:         agent.UserID,
+			agentID:        agent.ID,
+			conversationID: conversationID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewTaskApprovalReply(h.PendingApprovals, agent))
+		if err != nil {
+			auditStatus = http.StatusInternalServerError
+			auditDecide = "deny"
+			auditOutcome = "pipeline_error"
+			auditReason = err.Error()
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
+			return
+		}
+		if result.DenyReason != "" {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
-			auditReason = err.Error()
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
+			auditReason = result.DenyReason
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the task-approval reply: "+result.DenyReason+". Please retry.")
 			return
 		}
-		auditParams["approval_task_rewritten"] = true
+		if string(result.FinalBody) != string(body) {
+			body = result.FinalBody
+			if _, err := parser.ParseRequest(body); err != nil {
+				auditStatus = http.StatusBadRequest
+				auditDecide = "deny"
+				auditOutcome = "malformed_request"
+				auditReason = err.Error()
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
+				return
+			}
+		}
+		for k, v := range result.AuditFields {
+			auditParams[k] = v
+		}
 	}
 
 	// Inline task approval: when the user's "approve"/"deny" reply
@@ -509,46 +525,49 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// than a synthesized cat-heredoc tool_use that confuses the model
 	// into re-POSTing /api/control/tasks).
 	inlineApprovalConsumed := false
-	if inlineRewrite, inlineErr := llmproxy.RewriteInlineTaskApprovalReply(r.Context(), llmproxy.InlineApprovalRewriteRequest{
-		HTTPRequest:     r,
-		Provider:        provider,
-		Body:            body,
-		Agent:           agent,
-		ConversationID:  conversationID,
-		PendingApproval: h.PendingApprovals,
-		Creator:         h.InlineTaskCreator,
-		Audit:           h.AuditEmitter,
-		RequestID:       requestID,
-		Outcomes:        h.InlineApprovalOutcomes,
-		Checkouts:       h.TaskCheckouts,
-	}); inlineErr != nil {
-		auditStatus = http.StatusBadRequest
-		auditDecide = "deny"
-		auditOutcome = "malformed_request"
-		auditReason = inlineErr.Error()
-		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the inline-approval reply: "+inlineErr.Error()+". Please retry.")
-		return
-	} else if inlineRewrite.Rewritten {
-		body = inlineRewrite.Body
-		if _, err := parser.ParseRequest(body); err != nil {
+	// Seventh migrated call site through pipeline: inline_task_intercept.
+	{
+		pipeReq := &pipelineReadOnlyRequest{
+			provider:       provider,
+			httpReq:        r,
+			body:           body,
+			userID:         agent.UserID,
+			agentID:        agent.ID,
+			conversationID: conversationID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewInlineTaskIntercept(
+			h.PendingApprovals, agent, h.InlineTaskCreator, h.AuditEmitter, requestID, h.InlineApprovalOutcomes, h.TaskCheckouts,
+		))
+		if err != nil {
+			auditStatus = http.StatusInternalServerError
+			auditDecide = "deny"
+			auditOutcome = "pipeline_error"
+			auditReason = err.Error()
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
+			return
+		}
+		if result.DenyReason != "" {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
-			auditReason = err.Error()
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
+			auditReason = result.DenyReason
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the inline-approval reply: "+result.DenyReason+". Please retry.")
 			return
 		}
-		inlineApprovalConsumed = true
-		auditParams["inline_task_approval_rewritten"] = true
-		auditParams["inline_task_outcome"] = inlineRewrite.Outcome
-		if inlineRewrite.TaskID != "" {
-			auditParams["inline_task_id"] = inlineRewrite.TaskID
+		if string(result.FinalBody) != string(body) {
+			body = result.FinalBody
+			if _, err := parser.ParseRequest(body); err != nil {
+				auditStatus = http.StatusBadRequest
+				auditDecide = "deny"
+				auditOutcome = "malformed_request"
+				auditReason = err.Error()
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
+				return
+			}
+			inlineApprovalConsumed = true
 		}
-		if inlineRewrite.CheckedOut {
-			auditParams["inline_task_checked_out"] = true
-		}
-		if inlineRewrite.Reason != "" {
-			auditParams["inline_task_reason"] = inlineRewrite.Reason
+		for k, v := range result.AuditFields {
+			auditParams[k] = v
 		}
 	}
 
@@ -582,28 +601,50 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	h.ensureDefaultToolRules(r.Context(), agent, reqSummary.AvailableTools)
-	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
-		// Notice injection is best-effort UX; a store error here should
-		// not fail-close the request because no authorization decision
-		// is being made. Authorization-relevant call sites below check
-		// the error and refuse.
-		_, noticeToolRules, _, noticeLoadErr := h.loadLiteProxyDecisionInputs(r.Context(), agent)
-		if noticeLoadErr != nil {
-			h.Logger.WarnContext(r.Context(), "lite-proxy notice injection skipped: decision-input load failed",
-				"agent_id", agent.ID, "err", noticeLoadErr.Error())
-			noticeToolRules = nil
+	// Fifth migrated call site through pipeline: control_notice. The
+	// policy's gating mirrors shouldInjectLiteControlNotice (URL path
+	// + tools[] declared); the AvailableToolsFn and ToolRulesLoader
+	// callbacks delegate to existing handler helpers so the policy
+	// stays Store-decoupled.
+	{
+		availableToolsFn := func(p conversation.Provider, b []byte) []string {
+			return liteProxyRequestDebugSummary(p, b).AvailableTools
 		}
-		injectedBody, injected, injectErr := llmproxy.InjectControlNoticeWithPolicy(provider, body, h.ControlBaseURL, reqSummary.AvailableTools, noticeToolRules)
-		if injectErr != nil {
+		toolRulesLoader := func(ctx context.Context, _, _ string) []*store.RuntimePolicyRule {
+			_, rules, _, loadErr := h.loadLiteProxyDecisionInputs(ctx, agent)
+			if loadErr != nil {
+				h.Logger.WarnContext(ctx, "lite-proxy notice injection skipped: decision-input load failed",
+					"agent_id", agent.ID, "err", loadErr.Error())
+				return nil
+			}
+			return rules
+		}
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewControlNotice(h.ControlBaseURL, availableToolsFn, toolRulesLoader))
+		if err != nil {
+			auditStatus = http.StatusInternalServerError
+			auditDecide = "deny"
+			auditOutcome = "pipeline_error"
+			auditReason = err.Error()
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
+			return
+		}
+		if result.DenyReason != "" {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
-			auditReason = injectErr.Error()
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't inject the control notice: "+injectErr.Error()+". Please retry.")
+			auditReason = result.DenyReason
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't inject the control notice: "+result.DenyReason+". Please retry.")
 			return
 		}
-		if injected {
-			body = injectedBody
+		if string(result.FinalBody) != string(body) {
+			body = result.FinalBody
 			if _, err := parser.ParseRequest(body); err != nil {
 				auditStatus = http.StatusBadRequest
 				auditDecide = "deny"
@@ -613,7 +654,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			reqSummary = liteProxyRequestDebugSummary(provider, body)
-			auditParams["control_notice_injected"] = true
+		}
+		for k, v := range result.AuditFields {
+			auditParams[k] = v
 		}
 	}
 	auditParams["model"] = reqSummary.Model
