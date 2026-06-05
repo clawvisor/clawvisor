@@ -637,6 +637,42 @@ func rollbackBufferedPendingTasks(ctx context.Context, cfg PostprocessConfig, si
 	}
 }
 
+// BuildLegacyToolUseEvaluator exposes the inline newToolUseEvaluator
+// closure to handler-side factories that delegate stages they haven't
+// migrated yet. The audit emit callback bridges legacy's inline
+// auditSink-append shape to the exported BufferedAudit emit shape —
+// so the handler factory can compose legacy with the policies chain
+// while audit rows flow through a single sink.
+//
+// Internally builds a sink the legacy closure appends to, then runs
+// the closure wrapped so any newly-appended entries are flushed to
+// emit after each invocation. The sink is owned by the wrapper and
+// not exposed.
+func BuildLegacyToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, emit func(BufferedAudit)) conversation.ToolUseEvaluator {
+	sink := &capturedAuditSink{}
+	// Pass nil ToolUseEvaluatorFactory to avoid recursion if cfg has
+	// one set (the handler-side factory calls THIS function as the
+	// legacy fallback).
+	cfg.ToolUseEvaluatorFactory = nil
+	inner := newToolUseEvaluator(req, cfg, provider, sink)
+	return func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		prevLen := len(sink.entries)
+		v := inner(tu)
+		for i := prevLen; i < len(sink.entries); i++ {
+			e := sink.entries[i]
+			emit(BufferedAudit{
+				ToolUse:  e.ToolUse,
+				Verdict:  e.Verdict,
+				Decision: e.Decision,
+				Outcome:  e.Outcome,
+				Reason:   e.Reason,
+				TaskID:   e.TaskID,
+			})
+		}
+		return v
+	}
+}
+
 // selectToolUseEvaluator dispatches to either the handler-supplied
 // ToolUseEvaluatorFactory (the policies-chain-based pipeline path) or
 // the inline newToolUseEvaluator (legacy default). The factory's emit
