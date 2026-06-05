@@ -1214,6 +1214,13 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 	}
 }
 
+// CredentialedRewriteRecoveryReason exposes the user-facing recovery
+// message for credential-rewrite errors. Used by the
+// policies.CredentialRewriteEvaluator wrapper.
+func CredentialedRewriteRecoveryReason(v inspector.Verdict, err error) string {
+	return credentialedRewriteRecoveryReason(v, err)
+}
+
 func credentialedRewriteRecoveryReason(v inspector.Verdict, err error) string {
 	if err == nil {
 		return "Clawvisor: rewriter refused"
