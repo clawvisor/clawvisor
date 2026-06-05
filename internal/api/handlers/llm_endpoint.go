@@ -2993,7 +2993,81 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 			}
 		}
 	}
-	if h.maybeHoldInboundSecret(w, r, agent, provider, requestID, body, extraSuppressed, auditParams, auditStatus, auditDecide, auditOutcome, auditReason) {
+	// Tenth migrated call site through pipeline: SecretHold.
+	pipeReq := &pipelineReadOnlyRequest{
+		provider: provider,
+		httpReq:  r,
+		body:     body,
+		userID:   agent.UserID,
+		agentID:  agent.ID,
+	}
+	resolver := func(_ context.Context, b []byte) policies.SecretHoldResult {
+		out := h.tryHoldInboundSecret(r, agent, provider, requestID, b, extraSuppressed)
+		if !out.Held {
+			return policies.SecretHoldResult{Held: false}
+		}
+		fields := map[string]any{}
+		if out.DecisionID != "" {
+			fields["secret_decision_id"] = out.DecisionID
+		}
+		if len(out.Findings) > 0 {
+			fields["secret_findings"] = len(out.Findings)
+			fields["secret_suggested_name"] = out.Findings[0].SuggestedName
+			fields["secret_sources"] = liteSecretFindingSources(out.Findings)
+		}
+		// IsError → handler writes a writeLiteProxyError-shaped response,
+		// not a 200 hold prompt. Surface the error info via the policy
+		// AuditFields so the handler can branch on it.
+		if out.IsError {
+			fields["secret_hold_is_error"] = true
+			fields["secret_hold_error_code"] = out.ErrorCode
+			fields["secret_hold_error_message"] = out.ErrorMessage
+		}
+		return policies.SecretHoldResult{
+			Held:        true,
+			HTTPStatus:  out.HTTPStatus,
+			Body:        out.Body,
+			ContentType: out.ContentType,
+			Decision:    out.Decision,
+			Outcome:     out.Outcome,
+			Reason:      out.Reason,
+			AuditFields: fields,
+		}
+	}
+	holdResult, err := runSinglePolicy(r.Context(), pipeReq, policies.NewSecretHold(resolver))
+	if err != nil {
+		h.Logger.WarnContext(r.Context(), "lite-proxy secret hold pipeline failed",
+			"agent_id", agent.ID, "err", err.Error())
+		return body, false
+	}
+	for k, v := range holdResult.AuditFields {
+		auditParams[k] = v
+	}
+	if sc := holdResult.ShortCircuit; sc != nil {
+		*auditStatus = sc.StatusCode
+		if v, _ := holdResult.AuditFields["secret_hold_outcome"].(string); v != "" {
+			*auditOutcome = v
+		}
+		if v, _ := holdResult.AuditFields["secret_hold_decision"].(string); v != "" {
+			*auditDecide = v
+		}
+		if v, _ := holdResult.AuditFields["secret_hold_reason"].(string); v != "" {
+			*auditReason = v
+		}
+		// Error path: writeLiteProxyError formatting.
+		if isErr, _ := holdResult.AuditFields["secret_hold_is_error"].(bool); isErr {
+			code, _ := holdResult.AuditFields["secret_hold_error_code"].(string)
+			msg, _ := holdResult.AuditFields["secret_hold_error_message"].(string)
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, sc.StatusCode, code, msg)
+			return body, true
+		}
+		// Success path: 200 with synthesized hold prompt.
+		for k, v := range sc.Headers {
+			w.Header().Set(k, v)
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(sc.StatusCode)
+		_, _ = w.Write(sc.Body)
 		return body, true
 	}
 	return body, false
