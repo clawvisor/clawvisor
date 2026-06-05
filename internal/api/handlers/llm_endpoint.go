@@ -3510,9 +3510,37 @@ func (h *LLMEndpointHandler) loadActiveSecretRewrites(ctx context.Context, agent
 	return out
 }
 
-func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, extraSuppressed map[string]struct{}, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
+// liteSecretHoldOutcome is the result-returning shape of the
+// secret-hold check. Used by both the legacy maybeHoldInboundSecret
+// method (which writes the response from this struct) and the
+// SecretHold pipeline policy (which converts it into a ShortCircuit
+// verdict).
+type liteSecretHoldOutcome struct {
+	Held        bool
+	HTTPStatus  int
+	Body        []byte
+	ContentType string
+	Decision    string
+	Outcome     string
+	Reason      string
+	DecisionID  string
+	Findings    []llmproxy.InboundSecretFinding
+	// IsError flags whether the hold attempt itself failed (vs.
+	// successfully created a hold). Errors map to writeLiteProxyError
+	// with SECRET_HOLD_FAILED; successful holds map to the synthetic
+	// hold-prompt response.
+	IsError       bool
+	ErrorCode     string
+	ErrorMessage  string
+}
+
+// tryHoldInboundSecret runs the secret-hold scan and adjudication
+// without writing to the response. Returns liteSecretHoldOutcome
+// which the caller maps to either a written response or a pipeline
+// ShortCircuit verdict.
+func (h *LLMEndpointHandler) tryHoldInboundSecret(r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, extraSuppressed map[string]struct{}) liteSecretHoldOutcome {
 	if h == nil || h.PendingSecrets == nil || agent == nil {
-		return false
+		return liteSecretHoldOutcome{Held: false}
 	}
 	suppressed := h.secretSuppressionFingerprints(r.Context(), agent)
 	for fp := range extraSuppressed {
@@ -3538,10 +3566,8 @@ func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *ht
 			"error_message": err.Error(),
 		})
 		h.Logger.WarnContext(r.Context(), "lite-proxy inbound secret scan failed",
-			"request_id", requestID,
-			"agent_id", agent.ID,
-			"err", err.Error())
-		return false
+			"request_id", requestID, "agent_id", agent.ID, "err", err.Error())
+		return liteSecretHoldOutcome{Held: false}
 	}
 	if !found {
 		h.emitLiteSecretPipelineTrace(requestID, agent, "hold_scan_no_findings", map[string]any{
@@ -3549,7 +3575,7 @@ func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *ht
 			"adjudications": liteSecretAdjudicationTraceSummaries(scan.Adjudications),
 			"body_sha":      liteSecretBodySHA(body),
 		})
-		return false
+		return liteSecretHoldOutcome{Held: false}
 	}
 	scan.Findings = h.annotateExistingVaultSecrets(r.Context(), agent.UserID, scan.Findings)
 	h.emitLiteSecretPipelineTrace(requestID, agent, "hold_scan_findings", map[string]any{
@@ -3574,18 +3600,16 @@ func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *ht
 			"body_sha":      liteSecretBodySHA(body),
 			"error_message": err.Error(),
 		})
-		*auditStatus = http.StatusInternalServerError
-		*auditDecide = "deny"
-		*auditOutcome = "secret_hold_failed"
-		*auditReason = err.Error()
-		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "SECRET_HOLD_FAILED", "couldn't pause this request for secret review. Please retry.")
-		return true
-	}
-	if auditParams != nil {
-		auditParams["secret_decision_id"] = held.ID
-		auditParams["secret_findings"] = len(scan.Findings)
-		auditParams["secret_suggested_name"] = scan.Findings[0].SuggestedName
-		auditParams["secret_sources"] = liteSecretFindingSources(scan.Findings)
+		return liteSecretHoldOutcome{
+			Held:         true,
+			HTTPStatus:   http.StatusInternalServerError,
+			Decision:     "deny",
+			Outcome:      "secret_hold_failed",
+			Reason:       err.Error(),
+			IsError:      true,
+			ErrorCode:    "SECRET_HOLD_FAILED",
+			ErrorMessage: "couldn't pause this request for secret review. Please retry.",
+		}
 	}
 	h.emitLiteSecretPipelineTrace(requestID, agent, "hold_created", map[string]any{
 		"provider":          string(provider),
@@ -3613,16 +3637,46 @@ func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *ht
 			Marker:       "redacted_pre_hold",
 		})
 	}
-	*auditStatus = http.StatusOK
-	*auditDecide = "block"
-	*auditOutcome = "secret_detected"
-	*auditReason = "raw secret detected in inbound LLM request"
 	prompt := renderInboundSecretPrompt(held)
 	bodyBytes, contentType := syntheticLiteTextResponse(r, provider, body, prompt)
-	w.Header().Set("Content-Type", contentType)
+	return liteSecretHoldOutcome{
+		Held:        true,
+		HTTPStatus:  http.StatusOK,
+		Body:        bodyBytes,
+		ContentType: contentType,
+		Decision:    "block",
+		Outcome:     "secret_detected",
+		Reason:      "raw secret detected in inbound LLM request",
+		DecisionID:  held.ID,
+		Findings:    scan.Findings,
+	}
+}
+
+func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, extraSuppressed map[string]struct{}, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
+	outcome := h.tryHoldInboundSecret(r, agent, provider, requestID, body, extraSuppressed)
+	if !outcome.Held {
+		return false
+	}
+	*auditStatus = outcome.HTTPStatus
+	*auditDecide = outcome.Decision
+	*auditOutcome = outcome.Outcome
+	*auditReason = outcome.Reason
+	if outcome.IsError {
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, outcome.HTTPStatus, outcome.ErrorCode, outcome.ErrorMessage)
+		return true
+	}
+	if auditParams != nil {
+		auditParams["secret_decision_id"] = outcome.DecisionID
+		auditParams["secret_findings"] = len(outcome.Findings)
+		if len(outcome.Findings) > 0 {
+			auditParams["secret_suggested_name"] = outcome.Findings[0].SuggestedName
+			auditParams["secret_sources"] = liteSecretFindingSources(outcome.Findings)
+		}
+	}
+	w.Header().Set("Content-Type", outcome.ContentType)
 	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(bodyBytes)
+	w.WriteHeader(outcome.HTTPStatus)
+	_, _ = w.Write(outcome.Body)
 	return true
 }
 
