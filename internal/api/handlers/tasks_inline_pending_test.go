@@ -248,6 +248,7 @@ func TestPostprocess_ReplayFailureExpiresPendingInlineTask(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/v1/messages?beta=true", nil)
 	cache := &failingInlineTaskHoldCache{err: errors.New("simulated replay hold failure")}
 	result := llmproxy.Postprocess(req, anthropicInlineTaskPostBody(t, taskBody), "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
 		Inspector:         inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 		RewriteOpts:       inspector.DefaultRewriteOpts("http://localhost:25297"),
 		AgentUserID:       agent.UserID,
@@ -297,6 +298,7 @@ func TestPostprocess_RewriterFailureExpiresPendingInlineTask(t *testing.T) {
 	taskBody := `{"purpose":"Rollback user's rewriter failure task","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"Create files"}]}`
 	req := httptest.NewRequest("POST", "/api/v1/messages?beta=true", nil)
 	result := llmproxy.Postprocess(req, anthropicInlineTaskPostBody(t, taskBody), "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
 		Inspector:         inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 		RewriteOpts:       inspector.DefaultRewriteOpts("http://localhost:25297"),
 		AgentUserID:       agent.UserID,
