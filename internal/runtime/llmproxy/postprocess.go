@@ -495,6 +495,8 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				if !firstReplaced {
 					out.SubstituteWith = coalescedPrompt
 					firstReplaced = true
+				} else {
+					out.SuppressSubstituteText = true
 				}
 				return out
 			}

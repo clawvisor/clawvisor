@@ -15,6 +15,12 @@ type ToolUseVerdict struct {
 	Allowed        bool
 	Reason         string
 	SubstituteWith string
+	// SuppressSubstituteText, when true and Allowed=false, prevents the
+	// rewriter/formatter from falling back to a default "Tool 'X' was
+	// blocked by Clawvisor policy: ..." text when SubstituteWith is empty.
+	// Used during coalesced approval turns where sibling tools should
+	// not render their own separate block messages.
+	SuppressSubstituteText bool
 
 	// RewriteInput, when non-nil and Allowed=true, replaces the tool_use's
 	// input field in-place. Used by the lite-proxy inspector to redirect
@@ -217,16 +223,18 @@ func applyBlockSubstitutions(frags []assistantFragment, decisions []ToolUseDecis
 		toolDecisionIdx++
 		if !decision.Verdict.Allowed {
 			txt := decision.Verdict.SubstituteWith
-			if txt == "" {
+			if txt == "" && !decision.Verdict.SuppressSubstituteText {
 				reason := decision.Verdict.Reason
 				if reason == "" {
 					reason = "blocked by policy"
 				}
 				txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", frag.ToolName, reason)
 			}
-			out = append(out, assistantFragment{
-				Text: txt,
-			})
+			if txt != "" {
+				out = append(out, assistantFragment{
+					Text: txt,
+				})
+			}
 			continue
 		}
 		out = append(out, frag)
@@ -237,6 +245,9 @@ func applyBlockSubstitutions(frags []assistantFragment, decisions []ToolUseDecis
 func BlockedReasonText(decisions []ToolUseDecisionRecord) string {
 	var substitutions []string
 	for _, decision := range decisions {
+		if decision.Verdict.SuppressSubstituteText {
+			continue
+		}
 		if decision.Verdict.SubstituteWith != "" {
 			substitutions = append(substitutions, decision.Verdict.SubstituteWith)
 		}
@@ -248,6 +259,9 @@ func BlockedReasonText(decisions []ToolUseDecisionRecord) string {
 	var parts []string
 	for _, decision := range decisions {
 		if decision.Verdict.Allowed {
+			continue
+		}
+		if decision.Verdict.SuppressSubstituteText {
 			continue
 		}
 		reason := decision.Verdict.Reason

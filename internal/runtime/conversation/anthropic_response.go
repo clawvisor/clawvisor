@@ -84,7 +84,7 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 			if !verdict.Allowed {
 				anyBlocked = true
 				txt := verdict.SubstituteWith
-				if txt == "" {
+				if txt == "" && !verdict.SuppressSubstituteText {
 					reason := verdict.Reason
 					if reason == "" {
 						reason = "blocked by policy"
@@ -321,7 +321,7 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 			verdict := verdicts[pb]
 			if !verdict.Allowed {
 				txt := verdict.SubstituteWith
-				if txt == "" {
+				if txt == "" && !verdict.SuppressSubstituteText {
 					reason := verdict.Reason
 					if reason == "" {
 						reason = "blocked by policy"

@@ -139,7 +139,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 			if !verdict.Allowed {
 				anyBlocked = true
 				txt := verdict.SubstituteWith
-				if txt == "" {
+				if txt == "" && !verdict.SuppressSubstituteText {
 					reason := verdict.Reason
 					if reason == "" {
 						reason = "blocked by policy"
@@ -183,7 +183,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 			if !verdict.Allowed {
 				anyBlocked = true
 				txt := verdict.SubstituteWith
-				if txt == "" {
+				if txt == "" && !verdict.SuppressSubstituteText {
 					reason := verdict.Reason
 					if reason == "" {
 						reason = "blocked by policy"
@@ -379,7 +379,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 				if !verdict.Allowed {
 					anyBlocked = true
 					txt := verdict.SubstituteWith
-					if txt == "" {
+					if txt == "" && !verdict.SuppressSubstituteText {
 						reason := verdict.Reason
 						if reason == "" {
 							reason = "blocked by policy"
@@ -424,7 +424,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 				if !verdict.Allowed {
 					anyBlocked = true
 					txt := verdict.SubstituteWith
-					if txt == "" {
+					if txt == "" && !verdict.SuppressSubstituteText {
 						reason := verdict.Reason
 						if reason == "" {
 							reason = "blocked by policy"
@@ -751,7 +751,7 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 				anyBlocked = true
 				choiceBlocked = true
 				txt := verdict.SubstituteWith
-				if txt == "" {
+				if txt == "" && !verdict.SuppressSubstituteText {
 					reason := verdict.Reason
 					if reason == "" {
 						reason = "blocked by policy"
@@ -975,7 +975,7 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 					anyBlocked = true
 					choiceBlocked = true
 					txt := verdict.SubstituteWith
-					if txt == "" {
+					if txt == "" && !verdict.SuppressSubstituteText {
 						reason := verdict.Reason
 						if reason == "" {
 							reason = "blocked by policy"
