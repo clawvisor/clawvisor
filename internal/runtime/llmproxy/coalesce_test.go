@@ -63,6 +63,9 @@ func TestPostprocess_CoalescesMixedAllowAndApproval(t *testing.T) {
 	if !strings.Contains(out, "held alongside") {
 		t.Fatalf("expected the bash sibling to be labeled 'held alongside', got: %s", out)
 	}
+	if strings.Contains(out, "Tool 'WebFetch' was blocked by Clawvisor policy") {
+		t.Fatalf("expected coalesced sibling WebFetch block message to be suppressed, but got it in output: %s", out)
+	}
 
 	holds := cache.snapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
 	if len(holds) != 1 {
