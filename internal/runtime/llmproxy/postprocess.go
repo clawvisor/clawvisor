@@ -2648,6 +2648,9 @@ func hasScriptSessionToken(v string) bool {
 // partially-written SSE stream. Called when the upstream connection
 // drops after HTTP 200 has been committed. The harness sees the error
 // instead of a clean EOF.
+//
+// Note: Write operations in this function are performed on a best-effort basis
+// as the underlying connection is already presumed broken.
 func WriteStreamError(
 	w io.Writer,
 	req *http.Request,

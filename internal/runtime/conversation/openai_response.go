@@ -1912,9 +1912,9 @@ func (rw OpenAIResponseRewriter) streamRewriteChatCompletions(ctx context.Contex
 					contentOnlyChoices = append(contentOnlyChoices, map[string]any{
 						"index": choice.Index,
 						"delta": map[string]any{
-							"content": txt,
+							"content": choice.Delta.Content,
 						},
-						"finish_reason": choice.FinishReason,
+						"finish_reason": nil,
 					})
 				}
 			}
@@ -1928,7 +1928,10 @@ func (rw OpenAIResponseRewriter) streamRewriteChatCompletions(ctx context.Contex
 					"model":   event.Model,
 					"choices": contentOnlyChoices,
 				}
-				raw, _ := json.Marshal(reemitPayload)
+				raw, err := json.Marshal(reemitPayload)
+				if err != nil {
+					return StreamingRewriteResult{StreamID: streamID, Model: msgModel, StreamFormat: "openai_chat"}, err
+				}
 				if _, err := fmt.Fprintf(w, "data: %s\n\n", string(raw)); err != nil {
 					return StreamingRewriteResult{StreamID: streamID, Model: msgModel, StreamFormat: "openai_chat"}, err
 				}
