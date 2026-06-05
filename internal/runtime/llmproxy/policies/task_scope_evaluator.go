@@ -41,6 +41,30 @@ func NewTaskScopeEvaluator(resolver TaskScopeResolver) *TaskScopeEvaluator {
 	return &TaskScopeEvaluator{resolver: resolver}
 }
 
+// CredentialedTarget is the inspector-classified target a credentialed
+// tool_use intends to reach. The handler-side resolver uses this to
+// populate runtimedecision.AuthorizationInput.Target when wrapping
+// EvaluateAuthorization for the credentialed path. Exposed as a
+// stable type so the resolver contract is documented in the policy
+// package (not just convention inside the handler).
+type CredentialedTarget struct {
+	Host    string
+	Method  string
+	Path    string
+	Service string // ServiceID resolved via catalog (empty if unresolved)
+	Action  string // ActionID resolved via catalog (empty if unresolved)
+}
+
+// CredentialedTaskScopeResolver is the variant of TaskScopeResolver
+// the handler builds when a tool_use has been classified as
+// credentialed (Inspector verdict.IsAPICall == true). It receives the
+// resolved target alongside the tool_use so the underlying
+// runtimedecision.EvaluateAuthorization call can populate Target,
+// Service, and Action correctly. The handler converts a
+// CredentialedTaskScopeResolver to TaskScopeResolver via a small
+// adapter closure that supplies the target from the inspector verdict.
+type CredentialedTaskScopeResolver func(ctx context.Context, tu conversation.ToolUse, target CredentialedTarget) llmproxy.TaskScopeDecision
+
 // Name returns the audit-friendly identifier.
 func (TaskScopeEvaluator) Name() string { return "task_scope" }
 
