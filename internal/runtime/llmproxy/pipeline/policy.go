@@ -82,6 +82,15 @@ type ReadOnlyRequest interface {
 	RawBody() []byte
 	IsFirstTurn() bool
 	ConversationID() string
+	// UserID is the authenticated user owning this request. Required
+	// by policies that scope state by user (inline-approval outcomes,
+	// secret decisions, vault lookups). Empty if unauthenticated —
+	// though the proxy refuses unauthenticated requests upstream of
+	// the pipeline.
+	UserID() string
+	// AgentID is the authenticated agent. Same scoping shape as
+	// UserID; empty when the request is user-scoped only.
+	AgentID() string
 }
 
 // ReadOnlyResponse exposes the response under inspection.

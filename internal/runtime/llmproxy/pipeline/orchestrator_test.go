@@ -26,6 +26,8 @@ func (r *orchTestRequest) HTTPRequest() *http.Request            { return nil }
 func (r *orchTestRequest) RawBody() []byte                       { return r.body }
 func (r *orchTestRequest) IsFirstTurn() bool                     { return true }
 func (r *orchTestRequest) ConversationID() string                { return "" }
+func (r *orchTestRequest) UserID() string                        { return "" }
+func (r *orchTestRequest) AgentID() string                       { return "" }
 
 // allowingPolicy is a no-op RequestPolicy that emits one audit field.
 type allowingPolicy struct {

@@ -74,6 +74,8 @@ type stubReadOnlyRequest struct {
 	rawBody   []byte
 	firstTurn bool
 	convID    string
+	userID    string
+	agentID   string
 }
 
 func (s *stubReadOnlyRequest) Provider() conversation.Provider       { return s.provider }
@@ -83,5 +85,7 @@ func (s *stubReadOnlyRequest) HTTPRequest() *http.Request            { return ni
 func (s *stubReadOnlyRequest) RawBody() []byte                       { return s.rawBody }
 func (s *stubReadOnlyRequest) IsFirstTurn() bool                     { return s.firstTurn }
 func (s *stubReadOnlyRequest) ConversationID() string                { return s.convID }
+func (s *stubReadOnlyRequest) UserID() string                        { return s.userID }
+func (s *stubReadOnlyRequest) AgentID() string                       { return s.agentID }
 
 var _ pipeline.ReadOnlyRequest = (*stubReadOnlyRequest)(nil)

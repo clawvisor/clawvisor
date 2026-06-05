@@ -138,5 +138,7 @@ func (w *mutatingRequestWrapper) HTTPRequest() *http.Request { return w.base.HTT
 func (w *mutatingRequestWrapper) RawBody() []byte            { return w.body }
 func (w *mutatingRequestWrapper) IsFirstTurn() bool          { return w.base.IsFirstTurn() }
 func (w *mutatingRequestWrapper) ConversationID() string     { return w.base.ConversationID() }
+func (w *mutatingRequestWrapper) UserID() string             { return w.base.UserID() }
+func (w *mutatingRequestWrapper) AgentID() string            { return w.base.AgentID() }
 
 var _ ReadOnlyRequest = (*mutatingRequestWrapper)(nil)
