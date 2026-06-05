@@ -20,6 +20,10 @@ const (
 	StreamShapeAnthropicMessages
 	StreamShapeOpenAIChat
 	StreamShapeOpenAIResponses
+	// StreamShapeGoogleGemini is the Phase 6 third-provider stream
+	// shape. Gemini's :streamGenerateContent endpoint emits SSE
+	// chunks with a different envelope than Anthropic or OpenAI.
+	StreamShapeGoogleGemini
 )
 
 // DetectStreamShape picks the streaming SSE shape from the inbound LLM
@@ -35,6 +39,8 @@ func DetectStreamShape(req *http.Request, provider Provider) StreamShape {
 			return StreamShapeOpenAIChat
 		}
 		return StreamShapeOpenAIResponses
+	case ProviderGoogle:
+		return StreamShapeGoogleGemini
 	}
 	return StreamShapeUnknown
 }
