@@ -115,7 +115,6 @@ func TestStreamingResponseMutator_RejectsCommitTwice(t *testing.T) {
 // arrive once their shape-specific prepend ports land.
 func TestStreamingResponseMutator_RejectsUnsupportedShape(t *testing.T) {
 	for _, shape := range []conversation.StreamShape{
-		conversation.StreamShapeOpenAIResponses,
 		conversation.StreamShapeUnknown,
 	} {
 		_, err := pipeline.NewStreamingResponseMutator(&bytes.Buffer{}, strings.NewReader(""), shape)
