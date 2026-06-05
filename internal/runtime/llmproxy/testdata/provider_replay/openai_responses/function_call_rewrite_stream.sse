@@ -1,0 +1,19 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_tool","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","call_id":"call_rewrite","name":"WebFetch"}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"X-Fixture-Token\":\"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_1","output_index":0,"name":"WebFetch","arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"X-Fixture-Token\":\"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_rewrite","name":"WebFetch","arguments":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"method\":\"POST\",\"headers\":{\"X-Fixture-Token\":\"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_tool","status":"completed"}}
+
+data: [DONE]

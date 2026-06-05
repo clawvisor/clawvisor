@@ -100,6 +100,7 @@ type StreamingRewriteResult struct {
 	StreamFormat              string
 	NextAnthropicContentIndex int
 	NextOpenAIOutputIndex     int
+	HasOpenAIResponseCreated  bool
 }
 
 type ResponseRewriter interface {

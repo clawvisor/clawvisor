@@ -1,0 +1,5 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_bad","type":"message","role":"assistant","model":"claude-sonnet-4","content":[]}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_bad","name":"WebFetch","input":{"url":"https://api.github.com/repos/x/y/issues","headers":{"X-Fixture-Token":"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}

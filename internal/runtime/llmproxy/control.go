@@ -101,6 +101,7 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"  - Pure local work (file edits, shell inspection, etc.) does NOT need `required_credentials`. Omit the field entirely; it is not a per-task formality.",
 		"  - If task creation is rejected with `vault item \"<id>\" is not available`, do NOT tell the user the credential is missing. List GET " + vaultItemsURL + " to discover the correct (possibly account-aliased) handle, then retry the task. Only report the credential as missing if the list itself has no plausible match.",
 		"  - Do not ask the user to paste raw secrets into chat.",
+		"  - Do not invent or fabricate `autovault_...` placeholders. Only use placeholders already present in the conversation or returned by Clawvisor.",
 		"",
 		"VAULT PLACEHOLDERS — use minted `autovault_*` values verbatim in Authorization headers or curl arguments; Clawvisor substitutes the real secret at proxy time. NEVER write your own `autovault_<service>` string in `required_credentials` (use the account-scoped vault item id there) or in a downstream call. Raw tokens such as `ghp_...` or `sk-...` are sensitive; ask the user to vault them first.",
 		"",

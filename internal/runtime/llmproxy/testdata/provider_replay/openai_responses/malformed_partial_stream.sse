@@ -1,0 +1,5 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_bad","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"ctc_bad","type":"custom_tool_call","status":"in_progress","call_id":"call_bad","name":"WebFetch","input":"{\"url\":\"https://api.github.com/repos/x/y/issues\",\"headers\":{\"X-Fixture-Token\":\"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}

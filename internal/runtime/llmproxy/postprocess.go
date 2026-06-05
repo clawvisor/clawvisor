@@ -1,6 +1,7 @@
 package llmproxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2058,7 +2059,11 @@ func writeProviderBlockedPrompt(w io.Writer, provider conversation.Provider, res
 
 	case conversation.ProviderOpenAI:
 		if result.StreamFormat == "openai_responses" {
-			_, err := w.Write(conversation.SynthOpenAIResponsesTextSSE(text))
+			body, err := openAIResponsesSyntheticForExistingStream(conversation.SynthOpenAIResponsesTextSSE(text), result.StreamID, result.HasOpenAIResponseCreated)
+			if err != nil {
+				return err
+			}
+			_, err = w.Write(body)
 			return err
 		}
 		chunk := map[string]any{
@@ -2102,7 +2107,11 @@ func writeProviderToolUses(w io.Writer, provider conversation.Provider, result c
 		return writeAnthropicToolUsesSSE(w, tus, rewrittenInput)
 	case conversation.ProviderOpenAI:
 		if result.StreamFormat == "openai_responses" {
-			_, err := w.Write(conversation.SynthOpenAIResponsesFunctionCallsSSE(syntheticCallsFromToolUses(tus, rewrittenInput)))
+			body, err := openAIResponsesSyntheticForExistingStream(conversation.SynthOpenAIResponsesFunctionCallsSSE(syntheticCallsFromToolUses(tus, rewrittenInput)), result.StreamID, result.HasOpenAIResponseCreated)
+			if err != nil {
+				return err
+			}
+			_, err = w.Write(body)
 			return err
 		}
 		return writeOpenAIChatToolUsesSSE(w, result.StreamID, tus, rewrittenInput)
@@ -2252,6 +2261,55 @@ func syntheticCallsFromToolUses(tus []conversation.ToolUse, rewrittenInput map[s
 		})
 	}
 	return calls
+}
+
+func openAIResponsesSyntheticForExistingStream(body []byte, streamID string, alreadyCreated bool) ([]byte, error) {
+	if !alreadyCreated {
+		return body, nil
+	}
+	events := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n\n")
+	var out bytes.Buffer
+	for _, eventBlock := range events {
+		eventBlock = strings.TrimSpace(eventBlock)
+		if eventBlock == "" {
+			continue
+		}
+		var event string
+		var dataLines []string
+		for _, line := range strings.Split(eventBlock, "\n") {
+			line = strings.TrimSpace(line)
+			switch {
+			case strings.HasPrefix(line, "event:"):
+				event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "data:"):
+				dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			}
+		}
+		if len(dataLines) == 0 {
+			continue
+		}
+		data := strings.Join(dataLines, "\n")
+		if data == "[DONE]" {
+			out.WriteString("data: [DONE]\n\n")
+			continue
+		}
+		if event == "response.created" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(data), &payload); err != nil {
+			return nil, err
+		}
+		if event == "response.completed" {
+			if response, ok := payload["response"].(map[string]any); ok {
+				response["id"] = streamID
+			}
+		}
+		if err := writeSSE(&out, event, payload); err != nil {
+			return nil, err
+		}
+	}
+	return out.Bytes(), nil
 }
 
 func writeSSE(w io.Writer, event string, data any) error {

@@ -297,6 +297,7 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 		// the model must not fabricate its own `autovault_*` strings.
 		"VAULT PLACEHOLDERS",
 		"autovault_",
+		"Do not invent or fabricate `autovault_...` placeholders",
 		// Escape-stable substring of the "no fabricated autovault" rule.
 		// (The full sentence contains `<` which gets JSON-escaped on the
 		// wire; matching on the leading clause keeps the assertion
