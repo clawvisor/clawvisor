@@ -124,6 +124,31 @@ func TestStreamingResponseMutator_RejectsUnsupportedShape(t *testing.T) {
 	}
 }
 
+// TestStreamingResponseMutator_GoogleAcceptsConstruction pins the
+// Phase 6 promise at the mutator boundary: the new ProviderGoogle /
+// StreamShapeGoogleGemini values are accepted at construction even
+// though their prepend isn't wired yet. No-mutation commits copy
+// upstream verbatim (the stub codec's pass-through property).
+func TestStreamingResponseMutator_GoogleAcceptsConstruction(t *testing.T) {
+	upstream := strings.Join([]string{
+		`data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"}}]}`,
+		``,
+	}, "\n")
+	var dst bytes.Buffer
+	m, err := pipeline.NewStreamingResponseMutator(&dst, strings.NewReader(upstream), conversation.StreamShapeGoogleGemini)
+	if err != nil {
+		t.Fatalf("Google shape rejected at construction: %v", err)
+	}
+	if committer, ok := m.(interface{ Commit() error }); ok {
+		if err := committer.Commit(); err != nil {
+			t.Fatalf("Commit (no mutation): %v", err)
+		}
+	}
+	if dst.String() != upstream {
+		t.Errorf("no-mutation commit should copy upstream verbatim\n--- want ---\n%s\n--- got ---\n%s", upstream, dst.String())
+	}
+}
+
 // TestStreamingResponseMutator_PrependOpenAIChatNotice exercises the
 // new OpenAI Chat prepend wiring: a chat completions stream gets a
 // synthetic leading chunk carrying the notice; upstream chunks pass

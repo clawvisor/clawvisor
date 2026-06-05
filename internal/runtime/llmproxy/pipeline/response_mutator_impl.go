@@ -42,7 +42,8 @@ func NewStreamingResponseMutator(dst io.Writer, src io.Reader, shape conversatio
 	switch shape {
 	case conversation.StreamShapeAnthropicMessages,
 		conversation.StreamShapeOpenAIChat,
-		conversation.StreamShapeOpenAIResponses:
+		conversation.StreamShapeOpenAIResponses,
+		conversation.StreamShapeGoogleGemini:
 		// supported
 	default:
 		return nil, fmt.Errorf("streaming response mutator: unknown shape %v", shape)
@@ -99,6 +100,12 @@ func (m *streamingResponseMutator) Commit() error {
 		// No mutations queued — copy upstream verbatim.
 		_, err := io.Copy(m.dst, m.src)
 		return err
+	}
+
+	// Google's prepend isn't wired yet (the stub codec is pass-through
+	// only). When a real implementation lands it slots in here.
+	if m.shape == conversation.StreamShapeGoogleGemini {
+		return fmt.Errorf("streaming response mutator: PrependAssistantText not yet wired for Google Gemini (stub codec is pass-through only)")
 	}
 
 	switch m.shape {
