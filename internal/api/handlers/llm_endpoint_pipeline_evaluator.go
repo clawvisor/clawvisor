@@ -33,10 +33,26 @@ var pipelineToolUseEvaluatorFactory llmproxy.ToolUseEvaluatorFactory = func(
 	provider conversation.Provider,
 	emit func(llmproxy.BufferedAudit),
 ) conversation.ToolUseEvaluator {
-	legacy := llmproxy.BuildLegacyToolUseEvaluator(req, cfg, provider, emit)
-
-	triggerMissAuth := func(_ context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator) pipeline.ToolUseVerdict {
-		convV := legacy(tu)
+	triggerMissAuth := func(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator) pipeline.ToolUseVerdict {
+		// Re-derive the verdict the InspectorChain saw (idempotent;
+		// the chain just ran it). EvaluateTriggerMissAuthorization
+		// uses this for audit row shape (Verdict field on the
+		// BufferedAudit it emits).
+		v := cfg.Inspector.Inspect(ctx, inspector.ToolUse{
+			ID:    tu.ID,
+			Name:  tu.Name,
+			Input: tu.Input,
+		})
+		// Stub-placeholder downgrade — matches the InspectorChain
+		// branch the policy already ran.
+		if v.Source != inspector.SourceTriggerMiss && inspector.AllPlaceholdersAreStubs(v.Placeholders) {
+			v = inspector.Verdict{
+				IsAPICall: false,
+				Source:    inspector.SourceTriggerMiss,
+				Reason:    "placeholders are stub-length (no real vault reference)",
+			}
+		}
+		convV := llmproxy.EvaluateTriggerMissAuthorization(ctx, cfg, provider, tu, v, emit)
 		if mut != nil {
 			if len(convV.RewriteInput) > 0 {
 				_ = mut.RewriteArgs(convV.RewriteInput)
@@ -48,11 +64,37 @@ var pipelineToolUseEvaluatorFactory llmproxy.ToolUseEvaluatorFactory = func(
 		return delegatePipelineVerdict(convV)
 	}
 
-	credentialedTaskScope := func(_ context.Context, _ conversation.ToolUse) llmproxy.TaskScopeDecision {
-		// Skip — credentialed-path authorization delegates via the
-		// trigger-miss authorizer's fall-through above. Empty Reason
-		// makes the policy emit Skip.
-		return llmproxy.TaskScopeDecision{}
+	// credentialedTaskScope runs the credentialed-path TaskScope +
+	// intent verification stage. Calls into EvaluateCredentialedAuthorization
+	// to do the actual decision. Translates the result into the
+	// TaskScopeDecision shape the policy expects.
+	credentialedTaskScope := func(ctx context.Context, tu conversation.ToolUse) llmproxy.TaskScopeDecision {
+		v := cfg.Inspector.Inspect(ctx, inspector.ToolUse{
+			ID:    tu.ID,
+			Name:  tu.Name,
+			Input: tu.Input,
+		})
+		if !v.IsAPICall || v.Ambiguous {
+			// Not a credentialed call from the chain's perspective —
+			// nothing to authorize here. Return empty (Skip).
+			return llmproxy.TaskScopeDecision{}
+		}
+		result := llmproxy.EvaluateCredentialedAuthorization(ctx, cfg, provider, tu, v, emit)
+		if result.Allowed {
+			// Allowed → return empty Reason (Skip) so the chain
+			// continues to CredentialRewrite. Stash matched_task_id
+			// in audit fields via the policy's TaskID branch — handled
+			// by lookupMatchedTaskID in the emit sink.
+			return llmproxy.TaskScopeDecision{}
+		}
+		// Denied / held — turn the verdict into the policy's Hold
+		// shape via a non-empty Reason + Allowed=false. The policy
+		// will emit Hold with HoldKey "needs_task_<id>".
+		return llmproxy.TaskScopeDecision{
+			Allowed: false,
+			Reason:  result.Verdict.Reason,
+			TaskID:  result.MatchedTaskID,
+		}
 	}
 
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
@@ -70,7 +112,20 @@ var pipelineToolUseEvaluatorFactory llmproxy.ToolUseEvaluatorFactory = func(
 		res := &singletonToolUseResponse{provider: provider, tu: tu}
 		evalFn, result, err := pipeline.BridgeToolUseEvaluator(ctx, res, []conversation.ToolUse{tu}, chain)
 		if err != nil {
-			return legacy(tu)
+			// Pipeline orchestrator error is rare (one of the
+			// evaluators returned an error). Fail closed with a
+			// refusal — the user-facing reason mirrors the legacy
+			// "authorization failed" shape.
+			emit(llmproxy.BufferedAudit{
+				ToolUse:  tu,
+				Decision: "block",
+				Outcome:  "pipeline_error",
+				Reason:   err.Error(),
+			})
+			return conversation.ToolUseVerdict{
+				Allowed: false,
+				Reason:  "Clawvisor: authorization pipeline failed — " + err.Error(),
+			}
 		}
 		// If the trigger-miss authorizer fired, the legacy closure
 		// already emitted its audit row through emit. Skip the
