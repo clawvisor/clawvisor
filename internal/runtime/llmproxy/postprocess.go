@@ -112,10 +112,47 @@ type IntentVerdict struct {
 	Explanation string
 }
 
+// BufferedAudit is the exported per-tool-use audit shape the
+// pipeline-based ToolUseEvaluatorFactory emits into Postprocess.
+// Internal callers continue to use the unexported bufferedAudit; the
+// two are bidirectionally convertible. Exists so handler-side
+// factories can append audit rows without depending on unexported
+// llmproxy types.
+type BufferedAudit struct {
+	ToolUse  conversation.ToolUse
+	Verdict  inspector.Verdict
+	Decision string
+	Outcome  string
+	Reason   string
+	TaskID   string
+}
+
+// ToolUseEvaluatorFactory, when set on PostprocessConfig, replaces
+// the inline newToolUseEvaluator with a handler-supplied alternative
+// (typically the policies-chain-based pipeline evaluator). The
+// factory receives the request, full config, provider, and an emit
+// callback that the factory uses to append audit rows to the
+// internal sink.
+//
+// Set on a per-call basis (or shared via cfg) so the handler can
+// choose evaluator implementation per request — useful for A/B
+// validation during the migration to the pipeline path.
+type ToolUseEvaluatorFactory func(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, emit func(BufferedAudit)) conversation.ToolUseEvaluator
+
 // PostprocessConfig wires the inspector + rewriter into the LLM endpoint
 // handler's response path. The handler reads the upstream response body
 // and calls Postprocess; the result is what the harness sees.
 type PostprocessConfig struct {
+	// ToolUseEvaluatorFactory, when non-nil, replaces the default
+	// inline newToolUseEvaluator with a handler-supplied implementation
+	// (typically the policies-chain-based pipeline evaluator). The
+	// factory takes the same per-call inputs and returns the
+	// conversation.ToolUseEvaluator the rewriter calls per tool_use.
+	// The emit callback appends audit rows into the internal sink
+	// without requiring handler code to depend on unexported sink
+	// internals.
+	ToolUseEvaluatorFactory ToolUseEvaluatorFactory
+
 	// Inspector decides whether each tool_use should be rewritten or
 	// passed through. Required.
 	Inspector *inspector.Inspector
@@ -360,7 +397,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 	auditSink := &capturedAuditSink{}
 	var captures []evalCapture
 
-	innerEval := newToolUseEvaluator(req, cfg, rewriter.Name(), auditSink)
+	innerEval := selectToolUseEvaluator(req, cfg, rewriter.Name(), auditSink)
 
 	// Outer eval wraps innerEval and records the kind + decision
 	// context for the coalesce post-pass. Two side channels feed the
@@ -598,6 +635,28 @@ func rollbackBufferedPendingTasks(ctx context.Context, cfg PostprocessConfig, si
 			})
 		}
 	}
+}
+
+// selectToolUseEvaluator dispatches to either the handler-supplied
+// ToolUseEvaluatorFactory (the policies-chain-based pipeline path) or
+// the inline newToolUseEvaluator (legacy default). The factory's emit
+// callback bridges exported BufferedAudit shape to the internal
+// bufferedAudit sink the rest of Postprocess consumes.
+func selectToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, auditSink *capturedAuditSink) conversation.ToolUseEvaluator {
+	if cfg.ToolUseEvaluatorFactory != nil {
+		emit := func(ba BufferedAudit) {
+			auditSink.entries = append(auditSink.entries, bufferedAudit{
+				ToolUse:  ba.ToolUse,
+				Verdict:  ba.Verdict,
+				Decision: ba.Decision,
+				Outcome:  ba.Outcome,
+				Reason:   ba.Reason,
+				TaskID:   ba.TaskID,
+			})
+		}
+		return cfg.ToolUseEvaluatorFactory(req, cfg, provider, emit)
+	}
+	return newToolUseEvaluator(req, cfg, provider, auditSink)
 }
 
 func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, auditSink *capturedAuditSink) conversation.ToolUseEvaluator {
@@ -1765,7 +1824,7 @@ func PostprocessStream(
 	auditSink := &capturedAuditSink{}
 	var captures []evalCapture
 
-	innerEval := newToolUseEvaluator(req, cfg, provider, auditSink)
+	innerEval := selectToolUseEvaluator(req, cfg, provider, auditSink)
 
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		holdsBefore, auditsBefore := 0, 0
