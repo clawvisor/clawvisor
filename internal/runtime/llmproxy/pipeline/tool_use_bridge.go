@@ -94,6 +94,13 @@ func BridgeToolUseEvaluator(
 			cv.ContinueWithToolResult = string(combined)
 			cv.PrependAssistantNotice = v.Continue.PrependNotice
 		}
+		// ContinueWithToolResultText is the flat-text variant: refusal
+		// paths use it to feed recovery guidance back to the model via
+		// a synthetic tool_result without building a full assistant
+		// turn (which Continue/SyntheticToolResults would).
+		if v.ContinueWithToolResultText != "" {
+			cv.ContinueWithToolResult = v.ContinueWithToolResultText
+		}
 		return cv
 	}
 	return eval, result, nil

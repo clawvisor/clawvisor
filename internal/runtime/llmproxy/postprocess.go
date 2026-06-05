@@ -673,24 +673,37 @@ func BuildLegacyToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provi
 	}
 }
 
-// selectToolUseEvaluator dispatches to either the handler-supplied
-// ToolUseEvaluatorFactory (the policies-chain-based pipeline path) or
-// the inline newToolUseEvaluator (legacy default). The factory's emit
-// callback bridges exported BufferedAudit shape to the internal
-// bufferedAudit sink the rest of Postprocess consumes.
+// DefaultToolUseEvaluatorFactory is a package-level factory used by
+// Postprocess + PostprocessStream when cfg.ToolUseEvaluatorFactory is
+// not set. The pipelineeval package's init() assigns its Factory here
+// so blank-importing it from a test (or main) opts that build into
+// the policies-chain-based path without each call site having to
+// thread the factory through PostprocessConfig.
+//
+// When nil (default), the inline newToolUseEvaluator closure runs.
+var DefaultToolUseEvaluatorFactory ToolUseEvaluatorFactory
+
+// selectToolUseEvaluator dispatches to either the cfg-supplied
+// ToolUseEvaluatorFactory, the package-level
+// DefaultToolUseEvaluatorFactory, or the inline newToolUseEvaluator
+// (legacy default). Per-cfg setting takes precedence over the global
+// default so individual call sites can override.
 func selectToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, auditSink *capturedAuditSink) conversation.ToolUseEvaluator {
+	emit := func(ba BufferedAudit) {
+		auditSink.entries = append(auditSink.entries, bufferedAudit{
+			ToolUse:  ba.ToolUse,
+			Verdict:  ba.Verdict,
+			Decision: ba.Decision,
+			Outcome:  ba.Outcome,
+			Reason:   ba.Reason,
+			TaskID:   ba.TaskID,
+		})
+	}
 	if cfg.ToolUseEvaluatorFactory != nil {
-		emit := func(ba BufferedAudit) {
-			auditSink.entries = append(auditSink.entries, bufferedAudit{
-				ToolUse:  ba.ToolUse,
-				Verdict:  ba.Verdict,
-				Decision: ba.Decision,
-				Outcome:  ba.Outcome,
-				Reason:   ba.Reason,
-				TaskID:   ba.TaskID,
-			})
-		}
 		return cfg.ToolUseEvaluatorFactory(req, cfg, provider, emit)
+	}
+	if DefaultToolUseEvaluatorFactory != nil {
+		return DefaultToolUseEvaluatorFactory(req, cfg, provider, emit)
 	}
 	return newToolUseEvaluator(req, cfg, provider, auditSink)
 }

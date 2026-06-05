@@ -139,6 +139,14 @@ type ToolUseVerdict struct {
 	// pipeline re-enters with the synthetic continuation as the next
 	// request.
 	Continue *ContinueSignal
+	// ContinueWithToolResultText, when non-empty, surfaces as
+	// conversation.ToolUseVerdict.ContinueWithToolResult via the
+	// bridge. Used for refusal paths where the evaluator wants the
+	// model to recover (e.g., rewriter error with actionable
+	// guidance) by feeding the refusal text back as a synthetic
+	// tool_result. Distinct from Continue which builds a full
+	// synthetic assistant turn — this is just the tool_result text.
+	ContinueWithToolResultText string
 }
 
 // SyntheticResponse is returned to the client when a RequestPolicy
