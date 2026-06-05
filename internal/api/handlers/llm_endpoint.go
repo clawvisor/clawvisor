@@ -2970,9 +2970,28 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 		})
 		return body, false
 	}
-	if rewritten, modified := h.applyRememberedSecretRewrites(r.Context(), agent, provider, requestID, body); modified {
-		body = rewritten
-		auditParams["secret_rewrites_applied"] = true
+	// Ninth migrated call site through pipeline: SecretRewrites.
+	{
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		resolver := func(ctx context.Context, b []byte) ([]byte, bool) {
+			return h.applyRememberedSecretRewrites(ctx, agent, provider, requestID, b)
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewSecretRewrites(resolver))
+		if err != nil {
+			h.Logger.WarnContext(r.Context(), "lite-proxy secret rewrites pipeline failed",
+				"agent_id", agent.ID, "err", err.Error())
+		} else {
+			body = result.FinalBody
+			for k, v := range result.AuditFields {
+				auditParams[k] = v
+			}
+		}
 	}
 	if h.maybeHoldInboundSecret(w, r, agent, provider, requestID, body, extraSuppressed, auditParams, auditStatus, auditDecide, auditOutcome, auditReason) {
 		return body, true
