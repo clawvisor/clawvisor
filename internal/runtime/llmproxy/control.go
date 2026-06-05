@@ -888,6 +888,15 @@ func controlCallParts(t conversation.ToolUse, controlBaseURL string) (*url.URL, 
 	return nil, "", nil, false
 }
 
+// ControlToolUseMentionsEndpoint reports whether the tool_use mentions
+// the configured control endpoint host, regardless of whether it parses
+// as a well-formed control call. Used by the control-tool evaluator to
+// route malformed mentions through the failure-rewrite path so the
+// model gets a structured failure response rather than a raw refusal.
+func ControlToolUseMentionsEndpoint(t conversation.ToolUse, controlBaseURL string) bool {
+	return controlToolUseMentionsEndpoint(t, controlBaseURL)
+}
+
 func controlToolUseMentionsEndpoint(t conversation.ToolUse, controlBaseURL string) bool {
 	if len(t.Input) == 0 {
 		return false
