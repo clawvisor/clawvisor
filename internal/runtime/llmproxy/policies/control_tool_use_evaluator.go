@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/callernonce"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
@@ -37,7 +37,7 @@ type ControlToolUseInputs struct {
 	AgentID string
 	// CallerNonces mints + consumes the per-call nonces the rewritten
 	// URL embeds in X-Clawvisor-Caller.
-	CallerNonces llmproxy.CallerNonceCache
+	CallerNonces callernonce.CallerNonceCache
 	// InterceptInline, when non-nil, handles inline task-definition
 	// interception (model emits POST /api/control/tasks while the user
 	// is mid-flight on a "task" gesture). Returns a verdict + true when
@@ -107,7 +107,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}},
 		}, nil
 	}
-	nonce, err := in.CallerNonces.Mint(ctx, in.AgentID, llmproxy.NonceTarget{
+	nonce, err := in.CallerNonces.Mint(ctx, in.AgentID, callernonce.NonceTarget{
 		Host:   call.Verdict.Host,
 		Method: call.Verdict.Method,
 		Path:   call.Verdict.Path,
@@ -159,7 +159,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}},
 		}, nil
 	}
-	nonce, err := in.CallerNonces.Mint(ctx, in.AgentID, llmproxy.NonceTarget{
+	nonce, err := in.CallerNonces.Mint(ctx, in.AgentID, callernonce.NonceTarget{
 		Host:   controltool.ControlSyntheticHost,
 		Method: "POST",
 		Path:   "/api/control/failure",

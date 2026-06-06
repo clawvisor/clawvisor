@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/callernonce"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/rewritehelp"
@@ -41,7 +41,7 @@ type CredentialRewriteEvaluator struct {
 // evaluator Skip so the orchestrator's default-Allow path handles it.
 type CredentialRewriteInputs struct {
 	Inspector    *inspector.Inspector
-	CallerNonces llmproxy.CallerNonceCache
+	CallerNonces callernonce.CallerNonceCache
 	AgentID      string
 	RewriteOpts  inspector.RewriteOpts
 }
@@ -98,7 +98,7 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 			}},
 		}, nil
 	}
-	nonce, mintErr := in.CallerNonces.Mint(ctx, in.AgentID, llmproxy.NonceTarget{
+	nonce, mintErr := in.CallerNonces.Mint(ctx, in.AgentID, callernonce.NonceTarget{
 		Host:   v.Host,
 		Method: v.Method,
 		Path:   v.Path,

@@ -1,4 +1,4 @@
-package llmproxy
+package callernonce
 
 import (
 	"context"
@@ -94,18 +94,18 @@ func TestMemoryCallerNonceCache_MethodAndPathBinding(t *testing.T) {
 func TestMemoryCallerNonceCache_NormalizationStable(t *testing.T) {
 	c := NewMemoryCallerNonceCache(time.Minute)
 	nonce, err := c.Mint(context.Background(), "agent-1", NonceTarget{
-		Host: "API.Github.com",
+		Host:   "API.Github.com",
 		Method: "post",
-		Path: "/repos/x/y/issues/",
+		Path:   "/repos/x/y/issues/",
 	})
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
 	// Different casing / trailing slash on consume — must match.
 	agentID, err := c.Consume(context.Background(), nonce, NonceTarget{
-		Host: "api.github.com",
+		Host:   "api.github.com",
 		Method: "POST",
-		Path: "/repos/x/y/issues",
+		Path:   "/repos/x/y/issues",
 	})
 	if err != nil {
 		t.Fatalf("Consume normalized: %v", err)
