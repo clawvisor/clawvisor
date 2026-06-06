@@ -23,6 +23,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
+	placeholderpkg "github.com/clawvisor/clawvisor/internal/runtime/llmproxy/placeholder"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
@@ -338,13 +339,13 @@ func buildBoundaryResolver(agent llmproxy.AgentContext, st store.Store) policies
 				Reason:     "Clawvisor: autovault placeholder not found in store",
 			}
 		}
-		if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(ctx, st, rec, userID, agentID, time.Now().UTC()); !ok {
+		if _, ok := placeholderpkg.ValidateRuntimePlaceholderAccess(ctx, st, rec, userID, agentID, time.Now().UTC()); !ok {
 			return policies.BoundaryDecision{
 				DenyReason: pipeline.BoundaryDenyReasonOwnershipMismatch,
 				Reason:     "Clawvisor: autovault placeholder belongs to a different agent",
 			}
 		}
-		hosts, _ := llmproxy.RuntimePlaceholderBoundHosts(ctx, st, rec)
+		hosts, _ := placeholderpkg.RuntimePlaceholderBoundHosts(ctx, st, rec)
 		ok, reason := inspector.BoundaryCheck(v, hosts)
 		decision := policies.BoundaryDecision{Allowed: ok, AllowedHosts: hosts, Reason: reason}
 		if !ok {
