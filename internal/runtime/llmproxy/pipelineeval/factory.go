@@ -67,9 +67,9 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		// EvaluateTriggerMissAuthorization emits its own audit row via the
 		// emit callback; flag the verdict so the downstream emission pass
 		// suppresses a second row for this tool_use.
-		v2 := delegatePipelineVerdict(convV)
-		v2.EmittedAuditExternally = true
-		return v2
+		pv := conversationToPipelineVerdict(convV)
+		pv.EmittedAuditExternally = true
+		return pv
 	}
 
 	credentialedTaskScope := func(ctx context.Context, tu conversation.ToolUse) llmproxy.TaskScopeDecision {
@@ -92,9 +92,8 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		}
 	}
 
-	inlineExtras := make(map[string]conversation.ToolUseVerdict)
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
-		Control:         buildControlResolver(req, cfg, provider, emit, inlineExtras),
+		Control:         buildControlResolver(req, cfg, provider, emit),
 		ScriptSession:   buildScriptSessionResolver(cfg),
 		Inspector:       cfg.Inspector,
 		AllowedHostsFor: buildAllowedHostsResolver(cfg),
@@ -135,7 +134,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 				})
 			})
 		}
-		return applyInlineExtras(inlineExtras, tu, evalFn(tu))
+		return evalFn(tu)
 	}
 }
 
@@ -188,21 +187,6 @@ func lookupMatchedTaskID(ctx context.Context, cfg llmproxy.PostprocessConfig, tu
 	return ""
 }
 
-func delegatePipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolUseVerdict {
-	outcome := pipeline.OutcomeDeny
-	if v.Allowed {
-		if len(v.RewriteInput) > 0 {
-			outcome = pipeline.OutcomeRewrite
-		} else {
-			outcome = pipeline.OutcomeAllow
-		}
-	}
-	return pipeline.ToolUseVerdict{
-		Outcome: outcome,
-		Reason:  v.Reason,
-	}
-}
-
 // verdictEmittedAuditExternally reports whether the winning verdict
 // for tu already emitted its audit row via the legacy emit callback
 // (trigger-miss authorizer pattern). When true, the downstream
@@ -234,7 +218,7 @@ func (r *singletonToolUseResponse) ToolUses() []conversation.ToolUse {
 	return []conversation.ToolUse{r.tu}
 }
 
-func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, emit func(llmproxy.BufferedAudit), inlineExtras map[string]conversation.ToolUseVerdict) policies.ControlToolUseResolver {
+func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, emit func(llmproxy.BufferedAudit)) policies.ControlToolUseResolver {
 	if cfg.ControlBaseURL == "" {
 		return nil
 	}
@@ -260,42 +244,38 @@ func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, pro
 				if !claimed {
 					return pipeline.ToolUseVerdict{}, false
 				}
-				// Stash the conversation-shape extras so the
-				// per-tool factory closure can surface them.
-				inlineExtras[tu.ID] = convV
-				return delegatePipelineVerdict(convV), true
+				return conversationToPipelineVerdict(convV), true
 			},
 		}
 	}
 }
 
-// applyInlineExtras patches the conversation verdict the bridge
-// returned with the inline-intercept extras the resolver captured.
-// Used by the per-tool closure right before returning the verdict
-// to the rewriter so SubstituteWith / RewriteInput from
-// MaybeInterceptInlineTaskDefinition survive the pipeline.ToolUseVerdict
-// round trip.
-func applyInlineExtras(extras map[string]conversation.ToolUseVerdict, tu conversation.ToolUse, v conversation.ToolUseVerdict) conversation.ToolUseVerdict {
-	x, ok := extras[tu.ID]
-	if !ok {
-		return v
+// conversationToPipelineVerdict translates a conversation-shape verdict
+// into the pipeline shape, preserving every field (SubstituteWith,
+// RewriteInput, ContinueWithToolResult, PrependAssistantNotice,
+// CreatedTaskID). Used by the inline-task interceptor whose source
+// helper still returns a conversation.ToolUseVerdict. The pipeline
+// verdict carries all conversation-shape fields directly so the bridge
+// is 1:1 — no inlineExtras side channel required.
+func conversationToPipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolUseVerdict {
+	outcome := pipeline.OutcomeDeny
+	if v.Allowed {
+		if len(v.RewriteInput) > 0 {
+			outcome = pipeline.OutcomeRewrite
+		} else {
+			outcome = pipeline.OutcomeAllow
+		}
 	}
-	if x.SubstituteWith != "" {
-		v.SubstituteWith = x.SubstituteWith
+	return pipeline.ToolUseVerdict{
+		Outcome:                outcome,
+		Reason:                 v.Reason,
+		HeldKind:               pipeline.HeldKindHint(v.HeldKindHint),
+		SubstituteText:         v.SubstituteWith,
+		RewriteInput:           v.RewriteInput,
+		ContinueWithToolResult: v.ContinueWithToolResult,
+		PrependAssistantNotice: v.PrependAssistantNotice,
+		CreatedTaskID:          v.CreatedTaskID,
 	}
-	if len(x.RewriteInput) > 0 {
-		v.RewriteInput = x.RewriteInput
-	}
-	if x.ContinueWithToolResult != "" {
-		v.ContinueWithToolResult = x.ContinueWithToolResult
-	}
-	if x.PrependAssistantNotice != "" {
-		v.PrependAssistantNotice = x.PrependAssistantNotice
-	}
-	if x.CreatedTaskID != "" {
-		v.CreatedTaskID = x.CreatedTaskID
-	}
-	return v
 }
 
 // buildAllowedHostsResolver wires InspectorChain's boundary check to

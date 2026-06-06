@@ -79,6 +79,28 @@ func BridgeToolUseEvaluator(
 			Reason:       v.Reason,
 			HeldKindHint: string(v.HeldKind),
 		}
+		// Pipeline-side fields populated directly by evaluators.
+		if v.SubstituteText != "" {
+			cv.SubstituteWith = v.SubstituteText
+		}
+		if len(v.RewriteInput) > 0 {
+			cv.RewriteInput = v.RewriteInput
+		}
+		if v.ContinueWithToolResult != "" {
+			cv.ContinueWithToolResult = v.ContinueWithToolResult
+		}
+		if v.PrependAssistantNotice != "" {
+			cv.PrependAssistantNotice = v.PrependAssistantNotice
+		}
+		if v.CreatedTaskID != "" {
+			cv.CreatedTaskID = v.CreatedTaskID
+		}
+		// Mutator-side mutations (RewriteArgs / ReplaceWithText) take
+		// precedence over verdict-side fields. The mutator is the
+		// imperative API for evaluators that prefer to queue mutations
+		// alongside the verdict return; verdict-side fields are the
+		// declarative API for evaluators that build the verdict from
+		// scratch (inline-task intercept, control rewrite redirects).
 		if mu, ok := mutations[tu.ID]; ok && mu != nil {
 			if len(mu.rewrittenInput) > 0 {
 				cv.RewriteInput = mu.rewrittenInput
@@ -95,10 +117,9 @@ func BridgeToolUseEvaluator(
 			cv.ContinueWithToolResult = string(combined)
 			cv.PrependAssistantNotice = v.Continue.PrependNotice
 		}
-		// ContinueWithToolResultText is the flat-text variant: refusal
-		// paths use it to feed recovery guidance back to the model via
-		// a synthetic tool_result without building a full assistant
-		// turn (which Continue/SyntheticToolResults would).
+		// ContinueWithToolResultText is the legacy flat-text variant
+		// retained for evaluators that haven't moved to
+		// ContinueWithToolResult yet.
 		if v.ContinueWithToolResultText != "" {
 			cv.ContinueWithToolResult = v.ContinueWithToolResultText
 		}

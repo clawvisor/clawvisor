@@ -168,6 +168,30 @@ type ToolUseVerdict struct {
 	// including those returning Skip — observation is a separate
 	// channel from verdict claiming.
 	Facts []EvaluationFact
+	// SubstituteText, when non-empty, replaces the tool_use block with
+	// a plain-text assistant block in the rewritten response. Used by
+	// approval-prompt rendering, inline-task interception, etc.
+	// Translates to conversation.ToolUseVerdict.SubstituteWith via the
+	// bridge.
+	SubstituteText string
+	// RewriteInput, when non-nil, replaces the tool_use's input field
+	// in-place. Used by inspector/control rewrites where the URL or
+	// args change but the tool_use shape is preserved.
+	RewriteInput []byte
+	// ContinueWithToolResult, when non-empty, feeds back a synthetic
+	// tool_result to the upstream LLM so it continues with its next
+	// tool_use. Replaces the older ContinueWithToolResultText.
+	ContinueWithToolResult string
+	// PrependAssistantNotice, when non-empty, prepends a user-facing
+	// notice to the assistant turn returned after a successful
+	// ContinueWithToolResult round-trip ("a task was auto-approved on
+	// your behalf"). Ignored when ContinueWithToolResult is empty.
+	PrependAssistantNotice string
+	// CreatedTaskID is set by the conversation auto-approval gate to
+	// the ID of the inline task it created before returning the
+	// verdict. Carried so downstream audit rows can link to the same
+	// task_id without parsing augmentation text.
+	CreatedTaskID string
 }
 
 // HeldKindHint classifies a verdict for the coalescing pass without
