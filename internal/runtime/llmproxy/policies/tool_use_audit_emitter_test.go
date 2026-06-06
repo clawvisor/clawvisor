@@ -14,7 +14,7 @@ import (
 func TestEmitToolUseAuditRows_NoOpOnNilInputs(t *testing.T) {
 	// Both nil result + nil sink → no panic, no rows.
 	called := false
-	policies.EmitToolUseAuditRows(context.Background(), nil, nil, nil, func(_ context.Context, _ policies.ToolUseAuditRow) {
+	policies.EmitToolUseAuditRows(context.Background(), nil, nil, nil, func(_ context.Context, _ conversation.AuditEvent) {
 		called = true
 	})
 	if called {
@@ -44,8 +44,8 @@ func TestEmitToolUseAuditRows_TaskScopeMissingMapping(t *testing.T) {
 			{EvaluatorName: "task_scope", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeHold, Facts: []pipeline.EvaluationFact{scopeFact}}},
 		},
 	}
-	var rows []policies.ToolUseAuditRow
-	policies.EmitToolUseAuditRows(context.Background(), result, []conversation.ToolUse{tu}, nil, func(_ context.Context, r policies.ToolUseAuditRow) {
+	var rows []conversation.AuditEvent
+	policies.EmitToolUseAuditRows(context.Background(), result, []conversation.ToolUse{tu}, nil, func(_ context.Context, r conversation.AuditEvent) {
 		rows = append(rows, r)
 	})
 	if len(rows) != 1 {
@@ -55,7 +55,7 @@ func TestEmitToolUseAuditRows_TaskScopeMissingMapping(t *testing.T) {
 	if r.Decision != "block" {
 		t.Errorf("Decision = %q, want block", r.Decision)
 	}
-	if r.Outcome != "task_scope_missing" {
+	if r.OutcomeName != "task_scope_missing" {
 		t.Errorf("Outcome = %q, want task_scope_missing", r.Outcome)
 	}
 	if r.TaskID != "task-123" {
@@ -84,8 +84,8 @@ func TestEmitToolUseAuditRows_CredentialRewriteMapping(t *testing.T) {
 			{EvaluatorName: "credential_rewrite", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeRewrite, Facts: []pipeline.EvaluationFact{rewriteFact}}},
 		},
 	}
-	var rows []policies.ToolUseAuditRow
-	policies.EmitToolUseAuditRows(context.Background(), result, []conversation.ToolUse{tu}, nil, func(_ context.Context, r policies.ToolUseAuditRow) {
+	var rows []conversation.AuditEvent
+	policies.EmitToolUseAuditRows(context.Background(), result, []conversation.ToolUse{tu}, nil, func(_ context.Context, r conversation.AuditEvent) {
 		rows = append(rows, r)
 	})
 	if len(rows) != 1 {
@@ -94,7 +94,7 @@ func TestEmitToolUseAuditRows_CredentialRewriteMapping(t *testing.T) {
 	if rows[0].Decision != "rewrite" {
 		t.Errorf("Decision = %q, want rewrite", rows[0].Decision)
 	}
-	if rows[0].Outcome != "success" {
+	if rows[0].OutcomeName != "success" {
 		t.Errorf("Outcome = %q, want success", rows[0].Outcome)
 	}
 }
@@ -117,14 +117,14 @@ func TestEmitToolUseAuditRows_ControlOutcomeMapping(t *testing.T) {
 			{EvaluatorName: "control_tool_use", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeDeny, Facts: []pipeline.EvaluationFact{controlFact}}},
 		},
 	}
-	var rows []policies.ToolUseAuditRow
-	policies.EmitToolUseAuditRows(context.Background(), result, []conversation.ToolUse{tu}, nil, func(_ context.Context, r policies.ToolUseAuditRow) {
+	var rows []conversation.AuditEvent
+	policies.EmitToolUseAuditRows(context.Background(), result, []conversation.ToolUse{tu}, nil, func(_ context.Context, r conversation.AuditEvent) {
 		rows = append(rows, r)
 	})
 	if rows[0].Decision != "block" {
 		t.Errorf("Decision = %q, want block", rows[0].Decision)
 	}
-	if rows[0].Outcome != "caller_nonce_unavailable" {
+	if rows[0].OutcomeName != "caller_nonce_unavailable" {
 		t.Errorf("Outcome = %q, want caller_nonce_unavailable", rows[0].Outcome)
 	}
 }
@@ -147,14 +147,14 @@ func TestEmitToolUseAuditRows_ScriptSessionPassthroughMapping(t *testing.T) {
 			{EvaluatorName: "script_session", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeAllow, Facts: []pipeline.EvaluationFact{scriptFact}}},
 		},
 	}
-	var rows []policies.ToolUseAuditRow
-	policies.EmitToolUseAuditRows(context.Background(), result, []conversation.ToolUse{tu}, nil, func(_ context.Context, r policies.ToolUseAuditRow) {
+	var rows []conversation.AuditEvent
+	policies.EmitToolUseAuditRows(context.Background(), result, []conversation.ToolUse{tu}, nil, func(_ context.Context, r conversation.AuditEvent) {
 		rows = append(rows, r)
 	})
 	if rows[0].Decision != "allow" {
 		t.Errorf("Decision = %q, want allow", rows[0].Decision)
 	}
-	if rows[0].Outcome != "script_session_passthrough" {
+	if rows[0].OutcomeName != "script_session_passthrough" {
 		t.Errorf("Outcome = %q, want script_session_passthrough", rows[0].Outcome)
 	}
 }
@@ -179,14 +179,14 @@ func TestEmitToolUseAuditRows_InspectorVerdictRederived(t *testing.T) {
 			"toolu_1": {Outcome: pipeline.OutcomeAllow},
 		},
 	}
-	var rows []policies.ToolUseAuditRow
-	policies.EmitToolUseAuditRows(context.Background(), result, []conversation.ToolUse{tu}, insp, func(_ context.Context, r policies.ToolUseAuditRow) {
+	var rows []conversation.AuditEvent
+	policies.EmitToolUseAuditRows(context.Background(), result, []conversation.ToolUse{tu}, insp, func(_ context.Context, r conversation.AuditEvent) {
 		rows = append(rows, r)
 	})
-	if rows[0].Verdict.Host != "api.github.com" {
-		t.Errorf("Verdict.Host = %q, want api.github.com", rows[0].Verdict.Host)
+	if rows[0].InspectorVerdict.Host != "api.github.com" {
+		t.Errorf("Verdict.Host = %q, want api.github.com", rows[0].InspectorVerdict.Host)
 	}
-	if !rows[0].Verdict.IsAPICall {
+	if !rows[0].InspectorVerdict.IsAPICall {
 		t.Error("expected IsAPICall=true")
 	}
 }

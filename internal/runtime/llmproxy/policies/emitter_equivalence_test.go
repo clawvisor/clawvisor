@@ -243,10 +243,9 @@ func TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows(t *testing.T) {
 			// newToolUseEvaluator overrides v after the downgrade). The
 			// equivalence test pins arg-shape parity, not inspector
 			// re-determinism; we feed the same verdict to both paths.
-			policies.EmitToolUseAuditRows(ctx, result, []conversation.ToolUse{sc.tu}, nil, func(ctx context.Context, row policies.ToolUseAuditRow) {
-				row.Verdict = sc.verdict
-				emitter.LogToolUseInspected(ctx, agent, pipelineRequestID, row.ToolUse, row.Verdict,
-					row.Decision, row.Outcome, row.Reason, row.TaskID)
+			policies.EmitToolUseAuditRows(ctx, result, []conversation.ToolUse{sc.tu}, nil, func(ctx context.Context, ev conversation.AuditEvent) {
+				ev.InspectorVerdict = sc.verdict
+				emitter.WriteAuditEvent(ctx, agent, pipelineRequestID, ev)
 			})
 
 			// Pull both rows from the store and compare them

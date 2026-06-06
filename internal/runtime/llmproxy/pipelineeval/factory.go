@@ -151,20 +151,13 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 			toEmit = append(toEmit, tu)
 		}
 	}
-	policies.EmitToolUseAuditRows(ctx, result, toEmit, cfg.Inspector, func(_ context.Context, row policies.ToolUseAuditRow) {
-		if row.TaskID == "" {
-			if id := matchedTaskIDs[row.ToolUse.ID]; id != "" {
-				row.TaskID = id
+	policies.EmitToolUseAuditRows(ctx, result, toEmit, cfg.Inspector, func(_ context.Context, ev conversation.AuditEvent) {
+		if ev.TaskID == "" {
+			if id := matchedTaskIDs[ev.ToolUse.ID]; id != "" {
+				ev.TaskID = id
 			}
 		}
-		emit(conversation.AuditEvent{
-			ToolUse:          row.ToolUse,
-			InspectorVerdict: row.Verdict,
-			Decision:         conversation.DecisionKind(row.Decision),
-			OutcomeName:      row.Outcome,
-			Reason:           row.Reason,
-			TaskID:           row.TaskID,
-		})
+		emit(ev)
 	})
 	return evalFn
 }

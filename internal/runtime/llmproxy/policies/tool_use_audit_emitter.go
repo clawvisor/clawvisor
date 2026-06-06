@@ -8,48 +8,14 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
-// ToolUseAuditRow is the per-tool-use audit shape the host emits to
-// the store. Translation from pipeline.ToolUseResult to this shape
-// lives here so the evaluator chain stays free of audit-emit concerns,
-// while the caller stays free of pipeline-shape concerns.
-//
-// Field semantics match store.AuditEntry's per-tool-use row:
-//   - Decision: "allow" | "block" | "rewrite"
-//   - Outcome: stage-specific outcome name (task_scope_missing,
-//     caller_nonce_unavailable, success, etc.)
-//   - Reason: human-readable explanation; surfaced as the audit row's
-//     Reason and as part of any user-visible refusal text upstream.
-//   - Verdict: the inspector.Verdict for this tool_use. Re-derived
-//     inside Emit by running the inspector (idempotent), so callers
-//     don't have to thread it through pipeline state. Empty when the
-//     emitter has no inspector configured.
-//   - TaskID: matched task ID when known (TaskScopeEvaluator surfaces
-//     this via the matched_task_id AuditField).
-type ToolUseAuditRow struct {
-	ToolUse  conversation.ToolUse
-	Verdict  inspector.Verdict
-	Decision string
-	Outcome  string
-	Reason   string
-	TaskID   string
-}
-
-// ToolUseAuditSink receives one audit row per tool_use. The host
-// implementation typically wraps llmproxy.AuditEmitter.LogToolUseInspected
-// with the row's fields.
-type ToolUseAuditSink func(ctx context.Context, row ToolUseAuditRow)
+// ToolUseAuditSink receives one typed conversation.AuditEvent per
+// tool_use. The host wires this to AuditEmitter.WriteAuditEvent.
+type ToolUseAuditSink func(ctx context.Context, ev conversation.AuditEvent)
 
 // EmitToolUseAuditRows walks the per-tool verdicts in result and emits
-// one audit row per tool_use via sink. The translation is:
-//
-//   - OutcomeAllow / OutcomeRewrite → Decision="allow" / "rewrite"
-//   - OutcomeDeny / OutcomeHold → Decision="block"
-//   - Outcome name reads from AuditFields keys (control_outcome,
-//     rewrite_outcome, path, task_scope_*) — falls back to generic
-//     names when no key is present.
-//   - The Reason on the pipeline verdict becomes the row Reason.
-//   - The matched_task_id AuditField becomes TaskID.
-//   - Verdict is re-derived by running insp.Inspect (idempotent).
+// one typed AuditEvent per tool_use via sink. Outcome name derives
+// from typed Facts (Phase 2); InspectorVerdict is re-derived via the
+// supplied inspector (idempotent).
 //
 // Sink and result may both be nil — the function no-ops.
 func EmitToolUseAuditRows(
@@ -89,31 +55,30 @@ func EmitToolUseAuditRows(
 		// Pull the canonical reason from PerToolUse (the winning verdict
 		// the orchestrator recorded) rather than the AuditEvent — the
 		// trail Evaluations may store an abbreviated Reason while
-		// PerToolUse carries the final richer form. AuditEvent.Reason
-		// matches whichever was set on the trail entry.
+		// PerToolUse carries the final richer form.
 		winningV := result.PerToolUse[ev.ToolUse.ID]
-		row := ToolUseAuditRow{
-			ToolUse:  ev.ToolUse,
-			Reason:   winningV.Reason,
-			Decision: string(ev.Decision),
+		out := conversation.AuditEvent{
+			ToolUse:       ev.ToolUse,
+			EvaluatorName: ev.EvaluatorName,
+			Outcome:       ev.Outcome,
+			Decision:      ev.Decision,
+			Reason:        winningV.Reason,
+			Facts:         ev.Facts,
+			Winning:       true,
 		}
-		if row.Reason == "" {
-			row.Reason = ev.Reason
+		if out.Reason == "" {
+			out.Reason = ev.Reason
 		}
 		if insp != nil {
-			row.Verdict = insp.Inspect(ctx, inspector.ToolUse{
+			out.InspectorVerdict = insp.Inspect(ctx, inspector.ToolUse{
 				ID:    ev.ToolUse.ID,
 				Name:  ev.ToolUse.Name,
 				Input: ev.ToolUse.Input,
 			})
 		}
-		// Outcome name + matched_task_id derive from the winning
-		// verdict's facts (and the aggregated trail for matched_task_id
-		// since TaskScope may emit on a Skip path that loses the
-		// verdict claim to CredentialRewrite).
-		row.Outcome = outcomeNameFor(ev.EvaluatorName, winningV, ev.Facts)
-		row.TaskID = matchedTaskIDFromFacts(factsByTU[ev.ToolUse.ID])
-		sink(ctx, row)
+		out.OutcomeName = outcomeNameFor(ev.EvaluatorName, winningV, ev.Facts)
+		out.TaskID = matchedTaskIDFromFacts(factsByTU[ev.ToolUse.ID])
+		sink(ctx, out)
 	}
 }
 
