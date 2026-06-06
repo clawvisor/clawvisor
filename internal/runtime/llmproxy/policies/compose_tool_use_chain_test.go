@@ -20,6 +20,7 @@ func TestComposeToolUseEvaluatorChain_AssemblesAllSixStages(t *testing.T) {
 		"control_tool_use",
 		"script_session",
 		"shell_poll_passthrough",
+		"readonly_shell_passthrough",
 		"inspector_chain",
 		"task_scope",
 		"intent_verify",

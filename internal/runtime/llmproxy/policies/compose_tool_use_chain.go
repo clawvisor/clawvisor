@@ -41,6 +41,11 @@ type ToolUseChainConfig struct {
 	// adapted via boundaryResolverFromHosts when Boundary is nil.
 	Boundary        BoundaryResolver
 	TriggerMissAuth TriggerMissAuthorizer
+	// ReadOnlyShell, when set, wires ReadOnlyShellPassthroughPolicy +
+	// SensitivePathPolicy. They share the same per-call inputs
+	// (AgentID + ToolRules) so they share one resolver. Nil → both
+	// policies Skip.
+	ReadOnlyShell ReadOnlyShellResolver
 	// TaskScope authorizes credentialed tool_uses against the agent's
 	// active task scopes (the handler wraps EvaluateAuthorization +
 	// catalog resolution into the TaskScopeResolver closure).
@@ -86,7 +91,16 @@ func ComposeToolUseEvaluatorChain(cfg ToolUseChainConfig) []pipeline.ToolUseEval
 	// wired yet — they require resolver plumbing the host hasn't moved
 	// out of the closure pattern. ShellPoll has no host dependencies, so
 	// it lands first.
+	// Phase 6 decomposed policies handling trigger-miss specials. Only
+	// ShellPoll + ReadOnlyShell are wired here — they take the
+	// passthrough Allow path. SensitivePathPolicy + AuthorizationPolicy
+	// remain unwired because their legacy behavior requires
+	// post-Deny decision-engine consultation (multi-row audit, approval
+	// flow) the chain can't yet express. The legacy
+	// EvaluateTriggerMissAuthorization closure (wired via InspectorChain)
+	// handles those cases.
 	chain = append(chain, NewShellPollPassthroughPolicy(cfg.Inspector))
+	chain = append(chain, NewReadOnlyShellPassthroughPolicy(cfg.Inspector, cfg.ReadOnlyShell))
 	chain = append(chain, inspectorChain)
 	chain = append(chain, NewTaskScopeEvaluator(cfg.TaskScope))
 	chain = append(chain, NewIntentVerifyEvaluator(cfg.IntentVerify))

@@ -99,6 +99,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		Inspector:       cfg.Inspector,
 		Boundary:        buildBoundaryResolver(cfg),
 		TriggerMissAuth: triggerMissAuth,
+		ReadOnlyShell:   buildReadOnlyShellResolver(cfg),
 		TaskScope:       credentialedTaskScope,
 		Rewrite:         buildRewriteResolver(cfg),
 	})
@@ -354,6 +355,22 @@ func buildBoundaryResolver(cfg llmproxy.PostprocessConfig) policies.BoundaryReso
 			decision.DenyReason = pipeline.BoundaryDenyReasonHostNotAllowed
 		}
 		return decision
+	}
+}
+
+// buildReadOnlyShellResolver wires ReadOnlyShellPassthroughPolicy +
+// SensitivePathPolicy to PostprocessConfig's AgentID + ToolRules.
+func buildReadOnlyShellResolver(cfg llmproxy.PostprocessConfig) policies.ReadOnlyShellResolver {
+	agentID := cfg.AgentID
+	toolRules := cfg.ToolRules
+	if agentID == "" && toolRules == nil {
+		return nil
+	}
+	return func(_ context.Context, _ conversation.ToolUse) *policies.ReadOnlyShellInputs {
+		return &policies.ReadOnlyShellInputs{
+			AgentID:   agentID,
+			ToolRules: toolRules,
+		}
 	}
 }
 
