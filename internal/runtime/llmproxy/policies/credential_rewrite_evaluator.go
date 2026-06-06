@@ -126,9 +126,9 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 	if err != nil {
 		reason := llmproxy.CredentialedRewriteRecoveryReason(v, err)
 		return pipeline.ToolUseVerdict{
-			Outcome:                    pipeline.OutcomeDeny,
-			Reason:                     reason,
-			ContinueWithToolResultText: reason,
+			Outcome:                pipeline.OutcomeDeny,
+			Reason:                 reason,
+			ContinueWithToolResult: reason,
 			Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
 				Outcome:      "rewriter_error",
 				TargetHost:   v.Host,

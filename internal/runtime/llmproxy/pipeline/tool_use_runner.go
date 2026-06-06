@@ -101,11 +101,6 @@ func RunToolUseEvaluators(
 			v.ContinueWithToolResult = string(combined)
 			v.PrependAssistantNotice = v.Continue.PrependNotice
 		}
-		// Legacy flat-text continuation variant retained for evaluators
-		// that haven't migrated to ContinueWithToolResult yet.
-		if v.ContinueWithToolResultText != "" {
-			v.ContinueWithToolResult = v.ContinueWithToolResultText
-		}
 		return v
 	}
 	return eval, result, nil

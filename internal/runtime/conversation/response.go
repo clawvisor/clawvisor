@@ -76,12 +76,6 @@ type ToolUseVerdict struct {
 	// request.
 	Continue *ContinueSignal
 
-	// ContinueWithToolResultText is the legacy flat-text variant of
-	// ContinueWithToolResult. Both fields surface as the same
-	// conversation continuation; ContinueWithToolResultText is kept for
-	// evaluator code that hasn't migrated.
-	ContinueWithToolResultText string
-
 	// Facts carries typed observations the evaluator emitted. Audit
 	// emission branches via type switch on Facts. Populated for EVERY
 	// evaluator that runs, including those returning Skip —
