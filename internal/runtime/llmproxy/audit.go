@@ -247,54 +247,36 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 	}
 }
 
-// WriteAuditEvent records one typed AuditEvent to the audit store. The
-// canonical Phase 9 API — consumes the typed conversation.AuditEvent
-// produced by the pipeline orchestrator instead of taking positional
-// args. LogToolUseInspected remains as a thin wrapper around this
-// method while in-tree callers migrate.
+// WriteAuditEvent records one typed AuditEvent to the audit store.
+// The canonical Phase 9 audit-emission API — consumes the typed
+// conversation.AuditEvent produced by the pipeline orchestrator.
 func (e *AuditEmitter) WriteAuditEvent(ctx context.Context, agent *store.Agent, requestID string, ev conversation.AuditEvent) {
-	e.LogToolUseInspected(ctx, agent, requestID, ev.ToolUse, ev.InspectorVerdict, string(ev.Decision), ev.OutcomeName, ev.Reason, ev.TaskID)
-}
-
-// LogToolUseInspected records one tool_use seen by the lite-proxy. Each row
-// carries the tool name, a bounded input summary, verdict source, decision,
-// target host (when known), and placeholder substrings (no real credential).
-//
-// taskID names the active task this tool_use matched (via task-scope
-// authorization), when one was matched. The dashboard task viewer
-// filters audit rows on AuditEntry.task_id, so threading the matched
-// task here is what makes lite-proxy tool_use rows visible in the
-// per-task activity feed. Empty taskID means "no task matched" — the
-// row still lands in the global audit feed but won't appear in any
-// task's activity tab, which matches reality (the call wasn't bound
-// to a task).
-func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Agent, requestID string, tu conversation.ToolUse, verdict inspector.Verdict, decision, outcome, reason, taskID string) {
 	if e == nil || e.Store == nil || agent == nil {
 		return
 	}
-	toolInput := decodeAuditToolInput(tu.Input)
+	toolInput := decodeAuditToolInput(ev.ToolUse.Input)
 	params := map[string]any{
 		"event":             "lite_proxy.tool_use_inspected",
 		"parent_request_id": requestID,
-		"tool_use_id":       tu.ID,
-		"tool_name":         tu.Name,
+		"tool_use_id":       ev.ToolUse.ID,
+		"tool_name":         ev.ToolUse.Name,
 		"tool_input":        toolInput,
 		"tool_target":       toolTarget(toolInput),
-		"verdict_source":    string(verdict.Source),
-		"is_api_call":       verdict.IsAPICall,
-		"ambiguous":         verdict.Ambiguous,
-		"target_host":       verdict.Host,
-		"target_method":     verdict.Method,
-		"target_path":       verdict.Path,
-		"placeholders":      verdict.Placeholders,
+		"verdict_source":    string(ev.InspectorVerdict.Source),
+		"is_api_call":       ev.InspectorVerdict.IsAPICall,
+		"ambiguous":         ev.InspectorVerdict.Ambiguous,
+		"target_host":       ev.InspectorVerdict.Host,
+		"target_method":     ev.InspectorVerdict.Method,
+		"target_path":       ev.InspectorVerdict.Path,
+		"placeholders":      ev.InspectorVerdict.Placeholders,
 		"build_sha":         buildSHA(),
 		"validator_prompt":  e.ValidatorPromptSHA,
 		"parser_version":    parserVersion(),
 		"clawvisor_version": version.Version,
 	}
-	if len(verdict.CredentialLocations) > 0 {
-		creds := make([]map[string]string, 0, len(verdict.CredentialLocations))
-		for _, c := range verdict.CredentialLocations {
+	if len(ev.InspectorVerdict.CredentialLocations) > 0 {
+		creds := make([]map[string]string, 0, len(ev.InspectorVerdict.CredentialLocations))
+		for _, c := range ev.InspectorVerdict.CredentialLocations {
 			creds = append(creds, map[string]string{
 				"kind":   c.Kind,
 				"name":   c.Name,
@@ -306,9 +288,10 @@ func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Age
 	paramsJSON, _ := json.Marshal(params)
 
 	service := "runtime.tool_use"
-	toolUseID := tu.ID
+	toolUseID := ev.ToolUse.ID
 	id := uuid.NewString()
-	dedupKey := liteProxyEventDedupKey("tool_use_inspected", requestID, tu.ID)
+	dedupKey := liteProxyEventDedupKey("tool_use_inspected", requestID, ev.ToolUse.ID)
+	decision := string(ev.Decision)
 
 	entry := &store.AuditEntry{
 		ID:         id,
@@ -317,19 +300,34 @@ func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Age
 		RequestID:  requestID,
 		DedupKey:   &dedupKey,
 		ToolUseID:  &toolUseID,
-		TaskID:     nilIfEmpty(taskID),
+		TaskID:     nilIfEmpty(ev.TaskID),
 		Timestamp:  time.Now().UTC(),
 		Service:    service,
 		Action:     "lite_proxy.tool_use." + decision,
 		ParamsSafe: paramsJSON,
 		Decision:   decision,
-		Outcome:    outcome,
-		Reason:     nilIfEmpty(reason),
+		Outcome:    ev.OutcomeName,
+		Reason:     nilIfEmpty(ev.Reason),
 	}
 	if err := e.Store.LogAudit(ctx, entry); err != nil && !errors.Is(err, store.ErrConflict) {
 		e.Logger.WarnContext(ctx, "lite-proxy: tool_use audit failed",
-			"agent_id", agent.ID, "tool_use_id", tu.ID, "err", err.Error())
+			"agent_id", agent.ID, "tool_use_id", ev.ToolUse.ID, "err", err.Error())
 	}
+}
+
+// LogToolUseInspected is the legacy positional-arg API. New callers
+// should use WriteAuditEvent with a typed conversation.AuditEvent.
+// Kept as a thin shim for in-tree call sites + tests that haven't
+// migrated yet.
+func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Agent, requestID string, tu conversation.ToolUse, verdict inspector.Verdict, decision, outcome, reason, taskID string) {
+	e.WriteAuditEvent(ctx, agent, requestID, conversation.AuditEvent{
+		ToolUse:          tu,
+		InspectorVerdict: verdict,
+		Decision:         conversation.DecisionKind(decision),
+		OutcomeName:      outcome,
+		Reason:           reason,
+		TaskID:           taskID,
+	})
 }
 
 func (e *AuditEmitter) LogApprovalRelease(ctx context.Context, agent *store.Agent, requestID string, pending *PendingLiteApproval, decision, outcome, reason string) {
