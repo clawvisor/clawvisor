@@ -1,4 +1,4 @@
-package llmproxy
+package postproc
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
@@ -28,8 +29,8 @@ func anthropicBashControlTasksPost(body string) []byte {
 	return anthropicJSONWithNamedToolUse("Bash", string(enc))
 }
 
-// The legacy "state signal" path (a prior StageAwaitingTaskDefinition
-// hold seeded by RewriteTaskApprovalReply) is no longer reachable in
+// The legacy "state signal" path (a prior llmproxy.StageAwaitingTaskDefinition
+// hold seeded by llmproxy.RewriteTaskApprovalReply) is no longer reachable in
 // production — task replies now fully Resolve the original hold rather
 // than transitioning its stage, so there is no awaiting-definition
 // hold for the intercept to observe. Inline approvals flow only
@@ -40,17 +41,17 @@ func TestPostprocess_AsyncControlTasksPostFallsThroughWhenNoHold(t *testing.T) {
 	// No awaiting_task_definition hold → the model is doing async task
 	// creation (or just calling /api/control/tasks directly), which should
 	// hit the dashboard-backed rewrite path unchanged.
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	body := anthropicBashControlTasksPost(inlineTaskBody)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -71,13 +72,13 @@ func TestPostprocess_AsyncControlTasksPostFallsThroughWhenNoHold(t *testing.T) {
 // state machine through real exported entry points: Postprocess
 // intercepts the model-emitted POST /api/control/tasks (via the
 // ?surface=inline query signal — the only production-reachable signal
-// today) and registers the inner hold; TryReleasePendingApproval
-// consumes the user's "approve" reply, drives the InlineTaskCreator,
+// today) and registers the inner hold; llmproxy.TryReleasePendingApproval
+// consumes the user's "approve" reply, drives the llmproxy.InlineTaskCreator,
 // and emits the synthetic response. Mirrors the production wiring
 // with stubs for the creator.
 func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 	ctx := context.Background()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	// Drive Postprocess on a model response that emits the bash-form
@@ -86,10 +87,10 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	postResult := Postprocess(req, body, "application/json", PostprocessConfig{
+	postResult := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -102,14 +103,10 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 
 	// Find the inner hold the intercept just registered. We need its id
 	// to send the user's "approve" reply at it.
-	cache.mu.Lock()
-	holds := append([]PendingLiteApproval(nil), cache.pending[pendingApprovalKey{
-		userID: userID, agentID: agentID, provider: conversation.ProviderAnthropic,
-	}]...)
-	cache.mu.Unlock()
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
 	var innerID string
 	for _, h := range holds {
-		if h.Stage == StageAwaitingTaskApproval {
+		if h.Stage == llmproxy.StageAwaitingTaskApproval {
 			innerID = h.ID
 			break
 		}
@@ -120,7 +117,7 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 
 	// User types yes.
 	creator := &capturingInlineCreator{
-		resp: &InlineApprovedTask{
+		resp: &llmproxy.InlineApprovedTask{
 			ID:               "task-uuid-final",
 			Status:           "active",
 			Purpose:          "Build a landing page",
@@ -130,7 +127,7 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 		},
 	}
 	approveBody := []byte(`{"messages":[{"role":"user","content":"yes ` + innerID + `"}]}`)
-	rewrite, err := RewriteInlineTaskApprovalReply(ctx, InlineApprovalRewriteRequest{
+	rewrite, err := llmproxy.RewriteInlineTaskApprovalReply(ctx, llmproxy.InlineApprovalRewriteRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
 		Body:            approveBody,
@@ -155,25 +152,21 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 	}
 
 	// Both holds should be gone now.
-	cache.mu.Lock()
-	remaining := len(cache.pending[pendingApprovalKey{
-		userID: userID, agentID: agentID, provider: conversation.ProviderAnthropic,
-	}])
-	cache.mu.Unlock()
+	remaining := len(cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic))
 	if remaining != 0 {
 		t.Errorf("expected all holds dropped; %d remain", remaining)
 	}
 }
 
-// capturingInlineCreator is a test InlineTaskCreator that records the
+// capturingInlineCreator is a test llmproxy.InlineTaskCreator that records the
 // inputs and returns a canned response (or an error when fail is set,
 // so auto-approve gate fall-back paths can be exercised). Implements
-// the InlineTaskPendingCreator extension so the human-prompt path's
+// the llmproxy.InlineTaskPendingCreator extension so the human-prompt path's
 // pre-Hold CreatePendingInlineTask call lands in `pendingTaskID`.
 type capturingInlineCreator struct {
 	called bool
 	fail   bool
-	resp   *InlineApprovedTask
+	resp   *llmproxy.InlineApprovedTask
 
 	pendingCalled bool
 	pendingFail   bool
@@ -185,7 +178,7 @@ type capturingInlineCreator struct {
 	expiredIDs    []string
 }
 
-func (c *capturingInlineCreator) CreateInlineApprovedTask(_ context.Context, _ *store.Agent, _ *runtimetasks.TaskCreateRequest, _ string) (*InlineApprovedTask, error) {
+func (c *capturingInlineCreator) CreateInlineApprovedTask(_ context.Context, _ *store.Agent, _ *runtimetasks.TaskCreateRequest, _ string) (*llmproxy.InlineApprovedTask, error) {
 	c.called = true
 	if c.fail {
 		return nil, fmtErrorf("simulated inline creator failure")
@@ -204,7 +197,7 @@ func (c *capturingInlineCreator) CreatePendingInlineTask(_ context.Context, _ *s
 	return c.pendingTaskID, nil
 }
 
-func (c *capturingInlineCreator) ApproveInlineTask(_ context.Context, _, _ string) (*InlineApprovedTask, error) {
+func (c *capturingInlineCreator) ApproveInlineTask(_ context.Context, _, _ string) (*llmproxy.InlineApprovedTask, error) {
 	c.approveCalled = true
 	c.called = true
 	if c.fail {
@@ -250,23 +243,23 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 	// No prior `task` reply, no awaiting-definition hold. The agent
 	// explicitly opts into inline approval via ?surface=inline.
 	ctx := context.Background()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
 		ControlBaseURL:   "http://localhost:25297",
 		PendingApprovals: cache,
-		Audit:            NewAuditEmitter(st, nil, nil),
+		Audit:            llmproxy.NewAuditEmitter(st, nil, nil),
 		RequestID:        "req-inline-task-pending",
 	})
 
@@ -294,15 +287,11 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 
 	// One inner hold should now exist, with AwaitingTaskFor="" (no
 	// outer hold to cascade to).
-	cache.mu.Lock()
-	holds := append([]PendingLiteApproval(nil), cache.pending[pendingApprovalKey{
-		userID: userID, agentID: agentID, provider: conversation.ProviderAnthropic,
-	}]...)
-	cache.mu.Unlock()
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
 	if len(holds) != 1 {
 		t.Fatalf("expected 1 hold; got %d", len(holds))
 	}
-	if holds[0].Stage != StageAwaitingTaskApproval {
+	if holds[0].Stage != llmproxy.StageAwaitingTaskApproval {
 		t.Errorf("hold stage = %q, want awaiting_task_approval", holds[0].Stage)
 	}
 	if holds[0].AwaitingTaskFor != "" {
@@ -313,17 +302,17 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 
 func TestMaybeInterceptInlineTaskDefinition_ExpiresEvictedInlineHold(t *testing.T) {
 	ctx := context.Background()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
-	cache.max = 1
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+	cache.SetMaxForTest(1)
 	userID := "user-inline-evict"
 	agentID := "agent-inline-evict"
 
-	if _, err := cache.Hold(ctx, PendingLiteApproval{
+	if _, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
 		ID:            "cv-oldevictedxxxxxxxxxxxxx",
 		UserID:        userID,
 		AgentID:       agentID,
 		Provider:      conversation.ProviderAnthropic,
-		Stage:         StageAwaitingTaskApproval,
+		Stage:         llmproxy.StageAwaitingTaskApproval,
 		PendingTaskID: "task-old-evicted",
 		ToolUse:       conversation.ToolUse{ID: "toolu_old", Name: "Bash"},
 	}); err != nil {
@@ -336,15 +325,15 @@ func TestMaybeInterceptInlineTaskDefinition_ExpiresEvictedInlineHold(t *testing.
 		t.Fatalf("marshal tool input: %v", err)
 	}
 	tu := conversation.ToolUse{ID: "toolu_new", Name: "Bash", Input: input}
-	call, ok := ParseControlToolUse(tu)
+	call, ok := llmproxy.ParseControlToolUse(tu)
 	if !ok {
 		t.Fatalf("control call did not parse")
 	}
 	creator := &capturingInlineCreator{pendingTaskID: "task-new-pending"}
 
-	_, handled := MaybeInterceptInlineTaskDefinition(
+	_, handled := llmproxy.MaybeInterceptInlineTaskDefinition(
 		httptest.NewRequest("POST", "/v1/messages", nil),
-		PostprocessConfig{
+		llmproxy.PostprocessConfig{
 			AgentUserID:       userID,
 			AgentID:           agentID,
 			PendingApprovals:  cache,
@@ -368,7 +357,7 @@ func TestMaybeInterceptInlineTaskDefinition_ExpiresEvictedInlineHold(t *testing.
 }
 
 func TestMaybeInterceptInlineTaskDefinition_ExpiresPendingTaskOnHoldFailure(t *testing.T) {
-	inner := NewMemoryPendingApprovalCache(time.Minute)
+	inner := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	cache := &flakyHoldFromCallN{inner: inner, failOnCall: 1}
 	userID := "user-inline-hold-fail"
 	agentID := "agent-inline-hold-fail"
@@ -379,15 +368,15 @@ func TestMaybeInterceptInlineTaskDefinition_ExpiresPendingTaskOnHoldFailure(t *t
 		t.Fatalf("marshal tool input: %v", err)
 	}
 	tu := conversation.ToolUse{ID: "toolu_new", Name: "Bash", Input: input}
-	call, ok := ParseControlToolUse(tu)
+	call, ok := llmproxy.ParseControlToolUse(tu)
 	if !ok {
 		t.Fatalf("control call did not parse")
 	}
 	creator := &capturingInlineCreator{pendingTaskID: "task-hold-failed"}
 
-	_, handled := MaybeInterceptInlineTaskDefinition(
+	_, handled := llmproxy.MaybeInterceptInlineTaskDefinition(
 		httptest.NewRequest("POST", "/v1/messages", nil),
-		PostprocessConfig{
+		llmproxy.PostprocessConfig{
 			AgentUserID:       userID,
 			AgentID:           agentID,
 			PendingApprovals:  cache,
@@ -414,7 +403,7 @@ func TestMaybeInterceptInlineTaskDefinition_ExpiresPendingTaskOnHoldFailure(t *t
 }
 
 func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	taskBody := `{"purpose":"Create GitHub release issues","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"Call the GitHub API."}],"required_credentials":[{"vault_item_id":"github","why":"Create issues in owner/repo."}]}`
@@ -422,10 +411,10 @@ func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -443,7 +432,7 @@ func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
 }
 
 func TestPostprocess_InlineTaskInvalidCredentialFallsThroughToToolError(t *testing.T) {
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	taskBody := `{"purpose":"Call agentphone","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"Call the agentphone API."}],"required_credentials":[{"vault_item_id":"agentphone"}]}`
@@ -451,10 +440,10 @@ func TestPostprocess_InlineTaskInvalidCredentialFallsThroughToToolError(t *testi
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -470,11 +459,7 @@ func TestPostprocess_InlineTaskInvalidCredentialFallsThroughToToolError(t *testi
 		t.Fatalf("invalid inline task should fall through to control rewrite so the tool receives the validation error: %s", out)
 	}
 
-	cache.mu.Lock()
-	holds := len(cache.pending[pendingApprovalKey{
-		userID: userID, agentID: agentID, provider: conversation.ProviderAnthropic,
-	}])
-	cache.mu.Unlock()
+	holds := len(cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic))
 	if holds != 0 {
 		t.Fatalf("invalid inline task should not create an approval hold, got %d", holds)
 	}
@@ -485,7 +470,7 @@ func TestPostprocess_InlineTaskStandingWithExpiresFallsThrough(t *testing.T) {
 	// creation time (tasks_inline.go); the intercept catches the same
 	// conflict before rendering so the user never sees an approval
 	// prompt that would resolve to a failed create.
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	taskBody := `{"purpose":"Standing task with expiry","lifetime":"standing","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"x"}]}`
@@ -493,10 +478,10 @@ func TestPostprocess_InlineTaskStandingWithExpiresFallsThrough(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -512,11 +497,7 @@ func TestPostprocess_InlineTaskStandingWithExpiresFallsThrough(t *testing.T) {
 		t.Fatalf("standing+expires_in_seconds should fall through to control rewrite: %s", out)
 	}
 
-	cache.mu.Lock()
-	holds := len(cache.pending[pendingApprovalKey{
-		userID: userID, agentID: agentID, provider: conversation.ProviderAnthropic,
-	}])
-	cache.mu.Unlock()
+	holds := len(cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic))
 	if holds != 0 {
 		t.Fatalf("standing+expires_in_seconds should not create an approval hold, got %d", holds)
 	}
@@ -525,17 +506,17 @@ func TestPostprocess_InlineTaskStandingWithExpiresFallsThrough(t *testing.T) {
 func TestPostprocess_InlineTaskBareNoSignalRoutesToDashboard(t *testing.T) {
 	// No prior `task` reply AND no surface=inline → fall through to
 	// the regular control-rewrite path (dashboard task creation).
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	body := anthropicBashControlTasksPost(inlineTaskBody)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -553,16 +534,16 @@ func TestPostprocess_InlineTaskBareNoSignalRoutesToDashboard(t *testing.T) {
 func TestReleaseInlineTaskApproval_QueryOnlyHoldNoOuterCascade(t *testing.T) {
 	// A query-signal inner hold has AwaitingTaskFor="" — the release
 	// path must NOT try to drop a non-existent outer hold.
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	ctx := context.Background()
 
-	inner, err := cache.Hold(ctx, PendingLiteApproval{
+	inner, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
 		ID:       "cv-innerholdxxxxxxxxxxxxxxxxx",
 		UserID:   "user-1",
 		AgentID:  "agent-1",
 		Provider: conversation.ProviderAnthropic,
 		ToolUse:  conversation.ToolUse{ID: "toolu_post", Name: "Bash"},
-		Stage:    StageAwaitingTaskApproval,
+		Stage:    llmproxy.StageAwaitingTaskApproval,
 		// AwaitingTaskFor intentionally empty — query-only inline.
 		TaskDefinition: &runtimetasks.TaskCreateRequest{
 			Purpose: "Inline-only task",
@@ -576,10 +557,10 @@ func TestReleaseInlineTaskApproval_QueryOnlyHoldNoOuterCascade(t *testing.T) {
 	}
 
 	creator := &capturingInlineCreator{
-		resp: &InlineApprovedTask{ID: "task-q", Status: "active", ApprovalSource: "inline_chat", Lifetime: "session", ApprovalRecordID: "appr-q"},
+		resp: &llmproxy.InlineApprovedTask{ID: "task-q", Status: "active", ApprovalSource: "inline_chat", Lifetime: "session", ApprovalRecordID: "appr-q"},
 	}
 	approveBody := []byte(`{"messages":[{"role":"user","content":"yes ` + inner.Pending.ID + `"}]}`)
-	rewrite, err := RewriteInlineTaskApprovalReply(ctx, InlineApprovalRewriteRequest{
+	rewrite, err := llmproxy.RewriteInlineTaskApprovalReply(ctx, llmproxy.InlineApprovalRewriteRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
 		Body:            approveBody,
@@ -601,12 +582,12 @@ func TestReleaseInlineTaskApproval_QueryOnlyHoldNoOuterCascade(t *testing.T) {
 
 // stubInlineRiskAssessor is a recorder for the LLM-backed task risk path.
 type stubInlineRiskAssessor struct {
-	got    TaskRiskAssessRequest
+	got    llmproxy.TaskRiskAssessRequest
 	called bool
-	out    *TaskRiskAssessment
+	out    *llmproxy.TaskRiskAssessment
 }
 
-func (s *stubInlineRiskAssessor) AssessEnvelope(_ context.Context, req TaskRiskAssessRequest) *TaskRiskAssessment {
+func (s *stubInlineRiskAssessor) AssessEnvelope(_ context.Context, req llmproxy.TaskRiskAssessRequest) *llmproxy.TaskRiskAssessment {
 	s.called = true
 	s.got = req
 	return s.out
@@ -617,7 +598,7 @@ func (s *stubInlineRiskAssessor) AssessEnvelope(_ context.Context, req TaskRiskA
 // specific condition being exercised.
 type autoApproveFixture struct {
 	t        *testing.T
-	cache    *MemoryPendingApprovalCache
+	cache    *llmproxy.MemoryPendingApprovalCache
 	store    store.Store
 	userID   string
 	agentID  string
@@ -626,9 +607,9 @@ type autoApproveFixture struct {
 	insp     *inspector.Inspector
 }
 
-func newAutoApproveFixture(t *testing.T, assessment *TaskRiskAssessment) autoApproveFixture {
+func newAutoApproveFixture(t *testing.T, assessment *llmproxy.TaskRiskAssessment) autoApproveFixture {
 	t.Helper()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	return autoApproveFixture{
 		t:        t,
@@ -638,7 +619,7 @@ func newAutoApproveFixture(t *testing.T, assessment *TaskRiskAssessment) autoApp
 		agentID:  agentID,
 		assessor: &stubInlineRiskAssessor{out: assessment},
 		creator: &capturingInlineCreator{
-			resp: &InlineApprovedTask{
+			resp: &llmproxy.InlineApprovedTask{
 				ID:               "task-auto-approved",
 				Status:           "active",
 				Purpose:          "Build a landing page at /tmp/landing",
@@ -651,13 +632,13 @@ func newAutoApproveFixture(t *testing.T, assessment *TaskRiskAssessment) autoApp
 	}
 }
 
-func (f autoApproveFixture) run(threshold string, turns []string) PostprocessResult {
+func (f autoApproveFixture) run(threshold string, turns []string) llmproxy.PostprocessResult {
 	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	return Postprocess(req, body, "application/json", PostprocessConfig{
+	return Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:                        f.insp,
 		RewriteOpts:                      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:                     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:                     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:                            f.store,
 		AgentUserID:                      f.userID,
 		AgentID:                          f.agentID,
@@ -672,11 +653,7 @@ func (f autoApproveFixture) run(threshold string, turns []string) PostprocessRes
 }
 
 func (f autoApproveFixture) holdCount() int {
-	f.cache.mu.Lock()
-	defer f.cache.mu.Unlock()
-	return len(f.cache.pending[pendingApprovalKey{
-		userID: f.userID, agentID: f.agentID, provider: conversation.ProviderAnthropic,
-	}])
+	return len(f.cache.SnapshotHoldsForTest(f.userID, f.agentID, conversation.ProviderAnthropic))
 }
 
 // TestAutoApproveUserNotice_TruncatesByRune ensures the user-facing
@@ -688,7 +665,7 @@ func TestAutoApproveUserNotice_TruncatesByRune(t *testing.T) {
 	// Each Chinese character is 3 bytes in UTF-8; 300 chars = 900
 	// bytes, well over the 200-rune cap.
 	long := strings.Repeat("漢", 300)
-	got := autoApproveUserNotice(long)
+	got := llmproxy.AutoApproveUserNotice(long)
 	// Result must be valid UTF-8 — no replacement chars from
 	// mid-rune slicing.
 	if strings.Contains(got, "�") {
@@ -709,7 +686,7 @@ func TestAutoApproveUserNotice_TruncatesByRune(t *testing.T) {
 // guidance as prose instead of code, and any embedded backticks
 // would leak the wrapping in chat UIs.
 func TestAutoApproveUserNotice_StripsBackticksFromPurpose(t *testing.T) {
-	got := autoApproveUserNotice("fix the `foo` helper")
+	got := llmproxy.AutoApproveUserNotice("fix the `foo` helper")
 	if strings.Count(got, "`") != 2 {
 		t.Errorf("expected exactly the two wrapping backticks; got %q", got)
 	}
@@ -722,7 +699,7 @@ func TestAutoApproveUserNotice_StripsBackticksFromPurpose(t *testing.T) {
 // authorized the work in the conversation, risk is low, threshold is
 // low — gate fires, task is created, no prompt rendered.
 func TestAutoApprove_FiresOnLowRiskYesMatch(t *testing.T) {
-	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:              "low",
 		Explanation:            "Read-only landing-page work.",
 		IntentMatch:            "yes",
@@ -763,7 +740,7 @@ func TestAutoApprove_FiresOnLowRiskYesMatch(t *testing.T) {
 // handler to make a recursive LLM call instead of terminating the turn
 // with an assistant text reply.
 func TestAutoApprove_VerdictRequestsContinuation(t *testing.T) {
-	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "low",
 		IntentMatch: "yes",
 	})
@@ -788,7 +765,7 @@ func TestAutoApprove_VerdictRequestsContinuation(t *testing.T) {
 // Even with a perfect intent match and low risk, threshold="off" must
 // keep the human in the loop.
 func TestAutoApprove_DoesNotFireOnThresholdOff(t *testing.T) {
-	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "low",
 		IntentMatch: "yes",
 	})
@@ -808,7 +785,7 @@ func TestAutoApprove_DoesNotFireOnThresholdOff(t *testing.T) {
 // TestAutoApprove_DoesNotFireOnRiskAboveThreshold confirms the cap
 // works: low threshold with medium risk must still prompt the human.
 func TestAutoApprove_DoesNotFireOnRiskAboveThreshold(t *testing.T) {
-	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "medium",
 		IntentMatch: "yes",
 	})
@@ -829,7 +806,7 @@ func TestAutoApprove_DoesNotFireOnRiskAboveThreshold(t *testing.T) {
 // strict: only a "yes" intent_match counts. "partial" — user asked for
 // some but not all of the requested scope — must prompt.
 func TestAutoApprove_DoesNotFireOnPartialIntent(t *testing.T) {
-	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "low",
 		IntentMatch: "partial",
 	})
@@ -847,7 +824,7 @@ func TestAutoApprove_DoesNotFireOnPartialIntent(t *testing.T) {
 // path: no recent human turns → assessor emits intent_match=unknown →
 // gate must not fire even at threshold=medium.
 func TestAutoApprove_DoesNotFireOnUnknownIntent(t *testing.T) {
-	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "low",
 		IntentMatch: "unknown",
 	})
@@ -868,7 +845,7 @@ func TestAutoApprove_DoesNotFireOnUnknownIntent(t *testing.T) {
 // must reject this on its own — it cannot defer that question to the
 // LLM, because the assessor itself is the layer being constrained.
 func TestAutoApprove_DoesNotFireWithoutRecentTurnsEvenWhenAssessorSaysYes(t *testing.T) {
-	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:              "low",
 		IntentMatch:            "yes",
 		IntentMatchExplanation: "Assessor incorrectly claims user authorized this.",
@@ -893,10 +870,10 @@ func TestAutoApprove_DoesNotFireWithoutRecentTurnsEvenWhenAssessorSaysYes(t *tes
 // verdict with low risk must prompt when the assessor flagged a
 // conflict.
 func TestAutoApprove_DoesNotFireWithConflicts(t *testing.T) {
-	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "low",
 		IntentMatch: "yes",
-		Conflicts: []TaskRiskConflict{{
+		Conflicts: []llmproxy.TaskRiskConflict{{
 			Field:       "expected_use",
 			Description: "expected_use mentions sending email but purpose is read-only",
 			Severity:    "warning",
@@ -918,7 +895,7 @@ func TestAutoApprove_DoesNotFireWithConflicts(t *testing.T) {
 // dashboards filtering by task_id can't reconstruct which task was
 // auto-approved — only that the intercept fired.
 func TestAutoApprove_WritesTaskLinkedAuditRow(t *testing.T) {
-	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:              "low",
 		Explanation:            "Read-only landing-page work.",
 		IntentMatch:            "yes",
@@ -927,10 +904,10 @@ func TestAutoApprove_WritesTaskLinkedAuditRow(t *testing.T) {
 
 	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:                        f.insp,
 		RewriteOpts:                      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:                     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:                     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:                            f.store,
 		AgentUserID:                      f.userID,
 		AgentID:                          f.agentID,
@@ -941,7 +918,7 @@ func TestAutoApprove_WritesTaskLinkedAuditRow(t *testing.T) {
 		RecentUserTurns:                  []string{"build me a landing page at /tmp/landing"},
 		ConversationAutoApproveThreshold: "low",
 		InlineTaskCreator:                f.creator,
-		Audit:                            NewAuditEmitter(f.store, nil, nil),
+		Audit:                            llmproxy.NewAuditEmitter(f.store, nil, nil),
 		RequestID:                        "req-auto-approve-audit",
 	})
 
@@ -993,7 +970,7 @@ func auditActions(rows []*store.AuditEntry) []string {
 // errors, fall through to the human prompt rather than dropping the
 // task on the floor.
 func TestAutoApprove_FallsBackOnCreatorError(t *testing.T) {
-	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "low",
 		IntentMatch: "yes",
 	})
@@ -1014,19 +991,19 @@ func TestAutoApprove_FallsBackOnCreatorError(t *testing.T) {
 // pretend to approve; it should fall through to the human prompt and
 // audit the gap.
 func TestAutoApprove_FallsBackWhenCreatorMissing(t *testing.T) {
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-	assessor := &stubInlineRiskAssessor{out: &TaskRiskAssessment{
+	assessor := &stubInlineRiskAssessor{out: &llmproxy.TaskRiskAssessment{
 		RiskLevel: "low", IntentMatch: "yes",
 	}}
 	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:                        insp,
 		RewriteOpts:                      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:                     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:                     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:                            st,
 		AgentUserID:                      userID,
 		AgentID:                          agentID,
@@ -1036,7 +1013,7 @@ func TestAutoApprove_FallsBackWhenCreatorMissing(t *testing.T) {
 		AgentName:                        "test-agent",
 		RecentUserTurns:                  []string{"build me a landing page"},
 		ConversationAutoApproveThreshold: "low",
-		// InlineTaskCreator intentionally nil.
+		// llmproxy.InlineTaskCreator intentionally nil.
 	})
 
 	if !strings.Contains(string(got.Body), "Clawvisor wants to create a task") {
@@ -1045,10 +1022,10 @@ func TestAutoApprove_FallsBackWhenCreatorMissing(t *testing.T) {
 }
 
 func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
-	assessor := &stubInlineRiskAssessor{out: &TaskRiskAssessment{
+	assessor := &stubInlineRiskAssessor{out: &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "medium",
 		Explanation: "Writing to /tmp may collide with other processes' files.",
 	}}
@@ -1057,10 +1034,10 @@ func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -1096,10 +1073,10 @@ func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
 // drops back to the deterministic envelope policy so the prompt still
 // renders a risk read.
 func TestPostprocess_InlineTaskFallsBackWhenLLMUnknown(t *testing.T) {
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
-	assessor := &stubInlineRiskAssessor{out: &TaskRiskAssessment{
+	assessor := &stubInlineRiskAssessor{out: &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "unknown",
 		Explanation: "Risk assessment failed: spend cap exhausted",
 	}}
@@ -1108,10 +1085,10 @@ func TestPostprocess_InlineTaskFallsBackWhenLLMUnknown(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -1131,16 +1108,16 @@ func TestPostprocess_InlineTaskFallsBackWhenLLMUnknown(t *testing.T) {
 
 func TestPostprocess_InlineTaskMalformedBodyFallsThrough(t *testing.T) {
 	ctx := context.Background()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
-	if _, err := cache.Hold(ctx, PendingLiteApproval{
+	if _, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
 		ID:       "cv-origtooluuid00000000000001",
 		UserID:   userID,
 		AgentID:  agentID,
 		Provider: conversation.ProviderAnthropic,
 		ToolUse:  conversation.ToolUse{ID: "toolu_bad", Name: "Bash"},
-		Stage:    StageAwaitingTaskDefinition,
+		Stage:    llmproxy.StageAwaitingTaskDefinition,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1150,10 +1127,10 @@ func TestPostprocess_InlineTaskMalformedBodyFallsThrough(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,

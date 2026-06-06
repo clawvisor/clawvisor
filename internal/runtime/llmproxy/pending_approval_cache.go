@@ -14,6 +14,7 @@ import (
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // PendingApprovalStage is the per-hold state in the inline-task-approval
@@ -431,6 +432,26 @@ func resolveRequestKey(req ResolveRequest) pendingApprovalKey {
 // (user, agent, provider) tuple in insertion order. Test-only — used
 // by coalescence tests to assert how many holds were created and what
 // they contain without poking the private storage map.
+// SetMaxForTest overrides the per-key capacity to force eviction in
+// coalescence/eviction tests. Test-only — the cache normally derives
+// max from NewMemoryPendingApprovalCacheWithMax.
+func (c *MemoryPendingApprovalCache) SetMaxForTest(max int) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.max = max
+}
+
+// SnapshotHoldsForTest is the test-only entry point for inspecting
+// the cache's per-key hold buffer. Exported so the postproc package's
+// coalescence tests can assert hold counts + contents without poking
+// the private storage map.
+func (c *MemoryPendingApprovalCache) SnapshotHoldsForTest(userID, agentID string, provider conversation.Provider) []PendingLiteApproval {
+	return c.snapshotHoldsForTest(userID, agentID, provider)
+}
+
 func (c *MemoryPendingApprovalCache) snapshotHoldsForTest(userID, agentID string, provider conversation.Provider) []PendingLiteApproval {
 	if c == nil {
 		return nil
@@ -469,4 +490,26 @@ func newLiteApprovalID() (string, error) {
 		return "", fmt.Errorf("generate approval id: %w", err)
 	}
 	return "cv-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])), nil
+}
+
+// NewLiteApprovalID mints a per-hold ID for the inline-approval flow.
+// Exported for the postproc package's coalesce machinery, which mints
+// IDs ahead of replay to the underlying cache.
+func NewLiteApprovalID() (string, error) {
+	return newLiteApprovalID()
+}
+
+// CleanupEvictedInlineTask is the exported entry point for terminating
+// an evicted inline-task hold's store.Task row. Called by the postproc
+// package's coalesce/replay paths when a buffered hold's replay
+// displaces an older inline-task hold.
+func CleanupEvictedInlineTask(ctx context.Context, cfg PostprocessConfig, evicted *PendingLiteApproval) {
+	cleanupEvictedInlineTask(ctx, cfg, evicted)
+}
+
+// AuditAgentForCfg builds a minimal *store.Agent for the audit emitter
+// from PostprocessConfig. Exported for the postproc package; the
+// emitter only reads UserID and ID.
+func AuditAgentForCfg(cfg PostprocessConfig) *store.Agent {
+	return auditAgentForCfg(cfg)
 }

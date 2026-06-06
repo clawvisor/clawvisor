@@ -161,6 +161,14 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 const InlineApprovalIDMarker = "[clawvisor:approval="
 
 func approvalIDFooter(approvalID string) string {
+	return ApprovalIDFooter(approvalID)
+}
+
+// ApprovalIDFooter returns the marker the postproc layer appends to
+// approval-prompt substitute text so subsequent agent turns can
+// disambiguate which hold a bare "y"/"n" reply targets. Exported for
+// the postproc package's coalescedApprovalPrompt.
+func ApprovalIDFooter(approvalID string) string {
 	if approvalID == "" {
 		return ""
 	}

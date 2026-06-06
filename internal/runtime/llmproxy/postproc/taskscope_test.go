@@ -1,4 +1,4 @@
-package llmproxy
+package postproc
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
@@ -55,7 +56,7 @@ func TestStoreTaskScopeChecker_AllowsMatchingAction(t *testing.T) {
 	seedActiveTask(t, st, user, agent, []store.TaskAction{
 		{Service: "github", Action: "create_issue"},
 	})
-	c := NewStoreTaskScopeChecker(st)
+	c := llmproxy.NewStoreTaskScopeChecker(st)
 	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "create_issue")
 	if !dec.Allowed {
 		t.Errorf("expected allow, got %+v", dec)
@@ -70,7 +71,7 @@ func TestStoreTaskScopeChecker_DeniesUnauthorizedAction(t *testing.T) {
 	seedActiveTask(t, st, user, agent, []store.TaskAction{
 		{Service: "github", Action: "list_issues"},
 	})
-	c := NewStoreTaskScopeChecker(st)
+	c := llmproxy.NewStoreTaskScopeChecker(st)
 	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "create_issue")
 	if dec.Allowed {
 		t.Errorf("expected deny — task only authorizes list_issues, got %+v", dec)
@@ -82,7 +83,7 @@ func TestStoreTaskScopeChecker_DeniesUnauthorizedAction(t *testing.T) {
 
 func TestStoreTaskScopeChecker_NoActiveTask(t *testing.T) {
 	st, user, agent := newTaskscopeStore(t)
-	c := NewStoreTaskScopeChecker(st)
+	c := llmproxy.NewStoreTaskScopeChecker(st)
 	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "create_issue")
 	if dec.Allowed {
 		t.Errorf("expected deny when no active task, got %+v", dec)
@@ -97,7 +98,7 @@ func TestStoreTaskScopeChecker_WildcardActionMatches(t *testing.T) {
 	seedActiveTask(t, st, user, agent, []store.TaskAction{
 		{Service: "github", Action: "*"},
 	})
-	c := NewStoreTaskScopeChecker(st)
+	c := llmproxy.NewStoreTaskScopeChecker(st)
 	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "delete_repo")
 	if !dec.Allowed {
 		t.Errorf("expected wildcard match, got %+v", dec)
@@ -106,7 +107,7 @@ func TestStoreTaskScopeChecker_WildcardActionMatches(t *testing.T) {
 
 func TestStoreTaskScopeChecker_RejectsUnresolvedAction(t *testing.T) {
 	st, user, agent := newTaskscopeStore(t)
-	c := NewStoreTaskScopeChecker(st)
+	c := llmproxy.NewStoreTaskScopeChecker(st)
 	dec := c.Check(context.Background(), user.ID, agent.ID, "", "")
 	if dec.Allowed {
 		t.Errorf("expected deny on empty service/action")
@@ -119,29 +120,29 @@ func TestStoreTaskScopeChecker_RejectsUnresolvedAction(t *testing.T) {
 // stubCatalog lets us drive postprocess task-scope behavior without
 // loading real YAML defs.
 type stubCatalog struct {
-	resolve func(host, method, path string) (ResolvedAction, bool)
+	resolve func(host, method, path string) (llmproxy.ResolvedAction, bool)
 }
 
-func (s stubCatalog) Resolve(host, method, path string) (ResolvedAction, bool) {
+func (s stubCatalog) Resolve(host, method, path string) (llmproxy.ResolvedAction, bool) {
 	return s.resolve(host, method, path)
 }
 
 // stubTaskScope returns a fixed decision for every Check call.
-type stubTaskScope struct{ decision TaskScopeDecision }
+type stubTaskScope struct{ decision llmproxy.TaskScopeDecision }
 
-func (s stubTaskScope) Check(ctx context.Context, userID, agentID, serviceID, actionID string) TaskScopeDecision {
+func (s stubTaskScope) Check(ctx context.Context, userID, agentID, serviceID, actionID string) llmproxy.TaskScopeDecision {
 	return s.decision
 }
 
 func TestNewServiceCatalogFromRegistry_NilSafe(t *testing.T) {
-	c := NewServiceCatalogFromRegistry(nil)
+	c := llmproxy.NewServiceCatalogFromRegistry(nil)
 	if _, ok := c.Resolve("api.github.com", "GET", "/user"); ok {
 		t.Errorf("nil registry should produce empty catalog")
 	}
 }
 
 func TestDefsFromRegistry_NilSafe(t *testing.T) {
-	if defs := DefsFromRegistry(nil); len(defs) != 0 {
+	if defs := llmproxy.DefsFromRegistry(nil); len(defs) != 0 {
 		t.Errorf("nil registry should produce empty defs, got %d", len(defs))
 	}
 }
@@ -159,17 +160,17 @@ func TestPostprocess_TaskScopeBlocksUnauthorizedAction(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
-		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
-			return ResolvedAction{ServiceID: "github", ActionID: "create_issue", Method: "POST", PathTemplate: "/repos/{{.o}}/{{.r}}/issues"}, true
+		Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
+			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue", Method: "POST", PathTemplate: "/repos/{{.o}}/{{.r}}/issues"}, true
 		}},
-		TaskScope: stubTaskScope{decision: TaskScopeDecision{Reason: "needs_new_task"}},
+		TaskScope: stubTaskScope{decision: llmproxy.TaskScopeDecision{Reason: "needs_new_task"}},
 	})
 
 	// The body should contain a Clawvisor refusal in place of the
@@ -192,17 +193,17 @@ func TestPostprocess_TaskScopeAllowsAuthorizedAction(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
-		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
-			return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+		Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
+			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
 		}},
-		TaskScope: stubTaskScope{decision: TaskScopeDecision{Allowed: true, TaskID: "task-x"}},
+		TaskScope: stubTaskScope{decision: llmproxy.TaskScopeDecision{Allowed: true, TaskID: "task-x"}},
 	})
 
 	if !got.Rewritten {
@@ -215,13 +216,13 @@ func TestPostprocess_TaskScopeAllowsAuthorizedAction(t *testing.T) {
 
 // stubIntentVerifier produces a fixed verdict, capturing the request for assertions.
 type stubIntentVerifier struct {
-	verdict *IntentVerdict
+	verdict *llmproxy.IntentVerdict
 	err     error
 	called  bool
-	last    IntentVerifyRequest
+	last    llmproxy.IntentVerifyRequest
 }
 
-func (s *stubIntentVerifier) Verify(ctx context.Context, req IntentVerifyRequest) (*IntentVerdict, error) {
+func (s *stubIntentVerifier) Verify(ctx context.Context, req llmproxy.IntentVerifyRequest) (*llmproxy.IntentVerdict, error) {
 	s.called = true
 	s.last = req
 	return s.verdict, s.err
@@ -237,19 +238,19 @@ func TestPostprocess_IntentVerifierBlocksOnDeny(t *testing.T) {
 	// Task-scope returns a matched action with strict verification mode.
 	matchedAction := &store.TaskAction{Service: "github", Action: "create_issue", Verification: "strict", ExpectedUse: "create issues for the bug-triage workflow"}
 	matchedTask := &store.Task{ID: "task-x", Purpose: "triage bugs"}
-	scope := stubTaskScope{decision: TaskScopeDecision{Allowed: true, TaskID: "task-x", MatchedTask: matchedTask, MatchedAction: matchedAction}}
+	scope := stubTaskScope{decision: llmproxy.TaskScopeDecision{Allowed: true, TaskID: "task-x", MatchedTask: matchedTask, MatchedAction: matchedAction}}
 
-	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "params violate scope"}}
+	verifier := &stubIntentVerifier{verdict: &llmproxy.IntentVerdict{Allow: false, Explanation: "params violate scope"}}
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
-		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
-			return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+		Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
+			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
 		}},
 		TaskScope:      scope,
 		IntentVerifier: verifier,
@@ -280,18 +281,18 @@ func TestPostprocess_IntentVerifierLenientFlag(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	matchedAction := &store.TaskAction{Service: "github", Action: "create_issue", Verification: "lenient"}
-	scope := stubTaskScope{decision: TaskScopeDecision{Allowed: true, MatchedTask: &store.Task{}, MatchedAction: matchedAction}}
-	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	scope := stubTaskScope{decision: llmproxy.TaskScopeDecision{Allowed: true, MatchedTask: &store.Task{}, MatchedAction: matchedAction}}
+	verifier := &stubIntentVerifier{verdict: &llmproxy.IntentVerdict{Allow: true}}
 
-	_ = Postprocess(req, body, "application/json", PostprocessConfig{
+	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
-		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
-			return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+		Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
+			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
 		}},
 		TaskScope:      scope,
 		IntentVerifier: verifier,
@@ -310,18 +311,18 @@ func TestPostprocess_IntentVerifierOffSkipsCall(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	matchedAction := &store.TaskAction{Service: "github", Action: "create_issue", Verification: "off"}
-	scope := stubTaskScope{decision: TaskScopeDecision{Allowed: true, MatchedTask: &store.Task{}, MatchedAction: matchedAction}}
-	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "should_not_be_called"}}
+	scope := stubTaskScope{decision: llmproxy.TaskScopeDecision{Allowed: true, MatchedTask: &store.Task{}, MatchedAction: matchedAction}}
+	verifier := &stubIntentVerifier{verdict: &llmproxy.IntentVerdict{Allow: false, Explanation: "should_not_be_called"}}
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
-		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
-			return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+		Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
+			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
 		}},
 		TaskScope:      scope,
 		IntentVerifier: verifier,
@@ -347,16 +348,16 @@ func TestPostprocess_TaskScopeFallthroughOnUnknownAction(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	denyAll := stubTaskScope{decision: TaskScopeDecision{Reason: "should_not_be_called"}}
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	denyAll := stubTaskScope{decision: llmproxy.TaskScopeDecision{Reason: "should_not_be_called"}}
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
-		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
-			return ResolvedAction{}, false // catalog miss
+		Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
+			return llmproxy.ResolvedAction{}, false // catalog miss
 		}},
 		TaskScope: denyAll, // intentionally deny — should not be consulted
 	})
@@ -374,16 +375,16 @@ func TestPostprocess_SharedDecisionAllowSkipsLegacyTaskScope(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	denyAll := stubTaskScope{decision: TaskScopeDecision{Reason: "legacy task scope should not run"}}
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	denyAll := stubTaskScope{decision: llmproxy.TaskScopeDecision{Reason: "legacy task scope should not run"}}
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
-		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
-			return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+		Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
+			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
 		}},
 		TaskScope: denyAll,
 		CandidateTasks: []*store.Task{{

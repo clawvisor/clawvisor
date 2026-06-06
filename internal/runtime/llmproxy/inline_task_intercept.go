@@ -464,6 +464,13 @@ func hasNonEmptyTurn(turns []string) bool {
 // dashboard. The purpose is model-authored, so we strip control
 // characters and cap the length defensively so a runaway purpose
 // can't dominate the assistant turn.
+// AutoApproveUserNotice renders the user-visible "task X was
+// auto-approved" notice. Exported for the postproc tests that exercise
+// the truncation + escaping behavior.
+func AutoApproveUserNotice(purpose string) string {
+	return autoApproveUserNotice(purpose)
+}
+
 func autoApproveUserNotice(purpose string) string {
 	const maxPurposeRunes = 200
 	cleaned := strings.TrimSpace(purpose)

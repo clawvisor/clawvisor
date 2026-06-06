@@ -14,6 +14,14 @@ import (
 // Without this, typing "task" on a coalesced approval prompt would scope
 // only the primary tool and leave sibling reviewed calls to re-prompt on
 // the next retry.
+// TaskCreationPromptForHolds renders the inline task-creation prompt
+// the agent is told to POST when the user types "task" on a single-
+// or multi-tool approval. Exported for the postproc package's
+// coalesce path.
+func TaskCreationPromptForHolds(holds []HeldToolUse) string {
+	return taskCreationPromptForHolds(holds)
+}
+
 func taskCreationPromptForHolds(holds []HeldToolUse) string {
 	if len(holds) == 0 {
 		return ""

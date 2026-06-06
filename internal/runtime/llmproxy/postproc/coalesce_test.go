@@ -1,4 +1,4 @@
-package llmproxy
+package postproc
 
 import (
 	"context"
@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // Mixed-turn coalescence: bash that would auto-allow alongside a
 // WebFetch flagged for review. The whole turn is held under one
-// coalesced approval; the bash sibling is tagged HeldKindAllow on the
+// coalesced approval; the bash sibling is tagged llmproxy.HeldKindAllow on the
 // hold, and the rendered prompt mentions both calls.
 func TestPostprocess_CoalescesMixedAllowAndApproval(t *testing.T) {
 	body := []byte(`{
@@ -33,12 +34,12 @@ func TestPostprocess_CoalescesMixedAllowAndApproval(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -67,7 +68,7 @@ func TestPostprocess_CoalescesMixedAllowAndApproval(t *testing.T) {
 		t.Fatalf("expected coalesced sibling WebFetch block message to be suppressed, but got it in output: %s", out)
 	}
 
-	holds := cache.snapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
 	if len(holds) != 1 {
 		t.Fatalf("expected exactly one coalesced hold, got %d", len(holds))
 	}
@@ -82,11 +83,11 @@ func TestPostprocess_CoalescesMixedAllowAndApproval(t *testing.T) {
 	// WebFetch internally (Inspector/Fingerprint/Reason point at it),
 	// but the visible order matches the model's emit order so the
 	// released call sequence is deterministic for dependent calls.
-	if all[0].ToolUse.ID != "toolu_bash" || all[0].Kind != HeldKindAllow {
-		t.Fatalf("expected Bash first (turn order) as HeldKindAllow, got %+v", all[0])
+	if all[0].ToolUse.ID != "toolu_bash" || all[0].Kind != llmproxy.HeldKindAllow {
+		t.Fatalf("expected Bash first (turn order) as llmproxy.HeldKindAllow, got %+v", all[0])
 	}
-	if all[1].ToolUse.ID != "toolu_fetch" || all[1].Kind != HeldKindApproval {
-		t.Fatalf("expected WebFetch second (turn order) as HeldKindApproval, got %+v", all[1])
+	if all[1].ToolUse.ID != "toolu_fetch" || all[1].Kind != llmproxy.HeldKindApproval {
+		t.Fatalf("expected WebFetch second (turn order) as llmproxy.HeldKindApproval, got %+v", all[1])
 	}
 	if hold.ToolUse.ID != "toolu_fetch" {
 		t.Fatalf("primary slot should be the approval-needing WebFetch, got %s", hold.ToolUse.ID)
@@ -113,12 +114,12 @@ func TestPostprocess_SingleApprovalKeepsLegacyPromptShape(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -137,7 +138,7 @@ func TestPostprocess_SingleApprovalKeepsLegacyPromptShape(t *testing.T) {
 	if !strings.Contains(out, "or `task` to instruct") {
 		t.Fatalf("single-tool prompt should retain the 'task' verb, got: %s", out)
 	}
-	holds := cache.snapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
 	if len(holds) != 1 || holds[0].IsCoalesced() {
 		t.Fatalf("single-tool turn should produce one non-coalesced hold; got %+v", holds)
 	}
@@ -156,32 +157,32 @@ func TestShouldCoalesceTurn(t *testing.T) {
 		},
 		{
 			name: "single approval",
-			in:   []evalCapture{{Kind: HeldKindApproval}},
+			in:   []evalCapture{{Kind: llmproxy.HeldKindApproval}},
 			want: false,
 		},
 		{
 			name: "two approvals",
-			in:   []evalCapture{{Kind: HeldKindApproval}, {Kind: HeldKindApproval}},
+			in:   []evalCapture{{Kind: llmproxy.HeldKindApproval}, {Kind: llmproxy.HeldKindApproval}},
 			want: true,
 		},
 		{
 			name: "approval + auto-allow sibling",
-			in:   []evalCapture{{Kind: HeldKindAllow}, {Kind: HeldKindApproval}},
+			in:   []evalCapture{{Kind: llmproxy.HeldKindAllow}, {Kind: llmproxy.HeldKindApproval}},
 			want: true,
 		},
 		{
 			name: "all auto-allow — nothing to coalesce",
-			in:   []evalCapture{{Kind: HeldKindAllow}, {Kind: HeldKindAllow}},
+			in:   []evalCapture{{Kind: llmproxy.HeldKindAllow}, {Kind: llmproxy.HeldKindAllow}},
 			want: false,
 		},
 		{
 			name: "hard deny in turn — fall back to legacy",
-			in:   []evalCapture{{Kind: HeldKindApproval}, {Kind: HeldKindDeny}},
+			in:   []evalCapture{{Kind: llmproxy.HeldKindApproval}, {Kind: llmproxy.HeldKindDeny}},
 			want: false,
 		},
 		{
 			name: "inline-task stage skips coalesce",
-			in:   []evalCapture{{Kind: HeldKindApproval, Stage: StageAwaitingTaskApproval}, {Kind: HeldKindAllow}},
+			in:   []evalCapture{{Kind: llmproxy.HeldKindApproval, Stage: llmproxy.StageAwaitingTaskApproval}, {Kind: llmproxy.HeldKindAllow}},
 			want: false,
 		},
 	}
@@ -198,13 +199,13 @@ func TestClassifyVerdict(t *testing.T) {
 	cases := []struct {
 		name string
 		v    conversation.ToolUseVerdict
-		want HeldToolUseKind
+		want llmproxy.HeldToolUseKind
 	}{
-		{"allowed pass-through", conversation.ToolUseVerdict{Allowed: true}, HeldKindAllow},
-		{"allowed with rewrite", conversation.ToolUseVerdict{Allowed: true, RewriteInput: json.RawMessage(`{"x":1}`)}, HeldKindRewrite},
-		{"approval-required", conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: approval required — review"}, HeldKindApproval},
-		{"inline-task awaiting", conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: awaiting inline task approval"}, HeldKindApproval},
-		{"hard deny", conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: ambiguous credentialed call refused — bad shape"}, HeldKindDeny},
+		{"allowed pass-through", conversation.ToolUseVerdict{Allowed: true}, llmproxy.HeldKindAllow},
+		{"allowed with rewrite", conversation.ToolUseVerdict{Allowed: true, RewriteInput: json.RawMessage(`{"x":1}`)}, llmproxy.HeldKindRewrite},
+		{"approval-required", conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: approval required — review"}, llmproxy.HeldKindApproval},
+		{"inline-task awaiting", conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: awaiting inline task approval"}, llmproxy.HeldKindApproval},
+		{"hard deny", conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: ambiguous credentialed call refused — bad shape"}, llmproxy.HeldKindDeny},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -220,28 +221,28 @@ func TestClassifyVerdict(t *testing.T) {
 // them all from one user gesture.
 func TestTryReleasePendingApproval_CoalescedAllowEmitsAllCalls(t *testing.T) {
 	ctx := context.Background()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
 	primary := conversation.ToolUse{ID: "toolu_a", Name: "Bash", Input: json.RawMessage(`{"command":"echo a"}`)}
 	sibling := conversation.ToolUse{ID: "toolu_b", Name: "Bash", Input: json.RawMessage(`{"command":"echo b"}`)}
-	held, err := cache.Hold(ctx, PendingLiteApproval{
+	held, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
 		ID:       "cv-coalescereleasexxxxxxxxxxx",
 		UserID:   "user-1",
 		AgentID:  "agent-1",
 		Provider: conversation.ProviderAnthropic,
-		Stage:    StageTool,
+		Stage:    llmproxy.StageTool,
 		ToolUse:  primary,
 		Reason:   "test coalesced release",
-		Additional: []HeldToolUse{{
+		Additional: []llmproxy.HeldToolUse{{
 			ToolUse: sibling,
-			Kind:    HeldKindAllow,
+			Kind:    llmproxy.HeldKindAllow,
 		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result := TryReleasePendingApproval(ctx, ReleaseRequest{
+	result := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
 		Body:            []byte(`{"messages":[{"role":"user","content":"approve ` + held.Pending.ID + `"}]}`),
@@ -265,25 +266,25 @@ func TestTryReleasePendingApproval_CoalescedAllowEmitsAllCalls(t *testing.T) {
 // block; no tool_use blocks at all (no half-execution).
 func TestTryReleasePendingApproval_CoalescedDenyProducesTextOnly(t *testing.T) {
 	ctx := context.Background()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
-	held, err := cache.Hold(ctx, PendingLiteApproval{
+	held, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
 		ID:       "cv-coalescedenyxxxxxxxxxxxxxx",
 		UserID:   "user-1",
 		AgentID:  "agent-1",
 		Provider: conversation.ProviderAnthropic,
-		Stage:    StageTool,
+		Stage:    llmproxy.StageTool,
 		ToolUse:  conversation.ToolUse{ID: "toolu_a", Name: "Bash", Input: json.RawMessage(`{"command":"echo a"}`)},
-		Additional: []HeldToolUse{{
+		Additional: []llmproxy.HeldToolUse{{
 			ToolUse: conversation.ToolUse{ID: "toolu_b", Name: "Bash", Input: json.RawMessage(`{"command":"echo b"}`)},
-			Kind:    HeldKindAllow,
+			Kind:    llmproxy.HeldKindAllow,
 		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result := TryReleasePendingApproval(ctx, ReleaseRequest{
+	result := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
 		Body:            []byte(`{"messages":[{"role":"user","content":"deny ` + held.Pending.ID + `"}]}`),
@@ -328,12 +329,12 @@ func TestPostprocess_CoalescedReleasePreservesTurnOrder(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
-	_ = Postprocess(req, body, "application/json", PostprocessConfig{
+	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -345,7 +346,7 @@ func TestPostprocess_CoalescedReleasePreservesTurnOrder(t *testing.T) {
 		},
 		EgressRules: []*store.RuntimePolicyRule{},
 	})
-	holds := cache.snapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
 	if len(holds) != 1 {
 		t.Fatalf("want one coalesced hold, got %d", len(holds))
 	}
@@ -356,7 +357,7 @@ func TestPostprocess_CoalescedReleasePreservesTurnOrder(t *testing.T) {
 	}
 	// The release synthesis pulls from AllHolds() too; confirm the
 	// wire-level call order matches as well.
-	result := TryReleasePendingApproval(ctx, ReleaseRequest{
+	result := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
 		Body:            []byte(`{"messages":[{"role":"user","content":"approve ` + hold.ID + `"}]}`),
@@ -365,7 +366,7 @@ func TestPostprocess_CoalescedReleasePreservesTurnOrder(t *testing.T) {
 		Inspector:       insp,
 		Store:           st,
 		RewriteOpts:     inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:    NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:    llmproxy.NewMemoryCallerNonceCache(time.Minute),
 	})
 	if !result.Handled || result.Decision != "allow" {
 		t.Fatalf("coalesced release should allow, got %+v", result)
@@ -401,16 +402,16 @@ func TestPostprocess_CoalescedHoldFailureFallsBackToPerToolHolds(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-	inner := NewMemoryPendingApprovalCache(time.Minute)
+	inner := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	// failFirst=1 → the coalesced Hold (first call) fails; subsequent
 	// replay calls succeed. With pass-1 buffering this is the right
 	// shape to exercise the fallback path.
 	cache := &flakyHoldCache{inner: inner, failFirst: 1}
 
-	_ = Postprocess(req, body, "application/json", PostprocessConfig{
+	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -425,7 +426,7 @@ func TestPostprocess_CoalescedHoldFailureFallsBackToPerToolHolds(t *testing.T) {
 
 	// The coalesced Hold failed; legacy replay then wrote both
 	// per-tool holds. Final occupancy: 2.
-	got := inner.snapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	got := inner.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 per-tool holds after coalesced fallback; got %d: %+v", len(got), got)
 	}
@@ -446,19 +447,19 @@ func TestPostprocess_CoalesceDoesNotEvictUnrelatedApprovals(t *testing.T) {
 	// coalesced hold lands at capacity without eviction; the
 	// pre-buffering passthrough design would have hit max via
 	// per-tool inserts and evicted one of the seeded entries.
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	seedIDs := make([]string, 0, 9)
 	for i := 0; i < 9; i++ {
 		// 26-char suffix to satisfy approvalReplyRE if anyone
 		// resolves these by ID later (not used here, but defensive).
 		id := "cv-seedapprovalxxxxxxxxxxxx"[:len("cv-")] + padTo26(t, "seed"+stringFromInt(t, i))
-		res, err := cache.Hold(ctx, PendingLiteApproval{
+		res, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
 			ID:       id,
 			UserID:   userID,
 			AgentID:  agentID,
 			Provider: conversation.ProviderAnthropic,
-			Stage:    StageTool,
+			Stage:    llmproxy.StageTool,
 			ToolUse:  conversation.ToolUse{ID: "seed_" + stringFromInt(t, i), Name: "Bash"},
 		})
 		if err != nil {
@@ -481,10 +482,10 @@ func TestPostprocess_CoalesceDoesNotEvictUnrelatedApprovals(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
-	_ = Postprocess(req, body, "application/json", PostprocessConfig{
+	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -499,7 +500,7 @@ func TestPostprocess_CoalesceDoesNotEvictUnrelatedApprovals(t *testing.T) {
 
 	// All 9 seed approvals must still be present; only the one
 	// coalesced hold was added, putting total at 10 (== max).
-	final := cache.snapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	final := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
 	if len(final) != 10 {
 		t.Fatalf("expected 10 final holds (9 seed + 1 coalesced); got %d", len(final))
 	}
@@ -515,21 +516,21 @@ func TestPostprocess_CoalesceDoesNotEvictUnrelatedApprovals(t *testing.T) {
 }
 
 // Regression: the coalesced Hold itself can evict an older inline-task
-// hold. When that happens, the evicted hold's PendingTaskID must be
+// hold. When that happens, the evicted hold's llmproxy.PendingTaskID must be
 // expired so the dashboard stops showing an approval that no longer has
 // a cache anchor for chat resolution.
 func TestPostprocess_CoalescedHoldEvictionExpiresInlineTask(t *testing.T) {
 	ctx := context.Background()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
-	cache.max = 1
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+	cache.SetMaxForTest(1)
 	st, userID, agentID := seedPostprocessStore(t, "placeholder_github_coalesce")
 
-	if _, err := cache.Hold(ctx, PendingLiteApproval{
+	if _, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
 		ID:            "cv-inlineevictedxxxxxxxxxx",
 		UserID:        userID,
 		AgentID:       agentID,
 		Provider:      conversation.ProviderAnthropic,
-		Stage:         StageAwaitingTaskApproval,
+		Stage:         llmproxy.StageAwaitingTaskApproval,
 		PendingTaskID: "task-coalesced-evicted",
 		ToolUse:       conversation.ToolUse{ID: "toolu_inline", Name: "Bash"},
 	}); err != nil {
@@ -551,10 +552,10 @@ func TestPostprocess_CoalescedHoldEvictionExpiresInlineTask(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	creator := &capturingInlineCreator{}
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -596,13 +597,13 @@ func TestPostprocess_CoalesceAuditDoesNotEmitMisleadingAllow(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-	cache := NewMemoryPendingApprovalCache(time.Minute)
-	emitter := NewAuditEmitter(st, nil, nil)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+	emitter := llmproxy.NewAuditEmitter(st, nil, nil)
 
-	_ = Postprocess(req, body, "application/json", PostprocessConfig{
+	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -667,13 +668,13 @@ func TestPostprocess_CoalescePendingAuditSurfacesApprovalTrigger(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-	cache := NewMemoryPendingApprovalCache(time.Minute)
-	emitter := NewAuditEmitter(st, nil, nil)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+	emitter := llmproxy.NewAuditEmitter(st, nil, nil)
 
-	_ = Postprocess(req, body, "application/json", PostprocessConfig{
+	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -750,13 +751,13 @@ func TestPostprocess_LegacyReplayFailureFailsClosed(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	// failFirst=999 → every Hold call fails. Single tool_use → no
 	// coalescence; the legacy-replay path is the one exercised.
-	inner := NewMemoryPendingApprovalCache(time.Minute)
+	inner := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	cache := &flakyHoldCache{inner: inner, failFirst: 999}
 
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -785,25 +786,25 @@ func TestPostprocess_LegacyReplayFailureFailsClosed(t *testing.T) {
 // engine doesn't naturally produce.
 func TestReplayBufferedHolds_PartialFailureRollsBackCommitted(t *testing.T) {
 	ctx := context.Background()
-	inner := NewMemoryPendingApprovalCache(time.Minute)
+	inner := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	// Three buffered holds; the second one's Hold call fails. The
 	// first should be committed then dropped on the failure path;
 	// the third should never be attempted.
 	cache := &flakyHoldFromCallN{inner: inner, failOnCall: 2}
 	sink := &capturedHoldSink{
 		holds: []capturedHold{
-			{Pending: PendingLiteApproval{UserID: "u", AgentID: "a", Provider: conversation.ProviderAnthropic, ToolUse: conversation.ToolUse{ID: "t1", Name: "Bash"}}},
-			{Pending: PendingLiteApproval{UserID: "u", AgentID: "a", Provider: conversation.ProviderAnthropic, ToolUse: conversation.ToolUse{ID: "t2", Name: "Bash"}}},
-			{Pending: PendingLiteApproval{UserID: "u", AgentID: "a", Provider: conversation.ProviderAnthropic, ToolUse: conversation.ToolUse{ID: "t3", Name: "Bash"}}},
+			{Pending: llmproxy.PendingLiteApproval{UserID: "u", AgentID: "a", Provider: conversation.ProviderAnthropic, ToolUse: conversation.ToolUse{ID: "t1", Name: "Bash"}}},
+			{Pending: llmproxy.PendingLiteApproval{UserID: "u", AgentID: "a", Provider: conversation.ProviderAnthropic, ToolUse: conversation.ToolUse{ID: "t2", Name: "Bash"}}},
+			{Pending: llmproxy.PendingLiteApproval{UserID: "u", AgentID: "a", Provider: conversation.ProviderAnthropic, ToolUse: conversation.ToolUse{ID: "t3", Name: "Bash"}}},
 		},
 	}
 	captures := []evalCapture{{Use: sink.holds[0].Pending.ToolUse}, {Use: sink.holds[1].Pending.ToolUse}, {Use: sink.holds[2].Pending.ToolUse}}
 
-	err := replayBufferedHolds(ctx, PostprocessConfig{}, cache, sink, nil, captures)
+	err := replayBufferedHolds(ctx, llmproxy.PostprocessConfig{}, cache, sink, nil, captures)
 	if err == nil {
 		t.Fatalf("expected non-nil error from partial replay failure")
 	}
-	final := inner.snapshotHoldsForTest("u", "a", conversation.ProviderAnthropic)
+	final := inner.SnapshotHoldsForTest("u", "a", conversation.ProviderAnthropic)
 	if len(final) != 0 {
 		t.Fatalf("partial replay failure must roll back committed holds; got %d remaining: %+v", len(final), final)
 	}
@@ -814,12 +815,12 @@ func TestReplayBufferedHolds_PartialFailureRollsBackCommitted(t *testing.T) {
 
 func TestHoldCapturingApprovalCacheBuffersThenReplayCommitsOnce(t *testing.T) {
 	ctx := context.Background()
-	inner := NewMemoryPendingApprovalCache(time.Minute)
+	inner := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	counting := &countingHoldCache{inner: inner}
 	sink := &capturedHoldSink{}
 	cache := newHoldCapturingApprovalCache(counting, sink)
 
-	pending := PendingLiteApproval{
+	pending := llmproxy.PendingLiteApproval{
 		UserID:   "u",
 		AgentID:  "a",
 		Provider: conversation.ProviderAnthropic,
@@ -834,13 +835,13 @@ func TestHoldCapturingApprovalCacheBuffersThenReplayCommitsOnce(t *testing.T) {
 	if len(sink.holds) != 1 {
 		t.Fatalf("expected one buffered hold, got %d", len(sink.holds))
 	}
-	if err := replayBufferedHolds(ctx, PostprocessConfig{}, counting, sink, nil, []evalCapture{{Use: pending.ToolUse}}); err != nil {
+	if err := replayBufferedHolds(ctx, llmproxy.PostprocessConfig{}, counting, sink, nil, []evalCapture{{Use: pending.ToolUse}}); err != nil {
 		t.Fatalf("replayBufferedHolds: %v", err)
 	}
 	if counting.holdCalls != 1 {
 		t.Fatalf("replay must commit exactly once, got %d inner Hold calls", counting.holdCalls)
 	}
-	final := inner.snapshotHoldsForTest("u", "a", conversation.ProviderAnthropic)
+	final := inner.SnapshotHoldsForTest("u", "a", conversation.ProviderAnthropic)
 	if len(final) != 1 {
 		t.Fatalf("expected one committed hold, got %d: %+v", len(final), final)
 	}
@@ -849,44 +850,44 @@ func TestHoldCapturingApprovalCacheBuffersThenReplayCommitsOnce(t *testing.T) {
 // flakyHoldFromCallN fails the N-th Hold call only and otherwise
 // passes through. Lets tests target a specific replay step.
 type flakyHoldFromCallN struct {
-	inner      PendingApprovalCache
+	inner      llmproxy.PendingApprovalCache
 	failOnCall int
 	calls      int
 }
 
-func (c *flakyHoldFromCallN) Hold(ctx context.Context, p PendingLiteApproval) (HoldResult, error) {
+func (c *flakyHoldFromCallN) Hold(ctx context.Context, p llmproxy.PendingLiteApproval) (llmproxy.HoldResult, error) {
 	c.calls++
 	if c.calls == c.failOnCall {
-		return HoldResult{}, errFlakyHold
+		return llmproxy.HoldResult{}, errFlakyHold
 	}
 	return c.inner.Hold(ctx, p)
 }
-func (c *flakyHoldFromCallN) Peek(ctx context.Context, r ResolveRequest) (*PendingLiteApproval, error) {
+func (c *flakyHoldFromCallN) Peek(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Peek(ctx, r)
 }
-func (c *flakyHoldFromCallN) Resolve(ctx context.Context, r ResolveRequest) (*PendingLiteApproval, error) {
+func (c *flakyHoldFromCallN) Resolve(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Resolve(ctx, r)
 }
-func (c *flakyHoldFromCallN) Drop(ctx context.Context, r ResolveRequest) error {
+func (c *flakyHoldFromCallN) Drop(ctx context.Context, r llmproxy.ResolveRequest) error {
 	return c.inner.Drop(ctx, r)
 }
 
 type countingHoldCache struct {
-	inner     PendingApprovalCache
+	inner     llmproxy.PendingApprovalCache
 	holdCalls int
 }
 
-func (c *countingHoldCache) Hold(ctx context.Context, p PendingLiteApproval) (HoldResult, error) {
+func (c *countingHoldCache) Hold(ctx context.Context, p llmproxy.PendingLiteApproval) (llmproxy.HoldResult, error) {
 	c.holdCalls++
 	return c.inner.Hold(ctx, p)
 }
-func (c *countingHoldCache) Peek(ctx context.Context, r ResolveRequest) (*PendingLiteApproval, error) {
+func (c *countingHoldCache) Peek(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Peek(ctx, r)
 }
-func (c *countingHoldCache) Resolve(ctx context.Context, r ResolveRequest) (*PendingLiteApproval, error) {
+func (c *countingHoldCache) Resolve(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Resolve(ctx, r)
 }
-func (c *countingHoldCache) Drop(ctx context.Context, r ResolveRequest) error {
+func (c *countingHoldCache) Drop(ctx context.Context, r llmproxy.ResolveRequest) error {
 	return c.inner.Drop(ctx, r)
 }
 
@@ -911,12 +912,12 @@ func TestPostprocess_BufferedHoldRespectsConfiguredCacheTTL(t *testing.T) {
 	// Configure the cache with a 30-second TTL. The wrapper used to
 	// default ExpiresAt = now + 10m; with that bug the persisted
 	// hold would expire 9.5 minutes later than the configured TTL.
-	cache := NewMemoryPendingApprovalCache(30 * time.Second)
+	cache := llmproxy.NewMemoryPendingApprovalCache(30 * time.Second)
 
-	_ = Postprocess(req, body, "application/json", PostprocessConfig{
+	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -929,7 +930,7 @@ func TestPostprocess_BufferedHoldRespectsConfiguredCacheTTL(t *testing.T) {
 		EgressRules: []*store.RuntimePolicyRule{},
 	})
 
-	holds := cache.snapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
 	if len(holds) != 1 {
 		t.Fatalf("expected one hold, got %d", len(holds))
 	}
@@ -960,12 +961,12 @@ func TestPostprocess_CoalescedSiblingCarriesInspectorMetadata(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
-	_ = Postprocess(req, body, "application/json", PostprocessConfig{
+	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -977,7 +978,7 @@ func TestPostprocess_CoalescedSiblingCarriesInspectorMetadata(t *testing.T) {
 		},
 		EgressRules: []*store.RuntimePolicyRule{},
 	})
-	holds := cache.snapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
 	if len(holds) != 1 {
 		t.Fatalf("want one coalesced hold, got %d", len(holds))
 	}
@@ -986,9 +987,9 @@ func TestPostprocess_CoalescedSiblingCarriesInspectorMetadata(t *testing.T) {
 		t.Fatalf("expected 2 held tool_uses, got %d", len(all))
 	}
 	// Find the auto-allowed bash sibling.
-	var bash HeldToolUse
+	var bash llmproxy.HeldToolUse
 	for _, h := range all {
-		if h.Kind == HeldKindAllow {
+		if h.Kind == llmproxy.HeldKindAllow {
 			bash = h
 			break
 		}
@@ -1012,9 +1013,9 @@ func TestPostprocess_CoalescedSiblingCarriesInspectorMetadata(t *testing.T) {
 func TestAuditEmitter_LogApprovalRelease_CoalescedEmitsOneRowWithPerToolDetail(t *testing.T) {
 	ctx := context.Background()
 	st, agent := newAuditTestStore(t)
-	em := NewAuditEmitter(st, nil, nil)
+	em := llmproxy.NewAuditEmitter(st, nil, nil)
 
-	pending := &PendingLiteApproval{
+	pending := &llmproxy.PendingLiteApproval{
 		ID:       "cv-coalescedauditxxxxxxxxxx",
 		UserID:   agent.UserID,
 		AgentID:  agent.ID,
@@ -1025,9 +1026,9 @@ func TestAuditEmitter_LogApprovalRelease_CoalescedEmitsOneRowWithPerToolDetail(t
 			Source: inspector.SourceDeterministic,
 		},
 		Reason: "review web fetch",
-		Additional: []HeldToolUse{{
+		Additional: []llmproxy.HeldToolUse{{
 			ToolUse:   conversation.ToolUse{ID: "toolu_sibling", Name: "Bash"},
-			Kind:      HeldKindAllow,
+			Kind:      llmproxy.HeldKindAllow,
 			Inspector: inspector.Verdict{Source: inspector.SourceTriggerMiss},
 		}},
 		PrimaryIndex: 1, // primary sits second in turn order
@@ -1088,17 +1089,17 @@ func TestAuditEmitter_LogApprovalRelease_CoalescedEmitsOneRowWithPerToolDetail(t
 // on retry, defeating the gesture.
 func TestStartInlineTaskDefinition_CoalescedHoldCoversEveryHeldTool(t *testing.T) {
 	ctx := context.Background()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
-	held, err := cache.Hold(ctx, PendingLiteApproval{
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+	held, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
 		ID:       "cv-coalescetaskxxxxxxxxxxxxxx",
 		UserID:   "user-1",
 		AgentID:  "agent-1",
 		Provider: conversation.ProviderAnthropic,
-		Stage:    StageTool,
+		Stage:    llmproxy.StageTool,
 		ToolUse:  conversation.ToolUse{ID: "toolu_fetch", Name: "WebFetch", Input: json.RawMessage(`{"url":"https://example.com/x"}`)},
-		Additional: []HeldToolUse{{
+		Additional: []llmproxy.HeldToolUse{{
 			ToolUse: conversation.ToolUse{ID: "toolu_bash", Name: "Bash", Input: json.RawMessage(`{"command":"ls"}`)},
-			Kind:    HeldKindAllow,
+			Kind:    llmproxy.HeldKindAllow,
 		}},
 		PrimaryIndex: 1,
 	})
@@ -1106,7 +1107,7 @@ func TestStartInlineTaskDefinition_CoalescedHoldCoversEveryHeldTool(t *testing.T
 		t.Fatal(err)
 	}
 
-	out, err := RewriteTaskApprovalReply(ctx, TaskReplyRewriteRequest{
+	out, err := llmproxy.RewriteTaskApprovalReply(ctx, llmproxy.TaskReplyRewriteRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
 		Body:            []byte(`{"messages":[{"role":"user","content":"task ` + held.Pending.ID + `"}]}`),
@@ -1135,25 +1136,25 @@ func TestStartInlineTaskDefinition_CoalescedHoldCoversEveryHeldTool(t *testing.T
 // coalesced Hold (first call under pass-1 buffering) while letting
 // the legacy-replay fallback succeed.
 type flakyHoldCache struct {
-	inner     PendingApprovalCache
+	inner     llmproxy.PendingApprovalCache
 	failFirst int
 	calls     int
 }
 
-func (c *flakyHoldCache) Hold(ctx context.Context, p PendingLiteApproval) (HoldResult, error) {
+func (c *flakyHoldCache) Hold(ctx context.Context, p llmproxy.PendingLiteApproval) (llmproxy.HoldResult, error) {
 	c.calls++
 	if c.calls <= c.failFirst {
-		return HoldResult{}, errFlakyHold
+		return llmproxy.HoldResult{}, errFlakyHold
 	}
 	return c.inner.Hold(ctx, p)
 }
-func (c *flakyHoldCache) Peek(ctx context.Context, r ResolveRequest) (*PendingLiteApproval, error) {
+func (c *flakyHoldCache) Peek(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Peek(ctx, r)
 }
-func (c *flakyHoldCache) Resolve(ctx context.Context, r ResolveRequest) (*PendingLiteApproval, error) {
+func (c *flakyHoldCache) Resolve(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Resolve(ctx, r)
 }
-func (c *flakyHoldCache) Drop(ctx context.Context, r ResolveRequest) error {
+func (c *flakyHoldCache) Drop(ctx context.Context, r llmproxy.ResolveRequest) error {
 	return c.inner.Drop(ctx, r)
 }
 

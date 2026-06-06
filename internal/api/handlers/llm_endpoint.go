@@ -19,6 +19,7 @@ import (
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
@@ -1104,7 +1105,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			var capturedUpstream bytes.Buffer
 			teeReader := io.TeeReader(resp.Body, &capturedUpstream)
 
-			processed, err := llmproxy.PostprocessStream(r.Context(), r, teeReader, streamW, upstreamCT, cfg)
+			processed, err := postproc.PostprocessStream(r.Context(), r, teeReader, streamW, upstreamCT, cfg)
 			if err != nil {
 				h.Logger.WarnContext(r.Context(), "lite-proxy postprocess streaming error",
 					"request_id", requestID, "agent_id", agent.ID, "err", err.Error())
@@ -1437,7 +1438,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			Body:     body,
 		})
 		autoApproveThreshold := agentConversationAutoApproveThreshold(agent)
-		processed := llmproxy.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
+		processed := postproc.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
 			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
 			Inspector:        h.Inspector,
 			RewriteOpts:      opts,
@@ -2019,7 +2020,7 @@ func (h *LLMEndpointHandler) tryContinuation(
 	// SubstituteWith fallback renders as a terminal text turn instead,
 	// which is the right behavior for a model that re-emits a task-
 	// creation tool_use on the continuation.
-	newProcessed := llmproxy.Postprocess(r, full, contCT, cfg)
+	newProcessed := postproc.Postprocess(r, full, contCT, cfg)
 	// Force Rewritten=true on a successful continuation swap. The
 	// body now comes from a SECOND upstream call whose length almost
 	// certainly differs from the first call's Content-Length (which

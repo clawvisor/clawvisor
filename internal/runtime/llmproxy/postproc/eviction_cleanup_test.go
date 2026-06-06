@@ -1,4 +1,4 @@
-package llmproxy
+package postproc
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 )
 
 // TestCleanupEvictedInlineTask_NoOpWhenNoTaskID confirms the helper
@@ -17,12 +18,12 @@ import (
 func TestCleanupEvictedInlineTask_NoOpWhenNoTaskID(t *testing.T) {
 	ctx := context.Background()
 	creator := &capturingInlineCreator{}
-	cleanupEvictedInlineTask(ctx, PostprocessConfig{InlineTaskCreator: creator}, &PendingLiteApproval{
+	llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{InlineTaskCreator: creator}, &llmproxy.PendingLiteApproval{
 		ID:     "cv-tool-hold",
 		UserID: "u",
 	})
 	if creator.expireCalled {
-		t.Fatalf("ExpireInlineTask was called for a hold with no PendingTaskID")
+		t.Fatalf("ExpireInlineTask was called for a hold with no llmproxy.PendingTaskID")
 	}
 }
 
@@ -33,7 +34,7 @@ func TestCleanupEvictedInlineTask_NoOpWhenNoTaskID(t *testing.T) {
 // daemon is wired in a partial / legacy shape.
 func TestCleanupEvictedInlineTask_NoOpWhenCreatorMissing(t *testing.T) {
 	ctx := context.Background()
-	cleanupEvictedInlineTask(ctx, PostprocessConfig{}, &PendingLiteApproval{
+	llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{}, &llmproxy.PendingLiteApproval{
 		ID:            "cv-inline-hold",
 		UserID:        "u",
 		PendingTaskID: "task-aaa",
@@ -41,14 +42,14 @@ func TestCleanupEvictedInlineTask_NoOpWhenCreatorMissing(t *testing.T) {
 }
 
 // TestCleanupEvictedInlineTask_CallsExpireWhenInlineHold drives the
-// happy path: an inline-task hold with a non-empty PendingTaskID
+// happy path: an inline-task hold with a non-empty llmproxy.PendingTaskID
 // triggers ExpireInlineTask on the configured creator. The cache
 // eviction sites all funnel through this helper, so this is the only
 // branch that needs end-to-end coverage of the cleanup wiring.
 func TestCleanupEvictedInlineTask_CallsExpireWhenInlineHold(t *testing.T) {
 	ctx := context.Background()
 	creator := &capturingInlineCreator{}
-	cleanupEvictedInlineTask(ctx, PostprocessConfig{InlineTaskCreator: creator}, &PendingLiteApproval{
+	llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{InlineTaskCreator: creator}, &llmproxy.PendingLiteApproval{
 		ID:            "cv-inline-hold",
 		UserID:        "u",
 		PendingTaskID: "task-aaa",
@@ -65,11 +66,11 @@ func TestCleanupEvictedInlineTask_TracesExpireFailure(t *testing.T) {
 	ctx := context.Background()
 	creator := &capturingInlineCreator{expireFail: true}
 	var buf bytes.Buffer
-	cleanupEvictedInlineTask(ctx, PostprocessConfig{
+	llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{
 		InlineTaskCreator: creator,
 		RequestID:         "req-evict-trace",
-		Trace:             NewTraceLogger(&buf),
-	}, &PendingLiteApproval{
+		Trace:             llmproxy.NewTraceLogger(&buf),
+	}, &llmproxy.PendingLiteApproval{
 		ID:            "cv-inline-hold",
 		UserID:        "u",
 		AgentID:       "a",
@@ -87,22 +88,22 @@ func TestCleanupEvictedInlineTask_TracesExpireFailure(t *testing.T) {
 // TestReplayBufferedHolds_EvictionExpiresInlineTask drives the
 // integration path the user reported: a buffered Hold that would
 // displace an older inline-task hold during replay triggers
-// ExpireInlineTask on the evicted hold's PendingTaskID so the
+// ExpireInlineTask on the evicted hold's llmproxy.PendingTaskID so the
 // dashboard doesn't strand a row whose chat anchor is gone.
 func TestReplayBufferedHolds_EvictionExpiresInlineTask(t *testing.T) {
 	ctx := context.Background()
-	inner := NewMemoryPendingApprovalCache(time.Minute)
+	inner := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 	// Force eviction on the very next Hold by tightening the cap.
-	inner.max = 1
+	inner.SetMaxForTest(1)
 
 	// Seed the inner cache with an inline-task hold that the replay
 	// will evict — exactly the user's reported shape.
-	if _, err := inner.Hold(ctx, PendingLiteApproval{
+	if _, err := inner.Hold(ctx, llmproxy.PendingLiteApproval{
 		ID:            "cv-inline-evicted",
 		UserID:        "u",
 		AgentID:       "a",
 		Provider:      conversation.ProviderAnthropic,
-		Stage:         StageAwaitingTaskApproval,
+		Stage:         llmproxy.StageAwaitingTaskApproval,
 		PendingTaskID: "task-stranded",
 		ToolUse:       conversation.ToolUse{ID: "tool_a", Name: "Bash"},
 	}); err != nil {
@@ -114,7 +115,7 @@ func TestReplayBufferedHolds_EvictionExpiresInlineTask(t *testing.T) {
 	// to be on the EVICTED hold, not this one.
 	sink := &capturedHoldSink{
 		holds: []capturedHold{{
-			Pending: PendingLiteApproval{
+			Pending: llmproxy.PendingLiteApproval{
 				ID:       "cv-newcomer",
 				UserID:   "u",
 				AgentID:  "a",
@@ -124,7 +125,7 @@ func TestReplayBufferedHolds_EvictionExpiresInlineTask(t *testing.T) {
 		}},
 	}
 	creator := &capturingInlineCreator{}
-	if err := replayBufferedHolds(ctx, PostprocessConfig{InlineTaskCreator: creator}, inner, sink, nil, nil); err != nil {
+	if err := replayBufferedHolds(ctx, llmproxy.PostprocessConfig{InlineTaskCreator: creator}, inner, sink, nil, nil); err != nil {
 		t.Fatalf("replayBufferedHolds: %v", err)
 	}
 
@@ -132,7 +133,7 @@ func TestReplayBufferedHolds_EvictionExpiresInlineTask(t *testing.T) {
 		t.Fatalf("ExpireInlineTask was not invoked for the evicted inline-task hold")
 	}
 	if len(creator.expiredIDs) != 1 || creator.expiredIDs[0] != "task-stranded" {
-		t.Fatalf("expired ids = %v, want [task-stranded] (PendingTaskID of the evicted hold)", creator.expiredIDs)
+		t.Fatalf("expired ids = %v, want [task-stranded] (llmproxy.PendingTaskID of the evicted hold)", creator.expiredIDs)
 	}
 }
 
@@ -141,13 +142,13 @@ func TestRollbackBufferedPendingTasks_ExpiresOnlyInlineTaskHolds(t *testing.T) {
 	creator := &capturingInlineCreator{}
 	sink := &capturedHoldSink{
 		holds: []capturedHold{
-			{Pending: PendingLiteApproval{UserID: "u", PendingTaskID: "task-pending-1"}},
-			{Pending: PendingLiteApproval{UserID: "u"}},
-			{Pending: PendingLiteApproval{UserID: "u", PendingTaskID: "task-pending-2"}},
+			{Pending: llmproxy.PendingLiteApproval{UserID: "u", PendingTaskID: "task-pending-1"}},
+			{Pending: llmproxy.PendingLiteApproval{UserID: "u"}},
+			{Pending: llmproxy.PendingLiteApproval{UserID: "u", PendingTaskID: "task-pending-2"}},
 		},
 	}
 
-	rollbackBufferedPendingTasks(ctx, PostprocessConfig{InlineTaskCreator: creator}, sink)
+	rollbackBufferedPendingTasks(ctx, llmproxy.PostprocessConfig{InlineTaskCreator: creator}, sink)
 
 	if !creator.expireCalled {
 		t.Fatalf("ExpireInlineTask was not called for buffered inline-task holds")
@@ -166,7 +167,7 @@ func TestRollbackBufferedPendingTasks_TracesExpireFailure(t *testing.T) {
 	creator := &capturingInlineCreator{expireFail: true}
 	sink := &capturedHoldSink{
 		holds: []capturedHold{{
-			Pending: PendingLiteApproval{
+			Pending: llmproxy.PendingLiteApproval{
 				ID:            "cv-inline-rollback",
 				UserID:        "u",
 				AgentID:       "a",
@@ -176,10 +177,10 @@ func TestRollbackBufferedPendingTasks_TracesExpireFailure(t *testing.T) {
 	}
 	var buf bytes.Buffer
 
-	rollbackBufferedPendingTasks(ctx, PostprocessConfig{
+	rollbackBufferedPendingTasks(ctx, llmproxy.PostprocessConfig{
 		InlineTaskCreator: creator,
 		RequestID:         "req-rollback-trace",
-		Trace:             NewTraceLogger(&buf),
+		Trace:             llmproxy.NewTraceLogger(&buf),
 	}, sink)
 
 	out := buf.String()
