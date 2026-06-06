@@ -26,6 +26,12 @@ type DefaultParser struct{}
 
 // Parse implements Parser.
 func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
+	if v, ok := parseStructuredFetch(t); ok {
+		return v, true
+	}
+	if v, ok := parseBashCurl(t); ok {
+		return v, true
+	}
 	// Known-local tools never make outbound HTTP calls; if a placeholder
 	// substring appears in their args (a user pasting the placeholder
 	// into a chat that gets routed through Skill, an Edit that records
@@ -45,17 +51,15 @@ func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
 			Reason:    "non-API file manipulation tool (" + t.Name + ")",
 		}, true
 	}
-	if v, ok := parseStructuredFetch(t); ok {
-		return v, true
-	}
-	if v, ok := parseBashCurl(t); ok {
-		return v, true
-	}
 	return Verdict{}, false
 }
 
 func isFileManipulationTool(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
+	nameLower := strings.ToLower(strings.TrimSpace(name))
+	if strings.Contains(nameLower, "__") && !strings.HasPrefix(nameLower, "mcp__filesystem__") {
+		return false
+	}
+	switch nameLower {
 	case "write", "edit", "notebookedit", "write_file", "edit_file",
 		"mcp__filesystem__write_file", "mcp__filesystem__edit_file",
 		"replace_file_content", "multi_replace_file_content", "write_to_file",
@@ -233,6 +237,10 @@ var defaultAllowedTools = map[string]struct{}{
 }
 
 func isLocalOnlyTool(name string) bool {
+	nameLower := strings.ToLower(strings.TrimSpace(name))
+	if strings.Contains(nameLower, "__") && !strings.HasPrefix(nameLower, "mcp__filesystem__") {
+		return false
+	}
 	return IsLocalOnlyTool(name)
 }
 

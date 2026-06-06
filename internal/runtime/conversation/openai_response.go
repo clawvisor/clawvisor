@@ -1925,7 +1925,7 @@ func (rw OpenAIResponseRewriter) streamRewriteChatCompletions(ctx context.Contex
 				reemitPayload := map[string]any{
 					"id":      event.ID,
 					"object":  "chat.completion.chunk",
-					"model":   event.Model,
+					"model":   msgModel,
 					"choices": contentOnlyChoices,
 				}
 				raw, err := json.Marshal(reemitPayload)
