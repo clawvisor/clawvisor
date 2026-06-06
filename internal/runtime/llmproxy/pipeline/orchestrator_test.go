@@ -19,28 +19,30 @@ type orchTestRequest struct {
 	body     []byte
 }
 
-func (r *orchTestRequest) Provider() conversation.Provider       { return r.provider }
-func (r *orchTestRequest) StreamShape() conversation.StreamShape { return conversation.StreamShapeUnknown }
-func (r *orchTestRequest) Turns() []conversation.Turn            { return nil }
-func (r *orchTestRequest) HTTPRequest() *http.Request            { return nil }
-func (r *orchTestRequest) RawBody() []byte                       { return r.body }
-func (r *orchTestRequest) IsFirstTurn() bool                     { return true }
-func (r *orchTestRequest) ConversationID() string                { return "" }
-func (r *orchTestRequest) UserID() string                        { return "" }
-func (r *orchTestRequest) AgentID() string                       { return "" }
+func (r *orchTestRequest) Provider() conversation.Provider { return r.provider }
+func (r *orchTestRequest) StreamShape() conversation.StreamShape {
+	return conversation.StreamShapeUnknown
+}
+func (r *orchTestRequest) Turns() []conversation.Turn { return nil }
+func (r *orchTestRequest) HTTPRequest() *http.Request { return nil }
+func (r *orchTestRequest) RawBody() []byte            { return r.body }
+func (r *orchTestRequest) IsFirstTurn() bool          { return true }
+func (r *orchTestRequest) ConversationID() string     { return "" }
+func (r *orchTestRequest) UserID() string             { return "" }
+func (r *orchTestRequest) AgentID() string            { return "" }
 
 // allowingPolicy is a no-op RequestPolicy that emits one audit field.
 type allowingPolicy struct {
-	name   string
-	field  string
-	value  any
+	name  string
+	field string
+	value any
 }
 
 func (p *allowingPolicy) Name() string { return p.name }
 func (p *allowingPolicy) Preprocess(_ context.Context, _ pipeline.ReadOnlyRequest, _ pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
 	return pipeline.RequestVerdict{
 		Outcome: pipeline.OutcomeAllow,
-		AuditFields: map[string]any{
+		AuditParams: map[string]any{
 			p.field: p.value,
 		},
 	}, nil
@@ -59,7 +61,7 @@ func (p *bodyReplacingPolicy) Preprocess(_ context.Context, _ pipeline.ReadOnlyR
 	}
 	return pipeline.RequestVerdict{
 		Outcome:     pipeline.OutcomeAllow,
-		AuditFields: map[string]any{"replaced": p.name},
+		AuditParams: map[string]any{"replaced": p.name},
 	}, nil
 }
 
@@ -86,7 +88,7 @@ func (p *denyingPolicy) Preprocess(_ context.Context, _ pipeline.ReadOnlyRequest
 	return pipeline.RequestVerdict{
 		Outcome: pipeline.OutcomeDeny,
 		Reason:  "test denied",
-		AuditFields: map[string]any{
+		AuditParams: map[string]any{
 			"deny_reason": "test_deny",
 		},
 	}, nil
@@ -143,11 +145,11 @@ func TestRunPre_AppliesPoliciesInOrderAndMergesAudit(t *testing.T) {
 	if string(observer.seen) != string(intermediate) {
 		t.Errorf("middle policy saw body %q, want %q (eager apply broken)", observer.seen, intermediate)
 	}
-	if result.AuditFields["replaced"] != "second" {
-		t.Errorf("expected last writer wins on `replaced`; got %v", result.AuditFields["replaced"])
+	if result.AuditParams["replaced"] != "second" {
+		t.Errorf("expected last writer wins on `replaced`; got %v", result.AuditParams["replaced"])
 	}
-	if result.AuditFields["tagger_ran"] != true {
-		t.Errorf("expected tagger_ran:true in merged audit; got %v", result.AuditFields)
+	if result.AuditParams["tagger_ran"] != true {
+		t.Errorf("expected tagger_ran:true in merged audit; got %v", result.AuditParams)
 	}
 	if len(result.Verdicts) != 4 {
 		t.Errorf("expected 4 verdicts, got %d", len(result.Verdicts))
@@ -182,10 +184,10 @@ func TestRunPre_HaltsOnDeny(t *testing.T) {
 	if len(result.Verdicts) != 2 {
 		t.Errorf("expected 2 verdicts (first + denier), got %d", len(result.Verdicts))
 	}
-	if result.AuditFields["first_ran"] != true {
+	if result.AuditParams["first_ran"] != true {
 		t.Errorf("first policy's audit field lost")
 	}
-	if result.AuditFields["deny_reason"] != "test_deny" {
+	if result.AuditParams["deny_reason"] != "test_deny" {
 		t.Errorf("denier's audit field lost")
 	}
 }

@@ -18,10 +18,12 @@ type chainIntegrationResponse struct {
 	provider conversation.Provider
 }
 
-func (r *chainIntegrationResponse) Provider() conversation.Provider       { return r.provider }
-func (r *chainIntegrationResponse) StreamShape() conversation.StreamShape { return conversation.StreamShapeUnknown }
-func (r *chainIntegrationResponse) IsStreaming() bool                     { return false }
-func (r *chainIntegrationResponse) ToolUses() []conversation.ToolUse      { return nil }
+func (r *chainIntegrationResponse) Provider() conversation.Provider { return r.provider }
+func (r *chainIntegrationResponse) StreamShape() conversation.StreamShape {
+	return conversation.StreamShapeUnknown
+}
+func (r *chainIntegrationResponse) IsStreaming() bool                { return false }
+func (r *chainIntegrationResponse) ToolUses() []conversation.ToolUse { return nil }
 
 // chainIntegrationMutator is a no-op ToolUseMutator for these tests.
 type chainIntegrationMutator struct{}

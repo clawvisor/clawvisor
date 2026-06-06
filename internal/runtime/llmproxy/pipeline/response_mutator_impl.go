@@ -21,10 +21,10 @@ type streamingResponseMutator struct {
 	src   io.Reader
 	shape conversation.StreamShape
 
-	prependText        string
-	substituteText     string
-	hasSubstitute      bool
-	committed          bool
+	prependText    string
+	substituteText string
+	hasSubstitute  bool
+	committed      bool
 }
 
 // NewStreamingResponseMutator wires a ResponseMutator that mutates

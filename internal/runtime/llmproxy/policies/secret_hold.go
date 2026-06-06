@@ -41,9 +41,9 @@ type SecretHoldResult struct {
 	Decision    string
 	Outcome     string
 	Reason      string
-	// AuditFields are additional audit-row entries the hold check
+	// AuditParams are additional audit-row entries the hold check
 	// produced (e.g., the pending secret ID).
-	AuditFields map[string]any
+	AuditParams map[string]any
 }
 
 // NewSecretHold constructs the policy. nil resolver → Skip.
@@ -86,13 +86,13 @@ func (p *SecretHold) Preprocess(ctx context.Context, req pipeline.ReadOnlyReques
 	if result.Reason != "" {
 		fields["secret_hold_reason"] = result.Reason
 	}
-	for k, v := range result.AuditFields {
+	for k, v := range result.AuditParams {
 		fields[k] = v
 	}
 
 	return pipeline.RequestVerdict{
 		Outcome:     pipeline.OutcomeShortCircuit,
-		AuditFields: fields,
+		AuditParams: fields,
 		ShortCircuit: &pipeline.SyntheticResponse{
 			Body:       result.Body,
 			StatusCode: status,

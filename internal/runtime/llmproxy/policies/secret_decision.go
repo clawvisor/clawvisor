@@ -41,7 +41,7 @@ type SecretDecisionResult struct {
 	Decision     string
 	Outcome      string
 	Reason       string
-	AuditFields  map[string]any
+	AuditParams  map[string]any
 }
 
 // NewSecretDecision constructs the policy. nil resolver → Skip.
@@ -73,7 +73,7 @@ func (p *SecretDecision) Preprocess(ctx context.Context, req pipeline.ReadOnlyRe
 	if result.Reason != "" {
 		fields["secret_decision_reason"] = result.Reason
 	}
-	for k, v := range result.AuditFields {
+	for k, v := range result.AuditParams {
 		fields[k] = v
 	}
 
@@ -88,7 +88,7 @@ func (p *SecretDecision) Preprocess(ctx context.Context, req pipeline.ReadOnlyRe
 		}
 		return pipeline.RequestVerdict{
 			Outcome:     pipeline.OutcomeShortCircuit,
-			AuditFields: fields,
+			AuditParams: fields,
 			ShortCircuit: &pipeline.SyntheticResponse{
 				Body:       result.Body,
 				StatusCode: status,
@@ -103,11 +103,11 @@ func (p *SecretDecision) Preprocess(ctx context.Context, req pipeline.ReadOnlyRe
 		}
 		return pipeline.RequestVerdict{
 			Outcome:     pipeline.OutcomeAllow,
-			AuditFields: fields,
+			AuditParams: fields,
 		}, nil
 	}
 
-	return pipeline.RequestVerdict{Outcome: pipeline.OutcomeAllow, AuditFields: fields}, nil
+	return pipeline.RequestVerdict{Outcome: pipeline.OutcomeAllow, AuditParams: fields}, nil
 }
 
 var _ pipeline.RequestPolicy = (*SecretDecision)(nil)

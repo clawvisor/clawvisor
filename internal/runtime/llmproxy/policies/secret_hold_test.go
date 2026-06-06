@@ -75,11 +75,11 @@ func TestSecretHold_ShortCircuitOnHold(t *testing.T) {
 	if v.ShortCircuit.Headers["Content-Type"] != "application/json" {
 		t.Errorf("Content-Type header missing")
 	}
-	if v.AuditFields["secret_hold_held"] != true {
-		t.Errorf("secret_hold_held = %v, want true", v.AuditFields["secret_hold_held"])
+	if v.AuditParams["secret_hold_held"] != true {
+		t.Errorf("secret_hold_held = %v, want true", v.AuditParams["secret_hold_held"])
 	}
-	if v.AuditFields["secret_hold_outcome"] != "secret_pending" {
-		t.Errorf("secret_hold_outcome = %v, want secret_pending", v.AuditFields["secret_hold_outcome"])
+	if v.AuditParams["secret_hold_outcome"] != "secret_pending" {
+		t.Errorf("secret_hold_outcome = %v, want secret_pending", v.AuditParams["secret_hold_outcome"])
 	}
 }
 

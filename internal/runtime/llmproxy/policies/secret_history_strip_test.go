@@ -61,7 +61,7 @@ func TestSecretHistoryStrip_StripsAssistantMarkerTurn(t *testing.T) {
 	if len(mut.ReplaceBodyCalls) != 1 {
 		t.Fatalf("expected 1 ReplaceBody call, got %d", len(mut.ReplaceBodyCalls))
 	}
-	if got := verdict.AuditFields["secret_history_stripped"]; got != true {
+	if got := verdict.AuditParams["secret_history_stripped"]; got != true {
 		t.Errorf("audit field secret_history_stripped = %v, want true", got)
 	}
 

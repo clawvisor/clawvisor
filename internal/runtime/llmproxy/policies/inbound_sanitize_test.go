@@ -63,7 +63,7 @@ func TestInboundSanitize_StripsRewrittenToolUseInputs(t *testing.T) {
 	if len(mut.ReplaceBodyCalls) != 1 {
 		t.Fatalf("expected 1 ReplaceBody call, got %d", len(mut.ReplaceBodyCalls))
 	}
-	if got := verdict.AuditFields["inbound_history_sanitized"]; got != true {
+	if got := verdict.AuditParams["inbound_history_sanitized"]; got != true {
 		t.Errorf("audit field inbound_history_sanitized = %v, want true", got)
 	}
 

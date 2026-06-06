@@ -60,7 +60,7 @@ func (p *InlineTaskAugment) Preprocess(ctx context.Context, req pipeline.ReadOnl
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeSkip,
 			Reason:  err.Error(),
-			AuditFields: map[string]any{
+			AuditParams: map[string]any{
 				"inline_task_augment_error": err.Error(),
 			},
 		}, nil
@@ -73,7 +73,7 @@ func (p *InlineTaskAugment) Preprocess(ctx context.Context, req pipeline.ReadOnl
 	}
 	return pipeline.RequestVerdict{
 		Outcome: pipeline.OutcomeAllow,
-		AuditFields: map[string]any{
+		AuditParams: map[string]any{
 			"inline_task_history_augmented": true,
 		},
 	}, nil

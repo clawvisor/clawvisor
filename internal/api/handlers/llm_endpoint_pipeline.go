@@ -50,7 +50,7 @@ var _ pipeline.ReadOnlyRequest = (*pipelineReadOnlyRequest)(nil)
 // before the full chain consolidates.
 //
 // Returns the result. The caller threads result.FinalBody back into the
-// handler's working body, merges result.AuditFields into auditParams,
+// handler's working body, merges result.AuditParams into auditParams,
 // and handles result.DenyReason / result.ShortCircuit per its existing
 // error semantics.
 func runSinglePolicy(

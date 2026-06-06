@@ -136,8 +136,8 @@ func TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows(t *testing.T) {
 		{
 			name: "control_tool clawvisor_control rewrite",
 			tu: conversation.ToolUse{
-				ID:   "toolu_4",
-				Name: "Bash",
+				ID:    "toolu_4",
+				Name:  "Bash",
 				Input: json.RawMessage(`{"command":"curl https://clawvisor.local/control/tasks"}`),
 			},
 			verdict: inspector.Verdict{

@@ -53,7 +53,7 @@ func TestAnthropicSanitize_AllowWithoutMutation(t *testing.T) {
 	if len(mut.ReplaceBodyCalls) != 0 {
 		t.Errorf("expected no mutations on clean body, got %d", len(mut.ReplaceBodyCalls))
 	}
-	if _, ok := verdict.AuditFields["anthropic_empty_text_sanitized"]; ok {
+	if _, ok := verdict.AuditParams["anthropic_empty_text_sanitized"]; ok {
 		t.Errorf("audit field should be absent when not sanitized")
 	}
 }
@@ -78,7 +78,7 @@ func TestAnthropicSanitize_QueuesReplaceBodyWhenSanitized(t *testing.T) {
 	if verdict.Outcome != pipeline.OutcomeAllow {
 		t.Errorf("Outcome = %q, want Allow", verdict.Outcome)
 	}
-	if got := verdict.AuditFields["anthropic_empty_text_sanitized"]; got != true {
+	if got := verdict.AuditParams["anthropic_empty_text_sanitized"]; got != true {
 		t.Errorf("audit field anthropic_empty_text_sanitized = %v, want true", got)
 	}
 	if len(mut.ReplaceBodyCalls) != 1 {
@@ -115,7 +115,7 @@ func TestAnthropicSanitize_DenyOnMalformedBody(t *testing.T) {
 	if verdict.Reason == "" {
 		t.Errorf("expected Reason populated on Deny")
 	}
-	if got := verdict.AuditFields["deny_outcome"]; got != "malformed_request" {
+	if got := verdict.AuditParams["deny_outcome"]; got != "malformed_request" {
 		t.Errorf("deny_outcome audit field = %v, want malformed_request", got)
 	}
 }

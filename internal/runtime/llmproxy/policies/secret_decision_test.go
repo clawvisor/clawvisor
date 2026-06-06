@@ -74,8 +74,8 @@ func TestSecretDecision_BodyRewritePath(t *testing.T) {
 	if string(mut.ReplaceBodyCalls[0]) != string(newBody) {
 		t.Errorf("ReplaceBody body = %q, want %q", mut.ReplaceBodyCalls[0], newBody)
 	}
-	if v.AuditFields["secret_decision_action"] != string(llmproxy.SecretDecisionDiscard) {
-		t.Errorf("audit action = %v, want %s", v.AuditFields["secret_decision_action"], llmproxy.SecretDecisionDiscard)
+	if v.AuditParams["secret_decision_action"] != string(llmproxy.SecretDecisionDiscard) {
+		t.Errorf("audit action = %v, want %s", v.AuditParams["secret_decision_action"], llmproxy.SecretDecisionDiscard)
 	}
 }
 

@@ -43,8 +43,8 @@ func TestScriptSessionEvaluator_SkipWhenNotScriptSession(t *testing.T) {
 		return &policies.ScriptSessionInputs{ResolverBaseURL: "http://localhost:25297/api/proxy"}
 	})
 	tu := conversation.ToolUse{
-		ID:   "toolu_1",
-		Name: "WebFetch",
+		ID:    "toolu_1",
+		Name:  "WebFetch",
 		Input: json.RawMessage(`{"url":"https://api.github.com/repos/x/y/issues","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`),
 	}
 	v, err := e.Evaluate(context.Background(), newStubResp(), tu, &recordingMutator{})

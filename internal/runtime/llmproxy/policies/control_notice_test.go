@@ -72,7 +72,7 @@ func TestControlNotice_InjectsWhenGatesPass(t *testing.T) {
 	if len(mut.ReplaceBodyCalls) != 1 {
 		t.Fatalf("expected 1 ReplaceBody, got %d", len(mut.ReplaceBodyCalls))
 	}
-	if v := verdict.AuditFields["control_notice_injected"]; v != true {
+	if v := verdict.AuditParams["control_notice_injected"]; v != true {
 		t.Errorf("audit flag control_notice_injected = %v, want true", v)
 	}
 	// Quick smoke check that the notice text landed.
@@ -94,7 +94,7 @@ func newTestRequestForControlNotice(body string) *stubReadOnlyRequest {
 
 // noopAvailableTools / oneToolAvailable / emptyToolsAvailable are
 // AvailableToolsFn test doubles.
-func noopAvailableTools(_ conversation.Provider, _ []byte) []string { return nil }
+func noopAvailableTools(_ conversation.Provider, _ []byte) []string  { return nil }
 func emptyToolsAvailable(_ conversation.Provider, _ []byte) []string { return nil }
 func oneToolAvailable(_ conversation.Provider, _ []byte) []string    { return []string{"Bash"} }
 

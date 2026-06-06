@@ -18,7 +18,7 @@ import (
 //
 // Outcomes:
 //   - Decision.Reason == "" or no checker → Skip
-//   - Decision.Allowed → Allow with matched_task_id in AuditFields
+//   - Decision.Allowed → Allow with matched_task_id in AuditParams
 //   - Decision.Allowed == false → Hold with HoldKey
 //     "needs_task_<toolu_id>". The orchestrator's coalescing rules
 //     decide whether to merge with siblings.

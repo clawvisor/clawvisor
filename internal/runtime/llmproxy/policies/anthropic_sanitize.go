@@ -44,7 +44,7 @@ func (p *AnthropicSanitize) Preprocess(ctx context.Context, req pipeline.ReadOnl
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  err.Error(),
-			AuditFields: map[string]any{
+			AuditParams: map[string]any{
 				"deny_outcome": "malformed_request",
 			},
 		}, nil
@@ -58,7 +58,7 @@ func (p *AnthropicSanitize) Preprocess(ctx context.Context, req pipeline.ReadOnl
 	}
 	return pipeline.RequestVerdict{
 		Outcome: pipeline.OutcomeAllow,
-		AuditFields: map[string]any{
+		AuditParams: map[string]any{
 			"anthropic_empty_text_sanitized": true,
 		},
 	}, nil

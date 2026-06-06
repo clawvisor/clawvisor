@@ -15,9 +15,9 @@ import (
 // TestInlineTaskIntercept_SkipsWithoutCacheOrAgent pins the nil-checks.
 func TestInlineTaskIntercept_SkipsWithoutCacheOrAgent(t *testing.T) {
 	cases := []struct {
-		name   string
-		cache  policies.PendingApprovalCacheView
-		agent  *store.Agent
+		name  string
+		cache policies.PendingApprovalCacheView
+		agent *store.Agent
 	}{
 		{"no cache", nil, &store.Agent{ID: "a", UserID: "u"}},
 		{"no agent", llmproxy.NewMemoryPendingApprovalCache(time.Hour), nil},
@@ -67,7 +67,7 @@ func TestInlineTaskIntercept_AllowWithoutMutation(t *testing.T) {
 	if len(mut.ReplaceBodyCalls) != 0 {
 		t.Errorf("expected no mutation, got %d ReplaceBody calls", len(mut.ReplaceBodyCalls))
 	}
-	if _, ok := verdict.AuditFields["inline_task_approval_rewritten"]; ok {
+	if _, ok := verdict.AuditParams["inline_task_approval_rewritten"]; ok {
 		t.Errorf("audit fields should be absent when no rewrite occurs")
 	}
 }

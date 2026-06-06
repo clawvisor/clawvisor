@@ -51,7 +51,7 @@ func TestAgentNoticeResponse_PrependsAndAudits(t *testing.T) {
 	if mut.PrependAssistantTextCalls[0] != notice {
 		t.Errorf("queued text %q, want %q", mut.PrependAssistantTextCalls[0], notice)
 	}
-	if got := verdict.AuditFields["agent_notice_prepended"]; got != true {
+	if got := verdict.AuditParams["agent_notice_prepended"]; got != true {
 		t.Errorf("audit field agent_notice_prepended = %v, want true", got)
 	}
 }

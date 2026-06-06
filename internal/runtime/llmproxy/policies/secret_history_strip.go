@@ -37,7 +37,7 @@ func (p *SecretHistoryStrip) Preprocess(ctx context.Context, req pipeline.ReadOn
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeSkip,
 			Reason:  err.Error(),
-			AuditFields: map[string]any{
+			AuditParams: map[string]any{
 				"secret_history_strip_error": err.Error(),
 			},
 		}, nil
@@ -50,7 +50,7 @@ func (p *SecretHistoryStrip) Preprocess(ctx context.Context, req pipeline.ReadOn
 	}
 	return pipeline.RequestVerdict{
 		Outcome: pipeline.OutcomeAllow,
-		AuditFields: map[string]any{
+		AuditParams: map[string]any{
 			"secret_history_stripped": true,
 		},
 	}, nil

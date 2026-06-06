@@ -80,7 +80,7 @@ func (p *ApprovalRelease) Preprocess(ctx context.Context, _ pipeline.ReadOnlyReq
 
 	return pipeline.RequestVerdict{
 		Outcome:     pipeline.OutcomeShortCircuit,
-		AuditFields: fields,
+		AuditParams: fields,
 		ShortCircuit: &pipeline.SyntheticResponse{
 			Body:       result.Body,
 			StatusCode: status,

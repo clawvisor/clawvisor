@@ -18,7 +18,7 @@ import (
 // audit emitter, outcome store, checkout store, pending-approval cache,
 // request ID).
 //
-// The policy emits its audit fields via Verdict.AuditFields; the
+// The policy emits its audit fields via Verdict.AuditParams; the
 // orchestrator merges them into the request's audit row. Today's
 // handler stores the same fields (`inline_task_approval_rewritten`,
 // `inline_task_outcome`, `inline_task_id`, etc.) inline on
@@ -66,7 +66,7 @@ func (InlineTaskIntercept) Name() string { return "inline_task_intercept" }
 //   - Body unchanged (no rewrite) → Allow with no mutation
 //   - Body rewritten on success → Allow with ReplaceBody + audit fields
 //   - Body rewritten on deny / creator failure → Allow with ReplaceBody
-//     + audit fields tagged with the failure outcome
+//   - audit fields tagged with the failure outcome
 //   - Underlying error → Deny (today's handler returns 400)
 func (p *InlineTaskIntercept) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
 	if p.cache == nil || p.agent == nil {
@@ -90,7 +90,7 @@ func (p *InlineTaskIntercept) Preprocess(ctx context.Context, req pipeline.ReadO
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  err.Error(),
-			AuditFields: map[string]any{
+			AuditParams: map[string]any{
 				"deny_outcome": "malformed_request",
 			},
 		}, nil
@@ -118,7 +118,7 @@ func (p *InlineTaskIntercept) Preprocess(ctx context.Context, req pipeline.ReadO
 	}
 	return pipeline.RequestVerdict{
 		Outcome:     pipeline.OutcomeAllow,
-		AuditFields: fields,
+		AuditParams: fields,
 	}, nil
 }
 

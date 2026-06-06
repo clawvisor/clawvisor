@@ -110,7 +110,7 @@ func TestInspectorEvaluator_AmbiguousHolds(t *testing.T) {
 
 // TestInspectorEvaluator_AllowOnRecognizedAPICall verifies the positive
 // path: a recognized API-call tool_use → Allow with verdict surfaced
-// through AuditFields.
+// through AuditParams.
 func TestInspectorEvaluator_AllowOnRecognizedAPICall(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	e := policies.NewInspectorEvaluator(insp)

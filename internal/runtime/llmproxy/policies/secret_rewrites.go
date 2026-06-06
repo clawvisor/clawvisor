@@ -55,7 +55,7 @@ func (p *SecretRewrites) Preprocess(ctx context.Context, req pipeline.ReadOnlyRe
 	}
 	return pipeline.RequestVerdict{
 		Outcome: pipeline.OutcomeAllow,
-		AuditFields: map[string]any{
+		AuditParams: map[string]any{
 			"secret_rewrites_applied": true,
 		},
 	}, nil

@@ -20,7 +20,7 @@ import (
 //     (the existing system fails closed on ambiguous).
 //   - Inspector recognizes the call as a credentialed API call → Allow
 //     with the verdict surface available to subsequent evaluators via
-//     AuditFields. Boundary check + intent verify chain on top.
+//     AuditParams. Boundary check + intent verify chain on top.
 //
 // Today's newToolUseEvaluator runs the inspector, then the boundary
 // check, then intent verify, then task scope, with mutations and audit

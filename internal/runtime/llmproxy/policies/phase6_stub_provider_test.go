@@ -40,10 +40,10 @@ func TestPhase6_StubProvider_PipelineProcessesNewProvider(t *testing.T) {
 	// inline_task_intercept which calls newApprovalBodyEditor that
 	// switches on provider) gracefully Skip for unknown providers.
 	chain := []pipeline.RequestPolicy{
-		policies.NewAnthropicSanitize(),        // expected Skip for stub provider
-		policies.NewInboundSanitize("", ""),    // expected Skip / Allow with no mutation
-		policies.NewSecretHistoryStrip(),       // expected Allow with no mutation
-		policies.NewSyntheticHistoryStrip(),    // expected Allow with no mutation
+		policies.NewAnthropicSanitize(),     // expected Skip for stub provider
+		policies.NewInboundSanitize("", ""), // expected Skip / Allow with no mutation
+		policies.NewSecretHistoryStrip(),    // expected Allow with no mutation
+		policies.NewSyntheticHistoryStrip(), // expected Allow with no mutation
 	}
 
 	httpReq := httptest.NewRequest(http.MethodPost, "/v1/google/generate", strings.NewReader(string(body)))

@@ -95,7 +95,7 @@ type ReadOnlyResponse interface {
 type RequestVerdict struct {
 	Outcome     Outcome
 	Reason      string
-	AuditFields map[string]any
+	AuditParams map[string]any
 	// ShortCircuit is set when Outcome == ShortCircuit. The pipeline
 	// skips remaining pre policies AND the forward step; the synthetic
 	// body enters the post-phase as if it were an upstream response.
@@ -106,7 +106,7 @@ type RequestVerdict struct {
 type ResponseVerdict struct {
 	Outcome     Outcome
 	Reason      string
-	AuditFields map[string]any
+	AuditParams map[string]any
 }
 
 // ToolUseVerdict aliases conversation.ToolUseVerdict — the unified

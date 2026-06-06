@@ -19,9 +19,9 @@ import (
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
@@ -386,7 +386,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		body = result.FinalBody
-		for k, v := range result.AuditFields {
+		for k, v := range result.AuditParams {
 			auditParams[k] = v
 		}
 	}
@@ -487,7 +487,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"agent_id", agent.ID, "err", err.Error())
 		} else {
 			body = result.FinalBody
-			for k, v := range result.AuditFields {
+			for k, v := range result.AuditParams {
 				auditParams[k] = v
 			}
 		}
@@ -541,7 +541,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		for k, v := range result.AuditFields {
+		for k, v := range result.AuditParams {
 			auditParams[k] = v
 		}
 	}
@@ -593,7 +593,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			inlineApprovalConsumed = true
 		}
-		for k, v := range result.AuditFields {
+		for k, v := range result.AuditParams {
 			auditParams[k] = v
 		}
 	}
@@ -621,7 +621,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"request_id", requestID, "agent_id", agent.ID, "err", err.Error())
 		} else {
 			body = result.FinalBody
-			for k, v := range result.AuditFields {
+			for k, v := range result.AuditParams {
 				auditParams[k] = v
 			}
 		}
@@ -682,7 +682,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			reqSummary = liteProxyRequestDebugSummary(provider, body)
 		}
-		for k, v := range result.AuditFields {
+		for k, v := range result.AuditParams {
 			auditParams[k] = v
 		}
 	}
@@ -738,7 +738,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
 			return
 		}
-		for k, v := range preResult.AuditFields {
+		for k, v := range preResult.AuditParams {
 			auditParams[k] = v
 		}
 		if sc := preResult.ShortCircuit; sc != nil {
@@ -746,13 +746,13 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// response-write protocol. Mirrors what the legacy
 			// maybeHandleLiteApprovalRelease method did inline.
 			auditStatus = sc.StatusCode
-			if decision, _ := preResult.AuditFields["approval_release_decision"].(string); decision != "" {
+			if decision, _ := preResult.AuditParams["approval_release_decision"].(string); decision != "" {
 				auditDecide = decision
 			}
-			if outcome, _ := preResult.AuditFields["approval_release_outcome"].(string); outcome != "" {
+			if outcome, _ := preResult.AuditParams["approval_release_outcome"].(string); outcome != "" {
 				auditOutcome = outcome
 			}
-			if reason, _ := preResult.AuditFields["approval_release_reason"].(string); reason != "" {
+			if reason, _ := preResult.AuditParams["approval_release_reason"].(string); reason != "" {
 				auditReason = reason
 			}
 			// The decision-input-load-failed sentinel translates to the
@@ -871,7 +871,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				body = result.FinalBody
 				reqSummary = liteProxyRequestDebugSummary(provider, body)
 			}
-			for k, v := range result.AuditFields {
+			for k, v := range result.AuditParams {
 				auditParams[k] = v
 			}
 		}
@@ -1051,38 +1051,38 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
 				AgentContext: llmproxy.AgentContext{
 					AgentUserID: agent.UserID,
-					AgentID: agent.ID,
-					AgentName: agent.Name,
+					AgentID:     agent.ID,
+					AgentName:   agent.Name,
 				},
 				AuditContext: llmproxy.AuditContext{
 					ConversationID: conversationID,
-					Audit: h.AuditEmitter,
-					RequestID: requestID,
-					Trace: h.TraceLogger,
+					Audit:          h.AuditEmitter,
+					RequestID:      requestID,
+					Trace:          h.TraceLogger,
 				},
 				AuthorizationContext: llmproxy.AuthorizationContext{
-					Catalog: catalogIface,
-					TaskScope: h.TaskScope,
-					IntentVerifier: h.IntentVerifier,
-					Posture: liteProxyDecisionPosture(agent),
-					CandidateTasks: candidateTasks,
-					ToolRules: toolRules,
-					EgressRules: egressRules,
+					Catalog:         catalogIface,
+					TaskScope:       h.TaskScope,
+					IntentVerifier:  h.IntentVerifier,
+					Posture:         liteProxyDecisionPosture(agent),
+					CandidateTasks:  candidateTasks,
+					ToolRules:       toolRules,
+					EgressRules:     egressRules,
 					PreferredTaskID: preferredTaskID,
 				},
 				ApprovalContext: llmproxy.ApprovalContext{
-					PendingApprovals: h.PendingApprovals,
-					TaskRiskAssessor: h.taskRiskBridge(),
-					RecentUserTurns: recentTurns,
+					PendingApprovals:                 h.PendingApprovals,
+					TaskRiskAssessor:                 h.taskRiskBridge(),
+					RecentUserTurns:                  recentTurns,
 					ConversationAutoApproveThreshold: autoApproveThreshold,
-					InlineTaskCreator: h.InlineTaskCreator,
-					Checkouts: h.TaskCheckouts,
-					DefaultTaskExpirySeconds: h.DefaultTaskExpirySeconds,
+					InlineTaskCreator:                h.InlineTaskCreator,
+					Checkouts:                        h.TaskCheckouts,
+					DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
 				},
 				RewriteContext: llmproxy.RewriteContext{
-					Inspector: h.Inspector,
-					RewriteOpts: opts,
-					Store: h.Store,
+					Inspector:    h.Inspector,
+					RewriteOpts:  opts,
+					Store:        h.Store,
 					CallerNonces: h.CallerNonces,
 				},
 				RoutingContext: llmproxy.RoutingContext{
@@ -1454,38 +1454,38 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
 			AgentContext: llmproxy.AgentContext{
 				AgentUserID: agent.UserID,
-				AgentID: agent.ID,
-				AgentName: agent.Name,
+				AgentID:     agent.ID,
+				AgentName:   agent.Name,
 			},
 			AuditContext: llmproxy.AuditContext{
 				ConversationID: conversationID,
-				Audit: h.AuditEmitter,
-				RequestID: requestID,
-				Trace: h.TraceLogger,
+				Audit:          h.AuditEmitter,
+				RequestID:      requestID,
+				Trace:          h.TraceLogger,
 			},
 			AuthorizationContext: llmproxy.AuthorizationContext{
-				Catalog: catalogIface,
-				TaskScope: h.TaskScope,
-				IntentVerifier: h.IntentVerifier,
-				Posture: liteProxyDecisionPosture(agent),
-				CandidateTasks: candidateTasks,
-				ToolRules: toolRules,
-				EgressRules: egressRules,
+				Catalog:         catalogIface,
+				TaskScope:       h.TaskScope,
+				IntentVerifier:  h.IntentVerifier,
+				Posture:         liteProxyDecisionPosture(agent),
+				CandidateTasks:  candidateTasks,
+				ToolRules:       toolRules,
+				EgressRules:     egressRules,
 				PreferredTaskID: preferredTaskID,
 			},
 			ApprovalContext: llmproxy.ApprovalContext{
-				PendingApprovals: h.PendingApprovals,
-				TaskRiskAssessor: h.taskRiskBridge(),
-				RecentUserTurns: recentTurns,
+				PendingApprovals:                 h.PendingApprovals,
+				TaskRiskAssessor:                 h.taskRiskBridge(),
+				RecentUserTurns:                  recentTurns,
 				ConversationAutoApproveThreshold: autoApproveThreshold,
-				InlineTaskCreator: h.InlineTaskCreator,
-				Checkouts: h.TaskCheckouts,
-				DefaultTaskExpirySeconds: h.DefaultTaskExpirySeconds,
+				InlineTaskCreator:                h.InlineTaskCreator,
+				Checkouts:                        h.TaskCheckouts,
+				DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
 			},
 			RewriteContext: llmproxy.RewriteContext{
-				Inspector: h.Inspector,
-				RewriteOpts: opts,
-				Store: h.Store,
+				Inspector:    h.Inspector,
+				RewriteOpts:  opts,
+				Store:        h.Store,
 				CallerNonces: h.CallerNonces,
 			},
 			RoutingContext: llmproxy.RoutingContext{
@@ -1521,38 +1521,38 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
 				AgentContext: llmproxy.AgentContext{
 					AgentUserID: agent.UserID,
-					AgentID: agent.ID,
-					AgentName: agent.Name,
+					AgentID:     agent.ID,
+					AgentName:   agent.Name,
 				},
 				AuditContext: llmproxy.AuditContext{
 					ConversationID: conversationID,
-					Audit: h.AuditEmitter,
-					RequestID: requestID,
-					Trace: h.TraceLogger,
+					Audit:          h.AuditEmitter,
+					RequestID:      requestID,
+					Trace:          h.TraceLogger,
 				},
 				AuthorizationContext: llmproxy.AuthorizationContext{
-					Catalog: catalogIface,
-					TaskScope: h.TaskScope,
-					IntentVerifier: h.IntentVerifier,
-					Posture: liteProxyDecisionPosture(agent),
-					CandidateTasks: candidateTasks,
-					ToolRules: toolRules,
-					EgressRules: egressRules,
+					Catalog:         catalogIface,
+					TaskScope:       h.TaskScope,
+					IntentVerifier:  h.IntentVerifier,
+					Posture:         liteProxyDecisionPosture(agent),
+					CandidateTasks:  candidateTasks,
+					ToolRules:       toolRules,
+					EgressRules:     egressRules,
 					PreferredTaskID: preferredTaskID,
 				},
 				ApprovalContext: llmproxy.ApprovalContext{
-					PendingApprovals: h.PendingApprovals,
-					TaskRiskAssessor: h.taskRiskBridge(),
-					RecentUserTurns: recentTurns,
+					PendingApprovals:                 h.PendingApprovals,
+					TaskRiskAssessor:                 h.taskRiskBridge(),
+					RecentUserTurns:                  recentTurns,
 					ConversationAutoApproveThreshold: autoApproveThreshold,
-					InlineTaskCreator: h.InlineTaskCreator,
-					Checkouts: h.TaskCheckouts,
-					DefaultTaskExpirySeconds: h.DefaultTaskExpirySeconds,
+					InlineTaskCreator:                h.InlineTaskCreator,
+					Checkouts:                        h.TaskCheckouts,
+					DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
 				},
 				RewriteContext: llmproxy.RewriteContext{
-					Inspector: h.Inspector,
-					RewriteOpts: opts,
-					Store: h.Store,
+					Inspector:    h.Inspector,
+					RewriteOpts:  opts,
+					Store:        h.Store,
 					CallerNonces: h.CallerNonces,
 				},
 				RoutingContext: llmproxy.RoutingContext{
@@ -3064,7 +3064,7 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 				"agent_id", agent.ID, "err", err.Error())
 		} else {
 			body = result.FinalBody
-			for k, v := range result.AuditFields {
+			for k, v := range result.AuditParams {
 				auditParams[k] = v
 			}
 		}
@@ -3093,7 +3093,7 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 		}
 		// IsError → handler writes a writeLiteProxyError-shaped response,
 		// not a 200 hold prompt. Surface the error info via the policy
-		// AuditFields so the handler can branch on it.
+		// AuditParams so the handler can branch on it.
 		if out.IsError {
 			fields["secret_hold_is_error"] = true
 			fields["secret_hold_error_code"] = out.ErrorCode
@@ -3107,7 +3107,7 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 			Decision:    out.Decision,
 			Outcome:     out.Outcome,
 			Reason:      out.Reason,
-			AuditFields: fields,
+			AuditParams: fields,
 		}
 	}
 	holdResult, err := runSinglePolicy(r.Context(), pipeReq, policies.NewSecretHold(resolver))
@@ -3116,24 +3116,24 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 			"agent_id", agent.ID, "err", err.Error())
 		return body, false
 	}
-	for k, v := range holdResult.AuditFields {
+	for k, v := range holdResult.AuditParams {
 		auditParams[k] = v
 	}
 	if sc := holdResult.ShortCircuit; sc != nil {
 		*auditStatus = sc.StatusCode
-		if v, _ := holdResult.AuditFields["secret_hold_outcome"].(string); v != "" {
+		if v, _ := holdResult.AuditParams["secret_hold_outcome"].(string); v != "" {
 			*auditOutcome = v
 		}
-		if v, _ := holdResult.AuditFields["secret_hold_decision"].(string); v != "" {
+		if v, _ := holdResult.AuditParams["secret_hold_decision"].(string); v != "" {
 			*auditDecide = v
 		}
-		if v, _ := holdResult.AuditFields["secret_hold_reason"].(string); v != "" {
+		if v, _ := holdResult.AuditParams["secret_hold_reason"].(string); v != "" {
 			*auditReason = v
 		}
 		// Error path: writeLiteProxyError formatting.
-		if isErr, _ := holdResult.AuditFields["secret_hold_is_error"].(bool); isErr {
-			code, _ := holdResult.AuditFields["secret_hold_error_code"].(string)
-			msg, _ := holdResult.AuditFields["secret_hold_error_message"].(string)
+		if isErr, _ := holdResult.AuditParams["secret_hold_is_error"].(bool); isErr {
+			code, _ := holdResult.AuditParams["secret_hold_error_code"].(string)
+			msg, _ := holdResult.AuditParams["secret_hold_error_message"].(string)
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, sc.StatusCode, code, msg)
 			return body, true
 		}
@@ -3192,11 +3192,11 @@ type liteSecretDecisionAttempt struct {
 	// status untouched).
 	AuditStatusOverride int
 	// IsError flags the vault error paths.
-	IsError       bool
-	ErrorCode     string
-	ErrorMessage  string
-	ErrorReason   string
-	ErrorOutcome  string
+	IsError      bool
+	ErrorCode    string
+	ErrorMessage string
+	ErrorReason  string
+	ErrorOutcome string
 }
 
 // tryHandleLiteSecretDecision runs the adjudication without writing
@@ -3740,9 +3740,9 @@ type liteSecretHoldOutcome struct {
 	// successfully created a hold). Errors map to writeLiteProxyError
 	// with SECRET_HOLD_FAILED; successful holds map to the synthetic
 	// hold-prompt response.
-	IsError       bool
-	ErrorCode     string
-	ErrorMessage  string
+	IsError      bool
+	ErrorCode    string
+	ErrorMessage string
 }
 
 // tryHoldInboundSecret runs the secret-hold scan and adjudication

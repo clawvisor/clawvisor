@@ -82,8 +82,8 @@ func TestIntegration_FullPreprocessChain(t *testing.T) {
 
 	// Only control_notice should have mutated this body (no empty text
 	// blocks, no rewritten artifacts, no inline approval markers, etc.).
-	if got := result.AuditFields["control_notice_injected"]; got != true {
-		t.Errorf("expected control_notice_injected, got %v\n%+v", got, result.AuditFields)
+	if got := result.AuditParams["control_notice_injected"]; got != true {
+		t.Errorf("expected control_notice_injected, got %v\n%+v", got, result.AuditParams)
 	}
 
 	// And the final body must include the notice text.
@@ -102,8 +102,8 @@ func TestIntegration_FullPreprocessChain(t *testing.T) {
 		"synthetic_approval_history_stripped",
 	}
 	for _, flag := range unwantedFlags {
-		if _, ok := result.AuditFields[flag]; ok {
-			t.Errorf("unexpected audit flag set on benign request: %q (full audit: %+v)", flag, result.AuditFields)
+		if _, ok := result.AuditParams[flag]; ok {
+			t.Errorf("unexpected audit flag set on benign request: %q (full audit: %+v)", flag, result.AuditParams)
 		}
 	}
 }

@@ -54,7 +54,7 @@ func (p *InboundSanitize) Preprocess(ctx context.Context, req pipeline.ReadOnlyR
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeSkip,
 			Reason:  err.Error(),
-			AuditFields: map[string]any{
+			AuditParams: map[string]any{
 				"inbound_sanitize_error": err.Error(),
 			},
 		}, nil
@@ -67,7 +67,7 @@ func (p *InboundSanitize) Preprocess(ctx context.Context, req pipeline.ReadOnlyR
 	}
 	return pipeline.RequestVerdict{
 		Outcome: pipeline.OutcomeAllow,
-		AuditFields: map[string]any{
+		AuditParams: map[string]any{
 			"inbound_history_sanitized": true,
 		},
 	}, nil

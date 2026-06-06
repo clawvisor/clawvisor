@@ -12,9 +12,9 @@ import (
 // ResponsePolicy in declared order and committing queued mutations
 // to the destination writer.
 type PostResult struct {
-	// AuditFields is the aggregated map of audit-row fields each policy
+	// AuditParams is the aggregated map of audit-row fields each policy
 	// emitted. Last-writer-wins on key collision.
-	AuditFields map[string]any
+	AuditParams map[string]any
 	// Verdicts is the per-policy verdict trail, in execution order.
 	Verdicts []ResponsePolicyVerdict
 }
@@ -61,7 +61,7 @@ func RunPost(
 	}
 
 	result := &PostResult{
-		AuditFields: make(map[string]any),
+		AuditParams: make(map[string]any),
 		Verdicts:    make([]ResponsePolicyVerdict, 0, len(policies)),
 	}
 
@@ -71,8 +71,8 @@ func RunPost(
 			return nil, fmt.Errorf("policy %q: %w", policy.Name(), err)
 		}
 		result.Verdicts = append(result.Verdicts, ResponsePolicyVerdict{Name: policy.Name(), Verdict: verdict})
-		for k, v := range verdict.AuditFields {
-			result.AuditFields[k] = v
+		for k, v := range verdict.AuditParams {
+			result.AuditParams[k] = v
 		}
 
 		// ResponsePolicies don't halt the chain via Deny / ShortCircuit

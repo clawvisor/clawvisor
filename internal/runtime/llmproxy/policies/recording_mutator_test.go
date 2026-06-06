@@ -13,14 +13,14 @@ import (
 // policy called and with what arguments — without exercising the
 // real (provider-aware) mutator implementation.
 type recordingRequestMutator struct {
-	ReplaceBodyCalls         [][]byte
-	InjectSystemNoticeCalls  []string
-	PrependUserTurnCalls     []string
-	RewriteHistoricalCalls   []rewriteHistoricalCall
-	StripTurnsCalls          int
-	RewriteUserTextCalls     []string
-	RedactSpansCalls         [][]pipeline.ByteSpan
-	AppendContinuationCalls  []pipeline.SyntheticContinuation
+	ReplaceBodyCalls        [][]byte
+	InjectSystemNoticeCalls []string
+	PrependUserTurnCalls    []string
+	RewriteHistoricalCalls  []rewriteHistoricalCall
+	StripTurnsCalls         int
+	RewriteUserTextCalls    []string
+	RedactSpansCalls        [][]pipeline.ByteSpan
+	AppendContinuationCalls []pipeline.SyntheticContinuation
 }
 
 type rewriteHistoricalCall struct {

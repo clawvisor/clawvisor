@@ -44,7 +44,7 @@ func (p *SyntheticHistoryStrip) Preprocess(ctx context.Context, req pipeline.Rea
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeSkip,
 			Reason:  err.Error(),
-			AuditFields: map[string]any{
+			AuditParams: map[string]any{
 				"synthetic_history_strip_error": err.Error(),
 			},
 		}, nil
@@ -57,7 +57,7 @@ func (p *SyntheticHistoryStrip) Preprocess(ctx context.Context, req pipeline.Rea
 	}
 	return pipeline.RequestVerdict{
 		Outcome: pipeline.OutcomeAllow,
-		AuditFields: map[string]any{
+		AuditParams: map[string]any{
 			"synthetic_approval_history_stripped": true,
 		},
 	}, nil

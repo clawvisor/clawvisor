@@ -45,7 +45,7 @@ func (p *AgentNoticeResponse) Postprocess(ctx context.Context, res pipeline.Read
 	}
 	return pipeline.ResponseVerdict{
 		Outcome: pipeline.OutcomeAllow,
-		AuditFields: map[string]any{
+		AuditParams: map[string]any{
 			"agent_notice_prepended": true,
 		},
 	}, nil

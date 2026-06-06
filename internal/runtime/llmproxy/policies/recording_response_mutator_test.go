@@ -10,7 +10,7 @@ import (
 // tests verify which mutator method a policy called and with what args
 // — without exercising the real (stream-codec-backed) implementation.
 type recordingResponseMutator struct {
-	PrependAssistantTextCalls    []string
+	PrependAssistantTextCalls     []string
 	SubstituteEntireResponseCalls []string
 }
 

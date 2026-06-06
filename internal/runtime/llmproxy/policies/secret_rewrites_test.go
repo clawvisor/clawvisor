@@ -68,7 +68,7 @@ func TestSecretRewrites_AppliesRewrite(t *testing.T) {
 	if string(mut.ReplaceBodyCalls[0]) != string(rewritten) {
 		t.Errorf("ReplaceBody arg = %q, want %q", mut.ReplaceBodyCalls[0], rewritten)
 	}
-	if v := verdict.AuditFields["secret_rewrites_applied"]; v != true {
+	if v := verdict.AuditParams["secret_rewrites_applied"]; v != true {
 		t.Errorf("secret_rewrites_applied = %v, want true", v)
 	}
 }

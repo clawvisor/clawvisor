@@ -10,7 +10,7 @@ import (
 
 // BoundaryCheckEvaluator validates an inspector verdict against the
 // placeholder's bound-service host allowlist. Runs after the
-// InspectorEvaluator — reads its verdict from AuditFields (set by
+// InspectorEvaluator — reads its verdict from AuditParams (set by
 // InspectorEvaluator.Evaluate).
 //
 // The bound-service host allowlist is per-placeholder; the lookup
@@ -93,14 +93,14 @@ func NewBoundaryCheckEvaluator(resolver AllowedHostsResolver) *BoundaryCheckEval
 func (BoundaryCheckEvaluator) Name() string { return "boundary_check" }
 
 // Evaluate runs the boundary check. Reads inspector verdict from
-// AuditFields (set by InspectorEvaluator); if those fields aren't
+// AuditParams (set by InspectorEvaluator); if those fields aren't
 // present, this evaluator can't proceed and returns Skip.
 //
-// Reconstructs a minimal inspector.Verdict from AuditFields rather
+// Reconstructs a minimal inspector.Verdict from AuditParams rather
 // than passing the verdict struct in a per-evaluator carrier. The
-// AuditFields approach has the property that audit consumers see
+// AuditParams approach has the property that audit consumers see
 // the inspection result for free, and evaluators are coupled only
-// to the AuditFields contract.
+// to the AuditParams contract.
 func (e *BoundaryCheckEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyResponse, tu conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
 	if e.allowedHostsFor == nil {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
@@ -113,7 +113,7 @@ func (e *BoundaryCheckEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOn
 	// there's no verdict to boundary-check; return Skip.
 	//
 	// Future wiring: extract the inspector verdict from an explicit
-	// carrier rather than reading AuditFields. For now this gate is
+	// carrier rather than reading AuditParams. For now this gate is
 	// the right default — boundary checks shouldn't run without an
 	// inspector verdict.
 	return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil

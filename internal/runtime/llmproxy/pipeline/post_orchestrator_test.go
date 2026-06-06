@@ -38,7 +38,7 @@ func (p *prependPolicy) Postprocess(_ context.Context, _ pipeline.ReadOnlyRespon
 	}
 	return pipeline.ResponseVerdict{
 		Outcome:     pipeline.OutcomeAllow,
-		AuditFields: map[string]any{p.name + "_ran": true},
+		AuditParams: map[string]any{p.name + "_ran": true},
 	}, nil
 }
 
@@ -110,8 +110,8 @@ func TestRunPost_PrependsThroughStream(t *testing.T) {
 	if !strings.Contains(got, "hello") {
 		t.Errorf("upstream hello text lost:\n%s", got)
 	}
-	if result.AuditFields["agent_notice_ran"] != true {
-		t.Errorf("audit field agent_notice_ran missing: %+v", result.AuditFields)
+	if result.AuditParams["agent_notice_ran"] != true {
+		t.Errorf("audit field agent_notice_ran missing: %+v", result.AuditParams)
 	}
 	if len(result.Verdicts) != 1 {
 		t.Errorf("expected 1 verdict, got %d", len(result.Verdicts))

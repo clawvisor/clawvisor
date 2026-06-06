@@ -21,19 +21,19 @@ const panicMessage = "pipeline mutator called before Phase 2 wiring landed — s
 
 // --- RequestMutator ---------------------------------------------------
 
-func (PanicMutator) ReplaceBody([]byte) error                                           { panic(panicMessage) }
-func (PanicMutator) InjectSystemNotice(string) error                                    { panic(panicMessage) }
-func (PanicMutator) PrependUserTurn(string) error                                       { panic(panicMessage) }
-func (PanicMutator) RewriteHistoricalToolUseArgs(string, json.RawMessage) error         { panic(panicMessage) }
-func (PanicMutator) StripTurns(func(StripContext) bool) error                           { panic(panicMessage) }
-func (PanicMutator) RewriteMostRecentUserText(string) error                             { panic(panicMessage) }
-func (PanicMutator) RedactSpans([]ByteSpan) error                                       { panic(panicMessage) }
-func (PanicMutator) AppendContinuationTurn(SyntheticContinuation) error                 { panic(panicMessage) }
+func (PanicMutator) ReplaceBody([]byte) error                                   { panic(panicMessage) }
+func (PanicMutator) InjectSystemNotice(string) error                            { panic(panicMessage) }
+func (PanicMutator) PrependUserTurn(string) error                               { panic(panicMessage) }
+func (PanicMutator) RewriteHistoricalToolUseArgs(string, json.RawMessage) error { panic(panicMessage) }
+func (PanicMutator) StripTurns(func(StripContext) bool) error                   { panic(panicMessage) }
+func (PanicMutator) RewriteMostRecentUserText(string) error                     { panic(panicMessage) }
+func (PanicMutator) RedactSpans([]ByteSpan) error                               { panic(panicMessage) }
+func (PanicMutator) AppendContinuationTurn(SyntheticContinuation) error         { panic(panicMessage) }
 
 // --- ResponseMutator --------------------------------------------------
 
-func (PanicMutator) PrependAssistantText(string) error      { panic(panicMessage) }
-func (PanicMutator) SubstituteEntireResponse(string) error  { panic(panicMessage) }
+func (PanicMutator) PrependAssistantText(string) error     { panic(panicMessage) }
+func (PanicMutator) SubstituteEntireResponse(string) error { panic(panicMessage) }
 
 // --- ToolUseMutator ---------------------------------------------------
 

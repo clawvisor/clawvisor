@@ -32,7 +32,7 @@ func TestSyntheticHistoryStrip_AllowWithoutMutation(t *testing.T) {
 	if len(mut.ReplaceBodyCalls) != 0 {
 		t.Errorf("expected no mutation, got %d ReplaceBody calls", len(mut.ReplaceBodyCalls))
 	}
-	if _, ok := verdict.AuditFields["synthetic_approval_history_stripped"]; ok {
+	if _, ok := verdict.AuditParams["synthetic_approval_history_stripped"]; ok {
 		t.Errorf("audit field should be absent when no mutation occurs")
 	}
 }
@@ -75,7 +75,7 @@ func TestSyntheticHistoryStrip_QueuesReplaceBodyWhenMarkerPresent(t *testing.T) 
 		t.Fatalf("expected 1 ReplaceBody call, got %d", len(mut.ReplaceBodyCalls))
 	}
 	// Verify audit flag set.
-	if got := verdict.AuditFields["synthetic_approval_history_stripped"]; got != true {
+	if got := verdict.AuditParams["synthetic_approval_history_stripped"]; got != true {
 		t.Errorf("audit field synthetic_approval_history_stripped = %v, want true", got)
 	}
 	// Verify the marker was actually removed from the new body.

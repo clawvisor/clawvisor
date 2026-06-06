@@ -84,10 +84,10 @@ func TestApprovalRelease_ShortCircuitWhenHandled(t *testing.T) {
 	if verdict.ShortCircuit.Headers["Content-Type"] != "application/json" {
 		t.Errorf("Content-Type header missing")
 	}
-	if v := verdict.AuditFields["approval_release_handled"]; v != true {
+	if v := verdict.AuditParams["approval_release_handled"]; v != true {
 		t.Errorf("approval_release_handled = %v, want true", v)
 	}
-	if v := verdict.AuditFields["approval_release_decision"]; v != "allow" {
+	if v := verdict.AuditParams["approval_release_decision"]; v != "allow" {
 		t.Errorf("approval_release_decision = %v, want allow", v)
 	}
 }

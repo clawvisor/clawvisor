@@ -73,7 +73,7 @@ func TestTaskApprovalReply_AllowWithoutMutation(t *testing.T) {
 	if len(mut.ReplaceBodyCalls) != 0 {
 		t.Errorf("expected no mutation, got %d ReplaceBody calls", len(mut.ReplaceBodyCalls))
 	}
-	if _, ok := verdict.AuditFields["approval_task_rewritten"]; ok {
+	if _, ok := verdict.AuditParams["approval_task_rewritten"]; ok {
 		t.Errorf("audit field should be absent when no rewrite occurs")
 	}
 }

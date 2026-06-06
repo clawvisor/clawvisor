@@ -86,8 +86,8 @@ func TestIntegration_RealPreprocessChain(t *testing.T) {
 		"secret_history_stripped",
 	}
 	for _, flag := range wantAuditFlags {
-		if got := result.AuditFields[flag]; got != true {
-			t.Errorf("audit flag %q = %v, want true (full audit: %+v)", flag, got, result.AuditFields)
+		if got := result.AuditParams[flag]; got != true {
+			t.Errorf("audit flag %q = %v, want true (full audit: %+v)", flag, got, result.AuditParams)
 		}
 	}
 
@@ -144,7 +144,7 @@ func TestIntegration_NonAnthropicSkipsAnthropicPolicy(t *testing.T) {
 		"synthetic_approval_history_stripped",
 		"secret_history_stripped",
 	} {
-		if _, ok := result.AuditFields[flag]; ok {
+		if _, ok := result.AuditParams[flag]; ok {
 			t.Errorf("audit flag %q unexpectedly set on clean body", flag)
 		}
 	}

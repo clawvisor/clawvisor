@@ -47,9 +47,9 @@ type PendingApprovalHolder interface {
 
 // HoldRequest is the typed input passed to PendingApprovalHolder.Hold.
 type HoldRequest struct {
-	ToolUse        conversation.ToolUse
+	ToolUse          conversation.ToolUse
 	InspectorVerdict inspector.Verdict
-	Reason         string
+	Reason           string
 }
 
 // HoldResult is the typed output of PendingApprovalHolder.Hold.

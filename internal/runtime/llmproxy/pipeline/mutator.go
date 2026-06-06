@@ -21,7 +21,6 @@ type RequestMutator interface {
 	// inline body swap.
 	ReplaceBody(newBody []byte) error
 
-
 	// InjectSystemNotice appends to the system prompt for both providers.
 	InjectSystemNotice(text string) error
 

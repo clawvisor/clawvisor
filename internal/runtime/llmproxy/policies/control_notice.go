@@ -28,9 +28,9 @@ import (
 //     callbacks provided at construction. The handler owns the loaders
 //     so the policy stays decoupled from the Store.
 type ControlNotice struct {
-	controlBaseURL  string
-	availableTools  AvailableToolsFn
-	loadToolRules   ToolRulesLoader
+	controlBaseURL string
+	availableTools AvailableToolsFn
+	loadToolRules  ToolRulesLoader
 }
 
 // AvailableToolsFn extracts the declared tool names from a request.
@@ -80,7 +80,7 @@ func (p *ControlNotice) Preprocess(ctx context.Context, req pipeline.ReadOnlyReq
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  err.Error(),
-			AuditFields: map[string]any{
+			AuditParams: map[string]any{
 				"deny_outcome": "malformed_request",
 			},
 		}, nil
@@ -93,7 +93,7 @@ func (p *ControlNotice) Preprocess(ctx context.Context, req pipeline.ReadOnlyReq
 	}
 	return pipeline.RequestVerdict{
 		Outcome: pipeline.OutcomeAllow,
-		AuditFields: map[string]any{
+		AuditParams: map[string]any{
 			"control_notice_injected": true,
 		},
 	}, nil

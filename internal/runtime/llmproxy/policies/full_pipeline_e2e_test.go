@@ -67,8 +67,8 @@ func TestFullPipeline_E2E_HappyPath(t *testing.T) {
 	}
 
 	// At least control_notice should have fired (tools[] declared).
-	if preResult.AuditFields["control_notice_injected"] != true {
-		t.Errorf("expected control_notice_injected, got %+v", preResult.AuditFields)
+	if preResult.AuditParams["control_notice_injected"] != true {
+		t.Errorf("expected control_notice_injected, got %+v", preResult.AuditParams)
 	}
 
 	// Body should contain the notice now.

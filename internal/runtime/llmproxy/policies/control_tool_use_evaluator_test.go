@@ -36,7 +36,7 @@ func (s *stubNonceCache) Consume(_ context.Context, _ string, _ llmproxy.NonceTa
 }
 
 type recordingMutator struct {
-	rewrites    []json.RawMessage
+	rewrites     []json.RawMessage
 	replacements []string
 }
 
@@ -107,8 +107,8 @@ func TestControlToolUseEvaluator_SkipWhenNotControlPlane(t *testing.T) {
 		}
 	})
 	tu := conversation.ToolUse{
-		ID:   "toolu_1",
-		Name: "WebFetch",
+		ID:    "toolu_1",
+		Name:  "WebFetch",
 		Input: json.RawMessage(`{"url":"https://api.github.com/repos/x/y/issues","method":"GET"}`),
 	}
 	mut := &recordingMutator{}
@@ -137,8 +137,8 @@ func TestControlToolUseEvaluator_DenyOnMissingNonceCache(t *testing.T) {
 	})
 	// A well-formed control curl pointing at clawvisor.local/control/tasks.
 	tu := conversation.ToolUse{
-		ID:   "toolu_1",
-		Name: "Bash",
+		ID:    "toolu_1",
+		Name:  "Bash",
 		Input: json.RawMessage(`{"command":"curl -sS -X POST 'https://clawvisor.local/control/tasks?surface=inline' -H 'Content-Type: application/json' --data '{}'"}`),
 	}
 	v, err := e.Evaluate(context.Background(), newStubResp(), tu, &recordingMutator{})
@@ -165,8 +165,8 @@ func TestControlToolUseEvaluator_DenyOnNonceMintError(t *testing.T) {
 		}
 	})
 	tu := conversation.ToolUse{
-		ID:   "toolu_1",
-		Name: "Bash",
+		ID:    "toolu_1",
+		Name:  "Bash",
 		Input: json.RawMessage(`{"command":"curl -sS -X POST 'https://clawvisor.local/control/tasks' --data '{}'"}`),
 	}
 	v, err := e.Evaluate(context.Background(), newStubResp(), tu, &recordingMutator{})
@@ -202,8 +202,8 @@ func TestControlToolUseEvaluator_RewriteSuccess(t *testing.T) {
 		}
 	})
 	tu := conversation.ToolUse{
-		ID:   "toolu_1",
-		Name: "Bash",
+		ID:    "toolu_1",
+		Name:  "Bash",
 		Input: json.RawMessage(`{"command":"curl -sS -X POST 'https://clawvisor.local/control/tasks' -H 'Content-Type: application/json' --data '{\"purpose\":\"x\"}'"}`),
 	}
 	mut := &recordingMutator{}
@@ -242,8 +242,8 @@ func TestControlToolUseEvaluator_InlineInterceptClaimsCall(t *testing.T) {
 		}
 	})
 	tu := conversation.ToolUse{
-		ID:   "toolu_1",
-		Name: "Bash",
+		ID:    "toolu_1",
+		Name:  "Bash",
 		Input: json.RawMessage(`{"command":"curl -sS -X POST 'https://clawvisor.local/control/tasks' --data '{}'"}`),
 	}
 	v, err := e.Evaluate(context.Background(), newStubResp(), tu, &recordingMutator{})

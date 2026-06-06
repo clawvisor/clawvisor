@@ -15,10 +15,10 @@ type PreResult struct {
 	// been applied. The handler forwards this to the upstream.
 	FinalBody []byte
 
-	// AuditFields is the aggregated map of audit-row fields each policy
+	// AuditParams is the aggregated map of audit-row fields each policy
 	// emitted. Conflicts go to the last writer (orderly via declared
 	// chain order). The handler merges this with its existing auditParams.
-	AuditFields map[string]any
+	AuditParams map[string]any
 
 	// Verdicts is the per-policy verdict trail, in execution order.
 	// Useful for tests asserting which policies fired. The handler can
@@ -67,7 +67,7 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 
 	mut := newEagerRequestMutator(req.RawBody())
 	result := &PreResult{
-		AuditFields: make(map[string]any),
+		AuditParams: make(map[string]any),
 		Verdicts:    make([]PolicyVerdict, 0, len(policies)),
 	}
 
@@ -84,8 +84,8 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 		result.Verdicts = append(result.Verdicts, PolicyVerdict{Name: policy.Name(), Verdict: verdict})
 
 		// Merge audit fields regardless of outcome.
-		for k, v := range verdict.AuditFields {
-			result.AuditFields[k] = v
+		for k, v := range verdict.AuditParams {
+			result.AuditParams[k] = v
 		}
 
 		// Refresh the wrapper's body view in case the policy queued a
