@@ -4,13 +4,11 @@ package llmproxy
 // orchestrates a response.
 //
 // Postprocess + PostprocessStream live in
-// internal/runtime/llmproxy/postproc; the helpers the policies chain
-// consumes (EvaluateTriggerMissAuthorization,
-// EvaluateCredentialedAuthorization, MaybeInterceptInlineTaskDefinition,
-// CredentialedRewriteRecoveryReason, ScriptSessionToolUse,
-// ControlToolUseMentionsEndpoint) live alongside this file in
-// postprocess.go + trigger_miss_authorization.go +
-// credentialed_authorization.go + script_session_helpers.go.
+// internal/runtime/llmproxy/postproc. The policies chain consumes
+// smaller helper packages for body transforms, control-plane parsing,
+// approval prompt text, placeholder boundaries, history stripping,
+// intent verification, script-session recognition, and task checkout
+// state; root-level wrappers remain here for existing callers.
 
 import (
 	"context"
