@@ -48,7 +48,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	if originalPendingApprovals != nil {
 		cfg.PendingApprovals = newHoldCapturingApprovalCache(originalPendingApprovals, holdSink)
 	}
-	auditSink := &capturedAuditSink{}
+	pendingAuditEvents := &pendingAuditEventBuffer{}
 	var captures []evalCapture
 	failClosed := func(reason string) llmproxy.PostprocessResult {
 		rollbackBufferedPendingTasks(req.Context(), cfg, holdSink)
@@ -79,12 +79,12 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		return failClosed("rewriter error during tool_use extraction: " + err.Error())
 	}
 
-	innerEval := selectToolUseEvaluator(req, cfg, rewriter.Name(), preExtracted, auditSink)
+	innerEval := selectToolUseEvaluator(req, cfg, rewriter.Name(), preExtracted, pendingAuditEvents)
 
 	// Outer eval wraps innerEval and records the kind + decision
 	// context for the coalesce post-pass. Two side channels feed the
 	// capture: holdSink.holds (set by the buffered PendingApprovals
-	// wrapper) and auditSink.entries (set by the buffered audit
+	// wrapper) and pendingAuditEvents.entries (set by the buffered audit
 	// closure). In response-level mode (buffered path) all pipeline
 	// side effects fire upfront during selectToolUseEvaluator, so the
 	// capture matches entries by tool_use ID instead of by sequence.
@@ -104,9 +104,9 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 				}
 			}
 		}
-		if auditSink != nil {
-			for i := len(auditSink.entries) - 1; i >= 0; i-- {
-				entry := auditSink.entries[i]
+		if pendingAuditEvents != nil {
+			for i := len(pendingAuditEvents.entries) - 1; i >= 0; i-- {
+				entry := pendingAuditEvents.entries[i]
 				if entry.ToolUse.ID == tu.ID {
 					if c.Inspector.Source == "" {
 						c.Inspector = entry.InspectorVerdict
@@ -180,7 +180,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 				}
 			}
 			// Coalesced re-run failed; fall through to flush + return first pass.
-			flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
+			flushBufferedAudit(req.Context(), cfg, auditAgent, pendingAuditEvents)
 			return llmproxy.PostprocessResult{
 				Body:        result.Body,
 				ContentType: contentType,
@@ -193,10 +193,10 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 
 	// Legacy replay: no coalescence happened.
 	if replayErr := replayBufferedHolds(req.Context(), cfg, originalPendingApprovals, holdSink, auditAgent, captures); replayErr != nil {
-		flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
+		flushBufferedAudit(req.Context(), cfg, auditAgent, pendingAuditEvents)
 		return failClosed("approval hold storage failed: " + replayErr.Error())
 	}
-	flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
+	flushBufferedAudit(req.Context(), cfg, auditAgent, pendingAuditEvents)
 
 	return llmproxy.PostprocessResult{
 		Body:        result.Body,
@@ -214,12 +214,12 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 // toolUses is the pre-extracted sibling set when known (buffered
 // path); empty for streaming where tool_uses arrive incrementally
 // and the factory runs lazily per call.
-func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, auditSink *capturedAuditSink) conversation.ToolUseEvaluator {
+func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, pendingAuditEvents *pendingAuditEventBuffer) conversation.ToolUseEvaluator {
 	if cfg.ToolUseEvaluatorFactory == nil {
 		panic("llmproxy/postproc: PostprocessConfig.ToolUseEvaluatorFactory is required — assign pipelineeval.Factory")
 	}
 	emit := func(ba conversation.AuditEvent) {
-		auditSink.entries = append(auditSink.entries, ba)
+		pendingAuditEvents.entries = append(pendingAuditEvents.entries, ba)
 	}
 	return cfg.ToolUseEvaluatorFactory(req, cfg, provider, toolUses, emit)
 }

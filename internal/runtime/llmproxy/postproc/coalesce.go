@@ -96,8 +96,8 @@ func (c *holdCapturingApprovalCache) Drop(ctx context.Context, req llmproxy.Reso
 	return c.inner.Drop(ctx, req)
 }
 
-// capturedAuditSink buffers audit rows from pass 1.
-type capturedAuditSink struct {
+// pendingAuditEventBuffer buffers audit rows from pass 1.
+type pendingAuditEventBuffer struct {
 	entries []conversation.AuditEvent
 }
 
@@ -189,7 +189,7 @@ func replayBufferedHolds(ctx context.Context, cfg llmproxy.PostprocessConfig, in
 // flushBufferedAudit emits each buffered audit row to the configured
 // audit emitter. Used on the legacy path; coalesce mode replaces this
 // with emitCoalescedPendingAuditRows.
-func flushBufferedAudit(ctx context.Context, cfg llmproxy.PostprocessConfig, agent *store.Agent, sink *capturedAuditSink) {
+func flushBufferedAudit(ctx context.Context, cfg llmproxy.PostprocessConfig, agent *store.Agent, sink *pendingAuditEventBuffer) {
 	if cfg.Audit == nil || agent == nil || sink == nil {
 		return
 	}

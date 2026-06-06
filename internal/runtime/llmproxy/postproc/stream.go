@@ -60,7 +60,7 @@ func PostprocessStream(
 	if originalPendingApprovals != nil {
 		cfg.PendingApprovals = newHoldCapturingApprovalCache(originalPendingApprovals, holdSink)
 	}
-	auditSink := &capturedAuditSink{}
+	pendingAuditEvents := &pendingAuditEventBuffer{}
 	var captures []evalCapture
 
 	// Streaming rewriter consumes the upstream stream and returns the
@@ -80,7 +80,7 @@ func PostprocessStream(
 		}, nil
 	}
 
-	innerEval := selectToolUseEvaluator(req, cfg, provider, streamResult.ToolUses, auditSink)
+	innerEval := selectToolUseEvaluator(req, cfg, provider, streamResult.ToolUses, pendingAuditEvents)
 
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
@@ -98,9 +98,9 @@ func PostprocessStream(
 				}
 			}
 		}
-		if auditSink != nil {
-			for i := len(auditSink.entries) - 1; i >= 0; i-- {
-				entry := auditSink.entries[i]
+		if pendingAuditEvents != nil {
+			for i := len(pendingAuditEvents.entries) - 1; i >= 0; i-- {
+				entry := pendingAuditEvents.entries[i]
 				if entry.ToolUse.ID == tu.ID {
 					if c.Inspector.Source == "" {
 						c.Inspector = entry.InspectorVerdict
@@ -178,12 +178,12 @@ func PostprocessStream(
 	}
 
 	if replayErr := replayBufferedHolds(req.Context(), cfg, originalPendingApprovals, holdSink, auditAgent, captures); replayErr != nil {
-		flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
+		flushBufferedAudit(req.Context(), cfg, auditAgent, pendingAuditEvents)
 		return llmproxy.PostprocessResult{
 			SkippedReason: "approval hold storage failed: " + replayErr.Error(),
 		}, nil
 	}
-	flushBufferedAudit(req.Context(), cfg, auditAgent, auditSink)
+	flushBufferedAudit(req.Context(), cfg, auditAgent, pendingAuditEvents)
 
 	var continuationResults []conversation.ContinuationToolResult
 	for _, dec := range decisions {
