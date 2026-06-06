@@ -77,6 +77,16 @@ func EmitToolUseAuditRows(
 		winnerEvaluator[ev.ToolUseID] = ev.EvaluatorName
 	}
 
+	// Collect typed Facts emitted by every evaluator that ran on each
+	// tool_use. Facts from Skip evaluators are included — observation
+	// is independent of verdict claiming (e.g., InspectorChain emits
+	// InspectorFact + BoundaryFact even when it Skips so
+	// CredentialRewrite can claim).
+	factsByTU := make(map[string][]pipeline.EvaluationFact, len(toolUses))
+	for _, ev := range result.Evaluations {
+		factsByTU[ev.ToolUseID] = append(factsByTU[ev.ToolUseID], ev.Verdict.Facts...)
+	}
+
 	for _, tu := range toolUses {
 		v, ok := result.PerToolUse[tu.ID]
 		if !ok {
@@ -94,26 +104,42 @@ func EmitToolUseAuditRows(
 			})
 		}
 		row.Decision = decisionFromOutcome(v.Outcome)
-		row.Outcome = outcomeNameFor(winnerEvaluator[tu.ID], v)
-		row.TaskID = taskIDFromAuditFields(v.AuditFields)
+		row.Outcome = outcomeNameFor(winnerEvaluator[tu.ID], v, factsByTU[tu.ID])
+		row.TaskID = matchedTaskIDFromFacts(factsByTU[tu.ID])
 		if row.TaskID == "" {
-			// matched_task_id may have been recorded on an earlier
-			// Skip evaluation (e.g. TaskScopeEvaluator on a credentialed
-			// rewrite path returns Skip + matched_task_id, and the
-			// downstream CredentialRewriteEvaluator wins the verdict).
-			// Walk the trail and take the first matched_task_id found.
-			for _, ev := range result.Evaluations {
-				if ev.ToolUseID != tu.ID {
-					continue
-				}
-				if id := taskIDFromAuditFields(ev.Verdict.AuditFields); id != "" {
-					row.TaskID = id
-					break
+			// Legacy fallback path: pre-fact evaluators (or fact-less
+			// custom evaluators) still surface matched_task_id through
+			// AuditFields. Phase 6 deletes this once every evaluator
+			// emits TaskScopeFact.
+			row.TaskID = taskIDFromAuditFields(v.AuditFields)
+			if row.TaskID == "" {
+				for _, ev := range result.Evaluations {
+					if ev.ToolUseID != tu.ID {
+						continue
+					}
+					if id := taskIDFromAuditFields(ev.Verdict.AuditFields); id != "" {
+						row.TaskID = id
+						break
+					}
 				}
 			}
 		}
 		sink(ctx, row)
 	}
+}
+
+// matchedTaskIDFromFacts walks a tool_use's accumulated facts looking
+// for the first TaskScopeFact carrying a MatchedTaskID. TaskScope
+// evaluators may emit the fact on Skip paths (e.g., credentialed
+// rewrite where TaskScope sees the match but CredentialRewrite claims
+// the verdict).
+func matchedTaskIDFromFacts(facts []pipeline.EvaluationFact) string {
+	for _, f := range facts {
+		if tf, ok := f.(pipeline.TaskScopeFact); ok && tf.MatchedTaskID != "" {
+			return tf.MatchedTaskID
+		}
+	}
+	return ""
 }
 
 // decisionFromOutcome maps the pipeline Outcome enum to the legacy
@@ -137,12 +163,44 @@ func decisionFromOutcome(o pipeline.Outcome) string {
 }
 
 // outcomeNameFor extracts the stage-specific outcome name from the
-// pipeline verdict's AuditFields. Different evaluators emit the name
-// under different keys (control_outcome, rewrite_outcome, path); the
-// fallback ladder mirrors the legacy newToolUseEvaluator's audit calls.
-func outcomeNameFor(evaluatorName string, v pipeline.ToolUseVerdict) string {
+// winning verdict. Reads typed Facts first (Phase 2's primary path);
+// falls back to AuditFields keys for legacy paths not yet migrated.
+// Different evaluators surface different fact types; the type switch
+// here mirrors the per-stage outcome naming the legacy
+// newToolUseEvaluator's audit calls used.
+func outcomeNameFor(evaluatorName string, v pipeline.ToolUseVerdict, facts []pipeline.EvaluationFact) string {
+	// Typed facts on the winning verdict take priority. Only consult
+	// the verdict's own facts here (not the full accumulated trail) —
+	// the outcome name characterizes the WINNING evaluator's verdict.
+	for _, f := range v.Facts {
+		switch ff := f.(type) {
+		case pipeline.ControlFact:
+			if ff.Outcome != "" {
+				return ff.Outcome
+			}
+		case pipeline.RewriteFact:
+			if ff.Outcome != "" {
+				return ff.Outcome
+			}
+		case pipeline.ScriptSessionFact:
+			if ff.Outcome != "" {
+				return ff.Outcome
+			}
+		case pipeline.TaskScopeFact:
+			if ff.Reason != "" {
+				if ff.Allowed {
+					return "matched_task_scope"
+				}
+				return "task_scope_missing"
+			}
+		case pipeline.BoundaryFact:
+			if !ff.Passed {
+				return "boundary_check_failed"
+			}
+		}
+	}
+	// Legacy AuditFields fallback for paths not yet emitting Facts.
 	if v.AuditFields != nil {
-		// Stage-specific keys, checked in evaluator-priority order.
 		for _, key := range []string{
 			"control_outcome",
 			"rewrite_outcome",
@@ -152,8 +210,6 @@ func outcomeNameFor(evaluatorName string, v pipeline.ToolUseVerdict) string {
 				return s
 			}
 		}
-		// TaskScopeEvaluator emits task_scope_* fields; pick a concrete
-		// outcome based on Allowed.
 		if _, hasReason := v.AuditFields["task_scope_reason"]; hasReason {
 			allowed, _ := boolField(v.AuditFields, "task_scope_allowed")
 			if allowed {
@@ -161,7 +217,6 @@ func outcomeNameFor(evaluatorName string, v pipeline.ToolUseVerdict) string {
 			}
 			return "task_scope_missing"
 		}
-		// Boundary-check failure path.
 		if passed, ok := boolField(v.AuditFields, "boundary_check_passed"); ok && !passed {
 			return "boundary_check_failed"
 		}

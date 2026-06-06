@@ -62,6 +62,7 @@ func (e *ScriptSessionEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOn
 			"path":           "script_session_passthrough",
 			"verdict_source": "script_session",
 		},
+		Facts: []pipeline.EvaluationFact{pipeline.ScriptSessionFact{Outcome: "script_session_passthrough"}},
 	}, nil
 }
 

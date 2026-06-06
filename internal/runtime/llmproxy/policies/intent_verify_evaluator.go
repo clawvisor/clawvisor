@@ -59,6 +59,7 @@ func (e *IntentVerifyEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnl
 			AuditFields: map[string]any{
 				"intent_verifier_passed": true,
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.IntentVerifyFact{Allowed: true}},
 		}, nil
 	}
 	if reason == "" && !ok {
@@ -70,17 +71,20 @@ func (e *IntentVerifyEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnl
 		"intent_verifier_passed": ok,
 		"intent_verifier_reason": reason,
 	}
+	fact := pipeline.IntentVerifyFact{Allowed: ok, Explanation: reason}
 
 	if ok {
 		return pipeline.ToolUseVerdict{
 			Outcome:     pipeline.OutcomeAllow,
 			AuditFields: fields,
+			Facts:       []pipeline.EvaluationFact{fact},
 		}, nil
 	}
 	return pipeline.ToolUseVerdict{
 		Outcome:     pipeline.OutcomeDeny,
 		Reason:      reason,
 		AuditFields: fields,
+		Facts:       []pipeline.EvaluationFact{fact},
 	}, nil
 }
 

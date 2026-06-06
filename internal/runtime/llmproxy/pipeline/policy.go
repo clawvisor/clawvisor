@@ -160,6 +160,14 @@ type ToolUseVerdict struct {
 	// when empty, classifyVerdict falls back to substring matching on
 	// Reason. Phase 6 deletes the fallback.
 	HeldKind HeldKindHint
+	// Facts carries typed observations an evaluator emitted about this
+	// tool_use. Audit emission and downstream consumers branch via
+	// type switch on Facts; the AuditFields map[string]any path is
+	// kept only as a transitional carrier for evaluators not yet
+	// migrated. Facts are populated for EVERY evaluator that runs,
+	// including those returning Skip — observation is a separate
+	// channel from verdict claiming.
+	Facts []EvaluationFact
 }
 
 // HeldKindHint classifies a verdict for the coalescing pass without

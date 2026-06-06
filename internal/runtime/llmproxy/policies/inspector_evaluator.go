@@ -72,6 +72,7 @@ func (e *InspectorEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 	if len(v.Placeholders) > 0 {
 		fields["inspector_placeholders"] = v.Placeholders
 	}
+	fact := newInspectorFact(v)
 
 	// Ambiguous verdict → Hold per-tool. The legacy code fails closed
 	// here; the policy preserves that. HoldKey is per-tool (no
@@ -84,6 +85,7 @@ func (e *InspectorEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 			AuditFields: fields,
 			HoldKey:     "ambiguous_" + tu.ID,
 			HeldKind:    pipeline.HeldKindHintApproval,
+			Facts:       []pipeline.EvaluationFact{fact},
 		}, nil
 	}
 
@@ -92,6 +94,7 @@ func (e *InspectorEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 		return pipeline.ToolUseVerdict{
 			Outcome:     pipeline.OutcomeSkip,
 			AuditFields: fields,
+			Facts:       []pipeline.EvaluationFact{fact},
 		}, nil
 	}
 
@@ -99,6 +102,7 @@ func (e *InspectorEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 	return pipeline.ToolUseVerdict{
 		Outcome:     pipeline.OutcomeAllow,
 		AuditFields: fields,
+		Facts:       []pipeline.EvaluationFact{fact},
 	}, nil
 }
 

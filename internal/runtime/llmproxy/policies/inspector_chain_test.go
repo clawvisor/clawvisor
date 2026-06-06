@@ -189,11 +189,19 @@ func TestInspectorChain_TriggerMissDelegatesToAuthorizer(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeHold {
 		t.Errorf("Outcome = %q, want Hold (from authorizer)", v.Outcome)
 	}
-	// Inspector audit fields should merge in.
-	if v.AuditFields["inspector_source"] == nil {
-		t.Errorf("inspector audit fields not merged: %+v", v.AuditFields)
+	// InspectorChain prepends an InspectorFact onto the authorizer's facts
+	// so the audit row carries both surfaces.
+	foundInspector := false
+	for _, f := range v.Facts {
+		if _, ok := f.(pipeline.InspectorFact); ok {
+			foundInspector = true
+			break
+		}
 	}
-	// Authorizer's own audit fields should take precedence.
+	if !foundInspector {
+		t.Errorf("InspectorFact not prepended onto authorizer verdict: %+v", v.Facts)
+	}
+	// Authorizer's own audit fields should pass through unchanged.
 	if v.AuditFields["path"] != "trigger_miss_needs_approval" {
 		t.Errorf("authorizer path field = %v", v.AuditFields["path"])
 	}

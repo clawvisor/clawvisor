@@ -106,6 +106,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 			AuditFields: map[string]any{
 				"control_outcome": "caller_nonce_unavailable",
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}},
 		}, nil
 	}
 	nonce, err := in.CallerNonces.Mint(ctx, in.AgentID, llmproxy.NonceTarget{
@@ -120,6 +121,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 			AuditFields: map[string]any{
 				"control_outcome": "caller_nonce_mint_failed",
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
 		}, nil
 	}
 	rewritten, _, rewriteOK, rewriteErr := llmproxy.RewriteControlToolUse(tu, in.ControlBaseURL, nonce)
@@ -130,6 +132,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 			AuditFields: map[string]any{
 				"control_outcome": "control_unavailable",
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_unavailable"}},
 		}, nil
 	}
 	if rewriteErr != nil {
@@ -139,6 +142,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 			AuditFields: map[string]any{
 				"control_outcome": "control_rewriter_error",
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
 		}, nil
 	}
 	if mut != nil {
@@ -155,6 +159,11 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 			"target_method":   call.Verdict.Method,
 			"target_path":     call.Verdict.Path,
 		},
+		Facts: []pipeline.EvaluationFact{pipeline.ControlFact{
+			Outcome: "clawvisor_control",
+			Method:  call.Verdict.Method,
+			Path:    call.Verdict.Path,
+		}},
 	}, nil
 }
 
@@ -168,6 +177,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 				"control_outcome": "caller_nonce_unavailable",
 				"failure_reason":  failureReason,
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}},
 		}, nil
 	}
 	nonce, err := in.CallerNonces.Mint(ctx, in.AgentID, llmproxy.NonceTarget{
@@ -183,6 +193,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 				"control_outcome": "caller_nonce_mint_failed",
 				"failure_reason":  failureReason,
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
 		}, nil
 	}
 	rewritten, ok, rewriteErr := llmproxy.RewriteControlFailureToolUse(tu, in.ControlBaseURL, nonce, failureReason)
@@ -194,6 +205,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 				"control_outcome": "control_rewriter_error",
 				"failure_reason":  failureReason,
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
 		}, nil
 	}
 	if rewriteErr != nil {
@@ -204,6 +216,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 				"control_outcome": "control_rewriter_error",
 				"failure_reason":  failureReason,
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
 		}, nil
 	}
 	if mut != nil {
@@ -221,6 +234,12 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 			"target_method":   "POST",
 			"target_path":     "/api/control/failure",
 		},
+		Facts: []pipeline.EvaluationFact{pipeline.ControlFact{
+			Outcome:       "clawvisor_control_failure",
+			Method:        "POST",
+			Path:          "/api/control/failure",
+			SyntheticHost: llmproxy.ControlSyntheticHost,
+		}},
 	}, nil
 }
 

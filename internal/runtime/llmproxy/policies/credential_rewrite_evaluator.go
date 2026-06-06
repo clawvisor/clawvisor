@@ -93,6 +93,12 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 			AuditFields: map[string]any{
 				"rewrite_outcome": "caller_nonce_unavailable",
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
+				Outcome:      "caller_nonce_unavailable",
+				TargetHost:   v.Host,
+				TargetMethod: v.Method,
+				TargetPath:   v.Path,
+			}},
 		}, nil
 	}
 	nonce, mintErr := in.CallerNonces.Mint(ctx, in.AgentID, llmproxy.NonceTarget{
@@ -107,6 +113,12 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 			AuditFields: map[string]any{
 				"rewrite_outcome": "caller_nonce_mint_failed",
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
+				Outcome:      "caller_nonce_mint_failed",
+				TargetHost:   v.Host,
+				TargetMethod: v.Method,
+				TargetPath:   v.Path,
+			}},
 		}, nil
 	}
 
@@ -126,6 +138,12 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 			AuditFields: map[string]any{
 				"rewrite_outcome": "rewriter_error",
 			},
+			Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
+				Outcome:      "rewriter_error",
+				TargetHost:   v.Host,
+				TargetMethod: v.Method,
+				TargetPath:   v.Path,
+			}},
 		}, nil
 	}
 	if mut != nil {
@@ -143,6 +161,12 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 			"target_path":     v.Path,
 			"placeholders":    v.Placeholders,
 		},
+		Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
+			Outcome:      "success",
+			TargetHost:   v.Host,
+			TargetMethod: v.Method,
+			TargetPath:   v.Path,
+		}},
 	}, nil
 }
 

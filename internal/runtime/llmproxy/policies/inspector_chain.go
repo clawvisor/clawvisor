@@ -98,6 +98,7 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	}
 
 	fields := inspectorVerdictAuditFields(v)
+	inspectorFact := newInspectorFact(v)
 
 	// Trigger miss: not an autovault-bearing call. If a trigger-miss
 	// authorizer is configured, delegate to it (runs EvaluateAuthorization
@@ -106,22 +107,20 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	if v.Source == inspector.SourceTriggerMiss {
 		if c.triggerMissAuth != nil {
 			verdict := c.triggerMissAuth(ctx, tu, mut)
-			// Merge inspector audit fields with the authorizer's so the
-			// row carries both surfaces.
+			// Carry the inspector observation forward as a typed fact so
+			// the audit row sees both surfaces. AuditFields merging is no
+			// longer needed — typed Facts are the canonical observation
+			// channel.
 			if verdict.AuditFields == nil {
 				verdict.AuditFields = fields
-			} else {
-				for k, val := range fields {
-					if _, exists := verdict.AuditFields[k]; !exists {
-						verdict.AuditFields[k] = val
-					}
-				}
 			}
+			verdict.Facts = append([]pipeline.EvaluationFact{inspectorFact}, verdict.Facts...)
 			return verdict, nil
 		}
 		return pipeline.ToolUseVerdict{
 			Outcome:     pipeline.OutcomeSkip,
 			AuditFields: fields,
+			Facts:       []pipeline.EvaluationFact{inspectorFact},
 		}, nil
 	}
 
@@ -133,6 +132,7 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 			AuditFields: fields,
 			HoldKey:     "ambiguous_" + tu.ID,
 			HeldKind:    pipeline.HeldKindHintApproval,
+			Facts:       []pipeline.EvaluationFact{inspectorFact},
 		}, nil
 	}
 
@@ -142,6 +142,7 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 		return pipeline.ToolUseVerdict{
 			Outcome:     pipeline.OutcomeAllow,
 			AuditFields: fields,
+			Facts:       []pipeline.EvaluationFact{inspectorFact},
 		}, nil
 	}
 
@@ -157,6 +158,7 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 		return pipeline.ToolUseVerdict{
 			Outcome:     pipeline.OutcomeSkip,
 			AuditFields: fields,
+			Facts:       []pipeline.EvaluationFact{inspectorFact},
 		}, nil
 	}
 
@@ -170,11 +172,22 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	if reason != "" {
 		fields["boundary_check_reason"] = reason
 	}
+	placeholder := ""
+	if len(v.Placeholders) > 0 {
+		placeholder = v.Placeholders[0]
+	}
+	boundaryFact := pipeline.BoundaryFact{
+		Passed:      ok,
+		Reason:      reason,
+		Placeholder: placeholder,
+		Host:        v.Host,
+	}
 	if !ok {
 		return pipeline.ToolUseVerdict{
 			Outcome:     pipeline.OutcomeDeny,
 			Reason:      reason,
 			AuditFields: fields,
+			Facts:       []pipeline.EvaluationFact{inspectorFact, boundaryFact},
 		}, nil
 	}
 
@@ -183,7 +196,24 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	return pipeline.ToolUseVerdict{
 		Outcome:     pipeline.OutcomeSkip,
 		AuditFields: fields,
+		Facts:       []pipeline.EvaluationFact{inspectorFact, boundaryFact},
 	}, nil
+}
+
+// newInspectorFact extracts the typed InspectorFact from an inspector
+// verdict. Used by InspectorChain + InspectorEvaluator so they emit
+// the same fact shape regardless of which path runs.
+func newInspectorFact(v inspector.Verdict) pipeline.InspectorFact {
+	return pipeline.InspectorFact{
+		Source:       v.Source,
+		Host:         v.Host,
+		Method:       v.Method,
+		Path:         v.Path,
+		Placeholders: append([]string(nil), v.Placeholders...),
+		IsAPICall:    v.IsAPICall,
+		Ambiguous:    v.Ambiguous,
+		Reason:       v.Reason,
+	}
 }
 
 // inspectorVerdictAuditFields builds the audit-field map carrying the

@@ -89,11 +89,18 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 	if dec.TaskID != "" {
 		fields["matched_task_id"] = dec.TaskID
 	}
+	fact := pipeline.TaskScopeFact{
+		Reason:        dec.Reason,
+		Allowed:       dec.Allowed,
+		MatchedTaskID: dec.TaskID,
+		Ambiguous:     dec.Ambiguous,
+	}
 
 	if dec.Allowed {
 		return pipeline.ToolUseVerdict{
 			Outcome:     pipeline.OutcomeAllow,
 			AuditFields: fields,
+			Facts:       []pipeline.EvaluationFact{fact},
 		}, nil
 	}
 
@@ -106,6 +113,7 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 		AuditFields: fields,
 		HoldKey:     "needs_task_" + tu.ID,
 		HeldKind:    pipeline.HeldKindHintApproval,
+		Facts:       []pipeline.EvaluationFact{fact},
 	}, nil
 }
 

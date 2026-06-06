@@ -85,16 +85,28 @@ func (e *BoundaryCheckEvaluator) EvaluateWithVerdict(_ context.Context, v inspec
 	if reason != "" {
 		fields["boundary_check_reason"] = reason
 	}
+	placeholder := ""
+	if len(v.Placeholders) > 0 {
+		placeholder = v.Placeholders[0]
+	}
+	fact := pipeline.BoundaryFact{
+		Passed:      ok,
+		Reason:      reason,
+		Placeholder: placeholder,
+		Host:        v.Host,
+	}
 	if ok {
 		return pipeline.ToolUseVerdict{
 			Outcome:     pipeline.OutcomeAllow,
 			AuditFields: fields,
+			Facts:       []pipeline.EvaluationFact{fact},
 		}
 	}
 	return pipeline.ToolUseVerdict{
 		Outcome:     pipeline.OutcomeDeny,
 		Reason:      reason,
 		AuditFields: fields,
+		Facts:       []pipeline.EvaluationFact{fact},
 	}
 }
 
