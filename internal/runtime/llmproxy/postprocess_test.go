@@ -2066,3 +2066,43 @@ func TestPostprocess_EnforcesRulesOnConfidentNonAPICalls(t *testing.T) {
 	}
 }
 
+func TestPostprocess_AllowsConfidentNonAPICallsFromValidator(t *testing.T) {
+	t.Parallel()
+	// Use a custom tool name so DefaultParser doesn't recognize it.
+	body := anthropicJSONWithNamedToolUse("CustomTool", `{"arg":"autovault_stripe_mock_token_for_unit_tests"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+
+	// The validator returns IsAPICall=false, Ambiguous=false
+	insp := inspector.NewInspector(inspector.DefaultParser{}, postprocessFakeValidator{
+		verdict: inspector.Verdict{
+			IsAPICall: false,
+			Ambiguous: false,
+			Reason:    "confident non-API verdict from LLM",
+		},
+	})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_stripe_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
+	})
+
+	if len(got.Decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(got.Decisions))
+	}
+	if !got.Decisions[0].Verdict.Allowed {
+		t.Fatalf("confident validator non-API tool call should be allowed, got decision: %+v", got.Decisions[0])
+	}
+	if got.Rewritten {
+		t.Fatalf("confident validator non-API tool call should not be rewritten")
+	}
+	if string(got.Body) != string(body) {
+		t.Fatalf("body should be unchanged when non-API passes through")
+	}
+}
+
+

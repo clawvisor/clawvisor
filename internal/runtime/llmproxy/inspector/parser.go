@@ -26,12 +26,6 @@ type DefaultParser struct{}
 
 // Parse implements Parser.
 func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
-	if v, ok := parseStructuredFetch(t); ok {
-		return v, true
-	}
-	if v, ok := parseBashCurl(t); ok {
-		return v, true
-	}
 	// Known-local tools never make outbound HTTP calls; if a placeholder
 	// substring appears in their args (a user pasting the placeholder
 	// into a chat that gets routed through Skill, an Edit that records
@@ -50,6 +44,12 @@ func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
 			Ambiguous: false,
 			Reason:    "non-API file manipulation tool (" + t.Name + ")",
 		}, true
+	}
+	if v, ok := parseStructuredFetch(t); ok {
+		return v, true
+	}
+	if v, ok := parseBashCurl(t); ok {
+		return v, true
 	}
 	return Verdict{}, false
 }

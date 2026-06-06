@@ -777,3 +777,25 @@ func TestDefaultParser_FileManipulationToolsAllowed(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultParser_FileManipulationWithURLAllowed(t *testing.T) {
+	p := DefaultParser{}
+	// Write tool call where the input has a "url" key.
+	// If parseStructuredFetch ran first, it would see "url" and try to treat it as a Structured Fetch API call.
+	// Because it runs after isFileManipulationTool, it should be parsed as a file manipulation tool instead.
+	tu := ToolUse{
+		Name:  "Write",
+		Input: json.RawMessage(`{"file_path": "test.txt", "url": "https://api.github.com/repos/x/y", "content": "autovault_stripe_mock_token_for_unit_tests"}`),
+	}
+	v, ok := p.Parse(tu)
+	if !ok {
+		t.Fatalf("expected parser to handle Write tool")
+	}
+	if v.IsAPICall {
+		t.Errorf("expected IsAPICall false, got true")
+	}
+	if v.Ambiguous {
+		t.Errorf("expected Ambiguous false, got true")
+	}
+}
+

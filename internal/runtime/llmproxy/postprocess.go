@@ -872,7 +872,7 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 		// Inspector says trigger missed (no autovault placeholder). There
 		// is no credential rewrite to perform, but shared authorization
 		// still sees ordinary tool_use calls such as Bash/Read.
-		if v.Source == inspector.SourceTriggerMiss || (!v.IsAPICall && !v.Ambiguous && v.Source == inspector.SourceDeterministic) {
+		if v.Source == inspector.SourceTriggerMiss || (!v.IsAPICall && !v.Ambiguous) {
 			readOnlyShellCommand := false
 			sensitiveShellPath := false
 			if toolnames.IsShellToolName(tu.Name) && readOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
