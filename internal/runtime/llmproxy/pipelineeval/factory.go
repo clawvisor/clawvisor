@@ -45,36 +45,6 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	toolUses []conversation.ToolUse,
 	emit func(conversation.AuditEvent),
 ) conversation.ToolUseEvaluator {
-	triggerMissAuth := func(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator) pipeline.ToolUseVerdict {
-		v := cfg.Inspector.Inspect(ctx, inspector.ToolUse{
-			ID:    tu.ID,
-			Name:  tu.Name,
-			Input: tu.Input,
-		})
-		if v.Source != inspector.SourceTriggerMiss && inspector.AllPlaceholdersAreStubs(v.Placeholders) {
-			v = inspector.Verdict{
-				IsAPICall: false,
-				Source:    inspector.SourceTriggerMiss,
-				Reason:    "placeholders are stub-length (no real vault reference)",
-			}
-		}
-		convV := llmproxy.EvaluateTriggerMissAuthorization(ctx, cfg, provider, tu, v, emit)
-		if mut != nil {
-			if len(convV.RewriteInput) > 0 {
-				_ = mut.RewriteArgs(convV.RewriteInput)
-			}
-			if convV.SubstituteWith != "" {
-				_ = mut.ReplaceWithText(convV.SubstituteWith)
-			}
-		}
-		// EvaluateTriggerMissAuthorization emits its own audit row via the
-		// emit callback; flag the verdict so the downstream emission pass
-		// suppresses a second row for this tool_use.
-		pv := conversationToPipelineVerdict(convV)
-		pv.EmittedAuditExternally = true
-		return pv
-	}
-
 	credentialedTaskScope := func(ctx context.Context, tu conversation.ToolUse) llmproxy.TaskScopeDecision {
 		v := cfg.Inspector.Inspect(ctx, inspector.ToolUse{
 			ID:    tu.ID,
@@ -96,15 +66,14 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	}
 
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
-		Control:         buildControlResolver(req, cfg, provider, emit),
-		ScriptSession:   buildScriptSessionResolver(cfg),
-		Inspector:       cfg.Inspector,
-		Boundary:        buildBoundaryResolver(cfg),
-		TriggerMissAuth: triggerMissAuth,
-		ReadOnlyShell:   buildReadOnlyShellResolver(cfg),
-		Authorization:   buildAuthorizationResolver(cfg, provider),
-		TaskScope:       credentialedTaskScope,
-		Rewrite:         buildRewriteResolver(cfg),
+		Control:       buildControlResolver(req, cfg, provider, emit),
+		ScriptSession: buildScriptSessionResolver(cfg),
+		Inspector:     cfg.Inspector,
+		Boundary:      buildBoundaryResolver(cfg),
+		ReadOnlyShell: buildReadOnlyShellResolver(cfg),
+		Authorization: buildAuthorizationResolver(cfg, provider),
+		TaskScope:     credentialedTaskScope,
+		Rewrite:       buildRewriteResolver(cfg),
 	})
 
 	// Response-level orchestration: callers (buffered + streaming
