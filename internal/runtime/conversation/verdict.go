@@ -144,3 +144,59 @@ type ContinueSignal struct {
 	SyntheticToolResults     []json.RawMessage
 	PrependNotice            string
 }
+
+// AuditEvent is the typed per-tool-use audit record. Carries:
+//   - the pipeline-domain observation (Outcome, Decision, Reason, Facts)
+//   - the audit wire-shape needed by the emitter (InspectorVerdict,
+//     TaskID, EvaluatorName, Winning)
+//
+// Replaces the legacy BufferedAudit + LogToolUseInspected positional
+// arg list. Translation to store.AuditEntry happens in the emitter.
+type AuditEvent struct {
+	// ToolUse is the assistant tool_use block the verdict applies to.
+	ToolUse ToolUse
+	// EvaluatorName names the policy that produced the verdict.
+	EvaluatorName string
+	// Outcome is the typed verdict category.
+	Outcome Outcome
+	// Decision is the coarse audit-row classification.
+	Decision DecisionKind
+	// Reason is the human-readable explanation.
+	Reason string
+	// Facts is the typed observation set the evaluator emitted.
+	Facts []EvaluationFact
+	// Winning reports whether this event corresponds to the verdict
+	// that won the tool_use's evaluation (first non-Skip in the chain).
+	Winning bool
+	// InspectorVerdict is the inspector's classification for this
+	// tool_use, surfaced into the store row's params blob. Re-derived
+	// by the emitter when nil.
+	InspectorVerdict inspector.Verdict
+	// TaskID names the active task this tool_use matched.
+	TaskID string
+}
+
+// DecisionKind is the coarse audit-row classification, matching the
+// legacy three-value enum the audit store uses.
+type DecisionKind string
+
+const (
+	DecisionAllow   DecisionKind = "allow"
+	DecisionBlock   DecisionKind = "block"
+	DecisionRewrite DecisionKind = "rewrite"
+)
+
+// DecisionFromOutcome maps an Outcome to the coarse Decision the audit
+// store expects. Hold and Deny both collapse to "block".
+func DecisionFromOutcome(o Outcome) DecisionKind {
+	switch o {
+	case OutcomeAllow:
+		return DecisionAllow
+	case OutcomeRewrite:
+		return DecisionRewrite
+	case OutcomeDeny, OutcomeHold:
+		return DecisionBlock
+	default:
+		return DecisionAllow
+	}
+}

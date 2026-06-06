@@ -2,68 +2,24 @@ package pipeline
 
 import "github.com/clawvisor/clawvisor/internal/runtime/conversation"
 
-// AuditEvent is the typed per-tool-use audit record the pipeline
-// produces from each Evaluations[] entry. Emitters (policies-side
-// + handler-side) consume this instead of reading AuditFields keys
-// or branching on Outcome enums directly.
-//
-// CRITICAL: AuditEvent is store-independent. It carries pipeline-domain
-// primitives (Outcome, DecisionKind, the typed Facts) and lives in the
-// pipeline package. Translation to store.AuditEntry happens OUTSIDE
-// this package, in the audit emitter layer. The pipeline shape isn't
-// driven by what columns the audit store happens to persist today —
-// it's driven by what evaluators observe.
-type AuditEvent struct {
-	// ToolUse is the assistant tool_use block the verdict applies to.
-	ToolUse conversation.ToolUse
-	// EvaluatorName is the policy that produced the verdict (e.g.,
-	// "inspector_chain", "task_scope", "credential_rewrite").
-	EvaluatorName string
-	// Outcome is the evaluator's verdict outcome.
-	Outcome Outcome
-	// Decision is the coarse-grained classification for downstream
-	// stores that don't model the full Outcome enum. Translates from
-	// Outcome via DecisionFromOutcome.
-	Decision DecisionKind
-	// Reason is the human-readable explanation.
-	Reason string
-	// Facts is the typed observation set the evaluator emitted.
-	// Audit emitters branch via type switch over Facts to populate
-	// stage-specific columns.
-	Facts []EvaluationFact
-	// Winning reports whether this event corresponds to the verdict
-	// that won the tool_use's evaluation (first non-Skip in the chain).
-	// Skip-and-still-observing evaluators emit AuditEvents with
-	// Winning=false; downstream consumers filter as needed.
-	Winning bool
-}
+// AuditEvent aliases conversation.AuditEvent — Phase 8/9 unified the
+// typed per-tool-use audit record so both pipeline orchestrator output
+// and postproc-side buffering share the same shape.
+type AuditEvent = conversation.AuditEvent
 
-// DecisionKind is the coarse audit-row classification, matching the
-// legacy three-value enum the audit store uses.
-type DecisionKind string
+// DecisionKind aliases conversation.DecisionKind.
+type DecisionKind = conversation.DecisionKind
 
 const (
-	DecisionAllow   DecisionKind = "allow"
-	DecisionBlock   DecisionKind = "block"
-	DecisionRewrite DecisionKind = "rewrite"
+	DecisionAllow   = conversation.DecisionAllow
+	DecisionBlock   = conversation.DecisionBlock
+	DecisionRewrite = conversation.DecisionRewrite
 )
 
 // DecisionFromOutcome maps a pipeline Outcome to the coarse Decision
-// the audit store expects. Hold and Deny both collapse to "block"
-// because the user sees a refusal/approval prompt for either.
+// the audit store expects.
 func DecisionFromOutcome(o Outcome) DecisionKind {
-	switch o {
-	case OutcomeAllow:
-		return DecisionAllow
-	case OutcomeRewrite:
-		return DecisionRewrite
-	case OutcomeDeny, OutcomeHold:
-		return DecisionBlock
-	default:
-		// Skip / ShortCircuit shouldn't be audit-emitted as a final
-		// verdict; default to Allow so accidental flows don't false-alarm.
-		return DecisionAllow
-	}
+	return conversation.DecisionFromOutcome(o)
 }
 
 // AuditEvents builds the typed audit-event stream for this result.
