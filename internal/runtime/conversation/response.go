@@ -140,7 +140,18 @@ type ResponseRewriter interface {
 type StreamingResponseRewriter interface {
 	Name() Provider
 	MatchesResponse(req *http.Request, resp *http.Response) bool
-	StreamRewrite(ctx context.Context, r io.Reader, w io.Writer) (StreamingRewriteResult, error)
+	// StreamRewrite reads the upstream SSE stream from r, writes the
+	// rewritten (or unchanged) stream to w, and returns the per-stream
+	// summary the post-pass needs (tool_uses observed, indices, IDs).
+	//
+	// onToolUse, if non-nil, is invoked as each tool_use's parsing
+	// completes (content_block_stop for Anthropic; the equivalent for
+	// OpenAI). Phase D leak cleanup: lets the orchestrator buffer
+	// tool_uses incrementally instead of reading them all at end-of-
+	// stream from StreamingRewriteResult.ToolUses. The returned result
+	// still carries the full ToolUses slice for callers that don't
+	// supply a callback.
+	StreamRewrite(ctx context.Context, r io.Reader, w io.Writer, onToolUse func(ToolUse)) (StreamingRewriteResult, error)
 }
 
 type ResponseRegistry struct {

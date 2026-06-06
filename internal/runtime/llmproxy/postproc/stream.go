@@ -62,26 +62,38 @@ func PostprocessStream(
 	pendingAuditEvents := &pendingAuditEventBuffer{}
 	finalizer := llmproxy.NewFinalizer(cfg, originalPendingApprovals)
 
-	// Streaming rewriter consumes the upstream stream and returns the
-	// full tool_use list it observed. We run the response-level
-	// orchestrator AFTER StreamRewrite so the factory can pre-run
-	// pipeline.EvaluateToolUses once on the full sibling set — same
-	// architectural shape as the buffered path. The synthetic events
-	// (blocked prompt, rewritten tool_uses) below use the verdict
-	// lookup, no per-call pipeline runs.
-	streamResult, err := streamingRewriter.StreamRewrite(ctx, r, w)
+	// Streaming rewriter consumes the upstream stream, invokes
+	// onToolUse for each tool_use as it completes, and returns the
+	// per-stream summary. We collect tool_uses incrementally via the
+	// callback so the orchestrator sees them as they're parsed; the
+	// factory still pre-runs pipeline.EvaluateToolUses once on the
+	// full sibling set after stream end (response-level orchestration
+	// gates on the complete list for coalesce decisions).
+	var streamedToolUses []conversation.ToolUse
+	onToolUse := func(tu conversation.ToolUse) {
+		streamedToolUses = append(streamedToolUses, tu)
+	}
+	streamResult, err := streamingRewriter.StreamRewrite(ctx, r, w, onToolUse)
 	if err != nil {
 		return llmproxy.PostprocessResult{}, err
 	}
-	if len(streamResult.ToolUses) == 0 {
+	// Prefer the incrementally-collected tool_uses from the
+	// onToolUse callback. Result.ToolUses stays available as a
+	// fallback for any legacy streaming rewriter that doesn't fire
+	// the callback (none today, but the interface allows it).
+	toolUses := streamedToolUses
+	if len(toolUses) == 0 {
+		toolUses = streamResult.ToolUses
+	}
+	if len(toolUses) == 0 {
 		return llmproxy.PostprocessResult{
 			ContentType: contentType,
 		}, nil
 	}
 
-	innerEval := selectToolUseEvaluator(req, cfg, provider, streamResult.ToolUses, pendingAuditEvents)
+	innerEval := selectToolUseEvaluator(req, cfg, provider, toolUses, pendingAuditEvents)
 
-	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(streamResult.ToolUses))
+	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(toolUses))
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
 		verdictByTU[tu.ID] = v
@@ -93,7 +105,7 @@ func PostprocessStream(
 	anyRewritten := false
 	rewrittenInput := map[string]json.RawMessage{}
 
-	for _, tu := range streamResult.ToolUses {
+	for _, tu := range toolUses {
 		v := eval(tu)
 		decisions = append(decisions, conversation.ToolUseDecisionRecord{
 			ToolUse:          tu,
@@ -109,7 +121,7 @@ func PostprocessStream(
 		}
 	}
 
-	feedFinalizer(finalizer, streamResult.ToolUses, holdSink, pendingAuditEvents, verdictByTU)
+	feedFinalizer(finalizer, toolUses, holdSink, pendingAuditEvents, verdictByTU)
 
 	finalResult, finalErr := finalizeOrLegacy(req.Context(), finalizer, originalPendingApprovals, holdSink, pendingAuditEvents, cfg, verdictByTU)
 	if finalErr != nil {

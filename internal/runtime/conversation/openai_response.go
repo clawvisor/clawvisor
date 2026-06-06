@@ -1782,18 +1782,31 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func (rw OpenAIResponseRewriter) StreamRewrite(ctx context.Context, r io.Reader, w io.Writer) (StreamingRewriteResult, error) {
+func (rw OpenAIResponseRewriter) StreamRewrite(ctx context.Context, r io.Reader, w io.Writer, onToolUse func(ToolUse)) (StreamingRewriteResult, error) {
 	br := bufio.NewReader(r)
 	prefix, isResponses, err := sniffOpenAIStreamFormat(br)
 	if err != nil {
 		return StreamingRewriteResult{}, err
 	}
 	stream := io.MultiReader(bytes.NewReader(prefix), br)
+	// OpenAI's chat/responses formats finalize each tool_use only at
+	// end-of-stream (chat) or item-completed events (responses). Both
+	// sub-paths build the full ToolUses slice during scanning; we fire
+	// onToolUse after each entry lands so the orchestrator sees them
+	// through the same incremental surface as Anthropic.
+	deliver := func(result StreamingRewriteResult, err error) (StreamingRewriteResult, error) {
+		if err == nil && onToolUse != nil {
+			for _, tu := range result.ToolUses {
+				onToolUse(tu)
+			}
+		}
+		return result, err
+	}
 
 	if isResponses {
-		return rw.streamRewriteResponses(ctx, stream, w)
+		return deliver(rw.streamRewriteResponses(ctx, stream, w))
 	}
-	return rw.streamRewriteChatCompletions(ctx, stream, w)
+	return deliver(rw.streamRewriteChatCompletions(ctx, stream, w))
 }
 
 func sniffOpenAIStreamFormat(br *bufio.Reader) ([]byte, bool, error) {

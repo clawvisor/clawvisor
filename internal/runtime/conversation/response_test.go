@@ -569,7 +569,7 @@ func TestAnthropicStreamRewritePreservesIndices(t *testing.T) {
 
 	var output bytes.Buffer
 	rewriter := AnthropicResponseRewriter{}
-	res, err := rewriter.StreamRewrite(context.Background(), strings.NewReader(input), &output)
+	res, err := rewriter.StreamRewrite(context.Background(), strings.NewReader(input), &output, nil)
 	if err != nil {
 		t.Fatalf("StreamRewrite failed: %v", err)
 	}
@@ -621,7 +621,7 @@ func TestAnthropicStreamRewriteTextOnlyPreservesEndTurn(t *testing.T) {
 	}, "\n")
 
 	var output bytes.Buffer
-	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output)
+	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output, nil)
 	if err != nil {
 		t.Fatalf("StreamRewrite: %v", err)
 	}
@@ -677,7 +677,7 @@ func TestAnthropicStreamRewritePreservesThinkingBlocks(t *testing.T) {
 	}, "\n")
 
 	var output bytes.Buffer
-	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output)
+	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output, nil)
 	if err != nil {
 		t.Fatalf("StreamRewrite: %v", err)
 	}
@@ -754,7 +754,7 @@ func TestAnthropicStreamRewritePreservesEmptyThinkingDeltaField(t *testing.T) {
 	}, "\n")
 
 	var output bytes.Buffer
-	if _, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output); err != nil {
+	if _, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output, nil); err != nil {
 		t.Fatalf("StreamRewrite: %v", err)
 	}
 	out := output.String()
@@ -803,7 +803,7 @@ func TestAnthropicStreamRewriteThinkingEventsAreBytePreserved(t *testing.T) {
 	input := sb.String()
 
 	var output bytes.Buffer
-	if _, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output); err != nil {
+	if _, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output, nil); err != nil {
 		t.Fatalf("StreamRewrite: %v", err)
 	}
 	out := output.String()
@@ -853,7 +853,7 @@ func TestAnthropicStreamRewriteDropsNonClaudeThinkingBlocks(t *testing.T) {
 	}, "\n")
 
 	var output bytes.Buffer
-	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output)
+	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output, nil)
 	if err != nil {
 		t.Fatalf("StreamRewrite: %v", err)
 	}
@@ -893,7 +893,7 @@ func TestAnthropicStreamRewriteStopsOnContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var output bytes.Buffer
-	_, err := (AnthropicResponseRewriter{}).StreamRewrite(ctx, strings.NewReader("event: message_start\ndata: {}\n\n"), &output)
+	_, err := (AnthropicResponseRewriter{}).StreamRewrite(ctx, strings.NewReader("event: message_start\ndata: {}\n\n"), &output, nil)
 	if err == nil {
 		t.Fatal("expected context cancellation error")
 	}
@@ -907,7 +907,7 @@ func TestAnthropicStreamRewriteStopsOnMidStreamCancellation(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		var output bytes.Buffer
-		_, err := (AnthropicResponseRewriter{}).StreamRewrite(ctx, pr, &output)
+		_, err := (AnthropicResponseRewriter{}).StreamRewrite(ctx, pr, &output, nil)
 		errCh <- err
 	}()
 
@@ -951,7 +951,7 @@ func TestAnthropicStreamRewriteNextIndexAfterMultipleTextBlocks(t *testing.T) {
 	}, "\n")
 
 	var output bytes.Buffer
-	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output)
+	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output, nil)
 	if err != nil {
 		t.Fatalf("StreamRewrite: %v", err)
 	}
@@ -994,7 +994,7 @@ func TestAnthropicStreamRewriteBuffersContentAfterToolUse(t *testing.T) {
 	}, "\n")
 
 	var output bytes.Buffer
-	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output)
+	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output, nil)
 	if err != nil {
 		t.Fatalf("StreamRewrite: %v", err)
 	}
@@ -1022,7 +1022,7 @@ func TestOpenAIChatStreamRewriteTextOnlyPreservesStopAndDone(t *testing.T) {
 	}, "\n")
 
 	var output bytes.Buffer
-	res, err := (OpenAIResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output)
+	res, err := (OpenAIResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output, nil)
 	if err != nil {
 		t.Fatalf("StreamRewrite: %v", err)
 	}
@@ -1060,7 +1060,7 @@ func TestOpenAIResponsesStreamRewriteTextOnlyPreservesCompleted(t *testing.T) {
 	}, "\n")
 
 	var output bytes.Buffer
-	res, err := (OpenAIResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output)
+	res, err := (OpenAIResponseRewriter{}).StreamRewrite(context.Background(), strings.NewReader(input), &output, nil)
 	if err != nil {
 		t.Fatalf("StreamRewrite: %v", err)
 	}

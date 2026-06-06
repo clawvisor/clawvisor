@@ -1104,7 +1104,7 @@ func synthAnthropicTextSSE(msgID, model, role, text string) []byte {
 	return b.Bytes()
 }
 
-func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Reader, w io.Writer) (StreamingRewriteResult, error) {
+func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Reader, w io.Writer, onToolUse func(ToolUse)) (StreamingRewriteResult, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64<<10), 8<<20)
 
@@ -1330,10 +1330,10 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 			if pb.filtered {
 				return nil
 			}
-			if pb.index < 0 {
+			if pb.isTU {
 				return nil
 			}
-			if pb.isTU {
+			if pb.index < 0 {
 				return nil
 			}
 			if pb.index == cbs.Index {
@@ -1400,12 +1400,20 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 		if pb.input.Len() > 0 {
 			inputRaw = json.RawMessage(pb.input.Bytes())
 		}
-		tus = append(tus, ToolUse{
+		tu := ToolUse{
 			ID:    pb.id,
 			Index: pb.index,
 			Name:  pb.name,
 			Input: inputRaw,
-		})
+		}
+		tus = append(tus, tu)
+		// Phase D.2: deliver each tool_use to the orchestrator as
+		// its index is finalized. Anthropic shifts tool_use blocks
+		// to follow all text blocks, so per-block indices aren't
+		// known until end-of-stream finalization runs.
+		if onToolUse != nil {
+			onToolUse(tu)
+		}
 	}
 
 	for _, pb := range orderedAll {
