@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/approvaltext"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/rewritehelp"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -22,60 +23,7 @@ import (
 // message for credential-rewrite errors. Used by the
 // policies.CredentialRewriteEvaluator on rewriter_error.
 func CredentialedRewriteRecoveryReason(v inspector.Verdict, err error) string {
-	if err == nil {
-		return "Clawvisor: rewriter refused"
-	}
-	// Sentinel match — the inspector package owns the canonical error
-	// value, so substring matching on err.Error() would silently break
-	// if the message text ever changes. errors.Is is the durable
-	// boundary.
-	if errors.Is(err, inspector.ErrNoRewriter) {
-		var b strings.Builder
-		b.WriteString("Clawvisor: detected credentialed API access, but this tool shape cannot be rewritten. ")
-		b.WriteString("Detected ")
-		b.WriteString(firstNonEmpty(v.Method, "HTTP"))
-		if v.Host != "" {
-			b.WriteString(" ")
-			b.WriteString(v.Host)
-		}
-		if v.Path != "" {
-			b.WriteString(v.Path)
-		}
-		if len(v.CredentialLocations) > 0 || len(v.Placeholders) > 0 {
-			b.WriteString(" using an autovault placeholder")
-		}
-		b.WriteString(". Recover by minting a script session: POST ")
-		b.WriteString("https://" + ControlSyntheticHost + ControlSyntheticPath + "/autovault/script-session")
-		// Build the example with placeholder text when the verdict's
-		// host/method are unknown — otherwise the example would
-		// render as `target_host, methods:[]` which isn't a valid
-		// shape and would mislead the agent on the field format.
-		host := v.Host
-		if host == "" {
-			host = "<target host>"
-		}
-		method := v.Method
-		if method == "" {
-			method = "GET"
-		}
-		b.WriteString(" with `{placeholder, target_host:\"")
-		b.WriteString(host)
-		b.WriteString("\", methods:[\"")
-		b.WriteString(method)
-		b.WriteString("\"], path_prefixes:[<service-specific prefix covering ")
-		if v.Path != "" {
-			b.WriteString(v.Path)
-		} else {
-			b.WriteString("the requests you are making")
-		}
-		b.WriteString(">], max_uses, ttl_seconds, why}` (hard limits: TTL ≤ 120s, max_uses ≤ 200, GET-only initially). ")
-		b.WriteString("Then from your script call `base_url + <upstream path>` with `X-Clawvisor-Caller: Bearer <caller_token>` and `Authorization: Bearer <placeholder>` on each request. ")
-		b.WriteString("See GET ")
-		b.WriteString("https://" + ControlSyntheticHost + ControlSyntheticPath + "/autovault/script")
-		b.WriteString(" for the full request shape and error recovery codes.")
-		return b.String()
-	}
-	return "Clawvisor: rewriter refused — " + err.Error()
+	return rewritehelp.CredentialedRewriteRecoveryReason(v, err)
 }
 
 // coalesceFromCaptures builds the single PendingLiteApproval covering
@@ -95,25 +43,7 @@ func CredentialedRewriteRecoveryReason(v inspector.Verdict, err error) string {
 // multiple pending prompts, or when several agents share a Clawvisor token
 // and only the per-transcript marker reliably identifies the right hold.
 func ApprovalPrompt(tu conversation.ToolUse, reason, approvalID string) string {
-	preview := conversation.MakeToolInputPreview(tu.Input)
-	var b strings.Builder
-	b.WriteString("Clawvisor paused this tool call for approval.")
-	if tu.Name != "" {
-		b.WriteString("\n\nTool: `")
-		b.WriteString(tu.Name)
-		b.WriteString("`")
-	}
-	if reason != "" {
-		b.WriteString("\nReason: ")
-		b.WriteString(reason)
-	}
-	if preview != "" {
-		b.WriteString("\nInput: ")
-		b.WriteString(preview)
-	}
-	b.WriteString("\n\nReply `yes` or `y` to run this tool call, `no` or `n` to block it, or `task` to instruct the agent to include this in a task definition for approval.")
-	b.WriteString(approvalIDFooter(approvalID))
-	return b.String()
+	return approvaltext.ApprovalPrompt(tu, reason, approvalID)
 }
 
 // DecisionIntentVerifierFor wraps a (possibly nil) IntentVerifier so
@@ -253,12 +183,3 @@ func runIntentVerify(ctx context.Context, cfg PostprocessConfig, dec TaskScopeDe
 // route. The conversation.ResponseRegistry's MatchesResponse depends on
 // the request's host (for runtime-proxy CONNECT use); for lite-proxy we
 // dispatch by route path instead.
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}

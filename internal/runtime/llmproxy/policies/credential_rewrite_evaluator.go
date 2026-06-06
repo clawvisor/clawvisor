@@ -7,6 +7,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/rewritehelp"
 )
 
 // CredentialRewriteEvaluator rewrites a credentialed tool_use's URL +
@@ -123,7 +124,7 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 		Input: tu.Input,
 	}, v, opts)
 	if err != nil {
-		reason := llmproxy.CredentialedRewriteRecoveryReason(v, err)
+		reason := rewritehelp.CredentialedRewriteRecoveryReason(v, err)
 		return pipeline.ToolUseVerdict{
 			Outcome:                pipeline.OutcomeDeny,
 			Reason:                 reason,

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/approvaltext"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 )
@@ -158,10 +159,10 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 // InlineApprovalIDMarker is the prefix of the footer line that
 // renderTaskApprovalPrompt appends and that the history augmenter
 // parses. Format: "\n\n[clawvisor:approval=<id>]".
-const InlineApprovalIDMarker = "[clawvisor:approval="
+const InlineApprovalIDMarker = approvaltext.InlineApprovalIDMarker
 
 func approvalIDFooter(approvalID string) string {
-	return ApprovalIDFooter(approvalID)
+	return approvaltext.ApprovalIDFooter(approvalID)
 }
 
 // ApprovalIDFooter returns the marker the postproc layer appends to
@@ -169,10 +170,7 @@ func approvalIDFooter(approvalID string) string {
 // disambiguate which hold a bare "y"/"n" reply targets. Exported for
 // the postproc package's coalescedApprovalPrompt.
 func ApprovalIDFooter(approvalID string) string {
-	if approvalID == "" {
-		return ""
-	}
-	return "\n\n" + InlineApprovalIDMarker + approvalID + "]"
+	return approvaltext.ApprovalIDFooter(approvalID)
 }
 
 // extractApprovalIDFromPrompt pulls the approval ID out of an assistant

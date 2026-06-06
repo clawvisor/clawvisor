@@ -20,6 +20,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/approvaltext"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
@@ -617,7 +618,7 @@ func (h *authorizationHoldHandler) Hold(ctx context.Context, req policies.Author
 	}
 	return policies.AuthorizationHoldResult{
 		ApprovalID:     approvalID,
-		SubstituteText: llmproxy.ApprovalPrompt(req.ToolUse, req.Decision.Reason, approvalID),
+		SubstituteText: approvaltext.ApprovalPrompt(req.ToolUse, req.Decision.Reason, approvalID),
 	}, nil
 }
 
