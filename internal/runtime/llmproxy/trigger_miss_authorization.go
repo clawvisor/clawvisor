@@ -37,13 +37,13 @@ func EvaluateTriggerMissAuthorization(
 	provider conversation.Provider,
 	tu conversation.ToolUse,
 	v inspector.Verdict,
-	emit func(BufferedAudit),
+	emit func(conversation.AuditEvent),
 ) conversation.ToolUseVerdict {
 	audit := func(decision, outcome, reason, taskID string) {
 		if emit == nil {
 			return
 		}
-		emit(BufferedAudit{
+		emit(conversation.AuditEvent{
 			ToolUse:          tu,
 			InspectorVerdict: v,
 			Decision:         conversation.DecisionKind(decision),

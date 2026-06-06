@@ -98,7 +98,7 @@ func (c *holdCapturingApprovalCache) Drop(ctx context.Context, req llmproxy.Reso
 
 // capturedAuditSink buffers audit rows from pass 1.
 type capturedAuditSink struct {
-	entries []llmproxy.BufferedAudit
+	entries []conversation.AuditEvent
 }
 
 // rollbackBufferedPendingTasks expires any pending inline tasks

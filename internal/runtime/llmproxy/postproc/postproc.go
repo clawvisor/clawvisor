@@ -218,7 +218,7 @@ func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, p
 	if cfg.ToolUseEvaluatorFactory == nil {
 		panic("llmproxy/postproc: PostprocessConfig.ToolUseEvaluatorFactory is required — assign pipelineeval.Factory")
 	}
-	emit := func(ba llmproxy.BufferedAudit) {
+	emit := func(ba conversation.AuditEvent) {
 		auditSink.entries = append(auditSink.entries, ba)
 	}
 	return cfg.ToolUseEvaluatorFactory(req, cfg, provider, toolUses, emit)

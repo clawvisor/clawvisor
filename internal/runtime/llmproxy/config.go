@@ -97,12 +97,6 @@ type IntentVerdict struct {
 	Explanation string
 }
 
-// BufferedAudit aliases conversation.AuditEvent — Phase 9 unified the
-// typed observation record (Outcome enum + Facts) and the audit wire
-// shape (Decision string + OutcomeName string + InspectorVerdict +
-// TaskID) into a single struct.
-type BufferedAudit = conversation.AuditEvent
-
 // ToolUseEvaluatorFactory, when set on PostprocessConfig, replaces the
 // orchestrator's default tool_use evaluator with a handler-supplied
 // implementation (typically the policies-chain-based pipeline
@@ -118,7 +112,7 @@ type BufferedAudit = conversation.AuditEvent
 // empty, the factory falls back to lazy per-call pipeline runs
 // (used by the streaming path that doesn't have the full list
 // available before the rewriter sees the response).
-type ToolUseEvaluatorFactory func(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, emit func(BufferedAudit)) conversation.ToolUseEvaluator
+type ToolUseEvaluatorFactory func(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, emit func(conversation.AuditEvent)) conversation.ToolUseEvaluator
 
 // PostprocessConfig wires the inspector + rewriter into the LLM
 // endpoint handler's response path. The handler reads the upstream

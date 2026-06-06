@@ -7,35 +7,74 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // AuthorizationPolicy runs runtimedecision.EvaluateAuthorization on
 // trigger-miss tool_uses and translates the decision into a typed
-// pipeline verdict. The Hold side-effects (PendingApprovals.Hold,
-// approval-prompt rendering, evicted-task cleanup) are handled by
-// PendingApprovalHoldPolicy via the AuthorizationDecision fact this
-// policy emits.
+// pipeline verdict. The Hold side-effects (PendingApprovals.Hold +
+// approval-prompt rendering + evicted-task cleanup) run inline so the
+// final verdict carries the approval ID in its substitute text — the
+// chain's first-non-Skip-wins shape doesn't support post-claim
+// handoffs to a separate PendingApprovalHoldPolicy.
 //
-// Decomposed from the trigger-miss authorization helper (Phase 6).
+// Decomposed from EvaluateTriggerMissAuthorization (Phase 6).
 type AuthorizationPolicy struct {
 	inspector *inspector.Inspector
 	resolver  AuthorizationResolver
 }
 
-// AuthorizationResolver returns the per-call AuthorizationInput for a
-// tool_use. Returning nil makes the policy Skip (no decision-engine
-// inputs wired).
+// AuthorizationResolver returns the per-call AuthorizationInputs for
+// a tool_use. nil → Skip (no decision-engine inputs wired).
 type AuthorizationResolver func(ctx context.Context, tu conversation.ToolUse, v inspector.Verdict) *AuthorizationInputs
 
 // AuthorizationInputs is the per-call bundle the host supplies.
 type AuthorizationInputs struct {
 	Input runtimedecision.AuthorizationInput
 	// ReadOnlyShellCommand reports whether the upstream
-	// ReadOnlyShellPassthroughPolicy would have allowed this call
-	// (read-only shell + agent rule). When true, the authorization's
-	// SkipIntentVerification is set so the LLM intent gate doesn't
-	// double-check a read-only call.
+	// ReadOnlyShellPassthroughPolicy would have allowed this call.
+	// Set true → SkipIntentVerification on the authorization input.
 	ReadOnlyShellCommand bool
+	// HoldHandler, when non-nil, is invoked on VerdictNeedsApproval to
+	// commit the hold + render the approval prompt. The policy
+	// supplies the inspector verdict + decision; the handler returns
+	// the rendered prompt + cleanup callback.
+	HoldHandler AuthorizationHoldHandler
+	// SlideTask, when non-nil, is invoked on VerdictAllow with a
+	// matched task so the task's sliding lifetime bumps. The handler
+	// closes over the store and time.Now.
+	SlideTask func(ctx context.Context, task *store.Task)
+}
+
+// AuthorizationHoldHandler is the typed interface PostprocessConfig
+// supplies to AuthorizationPolicy for the approval flow.
+type AuthorizationHoldHandler interface {
+	Hold(ctx context.Context, req AuthorizationHoldRequest) (AuthorizationHoldResult, error)
+}
+
+// AuthorizationHoldRequest is the typed input to HoldHandler.Hold.
+type AuthorizationHoldRequest struct {
+	ToolUse          conversation.ToolUse
+	InspectorVerdict inspector.Verdict
+	Decision         runtimedecision.AuthorizationDecision
+	Input            runtimedecision.AuthorizationInput
+}
+
+// AuthorizationHoldResult is the typed output of HoldHandler.Hold.
+type AuthorizationHoldResult struct {
+	// ApprovalID is the hold ID; embedded in the approval prompt's
+	// footer so subsequent y/n replies disambiguate.
+	ApprovalID string
+	// SubstituteText is the rendered approval prompt the policy
+	// surfaces via the verdict's SubstituteWith field.
+	SubstituteText string
+	// Err, when non-empty, signals a hold storage failure. The policy
+	// returns Deny.
+	Err string
+	// EvictedSummary is non-empty when the hold displaced an older
+	// pending approval; the policy emits a secondary audit row via
+	// fact.
+	EvictedSummary string
 }
 
 // NewAuthorizationPolicy constructs the policy. Nil inspector or
@@ -48,7 +87,7 @@ func NewAuthorizationPolicy(insp *inspector.Inspector, resolver AuthorizationRes
 func (AuthorizationPolicy) Name() string { return "authorization" }
 
 // Evaluate runs the authorization decision and emits the result as a
-// typed AuthorizationFact + Outcome.
+// typed verdict + facts.
 func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyResponse, tu conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
 	if p.inspector == nil || p.resolver == nil {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
@@ -58,18 +97,25 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		Name:  tu.Name,
 		Input: tu.Input,
 	})
+	// Stub-placeholder downgrade matches the legacy helper.
+	if v.Source != inspector.SourceTriggerMiss && inspector.AllPlaceholdersAreStubs(v.Placeholders) {
+		v = inspector.Verdict{
+			IsAPICall: false,
+			Source:    inspector.SourceTriggerMiss,
+			Reason:    "placeholders are stub-length (no real vault reference)",
+		}
+	}
 	if v.Source != inspector.SourceTriggerMiss {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 	in := p.resolver(ctx, tu, v)
 	if in == nil {
-		// Decision-engine not wired — pass-through.
+		// No decision-engine inputs wired — pass-through. Matches the
+		// legacy "no credential trigger" branch.
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeAllow,
 			Reason:  "no credential trigger",
-			Facts: []pipeline.EvaluationFact{
-				pipeline.ScriptSessionFact{Outcome: "pass_through"},
-			},
+			Facts:   []pipeline.EvaluationFact{pipeline.ScriptSessionFact{Outcome: "pass_through"}},
 		}, nil
 	}
 	input := in.Input
@@ -79,9 +125,7 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: authorization failed — " + err.Error(),
-			Facts: []pipeline.EvaluationFact{
-				pipeline.ScriptSessionFact{Outcome: "decision_error"},
-			},
+			Facts:   []pipeline.EvaluationFact{pipeline.ScriptSessionFact{Outcome: "decision_error"}},
 		}, nil
 	}
 	taskScopeFact := pipeline.TaskScopeFact{
@@ -91,6 +135,9 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 	}
 	switch dec.Kind {
 	case runtimedecision.VerdictAllow:
+		if dec.Task != nil && in.SlideTask != nil {
+			in.SlideTask(ctx, dec.Task)
+		}
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeAllow,
 			Reason:  dec.Reason,
@@ -103,12 +150,45 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 			Facts:   []pipeline.EvaluationFact{taskScopeFact},
 		}, nil
 	case runtimedecision.VerdictNeedsApproval:
+		// Hold side-effects inline so the verdict carries the rendered
+		// approval prompt (with the approval ID in its footer).
+		if in.HoldHandler == nil {
+			// Fail-closed-without-cache: refuse so the chain's
+			// downstream rewriter renders an "approval unavailable"
+			// notice.
+			return pipeline.ToolUseVerdict{
+				Outcome: pipeline.OutcomeDeny,
+				Reason:  "Clawvisor: approval unavailable",
+				Facts:   []pipeline.EvaluationFact{taskScopeFact},
+			}, nil
+		}
+		held, holdErr := in.HoldHandler.Hold(ctx, AuthorizationHoldRequest{
+			ToolUse:          tu,
+			InspectorVerdict: v,
+			Decision:         dec,
+			Input:            input,
+		})
+		if holdErr != nil {
+			return pipeline.ToolUseVerdict{
+				Outcome: pipeline.OutcomeDeny,
+				Reason:  "Clawvisor: approval unavailable — " + holdErr.Error(),
+				Facts:   []pipeline.EvaluationFact{taskScopeFact},
+			}, nil
+		}
+		if held.Err != "" {
+			return pipeline.ToolUseVerdict{
+				Outcome: pipeline.OutcomeDeny,
+				Reason:  "Clawvisor: approval unavailable — " + held.Err,
+				Facts:   []pipeline.EvaluationFact{taskScopeFact},
+			}, nil
+		}
 		return pipeline.ToolUseVerdict{
-			Outcome:      pipeline.OutcomeHold,
-			Reason:       dec.Reason,
-			HoldKey:      "auth_needs_approval_" + tu.ID,
-			HeldKindHint: pipeline.HeldKindHintApproval,
-			Facts:        []pipeline.EvaluationFact{taskScopeFact},
+			Outcome:        pipeline.OutcomeHold,
+			Reason:         "Clawvisor: approval required — " + dec.Reason,
+			SubstituteWith: held.SubstituteText,
+			HoldKey:        "auth_needs_approval_" + tu.ID,
+			HeldKindHint:   pipeline.HeldKindHintApproval,
+			Facts:          []pipeline.EvaluationFact{taskScopeFact},
 		}, nil
 	}
 	return pipeline.ToolUseVerdict{

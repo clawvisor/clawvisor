@@ -13,7 +13,7 @@
 // exported llmproxy.Evaluate* helpers; the inline task-definition
 // intercept flows through ControlToolUseEvaluator's InterceptInline
 // hook. Audit emission flows through policies.EmitToolUseAuditRows
-// into the BufferedAudit emit callback the caller supplies.
+// into the conversation.AuditEvent emit callback the caller supplies.
 //
 // Verified byte-equivalent to legacy newToolUseEvaluator emission by
 // TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows.
@@ -41,7 +41,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	cfg llmproxy.PostprocessConfig,
 	provider conversation.Provider,
 	toolUses []conversation.ToolUse,
-	emit func(llmproxy.BufferedAudit),
+	emit func(conversation.AuditEvent),
 ) conversation.ToolUseEvaluator {
 	triggerMissAuth := func(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator) pipeline.ToolUseVerdict {
 		v := cfg.Inspector.Inspect(ctx, inspector.ToolUse{
@@ -124,7 +124,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		// and return a Deny-for-everything evaluator so the rewriter
 		// renders refusals consistently.
 		firstTU := toolUses[0]
-		emit(llmproxy.BufferedAudit{
+		emit(conversation.AuditEvent{
 			ToolUse:     firstTU,
 			Decision:    conversation.DecisionBlock,
 			OutcomeName: "pipeline_error",
@@ -157,7 +157,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 				row.TaskID = id
 			}
 		}
-		emit(llmproxy.BufferedAudit{
+		emit(conversation.AuditEvent{
 			ToolUse:          row.ToolUse,
 			InspectorVerdict: row.Verdict,
 			Decision:         conversation.DecisionKind(row.Decision),
@@ -256,7 +256,7 @@ func verdictEmittedAuditExternally(result *pipeline.ToolUseResult, tuID string) 
 // factory and the orchestrator runs response-level. multiToolUseResponse
 // is the canonical pipeline-side response type.
 
-func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, emit func(llmproxy.BufferedAudit)) policies.ControlToolUseResolver {
+func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, emit func(conversation.AuditEvent)) policies.ControlToolUseResolver {
 	if cfg.ControlBaseURL == "" {
 		return nil
 	}
@@ -270,7 +270,7 @@ func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, pro
 			CallerNonces:   cache,
 			InterceptInline: func(_ context.Context, tu conversation.ToolUse, call llmproxy.ControlCall) (pipeline.ToolUseVerdict, bool) {
 				auditFn := func(decision, outcome, reason string) {
-					emit(llmproxy.BufferedAudit{
+					emit(conversation.AuditEvent{
 						ToolUse:     tu,
 						Decision:    conversation.DecisionKind(decision),
 						OutcomeName: outcome,
