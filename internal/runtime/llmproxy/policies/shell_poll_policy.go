@@ -2,12 +2,11 @@ package policies
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/shellpolicy"
 )
 
 // ShellPollPassthroughPolicy recognizes harness polls on a background
@@ -47,7 +46,7 @@ func (p *ShellPollPassthroughPolicy) Evaluate(ctx context.Context, _ pipeline.Re
 	if v.Source != inspector.SourceTriggerMiss {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
-	if !isShellPollTool(tu.Name, tu.Input) {
+	if !shellpolicy.IsShellPollTool(tu.Name, tu.Input) {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 	return pipeline.ToolUseVerdict{
@@ -60,22 +59,3 @@ func (p *ShellPollPassthroughPolicy) Evaluate(ctx context.Context, _ pipeline.Re
 }
 
 var _ pipeline.ToolUseEvaluator = (*ShellPollPassthroughPolicy)(nil)
-
-// isShellPollTool reports whether a tool_use is a harness poll on a
-// background shell — Codex's `write_stdin` with empty `chars`.
-// Mirrors the helper in llmproxy/shell_helpers.go but duplicated here
-// so the policy package owns the gate.
-func isShellPollTool(name string, raw json.RawMessage) bool {
-	if name != "write_stdin" || len(raw) == 0 {
-		return false
-	}
-	var input map[string]any
-	if err := json.Unmarshal(raw, &input); err != nil {
-		return false
-	}
-	chars, ok := input["chars"].(string)
-	if !ok {
-		return false
-	}
-	return strings.TrimSpace(chars) == ""
-}

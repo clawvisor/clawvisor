@@ -25,6 +25,8 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	placeholderpkg "github.com/clawvisor/clawvisor/internal/runtime/llmproxy/placeholder"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/shellpolicy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/tasklifetime"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -433,7 +435,7 @@ func buildCredentialedTaskScope(
 			switch dec.Kind {
 			case runtimedecision.VerdictAllow:
 				if dec.Task != nil && rewrite.Store != nil {
-					_, _, _ = llmproxy.SlideTaskExpiry(ctx, rewrite.Store, dec.Task, time.Now().UTC())
+					_, _, _ = tasklifetime.SlideTaskExpiry(ctx, rewrite.Store, dec.Task, time.Now().UTC())
 				}
 				return policies.TaskScopeDecision{}
 			case runtimedecision.VerdictDeny:
@@ -495,7 +497,7 @@ func buildCredentialedTaskScope(
 					}
 				}
 				if dec.MatchedTask != nil && rewrite.Store != nil {
-					_, _, _ = llmproxy.SlideTaskExpiry(ctx, rewrite.Store, dec.MatchedTask, time.Now().UTC())
+					_, _, _ = tasklifetime.SlideTaskExpiry(ctx, rewrite.Store, dec.MatchedTask, time.Now().UTC())
 				}
 				return policies.TaskScopeDecision{}
 			}
@@ -530,7 +532,7 @@ func buildAuthorizationResolver(
 		if rewrite.Store == nil || task == nil {
 			return
 		}
-		_, _, _ = llmproxy.SlideTaskExpiry(ctx, rewrite.Store, task, time.Now().UTC())
+		_, _, _ = tasklifetime.SlideTaskExpiry(ctx, rewrite.Store, task, time.Now().UTC())
 	}
 	return func(ctx context.Context, tu conversation.ToolUse, v inspector.Verdict) *policies.AuthorizationInputs {
 		hasPolicyConfig := auth.CandidateTasks != nil || auth.ToolRules != nil || auth.EgressRules != nil
@@ -564,10 +566,10 @@ func detectShellSpecials(tu conversation.ToolUse, agent llmproxy.AgentContext, a
 	if !toolnames.IsShellToolName(tu.Name) {
 		return false, false
 	}
-	if !llmproxy.ReadOnlyShellCommandsAllowed(tu.Name, agent.AgentID, auth.ToolRules) {
+	if !shellpolicy.ReadOnlyShellCommandsAllowed(tu.Name, agent.AgentID, auth.ToolRules) {
 		return false, false
 	}
-	cmd := llmproxy.ShellCommandFromInput(tu.Input)
+	cmd := shellpolicy.ShellCommandFromInput(tu.Input)
 	if cmd == "" {
 		return false, false
 	}
