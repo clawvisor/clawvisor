@@ -1,4 +1,4 @@
-package llmproxy
+package taskcheckout
 
 import (
 	"context"
@@ -13,20 +13,20 @@ import (
 
 const redisTaskCheckoutPrefix = "clawvisor:lite_task_checkout:"
 
-type RedisTaskCheckoutStore struct {
+type RedisStore struct {
 	rdb        *redis.Client
 	defaultTTL time.Duration
 	now        func() time.Time
 }
 
-func NewRedisTaskCheckoutStore(rdb *redis.Client, defaultTTL time.Duration) *RedisTaskCheckoutStore {
+func NewRedisStore(rdb *redis.Client, defaultTTL time.Duration) *RedisStore {
 	if defaultTTL <= 0 {
 		defaultTTL = 24 * time.Hour
 	}
-	return &RedisTaskCheckoutStore{rdb: rdb, defaultTTL: defaultTTL, now: time.Now}
+	return &RedisStore{rdb: rdb, defaultTTL: defaultTTL, now: time.Now}
 }
 
-func (s *RedisTaskCheckoutStore) Set(ctx context.Context, key TaskCheckoutKey, taskID string, ttl time.Duration) error {
+func (s *RedisStore) Set(ctx context.Context, key Key, taskID string, ttl time.Duration) error {
 	if s == nil || s.rdb == nil || key.UserID == "" || key.AgentID == "" || taskID == "" {
 		return nil
 	}
@@ -34,7 +34,7 @@ func (s *RedisTaskCheckoutStore) Set(ctx context.Context, key TaskCheckoutKey, t
 		ttl = s.defaultTTL
 	}
 	now := s.now().UTC()
-	checkout := TaskCheckout{
+	checkout := Checkout{
 		TaskID:    taskID,
 		UpdatedAt: now,
 		ExpiresAt: now.Add(ttl),
@@ -43,39 +43,39 @@ func (s *RedisTaskCheckoutStore) Set(ctx context.Context, key TaskCheckoutKey, t
 	if err != nil {
 		return err
 	}
-	return s.rdb.Set(ctx, redisTaskCheckoutKey(key), raw, ttl).Err()
+	return s.rdb.Set(ctx, redisKey(key), raw, ttl).Err()
 }
 
-func (s *RedisTaskCheckoutStore) Get(ctx context.Context, key TaskCheckoutKey) (TaskCheckout, bool, error) {
+func (s *RedisStore) Get(ctx context.Context, key Key) (Checkout, bool, error) {
 	if s == nil || s.rdb == nil || key.UserID == "" || key.AgentID == "" {
-		return TaskCheckout{}, false, nil
+		return Checkout{}, false, nil
 	}
-	raw, err := s.rdb.Get(ctx, redisTaskCheckoutKey(key)).Bytes()
+	raw, err := s.rdb.Get(ctx, redisKey(key)).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return TaskCheckout{}, false, nil
+			return Checkout{}, false, nil
 		}
-		return TaskCheckout{}, false, err
+		return Checkout{}, false, err
 	}
-	var checkout TaskCheckout
+	var checkout Checkout
 	if err := json.Unmarshal(raw, &checkout); err != nil {
-		return TaskCheckout{}, false, err
+		return Checkout{}, false, err
 	}
 	if !checkout.ExpiresAt.IsZero() && s.now().UTC().After(checkout.ExpiresAt) {
-		_ = s.rdb.Del(ctx, redisTaskCheckoutKey(key)).Err()
-		return TaskCheckout{}, false, nil
+		_ = s.rdb.Del(ctx, redisKey(key)).Err()
+		return Checkout{}, false, nil
 	}
 	return checkout, true, nil
 }
 
-func (s *RedisTaskCheckoutStore) Clear(ctx context.Context, key TaskCheckoutKey) error {
+func (s *RedisStore) Clear(ctx context.Context, key Key) error {
 	if s == nil || s.rdb == nil || key.UserID == "" || key.AgentID == "" {
 		return nil
 	}
-	return s.rdb.Del(ctx, redisTaskCheckoutKey(key)).Err()
+	return s.rdb.Del(ctx, redisKey(key)).Err()
 }
 
-func redisTaskCheckoutKey(key TaskCheckoutKey) string {
+func redisKey(key Key) string {
 	// ConversationID partitions focus per-conversation. When empty, we
 	// hash the legacy (user, agent) shape unchanged so existing redis
 	// entries from pre-conversation-scoping clients remain readable —
@@ -88,4 +88,4 @@ func redisTaskCheckoutKey(key TaskCheckoutKey) string {
 	return redisTaskCheckoutPrefix + hex.EncodeToString(sum[:])
 }
 
-var _ TaskCheckoutStore = (*RedisTaskCheckoutStore)(nil)
+var _ Store = (*RedisStore)(nil)

@@ -5,6 +5,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/taskcheckout"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -27,7 +28,7 @@ type InlineTaskIntercept struct {
 	cache     PendingApprovalCacheView
 	creator   llmproxy.InlineTaskCreator
 	outcomes  llmproxy.InlineApprovalOutcomeStore
-	checkouts llmproxy.TaskCheckoutStore
+	checkouts taskcheckout.Store
 	audit     *llmproxy.AuditEmitter
 	requestID string
 	agent     *store.Agent
@@ -42,7 +43,7 @@ func NewInlineTaskIntercept(
 	audit *llmproxy.AuditEmitter,
 	requestID string,
 	outcomes llmproxy.InlineApprovalOutcomeStore,
-	checkouts llmproxy.TaskCheckoutStore,
+	checkouts taskcheckout.Store,
 ) *InlineTaskIntercept {
 	return &InlineTaskIntercept{
 		cache:     cache,
