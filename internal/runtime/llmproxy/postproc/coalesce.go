@@ -157,18 +157,28 @@ func replayBufferedHolds(ctx context.Context, cfg llmproxy.PostprocessConfig, in
 				})
 			}
 			if cfg.Audit != nil && agent != nil && i < len(captures) {
-				use := captures[i].Use
-				v := captures[i].Inspector
-				cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, use, v, "block", "approval_hold_replay_failed", err.Error(), captures[i].TaskID)
+				cfg.Audit.WriteAuditEvent(ctx, agent, cfg.RequestID, conversation.AuditEvent{
+					ToolUse:          captures[i].Use,
+					InspectorVerdict: captures[i].Inspector,
+					Decision:         conversation.DecisionBlock,
+					OutcomeName:      "approval_hold_replay_failed",
+					Reason:           err.Error(),
+					TaskID:           captures[i].TaskID,
+				})
 			}
 			return err
 		}
 		committed = append(committed, res.Pending.ID)
 		if res.Evicted != nil {
 			if cfg.Audit != nil && agent != nil && i < len(captures) {
-				use := captures[i].Use
-				v := captures[i].Inspector
-				cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, use, v, "block", "approval_evicted", "superseded pending approval "+res.Evicted.ID, captures[i].TaskID)
+				cfg.Audit.WriteAuditEvent(ctx, agent, cfg.RequestID, conversation.AuditEvent{
+					ToolUse:          captures[i].Use,
+					InspectorVerdict: captures[i].Inspector,
+					Decision:         conversation.DecisionBlock,
+					OutcomeName:      "approval_evicted",
+					Reason:           "superseded pending approval " + res.Evicted.ID,
+					TaskID:           captures[i].TaskID,
+				})
 			}
 			llmproxy.CleanupEvictedInlineTask(ctx, cfg, res.Evicted)
 		}
@@ -184,7 +194,7 @@ func flushBufferedAudit(ctx context.Context, cfg llmproxy.PostprocessConfig, age
 		return
 	}
 	for _, e := range sink.entries {
-		cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, e.ToolUse, e.InspectorVerdict, string(e.Decision), e.OutcomeName, e.Reason, e.TaskID)
+		cfg.Audit.WriteAuditEvent(ctx, agent, cfg.RequestID, e)
 	}
 }
 
@@ -209,7 +219,14 @@ func emitCoalescedPendingAuditRows(ctx context.Context, cfg llmproxy.Postprocess
 	}
 	for _, c := range ordered {
 		reason := "held under coalesced approval " + approvalID + " (originally classified as " + string(c.Kind) + ")"
-		cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, c.Use, c.Inspector, "block", "coalesced_approval_pending", reason, c.TaskID)
+		cfg.Audit.WriteAuditEvent(ctx, agent, cfg.RequestID, conversation.AuditEvent{
+			ToolUse:          c.Use,
+			InspectorVerdict: c.Inspector,
+			Decision:         conversation.DecisionBlock,
+			OutcomeName:      "coalesced_approval_pending",
+			Reason:           reason,
+			TaskID:           c.TaskID,
+		})
 	}
 }
 

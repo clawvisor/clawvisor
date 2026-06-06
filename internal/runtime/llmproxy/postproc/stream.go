@@ -151,7 +151,14 @@ func PostprocessStream(
 			if held.Evicted != nil {
 				if cfg.Audit != nil && auditAgent != nil && len(captures) > 0 {
 					first := captures[0]
-					cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, first.Use, first.Inspector, "block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, first.TaskID)
+					cfg.Audit.WriteAuditEvent(req.Context(), auditAgent, cfg.RequestID, conversation.AuditEvent{
+						ToolUse:          first.Use,
+						InspectorVerdict: first.Inspector,
+						Decision:         conversation.DecisionBlock,
+						OutcomeName:      "approval_evicted",
+						Reason:           "superseded pending approval " + held.Evicted.ID,
+						TaskID:           first.TaskID,
+					})
 				}
 				llmproxy.CleanupEvictedInlineTask(req.Context(), cfg, held.Evicted)
 			}

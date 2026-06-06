@@ -247,6 +247,15 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 	}
 }
 
+// WriteAuditEvent records one typed AuditEvent to the audit store. The
+// canonical Phase 9 API — consumes the typed conversation.AuditEvent
+// produced by the pipeline orchestrator instead of taking positional
+// args. LogToolUseInspected remains as a thin wrapper around this
+// method while in-tree callers migrate.
+func (e *AuditEmitter) WriteAuditEvent(ctx context.Context, agent *store.Agent, requestID string, ev conversation.AuditEvent) {
+	e.LogToolUseInspected(ctx, agent, requestID, ev.ToolUse, ev.InspectorVerdict, string(ev.Decision), ev.OutcomeName, ev.Reason, ev.TaskID)
+}
+
 // LogToolUseInspected records one tool_use seen by the lite-proxy. Each row
 // carries the tool name, a bounded input summary, verdict source, decision,
 // target host (when known), and placeholder substrings (no real credential).
