@@ -250,14 +250,22 @@ func TestPostprocess_ReplayFailureExpiresPendingInlineTask(t *testing.T) {
 	cache := &failingInlineTaskHoldCache{err: errors.New("simulated replay hold failure")}
 	result := postproc.Postprocess(req, anthropicInlineTaskPostBody(t, taskBody), "application/json", llmproxy.PostprocessConfig{
 		ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
-		Inspector:         inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
-		RewriteOpts:       inspector.DefaultRewriteOpts("http://localhost:25297"),
-		AgentUserID:       agent.UserID,
-		AgentID:           agent.ID,
-		AgentName:         agent.Name,
-		ControlBaseURL:    "http://localhost:25297",
-		PendingApprovals:  cache,
-		InlineTaskCreator: h,
+		AgentContext: llmproxy.AgentContext{
+			AgentUserID: agent.UserID,
+			AgentID: agent.ID,
+			AgentName: agent.Name,
+		},
+		ApprovalContext: llmproxy.ApprovalContext{
+			PendingApprovals: cache,
+			InlineTaskCreator: h,
+		},
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector: inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+		},
+		RoutingContext: llmproxy.RoutingContext{
+			ControlBaseURL: "http://localhost:25297",
+		},
 	})
 
 	if result.Body != nil {
@@ -300,15 +308,23 @@ func TestPostprocess_RewriterFailureExpiresPendingInlineTask(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/v1/messages?beta=true", nil)
 	result := postproc.Postprocess(req, anthropicInlineTaskPostBody(t, taskBody), "application/json", llmproxy.PostprocessConfig{
 		ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
-		Inspector:         inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
-		RewriteOpts:       inspector.DefaultRewriteOpts("http://localhost:25297"),
-		AgentUserID:       agent.UserID,
-		AgentID:           agent.ID,
-		AgentName:         agent.Name,
-		ControlBaseURL:    "http://localhost:25297",
-		PendingApprovals:  llmproxy.NewMemoryPendingApprovalCache(time.Minute),
-		InlineTaskCreator: h,
-		ResponseRegistry:  conversation.NewResponseRegistry(evalThenErrorRewriter{}),
+		AgentContext: llmproxy.AgentContext{
+			AgentUserID: agent.UserID,
+			AgentID: agent.ID,
+			AgentName: agent.Name,
+		},
+		ApprovalContext: llmproxy.ApprovalContext{
+			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
+			InlineTaskCreator: h,
+		},
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector: inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+		},
+		RoutingContext: llmproxy.RoutingContext{
+			ControlBaseURL: "http://localhost:25297",
+			ResponseRegistry: conversation.NewResponseRegistry(evalThenErrorRewriter{}),
+		},
 	})
 
 	if result.Body != nil {

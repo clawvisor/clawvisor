@@ -118,13 +118,15 @@ func TestTryContinuation_PostsSecondCallWithToolResult(t *testing.T) {
 		processed,
 		llmproxy.PostprocessConfig{
 			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
-			// Postprocess on the second call needs at least an inspector
-			// configured to not be skipped; pass the handler's.
-			Inspector:   h.Inspector,
-			RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
-			Store:       h.Store,
-			AgentUserID: agent.UserID,
-			AgentID:     agent.ID,
+			AgentContext: llmproxy.AgentContext{
+				AgentUserID: agent.UserID,
+				AgentID: agent.ID,
+			},
+			RewriteContext: llmproxy.RewriteContext{
+				Inspector: h.Inspector,
+				RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
+				Store: h.Store,
+			},
 		},
 	)
 	if err != nil {
@@ -283,11 +285,15 @@ func TestTryContinuation_PostsSecondCallWithSSEToolResult(t *testing.T) {
 		processed,
 		llmproxy.PostprocessConfig{
 			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
-			Inspector:   h.Inspector,
-			RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
-			Store:       h.Store,
-			AgentUserID: agent.UserID,
-			AgentID:     agent.ID,
+			AgentContext: llmproxy.AgentContext{
+				AgentUserID: agent.UserID,
+				AgentID: agent.ID,
+			},
+			RewriteContext: llmproxy.RewriteContext{
+				Inspector: h.Inspector,
+				RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
+				Store: h.Store,
+			},
 		},
 	)
 	if err != nil {
@@ -488,17 +494,25 @@ func TestTryContinuation_RefreshesCandidateTasksFromStore(t *testing.T) {
 		processed,
 		llmproxy.PostprocessConfig{
 			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
-			Inspector:        h.Inspector,
-			RewriteOpts:      inspector.DefaultRewriteOpts(h.ResolverBaseURL),
-			Store:            h.Store,
-			AgentUserID:      agent.UserID,
-			AgentID:          agent.ID,
-			Catalog:          nil,
-			CandidateTasks:   nil, // STALE — refresh must rebuild this
-			ToolRules:        nil,
-			EgressRules:      nil,
-			CallerNonces:     h.CallerNonces,
-			PendingApprovals: h.PendingApprovals,
+			AgentContext: llmproxy.AgentContext{
+				AgentUserID: agent.UserID,
+				AgentID: agent.ID,
+			},
+			AuthorizationContext: llmproxy.AuthorizationContext{
+				Catalog: nil,
+				CandidateTasks: nil,
+				ToolRules: nil,
+				EgressRules: nil,
+			},
+			ApprovalContext: llmproxy.ApprovalContext{
+				PendingApprovals: h.PendingApprovals,
+			},
+			RewriteContext: llmproxy.RewriteContext{
+				Inspector: h.Inspector,
+				RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
+				Store: h.Store,
+				CallerNonces: h.CallerNonces,
+			},
 		},
 	)
 	if err != nil {
@@ -576,11 +590,15 @@ func TestTryContinuation_PrependsUserFacingNotice(t *testing.T) {
 		processed,
 		llmproxy.PostprocessConfig{
 			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
-			Inspector:   h.Inspector,
-			RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
-			Store:       h.Store,
-			AgentUserID: agent.UserID,
-			AgentID:     agent.ID,
+			AgentContext: llmproxy.AgentContext{
+				AgentUserID: agent.UserID,
+				AgentID: agent.ID,
+			},
+			RewriteContext: llmproxy.RewriteContext{
+				Inspector: h.Inspector,
+				RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
+				Store: h.Store,
+			},
 		},
 	)
 	if err != nil {
@@ -624,7 +642,12 @@ func TestTryContinuation_NoContinueDecisionIsNoOp(t *testing.T) {
 	final, status, ct, _, err := h.tryContinuation(
 		req, agent, conversation.ProviderAnthropic, "req-x",
 		[]byte(`{"messages":[]}`), []byte(`{"content":[]}`), "application/json", http.StatusOK,
-		processed, llmproxy.PostprocessConfig{ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory, Inspector: h.Inspector},
+		processed, llmproxy.PostprocessConfig{
+			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
+			RewriteContext: llmproxy.RewriteContext{
+				Inspector: h.Inspector,
+			},
+		},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -698,11 +721,15 @@ func TestServe_ContinuationClearsStaleContentLengthHeader(t *testing.T) {
 		processed,
 		llmproxy.PostprocessConfig{
 			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
-			Inspector:   h.Inspector,
-			RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
-			Store:       h.Store,
-			AgentUserID: agent.UserID,
-			AgentID:     agent.ID,
+			AgentContext: llmproxy.AgentContext{
+				AgentUserID: agent.UserID,
+				AgentID: agent.ID,
+			},
+			RewriteContext: llmproxy.RewriteContext{
+				Inspector: h.Inspector,
+				RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
+				Store: h.Store,
+			},
 		},
 	)
 	if err != nil {
@@ -758,7 +785,12 @@ func TestTryContinuation_UpstreamErrorFallsBack(t *testing.T) {
 	final, _, _, _, err := h.tryContinuation(
 		req, agent, conversation.ProviderAnthropic, "req-y",
 		inbound, first, "application/json", http.StatusOK,
-		processed, llmproxy.PostprocessConfig{ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory, Inspector: h.Inspector},
+		processed, llmproxy.PostprocessConfig{
+			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
+			RewriteContext: llmproxy.RewriteContext{
+				Inspector: h.Inspector,
+			},
+		},
 	)
 	if err == nil {
 		t.Fatal("expected error on upstream failure; got nil so caller would silently swap in continuation result")

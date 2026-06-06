@@ -114,105 +114,87 @@ type IntentVerdict struct {
 // available before the rewriter sees the response).
 type ToolUseEvaluatorFactory func(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, emit func(conversation.AuditEvent)) conversation.ToolUseEvaluator
 
-// PostprocessConfig wires the inspector + rewriter into the LLM
-// endpoint handler's response path. The handler reads the upstream
-// response body and calls postproc.Postprocess; the result is what
-// the harness sees.
-type PostprocessConfig struct {
-	ToolUseEvaluatorFactory ToolUseEvaluatorFactory
-
-	// Inspector decides whether each tool_use should be rewritten or
-	// passed through. Required.
-	Inspector *inspector.Inspector
-
-	// RewriteOpts controls how the rewriter produces the redirected
-	// tool_use input. Required when rewrite paths fire.
-	RewriteOpts inspector.RewriteOpts
-
-	// Store provides placeholder lookup for the boundary check.
-	Store store.Store
-
-	// AgentUserID + AgentID scope placeholder ownership to the calling
-	// agent. Required for the boundary check.
+// AgentContext groups identity carriers — user, agent, and agent
+// display name — that flow into most stages.
+type AgentContext struct {
 	AgentUserID string
 	AgentID     string
+	AgentName   string
+}
 
-	// ConversationID is a stable per-conversation identifier extracted
-	// from the incoming request body.
+// AuditContext groups the audit emitter + request correlation + trace
+// sink so the audit-emission path has a single typed dependency.
+type AuditContext struct {
+	Audit          *AuditEmitter
+	RequestID      string
 	ConversationID string
+	Trace          *TraceLogger
+}
 
-	// CallerNonces mints the short-lived single-use nonce that takes
-	// the place of the agent's bearer token in the rewritten tool_use's
-	// X-Clawvisor-Caller header.
-	CallerNonces CallerNonceCache
-
-	// Audit is the emitter for runtime.llm_proxy.* events.
-	Audit *AuditEmitter
-
-	// RequestID is the audit RequestID for tool_use rows so they group
-	// with the parent endpoint call.
-	RequestID string
-
-	// ResponseRegistry is the conversation rewriter registry.
-	ResponseRegistry *conversation.ResponseRegistry
-
-	// Catalog reverse-resolves (host, method, path) → (service, action).
-	Catalog interface {
-		Resolve(host, method, path string) (ResolvedAction, bool)
-	}
-
-	// TaskScope authorizes the resolved (service, action) against the
-	// agent's active tasks.
-	TaskScope TaskScopeChecker
-
-	// IntentVerifier runs the LLM intent check against the matched
-	// TaskAction's expected_use.
-	IntentVerifier IntentVerifier
-
-	// Decision-engine inputs.
+// AuthorizationContext groups the decision-engine inputs +
+// catalog/scope checkers that authorize tool_uses.
+type AuthorizationContext struct {
 	Posture         runtimedecision.EvaluationPosture
 	CandidateTasks  []*store.Task
 	ToolRules       []*store.RuntimePolicyRule
 	EgressRules     []*store.RuntimePolicyRule
 	PreferredTaskID string
+	TaskScope       TaskScopeChecker
+	IntentVerifier  IntentVerifier
+	Catalog         interface {
+		Resolve(host, method, path string) (ResolvedAction, bool)
+	}
+}
 
-	PendingApprovals PendingApprovalCache
-
-	// TaskRiskAssessor scores a task envelope via LLM at inline-approval
-	// time so the approval prompt carries an evaluated risk read.
-	TaskRiskAssessor TaskRiskAssessor
-
-	// AgentName is the agent's display name, surfaced to the assessor.
-	AgentName string
-
-	// RecentUserTurns is forwarded to the task-risk assessor's
-	// intent-match read.
-	RecentUserTurns []string
-
-	// ControlBaseURL is the synthetic control-plane host the proxy
-	// rewrites control tool_uses against.
-	ControlBaseURL string
-
-	// Trace is the optional JSONL telemetry sink.
-	Trace *TraceLogger
-
-	// InlineTaskCreator handles the inline-task-approval intercept.
-	InlineTaskCreator InlineTaskCreator
-
-	// ConversationAutoApproveThreshold controls when the conversation
-	// auto-approve gate fires.
+// ApprovalContext groups the inline-approval flow's dependencies:
+// pending cache, risk assessor, the human-context turns the assessor
+// reads, the inline-task-creator, the auto-approve threshold + default
+// expiry, and the checkout registry.
+type ApprovalContext struct {
+	PendingApprovals                 PendingApprovalCache
+	TaskRiskAssessor                 TaskRiskAssessor
+	RecentUserTurns                  []string
+	InlineTaskCreator                InlineTaskCreator
 	ConversationAutoApproveThreshold string
+	Checkouts                        TaskCheckoutStore
+	DefaultTaskExpirySeconds         int
+}
 
-	// Checkouts is the task-checkout registry.
-	Checkouts TaskCheckoutStore
+// RewriteContext groups the credentialed-rewrite path's dependencies:
+// inspector + rewrite opts + caller-nonce cache + placeholder store.
+type RewriteContext struct {
+	Inspector    *inspector.Inspector
+	RewriteOpts  inspector.RewriteOpts
+	CallerNonces CallerNonceCache
+	Store        store.Store
+}
 
-	// DefaultTaskExpirySeconds is the default TTL for inline-created
-	// tasks when the model omits expires_in_seconds.
-	DefaultTaskExpirySeconds int
+// RoutingContext groups the response-routing dependencies: the
+// control-plane synthetic host, the first-turn routing notice, and the
+// registry of response rewriters.
+type RoutingContext struct {
+	ControlBaseURL   string
+	FirstTurnNotice  string
+	ResponseRegistry *conversation.ResponseRegistry
+}
 
-	// FirstTurnNotice is the routing notice the streaming flow prepends
-	// to the first SSE assistant turn (text-only).
-	FirstTurnNotice string
+// PostprocessConfig wires the inspector + rewriter into the LLM
+// endpoint handler's response path. The handler reads the upstream
+// response body and calls postproc.Postprocess; the result is what
+// the harness sees.
+//
+// Phase 5: top-level fields are sliced into per-stage sub-contexts.
+// Embedded structs preserve field-access promotion (cfg.AgentID,
+// cfg.RequestID, etc.) so internal code reads unchanged; composite
+// literals construct the nested form.
+type PostprocessConfig struct {
+	ToolUseEvaluatorFactory ToolUseEvaluatorFactory
+	AgentContext
+	AuditContext
+	AuthorizationContext
+	ApprovalContext
+	RewriteContext
+	RoutingContext
 }
 
 // PostprocessResult is what postproc.Postprocess +

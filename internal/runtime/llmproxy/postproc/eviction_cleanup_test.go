@@ -18,7 +18,11 @@ import (
 func TestCleanupEvictedInlineTask_NoOpWhenNoTaskID(t *testing.T) {
 	ctx := context.Background()
 	creator := &capturingInlineCreator{}
-	llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{InlineTaskCreator: creator}, &llmproxy.PendingLiteApproval{
+	llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{
+		ApprovalContext: llmproxy.ApprovalContext{
+			InlineTaskCreator: creator,
+		},
+	}, &llmproxy.PendingLiteApproval{
 		ID:     "cv-tool-hold",
 		UserID: "u",
 	})
@@ -49,7 +53,11 @@ func TestCleanupEvictedInlineTask_NoOpWhenCreatorMissing(t *testing.T) {
 func TestCleanupEvictedInlineTask_CallsExpireWhenInlineHold(t *testing.T) {
 	ctx := context.Background()
 	creator := &capturingInlineCreator{}
-	llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{InlineTaskCreator: creator}, &llmproxy.PendingLiteApproval{
+	llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{
+		ApprovalContext: llmproxy.ApprovalContext{
+			InlineTaskCreator: creator,
+		},
+	}, &llmproxy.PendingLiteApproval{
 		ID:            "cv-inline-hold",
 		UserID:        "u",
 		PendingTaskID: "task-aaa",
@@ -67,9 +75,13 @@ func TestCleanupEvictedInlineTask_TracesExpireFailure(t *testing.T) {
 	creator := &capturingInlineCreator{expireFail: true}
 	var buf bytes.Buffer
 	llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{
-		InlineTaskCreator: creator,
-		RequestID:         "req-evict-trace",
-		Trace:             llmproxy.NewTraceLogger(&buf),
+		AuditContext: llmproxy.AuditContext{
+			RequestID: "req-evict-trace",
+			Trace: llmproxy.NewTraceLogger(&buf),
+		},
+		ApprovalContext: llmproxy.ApprovalContext{
+			InlineTaskCreator: creator,
+		},
 	}, &llmproxy.PendingLiteApproval{
 		ID:            "cv-inline-hold",
 		UserID:        "u",
@@ -125,7 +137,11 @@ func TestReplayBufferedHolds_EvictionExpiresInlineTask(t *testing.T) {
 		}},
 	}
 	creator := &capturingInlineCreator{}
-	if err := replayBufferedHolds(ctx, llmproxy.PostprocessConfig{InlineTaskCreator: creator}, inner, sink, nil, nil); err != nil {
+	if err := replayBufferedHolds(ctx, llmproxy.PostprocessConfig{
+		ApprovalContext: llmproxy.ApprovalContext{
+			InlineTaskCreator: creator,
+		},
+	}, inner, sink, nil, nil); err != nil {
 		t.Fatalf("replayBufferedHolds: %v", err)
 	}
 
@@ -148,7 +164,11 @@ func TestRollbackBufferedPendingTasks_ExpiresOnlyInlineTaskHolds(t *testing.T) {
 		},
 	}
 
-	rollbackBufferedPendingTasks(ctx, llmproxy.PostprocessConfig{InlineTaskCreator: creator}, sink)
+	rollbackBufferedPendingTasks(ctx, llmproxy.PostprocessConfig{
+		ApprovalContext: llmproxy.ApprovalContext{
+			InlineTaskCreator: creator,
+		},
+	}, sink)
 
 	if !creator.expireCalled {
 		t.Fatalf("ExpireInlineTask was not called for buffered inline-task holds")
@@ -178,9 +198,13 @@ func TestRollbackBufferedPendingTasks_TracesExpireFailure(t *testing.T) {
 	var buf bytes.Buffer
 
 	rollbackBufferedPendingTasks(ctx, llmproxy.PostprocessConfig{
-		InlineTaskCreator: creator,
-		RequestID:         "req-rollback-trace",
-		Trace:             llmproxy.NewTraceLogger(&buf),
+		AuditContext: llmproxy.AuditContext{
+			RequestID: "req-rollback-trace",
+			Trace: llmproxy.NewTraceLogger(&buf),
+		},
+		ApprovalContext: llmproxy.ApprovalContext{
+			InlineTaskCreator: creator,
+		},
 	}, sink)
 
 	out := buf.String()
