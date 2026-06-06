@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/bodytransform"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
@@ -13,7 +13,7 @@ import (
 // validation. Pure body transformation — no state, no side effects,
 // no audit beyond the `anthropic_empty_text_sanitized` flag.
 //
-// The underlying transform is llmproxy.SanitizeAnthropicRequest, which
+// The underlying transform is bodytransform.SanitizeAnthropicRequest, which
 // has been byte-fidelity tested for thinking-block preservation since
 // before the refactor; this policy is a thin pipeline wrapper around it.
 type AnthropicSanitize struct{}
@@ -37,7 +37,7 @@ func (p *AnthropicSanitize) Preprocess(ctx context.Context, req pipeline.ReadOnl
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 
-	sanitizedBody, sanitized, err := llmproxy.SanitizeAnthropicRequest(req.RawBody())
+	sanitizedBody, sanitized, err := bodytransform.SanitizeAnthropicRequest(req.RawBody())
 	if err != nil {
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeDeny,

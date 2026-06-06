@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/bodytransform"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
@@ -40,11 +40,11 @@ func NewInboundSanitize(resolverBaseURL, controlBaseURL string) *InboundSanitize
 // Name returns the audit-friendly policy identifier.
 func (InboundSanitize) Name() string { return "inbound_sanitize" }
 
-// Preprocess invokes llmproxy.SanitizeInboundHistory with the policy's
+// Preprocess invokes bodytransform.SanitizeInboundHistory with the policy's
 // configured URLs. Errors don't deny — best-effort semantic matches
 // the legacy handler.
 func (p *InboundSanitize) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
-	sanitized, err := llmproxy.SanitizeInboundHistory(llmproxy.SanitizeInboundRequest{
+	sanitized, err := bodytransform.SanitizeInboundHistory(bodytransform.SanitizeInboundRequest{
 		Provider:        req.Provider(),
 		Body:            req.RawBody(),
 		ResolverBaseURL: p.resolverBaseURL,
