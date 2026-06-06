@@ -10,6 +10,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/intentverify"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
@@ -327,7 +328,7 @@ func rewriteApprovedHeldToolUse(ctx context.Context, req ReleaseRequest, held He
 			CandidateTasks:    req.CandidateTasks,
 			ToolRules:         req.ToolRules,
 			EgressRules:       req.EgressRules,
-			IntentVerifier:    decisionIntentVerifier{inner: req.IntentVerifier},
+			IntentVerifier:    intentverify.DecisionVerifierFor(req.IntentVerifier),
 			PreferredTaskID:   held.Fingerprint.TaskID,
 			AllowMissingScope: true,
 		}
@@ -373,7 +374,7 @@ func rewriteApprovedHeldToolUse(ctx context.Context, req ReleaseRequest, held He
 		CandidateTasks:  req.CandidateTasks,
 		ToolRules:       req.ToolRules,
 		EgressRules:     req.EgressRules,
-		IntentVerifier:  decisionIntentVerifier{inner: req.IntentVerifier},
+		IntentVerifier:  intentverify.DecisionVerifierFor(req.IntentVerifier),
 		PreferredTaskID: held.Fingerprint.TaskID,
 	}
 	dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)

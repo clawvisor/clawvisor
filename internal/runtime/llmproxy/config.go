@@ -18,6 +18,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/intentverify"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -26,9 +27,7 @@ import (
 // IntentVerifier matches the intent.Verifier contract. The lite-proxy
 // declares its own narrow interface to avoid pulling the LLM provider
 // dependency into this package.
-type IntentVerifier interface {
-	Verify(ctx context.Context, req IntentVerifyRequest) (*IntentVerdict, error)
-}
+type IntentVerifier = intentverify.Verifier
 
 // TaskRiskAssessor scores a candidate task envelope at creation time so
 // the inline-approval prompt can surface a real, LLM-judged risk read
@@ -79,23 +78,8 @@ type TaskRiskConflict struct {
 	Severity    string
 }
 
-// IntentVerifyRequest is the per-tool-use input to the verifier.
-type IntentVerifyRequest struct {
-	TaskPurpose string
-	ExpectedUse string
-	Service     string
-	Action      string
-	Params      map[string]any
-	Reason      string
-	TaskID      string
-	Lenient     bool
-}
-
-// IntentVerdict mirrors intent.VerificationVerdict.
-type IntentVerdict struct {
-	Allow       bool
-	Explanation string
-}
+type IntentVerifyRequest = intentverify.Request
+type IntentVerdict = intentverify.Verdict
 
 // ToolUseEvaluatorFactory, when set on PostprocessConfig, replaces the
 // orchestrator's default tool_use evaluator with a handler-supplied

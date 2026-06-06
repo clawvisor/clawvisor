@@ -539,7 +539,7 @@ func TestTryReleasePendingApproval_ParallelPreferredTaskID_TriggerMiss(t *testin
 		Posture:         runtimedecision.PostureEnforce,
 		CandidateTasks:  []*store.Task{taskA, taskB},
 		PreferredTaskID: "task-A",
-		IntentVerifier:  decisionIntentVerifier{inner: verifier},
+		IntentVerifier:  DecisionIntentVerifierFor(verifier),
 	}
 	dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 	if err != nil {
@@ -644,7 +644,7 @@ func TestTryReleasePendingApproval_ParallelPreferredTaskID_Credentialed(t *testi
 		Target:          runtimedecision.TargetRequest{Host: verdict.Host, Method: verdict.Method, Path: verdict.Path},
 		CandidateTasks:  []*store.Task{taskA, taskB},
 		PreferredTaskID: "task-A",
-		IntentVerifier:  decisionIntentVerifier{inner: verifier},
+		IntentVerifier:  DecisionIntentVerifierFor(verifier),
 	}
 	dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 	if err != nil {

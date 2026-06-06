@@ -2,14 +2,13 @@ package llmproxy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/approvaltext"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/intentverify"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/rewritehelp"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -51,34 +50,7 @@ func ApprovalPrompt(tu conversation.ToolUse, reason, approvalID string) string {
 // wrapper translates between the package-local IntentVerifyRequest /
 // IntentVerdict types and runtimedecision's.
 func DecisionIntentVerifierFor(v IntentVerifier) runtimedecision.IntentVerifier {
-	return decisionIntentVerifier{inner: v}
-}
-
-type decisionIntentVerifier struct {
-	inner IntentVerifier
-}
-
-func (v decisionIntentVerifier) Verify(ctx context.Context, req runtimedecision.IntentVerifyRequest) (*runtimedecision.IntentVerdict, error) {
-	if v.inner == nil {
-		return nil, nil
-	}
-	verdict, err := v.inner.Verify(ctx, IntentVerifyRequest{
-		TaskPurpose: req.TaskPurpose,
-		ExpectedUse: req.ExpectedUse,
-		Service:     req.Service,
-		Action:      req.Action,
-		Params:      req.Params,
-		Reason:      req.Reason,
-		TaskID:      req.TaskID,
-		Lenient:     req.Lenient,
-	})
-	if err != nil || verdict == nil {
-		return nil, err
-	}
-	return &runtimedecision.IntentVerdict{
-		Allow:       verdict.Allow,
-		Explanation: verdict.Explanation,
-	}, nil
+	return intentverify.DecisionVerifierFor(v)
 }
 
 // AuditAgentForCfg builds a minimal *store.Agent for the audit emitter
@@ -133,50 +105,29 @@ func RunIntentVerify(ctx context.Context, cfg PostprocessConfig, dec TaskScopeDe
 }
 
 func runIntentVerify(ctx context.Context, cfg PostprocessConfig, dec TaskScopeDecision, resolved ResolvedAction, tu conversation.ToolUse) (string, bool) {
-	if cfg.IntentVerifier == nil || dec.MatchedAction == nil {
-		return "", true
-	}
-	mode := dec.MatchedAction.Verification
-	if mode == "off" {
-		return "", true
-	}
 	purpose := ""
 	if dec.MatchedTask != nil {
 		purpose = dec.MatchedTask.Purpose
 	}
-	var params map[string]any
-	if len(tu.Input) > 0 {
-		_ = json.Unmarshal(tu.Input, &params)
+	verification := ""
+	expectedUse := ""
+	hasAction := dec.MatchedAction != nil
+	if hasAction {
+		verification = dec.MatchedAction.Verification
+		expectedUse = dec.MatchedAction.ExpectedUse
 	}
-	verdict, err := cfg.IntentVerifier.Verify(ctx, IntentVerifyRequest{
-		TaskPurpose: purpose,
-		ExpectedUse: dec.MatchedAction.ExpectedUse,
-		Service:     resolved.ServiceID,
-		Action:      resolved.ActionID,
-		Params:      params,
-		Reason:      "lite-proxy tool_use " + tu.Name,
-		TaskID:      dec.TaskID,
-		Lenient:     mode == "lenient",
+	return intentverify.Run(ctx, cfg.IntentVerifier, intentverify.Decision{
+		TaskID:       dec.TaskID,
+		TaskPurpose:  purpose,
+		ExpectedUse:  expectedUse,
+		Verification: verification,
+		HasAction:    hasAction,
+	}, intentverify.ResolvedAction{
+		ServiceID: resolved.ServiceID,
+		ActionID:  resolved.ActionID,
+	}, tu, func(err error) bool {
+		return errors.Is(err, ErrCircuitOpen)
 	})
-	if err != nil {
-		// Circuit-breaker outage signals fail-closed: until the verifier
-		// recovers, we refuse rather than allow tool_use without scope
-		// validation. Other errors (timeouts, transient network failures)
-		// fail-open to match the gateway's behavior so a single hiccup
-		// doesn't strand the agent.
-		if errors.Is(err, ErrCircuitOpen) {
-			return "verifier_circuit_open", false
-		}
-		return fmt.Sprintf("verifier_error: %s", err.Error()), true
-	}
-	if verdict == nil {
-		// Verifier disabled at config level — treat as off.
-		return "", true
-	}
-	if verdict.Allow {
-		return verdict.Explanation, true
-	}
-	return verdict.Explanation, false
 }
 
 // matchByRoute resolves the response rewriter that pairs with the inbound

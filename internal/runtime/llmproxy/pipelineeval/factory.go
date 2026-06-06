@@ -15,6 +15,7 @@ package pipelineeval
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/approvaltext"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/intentverify"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	placeholderpkg "github.com/clawvisor/clawvisor/internal/runtime/llmproxy/placeholder"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
@@ -382,7 +384,6 @@ func buildCredentialedTaskScope(
 		return nil
 	}
 	approvalCleanupCfg := llmproxy.PostprocessConfig{ApprovalContext: approval}
-	intentVerifyCfg := llmproxy.PostprocessConfig{AuthorizationContext: auth}
 	return func(ctx context.Context, tu conversation.ToolUse) policies.TaskScopeDecision {
 		v := rewrite.Inspector.Inspect(ctx, inspector.ToolUse{
 			ID:    tu.ID,
@@ -422,7 +423,7 @@ func buildCredentialedTaskScope(
 				ToolRules:       auth.ToolRules,
 				EgressRules:     auth.EgressRules,
 				PreferredTaskID: auth.PreferredTaskID,
-				IntentVerifier:  llmproxy.DecisionIntentVerifierFor(auth.IntentVerifier),
+				IntentVerifier:  intentverify.DecisionVerifierFor(auth.IntentVerifier),
 			}
 			dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 			if err != nil {
@@ -489,7 +490,7 @@ func buildCredentialedTaskScope(
 						Reason:  "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
 					}
 				}
-				if reason, ok := llmproxy.RunIntentVerify(ctx, intentVerifyCfg, dec, resolved, tu); !ok {
+				if reason, ok := runIntentVerify(ctx, auth.IntentVerifier, dec, resolved, tu); !ok {
 					audit("block", "intent_verification_failed", reason, dec.TaskID)
 					return policies.TaskScopeDecision{
 						Allowed: false,
@@ -522,7 +523,7 @@ func buildAuthorizationResolver(
 	if rewrite.Inspector == nil {
 		return nil
 	}
-	intentVerifier := llmproxy.DecisionIntentVerifierFor(auth.IntentVerifier)
+	intentVerifier := intentverify.DecisionVerifierFor(auth.IntentVerifier)
 	holdHandler := &authorizationHoldHandler{
 		agent:    agent,
 		audit:    audit,
@@ -581,6 +582,32 @@ func detectShellSpecials(tu conversation.ToolUse, agent llmproxy.AgentContext, a
 		}
 	}
 	return readOnly, false
+}
+
+func runIntentVerify(ctx context.Context, verifier llmproxy.IntentVerifier, dec llmproxy.TaskScopeDecision, resolved llmproxy.ResolvedAction, tu conversation.ToolUse) (string, bool) {
+	purpose := ""
+	if dec.MatchedTask != nil {
+		purpose = dec.MatchedTask.Purpose
+	}
+	verification := ""
+	expectedUse := ""
+	hasAction := dec.MatchedAction != nil
+	if hasAction {
+		verification = dec.MatchedAction.Verification
+		expectedUse = dec.MatchedAction.ExpectedUse
+	}
+	return intentverify.Run(ctx, verifier, intentverify.Decision{
+		TaskID:       dec.TaskID,
+		TaskPurpose:  purpose,
+		ExpectedUse:  expectedUse,
+		Verification: verification,
+		HasAction:    hasAction,
+	}, intentverify.ResolvedAction{
+		ServiceID: resolved.ServiceID,
+		ActionID:  resolved.ActionID,
+	}, tu, func(err error) bool {
+		return errors.Is(err, llmproxy.ErrCircuitOpen)
+	})
 }
 
 // authorizationHoldHandler implements policies.AuthorizationHoldHandler
