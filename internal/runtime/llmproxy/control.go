@@ -894,10 +894,6 @@ func controlCallParts(t conversation.ToolUse, controlBaseURL string) (*url.URL, 
 // route malformed mentions through the failure-rewrite path so the
 // model gets a structured failure response rather than a raw refusal.
 func ControlToolUseMentionsEndpoint(t conversation.ToolUse, controlBaseURL string) bool {
-	return controlToolUseMentionsEndpoint(t, controlBaseURL)
-}
-
-func controlToolUseMentionsEndpoint(t conversation.ToolUse, controlBaseURL string) bool {
 	if len(t.Input) == 0 {
 		return false
 	}

@@ -112,12 +112,10 @@ type IntentVerdict struct {
 	Explanation string
 }
 
-// BufferedAudit is the exported per-tool-use audit shape the
-// pipeline-based ToolUseEvaluatorFactory emits into Postprocess.
-// Internal callers continue to use the unexported bufferedAudit; the
-// two are bidirectionally convertible. Exists so handler-side
-// factories can append audit rows without depending on unexported
-// llmproxy types.
+// BufferedAudit is one deferred LogToolUseInspected call from pass 1.
+// Captured per audit() invocation; flushed (legacy) or discarded
+// (coalesce) after the coalesce decision. Exported so handler-side
+// factories can append audit rows.
 type BufferedAudit struct {
 	ToolUse  conversation.ToolUse
 	Verdict  inspector.Verdict
@@ -655,14 +653,7 @@ var DefaultToolUseEvaluatorFactory ToolUseEvaluatorFactory
 // pipelineeval (or whichever package registers the default).
 func selectToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, auditSink *capturedAuditSink) conversation.ToolUseEvaluator {
 	emit := func(ba BufferedAudit) {
-		auditSink.entries = append(auditSink.entries, bufferedAudit{
-			ToolUse:  ba.ToolUse,
-			Verdict:  ba.Verdict,
-			Decision: ba.Decision,
-			Outcome:  ba.Outcome,
-			Reason:   ba.Reason,
-			TaskID:   ba.TaskID,
-		})
+		auditSink.entries = append(auditSink.entries, ba)
 	}
 	if cfg.ToolUseEvaluatorFactory != nil {
 		return cfg.ToolUseEvaluatorFactory(req, cfg, provider, emit)
@@ -674,14 +665,10 @@ func selectToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider c
 }
 
 
-// CredentialedRewriteRecoveryReason exposes the user-facing recovery
+// CredentialedRewriteRecoveryReason is the user-facing recovery
 // message for credential-rewrite errors. Used by the
-// policies.CredentialRewriteEvaluator wrapper.
+// policies.CredentialRewriteEvaluator on rewriter_error.
 func CredentialedRewriteRecoveryReason(v inspector.Verdict, err error) string {
-	return credentialedRewriteRecoveryReason(v, err)
-}
-
-func credentialedRewriteRecoveryReason(v inspector.Verdict, err error) string {
 	if err == nil {
 		return "Clawvisor: rewriter refused"
 	}
@@ -1678,13 +1665,9 @@ func firstNonEmpty(values ...string) string {
 // "http://localhost:25297/api/proxy"). Empty disables passthrough.
 // ScriptSessionToolUse reports whether a tool_use is the agent's
 // already-shaped script-session call (cv-script caller token + URL
-// targeting our resolver mount). Exposed for the
-// policies.ScriptSessionEvaluator wrapper.
+// targeting our resolver mount). Used by the
+// policies.ScriptSessionEvaluator.
 func ScriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
-	return scriptSessionToolUse(input, resolverBaseURL)
-}
-
-func scriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
 	if len(input) == 0 || resolverBaseURL == "" {
 		return false
 	}

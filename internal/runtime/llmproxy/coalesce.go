@@ -120,18 +120,6 @@ func (c *holdCapturingApprovalCache) Drop(ctx context.Context, req ResolveReques
 	return c.inner.Drop(ctx, req)
 }
 
-// bufferedAudit is one deferred LogToolUseInspected call from pass 1.
-// Captured per audit() invocation; flushed (legacy) or discarded
-// (coalesce) after the coalesce decision.
-type bufferedAudit struct {
-	ToolUse  conversation.ToolUse
-	Verdict  inspector.Verdict
-	Decision string
-	Outcome  string
-	Reason   string
-	TaskID   string
-}
-
 // capturedAuditSink buffers audit rows from pass 1. See capturedHoldSink
 // for the motivation: pass 1 may emit "allow"/"rewrite" rows for
 // siblings whose calls are then replaced by a coalesced approval, so
@@ -139,7 +127,7 @@ type bufferedAudit struct {
 // Buffering lets the coalesce branch suppress them and emit corrected
 // rows instead.
 type capturedAuditSink struct {
-	entries []bufferedAudit
+	entries []BufferedAudit
 }
 
 // store.Agent is referenced only by the helper signatures below.

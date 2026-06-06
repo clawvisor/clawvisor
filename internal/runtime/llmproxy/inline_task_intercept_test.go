@@ -342,7 +342,7 @@ func TestMaybeInterceptInlineTaskDefinition_ExpiresEvictedInlineHold(t *testing.
 	}
 	creator := &capturingInlineCreator{pendingTaskID: "task-new-pending"}
 
-	_, handled := maybeInterceptInlineTaskDefinition(
+	_, handled := MaybeInterceptInlineTaskDefinition(
 		httptest.NewRequest("POST", "/v1/messages", nil),
 		PostprocessConfig{
 			AgentUserID:       userID,
@@ -385,7 +385,7 @@ func TestMaybeInterceptInlineTaskDefinition_ExpiresPendingTaskOnHoldFailure(t *t
 	}
 	creator := &capturingInlineCreator{pendingTaskID: "task-hold-failed"}
 
-	_, handled := maybeInterceptInlineTaskDefinition(
+	_, handled := MaybeInterceptInlineTaskDefinition(
 		httptest.NewRequest("POST", "/v1/messages", nil),
 		PostprocessConfig{
 			AgentUserID:       userID,

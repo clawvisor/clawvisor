@@ -266,9 +266,9 @@ func TestScriptSessionToolUse_RecognizesCallerHeader(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := scriptSessionToolUse(json.RawMessage(tc.input), tc.base)
+			got := ScriptSessionToolUse(json.RawMessage(tc.input), tc.base)
 			if got != tc.want {
-				t.Fatalf("scriptSessionToolUse(%q, %q) = %v, want %v", tc.input, tc.base, got, tc.want)
+				t.Fatalf("ScriptSessionToolUse(%q, %q) = %v, want %v", tc.input, tc.base, got, tc.want)
 			}
 		})
 	}
