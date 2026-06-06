@@ -41,23 +41,23 @@ func TestPostprocess_CoalescesMixedAllowAndApproval(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -109,6 +109,86 @@ func TestPostprocess_CoalescesMixedAllowAndApproval(t *testing.T) {
 	}
 }
 
+func TestPostprocessStream_CoalescesMixedAllowAndApproval(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+	input := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[]}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_bash","name":"Bash","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"ls -la\"}"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_fetch","name":"WebFetch","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"url\":\"https://example.com/x\"}"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":1}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":15}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	var output strings.Builder
+	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
+		AgentContext: llmproxy.AgentContext{
+			AgentUserID: userID,
+			AgentID:     agentID,
+		},
+		AuthorizationContext: llmproxy.AuthorizationContext{
+			CandidateTasks: []*store.Task{},
+			ToolRules: []*store.RuntimePolicyRule{
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
+			EgressRules: []*store.RuntimePolicyRule{},
+		},
+		ApprovalContext: llmproxy.ApprovalContext{
+			PendingApprovals: cache,
+		},
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
+			Store:        st,
+		},
+		RoutingContext: llmproxy.RoutingContext{
+			ResponseRegistry: conversation.DefaultResponseRegistry(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("PostprocessStream: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected streaming coalesced approval rewrite")
+	}
+	if got := output.String(); !strings.Contains(got, "Clawvisor paused this turn for approval (2 tool calls).") {
+		t.Fatalf("expected coalesced prompt in stream, got: %s", got)
+	}
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	if len(holds) != 1 || !holds[0].IsCoalesced() {
+		t.Fatalf("expected exactly one coalesced streaming hold, got %+v", holds)
+	}
+	if all := holds[0].AllHolds(); len(all) != 2 {
+		t.Fatalf("expected 2 held streaming tool_uses, got %d", len(all))
+	}
+}
+
 // A turn with a single tool_use needing approval is NOT coalesced —
 // coalescing one element into one element is a no-op, and the legacy
 // per-tool prompt (with the "task" verb) stays available.
@@ -132,23 +212,23 @@ func TestPostprocess_SingleApprovalKeepsLegacyPromptShape(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -309,23 +389,23 @@ func TestPostprocess_CoalescedReleasePreservesTurnOrder(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -397,23 +477,23 @@ func TestPostprocess_CoalescedHoldFailureFallsBackToPerToolHolds(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -482,23 +562,23 @@ func TestPostprocess_CoalesceDoesNotEvictUnrelatedApprovals(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -563,24 +643,24 @@ func TestPostprocess_CoalescedHoldEvictionExpiresInlineTask(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
-			PendingApprovals: cache,
+			PendingApprovals:  cache,
 			InlineTaskCreator: creator,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -622,7 +702,7 @@ func TestPostprocess_CoalesceAuditDoesNotEmitMisleadingAllow(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
 			Audit: emitter,
@@ -630,18 +710,18 @@ func TestPostprocess_CoalesceAuditDoesNotEmitMisleadingAllow(t *testing.T) {
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -706,27 +786,27 @@ func TestPostprocess_CoalescePendingAuditSurfacesApprovalTrigger(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
 			RequestID: requestID,
-			Audit: emitter,
+			Audit:     emitter,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -802,23 +882,23 @@ func TestPostprocess_LegacyReplayFailureFailsClosed(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -993,23 +1073,23 @@ func TestPostprocess_BufferedHoldRespectsConfiguredCacheTTL(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -1053,23 +1133,23 @@ func TestPostprocess_CoalescedSiblingCarriesInspectorMetadata(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{
-			{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
-		},
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
 			EgressRules: []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
