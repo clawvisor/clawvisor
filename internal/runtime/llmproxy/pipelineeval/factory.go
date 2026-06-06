@@ -124,10 +124,10 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		// renders refusals consistently.
 		firstTU := toolUses[0]
 		emit(llmproxy.BufferedAudit{
-			ToolUse:  firstTU,
-			Decision: "block",
-			Outcome:  "pipeline_error",
-			Reason:   err.Error(),
+			ToolUse:     firstTU,
+			Decision:    conversation.DecisionBlock,
+			OutcomeName: "pipeline_error",
+			Reason:      err.Error(),
 		})
 		errMsg := "Clawvisor: authorization pipeline failed — " + err.Error()
 		return func(_ conversation.ToolUse) conversation.ToolUseVerdict {
@@ -157,12 +157,12 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 			}
 		}
 		emit(llmproxy.BufferedAudit{
-			ToolUse:  row.ToolUse,
-			Verdict:  row.Verdict,
-			Decision: row.Decision,
-			Outcome:  row.Outcome,
-			Reason:   row.Reason,
-			TaskID:   row.TaskID,
+			ToolUse:          row.ToolUse,
+			InspectorVerdict: row.Verdict,
+			Decision:         conversation.DecisionKind(row.Decision),
+			OutcomeName:      row.Outcome,
+			Reason:           row.Reason,
+			TaskID:           row.TaskID,
 		})
 	})
 	return evalFn
@@ -270,10 +270,10 @@ func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, pro
 			InterceptInline: func(_ context.Context, tu conversation.ToolUse, call llmproxy.ControlCall) (pipeline.ToolUseVerdict, bool) {
 				auditFn := func(decision, outcome, reason string) {
 					emit(llmproxy.BufferedAudit{
-						ToolUse:  tu,
-						Decision: decision,
-						Outcome:  outcome,
-						Reason:   reason,
+						ToolUse:     tu,
+						Decision:    conversation.DecisionKind(decision),
+						OutcomeName: outcome,
+						Reason:      reason,
 					})
 				}
 				traceFn := func(_ string, _ ...any) {}

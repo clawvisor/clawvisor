@@ -184,7 +184,7 @@ func flushBufferedAudit(ctx context.Context, cfg llmproxy.PostprocessConfig, age
 		return
 	}
 	for _, e := range sink.entries {
-		cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, e.ToolUse, e.Verdict, e.Decision, e.Outcome, e.Reason, e.TaskID)
+		cfg.Audit.LogToolUseInspected(ctx, agent, cfg.RequestID, e.ToolUse, e.InspectorVerdict, string(e.Decision), e.OutcomeName, e.Reason, e.TaskID)
 	}
 }
 

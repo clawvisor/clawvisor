@@ -97,17 +97,11 @@ type IntentVerdict struct {
 	Explanation string
 }
 
-// BufferedAudit is one deferred LogToolUseInspected call from the
-// orchestrator's first eval pass. Exported so the postproc package's
-// coalesce machinery (and handler-side factories) can append rows.
-type BufferedAudit struct {
-	ToolUse  conversation.ToolUse
-	Verdict  inspector.Verdict
-	Decision string
-	Outcome  string
-	Reason   string
-	TaskID   string
-}
+// BufferedAudit aliases conversation.AuditEvent — Phase 9 unified the
+// typed observation record (Outcome enum + Facts) and the audit wire
+// shape (Decision string + OutcomeName string + InspectorVerdict +
+// TaskID) into a single struct.
+type BufferedAudit = conversation.AuditEvent
 
 // ToolUseEvaluatorFactory, when set on PostprocessConfig, replaces the
 // orchestrator's default tool_use evaluator with a handler-supplied

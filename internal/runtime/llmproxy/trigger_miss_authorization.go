@@ -44,12 +44,12 @@ func EvaluateTriggerMissAuthorization(
 			return
 		}
 		emit(BufferedAudit{
-			ToolUse:  tu,
-			Verdict:  v,
-			Decision: decision,
-			Outcome:  outcome,
-			Reason:   reason,
-			TaskID:   taskID,
+			ToolUse:          tu,
+			InspectorVerdict: v,
+			Decision:         conversation.DecisionKind(decision),
+			OutcomeName:      outcome,
+			Reason:           reason,
+			TaskID:           taskID,
 		})
 	}
 

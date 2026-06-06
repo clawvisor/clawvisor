@@ -148,7 +148,7 @@ type ContinueSignal struct {
 // AuditEvent is the typed per-tool-use audit record. Carries:
 //   - the pipeline-domain observation (Outcome, Decision, Reason, Facts)
 //   - the audit wire-shape needed by the emitter (InspectorVerdict,
-//     TaskID, EvaluatorName, Winning)
+//     TaskID, EvaluatorName, Winning, OutcomeName)
 //
 // Replaces the legacy BufferedAudit + LogToolUseInspected positional
 // arg list. Translation to store.AuditEntry happens in the emitter.
@@ -157,8 +157,13 @@ type AuditEvent struct {
 	ToolUse ToolUse
 	// EvaluatorName names the policy that produced the verdict.
 	EvaluatorName string
-	// Outcome is the typed verdict category.
+	// Outcome is the typed verdict category (allow/deny/hold/rewrite/skip).
 	Outcome Outcome
+	// OutcomeName is the stage-specific outcome string that lands in the
+	// audit store's Outcome column (e.g., "task_scope_missing",
+	// "caller_nonce_unavailable", "pass_through"). Derived from typed
+	// Facts by outcomeNameFor, or set directly by legacy emitters.
+	OutcomeName string
 	// Decision is the coarse audit-row classification.
 	Decision DecisionKind
 	// Reason is the human-readable explanation.
@@ -169,8 +174,7 @@ type AuditEvent struct {
 	// that won the tool_use's evaluation (first non-Skip in the chain).
 	Winning bool
 	// InspectorVerdict is the inspector's classification for this
-	// tool_use, surfaced into the store row's params blob. Re-derived
-	// by the emitter when nil.
+	// tool_use, surfaced into the store row's params blob.
 	InspectorVerdict inspector.Verdict
 	// TaskID names the active task this tool_use matched.
 	TaskID string

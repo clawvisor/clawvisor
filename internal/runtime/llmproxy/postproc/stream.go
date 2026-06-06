@@ -103,7 +103,7 @@ func PostprocessStream(
 				entry := auditSink.entries[i]
 				if entry.ToolUse.ID == tu.ID {
 					if c.Inspector.Source == "" {
-						c.Inspector = entry.Verdict
+						c.Inspector = entry.InspectorVerdict
 					}
 					if c.Reason == "" {
 						c.Reason = entry.Reason
