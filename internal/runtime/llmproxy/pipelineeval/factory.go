@@ -151,15 +151,71 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 			toEmit = append(toEmit, tu)
 		}
 	}
-	policies.EmitToolUseAuditRows(ctx, result, toEmit, cfg.Inspector, func(_ context.Context, ev conversation.AuditEvent) {
-		if ev.TaskID == "" {
+	emitAuditEvents(ctx, result, toEmit, cfg.Inspector, matchedTaskIDs, emit)
+	return evalFn
+}
+
+// emitAuditEvents walks the pipeline result's typed AuditEvent stream
+// and emits one event per winning tool_use verdict. InspectorVerdict is
+// re-derived from the supplied inspector; OutcomeName is derived from
+// the verdict's typed Facts via conversation.OutcomeNameFromFacts;
+// TaskID falls back to the matchedTaskIDs map when not surfaced by
+// facts.
+//
+// Replaces the legacy policies.EmitToolUseAuditRows compat shim (Phase 9
+// strict strip). The pipeline package owns the typed event stream; the
+// emit helper is a pure translator inlined at the call site.
+func emitAuditEvents(
+	ctx context.Context,
+	result *pipeline.ToolUseResult,
+	toolUses []conversation.ToolUse,
+	insp *inspector.Inspector,
+	matchedTaskIDs map[string]string,
+	emit func(conversation.AuditEvent),
+) {
+	if result == nil || emit == nil {
+		return
+	}
+	events := result.AuditEvents(toolUses)
+	factsByTU := make(map[string][]conversation.EvaluationFact, len(toolUses))
+	for _, ev := range events {
+		factsByTU[ev.ToolUse.ID] = append(factsByTU[ev.ToolUse.ID], ev.Facts...)
+	}
+	emitted := make(map[string]bool, len(toolUses))
+	for _, ev := range events {
+		if !ev.Winning || emitted[ev.ToolUse.ID] {
+			continue
+		}
+		emitted[ev.ToolUse.ID] = true
+		winningV := result.PerToolUse[ev.ToolUse.ID]
+		out := conversation.AuditEvent{
+			ToolUse:       ev.ToolUse,
+			EvaluatorName: ev.EvaluatorName,
+			Outcome:       ev.Outcome,
+			Decision:      ev.Decision,
+			Reason:        winningV.Reason,
+			Facts:         ev.Facts,
+			Winning:       true,
+		}
+		if out.Reason == "" {
+			out.Reason = ev.Reason
+		}
+		if insp != nil {
+			out.InspectorVerdict = insp.Inspect(ctx, inspector.ToolUse{
+				ID:    ev.ToolUse.ID,
+				Name:  ev.ToolUse.Name,
+				Input: ev.ToolUse.Input,
+			})
+		}
+		out.OutcomeName = conversation.OutcomeNameFromFacts(ev.EvaluatorName, ev.Outcome, ev.Facts)
+		out.TaskID = conversation.MatchedTaskIDFromFacts(factsByTU[ev.ToolUse.ID])
+		if out.TaskID == "" {
 			if id := matchedTaskIDs[ev.ToolUse.ID]; id != "" {
-				ev.TaskID = id
+				out.TaskID = id
 			}
 		}
-		emit(ev)
-	})
-	return evalFn
+		emit(out)
+	}
 }
 
 // multiToolUseResponse is the pipeline ReadOnlyResponse the

@@ -236,17 +236,43 @@ func TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows(t *testing.T) {
 					{EvaluatorName: sc.evaluatorName, ToolUseID: sc.tu.ID, Verdict: sc.pipelineVerdict},
 				},
 			}
-			// Use a presupplied verdict — re-running inspector inside
-			// EmitToolUseAuditRows would also work, but the verdict's
-			// Reason/Source may differ from the legacy capture
+			// Use a presupplied verdict — re-running inspector via
+			// conversation.AuditEvent helpers would also work, but the
+			// verdict's Reason/Source may differ from the legacy capture
 			// (especially for trigger-miss synthetic verdicts where
 			// newToolUseEvaluator overrides v after the downgrade). The
 			// equivalence test pins arg-shape parity, not inspector
 			// re-determinism; we feed the same verdict to both paths.
-			policies.EmitToolUseAuditRows(ctx, result, []conversation.ToolUse{sc.tu}, nil, func(ctx context.Context, ev conversation.AuditEvent) {
-				ev.InspectorVerdict = sc.verdict
-				emitter.WriteAuditEvent(ctx, agent, pipelineRequestID, ev)
-			})
+			events := result.AuditEvents([]conversation.ToolUse{sc.tu})
+			factsByTU := make(map[string][]conversation.EvaluationFact)
+			for _, ev := range events {
+				factsByTU[ev.ToolUse.ID] = append(factsByTU[ev.ToolUse.ID], ev.Facts...)
+			}
+			emitted := map[string]bool{}
+			for _, ev := range events {
+				if !ev.Winning || emitted[ev.ToolUse.ID] {
+					continue
+				}
+				emitted[ev.ToolUse.ID] = true
+				winningV := result.PerToolUse[ev.ToolUse.ID]
+				out := conversation.AuditEvent{
+					ToolUse:          ev.ToolUse,
+					EvaluatorName:    ev.EvaluatorName,
+					Outcome:          ev.Outcome,
+					Decision:         ev.Decision,
+					Reason:           winningV.Reason,
+					Facts:            ev.Facts,
+					Winning:          true,
+					InspectorVerdict: sc.verdict,
+					OutcomeName:      conversation.OutcomeNameFromFacts(ev.EvaluatorName, ev.Outcome, ev.Facts),
+					TaskID:           conversation.MatchedTaskIDFromFacts(factsByTU[ev.ToolUse.ID]),
+				}
+				if out.Reason == "" {
+					out.Reason = ev.Reason
+				}
+				emitter.WriteAuditEvent(ctx, agent, pipelineRequestID, out)
+			}
+			_ = policies.NewControlToolUseEvaluator // keep policies import live
 
 			// Pull both rows from the store and compare them
 			// field-by-field, ignoring the fields that are intentionally

@@ -204,3 +204,71 @@ func DecisionFromOutcome(o Outcome) DecisionKind {
 		return DecisionAllow
 	}
 }
+
+// MatchedTaskIDFromFacts walks a fact slice looking for the first
+// TaskScopeFact carrying a MatchedTaskID. TaskScope evaluators may
+// emit the fact on Skip paths (e.g., credentialed rewrite where
+// TaskScope sees the match but CredentialRewrite claims the verdict),
+// so the audit emitter aggregates facts across the trail.
+func MatchedTaskIDFromFacts(facts []EvaluationFact) string {
+	for _, f := range facts {
+		if tf, ok := f.(TaskScopeFact); ok && tf.MatchedTaskID != "" {
+			return tf.MatchedTaskID
+		}
+	}
+	return ""
+}
+
+// OutcomeNameFromFacts extracts the stage-specific outcome name from
+// a verdict's typed Facts. Each evaluator's Fact carries the outcome
+// string directly; this helper produces the value the audit store's
+// Outcome column expects. Falls back to a generic name per Outcome
+// when no fact matches.
+func OutcomeNameFromFacts(evaluatorName string, outcome Outcome, facts []EvaluationFact) string {
+	for _, f := range facts {
+		switch ff := f.(type) {
+		case ControlFact:
+			if ff.Outcome != "" {
+				return ff.Outcome
+			}
+		case RewriteFact:
+			if ff.Outcome != "" {
+				return ff.Outcome
+			}
+		case ScriptSessionFact:
+			if ff.Outcome != "" {
+				return ff.Outcome
+			}
+		case TaskScopeFact:
+			if ff.Reason != "" {
+				if ff.Allowed {
+					return "matched_task_scope"
+				}
+				return "task_scope_missing"
+			}
+		case BoundaryFact:
+			if !ff.Passed {
+				return "boundary_check_failed"
+			}
+		}
+	}
+	switch outcome {
+	case OutcomeAllow:
+		switch evaluatorName {
+		case "inspector_chain":
+			return "boundary_check_passed"
+		case "script_session":
+			return "script_session_passthrough"
+		default:
+			return "pass_through"
+		}
+	case OutcomeRewrite:
+		return "success"
+	case OutcomeDeny:
+		return "deny"
+	case OutcomeHold:
+		return "approval_required"
+	default:
+		return ""
+	}
+}
