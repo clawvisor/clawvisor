@@ -75,9 +75,18 @@ func ComposeToolUseEvaluatorChain(cfg ToolUseChainConfig) []pipeline.ToolUseEval
 		inspectorChain = inspectorChain.WithBoundaryResolver(cfg.Boundary)
 	}
 	inspectorChain = inspectorChain.WithTriggerMissAuthorizer(cfg.TriggerMissAuth)
-	chain := make([]pipeline.ToolUseEvaluator, 0, 6)
+	chain := make([]pipeline.ToolUseEvaluator, 0, 8)
 	chain = append(chain, NewControlToolUseEvaluator(cfg.Control))
 	chain = append(chain, NewScriptSessionEvaluator(cfg.ScriptSession))
+	// Phase 6 decomposed policies run BEFORE InspectorChain so a
+	// background-shell poll claims Allow directly (the legacy
+	// EvaluateTriggerMissAuthorization closure would have done the same
+	// via InspectorChain's TriggerMissAuth). The other Phase 6 policies
+	// (ReadOnlyShell, SensitivePath, Authorization) are built but not
+	// wired yet — they require resolver plumbing the host hasn't moved
+	// out of the closure pattern. ShellPoll has no host dependencies, so
+	// it lands first.
+	chain = append(chain, NewShellPollPassthroughPolicy(cfg.Inspector))
 	chain = append(chain, inspectorChain)
 	chain = append(chain, NewTaskScopeEvaluator(cfg.TaskScope))
 	chain = append(chain, NewIntentVerifyEvaluator(cfg.IntentVerify))
