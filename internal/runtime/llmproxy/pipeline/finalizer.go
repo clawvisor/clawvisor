@@ -86,10 +86,13 @@ func Holds(captures []HoldCapture) []HoldCapture {
 
 // HoldSubmitResult is what FinalizerDeps.SubmitHold returns. Evicted
 // is the optional previously-pending payload the deps wants to clean
-// up (the orchestrator passes it back through Cleanup).
+// up (the orchestrator passes it back through Cleanup). ApprovalID
+// names the newly committed hold; EvictedApprovalID names the
+// displaced hold when Evicted is non-nil.
 type HoldSubmitResult struct {
-	ApprovalID string
-	Evicted    any
+	ApprovalID        string
+	EvictedApprovalID string
+	Evicted           any
 }
 
 // CoalescedHold is what FinalizerDeps.BuildCoalescedHold returns. The
@@ -278,9 +281,8 @@ func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, bool, 
 	}
 	if submit.Evicted != nil && len(f.captures) > 0 {
 		primary := f.captures[0]
-		evictedID := submit.ApprovalID
 		if coalesced.EvictedAuditFor != nil {
-			f.deps.WriteAudit(ctx, coalesced.EvictedAuditFor(primary, evictedID))
+			f.deps.WriteAudit(ctx, coalesced.EvictedAuditFor(primary, submit.EvictedApprovalID))
 		}
 		f.deps.CleanupEvictedHold(ctx, submit.Evicted)
 	}
@@ -319,7 +321,7 @@ func (f *Finalizer) replayLegacy(ctx context.Context) error {
 			return err
 		}
 		if res.Evicted != nil {
-			f.deps.WriteAudit(ctx, f.deps.BuildEvictedAudit(c, res.ApprovalID))
+			f.deps.WriteAudit(ctx, f.deps.BuildEvictedAudit(c, res.EvictedApprovalID))
 			f.deps.CleanupEvictedHold(ctx, res.Evicted)
 		}
 		committed = append(committed, c)

@@ -68,6 +68,7 @@ func (d *finalizerDeps) SubmitHold(ctx context.Context, payload any) (pipeline.H
 	out := pipeline.HoldSubmitResult{ApprovalID: res.Pending.ID}
 	if res.Evicted != nil {
 		out.Evicted = res.Evicted
+		out.EvictedApprovalID = res.Evicted.ID
 	}
 	return out, nil
 }
