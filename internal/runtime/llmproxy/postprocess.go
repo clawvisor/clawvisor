@@ -771,44 +771,6 @@ func coalesceFromCaptures(captures []evalCapture) PendingLiteApproval {
 	return pending
 }
 
-// ambiguousRefusalGuidance produces the substitute message the model
-// sees when the inspector refused a credentialed call as ambiguous.
-// The model needs actionable instructions on how to rewrite the call
-// in a shape Clawvisor can mediate — otherwise it retries the same
-// shape and ends up in a loop, or worse, copies a fragment back into
-// the conversation and gets stuck.
-func ambiguousRefusalGuidance(tu conversation.ToolUse, v inspector.Verdict) string {
-	preview := conversation.MakeToolInputPreview(tu.Input)
-	var b strings.Builder
-	b.WriteString("Clawvisor refused this credentialed call: ")
-	b.WriteString(v.Reason)
-	b.WriteString(".")
-	if tu.Name != "" {
-		b.WriteString("\n\nTool: `")
-		b.WriteString(tu.Name)
-		b.WriteString("`")
-	}
-	if preview != "" {
-		b.WriteString("\nInput: ")
-		b.WriteString(preview)
-	}
-	// Tailored guidance based on the parser's specific objection.
-	reason := strings.ToLower(v.Reason)
-	switch {
-	case strings.Contains(reason, "shell metacharacter"):
-		b.WriteString("\n\nRewrite the command as a single curl invocation with no pipes, redirects, command chaining (`|`, `;`, `&&`, `>`, `2>&1`), command substitution (`$(...)`, backticks), or subshells. Clawvisor needs to parse the curl shape to inject credentials safely. If you need to filter or post-process the response, run a separate tool call after the curl returns.")
-	case strings.Contains(reason, "unknown curl flag"):
-		b.WriteString("\n\nThe curl flag isn't on Clawvisor's allowlist (only common safe flags like `-s`, `-S`, `-f`, `-i`, `-A`, `-o`, `--max-time` are accepted; `-L`, `-k`, `-x`, `-d`, `--data*`, `-T`, `-F` are refused). Rewrite without that flag.")
-	case strings.Contains(reason, "expected exactly one positional URL"):
-		b.WriteString("\n\nUse exactly one URL positional argument. If you need to call multiple endpoints, run separate tool calls.")
-	case strings.Contains(reason, "placeholder not in"):
-		b.WriteString("\n\nThe credential placeholder must appear in an HTTP header (e.g. `-H 'Authorization: Bearer autovault_…'`). Body, query, or non-header locations are not yet supported for rewrite.")
-	default:
-		b.WriteString("\n\nRewrite the call in the simplest shape Clawvisor can mediate: a single curl invocation with `-H 'Authorization: Bearer <autovault_placeholder>'` and one URL positional argument. No pipes, redirects, or command chaining.")
-	}
-	return b.String()
-}
-
 // approvalPrompt renders the agent-facing message that substitutes for a
 // paused tool call. When approvalID is non-empty, the InlineApprovalIDMarker
 // footer is appended so subsequent turns can disambiguate which hold a bare
@@ -893,10 +855,6 @@ func coalescedApprovalPrompt(uses []HeldToolUse, approvalID string) string {
 	b.WriteString("\n\nReply `yes` or `y` to approve all calls and run them in order, `no` or `n` to deny the whole turn, or `task` to scope this work under a Clawvisor task that covers every call above.")
 	b.WriteString(approvalIDFooter(approvalID))
 	return b.String()
-}
-
-func taskCreationPrompt(tu conversation.ToolUse) string {
-	return taskCreationPromptForHolds([]HeldToolUse{{ToolUse: tu, Kind: HeldKindApproval}})
 }
 
 type decisionIntentVerifier struct {
@@ -1023,40 +981,6 @@ func redactPlaceholderForReason(ph string) string {
 		return ph
 	}
 	return ph[:head] + "…(" + strconv.Itoa(len(ph)) + " chars)"
-}
-
-// boundaryCheckVerdict validates the inspector's claimed host against
-// the bound-service allowlist of every placeholder it found.
-func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.Verdict) (string, bool) {
-	if cfg.Store == nil {
-		return "no store configured for boundary check", false
-	}
-	if cfg.AgentUserID == "" || cfg.AgentID == "" {
-		return "no agent context for boundary check", false
-	}
-	if len(v.Placeholders) == 0 {
-		return "verdict missing placeholder for boundary lookup", false
-	}
-	for _, ph := range v.Placeholders {
-		rec, err := cfg.Store.GetRuntimePlaceholder(req.Context(), ph)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return "placeholder not registered: " + redactPlaceholderForReason(ph), false
-			}
-			return "store error: " + err.Error(), false
-		}
-		if reason, ok := ValidateRuntimePlaceholderAccess(req.Context(), cfg.Store, rec, cfg.AgentUserID, cfg.AgentID, time.Now().UTC()); !ok {
-			return reason + " (placeholder=" + redactPlaceholderForReason(ph) + ")", false
-		}
-		hosts, boundReason := RuntimePlaceholderBoundHosts(req.Context(), cfg.Store, rec)
-		if len(hosts) == 0 {
-			return boundReason, false
-		}
-		if ok, reason := inspector.BoundaryCheck(v, hosts); !ok {
-			return reason, false
-		}
-	}
-	return "", true
 }
 
 // runIntentVerify runs LLM intent verification when the matched TaskAction

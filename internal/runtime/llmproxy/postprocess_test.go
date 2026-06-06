@@ -441,29 +441,6 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	}
 }
 
-func TestBoundaryCheckVerdictUnknownServiceFailsClosed(t *testing.T) {
-	placeholder := "autovault_agentphone_xxx"
-	st, userID, agentID := seedPostprocessStoreWithService(t, placeholder, "agentphone")
-	req := httptest.NewRequest("POST", "/v1/messages", nil)
-
-	reason, ok := boundaryCheckVerdict(req, PostprocessConfig{
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
-	}, inspector.Verdict{
-		IsAPICall:    true,
-		Host:         "api.agentphone.ai",
-		Placeholders: []string{placeholder},
-	})
-
-	if ok {
-		t.Fatalf("expected unknown service to fail closed, got reason %q", reason)
-	}
-	if !strings.Contains(reason, "no bound-service hosts") {
-		t.Fatalf("expected missing bound-host reason, got %q", reason)
-	}
-}
-
 func TestPostprocess_ReadOnlyBashBypassesTaskScopeByDefault(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1060,10 +1037,13 @@ func TestApprovalPromptEmbedsApprovalIDFooter(t *testing.T) {
 }
 
 func TestTaskCreationPromptIncludesTaskCreationExample(t *testing.T) {
-	got := taskCreationPrompt(conversation.ToolUse{
-		Name:  "Write",
-		Input: json.RawMessage(`{"file_path":"/tmp/report.txt","content":"hello"}`),
-	})
+	got := taskCreationPromptForHolds([]HeldToolUse{{
+		ToolUse: conversation.ToolUse{
+			Name:  "Write",
+			Input: json.RawMessage(`{"file_path":"/tmp/report.txt","content":"hello"}`),
+		},
+		Kind: HeldKindApproval,
+	}})
 
 	for _, want := range []string{
 		"Please request a Clawvisor task",
