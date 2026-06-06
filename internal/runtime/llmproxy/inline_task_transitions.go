@@ -38,7 +38,7 @@ func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest,
 	// one call and the sibling reviewed calls re-prompt on retry,
 	// defeating the point of the gesture. Single-tool holds collapse
 	// to the legacy single-element prompt unchanged.
-	rewritten, ok, err := editor.ReplaceLatestUserText("task", pendingApprovalID, taskCreationPromptForHolds(pending.AllHolds()))
+	rewritten, ok, err := editor.ReplaceLatestUserText("task", pendingApprovalID, TaskCreationPromptForHolds(pending.AllHolds()))
 	if err != nil || !ok {
 		return TaskReplyRewriteResult{Body: req.Body}, err
 	}

@@ -257,7 +257,7 @@ func MaybeInterceptInlineTaskDefinition(
 				// name so dashboards can distinguish gate-bypassed
 				// approvals from human ones.
 				if cfg.Audit != nil {
-					if auditAgent := auditAgentForCfg(cfg); auditAgent != nil {
+					if auditAgent := AuditAgentForCfg(cfg); auditAgent != nil {
 						cfg.Audit.LogInlineTaskAutoApproved(
 							req.Context(),
 							auditAgent,
@@ -305,7 +305,7 @@ func MaybeInterceptInlineTaskDefinition(
 					// model-authored Purpose makes the notice
 					// self-describing without leaking task IDs or
 					// internal scope details.
-					PrependAssistantNotice: autoApproveUserNotice(created.Purpose),
+					PrependAssistantNotice: AutoApproveUserNotice(created.Purpose),
 				}, true
 			}
 		}
@@ -384,7 +384,7 @@ func MaybeInterceptInlineTaskDefinition(
 		// task's DB anchor so the dashboard doesn't keep showing
 		// "reply in chat" guidance for a hold that can no longer be
 		// resolved from chat.
-		cleanupEvictedInlineTask(req.Context(), cfg, innerHold.Evicted)
+		CleanupEvictedInlineTask(req.Context(), cfg, innerHold.Evicted)
 	}
 
 	audit("approve", "pending", "inline_task_pending_approval: awaiting user yes/no on inline task definition (query)")
@@ -401,7 +401,7 @@ func MaybeInterceptInlineTaskDefinition(
 	}, true
 }
 
-// cleanupEvictedInlineTask expires the store.Task row anchoring an
+// CleanupEvictedInlineTask expires the store.Task row anchoring an
 // evicted inline-task hold. The LRU cache only carries N holds per
 // (user, agent, provider, conversation) tuple; when a new Hold
 // displaces an older inline-task hold, the cache anchor is gone and
@@ -416,7 +416,7 @@ func MaybeInterceptInlineTaskDefinition(
 // inline holds minted before the pending-task surface was wired),
 // or when the creator doesn't implement the pending extension.
 // Safe to call unconditionally on any eviction.
-func cleanupEvictedInlineTask(ctx context.Context, cfg PostprocessConfig, evicted *PendingLiteApproval) {
+func CleanupEvictedInlineTask(ctx context.Context, cfg PostprocessConfig, evicted *PendingLiteApproval) {
 	if evicted == nil || evicted.PendingTaskID == "" || evicted.UserID == "" {
 		return
 	}
@@ -456,7 +456,7 @@ func hasNonEmptyTurn(turns []string) bool {
 	return false
 }
 
-// autoApproveUserNotice renders the human-facing one-liner the
+// AutoApproveUserNotice renders the human-facing one-liner the
 // handler prepends to the continuation's assistant turn after the
 // gate fires. Quoting the task purpose makes the message
 // self-describing — the user sees both that an auto-approval
@@ -464,14 +464,7 @@ func hasNonEmptyTurn(turns []string) bool {
 // dashboard. The purpose is model-authored, so we strip control
 // characters and cap the length defensively so a runaway purpose
 // can't dominate the assistant turn.
-// AutoApproveUserNotice renders the user-visible "task X was
-// auto-approved" notice. Exported for the postproc tests that exercise
-// the truncation + escaping behavior.
 func AutoApproveUserNotice(purpose string) string {
-	return autoApproveUserNotice(purpose)
-}
-
-func autoApproveUserNotice(purpose string) string {
 	const maxPurposeRunes = 200
 	cleaned := strings.TrimSpace(purpose)
 	cleaned = strings.ReplaceAll(cleaned, "\r", " ")

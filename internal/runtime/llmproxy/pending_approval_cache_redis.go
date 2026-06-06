@@ -47,7 +47,7 @@ func (c *RedisPendingApprovalCache) Hold(ctx context.Context, pending PendingLit
 	}
 	now := c.now().UTC()
 	if pending.ID == "" {
-		id, err := newLiteApprovalID()
+		id, err := NewLiteApprovalID()
 		if err != nil {
 			return HoldResult{}, err
 		}

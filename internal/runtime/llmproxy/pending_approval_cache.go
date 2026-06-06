@@ -14,7 +14,6 @@ import (
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
-	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // PendingApprovalStage is the per-hold state in the inline-task-approval
@@ -287,7 +286,7 @@ func (c *MemoryPendingApprovalCache) Hold(_ context.Context, pending PendingLite
 	}
 	now := c.now().UTC()
 	if pending.ID == "" {
-		id, err := newLiteApprovalID()
+		id, err := NewLiteApprovalID()
 		if err != nil {
 			return HoldResult{}, err
 		}
@@ -484,32 +483,13 @@ func (c *MemoryPendingApprovalCache) pruneExpiredLocked(key pendingApprovalKey, 
 	return kept
 }
 
-func newLiteApprovalID() (string, error) {
+// NewLiteApprovalID mints a per-hold ID for the inline-approval flow.
+// Used by the postproc package's coalesce machinery to mint IDs ahead
+// of replay to the underlying cache.
+func NewLiteApprovalID() (string, error) {
 	var b [16]byte
 	if _, err := liteApprovalRandRead(b[:]); err != nil {
 		return "", fmt.Errorf("generate approval id: %w", err)
 	}
 	return "cv-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])), nil
-}
-
-// NewLiteApprovalID mints a per-hold ID for the inline-approval flow.
-// Exported for the postproc package's coalesce machinery, which mints
-// IDs ahead of replay to the underlying cache.
-func NewLiteApprovalID() (string, error) {
-	return newLiteApprovalID()
-}
-
-// CleanupEvictedInlineTask is the exported entry point for terminating
-// an evicted inline-task hold's store.Task row. Called by the postproc
-// package's coalesce/replay paths when a buffered hold's replay
-// displaces an older inline-task hold.
-func CleanupEvictedInlineTask(ctx context.Context, cfg PostprocessConfig, evicted *PendingLiteApproval) {
-	cleanupEvictedInlineTask(ctx, cfg, evicted)
-}
-
-// AuditAgentForCfg builds a minimal *store.Agent for the audit emitter
-// from PostprocessConfig. Exported for the postproc package; the
-// emitter only reads UserID and ID.
-func AuditAgentForCfg(cfg PostprocessConfig) *store.Agent {
-	return auditAgentForCfg(cfg)
 }

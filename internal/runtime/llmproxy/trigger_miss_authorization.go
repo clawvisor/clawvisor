@@ -23,7 +23,7 @@ import (
 //     runtimedecision.EvaluateAuthorization.
 //   - Maps VerdictAllow / Deny / NeedsApproval into a conversation
 //     verdict, including PendingApprovals.Hold for the approval path
-//     and approvalPrompt rendering for the substitute text.
+//     and ApprovalPrompt rendering for the substitute text.
 //   - When the decision engine isn't wired, returns the legacy
 //     "pass_through" allow.
 //
@@ -146,7 +146,7 @@ func EvaluateTriggerMissAuthorization(
 			}
 			if held.Evicted != nil {
 				audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, "")
-				cleanupEvictedInlineTask(ctx, cfg, held.Evicted)
+				CleanupEvictedInlineTask(ctx, cfg, held.Evicted)
 			}
 			approvalID = held.Pending.ID
 		}
@@ -154,7 +154,7 @@ func EvaluateTriggerMissAuthorization(
 		return conversation.ToolUseVerdict{
 			Allowed:        false,
 			Reason:         "Clawvisor: approval required — " + dec.Reason,
-			SubstituteWith: approvalPrompt(tu, dec.Reason, approvalID),
+			SubstituteWith: ApprovalPrompt(tu, dec.Reason, approvalID),
 		}
 	}
 	// Unknown decision kind — fail closed.

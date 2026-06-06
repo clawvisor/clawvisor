@@ -88,21 +88,13 @@ func CredentialedRewriteRecoveryReason(v inspector.Verdict, err error) string {
 // break dependent sequences like Bash producing stdout that a
 // following WebFetch consumes.
 
-// approvalPrompt renders the agent-facing message that substitutes for a
+// ApprovalPrompt renders the agent-facing message that substitutes for a
 // paused tool call. When approvalID is non-empty, the InlineApprovalIDMarker
 // footer is appended so subsequent turns can disambiguate which hold a bare
 // "y"/"n" reply targets — important when one agent's transcript contains
 // multiple pending prompts, or when several agents share a Clawvisor token
 // and only the per-transcript marker reliably identifies the right hold.
-// ApprovalPrompt renders the agent-facing substitute text for a paused
-// tool call. Used by EvaluateTriggerMissAuthorization +
-// EvaluateCredentialedAuthorization, plus the postproc package's
-// coalesce + tests.
 func ApprovalPrompt(tu conversation.ToolUse, reason, approvalID string) string {
-	return approvalPrompt(tu, reason, approvalID)
-}
-
-func approvalPrompt(tu conversation.ToolUse, reason, approvalID string) string {
 	preview := conversation.MakeToolInputPreview(tu.Input)
 	var b strings.Builder
 	b.WriteString("Clawvisor paused this tool call for approval.")
@@ -151,10 +143,10 @@ func (v decisionIntentVerifier) Verify(ctx context.Context, req runtimedecision.
 	}, nil
 }
 
-// auditAgentForCfg builds a minimal *store.Agent for the audit emitter
+// AuditAgentForCfg builds a minimal *store.Agent for the audit emitter
 // from the postprocess config. The emitter only reads UserID and ID; we
 // avoid an extra DB lookup by synthesizing the struct.
-func auditAgentForCfg(cfg PostprocessConfig) *store.Agent {
+func AuditAgentForCfg(cfg PostprocessConfig) *store.Agent {
 	if cfg.Audit == nil || cfg.AgentID == "" || cfg.AgentUserID == "" {
 		return nil
 	}

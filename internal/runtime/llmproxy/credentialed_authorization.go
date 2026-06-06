@@ -135,7 +135,7 @@ func EvaluateCredentialedAuthorization(
 				}
 				if held.Evicted != nil {
 					audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, "")
-					cleanupEvictedInlineTask(ctx, cfg, held.Evicted)
+					CleanupEvictedInlineTask(ctx, cfg, held.Evicted)
 				}
 				approvalID = held.Pending.ID
 			}
@@ -145,7 +145,7 @@ func EvaluateCredentialedAuthorization(
 				Verdict: conversation.ToolUseVerdict{
 					Allowed:        false,
 					Reason:         "Clawvisor: approval required — " + dec.Reason,
-					SubstituteWith: approvalPrompt(tu, dec.Reason, approvalID),
+					SubstituteWith: ApprovalPrompt(tu, dec.Reason, approvalID),
 				},
 				MatchedTaskID: matchedTaskID,
 			}

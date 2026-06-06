@@ -13,7 +13,7 @@ import (
 // first-turn notice. The agent name is operator-controlled (not
 // model-authored), but a runaway name from a misconfigured deployment
 // would still dominate the assistant turn without this. Matches the
-// defensive cap on [autoApproveUserNotice].
+// defensive cap on [AutoApproveUserNotice].
 const agentNoticeMaxNameRunes = 80
 
 // RenderAgentRoutingNotice returns the human-facing one-liner the

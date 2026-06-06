@@ -13,7 +13,7 @@ import (
 // POST /api/control/tasks when the user is mid-flight on an inline task gesture
 // (StageAwaitingTaskApproval).
 //
-// The output is plain text in the same shape as approvalPrompt — the harness
+// The output is plain text in the same shape as ApprovalPrompt — the harness
 // renders it verbatim, so the user sees a continuation of the same approval
 // conversation rather than a context switch to the dashboard.
 //
