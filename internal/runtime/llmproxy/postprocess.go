@@ -196,6 +196,14 @@ func redactPlaceholderForReason(ph string) string {
 // On verifier error we fail-open (audit will record), matching the gateway's
 // behavior so a transient LLM outage doesn't block tool use; #37 will tighten
 // this to fail-closed once the circuit breaker is in place.
+// RunIntentVerify is the exported version of the per-task-scope intent
+// check the credentialed path runs after TaskScope.Check confirms the
+// scope match. Exposed for the Phase 6 credentialedTaskScope closure
+// in pipelineeval/factory.go.
+func RunIntentVerify(ctx context.Context, cfg PostprocessConfig, dec TaskScopeDecision, resolved ResolvedAction, tu conversation.ToolUse) (string, bool) {
+	return runIntentVerify(ctx, cfg, dec, resolved, tu)
+}
+
 func runIntentVerify(ctx context.Context, cfg PostprocessConfig, dec TaskScopeDecision, resolved ResolvedAction, tu conversation.ToolUse) (string, bool) {
 	if cfg.IntentVerifier == nil || dec.MatchedAction == nil {
 		return "", true

@@ -45,25 +45,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	toolUses []conversation.ToolUse,
 	emit func(conversation.AuditEvent),
 ) conversation.ToolUseEvaluator {
-	credentialedTaskScope := func(ctx context.Context, tu conversation.ToolUse) llmproxy.TaskScopeDecision {
-		v := cfg.Inspector.Inspect(ctx, inspector.ToolUse{
-			ID:    tu.ID,
-			Name:  tu.Name,
-			Input: tu.Input,
-		})
-		if !v.IsAPICall || v.Ambiguous {
-			return llmproxy.TaskScopeDecision{}
-		}
-		result := llmproxy.EvaluateCredentialedAuthorization(ctx, cfg, provider, tu, v, emit)
-		if result.Allowed {
-			return llmproxy.TaskScopeDecision{}
-		}
-		return llmproxy.TaskScopeDecision{
-			Allowed: false,
-			Reason:  result.Verdict.Reason,
-			TaskID:  result.MatchedTaskID,
-		}
-	}
+	credentialedTaskScope := buildCredentialedTaskScope(cfg, provider, emit)
 
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
 		Control:       buildControlResolver(req, cfg, provider, emit),
@@ -376,6 +358,142 @@ func buildBoundaryResolver(cfg llmproxy.PostprocessConfig) policies.BoundaryReso
 			decision.DenyReason = pipeline.BoundaryDenyReasonHostNotAllowed
 		}
 		return decision
+	}
+}
+
+// buildCredentialedTaskScope builds the credentialed-path authorization
+// closure that TaskScopeEvaluator consumes via its TaskScopeResolver.
+// The closure runs the runtimedecision.EvaluateAuthorization flow on
+// the credentialed (host, method, path) target, handles Hold
+// side-effects (PendingApprovals.Hold + ApprovalPrompt rendering +
+// CleanupEvictedInlineTask), and emits audit rows. Returns an empty
+// TaskScopeDecision when the call is authorized so TaskScopeEvaluator
+// Skips and downstream stages (IntentVerify, CredentialRewrite) run.
+//
+// Inlined from the legacy EvaluateCredentialedAuthorization helper
+// (Phase 6).
+func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider conversation.Provider, emit func(conversation.AuditEvent)) policies.TaskScopeResolver {
+	return func(ctx context.Context, tu conversation.ToolUse) llmproxy.TaskScopeDecision {
+		v := cfg.Inspector.Inspect(ctx, inspector.ToolUse{
+			ID:    tu.ID,
+			Name:  tu.Name,
+			Input: tu.Input,
+		})
+		if !v.IsAPICall || v.Ambiguous {
+			return llmproxy.TaskScopeDecision{}
+		}
+		audit := func(decision, outcome, reason, taskID string) {
+			if emit == nil {
+				return
+			}
+			emit(conversation.AuditEvent{
+				ToolUse:          tu,
+				InspectorVerdict: v,
+				Decision:         conversation.DecisionKind(decision),
+				OutcomeName:      outcome,
+				Reason:           reason,
+				TaskID:           taskID,
+			})
+		}
+		if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil {
+			resolved := llmproxy.ResolvedAction{}
+			if cfg.Catalog != nil {
+				resolved, _ = cfg.Catalog.Resolve(v.Host, v.Method, v.Path)
+			}
+			decisionInput := runtimedecision.AuthorizationInput{
+				ToolUse:         tu,
+				UserID:          cfg.AgentUserID,
+				AgentID:         cfg.AgentID,
+				Posture:         cfg.Posture,
+				Target:          runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
+				Service:         resolved.ServiceID,
+				Action:          resolved.ActionID,
+				CandidateTasks:  cfg.CandidateTasks,
+				ToolRules:       cfg.ToolRules,
+				EgressRules:     cfg.EgressRules,
+				PreferredTaskID: cfg.PreferredTaskID,
+				IntentVerifier:  llmproxy.DecisionIntentVerifierFor(cfg.IntentVerifier),
+			}
+			dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
+			if err != nil {
+				audit("block", "decision_error", err.Error(), "")
+				return llmproxy.TaskScopeDecision{Allowed: false, Reason: "Clawvisor: authorization failed — " + err.Error()}
+			}
+			matchedTaskID := ""
+			if dec.Task != nil {
+				matchedTaskID = dec.Task.ID
+			}
+			switch dec.Kind {
+			case runtimedecision.VerdictAllow:
+				if dec.Task != nil && cfg.Store != nil {
+					_, _, _ = llmproxy.SlideTaskExpiry(ctx, cfg.Store, dec.Task, time.Now().UTC())
+				}
+				return llmproxy.TaskScopeDecision{}
+			case runtimedecision.VerdictDeny:
+				audit("block", string(dec.Source), dec.Reason, matchedTaskID)
+				return llmproxy.TaskScopeDecision{
+					Allowed: false,
+					Reason:  "Clawvisor: " + dec.Reason,
+					TaskID:  matchedTaskID,
+				}
+			case runtimedecision.VerdictNeedsApproval:
+				var approvalID string
+				if cfg.PendingApprovals != nil {
+					held, herr := cfg.PendingApprovals.Hold(ctx, llmproxy.PendingLiteApproval{
+						UserID:         cfg.AgentUserID,
+						AgentID:        cfg.AgentID,
+						Provider:       provider,
+						ConversationID: cfg.ConversationID,
+						ToolUse:        tu,
+						Inspector:      v,
+						Fingerprint:    runtimedecision.Fingerprint(dec, decisionInput),
+						Reason:         dec.Reason,
+					})
+					if herr != nil {
+						audit("block", "approval_hold_error", herr.Error(), "")
+						return llmproxy.TaskScopeDecision{Allowed: false, Reason: "Clawvisor: approval unavailable — " + herr.Error()}
+					}
+					if held.Evicted != nil {
+						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, "")
+						llmproxy.CleanupEvictedInlineTask(ctx, cfg, held.Evicted)
+					}
+					approvalID = held.Pending.ID
+				}
+				audit("block", string(dec.Source), dec.Reason, matchedTaskID)
+				return llmproxy.TaskScopeDecision{
+					Allowed: false,
+					Reason:  "Clawvisor: approval required — " + dec.Reason,
+					TaskID:  matchedTaskID,
+				}
+				_ = approvalID
+			}
+		}
+		// Legacy TaskScope.Check + intent verify fallback.
+		if cfg.Catalog != nil && cfg.TaskScope != nil {
+			if resolved, ok := cfg.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
+				dec := cfg.TaskScope.Check(ctx, cfg.AgentUserID, cfg.AgentID, resolved.ServiceID, resolved.ActionID)
+				if !dec.Allowed {
+					audit("block", "task_scope_denied", dec.Reason, "")
+					return llmproxy.TaskScopeDecision{
+						Allowed: false,
+						Reason:  "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
+					}
+				}
+				if reason, ok := llmproxy.RunIntentVerify(ctx, cfg, dec, resolved, tu); !ok {
+					audit("block", "intent_verification_failed", reason, dec.TaskID)
+					return llmproxy.TaskScopeDecision{
+						Allowed: false,
+						Reason:  "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason,
+						TaskID:  dec.TaskID,
+					}
+				}
+				if dec.MatchedTask != nil && cfg.Store != nil {
+					_, _, _ = llmproxy.SlideTaskExpiry(ctx, cfg.Store, dec.MatchedTask, time.Now().UTC())
+				}
+				return llmproxy.TaskScopeDecision{}
+			}
+		}
+		return llmproxy.TaskScopeDecision{}
 	}
 }
 
