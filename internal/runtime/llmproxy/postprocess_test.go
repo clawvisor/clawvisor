@@ -2029,3 +2029,40 @@ func TestPostprocess_AllowsConfidentNonAPICalls(t *testing.T) {
 	}
 }
 
+func TestPostprocess_EnforcesRulesOnConfidentNonAPICalls(t *testing.T) {
+	t.Parallel()
+	body := anthropicJSONWithNamedToolUse("Write", `{"file_path":"test.txt","content":"autovault_stripe_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_stripe_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
+		ToolRules: []*store.RuntimePolicyRule{{
+			ID:       "deny-write",
+			UserID:   userID,
+			AgentID:  &agentID,
+			Kind:     "tool",
+			Action:   "deny",
+			ToolName: "Write",
+			Reason:   "file writes blocked",
+			Enabled:  true,
+		}},
+	})
+
+	if len(got.Decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(got.Decisions))
+	}
+	if got.Decisions[0].Verdict.Allowed {
+		t.Fatalf("confident non-API tool call (Write) should be blocked by ToolRules")
+	}
+	if !strings.Contains(string(got.Body), "file writes blocked") {
+		t.Fatalf("expected error block message with rule reason, got body: %s", got.Body)
+	}
+}
+

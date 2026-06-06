@@ -872,7 +872,7 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 		// Inspector says trigger missed (no autovault placeholder). There
 		// is no credential rewrite to perform, but shared authorization
 		// still sees ordinary tool_use calls such as Bash/Read.
-		if v.Source == inspector.SourceTriggerMiss {
+		if v.Source == inspector.SourceTriggerMiss || (!v.IsAPICall && !v.Ambiguous) {
 			readOnlyShellCommand := false
 			sensitiveShellPath := false
 			if toolnames.IsShellToolName(tu.Name) && readOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
@@ -986,25 +986,36 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 				}
 			}
 			// Record ordinary tool uses even when no credential trigger was
-			// present so lite-proxy activity shows the agent's tool calls.
-			audit("allow", "pass_through", "no credential trigger")
+			// present or it was a confident non-API call so activity shows it.
+			reason := "no credential trigger"
+			if v.Source != inspector.SourceTriggerMiss {
+				reason = "confident non-API call: " + v.Reason
+			}
+			audit("allow", "pass_through", reason)
 			return conversation.ToolUseVerdict{Allowed: true}
 		}
 		if !v.IsAPICall {
-			if v.Ambiguous {
-				audit("block", "ambiguous", v.Reason)
-				reason := "Clawvisor: ambiguous credentialed call refused — " + v.Reason
-				return conversation.ToolUseVerdict{
-					Allowed:                false,
-					Reason:                 reason,
-					ContinueWithToolResult: reason,
-				}
+			// Since !v.Ambiguous is handled in the authorization block above,
+			// if we reach here, it must be ambiguous.
+			audit("block", "ambiguous", v.Reason)
+			reason := "Clawvisor: ambiguous credentialed call refused — " + v.Reason
+			return conversation.ToolUseVerdict{
+				Allowed:                false,
+				Reason:                 reason,
+				ContinueWithToolResult: reason,
 			}
-			audit("allow", "pass_through", "confident non-API call: "+v.Reason)
-			return conversation.ToolUseVerdict{Allowed: true}
 		}
 		if v.Ambiguous {
 			audit("block", "ambiguous", v.Reason)
+			// ContinueWithToolResult preserves the agent's actual
+			// tool_use in conversation history and feeds the rejection
+			// back as a synthetic tool_result — the canonical Anthropic
+			// shape for "your tool call failed, here's why." The model's
+			// own emitted input is right above the synthetic user turn,
+			// so it can see exactly what shape got rejected. The
+			// SubstituteWith fallback is what gets rendered if the
+			// handler can't perform the continuation call (older
+			// provider, recursion bound reached, upstream outage).
 			reason := "Clawvisor: ambiguous credentialed call refused — " + v.Reason
 			return conversation.ToolUseVerdict{
 				Allowed:                false,

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -44,6 +45,9 @@ func TestRawIOLogger_EmitsJSONLineWithBody(t *testing.T) {
 }
 
 func TestOpenRawIOLoggerTightensExistingFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping Unix permission checks on Windows")
+	}
 	path := filepath.Join(t.TempDir(), "raw.jsonl")
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
