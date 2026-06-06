@@ -22,6 +22,7 @@ package pipelineeval
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
@@ -99,7 +100,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		Control:         buildControlResolver(req, cfg, provider, emit, inlineExtras),
 		ScriptSession:   buildScriptSessionResolver(cfg),
 		Inspector:       cfg.Inspector,
-		AllowedHostsFor: nil,
+		AllowedHostsFor: buildAllowedHostsResolver(cfg),
 		TriggerMissAuth: triggerMissAuth,
 		TaskScope:       credentialedTaskScope,
 		Rewrite:         buildRewriteResolver(cfg),
@@ -306,6 +307,38 @@ func applyInlineExtras(extras map[string]conversation.ToolUseVerdict, tu convers
 		v.CreatedTaskID = x.CreatedTaskID
 	}
 	return v
+}
+
+// buildAllowedHostsResolver wires InspectorChain's boundary check to
+// the placeholder store. The legacy boundaryCheckVerdict combined
+// three checks: (1) placeholder exists, (2) ownership matches the
+// agent, (3) target host in the placeholder's bound-service allowlist.
+// We compose the same three here: returning an empty allowlist (which
+// makes the chain's BoundaryCheck fail) for any of (1)/(2)/(3) failing,
+// returning the bound hosts otherwise.
+//
+// Without this, an autovault placeholder belonging to a different agent
+// could be sent to any host that "looked like" it accepted that
+// credential; the resolver would still catch it on the actual call, but
+// the proxy's defense-in-depth boundary check would be bypassed.
+func buildAllowedHostsResolver(cfg llmproxy.PostprocessConfig) policies.AllowedHostsResolver {
+	if cfg.Store == nil {
+		return nil
+	}
+	st := cfg.Store
+	userID := cfg.AgentUserID
+	agentID := cfg.AgentID
+	return func(ctx context.Context, placeholder string) []string {
+		rec, err := st.GetRuntimePlaceholder(ctx, placeholder)
+		if err != nil || rec == nil {
+			return nil
+		}
+		if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(ctx, st, rec, userID, agentID, time.Now().UTC()); !ok {
+			return nil
+		}
+		hosts, _ := llmproxy.RuntimePlaceholderBoundHosts(ctx, st, rec)
+		return hosts
+	}
 }
 
 func buildScriptSessionResolver(cfg llmproxy.PostprocessConfig) policies.ScriptSessionResolver {
