@@ -161,6 +161,7 @@ func TestPostprocess_TaskScopeBlocksUnauthorizedAction(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -194,6 +195,7 @@ func TestPostprocess_TaskScopeAllowsAuthorizedAction(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -243,6 +245,7 @@ func TestPostprocess_IntentVerifierBlocksOnDeny(t *testing.T) {
 	verifier := &stubIntentVerifier{verdict: &llmproxy.IntentVerdict{Allow: false, Explanation: "params violate scope"}}
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -285,6 +288,7 @@ func TestPostprocess_IntentVerifierLenientFlag(t *testing.T) {
 	verifier := &stubIntentVerifier{verdict: &llmproxy.IntentVerdict{Allow: true}}
 
 	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -315,6 +319,7 @@ func TestPostprocess_IntentVerifierOffSkipsCall(t *testing.T) {
 	verifier := &stubIntentVerifier{verdict: &llmproxy.IntentVerdict{Allow: false, Explanation: "should_not_be_called"}}
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -350,6 +355,7 @@ func TestPostprocess_TaskScopeFallthroughOnUnknownAction(t *testing.T) {
 
 	denyAll := stubTaskScope{decision: llmproxy.TaskScopeDecision{Reason: "should_not_be_called"}}
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -377,6 +383,7 @@ func TestPostprocess_SharedDecisionAllowSkipsLegacyTaskScope(t *testing.T) {
 
 	denyAll := stubTaskScope{decision: llmproxy.TaskScopeDecision{Reason: "legacy task scope should not run"}}
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),

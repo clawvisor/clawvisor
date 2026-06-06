@@ -18,13 +18,6 @@ import (
 // declares its own narrow interface to avoid pulling the LLM provider
 // dependency into this package.
 
-// selectToolUseEvaluator dispatches to either the cfg-supplied
-// ToolUseEvaluatorFactory or the package-level
-// DefaultToolUseEvaluatorFactory. Per-cfg setting takes precedence
-// over the global default so individual call sites can override.
-// Panics if neither is set — that means the binary forgot to import
-// pipelineeval (or whichever package registers the default).
-
 // CredentialedRewriteRecoveryReason is the user-facing recovery
 // message for credential-rewrite errors. Used by the
 // policies.CredentialRewriteEvaluator on rewriter_error.

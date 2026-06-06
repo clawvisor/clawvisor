@@ -146,6 +146,7 @@ func TestPostprocessStream_BlockedAnthropicPromptUsesNextContentIndex(t *testing
 
 	var output bytes.Buffer
 	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:   insp,
 		Store:       st,
 		AgentUserID: userID,
@@ -204,6 +205,7 @@ func TestPostprocessStream_NoStreamingRewriterPassesThrough(t *testing.T) {
 	var output bytes.Buffer
 
 	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector: inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 	})
 	if err != nil {
@@ -232,6 +234,7 @@ func TestPostprocessStream_FirstTurnNoticeInjectsWithoutInspector(t *testing.T) 
 	var output bytes.Buffer
 
 	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:       nil,
 		FirstTurnNotice: "[Clawvisor] routing notice",
 	})
@@ -262,6 +265,7 @@ func TestPostprocessStream_FirstTurnNoticeSkippedWithoutRewriter(t *testing.T) {
 	var output bytes.Buffer
 
 	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:       inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 		FirstTurnNotice: "[Clawvisor] routing notice",
 	})
@@ -286,6 +290,7 @@ func TestPostprocess_JSONNoTrigger(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -331,6 +336,7 @@ PY`
 	}})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -387,6 +393,7 @@ func TestPostprocess_AuditsNoTriggerToolUse(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -439,6 +446,7 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -486,6 +494,7 @@ func TestPostprocess_ReadOnlyBashBypassesTaskScopeByDefault(t *testing.T) {
 			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 			got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 				Inspector:        insp,
 				RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 				CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -522,6 +531,7 @@ func TestPostprocess_SensitiveShellPathRequiresApprovalWithoutPolicyConfig(t *te
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -549,6 +559,7 @@ func TestPostprocess_ReadOnlyBashCanBeDisabledByPolicy(t *testing.T) {
 	agentRuleID := "readonly-shell-disabled"
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:      insp,
 		RewriteOpts:    inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:   llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -591,6 +602,7 @@ func TestPostprocess_WriteStdinPollBypassesTaskScope(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -627,6 +639,7 @@ func TestPostprocess_WriteStdinWithCharsStillRequiresApproval(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -670,6 +683,7 @@ func TestPostprocess_MutatingBashStillRequiresApproval(t *testing.T) {
 			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 			got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 				Inspector:        insp,
 				RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 				CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -714,6 +728,7 @@ func TestPostprocess_ReadOnlyToolPolicyAllowlistBypassesTaskScope(t *testing.T) 
 			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 			got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 				Inspector:      insp,
 				RewriteOpts:    inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 				CallerNonces:   llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -769,6 +784,7 @@ func TestPostprocess_BashWithoutTaskScopeStillRequiresApproval(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -799,6 +815,7 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -855,6 +872,7 @@ func TestPostprocess_ToolTaskIntentRefusalRequiresApproval(t *testing.T) {
 	verifier := &stubIntentVerifier{verdict: &llmproxy.IntentVerdict{Allow: false, Explanation: "The requested file path /tmp/goodbye.py and content do not match the task purpose of creating and refactoring /tmp/hello.py."}}
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -915,6 +933,7 @@ func TestPostprocess_SlidingTaskExpiryBumpsOnAuthorizedToolUse(t *testing.T) {
 	}
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -976,6 +995,7 @@ func TestPostprocess_SessionTaskExpiryDoesNotBumpOnAuthorizedToolUse(t *testing.
 	}
 
 	Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1118,6 +1138,7 @@ func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:      insp,
 		RewriteOpts:    inspector.DefaultRewriteOpts(""),
 		CallerNonces:   llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1161,6 +1182,7 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 	opts.CallerToken = "cvis_test"
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:      insp,
 		RewriteOpts:    opts,
 		CallerNonces:   llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1204,6 +1226,7 @@ func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing
 	opts.CallerToken = "cvis_test"
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:      insp,
 		RewriteOpts:    opts,
 		CallerNonces:   llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1245,6 +1268,7 @@ func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T)
 	opts.CallerToken = "cvis_test"
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:      insp,
 		RewriteOpts:    opts,
 		CallerNonces:   llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1294,6 +1318,7 @@ func TestPostprocess_MalformedSyntheticControlCommandRewritesToToolFailure(t *te
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:      insp,
 		RewriteOpts:    inspector.DefaultRewriteOpts(""),
 		CallerNonces:   llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1342,6 +1367,7 @@ func TestPostprocess_CoalescesMultipleApprovalsIntoSingleHold(t *testing.T) {
 	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1411,6 +1437,7 @@ func TestPostprocess_ObservePostureDoesNotBlockToolDenyRule(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1449,6 +1476,7 @@ func TestPostprocess_JSONRewritesAutovaultURL(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1529,6 +1557,7 @@ data: {"type":"message_stop"}
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1571,6 +1600,7 @@ func TestPostprocess_OpenAIResponsesJSONRewrite(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1616,6 +1646,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1661,6 +1692,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1722,6 +1754,7 @@ func TestPostprocessStream_OpenAIResponsesCustomToolCallIsInspectedAndBlocked(t 
 
 	var output bytes.Buffer
 	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:   inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 		Store:       st,
 		AgentUserID: userID,
@@ -1778,6 +1811,7 @@ func TestPostprocess_OpenAIChatJSONRewrite(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1810,6 +1844,7 @@ data: [DONE]
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1844,6 +1879,7 @@ func TestPostprocess_AmbiguousFailsClosed(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:    insp,
 		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),

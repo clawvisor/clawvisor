@@ -37,6 +37,7 @@ func TestPostprocess_CoalescesMixedAllowAndApproval(t *testing.T) {
 	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -117,6 +118,7 @@ func TestPostprocess_SingleApprovalKeepsLegacyPromptShape(t *testing.T) {
 	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -332,6 +334,7 @@ func TestPostprocess_CoalescedReleasePreservesTurnOrder(t *testing.T) {
 	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
 	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -409,6 +412,7 @@ func TestPostprocess_CoalescedHoldFailureFallsBackToPerToolHolds(t *testing.T) {
 	cache := &flakyHoldCache{inner: inner, failFirst: 1}
 
 	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -483,6 +487,7 @@ func TestPostprocess_CoalesceDoesNotEvictUnrelatedApprovals(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -553,6 +558,7 @@ func TestPostprocess_CoalescedHoldEvictionExpiresInlineTask(t *testing.T) {
 	creator := &capturingInlineCreator{}
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -601,6 +607,7 @@ func TestPostprocess_CoalesceAuditDoesNotEmitMisleadingAllow(t *testing.T) {
 	emitter := llmproxy.NewAuditEmitter(st, nil, nil)
 
 	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -672,6 +679,7 @@ func TestPostprocess_CoalescePendingAuditSurfacesApprovalTrigger(t *testing.T) {
 	emitter := llmproxy.NewAuditEmitter(st, nil, nil)
 
 	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -755,6 +763,7 @@ func TestPostprocess_LegacyReplayFailureFailsClosed(t *testing.T) {
 	cache := &flakyHoldCache{inner: inner, failFirst: 999}
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -915,6 +924,7 @@ func TestPostprocess_BufferedHoldRespectsConfiguredCacheTTL(t *testing.T) {
 	cache := llmproxy.NewMemoryPendingApprovalCache(30 * time.Second)
 
 	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -964,6 +974,7 @@ func TestPostprocess_CoalescedSiblingCarriesInspectorMetadata(t *testing.T) {
 	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
 	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),

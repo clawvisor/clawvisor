@@ -170,20 +170,18 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	}
 }
 
-// selectToolUseEvaluator dispatches to either the cfg-supplied
-// ToolUseEvaluatorFactory or the package-level
-// llmproxy.DefaultToolUseEvaluatorFactory.
+// selectToolUseEvaluator dispatches to the cfg-supplied
+// ToolUseEvaluatorFactory. Nil is a programmer error — the handler
+// (and every test that exercises Postprocess) must assign
+// pipelineeval.Factory to cfg.ToolUseEvaluatorFactory explicitly.
 func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, auditSink *capturedAuditSink) conversation.ToolUseEvaluator {
+	if cfg.ToolUseEvaluatorFactory == nil {
+		panic("llmproxy/postproc: PostprocessConfig.ToolUseEvaluatorFactory is required — assign pipelineeval.Factory")
+	}
 	emit := func(ba llmproxy.BufferedAudit) {
 		auditSink.entries = append(auditSink.entries, ba)
 	}
-	if cfg.ToolUseEvaluatorFactory != nil {
-		return cfg.ToolUseEvaluatorFactory(req, cfg, provider, emit)
-	}
-	if llmproxy.DefaultToolUseEvaluatorFactory != nil {
-		return llmproxy.DefaultToolUseEvaluatorFactory(req, cfg, provider, emit)
-	}
-	panic("llmproxy/postproc: no ToolUseEvaluatorFactory configured — import pipelineeval to register the default")
+	return cfg.ToolUseEvaluatorFactory(req, cfg, provider, emit)
 }
 
 // coalesceFromCaptures builds the single PendingLiteApproval covering

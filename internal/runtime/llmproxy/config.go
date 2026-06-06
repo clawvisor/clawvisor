@@ -245,10 +245,3 @@ type PostprocessResult struct {
 	StreamingResult conversation.StreamingRewriteResult
 }
 
-// DefaultToolUseEvaluatorFactory is the package-level factory the
-// pipelineeval package registers via init(). postproc.Postprocess +
-// postproc.PostprocessStream use it when cfg.ToolUseEvaluatorFactory
-// is unset. Any binary that includes llmproxy must also import
-// pipelineeval (directly or transitively) so this is non-nil before
-// any tool_use evaluation runs.
-var DefaultToolUseEvaluatorFactory ToolUseEvaluatorFactory

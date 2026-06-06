@@ -32,14 +32,6 @@ import (
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 )
 
-// init registers Factory as llmproxy.DefaultToolUseEvaluatorFactory
-// so blank-importing this package opts the build into the policies
-// chain by default. Callers can still override via
-// PostprocessConfig.ToolUseEvaluatorFactory.
-func init() {
-	llmproxy.DefaultToolUseEvaluatorFactory = Factory
-}
-
 // Factory is the llmproxy.ToolUseEvaluatorFactory implementation that
 // drives the policies-chain-based tool_use evaluation. Assign it to
 // PostprocessConfig.ToolUseEvaluatorFactory to opt a call into the

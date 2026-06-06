@@ -49,6 +49,7 @@ func TestPostprocess_AsyncControlTasksPostFallsThroughWhenNoHold(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -88,6 +89,7 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	postResult := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -251,6 +253,7 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -412,6 +415,7 @@ func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -441,6 +445,7 @@ func TestPostprocess_InlineTaskInvalidCredentialFallsThroughToToolError(t *testi
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -479,6 +484,7 @@ func TestPostprocess_InlineTaskStandingWithExpiresFallsThrough(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -514,6 +520,7 @@ func TestPostprocess_InlineTaskBareNoSignalRoutesToDashboard(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -636,6 +643,7 @@ func (f autoApproveFixture) run(threshold string, turns []string) llmproxy.Postp
 	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	return Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:                        f.insp,
 		RewriteOpts:                      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:                     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -905,6 +913,7 @@ func TestAutoApprove_WritesTaskLinkedAuditRow(t *testing.T) {
 	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:                        f.insp,
 		RewriteOpts:                      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:                     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1001,6 +1010,7 @@ func TestAutoApprove_FallsBackWhenCreatorMissing(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:                        insp,
 		RewriteOpts:                      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:                     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1035,6 +1045,7 @@ func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1086,6 +1097,7 @@ func TestPostprocess_InlineTaskFallsBackWhenLLMUnknown(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
@@ -1128,6 +1140,7 @@ func TestPostprocess_InlineTaskMalformedBodyFallsThrough(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 
 	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
 		CallerNonces:     llmproxy.NewMemoryCallerNonceCache(time.Minute),
