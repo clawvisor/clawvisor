@@ -89,23 +89,14 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 			return conversation.ToolUseVerdict{Allowed: false, Reason: errMsg}
 		}
 	}
-	// Emit one audit row per tool_use whose verdict didn't externally
-	// emit. Skipped tools (trigger-miss authorizer fired its own
-	// emit) are correctly suppressed.
+	// Emit one audit row per tool_use. The legacy trigger-miss
+	// suppression channel (verdictEmittedAuditExternally) was deleted
+	// with Phase 6 — no evaluator emits side-channel audits anymore.
 	matchedTaskIDs := make(map[string]string, len(toolUses))
 	for _, tu := range toolUses {
-		if verdictEmittedAuditExternally(result, tu.ID) {
-			continue
-		}
 		matchedTaskIDs[tu.ID] = lookupMatchedTaskID(ctx, cfg, tu)
 	}
-	toEmit := make([]conversation.ToolUse, 0, len(toolUses))
-	for _, tu := range toolUses {
-		if !verdictEmittedAuditExternally(result, tu.ID) {
-			toEmit = append(toEmit, tu)
-		}
-	}
-	emitAuditEvents(ctx, result, toEmit, cfg.Inspector, matchedTaskIDs, emit)
+	emitAuditEvents(ctx, result, toolUses, cfg.Inspector, matchedTaskIDs, emit)
 	return evalFn
 }
 
@@ -235,23 +226,6 @@ func lookupMatchedTaskID(ctx context.Context, cfg llmproxy.PostprocessConfig, tu
 		return dec.Task.ID
 	}
 	return ""
-}
-
-// verdictEmittedAuditExternally reports whether the winning verdict
-// for tu already emitted its audit row via the legacy emit callback
-// (trigger-miss authorizer pattern). When true, the downstream
-// EmitToolUseAuditRows pass skips this tool_use to avoid a duplicate row.
-func verdictEmittedAuditExternally(result *pipeline.ToolUseResult, tuID string) bool {
-	if result == nil {
-		return false
-	}
-	for _, ev := range result.Evaluations {
-		if ev.ToolUseID != tuID || ev.Verdict.Outcome == pipeline.OutcomeSkip {
-			continue
-		}
-		return ev.Verdict.EmittedAuditExternally
-	}
-	return false
 }
 
 // Legacy singletonToolUseResponse + its methods have been removed —

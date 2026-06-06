@@ -86,11 +86,6 @@ type ToolUseVerdict struct {
 	// evaluator code that hasn't migrated.
 	ContinueWithToolResultText string
 
-	// EmittedAuditExternally signals that this evaluator already emitted
-	// an audit row via a side channel (legacy trigger-miss authorizer).
-	// Set true to suppress the orchestrator's downstream audit emission.
-	EmittedAuditExternally bool
-
 	// Facts carries typed observations the evaluator emitted. Audit
 	// emission branches via type switch on Facts. Populated for EVERY
 	// evaluator that runs, including those returning Skip —
