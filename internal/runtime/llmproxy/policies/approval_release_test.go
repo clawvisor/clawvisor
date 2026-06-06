@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 )
@@ -27,8 +26,8 @@ func TestApprovalRelease_SkipsNilResolver(t *testing.T) {
 // TestApprovalRelease_AllowWhenNotHandled verifies the no-release
 // path: resolver returns Handled=false → Allow with no mutation.
 func TestApprovalRelease_AllowWhenNotHandled(t *testing.T) {
-	resolver := func(_ context.Context) llmproxy.ReleaseResult {
-		return llmproxy.ReleaseResult{Handled: false}
+	resolver := func(_ context.Context) policies.ApprovalReleaseResult {
+		return policies.ApprovalReleaseResult{Handled: false}
 	}
 	p := policies.NewApprovalRelease(resolver)
 	req := &stubReadOnlyRequest{provider: conversation.ProviderAnthropic}
@@ -50,8 +49,8 @@ func TestApprovalRelease_AllowWhenNotHandled(t *testing.T) {
 // path: Handled=true → ShortCircuit with the synthesized response.
 func TestApprovalRelease_ShortCircuitWhenHandled(t *testing.T) {
 	syntheticBody := []byte(`{"synthesized":"approved"}`)
-	resolver := func(_ context.Context) llmproxy.ReleaseResult {
-		return llmproxy.ReleaseResult{
+	resolver := func(_ context.Context) policies.ApprovalReleaseResult {
+		return policies.ApprovalReleaseResult{
 			Handled:     true,
 			HTTPStatus:  200,
 			Body:        syntheticBody,
@@ -96,8 +95,8 @@ func TestApprovalRelease_ShortCircuitWhenHandled(t *testing.T) {
 // when the resolver returns Handled=true but doesn't fill in
 // ContentType/HTTPStatus.
 func TestApprovalRelease_DefaultsContentTypeAndStatus(t *testing.T) {
-	resolver := func(_ context.Context) llmproxy.ReleaseResult {
-		return llmproxy.ReleaseResult{
+	resolver := func(_ context.Context) policies.ApprovalReleaseResult {
+		return policies.ApprovalReleaseResult{
 			Handled: true,
 			Body:    []byte(`{}`),
 		}

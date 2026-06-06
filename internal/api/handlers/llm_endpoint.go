@@ -726,8 +726,17 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			agentID:        agent.ID,
 			conversationID: conversationID,
 		}
-		resolver := func(ctx context.Context) llmproxy.ReleaseResult {
-			return h.tryApprovalRelease(r, agent, provider, requestID, conversationID, body)
+		resolver := func(ctx context.Context) policies.ApprovalReleaseResult {
+			release := h.tryApprovalRelease(r, agent, provider, requestID, conversationID, body)
+			return policies.ApprovalReleaseResult{
+				Handled:     release.Handled,
+				HTTPStatus:  release.HTTPStatus,
+				Body:        release.Body,
+				ContentType: release.ContentType,
+				Decision:    release.Decision,
+				Outcome:     release.Outcome,
+				Reason:      release.Reason,
+			}
 		}
 		preResult, err := runSinglePolicy(r.Context(), pipeReq, policies.NewApprovalRelease(resolver))
 		if err != nil {

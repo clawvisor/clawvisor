@@ -3,7 +3,6 @@ package policies
 import (
 	"context"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
@@ -34,7 +33,20 @@ type ApprovalRelease struct {
 // the release attempt. Returns Handled=false when the reply isn't a
 // release attempt; Handled=true with the synthesized body + content
 // type when a release fires.
-type ApprovalReleaseResolver func(ctx context.Context) llmproxy.ReleaseResult
+type ApprovalReleaseResolver func(ctx context.Context) ApprovalReleaseResult
+
+// ApprovalReleaseResult is the policy-local DTO returned by the
+// handler-supplied release resolver. The handler maps the concrete
+// llmproxy release helper result into this shape.
+type ApprovalReleaseResult struct {
+	Handled     bool
+	HTTPStatus  int
+	Body        []byte
+	ContentType string
+	Decision    string
+	Outcome     string
+	Reason      string
+}
 
 // NewApprovalRelease constructs the policy. nil resolver → Skip.
 func NewApprovalRelease(resolver ApprovalReleaseResolver) *ApprovalRelease {
