@@ -96,7 +96,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		Control:         buildControlResolver(req, cfg, provider, emit),
 		ScriptSession:   buildScriptSessionResolver(cfg),
 		Inspector:       cfg.Inspector,
-		AllowedHostsFor: buildAllowedHostsResolver(cfg),
+		Boundary:        buildBoundaryResolver(cfg),
 		TriggerMissAuth: triggerMissAuth,
 		TaskScope:       credentialedTaskScope,
 		Rewrite:         buildRewriteResolver(cfg),
@@ -278,35 +278,53 @@ func conversationToPipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolU
 	}
 }
 
-// buildAllowedHostsResolver wires InspectorChain's boundary check to
-// the placeholder store. The legacy boundaryCheckVerdict combined
-// three checks: (1) placeholder exists, (2) ownership matches the
-// agent, (3) target host in the placeholder's bound-service allowlist.
-// We compose the same three here: returning an empty allowlist (which
-// makes the chain's BoundaryCheck fail) for any of (1)/(2)/(3) failing,
-// returning the bound hosts otherwise.
+// buildBoundaryResolver wires InspectorChain's boundary check to the
+// placeholder store, running the three discrete checks the legacy
+// boundaryCheckVerdict combined into one binary:
+//   1. placeholder exists in the store
+//   2. placeholder is owned by the calling agent
+//   3. target host is in the placeholder's bound-service allowlist
+// Each failure mode returns a distinct BoundaryDenyReason so audit
+// rows tell operators WHICH check rejected the call instead of always
+// reading "host not allowed."
 //
-// Without this, an autovault placeholder belonging to a different agent
-// could be sent to any host that "looked like" it accepted that
-// credential; the resolver would still catch it on the actual call, but
-// the proxy's defense-in-depth boundary check would be bypassed.
-func buildAllowedHostsResolver(cfg llmproxy.PostprocessConfig) policies.AllowedHostsResolver {
+// Without this defense-in-depth, an autovault placeholder belonging
+// to a different agent could be sent to any host that looked like it
+// accepted that credential; the resolver would still catch it at the
+// network boundary, but the proxy's pre-flight check would have
+// silently passed.
+func buildBoundaryResolver(cfg llmproxy.PostprocessConfig) policies.BoundaryResolver {
 	if cfg.Store == nil {
 		return nil
 	}
 	st := cfg.Store
 	userID := cfg.AgentUserID
 	agentID := cfg.AgentID
-	return func(ctx context.Context, placeholder string) []string {
+	return func(ctx context.Context, v inspector.Verdict) policies.BoundaryDecision {
+		var placeholder string
+		if len(v.Placeholders) > 0 {
+			placeholder = v.Placeholders[0]
+		}
 		rec, err := st.GetRuntimePlaceholder(ctx, placeholder)
 		if err != nil || rec == nil {
-			return nil
+			return policies.BoundaryDecision{
+				DenyReason: pipeline.BoundaryDenyReasonPlaceholderUnknown,
+				Reason:     "Clawvisor: autovault placeholder not found in store",
+			}
 		}
 		if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(ctx, st, rec, userID, agentID, time.Now().UTC()); !ok {
-			return nil
+			return policies.BoundaryDecision{
+				DenyReason: pipeline.BoundaryDenyReasonOwnershipMismatch,
+				Reason:     "Clawvisor: autovault placeholder belongs to a different agent",
+			}
 		}
 		hosts, _ := llmproxy.RuntimePlaceholderBoundHosts(ctx, st, rec)
-		return hosts
+		ok, reason := inspector.BoundaryCheck(v, hosts)
+		decision := policies.BoundaryDecision{Allowed: ok, AllowedHosts: hosts, Reason: reason}
+		if !ok {
+			decision.DenyReason = pipeline.BoundaryDenyReasonHostNotAllowed
+		}
+		return decision
 	}
 }
 

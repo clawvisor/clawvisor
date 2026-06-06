@@ -31,7 +31,56 @@ type BoundaryCheckEvaluator struct {
 // AllowedHostsResolver maps a placeholder string to the set of hosts
 // that placeholder's bound service is authorized to forward to.
 // Callers wire this from the placeholder store.
+//
+// Deprecated: prefer BoundaryResolver, which returns typed denial
+// reasons that distinguish placeholder-unknown / ownership-mismatch /
+// host-not-allowed instead of compressing all three into a binary.
+// The chain still accepts AllowedHostsResolver for backward compat
+// and adapts via boundaryResolverFromHosts.
 type AllowedHostsResolver func(ctx context.Context, placeholder string) []string
+
+// BoundaryResolver evaluates the credentialed boundary check for a
+// given inspector verdict. The resolver runs the three discrete
+// failure-mode checks (placeholder exists, ownership matches, host in
+// allowlist) and returns a typed decision.
+//
+// Returning Allowed=true + AllowedHosts=nil means "no placeholder
+// supplied, skip boundary check" (the inspector verdict didn't carry
+// one); the chain treats this as no-op-Skip.
+type BoundaryResolver func(ctx context.Context, v inspector.Verdict) BoundaryDecision
+
+// BoundaryDecision is the typed outcome of a BoundaryResolver call.
+// When !Allowed, DenyReason names the specific failure mode so audit
+// rows distinguish the three cases.
+type BoundaryDecision struct {
+	Allowed      bool
+	DenyReason   pipeline.BoundaryDenyReason
+	Reason       string // human-readable; pairs with DenyReason
+	AllowedHosts []string
+}
+
+// boundaryResolverFromHosts adapts a legacy AllowedHostsResolver into
+// the typed BoundaryResolver. Compresses every failure mode to
+// BoundaryDenyReasonHostNotAllowed; callers that want the discrete
+// reasons should wire a BoundaryResolver directly.
+func boundaryResolverFromHosts(legacy AllowedHostsResolver) BoundaryResolver {
+	if legacy == nil {
+		return nil
+	}
+	return func(ctx context.Context, v inspector.Verdict) BoundaryDecision {
+		var placeholder string
+		if len(v.Placeholders) > 0 {
+			placeholder = v.Placeholders[0]
+		}
+		hosts := legacy(ctx, placeholder)
+		ok, reason := inspector.BoundaryCheck(v, hosts)
+		decision := BoundaryDecision{Allowed: ok, Reason: reason, AllowedHosts: hosts}
+		if !ok {
+			decision.DenyReason = pipeline.BoundaryDenyReasonHostNotAllowed
+		}
+		return decision
+	}
+}
 
 // NewBoundaryCheckEvaluator constructs the evaluator. nil resolver
 // → Skip on every tool_use (matches "no boundary-check infrastructure

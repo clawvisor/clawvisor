@@ -35,6 +35,11 @@ type ToolUseChainConfig struct {
 	// chain stage.
 	Inspector       *inspector.Inspector
 	AllowedHostsFor AllowedHostsResolver
+	// Boundary, when set, overrides AllowedHostsFor with a typed
+	// resolver that emits discrete denial reasons. Prefer this in new
+	// callers; AllowedHostsFor is retained for backward compat and
+	// adapted via boundaryResolverFromHosts when Boundary is nil.
+	Boundary        BoundaryResolver
 	TriggerMissAuth TriggerMissAuthorizer
 	// TaskScope authorizes credentialed tool_uses against the agent's
 	// active task scopes (the handler wraps EvaluateAuthorization +
@@ -65,10 +70,15 @@ type ToolUseChainConfig struct {
 // chain works in partial configurations (e.g., a deployment without
 // task scopes still gets the inspector + rewrite path).
 func ComposeToolUseEvaluatorChain(cfg ToolUseChainConfig) []pipeline.ToolUseEvaluator {
+	inspectorChain := NewInspectorChain(cfg.Inspector, cfg.AllowedHostsFor)
+	if cfg.Boundary != nil {
+		inspectorChain = inspectorChain.WithBoundaryResolver(cfg.Boundary)
+	}
+	inspectorChain = inspectorChain.WithTriggerMissAuthorizer(cfg.TriggerMissAuth)
 	chain := make([]pipeline.ToolUseEvaluator, 0, 6)
 	chain = append(chain, NewControlToolUseEvaluator(cfg.Control))
 	chain = append(chain, NewScriptSessionEvaluator(cfg.ScriptSession))
-	chain = append(chain, NewInspectorChain(cfg.Inspector, cfg.AllowedHostsFor).WithTriggerMissAuthorizer(cfg.TriggerMissAuth))
+	chain = append(chain, inspectorChain)
 	chain = append(chain, NewTaskScopeEvaluator(cfg.TaskScope))
 	chain = append(chain, NewIntentVerifyEvaluator(cfg.IntentVerify))
 	chain = append(chain, NewCredentialRewriteEvaluator(cfg.Rewrite))

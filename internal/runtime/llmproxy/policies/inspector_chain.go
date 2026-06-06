@@ -32,7 +32,7 @@ import (
 // the inspection + boundary check result.
 type InspectorChain struct {
 	inspector       *inspector.Inspector
-	allowedHostsFor AllowedHostsResolver
+	boundary        BoundaryResolver
 	triggerMissAuth TriggerMissAuthorizer
 }
 
@@ -47,14 +47,24 @@ type InspectorChain struct {
 type TriggerMissAuthorizer func(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator) pipeline.ToolUseVerdict
 
 // NewInspectorChain composes the inspector + boundary check chain.
-// Both dependencies are required; nil → degraded behavior (the
-// composite emits Skip when inspector is nil, mirroring the legacy
-// "no Inspector configured" gate).
+// The legacy AllowedHostsResolver still flows through here for tests
+// and call sites not yet migrated to BoundaryResolver — it's adapted
+// to the typed shape via boundaryResolverFromHosts. Nil resolver →
+// degraded behavior (boundary check skipped on credentialed calls).
 func NewInspectorChain(insp *inspector.Inspector, resolver AllowedHostsResolver) *InspectorChain {
 	return &InspectorChain{
-		inspector:       insp,
-		allowedHostsFor: resolver,
+		inspector: insp,
+		boundary:  boundaryResolverFromHosts(resolver),
 	}
+}
+
+// WithBoundaryResolver attaches a typed BoundaryResolver, replacing
+// the legacy AllowedHostsResolver wiring. Production callers should
+// prefer this so audit rows distinguish placeholder-unknown /
+// ownership-mismatch / host-not-allowed denials.
+func (c *InspectorChain) WithBoundaryResolver(r BoundaryResolver) *InspectorChain {
+	c.boundary = r
+	return c
 }
 
 // WithTriggerMissAuthorizer returns the same chain with the trigger-miss
@@ -150,7 +160,7 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	// closed; Allow paths return Skip so downstream stages
 	// (TaskScopeEvaluator + IntentVerifyEvaluator + CredentialRewriteEvaluator)
 	// can run the credentialed authorization + rewrite flow.
-	if c.allowedHostsFor == nil {
+	if c.boundary == nil {
 		// Without a resolver we can't enforce boundary, but the call is
 		// credentialed — let downstream rewrite the tool_use. Marking
 		// the audit field documents the gap.
@@ -162,30 +172,26 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 		}, nil
 	}
 
-	var allowedHosts []string
-	if len(v.Placeholders) > 0 {
-		allowedHosts = c.allowedHostsFor(ctx, v.Placeholders[0])
-	}
-
-	ok, reason := inspector.BoundaryCheck(v, allowedHosts)
-	fields["boundary_check_passed"] = ok
-	if reason != "" {
-		fields["boundary_check_reason"] = reason
+	decision := c.boundary(ctx, v)
+	fields["boundary_check_passed"] = decision.Allowed
+	if decision.Reason != "" {
+		fields["boundary_check_reason"] = decision.Reason
 	}
 	placeholder := ""
 	if len(v.Placeholders) > 0 {
 		placeholder = v.Placeholders[0]
 	}
 	boundaryFact := pipeline.BoundaryFact{
-		Passed:      ok,
-		Reason:      reason,
+		Passed:      decision.Allowed,
+		DenyReason:  decision.DenyReason,
+		Reason:      decision.Reason,
 		Placeholder: placeholder,
 		Host:        v.Host,
 	}
-	if !ok {
+	if !decision.Allowed {
 		return pipeline.ToolUseVerdict{
 			Outcome:     pipeline.OutcomeDeny,
-			Reason:      reason,
+			Reason:      decision.Reason,
 			AuditFields: fields,
 			Facts:       []pipeline.EvaluationFact{inspectorFact, boundaryFact},
 		}, nil

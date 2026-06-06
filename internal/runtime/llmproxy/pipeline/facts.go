@@ -93,16 +93,40 @@ func (IntentVerifyFact) isEvaluationFact() {}
 
 // BoundaryFact captures the boundary-check outcome for credentialed
 // tool_uses. Emitted by BoundaryCheckEvaluator (and the boundary check
-// embedded in InspectorChain). Reason names the failing check:
-// "placeholder_unknown", "ownership_mismatch", "host_not_allowed".
+// embedded in InspectorChain).
 type BoundaryFact struct {
-	Passed      bool
+	Passed bool
+	// DenyReason is typed when Passed=false. Three discrete failure
+	// modes the resolver distinguishes: placeholder not found in the
+	// store, placeholder owned by a different agent, target host not
+	// in the placeholder's bound-service allowlist.
+	DenyReason BoundaryDenyReason
+	// Reason is the human-readable explanation paired with DenyReason
+	// (or the inspector's BoundaryCheck reason when DenyReason isn't
+	// resolver-set).
 	Reason      string
 	Placeholder string
 	Host        string
 }
 
 func (BoundaryFact) isEvaluationFact() {}
+
+// BoundaryDenyReason categorizes a boundary check failure. "" means
+// "no resolver-level denial" (the inspector.BoundaryCheck itself
+// rejected the request, e.g., on shape grounds).
+type BoundaryDenyReason string
+
+const (
+	// BoundaryDenyReasonPlaceholderUnknown — the placeholder string
+	// in the tool_use isn't in the placeholder store.
+	BoundaryDenyReasonPlaceholderUnknown BoundaryDenyReason = "placeholder_unknown"
+	// BoundaryDenyReasonOwnershipMismatch — the placeholder exists
+	// but belongs to a different (user, agent) pair.
+	BoundaryDenyReasonOwnershipMismatch BoundaryDenyReason = "ownership_mismatch"
+	// BoundaryDenyReasonHostNotAllowed — the target host isn't in
+	// the placeholder's bound-service allowlist.
+	BoundaryDenyReasonHostNotAllowed BoundaryDenyReason = "host_not_allowed"
+)
 
 // ScriptSessionFact captures the script-session evaluator's outcome.
 // Emitted by ScriptSessionEvaluator on resolver-mediated requests.
