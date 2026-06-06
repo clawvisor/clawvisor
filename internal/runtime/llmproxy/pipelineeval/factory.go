@@ -49,13 +49,13 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
 		Control:       buildControlResolver(req, cfg, provider, emit),
-		ScriptSession: buildScriptSessionResolver(cfg),
+		ScriptSession: buildScriptSessionResolver(cfg.RewriteContext),
 		Inspector:     cfg.Inspector,
-		Boundary:      buildBoundaryResolver(cfg),
-		ReadOnlyShell: buildReadOnlyShellResolver(cfg),
+		Boundary:      buildBoundaryResolver(cfg.AgentContext, cfg.Store),
+		ReadOnlyShell: buildReadOnlyShellResolver(cfg.AgentContext, cfg.AuthorizationContext),
 		Authorization: buildAuthorizationResolver(cfg, provider),
 		TaskScope:     credentialedTaskScope,
-		Rewrite:       buildRewriteResolver(cfg),
+		Rewrite:       buildRewriteResolver(cfg.AgentContext, cfg.RewriteContext),
 	})
 
 	// Response-level orchestration: callers (buffered + streaming
@@ -300,13 +300,15 @@ func conversationToPipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolU
 // accepted that credential; the resolver would still catch it at the
 // network boundary, but the proxy's pre-flight check would have
 // silently passed.
-func buildBoundaryResolver(cfg llmproxy.PostprocessConfig) policies.BoundaryResolver {
-	if cfg.Store == nil {
+//
+// Phase C narrowed signature: only AgentContext (identity) + the
+// placeholder store flow in; no other sub-contexts are reachable.
+func buildBoundaryResolver(agent llmproxy.AgentContext, st store.Store) policies.BoundaryResolver {
+	if st == nil {
 		return nil
 	}
-	st := cfg.Store
-	userID := cfg.AgentUserID
-	agentID := cfg.AgentID
+	userID := agent.AgentUserID
+	agentID := agent.AgentID
 	return func(ctx context.Context, v inspector.Verdict) policies.BoundaryDecision {
 		var placeholder string
 		if len(v.Placeholders) > 0 {
@@ -577,10 +579,14 @@ func (h *authorizationHoldHandler) Hold(ctx context.Context, req policies.Author
 }
 
 // buildReadOnlyShellResolver wires ReadOnlyShellPassthroughPolicy +
-// SensitivePathPolicy to PostprocessConfig's AgentID + ToolRules.
-func buildReadOnlyShellResolver(cfg llmproxy.PostprocessConfig) policies.ReadOnlyShellResolver {
-	agentID := cfg.AgentID
-	toolRules := cfg.ToolRules
+// SensitivePathPolicy to AgentID + ToolRules.
+//
+// Phase C narrowed signature: AgentContext supplies identity, the
+// AuthorizationContext supplies the rule set. Nothing else is
+// reachable from this builder's scope.
+func buildReadOnlyShellResolver(agent llmproxy.AgentContext, auth llmproxy.AuthorizationContext) policies.ReadOnlyShellResolver {
+	agentID := agent.AgentID
+	toolRules := auth.ToolRules
 	if agentID == "" && toolRules == nil {
 		return nil
 	}
@@ -592,24 +598,36 @@ func buildReadOnlyShellResolver(cfg llmproxy.PostprocessConfig) policies.ReadOnl
 	}
 }
 
-func buildScriptSessionResolver(cfg llmproxy.PostprocessConfig) policies.ScriptSessionResolver {
-	if cfg.RewriteOpts.ResolverBaseURL == "" {
+// buildScriptSessionResolver pins the resolver to the proxy's
+// /api/proxy mount so the policy can recognize already-rewritten
+// script-session curls.
+//
+// Phase C narrowed signature: RewriteContext supplies RewriteOpts;
+// nothing else is reachable from this builder's scope.
+func buildScriptSessionResolver(rewrite llmproxy.RewriteContext) policies.ScriptSessionResolver {
+	if rewrite.RewriteOpts.ResolverBaseURL == "" {
 		return nil
 	}
-	resolverBaseURL := cfg.RewriteOpts.ResolverBaseURL
+	resolverBaseURL := rewrite.RewriteOpts.ResolverBaseURL
 	return func(_ context.Context, _ conversation.ToolUse) *policies.ScriptSessionInputs {
 		return &policies.ScriptSessionInputs{ResolverBaseURL: resolverBaseURL}
 	}
 }
 
-func buildRewriteResolver(cfg llmproxy.PostprocessConfig) policies.CredentialRewriteResolver {
-	if cfg.Inspector == nil {
+// buildRewriteResolver wires CredentialRewriteEvaluator to the
+// inspector + nonce cache + rewrite opts that the rewrite stage
+// needs.
+//
+// Phase C narrowed signature: AgentContext supplies identity,
+// RewriteContext supplies Inspector + CallerNonces + RewriteOpts.
+func buildRewriteResolver(agent llmproxy.AgentContext, rewrite llmproxy.RewriteContext) policies.CredentialRewriteResolver {
+	if rewrite.Inspector == nil {
 		return nil
 	}
-	insp := cfg.Inspector
-	opts := cfg.RewriteOpts
-	cache := cfg.CallerNonces
-	agentID := cfg.AgentID
+	insp := rewrite.Inspector
+	opts := rewrite.RewriteOpts
+	cache := rewrite.CallerNonces
+	agentID := agent.AgentID
 	return func(_ context.Context, _ conversation.ToolUse) *policies.CredentialRewriteInputs {
 		return &policies.CredentialRewriteInputs{
 			Inspector:    insp,
