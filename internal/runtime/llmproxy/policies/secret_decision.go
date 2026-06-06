@@ -3,7 +3,6 @@ package policies
 import (
 	"context"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
@@ -24,8 +23,7 @@ type SecretDecision struct {
 
 // SecretDecisionResolver is the handler-supplied closure. Returns
 // the full SecretDecisionResult including any rewritten body and the
-// SecretDecisionAction (allow_once / discard / vault / not_secret)
-// that was applied.
+// action string (allow_once / discard / vault / not_secret) that was applied.
 type SecretDecisionResolver func(ctx context.Context, body []byte) SecretDecisionResult
 
 // SecretDecisionResult is the full outcome of a secret-decision
@@ -36,7 +34,7 @@ type SecretDecisionResult struct {
 	HTTPStatus   int
 	Body         []byte
 	ContentType  string
-	Action       llmproxy.SecretDecisionAction
+	Action       string
 	ModifiedBody []byte
 	Decision     string
 	Outcome      string

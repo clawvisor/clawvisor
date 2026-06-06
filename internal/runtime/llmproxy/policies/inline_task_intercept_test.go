@@ -12,11 +12,15 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
+func noopInlineTaskApprovalRewriter(_ context.Context, req policies.InlineTaskApprovalRequest) (policies.InlineTaskApprovalResult, error) {
+	return policies.InlineTaskApprovalResult{Body: req.Body}, nil
+}
+
 // TestInlineTaskIntercept_SkipsWithoutCacheOrAgent pins the nil-checks.
 func TestInlineTaskIntercept_SkipsWithoutCacheOrAgent(t *testing.T) {
 	cases := []struct {
 		name  string
-		cache policies.PendingApprovalCacheView
+		cache any
 		agent *store.Agent
 	}{
 		{"no cache", nil, &store.Agent{ID: "a", UserID: "u"}},
@@ -25,7 +29,7 @@ func TestInlineTaskIntercept_SkipsWithoutCacheOrAgent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := policies.NewInlineTaskIntercept(tc.cache, tc.agent, nil, nil, "req-1", nil, nil)
+			p := policies.NewInlineTaskIntercept(tc.cache, tc.agent, "req-1", noopInlineTaskApprovalRewriter)
 			req := &stubReadOnlyRequest{
 				provider: conversation.ProviderAnthropic,
 				rawBody:  []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"approve"}]}`),
@@ -48,7 +52,7 @@ func TestInlineTaskIntercept_SkipsWithoutCacheOrAgent(t *testing.T) {
 func TestInlineTaskIntercept_AllowWithoutMutation(t *testing.T) {
 	cache := llmproxy.NewMemoryPendingApprovalCache(time.Hour)
 	agent := &store.Agent{ID: "a1", UserID: "u1"}
-	p := policies.NewInlineTaskIntercept(cache, agent, nil, nil, "req-1", nil, nil)
+	p := policies.NewInlineTaskIntercept(cache, agent, "req-1", noopInlineTaskApprovalRewriter)
 
 	req := &stubReadOnlyRequest{
 		provider: conversation.ProviderAnthropic,

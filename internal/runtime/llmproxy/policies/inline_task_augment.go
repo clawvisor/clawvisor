@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
@@ -18,15 +18,29 @@ import (
 // state-store dependency (InlineApprovalOutcomes), threaded through
 // the constructor.
 type InlineTaskAugment struct {
-	outcomes llmproxy.InlineApprovalOutcomeStore
+	augment InlineTaskHistoryAugmenter
 }
+
+type InlineTaskHistoryAugmentRequest struct {
+	Body     []byte
+	Provider conversation.Provider
+	UserID   string
+	AgentID  string
+}
+
+type InlineTaskHistoryAugmentResult struct {
+	Body     []byte
+	Modified bool
+}
+
+type InlineTaskHistoryAugmenter func(ctx context.Context, req InlineTaskHistoryAugmentRequest) (InlineTaskHistoryAugmentResult, error)
 
 // NewInlineTaskAugment constructs the policy with its outcome store
 // dependency. The handler holds the canonical outcome store; passing
 // it here keeps the policy testable in isolation against an in-memory
 // store.
-func NewInlineTaskAugment(outcomes llmproxy.InlineApprovalOutcomeStore) *InlineTaskAugment {
-	return &InlineTaskAugment{outcomes: outcomes}
+func NewInlineTaskAugment(augment InlineTaskHistoryAugmenter) *InlineTaskAugment {
+	return &InlineTaskAugment{augment: augment}
 }
 
 // Name returns the audit-friendly policy identifier.
@@ -45,17 +59,16 @@ func (p *InlineTaskAugment) Preprocess(ctx context.Context, req pipeline.ReadOnl
 	if userID == "" || agentID == "" {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
-	if p.outcomes == nil {
+	if p.augment == nil {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 
-	augmented, modified, err := llmproxy.AugmentApprovedInlineTasksInHistory(
-		req.RawBody(),
-		req.Provider(),
-		p.outcomes,
-		userID,
-		agentID,
-	)
+	augmented, err := p.augment(ctx, InlineTaskHistoryAugmentRequest{
+		Body:     req.RawBody(),
+		Provider: req.Provider(),
+		UserID:   userID,
+		AgentID:  agentID,
+	})
 	if err != nil {
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeSkip,
@@ -65,10 +78,10 @@ func (p *InlineTaskAugment) Preprocess(ctx context.Context, req pipeline.ReadOnl
 			},
 		}, nil
 	}
-	if !modified {
+	if !augmented.Modified {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeAllow}, nil
 	}
-	if err := mut.ReplaceBody(augmented); err != nil {
+	if err := mut.ReplaceBody(augmented.Body); err != nil {
 		return pipeline.RequestVerdict{}, err
 	}
 	return pipeline.RequestVerdict{

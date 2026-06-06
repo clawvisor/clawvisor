@@ -513,7 +513,21 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			agentID:        agent.ID,
 			conversationID: conversationID,
 		}
-		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewTaskApprovalReply(h.PendingApprovals, agent))
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewTaskApprovalReply(h.PendingApprovals, agent, func(ctx context.Context, req policies.TaskApprovalReplyRequest) (policies.TaskApprovalReplyResult, error) {
+			pending, _ := req.PendingApproval.(llmproxy.PendingApprovalCache)
+			rewrite, err := llmproxy.RewriteTaskApprovalReply(ctx, llmproxy.TaskReplyRewriteRequest{
+				HTTPRequest:     req.HTTPRequest,
+				Provider:        req.Provider,
+				Body:            req.Body,
+				Agent:           req.Agent,
+				ConversationID:  req.ConversationID,
+				PendingApproval: pending,
+			})
+			if err != nil {
+				return policies.TaskApprovalReplyResult{}, err
+			}
+			return policies.TaskApprovalReplyResult{Body: rewrite.Body, Rewritten: rewrite.Rewritten}, nil
+		}))
 		if err != nil {
 			auditStatus = http.StatusInternalServerError
 			auditDecide = "deny"
@@ -563,7 +577,33 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			conversationID: conversationID,
 		}
 		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewInlineTaskIntercept(
-			h.PendingApprovals, agent, h.InlineTaskCreator, h.AuditEmitter, requestID, h.InlineApprovalOutcomes, h.TaskCheckouts,
+			h.PendingApprovals, agent, requestID, func(ctx context.Context, req policies.InlineTaskApprovalRequest) (policies.InlineTaskApprovalResult, error) {
+				pending, _ := req.PendingApproval.(llmproxy.PendingApprovalCache)
+				rewrite, err := llmproxy.RewriteInlineTaskApprovalReply(ctx, llmproxy.InlineApprovalRewriteRequest{
+					HTTPRequest:     req.HTTPRequest,
+					Provider:        req.Provider,
+					Body:            req.Body,
+					Agent:           req.Agent,
+					ConversationID:  req.ConversationID,
+					PendingApproval: pending,
+					Creator:         h.InlineTaskCreator,
+					Audit:           h.AuditEmitter,
+					RequestID:       req.RequestID,
+					Outcomes:        h.InlineApprovalOutcomes,
+					Checkouts:       h.TaskCheckouts,
+				})
+				if err != nil {
+					return policies.InlineTaskApprovalResult{}, err
+				}
+				return policies.InlineTaskApprovalResult{
+					Body:       rewrite.Body,
+					Rewritten:  rewrite.Rewritten,
+					Outcome:    rewrite.Outcome,
+					Reason:     rewrite.Reason,
+					TaskID:     rewrite.TaskID,
+					CheckedOut: rewrite.CheckedOut,
+				}, nil
+			},
 		))
 		if err != nil {
 			auditStatus = http.StatusInternalServerError
@@ -615,7 +655,16 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			agentID:        agent.ID,
 			conversationID: conversationID,
 		}
-		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewInlineTaskAugment(h.InlineApprovalOutcomes))
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewInlineTaskAugment(func(ctx context.Context, req policies.InlineTaskHistoryAugmentRequest) (policies.InlineTaskHistoryAugmentResult, error) {
+			if h.InlineApprovalOutcomes == nil {
+				return policies.InlineTaskHistoryAugmentResult{Body: req.Body}, nil
+			}
+			body, modified, err := llmproxy.AugmentApprovedInlineTasksInHistory(req.Body, req.Provider, h.InlineApprovalOutcomes, req.UserID, req.AgentID)
+			if err != nil {
+				return policies.InlineTaskHistoryAugmentResult{}, err
+			}
+			return policies.InlineTaskHistoryAugmentResult{Body: body, Modified: modified}, nil
+		}))
 		if err != nil {
 			h.Logger.WarnContext(r.Context(), "lite-proxy inline task augmentation pipeline failed",
 				"request_id", requestID, "agent_id", agent.ID, "err", err.Error())

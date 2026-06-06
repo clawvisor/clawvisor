@@ -2,8 +2,9 @@ package policies
 
 import (
 	"context"
+	"net/http"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -19,23 +20,33 @@ import (
 // cache and the agent identity. The policy is constructed per
 // request — the handler already has the resolved *store.Agent before
 // any preprocess step runs.
-//
-// Underlying function: llmproxy.RewriteTaskApprovalReply (today
-// called inline from llm_endpoint.go).
 type TaskApprovalReply struct {
-	cache PendingApprovalCacheView
-	agent *store.Agent
+	cache    any
+	agent    *store.Agent
+	rewriter TaskApprovalReplyRewriter
 }
 
-// PendingApprovalCacheView narrows the cache interface to what this
-// policy needs. The full llmproxy.PendingApprovalCache satisfies it.
-type PendingApprovalCacheView = llmproxy.PendingApprovalCache
+type TaskApprovalReplyRequest struct {
+	HTTPRequest     *http.Request
+	Provider        conversation.Provider
+	Body            []byte
+	Agent           *store.Agent
+	ConversationID  string
+	PendingApproval any
+}
+
+type TaskApprovalReplyResult struct {
+	Body      []byte
+	Rewritten bool
+}
+
+type TaskApprovalReplyRewriter func(ctx context.Context, req TaskApprovalReplyRequest) (TaskApprovalReplyResult, error)
 
 // NewTaskApprovalReply constructs the policy. agent and cache must
 // be non-nil for the policy to act; nil values produce Skip rather
 // than panicking.
-func NewTaskApprovalReply(cache PendingApprovalCacheView, agent *store.Agent) *TaskApprovalReply {
-	return &TaskApprovalReply{cache: cache, agent: agent}
+func NewTaskApprovalReply(cache any, agent *store.Agent, rewriter TaskApprovalReplyRewriter) *TaskApprovalReply {
+	return &TaskApprovalReply{cache: cache, agent: agent, rewriter: rewriter}
 }
 
 // Name returns the audit-friendly policy identifier.
@@ -46,11 +57,11 @@ func (TaskApprovalReply) Name() string { return "task_approval_reply" }
 // reply isn't a task verb; OutcomeAllow with the body replaced when
 // the rewrite fires; OutcomeDeny on a malformed reply.
 func (p *TaskApprovalReply) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
-	if p.cache == nil || p.agent == nil {
+	if p.cache == nil || p.agent == nil || p.rewriter == nil {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 
-	rewrite, err := llmproxy.RewriteTaskApprovalReply(ctx, llmproxy.TaskReplyRewriteRequest{
+	rewrite, err := p.rewriter(ctx, TaskApprovalReplyRequest{
 		HTTPRequest:     req.HTTPRequest(),
 		Provider:        req.Provider(),
 		Body:            req.RawBody(),

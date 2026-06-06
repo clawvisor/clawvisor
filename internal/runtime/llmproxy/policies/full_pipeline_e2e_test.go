@@ -40,9 +40,9 @@ func TestFullPipeline_E2E_HappyPath(t *testing.T) {
 		policies.NewAnthropicSanitize(),
 		policies.NewInboundSanitize("http://localhost:25297/api/proxy", "http://localhost:25297"),
 		policies.NewSecretHistoryStrip(),
-		policies.NewTaskApprovalReply(cache, agent),
-		policies.NewInlineTaskIntercept(cache, agent, nil, nil, "req-1", outcomes, nil),
-		policies.NewInlineTaskAugment(outcomes),
+		policies.NewTaskApprovalReply(cache, agent, noopTaskApprovalRewriter),
+		policies.NewInlineTaskIntercept(cache, agent, "req-1", noopInlineTaskApprovalRewriter),
+		policies.NewInlineTaskAugment(inlineTaskAugmenter(outcomes)),
 		policies.NewControlNotice("http://localhost:25297", oneToolAvailable, noopToolRules),
 		policies.NewSyntheticHistoryStrip(),
 	}

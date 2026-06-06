@@ -2,14 +2,14 @@ package policies
 
 import (
 	"context"
+	"net/http"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/taskcheckout"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
-// InlineTaskIntercept wraps llmproxy.RewriteInlineTaskApprovalReply
+// InlineTaskIntercept wraps inline-task approval reply rewriting
 // behind RequestPolicy. The richest preprocess policy by dependency
 // count — it's the inline-task-approval resolver that runs when the
 // user replies "approve" / "deny" to a held inline-task creation.
@@ -25,32 +25,44 @@ import (
 // `inline_task_outcome`, `inline_task_id`, etc.) inline on
 // auditParams; the move preserves them.
 type InlineTaskIntercept struct {
-	cache     PendingApprovalCacheView
-	creator   llmproxy.InlineTaskCreator
-	outcomes  llmproxy.InlineApprovalOutcomeStore
-	checkouts taskcheckout.Store
-	audit     *llmproxy.AuditEmitter
+	cache     any
+	rewriter  InlineTaskApprovalRewriter
 	requestID string
 	agent     *store.Agent
 }
 
+type InlineTaskApprovalRequest struct {
+	HTTPRequest     *http.Request
+	Provider        conversation.Provider
+	Body            []byte
+	Agent           *store.Agent
+	ConversationID  string
+	PendingApproval any
+	RequestID       string
+}
+
+type InlineTaskApprovalResult struct {
+	Body       []byte
+	Rewritten  bool
+	Outcome    string
+	Reason     string
+	TaskID     string
+	CheckedOut bool
+}
+
+type InlineTaskApprovalRewriter func(ctx context.Context, req InlineTaskApprovalRequest) (InlineTaskApprovalResult, error)
+
 // NewInlineTaskIntercept constructs the policy with all its
 // per-request state. Any nil among (cache, agent) → Skip.
 func NewInlineTaskIntercept(
-	cache PendingApprovalCacheView,
+	cache any,
 	agent *store.Agent,
-	creator llmproxy.InlineTaskCreator,
-	audit *llmproxy.AuditEmitter,
 	requestID string,
-	outcomes llmproxy.InlineApprovalOutcomeStore,
-	checkouts taskcheckout.Store,
+	rewriter InlineTaskApprovalRewriter,
 ) *InlineTaskIntercept {
 	return &InlineTaskIntercept{
 		cache:     cache,
-		creator:   creator,
-		outcomes:  outcomes,
-		checkouts: checkouts,
-		audit:     audit,
+		rewriter:  rewriter,
 		requestID: requestID,
 		agent:     agent,
 	}
@@ -70,22 +82,18 @@ func (InlineTaskIntercept) Name() string { return "inline_task_intercept" }
 //   - audit fields tagged with the failure outcome
 //   - Underlying error → Deny
 func (p *InlineTaskIntercept) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
-	if p.cache == nil || p.agent == nil {
+	if p.cache == nil || p.agent == nil || p.rewriter == nil {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 
-	rewrite, err := llmproxy.RewriteInlineTaskApprovalReply(ctx, llmproxy.InlineApprovalRewriteRequest{
+	rewrite, err := p.rewriter(ctx, InlineTaskApprovalRequest{
 		HTTPRequest:     req.HTTPRequest(),
 		Provider:        req.Provider(),
 		Body:            req.RawBody(),
 		Agent:           p.agent,
 		ConversationID:  req.ConversationID(),
 		PendingApproval: p.cache,
-		Creator:         p.creator,
-		Audit:           p.audit,
 		RequestID:       p.requestID,
-		Outcomes:        p.outcomes,
-		Checkouts:       p.checkouts,
 	})
 	if err != nil {
 		return pipeline.RequestVerdict{

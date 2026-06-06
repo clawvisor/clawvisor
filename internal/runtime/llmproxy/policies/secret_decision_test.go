@@ -53,7 +53,7 @@ func TestSecretDecision_BodyRewritePath(t *testing.T) {
 		return policies.SecretDecisionResult{
 			Handled:      false,
 			ModifiedBody: newBody,
-			Action:       llmproxy.SecretDecisionDiscard,
+			Action:       string(llmproxy.SecretDecisionDiscard),
 			Outcome:      "discarded",
 		}
 	}
@@ -89,7 +89,7 @@ func TestSecretDecision_ShortCircuitOnHandled(t *testing.T) {
 			HTTPStatus:  200,
 			Body:        syntheticBody,
 			ContentType: "application/json",
-			Action:      llmproxy.SecretDecisionVault,
+			Action:      string(llmproxy.SecretDecisionVault),
 			Decision:    "allow",
 			Outcome:     "vaulted_and_continued",
 		}

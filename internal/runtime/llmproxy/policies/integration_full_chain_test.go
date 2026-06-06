@@ -43,9 +43,9 @@ func TestIntegration_FullPreprocessChain(t *testing.T) {
 		policies.NewAnthropicSanitize(),
 		policies.NewInboundSanitize("http://localhost:25297/api/proxy", "http://localhost:25297"),
 		policies.NewSecretHistoryStrip(),
-		policies.NewTaskApprovalReply(cache, agent),
-		policies.NewInlineTaskIntercept(cache, agent, nil /*creator*/, nil /*audit*/, "req-1", outcomes, nil /*checkouts*/),
-		policies.NewInlineTaskAugment(outcomes),
+		policies.NewTaskApprovalReply(cache, agent, noopTaskApprovalRewriter),
+		policies.NewInlineTaskIntercept(cache, agent, "req-1", noopInlineTaskApprovalRewriter),
+		policies.NewInlineTaskAugment(inlineTaskAugmenter(outcomes)),
 		policies.NewControlNotice("http://localhost:25297", oneToolAvailable, noopToolRules),
 		policies.NewSyntheticHistoryStrip(),
 	}
@@ -113,14 +113,13 @@ func TestIntegration_FullPreprocessChain(t *testing.T) {
 // anthropic_sanitize will Deny; the remaining 7 policies must not run.
 func TestIntegration_FullChainStopsOnDeny(t *testing.T) {
 	cache := llmproxy.NewMemoryPendingApprovalCache(time.Hour)
-	outcomes := llmproxy.NewMemoryInlineApprovalOutcomeStore(time.Hour)
 	agent := &store.Agent{ID: "a1", UserID: "u1"}
 
 	chain := []pipeline.RequestPolicy{
 		policies.NewAnthropicSanitize(),
 		policies.NewInboundSanitize("", ""),
-		policies.NewTaskApprovalReply(cache, agent),
-		policies.NewInlineTaskIntercept(cache, agent, nil, nil, "req-1", outcomes, nil),
+		policies.NewTaskApprovalReply(cache, agent, noopTaskApprovalRewriter),
+		policies.NewInlineTaskIntercept(cache, agent, "req-1", noopInlineTaskApprovalRewriter),
 	}
 
 	httpReq := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(""))

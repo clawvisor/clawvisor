@@ -12,10 +12,14 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
+func noopTaskApprovalRewriter(_ context.Context, req policies.TaskApprovalReplyRequest) (policies.TaskApprovalReplyResult, error) {
+	return policies.TaskApprovalReplyResult{Body: req.Body}, nil
+}
+
 // TestTaskApprovalReply_SkipsWithoutCache pins the gate: nil cache
 // → Skip.
 func TestTaskApprovalReply_SkipsWithoutCache(t *testing.T) {
-	p := policies.NewTaskApprovalReply(nil, &store.Agent{ID: "a1", UserID: "u1"})
+	p := policies.NewTaskApprovalReply(nil, &store.Agent{ID: "a1", UserID: "u1"}, noopTaskApprovalRewriter)
 	req := &stubReadOnlyRequest{
 		provider: conversation.ProviderAnthropic,
 		rawBody:  []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"task"}]}`),
@@ -36,7 +40,7 @@ func TestTaskApprovalReply_SkipsWithoutCache(t *testing.T) {
 // agent-missing branch.
 func TestTaskApprovalReply_SkipsWithoutAgent(t *testing.T) {
 	cache := llmproxy.NewMemoryPendingApprovalCache(time.Hour)
-	p := policies.NewTaskApprovalReply(cache, nil)
+	p := policies.NewTaskApprovalReply(cache, nil, noopTaskApprovalRewriter)
 	req := &stubReadOnlyRequest{
 		provider: conversation.ProviderAnthropic,
 		rawBody:  []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"task"}]}`),
@@ -55,7 +59,7 @@ func TestTaskApprovalReply_SkipsWithoutAgent(t *testing.T) {
 // a body without a "task" reply verb falls through with no rewrite.
 func TestTaskApprovalReply_AllowWithoutMutation(t *testing.T) {
 	cache := llmproxy.NewMemoryPendingApprovalCache(time.Hour)
-	p := policies.NewTaskApprovalReply(cache, &store.Agent{ID: "a1", UserID: "u1"})
+	p := policies.NewTaskApprovalReply(cache, &store.Agent{ID: "a1", UserID: "u1"}, noopTaskApprovalRewriter)
 	req := &stubReadOnlyRequest{
 		provider: conversation.ProviderAnthropic,
 		rawBody:  []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hello"}]}`),
