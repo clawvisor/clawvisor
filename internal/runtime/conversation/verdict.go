@@ -64,6 +64,14 @@ type (
 // continuation turn.
 type ContinueSignal = eval.ContinueSignal
 
+// InspectorVerdictSnapshot is the audit-row projection of the
+// inspector's verdict.
+type InspectorVerdictSnapshot = eval.InspectorVerdictSnapshot
+
+// CredentialLocation describes where a credential placeholder appears
+// in a tool_use input.
+type CredentialLocation = eval.CredentialLocation
+
 // AuditEvent is the typed per-tool-use audit record. Carries:
 //   - the pipeline-domain observation (Outcome, Decision, Reason, Facts)
 //   - the audit wire-shape needed by the emitter (InspectorVerdict,

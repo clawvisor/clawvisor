@@ -12,6 +12,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -166,73 +167,24 @@ func TestPostprocess_SingleApprovalKeepsLegacyPromptShape(t *testing.T) {
 	}
 }
 
-func TestShouldCoalesceTurn(t *testing.T) {
-	cases := []struct {
-		name string
-		in   []evalCapture
-		want bool
-	}{
-		{
-			name: "empty",
-			in:   nil,
-			want: false,
-		},
-		{
-			name: "single approval",
-			in:   []evalCapture{{Kind: llmproxy.HeldKindApproval}},
-			want: false,
-		},
-		{
-			name: "two approvals",
-			in:   []evalCapture{{Kind: llmproxy.HeldKindApproval}, {Kind: llmproxy.HeldKindApproval}},
-			want: true,
-		},
-		{
-			name: "approval + auto-allow sibling",
-			in:   []evalCapture{{Kind: llmproxy.HeldKindAllow}, {Kind: llmproxy.HeldKindApproval}},
-			want: true,
-		},
-		{
-			name: "all auto-allow — nothing to coalesce",
-			in:   []evalCapture{{Kind: llmproxy.HeldKindAllow}, {Kind: llmproxy.HeldKindAllow}},
-			want: false,
-		},
-		{
-			name: "hard deny in turn — fall back to legacy",
-			in:   []evalCapture{{Kind: llmproxy.HeldKindApproval}, {Kind: llmproxy.HeldKindDeny}},
-			want: false,
-		},
-		{
-			name: "inline-task stage skips coalesce",
-			in:   []evalCapture{{Kind: llmproxy.HeldKindApproval, Stage: llmproxy.StageAwaitingTaskApproval}, {Kind: llmproxy.HeldKindAllow}},
-			want: false,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldCoalesceTurn(tc.in); got != tc.want {
-				t.Fatalf("shouldCoalesceTurn(%s) = %v, want %v", tc.name, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestClassifyVerdict(t *testing.T) {
+// TestClassifyVerdict_TypedHints pins the typed classification —
+// Phase D dropped the substring-on-Reason fallback. Hold verdicts
+// must set HeldKindHint explicitly.
+func TestClassifyVerdict_TypedHints(t *testing.T) {
 	cases := []struct {
 		name string
 		v    conversation.ToolUseVerdict
-		want llmproxy.HeldToolUseKind
+		want conversation.HeldKindHint
 	}{
-		{"allowed pass-through", conversation.ToolUseVerdict{Allowed: true}, llmproxy.HeldKindAllow},
-		{"allowed with rewrite", conversation.ToolUseVerdict{Allowed: true, RewriteInput: json.RawMessage(`{"x":1}`)}, llmproxy.HeldKindRewrite},
-		{"approval-required", conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: approval required — review"}, llmproxy.HeldKindApproval},
-		{"inline-task awaiting", conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: awaiting inline task approval"}, llmproxy.HeldKindApproval},
-		{"hard deny", conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: ambiguous credentialed call refused — bad shape"}, llmproxy.HeldKindDeny},
+		{"allowed pass-through", conversation.ToolUseVerdict{Allowed: true}, conversation.HeldKindHintAllow},
+		{"allowed with rewrite", conversation.ToolUseVerdict{Allowed: true, RewriteInput: json.RawMessage(`{"x":1}`)}, conversation.HeldKindHintRewrite},
+		{"approval via typed hint", conversation.ToolUseVerdict{Allowed: false, HeldKindHint: conversation.HeldKindHintApproval}, conversation.HeldKindHintApproval},
+		{"hard deny", conversation.ToolUseVerdict{Allowed: false}, conversation.HeldKindHintDeny},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := classifyVerdict(tc.v); got != tc.want {
-				t.Fatalf("classifyVerdict(%s) = %q, want %q", tc.name, got, tc.want)
+			if got := pipeline.ClassifyVerdict(tc.v); got != tc.want {
+				t.Fatalf("ClassifyVerdict(%s) = %q, want %q", tc.name, got, tc.want)
 			}
 		})
 	}
@@ -882,28 +834,37 @@ func TestPostprocess_LegacyReplayFailureFailsClosed(t *testing.T) {
 
 // Regression: when a multi-hold replay fails partway through, the
 // committed holds must be dropped so the cache doesn't carry an
-// approval the response body never described. Tested directly
-// against replayBufferedHolds because constructing this scenario
-// through Postprocess proper would require a multi-hold turn that
-// also skips coalescence — a configuration the production rule
-// engine doesn't naturally produce.
+// approval the response body never described. Targets pipeline.Finalizer's
+// replay path through the llmproxy.NewFinalizer adapter — Phase D
+// hoisted this logic out of postproc into the orchestrator.
 func TestReplayBufferedHolds_PartialFailureRollsBackCommitted(t *testing.T) {
 	ctx := context.Background()
 	inner := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
-	// Three buffered holds; the second one's Hold call fails. The
-	// first should be committed then dropped on the failure path;
-	// the third should never be attempted.
+	// Three captured holds; the second Hold call fails. The first is
+	// committed then dropped on the failure path; the third never
+	// runs.
 	cache := &flakyHoldFromCallN{inner: inner, failOnCall: 2}
-	sink := &capturedHoldSink{
-		holds: []capturedHold{
-			{Pending: llmproxy.PendingLiteApproval{UserID: "u", AgentID: "a", Provider: conversation.ProviderAnthropic, ToolUse: conversation.ToolUse{ID: "t1", Name: "Bash"}}},
-			{Pending: llmproxy.PendingLiteApproval{UserID: "u", AgentID: "a", Provider: conversation.ProviderAnthropic, ToolUse: conversation.ToolUse{ID: "t2", Name: "Bash"}}},
-			{Pending: llmproxy.PendingLiteApproval{UserID: "u", AgentID: "a", Provider: conversation.ProviderAnthropic, ToolUse: conversation.ToolUse{ID: "t3", Name: "Bash"}}},
-		},
+	finalizer := llmproxy.NewFinalizer(llmproxy.PostprocessConfig{}, cache)
+	for _, tuID := range []string{"t1", "t2", "t3"} {
+		tu := conversation.ToolUse{ID: tuID, Name: "Bash"}
+		finalizer.AddCapture(pipeline.HoldCapture{
+			ToolUse:   tu,
+			ToolUseID: tuID,
+			Kind:      conversation.HeldKindHintApproval,
+			// Non-coalescible stage forces the legacy replay path so
+			// this test exercises per-tool replay atomicity rather
+			// than the coalesce path's single-Hold flow.
+			Stage: string(llmproxy.StageAwaitingTaskApproval),
+			Payload: llmproxy.PendingLiteApproval{
+				UserID:   "u",
+				AgentID:  "a",
+				Provider: conversation.ProviderAnthropic,
+				ToolUse:  tu,
+			},
+		})
 	}
-	captures := []evalCapture{{Use: sink.holds[0].Pending.ToolUse}, {Use: sink.holds[1].Pending.ToolUse}, {Use: sink.holds[2].Pending.ToolUse}}
 
-	err := replayBufferedHolds(ctx, llmproxy.PostprocessConfig{}, cache, sink, nil, captures)
+	_, err := finalizer.Finalize(ctx)
 	if err == nil {
 		t.Fatalf("expected non-nil error from partial replay failure")
 	}
@@ -916,6 +877,9 @@ func TestReplayBufferedHolds_PartialFailureRollsBackCommitted(t *testing.T) {
 	}
 }
 
+// Buffered Hold calls don't reach the underlying cache until Finalize
+// runs the replay; on Finalize, exactly one Hold commits per buffered
+// capture.
 func TestHoldCapturingApprovalCacheBuffersThenReplayCommitsOnce(t *testing.T) {
 	ctx := context.Background()
 	inner := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
@@ -938,8 +902,16 @@ func TestHoldCapturingApprovalCacheBuffersThenReplayCommitsOnce(t *testing.T) {
 	if len(sink.holds) != 1 {
 		t.Fatalf("expected one buffered hold, got %d", len(sink.holds))
 	}
-	if err := replayBufferedHolds(ctx, llmproxy.PostprocessConfig{}, counting, sink, nil, []evalCapture{{Use: pending.ToolUse}}); err != nil {
-		t.Fatalf("replayBufferedHolds: %v", err)
+
+	finalizer := llmproxy.NewFinalizer(llmproxy.PostprocessConfig{}, counting)
+	finalizer.AddCapture(pipeline.HoldCapture{
+		ToolUse:   pending.ToolUse,
+		ToolUseID: pending.ToolUse.ID,
+		Kind:      conversation.HeldKindHintApproval,
+		Payload:   sink.holds[0].Pending,
+	})
+	if _, err := finalizer.Finalize(ctx); err != nil {
+		t.Fatalf("Finalize: %v", err)
 	}
 	if counting.holdCalls != 1 {
 		t.Fatalf("replay must commit exactly once, got %d inner Hold calls", counting.holdCalls)

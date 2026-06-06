@@ -1,19 +1,23 @@
 package postproc
 
 import (
+	"context"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
 // Postprocess inspects, rewrites, and audits the upstream response.
 // The pipeline factory (registered via pipelineeval) drives per-tool
-// evaluation; this function wraps that with buffered captures, the
-// coalesce decision over the whole turn, and the legacy replay
-// fallback when coalescence isn't applicable or fails.
+// evaluation; the pipeline.Finalizer owns the response-level
+// coalesce / replay / audit-flush decisions. This function shrinks
+// to coordination: extract tool_uses, run eval, run rewriter, hand
+// off to Finalize, optionally re-run the rewriter with the
+// coalesced prompt.
+//
+// Phase D leak cleanup: finalization no longer lives in postproc.
 func Postprocess(req *http.Request, body []byte, contentType string, cfg llmproxy.PostprocessConfig) llmproxy.PostprocessResult {
 	if cfg.Inspector == nil {
 		return llmproxy.PostprocessResult{Body: body, ContentType: contentType, SkippedReason: "no inspector configured"}
@@ -33,25 +37,24 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		return llmproxy.PostprocessResult{Body: body, ContentType: contentType, SkippedReason: "no rewriter for route"}
 	}
 
-	auditAgent := llmproxy.AuditAgentForCfg(cfg)
-
-	// Coalescence capture state. Pass 1 runs with a buffering wrapper
-	// over both PendingApprovals and the audit emission so we can:
-	//   * detect when multiple tool_uses in one turn need approval
-	//   * detect the inline-task path (Stage != StageTool) to skip
-	//     coalescence for it
-	//   * decide a final shape (legacy: replay buffers; coalesce:
-	//     discard buffers and write one coalesced hold + per-tool
-	//     coalesced-pending audit rows)
+	// Pass-1 buffering: PendingApprovals.Hold + audit emission flow
+	// into local sinks. The pipeline.Finalizer (constructed below)
+	// consumes them at end-of-response.
 	originalPendingApprovals := cfg.PendingApprovals
 	holdSink := &capturedHoldSink{}
 	if originalPendingApprovals != nil {
 		cfg.PendingApprovals = newHoldCapturingApprovalCache(originalPendingApprovals, holdSink)
 	}
 	pendingAuditEvents := &pendingAuditEventBuffer{}
-	var captures []evalCapture
+	finalizer := llmproxy.NewFinalizer(cfg, originalPendingApprovals)
+
+	var preExtracted []conversation.ToolUse
 	failClosed := func(reason string) llmproxy.PostprocessResult {
-		rollbackBufferedPendingTasks(req.Context(), cfg, holdSink)
+		if finalizer != nil {
+			ctx := req.Context()
+			feedFinalizer(finalizer, preExtracted, holdSink, pendingAuditEvents, nil)
+			finalizer.Rollback(ctx)
+		}
 		return llmproxy.PostprocessResult{
 			Body:          nil,
 			ContentType:   contentType,
@@ -60,17 +63,9 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	}
 
 	// Pre-extract tool_uses so the factory can run pipeline.EvaluateToolUses
-	// ONCE on the full sibling set (response-level orchestration). The
-	// collector pass discards the rewritten body (Allowed=true with no
-	// mutations); the real rewrite happens in the second pass below
-	// with the pre-computed verdicts.
-	//
-	// Collector errors are tolerated when at least one tool_use was
-	// collected — the real rewriter pass below will surface the error
-	// and trigger failClosed. This preserves legacy "rewriter errors
-	// AFTER calling eval still create side effects" semantics, which a
-	// few tests pin via evalThenErrorRewriter.
-	var preExtracted []conversation.ToolUse
+	// ONCE on the full sibling set. The collector pass discards the
+	// rewritten body; the real rewrite happens in the second pass with
+	// the pre-computed verdicts.
 	collectorEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		preExtracted = append(preExtracted, tu)
 		return conversation.ToolUseVerdict{Allowed: true}
@@ -81,47 +76,11 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 
 	innerEval := selectToolUseEvaluator(req, cfg, rewriter.Name(), preExtracted, pendingAuditEvents)
 
-	// Outer eval wraps innerEval and records the kind + decision
-	// context for the coalesce post-pass. Two side channels feed the
-	// capture: holdSink.holds (set by the buffered PendingApprovals
-	// wrapper) and pendingAuditEvents.entries (set by the buffered audit
-	// closure). In response-level mode (buffered path) all pipeline
-	// side effects fire upfront during selectToolUseEvaluator, so the
-	// capture matches entries by tool_use ID instead of by sequence.
+	// Capture per-tool verdicts so the finalizer can classify them.
+	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(preExtracted))
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
-		c := evalCapture{Use: tu, Kind: classifyVerdict(v)}
-		if holdSink != nil {
-			for i := len(holdSink.holds) - 1; i >= 0; i-- {
-				h := holdSink.holds[i]
-				if h.Pending.ToolUse.ID == tu.ID {
-					c.HoldID = h.Pending.ID
-					c.Stage = h.Pending.Stage
-					c.Inspector = h.Pending.Inspector
-					c.Fingerprint = h.Pending.Fingerprint
-					c.Reason = h.Pending.Reason
-					break
-				}
-			}
-		}
-		if pendingAuditEvents != nil {
-			for i := len(pendingAuditEvents.entries) - 1; i >= 0; i-- {
-				entry := pendingAuditEvents.entries[i]
-				if entry.ToolUse.ID == tu.ID {
-					if c.Inspector.Source == "" {
-						c.Inspector = llmproxy.InspectorVerdictFromSnapshot(entry.InspectorVerdict)
-					}
-					if c.Reason == "" {
-						c.Reason = entry.Reason
-					}
-					if c.TaskID == "" {
-						c.TaskID = entry.TaskID
-					}
-					break
-				}
-			}
-		}
-		captures = append(captures, c)
+		verdictByTU[tu.ID] = v
 		return v
 	}
 
@@ -132,77 +91,159 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		return failClosed("rewriter error: " + err.Error())
 	}
 
-	// Coalesce decision.
-	if originalPendingApprovals != nil && shouldCoalesceTurn(captures) {
-		coalesced := coalesceFromCaptures(captures)
-		coalesced.UserID = cfg.AgentUserID
-		coalesced.AgentID = cfg.AgentID
-		coalesced.Provider = rewriter.Name()
-		coalesced.ConversationID = cfg.ConversationID
-		held, holdErr := originalPendingApprovals.Hold(req.Context(), coalesced)
-		if holdErr == nil {
-			if held.Evicted != nil {
-				if cfg.Audit != nil && auditAgent != nil && len(captures) > 0 {
-					first := captures[0]
-					cfg.Audit.WriteAuditEvent(req.Context(), auditAgent, cfg.RequestID, conversation.AuditEvent{
-						ToolUse:          first.Use,
-						InspectorVerdict: llmproxy.InspectorSnapshot(first.Inspector),
-						Decision:         conversation.DecisionBlock,
-						OutcomeName:      "approval_evicted",
-						Reason:           "superseded pending approval " + held.Evicted.ID,
-						TaskID:           first.TaskID,
-					})
-				}
-				llmproxy.CleanupEvictedInlineTask(req.Context(), cfg, held.Evicted)
-			}
-			emitCoalescedPendingAuditRows(req.Context(), cfg, auditAgent, captures, held.Pending.ID)
-			// Re-run the rewriter with a coalesced eval.
-			coalescedPrompt := coalescedApprovalPrompt(held.Pending.AllHolds(), held.Pending.ID)
-			firstReplaced := false
-			coalescedEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
-				out := conversation.ToolUseVerdict{
-					Allowed: false,
-					Reason:  "Clawvisor: approval required (coalesced turn) — " + held.Pending.Reason,
-				}
-				if !firstReplaced {
-					out.SubstituteWith = coalescedPrompt
-					firstReplaced = true
-				}
-				return out
-			}
-			coalescedResult, coalescedErr := rewriter.Rewrite(body, contentType, coalescedEval)
-			if coalescedErr == nil {
-				return llmproxy.PostprocessResult{
-					Body:        coalescedResult.Body,
-					ContentType: contentType,
-					Rewritten:   true,
-					Decisions:   coalescedResult.Decisions,
-				}
-			}
-			// Coalesced re-run failed; fall through to flush + return first pass.
-			flushBufferedAudit(req.Context(), cfg, auditAgent, pendingAuditEvents)
-			return llmproxy.PostprocessResult{
-				Body:        result.Body,
-				ContentType: contentType,
-				Rewritten:   result.Rewritten,
-				Decisions:   result.Decisions,
-			}
-		}
-		// Hold-failure path: fall through to legacy replay.
+	ctx := req.Context()
+	feedFinalizer(finalizer, preExtracted, holdSink, pendingAuditEvents, verdictByTU)
+
+	finalResult, finalErr := finalizeOrLegacy(ctx, finalizer, originalPendingApprovals, holdSink, pendingAuditEvents, cfg, verdictByTU)
+	if finalErr != nil {
+		return failClosed("approval hold storage failed: " + finalErr.Error())
 	}
 
-	// Legacy replay: no coalescence happened.
-	if replayErr := replayBufferedHolds(req.Context(), cfg, originalPendingApprovals, holdSink, auditAgent, captures); replayErr != nil {
-		flushBufferedAudit(req.Context(), cfg, auditAgent, pendingAuditEvents)
-		return failClosed("approval hold storage failed: " + replayErr.Error())
+	if finalResult.Coalesced {
+		// Re-run the rewriter with a coalesced eval substituting the
+		// human-facing prompt at the primary tool_use's slot.
+		firstReplaced := false
+		coalescedEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+			out := conversation.ToolUseVerdict{
+				Allowed: false,
+				Reason:  "Clawvisor: approval required (coalesced turn)",
+			}
+			if !firstReplaced {
+				out.SubstituteWith = finalResult.CoalescedPrompt
+				firstReplaced = true
+			}
+			return out
+		}
+		coalescedResult, coalescedErr := rewriter.Rewrite(body, contentType, coalescedEval)
+		if coalescedErr == nil {
+			return llmproxy.PostprocessResult{
+				Body:        coalescedResult.Body,
+				ContentType: contentType,
+				Rewritten:   true,
+				Decisions:   coalescedResult.Decisions,
+			}
+		}
+		// Coalesced re-run failed; fall through to first-pass result.
+		return llmproxy.PostprocessResult{
+			Body:        result.Body,
+			ContentType: contentType,
+			Rewritten:   result.Rewritten,
+			Decisions:   result.Decisions,
+		}
 	}
-	flushBufferedAudit(req.Context(), cfg, auditAgent, pendingAuditEvents)
 
 	return llmproxy.PostprocessResult{
 		Body:        result.Body,
 		ContentType: contentType,
 		Rewritten:   result.Rewritten,
 		Decisions:   result.Decisions,
+	}
+}
+
+// feedFinalizer transfers per-tool eval outcomes + audit events into
+// the finalizer. Captures every tool_use (whether or not it called
+// Hold) so the coalesce decision sees Allow/Rewrite siblings
+// alongside the held Approvals. Captures that didn't Hold carry a
+// nil Payload; replay skips them.
+//
+// orderedToolUses preserves the response order of tool_uses so the
+// coalesced primary is selected deterministically + each capture
+// carries its ToolUse for audit/prompt rendering.
+func feedFinalizer(
+	finalizer *pipeline.Finalizer,
+	orderedToolUses []conversation.ToolUse,
+	holdSink *capturedHoldSink,
+	auditBuf *pendingAuditEventBuffer,
+	verdictByTU map[string]conversation.ToolUseVerdict,
+) {
+	if finalizer == nil {
+		return
+	}
+	holdByTU := make(map[string]capturedHold, len(holdSink.holds))
+	if holdSink != nil {
+		for _, h := range holdSink.holds {
+			holdByTU[h.Pending.ToolUse.ID] = h
+		}
+	}
+	// Inspector verdicts surface through the buffered audit events
+	// the factory emitted. Allow / Rewrite siblings (no Hold) carry
+	// their inspector projection here so the coalesced renderer can
+	// fold them into the prompt with full audit detail.
+	auditByTU := make(map[string]conversation.AuditEvent)
+	if auditBuf != nil {
+		for _, ev := range auditBuf.entries {
+			auditByTU[ev.ToolUse.ID] = ev
+		}
+	}
+	for _, tu := range orderedToolUses {
+		kind := holdKindFromVerdict(verdictByTU, tu.ID)
+		c := pipeline.HoldCapture{
+			ToolUse:   tu,
+			ToolUseID: tu.ID,
+			Kind:      kind,
+		}
+		if h, ok := holdByTU[tu.ID]; ok {
+			c.ApprovalID = h.Pending.ID
+			c.Stage = string(h.Pending.Stage)
+			c.Payload = h.Pending
+			c.InspectorSnapshot = llmproxy.InspectorSnapshot(h.Pending.Inspector)
+		} else if ev, ok := auditByTU[tu.ID]; ok {
+			c.InspectorSnapshot = ev.InspectorVerdict
+		}
+		finalizer.AddCapture(c)
+	}
+	if auditBuf != nil {
+		for _, ev := range auditBuf.entries {
+			finalizer.AddAudit(ev)
+		}
+	}
+}
+
+func holdKindFromVerdict(
+	verdictByTU map[string]conversation.ToolUseVerdict,
+	tuID string,
+) conversation.HeldKindHint {
+	if v, ok := verdictByTU[tuID]; ok {
+		return pipeline.ClassifyVerdict(v)
+	}
+	return conversation.HeldKindHintDeny
+}
+
+// finalizeOrLegacy delegates to the finalizer when configured, or
+// falls back to direct cache writes when PendingApprovals is nil
+// (test scenarios that don't wire a cache).
+//
+// The legacy fallback only writes audits — there's no hold to
+// commit without a cache.
+func finalizeOrLegacy(
+	ctx context.Context,
+	finalizer *pipeline.Finalizer,
+	pendingApprovals llmproxy.PendingApprovalCache,
+	holdSink *capturedHoldSink,
+	auditBuf *pendingAuditEventBuffer,
+	cfg llmproxy.PostprocessConfig,
+	_ map[string]conversation.ToolUseVerdict,
+) (pipeline.FinalizeResult, error) {
+	if finalizer != nil && pendingApprovals != nil {
+		return finalizer.Finalize(ctx)
+	}
+	// No PendingApprovals cache — buffer audits flush directly via the
+	// emitter.
+	flushDirect(ctx, cfg, auditBuf)
+	_ = holdSink
+	return pipeline.FinalizeResult{}, nil
+}
+
+func flushDirect(ctx context.Context, cfg llmproxy.PostprocessConfig, auditBuf *pendingAuditEventBuffer) {
+	if cfg.Audit == nil || auditBuf == nil {
+		return
+	}
+	agent := llmproxy.AuditAgentForCfg(cfg)
+	if agent == nil {
+		return
+	}
+	for _, ev := range auditBuf.entries {
+		cfg.Audit.WriteAuditEvent(ctx, agent, cfg.RequestID, ev)
 	}
 }
 
@@ -222,89 +263,6 @@ func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, p
 		pendingAuditEvents.entries = append(pendingAuditEvents.entries, ba)
 	}
 	return cfg.ToolUseEvaluatorFactory(req, cfg, provider, toolUses, emit)
-}
-
-// coalesceFromCaptures builds the single PendingLiteApproval covering
-// every tool_use in a turn. The first approval-needing capture becomes
-// the primary; the others become Additional entries. PrimaryIndex
-// records where the primary sat in the original turn so AllHolds()
-// keeps the model's tool_use order intact.
-func coalesceFromCaptures(captures []evalCapture) llmproxy.PendingLiteApproval {
-	primaryIdx := -1
-	for i, c := range captures {
-		if c.Kind == llmproxy.HeldKindApproval {
-			primaryIdx = i
-			break
-		}
-	}
-	if primaryIdx < 0 {
-		primaryIdx = 0
-	}
-	primary := captures[primaryIdx]
-	pending := llmproxy.PendingLiteApproval{
-		ToolUse:      primary.Use,
-		Inspector:    primary.Inspector,
-		Fingerprint:  primary.Fingerprint,
-		Reason:       primary.Reason,
-		PrimaryIndex: primaryIdx,
-	}
-	pending.Additional = make([]llmproxy.HeldToolUse, 0, len(captures)-1)
-	for i, c := range captures {
-		if i == primaryIdx {
-			continue
-		}
-		pending.Additional = append(pending.Additional, llmproxy.HeldToolUse{
-			ToolUse:     c.Use,
-			Kind:        c.Kind,
-			Inspector:   c.Inspector,
-			Fingerprint: c.Fingerprint,
-			Reason:      c.Reason,
-		})
-	}
-	return pending
-}
-
-// coalescedApprovalPrompt renders the prompt for a hold that covers
-// multiple tool_uses in a turn. The first held use is named explicitly;
-// the rest are summarized as auto-allow / auto-rewrite siblings held
-// alongside.
-func coalescedApprovalPrompt(uses []llmproxy.HeldToolUse, approvalID string) string {
-	var b strings.Builder
-	b.WriteString("Clawvisor paused this turn for approval (")
-	b.WriteString(strconv.Itoa(len(uses)))
-	b.WriteString(" tool calls).")
-	for i, held := range uses {
-		b.WriteString("\n\n")
-		b.WriteString(strconv.Itoa(i + 1))
-		b.WriteString(". ")
-		if name := strings.TrimSpace(held.ToolUse.Name); name != "" {
-			b.WriteString("`")
-			b.WriteString(name)
-			b.WriteString("`")
-		} else {
-			b.WriteString("(unnamed tool)")
-		}
-		switch held.Kind {
-		case llmproxy.HeldKindApproval:
-			if reason := strings.TrimSpace(held.Reason); reason != "" {
-				b.WriteString(" — approval required: ")
-				b.WriteString(reason)
-			} else {
-				b.WriteString(" — approval required")
-			}
-		case llmproxy.HeldKindAllow:
-			b.WriteString(" — held alongside (would auto-allow on its own)")
-		case llmproxy.HeldKindRewrite:
-			b.WriteString(" — held alongside (would auto-allow with credential rewrite on its own)")
-		}
-		if preview := conversation.MakeToolInputPreview(held.ToolUse.Input); preview != "" {
-			b.WriteString("\n   Input: ")
-			b.WriteString(preview)
-		}
-	}
-	b.WriteString("\n\nReply `yes` or `y` to approve all calls and run them in order, `no` or `n` to deny the whole turn, or `task` to scope this work under a Clawvisor task that covers every call above.")
-	b.WriteString(llmproxy.ApprovalIDFooter(approvalID))
-	return b.String()
 }
 
 // matchByRoute returns the response rewriter the registry has indexed

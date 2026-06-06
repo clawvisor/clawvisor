@@ -53,7 +53,6 @@ func PostprocessStream(
 	}
 
 	provider := streamingRewriter.Name()
-	auditAgent := llmproxy.AuditAgentForCfg(cfg)
 
 	originalPendingApprovals := cfg.PendingApprovals
 	holdSink := &capturedHoldSink{}
@@ -61,7 +60,7 @@ func PostprocessStream(
 		cfg.PendingApprovals = newHoldCapturingApprovalCache(originalPendingApprovals, holdSink)
 	}
 	pendingAuditEvents := &pendingAuditEventBuffer{}
-	var captures []evalCapture
+	finalizer := llmproxy.NewFinalizer(cfg, originalPendingApprovals)
 
 	// Streaming rewriter consumes the upstream stream and returns the
 	// full tool_use list it observed. We run the response-level
@@ -82,40 +81,10 @@ func PostprocessStream(
 
 	innerEval := selectToolUseEvaluator(req, cfg, provider, streamResult.ToolUses, pendingAuditEvents)
 
+	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(streamResult.ToolUses))
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
-		c := evalCapture{Use: tu, Kind: classifyVerdict(v)}
-		if holdSink != nil {
-			for i := len(holdSink.holds) - 1; i >= 0; i-- {
-				h := holdSink.holds[i]
-				if h.Pending.ToolUse.ID == tu.ID {
-					c.HoldID = h.Pending.ID
-					c.Stage = h.Pending.Stage
-					c.Inspector = h.Pending.Inspector
-					c.Fingerprint = h.Pending.Fingerprint
-					c.Reason = h.Pending.Reason
-					break
-				}
-			}
-		}
-		if pendingAuditEvents != nil {
-			for i := len(pendingAuditEvents.entries) - 1; i >= 0; i-- {
-				entry := pendingAuditEvents.entries[i]
-				if entry.ToolUse.ID == tu.ID {
-					if c.Inspector.Source == "" {
-						c.Inspector = llmproxy.InspectorVerdictFromSnapshot(entry.InspectorVerdict)
-					}
-					if c.Reason == "" {
-						c.Reason = entry.Reason
-					}
-					if c.TaskID == "" {
-						c.TaskID = entry.TaskID
-					}
-					break
-				}
-			}
-		}
-		captures = append(captures, c)
+		verdictByTU[tu.ID] = v
 		return v
 	}
 
@@ -140,50 +109,25 @@ func PostprocessStream(
 		}
 	}
 
-	if originalPendingApprovals != nil && shouldCoalesceTurn(captures) {
-		coalesced := coalesceFromCaptures(captures)
-		coalesced.UserID = cfg.AgentUserID
-		coalesced.AgentID = cfg.AgentID
-		coalesced.Provider = provider
-		coalesced.ConversationID = cfg.ConversationID
-		held, holdErr := originalPendingApprovals.Hold(req.Context(), coalesced)
-		if holdErr == nil {
-			if held.Evicted != nil {
-				if cfg.Audit != nil && auditAgent != nil && len(captures) > 0 {
-					first := captures[0]
-					cfg.Audit.WriteAuditEvent(req.Context(), auditAgent, cfg.RequestID, conversation.AuditEvent{
-						ToolUse:          first.Use,
-						InspectorVerdict: llmproxy.InspectorSnapshot(first.Inspector),
-						Decision:         conversation.DecisionBlock,
-						OutcomeName:      "approval_evicted",
-						Reason:           "superseded pending approval " + held.Evicted.ID,
-						TaskID:           first.TaskID,
-					})
-				}
-				llmproxy.CleanupEvictedInlineTask(req.Context(), cfg, held.Evicted)
-			}
-			emitCoalescedPendingAuditRows(req.Context(), cfg, auditAgent, captures, held.Pending.ID)
+	feedFinalizer(finalizer, streamResult.ToolUses, holdSink, pendingAuditEvents, verdictByTU)
 
-			coalescedPrompt := coalescedApprovalPrompt(held.Pending.AllHolds(), held.Pending.ID)
-			if err := writeProviderBlockedPrompt(w, provider, streamResult, coalescedPrompt, streamingBlockedPromptIndex(provider, streamResult, captures)); err != nil {
-				return llmproxy.PostprocessResult{}, err
-			}
-
-			return llmproxy.PostprocessResult{
-				ContentType: contentType,
-				Rewritten:   true,
-				Decisions:   decisions,
-			}, nil
-		}
-	}
-
-	if replayErr := replayBufferedHolds(req.Context(), cfg, originalPendingApprovals, holdSink, auditAgent, captures); replayErr != nil {
-		flushBufferedAudit(req.Context(), cfg, auditAgent, pendingAuditEvents)
+	finalResult, finalErr := finalizeOrLegacy(req.Context(), finalizer, originalPendingApprovals, holdSink, pendingAuditEvents, cfg, verdictByTU)
+	if finalErr != nil {
 		return llmproxy.PostprocessResult{
-			SkippedReason: "approval hold storage failed: " + replayErr.Error(),
+			SkippedReason: "approval hold storage failed: " + finalErr.Error(),
 		}, nil
 	}
-	flushBufferedAudit(req.Context(), cfg, auditAgent, pendingAuditEvents)
+
+	if finalResult.Coalesced {
+		if err := writeProviderBlockedPrompt(w, provider, streamResult, finalResult.CoalescedPrompt, streamingBlockedPromptIndex(provider, streamResult, len(finalizer.Captures()))); err != nil {
+			return llmproxy.PostprocessResult{}, err
+		}
+		return llmproxy.PostprocessResult{
+			ContentType: contentType,
+			Rewritten:   true,
+			Decisions:   decisions,
+		}, nil
+	}
 
 	var continuationResults []conversation.ContinuationToolResult
 	for _, dec := range decisions {
@@ -212,7 +156,7 @@ func PostprocessStream(
 		if strings.TrimSpace(subText) == "" {
 			subText = "Tool use was blocked by the Clawvisor proxy."
 		}
-		if err := writeProviderBlockedPrompt(w, provider, streamResult, subText, streamingBlockedPromptIndex(provider, streamResult, captures)); err != nil {
+		if err := writeProviderBlockedPrompt(w, provider, streamResult, subText, streamingBlockedPromptIndex(provider, streamResult, len(streamResult.ToolUses))); err != nil {
 			return llmproxy.PostprocessResult{}, err
 		}
 	} else {
@@ -231,11 +175,11 @@ func PostprocessStream(
 	}, nil
 }
 
-func streamingBlockedPromptIndex(provider conversation.Provider, result conversation.StreamingRewriteResult, captures []evalCapture) int {
+func streamingBlockedPromptIndex(provider conversation.Provider, result conversation.StreamingRewriteResult, captureCount int) int {
 	if provider == conversation.ProviderAnthropic && result.NextAnthropicContentIndex > 0 {
 		return result.NextAnthropicContentIndex
 	}
-	return len(captures)
+	return captureCount
 }
 
 func writeProviderBlockedPrompt(w io.Writer, provider conversation.Provider, result conversation.StreamingRewriteResult, text string, contentIndex int) error {

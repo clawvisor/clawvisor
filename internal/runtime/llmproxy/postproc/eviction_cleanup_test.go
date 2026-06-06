@@ -9,6 +9,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
 // TestCleanupEvictedInlineTask_NoOpWhenNoTaskID confirms the helper
@@ -125,24 +126,27 @@ func TestReplayBufferedHolds_EvictionExpiresInlineTask(t *testing.T) {
 	// Buffered new hold that will commit during replay. Without
 	// inline-task linkage so we know any ExpireInlineTask call has
 	// to be on the EVICTED hold, not this one.
-	sink := &capturedHoldSink{
-		holds: []capturedHold{{
-			Pending: llmproxy.PendingLiteApproval{
-				ID:       "cv-newcomer",
-				UserID:   "u",
-				AgentID:  "a",
-				Provider: conversation.ProviderAnthropic,
-				ToolUse:  conversation.ToolUse{ID: "tool_b", Name: "Bash"},
-			},
-		}},
+	newHold := llmproxy.PendingLiteApproval{
+		ID:       "cv-newcomer",
+		UserID:   "u",
+		AgentID:  "a",
+		Provider: conversation.ProviderAnthropic,
+		ToolUse:  conversation.ToolUse{ID: "tool_b", Name: "Bash"},
 	}
 	creator := &capturingInlineCreator{}
-	if err := replayBufferedHolds(ctx, llmproxy.PostprocessConfig{
+	finalizer := llmproxy.NewFinalizer(llmproxy.PostprocessConfig{
 		ApprovalContext: llmproxy.ApprovalContext{
 			InlineTaskCreator: creator,
 		},
-	}, inner, sink, nil, nil); err != nil {
-		t.Fatalf("replayBufferedHolds: %v", err)
+	}, inner)
+	finalizer.AddCapture(pipeline.HoldCapture{
+		ToolUse:   newHold.ToolUse,
+		ToolUseID: newHold.ToolUse.ID,
+		Kind:      conversation.HeldKindHintApproval,
+		Payload:   newHold,
+	})
+	if _, err := finalizer.Finalize(ctx); err != nil {
+		t.Fatalf("Finalize: %v", err)
 	}
 
 	if !creator.expireCalled {
@@ -156,19 +160,23 @@ func TestReplayBufferedHolds_EvictionExpiresInlineTask(t *testing.T) {
 func TestRollbackBufferedPendingTasks_ExpiresOnlyInlineTaskHolds(t *testing.T) {
 	ctx := context.Background()
 	creator := &capturingInlineCreator{}
-	sink := &capturedHoldSink{
-		holds: []capturedHold{
-			{Pending: llmproxy.PendingLiteApproval{UserID: "u", PendingTaskID: "task-pending-1"}},
-			{Pending: llmproxy.PendingLiteApproval{UserID: "u"}},
-			{Pending: llmproxy.PendingLiteApproval{UserID: "u", PendingTaskID: "task-pending-2"}},
-		},
-	}
-
-	rollbackBufferedPendingTasks(ctx, llmproxy.PostprocessConfig{
+	finalizer := llmproxy.NewFinalizer(llmproxy.PostprocessConfig{
 		ApprovalContext: llmproxy.ApprovalContext{
 			InlineTaskCreator: creator,
 		},
-	}, sink)
+	}, llmproxy.NewMemoryPendingApprovalCache(time.Minute))
+	for _, p := range []llmproxy.PendingLiteApproval{
+		{UserID: "u", PendingTaskID: "task-pending-1"},
+		{UserID: "u"},
+		{UserID: "u", PendingTaskID: "task-pending-2"},
+	} {
+		finalizer.AddCapture(pipeline.HoldCapture{
+			ToolUseID: p.ToolUse.ID,
+			Payload:   p,
+		})
+	}
+
+	finalizer.Rollback(ctx)
 
 	if !creator.expireCalled {
 		t.Fatalf("ExpireInlineTask was not called for buffered inline-task holds")
@@ -185,27 +193,25 @@ func TestRollbackBufferedPendingTasks_ExpiresOnlyInlineTaskHolds(t *testing.T) {
 func TestRollbackBufferedPendingTasks_TracesExpireFailure(t *testing.T) {
 	ctx := context.Background()
 	creator := &capturingInlineCreator{expireFail: true}
-	sink := &capturedHoldSink{
-		holds: []capturedHold{{
-			Pending: llmproxy.PendingLiteApproval{
-				ID:            "cv-inline-rollback",
-				UserID:        "u",
-				AgentID:       "a",
-				PendingTaskID: "task-rollback",
-			},
-		}},
+	pending := llmproxy.PendingLiteApproval{
+		ID:            "cv-inline-rollback",
+		UserID:        "u",
+		AgentID:       "a",
+		PendingTaskID: "task-rollback",
 	}
 	var buf bytes.Buffer
 
-	rollbackBufferedPendingTasks(ctx, llmproxy.PostprocessConfig{
+	finalizer := llmproxy.NewFinalizer(llmproxy.PostprocessConfig{
 		AuditContext: llmproxy.AuditContext{
 			RequestID: "req-rollback-trace",
-			Trace: llmproxy.NewTraceLogger(&buf),
+			Trace:     llmproxy.NewTraceLogger(&buf),
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			InlineTaskCreator: creator,
 		},
-	}, sink)
+	}, llmproxy.NewMemoryPendingApprovalCache(time.Minute))
+	finalizer.AddCapture(pipeline.HoldCapture{Payload: pending})
+	finalizer.Rollback(ctx)
 
 	out := buf.String()
 	if !strings.Contains(out, "inline_task.rollback_expire_failed") {
