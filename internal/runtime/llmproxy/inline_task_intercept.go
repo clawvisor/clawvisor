@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
@@ -638,26 +639,5 @@ func inlineTaskValidationReason(issues []runtimepolicy.ValidationIssue) string {
 // heredoc) and multi-statement (cat-heredoc + curl --data @file)
 // shapes resolve to the actual body bytes.
 func controlTaskBodyFromInput(in json.RawMessage) ([]byte, bool) {
-	if len(in) == 0 {
-		return nil, false
-	}
-	// Structured form: { "url": "...", "method": "POST", "body": ... }
-	var structured struct {
-		Body json.RawMessage `json:"body,omitempty"`
-	}
-	if err := json.Unmarshal(in, &structured); err == nil && len(structured.Body) > 0 {
-		var bodyString string
-		if json.Unmarshal(structured.Body, &bodyString) == nil {
-			return []byte(bodyString), true
-		}
-		return structured.Body, true
-	}
-	// Bash form: { "cmd"/"command": "..." }. Re-use the same parser the
-	// rewrite path uses so single-stmt and cat-then-curl resolve
-	// identically; controlPartsFromCommandInput already handles
-	// @path → heredoc body substitution.
-	if _, _, body, ok := controlPartsFromCommandInput(in, ""); ok && len(body) > 0 {
-		return body, true
-	}
-	return nil, false
+	return controltool.TaskBodyFromInput(in)
 }

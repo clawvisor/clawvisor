@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 )
 
 // SanitizeInboundRequest configures inbound history sanitization. The
@@ -89,11 +90,11 @@ func inboundLooksRewritten(body []byte) bool {
 // turns; any reshape on the request path can corrupt them.
 func sanitizeAnthropicInbound(req SanitizeInboundRequest) (SanitizeInboundResult, error) {
 	body := req.Body
-	msgsStart, msgsEnd, ok := findJSONFieldValue(body, "messages")
+	msgsStart, msgsEnd, ok := jsonsurgery.FindFieldValue(body, "messages")
 	if !ok {
 		return SanitizeInboundResult{Body: body}, nil
 	}
-	messages, ok := flattenJSONArray(body[msgsStart:msgsEnd])
+	messages, ok := jsonsurgery.FlattenArray(body[msgsStart:msgsEnd])
 	if !ok {
 		return SanitizeInboundResult{Body: body}, nil
 	}
@@ -113,7 +114,7 @@ func sanitizeAnthropicInbound(req SanitizeInboundRequest) (SanitizeInboundResult
 	if err != nil {
 		return SanitizeInboundResult{Body: body}, nil
 	}
-	out, err := SetJSONField(body, "messages", newMsgsBytes)
+	out, err := jsonsurgery.SetField(body, "messages", newMsgsBytes)
 	if err != nil {
 		return SanitizeInboundResult{Body: body}, nil
 	}
@@ -124,7 +125,7 @@ func sanitizeAnthropicInbound(req SanitizeInboundRequest) (SanitizeInboundResult
 // assistant tool_use input commands while preserving byte fidelity
 // for everything else (other blocks, the message envelope).
 func sanitizeAnthropicInboundMessage(msg json.RawMessage, req SanitizeInboundRequest) (json.RawMessage, bool) {
-	roleStart, roleEnd, ok := findJSONFieldValue(msg, "role")
+	roleStart, roleEnd, ok := jsonsurgery.FindFieldValue(msg, "role")
 	if !ok {
 		return msg, false
 	}
@@ -132,12 +133,12 @@ func sanitizeAnthropicInboundMessage(msg json.RawMessage, req SanitizeInboundReq
 	if err := json.Unmarshal(msg[roleStart:roleEnd], &role); err != nil || role != "assistant" {
 		return msg, false
 	}
-	contentStart, contentEnd, ok := findJSONFieldValue(msg, "content")
+	contentStart, contentEnd, ok := jsonsurgery.FindFieldValue(msg, "content")
 	if !ok {
 		return msg, false
 	}
 	content := msg[contentStart:contentEnd]
-	blocks, ok := flattenJSONArray(content)
+	blocks, ok := jsonsurgery.FlattenArray(content)
 	if !ok {
 		return msg, false
 	}
@@ -148,7 +149,7 @@ func sanitizeAnthropicInboundMessage(msg json.RawMessage, req SanitizeInboundReq
 			newBlocks[i] = block
 			continue
 		}
-		inputStart, inputEnd, ok := findJSONFieldValue(block, "input")
+		inputStart, inputEnd, ok := jsonsurgery.FindFieldValue(block, "input")
 		if !ok {
 			newBlocks[i] = block
 			continue
@@ -158,7 +159,7 @@ func sanitizeAnthropicInboundMessage(msg json.RawMessage, req SanitizeInboundReq
 			newBlocks[i] = block
 			continue
 		}
-		newBlock, err := SetJSONField(block, "input", sanitized)
+		newBlock, err := jsonsurgery.SetField(block, "input", sanitized)
 		if err != nil {
 			newBlocks[i] = block
 			continue
@@ -173,7 +174,7 @@ func sanitizeAnthropicInboundMessage(msg json.RawMessage, req SanitizeInboundReq
 	if err != nil {
 		return msg, false
 	}
-	newMsg, err := SetJSONField(msg, "content", newContentBytes)
+	newMsg, err := jsonsurgery.SetField(msg, "content", newContentBytes)
 	if err != nil {
 		return msg, false
 	}

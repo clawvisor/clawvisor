@@ -1,10 +1,10 @@
-package llmproxy
+package jsonsurgery
 
 import (
 	"testing"
 )
 
-func TestSetJSONFieldReplaceExisting(t *testing.T) {
+func TestSetFieldReplaceExisting(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -44,9 +44,9 @@ func TestSetJSONFieldReplaceExisting(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := SetJSONField([]byte(tc.in), tc.key, []byte(tc.val))
+			got, err := SetField([]byte(tc.in), tc.key, []byte(tc.val))
 			if err != nil {
-				t.Fatalf("SetJSONField err: %v", err)
+				t.Fatalf("SetField err: %v", err)
 			}
 			if string(got) != tc.want {
 				t.Errorf("byte mismatch\n got: %q\nwant: %q", got, tc.want)
@@ -55,7 +55,7 @@ func TestSetJSONFieldReplaceExisting(t *testing.T) {
 	}
 }
 
-func TestSetJSONFieldAppendsMissingKey(t *testing.T) {
+func TestSetFieldAppendsMissingKey(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -81,9 +81,9 @@ func TestSetJSONFieldAppendsMissingKey(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := SetJSONField([]byte(tc.in), tc.key, []byte(tc.val))
+			got, err := SetField([]byte(tc.in), tc.key, []byte(tc.val))
 			if err != nil {
-				t.Fatalf("SetJSONField err: %v", err)
+				t.Fatalf("SetField err: %v", err)
 			}
 			if string(got) != tc.want {
 				t.Errorf("byte mismatch\n got: %q\nwant: %q", got, tc.want)
@@ -92,15 +92,15 @@ func TestSetJSONFieldAppendsMissingKey(t *testing.T) {
 	}
 }
 
-func TestSetJSONFieldIgnoresNestedKey(t *testing.T) {
+func TestSetFieldIgnoresNestedKey(t *testing.T) {
 	t.Parallel()
 	// `system` exists nested in `metadata` but not at the top level —
 	// should append at top level, not modify the nested value.
 	in := `{"model":"claude","metadata":{"system":"nested"}}`
 	want := `{"model":"claude","metadata":{"system":"nested"},"system":"new"}`
-	got, err := SetJSONField([]byte(in), "system", []byte(`"new"`))
+	got, err := SetField([]byte(in), "system", []byte(`"new"`))
 	if err != nil {
-		t.Fatalf("SetJSONField err: %v", err)
+		t.Fatalf("SetField err: %v", err)
 	}
 	if string(got) != want {
 		t.Errorf("byte mismatch\n got: %q\nwant: %q", got, want)
@@ -110,7 +110,7 @@ func TestSetJSONFieldIgnoresNestedKey(t *testing.T) {
 func TestFindJSONFieldValueByteRange(t *testing.T) {
 	t.Parallel()
 	in := []byte(`{"a":1,"b":[2,3],"c":"x"}`)
-	start, end, ok := findJSONFieldValue(in, "b")
+	start, end, ok := FindFieldValue(in, "b")
 	if !ok {
 		t.Fatalf("expected to find b")
 	}
@@ -119,13 +119,13 @@ func TestFindJSONFieldValueByteRange(t *testing.T) {
 	}
 }
 
-func TestDeleteJSONFieldKeyWithEscapedQuote(t *testing.T) {
+func TestDeleteFieldKeyWithEscapedQuote(t *testing.T) {
 	t.Parallel()
 	// Key `a"b` is JSON-encoded as `"a\"b"`. A naive backward walk for
 	// the first `"` would stop at the escaped inner quote and pick
 	// the wrong boundary.
 	in := `{"a\"b":1,"c":2}`
-	got, ok := DeleteJSONField([]byte(in), `a"b`)
+	got, ok := DeleteField([]byte(in), `a"b`)
 	if !ok {
 		t.Fatalf("expected key to be found")
 	}
@@ -134,7 +134,7 @@ func TestDeleteJSONFieldKeyWithEscapedQuote(t *testing.T) {
 	}
 }
 
-func TestDeleteJSONField(t *testing.T) {
+func TestDeleteField(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -163,7 +163,7 @@ func TestDeleteJSONField(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := DeleteJSONField([]byte(tc.in), tc.key)
+			got, ok := DeleteField([]byte(tc.in), tc.key)
 			if !ok {
 				t.Fatalf("expected key to be found")
 			}

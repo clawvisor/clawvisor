@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -200,7 +201,7 @@ func isShellInvocation(prefix string) bool {
 // invocations nested inside `xargs … sh -c '…'` and similar shapes.
 func extractFromCurlArgs(args []*syntax.Word, urls, headers *[]string, depth int) {
 	for i := 0; i < len(args); i++ {
-		prefix := shellWordLiteralPrefix(args[i])
+		prefix := controltool.ShellWordLiteralPrefix(args[i])
 
 		// `--header=value` / `--url=value` form: literal prefix
 		// includes the flag name + `=` + the start of the value.
@@ -221,14 +222,14 @@ func extractFromCurlArgs(args []*syntax.Word, urls, headers *[]string, depth int
 		// other flags are ignored.
 		if prefix == "-H" || prefix == "--header" {
 			if i+1 < len(args) {
-				*headers = append(*headers, shellWordLiteralPrefix(args[i+1]))
+				*headers = append(*headers, controltool.ShellWordLiteralPrefix(args[i+1]))
 				i++
 			}
 			continue
 		}
 		if prefix == "--url" {
 			if i+1 < len(args) {
-				candidate := shellWordLiteralPrefix(args[i+1])
+				candidate := controltool.ShellWordLiteralPrefix(args[i+1])
 				if strings.HasPrefix(candidate, "http://") || strings.HasPrefix(candidate, "https://") {
 					*urls = append(*urls, candidate)
 				}
@@ -259,8 +260,8 @@ func extractFromCurlArgs(args []*syntax.Word, urls, headers *[]string, depth int
 		// this arg as a positional below.
 		if isShellInvocation(prefix) {
 			for j := i + 1; j < len(args)-1; j++ {
-				if shellWordLiteralPrefix(args[j]) == "-c" {
-					nested := shellWordLiteralPrefix(args[j+1])
+				if controltool.ShellWordLiteralPrefix(args[j]) == "-c" {
+					nested := controltool.ShellWordLiteralPrefix(args[j+1])
 					if nested != "" {
 						extractCurlIntentInto(nested, urls, headers, depth+1)
 					}
@@ -366,4 +367,3 @@ func hasScriptSessionToken(v string) bool {
 	}
 	return strings.HasPrefix(v, ScriptSessionPrefix)
 }
-

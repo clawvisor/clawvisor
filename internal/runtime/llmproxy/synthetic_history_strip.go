@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 )
 
 type SyntheticApprovalHistoryStripRequest struct {
@@ -52,11 +53,11 @@ func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHisto
 	// Top-level body keys keep their order. Only messages we merge get
 	// re-marshalled — and those are user messages, never assistants
 	// carrying thinking blocks, so signature verification is unaffected.
-	msgsStart, msgsEnd, ok := findJSONFieldValue(body, "messages")
+	msgsStart, msgsEnd, ok := jsonsurgery.FindFieldValue(body, "messages")
 	if !ok {
 		return SyntheticApprovalHistoryStripResult{Body: body}, nil
 	}
-	messages, ok := flattenJSONArray(body[msgsStart:msgsEnd])
+	messages, ok := jsonsurgery.FlattenArray(body[msgsStart:msgsEnd])
 	if !ok {
 		return SyntheticApprovalHistoryStripResult{Body: body}, nil
 	}
@@ -102,7 +103,7 @@ func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHisto
 				if err != nil {
 					return SyntheticApprovalHistoryStripResult{Body: body}, err
 				}
-				newPrev, err := SetJSONField(prev, "content", mergedContent)
+				newPrev, err := jsonsurgery.SetField(prev, "content", mergedContent)
 				if err != nil {
 					return SyntheticApprovalHistoryStripResult{Body: body}, err
 				}
@@ -117,7 +118,7 @@ func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHisto
 	if err != nil {
 		return SyntheticApprovalHistoryStripResult{Body: body}, err
 	}
-	next, err := SetJSONField(body, "messages", newMsgsBytes)
+	next, err := jsonsurgery.SetField(body, "messages", newMsgsBytes)
 	if err != nil {
 		return SyntheticApprovalHistoryStripResult{Body: body}, err
 	}
@@ -125,7 +126,7 @@ func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHisto
 }
 
 func extractMessageRole(msg json.RawMessage) string {
-	start, end, ok := findJSONFieldValue(msg, "role")
+	start, end, ok := jsonsurgery.FindFieldValue(msg, "role")
 	if !ok {
 		return ""
 	}
@@ -135,7 +136,7 @@ func extractMessageRole(msg json.RawMessage) string {
 }
 
 func extractMessageContent(msg json.RawMessage) json.RawMessage {
-	start, end, ok := findJSONFieldValue(msg, "content")
+	start, end, ok := jsonsurgery.FindFieldValue(msg, "content")
 	if !ok {
 		return nil
 	}

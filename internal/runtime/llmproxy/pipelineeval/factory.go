@@ -20,6 +20,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
@@ -261,7 +262,7 @@ func buildControlResolver(
 			ControlBaseURL: controlBaseURL,
 			AgentID:        agentID,
 			CallerNonces:   cache,
-			InterceptInline: func(_ context.Context, tu conversation.ToolUse, call llmproxy.ControlCall) (pipeline.ToolUseVerdict, bool) {
+			InterceptInline: func(_ context.Context, tu conversation.ToolUse, call controltool.ControlCall) (pipeline.ToolUseVerdict, bool) {
 				auditFn := func(decision, outcome, reason string) {
 					emit(conversation.AuditEvent{
 						ToolUse:     tu,

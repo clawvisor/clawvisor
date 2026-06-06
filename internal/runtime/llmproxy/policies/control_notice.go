@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -75,7 +75,7 @@ func (p *ControlNotice) Preprocess(ctx context.Context, req pipeline.ReadOnlyReq
 		rules = p.loadToolRules(ctx, req.UserID(), req.AgentID())
 	}
 
-	injected, modified, err := llmproxy.InjectControlNoticeWithPolicy(req.Provider(), req.RawBody(), p.controlBaseURL, tools, rules)
+	injected, modified, err := controltool.InjectControlNoticeWithPolicy(req.Provider(), req.RawBody(), p.controlBaseURL, tools, rules)
 	if err != nil {
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeDeny,

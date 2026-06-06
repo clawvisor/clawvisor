@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 )
 
 type approvalBodyEditor interface {
@@ -249,11 +250,11 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 	// Only the user message whose content we're augmenting is reshaped.
 	// Top-level body keys keep their incoming order. See SanitizeAnthropicRequest
 	// for why this matters.
-	msgsStart, msgsEnd, ok := findJSONFieldValue(body, "messages")
+	msgsStart, msgsEnd, ok := jsonsurgery.FindFieldValue(body, "messages")
 	if !ok {
 		return body, false, nil
 	}
-	messages, ok := flattenJSONArray(body[msgsStart:msgsEnd])
+	messages, ok := jsonsurgery.FlattenArray(body[msgsStart:msgsEnd])
 	if !ok {
 		return body, false, nil
 	}
@@ -263,7 +264,7 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 
 	for i := 1; i < len(messages); i++ {
 		msg := messages[i]
-		roleStart, roleEnd, ok := findJSONFieldValue(msg, "role")
+		roleStart, roleEnd, ok := jsonsurgery.FindFieldValue(msg, "role")
 		if !ok {
 			continue
 		}
@@ -271,7 +272,7 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 		if err := json.Unmarshal(msg[roleStart:roleEnd], &role); err != nil || role != "user" {
 			continue
 		}
-		contentStart, contentEnd, ok := findJSONFieldValue(msg, "content")
+		contentStart, contentEnd, ok := jsonsurgery.FindFieldValue(msg, "content")
 		if !ok {
 			continue
 		}
@@ -286,7 +287,7 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 		}
 
 		priorMsg := messages[i-1]
-		priorRoleStart, priorRoleEnd, ok := findJSONFieldValue(priorMsg, "role")
+		priorRoleStart, priorRoleEnd, ok := jsonsurgery.FindFieldValue(priorMsg, "role")
 		if !ok {
 			continue
 		}
@@ -294,7 +295,7 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 		if err := json.Unmarshal(priorMsg[priorRoleStart:priorRoleEnd], &priorRole); err != nil || priorRole != "assistant" {
 			continue
 		}
-		priorContentStart, priorContentEnd, ok := findJSONFieldValue(priorMsg, "content")
+		priorContentStart, priorContentEnd, ok := jsonsurgery.FindFieldValue(priorMsg, "content")
 		if !ok {
 			continue
 		}
@@ -317,7 +318,7 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 		if !ok {
 			continue
 		}
-		newMsg, err := SetJSONField(msg, "content", updatedContent)
+		newMsg, err := jsonsurgery.SetField(msg, "content", updatedContent)
 		if err != nil {
 			continue
 		}
@@ -332,7 +333,7 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 	if err != nil {
 		return body, false, err
 	}
-	out, err := SetJSONField(body, "messages", newMsgsBytes)
+	out, err := jsonsurgery.SetField(body, "messages", newMsgsBytes)
 	if err != nil {
 		return body, false, err
 	}

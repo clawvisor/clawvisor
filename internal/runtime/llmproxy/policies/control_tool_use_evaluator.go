@@ -5,6 +5,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
@@ -41,7 +42,7 @@ type ControlToolUseInputs struct {
 	// interception (model emits POST /api/control/tasks while the user
 	// is mid-flight on a "task" gesture). Returns a verdict + true when
 	// the call was claimed; otherwise the control rewrite proceeds.
-	InterceptInline func(ctx context.Context, tu conversation.ToolUse, call llmproxy.ControlCall) (pipeline.ToolUseVerdict, bool)
+	InterceptInline func(ctx context.Context, tu conversation.ToolUse, call controltool.ControlCall) (pipeline.ToolUseVerdict, bool)
 }
 
 // ControlToolUseResolver returns the per-tool-use inputs. Returning
@@ -79,7 +80,7 @@ func (e *ControlToolUseEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadO
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 
-	call, ok := llmproxy.ParseControlToolUseWithBase(tu, in.ControlBaseURL)
+	call, ok := controltool.ParseControlToolUseWithBase(tu, in.ControlBaseURL)
 	if ok {
 		// Inline task-definition takes priority over the regular rewrite.
 		if in.InterceptInline != nil {
@@ -90,7 +91,7 @@ func (e *ControlToolUseEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadO
 		return e.rewriteControlCall(ctx, tu, mut, in, call)
 	}
 
-	if llmproxy.ControlToolUseMentionsEndpoint(tu, in.ControlBaseURL) {
+	if controltool.ControlToolUseMentionsEndpoint(tu, in.ControlBaseURL) {
 		return e.rewriteMalformedControlCall(ctx, tu, mut, in)
 	}
 
@@ -98,7 +99,7 @@ func (e *ControlToolUseEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadO
 	return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 }
 
-func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator, in *ControlToolUseInputs, call llmproxy.ControlCall) (pipeline.ToolUseVerdict, error) {
+func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator, in *ControlToolUseInputs, call controltool.ControlCall) (pipeline.ToolUseVerdict, error) {
 	if in.CallerNonces == nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
@@ -118,7 +119,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
 		}, nil
 	}
-	rewritten, _, rewriteOK, rewriteErr := llmproxy.RewriteControlToolUse(tu, in.ControlBaseURL, nonce)
+	rewritten, _, rewriteOK, rewriteErr := controltool.RewriteControlToolUse(tu, in.ControlBaseURL, nonce)
 	if !rewriteOK {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
@@ -159,7 +160,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 		}, nil
 	}
 	nonce, err := in.CallerNonces.Mint(ctx, in.AgentID, llmproxy.NonceTarget{
-		Host:   llmproxy.ControlSyntheticHost,
+		Host:   controltool.ControlSyntheticHost,
 		Method: "POST",
 		Path:   "/api/control/failure",
 	})
@@ -170,7 +171,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
 		}, nil
 	}
-	rewritten, ok, rewriteErr := llmproxy.RewriteControlFailureToolUse(tu, in.ControlBaseURL, nonce, failureReason)
+	rewritten, ok, rewriteErr := controltool.RewriteControlFailureToolUse(tu, in.ControlBaseURL, nonce, failureReason)
 	if !ok {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
@@ -197,7 +198,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 			Outcome:       "clawvisor_control_failure",
 			Method:        "POST",
 			Path:          "/api/control/failure",
-			SyntheticHost: llmproxy.ControlSyntheticHost,
+			SyntheticHost: controltool.ControlSyntheticHost,
 		}},
 	}, nil
 }

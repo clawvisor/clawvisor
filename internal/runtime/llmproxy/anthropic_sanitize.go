@@ -3,6 +3,8 @@ package llmproxy
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 )
 
 // SanitizeAnthropicRequest removes empty text content blocks that Anthropic
@@ -28,7 +30,7 @@ func SanitizeAnthropicRequest(body []byte) ([]byte, bool, error) {
 	changed := false
 
 	// system field.
-	if sysStart, sysEnd, ok := findJSONFieldValue(out, "system"); ok {
+	if sysStart, sysEnd, ok := jsonsurgery.FindFieldValue(out, "system"); ok {
 		sys := out[sysStart:sysEnd]
 		sanitized, fieldChanged, empty, err := sanitizeAnthropicContent(sys)
 		if err != nil {
@@ -37,11 +39,11 @@ func SanitizeAnthropicRequest(body []byte) ([]byte, bool, error) {
 		if fieldChanged {
 			changed = true
 			if empty {
-				if deleted, ok := DeleteJSONField(out, "system"); ok {
+				if deleted, ok := jsonsurgery.DeleteField(out, "system"); ok {
 					out = deleted
 				}
 			} else {
-				replaced, err := SetJSONField(out, "system", sanitized)
+				replaced, err := jsonsurgery.SetField(out, "system", sanitized)
 				if err != nil {
 					return nil, false, err
 				}
@@ -51,9 +53,9 @@ func SanitizeAnthropicRequest(body []byte) ([]byte, bool, error) {
 	}
 
 	// messages field.
-	if msgsStart, msgsEnd, ok := findJSONFieldValue(out, "messages"); ok {
+	if msgsStart, msgsEnd, ok := jsonsurgery.FindFieldValue(out, "messages"); ok {
 		msgsBytes := out[msgsStart:msgsEnd]
-		messages, ok := flattenJSONArray(msgsBytes)
+		messages, ok := jsonsurgery.FlattenArray(msgsBytes)
 		if !ok {
 			// `messages` present but not an array — malformed input.
 			// Surface the parse error so the caller can return a 400.
@@ -86,7 +88,7 @@ func SanitizeAnthropicRequest(body []byte) ([]byte, bool, error) {
 			if err != nil {
 				return nil, false, err
 			}
-			replaced, err := SetJSONField(out, "messages", newMsgsBytes)
+			replaced, err := jsonsurgery.SetField(out, "messages", newMsgsBytes)
 			if err != nil {
 				return nil, false, err
 			}
@@ -105,7 +107,7 @@ func SanitizeAnthropicRequest(body []byte) ([]byte, bool, error) {
 // When dropMessage is true, the caller should omit the message from
 // the parent array.
 func sanitizeAnthropicMessage(msg json.RawMessage) (json.RawMessage, bool, bool, error) {
-	contentStart, contentEnd, ok := findJSONFieldValue(msg, "content")
+	contentStart, contentEnd, ok := jsonsurgery.FindFieldValue(msg, "content")
 	if !ok {
 		return msg, false, false, nil
 	}
@@ -120,7 +122,7 @@ func sanitizeAnthropicMessage(msg json.RawMessage) (json.RawMessage, bool, bool,
 	if empty {
 		return nil, true, true, nil
 	}
-	newMsg, err := SetJSONField(msg, "content", sanitized)
+	newMsg, err := jsonsurgery.SetField(msg, "content", sanitized)
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -135,12 +137,12 @@ func sanitizeAnthropicContent(raw json.RawMessage) (json.RawMessage, bool, bool,
 	if len(raw) == 0 {
 		return raw, false, false, nil
 	}
-	trimmed := trimJSONWS(raw)
+	trimmed := jsonsurgery.TrimWS(raw)
 	if string(trimmed) == "null" {
 		return raw, false, false, nil
 	}
 	// String content: empty/whitespace → drop. Otherwise preserve.
-	if looksLikeJSONString(raw) {
+	if jsonsurgery.LooksLikeString(raw) {
 		var text string
 		if err := json.Unmarshal(raw, &text); err == nil {
 			if strings.TrimSpace(text) == "" {
@@ -150,7 +152,7 @@ func sanitizeAnthropicContent(raw json.RawMessage) (json.RawMessage, bool, bool,
 		return raw, false, false, nil
 	}
 	// Array content: walk blocks, preserve unchanged ones byte-for-byte.
-	blocks, ok := flattenJSONArray(raw)
+	blocks, ok := jsonsurgery.FlattenArray(raw)
 	if !ok {
 		return raw, false, false, nil
 	}
@@ -167,7 +169,7 @@ func sanitizeAnthropicContent(raw json.RawMessage) (json.RawMessage, bool, bool,
 		}
 		// Recurse into nested content (e.g. tool_result blocks whose
 		// `content` field is itself a list of content blocks).
-		if nestedStart, nestedEnd, ok := findJSONFieldValue(block, "content"); ok {
+		if nestedStart, nestedEnd, ok := jsonsurgery.FindFieldValue(block, "content"); ok {
 			nested := block[nestedStart:nestedEnd]
 			sanitized, nestedChanged, empty, err := sanitizeAnthropicContent(nested)
 			if err != nil {
@@ -176,12 +178,12 @@ func sanitizeAnthropicContent(raw json.RawMessage) (json.RawMessage, bool, bool,
 			if nestedChanged {
 				changed = true
 				if empty {
-					deleted, ok := DeleteJSONField(block, "content")
+					deleted, ok := jsonsurgery.DeleteField(block, "content")
 					if ok {
 						block = deleted
 					}
 				} else {
-					replaced, err := SetJSONField(block, "content", sanitized)
+					replaced, err := jsonsurgery.SetField(block, "content", sanitized)
 					if err != nil {
 						return nil, false, false, err
 					}
@@ -202,7 +204,7 @@ func sanitizeAnthropicContent(raw json.RawMessage) (json.RawMessage, bool, bool,
 }
 
 func extractBlockType(block json.RawMessage) string {
-	start, end, ok := findJSONFieldValue(block, "type")
+	start, end, ok := jsonsurgery.FindFieldValue(block, "type")
 	if !ok {
 		return ""
 	}
@@ -214,7 +216,7 @@ func extractBlockType(block json.RawMessage) string {
 }
 
 func isEmptyTextBlock(block json.RawMessage) bool {
-	start, end, ok := findJSONFieldValue(block, "text")
+	start, end, ok := jsonsurgery.FindFieldValue(block, "text")
 	if !ok {
 		return false
 	}
@@ -226,4 +228,3 @@ func isEmptyTextBlock(block json.RawMessage) bool {
 	}
 	return strings.TrimSpace(text) == ""
 }
-

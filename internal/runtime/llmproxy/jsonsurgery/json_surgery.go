@@ -1,4 +1,4 @@
-package llmproxy
+package jsonsurgery
 
 import (
 	"bytes"
@@ -23,12 +23,12 @@ import (
 // don't collide with top-level ones), then splice replacements into
 // the original byte slice without re-emitting surrounding context.
 
-// findJSONFieldValue locates the byte range of the value associated
+// FindFieldValue locates the byte range of the value associated
 // with the given top-level key in a JSON object. Returns
 // (valueStart, valueEnd, true) such that data[valueStart:valueEnd] is
 // the raw JSON value, or (_, _, false) if data isn't a JSON object or
 // the key isn't present.
-func findJSONFieldValue(data []byte, key string) (int, int, bool) {
+func FindFieldValue(data []byte, key string) (int, int, bool) {
 	_, valueStart, valueEnd, ok := findJSONFieldSpan(data, key)
 	return valueStart, valueEnd, ok
 }
@@ -36,7 +36,7 @@ func findJSONFieldValue(data []byte, key string) (int, int, bool) {
 // findJSONFieldSpan locates byte ranges for both the key string and
 // the value of a top-level field. Returns (keyOpenQuote, valueStart,
 // valueEnd, true) on success where data[keyOpenQuote] == '"' is the
-// opening quote of the JSON-encoded key. Used by DeleteJSONField so
+// opening quote of the JSON-encoded key. Used by DeleteField so
 // it can locate the start of the key without a backward scan
 // (which is brittle when the key contains escaped quotes).
 func findJSONFieldSpan(data []byte, key string) (int, int, int, bool) {
@@ -111,7 +111,7 @@ func findJSONFieldSpan(data []byte, key string) (int, int, int, bool) {
 	return 0, 0, 0, false
 }
 
-// SetJSONField returns data with the value at the given top-level key
+// SetField returns data with the value at the given top-level key
 // replaced by newValue. If the key doesn't exist, it's appended just
 // before the closing `}`. All unmodified bytes — including key order,
 // whitespace, and any fields we don't model — are preserved verbatim.
@@ -119,16 +119,16 @@ func findJSONFieldSpan(data []byte, key string) (int, int, int, bool) {
 // newValue must be valid JSON (object, array, string, number, bool,
 // or null). Callers typically construct it via json.Marshal of a
 // single value, never via json.Marshal of an envelope.
-func SetJSONField(data []byte, key string, newValue []byte) ([]byte, error) {
-	if start, end, ok := findJSONFieldValue(data, key); ok {
+func SetField(data []byte, key string, newValue []byte) ([]byte, error) {
+	if start, end, ok := FindFieldValue(data, key); ok {
 		return slices.Concat(data[:start], newValue, data[end:]), nil
 	}
 	return appendJSONField(data, key, newValue)
 }
 
-// DeleteJSONField returns data with the named top-level field
+// DeleteField returns data with the named top-level field
 // removed. If the key isn't present, data is returned unchanged.
-func DeleteJSONField(data []byte, key string) ([]byte, bool) {
+func DeleteField(data []byte, key string) ([]byte, bool) {
 	keyOpenQuote, _, valueEnd, ok := findJSONFieldSpan(data, key)
 	if !ok {
 		return data, false
@@ -218,11 +218,11 @@ func jsonObjectIsArray(data []byte) bool {
 	return false
 }
 
-// flattenJSONArray returns the top-level elements of a JSON array as
+// FlattenArray returns the top-level elements of a JSON array as
 // raw byte slices, preserving each element's bytes verbatim. The
 // returned slices alias into data. Returns nil, false if data isn't a
 // JSON array.
-func flattenJSONArray(data []byte) ([]json.RawMessage, bool) {
+func FlattenArray(data []byte) ([]json.RawMessage, bool) {
 	if !jsonObjectIsArray(data) {
 		return nil, false
 	}
@@ -233,10 +233,10 @@ func flattenJSONArray(data []byte) ([]json.RawMessage, bool) {
 	return elems, true
 }
 
-// looksLikeJSONString reports whether data is a JSON-encoded string
+// LooksLikeString reports whether data is a JSON-encoded string
 // (leading quote, after whitespace). Useful for distinguishing
 // string-content from array-content.
-func looksLikeJSONString(data []byte) bool {
+func LooksLikeString(data []byte) bool {
 	for _, b := range data {
 		if isJSONWS(b) {
 			continue
@@ -246,9 +246,9 @@ func looksLikeJSONString(data []byte) bool {
 	return false
 }
 
-// trimJSONWS returns data with leading/trailing JSON whitespace
+// TrimWS returns data with leading/trailing JSON whitespace
 // removed.
-func trimJSONWS(data []byte) []byte {
+func TrimWS(data []byte) []byte {
 	return bytes.TrimFunc(data, func(r rune) bool {
 		return r == ' ' || r == '\t' || r == '\n' || r == '\r'
 	})

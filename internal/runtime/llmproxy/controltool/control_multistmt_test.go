@@ -1,4 +1,4 @@
-package llmproxy
+package controltool
 
 import (
 	"encoding/json"

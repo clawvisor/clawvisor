@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 )
 
 type SecretDecisionHistoryStripRequest struct {
@@ -35,11 +36,11 @@ func stripAnthropicSecretDecisionHistory(body []byte) (SecretDecisionHistoryStri
 	// Byte fidelity: this strips entire messages by index but never
 	// modifies a surviving message's content, so we can preserve each
 	// survivor's bytes verbatim via []json.RawMessage.
-	msgsStart, msgsEnd, ok := findJSONFieldValue(body, "messages")
+	msgsStart, msgsEnd, ok := jsonsurgery.FindFieldValue(body, "messages")
 	if !ok {
 		return SecretDecisionHistoryStripResult{Body: body}, nil
 	}
-	messages, ok := flattenJSONArray(body[msgsStart:msgsEnd])
+	messages, ok := jsonsurgery.FlattenArray(body[msgsStart:msgsEnd])
 	if !ok {
 		return SecretDecisionHistoryStripResult{Body: body}, nil
 	}
@@ -54,7 +55,7 @@ func stripAnthropicSecretDecisionHistory(body []byte) (SecretDecisionHistoryStri
 	if err != nil {
 		return SecretDecisionHistoryStripResult{Body: body}, err
 	}
-	newBody, err := SetJSONField(body, "messages", encoded)
+	newBody, err := jsonsurgery.SetField(body, "messages", encoded)
 	if err != nil {
 		return SecretDecisionHistoryStripResult{Body: body}, err
 	}
