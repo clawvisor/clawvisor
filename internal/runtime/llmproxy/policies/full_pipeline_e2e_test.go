@@ -82,10 +82,10 @@ func TestFullPipeline_E2E_HappyPath(t *testing.T) {
 	hostsResolver := func(_ context.Context, _ string) []string {
 		return []string{"api.github.com"}
 	}
-	scopeResolver := func(_ context.Context, _ conversation.ToolUse) llmproxy.TaskScopeDecision {
+	scopeResolver := func(_ context.Context, _ conversation.ToolUse) policies.TaskScopeDecision {
 		// Simulate two tools where scope ISN'T matched — both Hold,
 		// with the same HoldKey so coalescing applies.
-		return llmproxy.TaskScopeDecision{
+		return policies.TaskScopeDecision{
 			Allowed: false,
 			Reason:  "needs_new_task",
 		}
@@ -150,8 +150,8 @@ func TestFullPipeline_E2E_DenyBreaksCoalescing(t *testing.T) {
 	hostsResolver := func(_ context.Context, _ string) []string {
 		return []string{"api.github.com"}
 	}
-	scopeResolver := func(_ context.Context, _ conversation.ToolUse) llmproxy.TaskScopeDecision {
-		return llmproxy.TaskScopeDecision{
+	scopeResolver := func(_ context.Context, _ conversation.ToolUse) policies.TaskScopeDecision {
+		return policies.TaskScopeDecision{
 			Allowed: false,
 			Reason:  "needs_new_task",
 		}

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
@@ -41,8 +40,8 @@ func TestInspectorChainIntegration_RecognizedAPICallFlowsThroughChain(t *testing
 	hostsResolver := func(_ context.Context, _ string) []string {
 		return []string{"api.github.com"}
 	}
-	scopeResolver := func(_ context.Context, _ conversation.ToolUse) llmproxy.TaskScopeDecision {
-		return llmproxy.TaskScopeDecision{
+	scopeResolver := func(_ context.Context, _ conversation.ToolUse) policies.TaskScopeDecision {
+		return policies.TaskScopeDecision{
 			Allowed: true,
 			TaskID:  "task-abc",
 			Reason:  "matched",
@@ -110,9 +109,9 @@ func TestInspectorChainIntegration_BoundaryCheckDenies(t *testing.T) {
 	// These shouldn't be reached — InspectorChain denies first.
 	scopeCalled := false
 	intentCalled := false
-	scopeResolver := func(_ context.Context, _ conversation.ToolUse) llmproxy.TaskScopeDecision {
+	scopeResolver := func(_ context.Context, _ conversation.ToolUse) policies.TaskScopeDecision {
 		scopeCalled = true
-		return llmproxy.TaskScopeDecision{Allowed: true}
+		return policies.TaskScopeDecision{Allowed: true}
 	}
 	intentResolver := func(_ context.Context, _ conversation.ToolUse) (bool, string) {
 		intentCalled = true
@@ -171,8 +170,8 @@ func TestInspectorChainIntegration_TriggerMissFlowsToTaskScope(t *testing.T) {
 	// autovault placeholder. The chain should fall through to
 	// TaskScopeEvaluator, which returns Hold because the task scope
 	// isn't matched.
-	scopeResolver := func(_ context.Context, _ conversation.ToolUse) llmproxy.TaskScopeDecision {
-		return llmproxy.TaskScopeDecision{
+	scopeResolver := func(_ context.Context, _ conversation.ToolUse) policies.TaskScopeDecision {
+		return policies.TaskScopeDecision{
 			Allowed: false,
 			Reason:  "no_active_task",
 		}

@@ -387,14 +387,14 @@ func buildCredentialedTaskScope(
 	}
 	approvalCleanupCfg := llmproxy.PostprocessConfig{ApprovalContext: approval}
 	intentVerifyCfg := llmproxy.PostprocessConfig{AuthorizationContext: auth}
-	return func(ctx context.Context, tu conversation.ToolUse) llmproxy.TaskScopeDecision {
+	return func(ctx context.Context, tu conversation.ToolUse) policies.TaskScopeDecision {
 		v := rewrite.Inspector.Inspect(ctx, inspector.ToolUse{
 			ID:    tu.ID,
 			Name:  tu.Name,
 			Input: tu.Input,
 		})
 		if !v.IsAPICall || v.Ambiguous {
-			return llmproxy.TaskScopeDecision{}
+			return policies.TaskScopeDecision{}
 		}
 		audit := func(decision, outcome, reason, taskID string) {
 			if emit == nil {
@@ -431,7 +431,7 @@ func buildCredentialedTaskScope(
 			dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 			if err != nil {
 				audit("block", "decision_error", err.Error(), "")
-				return llmproxy.TaskScopeDecision{Allowed: false, Reason: "Clawvisor: authorization failed — " + err.Error()}
+				return policies.TaskScopeDecision{Allowed: false, Reason: "Clawvisor: authorization failed — " + err.Error()}
 			}
 			matchedTaskID := ""
 			if dec.Task != nil {
@@ -442,10 +442,10 @@ func buildCredentialedTaskScope(
 				if dec.Task != nil && rewrite.Store != nil {
 					_, _, _ = llmproxy.SlideTaskExpiry(ctx, rewrite.Store, dec.Task, time.Now().UTC())
 				}
-				return llmproxy.TaskScopeDecision{}
+				return policies.TaskScopeDecision{}
 			case runtimedecision.VerdictDeny:
 				audit("block", string(dec.Source), dec.Reason, matchedTaskID)
-				return llmproxy.TaskScopeDecision{
+				return policies.TaskScopeDecision{
 					Allowed: false,
 					Reason:  "Clawvisor: " + dec.Reason,
 					TaskID:  matchedTaskID,
@@ -465,7 +465,7 @@ func buildCredentialedTaskScope(
 					})
 					if herr != nil {
 						audit("block", "approval_hold_error", herr.Error(), "")
-						return llmproxy.TaskScopeDecision{Allowed: false, Reason: "Clawvisor: approval unavailable — " + herr.Error()}
+						return policies.TaskScopeDecision{Allowed: false, Reason: "Clawvisor: approval unavailable — " + herr.Error()}
 					}
 					if held.Evicted != nil {
 						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, "")
@@ -474,7 +474,7 @@ func buildCredentialedTaskScope(
 					approvalID = held.Pending.ID
 				}
 				audit("block", string(dec.Source), dec.Reason, matchedTaskID)
-				return llmproxy.TaskScopeDecision{
+				return policies.TaskScopeDecision{
 					Allowed: false,
 					Reason:  "Clawvisor: approval required — " + dec.Reason,
 					TaskID:  matchedTaskID,
@@ -488,14 +488,14 @@ func buildCredentialedTaskScope(
 				dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, resolved.ServiceID, resolved.ActionID)
 				if !dec.Allowed {
 					audit("block", "task_scope_denied", dec.Reason, "")
-					return llmproxy.TaskScopeDecision{
+					return policies.TaskScopeDecision{
 						Allowed: false,
 						Reason:  "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
 					}
 				}
 				if reason, ok := llmproxy.RunIntentVerify(ctx, intentVerifyCfg, dec, resolved, tu); !ok {
 					audit("block", "intent_verification_failed", reason, dec.TaskID)
-					return llmproxy.TaskScopeDecision{
+					return policies.TaskScopeDecision{
 						Allowed: false,
 						Reason:  "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason,
 						TaskID:  dec.TaskID,
@@ -504,10 +504,10 @@ func buildCredentialedTaskScope(
 				if dec.MatchedTask != nil && rewrite.Store != nil {
 					_, _, _ = llmproxy.SlideTaskExpiry(ctx, rewrite.Store, dec.MatchedTask, time.Now().UTC())
 				}
-				return llmproxy.TaskScopeDecision{}
+				return policies.TaskScopeDecision{}
 			}
 		}
-		return llmproxy.TaskScopeDecision{}
+		return policies.TaskScopeDecision{}
 	}
 }
 

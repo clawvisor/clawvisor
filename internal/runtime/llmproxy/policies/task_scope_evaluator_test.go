@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 )
@@ -26,8 +25,8 @@ func TestTaskScope_SkipsNilResolver(t *testing.T) {
 
 // TestTaskScope_AllowOnMatchedScope pins the success path.
 func TestTaskScope_AllowOnMatchedScope(t *testing.T) {
-	resolver := func(_ context.Context, _ conversation.ToolUse) llmproxy.TaskScopeDecision {
-		return llmproxy.TaskScopeDecision{
+	resolver := func(_ context.Context, _ conversation.ToolUse) policies.TaskScopeDecision {
+		return policies.TaskScopeDecision{
 			Allowed: true,
 			TaskID:  "task-abc",
 			Reason:  "matched",
@@ -59,8 +58,8 @@ func TestTaskScope_AllowOnMatchedScope(t *testing.T) {
 
 // TestTaskScope_HoldOnUnmatchedScope pins the Hold path: needs_new_task.
 func TestTaskScope_HoldOnUnmatchedScope(t *testing.T) {
-	resolver := func(_ context.Context, _ conversation.ToolUse) llmproxy.TaskScopeDecision {
-		return llmproxy.TaskScopeDecision{
+	resolver := func(_ context.Context, _ conversation.ToolUse) policies.TaskScopeDecision {
+		return policies.TaskScopeDecision{
 			Allowed: false,
 			Reason:  "needs_new_task",
 		}
@@ -85,8 +84,8 @@ func TestTaskScope_HoldOnUnmatchedScope(t *testing.T) {
 // TestTaskScope_SkipsWhenEmptyReason pins the "resolver chose not to act"
 // signal: a Decision with empty Reason → Skip.
 func TestTaskScope_SkipsWhenEmptyReason(t *testing.T) {
-	resolver := func(_ context.Context, _ conversation.ToolUse) llmproxy.TaskScopeDecision {
-		return llmproxy.TaskScopeDecision{} // empty Reason
+	resolver := func(_ context.Context, _ conversation.ToolUse) policies.TaskScopeDecision {
+		return policies.TaskScopeDecision{} // empty Reason
 	}
 	e := policies.NewTaskScopeEvaluator(resolver)
 	tu := conversation.ToolUse{ID: "x"}

@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // TaskScopeEvaluator authorizes a tool_use against the agent's active
@@ -33,7 +33,19 @@ type TaskScopeEvaluator struct {
 //
 // Returns Decision with empty Reason when the tool_use shouldn't be
 // scope-checked (e.g., inspector didn't classify it as an API call).
-type TaskScopeResolver func(ctx context.Context, tu conversation.ToolUse) llmproxy.TaskScopeDecision
+type TaskScopeResolver func(ctx context.Context, tu conversation.ToolUse) TaskScopeDecision
+
+// TaskScopeDecision is the policy-local authorization result for a
+// credentialed tool_use. Host adapters translate from their task-scope
+// systems into this shape before the evaluator sees it.
+type TaskScopeDecision struct {
+	Allowed       bool
+	TaskID        string
+	Reason        string
+	Ambiguous     bool
+	MatchedTask   *store.Task
+	MatchedAction *store.TaskAction
+}
 
 // NewTaskScopeEvaluator constructs the evaluator. nil resolver → Skip
 // on every tool_use.
@@ -63,7 +75,7 @@ type CredentialedTarget struct {
 // Service, and Action correctly. The handler converts a
 // CredentialedTaskScopeResolver to TaskScopeResolver via a small
 // adapter closure that supplies the target from the inspector verdict.
-type CredentialedTaskScopeResolver func(ctx context.Context, tu conversation.ToolUse, target CredentialedTarget) llmproxy.TaskScopeDecision
+type CredentialedTaskScopeResolver func(ctx context.Context, tu conversation.ToolUse, target CredentialedTarget) TaskScopeDecision
 
 // Name returns the audit-friendly identifier.
 func (TaskScopeEvaluator) Name() string { return "task_scope" }
