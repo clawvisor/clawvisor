@@ -45,15 +45,23 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	toolUses []conversation.ToolUse,
 	emit func(conversation.AuditEvent),
 ) conversation.ToolUseEvaluator {
-	credentialedTaskScope := buildCredentialedTaskScope(cfg, provider, emit)
+	credentialedTaskScope := buildCredentialedTaskScope(
+		cfg.AgentContext,
+		cfg.AuditContext,
+		cfg.AuthorizationContext,
+		cfg.ApprovalContext,
+		cfg.RewriteContext,
+		provider,
+		emit,
+	)
 
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
-		Control:       buildControlResolver(req, cfg, provider, emit),
+		Control:       buildControlResolver(req, cfg.AgentContext, cfg.AuditContext, cfg.ApprovalContext, cfg.RewriteContext, cfg.RoutingContext, provider, emit),
 		ScriptSession: buildScriptSessionResolver(cfg.RewriteContext),
 		Inspector:     cfg.Inspector,
 		Boundary:      buildBoundaryResolver(cfg.AgentContext, cfg.Store),
 		ReadOnlyShell: buildReadOnlyShellResolver(cfg.AgentContext, cfg.AuthorizationContext),
-		Authorization: buildAuthorizationResolver(cfg, provider),
+		Authorization: buildAuthorizationResolver(cfg.AgentContext, cfg.AuditContext, cfg.AuthorizationContext, cfg.ApprovalContext, cfg.RewriteContext, provider),
 		TaskScope:     credentialedTaskScope,
 		Rewrite:       buildRewriteResolver(cfg.AgentContext, cfg.RewriteContext),
 	})
@@ -94,7 +102,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	// with Phase 6 — no evaluator emits side-channel audits anymore.
 	matchedTaskIDs := make(map[string]string, len(toolUses))
 	for _, tu := range toolUses {
-		matchedTaskIDs[tu.ID] = lookupMatchedTaskID(ctx, cfg, tu)
+		matchedTaskIDs[tu.ID] = lookupMatchedTaskID(ctx, cfg.AgentContext, cfg.AuthorizationContext, cfg.RewriteContext, tu)
 	}
 	emitAuditEvents(ctx, result, toolUses, cfg.Inspector, matchedTaskIDs, emit)
 	return evalFn
@@ -176,14 +184,14 @@ func (r *multiToolUseResponse) Provider() conversation.Provider { return r.provi
 func (r *multiToolUseResponse) StreamShape() conversation.StreamShape {
 	return conversation.StreamShapeUnknown
 }
-func (r *multiToolUseResponse) IsStreaming() bool             { return false }
+func (r *multiToolUseResponse) IsStreaming() bool                { return false }
 func (r *multiToolUseResponse) ToolUses() []conversation.ToolUse { return r.toolUses }
 
-func lookupMatchedTaskID(ctx context.Context, cfg llmproxy.PostprocessConfig, tu conversation.ToolUse) string {
-	if cfg.Inspector == nil {
+func lookupMatchedTaskID(ctx context.Context, agent llmproxy.AgentContext, auth llmproxy.AuthorizationContext, rewrite llmproxy.RewriteContext, tu conversation.ToolUse) string {
+	if rewrite.Inspector == nil {
 		return ""
 	}
-	v := cfg.Inspector.Inspect(ctx, inspector.ToolUse{
+	v := rewrite.Inspector.Inspect(ctx, inspector.ToolUse{
 		ID:    tu.ID,
 		Name:  tu.Name,
 		Input: tu.Input,
@@ -192,31 +200,31 @@ func lookupMatchedTaskID(ctx context.Context, cfg llmproxy.PostprocessConfig, tu
 		return ""
 	}
 	var serviceID, actionID string
-	if cfg.Catalog != nil {
-		if resolved, ok := cfg.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
+	if auth.Catalog != nil {
+		if resolved, ok := auth.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
 			serviceID = resolved.ServiceID
 			actionID = resolved.ActionID
 		}
 	}
-	if cfg.CandidateTasks == nil && cfg.ToolRules == nil && cfg.EgressRules == nil {
-		if cfg.TaskScope == nil || serviceID == "" || actionID == "" {
+	if auth.CandidateTasks == nil && auth.ToolRules == nil && auth.EgressRules == nil {
+		if auth.TaskScope == nil || serviceID == "" || actionID == "" {
 			return ""
 		}
-		dec := cfg.TaskScope.Check(ctx, cfg.AgentUserID, cfg.AgentID, serviceID, actionID)
+		dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, serviceID, actionID)
 		return dec.TaskID
 	}
 	decisionInput := runtimedecision.AuthorizationInput{
 		ToolUse:         tu,
-		UserID:          cfg.AgentUserID,
-		AgentID:         cfg.AgentID,
-		Posture:         cfg.Posture,
+		UserID:          agent.AgentUserID,
+		AgentID:         agent.AgentID,
+		Posture:         auth.Posture,
 		Target:          runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
 		Service:         serviceID,
 		Action:          actionID,
-		CandidateTasks:  cfg.CandidateTasks,
-		ToolRules:       cfg.ToolRules,
-		EgressRules:     cfg.EgressRules,
-		PreferredTaskID: cfg.PreferredTaskID,
+		CandidateTasks:  auth.CandidateTasks,
+		ToolRules:       auth.ToolRules,
+		EgressRules:     auth.EgressRules,
+		PreferredTaskID: auth.PreferredTaskID,
 	}
 	dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 	if err != nil {
@@ -233,13 +241,29 @@ func lookupMatchedTaskID(ctx context.Context, cfg llmproxy.PostprocessConfig, tu
 // factory and the orchestrator runs response-level. multiToolUseResponse
 // is the canonical pipeline-side response type.
 
-func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, emit func(conversation.AuditEvent)) policies.ControlToolUseResolver {
-	if cfg.ControlBaseURL == "" {
+func buildControlResolver(
+	req *http.Request,
+	agent llmproxy.AgentContext,
+	audit llmproxy.AuditContext,
+	approval llmproxy.ApprovalContext,
+	rewrite llmproxy.RewriteContext,
+	routing llmproxy.RoutingContext,
+	provider conversation.Provider,
+	emit func(conversation.AuditEvent),
+) policies.ControlToolUseResolver {
+	if routing.ControlBaseURL == "" {
 		return nil
 	}
-	controlBaseURL := cfg.ControlBaseURL
-	agentID := cfg.AgentID
-	cache := cfg.CallerNonces
+	controlBaseURL := routing.ControlBaseURL
+	agentID := agent.AgentID
+	cache := rewrite.CallerNonces
+	interceptCfg := llmproxy.PostprocessConfig{
+		AgentContext:    agent,
+		AuditContext:    audit,
+		ApprovalContext: approval,
+		RewriteContext:  rewrite,
+		RoutingContext:  routing,
+	}
 	return func(_ context.Context, _ conversation.ToolUse) *policies.ControlToolUseInputs {
 		return &policies.ControlToolUseInputs{
 			ControlBaseURL: controlBaseURL,
@@ -255,7 +279,7 @@ func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, pro
 					})
 				}
 				traceFn := func(_ string, _ ...any) {}
-				convV, claimed := llmproxy.MaybeInterceptInlineTaskDefinition(req, cfg, auditFn, traceFn, provider, tu, call)
+				convV, claimed := llmproxy.MaybeInterceptInlineTaskDefinition(req, interceptCfg, auditFn, traceFn, provider, tu, call)
 				if !claimed {
 					return pipeline.ToolUseVerdict{}, false
 				}
@@ -288,9 +312,10 @@ func conversationToPipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolU
 // buildBoundaryResolver wires InspectorChain's boundary check to the
 // placeholder store, running the three discrete checks the legacy
 // boundaryCheckVerdict combined into one binary:
-//   1. placeholder exists in the store
-//   2. placeholder is owned by the calling agent
-//   3. target host is in the placeholder's bound-service allowlist
+//  1. placeholder exists in the store
+//  2. placeholder is owned by the calling agent
+//  3. target host is in the placeholder's bound-service allowlist
+//
 // Each failure mode returns a distinct BoundaryDenyReason so audit
 // rows tell operators WHICH check rejected the call instead of always
 // reading "host not allowed."
@@ -348,9 +373,22 @@ func buildBoundaryResolver(agent llmproxy.AgentContext, st store.Store) policies
 //
 // Inlined from the legacy EvaluateCredentialedAuthorization helper
 // (Phase 6).
-func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider conversation.Provider, emit func(conversation.AuditEvent)) policies.TaskScopeResolver {
+func buildCredentialedTaskScope(
+	agent llmproxy.AgentContext,
+	auditCtx llmproxy.AuditContext,
+	auth llmproxy.AuthorizationContext,
+	approval llmproxy.ApprovalContext,
+	rewrite llmproxy.RewriteContext,
+	provider conversation.Provider,
+	emit func(conversation.AuditEvent),
+) policies.TaskScopeResolver {
+	if rewrite.Inspector == nil {
+		return nil
+	}
+	approvalCleanupCfg := llmproxy.PostprocessConfig{ApprovalContext: approval}
+	intentVerifyCfg := llmproxy.PostprocessConfig{AuthorizationContext: auth}
 	return func(ctx context.Context, tu conversation.ToolUse) llmproxy.TaskScopeDecision {
-		v := cfg.Inspector.Inspect(ctx, inspector.ToolUse{
+		v := rewrite.Inspector.Inspect(ctx, inspector.ToolUse{
 			ID:    tu.ID,
 			Name:  tu.Name,
 			Input: tu.Input,
@@ -371,24 +409,24 @@ func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider convers
 				TaskID:           taskID,
 			})
 		}
-		if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil {
+		if auth.CandidateTasks != nil || auth.ToolRules != nil || auth.EgressRules != nil {
 			resolved := llmproxy.ResolvedAction{}
-			if cfg.Catalog != nil {
-				resolved, _ = cfg.Catalog.Resolve(v.Host, v.Method, v.Path)
+			if auth.Catalog != nil {
+				resolved, _ = auth.Catalog.Resolve(v.Host, v.Method, v.Path)
 			}
 			decisionInput := runtimedecision.AuthorizationInput{
 				ToolUse:         tu,
-				UserID:          cfg.AgentUserID,
-				AgentID:         cfg.AgentID,
-				Posture:         cfg.Posture,
+				UserID:          agent.AgentUserID,
+				AgentID:         agent.AgentID,
+				Posture:         auth.Posture,
 				Target:          runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
 				Service:         resolved.ServiceID,
 				Action:          resolved.ActionID,
-				CandidateTasks:  cfg.CandidateTasks,
-				ToolRules:       cfg.ToolRules,
-				EgressRules:     cfg.EgressRules,
-				PreferredTaskID: cfg.PreferredTaskID,
-				IntentVerifier:  llmproxy.DecisionIntentVerifierFor(cfg.IntentVerifier),
+				CandidateTasks:  auth.CandidateTasks,
+				ToolRules:       auth.ToolRules,
+				EgressRules:     auth.EgressRules,
+				PreferredTaskID: auth.PreferredTaskID,
+				IntentVerifier:  llmproxy.DecisionIntentVerifierFor(auth.IntentVerifier),
 			}
 			dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 			if err != nil {
@@ -401,8 +439,8 @@ func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider convers
 			}
 			switch dec.Kind {
 			case runtimedecision.VerdictAllow:
-				if dec.Task != nil && cfg.Store != nil {
-					_, _, _ = llmproxy.SlideTaskExpiry(ctx, cfg.Store, dec.Task, time.Now().UTC())
+				if dec.Task != nil && rewrite.Store != nil {
+					_, _, _ = llmproxy.SlideTaskExpiry(ctx, rewrite.Store, dec.Task, time.Now().UTC())
 				}
 				return llmproxy.TaskScopeDecision{}
 			case runtimedecision.VerdictDeny:
@@ -414,12 +452,12 @@ func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider convers
 				}
 			case runtimedecision.VerdictNeedsApproval:
 				var approvalID string
-				if cfg.PendingApprovals != nil {
-					held, herr := cfg.PendingApprovals.Hold(ctx, llmproxy.PendingLiteApproval{
-						UserID:         cfg.AgentUserID,
-						AgentID:        cfg.AgentID,
+				if approval.PendingApprovals != nil {
+					held, herr := approval.PendingApprovals.Hold(ctx, llmproxy.PendingLiteApproval{
+						UserID:         agent.AgentUserID,
+						AgentID:        agent.AgentID,
 						Provider:       provider,
-						ConversationID: cfg.ConversationID,
+						ConversationID: auditCtx.ConversationID,
 						ToolUse:        tu,
 						Inspector:      v,
 						Fingerprint:    runtimedecision.Fingerprint(dec, decisionInput),
@@ -431,7 +469,7 @@ func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider convers
 					}
 					if held.Evicted != nil {
 						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, "")
-						llmproxy.CleanupEvictedInlineTask(ctx, cfg, held.Evicted)
+						llmproxy.CleanupEvictedInlineTask(ctx, approvalCleanupCfg, held.Evicted)
 					}
 					approvalID = held.Pending.ID
 				}
@@ -445,9 +483,9 @@ func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider convers
 			}
 		}
 		// Legacy TaskScope.Check + intent verify fallback.
-		if cfg.Catalog != nil && cfg.TaskScope != nil {
-			if resolved, ok := cfg.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
-				dec := cfg.TaskScope.Check(ctx, cfg.AgentUserID, cfg.AgentID, resolved.ServiceID, resolved.ActionID)
+		if auth.Catalog != nil && auth.TaskScope != nil {
+			if resolved, ok := auth.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
+				dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, resolved.ServiceID, resolved.ActionID)
 				if !dec.Allowed {
 					audit("block", "task_scope_denied", dec.Reason, "")
 					return llmproxy.TaskScopeDecision{
@@ -455,7 +493,7 @@ func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider convers
 						Reason:  "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
 					}
 				}
-				if reason, ok := llmproxy.RunIntentVerify(ctx, cfg, dec, resolved, tu); !ok {
+				if reason, ok := llmproxy.RunIntentVerify(ctx, intentVerifyCfg, dec, resolved, tu); !ok {
 					audit("block", "intent_verification_failed", reason, dec.TaskID)
 					return llmproxy.TaskScopeDecision{
 						Allowed: false,
@@ -463,8 +501,8 @@ func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider convers
 						TaskID:  dec.TaskID,
 					}
 				}
-				if dec.MatchedTask != nil && cfg.Store != nil {
-					_, _, _ = llmproxy.SlideTaskExpiry(ctx, cfg.Store, dec.MatchedTask, time.Now().UTC())
+				if dec.MatchedTask != nil && rewrite.Store != nil {
+					_, _, _ = llmproxy.SlideTaskExpiry(ctx, rewrite.Store, dec.MatchedTask, time.Now().UTC())
 				}
 				return llmproxy.TaskScopeDecision{}
 			}
@@ -477,34 +515,43 @@ func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider convers
 // PostprocessConfig's decision-engine inputs + PendingApprovals cache.
 // Returns nil when the policy has no role (no inspector, no policy
 // config, and no sensitive-path hook).
-func buildAuthorizationResolver(cfg llmproxy.PostprocessConfig, provider conversation.Provider) policies.AuthorizationResolver {
-	if cfg.Inspector == nil {
+func buildAuthorizationResolver(
+	agent llmproxy.AgentContext,
+	audit llmproxy.AuditContext,
+	auth llmproxy.AuthorizationContext,
+	approval llmproxy.ApprovalContext,
+	rewrite llmproxy.RewriteContext,
+	provider conversation.Provider,
+) policies.AuthorizationResolver {
+	if rewrite.Inspector == nil {
 		return nil
 	}
-	intentVerifier := llmproxy.DecisionIntentVerifierFor(cfg.IntentVerifier)
+	intentVerifier := llmproxy.DecisionIntentVerifierFor(auth.IntentVerifier)
 	holdHandler := &authorizationHoldHandler{
-		cfg:      cfg,
+		agent:    agent,
+		audit:    audit,
+		approval: approval,
 		provider: provider,
 	}
 	slideTask := func(ctx context.Context, task *store.Task) {
-		if cfg.Store == nil || task == nil {
+		if rewrite.Store == nil || task == nil {
 			return
 		}
-		_, _, _ = llmproxy.SlideTaskExpiry(ctx, cfg.Store, task, time.Now().UTC())
+		_, _, _ = llmproxy.SlideTaskExpiry(ctx, rewrite.Store, task, time.Now().UTC())
 	}
 	return func(ctx context.Context, tu conversation.ToolUse, v inspector.Verdict) *policies.AuthorizationInputs {
-		hasPolicyConfig := cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil
-		readOnlyShell, sensitivePath := detectShellSpecials(tu, cfg)
+		hasPolicyConfig := auth.CandidateTasks != nil || auth.ToolRules != nil || auth.EgressRules != nil
+		readOnlyShell, sensitivePath := detectShellSpecials(tu, agent, auth)
 		return &policies.AuthorizationInputs{
 			Input: runtimedecision.AuthorizationInput{
 				ToolUse:         tu,
-				UserID:          cfg.AgentUserID,
-				AgentID:         cfg.AgentID,
-				Posture:         cfg.Posture,
-				CandidateTasks:  cfg.CandidateTasks,
-				ToolRules:       cfg.ToolRules,
-				EgressRules:     cfg.EgressRules,
-				PreferredTaskID: cfg.PreferredTaskID,
+				UserID:          agent.AgentUserID,
+				AgentID:         agent.AgentID,
+				Posture:         auth.Posture,
+				CandidateTasks:  auth.CandidateTasks,
+				ToolRules:       auth.ToolRules,
+				EgressRules:     auth.EgressRules,
+				PreferredTaskID: auth.PreferredTaskID,
 				IntentVerifier:  intentVerifier,
 			},
 			HasPolicyConfig:      hasPolicyConfig,
@@ -521,11 +568,11 @@ func buildAuthorizationResolver(cfg llmproxy.PostprocessConfig, provider convers
 // hands AuthorizationPolicy the right flags. Returns
 // (readOnlyShellCommand, sensitivePath); when sensitivePath is true
 // readOnlyShellCommand is forced false (sensitive overrides).
-func detectShellSpecials(tu conversation.ToolUse, cfg llmproxy.PostprocessConfig) (bool, bool) {
+func detectShellSpecials(tu conversation.ToolUse, agent llmproxy.AgentContext, auth llmproxy.AuthorizationContext) (bool, bool) {
 	if !toolnames.IsShellToolName(tu.Name) {
 		return false, false
 	}
-	if !llmproxy.ReadOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
+	if !llmproxy.ReadOnlyShellCommandsAllowed(tu.Name, agent.AgentID, auth.ToolRules) {
 		return false, false
 	}
 	cmd := llmproxy.ShellCommandFromInput(tu.Input)
@@ -533,7 +580,7 @@ func detectShellSpecials(tu conversation.ToolUse, cfg llmproxy.PostprocessConfig
 		return false, false
 	}
 	readOnly, _ := inspector.IsReadOnlyBashCommand(cmd)
-	if toolnames.SensitiveFileGuardEnabled(tu.Name, cfg.AgentID, cfg.ToolRules) {
+	if toolnames.SensitiveFileGuardEnabled(tu.Name, agent.AgentID, auth.ToolRules) {
 		if _, _, hit := inspector.CommandReferencesSensitivePath(cmd); hit {
 			return false, true
 		}
@@ -546,20 +593,22 @@ func detectShellSpecials(tu conversation.ToolUse, cfg llmproxy.PostprocessConfig
 // PendingApprovals.Hold, renders the approval prompt with the
 // resulting approval ID, and cleans up any evicted inline task.
 type authorizationHoldHandler struct {
-	cfg      llmproxy.PostprocessConfig
+	agent    llmproxy.AgentContext
+	audit    llmproxy.AuditContext
+	approval llmproxy.ApprovalContext
 	provider conversation.Provider
 }
 
 func (h *authorizationHoldHandler) Hold(ctx context.Context, req policies.AuthorizationHoldRequest) (policies.AuthorizationHoldResult, error) {
-	if h.cfg.PendingApprovals == nil {
+	if h.approval.PendingApprovals == nil {
 		// Fail closed in the policy.
 		return policies.AuthorizationHoldResult{Err: "approval cache not configured"}, nil
 	}
-	held, err := h.cfg.PendingApprovals.Hold(ctx, llmproxy.PendingLiteApproval{
-		UserID:         h.cfg.AgentUserID,
-		AgentID:        h.cfg.AgentID,
+	held, err := h.approval.PendingApprovals.Hold(ctx, llmproxy.PendingLiteApproval{
+		UserID:         h.agent.AgentUserID,
+		AgentID:        h.agent.AgentID,
 		Provider:       h.provider,
-		ConversationID: h.cfg.ConversationID,
+		ConversationID: h.audit.ConversationID,
 		ToolUse:        req.ToolUse,
 		Inspector:      req.InspectorVerdict,
 		Fingerprint:    runtimedecision.Fingerprint(req.Decision, req.Input),
@@ -570,7 +619,7 @@ func (h *authorizationHoldHandler) Hold(ctx context.Context, req policies.Author
 	}
 	approvalID := held.Pending.ID
 	if held.Evicted != nil {
-		llmproxy.CleanupEvictedInlineTask(ctx, h.cfg, held.Evicted)
+		llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{ApprovalContext: h.approval}, held.Evicted)
 	}
 	return policies.AuthorizationHoldResult{
 		ApprovalID:     approvalID,
