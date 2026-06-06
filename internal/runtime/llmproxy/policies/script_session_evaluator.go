@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptrecognition"
 )
 
 // ScriptSessionEvaluator passes through tool_uses that are already
@@ -52,7 +52,7 @@ func (e *ScriptSessionEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOn
 	if in == nil || in.ResolverBaseURL == "" {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
-	if !llmproxy.ScriptSessionToolUse(tu.Input, in.ResolverBaseURL) {
+	if !scriptrecognition.ScriptSessionToolUse(tu.Input, in.ResolverBaseURL) {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 	return pipeline.ToolUseVerdict{

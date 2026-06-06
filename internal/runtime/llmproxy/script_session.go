@@ -89,22 +89,22 @@ type ScriptSessionCache interface {
 // mutable counters (use count, bytes consumed) are kept on the cache
 // implementation; callers receive a snapshot copy on Account.
 type ScriptSession struct {
-	ID                string
-	UserID            string
-	AgentID           string
-	TaskID            string
-	Placeholder       string
-	ServiceID         string
-	TargetHost        string
-	Methods           []string
-	PathPrefixes      []string
-	MaxUses           int
-	UsedCount         int
-	MaxRequestBytes   int64
-	MaxTotalBytes     int64
-	TotalBytesUsed    int64
-	Why               string
-	ExpiresAt         time.Time
+	ID              string
+	UserID          string
+	AgentID         string
+	TaskID          string
+	Placeholder     string
+	ServiceID       string
+	TargetHost      string
+	Methods         []string
+	PathPrefixes    []string
+	MaxUses         int
+	UsedCount       int
+	MaxRequestBytes int64
+	MaxTotalBytes   int64
+	TotalBytesUsed  int64
+	Why             string
+	ExpiresAt       time.Time
 }
 
 // ScriptSessionRequest is the inbound shape evaluated by Authorize.
@@ -114,11 +114,6 @@ type ScriptSessionRequest struct {
 	Path        string
 	Placeholder string
 }
-
-// ScriptSessionPrefix is the leading byte sequence of every token
-// produced by Mint. The resolver middleware uses it to distinguish
-// script-session tokens from one-shot nonces.
-const ScriptSessionPrefix = "cv-script-"
 
 var (
 	// ErrScriptSessionNotFound — token unknown or revoked.
