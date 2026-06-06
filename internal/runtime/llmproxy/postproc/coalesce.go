@@ -214,7 +214,21 @@ func emitCoalescedPendingAuditRows(ctx context.Context, cfg llmproxy.Postprocess
 }
 
 // classifyVerdict infers the held-use kind from a verdict.
+// Prefers HeldKindHint (set explicitly by a policy via the
+// pipeline-side HeldKindHint); falls back to substring matching on
+// Reason for policies that haven't been updated to set the hint yet.
+// Phase 6 deletes the fallback once every policy emits the hint.
 func classifyVerdict(v conversation.ToolUseVerdict) llmproxy.HeldToolUseKind {
+	switch v.HeldKindHint {
+	case "approval":
+		return llmproxy.HeldKindApproval
+	case "allow":
+		return llmproxy.HeldKindAllow
+	case "rewrite":
+		return llmproxy.HeldKindRewrite
+	case "deny":
+		return llmproxy.HeldKindDeny
+	}
 	if v.Allowed {
 		if len(v.RewriteInput) > 0 {
 			return llmproxy.HeldKindRewrite

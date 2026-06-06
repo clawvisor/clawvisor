@@ -146,6 +146,7 @@ func EvaluateCredentialedAuthorization(
 					Allowed:        false,
 					Reason:         "Clawvisor: approval required — " + dec.Reason,
 					SubstituteWith: ApprovalPrompt(tu, dec.Reason, approvalID),
+					HeldKindHint:   "approval",
 				},
 				MatchedTaskID: matchedTaskID,
 			}

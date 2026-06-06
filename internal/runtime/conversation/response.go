@@ -58,6 +58,13 @@ type ToolUseVerdict struct {
 	// augmentation text or threading a separate map. Empty for any
 	// other verdict source.
 	CreatedTaskID string
+
+	// HeldKindHint is the policy-set classification of this verdict
+	// for postproc's coalescing pass. Mirrors pipeline.HeldKindHint as
+	// a string so the conversation package stays free of pipeline
+	// imports. Empty means classifyVerdict falls back to substring
+	// matching on Reason.
+	HeldKindHint string
 }
 
 type RewriteResult struct {

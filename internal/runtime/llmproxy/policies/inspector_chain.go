@@ -132,6 +132,7 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 			Reason:      v.Reason,
 			AuditFields: fields,
 			HoldKey:     "ambiguous_" + tu.ID,
+			HeldKind:    pipeline.HeldKindHintApproval,
 		}, nil
 	}
 

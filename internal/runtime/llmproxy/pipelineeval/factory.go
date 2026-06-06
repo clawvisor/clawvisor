@@ -64,7 +64,12 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 				_ = mut.ReplaceWithText(convV.SubstituteWith)
 			}
 		}
-		return delegatePipelineVerdict(convV)
+		// EvaluateTriggerMissAuthorization emits its own audit row via the
+		// emit callback; flag the verdict so the downstream emission pass
+		// suppresses a second row for this tool_use.
+		v2 := delegatePipelineVerdict(convV)
+		v2.EmittedAuditExternally = true
+		return v2
 	}
 
 	credentialedTaskScope := func(ctx context.Context, tu conversation.ToolUse) llmproxy.TaskScopeDecision {
@@ -114,7 +119,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 				Reason:  "Clawvisor: authorization pipeline failed — " + err.Error(),
 			}
 		}
-		if !triggerMissAuthorizerFired(result, tu.ID) {
+		if !verdictEmittedAuditExternally(result, tu.ID) {
 			matchedTaskID := lookupMatchedTaskID(ctx, cfg, tu)
 			policies.EmitToolUseAuditRows(ctx, result, []conversation.ToolUse{tu}, cfg.Inspector, func(_ context.Context, row policies.ToolUseAuditRow) {
 				if row.TaskID == "" && matchedTaskID != "" {
@@ -198,7 +203,11 @@ func delegatePipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolUseVerd
 	}
 }
 
-func triggerMissAuthorizerFired(result *pipeline.ToolUseResult, tuID string) bool {
+// verdictEmittedAuditExternally reports whether the winning verdict
+// for tu already emitted its audit row via the legacy emit callback
+// (trigger-miss authorizer pattern). When true, the downstream
+// EmitToolUseAuditRows pass skips this tool_use to avoid a duplicate row.
+func verdictEmittedAuditExternally(result *pipeline.ToolUseResult, tuID string) bool {
 	if result == nil {
 		return false
 	}
@@ -206,19 +215,7 @@ func triggerMissAuthorizerFired(result *pipeline.ToolUseResult, tuID string) boo
 		if ev.ToolUseID != tuID || ev.Verdict.Outcome == pipeline.OutcomeSkip {
 			continue
 		}
-		if ev.EvaluatorName != "inspector_chain" {
-			return false
-		}
-		if ev.Verdict.AuditFields == nil {
-			return true
-		}
-		if _, present := ev.Verdict.AuditFields["boundary_check_passed"]; present {
-			return false
-		}
-		if _, present := ev.Verdict.AuditFields["inspector_source"]; present {
-			return false
-		}
-		return true
+		return ev.Verdict.EmittedAuditExternally
 	}
 	return false
 }

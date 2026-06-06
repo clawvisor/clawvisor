@@ -398,6 +398,7 @@ func MaybeInterceptInlineTaskDefinition(
 		Allowed:        false,
 		Reason:         "Clawvisor: awaiting inline task approval",
 		SubstituteWith: renderTaskApprovalPromptWithRisk(parsed, innerHold.Pending.ID, assessment, cfg.DefaultTaskExpirySeconds),
+		HeldKindHint:   "approval",
 	}, true
 }
 

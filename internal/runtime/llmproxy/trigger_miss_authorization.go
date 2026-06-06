@@ -155,6 +155,7 @@ func EvaluateTriggerMissAuthorization(
 			Allowed:        false,
 			Reason:         "Clawvisor: approval required — " + dec.Reason,
 			SubstituteWith: ApprovalPrompt(tu, dec.Reason, approvalID),
+			HeldKindHint:   "approval",
 		}
 	}
 	// Unknown decision kind — fail closed.

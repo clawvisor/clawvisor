@@ -147,7 +147,34 @@ type ToolUseVerdict struct {
 	// tool_result. Distinct from Continue which builds a full
 	// synthetic assistant turn — this is just the tool_result text.
 	ContinueWithToolResultText string
+	// EmittedAuditExternally signals that this evaluator already emitted
+	// an audit row via a side channel (the legacy trigger-miss authorizer
+	// closure pattern emits via its own emit callback rather than
+	// returning AuditFields the orchestrator's emitter will translate).
+	// Set true to suppress the orchestrator's downstream audit emission
+	// for this verdict. Typed replacement for the AuditFields key
+	// inspection the pipelineeval factory used to perform.
+	EmittedAuditExternally bool
+	// HeldKind classifies the verdict for postproc's coalescing pass.
+	// Evaluators that want to influence coalescing set it explicitly;
+	// when empty, classifyVerdict falls back to substring matching on
+	// Reason. Phase 6 deletes the fallback.
+	HeldKind HeldKindHint
 }
+
+// HeldKindHint classifies a verdict for the coalescing pass without
+// the substring-on-Reason heuristic the legacy classifier used. Values
+// match the string form of llmproxy.HeldToolUseKind so the
+// conversation-side bridge can propagate one-for-one. Empty value
+// means "no hint; let the legacy classifier infer."
+type HeldKindHint string
+
+const (
+	HeldKindHintApproval HeldKindHint = "approval"
+	HeldKindHintAllow    HeldKindHint = "allow"
+	HeldKindHintRewrite  HeldKindHint = "rewrite"
+	HeldKindHintDeny     HeldKindHint = "deny"
+)
 
 // SyntheticResponse is returned to the client when a RequestPolicy
 // short-circuits the forward step (e.g., inline-task-approval resolution

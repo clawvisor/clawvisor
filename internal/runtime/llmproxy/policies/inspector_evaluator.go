@@ -83,6 +83,7 @@ func (e *InspectorEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 			Reason:      v.Reason,
 			AuditFields: fields,
 			HoldKey:     "ambiguous_" + tu.ID,
+			HeldKind:    pipeline.HeldKindHintApproval,
 		}, nil
 	}
 

@@ -75,8 +75,9 @@ func BridgeToolUseEvaluator(
 			return conversation.ToolUseVerdict{Allowed: true}
 		}
 		cv := conversation.ToolUseVerdict{
-			Allowed: v.Outcome == OutcomeAllow || v.Outcome == OutcomeRewrite,
-			Reason:  v.Reason,
+			Allowed:      v.Outcome == OutcomeAllow || v.Outcome == OutcomeRewrite,
+			Reason:       v.Reason,
+			HeldKindHint: string(v.HeldKind),
 		}
 		if mu, ok := mutations[tu.ID]; ok && mu != nil {
 			if len(mu.rewrittenInput) > 0 {
