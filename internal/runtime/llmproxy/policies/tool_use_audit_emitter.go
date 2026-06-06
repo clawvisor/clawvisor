@@ -113,23 +113,6 @@ func EmitToolUseAuditRows(
 		// verdict claim to CredentialRewrite).
 		row.Outcome = outcomeNameFor(ev.EvaluatorName, winningV, ev.Facts)
 		row.TaskID = matchedTaskIDFromFacts(factsByTU[ev.ToolUse.ID])
-		if row.TaskID == "" {
-			// Legacy fallback for evaluators that still surface
-			// matched_task_id via AuditFields. Removed when Phase 6
-			// decomposes every policy to emit TaskScopeFact.
-			row.TaskID = taskIDFromAuditFields(winningV.AuditFields)
-			if row.TaskID == "" {
-				for _, e := range result.Evaluations {
-					if e.ToolUseID != ev.ToolUse.ID {
-						continue
-					}
-					if id := taskIDFromAuditFields(e.Verdict.AuditFields); id != "" {
-						row.TaskID = id
-						break
-					}
-				}
-			}
-		}
 		sink(ctx, row)
 	}
 }
@@ -169,15 +152,10 @@ func decisionFromOutcome(o pipeline.Outcome) string {
 }
 
 // outcomeNameFor extracts the stage-specific outcome name from the
-// winning verdict. Reads typed Facts first (Phase 2's primary path);
-// falls back to AuditFields keys for legacy paths not yet migrated.
-// Different evaluators surface different fact types; the type switch
-// here mirrors the per-stage outcome naming the legacy
-// newToolUseEvaluator's audit calls used.
+// winning verdict's typed Facts. Each evaluator's Fact carries the
+// outcome string directly; the type switch here mirrors the per-stage
+// outcome naming the legacy newToolUseEvaluator's audit calls used.
 func outcomeNameFor(evaluatorName string, v pipeline.ToolUseVerdict, facts []pipeline.EvaluationFact) string {
-	// Typed facts on the winning verdict take priority. Only consult
-	// the verdict's own facts here (not the full accumulated trail) —
-	// the outcome name characterizes the WINNING evaluator's verdict.
 	for _, f := range v.Facts {
 		switch ff := f.(type) {
 		case pipeline.ControlFact:
@@ -205,29 +183,8 @@ func outcomeNameFor(evaluatorName string, v pipeline.ToolUseVerdict, facts []pip
 			}
 		}
 	}
-	// Legacy AuditFields fallback for paths not yet emitting Facts.
-	if v.AuditFields != nil {
-		for _, key := range []string{
-			"control_outcome",
-			"rewrite_outcome",
-			"path",
-		} {
-			if s, ok := stringField(v.AuditFields, key); ok && s != "" {
-				return s
-			}
-		}
-		if _, hasReason := v.AuditFields["task_scope_reason"]; hasReason {
-			allowed, _ := boolField(v.AuditFields, "task_scope_allowed")
-			if allowed {
-				return "matched_task_scope"
-			}
-			return "task_scope_missing"
-		}
-		if passed, ok := boolField(v.AuditFields, "boundary_check_passed"); ok && !passed {
-			return "boundary_check_failed"
-		}
-	}
-	// Generic fallback per outcome.
+	// Generic fallback per outcome — used when the winning verdict
+	// carried no stage-specific fact (e.g., default Allow fallthrough).
 	switch v.Outcome {
 	case pipeline.OutcomeAllow:
 		switch evaluatorName {
@@ -247,33 +204,4 @@ func outcomeNameFor(evaluatorName string, v pipeline.ToolUseVerdict, facts []pip
 	default:
 		return ""
 	}
-}
-
-func taskIDFromAuditFields(fields map[string]any) string {
-	s, _ := stringField(fields, "matched_task_id")
-	return s
-}
-
-func stringField(fields map[string]any, key string) (string, bool) {
-	if fields == nil {
-		return "", false
-	}
-	v, ok := fields[key]
-	if !ok {
-		return "", false
-	}
-	s, ok := v.(string)
-	return s, ok
-}
-
-func boolField(fields map[string]any, key string) (bool, bool) {
-	if fields == nil {
-		return false, false
-	}
-	v, ok := fields[key]
-	if !ok {
-		return false, false
-	}
-	b, ok := v.(bool)
-	return b, ok
 }

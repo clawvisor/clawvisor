@@ -30,21 +30,18 @@ func TestEmitToolUseAuditRows_NoOpOnNilInputs(t *testing.T) {
 // (Decision=block, Outcome=task_scope_missing) tuple.
 func TestEmitToolUseAuditRows_TaskScopeMissingMapping(t *testing.T) {
 	tu := conversation.ToolUse{ID: "toolu_1", Name: "Bash", Input: json.RawMessage(`{"command":"mkdir /tmp/x"}`)}
+	scopeFact := pipeline.TaskScopeFact{Reason: "no active task scope", Allowed: false, MatchedTaskID: "task-123"}
 	result := &pipeline.ToolUseResult{
 		PerToolUse: map[string]pipeline.ToolUseVerdict{
 			"toolu_1": {
 				Outcome: pipeline.OutcomeHold,
 				Reason:  "no active task scope",
-				AuditFields: map[string]any{
-					"task_scope_reason":  "no active task scope",
-					"task_scope_allowed": false,
-					"matched_task_id":    "task-123",
-				},
 				HoldKey: "needs_task_toolu_1",
+				Facts:   []pipeline.EvaluationFact{scopeFact},
 			},
 		},
 		Evaluations: []pipeline.ToolUseEvaluation{
-			{EvaluatorName: "task_scope", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeHold}},
+			{EvaluatorName: "task_scope", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeHold, Facts: []pipeline.EvaluationFact{scopeFact}}},
 		},
 	}
 	var rows []policies.ToolUseAuditRow
@@ -74,20 +71,17 @@ func TestEmitToolUseAuditRows_TaskScopeMissingMapping(t *testing.T) {
 // Outcome=success.
 func TestEmitToolUseAuditRows_CredentialRewriteMapping(t *testing.T) {
 	tu := conversation.ToolUse{ID: "toolu_1", Name: "WebFetch", Input: json.RawMessage(`{}`)}
+	rewriteFact := pipeline.RewriteFact{Outcome: "success", TargetHost: "api.github.com", TargetMethod: "POST"}
 	result := &pipeline.ToolUseResult{
 		PerToolUse: map[string]pipeline.ToolUseVerdict{
 			"toolu_1": {
 				Outcome: pipeline.OutcomeRewrite,
 				Reason:  "credentialed call rewritten",
-				AuditFields: map[string]any{
-					"rewrite_outcome": "success",
-					"target_host":     "api.github.com",
-					"target_method":   "POST",
-				},
+				Facts:   []pipeline.EvaluationFact{rewriteFact},
 			},
 		},
 		Evaluations: []pipeline.ToolUseEvaluation{
-			{EvaluatorName: "credential_rewrite", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeRewrite}},
+			{EvaluatorName: "credential_rewrite", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeRewrite, Facts: []pipeline.EvaluationFact{rewriteFact}}},
 		},
 	}
 	var rows []policies.ToolUseAuditRow
@@ -110,18 +104,17 @@ func TestEmitToolUseAuditRows_CredentialRewriteMapping(t *testing.T) {
 // control_outcome AuditField.
 func TestEmitToolUseAuditRows_ControlOutcomeMapping(t *testing.T) {
 	tu := conversation.ToolUse{ID: "toolu_1", Name: "Bash"}
+	controlFact := pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}
 	result := &pipeline.ToolUseResult{
 		PerToolUse: map[string]pipeline.ToolUseVerdict{
 			"toolu_1": {
 				Outcome: pipeline.OutcomeDeny,
 				Reason:  "Clawvisor: caller nonce cache not configured",
-				AuditFields: map[string]any{
-					"control_outcome": "caller_nonce_unavailable",
-				},
+				Facts:   []pipeline.EvaluationFact{controlFact},
 			},
 		},
 		Evaluations: []pipeline.ToolUseEvaluation{
-			{EvaluatorName: "control_tool_use", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeDeny}},
+			{EvaluatorName: "control_tool_use", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeDeny, Facts: []pipeline.EvaluationFact{controlFact}}},
 		},
 	}
 	var rows []policies.ToolUseAuditRow
@@ -141,19 +134,17 @@ func TestEmitToolUseAuditRows_ControlOutcomeMapping(t *testing.T) {
 // path AuditField (script_session_passthrough).
 func TestEmitToolUseAuditRows_ScriptSessionPassthroughMapping(t *testing.T) {
 	tu := conversation.ToolUse{ID: "toolu_1", Name: "WebFetch"}
+	scriptFact := pipeline.ScriptSessionFact{Outcome: "script_session_passthrough"}
 	result := &pipeline.ToolUseResult{
 		PerToolUse: map[string]pipeline.ToolUseVerdict{
 			"toolu_1": {
 				Outcome: pipeline.OutcomeAllow,
 				Reason:  "tool_use carries a script-session caller token",
-				AuditFields: map[string]any{
-					"path":           "script_session_passthrough",
-					"verdict_source": "script_session",
-				},
+				Facts:   []pipeline.EvaluationFact{scriptFact},
 			},
 		},
 		Evaluations: []pipeline.ToolUseEvaluation{
-			{EvaluatorName: "script_session", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeAllow}},
+			{EvaluatorName: "script_session", ToolUseID: "toolu_1", Verdict: pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeAllow, Facts: []pipeline.EvaluationFact{scriptFact}}},
 		},
 	}
 	var rows []policies.ToolUseAuditRow

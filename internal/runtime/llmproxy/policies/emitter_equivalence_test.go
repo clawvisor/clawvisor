@@ -71,11 +71,10 @@ func TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows(t *testing.T) {
 			pipelineVerdict: pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeHold,
 				Reason:  "no active task scope covers Bash",
-				AuditFields: map[string]any{
-					"task_scope_reason":  "no active task scope covers Bash",
-					"task_scope_allowed": false,
-				},
 				HoldKey: "needs_task_toolu_1",
+				Facts: []pipeline.EvaluationFact{pipeline.TaskScopeFact{
+					Reason: "no active task scope covers Bash", Allowed: false,
+				}},
 			},
 			evaluatorName: "task_scope",
 		},
@@ -104,10 +103,9 @@ func TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows(t *testing.T) {
 			pipelineVerdict: pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeRewrite,
 				Reason:  "structured webfetch with autovault placeholder",
-				AuditFields: map[string]any{
-					"rewrite_outcome": "success",
-					"target_host":     "api.github.com",
-					"matched_task_id": "task-7",
+				Facts: []pipeline.EvaluationFact{
+					pipeline.RewriteFact{Outcome: "success", TargetHost: "api.github.com"},
+					pipeline.TaskScopeFact{MatchedTaskID: "task-7"},
 				},
 			},
 			evaluatorName: "credential_rewrite",
@@ -131,9 +129,7 @@ func TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows(t *testing.T) {
 			pipelineVerdict: pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeDeny,
 				Reason:  "caller nonce cache not configured",
-				AuditFields: map[string]any{
-					"rewrite_outcome": "caller_nonce_unavailable",
-				},
+				Facts:   []pipeline.EvaluationFact{pipeline.RewriteFact{Outcome: "caller_nonce_unavailable"}},
 			},
 			evaluatorName: "credential_rewrite",
 		},
@@ -157,10 +153,7 @@ func TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows(t *testing.T) {
 			pipelineVerdict: pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeRewrite,
 				Reason:  "control endpoint call",
-				AuditFields: map[string]any{
-					"control_outcome": "clawvisor_control",
-					"target_host":     "clawvisor.local",
-				},
+				Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "clawvisor_control"}},
 			},
 			evaluatorName: "control_tool_use",
 		},
@@ -183,10 +176,7 @@ func TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows(t *testing.T) {
 			pipelineVerdict: pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeAllow,
 				Reason:  "tool_use carries a script-session caller token; resolver enforces scope",
-				AuditFields: map[string]any{
-					"path":           "script_session_passthrough",
-					"verdict_source": "script_session",
-				},
+				Facts:   []pipeline.EvaluationFact{pipeline.ScriptSessionFact{Outcome: "script_session_passthrough"}},
 			},
 			evaluatorName: "script_session",
 		},
@@ -213,10 +203,10 @@ func TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows(t *testing.T) {
 			pipelineVerdict: pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeDeny,
 				Reason:  "host attacker.example not in placeholder allowlist",
-				AuditFields: map[string]any{
-					"boundary_check_passed": false,
-					"boundary_check_reason": "host attacker.example not in placeholder allowlist",
-				},
+				Facts: []pipeline.EvaluationFact{pipeline.BoundaryFact{
+					Passed: false,
+					Reason: "host attacker.example not in placeholder allowlist",
+				}},
 			},
 			evaluatorName: "inspector_chain",
 		},
