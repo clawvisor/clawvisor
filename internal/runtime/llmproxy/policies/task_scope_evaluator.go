@@ -112,7 +112,7 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 		Reason:      dec.Reason,
 		AuditFields: fields,
 		HoldKey:     "needs_task_" + tu.ID,
-		HeldKind:    pipeline.HeldKindHintApproval,
+		HeldKindHint: pipeline.HeldKindHintApproval,
 		Facts:       []pipeline.EvaluationFact{fact},
 	}, nil
 }

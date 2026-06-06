@@ -11,9 +11,22 @@ import (
 
 type ToolUseEvaluator func(ToolUse) ToolUseVerdict
 
+// ToolUseVerdict is the unified per-tool-use verdict shape consumed by
+// response rewriters AND produced by the policy pipeline. Both pipelines
+// share this type — there is no separate pipeline.ToolUseVerdict.
 type ToolUseVerdict struct {
-	Allowed        bool
-	Reason         string
+	// Allowed is the legacy boolean derived from Outcome. Rewriters
+	// read this directly. Set true when Outcome is OutcomeAllow or
+	// OutcomeRewrite; false otherwise.
+	Allowed bool
+	// Outcome is the typed verdict category produced by pipeline
+	// evaluators. Optional for legacy callers that only set Allowed.
+	Outcome Outcome
+	Reason  string
+
+	// SubstituteWith replaces the tool_use block with a plain-text
+	// assistant block in the rewritten response. Used by approval-prompt
+	// rendering, inline-task interception, etc.
 	SubstituteWith string
 	// SuppressSubstituteText, when true and Allowed=false, prevents the
 	// rewriter/formatter from falling back to a default "Tool 'X' was
@@ -22,49 +35,67 @@ type ToolUseVerdict struct {
 	// not render their own separate block messages.
 	SuppressSubstituteText bool
 
-	// RewriteInput, when non-nil and Allowed=true, replaces the tool_use's
-	// input field in-place. Used by the lite-proxy inspector to redirect
-	// the harness's eventual HTTP call at the resolver while preserving
-	// the original method/path/body. Per-block mutation; the assistant
-	// turn otherwise streams through unchanged.
+	// RewriteInput, when non-nil, replaces the tool_use's input field
+	// in-place. Used by the lite-proxy inspector to redirect the
+	// harness's eventual HTTP call at the resolver while preserving
+	// the original method/path/body.
 	RewriteInput json.RawMessage
 
 	// ContinueWithToolResult, when non-empty, signals that the proxy
 	// has answered the tool_use itself and wants to feed the result back
-	// to the model so it continues with its next tool_use rather than
-	// terminating the turn. The handler builds a synthetic user turn
-	// containing a tool_result block with this content and re-calls the
-	// upstream LLM. SubstituteWith remains the fallback rendered to the
-	// harness if the continuation call fails.
+	// to the model. The handler builds a synthetic user turn containing
+	// a tool_result block with this content and re-calls the upstream
+	// LLM. SubstituteWith remains the fallback rendered if the
+	// continuation call fails.
 	ContinueWithToolResult string
 
 	// PrependAssistantNotice, when non-empty, is text the handler
-	// prepends to the assistant turn it returns to the harness AFTER a
-	// successful ContinueWithToolResult round-trip. The use case is
-	// surfacing a user-facing notice ("a task was auto-approved on
-	// your behalf") in the same response that carries the model's next
-	// actions, so the user sees what happened without a separate turn.
-	// Ignored when ContinueWithToolResult is empty or when the
-	// continuation failed and the substitute fallback rendered
-	// instead.
+	// prepends to the assistant turn AFTER a successful
+	// ContinueWithToolResult round-trip.
 	PrependAssistantNotice string
 
-	// CreatedTaskID is set by the conversation auto-approval gate to
-	// the ID of the inline task it created before returning the
-	// verdict. Carried so downstream audit rows in the lite-proxy
-	// handler (e.g. LogContinuationSkippedSiblingTools when sibling
-	// tool_uses force a fallback) can link to the same task_id the
-	// rest of the approval audit trail uses — without parsing the
-	// augmentation text or threading a separate map. Empty for any
-	// other verdict source.
+	// CreatedTaskID names the inline task created by the
+	// conversation auto-approval gate. Carried so downstream audit
+	// rows can link to the same task_id.
 	CreatedTaskID string
 
 	// HeldKindHint is the policy-set classification of this verdict
-	// for postproc's coalescing pass. Mirrors pipeline.HeldKindHint as
-	// a string so the conversation package stays free of pipeline
-	// imports. Empty means classifyVerdict falls back to substring
-	// matching on Reason.
-	HeldKindHint string
+	// for postproc's coalescing pass. When empty, classifyVerdict
+	// falls back to substring matching on Reason.
+	HeldKindHint HeldKindHint
+
+	// --- pipeline-side fields (formerly on pipeline.ToolUseVerdict) ---
+
+	// AuditFields is the legacy untyped audit carrier. Deprecated;
+	// new evaluators emit Facts instead.
+	AuditFields map[string]any
+
+	// HoldKey groups sibling tool_uses for coalescing. Empty means
+	// "do not coalesce" (each Hold gets its own approval row).
+	HoldKey string
+
+	// Continue lifts continuation out of "mutation" into a control-flow
+	// signal. When set, the tool_use is being served locally and the
+	// pipeline re-enters with the synthetic continuation as the next
+	// request.
+	Continue *ContinueSignal
+
+	// ContinueWithToolResultText is the legacy flat-text variant of
+	// ContinueWithToolResult. Both fields surface as the same
+	// conversation continuation; ContinueWithToolResultText is kept for
+	// evaluator code that hasn't migrated.
+	ContinueWithToolResultText string
+
+	// EmittedAuditExternally signals that this evaluator already emitted
+	// an audit row via a side channel (legacy trigger-miss authorizer).
+	// Set true to suppress the orchestrator's downstream audit emission.
+	EmittedAuditExternally bool
+
+	// Facts carries typed observations the evaluator emitted. Audit
+	// emission branches via type switch on Facts. Populated for EVERY
+	// evaluator that runs, including those returning Skip —
+	// observation is a separate channel from verdict claiming.
+	Facts []EvaluationFact
 }
 
 type RewriteResult struct {

@@ -64,14 +64,14 @@ func TestBridgeToolUseEvaluator_AllowAndRewrite(t *testing.T) {
 		},
 	}
 
-	eval, result, err := pipeline.BridgeToolUseEvaluator(
+	eval, result, err := pipeline.RunToolUseEvaluators(
 		context.Background(),
 		res,
 		tools,
 		[]pipeline.ToolUseEvaluator{switcher},
 	)
 	if err != nil {
-		t.Fatalf("BridgeToolUseEvaluator: %v", err)
+		t.Fatalf("RunToolUseEvaluators: %v", err)
 	}
 	if result == nil {
 		t.Fatal("result is nil")
@@ -105,9 +105,9 @@ func TestBridgeToolUseEvaluator_DenyWithSubstitute(t *testing.T) {
 		&replacerEvaluator{name: "replace", text: "denied: please approve via /control/tasks"},
 	}
 
-	eval, _, err := pipeline.BridgeToolUseEvaluator(context.Background(), res, tools, evaluators)
+	eval, _, err := pipeline.RunToolUseEvaluators(context.Background(), res, tools, evaluators)
 	if err != nil {
-		t.Fatalf("BridgeToolUseEvaluator: %v", err)
+		t.Fatalf("RunToolUseEvaluators: %v", err)
 	}
 
 	v := eval(tools[0])
@@ -135,9 +135,9 @@ func TestBridgeToolUseEvaluator_ContinueSurfacesAsToolResult(t *testing.T) {
 		notice:  "auto-approved",
 	}
 
-	eval, result, err := pipeline.BridgeToolUseEvaluator(context.Background(), res, tools, []pipeline.ToolUseEvaluator{cont})
+	eval, result, err := pipeline.RunToolUseEvaluators(context.Background(), res, tools, []pipeline.ToolUseEvaluator{cont})
 	if err != nil {
-		t.Fatalf("BridgeToolUseEvaluator: %v", err)
+		t.Fatalf("RunToolUseEvaluators: %v", err)
 	}
 	if result.Continue == nil {
 		t.Fatal("result.Continue is nil")

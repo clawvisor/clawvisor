@@ -31,7 +31,7 @@ func (m *captureMutator) ReplaceWithText(text string) error {
 	return nil
 }
 
-// BridgeToolUseEvaluator runs the supplied pipeline evaluators against
+// RunToolUseEvaluators runs the supplied pipeline evaluators against
 // the response's tool_uses via EvaluateToolUses and returns a
 // conversation.ToolUseEvaluator closure that the existing response
 // rewriters can consume. The closure looks up each tool_use's verdict
@@ -50,7 +50,7 @@ func (m *captureMutator) ReplaceWithText(text string) error {
 // newToolUseEvaluator emits continuation text. The orchestrator
 // guarantees only one tool_use carries Continue, so siblings fall back
 // to Allowed.
-func BridgeToolUseEvaluator(
+func RunToolUseEvaluators(
 	ctx context.Context,
 	res ReadOnlyResponse,
 	toolUses []conversation.ToolUse,
@@ -74,56 +74,39 @@ func BridgeToolUseEvaluator(
 			// allow rather than silently substituting.
 			return conversation.ToolUseVerdict{Allowed: true}
 		}
-		cv := conversation.ToolUseVerdict{
-			Allowed:      v.Outcome == OutcomeAllow || v.Outcome == OutcomeRewrite,
-			Reason:       v.Reason,
-			HeldKindHint: string(v.HeldKind),
-		}
-		// Pipeline-side fields populated directly by evaluators.
-		if v.SubstituteText != "" {
-			cv.SubstituteWith = v.SubstituteText
-		}
-		if len(v.RewriteInput) > 0 {
-			cv.RewriteInput = v.RewriteInput
-		}
-		if v.ContinueWithToolResult != "" {
-			cv.ContinueWithToolResult = v.ContinueWithToolResult
-		}
-		if v.PrependAssistantNotice != "" {
-			cv.PrependAssistantNotice = v.PrependAssistantNotice
-		}
-		if v.CreatedTaskID != "" {
-			cv.CreatedTaskID = v.CreatedTaskID
-		}
+		// Verdict type is now unified across pipeline + rewriters
+		// (Phase 8). Set the derived Allowed bool from Outcome so the
+		// legacy rewriter readers stay correct, then merge any
+		// queued mutator state.
+		v.Allowed = v.Outcome == conversation.OutcomeAllow || v.Outcome == conversation.OutcomeRewrite
 		// Mutator-side mutations (RewriteArgs / ReplaceWithText) take
 		// precedence over verdict-side fields. The mutator is the
 		// imperative API for evaluators that prefer to queue mutations
-		// alongside the verdict return; verdict-side fields are the
-		// declarative API for evaluators that build the verdict from
-		// scratch (inline-task intercept, control rewrite redirects).
+		// alongside the verdict return.
 		if mu, ok := mutations[tu.ID]; ok && mu != nil {
 			if len(mu.rewrittenInput) > 0 {
-				cv.RewriteInput = mu.rewrittenInput
+				v.RewriteInput = mu.rewrittenInput
 			}
 			if mu.replacementText != "" {
-				cv.SubstituteWith = mu.replacementText
+				v.SubstituteWith = mu.replacementText
 			}
 		}
+		// ContinueSignal carries structured synthetic-turn blocks; the
+		// rewriter reads the flattened ContinueWithToolResult string.
 		if v.Continue != nil && len(v.Continue.SyntheticToolResults) > 0 {
 			var combined []byte
 			for _, blk := range v.Continue.SyntheticToolResults {
 				combined = append(combined, blk...)
 			}
-			cv.ContinueWithToolResult = string(combined)
-			cv.PrependAssistantNotice = v.Continue.PrependNotice
+			v.ContinueWithToolResult = string(combined)
+			v.PrependAssistantNotice = v.Continue.PrependNotice
 		}
-		// ContinueWithToolResultText is the legacy flat-text variant
-		// retained for evaluators that haven't moved to
-		// ContinueWithToolResult yet.
+		// Legacy flat-text continuation variant retained for evaluators
+		// that haven't migrated to ContinueWithToolResult yet.
 		if v.ContinueWithToolResultText != "" {
-			cv.ContinueWithToolResult = v.ContinueWithToolResultText
+			v.ContinueWithToolResult = v.ContinueWithToolResultText
 		}
-		return cv
+		return v
 	}
 	return eval, result, nil
 }

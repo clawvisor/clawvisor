@@ -51,14 +51,14 @@ func TestComposeToolUseEvaluatorChain_EndToEndOnTriggerMiss(t *testing.T) {
 	}
 	res := newStubResp()
 
-	_, result, err := pipeline.BridgeToolUseEvaluator(
+	_, result, err := pipeline.RunToolUseEvaluators(
 		context.Background(),
 		res,
 		[]conversation.ToolUse{tu},
 		chain,
 	)
 	if err != nil {
-		t.Fatalf("BridgeToolUseEvaluator: %v", err)
+		t.Fatalf("RunToolUseEvaluators: %v", err)
 	}
 
 	v := result.PerToolUse[tu.ID]
@@ -108,14 +108,14 @@ func TestComposeToolUseEvaluatorChain_EndToEndCredentialedRewrite(t *testing.T) 
 	// (because no TaskScope/credentialed-path config is wired, the
 	// boundary-check + Allow fires before CredentialRewrite gets a turn).
 	// The first non-Skip wins, so InspectorChain claims the call.
-	eval, result, err := pipeline.BridgeToolUseEvaluator(
+	eval, result, err := pipeline.RunToolUseEvaluators(
 		context.Background(),
 		newStubResp(),
 		[]conversation.ToolUse{tu},
 		chain,
 	)
 	if err != nil {
-		t.Fatalf("BridgeToolUseEvaluator: %v", err)
+		t.Fatalf("RunToolUseEvaluators: %v", err)
 	}
 	v := result.PerToolUse[tu.ID]
 	// InspectorChain's boundary-check path returns Allow; that wins over

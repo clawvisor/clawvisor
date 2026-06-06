@@ -8,7 +8,7 @@
 // The factory composes the six-stage chain (ControlToolUseEvaluator
 // + ScriptSessionEvaluator + InspectorChain with TriggerMissAuthorizer
 // + TaskScopeEvaluator + IntentVerifyEvaluator + CredentialRewriteEvaluator)
-// and runs each tool_use through it via pipeline.BridgeToolUseEvaluator.
+// and runs each tool_use through it via pipeline.RunToolUseEvaluators.
 // Trigger-miss and credentialed-path authorization run through the
 // exported llmproxy.Evaluate* helpers; the inline task-definition
 // intercept flows through ControlToolUseEvaluator's InterceptInline
@@ -116,7 +116,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	}
 	ctx := req.Context()
 	res := &multiToolUseResponse{provider: provider, toolUses: toolUses}
-	evalFn, result, err := pipeline.BridgeToolUseEvaluator(ctx, res, toolUses, chain)
+	evalFn, result, err := pipeline.RunToolUseEvaluators(ctx, res, toolUses, chain)
 	if err != nil {
 		// Pipeline errored before producing per-tool verdicts. Emit
 		// one audit row keyed to the first tool (best signal we have)
@@ -169,7 +169,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 }
 
 // multiToolUseResponse is the pipeline ReadOnlyResponse the
-// response-level factory hands to BridgeToolUseEvaluator. Carries
+// response-level factory hands to RunToolUseEvaluators. Carries
 // the full sibling set so the orchestrator's per-tool loop sees all
 // of them in one pass.
 type multiToolUseResponse struct {
@@ -287,32 +287,24 @@ func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, pro
 	}
 }
 
-// conversationToPipelineVerdict translates a conversation-shape verdict
-// into the pipeline shape, preserving every field (SubstituteWith,
-// RewriteInput, ContinueWithToolResult, PrependAssistantNotice,
-// CreatedTaskID). Used by the inline-task interceptor whose source
-// helper still returns a conversation.ToolUseVerdict. The pipeline
-// verdict carries all conversation-shape fields directly so the bridge
-// is 1:1 — no inlineExtras side channel required.
+// conversationToPipelineVerdict sets the typed Outcome on a verdict
+// returned from a legacy helper that only set Allowed. After Phase 8
+// the verdict type is unified, so the only field-level translation
+// needed is deriving Outcome from Allowed.
 func conversationToPipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolUseVerdict {
-	outcome := pipeline.OutcomeDeny
+	if v.Outcome != "" {
+		return v
+	}
 	if v.Allowed {
 		if len(v.RewriteInput) > 0 {
-			outcome = pipeline.OutcomeRewrite
+			v.Outcome = pipeline.OutcomeRewrite
 		} else {
-			outcome = pipeline.OutcomeAllow
+			v.Outcome = pipeline.OutcomeAllow
 		}
+	} else {
+		v.Outcome = pipeline.OutcomeDeny
 	}
-	return pipeline.ToolUseVerdict{
-		Outcome:                outcome,
-		Reason:                 v.Reason,
-		HeldKind:               pipeline.HeldKindHint(v.HeldKindHint),
-		SubstituteText:         v.SubstituteWith,
-		RewriteInput:           v.RewriteInput,
-		ContinueWithToolResult: v.ContinueWithToolResult,
-		PrependAssistantNotice: v.PrependAssistantNotice,
-		CreatedTaskID:          v.CreatedTaskID,
-	}
+	return v
 }
 
 // buildBoundaryResolver wires InspectorChain's boundary check to the
