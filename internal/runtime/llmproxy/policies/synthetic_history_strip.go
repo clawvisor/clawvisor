@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/historystrip"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
@@ -32,7 +32,7 @@ func (SyntheticHistoryStrip) Name() string { return "synthetic_history_strip" }
 // error in Reason so the orchestrator can surface it to logging without
 // denying the request.
 func (p *SyntheticHistoryStrip) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
-	stripped, err := llmproxy.StripSyntheticApprovalHistory(llmproxy.SyntheticApprovalHistoryStripRequest{
+	stripped, err := historystrip.StripSyntheticApprovalHistory(historystrip.SyntheticApprovalHistoryStripRequest{
 		Provider: req.Provider(),
 		Body:     req.RawBody(),
 	})

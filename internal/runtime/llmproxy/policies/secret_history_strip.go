@@ -3,7 +3,7 @@ package policies
 import (
 	"context"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/historystrip"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
 
@@ -29,7 +29,7 @@ func (SecretHistoryStrip) Name() string { return "secret_history_strip" }
 // Preprocess runs the strip transform. Errors don't deny; stripping is
 // a best-effort context cleanup.
 func (p *SecretHistoryStrip) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
-	stripped, err := llmproxy.StripSecretDecisionHistory(llmproxy.SecretDecisionHistoryStripRequest{
+	stripped, err := historystrip.StripSecretDecisionHistory(historystrip.SecretDecisionHistoryStripRequest{
 		Provider: req.Provider(),
 		Body:     req.RawBody(),
 	})

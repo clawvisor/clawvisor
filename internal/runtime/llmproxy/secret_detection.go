@@ -17,6 +17,7 @@ import (
 
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/historystrip"
 )
 
 type InboundSecretFinding struct {
@@ -81,7 +82,7 @@ const (
 
 const (
 	SecretDecisionPromptMarker = "Clawvisor detected a possible raw secret"
-	SecretDecisionIDMarker     = "[clawvisor:secret="
+	SecretDecisionIDMarker     = historystrip.SecretDecisionIDMarker
 )
 
 type SecretDecisionReply struct {

@@ -1,4 +1,4 @@
-package llmproxy
+package historystrip
 
 import (
 	"encoding/json"
