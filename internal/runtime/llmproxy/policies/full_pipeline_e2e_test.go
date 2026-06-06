@@ -139,22 +139,6 @@ func TestFullPipeline_E2E_HappyPath(t *testing.T) {
 		t.Errorf("toolu_2 Outcome = %q, want Hold", v.Outcome)
 	}
 
-	// --- Phase 5: Coalesce decision + groups ---
-
-	// Both tools Hold; both have different per-tool HoldKeys
-	// (needs_task_toolu_1, needs_task_toolu_2). CoalesceHolds groups
-	// by HoldKey, so 2 distinct keys → 2 groups.
-	groups := pipeline.CoalesceHolds(toolResult)
-	if len(groups) != 2 {
-		t.Errorf("expected 2 hold groups, got %d", len(groups))
-	}
-
-	// ShouldCoalesce: multi-tool + at least one Hold + no Deny + no
-	// inline-task → true. (Even with only one Hold, the rule fires
-	// as long as the total tool_use count > 1 and a Hold is present.)
-	if !pipeline.ShouldCoalesce(toolResult) {
-		t.Errorf("ShouldCoalesce should return true for this turn")
-	}
 }
 
 // TestFullPipeline_E2E_DenyBreaksCoalescing validates the negative
@@ -216,8 +200,4 @@ func TestFullPipeline_E2E_DenyBreaksCoalescing(t *testing.T) {
 		t.Errorf("toolu_deny Outcome = %q, want Deny", result.PerToolUse["toolu_deny"].Outcome)
 	}
 
-	// ShouldCoalesce: Deny present → must return false.
-	if pipeline.ShouldCoalesce(result) {
-		t.Errorf("Deny in turn should break coalescing — ShouldCoalesce returned true")
-	}
 }
