@@ -113,9 +113,18 @@ type BufferedAudit struct {
 // orchestrator's default tool_use evaluator with a handler-supplied
 // implementation (typically the policies-chain-based pipeline
 // evaluator). The factory receives the request, full config,
-// provider, and an emit callback that the factory uses to append
-// audit rows to the internal sink.
-type ToolUseEvaluatorFactory func(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, emit func(BufferedAudit)) conversation.ToolUseEvaluator
+// provider, the tool_use list (pre-extracted for the buffered path
+// so the pipeline can run response-level; empty for streaming where
+// tool_uses arrive incrementally), and an emit callback that the
+// factory uses to append audit rows to the internal sink.
+//
+// When toolUses is non-empty, the factory pre-runs pipeline
+// evaluation ONCE on the full sibling set, emitting audits + holds
+// up front; the returned per-tool eval is a verdict lookup. When
+// empty, the factory falls back to lazy per-call pipeline runs
+// (used by the streaming path that doesn't have the full list
+// available before the rewriter sees the response).
+type ToolUseEvaluatorFactory func(req *http.Request, cfg PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, emit func(BufferedAudit)) conversation.ToolUseEvaluator
 
 // PostprocessConfig wires the inspector + rewriter into the LLM
 // endpoint handler's response path. The handler reads the upstream

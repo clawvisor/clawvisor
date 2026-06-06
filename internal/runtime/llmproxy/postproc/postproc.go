@@ -50,43 +50,6 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	}
 	auditSink := &capturedAuditSink{}
 	var captures []evalCapture
-
-	innerEval := selectToolUseEvaluator(req, cfg, rewriter.Name(), auditSink)
-
-	// Outer eval wraps innerEval and records the kind + decision
-	// context for the coalesce post-pass. Two side channels feed the
-	// capture: holdSink.holds (set by the buffered PendingApprovals
-	// wrapper) and auditSink.entries (set by the buffered audit
-	// closure). The last entry for this call carries the inspector
-	// verdict and final reason even when no hold was created.
-	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
-		holdsBefore, auditsBefore := 0, 0
-		if holdSink != nil {
-			holdsBefore = len(holdSink.holds)
-		}
-		if auditSink != nil {
-			auditsBefore = len(auditSink.entries)
-		}
-		v := innerEval(tu)
-		c := evalCapture{Use: tu, Kind: classifyVerdict(v)}
-		if holdSink != nil && len(holdSink.holds) > holdsBefore {
-			h := holdSink.holds[len(holdSink.holds)-1]
-			c.HoldID = h.Pending.ID
-			c.Stage = h.Pending.Stage
-			c.Inspector = h.Pending.Inspector
-			c.Fingerprint = h.Pending.Fingerprint
-			c.Reason = h.Pending.Reason
-		} else if auditSink != nil && len(auditSink.entries) > auditsBefore {
-			last := auditSink.entries[len(auditSink.entries)-1]
-			c.Inspector = last.Verdict
-			c.Reason = last.Reason
-		}
-		if auditSink != nil && len(auditSink.entries) > auditsBefore {
-			c.TaskID = auditSink.entries[len(auditSink.entries)-1].TaskID
-		}
-		captures = append(captures, c)
-		return v
-	}
 	failClosed := func(reason string) llmproxy.PostprocessResult {
 		rollbackBufferedPendingTasks(req.Context(), cfg, holdSink)
 		return llmproxy.PostprocessResult{
@@ -94,6 +57,72 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 			ContentType:   contentType,
 			SkippedReason: reason,
 		}
+	}
+
+	// Pre-extract tool_uses so the factory can run pipeline.EvaluateToolUses
+	// ONCE on the full sibling set (response-level orchestration). The
+	// collector pass discards the rewritten body (Allowed=true with no
+	// mutations); the real rewrite happens in the second pass below
+	// with the pre-computed verdicts.
+	//
+	// Collector errors are tolerated when at least one tool_use was
+	// collected — the real rewriter pass below will surface the error
+	// and trigger failClosed. This preserves legacy "rewriter errors
+	// AFTER calling eval still create side effects" semantics, which a
+	// few tests pin via evalThenErrorRewriter.
+	var preExtracted []conversation.ToolUse
+	collectorEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		preExtracted = append(preExtracted, tu)
+		return conversation.ToolUseVerdict{Allowed: true}
+	}
+	if _, err := rewriter.Rewrite(body, contentType, collectorEval); err != nil && len(preExtracted) == 0 {
+		return failClosed("rewriter error during tool_use extraction: " + err.Error())
+	}
+
+	innerEval := selectToolUseEvaluator(req, cfg, rewriter.Name(), preExtracted, auditSink)
+
+	// Outer eval wraps innerEval and records the kind + decision
+	// context for the coalesce post-pass. Two side channels feed the
+	// capture: holdSink.holds (set by the buffered PendingApprovals
+	// wrapper) and auditSink.entries (set by the buffered audit
+	// closure). In response-level mode (buffered path) all pipeline
+	// side effects fire upfront during selectToolUseEvaluator, so the
+	// capture matches entries by tool_use ID instead of by sequence.
+	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		v := innerEval(tu)
+		c := evalCapture{Use: tu, Kind: classifyVerdict(v)}
+		if holdSink != nil {
+			for i := len(holdSink.holds) - 1; i >= 0; i-- {
+				h := holdSink.holds[i]
+				if h.Pending.ToolUse.ID == tu.ID {
+					c.HoldID = h.Pending.ID
+					c.Stage = h.Pending.Stage
+					c.Inspector = h.Pending.Inspector
+					c.Fingerprint = h.Pending.Fingerprint
+					c.Reason = h.Pending.Reason
+					break
+				}
+			}
+		}
+		if auditSink != nil {
+			for i := len(auditSink.entries) - 1; i >= 0; i-- {
+				entry := auditSink.entries[i]
+				if entry.ToolUse.ID == tu.ID {
+					if c.Inspector.Source == "" {
+						c.Inspector = entry.Verdict
+					}
+					if c.Reason == "" {
+						c.Reason = entry.Reason
+					}
+					if c.TaskID == "" {
+						c.TaskID = entry.TaskID
+					}
+					break
+				}
+			}
+		}
+		captures = append(captures, c)
+		return v
 	}
 
 	result, err := rewriter.Rewrite(body, contentType, eval)
@@ -174,14 +203,18 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 // ToolUseEvaluatorFactory. Nil is a programmer error — the handler
 // (and every test that exercises Postprocess) must assign
 // pipelineeval.Factory to cfg.ToolUseEvaluatorFactory explicitly.
-func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, auditSink *capturedAuditSink) conversation.ToolUseEvaluator {
+//
+// toolUses is the pre-extracted sibling set when known (buffered
+// path); empty for streaming where tool_uses arrive incrementally
+// and the factory runs lazily per call.
+func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, auditSink *capturedAuditSink) conversation.ToolUseEvaluator {
 	if cfg.ToolUseEvaluatorFactory == nil {
 		panic("llmproxy/postproc: PostprocessConfig.ToolUseEvaluatorFactory is required — assign pipelineeval.Factory")
 	}
 	emit := func(ba llmproxy.BufferedAudit) {
 		auditSink.entries = append(auditSink.entries, ba)
 	}
-	return cfg.ToolUseEvaluatorFactory(req, cfg, provider, emit)
+	return cfg.ToolUseEvaluatorFactory(req, cfg, provider, toolUses, emit)
 }
 
 // coalesceFromCaptures builds the single PendingLiteApproval covering

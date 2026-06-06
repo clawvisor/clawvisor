@@ -40,6 +40,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	req *http.Request,
 	cfg llmproxy.PostprocessConfig,
 	provider conversation.Provider,
+	toolUses []conversation.ToolUse,
 	emit func(llmproxy.BufferedAudit),
 ) conversation.ToolUseEvaluator {
 	triggerMissAuth := func(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator) pipeline.ToolUseVerdict {
@@ -102,6 +103,68 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		Rewrite:         buildRewriteResolver(cfg),
 	})
 
+	// Response-level path: when the caller supplies the full tool_use
+	// list (buffered case), run pipeline.EvaluateToolUses ONCE on all
+	// siblings. The returned eval becomes a verdict lookup; audit rows
+	// + holds emit up-front during this single pass.
+	if len(toolUses) > 0 {
+		ctx := req.Context()
+		res := &multiToolUseResponse{provider: provider, toolUses: toolUses}
+		evalFn, result, err := pipeline.BridgeToolUseEvaluator(ctx, res, toolUses, chain)
+		if err != nil {
+			// Pipeline errored before producing per-tool verdicts. Emit
+			// one audit row keyed to the first tool (best signal we have)
+			// and return a Deny-for-everything evaluator so the rewriter
+			// renders refusals consistently.
+			firstTU := toolUses[0]
+			emit(llmproxy.BufferedAudit{
+				ToolUse:  firstTU,
+				Decision: "block",
+				Outcome:  "pipeline_error",
+				Reason:   err.Error(),
+			})
+			errMsg := "Clawvisor: authorization pipeline failed — " + err.Error()
+			return func(_ conversation.ToolUse) conversation.ToolUseVerdict {
+				return conversation.ToolUseVerdict{Allowed: false, Reason: errMsg}
+			}
+		}
+		// Emit one audit row per tool_use whose verdict didn't externally
+		// emit. Skipped tools (trigger-miss authorizer fired its own
+		// emit) are correctly suppressed.
+		matchedTaskIDs := make(map[string]string, len(toolUses))
+		for _, tu := range toolUses {
+			if verdictEmittedAuditExternally(result, tu.ID) {
+				continue
+			}
+			matchedTaskIDs[tu.ID] = lookupMatchedTaskID(ctx, cfg, tu)
+		}
+		toEmit := make([]conversation.ToolUse, 0, len(toolUses))
+		for _, tu := range toolUses {
+			if !verdictEmittedAuditExternally(result, tu.ID) {
+				toEmit = append(toEmit, tu)
+			}
+		}
+		policies.EmitToolUseAuditRows(ctx, result, toEmit, cfg.Inspector, func(_ context.Context, row policies.ToolUseAuditRow) {
+			if row.TaskID == "" {
+				if id := matchedTaskIDs[row.ToolUse.ID]; id != "" {
+					row.TaskID = id
+				}
+			}
+			emit(llmproxy.BufferedAudit{
+				ToolUse:  row.ToolUse,
+				Verdict:  row.Verdict,
+				Decision: row.Decision,
+				Outcome:  row.Outcome,
+				Reason:   row.Reason,
+				TaskID:   row.TaskID,
+			})
+		})
+		return evalFn
+	}
+
+	// Streaming fallback: tool_uses arrive incrementally via the
+	// rewriter's per-tool callback. Pipeline runs lazily for the one
+	// tool the callback sees; audit rows emit per call.
 	return func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		ctx := req.Context()
 		res := &singletonToolUseResponse{provider: provider, tu: tu}
@@ -137,6 +200,22 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		return evalFn(tu)
 	}
 }
+
+// multiToolUseResponse is the pipeline ReadOnlyResponse the
+// response-level factory hands to BridgeToolUseEvaluator. Carries
+// the full sibling set so the orchestrator's per-tool loop sees all
+// of them in one pass.
+type multiToolUseResponse struct {
+	provider conversation.Provider
+	toolUses []conversation.ToolUse
+}
+
+func (r *multiToolUseResponse) Provider() conversation.Provider { return r.provider }
+func (r *multiToolUseResponse) StreamShape() conversation.StreamShape {
+	return conversation.StreamShapeUnknown
+}
+func (r *multiToolUseResponse) IsStreaming() bool             { return false }
+func (r *multiToolUseResponse) ToolUses() []conversation.ToolUse { return r.toolUses }
 
 func lookupMatchedTaskID(ctx context.Context, cfg llmproxy.PostprocessConfig, tu conversation.ToolUse) string {
 	if cfg.Inspector == nil {

@@ -63,7 +63,12 @@ func PostprocessStream(
 	auditSink := &capturedAuditSink{}
 	var captures []evalCapture
 
-	innerEval := selectToolUseEvaluator(req, cfg, provider, auditSink)
+	// Streaming path: tool_uses arrive incrementally via the rewriter's
+	// per-call eval. Pass nil to the factory so it falls back to lazy
+	// per-tool pipeline runs. Response-level pre-extraction isn't
+	// available here without buffering the entire stream first — see
+	// the buffered path in postproc.go for the response-level variant.
+	innerEval := selectToolUseEvaluator(req, cfg, provider, nil, auditSink)
 
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		holdsBefore, auditsBefore := 0, 0
