@@ -103,7 +103,7 @@ func PostprocessStream(
 				entry := pendingAuditEvents.entries[i]
 				if entry.ToolUse.ID == tu.ID {
 					if c.Inspector.Source == "" {
-						c.Inspector = entry.InspectorVerdict
+						c.Inspector = llmproxy.InspectorVerdictFromSnapshot(entry.InspectorVerdict)
 					}
 					if c.Reason == "" {
 						c.Reason = entry.Reason
@@ -153,7 +153,7 @@ func PostprocessStream(
 					first := captures[0]
 					cfg.Audit.WriteAuditEvent(req.Context(), auditAgent, cfg.RequestID, conversation.AuditEvent{
 						ToolUse:          first.Use,
-						InspectorVerdict: first.Inspector,
+						InspectorVerdict: llmproxy.InspectorSnapshot(first.Inspector),
 						Decision:         conversation.DecisionBlock,
 						OutcomeName:      "approval_evicted",
 						Reason:           "superseded pending approval " + held.Evicted.ID,

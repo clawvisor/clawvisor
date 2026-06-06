@@ -263,7 +263,7 @@ func TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows(t *testing.T) {
 					Reason:           winningV.Reason,
 					Facts:            ev.Facts,
 					Winning:          true,
-					InspectorVerdict: sc.verdict,
+					InspectorVerdict: llmproxy.InspectorSnapshot(sc.verdict),
 					OutcomeName:      conversation.OutcomeNameFromFacts(ev.EvaluatorName, ev.Outcome, ev.Facts),
 					TaskID:           conversation.MatchedTaskIDFromFacts(factsByTU[ev.ToolUse.ID]),
 				}

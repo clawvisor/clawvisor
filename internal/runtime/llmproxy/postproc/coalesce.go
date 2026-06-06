@@ -159,7 +159,7 @@ func replayBufferedHolds(ctx context.Context, cfg llmproxy.PostprocessConfig, in
 			if cfg.Audit != nil && agent != nil && i < len(captures) {
 				cfg.Audit.WriteAuditEvent(ctx, agent, cfg.RequestID, conversation.AuditEvent{
 					ToolUse:          captures[i].Use,
-					InspectorVerdict: captures[i].Inspector,
+					InspectorVerdict: llmproxy.InspectorSnapshot(captures[i].Inspector),
 					Decision:         conversation.DecisionBlock,
 					OutcomeName:      "approval_hold_replay_failed",
 					Reason:           err.Error(),
@@ -173,7 +173,7 @@ func replayBufferedHolds(ctx context.Context, cfg llmproxy.PostprocessConfig, in
 			if cfg.Audit != nil && agent != nil && i < len(captures) {
 				cfg.Audit.WriteAuditEvent(ctx, agent, cfg.RequestID, conversation.AuditEvent{
 					ToolUse:          captures[i].Use,
-					InspectorVerdict: captures[i].Inspector,
+					InspectorVerdict: llmproxy.InspectorSnapshot(captures[i].Inspector),
 					Decision:         conversation.DecisionBlock,
 					OutcomeName:      "approval_evicted",
 					Reason:           "superseded pending approval " + res.Evicted.ID,
@@ -221,7 +221,7 @@ func emitCoalescedPendingAuditRows(ctx context.Context, cfg llmproxy.Postprocess
 		reason := "held under coalesced approval " + approvalID + " (originally classified as " + string(c.Kind) + ")"
 		cfg.Audit.WriteAuditEvent(ctx, agent, cfg.RequestID, conversation.AuditEvent{
 			ToolUse:          c.Use,
-			InspectorVerdict: c.Inspector,
+			InspectorVerdict: llmproxy.InspectorSnapshot(c.Inspector),
 			Decision:         conversation.DecisionBlock,
 			OutcomeName:      "coalesced_approval_pending",
 			Reason:           reason,

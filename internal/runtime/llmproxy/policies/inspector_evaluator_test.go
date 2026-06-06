@@ -56,7 +56,7 @@ func TestInspectorEvaluator_TriggerMissReturnsSkip(t *testing.T) {
 func inspectorFactSource(facts []pipeline.EvaluationFact) inspector.VerdictSource {
 	for _, f := range facts {
 		if ifct, ok := f.(pipeline.InspectorFact); ok {
-			return ifct.Source
+			return inspector.VerdictSource(ifct.Source)
 		}
 	}
 	return ""

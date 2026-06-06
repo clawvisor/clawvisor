@@ -189,7 +189,7 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 // the same fact shape regardless of which path runs.
 func newInspectorFact(v inspector.Verdict) pipeline.InspectorFact {
 	return pipeline.InspectorFact{
-		Source:       v.Source,
+		Source:       string(v.Source),
 		Host:         v.Host,
 		Method:       v.Method,
 		Path:         v.Path,

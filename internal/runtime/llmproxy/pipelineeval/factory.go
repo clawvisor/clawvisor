@@ -146,11 +146,11 @@ func emitAuditEvents(
 			out.Reason = ev.Reason
 		}
 		if insp != nil {
-			out.InspectorVerdict = insp.Inspect(ctx, inspector.ToolUse{
+			out.InspectorVerdict = llmproxy.InspectorSnapshot(insp.Inspect(ctx, inspector.ToolUse{
 				ID:    ev.ToolUse.ID,
 				Name:  ev.ToolUse.Name,
 				Input: ev.ToolUse.Input,
-			})
+			}))
 		}
 		out.OutcomeName = conversation.OutcomeNameFromFacts(ev.EvaluatorName, ev.Outcome, ev.Facts)
 		out.TaskID = conversation.MatchedTaskIDFromFacts(factsByTU[ev.ToolUse.ID])
@@ -362,7 +362,7 @@ func buildCredentialedTaskScope(cfg llmproxy.PostprocessConfig, provider convers
 			}
 			emit(conversation.AuditEvent{
 				ToolUse:          tu,
-				InspectorVerdict: v,
+				InspectorVerdict: llmproxy.InspectorSnapshot(v),
 				Decision:         conversation.DecisionKind(decision),
 				OutcomeName:      outcome,
 				Reason:           reason,

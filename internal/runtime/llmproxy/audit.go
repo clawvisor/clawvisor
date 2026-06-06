@@ -322,7 +322,7 @@ func (e *AuditEmitter) WriteAuditEvent(ctx context.Context, agent *store.Agent, 
 func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Agent, requestID string, tu conversation.ToolUse, verdict inspector.Verdict, decision, outcome, reason, taskID string) {
 	e.WriteAuditEvent(ctx, agent, requestID, conversation.AuditEvent{
 		ToolUse:          tu,
-		InspectorVerdict: verdict,
+		InspectorVerdict: InspectorSnapshot(verdict),
 		Decision:         conversation.DecisionKind(decision),
 		OutcomeName:      outcome,
 		Reason:           reason,
