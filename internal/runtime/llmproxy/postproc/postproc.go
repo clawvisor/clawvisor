@@ -37,24 +37,11 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		return llmproxy.PostprocessResult{Body: body, ContentType: contentType, SkippedReason: "no rewriter for route"}
 	}
 
-	// Pass-1 buffering: PendingApprovals.Hold + audit emission flow
-	// into local sinks. The pipeline.Finalizer (constructed below)
-	// consumes them at end-of-response.
-	originalPendingApprovals := cfg.PendingApprovals
-	holdSink := &capturedHoldSink{}
-	if originalPendingApprovals != nil {
-		cfg.PendingApprovals = newHoldCapturingApprovalCache(originalPendingApprovals, holdSink)
-	}
-	pendingAuditEvents := &pendingAuditEventBuffer{}
-	finalizer := llmproxy.NewFinalizer(cfg, originalPendingApprovals)
+	session := newPostprocessSession(cfg)
 
 	var preExtracted []conversation.ToolUse
 	failClosed := func(reason string) llmproxy.PostprocessResult {
-		if finalizer != nil {
-			ctx := req.Context()
-			feedFinalizer(finalizer, preExtracted, holdSink, pendingAuditEvents, nil)
-			finalizer.Rollback(ctx)
-		}
+		session.rollback(req.Context(), preExtracted)
 		return llmproxy.PostprocessResult{
 			Body:          nil,
 			ContentType:   contentType,
@@ -74,7 +61,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		return failClosed("rewriter error during tool_use extraction: " + err.Error())
 	}
 
-	innerEval := selectToolUseEvaluator(req, cfg, rewriter.Name(), preExtracted, pendingAuditEvents)
+	innerEval := session.evaluator(req, rewriter.Name(), preExtracted)
 
 	// Capture per-tool verdicts so the finalizer can classify them.
 	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(preExtracted))
@@ -92,9 +79,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	}
 
 	ctx := req.Context()
-	feedFinalizer(finalizer, preExtracted, holdSink, pendingAuditEvents, verdictByTU)
-
-	finalResult, finalErr := finalizeOrLegacy(ctx, finalizer, originalPendingApprovals, holdSink, pendingAuditEvents, cfg, verdictByTU)
+	finalResult, finalErr := session.finalize(ctx, preExtracted, verdictByTU)
 	if finalErr != nil {
 		return failClosed("approval hold storage failed: " + finalErr.Error())
 	}
@@ -209,31 +194,6 @@ func holdKindFromVerdict(
 	return conversation.HeldKindHintDeny
 }
 
-// finalizeOrLegacy delegates to the finalizer when configured, or
-// falls back to direct cache writes when PendingApprovals is nil
-// (test scenarios that don't wire a cache).
-//
-// The legacy fallback only writes audits — there's no hold to
-// commit without a cache.
-func finalizeOrLegacy(
-	ctx context.Context,
-	finalizer *pipeline.Finalizer,
-	pendingApprovals llmproxy.PendingApprovalCache,
-	holdSink *capturedHoldSink,
-	auditBuf *pendingAuditEventBuffer,
-	cfg llmproxy.PostprocessConfig,
-	_ map[string]conversation.ToolUseVerdict,
-) (pipeline.FinalizeResult, error) {
-	if finalizer != nil && pendingApprovals != nil {
-		return finalizer.Finalize(ctx)
-	}
-	// No PendingApprovals cache — buffer audits flush directly via the
-	// emitter.
-	flushDirect(ctx, cfg, auditBuf)
-	_ = holdSink
-	return pipeline.FinalizeResult{}, nil
-}
-
 func flushDirect(ctx context.Context, cfg llmproxy.PostprocessConfig, auditBuf *pendingAuditEventBuffer) {
 	if cfg.Audit == nil || auditBuf == nil {
 		return
@@ -252,15 +212,11 @@ func flushDirect(ctx context.Context, cfg llmproxy.PostprocessConfig, auditBuf *
 // (and every test that exercises Postprocess) must assign
 // pipelineeval.Factory to cfg.ToolUseEvaluatorFactory explicitly.
 //
-// toolUses is the pre-extracted sibling set when known (buffered
-// path); empty for streaming where tool_uses arrive incrementally
-// and the factory runs lazily per call.
-func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, pendingAuditEvents *pendingAuditEventBuffer) conversation.ToolUseEvaluator {
+// toolUses is the pre-extracted sibling set when known. The returned
+// evaluator appends audit rows through emit for the owning session.
+func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, emit func(conversation.AuditEvent)) conversation.ToolUseEvaluator {
 	if cfg.ToolUseEvaluatorFactory == nil {
 		panic("llmproxy/postproc: PostprocessConfig.ToolUseEvaluatorFactory is required — assign pipelineeval.Factory")
-	}
-	emit := func(ba conversation.AuditEvent) {
-		pendingAuditEvents.entries = append(pendingAuditEvents.entries, ba)
 	}
 	return cfg.ToolUseEvaluatorFactory(req, cfg, provider, toolUses, emit)
 }

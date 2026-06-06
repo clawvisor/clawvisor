@@ -54,13 +54,7 @@ func PostprocessStream(
 
 	provider := streamingRewriter.Name()
 
-	originalPendingApprovals := cfg.PendingApprovals
-	holdSink := &capturedHoldSink{}
-	if originalPendingApprovals != nil {
-		cfg.PendingApprovals = newHoldCapturingApprovalCache(originalPendingApprovals, holdSink)
-	}
-	pendingAuditEvents := &pendingAuditEventBuffer{}
-	finalizer := llmproxy.NewFinalizer(cfg, originalPendingApprovals)
+	session := newPostprocessSession(cfg)
 
 	// Streaming rewriter consumes the upstream stream, invokes
 	// onToolUse for each tool_use as it completes, and returns the
@@ -91,7 +85,7 @@ func PostprocessStream(
 		}, nil
 	}
 
-	innerEval := selectToolUseEvaluator(req, cfg, provider, toolUses, pendingAuditEvents)
+	innerEval := session.evaluator(req, provider, toolUses)
 
 	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(toolUses))
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
@@ -121,9 +115,7 @@ func PostprocessStream(
 		}
 	}
 
-	feedFinalizer(finalizer, toolUses, holdSink, pendingAuditEvents, verdictByTU)
-
-	finalResult, finalErr := finalizeOrLegacy(req.Context(), finalizer, originalPendingApprovals, holdSink, pendingAuditEvents, cfg, verdictByTU)
+	finalResult, finalErr := session.finalize(req.Context(), toolUses, verdictByTU)
 	if finalErr != nil {
 		return llmproxy.PostprocessResult{
 			SkippedReason: "approval hold storage failed: " + finalErr.Error(),
@@ -131,7 +123,7 @@ func PostprocessStream(
 	}
 
 	if finalResult.Coalesced {
-		if err := writeProviderBlockedPrompt(w, provider, streamResult, finalResult.CoalescedPrompt, streamingBlockedPromptIndex(provider, streamResult, len(finalizer.Captures()))); err != nil {
+		if err := writeProviderBlockedPrompt(w, provider, streamResult, finalResult.CoalescedPrompt, streamingBlockedPromptIndex(provider, streamResult, len(session.captures()))); err != nil {
 			return llmproxy.PostprocessResult{}, err
 		}
 		return llmproxy.PostprocessResult{
