@@ -94,7 +94,7 @@ func EvaluateCredentialedAuthorization(
 		switch dec.Kind {
 		case runtimedecision.VerdictAllow:
 			if dec.Task != nil {
-				_, _, _ = slideTaskExpiry(ctx, cfg.Store, dec.Task, time.Now().UTC())
+				_, _, _ = SlideTaskExpiry(ctx, cfg.Store, dec.Task, time.Now().UTC())
 			}
 			return CredentialedAuthorizationResult{
 				Allowed:       true,
@@ -180,7 +180,7 @@ func EvaluateCredentialedAuthorization(
 				}
 			}
 			if dec.MatchedTask != nil {
-				_, _, _ = slideTaskExpiry(ctx, cfg.Store, dec.MatchedTask, time.Now().UTC())
+				_, _, _ = SlideTaskExpiry(ctx, cfg.Store, dec.MatchedTask, time.Now().UTC())
 			}
 			return CredentialedAuthorizationResult{
 				Allowed:       true,

@@ -61,8 +61,8 @@ func EvaluateTriggerMissAuthorization(
 	// sensitive-file guard.
 	readOnlyShellCommand := false
 	sensitiveShellPath := false
-	if toolnames.IsShellToolName(tu.Name) && readOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
-		if cmd := shellCommandFromInput(tu.Input); cmd != "" {
+	if toolnames.IsShellToolName(tu.Name) && ReadOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
+		if cmd := ShellCommandFromInput(tu.Input); cmd != "" {
 			readOnlyShellCommand, _ = inspector.IsReadOnlyBashCommand(cmd)
 			if toolnames.SensitiveFileGuardEnabled(tu.Name, cfg.AgentID, cfg.ToolRules) {
 				if tok, reason, hit := inspector.CommandReferencesSensitivePath(cmd); hit {
@@ -104,7 +104,7 @@ func EvaluateTriggerMissAuthorization(
 	case runtimedecision.VerdictAllow:
 		// Sliding-lifetime task expiry bump on each authorized call.
 		if dec.Task != nil {
-			_, _, _ = slideTaskExpiry(ctx, cfg.Store, dec.Task, time.Now().UTC())
+			_, _, _ = SlideTaskExpiry(ctx, cfg.Store, dec.Task, time.Now().UTC())
 		}
 		audit("allow", string(dec.Source), dec.Reason, matchedTaskID)
 		return conversation.ToolUseVerdict{Allowed: true}
@@ -114,7 +114,7 @@ func EvaluateTriggerMissAuthorization(
 	case runtimedecision.VerdictNeedsApproval:
 		// Background-shell poll (Codex's write_stdin with empty
 		// chars) is a passthrough — no state change, no side effect.
-		if dec.Source == runtimedecision.SourceTaskScopeMissing && isShellPollTool(tu.Name, tu.Input) {
+		if dec.Source == runtimedecision.SourceTaskScopeMissing && IsShellPollTool(tu.Name, tu.Input) {
 			audit("allow", "shell_poll_pass_through", "background-shell poll ("+tu.Name+")", "")
 			return conversation.ToolUseVerdict{Allowed: true}
 		}

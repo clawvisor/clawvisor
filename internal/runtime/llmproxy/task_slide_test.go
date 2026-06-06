@@ -85,7 +85,7 @@ func TestSlideTaskExpiry(t *testing.T) {
 			if tt.nilStore {
 				setter = nil
 			}
-			newExp, slid, err := slideTaskExpiry(context.Background(), setter, tt.task, now)
+			newExp, slid, err := SlideTaskExpiry(context.Background(), setter, tt.task, now)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -125,7 +125,7 @@ func TestSlideTaskExpiry_StoreError(t *testing.T) {
 	stub := &stubExpirySetter{err: errors.New("boom")}
 	task := &store.Task{ID: "t", Lifetime: "sliding", ExpiresAt: &soonExpiring}
 
-	_, slid, err := slideTaskExpiry(context.Background(), stub, task, now)
+	_, slid, err := SlideTaskExpiry(context.Background(), stub, task, now)
 	if err == nil {
 		t.Fatalf("expected store error to propagate")
 	}

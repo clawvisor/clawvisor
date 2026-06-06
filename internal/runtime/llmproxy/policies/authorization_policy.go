@@ -31,6 +31,18 @@ type AuthorizationResolver func(ctx context.Context, tu conversation.ToolUse, v 
 // AuthorizationInputs is the per-call bundle the host supplies.
 type AuthorizationInputs struct {
 	Input runtimedecision.AuthorizationInput
+	// HasPolicyConfig reports whether the host wired any
+	// decision-engine inputs (CandidateTasks, ToolRules, EgressRules).
+	// When false AND ShellSensitivePath is also false, the policy
+	// short-circuits with the legacy "no credential trigger"
+	// pass-through Allow.
+	HasPolicyConfig bool
+	// ShellSensitivePath signals that an upstream sensitive-path
+	// detection fired. Forces EvaluateAuthorization to run even when
+	// no policy config is wired — preserves the legacy multi-row
+	// behavior where sensitive-path + no-policy still routes through
+	// the approval flow.
+	ShellSensitivePath bool
 	// ReadOnlyShellCommand reports whether the upstream
 	// ReadOnlyShellPassthroughPolicy would have allowed this call.
 	// Set true → SkipIntentVerification on the authorization input.
@@ -110,8 +122,12 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 	}
 	in := p.resolver(ctx, tu, v)
 	if in == nil {
-		// No decision-engine inputs wired — pass-through. Matches the
-		// legacy "no credential trigger" branch.
+		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
+	}
+	if !in.HasPolicyConfig && !in.ShellSensitivePath {
+		// No decision-engine inputs wired and no sensitive-path
+		// override — pass-through. Matches the legacy "no credential
+		// trigger" branch.
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeAllow,
 			Reason:  "no credential trigger",
@@ -133,6 +149,7 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		Allowed:       dec.Kind == runtimedecision.VerdictAllow,
 		MatchedTaskID: taskIDFromDecision(dec),
 	}
+	authFact := pipeline.AuthorizationFact{Outcome: string(dec.Source)}
 	switch dec.Kind {
 	case runtimedecision.VerdictAllow:
 		if dec.Task != nil && in.SlideTask != nil {
@@ -141,13 +158,13 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeAllow,
 			Reason:  dec.Reason,
-			Facts:   []pipeline.EvaluationFact{taskScopeFact},
+			Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 		}, nil
 	case runtimedecision.VerdictDeny:
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: " + dec.Reason,
-			Facts:   []pipeline.EvaluationFact{taskScopeFact},
+			Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 		}, nil
 	case runtimedecision.VerdictNeedsApproval:
 		// Hold side-effects inline so the verdict carries the rendered
@@ -188,7 +205,7 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 			SubstituteWith: held.SubstituteText,
 			HoldKey:        "auth_needs_approval_" + tu.ID,
 			HeldKindHint:   pipeline.HeldKindHintApproval,
-			Facts:          []pipeline.EvaluationFact{taskScopeFact},
+			Facts:          []pipeline.EvaluationFact{authFact, taskScopeFact},
 		}, nil
 	}
 	return pipeline.ToolUseVerdict{

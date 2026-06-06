@@ -46,6 +46,12 @@ type ToolUseChainConfig struct {
 	// (AgentID + ToolRules) so they share one resolver. Nil → both
 	// policies Skip.
 	ReadOnlyShell ReadOnlyShellResolver
+	// Authorization, when set, wires AuthorizationPolicy. The resolver
+	// produces AuthorizationInputs (decision-engine inputs + hold
+	// handler) per-call. AuthorizationPolicy replaces the legacy
+	// EvaluateTriggerMissAuthorization closure path for trigger-miss
+	// tool_uses. Nil → policy Skips.
+	Authorization AuthorizationResolver
 	// TaskScope authorizes credentialed tool_uses against the agent's
 	// active task scopes (the handler wraps EvaluateAuthorization +
 	// catalog resolution into the TaskScopeResolver closure).
@@ -91,16 +97,16 @@ func ComposeToolUseEvaluatorChain(cfg ToolUseChainConfig) []pipeline.ToolUseEval
 	// wired yet — they require resolver plumbing the host hasn't moved
 	// out of the closure pattern. ShellPoll has no host dependencies, so
 	// it lands first.
-	// Phase 6 decomposed policies handling trigger-miss specials. Only
-	// ShellPoll + ReadOnlyShell are wired here — they take the
-	// passthrough Allow path. SensitivePathPolicy + AuthorizationPolicy
-	// remain unwired because their legacy behavior requires
-	// post-Deny decision-engine consultation (multi-row audit, approval
-	// flow) the chain can't yet express. The legacy
-	// EvaluateTriggerMissAuthorization closure (wired via InspectorChain)
-	// handles those cases.
+	// Phase 6 decomposed policies handling trigger-miss specials. Run
+	// BEFORE InspectorChain so they claim Allow/Deny/Hold directly
+	// without delegating to the legacy TriggerMissAuthorizer closure.
+	// SensitivePath emits a Fact-only Skip; AuthorizationPolicy reads
+	// the sensitive trail + runs EvaluateAuthorization + handles the
+	// approval flow inline.
+	chain = append(chain, NewSensitivePathPolicy(cfg.Inspector, cfg.ReadOnlyShell))
 	chain = append(chain, NewShellPollPassthroughPolicy(cfg.Inspector))
 	chain = append(chain, NewReadOnlyShellPassthroughPolicy(cfg.Inspector, cfg.ReadOnlyShell))
+	chain = append(chain, NewAuthorizationPolicy(cfg.Inspector, cfg.Authorization))
 	chain = append(chain, inspectorChain)
 	chain = append(chain, NewTaskScopeEvaluator(cfg.TaskScope))
 	chain = append(chain, NewIntentVerifyEvaluator(cfg.IntentVerify))

@@ -136,6 +136,17 @@ type ScriptSessionFact struct {
 
 func (ScriptSessionFact) isEvaluationFact() {}
 
+// AuthorizationFact captures the trigger-miss AuthorizationPolicy's
+// outcome (the decision-engine Source string: "rule_allow",
+// "task_scope", "task_scope_missing", "decision_error", etc.).
+// Preferred over TaskScopeFact's generic "matched_task_scope" naming
+// when the decision Source is known.
+type AuthorizationFact struct {
+	Outcome string
+}
+
+func (AuthorizationFact) isEvaluationFact() {}
+
 // ContinueSignal is returned by an evaluator when the tool_use is being
 // served locally and the pipeline should re-enter with a synthetic
 // continuation turn.
@@ -227,6 +238,10 @@ func MatchedTaskIDFromFacts(facts []EvaluationFact) string {
 func OutcomeNameFromFacts(evaluatorName string, outcome Outcome, facts []EvaluationFact) string {
 	for _, f := range facts {
 		switch ff := f.(type) {
+		case AuthorizationFact:
+			if ff.Outcome != "" {
+				return ff.Outcome
+			}
 		case ControlFact:
 			if ff.Outcome != "" {
 				return ff.Outcome

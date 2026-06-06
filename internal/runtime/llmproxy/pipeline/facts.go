@@ -17,6 +17,7 @@ type (
 	IntentVerifyFact  = conversation.IntentVerifyFact
 	BoundaryFact      = conversation.BoundaryFact
 	ScriptSessionFact = conversation.ScriptSessionFact
+	AuthorizationFact = conversation.AuthorizationFact
 )
 
 // BoundaryDenyReason aliases conversation.BoundaryDenyReason.

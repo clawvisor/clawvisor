@@ -13,7 +13,7 @@ import (
 // detection) before delegating to the decision engine. Carved out of
 // postprocess.go so the file stays small.
 
-func readOnlyShellCommandsAllowed(toolName, agentID string, rules []*store.RuntimePolicyRule) bool {
+func ReadOnlyShellCommandsAllowed(toolName, agentID string, rules []*store.RuntimePolicyRule) bool {
 	global := true
 	agent := (*bool)(nil)
 	for _, rule := range rules {
@@ -36,13 +36,13 @@ func readOnlyShellCommandsAllowed(toolName, agentID string, rules []*store.Runti
 	return global
 }
 
-// isShellPollTool reports whether a tool_use is a harness poll on a
+// IsShellPollTool reports whether a tool_use is a harness poll on a
 // background shell — read-equivalent and worth passing through. The
 // canonical case is Codex's `write_stdin` with empty `chars`, which
 // the harness emits continuously while a backgrounded `exec_command`
 // is running. Non-empty `chars` is actual input typed into a shell
 // (potentially mutating); stay strict.
-func isShellPollTool(name string, raw json.RawMessage) bool {
+func IsShellPollTool(name string, raw json.RawMessage) bool {
 	if name != "write_stdin" {
 		return false
 	}
@@ -60,10 +60,10 @@ func isShellPollTool(name string, raw json.RawMessage) bool {
 	return strings.TrimSpace(chars) == ""
 }
 
-// shellCommandFromInput extracts the command string from a shell-tool
+// ShellCommandFromInput extracts the command string from a shell-tool
 // input JSON. Claude Code's Bash uses `command`; Codex's exec_command
 // uses `cmd`. Returns "" when neither is present or non-string.
-func shellCommandFromInput(raw json.RawMessage) string {
+func ShellCommandFromInput(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}

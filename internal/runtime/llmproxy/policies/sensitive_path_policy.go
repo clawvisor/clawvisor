@@ -66,9 +66,16 @@ func (p *SensitivePathPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 	if !hit {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
+	// Emit a Skip with a typed fact rather than claiming Deny outright.
+	// AuthorizationPolicy downstream runs EvaluateAuthorization, which
+	// (with no decision-engine inputs configured) yields NeedsApproval
+	// + the "no matching task scope" approval prompt — matching the
+	// legacy multi-row sensitive-path behavior. AuthorizationPolicy
+	// reads the sensitive-path fact off the verdict trail to force
+	// authorization even when no policy is configured.
+	_, _ = tok, reason
 	return pipeline.ToolUseVerdict{
-		Outcome: pipeline.OutcomeDeny,
-		Reason:  "command references sensitive path " + tok + " (" + reason + ")",
+		Outcome: pipeline.OutcomeSkip,
 		Facts: []pipeline.EvaluationFact{
 			pipeline.ScriptSessionFact{Outcome: "sensitive_path_in_read_only_shell"},
 		},

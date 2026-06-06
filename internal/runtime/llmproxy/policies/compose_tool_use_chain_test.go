@@ -19,8 +19,10 @@ func TestComposeToolUseEvaluatorChain_AssemblesAllSixStages(t *testing.T) {
 	wantNames := []string{
 		"control_tool_use",
 		"script_session",
+		"sensitive_path",
 		"shell_poll_passthrough",
 		"readonly_shell_passthrough",
+		"authorization",
 		"inspector_chain",
 		"task_scope",
 		"intent_verify",

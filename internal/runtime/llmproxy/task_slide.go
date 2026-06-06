@@ -23,7 +23,7 @@ type taskExpirySetter interface {
 	UpdateTaskExpiresAt(ctx context.Context, id string, expiresAt time.Time) error
 }
 
-// slideTaskExpiry bumps the matched task's expires_at when the task
+// SlideTaskExpiry bumps the matched task's expires_at when the task
 // opted into "sliding" lifetime and the slide would actually move the
 // deadline forward. Returns (newExpiry, true, nil) on a write,
 // (_, false, nil) when the slide was a no-op (non-sliding lifetime,
@@ -35,7 +35,7 @@ type taskExpirySetter interface {
 // produced `task` already passed; failing the tool_use because we
 // couldn't extend its TTL would be a worse user experience than
 // silently letting the original deadline stand.
-func slideTaskExpiry(ctx context.Context, st taskExpirySetter, task *store.Task, now time.Time) (time.Time, bool, error) {
+func SlideTaskExpiry(ctx context.Context, st taskExpirySetter, task *store.Task, now time.Time) (time.Time, bool, error) {
 	if st == nil || task == nil || task.Lifetime != "sliding" || task.ExpiresAt == nil {
 		return time.Time{}, false, nil
 	}

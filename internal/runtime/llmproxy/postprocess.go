@@ -116,6 +116,15 @@ func ApprovalPrompt(tu conversation.ToolUse, reason, approvalID string) string {
 	return b.String()
 }
 
+// DecisionIntentVerifierFor wraps a (possibly nil) IntentVerifier so
+// runtimedecision.AuthorizationInput can consume it directly. The
+// wrapper translates between the package-local IntentVerifyRequest /
+// IntentVerdict types and runtimedecision's. Used by both the legacy
+// EvaluateTriggerMissAuthorization and the Phase 6 AuthorizationPolicy.
+func DecisionIntentVerifierFor(v IntentVerifier) runtimedecision.IntentVerifier {
+	return decisionIntentVerifier{inner: v}
+}
+
 type decisionIntentVerifier struct {
 	inner IntentVerifier
 }

@@ -30,6 +30,8 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // Factory is the llmproxy.ToolUseEvaluatorFactory implementation that
@@ -100,6 +102,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		Boundary:        buildBoundaryResolver(cfg),
 		TriggerMissAuth: triggerMissAuth,
 		ReadOnlyShell:   buildReadOnlyShellResolver(cfg),
+		Authorization:   buildAuthorizationResolver(cfg, provider),
 		TaskScope:       credentialedTaskScope,
 		Rewrite:         buildRewriteResolver(cfg),
 	})
@@ -405,6 +408,111 @@ func buildBoundaryResolver(cfg llmproxy.PostprocessConfig) policies.BoundaryReso
 		}
 		return decision
 	}
+}
+
+// buildAuthorizationResolver wires AuthorizationPolicy to
+// PostprocessConfig's decision-engine inputs + PendingApprovals cache.
+// Returns nil when the policy has no role (no inspector, no policy
+// config, and no sensitive-path hook).
+func buildAuthorizationResolver(cfg llmproxy.PostprocessConfig, provider conversation.Provider) policies.AuthorizationResolver {
+	if cfg.Inspector == nil {
+		return nil
+	}
+	intentVerifier := llmproxy.DecisionIntentVerifierFor(cfg.IntentVerifier)
+	holdHandler := &authorizationHoldHandler{
+		cfg:      cfg,
+		provider: provider,
+	}
+	slideTask := func(ctx context.Context, task *store.Task) {
+		if cfg.Store == nil || task == nil {
+			return
+		}
+		_, _, _ = llmproxy.SlideTaskExpiry(ctx, cfg.Store, task, time.Now().UTC())
+	}
+	return func(ctx context.Context, tu conversation.ToolUse, v inspector.Verdict) *policies.AuthorizationInputs {
+		hasPolicyConfig := cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil
+		readOnlyShell, sensitivePath := detectShellSpecials(tu, cfg)
+		return &policies.AuthorizationInputs{
+			Input: runtimedecision.AuthorizationInput{
+				ToolUse:         tu,
+				UserID:          cfg.AgentUserID,
+				AgentID:         cfg.AgentID,
+				Posture:         cfg.Posture,
+				CandidateTasks:  cfg.CandidateTasks,
+				ToolRules:       cfg.ToolRules,
+				EgressRules:     cfg.EgressRules,
+				PreferredTaskID: cfg.PreferredTaskID,
+				IntentVerifier:  intentVerifier,
+			},
+			HasPolicyConfig:      hasPolicyConfig,
+			ShellSensitivePath:   sensitivePath,
+			ReadOnlyShellCommand: readOnlyShell,
+			HoldHandler:          holdHandler,
+			SlideTask:            slideTask,
+		}
+	}
+}
+
+// detectShellSpecials replays the legacy read-only-shell + sensitive-
+// path detection from EvaluateTriggerMissAuthorization so the resolver
+// hands AuthorizationPolicy the right flags. Returns
+// (readOnlyShellCommand, sensitivePath); when sensitivePath is true
+// readOnlyShellCommand is forced false (sensitive overrides).
+func detectShellSpecials(tu conversation.ToolUse, cfg llmproxy.PostprocessConfig) (bool, bool) {
+	if !toolnames.IsShellToolName(tu.Name) {
+		return false, false
+	}
+	if !llmproxy.ReadOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
+		return false, false
+	}
+	cmd := llmproxy.ShellCommandFromInput(tu.Input)
+	if cmd == "" {
+		return false, false
+	}
+	readOnly, _ := inspector.IsReadOnlyBashCommand(cmd)
+	if toolnames.SensitiveFileGuardEnabled(tu.Name, cfg.AgentID, cfg.ToolRules) {
+		if _, _, hit := inspector.CommandReferencesSensitivePath(cmd); hit {
+			return false, true
+		}
+	}
+	return readOnly, false
+}
+
+// authorizationHoldHandler implements policies.AuthorizationHoldHandler
+// for AuthorizationPolicy's approval flow. Commits the hold via
+// PendingApprovals.Hold, renders the approval prompt with the
+// resulting approval ID, and cleans up any evicted inline task.
+type authorizationHoldHandler struct {
+	cfg      llmproxy.PostprocessConfig
+	provider conversation.Provider
+}
+
+func (h *authorizationHoldHandler) Hold(ctx context.Context, req policies.AuthorizationHoldRequest) (policies.AuthorizationHoldResult, error) {
+	if h.cfg.PendingApprovals == nil {
+		// Fail closed in the policy.
+		return policies.AuthorizationHoldResult{Err: "approval cache not configured"}, nil
+	}
+	held, err := h.cfg.PendingApprovals.Hold(ctx, llmproxy.PendingLiteApproval{
+		UserID:         h.cfg.AgentUserID,
+		AgentID:        h.cfg.AgentID,
+		Provider:       h.provider,
+		ConversationID: h.cfg.ConversationID,
+		ToolUse:        req.ToolUse,
+		Inspector:      req.InspectorVerdict,
+		Fingerprint:    runtimedecision.Fingerprint(req.Decision, req.Input),
+		Reason:         req.Decision.Reason,
+	})
+	if err != nil {
+		return policies.AuthorizationHoldResult{Err: err.Error()}, nil
+	}
+	approvalID := held.Pending.ID
+	if held.Evicted != nil {
+		llmproxy.CleanupEvictedInlineTask(ctx, h.cfg, held.Evicted)
+	}
+	return policies.AuthorizationHoldResult{
+		ApprovalID:     approvalID,
+		SubstituteText: llmproxy.ApprovalPrompt(req.ToolUse, req.Decision.Reason, approvalID),
+	}, nil
 }
 
 // buildReadOnlyShellResolver wires ReadOnlyShellPassthroughPolicy +
