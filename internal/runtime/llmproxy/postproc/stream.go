@@ -63,42 +63,13 @@ func PostprocessStream(
 	auditSink := &capturedAuditSink{}
 	var captures []evalCapture
 
-	// Streaming path: tool_uses arrive incrementally via the rewriter's
-	// per-call eval. Pass nil to the factory so it falls back to lazy
-	// per-tool pipeline runs. Response-level pre-extraction isn't
-	// available here without buffering the entire stream first — see
-	// the buffered path in postproc.go for the response-level variant.
-	innerEval := selectToolUseEvaluator(req, cfg, provider, nil, auditSink)
-
-	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
-		holdsBefore, auditsBefore := 0, 0
-		if holdSink != nil {
-			holdsBefore = len(holdSink.holds)
-		}
-		if auditSink != nil {
-			auditsBefore = len(auditSink.entries)
-		}
-		v := innerEval(tu)
-		c := evalCapture{Use: tu, Kind: classifyVerdict(v)}
-		if holdSink != nil && len(holdSink.holds) > holdsBefore {
-			h := holdSink.holds[len(holdSink.holds)-1]
-			c.HoldID = h.Pending.ID
-			c.Stage = h.Pending.Stage
-			c.Inspector = h.Pending.Inspector
-			c.Fingerprint = h.Pending.Fingerprint
-			c.Reason = h.Pending.Reason
-		} else if auditSink != nil && len(auditSink.entries) > auditsBefore {
-			last := auditSink.entries[len(auditSink.entries)-1]
-			c.Inspector = last.Verdict
-			c.Reason = last.Reason
-		}
-		if auditSink != nil && len(auditSink.entries) > auditsBefore {
-			c.TaskID = auditSink.entries[len(auditSink.entries)-1].TaskID
-		}
-		captures = append(captures, c)
-		return v
-	}
-
+	// Streaming rewriter consumes the upstream stream and returns the
+	// full tool_use list it observed. We run the response-level
+	// orchestrator AFTER StreamRewrite so the factory can pre-run
+	// pipeline.EvaluateToolUses once on the full sibling set — same
+	// architectural shape as the buffered path. The synthetic events
+	// (blocked prompt, rewritten tool_uses) below use the verdict
+	// lookup, no per-call pipeline runs.
 	streamResult, err := streamingRewriter.StreamRewrite(ctx, r, w)
 	if err != nil {
 		return llmproxy.PostprocessResult{}, err
@@ -107,6 +78,45 @@ func PostprocessStream(
 		return llmproxy.PostprocessResult{
 			ContentType: contentType,
 		}, nil
+	}
+
+	innerEval := selectToolUseEvaluator(req, cfg, provider, streamResult.ToolUses, auditSink)
+
+	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		v := innerEval(tu)
+		c := evalCapture{Use: tu, Kind: classifyVerdict(v)}
+		if holdSink != nil {
+			for i := len(holdSink.holds) - 1; i >= 0; i-- {
+				h := holdSink.holds[i]
+				if h.Pending.ToolUse.ID == tu.ID {
+					c.HoldID = h.Pending.ID
+					c.Stage = h.Pending.Stage
+					c.Inspector = h.Pending.Inspector
+					c.Fingerprint = h.Pending.Fingerprint
+					c.Reason = h.Pending.Reason
+					break
+				}
+			}
+		}
+		if auditSink != nil {
+			for i := len(auditSink.entries) - 1; i >= 0; i-- {
+				entry := auditSink.entries[i]
+				if entry.ToolUse.ID == tu.ID {
+					if c.Inspector.Source == "" {
+						c.Inspector = entry.Verdict
+					}
+					if c.Reason == "" {
+						c.Reason = entry.Reason
+					}
+					if c.TaskID == "" {
+						c.TaskID = entry.TaskID
+					}
+					break
+				}
+			}
+		}
+		captures = append(captures, c)
+		return v
 	}
 
 	var decisions []conversation.ToolUseDecisionRecord

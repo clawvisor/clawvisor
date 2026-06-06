@@ -103,102 +103,69 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		Rewrite:         buildRewriteResolver(cfg),
 	})
 
-	// Response-level path: when the caller supplies the full tool_use
-	// list (buffered case), run pipeline.EvaluateToolUses ONCE on all
-	// siblings. The returned eval becomes a verdict lookup; audit rows
-	// + holds emit up-front during this single pass.
-	if len(toolUses) > 0 {
-		ctx := req.Context()
-		res := &multiToolUseResponse{provider: provider, toolUses: toolUses}
-		evalFn, result, err := pipeline.BridgeToolUseEvaluator(ctx, res, toolUses, chain)
-		if err != nil {
-			// Pipeline errored before producing per-tool verdicts. Emit
-			// one audit row keyed to the first tool (best signal we have)
-			// and return a Deny-for-everything evaluator so the rewriter
-			// renders refusals consistently.
-			firstTU := toolUses[0]
-			emit(llmproxy.BufferedAudit{
-				ToolUse:  firstTU,
-				Decision: "block",
-				Outcome:  "pipeline_error",
-				Reason:   err.Error(),
-			})
-			errMsg := "Clawvisor: authorization pipeline failed — " + err.Error()
-			return func(_ conversation.ToolUse) conversation.ToolUseVerdict {
-				return conversation.ToolUseVerdict{Allowed: false, Reason: errMsg}
-			}
+	// Response-level orchestration: callers (buffered + streaming
+	// postproc) supply the full tool_use list so the pipeline runs
+	// ONCE on the sibling set. The returned eval is a verdict lookup;
+	// audit rows + holds emit up-front during this single pass.
+	//
+	// Empty toolUses returns a no-op eval (no tools, nothing to do).
+	if len(toolUses) == 0 {
+		return func(_ conversation.ToolUse) conversation.ToolUseVerdict {
+			return conversation.ToolUseVerdict{Allowed: true}
 		}
-		// Emit one audit row per tool_use whose verdict didn't externally
-		// emit. Skipped tools (trigger-miss authorizer fired its own
-		// emit) are correctly suppressed.
-		matchedTaskIDs := make(map[string]string, len(toolUses))
-		for _, tu := range toolUses {
-			if verdictEmittedAuditExternally(result, tu.ID) {
-				continue
-			}
-			matchedTaskIDs[tu.ID] = lookupMatchedTaskID(ctx, cfg, tu)
-		}
-		toEmit := make([]conversation.ToolUse, 0, len(toolUses))
-		for _, tu := range toolUses {
-			if !verdictEmittedAuditExternally(result, tu.ID) {
-				toEmit = append(toEmit, tu)
-			}
-		}
-		policies.EmitToolUseAuditRows(ctx, result, toEmit, cfg.Inspector, func(_ context.Context, row policies.ToolUseAuditRow) {
-			if row.TaskID == "" {
-				if id := matchedTaskIDs[row.ToolUse.ID]; id != "" {
-					row.TaskID = id
-				}
-			}
-			emit(llmproxy.BufferedAudit{
-				ToolUse:  row.ToolUse,
-				Verdict:  row.Verdict,
-				Decision: row.Decision,
-				Outcome:  row.Outcome,
-				Reason:   row.Reason,
-				TaskID:   row.TaskID,
-			})
+	}
+	ctx := req.Context()
+	res := &multiToolUseResponse{provider: provider, toolUses: toolUses}
+	evalFn, result, err := pipeline.BridgeToolUseEvaluator(ctx, res, toolUses, chain)
+	if err != nil {
+		// Pipeline errored before producing per-tool verdicts. Emit
+		// one audit row keyed to the first tool (best signal we have)
+		// and return a Deny-for-everything evaluator so the rewriter
+		// renders refusals consistently.
+		firstTU := toolUses[0]
+		emit(llmproxy.BufferedAudit{
+			ToolUse:  firstTU,
+			Decision: "block",
+			Outcome:  "pipeline_error",
+			Reason:   err.Error(),
 		})
-		return evalFn
+		errMsg := "Clawvisor: authorization pipeline failed — " + err.Error()
+		return func(_ conversation.ToolUse) conversation.ToolUseVerdict {
+			return conversation.ToolUseVerdict{Allowed: false, Reason: errMsg}
+		}
 	}
-
-	// Streaming fallback: tool_uses arrive incrementally via the
-	// rewriter's per-tool callback. Pipeline runs lazily for the one
-	// tool the callback sees; audit rows emit per call.
-	return func(tu conversation.ToolUse) conversation.ToolUseVerdict {
-		ctx := req.Context()
-		res := &singletonToolUseResponse{provider: provider, tu: tu}
-		evalFn, result, err := pipeline.BridgeToolUseEvaluator(ctx, res, []conversation.ToolUse{tu}, chain)
-		if err != nil {
-			emit(llmproxy.BufferedAudit{
-				ToolUse:  tu,
-				Decision: "block",
-				Outcome:  "pipeline_error",
-				Reason:   err.Error(),
-			})
-			return conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: authorization pipeline failed — " + err.Error(),
+	// Emit one audit row per tool_use whose verdict didn't externally
+	// emit. Skipped tools (trigger-miss authorizer fired its own
+	// emit) are correctly suppressed.
+	matchedTaskIDs := make(map[string]string, len(toolUses))
+	for _, tu := range toolUses {
+		if verdictEmittedAuditExternally(result, tu.ID) {
+			continue
+		}
+		matchedTaskIDs[tu.ID] = lookupMatchedTaskID(ctx, cfg, tu)
+	}
+	toEmit := make([]conversation.ToolUse, 0, len(toolUses))
+	for _, tu := range toolUses {
+		if !verdictEmittedAuditExternally(result, tu.ID) {
+			toEmit = append(toEmit, tu)
+		}
+	}
+	policies.EmitToolUseAuditRows(ctx, result, toEmit, cfg.Inspector, func(_ context.Context, row policies.ToolUseAuditRow) {
+		if row.TaskID == "" {
+			if id := matchedTaskIDs[row.ToolUse.ID]; id != "" {
+				row.TaskID = id
 			}
 		}
-		if !verdictEmittedAuditExternally(result, tu.ID) {
-			matchedTaskID := lookupMatchedTaskID(ctx, cfg, tu)
-			policies.EmitToolUseAuditRows(ctx, result, []conversation.ToolUse{tu}, cfg.Inspector, func(_ context.Context, row policies.ToolUseAuditRow) {
-				if row.TaskID == "" && matchedTaskID != "" {
-					row.TaskID = matchedTaskID
-				}
-				emit(llmproxy.BufferedAudit{
-					ToolUse:  row.ToolUse,
-					Verdict:  row.Verdict,
-					Decision: row.Decision,
-					Outcome:  row.Outcome,
-					Reason:   row.Reason,
-					TaskID:   row.TaskID,
-				})
-			})
-		}
-		return evalFn(tu)
-	}
+		emit(llmproxy.BufferedAudit{
+			ToolUse:  row.ToolUse,
+			Verdict:  row.Verdict,
+			Decision: row.Decision,
+			Outcome:  row.Outcome,
+			Reason:   row.Reason,
+			TaskID:   row.TaskID,
+		})
+	})
+	return evalFn
 }
 
 // multiToolUseResponse is the pipeline ReadOnlyResponse the
@@ -283,19 +250,10 @@ func verdictEmittedAuditExternally(result *pipeline.ToolUseResult, tuID string) 
 	return false
 }
 
-type singletonToolUseResponse struct {
-	provider conversation.Provider
-	tu       conversation.ToolUse
-}
-
-func (r *singletonToolUseResponse) Provider() conversation.Provider { return r.provider }
-func (r *singletonToolUseResponse) StreamShape() conversation.StreamShape {
-	return conversation.StreamShapeUnknown
-}
-func (r *singletonToolUseResponse) IsStreaming() bool { return false }
-func (r *singletonToolUseResponse) ToolUses() []conversation.ToolUse {
-	return []conversation.ToolUse{r.tu}
-}
+// Legacy singletonToolUseResponse + its methods have been removed —
+// every postproc caller now supplies the full sibling set to the
+// factory and the orchestrator runs response-level. multiToolUseResponse
+// is the canonical pipeline-side response type.
 
 func buildControlResolver(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, emit func(llmproxy.BufferedAudit)) policies.ControlToolUseResolver {
 	if cfg.ControlBaseURL == "" {
