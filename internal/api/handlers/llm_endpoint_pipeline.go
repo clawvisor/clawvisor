@@ -1,15 +1,9 @@
 package handlers
 
 // llm_endpoint_pipeline.go houses the bridge between the LLMEndpointHandler
-// and the new internal/runtime/llmproxy/pipeline package. The bridge is
-// kept thin and additive: each migrated policy gets replaced inline at
-// its existing call site via a single-policy Pipeline.RunPre invocation.
-//
-// This intermediate state lets us migrate one call site at a time, each
-// change reviewable on its own, while the rest of the handler continues
-// to call its legacy llmproxy helpers directly. When all preprocess
-// policies have moved over, we'll consolidate to a single Pipeline.RunPre
-// invocation that runs the whole chain.
+// and internal/runtime/llmproxy/pipeline. Preprocess policies still run
+// at their handler-owned call sites so the handler can preserve the
+// existing deny / short-circuit semantics around each step.
 
 import (
 	"context"

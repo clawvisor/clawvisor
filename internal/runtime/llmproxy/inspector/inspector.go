@@ -82,7 +82,8 @@ type Verdict struct {
 // CredentialLocation describes a single position where a placeholder is
 // embedded in the request being prepared.
 type CredentialLocation struct {
-	// Kind is "header" for v1; "query" / "body" arrive in Phase 4.
+	// Kind is "header" today; future inspectors may add "query" or
+	// "body".
 	Kind string
 
 	// Name is the header name, query parameter name, or body field path.

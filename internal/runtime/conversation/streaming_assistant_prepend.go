@@ -20,9 +20,8 @@ const (
 	StreamShapeAnthropicMessages
 	StreamShapeOpenAIChat
 	StreamShapeOpenAIResponses
-	// StreamShapeGoogleGemini is the Phase 6 third-provider stream
-	// shape. Gemini's :streamGenerateContent endpoint emits SSE
-	// chunks with a different envelope than Anthropic or OpenAI.
+	// StreamShapeGoogleGemini is Gemini's :streamGenerateContent SSE
+	// shape, with a different envelope than Anthropic or OpenAI.
 	StreamShapeGoogleGemini
 )
 

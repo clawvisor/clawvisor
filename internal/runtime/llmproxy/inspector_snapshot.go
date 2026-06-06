@@ -6,10 +6,10 @@ import (
 )
 
 // InspectorSnapshot translates an inspector.Verdict to the
-// audit-row projection conversation.AuditEvent carries. Phase B leak
-// cleanup: keeps the conversation package out of the inspector
-// dependency by running the conversion at the llmproxy boundary
-// where both types are already imported.
+// audit-row projection conversation.AuditEvent carries. This keeps the
+// conversation package out of the inspector dependency by running the
+// conversion at the llmproxy boundary where both types are already
+// imported.
 func InspectorSnapshot(v inspector.Verdict) eval.InspectorVerdictSnapshot {
 	snap := eval.InspectorVerdictSnapshot{
 		Source:       string(v.Source),

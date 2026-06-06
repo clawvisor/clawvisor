@@ -33,8 +33,8 @@ func NewInlineTaskAugment(outcomes llmproxy.InlineApprovalOutcomeStore) *InlineT
 func (InlineTaskAugment) Name() string { return "inline_task_augment" }
 
 // Preprocess walks history and re-injects approval context. Errors
-// don't deny — best-effort semantic matches today's handler (a failed
-// augmentation degrades context fidelity but doesn't fail the request).
+// don't deny: a failed augmentation degrades context fidelity but
+// doesn't fail the request.
 //
 // Requires non-empty UserID + AgentID on the request; without them
 // the outcome store lookup can't scope correctly. Empty IDs yield

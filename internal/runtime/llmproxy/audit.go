@@ -248,8 +248,6 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 }
 
 // WriteAuditEvent records one typed AuditEvent to the audit store.
-// The canonical Phase 9 audit-emission API — consumes the typed
-// conversation.AuditEvent produced by the pipeline orchestrator.
 func (e *AuditEmitter) WriteAuditEvent(ctx context.Context, agent *store.Agent, requestID string, ev conversation.AuditEvent) {
 	if e == nil || e.Store == nil || agent == nil {
 		return

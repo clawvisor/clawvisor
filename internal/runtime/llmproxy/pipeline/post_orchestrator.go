@@ -31,12 +31,10 @@ type ResponsePolicyVerdict struct {
 // SubstituteEntireResponse on the supplied mutator); the orchestrator
 // calls Commit at the end to stream the transformed bytes to dst.
 //
-// For Phase 4 the post-phase doesn't yet support tool-use evaluators
-// (Phase 5 lifts those in). One ResponseMutator is shared across all
-// policies in the chain; if multiple policies queue mutations they
-// MAY conflict at commit time (e.g., a second PrependAssistantText
-// errors today since multiple calls aren't yet supported). Production
-// chains will encode their order to avoid the conflict.
+// One ResponseMutator is shared across all policies in the chain; if
+// multiple policies queue incompatible mutations they may conflict at
+// commit time. Production chains should encode an order that avoids
+// those conflicts.
 //
 // dst is the client connection writer. src is the upstream response
 // body reader. shape selects the per-shape codec.

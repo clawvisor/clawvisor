@@ -10,17 +10,15 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 )
 
-// GoogleDecoder is the Phase 6 third-provider stream decoder stub.
-// Gemini's :streamGenerateContent endpoint emits SSE chunks where
-// each event is a JSON object on a single `data:` line, similar to
-// OpenAI Chat Completions but with a different envelope shape
+// GoogleDecoder handles Gemini's :streamGenerateContent SSE framing,
+// where each event is a JSON object on a single `data:` line, similar
+// to OpenAI Chat Completions but with a different envelope shape
 // (candidates[].content.parts[] instead of choices[].delta).
 //
-// This stub uses the same SSE framing as OpenAIChatDecoder; the
-// difference is in what the decoded events MEAN (and how they're
-// classified into EventKind). For Phase 6 stub purposes, all Gemini
-// events classify as KindBlockDelta — same as the OpenAI Chat stub
-// — until real codec work lands.
+// This partial codec uses the same SSE framing as OpenAIChatDecoder;
+// the difference is in what the decoded events mean and how they're
+// classified into EventKind. Until full Gemini codec work lands, all
+// Gemini events classify as KindBlockDelta.
 type GoogleDecoder struct {
 	r          *bufio.Scanner
 	rawBuf     bytes.Buffer

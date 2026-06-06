@@ -5,20 +5,16 @@ import "encoding/json"
 // RequestMutator records mutations to apply to the inbound request body.
 // The interface is a command queue, not an immediate edit: in the
 // pre-phase, mutations apply eagerly so later policies see earlier
-// edits (matches today's handler semantics). Implementation lives in
-// request_mutator_impl.go (to come in Phase 3).
+// edits.
 //
-// The interface will grow as policies migrate. The starting set covers
-// operations the first preprocess migrations (agent_notice, control_notice,
-// synthetic_history_strip, secret_detection) will exercise. Methods are
-// added migration-by-migration with contract tests scoped to each.
+// Methods should have contract tests scoped to the provider and body
+// shape they mutate.
 type RequestMutator interface {
 	// ReplaceBody swaps the entire request body bytes. Used by
 	// transformations that produce a whole-body output (e.g.,
 	// anthropic_sanitize). Later policies see the replaced body.
 	// Returns an error if the new body fails the per-provider parse
-	// check — that's also the legacy handler's behavior on every
-	// inline body swap.
+	// check.
 	ReplaceBody(newBody []byte) error
 
 	// InjectSystemNotice appends to the system prompt for both providers.
@@ -56,8 +52,7 @@ type RequestMutator interface {
 
 // StripContext is the predicate input for RequestMutator.StripTurns. It
 // carries enough to identify a turn (role + content fingerprint) without
-// exposing the full provider-specific shape to the predicate. Concrete
-// implementation TBD when synthetic_history_strip migrates.
+// exposing the full provider-specific shape to the predicate.
 type StripContext struct {
 	Role       string // "user" | "assistant" | "tool" | "system"
 	Index      int    // position in the conversation
@@ -68,14 +63,11 @@ type StripContext struct {
 // RequestMutator, the post-phase queues mutations and commits them
 // once at end-of-phase (after the coalesce phase has merged Holds).
 //
-// In Phase 2, this interface is backed by the event stream. The
-// streaming and buffered paths both go through the same mutator;
+// The streaming and buffered paths both go through the same mutator;
 // the encoder underneath handles framing.
 type ResponseMutator interface {
 	// PrependAssistantText injects a leading text block in the assistant
-	// turn. This is the first operation Phase 2 wires through the event
-	// stream — see streaming_assistant_prepend.go for the reference
-	// implementation.
+	// turn.
 	PrependAssistantText(text string) error
 
 	// SubstituteEntireResponse replaces the entire assistant response

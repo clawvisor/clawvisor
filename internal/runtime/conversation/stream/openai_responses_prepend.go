@@ -23,8 +23,8 @@ import (
 // item in the final response.output array) isn't done yet. Strict
 // reconcilers that read response.output may not see the notice item
 // in the final state. Streaming consumers that watch the per-event
-// deltas see the notice text correctly. The rewrite is a Phase 2
-// follow-up that handles the embedded response object.
+// deltas see the notice text correctly. A future rewrite should handle
+// the embedded response object.
 func PrependOpenAIResponsesAssistantNotice(dst io.Writer, src io.Reader, notice string) error {
 	if notice == "" {
 		_, err := io.Copy(dst, src)

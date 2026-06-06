@@ -6,9 +6,9 @@ import (
 
 // eagerRequestMutator is the real RequestMutator for the pre-phase.
 // Mutations apply eagerly: ReplaceBody updates the working body
-// immediately so subsequent policies see the edited bytes — matching
-// today's handler semantics where each preprocess step calls helpers
-// against the *current* body.
+// immediately so subsequent policies see the edited bytes. This matches
+// the handler contract where each preprocess step runs against the
+// current body.
 //
 // Only methods exercised by already-migrated policies are implemented.
 // The remainder remain as panics through PanicMutator embedding;

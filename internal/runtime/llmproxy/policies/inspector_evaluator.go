@@ -9,8 +9,7 @@ import (
 )
 
 // InspectorEvaluator wraps the autovault Inspector.Inspect call as a
-// ToolUseEvaluator. It's the entry point for the inspector chain that
-// Phase 4 extracts from newToolUseEvaluator in postprocess.go.
+// ToolUseEvaluator. It's the entry point for the inspector chain.
 //
 // Outcomes:
 //   - Inspector trigger miss (no autovault placeholder substring) → Skip.
@@ -22,16 +21,15 @@ import (
 //     with the verdict surface available to subsequent evaluators via
 //     AuditParams. Boundary check + intent verify chain on top.
 //
-// Today's newToolUseEvaluator runs the inspector, then the boundary
-// check, then intent verify, then task scope, with mutations and audit
-// rows interleaved. This evaluator carves out the first step;
-// follow-ups in the chain handle the subsequent decisions.
+// This evaluator records the inspector observation; follow-ups in the
+// chain handle boundary, intent, task-scope, authorization, and rewrite
+// decisions.
 type InspectorEvaluator struct {
 	inspector *inspector.Inspector
 }
 
-// NewInspectorEvaluator constructs the evaluator. Nil inspector → Skip
-// (matches today's "if h.Inspector == nil, no inspection" gate).
+// NewInspectorEvaluator constructs the evaluator. Nil inspector returns
+// Skip, which lets the all-skip default allow behavior handle the call.
 func NewInspectorEvaluator(insp *inspector.Inspector) *InspectorEvaluator {
 	return &InspectorEvaluator{inspector: insp}
 }

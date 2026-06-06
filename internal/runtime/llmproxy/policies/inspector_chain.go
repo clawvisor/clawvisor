@@ -14,10 +14,9 @@ import (
 // tool_use rather than two separate evaluator passes.
 //
 // Why composite instead of two pipeline evaluators: the inspector
-// verdict needs to thread between the two steps. Today's
-// newToolUseEvaluator does this with shared closure state. Modeling
-// the chain as one ToolUseEvaluator preserves that information flow
-// without introducing a per-tool-use state carrier in the pipeline.
+// verdict needs to thread between the two steps. Modeling the chain as
+// one ToolUseEvaluator preserves that information flow without
+// introducing a per-tool-use state carrier in the pipeline.
 //
 // Outcomes:
 //   - Inspector trigger miss → Skip (lets non-API tool_uses through to

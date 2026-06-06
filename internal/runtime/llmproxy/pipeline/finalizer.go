@@ -18,9 +18,6 @@ import (
 // the approval prompt) flow through FinalizerDeps. Payload values
 // (HoldCapture.Payload, HoldSubmitResult.Evicted) are opaque to this
 // package — the deps adapter unpacks them at the boundary.
-//
-// Phase D of the leak cleanup plan: finalization moves out of postproc
-// so the pipeline owns response-level orchestration end-to-end.
 type Finalizer struct {
 	deps     FinalizerDeps
 	captures []HoldCapture // every tool_use (drives coalesce decision)
@@ -56,7 +53,7 @@ type HoldCapture struct {
 	// Stage tags this hold's stage in the approval flow. The
 	// orchestrator coalesces holds where every Stage is the
 	// coalescible label ("tool" by convention); non-coalescible
-	// stages (e.g. "inline_task") force the legacy replay path.
+	// stages (e.g. "inline_task") force per-tool replay.
 	Stage string
 
 	// Kind is the typed classification from eval.HeldKindHint.
@@ -143,7 +140,7 @@ type FinalizerDeps interface {
 	// replay submit fails.
 	BuildReplayFailedAudit(capture HoldCapture, err error) conversation.AuditEvent
 
-	// BuildEvictedAudit formats the audit row when the legacy
+	// BuildEvictedAudit formats the audit row when the per-tool
 	// replay path sees an evicted prior hold from a single submit.
 	BuildEvictedAudit(capture HoldCapture, evictedID string) conversation.AuditEvent
 
@@ -176,8 +173,8 @@ func (f *Finalizer) AddCapture(capture HoldCapture) {
 }
 
 // AddAudit buffers an audit event the eval pass emitted. Buffered
-// events flush at Finalize time on the legacy path, or are replaced
-// with per-tool coalesced rows on the coalesce path.
+// events flush at Finalize time on the per-tool replay path, or are
+// replaced with per-tool coalesced rows on the coalesce path.
 func (f *Finalizer) AddAudit(ev conversation.AuditEvent) {
 	if f == nil {
 		return
@@ -192,12 +189,12 @@ type FinalizeResult struct {
 	Coalesced bool
 
 	// CoalescedApprovalID names the single hold the coalesce path
-	// committed. Empty on the legacy replay path.
+	// committed. Empty on the per-tool replay path.
 	CoalescedApprovalID string
 
 	// CoalescedPrompt is the human-facing approval-prompt text the
 	// caller injects into the assistant's response, replacing the
-	// model's content. Empty on the legacy replay path.
+	// model's content. Empty on the per-tool replay path.
 	CoalescedPrompt string
 }
 
@@ -217,8 +214,8 @@ func (f *Finalizer) Finalize(ctx context.Context) (FinalizeResult, error) {
 			return result, nil
 		}
 		// Coalesced commit failed mid-flight (Hold returned error).
-		// Fall through to the legacy replay path so the buffered
-		// holds still land somewhere.
+		// Fall through to per-tool replay so the buffered holds still
+		// land somewhere.
 	}
 	if err := f.replayLegacy(ctx); err != nil {
 		return FinalizeResult{}, err
@@ -362,7 +359,7 @@ func shouldCoalesce(captures []HoldCapture) bool {
 
 // orderCapturesForCoalescedAudit puts approval-class captures first
 // so the audit row that wins dedup describes the call that drove the
-// hold. Mirrors the legacy emitCoalescedPendingAuditRows ordering.
+// hold.
 func orderCapturesForCoalescedAudit(captures []HoldCapture) []HoldCapture {
 	ordered := make([]HoldCapture, 0, len(captures))
 	for _, c := range captures {
@@ -381,10 +378,8 @@ func orderCapturesForCoalescedAudit(captures []HoldCapture) []HoldCapture {
 // ClassifyVerdict maps a per-tool verdict into the typed
 // HeldKindHint the orchestrator coalesces over.
 //
-// Phase D drops the legacy substring fallback on Reason — every
-// Hold-emitting policy now sets HeldKindHint explicitly. The fallback
-// covered policies that hadn't migrated; with all migrated, the
-// classification is pure.
+// Hold-emitting policies set HeldKindHint explicitly. Other verdicts
+// classify from the Allowed / RewriteInput shape.
 func ClassifyVerdict(v ToolUseVerdict) eval.HeldKindHint {
 	if v.HeldKindHint != "" {
 		return v.HeldKindHint

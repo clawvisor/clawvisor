@@ -11,8 +11,7 @@ import (
 
 // CredentialRewriteEvaluator rewrites a credentialed tool_use's URL +
 // caller-token header so the call routes through the proxy's resolver.
-// Mirrors the rewrite branch of newToolUseEvaluator (postprocess.go
-// ~1164–1211):
+//
 //   - Mint a per-tool nonce bound to (agent, host, method, path).
 //   - Run inspector.Rewrite to substitute the URL prefix + inject
 //     X-Clawvisor-Caller.

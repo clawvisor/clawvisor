@@ -10,8 +10,8 @@ import (
 // ToolUseResult is what Pipeline.EvaluateToolUses returns after
 // running every ToolUseEvaluator against every tool_use in the
 // response. The orchestrator collects verdicts but does NOT commit
-// mutations or audit rows — coalescing decisions (Phase 5) need the
-// full set of verdicts before any side effect lands.
+// mutations or audit rows — coalescing decisions need the full set of
+// verdicts before any side effect lands.
 type ToolUseResult struct {
 	// PerToolUse maps tool_use ID to the verdict that won. Each tool_use
 	// runs through every evaluator in declared order; the first
@@ -47,10 +47,8 @@ type ToolUseEvaluation struct {
 // always single-tool-use by construction). The orchestrator records
 // the trigger ID and returns; the caller re-enters the pipeline.
 //
-// Phase 5 will add coalescing of Hold verdicts (sibling tool_uses
-// sharing a HoldKey collapse into one combined approval). For now the
-// orchestrator records per-tool Hold verdicts faithfully and leaves
-// coalescing to the caller.
+// Hold coalescing is handled after this pass by Finalizer, which needs
+// the full sibling verdict set and the buffered hold captures.
 func EvaluateToolUses(
 	ctx context.Context,
 	res ReadOnlyResponse,
@@ -97,10 +95,9 @@ func EvaluateToolUses(
 			}
 		}
 		if winner == nil {
-			// No evaluator claimed this tool_use — default to Allow
-			// (this matches today's "if no rule matches, allow"
-			// behavior; the inspector chain has its own fail-closed
-			// rules that emit Deny via the evaluator, not by absence).
+			// No evaluator claimed this tool_use — default to Allow.
+			// The inspector chain has its own fail-closed rules that
+			// emit Deny via the evaluator, not by absence.
 			result.PerToolUse[tu.ID] = ToolUseVerdict{Outcome: OutcomeAllow}
 		} else {
 			result.PerToolUse[tu.ID] = *winner

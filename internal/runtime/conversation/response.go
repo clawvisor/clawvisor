@@ -15,12 +15,12 @@ type ToolUseEvaluator func(ToolUse) ToolUseVerdict
 // response rewriters AND produced by the policy pipeline. Both pipelines
 // share this type — there is no separate pipeline.ToolUseVerdict.
 type ToolUseVerdict struct {
-	// Allowed is the legacy boolean derived from Outcome. Rewriters
-	// read this directly. Set true when Outcome is OutcomeAllow or
-	// OutcomeRewrite; false otherwise.
+	// Allowed is the compatibility boolean derived from Outcome.
+	// Rewriters read this directly. Set true when Outcome is
+	// OutcomeAllow or OutcomeRewrite; false otherwise.
 	Allowed bool
 	// Outcome is the typed verdict category produced by pipeline
-	// evaluators. Optional for legacy callers that only set Allowed.
+	// evaluators. Optional for callers that only set Allowed.
 	Outcome Outcome
 	Reason  string
 
@@ -60,11 +60,11 @@ type ToolUseVerdict struct {
 	CreatedTaskID string
 
 	// HeldKindHint is the policy-set classification of this verdict
-	// for postproc's coalescing pass. When empty, classifyVerdict
-	// falls back to substring matching on Reason.
+	// for postproc's coalescing pass. When empty, classification falls
+	// back to the Allowed / RewriteInput shape.
 	HeldKindHint HeldKindHint
 
-	// --- pipeline-side fields (formerly on pipeline.ToolUseVerdict) ---
+	// --- response orchestration fields ---
 
 	// HoldKey groups sibling tool_uses for coalescing. Empty means
 	// "do not coalesce" (each Hold gets its own approval row).
@@ -140,11 +140,9 @@ type StreamingResponseRewriter interface {
 	//
 	// onToolUse, if non-nil, is invoked as each tool_use's parsing
 	// completes (content_block_stop for Anthropic; the equivalent for
-	// OpenAI). Phase D leak cleanup: lets the orchestrator buffer
-	// tool_uses incrementally instead of reading them all at end-of-
-	// stream from StreamingRewriteResult.ToolUses. The returned result
-	// still carries the full ToolUses slice for callers that don't
-	// supply a callback.
+	// OpenAI). Streaming callers use this to collect tool_uses as they
+	// arrive; the returned result still carries the full ToolUses slice
+	// for callers that don't supply a callback.
 	StreamRewrite(ctx context.Context, r io.Reader, w io.Writer, onToolUse func(ToolUse)) (StreamingRewriteResult, error)
 }
 

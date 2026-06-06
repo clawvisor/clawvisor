@@ -2,9 +2,9 @@ package pipeline
 
 import "github.com/clawvisor/clawvisor/internal/runtime/conversation"
 
-// AuditEvent aliases conversation.AuditEvent — Phase 8/9 unified the
-// typed per-tool-use audit record so both pipeline orchestrator output
-// and postproc-side buffering share the same shape.
+// AuditEvent aliases conversation.AuditEvent so both pipeline
+// orchestrator output and postproc-side buffering share the same typed
+// per-tool-use audit shape.
 type AuditEvent = conversation.AuditEvent
 
 // DecisionKind aliases conversation.DecisionKind.

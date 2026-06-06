@@ -111,10 +111,10 @@ func applyAnthropicPatches(ev Event) ([]byte, error) {
 	return out, nil
 }
 
-// applyJSONPathPatch applies a single FieldPatch. For Phase 2 we only
-// support top-level fields (no dots in JSONPath) — that covers the
-// common case of `index` shifts. Nested patches (e.g., `delta.text`)
-// follow when a policy needs them.
+// applyJSONPathPatch applies a single FieldPatch. Only top-level
+// fields are supported (no dots in JSONPath) — that covers the common
+// case of `index` shifts. Nested patches (e.g., `delta.text`) should
+// be added when a policy needs them.
 func applyJSONPathPatch(data []byte, patch FieldPatch) ([]byte, error) {
 	if patch.JSONPath == "" {
 		return nil, fmt.Errorf("empty JSONPath")
@@ -123,7 +123,7 @@ func applyJSONPathPatch(data []byte, patch FieldPatch) ([]byte, error) {
 	// we don't silently swallow a malformed path.
 	for _, c := range patch.JSONPath {
 		if c == '.' {
-			return nil, fmt.Errorf("nested JSONPath %q not yet supported (Phase 2 starts top-level only)", patch.JSONPath)
+			return nil, fmt.Errorf("nested JSONPath %q not yet supported", patch.JSONPath)
 		}
 	}
 	return jsonpatch.SetTopLevelField(data, patch.JSONPath, patch.NewValue)

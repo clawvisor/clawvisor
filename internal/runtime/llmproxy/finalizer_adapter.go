@@ -15,9 +15,6 @@ import (
 // concrete PendingApprovalCache + AuditEmitter + inline-task creator.
 // Constructed per-response; the orchestrator drives all hold + audit
 // commits through this surface.
-//
-// Phase D leak cleanup: every domain-specific finalization side
-// effect lives here so the pipeline package stays narrow.
 type finalizerDeps struct {
 	pendingApprovals PendingApprovalCache
 	audit            *AuditEmitter
@@ -89,11 +86,10 @@ func (d *finalizerDeps) DropHold(ctx context.Context, capture pipeline.HoldCaptu
 }
 
 // BuildCoalescedHold constructs the single PendingLiteApproval that
-// supersedes every buffered capture. Mirrors the legacy
-// postproc.coalesceFromCaptures shape: the first approval-class
-// capture becomes the primary; the rest land in Additional. Allow /
-// Rewrite siblings (no Payload) contribute their ToolUse to the
-// rendered prompt without adding a real hold record.
+// supersedes every buffered capture. The first approval-class capture
+// becomes the primary; the rest land in Additional. Allow / Rewrite
+// siblings (no Payload) contribute their ToolUse to the rendered prompt
+// without adding a real hold record.
 func (d *finalizerDeps) BuildCoalescedHold(captures []pipeline.HoldCapture) pipeline.CoalescedHold {
 	primaryIdx := -1
 	for i, c := range captures {

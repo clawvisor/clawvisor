@@ -9,8 +9,7 @@ import (
 )
 
 // Outcome aliases conversation.Outcome so pipeline code can keep using
-// the local name while the canonical definition lives in conversation
-// (Phase 8 unified verdict shapes — no separate pipeline.ToolUseVerdict).
+// the local name while the canonical definition lives in conversation.
 type Outcome = conversation.Outcome
 
 const (
@@ -43,10 +42,8 @@ type ResponsePolicy interface {
 // verdict before committing any mutation — that's what enables
 // coalescing of multiple Holds.
 //
-// The inspector chain (boundary check → intent verify → task scope →
-// control_rewrite) composes into a single ToolUseEvaluator chain;
-// today's newToolUseEvaluator closure in postprocess.go is exactly
-// this shape.
+// The policies package composes the concrete inspector, authorization,
+// task-scope, intent-verification, and rewrite stages into this shape.
 type ToolUseEvaluator interface {
 	Name() string
 	Evaluate(ctx context.Context, res ReadOnlyResponse, tu conversation.ToolUse, mut ToolUseMutator) (ToolUseVerdict, error)
@@ -55,10 +52,8 @@ type ToolUseEvaluator interface {
 // ReadOnlyRequest exposes the parsed, lossy view of the inbound request.
 // Mutations never go through here — they go through RequestMutator.
 //
-// First-turn detection and conversation-ID minting happen *upstream* of
-// policies, so policies see stable values. (Today the handler interleaves
-// minting with policy execution; the refactor lifts that to before-policy
-// initialization.)
+// First-turn detection and conversation-ID minting happen upstream of
+// policies, so policies see stable values.
 type ReadOnlyRequest interface {
 	Provider() conversation.Provider
 	StreamShape() conversation.StreamShape
@@ -80,10 +75,10 @@ type ReadOnlyRequest interface {
 
 // ReadOnlyResponse exposes the response under inspection.
 //
-// For buffered responses, ToolUses() returns the full set immediately.
-// For streaming responses, the orchestrator populates this incrementally
-// as block_end events arrive — ToolUseEvaluators run per-tool_use as
-// each one completes.
+// For buffered responses, ToolUses returns the full set immediately.
+// Streaming callers may collect tool uses incrementally as events arrive,
+// but response-level evaluation runs once the complete sibling set is
+// known so coalescing and audit decisions see the full turn.
 type ReadOnlyResponse interface {
 	Provider() conversation.Provider
 	StreamShape() conversation.StreamShape
@@ -111,8 +106,7 @@ type ResponseVerdict struct {
 
 // ToolUseVerdict aliases conversation.ToolUseVerdict — the unified
 // verdict shape both pipeline evaluators and response rewriters
-// consume. Phase 8 eliminates the bridge translation between two
-// distinct verdict types.
+// consume.
 type ToolUseVerdict = conversation.ToolUseVerdict
 
 // HeldKindHint aliases conversation.HeldKindHint.

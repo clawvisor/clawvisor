@@ -31,9 +31,7 @@ func (AnthropicSanitize) Name() string { return "anthropic_sanitize" }
 //
 // On a Anthropic parse failure, the policy returns Outcome=Deny with
 // Reason set to the underlying error — the orchestrator turns that
-// into a 400 MALFORMED_REQUEST in the handler. (Today the handler
-// inlines this check; the refactor relocates the decision but
-// preserves the response shape via the deny path.)
+// into a 400 MALFORMED_REQUEST in the handler.
 func (p *AnthropicSanitize) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
 	if req.Provider() != conversation.ProviderAnthropic {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil

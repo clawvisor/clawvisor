@@ -1,11 +1,9 @@
 // Package stream models LLM responses as a unified event sequence.
 //
 // Both streaming SSE responses and buffered JSON responses decode into the
-// same Event channel; both encode back to wire format the same way. This
-// is the abstraction Phase 2 of the LLM proxy refactor introduces — see
-// .context/llmproxy-refactor-plan.md.
+// same Event channel; both encode back to wire format the same way.
 //
-// THE THREE-STATE EVENT CONTRACT
+// # THE THREE-STATE EVENT CONTRACT
 //
 // Each Event lives in exactly one of three states. The encoder asserts
 // the invariant and unit tests pin it.

@@ -183,10 +183,9 @@ type RoutingContext struct {
 // response body and calls postproc.Postprocess; the result is what
 // the harness sees.
 //
-// Phase 5: top-level fields are sliced into per-stage sub-contexts.
-// Embedded structs preserve field-access promotion (cfg.AgentID,
-// cfg.RequestID, etc.) so internal code reads unchanged; composite
-// literals construct the nested form.
+// Embedded sub-contexts group dependencies by stage while preserving
+// field-access promotion (cfg.AgentID, cfg.RequestID, etc.) for
+// existing internal call sites.
 type PostprocessConfig struct {
 	ToolUseEvaluatorFactory ToolUseEvaluatorFactory
 	AgentContext
@@ -223,4 +222,3 @@ type PostprocessResult struct {
 	// content-index, stream IDs, etc.).
 	StreamingResult conversation.StreamingRewriteResult
 }
-

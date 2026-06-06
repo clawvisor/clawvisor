@@ -3,11 +3,8 @@
 // read. It is a leaf package: depends only on stdlib so any layer
 // in the proxy can import it without inducing layering inversions.
 //
-// Phase B of the leak cleanup plan: extracted from
-// internal/runtime/conversation/verdict.go so the conversation
-// package stops importing internal/runtime/llmproxy/inspector.
-// InspectorFact.Source is now a plain string; the inspector →
-// fact translation lives at the policy/inspector boundary.
+// InspectorFact.Source is a plain string; inspector-specific
+// translation lives at the policy / inspector boundary.
 package eval
 
 import "encoding/json"

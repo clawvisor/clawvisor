@@ -33,8 +33,7 @@ type PendingApprovalCacheView = llmproxy.PendingApprovalCache
 
 // NewTaskApprovalReply constructs the policy. agent and cache must
 // be non-nil for the policy to act; nil values produce Skip rather
-// than panicking (matches today's nil-check in
-// llmproxy.RewriteTaskApprovalReply).
+// than panicking.
 func NewTaskApprovalReply(cache PendingApprovalCacheView, agent *store.Agent) *TaskApprovalReply {
 	return &TaskApprovalReply{cache: cache, agent: agent}
 }
@@ -45,8 +44,7 @@ func (TaskApprovalReply) Name() string { return "task_approval_reply" }
 // Preprocess attempts to rewrite a "task" reply into the inline-task-
 // definition flow. Returns OutcomeAllow with no mutation when the
 // reply isn't a task verb; OutcomeAllow with the body replaced when
-// the rewrite fires; OutcomeDeny on a malformed reply (mirroring
-// today's handler which returns 400 in that case).
+// the rewrite fires; OutcomeDeny on a malformed reply.
 func (p *TaskApprovalReply) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
 	if p.cache == nil || p.agent == nil {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil

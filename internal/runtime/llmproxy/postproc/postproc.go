@@ -16,8 +16,6 @@ import (
 // to coordination: extract tool_uses, run eval, run rewriter, hand
 // off to Finalize, optionally re-run the rewriter with the
 // coalesced prompt.
-//
-// Phase D leak cleanup: finalization no longer lives in postproc.
 func Postprocess(req *http.Request, body []byte, contentType string, cfg llmproxy.PostprocessConfig) llmproxy.PostprocessResult {
 	if cfg.Inspector == nil {
 		return llmproxy.PostprocessResult{Body: body, ContentType: contentType, SkippedReason: "no inspector configured"}

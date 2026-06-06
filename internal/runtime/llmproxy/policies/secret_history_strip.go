@@ -26,8 +26,8 @@ func NewSecretHistoryStrip() *SecretHistoryStrip {
 // Name returns the audit-friendly policy identifier.
 func (SecretHistoryStrip) Name() string { return "secret_history_strip" }
 
-// Preprocess runs the strip transform. Errors don't deny — best-effort
-// semantic matches today's handler.
+// Preprocess runs the strip transform. Errors don't deny; stripping is
+// a best-effort context cleanup.
 func (p *SecretHistoryStrip) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
 	stripped, err := llmproxy.StripSecretDecisionHistory(llmproxy.SecretDecisionHistoryStripRequest{
 		Provider: req.Provider(),

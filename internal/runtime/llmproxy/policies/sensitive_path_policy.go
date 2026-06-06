@@ -18,8 +18,6 @@ import (
 // Runs UPSTREAM of ReadOnlyShellPassthroughPolicy in the chain so a
 // sensitive read-only command is Denied here rather than allowed
 // through downstream.
-//
-// Decomposed from the trigger-miss authorization helper (Phase 6).
 type SensitivePathPolicy struct {
 	inspector *inspector.Inspector
 	resolver  ReadOnlyShellResolver

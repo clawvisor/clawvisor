@@ -17,8 +17,6 @@ import (
 // task-scope authorization, when the agent has the
 // read-only-shell-commands-allowed rule. Sensitive-path commands are
 // rejected by SensitivePathPolicy, which runs upstream of this one.
-//
-// Decomposed from the trigger-miss authorization helper (Phase 6).
 type ReadOnlyShellPassthroughPolicy struct {
 	inspector *inspector.Inspector
 	resolver  ReadOnlyShellResolver

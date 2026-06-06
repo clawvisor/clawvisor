@@ -9,18 +9,15 @@ import (
 // AgentNoticeResponse prepends a human-visible routing notice
 // ("[Clawvisor] Routing to <agent>...") to the assistant turn for
 // first-turn requests. The notice text is computed during the
-// request leg (today by the handler calling
-// llmproxy.RenderAgentRoutingNotice) and threaded into this policy
-// via its constructor — so the response-side policy stays purely
-// about the prepend operation.
+// request leg and threaded into this policy via its constructor, so
+// the response-side policy stays purely about the prepend operation.
 //
 // Empty notice text → OutcomeSkip (no mutation). That's how the
 // non-first-turn case is expressed; the handler simply constructs
 // the policy with "" when it doesn't want a notice.
 //
-// This is the first migrated ResponsePolicy. Its proof point: the
-// existing streamingResponseMutator (Phase 2) already does the
-// per-shape prepend; this policy just commands it.
+// The response mutator owns the per-shape prepend details; this policy
+// just commands that operation.
 type AgentNoticeResponse struct {
 	noticeText string
 }

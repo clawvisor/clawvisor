@@ -1407,10 +1407,10 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 			Input: inputRaw,
 		}
 		tus = append(tus, tu)
-		// Phase D.2: deliver each tool_use to the orchestrator as
-		// its index is finalized. Anthropic shifts tool_use blocks
-		// to follow all text blocks, so per-block indices aren't
-		// known until end-of-stream finalization runs.
+		// Deliver each tool_use to the orchestrator once its index is
+		// finalized. Anthropic shifts tool_use blocks to follow all
+		// text blocks, so per-block indices aren't known until
+		// end-of-stream finalization runs.
 		if onToolUse != nil {
 			onToolUse(tu)
 		}

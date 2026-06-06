@@ -4,12 +4,11 @@
 // The handler calls postproc.Postprocess (buffered) or
 // postproc.PostprocessStream (SSE) once per upstream response.
 //
-// Phase D leak cleanup: response-level finalization (coalesce-vs-
-// replay decision, hold replay, audit flushing, coalesced prompt
-// rendering) has moved into pipeline.Finalizer + the llmproxy
-// finalizer adapter. Postproc keeps the per-call buffering wrappers
-// (capturedHoldSink + pendingAuditEventBuffer) that feed the
-// finalizer, but no longer owns the finalization logic.
+// Response-level finalization (coalesce-vs-replay decision, hold
+// replay, audit flushing, coalesced prompt rendering) lives in
+// pipeline.Finalizer plus the llmproxy finalizer adapter. Postproc
+// keeps the per-call buffering wrappers (capturedHoldSink +
+// pendingAuditEventBuffer) that feed the finalizer.
 package postproc
 
 import (
@@ -23,7 +22,7 @@ import (
 // eval pass makes. The wrapper does NOT touch the underlying cache
 // during pass 1 — it generates a stable ID, stores the Pending in the
 // buffer, and returns. After eval the pipeline.Finalizer reads the
-// buffer and decides between coalesce + legacy replay.
+// buffer and decides between coalesce and per-tool replay.
 type capturedHoldSink struct {
 	holds []capturedHold
 }
@@ -74,9 +73,9 @@ func (c *holdCapturingApprovalCache) Drop(ctx context.Context, req llmproxy.Reso
 }
 
 // pendingAuditEventBuffer buffers audit rows from pass 1. The
-// pipeline.Finalizer reads this and either flushes verbatim (legacy
-// replay path) or discards the contents in favor of per-tool
-// coalesced rows (coalesce path).
+// pipeline.Finalizer reads this and either flushes verbatim on the
+// per-tool replay path or discards the contents in favor of per-tool
+// coalesced rows.
 type pendingAuditEventBuffer struct {
 	entries []conversation.AuditEvent
 }

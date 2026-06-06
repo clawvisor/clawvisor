@@ -6,8 +6,7 @@ import (
 )
 
 // ToolUseChainConfig bundles the resolvers + dependencies needed to
-// assemble the six-stage tool_use evaluator chain that replaces
-// newToolUseEvaluator in postprocess.go.
+// assemble the tool_use evaluator chain.
 //
 // All fields are optional in the sense that nil resolvers degrade
 // gracefully (the corresponding evaluator emits Skip). The handler
@@ -63,8 +62,8 @@ type ToolUseChainConfig struct {
 	Rewrite CredentialRewriteResolver
 }
 
-// ComposeToolUseEvaluatorChain assembles the six-stage tool_use
-// evaluator chain in the order the legacy newToolUseEvaluator runs them:
+// ComposeToolUseEvaluatorChain assembles the tool_use evaluator chain
+// in the order the proxy applies tool_use decisions:
 //
 //  1. ControlToolUseEvaluator — claims control-plane tool_uses (with
 //     inline-task interception when configured).
@@ -89,20 +88,10 @@ func ComposeToolUseEvaluatorChain(cfg ToolUseChainConfig) []pipeline.ToolUseEval
 	chain := make([]pipeline.ToolUseEvaluator, 0, 8)
 	chain = append(chain, NewControlToolUseEvaluator(cfg.Control))
 	chain = append(chain, NewScriptSessionEvaluator(cfg.ScriptSession))
-	// Phase 6 decomposed policies run BEFORE InspectorChain so a
-	// background-shell poll claims Allow directly (the legacy
-	// EvaluateTriggerMissAuthorization closure would have done the same
-	// via InspectorChain's TriggerMissAuth). The other Phase 6 policies
-	// (ReadOnlyShell, SensitivePath, Authorization) are built but not
-	// wired yet — they require resolver plumbing the host hasn't moved
-	// out of the closure pattern. ShellPoll has no host dependencies, so
-	// it lands first.
-	// Phase 6 decomposed policies handling trigger-miss specials. Run
-	// BEFORE InspectorChain so they claim Allow/Deny/Hold directly
-	// without delegating to the legacy TriggerMissAuthorizer closure.
-	// SensitivePath emits a Fact-only Skip; AuthorizationPolicy reads
-	// the sensitive trail + runs EvaluateAuthorization + handles the
-	// approval flow inline.
+	// Trigger-miss special policies run before InspectorChain so they
+	// can claim Allow/Deny/Hold directly. SensitivePath emits a
+	// Fact-only Skip; AuthorizationPolicy reads the sensitive trail,
+	// runs EvaluateAuthorization, and handles the approval flow inline.
 	chain = append(chain, NewSensitivePathPolicy(cfg.Inspector, cfg.ReadOnlyShell))
 	chain = append(chain, NewShellPollPassthroughPolicy(cfg.Inspector))
 	chain = append(chain, NewReadOnlyShellPassthroughPolicy(cfg.Inspector, cfg.ReadOnlyShell))

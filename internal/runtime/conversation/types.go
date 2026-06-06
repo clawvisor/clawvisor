@@ -26,11 +26,10 @@ type Provider string
 const (
 	ProviderAnthropic Provider = "anthropic"
 	ProviderOpenAI    Provider = "openai"
-	// ProviderGoogle is the Phase 6 third-provider stub. Defined here
-	// so the value is recognized across the codebase, but the parser
-	// and stream codec only exist at stub level — production traffic
-	// for Google routes through provider-neutral paths until full
-	// codec work lands.
+	// ProviderGoogle is defined here so the value is recognized across
+	// the codebase. The parser and stream codec are still partial, so
+	// production traffic for Google routes through provider-neutral
+	// paths until full codec work lands.
 	ProviderGoogle Provider = "google"
 )
 

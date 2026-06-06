@@ -1,11 +1,6 @@
-// Package pipeline defines the policy/mutator interfaces that the LLM
-// proxy will be carved into. See .context/llmproxy-refactor-plan.md
-// (Phase 1) for context.
-//
-// THE INTERFACES IN THIS PACKAGE ARE DESIGN HYPOTHESES UNTIL THE FIRST
-// CONCRETE POLICY MIGRATION VALIDATES THEM. Mutator implementations panic
-// if called — nothing wires through this package until Phase 2 ports the
-// first operation (PrependAssistantText via the new event stream).
+// Package pipeline defines the policy, mutator, evaluator, and
+// finalizer interfaces that coordinate the LLM proxy's request,
+// response, and tool_use flows.
 //
 // Three policy kinds carry different cardinality:
 //
@@ -19,7 +14,6 @@
 // orchestrator can merge multiple Hold verdicts sharing a HoldKey into
 // one combined approval before any audit row or cache write happens.
 //
-// The mutator surface will grow as policies migrate. Each new method
-// arrives with a contract test scoped to that method's per-provider,
-// per-stream-shape behavior — not pre-emptively for unused operations.
+// Each mutator method should have contract coverage scoped to that
+// method's per-provider, per-stream-shape behavior.
 package pipeline

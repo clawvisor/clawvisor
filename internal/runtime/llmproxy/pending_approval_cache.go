@@ -208,16 +208,16 @@ func (p PendingLiteApproval) AllHolds() []HeldToolUse {
 }
 
 // IsCoalesced reports whether the hold covers more than one tool_use.
-// Single-tool holds (Additional empty) keep today's 3-option (yes/no/task)
+// Single-tool holds (Additional empty) keep the 3-option (yes/no/task)
 // prompt; coalesced holds are strictly binary.
 func (p PendingLiteApproval) IsCoalesced() bool {
 	return len(p.Additional) > 0
 }
 
 type ResolveRequest struct {
-	UserID     string
-	AgentID    string
-	Provider   conversation.Provider
+	UserID   string
+	AgentID  string
+	Provider conversation.Provider
 	// ConversationID scopes the lookup to the requesting conversation's
 	// bucket so bare/no-ID resolves and Drops can't cross conversation
 	// boundaries. Empty matches the pre-conversation-scoping bucket so

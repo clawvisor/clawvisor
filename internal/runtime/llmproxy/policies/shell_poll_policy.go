@@ -15,10 +15,8 @@ import (
 // through without going through full task-scope authorization. The
 // background shell is read-equivalent: polling it is a no-op.
 //
-// Decomposed from the trigger-miss authorization helper (Phase 6).
-// Runs after InspectorChain in the tool_use chain; claims the verdict
-// only when the inspector classifies the call as SourceTriggerMiss
-// AND the tool shape matches the poll pattern.
+// Claims the verdict only when the inspector classifies the call as
+// SourceTriggerMiss and the tool shape matches the poll pattern.
 type ShellPollPassthroughPolicy struct {
 	inspector *inspector.Inspector
 }

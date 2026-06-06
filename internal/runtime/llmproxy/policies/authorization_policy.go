@@ -17,8 +17,6 @@ import (
 // final verdict carries the approval ID in its substitute text — the
 // chain's first-non-Skip-wins shape doesn't support post-claim
 // handoffs to a separate PendingApprovalHoldPolicy.
-//
-// Decomposed from EvaluateTriggerMissAuthorization (Phase 6).
 type AuthorizationPolicy struct {
 	inspector *inspector.Inspector
 	resolver  AuthorizationResolver
@@ -34,14 +32,13 @@ type AuthorizationInputs struct {
 	// HasPolicyConfig reports whether the host wired any
 	// decision-engine inputs (CandidateTasks, ToolRules, EgressRules).
 	// When false AND ShellSensitivePath is also false, the policy
-	// short-circuits with the legacy "no credential trigger"
-	// pass-through Allow.
+	// short-circuits with the "no credential trigger" pass-through
+	// Allow.
 	HasPolicyConfig bool
 	// ShellSensitivePath signals that an upstream sensitive-path
 	// detection fired. Forces EvaluateAuthorization to run even when
-	// no policy config is wired — preserves the legacy multi-row
-	// behavior where sensitive-path + no-policy still routes through
-	// the approval flow.
+	// no policy config is wired so sensitive-path + no-policy still
+	// routes through the approval flow.
 	ShellSensitivePath bool
 	// ReadOnlyShellCommand reports whether the upstream
 	// ReadOnlyShellPassthroughPolicy would have allowed this call.

@@ -1,22 +1,16 @@
 // Package pipelineeval exposes the policies-chain-based
-// llmproxy.ToolUseEvaluatorFactory as Factory. It's a leaf package
-// over llmproxy + llmproxy/policies + llmproxy/pipeline so handlers
-// and llmproxy's own internal tests can both import it without
-// re-introducing the policies → llmproxy cycle the broader refactor
-// already navigated.
+// llmproxy.ToolUseEvaluatorFactory as Factory. It is the adapter layer
+// between llmproxy's response config and the policy / pipeline packages,
+// so handlers and llmproxy's own tests can share the same evaluator
+// construction without introducing a policies -> llmproxy import cycle.
 //
 // The factory composes the six-stage chain (ControlToolUseEvaluator
 // + ScriptSessionEvaluator + InspectorChain with TriggerMissAuthorizer
 // + TaskScopeEvaluator + IntentVerifyEvaluator + CredentialRewriteEvaluator)
-// and runs each tool_use through it via pipeline.RunToolUseEvaluators.
-// Trigger-miss and credentialed-path authorization run through the
-// exported llmproxy.Evaluate* helpers; the inline task-definition
-// intercept flows through ControlToolUseEvaluator's InterceptInline
-// hook. Audit emission flows through policies.EmitToolUseAuditRows
-// into the conversation.AuditEvent emit callback the caller supplies.
-//
-// Verified byte-equivalent to legacy newToolUseEvaluator emission by
-// TestLegacyAndPipelineEmitters_ProduceIdenticalAuditRows.
+// and runs the whole sibling tool_use set once through
+// pipeline.RunToolUseEvaluators. The returned evaluator is a verdict
+// lookup; audit rows and buffered holds are emitted through the typed
+// conversation.AuditEvent callback the caller supplies.
 package pipelineeval
 
 import (
@@ -97,9 +91,9 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 			return conversation.ToolUseVerdict{Allowed: false, Reason: errMsg}
 		}
 	}
-	// Emit one audit row per tool_use. The legacy trigger-miss
-	// suppression channel (verdictEmittedAuditExternally) was deleted
-	// with Phase 6 — no evaluator emits side-channel audits anymore.
+	// Emit one audit row per tool_use. Evaluators report observations
+	// through the typed pipeline result; no side-channel audit emission
+	// is used for the winning verdicts here.
 	matchedTaskIDs := make(map[string]string, len(toolUses))
 	for _, tu := range toolUses {
 		matchedTaskIDs[tu.ID] = lookupMatchedTaskID(ctx, cfg.AgentContext, cfg.AuthorizationContext, cfg.RewriteContext, tu)
@@ -115,9 +109,8 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 // TaskID falls back to the matchedTaskIDs map when not surfaced by
 // facts.
 //
-// Replaces the legacy policies.EmitToolUseAuditRows compat shim (Phase 9
-// strict strip). The pipeline package owns the typed event stream; the
-// emit helper is a pure translator inlined at the call site.
+// The pipeline package owns the typed event stream; this helper is a
+// pure translator at the llmproxy adapter boundary.
 func emitAuditEvents(
 	ctx context.Context,
 	result *pipeline.ToolUseResult,
@@ -236,10 +229,9 @@ func lookupMatchedTaskID(ctx context.Context, agent llmproxy.AgentContext, auth 
 	return ""
 }
 
-// Legacy singletonToolUseResponse + its methods have been removed —
-// every postproc caller now supplies the full sibling set to the
-// factory and the orchestrator runs response-level. multiToolUseResponse
-// is the canonical pipeline-side response type.
+// Every postproc caller supplies the full sibling set to the factory,
+// and the orchestrator runs response-level. multiToolUseResponse is the
+// canonical pipeline-side response type.
 
 func buildControlResolver(
 	req *http.Request,
@@ -289,10 +281,9 @@ func buildControlResolver(
 	}
 }
 
-// conversationToPipelineVerdict sets the typed Outcome on a verdict
-// returned from a legacy helper that only set Allowed. After Phase 8
-// the verdict type is unified, so the only field-level translation
-// needed is deriving Outcome from Allowed.
+// conversationToPipelineVerdict normalizes helper verdicts that only set
+// Allowed. The verdict type is unified, so the only field-level
+// translation needed is deriving Outcome from Allowed.
 func conversationToPipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolUseVerdict {
 	if v.Outcome != "" {
 		return v
@@ -326,8 +317,8 @@ func conversationToPipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolU
 // network boundary, but the proxy's pre-flight check would have
 // silently passed.
 //
-// Phase C narrowed signature: only AgentContext (identity) + the
-// placeholder store flow in; no other sub-contexts are reachable.
+// The narrowed signature keeps this builder limited to identity and the
+// placeholder store; no other postprocess sub-contexts are reachable.
 func buildBoundaryResolver(agent llmproxy.AgentContext, st store.Store) policies.BoundaryResolver {
 	if st == nil {
 		return nil
@@ -371,8 +362,8 @@ func buildBoundaryResolver(agent llmproxy.AgentContext, st store.Store) policies
 // TaskScopeDecision when the call is authorized so TaskScopeEvaluator
 // Skips and downstream stages (IntentVerify, CredentialRewrite) run.
 //
-// Inlined from the legacy EvaluateCredentialedAuthorization helper
-// (Phase 6).
+// This adapter is where the policy layer reaches the credentialed-path
+// authorization helper behavior without importing llmproxy directly.
 func buildCredentialedTaskScope(
 	agent llmproxy.AgentContext,
 	auditCtx llmproxy.AuditContext,
@@ -563,9 +554,8 @@ func buildAuthorizationResolver(
 	}
 }
 
-// detectShellSpecials replays the legacy read-only-shell + sensitive-
-// path detection from EvaluateTriggerMissAuthorization so the resolver
-// hands AuthorizationPolicy the right flags. Returns
+// detectShellSpecials derives read-only-shell and sensitive-path flags
+// so the resolver hands AuthorizationPolicy the right inputs. Returns
 // (readOnlyShellCommand, sensitivePath); when sensitivePath is true
 // readOnlyShellCommand is forced false (sensitive overrides).
 func detectShellSpecials(tu conversation.ToolUse, agent llmproxy.AgentContext, auth llmproxy.AuthorizationContext) (bool, bool) {
@@ -630,9 +620,8 @@ func (h *authorizationHoldHandler) Hold(ctx context.Context, req policies.Author
 // buildReadOnlyShellResolver wires ReadOnlyShellPassthroughPolicy +
 // SensitivePathPolicy to AgentID + ToolRules.
 //
-// Phase C narrowed signature: AgentContext supplies identity, the
-// AuthorizationContext supplies the rule set. Nothing else is
-// reachable from this builder's scope.
+// AgentContext supplies identity, and AuthorizationContext supplies the
+// rule set. Nothing else is reachable from this builder's scope.
 func buildReadOnlyShellResolver(agent llmproxy.AgentContext, auth llmproxy.AuthorizationContext) policies.ReadOnlyShellResolver {
 	agentID := agent.AgentID
 	toolRules := auth.ToolRules
@@ -651,8 +640,8 @@ func buildReadOnlyShellResolver(agent llmproxy.AgentContext, auth llmproxy.Autho
 // /api/proxy mount so the policy can recognize already-rewritten
 // script-session curls.
 //
-// Phase C narrowed signature: RewriteContext supplies RewriteOpts;
-// nothing else is reachable from this builder's scope.
+// RewriteContext supplies RewriteOpts; nothing else is reachable from
+// this builder's scope.
 func buildScriptSessionResolver(rewrite llmproxy.RewriteContext) policies.ScriptSessionResolver {
 	if rewrite.RewriteOpts.ResolverBaseURL == "" {
 		return nil
@@ -667,8 +656,8 @@ func buildScriptSessionResolver(rewrite llmproxy.RewriteContext) policies.Script
 // inspector + nonce cache + rewrite opts that the rewrite stage
 // needs.
 //
-// Phase C narrowed signature: AgentContext supplies identity,
-// RewriteContext supplies Inspector + CallerNonces + RewriteOpts.
+// AgentContext supplies identity; RewriteContext supplies Inspector,
+// CallerNonces, and RewriteOpts.
 func buildRewriteResolver(agent llmproxy.AgentContext, rewrite llmproxy.RewriteContext) policies.CredentialRewriteResolver {
 	if rewrite.Inspector == nil {
 		return nil

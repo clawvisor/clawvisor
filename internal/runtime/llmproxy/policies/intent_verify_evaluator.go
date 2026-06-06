@@ -8,8 +8,7 @@ import (
 )
 
 // IntentVerifyEvaluator runs the LLM-backed intent check that confirms
-// a tool_use's purpose matches its task scope. Phase 4's fourth and
-// final inspector-chain evaluator.
+// a tool_use's purpose matches its task scope.
 //
 // The verification call is supplied by the handler as a closure so the
 // evaluator stays decoupled from the underlying IntentVerifier

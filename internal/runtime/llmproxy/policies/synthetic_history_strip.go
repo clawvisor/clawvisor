@@ -11,10 +11,8 @@ import (
 // their bare "approve"/"deny" replies) from conversation history
 // before the upstream sees the request.
 //
-// Today's handler calls llmproxy.StripSyntheticApprovalHistory inline;
-// this policy is the parallel pipeline implementation that will replace
-// that call site when the orchestrator lands. Pure body transformation;
-// no state, no side effects beyond the body swap and the
+// Pure body transformation; no state, no side effects beyond the body
+// swap and the
 // `synthetic_approval_history_stripped` audit flag.
 //
 // Unlike anthropic_sanitize, this policy runs for both providers —
@@ -30,17 +28,17 @@ func NewSyntheticHistoryStrip() *SyntheticHistoryStrip {
 func (SyntheticHistoryStrip) Name() string { return "synthetic_history_strip" }
 
 // Preprocess runs the strip transform. Unlike anthropic_sanitize, an
-// error here is *not* fatal — today's handler logs and continues. The
-// policy returns OutcomeSkip with the error in Reason so the orchestrator
-// can surface it to logging without denying the request.
+// error here is not fatal. The policy returns OutcomeSkip with the
+// error in Reason so the orchestrator can surface it to logging without
+// denying the request.
 func (p *SyntheticHistoryStrip) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
 	stripped, err := llmproxy.StripSyntheticApprovalHistory(llmproxy.SyntheticApprovalHistoryStripRequest{
 		Provider: req.Provider(),
 		Body:     req.RawBody(),
 	})
 	if err != nil {
-		// Best-effort: legacy handler logs and continues. Preserve that
-		// semantic by returning Skip with the error tagged in audit.
+		// Best-effort context cleanup: return Skip with the error
+		// tagged in audit.
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeSkip,
 			Reason:  err.Error(),

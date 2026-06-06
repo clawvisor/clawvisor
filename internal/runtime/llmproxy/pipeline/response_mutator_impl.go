@@ -86,8 +86,7 @@ func (m *streamingResponseMutator) Commit() error {
 	if m.hasSubstitute {
 		// SubstituteEntireResponse takes precedence over Prepend — the
 		// upstream response is discarded and replaced with a synthetic
-		// one-text-block stream carrying the substitute text. Used by
-		// inline_task_intercept's postprocess half (Phase 4).
+		// one-text-block stream carrying the substitute text.
 		switch m.shape {
 		case conversation.StreamShapeAnthropicMessages:
 			return stream.SubstituteAnthropicResponse(m.dst, m.src, m.substituteText)

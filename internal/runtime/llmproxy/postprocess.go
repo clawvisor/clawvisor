@@ -119,8 +119,7 @@ func ApprovalPrompt(tu conversation.ToolUse, reason, approvalID string) string {
 // DecisionIntentVerifierFor wraps a (possibly nil) IntentVerifier so
 // runtimedecision.AuthorizationInput can consume it directly. The
 // wrapper translates between the package-local IntentVerifyRequest /
-// IntentVerdict types and runtimedecision's. Used by both the legacy
-// EvaluateTriggerMissAuthorization and the Phase 6 AuthorizationPolicy.
+// IntentVerdict types and runtimedecision's.
 func DecisionIntentVerifierFor(v IntentVerifier) runtimedecision.IntentVerifier {
 	return decisionIntentVerifier{inner: v}
 }
@@ -198,8 +197,7 @@ func redactPlaceholderForReason(ph string) string {
 // this to fail-closed once the circuit breaker is in place.
 // RunIntentVerify is the exported version of the per-task-scope intent
 // check the credentialed path runs after TaskScope.Check confirms the
-// scope match. Exposed for the Phase 6 credentialedTaskScope closure
-// in pipelineeval/factory.go.
+// scope match.
 func RunIntentVerify(ctx context.Context, cfg PostprocessConfig, dec TaskScopeDecision, resolved ResolvedAction, tu conversation.ToolUse) (string, bool) {
 	return runIntentVerify(ctx, cfg, dec, resolved, tu)
 }

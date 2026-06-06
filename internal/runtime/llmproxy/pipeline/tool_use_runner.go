@@ -9,7 +9,7 @@ import (
 
 // capturedToolMutations records per-tool-use mutations queued by
 // ToolUseEvaluators so the bridge can translate them back into the
-// conversation.ToolUseVerdict shape the legacy response rewriters
+// conversation.ToolUseVerdict shape the response rewriters
 // (AnthropicResponseRewriter, OpenAIResponseRewriter) consume.
 type capturedToolMutations struct {
 	rewrittenInput  json.RawMessage
@@ -46,10 +46,8 @@ func (m *captureMutator) ReplaceWithText(text string) error {
 // Continuation: ContinueSignal carries structured synthetic turn
 // blocks, which the conversation.ToolUseVerdict surfaces as
 // stringified ContinueWithToolResult. The bridge concatenates the
-// continuation's tool-result block JSON — matching how the legacy
-// newToolUseEvaluator emits continuation text. The orchestrator
-// guarantees only one tool_use carries Continue, so siblings fall back
-// to Allowed.
+// continuation's tool-result block JSON. The orchestrator guarantees
+// only one tool_use carries Continue, so siblings fall back to Allowed.
 func RunToolUseEvaluators(
 	ctx context.Context,
 	res ReadOnlyResponse,
@@ -74,10 +72,9 @@ func RunToolUseEvaluators(
 			// allow rather than silently substituting.
 			return conversation.ToolUseVerdict{Allowed: true}
 		}
-		// Verdict type is now unified across pipeline + rewriters
-		// (Phase 8). Set the derived Allowed bool from Outcome so the
-		// legacy rewriter readers stay correct, then merge any
-		// queued mutator state.
+		// Verdict type is unified across pipeline and rewriters. Set
+		// the derived Allowed bool from Outcome so rewriter readers
+		// stay correct, then merge any queued mutator state.
 		v.Allowed = v.Outcome == conversation.OutcomeAllow || v.Outcome == conversation.OutcomeRewrite
 		// Mutator-side mutations (RewriteArgs / ReplaceWithText) take
 		// precedence over verdict-side fields. The mutator is the

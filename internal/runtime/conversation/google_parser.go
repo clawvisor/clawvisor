@@ -6,10 +6,9 @@ import (
 	"strings"
 )
 
-// GoogleParser is the Phase 6 third-provider parser stub. Recognizes
-// Google Gemini API requests at generativelanguage.googleapis.com and
-// extracts turns from the contents[] array (Gemini's analog to
-// Anthropic's messages[]).
+// GoogleParser recognizes Google Gemini API requests at
+// generativelanguage.googleapis.com and extracts turns from the
+// contents[] array (Gemini's analog to Anthropic's messages[]).
 //
 // Production traffic for Google requires more than this parser —
 // stream codecs, forwarder routing, response shape handling. The
@@ -44,13 +43,13 @@ type googleRequest struct {
 }
 
 type googleContent struct {
-	Role  string         `json:"role"`
+	Role  string              `json:"role"`
 	Parts []googleContentPart `json:"parts"`
 }
 
 type googleContentPart struct {
-	Text         string                  `json:"text,omitempty"`
-	FunctionCall *googleFunctionCall     `json:"functionCall,omitempty"`
+	Text             string                  `json:"text,omitempty"`
+	FunctionCall     *googleFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *googleFunctionResponse `json:"functionResponse,omitempty"`
 }
 

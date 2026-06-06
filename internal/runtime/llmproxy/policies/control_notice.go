@@ -15,7 +15,7 @@ import (
 // (/api/control/tasks, vault placeholders, etc.) and any active tool
 // rules.
 //
-// Gating mirrors today's handler:
+// Gating:
 //   - Empty ControlBaseURL → Skip.
 //   - URL path ending in `/count_tokens` → Skip.
 //   - Request declares no tools[] → Skip (no point advertising the
@@ -34,13 +34,13 @@ type ControlNotice struct {
 }
 
 // AvailableToolsFn extracts the declared tool names from a request.
-// Today's handler computes this via liteProxyRequestDebugSummary;
-// the policy receives the same shape via the loader closure.
+// The policy receives this shape via a loader closure so it does not
+// depend on the handler's request-debug helpers.
 type AvailableToolsFn func(provider conversation.Provider, body []byte) []string
 
 // ToolRulesLoader loads the active tool-rule policy for the given
-// user/agent. Returns nil on best-effort error — today's handler
-// treats notice injection as best-effort.
+// user/agent. Returns nil on best-effort error so notice injection
+// remains non-fatal.
 type ToolRulesLoader func(ctx context.Context, userID, agentID string) []*store.RuntimePolicyRule
 
 // NewControlNotice constructs the policy. controlBaseURL "" skips.

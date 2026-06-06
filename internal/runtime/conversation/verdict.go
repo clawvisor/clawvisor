@@ -4,12 +4,9 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/eval"
 )
 
-// Phase B leak cleanup: evaluation types now live in
-// internal/runtime/eval. This file re-exports them as type aliases so
-// the public conversation.X surface keeps working while breaking the
-// conversation → inspector import (the InspectorFact.Source field is
-// a plain string in eval; inspector.VerdictSource is converted at the
-// policy/inspector boundary).
+// Evaluation types live in internal/runtime/eval. This file re-exports
+// them as type aliases so the public conversation.X surface keeps
+// working while conversation stays independent of the inspector package.
 
 // Outcome is the coarse verdict category. See eval.Outcome.
 type Outcome = eval.Outcome

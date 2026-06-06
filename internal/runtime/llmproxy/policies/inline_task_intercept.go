@@ -67,7 +67,7 @@ func (InlineTaskIntercept) Name() string { return "inline_task_intercept" }
 //   - Body rewritten on success → Allow with ReplaceBody + audit fields
 //   - Body rewritten on deny / creator failure → Allow with ReplaceBody
 //   - audit fields tagged with the failure outcome
-//   - Underlying error → Deny (today's handler returns 400)
+//   - Underlying error → Deny
 func (p *InlineTaskIntercept) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
 	if p.cache == nil || p.agent == nil {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil

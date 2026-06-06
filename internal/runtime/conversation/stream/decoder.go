@@ -29,9 +29,8 @@ type Decoder interface {
 // Streaming responses pass r as the upstream body Reader; buffered
 // responses synthesize a Reader from the parsed body and use the same
 // API. Returns nil if the shape has no implementation yet — callers
-// should fall back to legacy path in that case.
+// should fall back to their provider-specific path in that case.
 func DecoderFor(_ /*shape*/ any, _ io.Reader) Decoder {
 	// Implementation per-shape lands as each shape's decoder is written.
-	// Phase 2 starts with Anthropic SSE; OpenAI shapes follow.
 	return nil
 }

@@ -13,12 +13,10 @@ import (
 // indices are shifted by +1 via FieldPatch — sibling bytes remain
 // untouched.
 //
-// This is the Phase 2 proof-of-concept: it reproduces (a subset of)
-// the behavior in conversation/streaming_assistant_prepend.go through
-// the new event-stream model. The reference implementation handles
-// edge cases (thinking-block deferral, stream-end fallback, partial
-// events) we'll port in follow-ups; this version pins the happy path
-// to validate the contract.
+// This helper covers the common notice-prepend path. The reference
+// implementation in conversation/streaming_assistant_prepend.go handles
+// additional edge cases such as thinking-block deferral, stream-end
+// fallback, and partial events.
 //
 // Returns an error from the underlying io operations. The notice text
 // must be non-empty; blank text is a no-op (the stream is copied

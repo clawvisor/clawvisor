@@ -23,8 +23,8 @@ func SubstituteAnthropicResponse(dst io.Writer, src io.Reader, text string) erro
 	// drained vs cancelled). The content is discarded.
 	if _, err := io.Copy(io.Discard, src); err != nil {
 		// Drain failure doesn't fail the substitution; we still emit the
-		// synthetic response. Log-and-continue semantic matches today's
-		// best-effort substitute handling.
+		// synthetic response. Substitution is best-effort after the
+		// caller has decided to replace the upstream body.
 	}
 
 	events := []struct {
@@ -36,12 +36,12 @@ func SubstituteAnthropicResponse(dst io.Writer, src io.Reader, text string) erro
 			payload: map[string]any{
 				"type": "message_start",
 				"message": map[string]any{
-					"id":           "msg_clawvisor_substitute",
-					"type":         "message",
-					"role":         "assistant",
-					"model":        "claude-substituted",
-					"content":      []any{},
-					"stop_reason":  nil,
+					"id":            "msg_clawvisor_substitute",
+					"type":          "message",
+					"role":          "assistant",
+					"model":         "claude-substituted",
+					"content":       []any{},
+					"stop_reason":   nil,
 					"stop_sequence": nil,
 					"usage": map[string]any{
 						"input_tokens":  0,

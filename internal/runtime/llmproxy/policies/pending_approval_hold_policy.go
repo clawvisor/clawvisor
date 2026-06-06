@@ -14,12 +14,9 @@ import (
 // resulting approval ID, and replaces the verdict's SubstituteWith
 // with the rendered prompt.
 //
-// Decomposed from the trigger-miss authorization helper (Phase 6). The
-// orchestrator's first-non-Skip-wins rule means this policy only runs
-// when no upstream policy claimed the verdict — to handle Hold
-// verdicts from AuthorizationPolicy, the chain composer threads the
-// upstream verdict through via PendingApprovalHoldResolver's Decision
-// field (see ComposeToolUseEvaluatorChain).
+// The orchestrator's first-non-Skip-wins rule means this policy only
+// runs when no upstream policy claimed the verdict. Hold verdicts from
+// AuthorizationPolicy are handled through its AuthorizationHoldHandler.
 type PendingApprovalHoldPolicy struct {
 	resolver PendingApprovalHoldResolver
 }
@@ -70,10 +67,8 @@ func (PendingApprovalHoldPolicy) Name() string { return "pending_approval_hold" 
 // hold (typical case). The actual hold side-effect is invoked by the
 // upstream AuthorizationPolicy via its resolver, not by chain
 // invocation — this policy exists primarily as a docs anchor for the
-// Phase 6 decomposition. The full integration moves the hold side-
-// effects out of AuthorizationPolicy into here once the chain
-// supports verdict-handoff (which it does not in the first-non-Skip-
-// wins shape).
+// approval-hold contract while the chain keeps first-non-Skip-wins
+// semantics.
 func (p *PendingApprovalHoldPolicy) Evaluate(_ context.Context, _ pipeline.ReadOnlyResponse, _ conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
 	return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 }
