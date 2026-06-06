@@ -62,62 +62,68 @@ func EmitToolUseAuditRows(
 	if result == nil || sink == nil {
 		return
 	}
-	// Build a quick lookup from tool_use ID → which evaluator's
-	// non-Skip verdict won. The orchestrator's PerToolUse already
-	// stores the winner; we walk Evaluations to find the producing
-	// evaluator so the row's Outcome can be evaluator-aware.
-	winnerEvaluator := make(map[string]string, len(toolUses))
-	for _, ev := range result.Evaluations {
-		if ev.Verdict.Outcome == pipeline.OutcomeSkip {
-			continue
-		}
-		if _, claimed := winnerEvaluator[ev.ToolUseID]; claimed {
-			continue
-		}
-		winnerEvaluator[ev.ToolUseID] = ev.EvaluatorName
-	}
+	// Consume the pipeline's typed AuditEvents stream rather than
+	// reconstructing winner-evaluator mappings + fact aggregation
+	// inline. AuditEvent carries Winning, Decision, Facts, and the
+	// EvaluatorName per (tool_use × evaluator) row.
+	events := result.AuditEvents(toolUses)
 
-	// Collect typed Facts emitted by every evaluator that ran on each
-	// tool_use. Facts from Skip evaluators are included — observation
-	// is independent of verdict claiming (e.g., InspectorChain emits
-	// InspectorFact + BoundaryFact even when it Skips so
-	// CredentialRewrite can claim).
+	// Group typed facts by tool_use across the full trail so observation
+	// flowing through Skip evaluators (TaskScopeFact's MatchedTaskID on
+	// a credentialed-rewrite path, etc.) reaches the winning row.
 	factsByTU := make(map[string][]pipeline.EvaluationFact, len(toolUses))
-	for _, ev := range result.Evaluations {
-		factsByTU[ev.ToolUseID] = append(factsByTU[ev.ToolUseID], ev.Verdict.Facts...)
+	for _, ev := range events {
+		factsByTU[ev.ToolUse.ID] = append(factsByTU[ev.ToolUse.ID], ev.Facts...)
 	}
 
-	for _, tu := range toolUses {
-		v, ok := result.PerToolUse[tu.ID]
-		if !ok {
+	emittedFor := make(map[string]bool, len(toolUses))
+	for _, ev := range events {
+		if !ev.Winning {
 			continue
 		}
+		if emittedFor[ev.ToolUse.ID] {
+			continue
+		}
+		emittedFor[ev.ToolUse.ID] = true
+
+		// Pull the canonical reason from PerToolUse (the winning verdict
+		// the orchestrator recorded) rather than the AuditEvent — the
+		// trail Evaluations may store an abbreviated Reason while
+		// PerToolUse carries the final richer form. AuditEvent.Reason
+		// matches whichever was set on the trail entry.
+		winningV := result.PerToolUse[ev.ToolUse.ID]
 		row := ToolUseAuditRow{
-			ToolUse: tu,
-			Reason:  v.Reason,
+			ToolUse:  ev.ToolUse,
+			Reason:   winningV.Reason,
+			Decision: string(ev.Decision),
+		}
+		if row.Reason == "" {
+			row.Reason = ev.Reason
 		}
 		if insp != nil {
 			row.Verdict = insp.Inspect(ctx, inspector.ToolUse{
-				ID:    tu.ID,
-				Name:  tu.Name,
-				Input: tu.Input,
+				ID:    ev.ToolUse.ID,
+				Name:  ev.ToolUse.Name,
+				Input: ev.ToolUse.Input,
 			})
 		}
-		row.Decision = decisionFromOutcome(v.Outcome)
-		row.Outcome = outcomeNameFor(winnerEvaluator[tu.ID], v, factsByTU[tu.ID])
-		row.TaskID = matchedTaskIDFromFacts(factsByTU[tu.ID])
+		// Outcome name + matched_task_id derive from the winning
+		// verdict's facts (and the aggregated trail for matched_task_id
+		// since TaskScope may emit on a Skip path that loses the
+		// verdict claim to CredentialRewrite).
+		row.Outcome = outcomeNameFor(ev.EvaluatorName, winningV, ev.Facts)
+		row.TaskID = matchedTaskIDFromFacts(factsByTU[ev.ToolUse.ID])
 		if row.TaskID == "" {
-			// Legacy fallback path: pre-fact evaluators (or fact-less
-			// custom evaluators) still surface matched_task_id through
-			// AuditFields. Phase 6 deletes this once every evaluator
-			// emits TaskScopeFact.
-			row.TaskID = taskIDFromAuditFields(v.AuditFields)
+			// Legacy fallback for evaluators that still surface
+			// matched_task_id via AuditFields. Removed when Phase 6
+			// decomposes every policy to emit TaskScopeFact.
+			row.TaskID = taskIDFromAuditFields(winningV.AuditFields)
 			if row.TaskID == "" {
-				for _, ev := range result.Evaluations {
-					if ev.ToolUseID != tu.ID {
+				for _, e := range result.Evaluations {
+					if e.ToolUseID != ev.ToolUse.ID {
 						continue
 					}
-					if id := taskIDFromAuditFields(ev.Verdict.AuditFields); id != "" {
+					if id := taskIDFromAuditFields(e.Verdict.AuditFields); id != "" {
 						row.TaskID = id
 						break
 					}
