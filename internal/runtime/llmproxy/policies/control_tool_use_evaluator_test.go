@@ -148,8 +148,8 @@ func TestControlToolUseEvaluator_DenyOnMissingNonceCache(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeDeny {
 		t.Errorf("Outcome = %q, want Deny", v.Outcome)
 	}
-	if v.AuditFields["control_outcome"] != "caller_nonce_unavailable" {
-		t.Errorf("control_outcome = %v, want caller_nonce_unavailable", v.AuditFields["control_outcome"])
+	if got := controlFactOutcome(v.Facts); got != "caller_nonce_unavailable" {
+		t.Errorf("control fact outcome = %v, want caller_nonce_unavailable", got)
 	}
 }
 
@@ -176,9 +176,18 @@ func TestControlToolUseEvaluator_DenyOnNonceMintError(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeDeny {
 		t.Errorf("Outcome = %q, want Deny", v.Outcome)
 	}
-	if v.AuditFields["control_outcome"] != "caller_nonce_mint_failed" {
-		t.Errorf("control_outcome = %v, want caller_nonce_mint_failed", v.AuditFields["control_outcome"])
+	if got := controlFactOutcome(v.Facts); got != "caller_nonce_mint_failed" {
+		t.Errorf("control fact outcome = %v, want caller_nonce_mint_failed", got)
 	}
+}
+
+func controlFactOutcome(facts []pipeline.EvaluationFact) string {
+	for _, f := range facts {
+		if cf, ok := f.(pipeline.ControlFact); ok {
+			return cf.Outcome
+		}
+	}
+	return ""
 }
 
 // TestControlToolUseEvaluator_RewriteSuccess pins the happy path: a

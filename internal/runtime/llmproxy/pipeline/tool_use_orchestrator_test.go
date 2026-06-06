@@ -26,7 +26,7 @@ func (m *recordingToolUseMutator) ReplaceWithText(text string) error {
 	return nil
 }
 
-// allowEvaluator returns Allow for every tool_use with a tag in Audit.
+// allowEvaluator returns Allow for every tool_use with a tag in Reason.
 type allowEvaluator struct {
 	name string
 	tag  string
@@ -35,8 +35,8 @@ type allowEvaluator struct {
 func (e *allowEvaluator) Name() string { return e.name }
 func (e *allowEvaluator) Evaluate(_ context.Context, _ pipeline.ReadOnlyResponse, _ conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
 	return pipeline.ToolUseVerdict{
-		Outcome:     pipeline.OutcomeAllow,
-		AuditFields: map[string]any{"evaluator": e.tag},
+		Outcome: pipeline.OutcomeAllow,
+		Reason:  e.tag,
 	}, nil
 }
 
@@ -110,8 +110,8 @@ func TestEvaluateToolUses_FirstNonSkipWins(t *testing.T) {
 		if v.Outcome != pipeline.OutcomeAllow {
 			t.Errorf("%s: Outcome = %q, want Allow", tu.ID, v.Outcome)
 		}
-		if v.AuditFields["evaluator"] != "claimed" {
-			t.Errorf("%s: evaluator tag = %v, want claimed", tu.ID, v.AuditFields["evaluator"])
+		if v.Reason != "claimed" {
+			t.Errorf("%s: evaluator tag = %v, want claimed", tu.ID, v.Reason)
 		}
 	}
 

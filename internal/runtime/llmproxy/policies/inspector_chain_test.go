@@ -37,13 +37,13 @@ func TestInspectorChain_SkipsOnMatchedAPICall(t *testing.T) {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if v.Outcome != pipeline.OutcomeSkip {
-		t.Errorf("Outcome = %q, want Skip (audit: %+v)", v.Outcome, v.AuditFields)
+		t.Errorf("Outcome = %q, want Skip (facts: %+v)", v.Outcome, v.Facts)
 	}
-	if v.AuditFields["inspector_is_api"] != true {
-		t.Errorf("inspector_is_api = %v, want true", v.AuditFields["inspector_is_api"])
+	if !inspectorFactIsAPI(v.Facts) {
+		t.Errorf("InspectorFact.IsAPICall = false, want true (facts: %+v)", v.Facts)
 	}
-	if v.AuditFields["boundary_check_passed"] != true {
-		t.Errorf("boundary_check_passed = %v, want true", v.AuditFields["boundary_check_passed"])
+	if !boundaryFactPassed(v.Facts) {
+		t.Errorf("BoundaryFact.Passed = false, want true (facts: %+v)", v.Facts)
 	}
 }
 
@@ -71,11 +71,20 @@ func TestInspectorChain_DeniesUnmatchedHost(t *testing.T) {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if v.Outcome != pipeline.OutcomeDeny {
-		t.Errorf("Outcome = %q, want Deny (audit: %+v)", v.Outcome, v.AuditFields)
+		t.Errorf("Outcome = %q, want Deny (facts: %+v)", v.Outcome, v.Facts)
 	}
-	if v.AuditFields["boundary_check_passed"] != false {
-		t.Errorf("boundary_check_passed = %v, want false", v.AuditFields["boundary_check_passed"])
+	if boundaryFactPassed(v.Facts) {
+		t.Errorf("BoundaryFact.Passed = true, want false (facts: %+v)", v.Facts)
 	}
+}
+
+func inspectorFactIsAPI(facts []pipeline.EvaluationFact) bool {
+	for _, f := range facts {
+		if ifct, ok := f.(pipeline.InspectorFact); ok {
+			return ifct.IsAPICall
+		}
+	}
+	return false
 }
 
 // TestInspectorChain_TriggerMissSkips verifies that tool_uses without
@@ -168,9 +177,9 @@ func TestInspectorChain_TriggerMissDelegatesToAuthorizer(t *testing.T) {
 	auth := func(_ context.Context, _ conversation.ToolUse, _ pipeline.ToolUseMutator) pipeline.ToolUseVerdict {
 		called = true
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeHold,
-			Reason:      "approval needed",
-			AuditFields: map[string]any{"path": "trigger_miss_needs_approval"},
+			Outcome: pipeline.OutcomeHold,
+			Reason:  "approval needed",
+			Facts:   []pipeline.EvaluationFact{pipeline.AuthorizationFact{Outcome: "trigger_miss_needs_approval"}},
 		}
 	}
 	chain := policies.NewInspectorChain(insp, nil).WithTriggerMissAuthorizer(auth)
@@ -201,8 +210,15 @@ func TestInspectorChain_TriggerMissDelegatesToAuthorizer(t *testing.T) {
 	if !foundInspector {
 		t.Errorf("InspectorFact not prepended onto authorizer verdict: %+v", v.Facts)
 	}
-	// Authorizer's own audit fields should pass through unchanged.
-	if v.AuditFields["path"] != "trigger_miss_needs_approval" {
-		t.Errorf("authorizer path field = %v", v.AuditFields["path"])
+	// Authorizer's own typed fact should pass through unchanged.
+	found := false
+	for _, f := range v.Facts {
+		if af, ok := f.(pipeline.AuthorizationFact); ok && af.Outcome == "trigger_miss_needs_approval" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("AuthorizationFact missing or wrong outcome: %+v", v.Facts)
 	}
 }

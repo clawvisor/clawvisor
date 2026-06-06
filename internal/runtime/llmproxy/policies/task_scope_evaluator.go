@@ -81,14 +81,6 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 
-	fields := map[string]any{
-		"task_scope_reason":    dec.Reason,
-		"task_scope_allowed":   dec.Allowed,
-		"task_scope_ambiguous": dec.Ambiguous,
-	}
-	if dec.TaskID != "" {
-		fields["matched_task_id"] = dec.TaskID
-	}
 	fact := pipeline.TaskScopeFact{
 		Reason:        dec.Reason,
 		Allowed:       dec.Allowed,
@@ -98,9 +90,8 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 
 	if dec.Allowed {
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeAllow,
-			AuditFields: fields,
-			Facts:       []pipeline.EvaluationFact{fact},
+			Outcome: pipeline.OutcomeAllow,
+			Facts:   []pipeline.EvaluationFact{fact},
 		}, nil
 	}
 
@@ -108,12 +99,11 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 	// disparate scope failures don't all collapse into one prompt
 	// unless the legacy code says they should (see ShouldCoalesce).
 	return pipeline.ToolUseVerdict{
-		Outcome:     pipeline.OutcomeHold,
-		Reason:      dec.Reason,
-		AuditFields: fields,
-		HoldKey:     "needs_task_" + tu.ID,
+		Outcome:      pipeline.OutcomeHold,
+		Reason:       dec.Reason,
+		HoldKey:      "needs_task_" + tu.ID,
 		HeldKindHint: pipeline.HeldKindHintApproval,
-		Facts:       []pipeline.EvaluationFact{fact},
+		Facts:        []pipeline.EvaluationFact{fact},
 	}, nil
 }
 

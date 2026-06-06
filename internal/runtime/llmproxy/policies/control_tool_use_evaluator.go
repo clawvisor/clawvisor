@@ -103,10 +103,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: caller nonce cache not configured; refusing to embed agent token in control tool_use",
-			AuditFields: map[string]any{
-				"control_outcome": "caller_nonce_unavailable",
-			},
-			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}},
 		}, nil
 	}
 	nonce, err := in.CallerNonces.Mint(ctx, in.AgentID, llmproxy.NonceTarget{
@@ -118,10 +115,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: caller nonce mint failed — " + err.Error(),
-			AuditFields: map[string]any{
-				"control_outcome": "caller_nonce_mint_failed",
-			},
-			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
 		}, nil
 	}
 	rewritten, _, rewriteOK, rewriteErr := llmproxy.RewriteControlToolUse(tu, in.ControlBaseURL, nonce)
@@ -129,20 +123,14 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: control endpoint unavailable",
-			AuditFields: map[string]any{
-				"control_outcome": "control_unavailable",
-			},
-			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_unavailable"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_unavailable"}},
 		}, nil
 	}
 	if rewriteErr != nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: control endpoint rewrite refused — " + rewriteErr.Error(),
-			AuditFields: map[string]any{
-				"control_outcome": "control_rewriter_error",
-			},
-			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
 		}, nil
 	}
 	if mut != nil {
@@ -153,12 +141,6 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 	return pipeline.ToolUseVerdict{
 		Outcome: pipeline.OutcomeRewrite,
 		Reason:  call.Verdict.Reason,
-		AuditFields: map[string]any{
-			"control_outcome": "clawvisor_control",
-			"target_host":     call.Verdict.Host,
-			"target_method":   call.Verdict.Method,
-			"target_path":     call.Verdict.Path,
-		},
 		Facts: []pipeline.EvaluationFact{pipeline.ControlFact{
 			Outcome: "clawvisor_control",
 			Method:  call.Verdict.Method,
@@ -173,11 +155,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: control endpoint rewrite refused — use a single foreground curl to the control endpoint, with no pipes, subshells, redirects to output files, or extra shell commands",
-			AuditFields: map[string]any{
-				"control_outcome": "caller_nonce_unavailable",
-				"failure_reason":  failureReason,
-			},
-			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}},
 		}, nil
 	}
 	nonce, err := in.CallerNonces.Mint(ctx, in.AgentID, llmproxy.NonceTarget{
@@ -189,11 +167,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: caller nonce mint failed — " + err.Error(),
-			AuditFields: map[string]any{
-				"control_outcome": "caller_nonce_mint_failed",
-				"failure_reason":  failureReason,
-			},
-			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
 		}, nil
 	}
 	rewritten, ok, rewriteErr := llmproxy.RewriteControlFailureToolUse(tu, in.ControlBaseURL, nonce, failureReason)
@@ -201,22 +175,14 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: control endpoint rewrite refused — use a single foreground curl to the control endpoint, with no pipes, subshells, redirects to output files, or extra shell commands",
-			AuditFields: map[string]any{
-				"control_outcome": "control_rewriter_error",
-				"failure_reason":  failureReason,
-			},
-			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
 		}, nil
 	}
 	if rewriteErr != nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: control endpoint failure rewrite refused — " + rewriteErr.Error(),
-			AuditFields: map[string]any{
-				"control_outcome": "control_rewriter_error",
-				"failure_reason":  failureReason,
-			},
-			Facts: []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
 		}, nil
 	}
 	if mut != nil {
@@ -227,13 +193,6 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 	return pipeline.ToolUseVerdict{
 		Outcome: pipeline.OutcomeRewrite,
 		Reason:  "malformed control endpoint command",
-		AuditFields: map[string]any{
-			"control_outcome": "clawvisor_control_failure",
-			"failure_reason":  failureReason,
-			"target_host":     llmproxy.ControlSyntheticHost,
-			"target_method":   "POST",
-			"target_path":     "/api/control/failure",
-		},
 		Facts: []pipeline.EvaluationFact{pipeline.ControlFact{
 			Outcome:       "clawvisor_control_failure",
 			Method:        "POST",

@@ -66,10 +66,6 @@ type ToolUseVerdict struct {
 
 	// --- pipeline-side fields (formerly on pipeline.ToolUseVerdict) ---
 
-	// AuditFields is the legacy untyped audit carrier. Deprecated;
-	// new evaluators emit Facts instead.
-	AuditFields map[string]any
-
 	// HoldKey groups sibling tool_uses for coalescing. Empty means
 	// "do not coalesce" (each Hold gets its own approval row).
 	HoldKey string

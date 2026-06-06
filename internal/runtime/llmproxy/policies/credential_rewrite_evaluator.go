@@ -90,9 +90,6 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: caller nonce cache not configured; refusing to embed agent token in tool_use",
-			AuditFields: map[string]any{
-				"rewrite_outcome": "caller_nonce_unavailable",
-			},
 			Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
 				Outcome:      "caller_nonce_unavailable",
 				TargetHost:   v.Host,
@@ -110,9 +107,6 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: caller nonce mint failed — " + mintErr.Error(),
-			AuditFields: map[string]any{
-				"rewrite_outcome": "caller_nonce_mint_failed",
-			},
 			Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
 				Outcome:      "caller_nonce_mint_failed",
 				TargetHost:   v.Host,
@@ -135,9 +129,6 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 			Outcome:                    pipeline.OutcomeDeny,
 			Reason:                     reason,
 			ContinueWithToolResultText: reason,
-			AuditFields: map[string]any{
-				"rewrite_outcome": "rewriter_error",
-			},
 			Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
 				Outcome:      "rewriter_error",
 				TargetHost:   v.Host,
@@ -154,13 +145,6 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 	return pipeline.ToolUseVerdict{
 		Outcome: pipeline.OutcomeRewrite,
 		Reason:  v.Reason,
-		AuditFields: map[string]any{
-			"rewrite_outcome": "success",
-			"target_host":     v.Host,
-			"target_method":   v.Method,
-			"target_path":     v.Path,
-			"placeholders":    v.Placeholders,
-		},
 		Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
 			Outcome:      "success",
 			TargetHost:   v.Host,

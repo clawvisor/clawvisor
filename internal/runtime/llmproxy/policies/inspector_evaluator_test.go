@@ -48,9 +48,36 @@ func TestInspectorEvaluator_TriggerMissReturnsSkip(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeSkip {
 		t.Errorf("trigger miss → Outcome = %q, want Skip", v.Outcome)
 	}
-	if v.AuditFields["inspector_source"] != string(inspector.SourceTriggerMiss) {
-		t.Errorf("inspector_source = %v, want trigger_miss", v.AuditFields["inspector_source"])
+	if src := inspectorFactSource(v.Facts); src != inspector.SourceTriggerMiss {
+		t.Errorf("InspectorFact.Source = %v, want trigger_miss (facts: %+v)", src, v.Facts)
 	}
+}
+
+func inspectorFactSource(facts []pipeline.EvaluationFact) inspector.VerdictSource {
+	for _, f := range facts {
+		if ifct, ok := f.(pipeline.InspectorFact); ok {
+			return ifct.Source
+		}
+	}
+	return ""
+}
+
+func inspectorFactHost(facts []pipeline.EvaluationFact) string {
+	for _, f := range facts {
+		if ifct, ok := f.(pipeline.InspectorFact); ok {
+			return ifct.Host
+		}
+	}
+	return ""
+}
+
+func inspectorFactMethod(facts []pipeline.EvaluationFact) string {
+	for _, f := range facts {
+		if ifct, ok := f.(pipeline.InspectorFact); ok {
+			return ifct.Method
+		}
+	}
+	return ""
 }
 
 // TestInspectorEvaluator_AmbiguousHolds verifies the fail-closed
@@ -104,15 +131,15 @@ func TestInspectorEvaluator_AllowOnRecognizedAPICall(t *testing.T) {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("recognized API call → Outcome = %q, want Allow (verdict surface: %+v)", v.Outcome, v.AuditFields)
+		t.Errorf("recognized API call → Outcome = %q, want Allow (facts: %+v)", v.Outcome, v.Facts)
 	}
-	if v.AuditFields["inspector_is_api"] != true {
-		t.Errorf("inspector_is_api = %v, want true", v.AuditFields["inspector_is_api"])
+	if !inspectorFactIsAPI(v.Facts) {
+		t.Errorf("InspectorFact.IsAPICall = false, want true (facts: %+v)", v.Facts)
 	}
-	if v.AuditFields["inspector_method"] != "GET" {
-		t.Errorf("inspector_method = %v, want GET", v.AuditFields["inspector_method"])
+	if m := inspectorFactMethod(v.Facts); m != "GET" {
+		t.Errorf("InspectorFact.Method = %v, want GET", m)
 	}
-	if v.AuditFields["inspector_host"] != "api.github.com" {
-		t.Errorf("inspector_host = %v, want api.github.com", v.AuditFields["inspector_host"])
+	if h := inspectorFactHost(v.Facts); h != "api.github.com" {
+		t.Errorf("InspectorFact.Host = %v, want api.github.com", h)
 	}
 }

@@ -79,7 +79,14 @@ func TestScriptSessionEvaluator_AllowWhenScriptSession(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeAllow {
 		t.Errorf("Outcome = %q, want Allow", v.Outcome)
 	}
-	if v.AuditFields["path"] != "script_session_passthrough" {
-		t.Errorf("path = %v", v.AuditFields["path"])
+	found := false
+	for _, f := range v.Facts {
+		if ss, ok := f.(pipeline.ScriptSessionFact); ok && ss.Outcome == "script_session_passthrough" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("ScriptSessionFact missing or wrong outcome (facts: %+v)", v.Facts)
 	}
 }

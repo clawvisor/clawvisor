@@ -34,8 +34,15 @@ func TestIntentVerify_AllowOnVerifierPass(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeAllow {
 		t.Errorf("verifier pass → Outcome = %q, want Allow", v.Outcome)
 	}
-	if v.AuditFields["intent_verifier_passed"] != true {
-		t.Errorf("intent_verifier_passed = %v, want true", v.AuditFields["intent_verifier_passed"])
+	found := false
+	for _, f := range v.Facts {
+		if iv, ok := f.(pipeline.IntentVerifyFact); ok && iv.Allowed {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("IntentVerifyFact.Allowed = false, want true (facts: %+v)", v.Facts)
 	}
 }
 

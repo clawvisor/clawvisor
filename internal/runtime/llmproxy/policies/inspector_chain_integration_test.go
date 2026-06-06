@@ -148,8 +148,8 @@ func TestInspectorChainIntegration_BoundaryCheckDenies(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeDeny {
 		t.Errorf("Outcome = %q, want Deny", v.Outcome)
 	}
-	if v.AuditFields["boundary_check_passed"] != false {
-		t.Errorf("boundary_check_passed = %v, want false", v.AuditFields["boundary_check_passed"])
+	if boundaryFactPassed(v.Facts) {
+		t.Errorf("BoundaryFact.Passed = true, want false (facts: %+v)", v.Facts)
 	}
 	if scopeCalled {
 		t.Errorf("TaskScopeEvaluator ran after InspectorChain denied")

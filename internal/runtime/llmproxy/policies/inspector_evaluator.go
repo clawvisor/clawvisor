@@ -39,9 +39,9 @@ func NewInspectorEvaluator(insp *inspector.Inspector) *InspectorEvaluator {
 // Name returns the audit-friendly evaluator identifier.
 func (InspectorEvaluator) Name() string { return "inspector" }
 
-// Evaluate inspects the tool_use. The verdict's IsAPICall / Ambiguous
-// / Placeholders fields are surfaced through AuditFields so later
-// evaluators can branch without re-inspecting.
+// Evaluate inspects the tool_use. Emits an InspectorFact carrying the
+// verdict's IsAPICall / Ambiguous / Placeholders so later evaluators
+// can branch without re-inspecting.
 func (e *InspectorEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyResponse, tu conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
 	if e.inspector == nil {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
@@ -52,26 +52,6 @@ func (e *InspectorEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 		Name:  tu.Name,
 		Input: tu.Input,
 	})
-
-	fields := map[string]any{
-		"inspector_source":   string(v.Source),
-		"inspector_is_api":   v.IsAPICall,
-	}
-	if v.Reason != "" {
-		fields["inspector_reason"] = v.Reason
-	}
-	if v.Method != "" {
-		fields["inspector_method"] = v.Method
-	}
-	if v.Host != "" {
-		fields["inspector_host"] = v.Host
-	}
-	if v.Path != "" {
-		fields["inspector_path"] = v.Path
-	}
-	if len(v.Placeholders) > 0 {
-		fields["inspector_placeholders"] = v.Placeholders
-	}
 	fact := newInspectorFact(v)
 
 	// Ambiguous verdict → Hold per-tool. The legacy code fails closed
@@ -80,29 +60,26 @@ func (e *InspectorEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 	// shouldn't merge into one approval prompt.
 	if v.Ambiguous {
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeHold,
-			Reason:      v.Reason,
-			AuditFields: fields,
-			HoldKey:     "ambiguous_" + tu.ID,
+			Outcome:      pipeline.OutcomeHold,
+			Reason:       v.Reason,
+			HoldKey:      "ambiguous_" + tu.ID,
 			HeldKindHint: pipeline.HeldKindHintApproval,
-			Facts:       []pipeline.EvaluationFact{fact},
+			Facts:        []pipeline.EvaluationFact{fact},
 		}, nil
 	}
 
 	// Trigger miss → Skip, let downstream evaluators decide.
 	if v.Source == inspector.SourceTriggerMiss {
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeSkip,
-			AuditFields: fields,
-			Facts:       []pipeline.EvaluationFact{fact},
+			Outcome: pipeline.OutcomeSkip,
+			Facts:   []pipeline.EvaluationFact{fact},
 		}, nil
 	}
 
-	// Recognized API call → Allow, surface verdict via AuditFields.
+	// Recognized API call → Allow, surface verdict via the InspectorFact.
 	return pipeline.ToolUseVerdict{
-		Outcome:     pipeline.OutcomeAllow,
-		AuditFields: fields,
-		Facts:       []pipeline.EvaluationFact{fact},
+		Outcome: pipeline.OutcomeAllow,
+		Facts:   []pipeline.EvaluationFact{fact},
 	}, nil
 }
 

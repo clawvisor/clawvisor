@@ -128,12 +128,6 @@ func (e *BoundaryCheckEvaluator) EvaluateWithVerdict(_ context.Context, v inspec
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}
 	}
 	ok, reason := inspector.BoundaryCheck(v, allowedHosts)
-	fields := map[string]any{
-		"boundary_check_passed": ok,
-	}
-	if reason != "" {
-		fields["boundary_check_reason"] = reason
-	}
 	placeholder := ""
 	if len(v.Placeholders) > 0 {
 		placeholder = v.Placeholders[0]
@@ -146,16 +140,14 @@ func (e *BoundaryCheckEvaluator) EvaluateWithVerdict(_ context.Context, v inspec
 	}
 	if ok {
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeAllow,
-			AuditFields: fields,
-			Facts:       []pipeline.EvaluationFact{fact},
+			Outcome: pipeline.OutcomeAllow,
+			Facts:   []pipeline.EvaluationFact{fact},
 		}
 	}
 	return pipeline.ToolUseVerdict{
-		Outcome:     pipeline.OutcomeDeny,
-		Reason:      reason,
-		AuditFields: fields,
-		Facts:       []pipeline.EvaluationFact{fact},
+		Outcome: pipeline.OutcomeDeny,
+		Reason:  reason,
+		Facts:   []pipeline.EvaluationFact{fact},
 	}
 }
 

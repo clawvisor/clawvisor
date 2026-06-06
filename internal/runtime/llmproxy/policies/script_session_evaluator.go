@@ -58,11 +58,7 @@ func (e *ScriptSessionEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOn
 	return pipeline.ToolUseVerdict{
 		Outcome: pipeline.OutcomeAllow,
 		Reason:  "tool_use carries a script-session caller token; resolver enforces scope",
-		AuditFields: map[string]any{
-			"path":           "script_session_passthrough",
-			"verdict_source": "script_session",
-		},
-		Facts: []pipeline.EvaluationFact{pipeline.ScriptSessionFact{Outcome: "script_session_passthrough"}},
+		Facts:   []pipeline.EvaluationFact{pipeline.ScriptSessionFact{Outcome: "script_session_passthrough"}},
 	}, nil
 }
 

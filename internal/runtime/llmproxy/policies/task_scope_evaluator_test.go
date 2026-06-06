@@ -42,11 +42,18 @@ func TestTaskScope_AllowOnMatchedScope(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeAllow {
 		t.Errorf("matched scope → Outcome = %q, want Allow", v.Outcome)
 	}
-	if v.AuditFields["matched_task_id"] != "task-abc" {
-		t.Errorf("matched_task_id = %v, want task-abc", v.AuditFields["matched_task_id"])
+	var tf pipeline.TaskScopeFact
+	for _, f := range v.Facts {
+		if ts, ok := f.(pipeline.TaskScopeFact); ok {
+			tf = ts
+			break
+		}
 	}
-	if v.AuditFields["task_scope_allowed"] != true {
-		t.Errorf("task_scope_allowed = %v, want true", v.AuditFields["task_scope_allowed"])
+	if tf.MatchedTaskID != "task-abc" {
+		t.Errorf("TaskScopeFact.MatchedTaskID = %v, want task-abc", tf.MatchedTaskID)
+	}
+	if !tf.Allowed {
+		t.Errorf("TaskScopeFact.Allowed = false, want true")
 	}
 }
 

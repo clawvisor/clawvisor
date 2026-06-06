@@ -107,7 +107,6 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 		}
 	}
 
-	fields := inspectorVerdictAuditFields(v)
 	inspectorFact := newInspectorFact(v)
 
 	// Trigger miss: not an autovault-bearing call. If a trigger-miss
@@ -117,32 +116,23 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	if v.Source == inspector.SourceTriggerMiss {
 		if c.triggerMissAuth != nil {
 			verdict := c.triggerMissAuth(ctx, tu, mut)
-			// Carry the inspector observation forward as a typed fact so
-			// the audit row sees both surfaces. AuditFields merging is no
-			// longer needed — typed Facts are the canonical observation
-			// channel.
-			if verdict.AuditFields == nil {
-				verdict.AuditFields = fields
-			}
 			verdict.Facts = append([]pipeline.EvaluationFact{inspectorFact}, verdict.Facts...)
 			return verdict, nil
 		}
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeSkip,
-			AuditFields: fields,
-			Facts:       []pipeline.EvaluationFact{inspectorFact},
+			Outcome: pipeline.OutcomeSkip,
+			Facts:   []pipeline.EvaluationFact{inspectorFact},
 		}, nil
 	}
 
 	// Ambiguous: fail closed with per-tool HoldKey.
 	if v.Ambiguous {
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeHold,
-			Reason:      v.Reason,
-			AuditFields: fields,
-			HoldKey:     "ambiguous_" + tu.ID,
+			Outcome:      pipeline.OutcomeHold,
+			Reason:       v.Reason,
+			HoldKey:      "ambiguous_" + tu.ID,
 			HeldKindHint: pipeline.HeldKindHintApproval,
-			Facts:       []pipeline.EvaluationFact{inspectorFact},
+			Facts:        []pipeline.EvaluationFact{inspectorFact},
 		}, nil
 	}
 
@@ -150,9 +140,8 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	// the boundary check to validate.
 	if !v.IsAPICall {
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeAllow,
-			AuditFields: fields,
-			Facts:       []pipeline.EvaluationFact{inspectorFact},
+			Outcome: pipeline.OutcomeAllow,
+			Facts:   []pipeline.EvaluationFact{inspectorFact},
 		}, nil
 	}
 
@@ -161,22 +150,13 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	// (TaskScopeEvaluator + IntentVerifyEvaluator + CredentialRewriteEvaluator)
 	// can run the credentialed authorization + rewrite flow.
 	if c.boundary == nil {
-		// Without a resolver we can't enforce boundary, but the call is
-		// credentialed — let downstream rewrite the tool_use. Marking
-		// the audit field documents the gap.
-		fields["boundary_check_skipped"] = "no_resolver"
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeSkip,
-			AuditFields: fields,
-			Facts:       []pipeline.EvaluationFact{inspectorFact},
+			Outcome: pipeline.OutcomeSkip,
+			Facts:   []pipeline.EvaluationFact{inspectorFact},
 		}, nil
 	}
 
 	decision := c.boundary(ctx, v)
-	fields["boundary_check_passed"] = decision.Allowed
-	if decision.Reason != "" {
-		fields["boundary_check_reason"] = decision.Reason
-	}
 	placeholder := ""
 	if len(v.Placeholders) > 0 {
 		placeholder = v.Placeholders[0]
@@ -190,19 +170,17 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	}
 	if !decision.Allowed {
 		return pipeline.ToolUseVerdict{
-			Outcome:     pipeline.OutcomeDeny,
-			Reason:      decision.Reason,
-			AuditFields: fields,
-			Facts:       []pipeline.EvaluationFact{inspectorFact, boundaryFact},
+			Outcome: pipeline.OutcomeDeny,
+			Reason:  decision.Reason,
+			Facts:   []pipeline.EvaluationFact{inspectorFact, boundaryFact},
 		}, nil
 	}
 
 	// Boundary passed — let downstream stages handle credentialed
 	// authorization + rewrite.
 	return pipeline.ToolUseVerdict{
-		Outcome:     pipeline.OutcomeSkip,
-		AuditFields: fields,
-		Facts:       []pipeline.EvaluationFact{inspectorFact, boundaryFact},
+		Outcome: pipeline.OutcomeSkip,
+		Facts:   []pipeline.EvaluationFact{inspectorFact, boundaryFact},
 	}, nil
 }
 
@@ -220,32 +198,6 @@ func newInspectorFact(v inspector.Verdict) pipeline.InspectorFact {
 		Ambiguous:    v.Ambiguous,
 		Reason:       v.Reason,
 	}
-}
-
-// inspectorVerdictAuditFields builds the audit-field map carrying the
-// inspector verdict's surface. Extracted so InspectorEvaluator and
-// InspectorChain can produce identical audit shapes.
-func inspectorVerdictAuditFields(v inspector.Verdict) map[string]any {
-	fields := map[string]any{
-		"inspector_source": string(v.Source),
-		"inspector_is_api": v.IsAPICall,
-	}
-	if v.Reason != "" {
-		fields["inspector_reason"] = v.Reason
-	}
-	if v.Method != "" {
-		fields["inspector_method"] = v.Method
-	}
-	if v.Host != "" {
-		fields["inspector_host"] = v.Host
-	}
-	if v.Path != "" {
-		fields["inspector_path"] = v.Path
-	}
-	if len(v.Placeholders) > 0 {
-		fields["inspector_placeholders"] = v.Placeholders
-	}
-	return fields
 }
 
 var _ pipeline.ToolUseEvaluator = (*InspectorChain)(nil)

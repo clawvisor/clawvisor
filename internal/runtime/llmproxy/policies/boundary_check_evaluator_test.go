@@ -26,8 +26,8 @@ func TestBoundaryCheck_AllowOnMatchedHost(t *testing.T) {
 	if result.Outcome != pipeline.OutcomeAllow {
 		t.Errorf("matched host → Outcome = %q, want Allow", result.Outcome)
 	}
-	if result.AuditFields["boundary_check_passed"] != true {
-		t.Errorf("boundary_check_passed = %v, want true", result.AuditFields["boundary_check_passed"])
+	if !boundaryFactPassed(result.Facts) {
+		t.Errorf("boundary_check_passed fact = false, want true (facts: %+v)", result.Facts)
 	}
 }
 
@@ -49,9 +49,18 @@ func TestBoundaryCheck_DenyOnMismatchedHost(t *testing.T) {
 	if result.Outcome != pipeline.OutcomeDeny {
 		t.Errorf("mismatched host → Outcome = %q, want Deny", result.Outcome)
 	}
-	if result.AuditFields["boundary_check_passed"] != false {
-		t.Errorf("boundary_check_passed = %v, want false", result.AuditFields["boundary_check_passed"])
+	if boundaryFactPassed(result.Facts) {
+		t.Errorf("boundary_check_passed fact = true, want false (facts: %+v)", result.Facts)
 	}
+}
+
+func boundaryFactPassed(facts []pipeline.EvaluationFact) bool {
+	for _, f := range facts {
+		if bf, ok := f.(pipeline.BoundaryFact); ok {
+			return bf.Passed
+		}
+	}
+	return false
 }
 
 // TestBoundaryCheck_DenyOnAmbiguousVerdict verifies that an ambiguous

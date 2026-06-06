@@ -90,8 +90,8 @@ func TestCredentialRewriteEvaluator_DenyOnMissingNonceCache(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeDeny {
 		t.Errorf("Outcome = %q, want Deny", v.Outcome)
 	}
-	if v.AuditFields["rewrite_outcome"] != "caller_nonce_unavailable" {
-		t.Errorf("rewrite_outcome = %v", v.AuditFields["rewrite_outcome"])
+	if got := rewriteFactOutcome(v.Facts); got != "caller_nonce_unavailable" {
+		t.Errorf("rewrite fact outcome = %v, want caller_nonce_unavailable", got)
 	}
 }
 
@@ -122,8 +122,8 @@ func TestCredentialRewriteEvaluator_DenyOnNonceMintError(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeDeny {
 		t.Errorf("Outcome = %q, want Deny", v.Outcome)
 	}
-	if v.AuditFields["rewrite_outcome"] != "caller_nonce_mint_failed" {
-		t.Errorf("rewrite_outcome = %v", v.AuditFields["rewrite_outcome"])
+	if got := rewriteFactOutcome(v.Facts); got != "caller_nonce_mint_failed" {
+		t.Errorf("rewrite fact outcome = %v, want caller_nonce_mint_failed", got)
 	}
 }
 
@@ -161,7 +161,25 @@ func TestCredentialRewriteEvaluator_RewriteSuccess(t *testing.T) {
 	if cache.lastAgID != "agent-1" {
 		t.Errorf("nonce minted for agent = %q, want agent-1", cache.lastAgID)
 	}
-	if v.AuditFields["target_host"] != "api.github.com" {
-		t.Errorf("target_host = %v", v.AuditFields["target_host"])
+	if host := rewriteFactHost(v.Facts); host != "api.github.com" {
+		t.Errorf("rewrite fact host = %v, want api.github.com", host)
 	}
+}
+
+func rewriteFactOutcome(facts []pipeline.EvaluationFact) string {
+	for _, f := range facts {
+		if rf, ok := f.(pipeline.RewriteFact); ok {
+			return rf.Outcome
+		}
+	}
+	return ""
+}
+
+func rewriteFactHost(facts []pipeline.EvaluationFact) string {
+	for _, f := range facts {
+		if rf, ok := f.(pipeline.RewriteFact); ok {
+			return rf.TargetHost
+		}
+	}
+	return ""
 }
