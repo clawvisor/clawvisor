@@ -990,17 +990,21 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 			audit("allow", "pass_through", "no credential trigger")
 			return conversation.ToolUseVerdict{Allowed: true}
 		}
-		if v.Ambiguous || !v.IsAPICall {
+		if !v.IsAPICall {
+			if v.Ambiguous {
+				audit("block", "ambiguous", v.Reason)
+				reason := "Clawvisor: ambiguous credentialed call refused — " + v.Reason
+				return conversation.ToolUseVerdict{
+					Allowed:                false,
+					Reason:                 reason,
+					ContinueWithToolResult: reason,
+				}
+			}
+			audit("allow", "pass_through", "confident non-API call: "+v.Reason)
+			return conversation.ToolUseVerdict{Allowed: true}
+		}
+		if v.Ambiguous {
 			audit("block", "ambiguous", v.Reason)
-			// ContinueWithToolResult preserves the agent's actual
-			// tool_use in conversation history and feeds the rejection
-			// back as a synthetic tool_result — the canonical Anthropic
-			// shape for "your tool call failed, here's why." The model's
-			// own emitted input is right above the synthetic user turn,
-			// so it can see exactly what shape got rejected. The
-			// SubstituteWith fallback is what gets rendered if the
-			// handler can't perform the continuation call (older
-			// provider, recursion bound reached, upstream outage).
 			reason := "Clawvisor: ambiguous credentialed call refused — " + v.Reason
 			return conversation.ToolUseVerdict{
 				Allowed:                false,

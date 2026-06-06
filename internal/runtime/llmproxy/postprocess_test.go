@@ -1999,3 +1999,33 @@ func (r *postprocessErroringReader) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
+func TestPostprocess_AllowsConfidentNonAPICalls(t *testing.T) {
+	t.Parallel()
+	body := anthropicJSONWithNamedToolUse("Write", `{"file_path":"test.txt","content":"autovault_stripe_mock_token_for_unit_tests"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_stripe_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
+	})
+
+	if len(got.Decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(got.Decisions))
+	}
+	if !got.Decisions[0].Verdict.Allowed {
+		t.Fatalf("confident non-API tool call (Write with long mock placeholder) should be allowed, got decision: %+v", got.Decisions[0])
+	}
+	if got.Rewritten {
+		t.Fatalf("confident non-API tool call should not be rewritten")
+	}
+	if string(got.Body) != string(body) {
+		t.Fatalf("body should be unchanged when non-API passes through")
+	}
+}
+

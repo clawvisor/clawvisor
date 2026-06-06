@@ -756,3 +756,24 @@ func TestAllPlaceholdersAreStubs(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultParser_FileManipulationToolsAllowed(t *testing.T) {
+	p := DefaultParser{}
+	tests := []string{"Write", "Edit", "replace_file_content", "apply_patch"}
+	for _, name := range tests {
+		tu := ToolUse{
+			Name:  name,
+			Input: json.RawMessage(`{"file_path": "test.txt", "content": "autovault_stripe_mock_token_for_unit_tests"}`),
+		}
+		v, ok := p.Parse(tu)
+		if !ok {
+			t.Errorf("expected parser to handle tool %s", name)
+		}
+		if v.IsAPICall {
+			t.Errorf("expected IsAPICall false for %s, got true", name)
+		}
+		if v.Ambiguous {
+			t.Errorf("expected Ambiguous false for %s, got true", name)
+		}
+	}
+}
