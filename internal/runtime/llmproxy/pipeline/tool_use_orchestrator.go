@@ -68,7 +68,13 @@ func EvaluateToolUses(
 		Evaluations: make([]ToolUseEvaluation, 0, len(toolUses)*len(evaluators)),
 	}
 
+	seenToolUseIDs := make(map[string]struct{}, len(toolUses))
 	for _, tu := range toolUses {
+		if _, ok := seenToolUseIDs[tu.ID]; ok {
+			return nil, fmt.Errorf("pipeline.EvaluateToolUses: duplicate tool_use id %q", tu.ID)
+		}
+		seenToolUseIDs[tu.ID] = struct{}{}
+
 		mut := mutatorFor(tu.ID)
 		var winner *ToolUseVerdict
 		for _, ev := range evaluators {

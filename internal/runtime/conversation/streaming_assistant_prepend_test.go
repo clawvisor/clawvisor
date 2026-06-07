@@ -386,6 +386,8 @@ func TestDetectStreamShape(t *testing.T) {
 		{"anthropic_messages", "/v1/messages", ProviderAnthropic, StreamShapeAnthropicMessages},
 		{"openai_chat", "/v1/chat/completions", ProviderOpenAI, StreamShapeOpenAIChat},
 		{"openai_responses", "/v1/responses", ProviderOpenAI, StreamShapeOpenAIResponses},
+		{"google_gemini_sse", "/v1beta/models/gemini:streamGenerateContent?alt=sse", ProviderGoogle, StreamShapeGoogleGemini},
+		{"google_gemini_raw_chunked_json", "/v1beta/models/gemini:streamGenerateContent", ProviderGoogle, StreamShapeUnknown},
 		{"unknown_provider", "/v1/anything", Provider(""), StreamShapeUnknown},
 	}
 	for _, tc := range cases {

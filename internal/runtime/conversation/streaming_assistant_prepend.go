@@ -39,7 +39,10 @@ func DetectStreamShape(req *http.Request, provider Provider) StreamShape {
 		}
 		return StreamShapeOpenAIResponses
 	case ProviderGoogle:
-		return StreamShapeGoogleGemini
+		if req != nil && strings.EqualFold(req.URL.Query().Get("alt"), "sse") {
+			return StreamShapeGoogleGemini
+		}
+		return StreamShapeUnknown
 	}
 	return StreamShapeUnknown
 }

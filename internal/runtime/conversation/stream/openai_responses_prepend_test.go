@@ -140,3 +140,43 @@ func TestPrependOpenAIResponsesAssistantNotice_ShiftsMultipleOutputIndices(t *te
 		t.Fatalf("notice item missing:\n%s", got)
 	}
 }
+
+func TestPrependOpenAIResponsesAssistantNotice_CompletedWithoutOutputArrayPassesThrough(t *testing.T) {
+	cases := []struct {
+		name      string
+		completed string
+	}{
+		{
+			name:      "missing output",
+			completed: `data: {"type":"response.completed","response":{"id":"resp_missing"}}`,
+		},
+		{
+			name:      "non-array output",
+			completed: `data: {"type":"response.completed","response":{"id":"resp_scalar","output":{"unexpected":true}}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := strings.Join([]string{
+				`event: response.created`,
+				`data: {"type":"response.created","response":{"id":"resp_x","output":[]}}`,
+				``,
+				`event: response.completed`,
+				tc.completed,
+				``,
+			}, "\n")
+
+			var buf bytes.Buffer
+			if err := stream.PrependOpenAIResponsesAssistantNotice(&buf, strings.NewReader(upstream), "[Clawvisor] notice"); err != nil {
+				t.Fatalf("PrependOpenAIResponsesAssistantNotice: %v", err)
+			}
+			got := buf.String()
+			if !strings.Contains(got, `msg_clawvisor_notice`) {
+				t.Fatalf("notice envelope missing:\n%s", got)
+			}
+			if !strings.Contains(got, tc.completed) {
+				t.Fatalf("malformed completed output should pass through unchanged\nwant completed line: %s\n--- got ---\n%s", tc.completed, got)
+			}
+		})
+	}
+}

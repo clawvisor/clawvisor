@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -164,6 +165,89 @@ func TestCredentialRewriteEvaluator_RewriteSuccess(t *testing.T) {
 	if host := rewriteFactHost(v.Facts); host != "api.github.com" {
 		t.Errorf("rewrite fact host = %v, want api.github.com", host)
 	}
+}
+
+func TestCredentialRewriteEvaluator_MutatorFailurePropagates(t *testing.T) {
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	mutErr := errors.New("mutator failed")
+	e := policies.NewCredentialRewriteEvaluator(func(_ context.Context, _ conversation.ToolUse) *policies.CredentialRewriteInputs {
+		return &policies.CredentialRewriteInputs{
+			Inspector:    insp,
+			CallerNonces: &stubNonceCache{minted: "cv-nonce-abc"},
+			AgentID:      "agent-1",
+			RewriteOpts:  inspector.RewriteOpts{ResolverBaseURL: "http://localhost:25297/api/proxy"},
+		}
+	})
+	tu := conversation.ToolUse{
+		ID:   "toolu_1",
+		Name: "WebFetch",
+		Input: json.RawMessage(`{
+			"url":"https://api.github.com/repos/x/y/issues",
+			"method":"POST",
+			"headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+		}`),
+	}
+
+	v, err := e.Evaluate(context.Background(), newStubResp(), tu, &failingRewriteMutator{err: mutErr})
+	if !errors.Is(err, mutErr) {
+		t.Fatalf("Evaluate error = %v, want mutator failure", err)
+	}
+	if v.Outcome != "" {
+		t.Fatalf("verdict on mutator error = %+v, want zero verdict", v)
+	}
+}
+
+func TestCredentialRewriteEvaluator_AuditFactsOmitSensitiveMaterial(t *testing.T) {
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	cache := &stubNonceCache{minted: "cv-nonce-secret"}
+	e := policies.NewCredentialRewriteEvaluator(func(_ context.Context, _ conversation.ToolUse) *policies.CredentialRewriteInputs {
+		return &policies.CredentialRewriteInputs{
+			Inspector:    insp,
+			CallerNonces: cache,
+			AgentID:      "agent-1",
+			RewriteOpts:  inspector.RewriteOpts{ResolverBaseURL: "http://localhost:25297/api/proxy"},
+		}
+	})
+	tu := conversation.ToolUse{
+		ID:   "toolu_1",
+		Name: "WebFetch",
+		Input: json.RawMessage(`{
+			"url":"https://api.github.com/repos/x/y/issues",
+			"method":"POST",
+			"headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+		}`),
+	}
+
+	v, err := e.Evaluate(context.Background(), newStubResp(), tu, &recordingMutator{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	rawFacts, err := json.Marshal(v.Facts)
+	if err != nil {
+		t.Fatalf("marshal facts: %v", err)
+	}
+	auditSurface := v.Reason + "\n" + string(rawFacts)
+	for _, forbidden := range []string{
+		"Authorization",
+		"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+		"cv-nonce-secret",
+	} {
+		if strings.Contains(auditSurface, forbidden) {
+			t.Fatalf("audit facts/reason leaked %q: %s", forbidden, auditSurface)
+		}
+	}
+}
+
+type failingRewriteMutator struct {
+	err error
+}
+
+func (m *failingRewriteMutator) RewriteArgs(json.RawMessage) error {
+	return m.err
+}
+
+func (m *failingRewriteMutator) ReplaceWithText(string) error {
+	return nil
 }
 
 func rewriteFactOutcome(facts []pipeline.EvaluationFact) string {

@@ -15,6 +15,8 @@ type finalizerTestDeps struct {
 	submitErrs                     []error
 	submitCalls                    int
 	dropErr                        error
+	dropErrs                       []error
+	dropCalls                      int
 	dropped                        []pipeline.HoldCapture
 	audits                         []conversation.AuditEvent
 	coalescedEvictedAuditToolUseID []string
@@ -30,6 +32,10 @@ func (d *finalizerTestDeps) SubmitHold(context.Context, any) (pipeline.HoldSubmi
 
 func (d *finalizerTestDeps) DropHold(_ context.Context, c pipeline.HoldCapture) error {
 	d.dropped = append(d.dropped, c)
+	d.dropCalls++
+	if len(d.dropErrs) >= d.dropCalls && d.dropErrs[d.dropCalls-1] != nil {
+		return d.dropErrs[d.dropCalls-1]
+	}
 	return d.dropErr
 }
 
@@ -263,6 +269,38 @@ func TestFinalizerReplayFailureRollsBackEveryCommittedHold(t *testing.T) {
 	}
 	if deps.dropped[0].ToolUseID != "toolu_committed_1" || deps.dropped[1].ToolUseID != "toolu_committed_2" {
 		t.Fatalf("dropped = %+v, want both committed holds in order", deps.dropped)
+	}
+}
+
+func TestFinalizerReplayFailureAttemptsAllRollbackDropsWithMixedErrors(t *testing.T) {
+	submitErr := errors.New("submit failed")
+	dropErr := errors.New("drop second failed")
+	deps := &finalizerTestDeps{
+		submit:     pipeline.HoldSubmitResult{ApprovalID: "cv-committed"},
+		submitErrs: []error{nil, nil, nil, submitErr},
+		dropErrs:   []error{nil, dropErr, nil},
+	}
+	f := pipeline.NewFinalizer(deps)
+	for _, id := range []string{"toolu_committed_1", "toolu_committed_2", "toolu_committed_3", "toolu_fail"} {
+		f.AddCapture(pipeline.HoldCapture{
+			ToolUseID: id,
+			Kind:      eval.HeldKindHintApproval,
+			Stage:     "inline_task",
+			Payload:   "pending-" + id,
+		})
+	}
+
+	_, err := f.Finalize(context.Background())
+	if !errors.Is(err, submitErr) || !errors.Is(err, dropErr) {
+		t.Fatalf("Finalize error = %v, want joined submit/drop failure", err)
+	}
+	if len(deps.dropped) != 3 {
+		t.Fatalf("dropped count = %d, want all 3 committed holds attempted: %+v", len(deps.dropped), deps.dropped)
+	}
+	for i, want := range []string{"toolu_committed_1", "toolu_committed_2", "toolu_committed_3"} {
+		if deps.dropped[i].ToolUseID != want {
+			t.Fatalf("dropped[%d] = %s, want %s", i, deps.dropped[i].ToolUseID, want)
+		}
 	}
 }
 

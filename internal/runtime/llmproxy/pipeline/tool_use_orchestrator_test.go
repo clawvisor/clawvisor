@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -148,6 +149,23 @@ func TestEvaluateToolUses_FirstNonSkipWins(t *testing.T) {
 	// tool_use (later doesn't run). 2 × 2 = 4.
 	if len(result.Evaluations) != 4 {
 		t.Errorf("expected 4 evaluations in trail, got %d", len(result.Evaluations))
+	}
+}
+
+func TestEvaluateToolUses_RejectsDuplicateToolUseIDs(t *testing.T) {
+	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
+	tools := []conversation.ToolUse{
+		{ID: "toolu_dup", Name: "Bash", Input: json.RawMessage(`{"command":"echo one"}`)},
+		{ID: "toolu_dup", Name: "Bash", Input: json.RawMessage(`{"command":"echo two"}`)},
+	}
+
+	_, err := pipeline.EvaluateToolUses(context.Background(), res, tools, []pipeline.ToolUseEvaluator{
+		&allowEvaluator{name: "claimer", tag: "claimed"},
+	}, func(id string) pipeline.ToolUseMutator {
+		return &recordingToolUseMutator{id: id}
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate tool_use id") {
+		t.Fatalf("EvaluateToolUses error = %v, want duplicate tool_use id error", err)
 	}
 }
 

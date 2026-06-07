@@ -248,6 +248,78 @@ func TestStreamRoundTrip_PartialFinalEventAllCodecs(t *testing.T) {
 	}
 }
 
+func TestStreamRoundTrip_MalformedJSONPreservesRawAndContinues(t *testing.T) {
+	t.Run("anthropic", func(t *testing.T) {
+		input := strings.Join([]string{
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":`,
+			``,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
+		}, "\n")
+		d := stream.NewAnthropicDecoder(strings.NewReader(input))
+		ev, err := d.Next()
+		if err != nil {
+			t.Fatalf("decode malformed event: %v", err)
+		}
+		if ev.Kind != stream.KindUnknown {
+			t.Fatalf("malformed event Kind = %v, want KindUnknown", ev.Kind)
+		}
+		ev, err = d.Next()
+		if err != nil {
+			t.Fatalf("decode following event: %v", err)
+		}
+		if ev.Kind != stream.KindResponseEnd {
+			t.Fatalf("following event Kind = %v, want KindResponseEnd", ev.Kind)
+		}
+		if got := roundTripAnthropic(t, input); got != input {
+			t.Fatalf("malformed stream round-trip not byte-identical\n--- want ---\n%q\n--- got ---\n%q", input, got)
+		}
+	})
+
+	t.Run("openai responses", func(t *testing.T) {
+		input := strings.Join([]string{
+			`event: response.output_text.delta`,
+			`data: {"type":"response.output_text.delta","output_index":`,
+			``,
+			`event: response.completed`,
+			`data: {"type":"response.completed","response":{"id":"resp_ok"}}`,
+			``,
+		}, "\n")
+		d := stream.NewOpenAIResponsesDecoder(strings.NewReader(input))
+		ev, err := d.Next()
+		if err != nil {
+			t.Fatalf("decode malformed event: %v", err)
+		}
+		if ev.Kind != stream.KindUnknown {
+			t.Fatalf("malformed event Kind = %v, want KindUnknown", ev.Kind)
+		}
+		ev, err = d.Next()
+		if err != nil {
+			t.Fatalf("decode following event: %v", err)
+		}
+		if ev.Kind != stream.KindResponseEnd {
+			t.Fatalf("following event Kind = %v, want KindResponseEnd", ev.Kind)
+		}
+		if got := roundTripOpenAIResponses(t, input); got != input {
+			t.Fatalf("malformed stream round-trip not byte-identical\n--- want ---\n%q\n--- got ---\n%q", input, got)
+		}
+	})
+}
+
+func TestOpenAIChatRoundTrip_AdjacentCRLFChunksWithoutBlankLines(t *testing.T) {
+	input := strings.Join([]string{
+		`data: {"id":"chatcmpl_adjacent","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"}}]}`,
+		`data: {"id":"chatcmpl_adjacent","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" world"}}]}`,
+		`data: [DONE]`,
+		``,
+	}, "\r\n")
+	if got := roundTripOpenAIChat(t, input); got != input {
+		t.Fatalf("adjacent CRLF chunks round-trip not byte-identical\n--- want ---\n%q\n--- got ---\n%q", input, got)
+	}
+}
+
 func TestStreamDecoders_AllowLargeDataLineNearScannerCap(t *testing.T) {
 	largeText := strings.Repeat("x", 3<<20)
 

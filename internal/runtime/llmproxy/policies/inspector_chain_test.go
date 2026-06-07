@@ -104,6 +104,56 @@ func TestInspectorChain_NilBoundaryResolverDeniesCredentialedAPICall(t *testing.
 	}
 }
 
+func TestInspectorChain_TypedBoundaryDenyReasons(t *testing.T) {
+	cases := []struct {
+		name string
+		want pipeline.BoundaryDenyReason
+	}{
+		{"placeholder unknown", pipeline.BoundaryDenyReasonPlaceholderUnknown},
+		{"ownership mismatch", pipeline.BoundaryDenyReasonOwnershipMismatch},
+		{"host not allowed", pipeline.BoundaryDenyReasonHostNotAllowed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+			chain := policies.NewInspectorChain(insp, nil).WithBoundaryResolver(func(context.Context, inspector.Verdict) policies.BoundaryDecision {
+				return policies.BoundaryDecision{
+					Allowed:    false,
+					DenyReason: tc.want,
+					Reason:     string(tc.want),
+				}
+			})
+
+			tu := conversation.ToolUse{
+				ID:   "toolu_boundary",
+				Name: "WebFetch",
+				Input: json.RawMessage(`{
+					"url":"https://api.github.com/repos/x/y/issues",
+					"method":"GET",
+					"headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+				}`),
+			}
+			v, err := chain.Evaluate(context.Background(), nil, tu, evalToolUseMutator{})
+			if err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			if v.Outcome != pipeline.OutcomeDeny {
+				t.Fatalf("Outcome = %q, want Deny", v.Outcome)
+			}
+			var got pipeline.BoundaryDenyReason
+			for _, f := range v.Facts {
+				if bf, ok := f.(pipeline.BoundaryFact); ok {
+					got = bf.DenyReason
+					break
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("BoundaryFact.DenyReason = %q, want %q (facts: %+v)", got, tc.want, v.Facts)
+			}
+		})
+	}
+}
+
 func inspectorFactIsAPI(facts []pipeline.EvaluationFact) bool {
 	for _, f := range facts {
 		if ifct, ok := f.(pipeline.InspectorFact); ok {
