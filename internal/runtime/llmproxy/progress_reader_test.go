@@ -34,8 +34,11 @@ func TestProgressReader_StatsCountReadBytes(t *testing.T) {
 	if bytesTotal != 10 {
 		t.Errorf("bytes_total=%d, want 10", bytesTotal)
 	}
-	if ttfb == 0 || ttfb > elapsed {
-		t.Errorf("ttfb=%v elapsed=%v — ttfb should be set and <= elapsed", ttfb, elapsed)
+	if ttfb > elapsed {
+		t.Errorf("ttfb=%v elapsed=%v — ttfb should be <= elapsed", ttfb, elapsed)
+	}
+	if pr.firstByte.IsZero() {
+		t.Error("firstByte timestamp was not recorded")
 	}
 }
 

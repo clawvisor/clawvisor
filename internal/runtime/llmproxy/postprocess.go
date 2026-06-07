@@ -872,7 +872,7 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 		// Inspector says trigger missed (no autovault placeholder). There
 		// is no credential rewrite to perform, but shared authorization
 		// still sees ordinary tool_use calls such as Bash/Read.
-		if v.Source == inspector.SourceTriggerMiss {
+		if v.Source == inspector.SourceTriggerMiss || (!v.IsAPICall && !v.Ambiguous && v.Source == inspector.SourceDeterministic) {
 			readOnlyShellCommand := false
 			sensitiveShellPath := false
 			if toolnames.IsShellToolName(tu.Name) && readOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
@@ -986,11 +986,33 @@ func newToolUseEvaluator(req *http.Request, cfg PostprocessConfig, provider conv
 				}
 			}
 			// Record ordinary tool uses even when no credential trigger was
-			// present so lite-proxy activity shows the agent's tool calls.
-			audit("allow", "pass_through", "no credential trigger")
+			// present or it was a confident non-API call so activity shows it.
+			reason := "no credential trigger"
+			if v.Source != inspector.SourceTriggerMiss {
+				reason = "confident non-API call: " + v.Reason
+			}
+			audit("allow", "pass_through", reason)
 			return conversation.ToolUseVerdict{Allowed: true}
 		}
-		if v.Ambiguous || !v.IsAPICall {
+		if !v.IsAPICall {
+			if v.Ambiguous {
+				audit("block", "ambiguous", v.Reason)
+				reason := "Clawvisor: ambiguous credentialed call refused — " + v.Reason
+				return conversation.ToolUseVerdict{
+					Allowed:                false,
+					Reason:                 reason,
+					ContinueWithToolResult: reason,
+				}
+			}
+			audit("block", "non_api_credentialed", v.Reason)
+			reason := "Clawvisor: non-API tool calls carrying credentials are not permitted — " + v.Reason
+			return conversation.ToolUseVerdict{
+				Allowed:                false,
+				Reason:                 reason,
+				ContinueWithToolResult: reason,
+			}
+		}
+		if v.Ambiguous {
 			audit("block", "ambiguous", v.Reason)
 			// ContinueWithToolResult preserves the agent's actual
 			// tool_use in conversation history and feeds the rejection

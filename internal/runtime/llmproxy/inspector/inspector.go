@@ -132,6 +132,9 @@ func (i *Inspector) Inspect(ctx context.Context, t ToolUse) Verdict {
 	if i != nil && i.Parser != nil {
 		if v, ok := i.Parser.Parse(t); ok {
 			v.Source = SourceDeterministic
+			if len(v.Placeholders) == 0 {
+				v.Placeholders = extractPlaceholdersFromInput(t.Input)
+			}
 			return v
 		}
 	}

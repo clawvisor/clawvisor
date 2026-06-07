@@ -1999,3 +1999,111 @@ func (r *postprocessErroringReader) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
+func TestPostprocess_AllowsConfidentNonAPICalls(t *testing.T) {
+	t.Parallel()
+	body := anthropicJSONWithNamedToolUse("Write", `{"file_path":"test.txt","content":"autovault_stripe_mock_token_for_unit_tests"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_stripe_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
+	})
+
+	if len(got.Decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(got.Decisions))
+	}
+	if !got.Decisions[0].Verdict.Allowed {
+		t.Fatalf("confident non-API tool call (Write with long mock placeholder) should be allowed, got decision: %+v", got.Decisions[0])
+	}
+	if got.Rewritten {
+		t.Fatalf("confident non-API tool call should not be rewritten")
+	}
+	if string(got.Body) != string(body) {
+		t.Fatalf("body should be unchanged when non-API passes through")
+	}
+}
+
+func TestPostprocess_EnforcesRulesOnConfidentNonAPICalls(t *testing.T) {
+	t.Parallel()
+	body := anthropicJSONWithNamedToolUse("Write", `{"file_path":"test.txt","content":"autovault_stripe_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_stripe_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
+		ToolRules: []*store.RuntimePolicyRule{{
+			ID:       "deny-write",
+			UserID:   userID,
+			AgentID:  &agentID,
+			Kind:     "tool",
+			Action:   "deny",
+			ToolName: "Write",
+			Reason:   "file writes blocked",
+			Enabled:  true,
+		}},
+	})
+
+	if len(got.Decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(got.Decisions))
+	}
+	if got.Decisions[0].Verdict.Allowed {
+		t.Fatalf("confident non-API tool call (Write) should be blocked by ToolRules")
+	}
+	if !strings.Contains(string(got.Body), "file writes blocked") {
+		t.Fatalf("expected error block message with rule reason, got body: %s", got.Body)
+	}
+}
+
+func TestPostprocess_BlocksValidatorOriginNonAPICalls(t *testing.T) {
+	t.Parallel()
+	// Use a custom tool name so DefaultParser doesn't recognize it, and a realistic
+	// placeholder token to ensure it isn't classified as a stub (trigger-miss).
+	body := anthropicJSONWithNamedToolUse("CustomTool", `{"arg":"autovault_stripe_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+
+	// The validator returns IsAPICall=false, Ambiguous=false.
+	// Since the source is validator, this is not trusted to bypass mediation (fail-closed security rule).
+	insp := inspector.NewInspector(inspector.DefaultParser{}, postprocessFakeValidator{
+		verdict: inspector.Verdict{
+			IsAPICall: false,
+			Ambiguous: false,
+			Reason:    "non-API verdict from LLM",
+		},
+	})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_stripe_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
+	})
+
+	if len(got.Decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(got.Decisions))
+	}
+	if got.Decisions[0].Verdict.Allowed {
+		t.Fatalf("validator non-API tool call should be blocked, got decision: %+v", got.Decisions[0])
+	}
+	if !strings.Contains(string(got.Body), "non-API tool calls carrying credentials are not permitted") {
+		t.Fatalf("expected non-API block error message, got body: %s", got.Body)
+	}
+}
+
+
+
+

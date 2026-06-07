@@ -38,6 +38,13 @@ func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
 			Reason:    "local-only tool (" + t.Name + "); placeholder not transmitted",
 		}, true
 	}
+	if isFileManipulationTool(t.Name) {
+		return Verdict{
+			IsAPICall: false,
+			Ambiguous: false,
+			Reason:    "non-API file manipulation tool (" + t.Name + ")",
+		}, true
+	}
 	if v, ok := parseStructuredFetch(t); ok {
 		return v, true
 	}
@@ -45,6 +52,22 @@ func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
 		return v, true
 	}
 	return Verdict{}, false
+}
+
+func isFileManipulationTool(name string) bool {
+	nameLower := strings.ToLower(strings.TrimSpace(name))
+	if strings.Contains(nameLower, "__") && !strings.HasPrefix(nameLower, "mcp__filesystem__") {
+		return false
+	}
+	switch nameLower {
+	case "write", "edit", "notebookedit", "write_file", "edit_file",
+		"mcp__filesystem__write_file", "mcp__filesystem__edit_file",
+		"replace_file_content", "multi_replace_file_content", "write_to_file",
+		"apply_patch", "replace", "strreplace", "str_replace":
+		return true
+	default:
+		return false
+	}
 }
 
 // localOnlyTools enumerates tool names whose payloads should not be
@@ -214,6 +237,10 @@ var defaultAllowedTools = map[string]struct{}{
 }
 
 func isLocalOnlyTool(name string) bool {
+	nameLower := strings.ToLower(strings.TrimSpace(name))
+	if strings.Contains(nameLower, "__") && !strings.HasPrefix(nameLower, "mcp__filesystem__") {
+		return false
+	}
 	return IsLocalOnlyTool(name)
 }
 
