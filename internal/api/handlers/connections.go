@@ -272,6 +272,39 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// One-paste install path: the caller proved possession of a dashboard-
+	// minted claim code, which IS the user's pre-authorization. Auto-approve
+	// immediately so the curl returns a token in one round-trip, without a
+	// second click in the dashboard or a Telegram notification. Without a
+	// claim (legacy user_id / single-tenant paths) we fall through to the
+	// notify-then-wait flow below.
+	if pendingClaim != "" {
+		agentID, approveErr := h.ApproveByID(r.Context(), req.ID, owner.ID)
+		if approveErr != nil {
+			h.logger.WarnContext(r.Context(), "lite-proxy: claim auto-approve failed",
+				"connection_id", req.ID, "err", approveErr.Error())
+			writeError(w, http.StatusInternalServerError, "AUTO_APPROVE_FAILED",
+				"connection was created but auto-approval failed; approve it in the dashboard")
+			return
+		}
+		raw, ok := h.tokenCache.Load(req.ID)
+		if !ok {
+			h.logger.WarnContext(r.Context(), "lite-proxy: auto-approved connection missing token in cache",
+				"connection_id", req.ID)
+			writeError(w, http.StatusInternalServerError, "TOKEN_UNAVAILABLE",
+				"connection was approved but the token cache no longer has it; re-run the bootstrap")
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"connection_id": req.ID,
+			"agent_id":      agentID,
+			"status":        "approved",
+			"token":         raw,
+			"expires_at":    req.ExpiresAt,
+		})
+		return
+	}
+
 	// Notify owner via SSE and push notification.
 	if h.eventHub != nil {
 		h.eventHub.Publish(owner.ID, events.Event{Type: "queue"})

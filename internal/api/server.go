@@ -1017,6 +1017,10 @@ func (s *Server) routes() http.Handler {
 		// user_id. The Other Agents fallback path still uses /skill/setup.
 		installerHandler := handlers.NewInstallerHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal(), s.cfg.ProxyLite.PublicURL, s.cfg.Server.PublicURL)
 		mux.HandleFunc("GET /skill/install/{target}", installerHandler.Setup)
+		// Companion uninstall route — the install skill writes the rendered
+		// markdown to ~/.claude/commands/clawvisor-uninstall.md so users have a
+		// one-command revert path (/clawvisor-uninstall).
+		mux.HandleFunc("GET /skill/uninstall/{target}", installerHandler.Uninstall)
 	}
 
 	// Claude Desktop configuration profile (.mobileconfig) — the user
@@ -1396,9 +1400,16 @@ func (s *Server) registerLiteProxyRoutes(
 
 	if includeCredentialRoutes {
 		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
-		mux.Handle("PUT /api/runtime/llm-credentials/{provider}", user(llmCredHandler.Set))
-		mux.Handle("DELETE /api/runtime/llm-credentials/{provider}", user(llmCredHandler.Delete))
-		mux.Handle("GET /api/runtime/llm-credentials", user(llmCredHandler.List))
+		// Accept either a user JWT or a `cvis_…` agent token. The one-paste
+		// install skill (which holds the freshly-minted agent token but no
+		// dashboard session) vaults the user's upstream LLM key from inside
+		// the skill via this endpoint; the dashboard's Settings UI still
+		// uses the same routes with user-JWT auth.
+		requireUserOrAgent := middleware.RequireUserOrAgent(s.jwtSvc, s.store)
+		userOrAgent := func(h http.HandlerFunc) http.Handler { return requireUserOrAgent(h) }
+		mux.Handle("PUT /api/runtime/llm-credentials/{provider}", userOrAgent(llmCredHandler.Set))
+		mux.Handle("DELETE /api/runtime/llm-credentials/{provider}", userOrAgent(llmCredHandler.Delete))
+		mux.Handle("GET /api/runtime/llm-credentials", userOrAgent(llmCredHandler.List))
 	}
 }
 

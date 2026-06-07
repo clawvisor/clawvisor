@@ -83,35 +83,105 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "claude-code", "ABCDEFGHIJ")
 
+	// New one-paste flow with passthrough-first, swap-as-fallback:
+	//   1. connect-with-claim (auto-approved)
+	//   2. smoke-test in PASSTHROUGH mode using the user's existing
+	//      claude login / env API key
+	//   3. on auth failure ONLY: vault key + retry in swap mode
+	//   4. ask make-default (gated on smoke-test pass)
+	//   5. apply (env vars to settings.json OR claude-cv alias, in the
+	//      mode that passed)
+	//   6. self-uninstall
+	//
+	// NB: vault step is recovery-only — users with `claude login` or
+	// `ANTHROPIC_API_KEY` in env never hit it.
 	assertContainsAll(t, body,
+		// Header
 		"# Connect Claude Code to Clawvisor",
-		"passthrough mode",
-		"## 1. Check the local CLI",
-		"install_mode\": \"host\"",
-		"## 2. Mint a connection request",
-		"Do not reuse a token",
-		"claim=ABCDEFGHIJ",
-		"wait=true",
-		"## 3. Persist the token",
-		"~/.clawvisor/agents/claude-code.json",
-		"## 4. Configure Claude Code",
-		"ANTHROPIC_BASE_URL",
-		"ANTHROPIC_CUSTOM_HEADERS",
-		"X-Clawvisor-Agent-Token",
-		"Dashboard answers",
-		"Claude Code routing scope: alias",
-		"The user chose **scoped routing**",
-		"Leave permissions unchanged",
-		"## 5. Offer a shell alias",
+		"name: clawvisor-setup",
+		// Mode preamble — explains why two modes exist
+		"**passthrough**",
+		"**swap**",
+		"keeps their\nsubscription billing intact",
+		// Step 1: claim-authenticated connect with existing-install detection
+		"## 1. Register and persist the token",
+		"Pre-flight: detect an existing install",
+		`if [ -f "$TOKEN_FILE" ]; then`,
+		"Overwrite it with a fresh install?",
+		`rm -f "$TOKEN_FILE"`,
+		"/api/agents/connect?claim=ABCDEFGHIJ",
+		"&harness=claude-code",
+		"~/.clawvisor/agents/$AGENT_NAME.json",
+		"INVALID_CLAIM",
+		// Step 2: PASSTHROUGH smoke test FIRST (no env clearing)
+		"## 2. Smoke-test Clawvisor routing in **passthrough mode**",
+		"We do NOT\nclear `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY`",
+		"ANTHROPIC_BASE_URL=\"$CLAWVISOR_URL/api\"",
+		"ANTHROPIC_CUSTOM_HEADERS=\"X-Clawvisor-Agent-Token: $TOKEN\"",
+		"claude -p \"respond with the word OK\"",
+		"`MODE=passthrough`",
+		// Step 3: swap-mode fallback (vault + retry)
+		"## 3. Fall back to **swap mode**",
+		"only if step 2 failed with upstream auth",
+		"### 3.a. Vault an Anthropic API key",
+		"HARD CONSTRAINTS",
+		"DO NOT `grep`",
+		"printf '%s' \"$ANTHROPIC_API_KEY\" | jq -Rs '{api_key:.}'",
+		"/api/runtime/llm-credentials/anthropic",
+		"/dashboard/keys/anthropic?for=$AGENT_ID",
+		"### 3.b. Re-run the smoke test in swap mode",
+		"ANTHROPIC_AUTH_TOKEN=\"$TOKEN\"",
+		"`MODE=swap`",
+		// Step 4: make-default
+		"## 4. Ask the user: make Clawvisor the default?",
+		"`claude-cv` shell function",
+		// Step 5: apply choice — both branches have mode-aware configs
+		"## 5. Apply the user's choice",
+		"### 5.a. Default-everywhere — commit env to `~/.claude/settings.json`",
+		"**If MODE=passthrough**",
+		"**If MODE=swap**",
+		"### 5.b. Alias-only — append `claude-cv` to the shell rc",
 		"claude-cv()",
-		"## 6. Connectivity smoke test",
-		"/api/skill/catalog",
-		"-o /dev/null && echo OK || echo REVOKED",
-		"## 7. Save an uninstall reference",
-		"## 8. Self-uninstall automatically",
-		"rm -f ~/.claude/commands/clawvisor-install.md",
-		"rm -rf ~/.codex/skills/clawvisor-install",
+		// YOLO opt-in: alias step asks the user once whether to bake the
+		// permission-skip flag into the function. Default is no.
+		"`--dangerously-skip-permissions`",
+		"`$YOLO`",
+		"Default is **no**",
+		// Diff records under ~/.clawvisor/diffs/<agent>/ — the user's files
+		// stay free of marker comments AND sentinel keys. JSON additions
+		// record dot-paths; text additions record the exact appended block.
+		"~/.clawvisor/diffs/$AGENT_NAME/settings.json",
+		"~/.clawvisor/diffs/$AGENT_NAME/claude_cv.json",
+		`type: "json_keys"`,
+		`type: "text_append"`,
+		`"env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_CUSTOM_HEADERS"`,
+		`"env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN", "env.ANTHROPIC_API_KEY"`,
+		// Step 6: drop uninstall skill + self-uninstall the setup file
+		"## 6. Drop the uninstall skill, then self-uninstall",
+		"/skill/uninstall/claude-code.md?agent_name=$AGENT_NAME",
+		"~/.claude/commands/clawvisor-uninstall.md",
+		"rm -f ~/.claude/commands/clawvisor-setup.md",
+		"`/clawvisor-uninstall`",
 	)
+	// LLM proxy mediates tool calls server-side; the install skill must NOT
+	// drop the service-routing skill onto the agent's disk in proxy-lite mode.
+	if strings.Contains(body, "Install the Clawvisor skill") {
+		t.Errorf("proxy-lite flow should not install agent-side Clawvisor skill")
+	}
+	if strings.Contains(body, "~/.claude/skills/clawvisor") {
+		t.Errorf("proxy-lite flow should not write to ~/.claude/skills/clawvisor")
+	}
+	// The new flow has no second dashboard click — assert claim auto-approves
+	// (the curl returns the token immediately, no long-poll on connect).
+	if strings.Contains(body, "wait=true") {
+		t.Errorf("new flow uses claim auto-approval, not wait=true long-poll")
+	}
+	if strings.Contains(body, "## 2. Mint a connection request") {
+		t.Errorf("two-phase mint+approve replaced by one-shot claim auto-approve")
+	}
+	if strings.Contains(body, "Dashboard answers") {
+		t.Errorf("dashboard-driven configure-questions removed in the one-paste flow")
+	}
 	if strings.Contains(body, "Check for an existing token") {
 		t.Errorf("installer should not offer to reuse an existing token")
 	}
@@ -121,26 +191,100 @@ func TestInstallerCodexRender(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "codex", "CLAIMCODE0")
 
+	// New one-paste flow with passthrough-first, swap-as-fallback:
+	//   1. connect-with-claim (auto-approved)
+	//   2. write [model_providers.clawvisor] block in PASSTHROUGH form
+	//   3. smoke-test in passthrough mode (uses user's codex login / env key)
+	//   4. on auth failure ONLY: vault key, rewrite block to swap form, retry
+	//   5. ask make-default (gated on smoke-test pass)
+	//   6. apply (model_provider top-level OR codex-cv alias, mode-aware)
+	//   7. self-uninstall
 	assertContainsAll(t, body,
+		// Header + frontmatter
 		"# Connect Codex to Clawvisor",
-		"passthrough mode",
-		"codex login",
-		"## 1. Check the local CLI",
-		"install_mode\": \"host\"",
-		"## 2. Mint a connection request",
-		"Do not reuse a token",
-		"claim=CLAIMCODE0",
-		"## 4. Configure Codex",
+		"name: clawvisor-setup",
+		// Mode preamble
+		"**passthrough**",
+		"**swap**",
+		"keeps their\nsubscription billing intact",
+		// Step 1: claim-authenticated connect with existing-install detection
+		"## 1. Register and persist the token",
+		"Pre-flight: detect an existing install",
+		`if [ -f "$TOKEN_FILE" ]; then`,
+		"Overwrite it with a fresh install?",
+		`rm -f "$TOKEN_FILE"`,
+		"/api/agents/connect?claim=CLAIMCODE0",
+		"&harness=codex",
+		"~/.clawvisor/agents/$AGENT_NAME.json",
+		// Step 2: write provider block in passthrough form
+		"## 2. Write the Clawvisor provider block (passthrough form)",
 		"[model_providers.clawvisor]",
-		`base_url = "http://`,
-		`/api/v1"`,
+		`base_url = "$CLAWVISOR_URL/api/v1"`,
 		"requires_openai_auth = true",
 		"X-Clawvisor-Agent-Token = \"CLAWVISOR_AGENT_TOKEN\"",
-		"Dashboard answers",
-		"Alias mode: safe",
+		// Step 3: passthrough smoke test
+		"## 3. Smoke-test Clawvisor routing in **passthrough mode**",
+		"timeout 30 codex",
+		"-c model_provider=clawvisor",
+		`exec "respond with the word OK"`,
+		"`MODE=passthrough`",
+		// Step 4: swap-mode fallback
+		"## 4. Fall back to **swap mode**",
+		"only if step 3 failed with upstream auth",
+		"### 4.a. Vault an OpenAI API key",
+		"DO NOT `grep`",
+		"DO NOT `echo \"$OPENAI_API_KEY\"`",
+		"printf '%s' \"$OPENAI_API_KEY\" | jq -Rs '{api_key:.}'",
+		"/api/runtime/llm-credentials/openai",
+		"/dashboard/keys/openai?for=$AGENT_ID",
+		"### 4.b. Rewrite the provider block to swap form",
+		"requires_openai_auth = false",
+		"Authorization = \"CLAWVISOR_AGENT_BEARER\"",
+		"### 4.c. Re-run the smoke test in swap mode",
+		"CLAWVISOR_AGENT_BEARER=\"Bearer $TOKEN\"",
+		"`MODE=swap`",
+		// Step 5: make-default
+		"## 5. Ask the user: make Clawvisor the default?",
+		"`codex-cv` shell function",
+		// Step 6: apply
+		"## 6. Apply the user's choice",
+		`### 6.a. Default-everywhere — set ` + "`model_provider = \"clawvisor\"`" + ` as the default`,
+		"**If MODE=passthrough**",
+		"**If MODE=swap**",
+		"CLAWVISOR_AGENT_BEARER",
+		"### 6.b. Alias-only — append `codex-cv` to the shell rc",
 		"codex-cv()",
-		"rm -rf ~/.codex/skills/clawvisor-install",
+		// YOLO opt-in (Codex equivalent).
+		"`--dangerously-bypass-approvals-and-sandbox`",
+		"`$YOLO`",
+		"Default is **no**",
+		// Diff records under ~/.clawvisor/diffs/<agent>/ for each Codex
+		// modification site. User config files are unannotated.
+		"~/.clawvisor/diffs/$AGENT_NAME/provider_block.json",
+		"~/.clawvisor/diffs/$AGENT_NAME/default_provider.json",
+		"~/.clawvisor/diffs/$AGENT_NAME/rc_export.json",
+		"~/.clawvisor/diffs/$AGENT_NAME/codex_cv.json",
+		`type: "text_append"`,
+		`type: "text_prepend"`,
+		// Step 7: drop uninstall skill + self-uninstall the setup directory
+		"## 7. Drop the uninstall skill, then self-uninstall",
+		"/skill/uninstall/codex.md?agent_name=$AGENT_NAME",
+		"~/.codex/skills/clawvisor-uninstall/SKILL.md",
+		"rm -rf ~/.codex/skills/clawvisor-setup",
+		"`clawvisor-uninstall` skill",
 	)
+	if strings.Contains(body, "Install the Clawvisor skill") {
+		t.Errorf("proxy-lite flow should not install agent-side Clawvisor skill")
+	}
+	if strings.Contains(body, "~/.codex/skills/clawvisor/SKILL.md") {
+		t.Errorf("proxy-lite flow should not write to ~/.codex/skills/clawvisor (the service-routing skill)")
+	}
+	if strings.Contains(body, "## 2. Mint a connection request") {
+		t.Errorf("two-phase mint+approve replaced by one-shot claim auto-approve")
+	}
+	if strings.Contains(body, "Dashboard answers") {
+		t.Errorf("dashboard-driven configure-questions removed in the one-paste flow")
+	}
 	if strings.Contains(body, "Check for an existing token") {
 		t.Errorf("installer should not offer to reuse an existing token")
 	}
@@ -345,13 +489,158 @@ func TestInstallerOpenClawRemoteModeSkipsLocalProbe(t *testing.T) {
 // TestInstallerAllTargetsHaveFrontmatter — Codex rejects skills without YAML
 // frontmatter at load time; we caught this in the field after a real install,
 // so guard against regression by asserting the exact shape on every target.
+// Claude Code and Codex use the `clawvisor-setup` slash command (one-paste
+// connect existing CLI); Hermes and OpenClaw use `clawvisor-install` (install
+// a harness binary). Both names are accepted here — the test asserts the
+// frontmatter shape, not the specific name.
+// uninstallGet hits the uninstall endpoint with a target + optional agent
+// name and returns the rendered markdown body. Mirrors installerGet.
+func uninstallGet(t *testing.T, h *InstallerHandler, target, agentName string) string {
+	t.Helper()
+	path := "/skill/uninstall/" + target + ".md"
+	if agentName != "" {
+		path += "?agent_name=" + agentName
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /skill/uninstall/{target}", h.Uninstall)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + path)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET %s: status %d, body: %s", path, resp.StatusCode, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+		t.Fatalf("expected text/markdown, got %q", ct)
+	}
+	return string(body)
+}
+
+func TestUninstallClaudeCodeRender(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	body := uninstallGet(t, h, "claude-code", "claude-code-7")
+
+	// Frontmatter + mode-detection + reversals for both default-everywhere
+	// (settings.json) and alias-only (shell rc) paths. Each path checks for
+	// the install-time backup first and prefers restore-from-backup over
+	// surgical edit. Token file delete + dashboard cleanup pointer at the end.
+	assertContainsAll(t, body,
+		"# Uninstall Clawvisor from Claude Code",
+		"name: clawvisor-uninstall",
+		"AGENT_NAME=\"claude-code-7\"",
+		"## 1. Detect the install mode",
+		"~/.claude/settings.json",
+		"`claude-cv()`",
+		"## 2. Reverse the config from the diff records",
+		// Uninstall walks the diff records and reverses each. Python3 is
+		// universal on macOS / modern Linux and handles json_keys,
+		// text_append, and text_prepend uniformly.
+		"~/.clawvisor/diffs/$AGENT_NAME/",
+		"ls ~/.clawvisor/diffs/$AGENT_NAME/",
+		"python3 - <<'PY'",
+		"json_keys",
+		"text_append",
+		"text_prepend",
+		`if rec['type'] == 'json_keys':`,
+		// Legacy fallback for installs that pre-date the diff-records design.
+		"legacy install",
+		"ANTHROPIC_BASE_URL",
+		"claude-cv()",
+		// 3 / 4 / 5
+		"## 3. Delete the local token file",
+		`rm -f "$TOKEN_FILE"`,
+		"## 4. Tell the user about dashboard cleanup",
+		"/dashboard/agents",
+		"/dashboard/keys/anthropic",
+		"## 5. Self-uninstall",
+		"rm -rf ~/.clawvisor/diffs/$AGENT_NAME",
+		"rm -f ~/.claude/commands/clawvisor-uninstall.md",
+	)
+}
+
+func TestUninstallCodexRender(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	body := uninstallGet(t, h, "codex", "codex-2")
+
+	// Backup-first uninstall: check for `<file>.clawvisor-backup-<agent>` and
+	// restore if present; surgical edit otherwise. Two files in scope:
+	// config.toml and the shell rc (which holds either the env export for
+	// default-everywhere OR the codex-cv function for alias-only — same
+	// rc-handling step covers both).
+	assertContainsAll(t, body,
+		"# Uninstall Clawvisor from Codex",
+		"name: clawvisor-uninstall",
+		"AGENT_NAME=\"codex-2\"",
+		"## 1. Detect the install state",
+		"~/.codex/config.toml",
+		"`codex-cv()`",
+		"## 2. Reverse the config from the diff records",
+		// Same diff-walker as Claude Code uninstall — harness-agnostic.
+		"~/.clawvisor/diffs/$AGENT_NAME/",
+		"ls ~/.clawvisor/diffs/$AGENT_NAME/",
+		"python3 - <<'PY'",
+		"json_keys",
+		"text_append",
+		"text_prepend",
+		// Legacy fallback for pre-diff-records installs (still strips by
+		// section header / sed line-delete).
+		"legacy install",
+		`awk 'BEGIN{skip=0} /^\[model_providers\.clawvisor/{skip=1; next}`,
+		`sed -i.bak '/^model_provider = "clawvisor"$/d' ~/.codex/config.toml`,
+		"CLAWVISOR_AGENT_TOKEN",
+		"codex-cv()",
+		// 3 / 4 / 5
+		"## 3. Delete the local token file",
+		"## 4. Tell the user about dashboard cleanup",
+		"/dashboard/agents",
+		"/dashboard/keys/openai",
+		"## 5. Self-uninstall",
+		"rm -rf ~/.clawvisor/diffs/$AGENT_NAME",
+		"rm -rf ~/.codex/skills/clawvisor-uninstall",
+	)
+}
+
+func TestUninstallUnknownTargetIs404(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /skill/uninstall/{target}", h.Uninstall)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	// Only claude-code and codex have uninstall renderers — Hermes / OpenClaw
+	// uninstall lives in the inline `uninstall-<harness>.md` reference doc
+	// the existing installer flow writes to ~/.clawvisor/.
+	for _, target := range []string{"hermes", "openclaw", "perplexity"} {
+		resp, err := http.Get(srv.URL + "/skill/uninstall/" + target + ".md")
+		if err != nil {
+			t.Fatalf("GET %s: %v", target, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 404 {
+			t.Errorf("[%s] expected 404, got %d", target, resp.StatusCode)
+		}
+	}
+}
+
 func TestInstallerAllTargetsHaveFrontmatter(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
-	for _, target := range []string{"claude-code", "codex", "hermes", "openclaw"} {
+	wantName := map[string]string{
+		"claude-code": "clawvisor-setup",
+		"codex":       "clawvisor-setup",
+		"hermes":      "clawvisor-install",
+		"openclaw":    "clawvisor-install",
+	}
+	for target, name := range wantName {
 		body := installerGet(t, h, target, "")
-		if !strings.HasPrefix(body, "---\nname: clawvisor-install\ndescription:") {
-			t.Errorf("[%s] missing required YAML frontmatter at top of body. First 200 chars:\n%s",
-				target, body[:min(len(body), 200)])
+		want := "---\nname: " + name + "\ndescription:"
+		if !strings.HasPrefix(body, want) {
+			t.Errorf("[%s] missing required YAML frontmatter (want prefix %q). First 200 chars:\n%s",
+				target, want, body[:min(len(body), 200)])
 		}
 		// Closing fence must come before the heading or downstream loaders
 		// treat the body as part of the frontmatter.
@@ -369,10 +658,15 @@ func TestInstallerPrefersLLMProxyURL(t *testing.T) {
 	// URLs must use that — even if the app has its own public URL. Agents
 	// installing the skill need the LLM-proxy endpoint for both registration
 	// and model traffic.
+	//
+	// The new one-paste flow exports CLAWVISOR_URL once at the top of the
+	// skill body and uses $CLAWVISOR_URL everywhere downstream. So we
+	// assert the export line uses the proxy URL, plus that the app URL
+	// never appears anywhere in the body.
 	h := NewInstallerHandler("", "", false, "https://llm.example.com", "https://app.example.com")
 	body := installerGet(t, h, "claude-code", "")
-	if !strings.Contains(body, "https://llm.example.com/api") {
-		t.Errorf("expected embedded URL to use configured LLM proxy URL; body excerpt:\n%s",
+	if !strings.Contains(body, `export CLAWVISOR_URL="https://llm.example.com"`) {
+		t.Errorf("expected CLAWVISOR_URL export to use configured LLM proxy URL; body excerpt:\n%s",
 			body[:min(len(body), 500)])
 	}
 	if strings.Contains(body, "https://app.example.com") {
@@ -385,11 +679,13 @@ func TestInstallerPrefersLLMProxyURL(t *testing.T) {
 
 func TestInstallerFallsBackToServerPublicURL(t *testing.T) {
 	// If there is no dedicated lite-proxy URL, use the general public URL
-	// before falling back to the request host.
+	// before falling back to the request host. The new one-paste flow
+	// exports CLAWVISOR_URL once at the top and uses $CLAWVISOR_URL
+	// downstream — assert on the export line.
 	h := NewInstallerHandler("", "", false, "", "https://app.example.com")
 	body := installerGet(t, h, "codex", "")
-	if !strings.Contains(body, "https://app.example.com/api/v1") {
-		t.Errorf("expected embedded URL to use server public URL; body excerpt:\n%s",
+	if !strings.Contains(body, `export CLAWVISOR_URL="https://app.example.com"`) {
+		t.Errorf("expected CLAWVISOR_URL export to use server public URL; body excerpt:\n%s",
 			body[:min(len(body), 500)])
 	}
 	if strings.Contains(body, "http://127.0.0.1:") {
@@ -399,16 +695,21 @@ func TestInstallerFallsBackToServerPublicURL(t *testing.T) {
 
 func TestInstallerEmbedsRequestHost(t *testing.T) {
 	// When not via the relay, the resolved URL should mirror the request host so
-	// agents on the user's box talk to the daemon directly.
+	// agents on the user's box talk to the daemon directly. The new one-paste
+	// flow embeds the URL via `export CLAWVISOR_URL=…` at the top of the body.
 	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "claude-code", "")
-	if !strings.Contains(body, "ANTHROPIC_BASE_URL") || !strings.Contains(body, "/api/skill/catalog") {
-		t.Fatalf("rendered body missing required scaffolding: %s", body)
+	if !strings.Contains(body, "ANTHROPIC_BASE_URL") {
+		t.Fatalf("rendered body missing ANTHROPIC_BASE_URL: %s", body)
+	}
+	if !strings.Contains(body, "/api/runtime/llm-credentials/anthropic") {
+		t.Fatalf("rendered body missing llm-credentials endpoint: %s", body)
 	}
 	// The httptest server uses an ephemeral 127.0.0.1 host; the body should
-	// embed that so the user's curl actually reaches the daemon.
-	if !strings.Contains(body, "http://127.0.0.1:") {
-		t.Errorf("expected request host to be embedded in URLs, body excerpt:\n%s", body[:min(len(body), 500)])
+	// embed that as the CLAWVISOR_URL export so the user's curl actually
+	// reaches the daemon.
+	if !strings.Contains(body, `export CLAWVISOR_URL="http://127.0.0.1:`) {
+		t.Errorf("expected request host to be embedded as CLAWVISOR_URL export, body excerpt:\n%s", body[:min(len(body), 500)])
 	}
 }
 

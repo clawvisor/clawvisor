@@ -447,23 +447,44 @@ func TestConnectionRequest_ClaimResolvesUser(t *testing.T) {
 	body := mustStatus(t, resp, http.StatusCreated)
 	code := str(t, body, "code")
 
-	// Use the claim — note the body has no user_id.
+	// Use the claim — note the body has no user_id. A consumed claim is the
+	// user's pre-authorization, so the connect endpoint auto-approves and
+	// returns the agent token in one round-trip (no second dashboard click).
 	resp = env.do("POST", "/api/agents/connect?claim="+code, "", map[string]any{
 		"name": "ClaimAgent",
 	})
 	body = mustStatus(t, resp, http.StatusCreated)
 
-	if str(t, body, "status") != "pending" {
-		t.Errorf("expected status=pending, got %s", str(t, body, "status"))
+	if got := str(t, body, "status"); got != "approved" {
+		t.Errorf("expected status=approved (claim auto-approves), got %q", got)
+	}
+	if tok := str(t, body, "token"); tok == "" {
+		t.Errorf("expected token in response, got empty")
 	}
 
-	// The request must be attributed to the minting user.
+	// The resulting AGENT (not pending request) must be attributed to the
+	// minting user.
+	agents, err := env.Store.ListAgents(context.Background(), session.UserID)
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	found := false
+	for _, a := range agents {
+		if a.Name == "ClaimAgent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected an agent named ClaimAgent for the minting user, got %+v", agents)
+	}
+	// And no pending request should remain — the auto-approve consumed it.
 	pending, err := env.Store.ListPendingConnectionRequests(context.Background(), session.UserID)
 	if err != nil {
 		t.Fatalf("ListPendingConnectionRequests: %v", err)
 	}
-	if len(pending) != 1 || pending[0].Name != "ClaimAgent" {
-		t.Errorf("expected one pending request named ClaimAgent for the minting user, got %+v", pending)
+	if len(pending) != 0 {
+		t.Errorf("expected zero pending requests after claim auto-approve, got %+v", pending)
 	}
 }
 
@@ -607,22 +628,22 @@ func TestConnectionRequest_ApproveRejectsRacingDuplicateName(t *testing.T) {
 // the token file rather than thinking the request expired.
 func TestConnectionRequest_WaitTimeoutLosingRaceToApproveReturnsToken(t *testing.T) {
 	env, session := setupConnectionEnv(t)
-	resp := session.do("POST", "/api/agents/connect/claim", nil)
-	claim := str(t, mustStatus(t, resp, http.StatusCreated), "code")
 
-	// Create a pending request directly, then mark it approved (with an
-	// agent) BEFORE issuing the wait=true POST. The handler will see the
-	// request as already-pending at peek time but the wait loop will
-	// detect the resolved state immediately via the initial fetch — same
-	// downstream code path as the race-loss, just timed deterministically.
-	// We use the request-creation path so the claim is consumed normally.
+	// This test exercises the wait=true long-poll path that still applies
+	// when a claim is NOT used (e.g. legacy bootstrap or non-dashboard
+	// callers). The claim-consume path auto-approves, so we use the
+	// user_id-body flow here to keep the request pending until the test
+	// races it against an out-of-band Approve.
 	type result struct {
 		status int
 		body   map[string]any
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		r := env.do("POST", "/api/agents/connect?claim="+claim+"&name=RaceApprove&wait=true&timeout=10", "", nil)
+		r := env.do("POST", "/api/agents/connect?name=RaceApprove&wait=true&timeout=10", "", map[string]any{
+			"name":    "RaceApprove",
+			"user_id": session.UserID,
+		})
 		defer r.Body.Close()
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -658,11 +679,14 @@ func TestConnectionRequest_WaitTimeoutLosingRaceToApproveReturnsToken(t *testing
 
 func TestConnectionRequest_WaitTimeoutExpiresPending(t *testing.T) {
 	env, session := setupConnectionEnv(t)
-	resp := session.do("POST", "/api/agents/connect/claim", nil)
-	claim := str(t, mustStatus(t, resp, http.StatusCreated), "code")
 
 	// Long-poll with a very short deadline. timeout=1 → ~1s wait window.
-	resp = env.do("POST", "/api/agents/connect?claim="+claim+"&name=TimeoutMe&wait=true&timeout=1", "", nil)
+	// Uses the user_id-body path so the request stays pending — the
+	// claim-consume path auto-approves and would skip the wait branch.
+	resp := env.do("POST", "/api/agents/connect?name=TimeoutMe&wait=true&timeout=1", "", map[string]any{
+		"name":    "TimeoutMe",
+		"user_id": session.UserID,
+	})
 	body := mustStatus(t, resp, http.StatusGone)
 	if got := str(t, body, "status"); got != "expired" {
 		t.Errorf("expected status=expired in response, got %q", got)
@@ -682,24 +706,29 @@ func TestConnectionRequest_WaitTimeoutExpiresPending(t *testing.T) {
 
 	// And re-bootstrap with the same name must succeed cleanly (no
 	// AGENT_NAME_EXISTS) — the agent was never created.
-	resp = session.do("POST", "/api/agents/connect/claim", nil)
-	claim2 := str(t, mustStatus(t, resp, http.StatusCreated), "code")
-	resp = env.do("POST", "/api/agents/connect?claim="+claim2+"&name=TimeoutMe", "", nil)
+	resp = env.do("POST", "/api/agents/connect", "", map[string]any{
+		"name":    "TimeoutMe",
+		"user_id": session.UserID,
+	})
 	mustStatus(t, resp, http.StatusCreated)
 }
 
 func TestConnectionRequest_WaitDeniedReturns403(t *testing.T) {
 	env, session := setupConnectionEnv(t)
-	resp := session.do("POST", "/api/agents/connect/claim", nil)
-	claim := str(t, mustStatus(t, resp, http.StatusCreated), "code")
 
+	// Wait-then-deny test uses the user_id-body path so the request
+	// stays pending until the test denies it out-of-band — the claim-
+	// consume path would auto-approve before any deny could land.
 	type result struct {
 		status int
 		body   map[string]any
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		r := env.do("POST", "/api/agents/connect?claim="+claim+"&name=DenyMe&wait=true&timeout=10", "", nil)
+		r := env.do("POST", "/api/agents/connect?name=DenyMe&wait=true&timeout=10", "", map[string]any{
+			"name":    "DenyMe",
+			"user_id": session.UserID,
+		})
 		defer r.Body.Close()
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -740,16 +769,20 @@ func TestConnectionRequest_WaitDeniedReturns403(t *testing.T) {
 
 func TestConnectionRequest_WaitApprovedReturns201WithToken(t *testing.T) {
 	env, session := setupConnectionEnv(t)
-	resp := session.do("POST", "/api/agents/connect/claim", nil)
-	claim := str(t, mustStatus(t, resp, http.StatusCreated), "code")
 
+	// Wait-then-approve test uses the user_id-body path so the request
+	// stays pending until the test approves it out-of-band — the claim-
+	// consume path would auto-approve before this dance can run.
 	type result struct {
 		status int
 		body   map[string]any
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		r := env.do("POST", "/api/agents/connect?claim="+claim+"&name=ApproveMeWait&wait=true&timeout=10", "", nil)
+		r := env.do("POST", "/api/agents/connect?name=ApproveMeWait&wait=true&timeout=10", "", map[string]any{
+			"name":    "ApproveMeWait",
+			"user_id": session.UserID,
+		})
 		defer r.Body.Close()
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -792,18 +825,29 @@ func TestConnectionRequest_NameFromQuery(t *testing.T) {
 	code := str(t, body, "code")
 
 	// Both name and claim ride on the URL; body is empty (no -d, no
-	// Content-Type required). This is the canonical bootstrap shape.
+	// Content-Type required). This is the canonical one-paste bootstrap
+	// shape — claim consumption auto-approves, agent is created immediately.
 	resp = env.do("POST", "/api/agents/connect?claim="+code+"&name=QueryAgent", "", nil)
 	body = mustStatus(t, resp, http.StatusCreated)
-	if str(t, body, "status") != "pending" {
-		t.Errorf("expected status=pending, got %s", str(t, body, "status"))
+	if got := str(t, body, "status"); got != "approved" {
+		t.Errorf("expected status=approved (claim auto-approves), got %q", got)
+	}
+	if tok := str(t, body, "token"); tok == "" {
+		t.Errorf("expected token in response, got empty")
 	}
 
-	pending, err := env.Store.ListPendingConnectionRequests(context.Background(), session.UserID)
+	agents, err := env.Store.ListAgents(context.Background(), session.UserID)
 	if err != nil {
-		t.Fatalf("ListPendingConnectionRequests: %v", err)
+		t.Fatalf("ListAgents: %v", err)
 	}
-	if len(pending) != 1 || pending[0].Name != "QueryAgent" {
-		t.Errorf("expected one pending request named QueryAgent, got %+v", pending)
+	found := false
+	for _, a := range agents {
+		if a.Name == "QueryAgent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected one agent named QueryAgent, got %+v", agents)
 	}
 }

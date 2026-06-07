@@ -3,8 +3,10 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/auth"
 	intauth "github.com/clawvisor/clawvisor/internal/auth"
@@ -135,6 +137,74 @@ func RequireUserOrTicket(jwtSvc auth.TokenService, st store.Store, tickets intau
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// RequireUserOrAgent accepts either a user JWT or a `cvis_…` agent token.
+// When an agent token authenticates, the owning user is also resolved and
+// attached to the request context, so handlers reading UserFromContext
+// continue to work unchanged regardless of which auth shape the caller used.
+//
+// Used on /api/runtime/llm-credentials/* so the lite-proxy install skill —
+// which holds the freshly-minted agent token but no dashboard session — can
+// vault the user's upstream LLM API key during one-paste setup.
+//
+// Token-shape sniff: a value in `X-Clawvisor-Agent-Token`, or an
+// `Authorization: Bearer cvis_…` value, is treated as an agent token.
+// Anything else in the Authorization header is sent down the user-JWT path.
+func RequireUserOrAgent(jwtSvc auth.TokenService, st store.Store) func(http.Handler) http.Handler {
+	requireUser := RequireUser(jwtSvc, st)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tok := agentTokenFromRequest(r)
+			if tok == "" {
+				requireUser(next).ServeHTTP(w, r)
+				return
+			}
+			hash := intauth.HashToken(tok)
+			agent, err := st.GetAgentByToken(r.Context(), hash)
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid agent token")
+				} else {
+					writeAuthError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "temporary service error, please retry")
+				}
+				return
+			}
+			if agent.TokenExpiresAt != nil && time.Now().After(*agent.TokenExpiresAt) {
+				writeAuthError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "agent token has expired")
+				return
+			}
+			user, err := st.GetUserByID(r.Context(), agent.UserID)
+			if err != nil {
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "owning user not found")
+				return
+			}
+			ctx := store.WithAgent(r.Context(), agent)
+			ctx = context.WithValue(ctx, UserContextKey, user)
+			AddLogField(ctx, "agent_id", agent.ID)
+			AddLogField(ctx, "user_id", user.ID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// agentTokenFromRequest returns a `cvis_…` agent token sniffed from either the
+// dedicated header or the Authorization bearer slot. Used by RequireUserOrAgent
+// to decide whether to take the agent-auth branch before consulting the JWT.
+func agentTokenFromRequest(r *http.Request) string {
+	if v := strings.TrimSpace(r.Header.Get("X-Clawvisor-Agent-Token")); v != "" {
+		const prefix = "Bearer "
+		if strings.HasPrefix(v, prefix) {
+			v = strings.TrimSpace(v[len(prefix):])
+		}
+		if strings.HasPrefix(v, "cvis_") {
+			return v
+		}
+	}
+	if bt := bearerToken(r); strings.HasPrefix(bt, "cvis_") {
+		return bt
+	}
+	return ""
 }
 
 // bearerToken extracts the token value from "Authorization: Bearer <token>".

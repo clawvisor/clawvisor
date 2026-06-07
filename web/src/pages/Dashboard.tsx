@@ -20,6 +20,7 @@ import OrgMembers from './OrgMembers'
 import OrgAdapters from './OrgAdapters'
 import OrgMCPServers from './OrgMCPServers'
 import Billing from './Billing'
+import KeyVault from './KeyVault'
 import OrgSelector from '../components/OrgSelector'
 import OnboardingBanner from '../components/OnboardingBanner'
 
@@ -362,6 +363,11 @@ export default function Dashboard() {
           <Route path="audit" element={<Navigate to="/dashboard/activity" replace />} />
           <Route path="agents" element={<Agents />} />
           <Route path="agents/:agentId" element={<Agents />} />
+          {/* Focused deep-link page for vaulting one upstream LLM API key.
+              Linked to by the one-paste install skill when the user's shell
+              env doesn't carry $ANTHROPIC_API_KEY / $OPENAI_API_KEY. Not in
+              the nav — strictly a deep-link target. */}
+          <Route path="keys/:provider" element={<KeyVault />} />
           <Route path="runtime" element={<Navigate to="/dashboard/policy" replace />} />
           <Route path="settings" element={<Settings />} />
           {features?.billing && <Route path="billing" element={<Billing />} />}

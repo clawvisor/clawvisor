@@ -1037,8 +1037,8 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
               <>
                 {picked === 'openclaw' && <InstallerSkillGuide target="openclaw" installerBaseURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
                 {picked === 'hermes' && <InstallerSkillGuide target="hermes" installerBaseURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
-                {picked === 'claude-code' && <ManualProxyCLISetupGuide target="claude-code" clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} onCopy={copyText} />}
-                {picked === 'codex' && <ManualProxyCLISetupGuide target="codex" clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} onCopy={copyText} />}
+                {picked === 'claude-code' && <OnePasteGuide target="claude-code" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} />}
+                {picked === 'codex' && <OnePasteGuide target="codex" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} />}
                 {picked === 'claude-desktop' && <ClaudeDesktopProfileGuide />}
                 {picked === 'gbrain' && <GBrainStreamlinedGuide clawvisorURL={clawvisorURL} onCopy={copyText} />}
                 {picked === 'cloud-agent' && <CloudAgentPromptGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
@@ -1148,34 +1148,6 @@ function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void
 // flip it accidentally and then forget. Kept as a thin wrapper around a
 // native `<input type="checkbox">` so it inherits the form-control styling
 // the dashboard already ships.
-function SkipPermissionsCheckbox({
-  checked,
-  onChange,
-  flag,
-  label,
-}: {
-  checked: boolean
-  onChange: (next: boolean) => void
-  flag: string
-  label: string
-}) {
-  return (
-    <label className="flex items-start gap-2 text-xs text-text-secondary cursor-pointer select-none">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={e => onChange(e.target.checked)}
-        className="mt-0.5 h-3.5 w-3.5 rounded border-border-default text-brand focus:ring-brand/30"
-      />
-      <span>
-        Skip permission prompts in {label} (
-        <code className="font-mono text-text-secondary">{flag}</code>
-        ). Dangerous — the agent will run shell commands without asking you first.
-      </span>
-    </label>
-  )
-}
-
 function LegacyClaudeCodeGuide({ clawvisorURL, userIdParam, onCopy }: {
   clawvisorURL: string
   userIdParam: string
@@ -2214,12 +2186,6 @@ function isWizardStartActivity(entry: AuditEntry, startedAtMs: number): boolean 
   return false
 }
 
-function isUpstreamCredentialIssue(entry: AuditEntry): boolean {
-  return entry.outcome === 'upstream_auth_missing_for_passthrough' ||
-    entry.outcome === 'upstream_key_missing' ||
-    entry.error_msg?.includes('API key configured') === true
-}
-
 function useAgentStartActivity(agentId: string | null | undefined, startedAtMs: number, polling: boolean = true) {
   const { data } = useQuery({
     queryKey: ['audit', 'install-wizard-start', agentId ?? 'none', startedAtMs],
@@ -2274,279 +2240,187 @@ function AgentStartStatus({
   )
 }
 
-// ── Manual proxy setup path (Claude Code / Codex) ────────────────────────────
+// ── One-paste setup path (Claude Code / Codex) ───────────────────────────────
+//
+// One curl, one slash-command invocation, chained with &&. The skill markdown
+// at /skill/install/<target>.md drives everything else: connect with claim
+// (auto-approves), install the agent-side Clawvisor skill, ask the user
+// whether to make Clawvisor the default for this harness, optionally vault
+// the upstream LLM API key (env-detect + dashboard-page fallback), subprocess
+// smoke-test the new config, commit settings, self-uninstall.
+//
+// The dashboard's only job here is: mint a claim, render the right one-liner
+// per target, and poll the agents list for the new agent appearing.
 
-type ManualProxyTarget = 'claude-code' | 'codex'
+type OnePasteTarget = 'claude-code' | 'codex'
 
-const MANUAL_PROXY_META: Record<ManualProxyTarget, { label: string; baseName: string }> = {
-  'claude-code': { label: 'Claude Code', baseName: 'claude-code' },
-  codex: { label: 'Codex', baseName: 'codex' },
+interface OnePasteTargetSpec {
+  label: string
+  baseName: string
+  // skillFile is the on-disk path the curl writes the downloaded skill to.
+  // Differs by harness because Claude Code expects slash commands under
+  // ~/.claude/commands/, while Codex expects skills under
+  // ~/.codex/skills/<name>/SKILL.md.
+  skillFile: string
+  // invokeCmd is the shell command that fires the slash command after the
+  // curl writes the skill file. Built to mirror what the user types when
+  // they want to run a slash command in a one-shot session — `claude
+  // "/clawvisor-setup"` opens an interactive Claude with the slash command
+  // as the first turn; Codex uses `$<name>` syntax inside an exec string.
+  invokeCmd: string
+  // skillDirMkdir is the optional `mkdir -p <dir>` prefix needed when the
+  // target's skill directory isn't auto-created by curl --create-dirs (Codex
+  // skills live under a per-skill subdirectory, so the dir has to exist).
+  skillDirMkdir: string
 }
 
-function ManualProxyCLISetupGuide({
+const ONE_PASTE_SPECS: Record<OnePasteTarget, OnePasteTargetSpec> = {
+  'claude-code': {
+    label: 'Claude Code',
+    baseName: 'claude-code',
+    skillFile: '~/.claude/commands/clawvisor-setup.md',
+    invokeCmd: 'claude "/clawvisor-setup"',
+    skillDirMkdir: '',
+  },
+  codex: {
+    label: 'Codex',
+    baseName: 'codex',
+    skillFile: '~/.codex/skills/clawvisor-setup/SKILL.md',
+    invokeCmd: `codex '$clawvisor-setup'`,
+    skillDirMkdir: 'mkdir -p ~/.codex/skills/clawvisor-setup && ',
+  },
+}
+
+// OnePasteGuide renders a single bash one-liner (curl + harness invocation
+// chained with &&) and watches the agents list for the new agent to land.
+// The skill markdown at /skill/install/<target>.md does everything else —
+// connect with claim (auto-approves), install the agent-side skill, ask the
+// user about defaults, optionally vault the upstream key (via env-detect or
+// the /dashboard/keys/<provider> page), smoke-test, and self-uninstall.
+function OnePasteGuide({
   target,
-  clawvisorURL,
-  llmBaseURL,
+  installerBaseURL,
   claim,
   onCopy,
 }: {
-  target: ManualProxyTarget
-  clawvisorURL: string
-  llmBaseURL: string
+  target: OnePasteTarget
+  installerBaseURL: string
   claim: string | undefined
   onCopy: (text: string) => void
 }) {
-  const meta = MANUAL_PROXY_META[target]
-  const [step, setStep] = useState(0)
-  const startedAtRef = useRef(Date.now())
+  const spec = ONE_PASTE_SPECS[target]
+  const installStartedAtRef = useRef(Date.now())
   const { data: agents } = useQuery({
     queryKey: ['agents', 'personal'],
     queryFn: () => api.agents.list(),
     refetchInterval: 3000,
   })
-  const [agentName, setAgentName] = useSequencedAgentName(meta.baseName, agents)
-  const [agentId, setAgentId] = useState<string | null>(null)
-  const selectedAgent = useMemo(
-    () => agentId ? agents?.find(a => a.id === agentId) : agents?.find(a => a.name === agentName),
-    [agentId, agentName, agents],
-  )
-  useEffect(() => {
-    if (selectedAgent && selectedAgent.id !== agentId) setAgentId(selectedAgent.id)
-  }, [agentId, selectedAgent])
 
-  const { data: sessions } = useQuery({
-    queryKey: ['runtime-sessions', 'install-wizard', agentId ?? 'none'],
-    queryFn: () => api.runtime.listSessions(),
-    enabled: !!agentId,
-    refetchInterval: 3000,
-    retry: false,
-  })
-  const liveSession = useMemo(() => {
-    return (sessions?.entries ?? []).find(session => session.agent_id === agentId && isActiveRuntimeSession(session))
-  }, [agentId, sessions])
-  const startActivity = useAgentStartActivity(agentId, startedAtRef.current)
-  const agentStarted = !!liveSession || !!startActivity
-  const upstreamProvider: LLMProvider = target === 'codex' ? 'openai' : 'anthropic'
-  const authIssueActivity = startActivity && isUpstreamCredentialIssue(startActivity) ? startActivity : undefined
-  const { data: userCreds } = useQuery({
-    queryKey: ['llm-credentials', 'user'],
-    queryFn: () => api.llmCredentials.list(),
-    enabled: !!authIssueActivity,
-  })
-  const authIssueKeyReady = hasProviderUpstreamKey(userCreds, upstreamProvider)
+  // Pick a non-colliding name so re-installs of the same harness sequence
+  // (claude-code, claude-code-2, …). Once an agent matching this install's
+  // start time appears, lock the displayed name to it so the success card
+  // shows the actual server-side name.
+  const [agentName] = useSequencedAgentName(spec.baseName, agents)
+  const matchingAgent = useMemo(() => {
+    if (!agents) return undefined
+    const cutoff = installStartedAtRef.current - 5000
+    return agents
+      .filter(a => a.install_context?.harness === target)
+      .filter(a => new Date(a.created_at).getTime() >= cutoff)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+  }, [agents, target])
+  const connected = !!matchingAgent
 
-  const tokenPath = `~/.clawvisor/agents/${agentName}.json`
-  // Opt-in flag that disables the harness's interactive permission prompts.
-  // For Claude Code: `--dangerously-skip-permissions`. For Codex: the
-  // equivalent `--dangerously-bypass-approvals-and-sandbox`. Applied to BOTH
-  // the test-connection (`startCommand`) and the alias (`aliasCommand`) so
-  // the user's everyday `claude-cv` / `codex-cv` invocations stay consistent
-  // with what they verified in the wizard.
-  const [skipPermissions, setSkipPermissions] = useState(false)
-  const skipPermsFlag = target === 'codex'
-    ? '--dangerously-bypass-approvals-and-sandbox'
-    : '--dangerously-skip-permissions'
-  const skipPermsClaude = skipPermissions ? ` ${skipPermsFlag}` : ''
-  const skipPermsCodex = skipPermissions ? ` ${skipPermsFlag}` : ''
+  // Build the one-paste command. URL-encode the query params to keep
+  // shell-safe characters; the curl URL is wrapped in double quotes so the
+  // shell doesn't interpret '&' as backgrounding.
+  const installURL = useMemo(() => {
+    const qs = new URLSearchParams()
+    if (claim) qs.set('claim', claim)
+    qs.set('agent_name', agentName)
+    return `${installerBaseURL}/skill/install/${target}.md?${qs.toString()}`
+  }, [agentName, claim, installerBaseURL, target])
 
-  const configureCommand = `mkdir -p ~/.codex
-grep -q '^\\[model_providers\\.clawvisor\\]' ~/.codex/config.toml 2>/dev/null || cat >> ~/.codex/config.toml <<'EOF'
-
-[model_providers.clawvisor]
-name = "Clawvisor"
-base_url = "${llmBaseURL}/api/v1"
-wire_api = "responses"
-requires_openai_auth = true
-
-[model_providers.clawvisor.env_http_headers]
-X-Clawvisor-Agent-Token = "CLAWVISOR_AGENT_TOKEN"
-EOF`
-  const startCommand = target === 'codex'
-    ? `CLAWVISOR_AGENT_TOKEN=$(jq -r .token ${tokenPath}) codex${skipPermsCodex} -c model_provider=clawvisor`
-    : `ANTHROPIC_BASE_URL=${llmBaseURL}/api \\
-ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${tokenPath})" \\
-ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
-claude${skipPermsClaude}`
-  const aliasCommand = target === 'codex'
-    ? `cat >> ~/.zshrc <<'EOF'
-codex-cv() {
-  CLAWVISOR_AGENT_TOKEN=$(jq -r .token ${tokenPath}) codex${skipPermsCodex} -c model_provider=clawvisor "$@"
-}
-EOF`
-    : `cat >> ~/.zshrc <<'EOF'
-claude-cv() {
-  ANTHROPIC_BASE_URL=${llmBaseURL}/api \\
-  ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${tokenPath})" \\
-  ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
-  claude${skipPermsClaude} "$@"
-}
-EOF`
-  const settingsLink = selectedAgent ? `/dashboard/agents/${encodeURIComponent(selectedAgent.id)}` : '/dashboard/agents'
-
-  const wizardSteps: WizardStepDef[] = target === 'codex'
-    ? [
-        { id: 'token', title: 'Token', done: !!agentId },
-        { id: 'configure', title: 'Configure', done: step > 1 },
-        { id: 'session', title: 'Start session', done: agentStarted || step > 2 },
-        { id: 'alias', title: 'Alias & settings', done: step > 3 },
-      ]
-    : [
-        { id: 'token', title: 'Token', done: !!agentId },
-        { id: 'session', title: 'Start session', done: agentStarted || step > 2 },
-        { id: 'alias', title: 'Alias & settings', done: step > 3 },
-      ]
-  const activeStepIndex = target === 'codex' ? step : Math.max(0, step - 1)
+  const oneLiner = `${spec.skillDirMkdir}curl -sf "${installURL}" --create-dirs -o ${spec.skillFile} && ${spec.invokeCmd}`
 
   return (
     <div className="space-y-5">
       <p className="text-sm text-text-secondary">
-        Set up {meta.label} manually for the local machine. First mint an agent
-        token, then start one Clawvisor-routed session. When Clawvisor sees
-        traffic, the wizard will show that you're ready for alias and settings.
+        Paste this one line into your terminal. It downloads a setup skill,
+        invokes {spec.label}, and the agent does the rest — register, install
+        the Clawvisor skill, optionally route every {spec.label.toLowerCase()}{' '}
+        session through Clawvisor, then remove the setup skill.
       </p>
-      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-4">
-        <div className="overflow-x-auto pb-1">
-          <StepBar steps={wizardSteps} activeIndex={activeStepIndex} />
-        </div>
 
-        {step === 0 && (
-          <>
-            <BootstrapApproveStep
-              clawvisorURL={clawvisorURL}
-              claim={claim}
-              agentName={agentName}
-              setAgentName={setAgentName}
-              onCopy={onCopy}
-              onAdvance={(id) => {
-                setAgentId(id)
-                setStep(target === 'codex' ? 1 : 2)
-              }}
-            />
-          </>
-        )}
+      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-4 space-y-3">
+        <CodeBlock onCopy={() => onCopy(oneLiner)}>{oneLiner}</CodeBlock>
 
-        {target === 'codex' && step === 1 && (
-          <>
-            <div className="space-y-3">
-              <p className="text-sm font-medium text-text-primary">Configure {meta.label}</p>
-              <p className="text-xs text-text-tertiary">
-                This uses the token file created in the previous step:{' '}
-                <code className="font-mono text-text-secondary">{tokenPath}</code>.
+        <div className="rounded border border-border-subtle bg-surface-0 px-3 py-2.5 flex items-start gap-2.5">
+          {connected ? (
+            <span className="mt-1 h-2.5 w-2.5 rounded-full bg-success" />
+          ) : (
+            <span className="mt-1 h-2.5 w-2.5 rounded-full bg-text-tertiary animate-pulse" />
+          )}
+          <div className="flex-1 min-w-0">
+            {connected ? (
+              <p className="text-xs text-success">
+                ✓ <code className="font-mono">{matchingAgent!.name}</code> is connected.
+                The skill is asking the user whether to make Clawvisor the default
+                for {spec.label} — finish that conversation in your terminal.
               </p>
-              <CodeBlock onCopy={() => onCopy(configureCommand)}>{configureCommand}</CodeBlock>
-            </div>
-            <WizardNav
-              canBack
-              canNext
-              onBack={() => setStep(0)}
-              onNext={() => setStep(2)}
-              nextLabel="Continue"
-            />
-          </>
-        )}
-
-        {step === 2 && (
-          <>
-            <div className="space-y-3">
-              <p className="text-sm font-medium text-text-primary">Start a Clawvisor-routed session</p>
+            ) : (
               <p className="text-xs text-text-tertiary">
-                Run this and send a short test message. This step updates when
-                Clawvisor sees routed activity from this agent.
+                Watching for the new agent to register. This panel updates the moment
+                Clawvisor sees the curl land. Suggested name:{' '}
+                <code className="font-mono text-text-secondary">{agentName}</code>.
               </p>
-              <SkipPermissionsCheckbox
-                checked={skipPermissions}
-                onChange={setSkipPermissions}
-                flag={skipPermsFlag}
-                label={meta.label}
-              />
-              <CodeBlock onCopy={() => onCopy(startCommand)}>{startCommand}</CodeBlock>
-              <AgentStartStatus
-                liveSession={liveSession}
-                startActivity={startActivity}
-                waitingText="Run the command above and send a short message. This updates automatically once Clawvisor sees the request."
-              />
-              {authIssueActivity && (
-                <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-3">
-                  <p className="text-sm font-medium text-text-primary">API key needed</p>
-                  <p className="text-xs text-text-secondary mt-1">
-                    {meta.label} reached Clawvisor, but the first model request did not include usable upstream auth.
-                    Add a {providerLabel(upstreamProvider)} API key, then run the session command again.
-                  </p>
-                  <div className="mt-3">
-                    <VaultKeyStep
-                      provider={upstreamProvider}
-                      title={`Add ${providerLabel(upstreamProvider)} API key`}
-                      description={`Clawvisor will use this user-level ${providerLabel(upstreamProvider)} key only when ${meta.label}'s own upstream auth is unavailable.`}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-            <WizardNav
-              canBack
-              canNext={!authIssueActivity || authIssueKeyReady}
-              onBack={() => setStep(target === 'codex' ? 1 : 0)}
-              onNext={() => setStep(3)}
-              nextLabel={agentStarted ? 'Continue to alias & settings' : "I've started it"}
-              nextDisabledHint={authIssueActivity && !authIssueKeyReady ? `Add a ${providerLabel(upstreamProvider)} API key to continue` : undefined}
-            />
-          </>
-        )}
-
-        {step === 3 && (
-          <>
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm font-medium text-text-primary">Create an alias</p>
-                <p className="text-xs text-text-tertiary mt-1">
-                  Add this to zsh. Use the same shape in bash/fish if needed.
-                </p>
-                <div className="mt-2 space-y-2">
-                  <SkipPermissionsCheckbox
-                    checked={skipPermissions}
-                    onChange={setSkipPermissions}
-                    flag={skipPermsFlag}
-                    label={meta.label}
-                  />
-                  <CodeBlock onCopy={() => onCopy(aliasCommand)}>{aliasCommand}</CodeBlock>
-                </div>
-              </div>
-              <div className="rounded border border-border-subtle bg-surface-0 px-3 py-2.5">
-                <p className="text-xs font-medium text-text-primary">Configure settings</p>
-                <p className="text-xs text-text-tertiary mt-1">
-                  Open this agent’s settings to tune runtime mode, restrictions,
-                  secret detection, and task auto-approval.
-                </p>
-                <Link to={settingsLink} className="mt-2 inline-block text-xs font-medium text-brand hover:underline">
-                  Open agent settings
-                </Link>
-              </div>
-            </div>
-            <WizardNav
-              canBack
-              canNext
-              onBack={() => setStep(2)}
-              onNext={() => setStep(4)}
-              nextLabel="Done"
-            />
-          </>
-        )}
-
-        {step >= 4 && (
-          <div className="rounded border border-success/30 bg-success/10 px-4 py-3">
-            <p className="text-sm font-medium text-success">{meta.label} setup complete.</p>
-            <button
-              onClick={() => setStep(3)}
-              className="mt-2 text-xs text-brand hover:underline"
-            >
-              Show alias and settings again
-            </button>
+            )}
           </div>
-        )}
+        </div>
       </div>
+
+      <details className="group">
+        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
+          What does this one line do?
+        </summary>
+        <div className="mt-3 text-xs text-text-secondary space-y-2 leading-relaxed">
+          <p>
+            <strong>1.</strong> <code className="font-mono">curl</code> downloads the
+            setup skill — a short markdown file telling{' '}
+            {target === 'codex' ? 'Codex' : 'Claude Code'} exactly what to do — and
+            writes it to{' '}
+            <code className="font-mono text-text-primary">{spec.skillFile}</code>.
+            The URL has a single-use claim code baked in so the skill can register
+            this agent without a second dashboard click.
+          </p>
+          <p>
+            <strong>2.</strong>{' '}
+            <code className="font-mono">{spec.invokeCmd}</code> opens{' '}
+            {spec.label} and runs the setup skill as the first turn. The skill:
+            calls <code className="font-mono">/api/agents/connect</code>, writes
+            the agent token to{' '}
+            <code className="font-mono">~/.clawvisor/agents/{spec.baseName}.json</code>,
+            asks whether to route every {spec.label.toLowerCase()} session through
+            Clawvisor (or just create a{' '}
+            <code className="font-mono">{target === 'codex' ? 'codex-cv' : 'claude-cv'}</code>{' '}
+            alias), optionally vaults your upstream API key{' '}
+            <em>without ever reading its value into the conversation</em>, and then
+            removes the setup skill file.
+          </p>
+          <p>
+            <strong>If you'd rather audit it first:</strong> the skill markdown is
+            served at{' '}
+            <a href={installURL} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+              {`${target}.md`}
+            </a>
+            {' '}— open it in a new tab, read it, then paste the one-liner when ready.
+          </p>
+        </div>
+      </details>
     </div>
   )
 }
+
 
 // ── Installer-skill driven path (Hermes / OpenClaw) ─────────────────────────
 //
