@@ -98,10 +98,10 @@ func RunPost(
 	if !ok {
 		return nil, fmt.Errorf("pipeline.RunPost: mutator doesn't expose Commit")
 	}
-	committed = true
 	if err := committer.Commit(); err != nil {
 		return nil, fmt.Errorf("pipeline.RunPost: commit: %w", err)
 	}
+	committed = true
 
 	return result, nil
 }

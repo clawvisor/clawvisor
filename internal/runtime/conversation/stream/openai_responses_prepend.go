@@ -66,9 +66,9 @@ func PrependOpenAIResponsesAssistantNotice(dst io.Writer, src io.Reader, notice 
 			if err != nil {
 				return err
 			}
+			ev.FieldPatches = nil
 			if ok {
 				ev.RawBytes = raw
-				ev.FieldPatches = nil
 			}
 		}
 

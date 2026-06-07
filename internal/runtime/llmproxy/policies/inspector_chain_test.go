@@ -219,6 +219,25 @@ func TestInspectorChain_NilInspectorSkips(t *testing.T) {
 	}
 }
 
+func TestInspectorChain_NilInspectorDeniesCredentialedInput(t *testing.T) {
+	chain := policies.NewInspectorChain(nil, nil)
+	tu := conversation.ToolUse{
+		ID:    "toolu_nil_inspector",
+		Name:  "WebFetch",
+		Input: json.RawMessage(`{"headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`),
+	}
+	v, err := chain.Evaluate(context.Background(), nil, tu, evalToolUseMutator{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("nil inspector credentialed input → Outcome = %q, want Deny", v.Outcome)
+	}
+	if !strings.Contains(v.Reason, "credential inspection is not configured") {
+		t.Fatalf("Reason = %q, want missing inspector message", v.Reason)
+	}
+}
+
 // TestInspectorChain_StubPlaceholdersFailClosed pins the behavior where
 // short autovault_… literals fail closed instead of downgrading to
 // trigger-miss pass-through.

@@ -82,6 +82,8 @@ func VaultServiceID(provider conversation.Provider) string {
 		return "anthropic"
 	case conversation.ProviderOpenAI:
 		return "openai"
+	case conversation.ProviderGoogle:
+		return "google"
 	}
 	return ""
 }
@@ -188,6 +190,10 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 			}
 			if provider == conversation.ProviderAnthropic {
 				injectPassthroughAnthropicAuth(req, auth)
+				return f.Client.Do(req)
+			}
+			if provider == conversation.ProviderGoogle {
+				injectPassthroughGoogleAuth(req, auth)
 				return f.Client.Do(req)
 			}
 		}
@@ -390,6 +396,11 @@ func injectPassthroughAnthropicAuth(req *http.Request, authorization string) {
 	if req.Header.Get("anthropic-version") == "" {
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
+}
+
+func injectPassthroughGoogleAuth(req *http.Request, authorization string) {
+	req.Header.Set("Authorization", authorization)
+	req.Header.Del("x-goog-api-key")
 }
 
 // forwardSkipHeaders are stripped from the inbound request when copying

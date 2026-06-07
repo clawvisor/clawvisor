@@ -2,6 +2,7 @@ package policies
 
 import (
 	"context"
+	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -82,6 +83,12 @@ func (InspectorChain) Name() string { return "inspector_chain" }
 // check. Emits one composite verdict.
 func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyResponse, tu conversation.ToolUse, mut pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
 	if c.inspector == nil {
+		if strings.Contains(string(tu.Input), "autovault_") {
+			return pipeline.ToolUseVerdict{
+				Outcome: pipeline.OutcomeDeny,
+				Reason:  "Clawvisor: credential inspection is not configured",
+			}, nil
+		}
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 

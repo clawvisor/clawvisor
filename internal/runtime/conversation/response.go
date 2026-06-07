@@ -307,19 +307,20 @@ func applyBlockSubstitutions(frags []assistantFragment, decisions []ToolUseDecis
 		decision := decisions[toolDecisionIdx]
 		toolDecisionIdx++
 		if !decision.Verdict.Allowed {
-			txt := decision.Verdict.SubstituteWith
-			if txt == "" && !decision.Verdict.SuppressSubstituteText {
-				reason := decision.Verdict.Reason
-				if reason == "" {
-					reason = "blocked by policy"
-				}
-				txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", frag.ToolName, reason)
+			if substitute := strings.TrimSpace(decision.Verdict.SubstituteWith); substitute != "" {
+				out = append(out, assistantFragment{Text: substitute})
+				continue
 			}
-			if txt != "" {
-				out = append(out, assistantFragment{
-					Text: txt,
-				})
+			if decision.Verdict.SuppressSubstituteText {
+				continue
 			}
+			reason := decision.Verdict.Reason
+			if reason == "" {
+				reason = "blocked by policy"
+			}
+			out = append(out, assistantFragment{
+				Text: fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", frag.ToolName, reason),
+			})
 			continue
 		}
 		out = append(out, frag)
