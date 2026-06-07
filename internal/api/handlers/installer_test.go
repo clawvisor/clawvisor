@@ -161,6 +161,10 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 		// Paths are emitted via --argjson (jq array) — pre-merge capture.
 		`"env.ANTHROPIC_BASE_URL","env.ANTHROPIC_CUSTOM_HEADERS"`,
 		`"env.ANTHROPIC_BASE_URL","env.ANTHROPIC_AUTH_TOKEN","env.ANTHROPIC_API_KEY"`,
+		// Defensive jq parse — handles empty / invalid-JSON / non-object
+		// settings.json without crashing the install partway through.
+		`jq -c 'if type == "object" then . else {} end'`,
+		`[ -n "$PRIOR_JSON" ] || PRIOR_JSON='{}'`,
 		// Step 6: drop uninstall skill + self-uninstall the setup file
 		"## 6. Drop the uninstall skill, then self-uninstall",
 		"/skill/uninstall/claude-code.md?agent_name=$AGENT_NAME",

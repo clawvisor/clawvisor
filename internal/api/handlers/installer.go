@@ -850,9 +850,26 @@ func recordTextDiff(id, targetFile string) string {
 func recordJSONKeyDiff(id, targetFile, paths string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "mkdir -p ~/.clawvisor/diffs/$AGENT_NAME\n")
-	// Snapshot the pre-merge document so we can read prior values, then
-	// emit one diff entry per path with the prior value attached.
-	fmt.Fprintf(&b, "PRIOR_JSON=$(cat %s 2>/dev/null || echo '{}')\n", targetFile)
+	// Snapshot the pre-merge document so we can read prior values. Three
+	// failure modes that the obvious `cat || echo '{}'` form drops on the
+	// floor:
+	//   - File is empty (or whitespace-only): cat exits 0 with empty output;
+	//     `--argjson prior ""` errors and the whole diff record is never
+	//     written.
+	//   - File has invalid JSON (typos, comments, truncation): cat exits 0
+	//     with garbage; same failure on --argjson.
+	//   - File is valid JSON but not an object (e.g. an array at the root):
+	//     getpath() would error on the lookup.
+	// Pipe through `jq` to validate AND require an object — anything that
+	// doesn't parse-as-object falls back to `{}` so the diff still records
+	// (with prior_value=null for every path, which means uninstall deletes
+	// the keys we added; the best we can do when there's no prior to
+	// restore).
+	fmt.Fprintf(&b, "PRIOR_JSON=$(jq -c 'if type == \"object\" then . else {} end' %s 2>/dev/null)\n", targetFile)
+	// `[ -n ] || ...` (not `[ -z ] && ...`) so the line returns 0 on both
+	// branches — otherwise `set -e` callers see a phantom failure when the
+	// candidate JSON was non-empty.
+	fmt.Fprintf(&b, "[ -n \"$PRIOR_JSON\" ] || PRIOR_JSON='{}'\n")
 	fmt.Fprintf(&b, "jq -n --argjson prior \"$PRIOR_JSON\" \\\n")
 	fmt.Fprintf(&b, "  --arg file %s \\\n", targetFile)
 	fmt.Fprintf(&b, "  --argjson paths '[%s]' '\n", quoteJSONPathList(paths))
