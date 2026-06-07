@@ -3,6 +3,7 @@ package policies_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,7 +127,7 @@ func TestPhase6_StubProvider_ToolUseEvaluatorChainAcceptsNewProvider(t *testing.
 // is clear rather than silent.
 func TestPhase6_StubProvider_StreamMutatorRejectsUnknownShape(t *testing.T) {
 	var dst strings.Builder
-	src := strings.NewReader("")
+	src := io.NopCloser(strings.NewReader(""))
 	_, err := pipeline.NewStreamingResponseMutator(&dst, src, conversation.StreamShapeUnknown)
 	if err == nil {
 		t.Errorf("expected unknown stream shape to be rejected at construction")

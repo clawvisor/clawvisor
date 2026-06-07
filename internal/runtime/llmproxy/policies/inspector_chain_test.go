@@ -147,13 +147,13 @@ func TestInspectorChain_NilInspectorSkips(t *testing.T) {
 // behavior where short autovault_… literals (test fixtures, doc
 // snippets) are downgraded to trigger-miss instead of being refused as
 // ambiguous. Without this, prose mentions of autovault_x or
-// autovault_github_short in tool inputs would block legitimate edits.
-func TestInspectorChain_StubPlaceholdersDowngradedToTriggerMiss(t *testing.T) {
+func TestInspectorChain_StubPlaceholdersFailClosed(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	chain := policies.NewInspectorChain(insp, nil)
 
-	// "autovault_x" is well below the realistic length floor — no real
-	// vault reference. Should downgrade to trigger-miss → Skip.
+	// "autovault_x" is well below the realistic length floor. Fail
+	// closed so the heuristic cannot accidentally turn a credentialed
+	// call into trigger-miss pass-through.
 	tu := conversation.ToolUse{
 		ID:    "toolu_stub",
 		Name:  "Edit",
@@ -163,8 +163,8 @@ func TestInspectorChain_StubPlaceholdersDowngradedToTriggerMiss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if v.Outcome != pipeline.OutcomeSkip {
-		t.Errorf("stub-length placeholder → Outcome = %q, want Skip", v.Outcome)
+	if v.Outcome != pipeline.OutcomeDeny {
+		t.Errorf("stub-length placeholder → Outcome = %q, want Deny", v.Outcome)
 	}
 }
 

@@ -2,6 +2,7 @@ package llmproxy
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -72,17 +73,29 @@ func (d *finalizerDeps) SubmitHold(ctx context.Context, payload any) (pipeline.H
 
 // DropHold removes a committed hold from the durable cache (rollback
 // after partial-replay failure).
-func (d *finalizerDeps) DropHold(ctx context.Context, capture pipeline.HoldCapture) {
+func (d *finalizerDeps) DropHold(ctx context.Context, capture pipeline.HoldCapture) error {
 	pending, ok := capture.Payload.(PendingLiteApproval)
 	if !ok {
-		return
+		return nil
 	}
-	_ = d.pendingApprovals.Drop(ctx, ResolveRequest{
+	dropErr := d.pendingApprovals.Drop(ctx, ResolveRequest{
 		UserID:     pending.UserID,
 		AgentID:    pending.AgentID,
 		Provider:   pending.Provider,
 		ApprovalID: capture.ApprovalID,
 	})
+	expireErr := d.expirePendingInlineTask(ctx, pending, "inline_task.drop_hold_expire_failed")
+	if dropErr != nil && d.traceEvent != nil {
+		d.traceEvent(map[string]any{
+			"event":       "inline_task.drop_hold_failed",
+			"request_id":  d.requestID,
+			"user_id":     pending.UserID,
+			"agent_id":    pending.AgentID,
+			"approval_id": capture.ApprovalID,
+			"err":         dropErr.Error(),
+		})
+	}
+	return errors.Join(dropErr, expireErr)
 }
 
 // BuildCoalescedHold constructs the single PendingLiteApproval that
@@ -227,19 +240,23 @@ func (d *finalizerDeps) RollbackPendingTask(ctx context.Context, c pipeline.Hold
 	if !ok {
 		return
 	}
+	_ = d.expirePendingInlineTask(ctx, pending, "inline_task.rollback_expire_failed")
+}
+
+func (d *finalizerDeps) expirePendingInlineTask(ctx context.Context, pending PendingLiteApproval, eventName string) error {
 	pendingCreator, ok := d.inlineCreator.(InlineTaskPendingCreator)
 	if !ok || pendingCreator == nil {
-		return
+		return nil
 	}
 	if pending.PendingTaskID == "" || pending.UserID == "" {
-		return
+		return nil
 	}
 	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	err := pendingCreator.ExpireInlineTask(rollbackCtx, pending.PendingTaskID, pending.UserID)
 	cancel()
 	if err != nil && d.traceEvent != nil {
 		d.traceEvent(map[string]any{
-			"event":       "inline_task.rollback_expire_failed",
+			"event":       eventName,
 			"request_id":  d.requestID,
 			"user_id":     pending.UserID,
 			"agent_id":    pending.AgentID,
@@ -248,6 +265,7 @@ func (d *finalizerDeps) RollbackPendingTask(ctx context.Context, c pipeline.Hold
 			"err":         err.Error(),
 		})
 	}
+	return err
 }
 
 // WriteAudit emits a typed AuditEvent to the durable audit store.

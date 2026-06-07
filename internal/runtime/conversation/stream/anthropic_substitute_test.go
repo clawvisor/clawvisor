@@ -2,6 +2,7 @@ package stream_test
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestSubstituteAnthropicResponse_EmitsSyntheticStream(t *testing.T) {
 	const substitute = "Clawvisor paused this tool call for approval."
 
 	var dst bytes.Buffer
-	if err := stream.SubstituteAnthropicResponse(&dst, strings.NewReader(upstream), substitute); err != nil {
+	if err := stream.SubstituteAnthropicResponse(&dst, io.NopCloser(strings.NewReader(upstream)), substitute); err != nil {
 		t.Fatalf("SubstituteAnthropicResponse: %v", err)
 	}
 

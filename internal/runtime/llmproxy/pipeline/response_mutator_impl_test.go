@@ -2,6 +2,7 @@ package pipeline_test
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -34,7 +35,7 @@ func TestStreamingResponseMutator_PrependAnthropicNotice(t *testing.T) {
 	const notice = "[Clawvisor] notice"
 
 	var dst bytes.Buffer
-	m, err := pipeline.NewStreamingResponseMutator(&dst, strings.NewReader(upstream), conversation.StreamShapeAnthropicMessages)
+	m, err := pipeline.NewStreamingResponseMutator(&dst, io.NopCloser(strings.NewReader(upstream)), conversation.StreamShapeAnthropicMessages)
 	if err != nil {
 		t.Fatalf("NewStreamingResponseMutator: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestStreamingResponseMutator_NoMutationCopiesVerbatim(t *testing.T) {
 	}, "\n")
 
 	var dst bytes.Buffer
-	m, err := pipeline.NewStreamingResponseMutator(&dst, strings.NewReader(upstream), conversation.StreamShapeAnthropicMessages)
+	m, err := pipeline.NewStreamingResponseMutator(&dst, io.NopCloser(strings.NewReader(upstream)), conversation.StreamShapeAnthropicMessages)
 	if err != nil {
 		t.Fatalf("NewStreamingResponseMutator: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestStreamingResponseMutator_NoMutationCopiesVerbatim(t *testing.T) {
 // TestStreamingResponseMutator_RejectsCommitTwice pins the lifecycle
 // invariant.
 func TestStreamingResponseMutator_RejectsCommitTwice(t *testing.T) {
-	src := strings.NewReader("event: foo\ndata: {}\n\n")
+	src := io.NopCloser(strings.NewReader("event: foo\ndata: {}\n\n"))
 	var dst bytes.Buffer
 	m, err := pipeline.NewStreamingResponseMutator(&dst, src, conversation.StreamShapeAnthropicMessages)
 	if err != nil {
@@ -117,7 +118,7 @@ func TestStreamingResponseMutator_RejectsUnsupportedShape(t *testing.T) {
 	for _, shape := range []conversation.StreamShape{
 		conversation.StreamShapeUnknown,
 	} {
-		_, err := pipeline.NewStreamingResponseMutator(&bytes.Buffer{}, strings.NewReader(""), shape)
+		_, err := pipeline.NewStreamingResponseMutator(&bytes.Buffer{}, io.NopCloser(strings.NewReader("")), shape)
 		if err == nil {
 			t.Errorf("shape %v: expected error, got nil", shape)
 		}
@@ -135,7 +136,7 @@ func TestStreamingResponseMutator_GoogleAcceptsConstruction(t *testing.T) {
 		``,
 	}, "\n")
 	var dst bytes.Buffer
-	m, err := pipeline.NewStreamingResponseMutator(&dst, strings.NewReader(upstream), conversation.StreamShapeGoogleGemini)
+	m, err := pipeline.NewStreamingResponseMutator(&dst, io.NopCloser(strings.NewReader(upstream)), conversation.StreamShapeGoogleGemini)
 	if err != nil {
 		t.Fatalf("Google shape rejected at construction: %v", err)
 	}
@@ -163,7 +164,7 @@ func TestStreamingResponseMutator_PrependOpenAIChatNotice(t *testing.T) {
 	const notice = "[Clawvisor] notice"
 
 	var dst bytes.Buffer
-	m, err := pipeline.NewStreamingResponseMutator(&dst, strings.NewReader(upstream), conversation.StreamShapeOpenAIChat)
+	m, err := pipeline.NewStreamingResponseMutator(&dst, io.NopCloser(strings.NewReader(upstream)), conversation.StreamShapeOpenAIChat)
 	if err != nil {
 		t.Fatalf("NewStreamingResponseMutator: %v", err)
 	}

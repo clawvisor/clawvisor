@@ -8,8 +8,8 @@ import (
 
 // SubstituteAnthropicResponse emits a synthetic Anthropic Messages SSE
 // stream carrying a single text block with the provided text. The
-// upstream src reader is drained-and-discarded — its content is
-// thrown away, replaced entirely by the synthetic stream.
+// upstream src body is closed immediately — its content is thrown away,
+// replaced entirely by the synthetic stream.
 //
 // Used when a policy substitutes the entire assistant response (e.g.,
 // inline_task_intercept replaces the model's POST /api/control/tasks
@@ -18,10 +18,11 @@ import (
 // The emitted sequence mirrors what Anthropic emits for a one-text-block
 // turn: message_start → content_block_start → content_block_delta →
 // content_block_stop → message_delta → message_stop.
-func SubstituteAnthropicResponse(dst io.Writer, src io.Reader, text string) error {
-	// Drain src to keep the upstream connection clean (some pools track
-	// drained vs cancelled). The content is discarded.
-	_, _ = io.Copy(io.Discard, src)
+func SubstituteAnthropicResponse(dst io.Writer, src io.ReadCloser, text string) error {
+	// Substitution intentionally does not drain src before responding:
+	// waiting for upstream EOF delays the policy response. If the caller
+	// supplied a closeable body, close it to cancel upstream generation.
+	_ = src.Close()
 
 	events := []struct {
 		name    string

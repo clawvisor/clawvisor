@@ -96,6 +96,14 @@ func TestAnthropicRoundTrip_ByteIdentical(t *testing.T) {
 				``,
 			}, "\n"),
 		},
+		{
+			name: "crlf line endings",
+			sse: strings.Join([]string{
+				`event: message_start`,
+				`data: {"type":"message_start","message":{"id":"msg_crlf","role":"assistant","model":"claude-sonnet-4"}}`,
+				``,
+			}, "\r\n"),
+		},
 	}
 
 	for _, tc := range cases {
@@ -105,6 +113,41 @@ func TestAnthropicRoundTrip_ByteIdentical(t *testing.T) {
 				t.Fatalf("round-trip not byte-identical\n--- want ---\n%s\n--- got ---\n%s", tc.sse, got)
 			}
 		})
+	}
+}
+
+func TestAnthropicDecoder_IgnoresCommentInsideEventRawBytes(t *testing.T) {
+	src := strings.Join([]string{
+		`event: content_block_delta`,
+		`: vendor-ping`,
+		`retry: 1000`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`,
+		``,
+	}, "\n")
+	d := stream.NewAnthropicDecoder(strings.NewReader(src))
+	ev, err := d.Next()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if strings.Contains(string(ev.RawBytes), "vendor-ping") || strings.Contains(string(ev.RawBytes), "retry:") {
+		t.Fatalf("event RawBytes included non-event lines: %q", ev.RawBytes)
+	}
+}
+
+func TestAnthropicDecoder_AllowsLargeDataLine(t *testing.T) {
+	largeText := strings.Repeat("x", 2<<20)
+	payload, err := json.Marshal(map[string]any{
+		"type":  "content_block_delta",
+		"index": 0,
+		"delta": map[string]any{"type": "text_delta", "text": largeText},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	src := "event: content_block_delta\ndata: " + string(payload) + "\n\n"
+	d := stream.NewAnthropicDecoder(strings.NewReader(src))
+	if _, err := d.Next(); err != nil {
+		t.Fatalf("decode large line: %v", err)
 	}
 }
 

@@ -17,7 +17,8 @@ import (
 // at construction time.
 //
 // Outcomes:
-//   - resolver returns ok=true → Allow with verifier_verdict in audit
+//   - resolver returns ok=true → Skip with verifier_verdict fact so
+//     downstream credential rewrite can still run
 //   - resolver returns ok=false → Deny with the verifier's reason in
 //     audit + verdict; the inspector chain's verdict authoritatively
 //     refuses the tool_use
@@ -52,9 +53,10 @@ func (e *IntentVerifyEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnl
 	}
 	ok, reason := e.resolver(ctx, tu)
 	if reason == "" && ok {
-		// Allowed with no reason — verifier passed silently. Allow.
+		// Verifier passed silently. Do not claim the tool_use; the
+		// downstream credential rewrite still needs to run.
 		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeAllow,
+			Outcome: pipeline.OutcomeSkip,
 			Facts:   []pipeline.EvaluationFact{pipeline.IntentVerifyFact{Allowed: true}},
 		}, nil
 	}
@@ -67,7 +69,7 @@ func (e *IntentVerifyEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnl
 
 	if ok {
 		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeAllow,
+			Outcome: pipeline.OutcomeSkip,
 			Facts:   []pipeline.EvaluationFact{fact},
 		}, nil
 	}

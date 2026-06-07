@@ -55,6 +55,23 @@ func TestOpenAIChatRoundTrip_ByteIdentical(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatDecoder_IgnoresCommentInsideEventRawBytes(t *testing.T) {
+	src := strings.Join([]string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"}}]}`,
+		`: vendor-ping`,
+		`retry: 1000`,
+		``,
+	}, "\n")
+	d := stream.NewOpenAIChatDecoder(strings.NewReader(src))
+	ev, err := d.Next()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if strings.Contains(string(ev.RawBytes), "vendor-ping") || strings.Contains(string(ev.RawBytes), "retry:") {
+		t.Fatalf("event RawBytes included non-event lines: %q", ev.RawBytes)
+	}
+}
+
 // TestOpenAIChatEncoder_PatchedTopLevelField verifies the PATCHED
 // state on a chat chunk: editing one top-level field preserves all
 // other bytes.

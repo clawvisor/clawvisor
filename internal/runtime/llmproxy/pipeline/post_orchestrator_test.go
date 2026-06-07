@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -95,7 +96,7 @@ func TestRunPost_PrependsThroughStream(t *testing.T) {
 		context.Background(),
 		res,
 		&dst,
-		strings.NewReader(upstream),
+		io.NopCloser(strings.NewReader(upstream)),
 		conversation.StreamShapeAnthropicMessages,
 		policies,
 	)
@@ -143,7 +144,7 @@ func TestRunPost_SkipPolicyDoesNotMutate(t *testing.T) {
 		context.Background(),
 		res,
 		&dst,
-		strings.NewReader(upstream),
+		io.NopCloser(strings.NewReader(upstream)),
 		conversation.StreamShapeAnthropicMessages,
 		policies,
 	); err != nil {
@@ -168,7 +169,7 @@ func TestRunPost_PropagatesPolicyError(t *testing.T) {
 		context.Background(),
 		res,
 		&dst,
-		strings.NewReader("event: x\ndata: {}\n\n"),
+		io.NopCloser(strings.NewReader("event: x\ndata: {}\n\n")),
 		conversation.StreamShapeAnthropicMessages,
 		policies,
 	)
@@ -190,7 +191,7 @@ func TestRunPost_RejectsDeny(t *testing.T) {
 		context.Background(),
 		res,
 		&dst,
-		strings.NewReader("event: x\ndata: {}\n\n"),
+		io.NopCloser(strings.NewReader("event: x\ndata: {}\n\n")),
 		conversation.StreamShapeAnthropicMessages,
 		policies,
 	)

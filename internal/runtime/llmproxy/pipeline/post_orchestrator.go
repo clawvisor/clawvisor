@@ -37,12 +37,13 @@ type ResponsePolicyVerdict struct {
 // those conflicts.
 //
 // dst is the client connection writer. src is the upstream response
-// body reader. shape selects the per-shape codec.
+// body reader. RunPost takes ownership of src and closes it when the
+// mutator commits. shape selects the per-shape codec.
 func RunPost(
 	ctx context.Context,
 	res ReadOnlyResponse,
 	dst io.Writer,
-	src io.Reader,
+	src io.ReadCloser,
 	shape conversation.StreamShape,
 	policies []ResponsePolicy,
 ) (*PostResult, error) {

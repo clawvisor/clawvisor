@@ -34,11 +34,10 @@ type AnthropicDecoder struct {
 // event's exact byte sequence via the rawBuf shadow.
 func NewAnthropicDecoder(r io.Reader) *AnthropicDecoder {
 	s := bufio.NewScanner(r)
+	s.Split(scanSSELines)
 	// SSE events can be larger than the default 64 KiB scanner buffer
-	// (e.g., a tool_use input with a large JSON object). 1 MiB matches
-	// what the existing rewriter uses.
-	const maxLineSize = 1 << 20
-	s.Buffer(make([]byte, 0, 4096), maxLineSize)
+	// (e.g., a tool_use input with a large JSON object).
+	s.Buffer(make([]byte, 0, 4096), maxSSELineSize)
 	return &AnthropicDecoder{r: s}
 }
 
@@ -54,9 +53,10 @@ func (d *AnthropicDecoder) Next() (Event, error) {
 		// it so rawBuf reflects what was on the wire.
 		d.rawBuf.WriteString(line)
 		d.rawBuf.WriteByte('\n')
+		trimmed := strings.TrimRight(line, "\r")
 
 		// Blank line terminates the current event.
-		if strings.TrimRight(line, "\r") == "" {
+		if trimmed == "" {
 			ev, ok := d.flushEvent()
 			if ok {
 				return ev, nil
@@ -66,8 +66,9 @@ func (d *AnthropicDecoder) Next() (Event, error) {
 
 		// Comment line — emit as keepalive immediately (these don't
 		// participate in an event block).
-		if strings.HasPrefix(line, ":") {
+		if strings.HasPrefix(trimmed, ":") {
 			if d.curEvent != "" || len(d.dataLines) > 0 {
+				discardLastRawLine(&d.rawBuf, line)
 				continue
 			}
 			raw := append([]byte(nil), d.rawBuf.Bytes()...)
@@ -80,17 +81,18 @@ func (d *AnthropicDecoder) Next() (Event, error) {
 			}, nil
 		}
 
-		if strings.HasPrefix(line, "event:") {
-			d.curEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		if strings.HasPrefix(trimmed, "event:") {
+			d.curEvent = strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
 			continue
 		}
-		if strings.HasPrefix(line, "data:") {
-			d.dataLines = append(d.dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		if strings.HasPrefix(trimmed, "data:") {
+			d.dataLines = append(d.dataLines, strings.TrimSpace(strings.TrimPrefix(trimmed, "data:")))
 			continue
 		}
 		// Unknown line shape (id:, retry:, ...). Emit immediately as
 		// keepalive so we don't lose bytes.
 		if d.curEvent != "" || len(d.dataLines) > 0 {
+			discardLastRawLine(&d.rawBuf, line)
 			continue
 		}
 		raw := append([]byte(nil), d.rawBuf.Bytes()...)

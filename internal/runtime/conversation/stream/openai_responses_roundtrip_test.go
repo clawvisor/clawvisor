@@ -71,6 +71,24 @@ func TestOpenAIResponsesRoundTrip_ByteIdentical(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponsesDecoder_IgnoresCommentInsideEventRawBytes(t *testing.T) {
+	src := strings.Join([]string{
+		`event: response.output_text.delta`,
+		`: vendor-ping`,
+		`id: abc`,
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"hello"}`,
+		``,
+	}, "\n")
+	d := stream.NewOpenAIResponsesDecoder(strings.NewReader(src))
+	ev, err := d.Next()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if strings.Contains(string(ev.RawBytes), "vendor-ping") || strings.Contains(string(ev.RawBytes), "id: abc") {
+		t.Fatalf("event RawBytes included non-event lines: %q", ev.RawBytes)
+	}
+}
+
 // TestOpenAIResponsesDecoder_SurfacesIndexFields verifies that the
 // decoder lifts output_index / content_index / item_id onto Meta so
 // policies can issue FieldPatches against them by name instead of

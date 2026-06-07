@@ -91,19 +91,17 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 		Input: tu.Input,
 	})
 
-	// Stub-placeholder downgrade: if the only `autovault_…` substrings
-	// in this tool_use are too short to be real vault references —
-	// test fixtures, prose examples, doc snippets — there's no
-	// credential to mediate. Downgrade to trigger-miss so the
-	// surrounding tool call (often an Edit of a test file that mentions
-	// the literal) is evaluated under normal authorization rather than
-	// refused as ambiguous.
+	// Stub-placeholder guard: short `autovault_…` substrings are common
+	// in tests and prose, but treating them as trigger-miss risks
+	// bypassing boundary checks if the stub heuristic ever misclassifies
+	// a real placeholder. Fail closed instead.
 	if v.Source != inspector.SourceTriggerMiss && inspector.AllPlaceholdersAreStubs(v.Placeholders) {
-		v = inspector.Verdict{
-			IsAPICall: false,
-			Source:    inspector.SourceTriggerMiss,
-			Reason:    "placeholders are stub-length (no real vault reference)",
-		}
+		inspectorFact := newInspectorFact(v)
+		return pipeline.ToolUseVerdict{
+			Outcome: pipeline.OutcomeDeny,
+			Reason:  "Clawvisor: autovault placeholder is too short to validate safely",
+			Facts:   []pipeline.EvaluationFact{inspectorFact},
+		}, nil
 	}
 
 	inspectorFact := newInspectorFact(v)
@@ -150,7 +148,8 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	// can run the credentialed authorization + rewrite flow.
 	if c.boundary == nil {
 		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeSkip,
+			Outcome: pipeline.OutcomeDeny,
+			Reason:  "Clawvisor: credentialed boundary check is not configured",
 			Facts:   []pipeline.EvaluationFact{inspectorFact},
 		}, nil
 	}

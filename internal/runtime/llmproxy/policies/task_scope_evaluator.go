@@ -18,7 +18,8 @@ import (
 //
 // Outcomes:
 //   - Decision.Reason == "" or no checker → Skip
-//   - Decision.Allowed → Allow with matched_task_id in AuditParams
+//   - Decision.Allowed → Skip with matched_task_id fact so downstream
+//     credential rewrite can still run
 //   - Decision.Allowed == false → Hold with HoldKey
 //     "needs_task_<toolu_id>". The orchestrator's coalescing rules
 //     decide whether to merge with siblings.
@@ -128,7 +129,7 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	case TaskScopeDecisionAllow:
 		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeAllow,
+			Outcome: pipeline.OutcomeSkip,
 			Facts:   []pipeline.EvaluationFact{fact},
 		}, nil
 	case TaskScopeDecisionDeny:

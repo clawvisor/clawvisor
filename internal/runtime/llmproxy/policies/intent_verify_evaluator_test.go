@@ -21,8 +21,8 @@ func TestIntentVerify_SkipsNilResolver(t *testing.T) {
 	}
 }
 
-// TestIntentVerify_AllowOnVerifierPass pins the success path.
-func TestIntentVerify_AllowOnVerifierPass(t *testing.T) {
+// TestIntentVerify_SkipOnVerifierPass pins the success path.
+func TestIntentVerify_SkipOnVerifierPass(t *testing.T) {
 	resolver := func(_ context.Context, _ conversation.ToolUse) (bool, string) {
 		return true, "matches scope"
 	}
@@ -31,8 +31,8 @@ func TestIntentVerify_AllowOnVerifierPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("verifier pass → Outcome = %q, want Allow", v.Outcome)
+	if v.Outcome != pipeline.OutcomeSkip {
+		t.Errorf("verifier pass → Outcome = %q, want Skip", v.Outcome)
 	}
 	found := false
 	for _, f := range v.Facts {
@@ -65,8 +65,8 @@ func TestIntentVerify_DenyOnVerifierFail(t *testing.T) {
 	}
 }
 
-// TestIntentVerify_SilentPassAllows pins the (true, "") path.
-func TestIntentVerify_SilentPassAllows(t *testing.T) {
+// TestIntentVerify_SilentPassSkips pins the (true, "") path.
+func TestIntentVerify_SilentPassSkips(t *testing.T) {
 	resolver := func(_ context.Context, _ conversation.ToolUse) (bool, string) {
 		return true, ""
 	}
@@ -75,8 +75,8 @@ func TestIntentVerify_SilentPassAllows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("silent pass → Outcome = %q, want Allow", v.Outcome)
+	if v.Outcome != pipeline.OutcomeSkip {
+		t.Errorf("silent pass → Outcome = %q, want Skip", v.Outcome)
 	}
 }
 

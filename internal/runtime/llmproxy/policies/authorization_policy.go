@@ -106,13 +106,15 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		Name:  tu.Name,
 		Input: tu.Input,
 	})
-	// Stub-placeholder downgrade matches the legacy helper.
+	// Stub-placeholder guard matches InspectorChain: short
+	// autovault-looking strings should fail closed rather than become
+	// trigger-miss pass-through.
 	if v.Source != inspector.SourceTriggerMiss && inspector.AllPlaceholdersAreStubs(v.Placeholders) {
-		v = inspector.Verdict{
-			IsAPICall: false,
-			Source:    inspector.SourceTriggerMiss,
-			Reason:    "placeholders are stub-length (no real vault reference)",
-		}
+		return pipeline.ToolUseVerdict{
+			Outcome: pipeline.OutcomeDeny,
+			Reason:  "Clawvisor: autovault placeholder is too short to validate safely",
+			Facts:   []pipeline.EvaluationFact{newInspectorFact(v)},
+		}, nil
 	}
 	if v.Source != inspector.SourceTriggerMiss {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil

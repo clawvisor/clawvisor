@@ -18,7 +18,7 @@ import (
 // bytes to the client.
 type streamingResponseMutator struct {
 	dst   io.Writer
-	src   io.Reader
+	src   io.ReadCloser
 	shape conversation.StreamShape
 
 	prependText    string
@@ -30,12 +30,13 @@ type streamingResponseMutator struct {
 // NewStreamingResponseMutator wires a ResponseMutator that mutates
 // the streaming response body via the canonical event-stream model.
 // dst is the client connection writer; src is the upstream response
-// body reader; shape is the SSE wire shape.
+// body reader. The mutator takes ownership of src and closes it when
+// committed; shape is the SSE wire shape.
 //
 // Returns an error for unsupported shapes — only Anthropic Messages
 // is fully wired today. OpenAI Chat and Responses follow as their
 // shape-specific prepend ports land.
-func NewStreamingResponseMutator(dst io.Writer, src io.Reader, shape conversation.StreamShape) (ResponseMutator, error) {
+func NewStreamingResponseMutator(dst io.Writer, src io.ReadCloser, shape conversation.StreamShape) (ResponseMutator, error) {
 	if dst == nil || src == nil {
 		return nil, fmt.Errorf("streaming response mutator: dst and src required")
 	}
@@ -82,6 +83,7 @@ func (m *streamingResponseMutator) Commit() error {
 		return fmt.Errorf("Commit called twice")
 	}
 	m.committed = true
+	defer func() { _ = m.src.Close() }()
 
 	if m.hasSubstitute {
 		// SubstituteEntireResponse takes precedence over Prepend — the

@@ -2,6 +2,7 @@ package policies
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -92,31 +93,11 @@ func NewBoundaryCheckEvaluator(resolver AllowedHostsResolver) *BoundaryCheckEval
 // Name returns the audit-friendly evaluator identifier.
 func (BoundaryCheckEvaluator) Name() string { return "boundary_check" }
 
-// Evaluate runs the boundary check. Reads inspector verdict from
-// AuditParams (set by InspectorEvaluator); if those fields aren't
-// present, this evaluator can't proceed and returns Skip.
-//
-// Reconstructs a minimal inspector.Verdict from AuditParams rather
-// than passing the verdict struct in a per-evaluator carrier. The
-// AuditParams approach has the property that audit consumers see
-// the inspection result for free, and evaluators are coupled only
-// to the AuditParams contract.
-func (e *BoundaryCheckEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyResponse, tu conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
-	if e.allowedHostsFor == nil {
-		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
-	}
-
-	// In the current chain composition this evaluator runs AFTER
-	// InspectorEvaluator. The orchestrator's first-non-Skip-wins rule
-	// means BoundaryCheckEvaluator only runs when InspectorEvaluator
-	// returned Skip (trigger miss or nil inspector). In that case
-	// there's no verdict to boundary-check; return Skip.
-	//
-	// Future wiring: extract the inspector verdict from an explicit
-	// carrier rather than reading AuditParams. For now this gate is
-	// the right default — boundary checks shouldn't run without an
-	// inspector verdict.
-	return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
+// Evaluate rejects standalone chain usage. BoundaryCheckEvaluator
+// requires an inspector verdict and is only valid through
+// EvaluateWithVerdict or the composite InspectorChain.
+func (e *BoundaryCheckEvaluator) Evaluate(context.Context, pipeline.ReadOnlyResponse, conversation.ToolUse, pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
+	return pipeline.ToolUseVerdict{}, fmt.Errorf("boundary_check is not valid as a standalone ToolUseEvaluator; use InspectorChain or EvaluateWithVerdict")
 }
 
 // EvaluateWithVerdict is the variant that takes an explicit inspector

@@ -32,8 +32,8 @@ type OpenAIResponsesDecoder struct {
 
 func NewOpenAIResponsesDecoder(r io.Reader) *OpenAIResponsesDecoder {
 	s := bufio.NewScanner(r)
-	const maxLineSize = 1 << 20
-	s.Buffer(make([]byte, 0, 4096), maxLineSize)
+	s.Split(scanSSELines)
+	s.Buffer(make([]byte, 0, 4096), maxSSELineSize)
 	return &OpenAIResponsesDecoder{r: s}
 }
 
@@ -58,6 +58,7 @@ func (d *OpenAIResponsesDecoder) Next() (Event, error) {
 
 		if strings.HasPrefix(trimmed, ":") {
 			if d.curEvent != "" || len(d.dataLines) > 0 {
+				discardLastRawLine(&d.rawBuf, line)
 				continue
 			}
 			raw := append([]byte(nil), d.rawBuf.Bytes()...)
@@ -80,6 +81,7 @@ func (d *OpenAIResponsesDecoder) Next() (Event, error) {
 		}
 
 		if d.curEvent != "" || len(d.dataLines) > 0 {
+			discardLastRawLine(&d.rawBuf, line)
 			continue
 		}
 		raw := append([]byte(nil), d.rawBuf.Bytes()...)

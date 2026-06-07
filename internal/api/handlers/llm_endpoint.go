@@ -1193,7 +1193,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				auditOutcome = "postprocess_stream_error"
 				auditReason = err.Error()
 				if !streamResp.WroteHeader() {
-					clearHeaders(w.Header())
+					clearHeadersPreservingRequestIDs(w.Header())
 					h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "POSTPROCESS_STREAM_ERROR",
 						"couldn't process the upstream stream. Please retry; details are in the Clawvisor audit log.")
 				} else {
@@ -2265,6 +2265,21 @@ func (w *delayedHeaderWriter) WroteHeader() bool {
 func clearHeaders(h http.Header) {
 	for k := range h {
 		delete(h, k)
+	}
+}
+
+func clearHeadersPreservingRequestIDs(h http.Header) {
+	preserved := make(http.Header)
+	for _, key := range []string{"request-id", "x-request-id", "anthropic-request-id"} {
+		for _, value := range h.Values(key) {
+			preserved.Add(key, value)
+		}
+	}
+	clearHeaders(h)
+	for key, values := range preserved {
+		for _, value := range values {
+			h.Add(key, value)
+		}
 	}
 }
 
@@ -4601,6 +4616,56 @@ func clawvisorAgentTokenHeader(r *http.Request) string {
 		return strings.TrimSpace(v[len(prefix):])
 	}
 	return v
+}
+
+func streamingPostprocessErrorFrame(r *http.Request, provider conversation.Provider, message string) ([]byte, bool) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return nil, false
+	}
+	switch provider {
+	case conversation.ProviderAnthropic:
+		body, _ := json.Marshal(map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "clawvisor_postprocess_error",
+				"message": message,
+			},
+		})
+		return []byte("event: error\ndata: " + string(body) + "\n\n"), true
+	case conversation.ProviderOpenAI:
+		if conversation.IsOpenAIChatCompletionsEndpoint(r) {
+			return conversation.SynthOpenAIChatTextSSE(message), true
+		}
+		body, _ := json.Marshal(map[string]any{
+			"type": "response.failed",
+			"response": map[string]any{
+				"status": "failed",
+				"error": map[string]any{
+					"type":    "clawvisor_postprocess_error",
+					"message": message,
+				},
+			},
+		})
+		return []byte("event: response.failed\ndata: " + string(body) + "\n\n"), true
+	case conversation.ProviderGoogle:
+		body, _ := json.Marshal(map[string]any{
+			"error": map[string]any{
+				"code":    http.StatusBadGateway,
+				"message": message,
+				"status":  "INTERNAL",
+			},
+		})
+		return []byte("data: " + string(body) + "\n\n"), true
+	default:
+		body, _ := json.Marshal(map[string]any{
+			"error": map[string]any{
+				"type":    "clawvisor_postprocess_error",
+				"message": message,
+			},
+		})
+		return []byte("data: " + string(body) + "\n\n"), true
+	}
 }
 
 // taskRiskBridge adapts the handler's taskrisk.Assessor (which speaks the

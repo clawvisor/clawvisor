@@ -61,9 +61,11 @@ func PrependOpenAIChatAssistantNotice(dst io.Writer, src io.Reader, notice strin
 // stream emits for the first text chunk.
 func writeOpenAIChatNoticeChunk(dst io.Writer, notice string) error {
 	chunk := map[string]any{
-		"id":      "chatcmpl_clawvisor_notice",
-		"object":  "chat.completion.chunk",
-		"created": 0,
+		"id":     "chatcmpl_clawvisor_notice",
+		"object": "chat.completion.chunk",
+		// Use a deterministic positive timestamp so strict clients see
+		// a valid created field without making tests time-dependent.
+		"created": int64(1),
 		"model":   "clawvisor-notice",
 		"choices": []map[string]any{{
 			"index":         0,

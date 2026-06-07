@@ -98,17 +98,48 @@ func EvaluateToolUses(
 			}
 		}
 		if winner == nil {
-			// Compatibility fail-open default: no evaluator claimed
-			// this tool_use, so it is allowed. Every gating evaluator
-			// must explicitly claim its trigger cases with Allow, Deny,
-			// Hold, or Rewrite; returning Skip delegates to this
-			// pass-through behavior.
-			result.PerToolUse[tu.ID] = ToolUseVerdict{Outcome: OutcomeAllow}
+			result.PerToolUse[tu.ID] = defaultUnclaimedToolUseVerdict(result.Evaluations, tu.ID)
 		} else {
 			result.PerToolUse[tu.ID] = *winner
 		}
 	}
 	return result, nil
+}
+
+func defaultUnclaimedToolUseVerdict(evaluations []ToolUseEvaluation, toolUseID string) ToolUseVerdict {
+	var credentialedFact *InspectorFact
+	for _, ev := range evaluations {
+		if ev.ToolUseID != toolUseID {
+			continue
+		}
+		for _, fact := range ev.Verdict.Facts {
+			switch inspectorFact := fact.(type) {
+			case InspectorFact:
+				if inspectorFact.IsAPICall && !inspectorFact.Ambiguous {
+					copyFact := inspectorFact
+					credentialedFact = &copyFact
+				}
+			case *InspectorFact:
+				if inspectorFact != nil && inspectorFact.IsAPICall && !inspectorFact.Ambiguous {
+					copyFact := *inspectorFact
+					credentialedFact = &copyFact
+				}
+			}
+		}
+	}
+	if credentialedFact != nil {
+		return ToolUseVerdict{
+			Outcome: OutcomeDeny,
+			Reason:  "Clawvisor: credentialed API call was not rewritten; refusing to send original tool_use upstream",
+			Facts:   []EvaluationFact{*credentialedFact},
+		}
+	}
+	// Compatibility fail-open default: no evaluator claimed this
+	// tool_use, so it is allowed. Every gating evaluator must
+	// explicitly claim its trigger cases with Allow, Deny, Hold, or
+	// Rewrite; returning Skip delegates non-credentialed calls to this
+	// pass-through behavior.
+	return ToolUseVerdict{Outcome: OutcomeAllow}
 }
 
 func continueOutcomeValid(verdict ToolUseVerdict) bool {

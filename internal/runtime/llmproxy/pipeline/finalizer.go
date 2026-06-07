@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/eval"
@@ -128,7 +129,7 @@ type FinalizerDeps interface {
 	// DropHold rolls back a previously-committed hold. Called on
 	// partial replay failure so the partially-committed batch is
 	// fully unwound.
-	DropHold(ctx context.Context, capture HoldCapture)
+	DropHold(ctx context.Context, capture HoldCapture) error
 
 	// BuildCoalescedHold constructs the single hold supersedes
 	// multiple buffered captures. Returns the coalesced payload
@@ -207,16 +208,13 @@ func (f *Finalizer) Finalize(ctx context.Context) (FinalizeResult, error) {
 	}
 	defer f.flushAudits(ctx)
 	if shouldCoalesce(f.captures) {
-		result, ok, err := f.commitCoalesced(ctx)
+		result, err := f.commitCoalesced(ctx)
 		if err != nil {
+			f.flushAudits(ctx)
 			return FinalizeResult{}, err
 		}
-		if ok {
-			return result, nil
-		}
-		// Coalesced commit failed mid-flight (Hold returned error).
-		// Fall through to per-tool replay so the buffered holds still
-		// land somewhere.
+		f.audits = nil
+		return result, nil
 	}
 	if err := f.replayLegacy(ctx); err != nil {
 		return FinalizeResult{}, err
@@ -270,20 +268,19 @@ func (f *Finalizer) Captures() []HoldCapture {
 	return f.captures
 }
 
-func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, bool, error) {
+func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, error) {
 	coalesced := f.deps.BuildCoalescedHold(f.captures)
 	submit, err := f.deps.SubmitHold(ctx, coalesced.Payload)
 	if err != nil {
-		return FinalizeResult{}, true, err
+		return FinalizeResult{}, err
 	}
 	if submit.Evicted != nil && len(f.captures) > 0 {
 		ordered := orderCapturesForCoalescedAudit(f.captures)
-		if len(ordered) == 0 {
-			return FinalizeResult{}, true, nil
-		}
-		primary := ordered[0]
-		if coalesced.EvictedAuditFor != nil {
-			f.deps.WriteAudit(ctx, coalesced.EvictedAuditFor(primary, submit.EvictedApprovalID))
+		if len(ordered) > 0 {
+			primary := ordered[0]
+			if coalesced.EvictedAuditFor != nil {
+				f.deps.WriteAudit(ctx, coalesced.EvictedAuditFor(primary, submit.EvictedApprovalID))
+			}
 		}
 		f.deps.CleanupEvictedHold(ctx, submit.Evicted)
 	}
@@ -301,7 +298,7 @@ func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, bool, 
 		Coalesced:           true,
 		CoalescedApprovalID: submit.ApprovalID,
 		CoalescedPrompt:     prompt,
-	}, true, nil
+	}, nil
 }
 
 func (f *Finalizer) replayLegacy(ctx context.Context) error {
@@ -315,9 +312,14 @@ func (f *Finalizer) replayLegacy(ctx context.Context) error {
 		}
 		res, err := f.deps.SubmitHold(ctx, c.Payload)
 		if err != nil {
+			var rollbackErr error
 			for _, prev := range committed {
-				f.deps.DropHold(ctx, prev)
+				rollbackErr = errors.Join(rollbackErr, f.deps.DropHold(ctx, prev))
 			}
+			if rollbackErr != nil {
+				err = errors.Join(err, rollbackErr)
+			}
+			f.flushAudits(ctx)
 			f.deps.WriteAudit(ctx, f.deps.BuildReplayFailedAudit(c, err))
 			return err
 		}
@@ -325,6 +327,7 @@ func (f *Finalizer) replayLegacy(ctx context.Context) error {
 			f.deps.WriteAudit(ctx, f.deps.BuildEvictedAudit(c, res.EvictedApprovalID))
 			f.deps.CleanupEvictedHold(ctx, res.Evicted)
 		}
+		c.ApprovalID = res.ApprovalID
 		committed = append(committed, c)
 	}
 	return nil
@@ -354,7 +357,9 @@ func shouldCoalesce(captures []HoldCapture) bool {
 			if c.Stage != "" && c.Stage != "tool" {
 				return false
 			}
-			approvals++
+			if c.Payload != nil {
+				approvals++
+			}
 		case eval.HeldKindHintDeny:
 			return false
 		}

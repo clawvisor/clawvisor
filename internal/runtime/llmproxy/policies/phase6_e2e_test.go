@@ -3,6 +3,7 @@ package policies_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -125,7 +126,7 @@ func TestPhase6_E2E_FullGoogleChain(t *testing.T) {
 
 	// --- Phase 6: streamingResponseMutator accepts the new shape ---
 
-	upstreamReader := strings.NewReader(`data: {"candidates":[{"content":{"parts":[{"text":"hi"}]}}]}` + "\n\n")
+	upstreamReader := io.NopCloser(strings.NewReader(`data: {"candidates":[{"content":{"parts":[{"text":"hi"}]}}]}` + "\n\n"))
 	var dst strings.Builder
 	mut, err := pipeline.NewStreamingResponseMutator(&dst, upstreamReader, conversation.StreamShapeGoogleGemini)
 	if err != nil {

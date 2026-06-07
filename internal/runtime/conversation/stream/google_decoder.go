@@ -10,9 +10,12 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 )
 
-// GoogleDecoder handles Gemini's :streamGenerateContent SSE framing,
-// where each event is a JSON object on a single `data:` line, similar
-// to OpenAI Chat Completions but with a different envelope shape
+// GoogleDecoder handles Gemini's :streamGenerateContent SSE framing.
+// It is only valid for Gemini requests made with `alt=sse`; the raw
+// chunked JSON-array stream that Gemini returns without that query
+// parameter is intentionally outside this codec's mutation contract.
+// Each SSE event is a JSON object on a single `data:` line, similar to
+// OpenAI Chat Completions but with a different envelope shape
 // (candidates[].content.parts[] instead of choices[].delta).
 //
 // This partial codec uses the same SSE framing as OpenAIChatDecoder;
@@ -28,8 +31,8 @@ type GoogleDecoder struct {
 
 func NewGoogleDecoder(r io.Reader) *GoogleDecoder {
 	s := bufio.NewScanner(r)
-	const maxLineSize = 1 << 20
-	s.Buffer(make([]byte, 0, 4096), maxLineSize)
+	s.Split(scanSSELines)
+	s.Buffer(make([]byte, 0, 4096), maxSSELineSize)
 	return &GoogleDecoder{r: s}
 }
 
@@ -54,6 +57,7 @@ func (d *GoogleDecoder) Next() (Event, error) {
 
 		if strings.HasPrefix(trimmed, ":") {
 			if len(d.dataLines) > 0 {
+				discardLastRawLine(&d.rawBuf, line)
 				continue
 			}
 			raw := append([]byte(nil), d.rawBuf.Bytes()...)
@@ -71,6 +75,10 @@ func (d *GoogleDecoder) Next() (Event, error) {
 			continue
 		}
 
+		if len(d.dataLines) > 0 {
+			discardLastRawLine(&d.rawBuf, line)
+			continue
+		}
 		raw := append([]byte(nil), d.rawBuf.Bytes()...)
 		d.rawBuf.Reset()
 		return Event{

@@ -48,6 +48,19 @@ func (e *skipEvaluator) Evaluate(_ context.Context, _ pipeline.ReadOnlyResponse,
 	return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 }
 
+type skipWithInspectorFactEvaluator struct {
+	name string
+	fact pipeline.InspectorFact
+}
+
+func (e *skipWithInspectorFactEvaluator) Name() string { return e.name }
+func (e *skipWithInspectorFactEvaluator) Evaluate(_ context.Context, _ pipeline.ReadOnlyResponse, _ conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
+	return pipeline.ToolUseVerdict{
+		Outcome: pipeline.OutcomeSkip,
+		Facts:   []pipeline.EvaluationFact{e.fact},
+	}, nil
+}
+
 // holdEvaluator returns Hold with a HoldKey.
 type holdEvaluator struct {
 	name    string
@@ -250,6 +263,36 @@ func TestEvaluateToolUses_AllSkipFallsThroughToAllow(t *testing.T) {
 
 	if v := result.PerToolUse["toolu_x"]; v.Outcome != pipeline.OutcomeAllow {
 		t.Errorf("all-Skip should default to Allow, got %q", v.Outcome)
+	}
+}
+
+func TestEvaluateToolUses_AllSkipCredentialedAPIDenies(t *testing.T) {
+	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
+	tools := []conversation.ToolUse{{ID: "toolu_cred"}}
+
+	result, err := pipeline.EvaluateToolUses(context.Background(), res, tools, []pipeline.ToolUseEvaluator{
+		&skipWithInspectorFactEvaluator{
+			name: "inspector_chain",
+			fact: pipeline.InspectorFact{
+				IsAPICall:    true,
+				Placeholders: []string{"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+				Host:         "api.github.com",
+			},
+		},
+		&skipEvaluator{name: "credential_rewrite"},
+	}, func(id string) pipeline.ToolUseMutator {
+		return &recordingToolUseMutator{id: id}
+	})
+	if err != nil {
+		t.Fatalf("EvaluateToolUses: %v", err)
+	}
+
+	v := result.PerToolUse["toolu_cred"]
+	if v.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("credentialed all-Skip Outcome = %q, want Deny", v.Outcome)
+	}
+	if v.Reason == "" {
+		t.Fatal("credentialed default Deny should include reason")
 	}
 }
 

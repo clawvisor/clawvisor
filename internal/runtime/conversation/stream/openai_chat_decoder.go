@@ -29,8 +29,8 @@ type OpenAIChatDecoder struct {
 // NewOpenAIChatDecoder wraps r.
 func NewOpenAIChatDecoder(r io.Reader) *OpenAIChatDecoder {
 	s := bufio.NewScanner(r)
-	const maxLineSize = 1 << 20
-	s.Buffer(make([]byte, 0, 4096), maxLineSize)
+	s.Split(scanSSELines)
+	s.Buffer(make([]byte, 0, 4096), maxSSELineSize)
 	return &OpenAIChatDecoder{r: s}
 }
 
@@ -57,6 +57,7 @@ func (d *OpenAIChatDecoder) Next() (Event, error) {
 		// SSE comment — emit immediately as keepalive.
 		if strings.HasPrefix(trimmed, ":") {
 			if len(d.dataLines) > 0 {
+				discardLastRawLine(&d.rawBuf, line)
 				continue
 			}
 			raw := append([]byte(nil), d.rawBuf.Bytes()...)
@@ -83,6 +84,7 @@ func (d *OpenAIChatDecoder) Next() (Event, error) {
 
 		// Unknown line shape — emit raw as keepalive to avoid byte loss.
 		if len(d.dataLines) > 0 {
+			discardLastRawLine(&d.rawBuf, line)
 			continue
 		}
 		raw := append([]byte(nil), d.rawBuf.Bytes()...)
@@ -159,10 +161,14 @@ func ensureSSETerminator(raw []byte) []byte {
 		return raw
 	}
 	out := append([]byte(nil), raw...)
-	if !bytes.HasSuffix(out, []byte("\n")) {
-		out = append(out, '\n')
+	switch {
+	case bytes.HasSuffix(out, []byte("\r\n")):
+		return append(out, '\r', '\n')
+	case bytes.HasSuffix(out, []byte("\n")):
+		return append(out, '\n')
+	default:
+		return append(out, '\n', '\n')
 	}
-	return append(out, '\n')
 }
 
 // classifyOpenAIChatEventKind inspects the data payload to determine

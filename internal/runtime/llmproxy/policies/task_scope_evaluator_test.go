@@ -23,8 +23,8 @@ func TestTaskScope_SkipsNilResolver(t *testing.T) {
 	}
 }
 
-// TestTaskScope_AllowOnMatchedScope pins the success path.
-func TestTaskScope_AllowOnMatchedScope(t *testing.T) {
+// TestTaskScope_SkipOnMatchedScope pins the success path.
+func TestTaskScope_SkipOnMatchedScope(t *testing.T) {
 	resolver := func(_ context.Context, _ conversation.ToolUse) policies.TaskScopeDecision {
 		return policies.TaskScopeDecision{
 			Allowed: true,
@@ -38,8 +38,8 @@ func TestTaskScope_AllowOnMatchedScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("matched scope → Outcome = %q, want Allow", v.Outcome)
+	if v.Outcome != pipeline.OutcomeSkip {
+		t.Errorf("matched scope → Outcome = %q, want Skip", v.Outcome)
 	}
 	var tf pipeline.TaskScopeFact
 	for _, f := range v.Facts {

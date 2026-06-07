@@ -2,6 +2,7 @@ package policies
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -63,14 +64,12 @@ func NewPendingApprovalHoldPolicy(resolver PendingApprovalHoldResolver) *Pending
 // Name returns the audit-friendly evaluator identifier.
 func (PendingApprovalHoldPolicy) Name() string { return "pending_approval_hold" }
 
-// Evaluate is a no-op gate that emits Skip when there's nothing to
-// hold (typical case). The actual hold side-effect is invoked by the
-// upstream AuthorizationPolicy via its resolver, not by chain
-// invocation — this policy exists primarily as a docs anchor for the
-// approval-hold contract while the chain keeps first-non-Skip-wins
-// semantics.
-func (p *PendingApprovalHoldPolicy) Evaluate(_ context.Context, _ pipeline.ReadOnlyResponse, _ conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
-	return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
+// Evaluate rejects standalone chain usage. The actual hold side-effect
+// is invoked by AuthorizationPolicy via its AuthorizationHoldHandler;
+// wiring this docs-anchor type directly would otherwise silently
+// pass-through approval-required calls.
+func (p *PendingApprovalHoldPolicy) Evaluate(context.Context, pipeline.ReadOnlyResponse, conversation.ToolUse, pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
+	return pipeline.ToolUseVerdict{}, fmt.Errorf("pending_approval_hold is not valid as a standalone ToolUseEvaluator; use AuthorizationPolicy hold handling")
 }
 
 var _ pipeline.ToolUseEvaluator = (*PendingApprovalHoldPolicy)(nil)

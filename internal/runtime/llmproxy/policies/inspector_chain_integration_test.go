@@ -31,10 +31,11 @@ func (chainIntegrationMutator) RewriteArgs(json.RawMessage) error { return nil }
 func (chainIntegrationMutator) ReplaceWithText(string) error      { return nil }
 
 // TestInspectorChainIntegration_RecognizedAPICallFlowsThroughChain
-// validates the full quartet (InspectorChain → TaskScope → IntentVerify)
+// validates the full credentialed chain (InspectorChain → TaskScope →
+// IntentVerify → CredentialRewrite)
 // composed through EvaluateToolUses: a recognized API call to an
 // allowlisted host with a matched task scope and passing intent
-// verification → Allow.
+// verification is rewritten rather than forwarded upstream as-is.
 func TestInspectorChainIntegration_RecognizedAPICallFlowsThroughChain(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	hostsResolver := func(_ context.Context, _ string) []string {
@@ -55,6 +56,14 @@ func TestInspectorChainIntegration_RecognizedAPICallFlowsThroughChain(t *testing
 		policies.NewInspectorChain(insp, hostsResolver),
 		policies.NewTaskScopeEvaluator(scopeResolver),
 		policies.NewIntentVerifyEvaluator(intentResolver),
+		policies.NewCredentialRewriteEvaluator(func(_ context.Context, _ conversation.ToolUse) *policies.CredentialRewriteInputs {
+			return &policies.CredentialRewriteInputs{
+				Inspector:    insp,
+				CallerNonces: &stubNonceCache{minted: "cv-nonce-abc"},
+				AgentID:      "agent-1",
+				RewriteOpts:  inspector.RewriteOpts{ResolverBaseURL: "http://localhost:25297/api/proxy"},
+			}
+		}),
 	}
 
 	tools := []conversation.ToolUse{{
@@ -79,22 +88,18 @@ func TestInspectorChainIntegration_RecognizedAPICallFlowsThroughChain(t *testing
 	}
 
 	v := result.PerToolUse["toolu_1"]
-	if v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("Outcome = %q, want Allow (full result: %+v)", v.Outcome, result)
+	if v.Outcome != pipeline.OutcomeRewrite {
+		t.Errorf("Outcome = %q, want Rewrite (full result: %+v)", v.Outcome, result)
 	}
 	// InspectorChain returns Skip on credentialed boundary-pass so
-	// downstream stages (TaskScope here) run the authorization. With
-	// scopeResolver returning Allow, TaskScopeEvaluator claims the
-	// tool_use; IntentVerify runs next and returns Allow too. So the
-	// trail is inspector_chain (Skip) → task_scope (Allow) — 2
-	// evaluations on the trail, but TaskScope is the winner.
-	if got := len(result.Evaluations); got != 2 {
-		t.Errorf("expected 2 evaluations on trail, got %d: %+v", got, result.Evaluations)
+	// downstream stages run authorization, intent verification, and
+	// finally credential rewrite. The two prerequisite stages return
+	// Skip on success so the rewrite stage still runs.
+	if got := len(result.Evaluations); got != 4 {
+		t.Errorf("expected 4 evaluations on trail, got %d: %+v", got, result.Evaluations)
 	}
-	// The winning evaluator should be task_scope (downstream of
-	// InspectorChain's Skip).
-	if got := result.Evaluations[len(result.Evaluations)-1].EvaluatorName; got != "task_scope" {
-		t.Errorf("winning evaluator = %q, want task_scope", got)
+	if got := result.Evaluations[len(result.Evaluations)-1].EvaluatorName; got != "credential_rewrite" {
+		t.Errorf("winning evaluator = %q, want credential_rewrite", got)
 	}
 }
 
