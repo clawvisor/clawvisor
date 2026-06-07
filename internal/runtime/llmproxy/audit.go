@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -36,6 +37,9 @@ type AuditEmitter struct {
 	// prompt change is forensically visible. Set by the handler when it
 	// knows the active validator's prompt hash.
 	ValidatorPromptSHA string
+
+	queue chan func()
+	wg    sync.WaitGroup
 }
 
 // NewAuditEmitter builds an AuditEmitter with sensible defaults. Logger
@@ -49,7 +53,48 @@ func NewAuditEmitter(st store.Store, logger *slog.Logger, v interface{ PromptSHA
 	if v != nil {
 		e.ValidatorPromptSHA = v.PromptSHA()
 	}
+	e.queue = make(chan func(), 10000)
+	e.wg.Add(1)
+	go e.worker()
 	return e
+}
+
+func (e *AuditEmitter) Close() {
+	if e.queue != nil {
+		close(e.queue)
+		e.wg.Wait()
+	}
+}
+
+func (e *AuditEmitter) enqueue(ctx context.Context, fn func()) {
+	if e.queue == nil {
+		fn()
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			e.Logger.WarnContext(ctx, "AuditEmitter: failed to enqueue audit event (channel closed)")
+		}
+	}()
+	select {
+	case e.queue <- fn:
+	case <-ctx.Done():
+		e.Logger.WarnContext(ctx, "AuditEmitter: context cancelled or timed out before audit event could be enqueued; dropping audit write", "err", ctx.Err())
+	}
+}
+
+func (e *AuditEmitter) worker() {
+	defer e.wg.Done()
+	for fn := range e.queue {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					e.Logger.Error("AuditEmitter: worker panicked", "recover", r)
+				}
+			}()
+			fn()
+		}()
+	}
 }
 
 // EndpointCallExtras carries optional, request-call-specific signals
@@ -621,10 +666,12 @@ func (e *AuditEmitter) LogResolverSwap(ctx context.Context, agent *store.Agent, 
 		Reason:     nilIfEmpty(reason),
 		DurationMS: int(duration.Milliseconds()),
 	}
-	if err := e.Store.LogAudit(ctx, entry); err != nil && !errors.Is(err, store.ErrConflict) {
-		e.Logger.WarnContext(ctx, "lite-proxy: resolver swap audit failed",
-			"agent_id", agent.ID, "target_host", targetHost, "err", err.Error())
-	}
+	e.enqueue(ctx, func() {
+		if err := e.Store.LogAudit(context.Background(), entry); err != nil && !errors.Is(err, store.ErrConflict) {
+			e.Logger.WarnContext(context.Background(), "lite-proxy: resolver swap audit failed",
+				"agent_id", agent.ID, "target_host", targetHost, "err", err.Error())
+		}
+	})
 }
 
 // LogScriptSessionMint records one autovault script-session mint. The
@@ -749,10 +796,12 @@ func (e *AuditEmitter) LogScriptSessionUse(ctx context.Context, agent *store.Age
 		Reason:     nilIfEmpty(reason),
 		DurationMS: int(duration.Milliseconds()),
 	}
-	if err := e.Store.LogAudit(ctx, entry); err != nil && !errors.Is(err, store.ErrConflict) {
-		e.Logger.WarnContext(ctx, "lite-proxy: script-session use audit failed",
-			"agent_id", agent.ID, "session_id", sess.ID, "err", err.Error())
-	}
+	e.enqueue(ctx, func() {
+		if err := e.Store.LogAudit(context.Background(), entry); err != nil && !errors.Is(err, store.ErrConflict) {
+			e.Logger.WarnContext(context.Background(), "lite-proxy: script-session use audit failed",
+				"agent_id", agent.ID, "session_id", sess.ID, "err", err.Error())
+		}
+	})
 }
 
 func nilIfEmpty(s string) *string {

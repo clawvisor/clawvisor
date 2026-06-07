@@ -2847,9 +2847,9 @@ func (s *Store) DeleteRuntimePlaceholder(ctx context.Context, placeholder, userI
 	return nil
 }
 
-func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE runtime_placeholders SET last_used_at = ?, use_count = use_count + 1 WHERE placeholder = ?`,
-		usedAt.UTC().Format(time.RFC3339), placeholder)
+func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time, count int) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_placeholders SET last_used_at = ?, use_count = use_count + ? WHERE placeholder = ?`,
+		usedAt.UTC().Format(time.RFC3339), count, placeholder)
 	if err != nil {
 		return err
 	}

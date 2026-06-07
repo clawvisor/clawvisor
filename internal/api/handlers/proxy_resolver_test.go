@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -873,4 +875,74 @@ func (rt *redirectTargetTransport) RoundTrip(req *http.Request) (*http.Response,
 	clone.URL.Scheme = "http"
 	clone.URL.Host = strings.TrimPrefix(rt.base, "http://")
 	return http.DefaultTransport.RoundTrip(clone)
+}
+
+func TestResolver_SQLiteHighVolumeContention(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
+	// Enable AuditEmitter to force DB writes on every request!
+	h.AuditEmitter = llmproxy.NewAuditEmitter(st, nil, nil)
+	t.Cleanup(func() {
+		h.AuditEmitter.Close()
+		h.Close()
+	})
+	h.Client = upstream.Client()
+	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
+
+	// Run multiple requests in parallel to stress the SQLite single connection pool.
+	const numRequests = 200
+	errChan := make(chan error, numRequests)
+	var wg sync.WaitGroup
+
+	startTime := time.Now()
+	for i := 0; i < numRequests; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
+			req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
+			req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+			req.Header.Set("Authorization", "Bearer "+placeholder)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				errChan <- fmt.Errorf("request %d failed with code %d: %s", id, rec.Code, rec.Body.String())
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	duration := time.Since(startTime)
+	t.Logf("Processed %d concurrent requests in %v", numRequests, duration)
+
+	close(errChan)
+
+	var errs []error
+	for err := range errChan {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		t.Fatalf("encountered errors under contention: %v", errs)
+	}
+
+	// Explicitly close the handler to flush all enqueued touch events to the DB
+	h.Close()
+
+	// Verify the placeholder use_count in the DB is exactly equal to numRequests
+	ph, err := st.GetRuntimePlaceholder(context.Background(), placeholder)
+	if err != nil {
+		t.Fatalf("GetRuntimePlaceholder error: %v", err)
+	}
+	if ph.UseCount != numRequests {
+		t.Errorf("expected placeholder use_count to be %d, got %d", numRequests, ph.UseCount)
+	}
 }

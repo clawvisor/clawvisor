@@ -2540,8 +2540,8 @@ func (s *Store) DeleteRuntimePlaceholder(ctx context.Context, placeholder, userI
 	return nil
 }
 
-func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE runtime_placeholders SET last_used_at = $1, use_count = use_count + 1 WHERE placeholder = $2`, usedAt, placeholder)
+func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time, count int) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE runtime_placeholders SET last_used_at = $1, use_count = use_count + $2 WHERE placeholder = $3`, usedAt, count, placeholder)
 	if err != nil {
 		return err
 	}
