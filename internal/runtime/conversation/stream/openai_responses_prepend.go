@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,6 +73,11 @@ func PrependOpenAIResponsesAssistantNotice(dst io.Writer, src io.Reader, notice 
 		}
 
 		if err := e.Encode(ev); err != nil {
+			return err
+		}
+	}
+	if !injected {
+		if err := writeOpenAIResponsesNoticeEnvelope(dst, notice); err != nil {
 			return err
 		}
 	}
@@ -171,25 +177,13 @@ func writeOpenAIResponsesNoticeEnvelope(dst io.Writer, notice string) error {
 }
 
 func rewriteOpenAIResponsesCompleted(raw []byte, notice string) ([]byte, bool, error) {
-	data := sseDataPayload(raw)
-	if data == "" {
-		return nil, false, nil
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(data), &payload); err != nil {
-		return nil, false, err
-	}
-	response, ok := payload["response"].(map[string]any)
-	if !ok {
-		return nil, false, nil
-	}
-	output, _ := response["output"].([]any)
-	response["output"] = append([]any{openAIResponsesNoticeItem(notice)}, output...)
-	encoded, err := json.Marshal(payload)
+	noticeRaw, err := json.Marshal(openAIResponsesNoticeItem(notice))
 	if err != nil {
 		return nil, false, err
 	}
-	return []byte(fmt.Sprintf("event: response.completed\ndata: %s\n\n", encoded)), true, nil
+	return rewriteFirstSSEDataPayload(raw, func(data []byte) ([]byte, bool, error) {
+		return insertNoticeIntoOutputArray(data, noticeRaw)
+	})
 }
 
 func openAIResponsesNoticeItem(notice string) map[string]any {
@@ -202,4 +196,74 @@ func openAIResponsesNoticeItem(notice string) map[string]any {
 			{"type": "output_text", "text": notice},
 		},
 	}
+}
+
+func rewriteFirstSSEDataPayload(raw []byte, rewrite func([]byte) ([]byte, bool, error)) ([]byte, bool, error) {
+	lines := bytes.SplitAfter(raw, []byte{'\n'})
+	offset := 0
+	for _, line := range lines {
+		trimmed := bytes.TrimRight(line, "\r\n")
+		if !bytes.HasPrefix(trimmed, []byte("data:")) {
+			offset += len(line)
+			continue
+		}
+		valueStart := offset + len("data:")
+		for valueStart < offset+len(trimmed) && (raw[valueStart] == ' ' || raw[valueStart] == '\t') {
+			valueStart++
+		}
+		valueEnd := offset + len(trimmed)
+		next, ok, err := rewrite(raw[valueStart:valueEnd])
+		if err != nil || !ok {
+			return nil, ok, err
+		}
+		out := make([]byte, 0, len(raw)+len(next)-(valueEnd-valueStart))
+		out = append(out, raw[:valueStart]...)
+		out = append(out, next...)
+		out = append(out, raw[valueEnd:]...)
+		return out, true, nil
+	}
+	return nil, false, nil
+}
+
+func insertNoticeIntoOutputArray(data []byte, noticeRaw []byte) ([]byte, bool, error) {
+	key := []byte(`"output"`)
+	keyPos := bytes.Index(data, key)
+	if keyPos < 0 {
+		return nil, false, nil
+	}
+	p := keyPos + len(key)
+	for p < len(data) && data[p] != ':' {
+		p++
+	}
+	if p >= len(data) {
+		return nil, false, nil
+	}
+	p++
+	for p < len(data) && (data[p] == ' ' || data[p] == '\t' || data[p] == '\n' || data[p] == '\r') {
+		p++
+	}
+	if p >= len(data) || data[p] != '[' {
+		return nil, false, nil
+	}
+	insertPos := p + 1
+	needsComma := false
+	for q := insertPos; q < len(data); q++ {
+		switch data[q] {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case ']':
+			needsComma = false
+		default:
+			needsComma = true
+		}
+		break
+	}
+	out := make([]byte, 0, len(data)+len(noticeRaw)+1)
+	out = append(out, data[:insertPos]...)
+	out = append(out, noticeRaw...)
+	if needsComma {
+		out = append(out, ',')
+	}
+	out = append(out, data[insertPos:]...)
+	return out, true, nil
 }

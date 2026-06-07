@@ -117,7 +117,8 @@ func PostprocessStream(
 
 	finalResult, finalErr := session.finalize(req.Context(), toolUses, verdictByTU)
 	if finalErr != nil {
-		err := fmt.Errorf("approval hold storage failed: %w", finalErr)
+		session.rollback(req.Context(), toolUses, verdictByTU)
+		err := finalErr
 		return llmproxy.PostprocessResult{
 			SkippedReason: err.Error(),
 		}, err

@@ -428,7 +428,7 @@ func buildCredentialedTaskScope(
 			dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 			if err != nil {
 				audit("block", "decision_error", err.Error(), "")
-				return policies.TaskScopeDecision{Allowed: false, Reason: "Clawvisor: authorization failed — " + err.Error()}
+				return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: "Clawvisor: authorization failed — " + err.Error()}
 			}
 			matchedTaskID := ""
 			if dec.Task != nil {
@@ -443,9 +443,9 @@ func buildCredentialedTaskScope(
 			case runtimedecision.VerdictDeny:
 				audit("block", string(dec.Source), dec.Reason, matchedTaskID)
 				return policies.TaskScopeDecision{
-					Allowed: false,
-					Reason:  "Clawvisor: " + dec.Reason,
-					TaskID:  matchedTaskID,
+					Kind:   policies.TaskScopeDecisionDeny,
+					Reason: "Clawvisor: " + dec.Reason,
+					TaskID: matchedTaskID,
 				}
 			case runtimedecision.VerdictNeedsApproval:
 				var approvalID string
@@ -462,7 +462,7 @@ func buildCredentialedTaskScope(
 					})
 					if herr != nil {
 						audit("block", "approval_hold_error", herr.Error(), "")
-						return policies.TaskScopeDecision{Allowed: false, Reason: "Clawvisor: approval unavailable — " + herr.Error()}
+						return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: "Clawvisor: approval unavailable — " + herr.Error()}
 					}
 					if held.Evicted != nil {
 						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, "")
@@ -472,6 +472,7 @@ func buildCredentialedTaskScope(
 				}
 				audit("block", string(dec.Source), dec.Reason, matchedTaskID)
 				return policies.TaskScopeDecision{
+					Kind:           policies.TaskScopeDecisionHold,
 					Allowed:        false,
 					Reason:         "Clawvisor: approval required — " + dec.Reason,
 					SubstituteText: approvaltext.ApprovalPrompt(tu, dec.Reason, approvalID),
@@ -480,29 +481,36 @@ func buildCredentialedTaskScope(
 			}
 		}
 		// Legacy TaskScope.Check + intent verify fallback.
-		if auth.Catalog != nil && auth.TaskScope != nil {
-			if resolved, ok := auth.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
-				dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, resolved.ServiceID, resolved.ActionID)
-				if !dec.Allowed {
-					audit("block", "task_scope_denied", dec.Reason, "")
-					return policies.TaskScopeDecision{
-						Allowed: false,
-						Reason:  "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
-					}
-				}
-				if reason, ok := runIntentVerify(ctx, auth.IntentVerifier, dec, resolved, tu); !ok {
-					audit("block", "intent_verification_failed", reason, dec.TaskID)
-					return policies.TaskScopeDecision{
-						Allowed: false,
-						Reason:  "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason,
-						TaskID:  dec.TaskID,
-					}
-				}
-				if dec.MatchedTask != nil && rewrite.Store != nil {
-					_, _, _ = tasklifetime.SlideTaskExpiry(ctx, rewrite.Store, dec.MatchedTask, time.Now().UTC())
-				}
-				return policies.TaskScopeDecision{}
+		if auth.TaskScope != nil {
+			if auth.Catalog == nil {
+				audit("block", "unresolved_action", "credentialed target catalog unavailable", "")
+				return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: "Clawvisor: credentialed target could not be resolved"}
 			}
+			resolved, ok := auth.Catalog.Resolve(v.Host, v.Method, v.Path)
+			if !ok {
+				audit("block", "unresolved_action", "credentialed target not found in catalog", "")
+				return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: "Clawvisor: credentialed target could not be resolved"}
+			}
+			dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, resolved.ServiceID, resolved.ActionID)
+			if !dec.Allowed {
+				audit("block", "task_scope_denied", dec.Reason, "")
+				return policies.TaskScopeDecision{
+					Kind:   policies.TaskScopeDecisionHold,
+					Reason: "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
+				}
+			}
+			if reason, ok := runIntentVerify(ctx, auth.IntentVerifier, dec, resolved, tu); !ok {
+				audit("block", "intent_verification_failed", reason, dec.TaskID)
+				return policies.TaskScopeDecision{
+					Kind:   policies.TaskScopeDecisionDeny,
+					Reason: "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason,
+					TaskID: dec.TaskID,
+				}
+			}
+			if dec.MatchedTask != nil && rewrite.Store != nil {
+				_, _, _ = tasklifetime.SlideTaskExpiry(ctx, rewrite.Store, dec.MatchedTask, time.Now().UTC())
+			}
+			return policies.TaskScopeDecision{}
 		}
 		return policies.TaskScopeDecision{}
 	}
@@ -570,19 +578,19 @@ func detectShellSpecials(tu conversation.ToolUse, agent llmproxy.AgentContext, a
 	if !toolnames.IsShellToolName(tu.Name) {
 		return false, false
 	}
-	if !shellpolicy.ReadOnlyShellCommandsAllowed(tu.Name, agent.AgentID, auth.ToolRules) {
-		return false, false
-	}
 	cmd := shellpolicy.ShellCommandFromInput(tu.Input)
 	if cmd == "" {
 		return false, false
 	}
-	readOnly, _ := inspector.IsReadOnlyBashCommand(cmd)
 	if toolnames.SensitiveFileGuardEnabled(tu.Name, agent.AgentID, auth.ToolRules) {
 		if _, _, hit := inspector.CommandReferencesSensitivePath(cmd); hit {
 			return false, true
 		}
 	}
+	if !shellpolicy.ReadOnlyShellCommandsAllowed(tu.Name, agent.AgentID, auth.ToolRules) {
+		return false, false
+	}
+	readOnly, _ := inspector.IsReadOnlyBashCommand(cmd)
 	return readOnly, false
 }
 

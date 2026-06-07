@@ -156,6 +156,7 @@ func (d *finalizerDeps) BuildCoalescedHold(captures []pipeline.HoldCapture) pipe
 				ev.InspectorVerdict = InspectorSnapshot(p.Inspector)
 			} else {
 				ev.ToolUse = primaryCap.ToolUse
+				ev.InspectorVerdict = primaryCap.InspectorSnapshot
 			}
 			return ev
 		},
@@ -172,6 +173,7 @@ func (d *finalizerDeps) BuildCoalescedHold(captures []pipeline.HoldCapture) pipe
 				ev.InspectorVerdict = InspectorSnapshot(p.Inspector)
 			} else {
 				ev.ToolUse = c.ToolUse
+				ev.InspectorVerdict = c.InspectorSnapshot
 			}
 			return ev
 		},

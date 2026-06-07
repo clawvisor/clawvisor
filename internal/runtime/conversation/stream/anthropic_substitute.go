@@ -21,11 +21,7 @@ import (
 func SubstituteAnthropicResponse(dst io.Writer, src io.Reader, text string) error {
 	// Drain src to keep the upstream connection clean (some pools track
 	// drained vs cancelled). The content is discarded.
-	if _, err := io.Copy(io.Discard, src); err != nil {
-		// Drain failure doesn't fail the substitution; we still emit the
-		// synthetic response. Substitution is best-effort after the
-		// caller has decided to replace the upstream body.
-	}
+	_, _ = io.Copy(io.Discard, src)
 
 	events := []struct {
 		name    string

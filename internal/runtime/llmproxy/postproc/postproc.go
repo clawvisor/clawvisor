@@ -2,6 +2,7 @@ package postproc
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -38,8 +39,9 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	session := newPostprocessSession(cfg)
 
 	var preExtracted []conversation.ToolUse
+	var verdictByTU map[string]conversation.ToolUseVerdict
 	failClosed := func(reason string) llmproxy.PostprocessResult {
-		session.rollback(req.Context(), preExtracted)
+		session.rollback(req.Context(), preExtracted, verdictByTU)
 		return llmproxy.PostprocessResult{
 			Body:          nil,
 			ContentType:   contentType,
@@ -62,7 +64,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	innerEval := session.evaluator(req, rewriter.Name(), preExtracted)
 
 	// Capture per-tool verdicts so the finalizer can classify them.
-	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(preExtracted))
+	verdictByTU = make(map[string]conversation.ToolUseVerdict, len(preExtracted))
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
 		verdictByTU[tu.ID] = v
@@ -218,9 +220,7 @@ func flushDirect(ctx context.Context, cfg llmproxy.PostprocessConfig, auditBuf *
 // evaluator appends audit rows through emit for the owning session.
 func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, emit func(conversation.AuditEvent)) conversation.ToolUseEvaluator {
 	if cfg.ToolUseEvaluatorFactory == nil {
-		return func(conversation.ToolUse) conversation.ToolUseVerdict {
-			return conversation.ToolUseVerdict{Allowed: true, Outcome: conversation.OutcomeAllow}
-		}
+		panic(fmt.Sprintf("postproc: ToolUseEvaluatorFactory is nil for provider %q", provider))
 	}
 	return cfg.ToolUseEvaluatorFactory(req, cfg, provider, toolUses, emit)
 }

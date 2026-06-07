@@ -98,9 +98,11 @@ func EvaluateToolUses(
 			}
 		}
 		if winner == nil {
-			// No evaluator claimed this tool_use — default to Allow.
-			// The inspector chain has its own fail-closed rules that
-			// emit Deny via the evaluator, not by absence.
+			// Compatibility fail-open default: no evaluator claimed
+			// this tool_use, so it is allowed. Every gating evaluator
+			// must explicitly claim its trigger cases with Allow, Deny,
+			// Hold, or Rewrite; returning Skip delegates to this
+			// pass-through behavior.
 			result.PerToolUse[tu.ID] = ToolUseVerdict{Outcome: OutcomeAllow}
 		} else {
 			result.PerToolUse[tu.ID] = *winner

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 )
@@ -43,11 +44,12 @@ func (m *captureMutator) ReplaceWithText(text string) error {
 // coalescing decisions (CoalesceHolds, ShouldCoalesce) over the full
 // set of per-tool verdicts before emitting audit rows.
 //
-// Continuation: ContinueSignal carries structured synthetic turn
-// blocks, which the conversation.ToolUseVerdict surfaces as
-// stringified ContinueWithToolResult. The bridge concatenates the
-// continuation's tool-result block JSON. The orchestrator guarantees
-// only one tool_use carries Continue, so siblings fall back to Allowed.
+// Continuation: ContinueSignal carries structured synthetic tool_result
+// blocks. The bridge extracts their content payload for
+// ContinueWithToolResult because the provider continuation builders
+// wrap that string in the correct provider-specific tool_result shape.
+// The orchestrator guarantees only one tool_use carries Continue, so
+// siblings fall back to Allowed.
 func RunToolUseEvaluators(
 	ctx context.Context,
 	res ReadOnlyResponse,
@@ -91,20 +93,42 @@ func RunToolUseEvaluators(
 		// ContinueSignal carries structured synthetic-turn blocks; the
 		// rewriter reads the flattened ContinueWithToolResult string.
 		if v.Continue != nil {
-			switch len(v.Continue.SyntheticToolResults) {
-			case 0:
-			case 1:
-				v.ContinueWithToolResult = string(v.Continue.SyntheticToolResults[0])
-			default:
-				combined, err := json.Marshal(v.Continue.SyntheticToolResults)
-				if err != nil {
-					return conversation.ToolUseVerdict{Allowed: false, Outcome: OutcomeDeny, Reason: "Clawvisor: invalid continuation tool results: " + err.Error()}
-				}
-				v.ContinueWithToolResult = string(combined)
+			text, err := continuationToolResultContent(v.Continue.SyntheticToolResults)
+			if err != nil {
+				return conversation.ToolUseVerdict{Allowed: false, Outcome: OutcomeDeny, Reason: "Clawvisor: invalid continuation tool results: " + err.Error()}
 			}
+			v.ContinueWithToolResult = text
 			v.PrependAssistantNotice = v.Continue.PrependNotice
 		}
 		return v
 	}
 	return eval, result, nil
+}
+
+func continuationToolResultContent(results []json.RawMessage) (string, error) {
+	parts := make([]string, 0, len(results))
+	for _, raw := range results {
+		if len(raw) == 0 {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil {
+			parts = append(parts, s)
+			continue
+		}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			return "", err
+		}
+		if content, ok := obj["content"]; ok {
+			if err := json.Unmarshal(content, &s); err == nil {
+				parts = append(parts, s)
+				continue
+			}
+			parts = append(parts, string(content))
+			continue
+		}
+		parts = append(parts, string(raw))
+	}
+	return strings.Join(parts, "\n"), nil
 }

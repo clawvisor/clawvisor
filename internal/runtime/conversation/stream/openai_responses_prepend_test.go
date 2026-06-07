@@ -32,7 +32,7 @@ func TestPrependOpenAIResponsesAssistantNotice_NoticeAtIndex0(t *testing.T) {
 		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","status":"completed"}}`,
 		``,
 		`event: response.completed`,
-		`data: {"type":"response.completed","response":{"id":"resp_x"}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_x","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello"}]}]}}`,
 		``,
 	}, "\n")
 	const notice = "[Clawvisor] notice"

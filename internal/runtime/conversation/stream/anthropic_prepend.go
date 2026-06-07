@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // PrependAnthropicAssistantNotice consumes an Anthropic SSE stream from
@@ -81,8 +82,11 @@ func PrependAnthropicAssistantNotice(dst io.Writer, src io.Reader, notice string
 		// at or after the injected index by +1 so upstream blocks slot
 		// in after the notice while leading thinking blocks keep their
 		// original signed order.
-		if injected && hasAnthropicIndex(ev.Kind) && ev.Meta.AnthropicIndex >= noticeIndex {
+		if injected && hasAnthropicIndex(ev.Kind) && (ev.Meta.AnthropicIndex < 0 || ev.Meta.AnthropicIndex >= noticeIndex) {
 			shifted := ev.Meta.AnthropicIndex + 1
+			if ev.Meta.AnthropicIndex < 0 {
+				shifted = noticeIndex + 1
+			}
 			ev.FieldPatches = append(ev.FieldPatches, FieldPatch{
 				JSONPath: "index",
 				NewValue: json.RawMessage(fmt.Sprintf("%d", shifted)),
@@ -91,6 +95,11 @@ func PrependAnthropicAssistantNotice(dst io.Writer, src io.Reader, notice string
 		}
 
 		if err := e.Encode(ev); err != nil {
+			return err
+		}
+	}
+	if !injected {
+		if err := writeAnthropicNoticeBlock(e, notice, noticeIndex); err != nil {
 			return err
 		}
 	}
@@ -147,17 +156,17 @@ func isAnthropicThinkingBlockStart(ev Event) bool {
 }
 
 func sseDataPayload(raw []byte) string {
-	var out string
+	var out strings.Builder
 	lines := bytes.Split(raw, []byte{'\n'})
 	for _, line := range lines {
 		if bytes.HasPrefix(line, []byte("data:")) {
-			if out != "" {
-				out += "\n"
+			if out.Len() > 0 {
+				out.WriteByte('\n')
 			}
-			out += string(bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:"))))
+			out.Write(bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:"))))
 		}
 	}
-	return out
+	return out.String()
 }
 
 // hasAnthropicIndex reports whether the event kind carries an `index`

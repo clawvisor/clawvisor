@@ -84,10 +84,6 @@ type AuthorizationHoldResult struct {
 	// Err, when non-empty, signals a hold storage failure. The policy
 	// returns Deny.
 	Err string
-	// EvictedSummary is non-empty when the hold displaced an older
-	// pending approval; the policy emits a secondary audit row via
-	// fact.
-	EvictedSummary string
 }
 
 // NewAuthorizationPolicy constructs the policy. Nil inspector or
@@ -168,13 +164,16 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 			Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 		}, nil
 	case runtimedecision.VerdictNeedsApproval:
-		if dec.Source == runtimedecision.SourceTaskScopeMissing && (in.ReadOnlyShellCommand || in.ShellPoll) {
+		if in.ShellPoll {
+			return pipeline.ToolUseVerdict{
+				Outcome: pipeline.OutcomeAllow,
+				Reason:  "background-shell poll",
+				Facts:   []pipeline.EvaluationFact{pipeline.AuthorizationFact{Outcome: "shell_poll_pass_through"}, authFact, taskScopeFact},
+			}, nil
+		}
+		if dec.Source == runtimedecision.SourceTaskScopeMissing && in.ReadOnlyShellCommand {
 			reason := "read-only shell command"
 			outcome := "readonly_shell_pass_through"
-			if in.ShellPoll {
-				reason = "background-shell poll"
-				outcome = "shell_poll_pass_through"
-			}
 			return pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeAllow,
 				Reason:  reason,

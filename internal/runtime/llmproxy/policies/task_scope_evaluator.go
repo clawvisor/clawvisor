@@ -39,6 +39,7 @@ type TaskScopeResolver func(ctx context.Context, tu conversation.ToolUse) TaskSc
 // credentialed tool_use. Host adapters translate from their task-scope
 // systems into this shape before the evaluator sees it.
 type TaskScopeDecision struct {
+	Kind           TaskScopeDecisionKind
 	Allowed        bool
 	TaskID         string
 	Reason         string
@@ -47,6 +48,18 @@ type TaskScopeDecision struct {
 	MatchedTask    *store.Task
 	MatchedAction  *store.TaskAction
 }
+
+// TaskScopeDecisionKind disambiguates hard denials from approvable
+// holds. Empty preserves the historical resolver contract: Allowed
+// means allow; non-empty Reason with !Allowed means hold.
+type TaskScopeDecisionKind string
+
+const (
+	TaskScopeDecisionSkip  TaskScopeDecisionKind = "skip"
+	TaskScopeDecisionAllow TaskScopeDecisionKind = "allow"
+	TaskScopeDecisionDeny  TaskScopeDecisionKind = "deny"
+	TaskScopeDecisionHold  TaskScopeDecisionKind = "hold"
+)
 
 // NewTaskScopeEvaluator constructs the evaluator. nil resolver → Skip
 // on every tool_use.
@@ -88,7 +101,7 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 	dec := e.resolver(ctx, tu)
-	if dec.Reason == "" {
+	if dec.Kind == "" && dec.Reason == "" {
 		// Resolver chose not to act on this tool_use (e.g., not an
 		// API call). Let downstream evaluators / default-Allow handle it.
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
@@ -101,9 +114,27 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 		Ambiguous:     dec.Ambiguous,
 	}
 
-	if dec.Allowed {
+	kind := dec.Kind
+	if kind == "" {
+		if dec.Allowed {
+			kind = TaskScopeDecisionAllow
+		} else {
+			kind = TaskScopeDecisionHold
+		}
+	}
+
+	switch kind {
+	case TaskScopeDecisionSkip:
+		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
+	case TaskScopeDecisionAllow:
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeAllow,
+			Facts:   []pipeline.EvaluationFact{fact},
+		}, nil
+	case TaskScopeDecisionDeny:
+		return pipeline.ToolUseVerdict{
+			Outcome: pipeline.OutcomeDeny,
+			Reason:  dec.Reason,
 			Facts:   []pipeline.EvaluationFact{fact},
 		}, nil
 	}

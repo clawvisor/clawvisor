@@ -76,11 +76,11 @@ func (s *postprocessSession) finalize(ctx context.Context, toolUses []conversati
 	return pipeline.FinalizeResult{}, nil
 }
 
-func (s *postprocessSession) rollback(ctx context.Context, toolUses []conversation.ToolUse) {
+func (s *postprocessSession) rollback(ctx context.Context, toolUses []conversation.ToolUse, verdictByTU map[string]conversation.ToolUseVerdict) {
 	if s == nil || s.finalizer == nil {
 		return
 	}
-	s.feed(toolUses, nil)
+	s.feed(toolUses, verdictByTU)
 	s.finalizer.Rollback(ctx)
 }
 

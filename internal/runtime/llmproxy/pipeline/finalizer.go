@@ -274,9 +274,6 @@ func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, bool, 
 	coalesced := f.deps.BuildCoalescedHold(f.captures)
 	submit, err := f.deps.SubmitHold(ctx, coalesced.Payload)
 	if err != nil {
-		if c, ok := firstReplayableCapture(f.captures); ok {
-			f.deps.WriteAudit(ctx, f.deps.BuildReplayFailedAudit(c, err))
-		}
 		return FinalizeResult{}, false, nil
 	}
 	if submit.Evicted != nil && len(f.captures) > 0 {
@@ -334,15 +331,6 @@ func (f *Finalizer) flushAudits(ctx context.Context) {
 		f.deps.WriteAudit(ctx, ev)
 	}
 	f.audits = nil
-}
-
-func firstReplayableCapture(captures []HoldCapture) (HoldCapture, bool) {
-	for _, c := range captures {
-		if c.Payload != nil {
-			return c, true
-		}
-	}
-	return HoldCapture{}, false
 }
 
 // shouldCoalesce decides whether the post-pass should replace the

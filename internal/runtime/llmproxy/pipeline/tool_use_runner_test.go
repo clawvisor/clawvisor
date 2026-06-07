@@ -144,7 +144,7 @@ func TestBridgeToolUseEvaluator_ContinueSurfacesAsToolResult(t *testing.T) {
 	}
 
 	v := eval(tools[0])
-	if v.ContinueWithToolResult != `{"type":"tool_result","content":"ok"}` {
+	if v.ContinueWithToolResult != `ok` {
 		t.Errorf("ContinueWithToolResult = %q", v.ContinueWithToolResult)
 	}
 	if v.PrependAssistantNotice != "auto-approved" {
