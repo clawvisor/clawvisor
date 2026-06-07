@@ -4,9 +4,10 @@
 // so handlers and llmproxy's own tests can share the same evaluator
 // construction without introducing a policies -> llmproxy import cycle.
 //
-// The factory composes the six-stage chain (ControlToolUseEvaluator
-// + ScriptSessionEvaluator + InspectorChain with TriggerMissAuthorizer
-// + TaskScopeEvaluator + IntentVerifyEvaluator + CredentialRewriteEvaluator)
+// The factory composes the seven-stage chain (ControlToolUseEvaluator
+// + ScriptSessionEvaluator + AuthorizationPolicy + InspectorChain with
+// TriggerMissAuthorizer + TaskScopeEvaluator + IntentVerifyEvaluator +
+// CredentialRewriteEvaluator)
 // and runs the whole sibling tool_use set once through
 // pipeline.RunToolUseEvaluators. The returned evaluator is a verdict
 // lookup; audit rows and buffered holds are emitted through the typed
@@ -61,7 +62,6 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		ScriptSession: buildScriptSessionResolver(cfg.RewriteContext),
 		Inspector:     cfg.Inspector,
 		Boundary:      buildBoundaryResolver(cfg.AgentContext, cfg.Store),
-		ReadOnlyShell: buildReadOnlyShellResolver(cfg.AgentContext, cfg.AuthorizationContext),
 		Authorization: buildAuthorizationResolver(cfg.AgentContext, cfg.AuditContext, cfg.AuthorizationContext, cfg.ApprovalContext, cfg.RewriteContext, provider),
 		TaskScope:     credentialedTaskScope,
 		Rewrite:       buildRewriteResolver(cfg.AgentContext, cfg.RewriteContext),
@@ -657,25 +657,6 @@ func (h *authorizationHoldHandler) Hold(ctx context.Context, req policies.Author
 		ApprovalID:     approvalID,
 		SubstituteText: approvaltext.ApprovalPrompt(req.ToolUse, req.Decision.Reason, approvalID),
 	}, nil
-}
-
-// buildReadOnlyShellResolver wires ReadOnlyShellPassthroughPolicy +
-// SensitivePathPolicy to AgentID + ToolRules.
-//
-// AgentContext supplies identity, and AuthorizationContext supplies the
-// rule set. Nothing else is reachable from this builder's scope.
-func buildReadOnlyShellResolver(agent llmproxy.AgentContext, auth llmproxy.AuthorizationContext) policies.ReadOnlyShellResolver {
-	agentID := agent.AgentID
-	toolRules := auth.ToolRules
-	if agentID == "" && toolRules == nil {
-		return nil
-	}
-	return func(_ context.Context, _ conversation.ToolUse) *policies.ReadOnlyShellInputs {
-		return &policies.ReadOnlyShellInputs{
-			AgentID:   agentID,
-			ToolRules: toolRules,
-		}
-	}
 }
 
 // buildScriptSessionResolver pins the resolver to the proxy's

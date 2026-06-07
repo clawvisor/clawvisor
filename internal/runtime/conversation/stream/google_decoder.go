@@ -53,6 +53,9 @@ func (d *GoogleDecoder) Next() (Event, error) {
 		}
 
 		if strings.HasPrefix(trimmed, ":") {
+			if len(d.dataLines) > 0 {
+				continue
+			}
 			raw := append([]byte(nil), d.rawBuf.Bytes()...)
 			d.rawBuf.Reset()
 			return Event{

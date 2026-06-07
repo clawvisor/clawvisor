@@ -29,6 +29,7 @@ func TestOpenAIChatRoundTrip_ByteIdentical(t *testing.T) {
 				``,
 				`data: [DONE]`,
 				``,
+				``,
 			}, "\n"),
 		},
 		{
@@ -38,6 +39,7 @@ func TestOpenAIChatRoundTrip_ByteIdentical(t *testing.T) {
 				``,
 				`: vendor-ping`,
 				`data: [DONE]`,
+				``,
 				``,
 			}, "\n"),
 		},

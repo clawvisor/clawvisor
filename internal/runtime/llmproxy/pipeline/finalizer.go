@@ -274,10 +274,14 @@ func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, bool, 
 	coalesced := f.deps.BuildCoalescedHold(f.captures)
 	submit, err := f.deps.SubmitHold(ctx, coalesced.Payload)
 	if err != nil {
-		return FinalizeResult{}, false, nil
+		return FinalizeResult{}, true, err
 	}
 	if submit.Evicted != nil && len(f.captures) > 0 {
-		primary := orderCapturesForCoalescedAudit(f.captures)[0]
+		ordered := orderCapturesForCoalescedAudit(f.captures)
+		if len(ordered) == 0 {
+			return FinalizeResult{}, true, nil
+		}
+		primary := ordered[0]
 		if coalesced.EvictedAuditFor != nil {
 			f.deps.WriteAudit(ctx, coalesced.EvictedAuditFor(primary, submit.EvictedApprovalID))
 		}

@@ -296,7 +296,7 @@ func TestTryReleasePendingApproval_CoalescedAllowEmitsAllCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
+	release := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
 		Body:            []byte(`{"messages":[{"role":"user","content":"approve ` + held.Pending.ID + `"}]}`),
@@ -304,10 +304,10 @@ func TestTryReleasePendingApproval_CoalescedAllowEmitsAllCalls(t *testing.T) {
 		PendingApproval: cache,
 		Inspector:       inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 	})
-	if !result.Handled || result.Decision != "allow" || result.Outcome != "approval_released" {
-		t.Fatalf("coalesced approve should release, got %+v", result)
+	if !release.Handled || release.Decision != "allow" || release.Outcome != "approval_released" {
+		t.Fatalf("coalesced approve should release, got %+v", release)
 	}
-	bodyStr := string(result.Body)
+	bodyStr := string(release.Body)
 	if !strings.Contains(bodyStr, `"id":"toolu_a"`) || !strings.Contains(bodyStr, `"id":"toolu_b"`) {
 		t.Fatalf("coalesced release response must carry every approved tool_use; got: %s", bodyStr)
 	}
@@ -338,7 +338,7 @@ func TestTryReleasePendingApproval_CoalescedDenyProducesTextOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
+	release := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
 		Body:            []byte(`{"messages":[{"role":"user","content":"deny ` + held.Pending.ID + `"}]}`),
@@ -346,10 +346,10 @@ func TestTryReleasePendingApproval_CoalescedDenyProducesTextOnly(t *testing.T) {
 		PendingApproval: cache,
 		Inspector:       inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 	})
-	if !result.Handled || result.Decision != "deny" || result.Outcome != "approval_denied" {
-		t.Fatalf("coalesced deny should be handled and denied, got %+v", result)
+	if !release.Handled || release.Decision != "deny" || release.Outcome != "approval_denied" {
+		t.Fatalf("coalesced deny should be handled and denied, got %+v", release)
 	}
-	bodyStr := string(result.Body)
+	bodyStr := string(release.Body)
 	if strings.Contains(bodyStr, `"type":"tool_use"`) {
 		t.Fatalf("denied coalesced release should carry no tool_use blocks; got: %s", bodyStr)
 	}
@@ -422,7 +422,7 @@ func TestPostprocess_CoalescedReleasePreservesTurnOrder(t *testing.T) {
 	}
 	// The release synthesis pulls from AllHolds() too; confirm the
 	// wire-level call order matches as well.
-	result := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
+	release := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
 		Body:            []byte(`{"messages":[{"role":"user","content":"approve ` + hold.ID + `"}]}`),
@@ -433,13 +433,13 @@ func TestPostprocess_CoalescedReleasePreservesTurnOrder(t *testing.T) {
 		RewriteOpts:     inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:    llmproxy.NewMemoryCallerNonceCache(time.Minute),
 	})
-	if !result.Handled || result.Decision != "allow" {
-		t.Fatalf("coalesced release should allow, got %+v", result)
+	if !release.Handled || release.Decision != "allow" {
+		t.Fatalf("coalesced release should allow, got %+v", release)
 	}
-	bashAt := strings.Index(string(result.Body), `"id":"toolu_bash"`)
-	fetchAt := strings.Index(string(result.Body), `"id":"toolu_fetch"`)
+	bashAt := strings.Index(string(release.Body), `"id":"toolu_bash"`)
+	fetchAt := strings.Index(string(release.Body), `"id":"toolu_fetch"`)
 	if bashAt < 0 || fetchAt < 0 {
-		t.Fatalf("release body missing held tool_use IDs: %s", result.Body)
+		t.Fatalf("release body missing held tool_use IDs: %s", release.Body)
 	}
 	if bashAt > fetchAt {
 		t.Fatalf("release body reordered tool_uses: bash@%d fetch@%d (want bash first)", bashAt, fetchAt)
@@ -447,11 +447,9 @@ func TestPostprocess_CoalescedReleasePreservesTurnOrder(t *testing.T) {
 }
 
 // Regression: when the coalesced Hold itself fails (Redis down, ID
-// gen panic), Postprocess must fall back to writing the per-tool
-// holds via legacy replay so the first-pass body's prompts resolve
-// to real cache entries. With pass-1 buffering the coalesced Hold is
-// the FIRST call against the underlying cache; failure triggers
-// legacy replay of the buffered per-tool holds.
+// gen panic), Postprocess must fail closed rather than replaying
+// individual holds. The failed write might have partially committed
+// in a durable cache, so replay risks duplicate approvals.
 func TestPostprocess_CoalescedHoldFailureFallsBackToPerToolHolds(t *testing.T) {
 	body := []byte(`{
 		"id":"msg_1",
@@ -473,7 +471,7 @@ func TestPostprocess_CoalescedHoldFailureFallsBackToPerToolHolds(t *testing.T) {
 	// shape to exercise the fallback path.
 	cache := &flakyHoldCache{inner: inner, failFirst: 1}
 
-	_ = Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+	result := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
@@ -500,14 +498,15 @@ func TestPostprocess_CoalescedHoldFailureFallsBackToPerToolHolds(t *testing.T) {
 		},
 	})
 
-	// The coalesced Hold failed; legacy replay then wrote both
-	// per-tool holds. Final occupancy: 2.
-	got := inner.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
-	if len(got) != 2 {
-		t.Fatalf("expected 2 per-tool holds after coalesced fallback; got %d: %+v", len(got), got)
+	if result.SkippedReason == "" {
+		t.Fatal("expected coalesced hold failure to fail closed")
 	}
-	if got[0].IsCoalesced() || got[1].IsCoalesced() {
-		t.Fatalf("fallback holds must be the per-tool singletons, not coalesced: %+v", got)
+	// The coalesced Hold failed; fail closed rather than replaying
+	// per-tool holds because the failed submit may have partially
+	// committed in the durable cache.
+	got := inner.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	if len(got) != 0 {
+		t.Fatalf("expected no replayed holds after coalesced failure; got %d: %+v", len(got), got)
 	}
 }
 

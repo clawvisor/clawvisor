@@ -374,7 +374,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "pipeline_error"
 			auditReason = err.Error()
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error. Please retry; details are in the Clawvisor audit log.")
 			return
 		}
 		if result.DenyReason != "" {
@@ -536,7 +536,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "pipeline_error"
 			auditReason = err.Error()
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error. Please retry; details are in the Clawvisor audit log.")
 			return
 		}
 		if result.DenyReason != "" {
@@ -616,7 +616,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "pipeline_error"
 			auditReason = err.Error()
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error. Please retry; details are in the Clawvisor audit log.")
 			return
 		}
 		if result.DenyReason != "" {
@@ -717,7 +717,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "pipeline_error"
 			auditReason = err.Error()
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error. Please retry; details are in the Clawvisor audit log.")
 			return
 		}
 		if result.DenyReason != "" {
@@ -802,7 +802,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "pipeline_error"
 			auditReason = err.Error()
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error: "+err.Error()+". Please retry.")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error. Please retry; details are in the Clawvisor audit log.")
 			return
 		}
 		for k, v := range preResult.AuditParams {
@@ -841,7 +841,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"reason", auditReason,
 			)
 			if len(sc.Body) == 0 {
-				h.writeLiteProxyError(w, r, agent, provider, body, requestID, sc.StatusCode, "APPROVAL_RELEASE_ERROR", auditReason)
+				h.writeLiteProxyError(w, r, agent, provider, body, requestID, sc.StatusCode, "APPROVAL_RELEASE_ERROR",
+					"couldn't resolve that approval reply. Please retry; details are in the Clawvisor audit log.")
 				return
 			}
 			for k, v := range sc.Headers {
@@ -1197,7 +1198,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 						"couldn't process the upstream stream. Please retry; details are in the Clawvisor audit log.")
 				} else {
 					llmproxy.WriteStreamError(streamW, r, provider, processed.StreamingResult,
-						"[Clawvisor] The upstream connection was lost before the response completed. The content above may be incomplete. Please retry.")
+						"[Clawvisor] The upstream connection was lost before the response completed. The content above may be incomplete. Please retry; details are in the Clawvisor audit log.")
 				}
 				return
 			}

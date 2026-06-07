@@ -83,6 +83,19 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 		}
 		result.Verdicts = append(result.Verdicts, PolicyVerdict{Name: policy.Name(), Verdict: verdict})
 
+		switch verdict.Outcome {
+		case OutcomeDeny, OutcomeAllow, OutcomeSkip:
+			if verdict.ShortCircuit != nil {
+				return nil, fmt.Errorf("policy %q returned %s outcome with ShortCircuit payload", policy.Name(), verdict.Outcome)
+			}
+		case OutcomeShortCircuit:
+			if verdict.ShortCircuit == nil {
+				return nil, fmt.Errorf("policy %q returned ShortCircuit outcome with nil ShortCircuit payload", policy.Name())
+			}
+		default:
+			return nil, fmt.Errorf("policy %q returned unsupported outcome %q for RunPre", policy.Name(), verdict.Outcome)
+		}
+
 		// Merge audit fields regardless of outcome.
 		for k, v := range verdict.AuditParams {
 			result.AuditParams[k] = v
@@ -94,27 +107,16 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 
 		switch verdict.Outcome {
 		case OutcomeDeny:
-			if verdict.ShortCircuit != nil {
-				return nil, fmt.Errorf("policy %q returned Deny outcome with ShortCircuit payload", policy.Name())
-			}
 			result.DenyReason = verdict.Reason
 			result.DeniedBy = policy.Name()
 			result.FinalBody = mut.Body()
 			return result, nil
 		case OutcomeShortCircuit:
-			if verdict.ShortCircuit == nil {
-				return nil, fmt.Errorf("policy %q returned ShortCircuit outcome with nil ShortCircuit payload", policy.Name())
-			}
 			result.ShortCircuit = verdict.ShortCircuit
 			result.FinalBody = mut.Body()
 			return result, nil
 		case OutcomeAllow, OutcomeSkip:
-			if verdict.ShortCircuit != nil {
-				return nil, fmt.Errorf("policy %q returned %s outcome with ShortCircuit payload", policy.Name(), verdict.Outcome)
-			}
 			// Continue chain.
-		default:
-			return nil, fmt.Errorf("policy %q returned unsupported outcome %q for RunPre", policy.Name(), verdict.Outcome)
 		}
 	}
 

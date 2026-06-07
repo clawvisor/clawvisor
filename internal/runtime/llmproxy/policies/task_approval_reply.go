@@ -57,7 +57,7 @@ func (TaskApprovalReply) Name() string { return "task_approval_reply" }
 // reply isn't a task verb; OutcomeAllow with the body replaced when
 // the rewrite fires; OutcomeDeny on a malformed reply.
 func (p *TaskApprovalReply) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
-	if p.cache == nil || p.agent == nil || p.rewriter == nil {
+	if isNilInterface(p.cache) || p.agent == nil || p.rewriter == nil {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 

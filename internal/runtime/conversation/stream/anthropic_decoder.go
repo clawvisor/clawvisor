@@ -155,7 +155,9 @@ func (d *AnthropicDecoder) flushEvent() (Event, bool) {
 		var probe struct {
 			Index *int `json:"index"`
 		}
-		if err := json.Unmarshal([]byte(data), &probe); err == nil && probe.Index != nil {
+		if err := json.Unmarshal([]byte(data), &probe); err != nil {
+			ev.Kind = KindUnknown
+		} else if probe.Index != nil {
 			ev.Meta.AnthropicIndex = *probe.Index
 		}
 	}

@@ -226,22 +226,15 @@ func rewriteFirstSSEDataPayload(raw []byte, rewrite func([]byte) ([]byte, bool, 
 }
 
 func insertNoticeIntoOutputArray(data []byte, noticeRaw []byte) ([]byte, bool, error) {
-	key := []byte(`"output"`)
-	keyPos := bytes.Index(data, key)
-	if keyPos < 0 {
+	responseStart, responseEnd, ok := findObjectFieldValue(data, "response")
+	if !ok {
 		return nil, false, nil
 	}
-	p := keyPos + len(key)
-	for p < len(data) && data[p] != ':' {
-		p++
-	}
-	if p >= len(data) {
+	outputStart, _, ok := findObjectFieldValue(data[responseStart:responseEnd], "output")
+	if !ok {
 		return nil, false, nil
 	}
-	p++
-	for p < len(data) && (data[p] == ' ' || data[p] == '\t' || data[p] == '\n' || data[p] == '\r') {
-		p++
-	}
+	p := responseStart + outputStart
 	if p >= len(data) || data[p] != '[' {
 		return nil, false, nil
 	}
@@ -266,4 +259,47 @@ func insertNoticeIntoOutputArray(data []byte, noticeRaw []byte) ([]byte, bool, e
 	}
 	out = append(out, data[insertPos:]...)
 	return out, true, nil
+}
+
+func findObjectFieldValue(data []byte, key string) (int, int, bool) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return 0, 0, false
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return 0, 0, false
+	}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return 0, 0, false
+		}
+		k, ok := keyTok.(string)
+		if !ok {
+			return 0, 0, false
+		}
+		keyEnd := int(dec.InputOffset())
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return 0, 0, false
+		}
+		valueEnd := int(dec.InputOffset())
+		if k != key {
+			continue
+		}
+		p := keyEnd
+		for p < len(data) && data[p] != ':' {
+			p++
+		}
+		if p >= len(data) {
+			return 0, 0, false
+		}
+		p++
+		for p < len(data) && (data[p] == ' ' || data[p] == '\t' || data[p] == '\n' || data[p] == '\r') {
+			p++
+		}
+		return p, valueEnd, true
+	}
+	return 0, 0, false
 }

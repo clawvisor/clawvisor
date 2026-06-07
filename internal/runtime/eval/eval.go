@@ -187,7 +187,7 @@ func DecisionFromOutcome(o Outcome) DecisionKind {
 	case OutcomeDeny, OutcomeHold:
 		return DecisionBlock
 	default:
-		return DecisionAllow
+		return DecisionBlock
 	}
 }
 

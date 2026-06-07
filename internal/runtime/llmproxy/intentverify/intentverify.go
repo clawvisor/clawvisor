@@ -108,7 +108,7 @@ func Run(ctx context.Context, verifier Verifier, dec Decision, resolved Resolved
 		if isCircuitOpen != nil && isCircuitOpen(err) {
 			return "verifier_circuit_open", false
 		}
-		return fmt.Sprintf("verifier_error: %s", err.Error()), true
+		return fmt.Sprintf("verifier_error: %s", err.Error()), false
 	}
 	if verdict == nil {
 		return "", true

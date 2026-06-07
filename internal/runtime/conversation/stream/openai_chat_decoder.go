@@ -113,6 +113,7 @@ func (d *OpenAIChatDecoder) flushEvent() (Event, bool) {
 		return Event{}, false
 	}
 	raw := append([]byte(nil), d.rawBuf.Bytes()...)
+	raw = ensureSSETerminator(raw)
 	d.rawBuf.Reset()
 	data := strings.Join(d.dataLines, "\n")
 	d.dataLines = d.dataLines[:0]
@@ -148,9 +149,20 @@ func (d *OpenAIChatDecoder) flushDataLinesPreserveCurrent(currentLine string) (E
 	return Event{
 		Kind:     classifyOpenAIChatEventKind(data),
 		Shape:    conversation.StreamShapeOpenAIChat,
-		RawBytes: []byte(completed),
+		RawBytes: ensureSSETerminator([]byte(completed)),
 		Meta:     EventMeta{AnthropicIndex: -1, OpenAIOutputIndex: -1, OpenAIContentIndex: -1},
 	}, true
+}
+
+func ensureSSETerminator(raw []byte) []byte {
+	if len(raw) == 0 || bytes.HasSuffix(raw, []byte("\n\n")) || bytes.HasSuffix(raw, []byte("\r\n\r\n")) {
+		return raw
+	}
+	out := append([]byte(nil), raw...)
+	if !bytes.HasSuffix(out, []byte("\n")) {
+		out = append(out, '\n')
+	}
+	return append(out, '\n')
 }
 
 // classifyOpenAIChatEventKind inspects the data payload to determine

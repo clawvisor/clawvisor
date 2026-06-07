@@ -40,10 +40,6 @@ type ToolUseChainConfig struct {
 	// adapted via boundaryResolverFromHosts when Boundary is nil.
 	Boundary        BoundaryResolver
 	TriggerMissAuth TriggerMissAuthorizer
-	// ReadOnlyShell, when set, lets AuthorizationPolicy apply the
-	// legacy read-only-shell and sensitive-path trigger-miss behavior
-	// after the decision engine has checked for explicit denies.
-	ReadOnlyShell ReadOnlyShellResolver
 	// Authorization, when set, wires AuthorizationPolicy. The resolver
 	// produces AuthorizationInputs (decision-engine inputs + hold
 	// handler) per-call. AuthorizationPolicy replaces the legacy
@@ -68,11 +64,14 @@ type ToolUseChainConfig struct {
 //     inline-task interception when configured).
 //  2. ScriptSessionEvaluator — claims tool_uses already shaped for the
 //     resolver mount via a script-session token.
-//  3. InspectorChain — inspect + ambiguous + stub-placeholder downgrade
+//  3. AuthorizationPolicy — trigger-miss decision-engine handling,
+//     including read-only shell and shell-poll carve-outs after
+//     explicit denies are checked.
+//  4. InspectorChain — inspect + ambiguous + stub-placeholder downgrade
 //     + boundary check + trigger-miss authorization.
-//  4. TaskScopeEvaluator — credentialed-path task-scope authorization.
-//  5. IntentVerifyEvaluator — LLM-backed intent check for matched tasks.
-//  6. CredentialRewriteEvaluator — nonce mint + URL rewrite.
+//  5. TaskScopeEvaluator — credentialed-path task-scope authorization.
+//  6. IntentVerifyEvaluator — LLM-backed intent check for matched tasks.
+//  7. CredentialRewriteEvaluator — nonce mint + URL rewrite.
 //
 // Earlier evaluators short-circuit later ones via the orchestrator's
 // "first non-Skip wins" semantic. Nil resolvers degrade to Skip so the

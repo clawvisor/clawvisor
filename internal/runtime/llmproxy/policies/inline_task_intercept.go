@@ -82,7 +82,7 @@ func (InlineTaskIntercept) Name() string { return "inline_task_intercept" }
 //   - audit fields tagged with the failure outcome
 //   - Underlying error → Deny
 func (p *InlineTaskIntercept) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
-	if p.cache == nil || p.agent == nil || p.rewriter == nil {
+	if isNilInterface(p.cache) || p.agent == nil || p.rewriter == nil {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 

@@ -135,7 +135,9 @@ func (d *OpenAIResponsesDecoder) flushEvent() (Event, bool) {
 		ContentIndex *int    `json:"content_index"`
 		ItemID       *string `json:"item_id"`
 	}
-	if err := json.Unmarshal([]byte(data), &probe); err == nil {
+	if err := json.Unmarshal([]byte(data), &probe); err != nil {
+		ev.Kind = KindUnknown
+	} else {
 		if probe.OutputIndex != nil {
 			ev.Meta.OpenAIOutputIndex = *probe.OutputIndex
 		}

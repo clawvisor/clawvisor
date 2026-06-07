@@ -29,6 +29,9 @@ var errNotObject = errors.New("JSON value is not an object")
 // or null). Callers typically construct it via json.Marshal of a
 // single value, never via json.Marshal of an envelope.
 func SetTopLevelField(data []byte, key string, newValue []byte) ([]byte, error) {
+	if !json.Valid(newValue) {
+		return nil, errors.New("newValue is not valid JSON")
+	}
 	if start, end, ok := findFieldValue(data, key); ok {
 		return slices.Concat(data[:start], newValue, data[end:]), nil
 	}

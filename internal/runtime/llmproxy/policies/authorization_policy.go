@@ -189,7 +189,7 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 			return pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeDeny,
 				Reason:  "Clawvisor: approval unavailable",
-				Facts:   []pipeline.EvaluationFact{taskScopeFact},
+				Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 			}, nil
 		}
 		held, holdErr := in.HoldHandler.Hold(ctx, AuthorizationHoldRequest{
@@ -202,14 +202,14 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 			return pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeDeny,
 				Reason:  "Clawvisor: approval unavailable — " + holdErr.Error(),
-				Facts:   []pipeline.EvaluationFact{taskScopeFact},
+				Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 			}, nil
 		}
 		if held.Err != "" {
 			return pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeDeny,
 				Reason:  "Clawvisor: approval unavailable — " + held.Err,
-				Facts:   []pipeline.EvaluationFact{taskScopeFact},
+				Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 			}, nil
 		}
 		return pipeline.ToolUseVerdict{
