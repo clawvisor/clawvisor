@@ -83,16 +83,16 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	evalFn, result, err := pipeline.RunToolUseEvaluators(ctx, res, toolUses, chain)
 	if err != nil {
 		// Pipeline errored before producing per-tool verdicts. Emit
-		// one audit row keyed to the first tool (best signal we have)
-		// and return a Deny-for-everything evaluator so the rewriter
-		// renders refusals consistently.
-		firstTU := toolUses[0]
-		emit(conversation.AuditEvent{
-			ToolUse:     firstTU,
-			Decision:    conversation.DecisionBlock,
-			OutcomeName: "pipeline_error",
-			Reason:      err.Error(),
-		})
+		// one audit row per sibling so every blocked tool_use has an
+		// investigable row.
+		for _, tu := range toolUses {
+			emit(conversation.AuditEvent{
+				ToolUse:     tu,
+				Decision:    conversation.DecisionBlock,
+				OutcomeName: "pipeline_error",
+				Reason:      err.Error(),
+			})
+		}
 		errMsg := "Clawvisor: authorization pipeline failed — " + err.Error()
 		return func(_ conversation.ToolUse) conversation.ToolUseVerdict {
 			return conversation.ToolUseVerdict{Allowed: false, Reason: errMsg}

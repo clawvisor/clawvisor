@@ -84,6 +84,13 @@ func (s *postprocessSession) rollback(ctx context.Context, toolUses []conversati
 	s.finalizer.Rollback(ctx)
 }
 
+func (s *postprocessSession) dropCommitted(ctx context.Context, capture *pipeline.HoldCapture) error {
+	if s == nil || s.finalizer == nil || capture == nil {
+		return nil
+	}
+	return s.finalizer.DropCommittedHold(ctx, *capture)
+}
+
 func (s *postprocessSession) captures() []pipeline.HoldCapture {
 	if s == nil || s.finalizer == nil {
 		return nil

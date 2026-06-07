@@ -14,6 +14,10 @@ import (
 // coalesced audit emission. Postproc now accumulates per-tool data
 // via AddHold + AddAudit and calls Finalize at end-of-response.
 //
+// Finalizer is intentionally single-goroutine: callers must finish
+// adding captures/audits before calling Finalize, Rollback, FlushAudits,
+// or Captures.
+//
 // The Finalizer doesn't import llmproxy. Domain-coupled operations
 // (building a PendingLiteApproval from buffered captures, formatting
 // the approval prompt) flow through FinalizerDeps. Payload values
@@ -197,6 +201,11 @@ type FinalizeResult struct {
 	// caller injects into the assistant's response, replacing the
 	// model's content. Empty on the per-tool replay path.
 	CoalescedPrompt string
+
+	// CoalescedCapture is the committed coalesced hold. Callers can use
+	// it to roll back the hold if rendering the coalesced prompt fails
+	// after storage has already committed.
+	CoalescedCapture *HoldCapture
 }
 
 // Finalize commits buffered holds + audits. Returns (Coalesced, ...)
@@ -230,9 +239,8 @@ func (f *Finalizer) Rollback(ctx context.Context) {
 	if f == nil || f.deps == nil {
 		return
 	}
-	for _, c := range f.captures {
-		f.deps.RollbackPendingTask(ctx, c)
-	}
+	f.rollbackPendingTasks(ctx, f.captures)
+	f.flushAudits(ctx)
 }
 
 // FlushAudits emits the buffered audit events without changing hold
@@ -246,6 +254,16 @@ func (f *Finalizer) FlushAudits(ctx context.Context) {
 		return
 	}
 	f.flushAudits(ctx)
+}
+
+// DropCommittedHold removes a hold that Finalize already committed.
+// It is intended for caller-side failure after commit, such as a
+// coalesced prompt render/rewrite failure.
+func (f *Finalizer) DropCommittedHold(ctx context.Context, capture HoldCapture) error {
+	if f == nil || f.deps == nil {
+		return nil
+	}
+	return f.deps.DropHold(ctx, capture)
 }
 
 // HasCoalesceCandidates reports whether shouldCoalesce would fire on
@@ -272,6 +290,7 @@ func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, error)
 	coalesced := f.deps.BuildCoalescedHold(f.captures)
 	submit, err := f.deps.SubmitHold(ctx, coalesced.Payload)
 	if err != nil {
+		f.rollbackPendingTasks(ctx, f.captures)
 		return FinalizeResult{}, err
 	}
 	if submit.Evicted != nil && len(f.captures) > 0 {
@@ -294,16 +313,22 @@ func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, error)
 	if coalesced.Prompt != nil {
 		prompt = coalesced.Prompt(submit.ApprovalID)
 	}
+	committedCapture := HoldCapture{
+		Kind:       eval.HeldKindHintApproval,
+		Payload:    coalesced.Payload,
+		ApprovalID: submit.ApprovalID,
+	}
 	return FinalizeResult{
 		Coalesced:           true,
 		CoalescedApprovalID: submit.ApprovalID,
 		CoalescedPrompt:     prompt,
+		CoalescedCapture:    &committedCapture,
 	}, nil
 }
 
 func (f *Finalizer) replayLegacy(ctx context.Context) error {
 	committed := make([]HoldCapture, 0, len(f.captures))
-	for _, c := range f.captures {
+	for i, c := range f.captures {
 		if c.Payload == nil {
 			// Allow/Rewrite sibling — no hold buffered for this
 			// tool_use. Skip the replay submit; it still
@@ -319,6 +344,7 @@ func (f *Finalizer) replayLegacy(ctx context.Context) error {
 			if rollbackErr != nil {
 				err = errors.Join(err, rollbackErr)
 			}
+			f.rollbackPendingTasks(ctx, f.captures[i:])
 			f.flushAudits(ctx)
 			f.deps.WriteAudit(ctx, f.deps.BuildReplayFailedAudit(c, err))
 			return err
@@ -331,6 +357,12 @@ func (f *Finalizer) replayLegacy(ctx context.Context) error {
 		committed = append(committed, c)
 	}
 	return nil
+}
+
+func (f *Finalizer) rollbackPendingTasks(ctx context.Context, captures []HoldCapture) {
+	for _, c := range captures {
+		f.deps.RollbackPendingTask(ctx, c)
+	}
 }
 
 func (f *Finalizer) flushAudits(ctx context.Context) {

@@ -107,13 +107,12 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 				Decisions:   coalescedResult.Decisions,
 			}
 		}
-		// Coalesced re-run failed; fall through to first-pass result.
-		return llmproxy.PostprocessResult{
-			Body:        result.Body,
-			ContentType: contentType,
-			Rewritten:   result.Rewritten,
-			Decisions:   result.Decisions,
+		dropErr := session.dropCommitted(ctx, finalResult.CoalescedCapture)
+		reason := "coalesced approval rewrite failed: " + coalescedErr.Error()
+		if dropErr != nil {
+			reason += "; rollback failed: " + dropErr.Error()
 		}
+		return failClosed(reason)
 	}
 
 	return llmproxy.PostprocessResult{

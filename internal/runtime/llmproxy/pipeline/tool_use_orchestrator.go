@@ -121,12 +121,12 @@ func defaultUnclaimedToolUseVerdict(evaluations []ToolUseEvaluation, toolUseID s
 		for _, fact := range ev.Verdict.Facts {
 			switch inspectorFact := fact.(type) {
 			case InspectorFact:
-				if inspectorFact.IsAPICall && !inspectorFact.Ambiguous {
+				if credentialedFact == nil && inspectorFact.IsAPICall && !inspectorFact.Ambiguous {
 					copyFact := inspectorFact
 					credentialedFact = &copyFact
 				}
 			case *InspectorFact:
-				if inspectorFact != nil && inspectorFact.IsAPICall && !inspectorFact.Ambiguous {
+				if credentialedFact == nil && inspectorFact != nil && inspectorFact.IsAPICall && !inspectorFact.Ambiguous {
 					copyFact := *inspectorFact
 					credentialedFact = &copyFact
 				}

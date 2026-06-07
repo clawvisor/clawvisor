@@ -3,6 +3,7 @@ package llmproxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ func NewFinalizer(cfg PostprocessConfig, pendingApprovals PendingApprovalCache) 
 func (d *finalizerDeps) SubmitHold(ctx context.Context, payload any) (pipeline.HoldSubmitResult, error) {
 	pending, ok := payload.(PendingLiteApproval)
 	if !ok {
-		return pipeline.HoldSubmitResult{}, nil
+		return pipeline.HoldSubmitResult{}, fmt.Errorf("invalid pending approval payload %T", payload)
 	}
 	res, err := d.pendingApprovals.Hold(ctx, pending)
 	if err != nil {
@@ -124,7 +125,13 @@ func (d *finalizerDeps) BuildCoalescedHold(captures []pipeline.HoldCapture) pipe
 			primaryIdx = 0
 		}
 	}
-	primary, _ := captures[primaryIdx].Payload.(PendingLiteApproval)
+	primary, ok := captures[primaryIdx].Payload.(PendingLiteApproval)
+	if !ok {
+		// This should be unreachable because pipeline.shouldCoalesce
+		// requires an approval capture with a non-nil payload, and
+		// SubmitHold will fail closed if a bad payload reaches it.
+		return pipeline.CoalescedHold{Payload: nil}
+	}
 	pending := PendingLiteApproval{
 		ToolUse:      primary.ToolUse,
 		Inspector:    primary.Inspector,

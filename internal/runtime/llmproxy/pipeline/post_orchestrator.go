@@ -53,6 +53,12 @@ func RunPost(
 	if dst == nil || src == nil {
 		return nil, fmt.Errorf("pipeline.RunPost: dst and src required")
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = src.Close()
+		}
+	}()
 
 	mut, err := NewStreamingResponseMutator(dst, src, shape)
 	if err != nil {
@@ -92,6 +98,7 @@ func RunPost(
 	if !ok {
 		return nil, fmt.Errorf("pipeline.RunPost: mutator doesn't expose Commit")
 	}
+	committed = true
 	if err := committer.Commit(); err != nil {
 		return nil, fmt.Errorf("pipeline.RunPost: commit: %w", err)
 	}

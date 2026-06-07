@@ -813,13 +813,13 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// response-write protocol. Mirrors what the legacy
 			// maybeHandleLiteApprovalRelease method did inline.
 			auditStatus = sc.StatusCode
-			if decision, _ := preResult.AuditParams["approval_release_decision"].(string); decision != "" {
+			if decision, ok := preResult.AuditParams["approval_release_decision"].(string); ok {
 				auditDecide = decision
 			}
-			if outcome, _ := preResult.AuditParams["approval_release_outcome"].(string); outcome != "" {
+			if outcome, ok := preResult.AuditParams["approval_release_outcome"].(string); ok {
 				auditOutcome = outcome
 			}
-			if reason, _ := preResult.AuditParams["approval_release_reason"].(string); reason != "" {
+			if reason, ok := preResult.AuditParams["approval_release_reason"].(string); ok {
 				auditReason = reason
 			}
 			// The decision-input-load-failed sentinel translates to the
@@ -841,8 +841,12 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"reason", auditReason,
 			)
 			if len(sc.Body) == 0 {
+				msg := auditReason
+				if strings.TrimSpace(msg) == "" {
+					msg = "couldn't resolve that approval reply. Please retry; details are in the Clawvisor audit log."
+				}
 				h.writeLiteProxyError(w, r, agent, provider, body, requestID, sc.StatusCode, "APPROVAL_RELEASE_ERROR",
-					"couldn't resolve that approval reply. Please retry; details are in the Clawvisor audit log.")
+					msg)
 				return
 			}
 			for k, v := range sc.Headers {

@@ -15,9 +15,17 @@ func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error
 }
 
 func discardLastRawLine(buf *bytes.Buffer, line string) {
-	n := len(line) + 1
-	if n <= 0 || buf.Len() < n {
-		return
+	for _, suffix := range [][]byte{
+		[]byte(line + "\n"),
+		[]byte(line),
+	} {
+		if len(suffix) == 0 || buf.Len() < len(suffix) {
+			continue
+		}
+		raw := buf.Bytes()
+		if bytes.Equal(raw[len(raw)-len(suffix):], suffix) {
+			buf.Truncate(buf.Len() - len(suffix))
+			return
+		}
 	}
-	buf.Truncate(buf.Len() - n)
 }
