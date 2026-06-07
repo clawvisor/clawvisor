@@ -31,6 +31,23 @@ var litePlaceholderExtractRE = regexp.MustCompile(`autovault_[A-Za-z0-9._:-]+`)
 
 type stubVault struct{ data map[string][]byte }
 
+func TestLiteProxyResponsePolicyAvailableRequiresRegisteredRewriter(t *testing.T) {
+	registry := conversation.DefaultResponseRegistry()
+
+	for _, provider := range []conversation.Provider{
+		conversation.ProviderAnthropic,
+		conversation.ProviderOpenAI,
+	} {
+		if !liteProxyResponsePolicyAvailable(provider, registry) {
+			t.Fatalf("%s should be available through inspected lite-proxy", provider)
+		}
+	}
+
+	if liteProxyResponsePolicyAvailable(conversation.ProviderGoogle, registry) {
+		t.Fatal("Google must stay unavailable until a Gemini response rewriter is registered")
+	}
+}
+
 var errCreateRuntimePlaceholderTest = errors.New("create runtime placeholder failed")
 var errCreateCredentialAuthorizationTest = errors.New("create credential authorization failed")
 

@@ -219,6 +219,13 @@ func (h *LLMEndpointHandler) Responses(w http.ResponseWriter, r *http.Request) {
 	h.serve(w, r)
 }
 
+func liteProxyResponsePolicyAvailable(provider conversation.Provider, registry *conversation.ResponseRegistry) bool {
+	if registry == nil {
+		return false
+	}
+	return registry.ForProvider(provider) != nil && registry.ForProviderStreaming(provider) != nil
+}
+
 func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	requestID := r.Header.Get("X-Request-Id")
@@ -308,6 +315,16 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if src := llmproxy.CallerAuthSource(r.Context()); src != "" {
 		auditParams["caller_auth_source"] = src
+	}
+
+	if h.Inspector != nil && !liteProxyResponsePolicyAvailable(provider, conversation.DefaultResponseRegistry()) {
+		auditStatus = http.StatusNotImplemented
+		auditDecide = "deny"
+		auditOutcome = "response_policy_unavailable"
+		auditReason = "no response policy registered for provider " + string(provider)
+		h.writeLiteProxyError(w, r, agent, provider, nil, requestID, http.StatusNotImplemented, "RESPONSE_POLICY_UNAVAILABLE",
+			"this provider is not available through Clawvisor's inspected lite-proxy yet.")
+		return
 	}
 	if llmproxy.PassthroughUpstreamAuth(r.Context()) {
 		auditParams["upstream_auth_passthrough_requested"] = true
