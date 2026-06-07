@@ -6,7 +6,7 @@ const maxSSELineSize = 4 << 20
 
 func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	if i := bytes.IndexByte(data, '\n'); i >= 0 {
-		return i + 1, data[:i], nil
+		return i + 1, data[:i+1], nil
 	}
 	if atEOF && len(data) > 0 {
 		return len(data), data, nil

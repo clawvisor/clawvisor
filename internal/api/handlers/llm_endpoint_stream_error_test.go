@@ -42,6 +42,24 @@ func TestStreamingPostprocessErrorFrame_OpenAIResponsesSplicesFailedEvent(t *tes
 	}
 }
 
+func TestStreamingPostprocessErrorFrame_OpenAIChatSplicesChatChunk(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	frame, ok := streamingPostprocessErrorFrame(req, conversation.ProviderOpenAI, "lost stream")
+	if !ok {
+		t.Fatal("expected OpenAI Chat stream error frame")
+	}
+	got := string(frame)
+	if !strings.Contains(got, "chat.completion.chunk") || !strings.Contains(got, "lost stream") {
+		t.Fatalf("unexpected OpenAI Chat stream error frame: %s", got)
+	}
+	if strings.Contains(got, `"error"`) {
+		t.Fatalf("OpenAI Chat stream error should be a chat chunk, not generic error JSON: %s", got)
+	}
+	if !strings.Contains(got, "data: [DONE]") {
+		t.Fatalf("OpenAI Chat stream error should terminate with DONE: %s", got)
+	}
+}
+
 func TestStreamingPostprocessErrorFrame_GoogleSplicesErrorChunk(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini:streamGenerateContent", nil)
 	frame, ok := streamingPostprocessErrorFrame(req, conversation.ProviderGoogle, "lost stream")

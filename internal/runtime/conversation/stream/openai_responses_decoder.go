@@ -42,9 +42,9 @@ func (d *OpenAIResponsesDecoder) Next() (Event, error) {
 		return Event{}, io.EOF
 	}
 	for d.r.Scan() {
-		line := d.r.Text()
-		d.rawBuf.WriteString(line)
-		d.rawBuf.WriteByte('\n')
+		rawLine := d.r.Text()
+		line := strings.TrimSuffix(rawLine, "\n")
+		d.rawBuf.WriteString(rawLine)
 
 		trimmed := strings.TrimRight(line, "\r")
 

@@ -95,3 +95,48 @@ func TestPrependOpenAIResponsesAssistantNotice_BlankIsCopy(t *testing.T) {
 		t.Fatalf("blank notice should copy verbatim\n--- want ---\n%s\n--- got ---\n%s", upstream, got)
 	}
 }
+
+func TestPrependOpenAIResponsesAssistantNotice_ShiftsMultipleOutputIndices(t *testing.T) {
+	upstream := strings.Join([]string{
+		`event: response.created`,
+		`data: {"type":"response.created","response":{"id":"resp_multi","output":[]}}`,
+		``,
+		`event: response.output_item.added`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_0","role":"assistant","status":"in_progress"}}`,
+		``,
+		`event: response.content_part.added`,
+		`data: {"type":"response.content_part.added","item_id":"msg_0","output_index":0,"content_index":2,"part":{"type":"output_text","text":""}}`,
+		``,
+		`event: response.output_item.added`,
+		`data: {"type":"response.output_item.added","output_index":1,"item":{"type":"message","id":"msg_1","role":"assistant","status":"in_progress"}}`,
+		``,
+		`event: response.output_text.delta`,
+		`data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"content_index":4,"delta":"hello"}`,
+		``,
+		`event: response.completed`,
+		`data: {"type":"response.completed","response":{"id":"resp_multi","output":[{"type":"message","id":"msg_0"},{"type":"message","id":"msg_1"}]}}`,
+		``,
+	}, "\n")
+
+	var buf bytes.Buffer
+	if err := stream.PrependOpenAIResponsesAssistantNotice(&buf, strings.NewReader(upstream), "[Clawvisor] shift"); err != nil {
+		t.Fatalf("PrependOpenAIResponsesAssistantNotice: %v", err)
+	}
+	got := buf.String()
+
+	for _, want := range []string{
+		`"item_id":"msg_0","output_index":1,"content_index":2`,
+		`"item_id":"msg_1","output_index":2,"content_index":4`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("shifted output/content indices missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `"item_id":"msg_0","output_index":0`) ||
+		strings.Contains(got, `"item_id":"msg_1","output_index":1`) {
+		t.Fatalf("unshifted upstream output_index leaked after notice injection:\n%s", got)
+	}
+	if !strings.Contains(got, `msg_clawvisor_notice`) {
+		t.Fatalf("notice item missing:\n%s", got)
+	}
+}

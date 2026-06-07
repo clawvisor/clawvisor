@@ -3,6 +3,7 @@ package policies_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -100,6 +101,64 @@ func TestInspectorChainIntegration_RecognizedAPICallFlowsThroughChain(t *testing
 	}
 	if got := result.Evaluations[len(result.Evaluations)-1].EvaluatorName; got != "credential_rewrite" {
 		t.Errorf("winning evaluator = %q, want credential_rewrite", got)
+	}
+}
+
+func TestInspectorChainIntegration_CredentialRewriteDivergenceFailsClosed(t *testing.T) {
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	hostsResolver := func(_ context.Context, _ string) []string {
+		return []string{"api.github.com"}
+	}
+	scopeResolver := func(_ context.Context, _ conversation.ToolUse) policies.TaskScopeDecision {
+		return policies.TaskScopeDecision{Allowed: true, TaskID: "task-abc", Reason: "matched"}
+	}
+	intentResolver := func(_ context.Context, _ conversation.ToolUse) (bool, string) {
+		return true, "intent matches scope"
+	}
+
+	chain := []pipeline.ToolUseEvaluator{
+		policies.NewInspectorChain(insp, hostsResolver),
+		policies.NewTaskScopeEvaluator(scopeResolver),
+		policies.NewIntentVerifyEvaluator(intentResolver),
+		// Simulate rewrite-stage divergence/misconfiguration after
+		// InspectorChain already classified the call as a credentialed
+		// API request. The rewrite evaluator Skips, so the orchestrator's
+		// unclaimed credentialed-call default must fail closed.
+		policies.NewCredentialRewriteEvaluator(func(context.Context, conversation.ToolUse) *policies.CredentialRewriteInputs {
+			return nil
+		}),
+	}
+
+	tools := []conversation.ToolUse{{
+		ID:   "toolu_1",
+		Name: "WebFetch",
+		Input: json.RawMessage(`{
+			"url":"https://api.github.com/repos/x/y/issues",
+			"method":"GET",
+			"headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+		}`),
+	}}
+
+	result, err := pipeline.EvaluateToolUses(
+		context.Background(),
+		&chainIntegrationResponse{provider: conversation.ProviderAnthropic},
+		tools,
+		chain,
+		func(string) pipeline.ToolUseMutator { return chainIntegrationMutator{} },
+	)
+	if err != nil {
+		t.Fatalf("EvaluateToolUses: %v", err)
+	}
+
+	v := result.PerToolUse["toolu_1"]
+	if v.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("Outcome = %q, want Deny when credentialed rewrite does not claim the call", v.Outcome)
+	}
+	if !strings.Contains(v.Reason, "credentialed API call was not rewritten") {
+		t.Fatalf("Reason = %q, want fail-closed rewrite-divergence message", v.Reason)
+	}
+	if got := len(result.Evaluations); got != 4 {
+		t.Fatalf("expected all four evaluators to Skip before default Deny, got %d: %+v", got, result.Evaluations)
 	}
 }
 

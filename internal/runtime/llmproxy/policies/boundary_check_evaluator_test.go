@@ -2,8 +2,10 @@ package policies_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
@@ -88,5 +90,23 @@ func TestBoundaryCheck_NilResolverSkips(t *testing.T) {
 	result := e.EvaluateWithVerdict(context.Background(), v, []string{"api.github.com"})
 	if result.Outcome != pipeline.OutcomeSkip {
 		t.Errorf("nil resolver → Outcome = %q, want Skip", result.Outcome)
+	}
+}
+
+func TestBoundaryCheck_StandaloneEvaluateErrors(t *testing.T) {
+	e := policies.NewBoundaryCheckEvaluator(func(context.Context, string) []string {
+		return []string{"api.github.com"}
+	})
+	_, err := e.Evaluate(context.Background(), nil, conversation.ToolUse{ID: "toolu_1"}, evalToolUseMutator{})
+	if err == nil || !strings.Contains(err.Error(), "not valid as a standalone") {
+		t.Fatalf("standalone Evaluate error = %v, want explicit invalid-standalone error", err)
+	}
+}
+
+func TestPendingApprovalHoldPolicy_StandaloneEvaluateErrors(t *testing.T) {
+	e := policies.NewPendingApprovalHoldPolicy(nil)
+	_, err := e.Evaluate(context.Background(), nil, conversation.ToolUse{ID: "toolu_1"}, evalToolUseMutator{})
+	if err == nil || !strings.Contains(err.Error(), "not valid as a standalone") {
+		t.Fatalf("standalone Evaluate error = %v, want explicit invalid-standalone error", err)
 	}
 }

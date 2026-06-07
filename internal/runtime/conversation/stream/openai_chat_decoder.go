@@ -39,9 +39,9 @@ func (d *OpenAIChatDecoder) Next() (Event, error) {
 		return Event{}, io.EOF
 	}
 	for d.r.Scan() {
-		line := d.r.Text()
-		d.rawBuf.WriteString(line)
-		d.rawBuf.WriteByte('\n')
+		rawLine := d.r.Text()
+		line := strings.TrimSuffix(rawLine, "\n")
+		d.rawBuf.WriteString(rawLine)
 
 		trimmed := strings.TrimRight(line, "\r")
 
@@ -71,14 +71,17 @@ func (d *OpenAIChatDecoder) Next() (Event, error) {
 		}
 
 		if strings.HasPrefix(trimmed, "data:") {
+			dataValue := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 			// OpenAI Chat sometimes elides the blank-line terminator
 			// between chunks. Each `data:` line therefore implicitly
-			// closes the previous event.
-			if len(d.dataLines) > 0 {
-				ev, _ := d.flushDataLinesPreserveCurrent(line)
+			// closes the previous event when it looks like a new chat
+			// chunk. Otherwise, keep standard SSE multi-line data
+			// semantics and join the data lines with "\n".
+			if len(d.dataLines) > 0 && startsOpenAIChatEvent(dataValue) {
+				ev, _ := d.flushDataLinesPreserveCurrent(rawLine, line)
 				return ev, nil
 			}
-			d.dataLines = append(d.dataLines, strings.TrimSpace(strings.TrimPrefix(trimmed, "data:")))
+			d.dataLines = append(d.dataLines, dataValue)
 			continue
 		}
 
@@ -115,7 +118,6 @@ func (d *OpenAIChatDecoder) flushEvent() (Event, bool) {
 		return Event{}, false
 	}
 	raw := append([]byte(nil), d.rawBuf.Bytes()...)
-	raw = ensureSSETerminator(raw)
 	d.rawBuf.Reset()
 	data := strings.Join(d.dataLines, "\n")
 	d.dataLines = d.dataLines[:0]
@@ -133,16 +135,15 @@ func (d *OpenAIChatDecoder) flushEvent() (Event, bool) {
 // retaining the current line as the start of the *next* event in the
 // rawBuf. This handles the OpenAI Chat case where `data:` lines aren't
 // separated by blank lines.
-func (d *OpenAIChatDecoder) flushDataLinesPreserveCurrent(currentLine string) (Event, bool) {
+func (d *OpenAIChatDecoder) flushDataLinesPreserveCurrent(currentRawLine, currentLine string) (Event, bool) {
 	// Identify how many bytes the current line contributed to rawBuf
-	// (currentLine + '\n'). Everything before that belongs to the
+	// (including its newline, if present). Everything before that belongs to the
 	// completed event; the current line starts the next event's rawBuf.
 	rawAll := d.rawBuf.String()
-	currentBytes := currentLine + "\n"
-	completed := strings.TrimSuffix(rawAll, currentBytes)
+	completed := strings.TrimSuffix(rawAll, currentRawLine)
 
 	d.rawBuf.Reset()
-	d.rawBuf.WriteString(currentBytes)
+	d.rawBuf.WriteString(currentRawLine)
 
 	data := strings.Join(d.dataLines, "\n")
 	d.dataLines = d.dataLines[:0]
@@ -151,9 +152,13 @@ func (d *OpenAIChatDecoder) flushDataLinesPreserveCurrent(currentLine string) (E
 	return Event{
 		Kind:     classifyOpenAIChatEventKind(data),
 		Shape:    conversation.StreamShapeOpenAIChat,
-		RawBytes: ensureSSETerminator([]byte(completed)),
+		RawBytes: []byte(completed),
 		Meta:     EventMeta{AnthropicIndex: -1, OpenAIOutputIndex: -1, OpenAIContentIndex: -1},
 	}, true
+}
+
+func startsOpenAIChatEvent(data string) bool {
+	return data == "[DONE]" || strings.HasPrefix(data, "{")
 }
 
 func ensureSSETerminator(raw []byte) []byte {

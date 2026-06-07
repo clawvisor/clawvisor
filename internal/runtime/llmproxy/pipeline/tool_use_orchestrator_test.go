@@ -266,6 +266,32 @@ func TestEvaluateToolUses_AllSkipFallsThroughToAllow(t *testing.T) {
 	}
 }
 
+func TestEvaluateToolUses_AllSkipNonCredentialedInspectorFactAllows(t *testing.T) {
+	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
+	tools := []conversation.ToolUse{{ID: "toolu_local", Name: "Bash"}}
+
+	result, err := pipeline.EvaluateToolUses(context.Background(), res, tools, []pipeline.ToolUseEvaluator{
+		&skipWithInspectorFactEvaluator{
+			name: "inspector_chain",
+			fact: pipeline.InspectorFact{
+				Source:    "trigger_miss",
+				IsAPICall: false,
+				Reason:    "no credential trigger",
+			},
+		},
+		&skipEvaluator{name: "credential_rewrite"},
+	}, func(id string) pipeline.ToolUseMutator {
+		return &recordingToolUseMutator{id: id}
+	})
+	if err != nil {
+		t.Fatalf("EvaluateToolUses: %v", err)
+	}
+
+	if v := result.PerToolUse["toolu_local"]; v.Outcome != pipeline.OutcomeAllow {
+		t.Fatalf("non-credentialed all-Skip Outcome = %q, want Allow", v.Outcome)
+	}
+}
+
 func TestEvaluateToolUses_AllSkipCredentialedAPIDenies(t *testing.T) {
 	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
 	tools := []conversation.ToolUse{{ID: "toolu_cred"}}
@@ -293,6 +319,31 @@ func TestEvaluateToolUses_AllSkipCredentialedAPIDenies(t *testing.T) {
 	}
 	if v.Reason == "" {
 		t.Fatal("credentialed default Deny should include reason")
+	}
+}
+
+func TestEvaluateToolUses_AllSkipAmbiguousAPIDoesNotUseDefaultCredentialDeny(t *testing.T) {
+	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
+	tools := []conversation.ToolUse{{ID: "toolu_ambiguous"}}
+
+	result, err := pipeline.EvaluateToolUses(context.Background(), res, tools, []pipeline.ToolUseEvaluator{
+		&skipWithInspectorFactEvaluator{
+			name: "inspector_chain",
+			fact: pipeline.InspectorFact{
+				IsAPICall: true,
+				Ambiguous: true,
+				Host:      "api.github.com",
+			},
+		},
+	}, func(id string) pipeline.ToolUseMutator {
+		return &recordingToolUseMutator{id: id}
+	})
+	if err != nil {
+		t.Fatalf("EvaluateToolUses: %v", err)
+	}
+
+	if v := result.PerToolUse["toolu_ambiguous"]; v.Outcome != pipeline.OutcomeAllow {
+		t.Fatalf("ambiguous all-Skip Outcome = %q, want compatibility Allow because the default credential deny is only for non-ambiguous API facts", v.Outcome)
 	}
 }
 

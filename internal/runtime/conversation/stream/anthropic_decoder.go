@@ -48,11 +48,9 @@ func (d *AnthropicDecoder) Next() (Event, error) {
 		return Event{}, io.EOF
 	}
 	for d.r.Scan() {
-		line := d.r.Text()
-		// Track exact bytes: scanner strips the trailing \n; we re-add
-		// it so rawBuf reflects what was on the wire.
-		d.rawBuf.WriteString(line)
-		d.rawBuf.WriteByte('\n')
+		rawLine := d.r.Text()
+		line := strings.TrimSuffix(rawLine, "\n")
+		d.rawBuf.WriteString(rawLine)
 		trimmed := strings.TrimRight(line, "\r")
 
 		// Blank line terminates the current event.

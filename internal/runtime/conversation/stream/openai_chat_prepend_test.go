@@ -75,3 +75,24 @@ func TestPrependOpenAIChatAssistantNotice_BlankIsCopy(t *testing.T) {
 		t.Fatalf("blank notice should copy verbatim\n--- want ---\n%s\n--- got ---\n%s", upstream, got)
 	}
 }
+
+func TestPrependOpenAIChatAssistantNotice_OnlyDoneStillEmitsNotice(t *testing.T) {
+	upstream := "data: [DONE]\n\n"
+	const notice = "[Clawvisor] only done"
+
+	var buf bytes.Buffer
+	if err := stream.PrependOpenAIChatAssistantNotice(&buf, strings.NewReader(upstream), notice); err != nil {
+		t.Fatalf("PrependOpenAIChatAssistantNotice: %v", err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, notice) {
+		t.Fatalf("notice missing when upstream had no mergeable chunk:\n%s", got)
+	}
+	if !strings.HasSuffix(got, upstream) {
+		t.Fatalf("upstream DONE sentinel should survive after notice\n--- got ---\n%s", got)
+	}
+	if strings.Index(got, notice) >= strings.Index(got, "data: [DONE]") {
+		t.Fatalf("notice should precede DONE sentinel:\n%s", got)
+	}
+}

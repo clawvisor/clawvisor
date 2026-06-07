@@ -3,6 +3,7 @@ package policies_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -78,6 +79,31 @@ func TestInspectorChain_DeniesUnmatchedHost(t *testing.T) {
 	}
 }
 
+func TestInspectorChain_NilBoundaryResolverDeniesCredentialedAPICall(t *testing.T) {
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	chain := policies.NewInspectorChain(insp, nil)
+
+	tu := conversation.ToolUse{
+		ID:   "toolu_nil_boundary",
+		Name: "WebFetch",
+		Input: json.RawMessage(`{
+			"url":"https://api.github.com/repos/x/y/issues",
+			"method":"GET",
+			"headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+		}`),
+	}
+	v, err := chain.Evaluate(context.Background(), nil, tu, evalToolUseMutator{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("Outcome = %q, want Deny for missing boundary resolver", v.Outcome)
+	}
+	if !strings.Contains(v.Reason, "boundary check is not configured") {
+		t.Fatalf("Reason = %q, want missing boundary resolver message", v.Reason)
+	}
+}
+
 func inspectorFactIsAPI(facts []pipeline.EvaluationFact) bool {
 	for _, f := range facts {
 		if ifct, ok := f.(pipeline.InspectorFact); ok {
@@ -143,10 +169,9 @@ func TestInspectorChain_NilInspectorSkips(t *testing.T) {
 	}
 }
 
-// TestInspectorChain_StubPlaceholdersDowngradedToTriggerMiss pins the
-// behavior where short autovault_… literals (test fixtures, doc
-// snippets) are downgraded to trigger-miss instead of being refused as
-// ambiguous. Without this, prose mentions of autovault_x or
+// TestInspectorChain_StubPlaceholdersFailClosed pins the behavior where
+// short autovault_… literals fail closed instead of downgrading to
+// trigger-miss pass-through.
 func TestInspectorChain_StubPlaceholdersFailClosed(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	chain := policies.NewInspectorChain(insp, nil)

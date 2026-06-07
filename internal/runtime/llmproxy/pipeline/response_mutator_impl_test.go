@@ -150,6 +150,25 @@ func TestStreamingResponseMutator_GoogleAcceptsConstruction(t *testing.T) {
 	}
 }
 
+func TestStreamingResponseMutator_GooglePrependFailsExplicitly(t *testing.T) {
+	upstream := strings.Join([]string{
+		`data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"}}]}`,
+		``,
+	}, "\n")
+	var dst bytes.Buffer
+	m, err := pipeline.NewStreamingResponseMutator(&dst, io.NopCloser(strings.NewReader(upstream)), conversation.StreamShapeGoogleGemini)
+	if err != nil {
+		t.Fatalf("Google shape rejected at construction: %v", err)
+	}
+	if err := m.PrependAssistantText("[Clawvisor] notice"); err != nil {
+		t.Fatalf("PrependAssistantText: %v", err)
+	}
+	committer := m.(interface{ Commit() error })
+	if err := committer.Commit(); err == nil || !strings.Contains(err.Error(), "Google Gemini") {
+		t.Fatalf("Google prepend error = %v, want explicit unsupported error", err)
+	}
+}
+
 // TestStreamingResponseMutator_PrependOpenAIChatNotice exercises the
 // new OpenAI Chat prepend wiring: a chat completions stream gets a
 // synthetic leading chunk carrying the notice; upstream chunks pass
