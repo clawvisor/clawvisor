@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -171,6 +173,14 @@ func (h *AgentsHandler) UpdateRuntimeSettings(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load agent runtime settings")
 		return
 	}
+	bodyReader := http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	defer bodyReader.Close()
+	bodyBytes, err := io.ReadAll(bodyReader)
+	if err != nil {
+		writeDetailedError(w, http.StatusBadRequest, diagnoseJSONError(err))
+		return
+	}
+
 	var body struct {
 		RuntimeEnabled                   bool    `json:"runtime_enabled"`
 		RuntimeMode                      string  `json:"runtime_mode"`
@@ -179,24 +189,49 @@ func (h *AgentsHandler) UpdateRuntimeSettings(w http.ResponseWriter, r *http.Req
 		InjectStoredBearer               bool    `json:"inject_stored_bearer"`
 		LiteProxySecretDetectionDisabled *bool   `json:"lite_proxy_secret_detection_disabled"`
 		ConversationAutoApproveThreshold *string `json:"conversation_auto_approve_threshold"`
+		MaxCostMicros                    *int64  `json:"max_cost_micros"`
+		MaxTokens                        *int64  `json:"max_tokens"`
 	}
-	if !decodeJSON(w, r, &body) {
+	if err := json.Unmarshal(bodyBytes, &body); err != nil {
+		writeDetailedError(w, http.StatusBadRequest, diagnoseJSONError(err))
 		return
 	}
-	switch body.RuntimeMode {
-	case "observe", "enforce":
-	default:
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "runtime_mode must be observe or enforce")
+
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(bodyBytes, &rawMap); err != nil {
+		writeDetailedError(w, http.StatusBadRequest, diagnoseJSONError(err))
 		return
 	}
-	switch body.OutboundCredentialMode {
-	case "inherit", "observe", "strict":
-	default:
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "outbound_credential_mode must be inherit, observe, or strict")
-		return
+	if _, ok := rawMap["runtime_enabled"]; ok {
+		settings.RuntimeEnabled = body.RuntimeEnabled
 	}
-	if body.StarterProfile == "" {
-		body.StarterProfile = "none"
+	if _, ok := rawMap["runtime_mode"]; ok {
+		switch body.RuntimeMode {
+		case "observe", "enforce":
+			settings.RuntimeMode = body.RuntimeMode
+		default:
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "runtime_mode must be observe or enforce")
+			return
+		}
+	}
+	if _, ok := rawMap["starter_profile"]; ok {
+		if body.StarterProfile == "" {
+			settings.StarterProfile = "none"
+		} else {
+			settings.StarterProfile = body.StarterProfile
+		}
+	}
+	if _, ok := rawMap["outbound_credential_mode"]; ok {
+		switch body.OutboundCredentialMode {
+		case "inherit", "observe", "strict":
+			settings.OutboundCredentialMode = body.OutboundCredentialMode
+		default:
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "outbound_credential_mode must be inherit, observe, or strict")
+			return
+		}
+	}
+	if _, ok := rawMap["inject_stored_bearer"]; ok {
+		settings.InjectStoredBearer = body.InjectStoredBearer
 	}
 	// Conversation auto-approve threshold is optional in the request
 	// body so the existing runtime-settings clients (which don't know
@@ -212,13 +247,14 @@ func (h *AgentsHandler) UpdateRuntimeSettings(w http.ResponseWriter, r *http.Req
 		}
 		settings.ConversationAutoApproveThreshold = normalized
 	}
-	settings.RuntimeEnabled = body.RuntimeEnabled
-	settings.RuntimeMode = body.RuntimeMode
-	settings.StarterProfile = body.StarterProfile
-	settings.OutboundCredentialMode = body.OutboundCredentialMode
-	settings.InjectStoredBearer = body.InjectStoredBearer
 	if body.LiteProxySecretDetectionDisabled != nil {
 		settings.LiteProxySecretDetectionDisabled = *body.LiteProxySecretDetectionDisabled
+	}
+	if _, ok := rawMap["max_cost_micros"]; ok {
+		settings.MaxCostMicros = body.MaxCostMicros
+	}
+	if _, ok := rawMap["max_tokens"]; ok {
+		settings.MaxTokens = body.MaxTokens
 	}
 	if err := h.st.UpsertAgentRuntimeSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save agent runtime settings")

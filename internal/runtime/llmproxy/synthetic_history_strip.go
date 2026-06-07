@@ -18,6 +18,7 @@ type SyntheticApprovalHistoryStripResult struct {
 }
 
 const ToolApprovalSubstitutedPromptMarker = "Clawvisor paused this tool call for approval."
+const BudgetApprovalSubstitutedPromptMarker = "Clawvisor: Task budget is at"
 
 // StripSyntheticApprovalHistory removes Clawvisor-generated approval UI from
 // conversation history before it is sent back to the upstream model. The live
@@ -218,7 +219,8 @@ func rawMessageString(raw json.RawMessage) string {
 
 func isSyntheticApprovalPromptText(text string) bool {
 	return strings.Contains(text, InlineApprovalSubstitutedPromptMarker) ||
-		strings.Contains(text, ToolApprovalSubstitutedPromptMarker)
+		strings.Contains(text, ToolApprovalSubstitutedPromptMarker) ||
+		strings.Contains(text, BudgetApprovalSubstitutedPromptMarker)
 }
 
 func isBareSyntheticApprovalReply(text string) bool {

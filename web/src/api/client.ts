@@ -330,6 +330,8 @@ export interface AgentRuntimeSettings {
   // turns authorize the task and the risk is at-or-below this level.
   // Backend rejects values above "medium" at the API layer.
   conversation_auto_approve_threshold?: ConversationAutoApproveThreshold
+  max_cost_micros?: number
+  max_tokens?: number
   created_at?: string
   updated_at?: string
 }
@@ -652,6 +654,8 @@ export interface Task {
   risk_details?: RiskAssessment
   approval_source?: string
   approval_rationale?: ApprovalRationale
+  max_cost_micros?: number
+  max_tokens?: number
 }
 
 export interface ApprovalRationale {

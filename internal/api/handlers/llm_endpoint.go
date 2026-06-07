@@ -170,6 +170,11 @@ type LLMEndpointHandler struct {
 
 	defaultToolRulesMu   sync.Mutex
 	defaultToolRulesSeen map[string]map[string]struct{}
+
+	// BudgetOverrides tracks transient user overrides for budget warnings.
+	BudgetOverrides      *llmproxy.BudgetOverrideCache
+	// RateLimits tracks upstream request/token rate limits.
+	RateLimits           *llmproxy.RateLimitTracker
 }
 
 const defaultToolRulesSeenMaxAgents = 10000
@@ -197,6 +202,8 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		CallerNonces:         llmproxy.NewMemoryCallerNonceCache(5 * time.Minute),
 		MaxRequestBytes:      34 << 20,
 		defaultToolRulesSeen: map[string]map[string]struct{}{},
+		BudgetOverrides:      llmproxy.NewBudgetOverrideCache(),
+		RateLimits:           llmproxy.NewRateLimitTracker(),
 	}
 }
 
@@ -520,6 +527,22 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	budgetApprovalConsumed := false
+	if budgetRewrite, budgetErr := llmproxy.RewriteBudgetApprovalReply(r.Context(), llmproxy.TaskReplyRewriteRequest{
+		HTTPRequest:     r,
+		Provider:        provider,
+		Body:            body,
+		Agent:           agent,
+		ConversationID:  conversationID,
+		PendingApproval: h.PendingApprovals,
+	}, h.BudgetOverrides); budgetErr != nil {
+		h.Logger.WarnContext(r.Context(), "budget approval reply handle failed", "err", budgetErr)
+	} else if budgetRewrite.Rewritten {
+		body = budgetRewrite.Body
+		budgetApprovalConsumed = true
+		auditParams["budget_approval_rewritten"] = true
+	}
+
 	// Persistent inline-approval context augmentation. The harness
 	// records what the user typed ("approve") not our one-shot
 	// rewrite ("approve [Clawvisor: ...]"), so on subsequent turns
@@ -595,7 +618,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// tool-stage approval emitted alongside the inline-task POST in
 	// the same turn). A single user "approve" must only resolve one
 	// hold.
-	if !inlineApprovalConsumed {
+	if !budgetApprovalConsumed && !inlineApprovalConsumed {
 		if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, conversationID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
 			return
 		}
@@ -700,6 +723,42 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			BodyBytes:    len(body),
 		})
 	}
+
+	// Load active checkout taskID and check budget
+	candidateTasks, _, _, _ := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+	activeTaskID, _ := h.checkedOutTaskID(r.Context(), agent, conversationID, candidateTasks)
+	auditTaskID = activeTaskID
+
+	budgetCheck, err := llmproxy.EvaluateBudget(r.Context(), h.Store, h.PendingApprovals, h.BudgetOverrides, agent, activeTaskID, provider, conversationID)
+	if err != nil {
+		h.Logger.WarnContext(r.Context(), "budget check failed; continuing under fail-open posture",
+			"err", err,
+			"agent_id", agent.ID,
+			"task_id", activeTaskID,
+			"provider", string(provider),
+			"conversation_id", conversationID,
+		)
+	} else if budgetCheck.Blocked {
+		auditStatus = http.StatusOK
+		auditDecide = "deny"
+		auditOutcome = "budget_limit_hit"
+		auditReason = budgetCheck.Message
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusOK, "BUDGET_LIMIT_HIT", budgetCheck.Message)
+		return
+	}
+
+	// Rate limit throttle
+	if h.RateLimits != nil {
+		if delay := h.RateLimits.ThrottleDelay(agent.ID, string(provider), reqSummary.Model); delay > 0 {
+			h.Logger.InfoContext(r.Context(), "rate limit throttling active, sleeping thread", "delay_ms", delay.Milliseconds())
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(delay):
+			}
+		}
+	}
+
 	forwardStart := time.Now()
 	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, body)
 	if err != nil {
@@ -736,6 +795,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	if h.RateLimits != nil {
+		h.RateLimits.Update(agent.ID, string(provider), reqSummary.Model, resp.Header)
+	}
 	upstreamHeadersMs := time.Since(forwardStart).Milliseconds()
 	auditStatus = resp.StatusCode
 	auditOutcome = outcomeFromStatus(resp.StatusCode)

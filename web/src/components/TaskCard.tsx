@@ -124,7 +124,7 @@ export default function TaskCard({
   // so we can decide whether to render the Cost tab at all — non-llm-proxy
   // tasks return request_count=0 and the tab stays hidden. The query is
   // cheap when there are no rows.
-  const costPrefetchEnabled = !isActionable && expanded
+  const costPrefetchEnabled = !isActionable && (expanded || typeof task.max_cost_micros === 'number' || typeof task.max_tokens === 'number')
 
   const { data: costData, isLoading: costLoading } = useQuery({
     queryKey: ['task-cost', task.id],
@@ -291,6 +291,25 @@ export default function TaskCard({
                 <RequestCounter count={task.request_count} active={isActive} />
               </>
             )}
+            {costData && (typeof task.max_cost_micros === 'number' || typeof task.max_tokens === 'number') && (
+              <>
+                <span>&middot;</span>
+                <span className="text-text-secondary font-medium">
+                  Budget:{' '}
+                  {typeof task.max_cost_micros === 'number' && (
+                    <span>
+                      {formatMicros(costData.cost_micros)} of {formatMicros(task.max_cost_micros)}
+                    </span>
+                  )}
+                  {typeof task.max_cost_micros === 'number' && typeof task.max_tokens === 'number' && ' · '}
+                  {typeof task.max_tokens === 'number' && (
+                    <span>
+                      {formatTokens(costData.input_tokens + costData.output_tokens + costData.cache_read_tokens + costData.cache_write_tokens)} of {formatTokens(task.max_tokens)} tokens
+                    </span>
+                  )}
+                </span>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -310,6 +329,17 @@ export default function TaskCard({
               {isStanding ? 'ongoing' : 'session'}
               {!isStanding && task.expires_in_seconds > 0 && ` · ${Math.round(task.expires_in_seconds / 60)}m`}
             </span>
+            {(typeof task.max_cost_micros === 'number' || typeof task.max_tokens === 'number') && (
+              <>
+                <span className="text-xs text-text-tertiary">&middot;</span>
+                <span className="text-xs font-mono text-text-secondary font-medium">
+                  Budget:{' '}
+                  {typeof task.max_cost_micros === 'number' && formatMicros(task.max_cost_micros)}
+                  {typeof task.max_cost_micros === 'number' && typeof task.max_tokens === 'number' && ' / '}
+                  {typeof task.max_tokens === 'number' && `${formatTokens(task.max_tokens)} tokens`}
+                </span>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -566,7 +596,7 @@ export default function TaskCard({
           )}
 
           {effectiveTab === 'cost' && (
-            <CostPanel data={costData} loading={costLoading} />
+            <CostPanel data={costData} loading={costLoading} task={task} />
           )}
 
           {!result && isActive && (
@@ -1132,7 +1162,7 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-function CostPanel({ data, loading }: { data: TaskCostSummary | undefined; loading: boolean }) {
+function CostPanel({ data, loading, task }: { data: TaskCostSummary | undefined; loading: boolean; task: Task }) {
   if (loading) {
     return <div className="px-4 py-3 text-xs text-text-tertiary">Loading…</div>
   }
@@ -1144,8 +1174,51 @@ function CostPanel({ data, loading }: { data: TaskCostSummary | undefined; loadi
     )
   }
   const hasUnknown = data.unknown_models.length > 0
+  const totalUsedTokens = data.input_tokens + data.output_tokens + data.cache_read_tokens + data.cache_write_tokens
+
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-4 py-3 space-y-4">
+      {typeof task.max_cost_micros === 'number' && (
+        <div className="space-y-1 rounded border border-border-subtle bg-surface-0 px-3 py-2">
+          <div className="flex justify-between text-xs text-text-secondary">
+            <span className="font-medium text-text-primary">Cost Budget Usage</span>
+            <span>{formatMicros(data.cost_micros)} / {formatMicros(task.max_cost_micros)} ({Math.round((data.cost_micros / task.max_cost_micros) * 100)}%)</span>
+          </div>
+          <div className="h-1.5 w-full bg-surface-2 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${
+                data.cost_micros >= task.max_cost_micros
+                  ? 'bg-danger'
+                  : data.cost_micros >= task.max_cost_micros * 0.9
+                  ? 'bg-warning'
+                  : 'bg-brand'
+              }`}
+              style={{ width: `${Math.min(100, (data.cost_micros / task.max_cost_micros) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {typeof task.max_tokens === 'number' && (
+        <div className="space-y-1 rounded border border-border-subtle bg-surface-0 px-3 py-2">
+          <div className="flex justify-between text-xs text-text-secondary">
+            <span className="font-medium text-text-primary">Token Budget Usage</span>
+            <span>{formatTokens(totalUsedTokens)} / {formatTokens(task.max_tokens)} ({Math.round((totalUsedTokens / task.max_tokens) * 100)}%)</span>
+          </div>
+          <div className="h-1.5 w-full bg-surface-2 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${
+                totalUsedTokens >= task.max_tokens
+                  ? 'bg-danger'
+                  : totalUsedTokens >= task.max_tokens * 0.9
+                  ? 'bg-warning'
+                  : 'bg-brand'
+              }`}
+              style={{ width: `${Math.min(100, (totalUsedTokens / task.max_tokens) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-3">
         <Stat label="Total cost" value={formatMicros(data.cost_micros)} mono />
         <Stat label="Requests" value={String(data.request_count)} mono />

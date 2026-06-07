@@ -213,3 +213,27 @@ func TestStripSyntheticApprovalHistory_DoesNotTouchUserMention(t *testing.T) {
 		t.Fatalf("user-authored diagnostic text should be preserved: %s", out.Body)
 	}
 }
+
+func TestStripSyntheticApprovalHistory_DropsBudgetPromptAndBareReply(t *testing.T) {
+	body := anthropicTextBody(
+		map[string]string{"role": "user", "content": "Run tasks"},
+		map[string]string{"role": "assistant", "content": BudgetApprovalSubstitutedPromptMarker + " 90% (cost spent $0.0009 of limit $0.0010). Reply y or approve to continue. (Hold ID: cv-123)"},
+		map[string]string{"role": "user", "content": "y"},
+	)
+
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider: conversation.ProviderAnthropic,
+		Body:     body,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Modified {
+		t.Fatal("expected synthetic budget prompt history to be stripped")
+	}
+	text := string(out.Body)
+	if strings.Contains(text, BudgetApprovalSubstitutedPromptMarker) || strings.Contains(text, `"y"`) {
+		t.Fatalf("synthetic budget approval history leaked upstream: %s", text)
+	}
+}
+

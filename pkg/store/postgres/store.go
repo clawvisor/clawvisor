@@ -283,7 +283,7 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		       ars.agent_id, ars.runtime_enabled, ars.runtime_mode, ars.starter_profile,
 		       ars.outbound_credential_mode, ars.inject_stored_bearer, ars.lite_proxy_secret_detection_disabled,
 		       ars.conversation_auto_approve_threshold,
-		       ars.created_at, ars.updated_at
+		       ars.created_at, ars.updated_at, ars.max_cost_micros, ars.max_tokens
 		FROM agents a
 		LEFT JOIN agent_runtime_settings ars ON ars.agent_id = a.id
 		WHERE a.user_id = $1 AND a.deleted_at IS NULL
@@ -301,7 +301,7 @@ func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*s
 	row := s.pool.QueryRow(ctx, `
 		SELECT agent_id, runtime_enabled, runtime_mode, starter_profile,
 		       outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled,
-		       conversation_auto_approve_threshold, created_at, updated_at
+		       conversation_auto_approve_threshold, created_at, updated_at, max_cost_micros, max_tokens
 		FROM agent_runtime_settings
 		WHERE agent_id = $1
 	`, agentID)
@@ -309,7 +309,7 @@ func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*s
 	err := row.Scan(&settings.AgentID, &settings.RuntimeEnabled, &settings.RuntimeMode, &settings.StarterProfile,
 		&settings.OutboundCredentialMode, &settings.InjectStoredBearer, &settings.LiteProxySecretDetectionDisabled,
 		&settings.ConversationAutoApproveThreshold,
-		&settings.CreatedAt, &settings.UpdatedAt)
+		&settings.CreatedAt, &settings.UpdatedAt, &settings.MaxCostMicros, &settings.MaxTokens)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -327,8 +327,8 @@ func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO agent_runtime_settings (
 			agent_id, runtime_enabled, runtime_mode, starter_profile, outbound_credential_mode, inject_stored_bearer, lite_proxy_secret_detection_disabled,
-			conversation_auto_approve_threshold
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+			conversation_auto_approve_threshold, max_cost_micros, max_tokens
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (agent_id) DO UPDATE SET
 			runtime_enabled = EXCLUDED.runtime_enabled,
 			runtime_mode = EXCLUDED.runtime_mode,
@@ -337,10 +337,12 @@ func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.
 			inject_stored_bearer = EXCLUDED.inject_stored_bearer,
 			lite_proxy_secret_detection_disabled = EXCLUDED.lite_proxy_secret_detection_disabled,
 			conversation_auto_approve_threshold = EXCLUDED.conversation_auto_approve_threshold,
+			max_cost_micros = EXCLUDED.max_cost_micros,
+			max_tokens = EXCLUDED.max_tokens,
 			updated_at = NOW()
 	`, settings.AgentID, settings.RuntimeEnabled, settings.RuntimeMode, settings.StarterProfile,
 		settings.OutboundCredentialMode, settings.InjectStoredBearer, settings.LiteProxySecretDetectionDisabled,
-		settings.ConversationAutoApproveThreshold)
+		settings.ConversationAutoApproveThreshold, settings.MaxCostMicros, settings.MaxTokens)
 	return err
 }
 
@@ -823,14 +825,55 @@ func (s *Store) RecordLLMRequestCost(ctx context.Context, c *store.LLMRequestCos
 	return err
 }
 
-// GetTaskCost rolls up llm_request_cost rows for one task. See the
-// sqlite copy for the contract.
-func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.TaskCostSummary, error) {
-	out := &store.TaskCostSummary{
-		TaskID:        taskID,
+type costAccumulator struct {
+	RequestCount     int
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	CostMicros       int64
+	UnknownModels    []string
+	ByModel          []store.TaskCostByModelEntry
+}
+
+func scanAndAccumulateCost(rows pgx.Rows) (*costAccumulator, error) {
+	acc := &costAccumulator{
 		ByModel:       []store.TaskCostByModelEntry{},
 		UnknownModels: []string{},
 	}
+	unknownModels := map[string]struct{}{}
+	for rows.Next() {
+		var e store.TaskCostByModelEntry
+		var unknownRows int64
+		if err := rows.Scan(&e.Model, &e.RequestCount, &e.InputTokens, &e.OutputTokens,
+			&e.CacheReadTokens, &e.CacheWriteTokens, &e.CostMicros, &unknownRows); err != nil {
+			return nil, err
+		}
+		e.Known = unknownRows == 0
+		if !e.Known {
+			unknownModels[e.Model] = struct{}{}
+		}
+		acc.ByModel = append(acc.ByModel, e)
+		acc.RequestCount += e.RequestCount
+		acc.InputTokens += e.InputTokens
+		acc.OutputTokens += e.OutputTokens
+		acc.CacheReadTokens += e.CacheReadTokens
+		acc.CacheWriteTokens += e.CacheWriteTokens
+		acc.CostMicros += e.CostMicros
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for m := range unknownModels {
+		acc.UnknownModels = append(acc.UnknownModels, m)
+	}
+	sort.Strings(acc.UnknownModels)
+	return acc, nil
+}
+
+// GetTaskCost rolls up llm_request_cost rows for one task. See the
+// sqlite copy for the contract.
+func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.TaskCostSummary, error) {
 	// Postgres' SUM(bigint) widens to NUMERIC; pgx can't scan that
 	// into int64. Cast each SUM back to bigint so the column type
 	// matches the destination. Token columns are INTEGER → SUM is
@@ -859,34 +902,60 @@ func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.
 		return nil, err
 	}
 	defer rows.Close()
-	unknownModels := map[string]struct{}{}
-	for rows.Next() {
-		var e store.TaskCostByModelEntry
-		var unknownRows int64
-		if err := rows.Scan(&e.Model, &e.RequestCount, &e.InputTokens, &e.OutputTokens,
-			&e.CacheReadTokens, &e.CacheWriteTokens, &e.CostMicros, &unknownRows); err != nil {
-			return nil, err
-		}
-		e.Known = unknownRows == 0
-		if !e.Known {
-			unknownModels[e.Model] = struct{}{}
-		}
-		out.ByModel = append(out.ByModel, e)
-		out.RequestCount += e.RequestCount
-		out.InputTokens += e.InputTokens
-		out.OutputTokens += e.OutputTokens
-		out.CacheReadTokens += e.CacheReadTokens
-		out.CacheWriteTokens += e.CacheWriteTokens
-		out.CostMicros += e.CostMicros
-	}
-	if err := rows.Err(); err != nil {
+
+	acc, err := scanAndAccumulateCost(rows)
+	if err != nil {
 		return nil, err
 	}
-	for m := range unknownModels {
-		out.UnknownModels = append(out.UnknownModels, m)
+
+	return &store.TaskCostSummary{
+		TaskID:           taskID,
+		RequestCount:     acc.RequestCount,
+		InputTokens:      acc.InputTokens,
+		OutputTokens:     acc.OutputTokens,
+		CacheReadTokens:  acc.CacheReadTokens,
+		CacheWriteTokens: acc.CacheWriteTokens,
+		CostMicros:       acc.CostMicros,
+		UnknownModels:    acc.UnknownModels,
+		ByModel:          acc.ByModel,
+	}, nil
+}
+
+func (s *Store) GetAgentCost(ctx context.Context, userID, agentID string) (*store.AgentCostSummary, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT model,
+		       COUNT(*)::integer AS n,
+		       COALESCE(SUM(input_tokens), 0)::bigint,
+		       COALESCE(SUM(output_tokens), 0)::bigint,
+		       COALESCE(SUM(cache_read_tokens), 0)::bigint,
+		       COALESCE(SUM(cache_write_tokens), 0)::bigint,
+		       COALESCE(SUM(cost_micros), 0)::bigint,
+		       SUM(CASE WHEN cost_micros IS NULL THEN 1 ELSE 0 END)::bigint AS unknown_rows
+		FROM llm_request_cost
+		WHERE user_id = $1 AND agent_id = $2 AND agent_id IS NOT NULL
+		GROUP BY model
+		ORDER BY model`, userID, agentID)
+	if err != nil {
+		return nil, err
 	}
-	sort.Strings(out.UnknownModels)
-	return out, nil
+	defer rows.Close()
+
+	acc, err := scanAndAccumulateCost(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	return &store.AgentCostSummary{
+		AgentID:          agentID,
+		RequestCount:     acc.RequestCount,
+		InputTokens:      acc.InputTokens,
+		OutputTokens:     acc.OutputTokens,
+		CacheReadTokens:  acc.CacheReadTokens,
+		CacheWriteTokens: acc.CacheWriteTokens,
+		CostMicros:       acc.CostMicros,
+		UnknownModels:    acc.UnknownModels,
+		ByModel:          acc.ByModel,
+	}, nil
 }
 
 func (s *Store) UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg string, durationMS int) error {
@@ -1198,15 +1267,16 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
 			risk_level, risk_details, approval_source, approval_rationale, expected_tools_json,
-			expected_egress_json, required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+			expected_egress_json, required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode,
+			max_cost_micros, max_tokens)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
 		actionsJSON, plannedCallsJSON, task.CallbackURL, task.ExpiresInSeconds,
 		task.ApprovedAt, task.ExpiresAt,
 		nilIfEmpty(pendingActionJSON), task.PendingReason, task.Lifetime,
 		task.RiskLevel, string(riskDetails), task.ApprovalSource, approvalRationale,
 		expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion,
-		task.ChainExtractionMode)
+		task.ChainExtractionMode, task.MaxCostMicros, task.MaxTokens)
 	return err
 }
 
@@ -1220,14 +1290,15 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode,
+		       max_cost_micros, max_tokens
 		FROM tasks WHERE id = $1
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsJSON,
 		&plannedCallsJSON, &t.CallbackURL, &t.CreatedAt, &t.ApprovedAt, &t.ExpiresAt, &t.ExpiresInSeconds,
 		&t.RequestCount, &pendingActionJSON, &t.PendingReason, &t.Lifetime,
 		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
 		&expectedToolsJSON, &expectedEgressJSON, &requiredCredentialsJSON, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
-		&chainExtractionMode)
+		&chainExtractionMode, &t.MaxCostMicros, &t.MaxTokens)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -1297,7 +1368,8 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode,
+		       max_cost_micros, max_tokens
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
 
 	if filter.Limit > 0 {
@@ -1479,7 +1551,8 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode,
+		       max_cost_micros, max_tokens
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < NOW()
 	`)
 	if err != nil {
@@ -1498,7 +1571,8 @@ func (s *Store) ListExpiredInlineChatPendingTasks(ctx context.Context, cutoff ti
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode,
+		       max_cost_micros, max_tokens
 		FROM tasks
 		WHERE status = 'pending_approval'
 		  AND approval_source = 'inline_chat'
@@ -1523,7 +1597,7 @@ func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 			&t.RequestCount, &pendingActionJSON, &t.PendingReason, &t.Lifetime,
 			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
 			&expectedToolsJSON, &expectedEgressJSON, &requiredCredentialsJSON, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
-			&chainExtractionMode); err != nil {
+			&chainExtractionMode, &t.MaxCostMicros, &t.MaxTokens); err != nil {
 			return nil, err
 		}
 		if chainExtractionMode != nil {
@@ -3396,12 +3470,15 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 		var settingsConversationAutoApprove *string
 		var settingsCreatedAt *time.Time
 		var settingsUpdatedAt *time.Time
+		var settingsMaxCostMicros *int64
+		var settingsMaxTokens *int64
 		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID, &a.Description,
 			&installContext,
 			&a.ActiveTaskCount, &a.LastTaskAt, &settingsAgentID, &settingsEnabled, &settingsMode,
 			&settingsProfile, &settingsOutbound, &settingsInject, &settingsLiteProxySecretDetectionDisabled,
 			&settingsConversationAutoApprove,
-			&settingsCreatedAt, &settingsUpdatedAt); err != nil {
+			&settingsCreatedAt, &settingsUpdatedAt,
+			&settingsMaxCostMicros, &settingsMaxTokens); err != nil {
 			return nil, err
 		}
 		if orgID != nil {
@@ -3443,6 +3520,8 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 			if settingsUpdatedAt != nil {
 				a.RuntimeSettings.UpdatedAt = *settingsUpdatedAt
 			}
+			a.RuntimeSettings.MaxCostMicros = settingsMaxCostMicros
+			a.RuntimeSettings.MaxTokens = settingsMaxTokens
 		}
 		agents = append(agents, a)
 	}

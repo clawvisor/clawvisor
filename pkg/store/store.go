@@ -161,6 +161,7 @@ type Store interface {
 	// task.
 	RecordLLMRequestCost(ctx context.Context, cost *LLMRequestCost) error
 	GetTaskCost(ctx context.Context, userID, taskID string) (*TaskCostSummary, error)
+	GetAgentCost(ctx context.Context, userID, agentID string) (*AgentCostSummary, error)
 	CreateActivityMute(ctx context.Context, mute *ActivityMute) error
 	ListActivityMutes(ctx context.Context, userID string) ([]*ActivityMute, error)
 	DeleteActivityMute(ctx context.Context, id, userID string) error
@@ -569,6 +570,8 @@ type AgentRuntimeSettings struct {
 	ConversationAutoApproveThreshold string    `json:"conversation_auto_approve_threshold"`
 	CreatedAt                        time.Time `json:"created_at"`
 	UpdatedAt                        time.Time `json:"updated_at"`
+	MaxCostMicros                    *int64    `json:"max_cost_micros,omitempty"`
+	MaxTokens                        *int64    `json:"max_tokens,omitempty"`
 }
 
 // ServiceMeta records that a user has activated a given service.
@@ -724,6 +727,20 @@ type TaskCostSummary struct {
 	ByModel       []TaskCostByModelEntry `json:"by_model"`
 }
 
+// AgentCostSummary is the rollup of all LLMRequestCost rows for a
+// single agent.
+type AgentCostSummary struct {
+	AgentID          string                  `json:"agent_id"`
+	RequestCount     int                     `json:"request_count"`
+	InputTokens      int64                   `json:"input_tokens"`
+	OutputTokens     int64                   `json:"output_tokens"`
+	CacheReadTokens  int64                   `json:"cache_read_tokens"`
+	CacheWriteTokens int64                   `json:"cache_write_tokens"`
+	CostMicros       int64                   `json:"cost_micros"`
+	UnknownModels    []string                `json:"unknown_models"`
+	ByModel          []TaskCostByModelEntry `json:"by_model"`
+}
+
 // TaskCostByModelEntry is one model's contribution to a task's cost.
 type TaskCostByModelEntry struct {
 	Model            string `json:"model"`
@@ -820,6 +837,8 @@ type Task struct {
 	// INLINE_CHAT_BOUND) plus the chat-bound expiry sweep.
 	ApprovalSource    string          `json:"approval_source,omitempty"`
 	ApprovalRationale json.RawMessage `json:"approval_rationale,omitempty"`
+	MaxCostMicros     *int64          `json:"max_cost_micros,omitempty"`
+	MaxTokens         *int64          `json:"max_tokens,omitempty"`
 }
 
 // PendingApproval is a gateway request awaiting human approval.

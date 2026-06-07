@@ -142,6 +142,8 @@ type createTaskRequest struct {
 	ExpiresInSeconds       int                               `json:"expires_in_seconds"`
 	CallbackURL            string                            `json:"callback_url"`
 	Lifetime               string                            `json:"lifetime"` // "session" (default), "sliding", or "standing"
+	MaxCostMicros          *int64                            `json:"max_cost_micros,omitempty"`
+	MaxTokens              *int64                            `json:"max_tokens,omitempty"`
 }
 
 // Create declares a new task scope.
@@ -508,6 +510,12 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.ChainExtractionMode != "" {
 		dedupParts = append(dedupParts, "chain_extraction_mode", req.ChainExtractionMode)
 	}
+	if req.MaxCostMicros != nil {
+		dedupParts = append(dedupParts, "max_cost_micros", *req.MaxCostMicros)
+	}
+	if req.MaxTokens != nil {
+		dedupParts = append(dedupParts, "max_tokens", *req.MaxTokens)
+	}
 	taskDedupKey := buildDedupKey(dedupParts...)
 	if cached, ok := h.contentDedup.Get(taskDedupKey); ok {
 		resp := cached.(map[string]any)
@@ -535,6 +543,8 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ExpectedUse:            req.ExpectedUse,
 		SchemaVersion:          schemaVersion,
 		ExpiresInSeconds:       expiresIn,
+		MaxCostMicros:          req.MaxCostMicros,
+		MaxTokens:              req.MaxTokens,
 	}
 	if req.CallbackURL != "" {
 		task.CallbackURL = &req.CallbackURL

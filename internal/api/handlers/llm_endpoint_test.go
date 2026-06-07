@@ -2211,3 +2211,123 @@ data: {"type":"message_stop"}
 		t.Fatal("timed out waiting for streamed text before upstream completion")
 	}
 }
+
+func TestLLMEndpoint_BudgetLimits(t *testing.T) {
+	ctx := context.Background()
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	agent, err := st.GetAgentByToken(ctx, auth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("GetAgentByToken: %v", err)
+	}
+
+	// Upsert agent runtime settings with a low budget limit
+	settings, err := st.GetAgentRuntimeSettings(ctx, agent.ID)
+	if err != nil && err != store.ErrNotFound {
+		t.Fatalf("GetAgentRuntimeSettings: %v", err)
+	}
+	if settings == nil {
+		settings = defaultAgentRuntimeSettings(nil, agent.ID)
+	}
+	limitCost := int64(100) // $0.0001
+	settings.MaxCostMicros = &limitCost
+	if err := st.UpsertAgentRuntimeSettings(ctx, settings); err != nil {
+		t.Fatalf("UpsertAgentRuntimeSettings: %v", err)
+	}
+
+	// 1. Record cost of 95 micros (95% budget limit)
+	audit := &store.AuditEntry{
+		ID:         "audit-b1",
+		UserID:     agent.UserID,
+		AgentID:    &agent.ID,
+		RequestID:  "req-b1",
+		Timestamp:  time.Now(),
+		Service:    "anthropic",
+		Action:     "lite_proxy.messages.create",
+		Decision:   "allow",
+		Outcome:    "success",
+		ParamsSafe: []byte("{}"),
+	}
+	if err := st.LogAudit(ctx, audit); err != nil {
+		t.Fatalf("LogAudit: %v", err)
+	}
+	costMicros := int64(95)
+	cost := &store.LLMRequestCost{
+		AuditID:     "audit-b1",
+		UserID:      agent.UserID,
+		AgentID:     &agent.ID,
+		RequestID:   "req-b1",
+		Timestamp:   time.Now(),
+		Provider:    "anthropic",
+		Model:       "claude-haiku-4-5",
+		InputTokens: 10,
+		CostMicros:  &costMicros,
+	}
+	if err := st.RecordLLMRequestCost(ctx, cost); err != nil {
+		t.Fatalf("RecordLLMRequestCost: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	// 2. Make LLM request, should hit 90% soft-block budget warning
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-haiku-4-5","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("expected upstream NOT to be hit on soft-block budget warning, got hits=%d", upstreamHits)
+	}
+	bodyStr := rec.Body.String()
+	if !strings.Contains(bodyStr, "Clawvisor: Task budget is at 90%") {
+		t.Fatalf("expected budget warning in response, got %s", bodyStr)
+	}
+
+	// Extract Hold ID from warning message
+	idx := strings.Index(bodyStr, "cv-")
+	if idx == -1 {
+		t.Fatalf("no cv- prefix found in body: %s", bodyStr)
+	}
+	holdID := bodyStr[idx : idx+29]
+
+	// Verify hold is registered in memory cache
+	peeked, err := h.PendingApprovals.Peek(ctx, llmproxy.ResolveRequest{
+		UserID:   agent.UserID,
+		AgentID:  agent.ID,
+		Provider: conversation.ProviderAnthropic,
+		Stage:    llmproxy.StageBudgetWarning,
+	})
+	if err != nil || peeked == nil || peeked.ID != holdID {
+		t.Fatalf("expected hold %s in cache, got peeked=%v", holdID, peeked)
+	}
+
+	// 3. User replies "approve" to resolve hold
+	approveReq := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-haiku-4-5","messages":[{"role":"user","content":"approve `+holdID+`"}]}`))
+	approveReq.Header.Set("Authorization", "Bearer "+rawToken)
+	approveRec := httptest.NewRecorder()
+	mux.ServeHTTP(approveRec, approveReq)
+
+	if approveRec.Code != http.StatusOK {
+		t.Fatalf("approve response status = %d (%s)", approveRec.Code, approveRec.Body.String())
+	}
+	// It should pass through to upstream mock and return "ok"
+	if !strings.Contains(approveRec.Body.String(), "ok") {
+		t.Fatalf("expected ok response from mock upstream, got %s", approveRec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("expected upstream to be hit 1 time, got %d", upstreamHits)
+	}
+}
+

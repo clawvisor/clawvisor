@@ -808,6 +808,60 @@ function AgentRuntimePanel({
               </select>
             </label>
           </div>
+          <div className="rounded border border-border-subtle bg-surface-1 px-4 py-3 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-sm font-medium text-text-primary">Token budgeting</div>
+            </div>
+            <p className="text-xs text-text-tertiary">
+              Limit this agent's lifetime spending or token usage. Leave blank for unlimited.
+            </p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="block space-y-1">
+                <span className="text-xs text-text-tertiary">Max Cost (USD)</span>
+                <input
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  placeholder="Unlimited"
+                  value={
+                    current.max_cost_micros !== undefined && current.max_cost_micros !== null
+                      ? current.max_cost_micros / 1000000
+                      : ''
+                  }
+                  onChange={e => {
+                    const val = e.target.value === '' ? undefined : Math.round(parseFloat(e.target.value) * 1000000)
+                    setDraft({
+                      ...current,
+                      max_cost_micros: val,
+                    })
+                  }}
+                  className="w-full rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary placeholder:text-text-disabled"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-text-tertiary">Max Tokens</span>
+                <input
+                  type="number"
+                  step="1000"
+                  min="0"
+                  placeholder="Unlimited"
+                  value={
+                    current.max_tokens !== undefined && current.max_tokens !== null
+                      ? current.max_tokens
+                      : ''
+                  }
+                  onChange={e => {
+                    const val = e.target.value === '' ? undefined : parseInt(e.target.value, 10)
+                    setDraft({
+                      ...current,
+                      max_tokens: val,
+                    })
+                  }}
+                  className="w-full rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary placeholder:text-text-disabled"
+                />
+              </label>
+            </div>
+          </div>
           <div className="flex justify-end">
             <button
               onClick={() => saveMut.mutate(current)}
