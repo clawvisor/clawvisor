@@ -72,6 +72,22 @@ func (e *continueEvaluator) Evaluate(_ context.Context, _ pipeline.ReadOnlyRespo
 	}, nil
 }
 
+type deniedContinueEvaluator struct {
+	name       string
+	substitute string
+}
+
+func (e *deniedContinueEvaluator) Name() string { return e.name }
+func (e *deniedContinueEvaluator) Evaluate(_ context.Context, _ pipeline.ReadOnlyResponse, _ conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
+	return pipeline.ToolUseVerdict{
+		Outcome:        pipeline.OutcomeDeny,
+		SubstituteWith: e.substitute,
+		Continue: &pipeline.ContinueSignal{
+			SyntheticToolResults: []json.RawMessage{json.RawMessage(`"continued"`)},
+		},
+	}, nil
+}
+
 // erroringEvaluator returns a Go error.
 type erroringEvaluator struct{ name string }
 
@@ -150,6 +166,35 @@ func TestEvaluateToolUses_ContinueShortCircuits(t *testing.T) {
 	}
 	if _, ok := result.PerToolUse["toolu_should_not_run"]; ok {
 		t.Errorf("tool_use after Continue was evaluated; should have been skipped")
+	}
+}
+
+func TestEvaluateToolUses_DeniedContinueRequiresSubstituteFallback(t *testing.T) {
+	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
+	tools := []conversation.ToolUse{{ID: "toolu_local", Name: "Bash"}}
+
+	_, err := pipeline.EvaluateToolUses(context.Background(), res, tools, []pipeline.ToolUseEvaluator{
+		&deniedContinueEvaluator{name: "local_answer"},
+	}, func(id string) pipeline.ToolUseMutator {
+		return &recordingToolUseMutator{id: id}
+	})
+	if err == nil {
+		t.Fatal("expected denied Continue without SubstituteWith to fail")
+	}
+
+	result, err := pipeline.EvaluateToolUses(context.Background(), res, tools, []pipeline.ToolUseEvaluator{
+		&deniedContinueEvaluator{name: "local_answer", substitute: "continued"},
+	}, func(id string) pipeline.ToolUseMutator {
+		return &recordingToolUseMutator{id: id}
+	})
+	if err != nil {
+		t.Fatalf("denied Continue with SubstituteWith should be valid: %v", err)
+	}
+	if result.Continue == nil {
+		t.Fatal("expected Continue set")
+	}
+	if v := result.PerToolUse["toolu_local"]; v.SubstituteWith != "continued" {
+		t.Fatalf("SubstituteWith = %q, want continued", v.SubstituteWith)
 	}
 }
 

@@ -137,10 +137,10 @@ func PostprocessStream(
 
 	var continuationResults []conversation.ContinuationToolResult
 	for _, dec := range decisions {
-		if dec.Verdict.ContinueWithToolResult != "" {
+		if content, ok := dec.Verdict.ContinuationToolResultContent(); ok {
 			continuationResults = append(continuationResults, conversation.ContinuationToolResult{
 				ToolUseID: dec.ToolUse.ID,
-				Content:   dec.Verdict.ContinueWithToolResult,
+				Content:   content,
 			})
 		}
 	}

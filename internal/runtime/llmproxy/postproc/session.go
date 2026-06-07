@@ -90,3 +90,76 @@ func (s *postprocessSession) captures() []pipeline.HoldCapture {
 	}
 	return s.finalizer.Captures()
 }
+
+// feedFinalizer transfers per-tool eval outcomes + audit events into
+// the finalizer. Captures every tool_use (whether or not it called
+// Hold) so the coalesce decision sees Allow/Rewrite siblings
+// alongside the held Approvals. Captures that didn't Hold carry a
+// nil Payload; replay skips them.
+//
+// orderedToolUses preserves the response order of tool_uses so the
+// coalesced primary is selected deterministically + each capture
+// carries its ToolUse for audit/prompt rendering.
+func feedFinalizer(
+	finalizer *pipeline.Finalizer,
+	orderedToolUses []conversation.ToolUse,
+	holdSink *capturedHoldSink,
+	auditBuf *pendingAuditEventBuffer,
+	verdictByTU map[string]conversation.ToolUseVerdict,
+) {
+	if finalizer == nil {
+		return
+	}
+	holdCount := 0
+	if holdSink != nil {
+		holdCount = len(holdSink.holds)
+	}
+	holdByTU := make(map[string]capturedHold, holdCount)
+	if holdSink != nil {
+		for _, h := range holdSink.holds {
+			holdByTU[h.Pending.ToolUse.ID] = h
+		}
+	}
+	// Inspector verdicts surface through the buffered audit events
+	// the factory emitted. Allow / Rewrite siblings (no Hold) carry
+	// their inspector projection here so the coalesced renderer can
+	// fold them into the prompt with full audit detail.
+	auditByTU := make(map[string]conversation.AuditEvent)
+	if auditBuf != nil {
+		for _, ev := range auditBuf.entries {
+			auditByTU[ev.ToolUse.ID] = ev
+		}
+	}
+	for _, tu := range orderedToolUses {
+		kind := holdKindFromVerdict(verdictByTU, tu.ID)
+		c := pipeline.HoldCapture{
+			ToolUse:   tu,
+			ToolUseID: tu.ID,
+			Kind:      kind,
+		}
+		if h, ok := holdByTU[tu.ID]; ok {
+			c.ApprovalID = h.Pending.ID
+			c.Stage = string(h.Pending.Stage)
+			c.Payload = h.Pending
+			c.InspectorSnapshot = llmproxy.InspectorSnapshot(h.Pending.Inspector)
+		} else if ev, ok := auditByTU[tu.ID]; ok {
+			c.InspectorSnapshot = ev.InspectorVerdict
+		}
+		finalizer.AddCapture(c)
+	}
+	if auditBuf != nil {
+		for _, ev := range auditBuf.entries {
+			finalizer.AddAudit(ev)
+		}
+	}
+}
+
+func holdKindFromVerdict(
+	verdictByTU map[string]conversation.ToolUseVerdict,
+	tuID string,
+) conversation.HeldKindHint {
+	if v, ok := verdictByTU[tuID]; ok {
+		return pipeline.ClassifyVerdict(v)
+	}
+	return conversation.HeldKindHintDeny
+}

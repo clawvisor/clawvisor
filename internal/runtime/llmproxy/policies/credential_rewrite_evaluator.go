@@ -2,6 +2,7 @@ package policies
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/callernonce"
@@ -19,8 +20,9 @@ import (
 //   - On success → OutcomeRewrite with the rewritten bytes queued via
 //     mutator.RewriteArgs.
 //   - On nonce or rewrite failure → OutcomeDeny with a Clawvisor
-//     refusal message (and ContinueWithToolResult-equivalent payload
-//     via the bridge's Continue translation).
+//     refusal message. Rewrite failures also include a structured
+//     Continue signal so the model can recover with a supported tool
+//     shape when the provider continuation path is available.
 //
 // Runs after InspectorChain + TaskScopeEvaluator + IntentVerifyEvaluator
 // in the credentialed chain. By the time this evaluator fires, the
@@ -125,10 +127,14 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 	}, v, opts)
 	if err != nil {
 		reason := rewritehelp.CredentialedRewriteRecoveryReason(v, err)
+		continuationPayload, _ := json.Marshal(reason)
 		return pipeline.ToolUseVerdict{
-			Outcome:                pipeline.OutcomeDeny,
-			Reason:                 reason,
-			ContinueWithToolResult: reason,
+			Outcome:        pipeline.OutcomeDeny,
+			Reason:         reason,
+			SubstituteWith: reason,
+			Continue: &pipeline.ContinueSignal{
+				SyntheticToolResults: []json.RawMessage{continuationPayload},
+			},
 			Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
 				Outcome:      "rewriter_error",
 				TargetHost:   v.Host,

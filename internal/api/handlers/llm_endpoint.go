@@ -1215,7 +1215,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 			if auditTaskID == "" {
 				for _, dec := range processed.Decisions {
-					if dec.Verdict.ContinueWithToolResult != "" && dec.Verdict.CreatedTaskID != "" {
+					if _, ok := dec.Verdict.ContinuationToolResultContent(); ok && dec.Verdict.CreatedTaskID != "" {
 						auditTaskID = dec.Verdict.CreatedTaskID
 						break
 					}
@@ -1673,7 +1673,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				// rather than overwrite with the just-minted task.
 				if auditTaskID == "" {
 					for _, dec := range processed.Decisions {
-						if dec.Verdict.ContinueWithToolResult != "" && dec.Verdict.CreatedTaskID != "" {
+						if _, ok := dec.Verdict.ContinuationToolResultContent(); ok && dec.Verdict.CreatedTaskID != "" {
 							auditTaskID = dec.Verdict.CreatedTaskID
 							break
 						}
@@ -1982,12 +1982,13 @@ func (h *LLMEndpointHandler) tryContinuation(
 	}
 	var toolResults []llmproxy.ContinuationToolResult
 	for _, dec := range processed.Decisions {
-		if dec.Verdict.ContinueWithToolResult == "" {
+		content, ok := dec.Verdict.ContinuationToolResultContent()
+		if !ok {
 			continue
 		}
 		toolResults = append(toolResults, llmproxy.ContinuationToolResult{
 			ToolUseID: dec.ToolUse.ID,
-			Content:   dec.Verdict.ContinueWithToolResult,
+			Content:   content,
 		})
 	}
 	if len(toolResults) == 0 {
@@ -2020,7 +2021,7 @@ func (h *LLMEndpointHandler) tryContinuation(
 		var droppedNames []string
 		var autoApprovedTUID, autoApprovedTaskID string
 		for _, dec := range processed.Decisions {
-			if dec.Verdict.ContinueWithToolResult != "" {
+			if _, ok := dec.Verdict.ContinuationToolResultContent(); ok {
 				autoApprovedTUID = dec.ToolUse.ID
 				if autoApprovedTaskID == "" {
 					autoApprovedTaskID = dec.Verdict.CreatedTaskID
@@ -2116,7 +2117,7 @@ func (h *LLMEndpointHandler) tryContinuation(
 	// not loop, so the second Postprocess pass below runs at most once
 	// per inbound harness request. If that second pass fires the
 	// auto-approve gate again, the gate's verdict still carries
-	// ContinueWithToolResult, but we never act on it — the caller
+	// a continuation signal, but we never act on it — the caller
 	// (serve()) doesn't re-invoke tryContinuation. The verdict's
 	// SubstituteWith fallback renders as a terminal text turn instead,
 	// which is the right behavior for a model that re-emits a task-
@@ -2141,7 +2142,7 @@ func (h *LLMEndpointHandler) tryContinuation(
 	newProcessed.Rewritten = true
 
 	// User-facing notices. The auto-approve gate records a one-line
-	// notice on each verdict via PrependAssistantNotice; we collect
+	// notice on each continuation verdict; we collect
 	// them here and inject into the continuation's assistant turn so
 	// the user sees what was auto-approved at the top of the model's
 	// response. Multiple notices (one per auto-approved tool_use in
@@ -2162,7 +2163,7 @@ func (h *LLMEndpointHandler) tryContinuation(
 	seen := map[string]struct{}{}
 	collect := func(decs []conversation.ToolUseDecisionRecord) {
 		for _, dec := range decs {
-			n := strings.TrimSpace(dec.Verdict.PrependAssistantNotice)
+			n := strings.TrimSpace(dec.Verdict.ContinuationNotice())
 			if n == "" {
 				continue
 			}

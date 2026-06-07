@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -149,11 +150,11 @@ func TestPostprocessStream_BlockedAnthropicPromptUsesNextContentIndex(t *testing
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
 			Inspector: insp,
-			Store: st,
+			Store:     st,
 		},
 	})
 	if err != nil {
@@ -178,6 +179,70 @@ func TestPostprocessStream_BlockedAnthropicPromptUsesNextContentIndex(t *testing
 	}
 	if promptIndex != firstToolIndex {
 		t.Fatalf("blocked prompt index=%d must replace first withheld tool index=%d: %s", promptIndex, firstToolIndex, out)
+	}
+}
+
+func TestPostprocessStream_StructuredContinuationResult(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	input := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[]}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_continue","name":"Bash","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"echo hi\"}"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":15}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	factory := func(_ *http.Request, _ llmproxy.PostprocessConfig, _ conversation.Provider, _ []conversation.ToolUse, _ func(conversation.AuditEvent)) conversation.ToolUseEvaluator {
+		return func(conversation.ToolUse) conversation.ToolUseVerdict {
+			return conversation.ToolUseVerdict{
+				Allowed: true,
+				Outcome: conversation.OutcomeAllow,
+				Continue: &conversation.ContinueSignal{
+					SyntheticToolResults: []json.RawMessage{json.RawMessage(`{"type":"tool_result","content":"continued"}`)},
+					PrependNotice:        "continued notice",
+				},
+			}
+		}
+	}
+
+	var output bytes.Buffer
+	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: factory,
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector: insp,
+		},
+	})
+	if err != nil {
+		t.Fatalf("PostprocessStream: %v", err)
+	}
+	if len(result.ContinuationToolResults) != 1 {
+		t.Fatalf("ContinuationToolResults = %+v, want one result", result.ContinuationToolResults)
+	}
+	if got := result.ContinuationToolResults[0]; got.ToolUseID != "toolu_continue" || got.Content != "continued" {
+		t.Fatalf("ContinuationToolResults[0] = %+v", got)
+	}
+	if len(result.Decisions) != 1 {
+		t.Fatalf("Decisions = %d, want 1", len(result.Decisions))
+	}
+	if result.Decisions[0].Verdict.Continue == nil {
+		t.Fatal("decision verdict lost structured Continue signal")
+	}
+	if result.Decisions[0].Verdict.ContinueWithToolResult != "" {
+		t.Fatalf("decision verdict flattened continuation early: %q", result.Decisions[0].Verdict.ContinueWithToolResult)
 	}
 }
 
@@ -307,13 +372,13 @@ func TestPostprocess_JSONNoTrigger(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -357,13 +422,13 @@ PY`
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -373,9 +438,15 @@ PY`
 	if len(got.Decisions) != 1 {
 		t.Fatalf("expected one tool decision, got %d", len(got.Decisions))
 	}
-	reason := got.Decisions[0].Verdict.ContinueWithToolResult
-	if reason == "" {
-		t.Fatal("rewriter error must populate ContinueWithToolResult for model recovery")
+	reason, ok := got.Decisions[0].Verdict.ContinuationToolResultContent()
+	if !ok || reason == "" {
+		t.Fatal("rewriter error must populate structured continuation content for model recovery")
+	}
+	if got.Decisions[0].Verdict.ContinueWithToolResult != "" {
+		t.Fatalf("rewriter error flattened continuation early: %q", got.Decisions[0].Verdict.ContinueWithToolResult)
+	}
+	if got.Decisions[0].Verdict.SubstituteWith != reason {
+		t.Fatalf("SubstituteWith = %q, want continuation fallback reason", got.Decisions[0].Verdict.SubstituteWith)
 	}
 	// Recovery guidance now redirects credentialed-fan-out failures
 	// to the autovault script-session path (the supported recovery
@@ -418,17 +489,17 @@ func TestPostprocess_AuditsNoTriggerToolUse(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+			Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 			RequestID: "req-audit",
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -477,25 +548,25 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			ToolRules: []*store.RuntimePolicyRule{{
-			ID:       "deny-webfetch",
-			UserID:   userID,
-			AgentID:  &agentID,
-			Kind:     "tool",
-			Action:   "deny",
-			ToolName: "WebFetch",
-			Reason:   "web fetch blocked",
-			Enabled:  true,
-		}},
+				ID:       "deny-webfetch",
+				UserID:   userID,
+				AgentID:  &agentID,
+				Kind:     "tool",
+				Action:   "deny",
+				ToolName: "WebFetch",
+				Reason:   "web fetch blocked",
+				Enabled:  true,
+			}},
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -531,26 +602,26 @@ func TestPostprocess_ReadOnlyBashBypassesTaskScopeByDefault(t *testing.T) {
 				ToolUseEvaluatorFactory: pipelineFactory,
 				AgentContext: llmproxy.AgentContext{
 					AgentUserID: userID,
-					AgentID: agentID,
+					AgentID:     agentID,
 				},
 				AuditContext: llmproxy.AuditContext{
-					Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+					Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 					RequestID: "req-bash-readonly-" + tc.name,
 				},
 				AuthorizationContext: llmproxy.AuthorizationContext{
 					CandidateTasks: []*store.Task{},
-					ToolRules: []*store.RuntimePolicyRule{},
-					EgressRules: []*store.RuntimePolicyRule{},
-					Posture: runtimedecision.PostureEnforce,
+					ToolRules:      []*store.RuntimePolicyRule{},
+					EgressRules:    []*store.RuntimePolicyRule{},
+					Posture:        runtimedecision.PostureEnforce,
 				},
 				ApprovalContext: llmproxy.ApprovalContext{
 					PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 				},
 				RewriteContext: llmproxy.RewriteContext{
-					Inspector: insp,
-					RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+					Inspector:    insp,
+					RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 					CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-					Store: st,
+					Store:        st,
 				},
 			})
 
@@ -578,10 +649,10 @@ func TestPostprocess_SensitiveShellPathRequiresApprovalWithoutPolicyConfig(t *te
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+			Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 			RequestID: "req-bash-sensitive-default",
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
@@ -591,10 +662,10 @@ func TestPostprocess_SensitiveShellPathRequiresApprovalWithoutPolicyConfig(t *te
 			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 	if !got.Rewritten {
@@ -616,36 +687,36 @@ func TestPostprocess_ReadOnlyBashCanBeDisabledByPolicy(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+			Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 			RequestID: "req-bash-readonly-disabled",
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
 			ToolRules: []*store.RuntimePolicyRule{{
-			ID:         agentRuleID,
-			UserID:     userID,
-			AgentID:    &agentID,
-			Kind:       "tool",
-			Action:     "deny",
-			ToolName:   "Bash",
-			InputShape: toolnames.ReadOnlyShellSettingInputShape(),
-			Source:     toolnames.ReadOnlyShellSettingSource,
-			Enabled:    true,
-		}},
+				ID:         agentRuleID,
+				UserID:     userID,
+				AgentID:    &agentID,
+				Kind:       "tool",
+				Action:     "deny",
+				ToolName:   "Bash",
+				InputShape: toolnames.ReadOnlyShellSettingInputShape(),
+				Source:     toolnames.ReadOnlyShellSettingSource,
+				Enabled:    true,
+			}},
 			EgressRules: []*store.RuntimePolicyRule{},
-			Posture: runtimedecision.PostureEnforce,
+			Posture:     runtimedecision.PostureEnforce,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -669,26 +740,26 @@ func TestPostprocess_WriteStdinPollBypassesTaskScope(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+			Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 			RequestID: "req-write-stdin-poll",
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
-			ToolRules: []*store.RuntimePolicyRule{},
-			EgressRules: []*store.RuntimePolicyRule{},
-			Posture: runtimedecision.PostureEnforce,
+			ToolRules:      []*store.RuntimePolicyRule{},
+			EgressRules:    []*store.RuntimePolicyRule{},
+			Posture:        runtimedecision.PostureEnforce,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 	if got.Rewritten {
@@ -716,26 +787,26 @@ func TestPostprocess_WriteStdinWithCharsStillRequiresApproval(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+			Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 			RequestID: "req-write-stdin-active",
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
-			ToolRules: []*store.RuntimePolicyRule{},
-			EgressRules: []*store.RuntimePolicyRule{},
-			Posture: runtimedecision.PostureEnforce,
+			ToolRules:      []*store.RuntimePolicyRule{},
+			EgressRules:    []*store.RuntimePolicyRule{},
+			Posture:        runtimedecision.PostureEnforce,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 	if !got.Rewritten {
@@ -770,26 +841,26 @@ func TestPostprocess_MutatingBashStillRequiresApproval(t *testing.T) {
 				ToolUseEvaluatorFactory: pipelineFactory,
 				AgentContext: llmproxy.AgentContext{
 					AgentUserID: userID,
-					AgentID: agentID,
+					AgentID:     agentID,
 				},
 				AuditContext: llmproxy.AuditContext{
-					Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+					Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 					RequestID: "req-bash-mutating-" + tc.name,
 				},
 				AuthorizationContext: llmproxy.AuthorizationContext{
 					CandidateTasks: []*store.Task{},
-					ToolRules: []*store.RuntimePolicyRule{},
-					EgressRules: []*store.RuntimePolicyRule{},
-					Posture: runtimedecision.PostureEnforce,
+					ToolRules:      []*store.RuntimePolicyRule{},
+					EgressRules:    []*store.RuntimePolicyRule{},
+					Posture:        runtimedecision.PostureEnforce,
 				},
 				ApprovalContext: llmproxy.ApprovalContext{
 					PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 				},
 				RewriteContext: llmproxy.RewriteContext{
-					Inspector: insp,
-					RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+					Inspector:    insp,
+					RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 					CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-					Store: st,
+					Store:        st,
 				},
 			})
 			if !got.Rewritten {
@@ -825,35 +896,35 @@ func TestPostprocess_ReadOnlyToolPolicyAllowlistBypassesTaskScope(t *testing.T) 
 				ToolUseEvaluatorFactory: pipelineFactory,
 				AgentContext: llmproxy.AgentContext{
 					AgentUserID: userID,
-					AgentID: agentID,
+					AgentID:     agentID,
 				},
 				AuditContext: llmproxy.AuditContext{
-					Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+					Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 					RequestID: "req-local-" + tc.name,
 				},
 				AuthorizationContext: llmproxy.AuthorizationContext{
 					CandidateTasks: []*store.Task{},
 					ToolRules: []*store.RuntimePolicyRule{{
-					ID:         "allow-" + tc.name,
-					UserID:     userID,
-					AgentID:    &agentID,
-					Kind:       "tool",
-					Action:     "allow",
-					ToolName:   tc.tool,
-					InputShape: json.RawMessage(`{}`),
-					Enabled:    true,
-				}},
+						ID:         "allow-" + tc.name,
+						UserID:     userID,
+						AgentID:    &agentID,
+						Kind:       "tool",
+						Action:     "allow",
+						ToolName:   tc.tool,
+						InputShape: json.RawMessage(`{}`),
+						Enabled:    true,
+					}},
 					EgressRules: []*store.RuntimePolicyRule{},
-					Posture: runtimedecision.PostureEnforce,
+					Posture:     runtimedecision.PostureEnforce,
 				},
 				ApprovalContext: llmproxy.ApprovalContext{
 					PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 				},
 				RewriteContext: llmproxy.RewriteContext{
-					Inspector: insp,
-					RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+					Inspector:    insp,
+					RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 					CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-					Store: st,
+					Store:        st,
 				},
 			})
 
@@ -891,26 +962,26 @@ func TestPostprocess_BashWithoutTaskScopeStillRequiresApproval(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+			Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 			RequestID: "req-bash-still-gated",
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
-			ToolRules: []*store.RuntimePolicyRule{},
-			EgressRules: []*store.RuntimePolicyRule{},
-			Posture: runtimedecision.PostureEnforce,
+			ToolRules:      []*store.RuntimePolicyRule{},
+			EgressRules:    []*store.RuntimePolicyRule{},
+			Posture:        runtimedecision.PostureEnforce,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -932,26 +1003,26 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+			Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 			RequestID: "req-missing-scope",
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
-			ToolRules: []*store.RuntimePolicyRule{},
-			EgressRules: []*store.RuntimePolicyRule{},
-			Posture: runtimedecision.PostureEnforce,
+			ToolRules:      []*store.RuntimePolicyRule{},
+			EgressRules:    []*store.RuntimePolicyRule{},
+			Posture:        runtimedecision.PostureEnforce,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -999,23 +1070,23 @@ func TestPostprocess_ToolTaskIntentRefusalRequiresApproval(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{task},
-			ToolRules: []*store.RuntimePolicyRule{},
-			EgressRules: []*store.RuntimePolicyRule{},
+			ToolRules:      []*store.RuntimePolicyRule{},
+			EgressRules:    []*store.RuntimePolicyRule{},
 			IntentVerifier: verifier,
-			Posture: runtimedecision.PostureEnforce,
+			Posture:        runtimedecision.PostureEnforce,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -1068,22 +1139,22 @@ func TestPostprocess_SlidingTaskExpiryBumpsOnAuthorizedToolUse(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{task},
-			ToolRules: []*store.RuntimePolicyRule{},
-			EgressRules: []*store.RuntimePolicyRule{},
-			Posture: runtimedecision.PostureEnforce,
+			ToolRules:      []*store.RuntimePolicyRule{},
+			EgressRules:    []*store.RuntimePolicyRule{},
+			Posture:        runtimedecision.PostureEnforce,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -1138,22 +1209,22 @@ func TestPostprocess_SessionTaskExpiryDoesNotBumpOnAuthorizedToolUse(t *testing.
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{task},
-			ToolRules: []*store.RuntimePolicyRule{},
-			EgressRules: []*store.RuntimePolicyRule{},
-			Posture: runtimedecision.PostureEnforce,
+			ToolRules:      []*store.RuntimePolicyRule{},
+			EgressRules:    []*store.RuntimePolicyRule{},
+			Posture:        runtimedecision.PostureEnforce,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -1289,25 +1360,25 @@ func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			ToolRules: []*store.RuntimePolicyRule{{
-			ID:       "deny-webfetch",
-			UserID:   userID,
-			AgentID:  &agentID,
-			Kind:     "tool",
-			Action:   "deny",
-			ToolName: "WebFetch",
-			Reason:   "web fetch blocked",
-			Enabled:  true,
-		}},
+				ID:       "deny-webfetch",
+				UserID:   userID,
+				AgentID:  &agentID,
+				Kind:     "tool",
+				Action:   "deny",
+				ToolName: "WebFetch",
+				Reason:   "web fetch blocked",
+				Enabled:  true,
+			}},
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts(""),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts(""),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -1341,25 +1412,25 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			ToolRules: []*store.RuntimePolicyRule{{
-			ID:       "deny-webfetch",
-			UserID:   userID,
-			AgentID:  &agentID,
-			Kind:     "tool",
-			Action:   "deny",
-			ToolName: "WebFetch",
-			Reason:   "web fetch blocked",
-			Enabled:  true,
-		}},
+				ID:       "deny-webfetch",
+				UserID:   userID,
+				AgentID:  &agentID,
+				Kind:     "tool",
+				Action:   "deny",
+				ToolName: "WebFetch",
+				Reason:   "web fetch blocked",
+				Enabled:  true,
+			}},
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: opts,
+			Inspector:    insp,
+			RewriteOpts:  opts,
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "https://control.example.test",
@@ -1393,25 +1464,25 @@ func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			ToolRules: []*store.RuntimePolicyRule{{
-			ID:       "deny-webfetch",
-			UserID:   userID,
-			AgentID:  &agentID,
-			Kind:     "tool",
-			Action:   "deny",
-			ToolName: "WebFetch",
-			Reason:   "web fetch blocked",
-			Enabled:  true,
-		}},
+				ID:       "deny-webfetch",
+				UserID:   userID,
+				AgentID:  &agentID,
+				Kind:     "tool",
+				Action:   "deny",
+				ToolName: "WebFetch",
+				Reason:   "web fetch blocked",
+				Enabled:  true,
+			}},
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: opts,
+			Inspector:    insp,
+			RewriteOpts:  opts,
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "https://control.example.test",
@@ -1443,25 +1514,25 @@ func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T)
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			ToolRules: []*store.RuntimePolicyRule{{
-			ID:       "deny-bash",
-			UserID:   userID,
-			AgentID:  &agentID,
-			Kind:     "tool",
-			Action:   "deny",
-			ToolName: "Bash",
-			Reason:   "bash blocked",
-			Enabled:  true,
-		}},
+				ID:       "deny-bash",
+				UserID:   userID,
+				AgentID:  &agentID,
+				Kind:     "tool",
+				Action:   "deny",
+				ToolName: "Bash",
+				Reason:   "bash blocked",
+				Enabled:  true,
+			}},
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: opts,
+			Inspector:    insp,
+			RewriteOpts:  opts,
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "https://control.example.test",
@@ -1501,13 +1572,13 @@ func TestPostprocess_MalformedSyntheticControlCommandRewritesToToolFailure(t *te
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts(""),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts(""),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -1556,21 +1627,21 @@ func TestPostprocess_CoalescesMultipleApprovalsIntoSingleHold(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			CandidateTasks: []*store.Task{},
-			ToolRules: []*store.RuntimePolicyRule{{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true}},
-			EgressRules: []*store.RuntimePolicyRule{},
+			ToolRules:      []*store.RuntimePolicyRule{{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true}},
+			EgressRules:    []*store.RuntimePolicyRule{},
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ResponseRegistry: conversation.DefaultResponseRegistry(),
@@ -1636,26 +1707,26 @@ func TestPostprocess_ObservePostureDoesNotBlockToolDenyRule(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			Posture: runtimedecision.PostureObserve,
 			ToolRules: []*store.RuntimePolicyRule{{
-			ID:       "deny-webfetch",
-			UserID:   userID,
-			AgentID:  &agentID,
-			Kind:     "tool",
-			Action:   "deny",
-			ToolName: "WebFetch",
-			Reason:   "web fetch blocked",
-			Enabled:  true,
-		}},
+				ID:       "deny-webfetch",
+				UserID:   userID,
+				AgentID:  &agentID,
+				Kind:     "tool",
+				Action:   "deny",
+				ToolName: "WebFetch",
+				Reason:   "web fetch blocked",
+				Enabled:  true,
+			}},
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -1681,13 +1752,13 @@ func TestPostprocess_JSONRewritesAutovaultURL(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -1766,13 +1837,13 @@ data: {"type":"message_stop"}
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -1813,13 +1884,13 @@ func TestPostprocess_OpenAIResponsesJSONRewrite(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -1863,13 +1934,13 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -1913,17 +1984,17 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+			Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 			RequestID: "req-custom-tool",
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -1981,11 +2052,11 @@ func TestPostprocessStream_OpenAIResponsesCustomToolCallIsInspectedAndBlocked(t 
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
 			Inspector: inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
-			Store: st,
+			Store:     st,
 		},
 	})
 	if err != nil {
@@ -2042,13 +2113,13 @@ func TestPostprocess_OpenAIChatJSONRewrite(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -2079,13 +2150,13 @@ data: [DONE]
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -2118,13 +2189,13 @@ func TestPostprocess_AmbiguousFailsClosed(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -2278,4 +2349,3 @@ func (r *postprocessErroringReader) Read(p []byte) (n int, err error) {
 	r.off += n
 	return n, nil
 }
-

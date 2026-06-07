@@ -122,10 +122,11 @@ func TestBridgeToolUseEvaluator_DenyWithSubstitute(t *testing.T) {
 	}
 }
 
-// TestBridgeToolUseEvaluator_ContinueSurfacesAsToolResult pins that a
-// ContinueSignal with SyntheticToolResults surfaces on the triggering
-// tool_use's verdict as ContinueWithToolResult + PrependAssistantNotice.
-func TestBridgeToolUseEvaluator_ContinueSurfacesAsToolResult(t *testing.T) {
+// TestBridgeToolUseEvaluator_ContinueStaysStructured pins that a
+// ContinueSignal remains structured on the triggering tool_use's
+// verdict; final adapters derive flat provider content only at the
+// boundary.
+func TestBridgeToolUseEvaluator_ContinueStaysStructured(t *testing.T) {
 	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
 	tools := []conversation.ToolUse{{ID: "toolu_local", Name: "Bash"}}
 
@@ -144,11 +145,17 @@ func TestBridgeToolUseEvaluator_ContinueSurfacesAsToolResult(t *testing.T) {
 	}
 
 	v := eval(tools[0])
-	if v.ContinueWithToolResult != `ok` {
-		t.Errorf("ContinueWithToolResult = %q", v.ContinueWithToolResult)
+	if v.Continue == nil {
+		t.Fatal("verdict Continue is nil")
 	}
-	if v.PrependAssistantNotice != "auto-approved" {
-		t.Errorf("PrependAssistantNotice = %q", v.PrependAssistantNotice)
+	if v.ContinueWithToolResult != "" {
+		t.Errorf("ContinueWithToolResult = %q, want empty compatibility field", v.ContinueWithToolResult)
+	}
+	if content, ok := v.ContinuationToolResultContent(); !ok || content != "ok" {
+		t.Errorf("ContinuationToolResultContent = %q, %v; want ok, true", content, ok)
+	}
+	if got := v.ContinuationNotice(); got != "auto-approved" {
+		t.Errorf("ContinuationNotice = %q", got)
 	}
 }
 

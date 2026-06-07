@@ -281,6 +281,7 @@ func MaybeInterceptInlineTaskDefinition(
 					"reason", reason,
 				)
 				augmentation := inlineApprovedReplyAugmentationContext(created.ID, checkedOut, created.Credentials)
+				continuationPayload, _ := json.Marshal(augmentation)
 				return conversation.ToolUseVerdict{
 					Allowed: false,
 					Reason:  "Clawvisor: auto-approved from conversation context",
@@ -293,20 +294,15 @@ func MaybeInterceptInlineTaskDefinition(
 					// harness as an assistant text turn if the handler
 					// can't complete the recursive continuation call
 					// (unsupported provider, recursion bound reached,
-					// upstream error). ContinueWithToolResult is the
-					// happy path: the handler feeds this same text back
-					// to the upstream as a synthetic user/tool_result
-					// turn so the model proceeds with its next tool_use
-					// without bouncing to the user.
-					SubstituteWith:         augmentation,
-					ContinueWithToolResult: augmentation,
-					// PrependAssistantNotice is shown to the human in
-					// the continuation's assistant turn so they see
-					// what happened on their behalf. Quoting the
-					// model-authored Purpose makes the notice
-					// self-describing without leaking task IDs or
-					// internal scope details.
-					PrependAssistantNotice: AutoApproveUserNotice(created.Purpose),
+					// upstream error). Continue is the happy path: the
+					// handler feeds this same text back upstream as a
+					// synthetic user/tool_result turn so the model can
+					// proceed without bouncing to the user.
+					SubstituteWith: augmentation,
+					Continue: &conversation.ContinueSignal{
+						SyntheticToolResults: []json.RawMessage{continuationPayload},
+						PrependNotice:        AutoApproveUserNotice(created.Purpose),
+					},
 				}, true
 			}
 		}

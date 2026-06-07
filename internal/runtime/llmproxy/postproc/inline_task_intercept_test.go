@@ -52,16 +52,16 @@ func TestPostprocess_AsyncControlTasksPostFallsThroughWhenNoHold(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -100,16 +100,16 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -272,20 +272,20 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit: llmproxy.NewAuditEmitter(st, nil, nil),
+			Audit:     llmproxy.NewAuditEmitter(st, nil, nil),
 			RequestID: "req-inline-task-pending",
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -365,10 +365,10 @@ func TestMaybeInterceptInlineTaskDefinition_ExpiresEvictedInlineHold(t *testing.
 		llmproxy.PostprocessConfig{
 			AgentContext: llmproxy.AgentContext{
 				AgentUserID: userID,
-				AgentID: agentID,
+				AgentID:     agentID,
 			},
 			ApprovalContext: llmproxy.ApprovalContext{
-				PendingApprovals: cache,
+				PendingApprovals:  cache,
 				InlineTaskCreator: creator,
 			},
 		},
@@ -412,10 +412,10 @@ func TestMaybeInterceptInlineTaskDefinition_ExpiresPendingTaskOnHoldFailure(t *t
 		llmproxy.PostprocessConfig{
 			AgentContext: llmproxy.AgentContext{
 				AgentUserID: userID,
-				AgentID: agentID,
+				AgentID:     agentID,
 			},
 			ApprovalContext: llmproxy.ApprovalContext{
-				PendingApprovals: cache,
+				PendingApprovals:  cache,
 				InlineTaskCreator: creator,
 			},
 		},
@@ -452,16 +452,16 @@ func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -490,16 +490,16 @@ func TestPostprocess_InlineTaskInvalidCredentialFallsThroughToToolError(t *testi
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -537,16 +537,16 @@ func TestPostprocess_InlineTaskStandingWithExpiresFallsThrough(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -581,16 +581,16 @@ func TestPostprocess_InlineTaskBareNoSignalRoutesToDashboard(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -712,21 +712,21 @@ func (f autoApproveFixture) run(threshold string, turns []string) llmproxy.Postp
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: f.userID,
-			AgentID: f.agentID,
-			AgentName: "test-agent",
+			AgentID:     f.agentID,
+			AgentName:   "test-agent",
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
-			PendingApprovals: f.cache,
-			TaskRiskAssessor: f.assessor,
-			RecentUserTurns: turns,
+			PendingApprovals:                 f.cache,
+			TaskRiskAssessor:                 f.assessor,
+			RecentUserTurns:                  turns,
 			ConversationAutoApproveThreshold: threshold,
-			InlineTaskCreator: f.creator,
+			InlineTaskCreator:                f.creator,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: f.insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    f.insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: f.store,
+			Store:        f.store,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -817,10 +817,10 @@ func TestAutoApprove_FiresOnLowRiskYesMatch(t *testing.T) {
 }
 
 // TestAutoApprove_VerdictRequestsContinuation verifies that the
-// auto-approve gate sets ContinueWithToolResult on the verdict — not
-// just SubstituteWith. The presence of this field is what tells the
-// handler to make a recursive LLM call instead of terminating the turn
-// with an assistant text reply.
+// auto-approve gate sets a structured continuation signal on the
+// verdict — not just SubstituteWith. The presence of this signal is
+// what tells the handler to make a recursive LLM call instead of
+// terminating the turn with an assistant text reply.
 func TestAutoApprove_VerdictRequestsContinuation(t *testing.T) {
 	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "low",
@@ -831,15 +831,19 @@ func TestAutoApprove_VerdictRequestsContinuation(t *testing.T) {
 		t.Fatal("expected at least one tool_use decision")
 	}
 	v := got.Decisions[0].Verdict
-	if v.ContinueWithToolResult == "" {
-		t.Fatal("auto-approve verdict must populate ContinueWithToolResult so handler can recursive-call")
+	if v.Continue == nil {
+		t.Fatal("auto-approve verdict must populate Continue so handler can recursive-call")
 	}
 	if v.SubstituteWith == "" {
 		t.Fatal("auto-approve verdict must keep SubstituteWith as fallback when continuation can't run")
 	}
-	if v.SubstituteWith != v.ContinueWithToolResult {
+	content, ok := v.ContinuationToolResultContent()
+	if !ok {
+		t.Fatal("auto-approve verdict must expose continuation content at adapter boundary")
+	}
+	if v.SubstituteWith != content {
 		t.Errorf("fallback and continuation should carry the same augmentation body; sub=%q cont=%q",
-			v.SubstituteWith, v.ContinueWithToolResult)
+			v.SubstituteWith, content)
 	}
 }
 
@@ -990,25 +994,25 @@ func TestAutoApprove_WritesTaskLinkedAuditRow(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: f.userID,
-			AgentID: f.agentID,
-			AgentName: "test-agent",
+			AgentID:     f.agentID,
+			AgentName:   "test-agent",
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit: llmproxy.NewAuditEmitter(f.store, nil, nil),
+			Audit:     llmproxy.NewAuditEmitter(f.store, nil, nil),
 			RequestID: "req-auto-approve-audit",
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
-			PendingApprovals: f.cache,
-			TaskRiskAssessor: f.assessor,
-			RecentUserTurns: []string{"build me a landing page at /tmp/landing"},
+			PendingApprovals:                 f.cache,
+			TaskRiskAssessor:                 f.assessor,
+			RecentUserTurns:                  []string{"build me a landing page at /tmp/landing"},
 			ConversationAutoApproveThreshold: "low",
-			InlineTaskCreator: f.creator,
+			InlineTaskCreator:                f.creator,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: f.insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    f.insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: f.store,
+			Store:        f.store,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -1097,20 +1101,20 @@ func TestAutoApprove_FallsBackWhenCreatorMissing(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
-			AgentName: "test-agent",
+			AgentID:     agentID,
+			AgentName:   "test-agent",
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
-			PendingApprovals: cache,
-			TaskRiskAssessor: assessor,
-			RecentUserTurns: []string{"build me a landing page"},
+			PendingApprovals:                 cache,
+			TaskRiskAssessor:                 assessor,
+			RecentUserTurns:                  []string{"build me a landing page"},
 			ConversationAutoApproveThreshold: "low",
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -1139,18 +1143,18 @@ func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
-			AgentName: "test-agent",
+			AgentID:     agentID,
+			AgentName:   "test-agent",
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 			TaskRiskAssessor: assessor,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -1199,17 +1203,17 @@ func TestPostprocess_InlineTaskFallsBackWhenLLMUnknown(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 			TaskRiskAssessor: assessor,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",
@@ -1250,16 +1254,16 @@ func TestPostprocess_InlineTaskMalformedBodyFallsThrough(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals: cache,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 		RoutingContext: llmproxy.RoutingContext{
 			ControlBaseURL: "http://localhost:25297",

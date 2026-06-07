@@ -41,17 +41,15 @@ type ToolUseVerdict struct {
 	// the original method/path/body.
 	RewriteInput json.RawMessage
 
-	// ContinueWithToolResult, when non-empty, signals that the proxy
-	// has answered the tool_use itself and wants to feed the result back
-	// to the model. The handler builds a synthetic user turn containing
-	// a tool_result block with this content and re-calls the upstream
-	// LLM. SubstituteWith remains the fallback rendered if the
-	// continuation call fails.
+	// ContinueWithToolResult is the legacy flattened continuation
+	// payload. New evaluators should set Continue instead; final
+	// adapter code should read ContinuationToolResultContent(), which
+	// prefers Continue and falls back to this field for compatibility.
 	ContinueWithToolResult string
 
-	// PrependAssistantNotice, when non-empty, is text the handler
-	// prepends to the assistant turn AFTER a successful
-	// ContinueWithToolResult round-trip.
+	// PrependAssistantNotice is the legacy flattened continuation
+	// notice. New evaluators should set Continue.PrependNotice instead;
+	// final adapter code should read ContinuationNotice().
 	PrependAssistantNotice string
 
 	// CreatedTaskID names the inline task created by the
@@ -112,6 +110,61 @@ func MakeToolInputPreview(in json.RawMessage) string {
 type ContinuationToolResult struct {
 	ToolUseID string
 	Content   string
+}
+
+// ContinuationToolResultContent returns the text payload a final
+// provider adapter should wrap in the provider-specific tool_result
+// shape. Structured Continue is canonical; ContinueWithToolResult is a
+// compatibility fallback for older call sites that have not migrated.
+func (v ToolUseVerdict) ContinuationToolResultContent() (string, bool) {
+	if v.Continue != nil {
+		text := continuationToolResultContent(v.Continue.SyntheticToolResults)
+		if text != "" {
+			return text, true
+		}
+	}
+	if v.ContinueWithToolResult != "" {
+		return v.ContinueWithToolResult, true
+	}
+	return "", false
+}
+
+// ContinuationNotice returns the user-facing notice to prepend after a
+// successful continuation. Structured Continue is canonical; the flat
+// field is a compatibility fallback.
+func (v ToolUseVerdict) ContinuationNotice() string {
+	if v.Continue != nil && strings.TrimSpace(v.Continue.PrependNotice) != "" {
+		return v.Continue.PrependNotice
+	}
+	return v.PrependAssistantNotice
+}
+
+func continuationToolResultContent(results []json.RawMessage) string {
+	parts := make([]string, 0, len(results))
+	for _, raw := range results {
+		if len(raw) == 0 {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil {
+			parts = append(parts, s)
+			continue
+		}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			continue
+		}
+		if content, ok := obj["content"]; ok {
+			if err := json.Unmarshal(content, &s); err == nil {
+				parts = append(parts, s)
+				continue
+			}
+			parts = append(parts, string(content))
+			continue
+		}
+		parts = append(parts, string(raw))
+	}
+	return strings.Join(parts, "\n")
 }
 
 type StreamingRewriteResult struct {

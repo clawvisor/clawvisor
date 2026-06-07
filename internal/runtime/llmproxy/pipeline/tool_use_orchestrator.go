@@ -82,8 +82,8 @@ func EvaluateToolUses(
 				Verdict:       verdict,
 			})
 			if verdict.Continue != nil {
-				if verdict.Outcome != OutcomeAllow && verdict.Outcome != OutcomeRewrite {
-					return nil, fmt.Errorf("evaluator %q on tool_use %q returned Continue with outcome %q; Continue requires Allow or Rewrite", ev.Name(), tu.ID, verdict.Outcome)
+				if !continueOutcomeValid(verdict) {
+					return nil, fmt.Errorf("evaluator %q on tool_use %q returned Continue with outcome %q; Continue requires Allow, Rewrite, or a local substitute fallback", ev.Name(), tu.ID, verdict.Outcome)
 				}
 				// Continuation short-circuits the whole pass.
 				result.Continue = verdict.Continue
@@ -109,4 +109,19 @@ func EvaluateToolUses(
 		}
 	}
 	return result, nil
+}
+
+func continueOutcomeValid(verdict ToolUseVerdict) bool {
+	switch verdict.Outcome {
+	case OutcomeAllow, OutcomeRewrite:
+		return true
+	case OutcomeDeny:
+		// Local-answer continuations block the original tool_use from
+		// the harness, feed a synthetic result upstream on the happy
+		// path, and need SubstituteWith as the terminal fallback if the
+		// continuation request cannot run.
+		return verdict.SubstituteWith != ""
+	default:
+		return false
+	}
 }
