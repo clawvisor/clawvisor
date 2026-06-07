@@ -45,6 +45,15 @@ func dockerHostURL(raw string) string {
 // `~/.clawvisor/agents/<name>.json` path inside the skill markdown.
 var validAgentName = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,64}$`)
 
+// validClaimCode guards the `claim` query param. Claim codes are URL-safe
+// base64 (rand.Read → base64.RawURLEncoding, truncated to 10 chars) — see
+// MintClaim in connections.go. The interpolation site renders the claim
+// straight into a shell URL inside the install skill, so any character
+// outside `[A-Za-z0-9_-]` could break out of the surrounding shell quote
+// and inject arbitrary commands into the user's terminal. Length-cap alone
+// is not enough; the charset has to be locked down too.
+var validClaimCode = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
 // InstallerTarget identifies which harness the installer skill is for.
 type InstallerTarget string
 
@@ -134,11 +143,12 @@ func (h *InstallerHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	if uid := r.URL.Query().Get("user_id"); uid != "" && len(uid) <= maxUserIDLen && validUserID.MatchString(uid) {
 		ctx.UserID = uid
 	}
-	// Same length defense for `claim`. Claim codes are minted as 10-char
-	// base64 (see MintClaim in connections.go), so 64 is a generous cap that
-	// still rejects abuse without rejecting any legitimate value.
-	const maxClaimLen = 64
-	if claim := r.URL.Query().Get("claim"); claim != "" && len(claim) <= maxClaimLen {
+	// `claim` is interpolated directly into the shell-quoted curl URL inside
+	// the rendered skill, so charset matters — not just length. Reject any
+	// value that isn't pure URL-safe base64. A `"` in the claim would close
+	// the shell string and let the rest run as arbitrary commands when the
+	// user pastes the skill into a terminal.
+	if claim := r.URL.Query().Get("claim"); claim != "" && validClaimCode.MatchString(claim) {
 		ctx.Claim = claim
 	}
 	ctx.ClaudeScope = queryChoice(r, "claude_scope", "alias", "alias", "global")
@@ -739,6 +749,65 @@ func sectionVaultUpstreamKey(heading, provider, providerLabel, envVar, keyPrefix
 	return b.String()
 }
 
+// diffWalkerPython is the body of the python3 heredoc both uninstall
+// skills emit. It walks ~/.clawvisor/diffs/$AGENT_NAME/*.json and reverses
+// each record:
+//
+//   - json_keys: for each entry, restore the prior_value (or delete the
+//     path if prior was null). Prunes parent objects we made empty.
+//   - text_append / text_prepend: find the install's exact recorded content
+//     and delete the first occurrence (with whitespace-variant fallbacks).
+//
+// Defined once so both Claude Code and Codex uninstall skills emit the
+// same logic and the prior-value-restore property holds uniformly.
+const diffWalkerPython = `python3 - <<'PY'
+import json, os, glob
+agent = os.environ['AGENT_NAME']
+diffs_dir = os.path.expanduser(f'~/.clawvisor/diffs/{agent}')
+def set_at(doc, parts, value):
+    cur = doc
+    for p in parts[:-1]:
+        if not isinstance(cur, dict): return
+        cur = cur.setdefault(p, {})
+    if isinstance(cur, dict): cur[parts[-1]] = value
+def del_at(doc, parts):
+    cur = doc
+    for p in parts[:-1]:
+        if not isinstance(cur, dict) or p not in cur: return
+        cur = cur[p]
+    if isinstance(cur, dict): cur.pop(parts[-1], None)
+def prune(d):
+    for k, v in list(d.items()):
+        if isinstance(v, dict):
+            prune(v)
+            if not v: del d[k]
+for path in sorted(glob.glob(os.path.join(diffs_dir, '*.json'))):
+    with open(path) as f: rec = json.load(f)
+    target = os.path.expanduser(rec['file'])
+    if not os.path.exists(target): continue
+    if rec['type'] == 'json_keys':
+        with open(target) as f: doc = json.load(f)
+        # Newer records have 'entries' with prior_value; legacy 'paths' just
+        # deletes (no prior captured — best-effort revert).
+        entries = rec.get('entries') or [{'path': p, 'prior_value': None} for p in rec.get('paths', [])]
+        for entry in entries:
+            parts = entry['path'].split('.')
+            if entry.get('prior_value') is None:
+                del_at(doc, parts)
+            else:
+                set_at(doc, parts, entry['prior_value'])
+        prune(doc)
+        with open(target, 'w') as f: json.dump(doc, f, indent=2); f.write('\n')
+    elif rec['type'] in ('text_append', 'text_prepend'):
+        with open(target) as f: body = f.read()
+        chunk = rec['content']
+        for needle in ('\n' + chunk + '\n', chunk + '\n\n', chunk + '\n', chunk):
+            if needle in body:
+                body = body.replace(needle, '', 1); break
+        with open(target, 'w') as f: f.write(body)
+PY
+`
+
 // recordTextDiff renders the shell snippet that captures an appended text
 // block into ~/.clawvisor/diffs/$AGENT_NAME/<id>.json, alongside appending
 // the same content to `targetFile`. The diff record is what the uninstall
@@ -763,18 +832,48 @@ func recordTextDiff(id, targetFile string) string {
 	return b.String()
 }
 
-// recordJSONKeyDiff renders the shell snippet that records which dotted JSON
-// paths the install added to `targetFile`. Uninstall uses jq to walk the
-// list and delete each path.
+// recordJSONKeyDiff renders the shell snippet that records the dotted JSON
+// paths the install added to `targetFile` **along with their prior values**
+// (or null if the path didn't exist before). Uninstall walks the entries
+// and restores each: null prior → delete the path; non-null prior → set the
+// value back. This preserves any user-set values our install overwrote —
+// without prior-value capture, uninstall would permanently delete keys the
+// user had set themselves before we showed up.
 //
-// `paths` is the literal JSON array body (e.g. `"env.X","env.Y"`).
+// `paths` is a comma-separated list of dotted JSON paths
+// (e.g. `env.ANTHROPIC_BASE_URL,env.ANTHROPIC_CUSTOM_HEADERS`). The shell
+// reads each prior value from `targetFile` via jq getpath() and writes a
+// single diff record listing all (path, prior) pairs.
+//
+// CALL THIS BEFORE THE MERGE — the prior-value read has to see the file
+// as it was, not after our keys land.
 func recordJSONKeyDiff(id, targetFile, paths string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "mkdir -p ~/.clawvisor/diffs/$AGENT_NAME\n")
-	fmt.Fprintf(&b, "jq -n --arg file %s \\\n", targetFile)
-	fmt.Fprintf(&b, "  '{file: $file, type: \"json_keys\", paths: [%s]}' \\\n", paths)
+	// Snapshot the pre-merge document so we can read prior values, then
+	// emit one diff entry per path with the prior value attached.
+	fmt.Fprintf(&b, "PRIOR_JSON=$(cat %s 2>/dev/null || echo '{}')\n", targetFile)
+	fmt.Fprintf(&b, "jq -n --argjson prior \"$PRIOR_JSON\" \\\n")
+	fmt.Fprintf(&b, "  --arg file %s \\\n", targetFile)
+	fmt.Fprintf(&b, "  --argjson paths '[%s]' '\n", quoteJSONPathList(paths))
+	fmt.Fprintf(&b, "  {file: $file, type: \"json_keys\",\n")
+	fmt.Fprintf(&b, "   entries: [$paths[] as $p | {path: $p, prior_value: ($prior | getpath($p / \".\"))}]}' \\\n")
 	fmt.Fprintf(&b, "  > ~/.clawvisor/diffs/$AGENT_NAME/%s.json\n", id)
 	return b.String()
+}
+
+// quoteJSONPathList accepts a comma-separated list of unquoted dotted JSON
+// paths (e.g. `env.X,env.Y`) and returns a JSON-array body of quoted strings
+// (e.g. `"env.X","env.Y"`). Used by recordJSONKeyDiff to feed jq's --argjson.
+func quoteJSONPathList(paths string) string {
+	if paths == "" {
+		return ""
+	}
+	parts := strings.Split(paths, ",")
+	for i, p := range parts {
+		parts[i] = `"` + strings.TrimSpace(p) + `"`
+	}
+	return strings.Join(parts, ",")
 }
 
 // classifySmokeFailure renders the shared "how to decide what to do when
@@ -941,10 +1040,16 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Do NOT add `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` keys — that would\n")
 	fmt.Fprintf(&b, "blank the user's `claude login` / env key.\n\n")
-	fmt.Fprintf(&b, "Then record the diff:\n\n")
+	fmt.Fprintf(&b, "**Record the diff BEFORE the merge** so the prior values get captured\n")
+	fmt.Fprintf(&b, "for restore-on-uninstall (uninstall sets the key back to the recorded\n")
+	fmt.Fprintf(&b, "prior, or deletes it if there was none — without this we'd erase any\n")
+	fmt.Fprintf(&b, "value the user had set in settings.json before this install):\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	b.WriteString(recordJSONKeyDiff("settings", `"$HOME/.claude/settings.json"`, `"env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_CUSTOM_HEADERS"`))
+	b.WriteString(recordJSONKeyDiff("settings", `"$HOME/.claude/settings.json"`, `env.ANTHROPIC_BASE_URL,env.ANTHROPIC_CUSTOM_HEADERS`))
 	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Then write the merged settings.json (do not include the `_clawvisor`\n")
+	fmt.Fprintf(&b, "marker that earlier iterations of this skill used — the diff record\n")
+	fmt.Fprintf(&b, "above is the only persistent uninstall trail).\n\n")
 	fmt.Fprintf(&b, "**If MODE=swap** — put the `cvis_…` token in the auth slot so Clawvisor\n")
 	fmt.Fprintf(&b, "swaps it for the vaulted upstream key:\n\n")
 	fmt.Fprintf(&b, "```json\n")
@@ -956,9 +1061,9 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "  }\n")
 	fmt.Fprintf(&b, "}\n")
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "Then record the diff:\n\n")
+	fmt.Fprintf(&b, "Same pre-merge diff capture:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	b.WriteString(recordJSONKeyDiff("settings", `"$HOME/.claude/settings.json"`, `"env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN", "env.ANTHROPIC_API_KEY"`))
+	b.WriteString(recordJSONKeyDiff("settings", `"$HOME/.claude/settings.json"`, `env.ANTHROPIC_BASE_URL,env.ANTHROPIC_AUTH_TOKEN,env.ANTHROPIC_API_KEY`))
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Write the file back. **The currently-running Claude Code session keeps\n")
 	fmt.Fprintf(&b, "its old config until restart** — tell the user the new routing takes\n")
@@ -1312,41 +1417,12 @@ func renderClaudeCodeUninstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "ls ~/.clawvisor/diffs/$AGENT_NAME/ 2>/dev/null || echo \"no diff records — skip to step 3\"\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Walk each record and reverse it. Use this Python one-liner (python3 ships\n")
-	fmt.Fprintf(&b, "with macOS and every modern Linux). It handles every diff type and is\n")
-	fmt.Fprintf(&b, "idempotent — re-running it after a partial uninstall is safe:\n\n")
+	fmt.Fprintf(&b, "with macOS and every modern Linux). For `json_keys` it RESTORES the prior\n")
+	fmt.Fprintf(&b, "value the install captured (or deletes the path if nothing was there);\n")
+	fmt.Fprintf(&b, "for `text_append` / `text_prepend` it removes the exact recorded chunk.\n")
+	fmt.Fprintf(&b, "Idempotent — re-running it after a partial uninstall is safe:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "python3 - <<'PY'\n")
-	fmt.Fprintf(&b, "import json, os, glob\n")
-	fmt.Fprintf(&b, "agent = os.environ['AGENT_NAME']\n")
-	fmt.Fprintf(&b, "diffs_dir = os.path.expanduser(f'~/.clawvisor/diffs/{agent}')\n")
-	fmt.Fprintf(&b, "for path in sorted(glob.glob(os.path.join(diffs_dir, '*.json'))):\n")
-	fmt.Fprintf(&b, "    with open(path) as f: rec = json.load(f)\n")
-	fmt.Fprintf(&b, "    target = os.path.expanduser(rec['file'])\n")
-	fmt.Fprintf(&b, "    if not os.path.exists(target): continue\n")
-	fmt.Fprintf(&b, "    if rec['type'] == 'json_keys':\n")
-	fmt.Fprintf(&b, "        with open(target) as f: doc = json.load(f)\n")
-	fmt.Fprintf(&b, "        for dotted in rec['paths']:\n")
-	fmt.Fprintf(&b, "            cur = doc; parts = dotted.split('.')\n")
-	fmt.Fprintf(&b, "            for p in parts[:-1]:\n")
-	fmt.Fprintf(&b, "                if not isinstance(cur, dict) or p not in cur: cur = None; break\n")
-	fmt.Fprintf(&b, "                cur = cur[p]\n")
-	fmt.Fprintf(&b, "            if cur is not None and isinstance(cur, dict): cur.pop(parts[-1], None)\n")
-	fmt.Fprintf(&b, "        # Drop empty parent objects we created.\n")
-	fmt.Fprintf(&b, "        def prune(d):\n")
-	fmt.Fprintf(&b, "            for k, v in list(d.items()):\n")
-	fmt.Fprintf(&b, "                if isinstance(v, dict): prune(v)\n")
-	fmt.Fprintf(&b, "                if isinstance(v, dict) and not v: del d[k]\n")
-	fmt.Fprintf(&b, "        prune(doc)\n")
-	fmt.Fprintf(&b, "        with open(target, 'w') as f: json.dump(doc, f, indent=2); f.write('\\n')\n")
-	fmt.Fprintf(&b, "    elif rec['type'] in ('text_append', 'text_prepend'):\n")
-	fmt.Fprintf(&b, "        with open(target) as f: body = f.read()\n")
-	fmt.Fprintf(&b, "        chunk = rec['content']\n")
-	fmt.Fprintf(&b, "        # Try variants with surrounding whitespace the install added.\n")
-	fmt.Fprintf(&b, "        for needle in ('\\n' + chunk + '\\n', chunk + '\\n\\n', chunk + '\\n', chunk):\n")
-	fmt.Fprintf(&b, "            if needle in body:\n")
-	fmt.Fprintf(&b, "                body = body.replace(needle, '', 1); break\n")
-	fmt.Fprintf(&b, "        with open(target, 'w') as f: f.write(body)\n")
-	fmt.Fprintf(&b, "PY\n")
+	b.WriteString(diffWalkerPython)
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "If `~/.clawvisor/diffs/$AGENT_NAME/` is missing entirely (legacy install\n")
 	fmt.Fprintf(&b, "or user-deleted), fall back to surgical removal:\n\n")
@@ -1429,38 +1505,11 @@ func renderCodexUninstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "ls ~/.clawvisor/diffs/$AGENT_NAME/ 2>/dev/null || echo \"no diff records — skip to step 3\"\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Walk every record and reverse it. The same python3 one-liner from the\n")
-	fmt.Fprintf(&b, "Claude Code uninstall handles every diff type — it's harness-agnostic:\n\n")
+	fmt.Fprintf(&b, "Claude Code uninstall handles every diff type — it's harness-agnostic.\n")
+	fmt.Fprintf(&b, "It restores prior JSON values (not just deletes) so any setting the user\n")
+	fmt.Fprintf(&b, "had before install comes back exactly:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "python3 - <<'PY'\n")
-	fmt.Fprintf(&b, "import json, os, glob\n")
-	fmt.Fprintf(&b, "agent = os.environ['AGENT_NAME']\n")
-	fmt.Fprintf(&b, "diffs_dir = os.path.expanduser(f'~/.clawvisor/diffs/{agent}')\n")
-	fmt.Fprintf(&b, "for path in sorted(glob.glob(os.path.join(diffs_dir, '*.json'))):\n")
-	fmt.Fprintf(&b, "    with open(path) as f: rec = json.load(f)\n")
-	fmt.Fprintf(&b, "    target = os.path.expanduser(rec['file'])\n")
-	fmt.Fprintf(&b, "    if not os.path.exists(target): continue\n")
-	fmt.Fprintf(&b, "    if rec['type'] == 'json_keys':\n")
-	fmt.Fprintf(&b, "        with open(target) as f: doc = json.load(f)\n")
-	fmt.Fprintf(&b, "        for dotted in rec['paths']:\n")
-	fmt.Fprintf(&b, "            cur = doc; parts = dotted.split('.')\n")
-	fmt.Fprintf(&b, "            for p in parts[:-1]:\n")
-	fmt.Fprintf(&b, "                if not isinstance(cur, dict) or p not in cur: cur = None; break\n")
-	fmt.Fprintf(&b, "                cur = cur[p]\n")
-	fmt.Fprintf(&b, "            if cur is not None and isinstance(cur, dict): cur.pop(parts[-1], None)\n")
-	fmt.Fprintf(&b, "        def prune(d):\n")
-	fmt.Fprintf(&b, "            for k, v in list(d.items()):\n")
-	fmt.Fprintf(&b, "                if isinstance(v, dict): prune(v)\n")
-	fmt.Fprintf(&b, "                if isinstance(v, dict) and not v: del d[k]\n")
-	fmt.Fprintf(&b, "        prune(doc)\n")
-	fmt.Fprintf(&b, "        with open(target, 'w') as f: json.dump(doc, f, indent=2); f.write('\\n')\n")
-	fmt.Fprintf(&b, "    elif rec['type'] in ('text_append', 'text_prepend'):\n")
-	fmt.Fprintf(&b, "        with open(target) as f: body = f.read()\n")
-	fmt.Fprintf(&b, "        chunk = rec['content']\n")
-	fmt.Fprintf(&b, "        for needle in ('\\n' + chunk + '\\n', chunk + '\\n\\n', chunk + '\\n', chunk):\n")
-	fmt.Fprintf(&b, "            if needle in body:\n")
-	fmt.Fprintf(&b, "                body = body.replace(needle, '', 1); break\n")
-	fmt.Fprintf(&b, "        with open(target, 'w') as f: f.write(body)\n")
-	fmt.Fprintf(&b, "PY\n")
+	b.WriteString(diffWalkerPython)
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "If `~/.clawvisor/diffs/$AGENT_NAME/` is missing (legacy install or\n")
 	fmt.Fprintf(&b, "user-deleted), fall back to surgical removal:\n\n")

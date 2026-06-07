@@ -2321,14 +2321,21 @@ function OnePasteGuide({
   // start time appears, lock the displayed name to it so the success card
   // shows the actual server-side name.
   const [agentName] = useSequencedAgentName(spec.baseName, agents)
+  // Match by EXACT name + harness + freshly-created. Without the name check
+  // we'd false-success on any same-harness agent that happened to land
+  // recently — e.g. a concurrent install from another tab/machine, or an
+  // older agent whose created_at floated within the 5s pre-mount window.
+  // The dashboard pasted this exact name into the install URL, so the new
+  // agent the server stamps from this run uniquely identifies us.
   const matchingAgent = useMemo(() => {
     if (!agents) return undefined
     const cutoff = installStartedAtRef.current - 5000
     return agents
+      .filter(a => a.name === agentName)
       .filter(a => a.install_context?.harness === target)
       .filter(a => new Date(a.created_at).getTime() >= cutoff)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
-  }, [agents, target])
+  }, [agents, agentName, target])
   const connected = !!matchingAgent
 
   // Build the one-paste command. URL-encode the query params to keep

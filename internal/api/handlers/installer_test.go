@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -154,8 +155,12 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 		"~/.clawvisor/diffs/$AGENT_NAME/claude_cv.json",
 		`type: "json_keys"`,
 		`type: "text_append"`,
-		`"env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_CUSTOM_HEADERS"`,
-		`"env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN", "env.ANTHROPIC_API_KEY"`,
+		// Prior-value capture: each entry has the prior_value the install
+		// overwrote, so uninstall restores instead of just deletes.
+		`[$paths[] as $p | {path: $p, prior_value: ($prior | getpath($p / "."))}]`,
+		// Paths are emitted via --argjson (jq array) — pre-merge capture.
+		`"env.ANTHROPIC_BASE_URL","env.ANTHROPIC_CUSTOM_HEADERS"`,
+		`"env.ANTHROPIC_BASE_URL","env.ANTHROPIC_AUTH_TOKEN","env.ANTHROPIC_API_KEY"`,
 		// Step 6: drop uninstall skill + self-uninstall the setup file
 		"## 6. Drop the uninstall skill, then self-uninstall",
 		"/skill/uninstall/claude-code.md?agent_name=$AGENT_NAME",
@@ -547,6 +552,14 @@ func TestUninstallClaudeCodeRender(t *testing.T) {
 		"text_append",
 		"text_prepend",
 		`if rec['type'] == 'json_keys':`,
+		// Prior-value restore for json_keys: if prior is non-null we set
+		// the key back to it instead of just deleting (preserves any value
+		// the user had before install).
+		"prior_value",
+		`if entry.get('prior_value') is None:`,
+		"set_at(doc, parts, entry['prior_value'])",
+		// Legacy 'paths' fallback for pre-prior-value diff records.
+		"rec.get('paths', [])",
 		// Legacy fallback for installs that pre-date the diff-records design.
 		"legacy install",
 		"ANTHROPIC_BASE_URL",
@@ -603,6 +616,45 @@ func TestUninstallCodexRender(t *testing.T) {
 		"rm -rf ~/.clawvisor/diffs/$AGENT_NAME",
 		"rm -rf ~/.codex/skills/clawvisor-uninstall",
 	)
+}
+
+func TestInstallerRejectsMaliciousClaim(t *testing.T) {
+	// claim is interpolated into a shell-quoted curl URL inside the rendered
+	// skill. Any character outside URL-safe base64 must be silently dropped
+	// rather than embedded, so a paste like
+	//   `/skill/install/claude-code.md?claim=foo";+rm+-rf+~;+echo+"`
+	// can't break out of the shell string and execute arbitrary commands.
+	h := NewInstallerHandler("", "", true, "", "")
+	bad := []string{
+		`foo"; rm -rf ~; echo "`,
+		"foo'$(touch /tmp/pwn)'",
+		"foo bar",  // space
+		"foo;bar",  // semicolon
+		"foo\nbar", // newline
+		"foo`id`",  // backtick
+		"foo$bar",  // dollar sign
+	}
+	for _, claim := range bad {
+		body := installerGetQuery(t, h, "claude-code", "claim="+url.QueryEscape(claim))
+		if strings.Contains(body, "claim="+claim) {
+			t.Errorf("malicious claim %q was interpolated unescaped into rendered body", claim)
+		}
+		// Without a valid claim, the body still renders but without claim= in the
+		// curl URL — the skill prints an explanatory "no claim code" message.
+		if !strings.Contains(body, "no claim code") {
+			t.Errorf("expected no-claim fallback in body for malicious claim %q", claim)
+		}
+	}
+}
+
+func TestInstallerAcceptsValidClaim(t *testing.T) {
+	// Sanity check the positive path — a real 10-char base64 claim is
+	// accepted and lands in the rendered curl URL.
+	h := NewInstallerHandler("", "", true, "", "")
+	body := installerGet(t, h, "claude-code", "abcDEF_-09")
+	if !strings.Contains(body, "claim=abcDEF_-09") {
+		t.Errorf("valid claim was dropped; body excerpt:\n%s", body[:min(len(body), 500)])
+	}
 }
 
 func TestUninstallUnknownTargetIs404(t *testing.T) {
