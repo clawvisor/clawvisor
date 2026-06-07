@@ -39,12 +39,13 @@ type TaskScopeResolver func(ctx context.Context, tu conversation.ToolUse) TaskSc
 // credentialed tool_use. Host adapters translate from their task-scope
 // systems into this shape before the evaluator sees it.
 type TaskScopeDecision struct {
-	Allowed       bool
-	TaskID        string
-	Reason        string
-	Ambiguous     bool
-	MatchedTask   *store.Task
-	MatchedAction *store.TaskAction
+	Allowed        bool
+	TaskID         string
+	Reason         string
+	SubstituteText string
+	Ambiguous      bool
+	MatchedTask    *store.Task
+	MatchedAction  *store.TaskAction
 }
 
 // NewTaskScopeEvaluator constructs the evaluator. nil resolver → Skip
@@ -111,11 +112,12 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 	// disparate scope failures don't all collapse into one prompt
 	// unless the legacy code says they should (see ShouldCoalesce).
 	return pipeline.ToolUseVerdict{
-		Outcome:      pipeline.OutcomeHold,
-		Reason:       dec.Reason,
-		HoldKey:      "needs_task_" + tu.ID,
-		HeldKindHint: pipeline.HeldKindHintApproval,
-		Facts:        []pipeline.EvaluationFact{fact},
+		Outcome:        pipeline.OutcomeHold,
+		Reason:         dec.Reason,
+		SubstituteWith: dec.SubstituteText,
+		HoldKey:        "needs_task_" + tu.ID,
+		HeldKindHint:   pipeline.HeldKindHintApproval,
+		Facts:          []pipeline.EvaluationFact{fact},
 	}, nil
 }
 

@@ -67,6 +67,9 @@ func (d *AnthropicDecoder) Next() (Event, error) {
 		// Comment line — emit as keepalive immediately (these don't
 		// participate in an event block).
 		if strings.HasPrefix(line, ":") {
+			if d.curEvent != "" || len(d.dataLines) > 0 {
+				continue
+			}
 			raw := append([]byte(nil), d.rawBuf.Bytes()...)
 			d.rawBuf.Reset()
 			return Event{
@@ -87,6 +90,9 @@ func (d *AnthropicDecoder) Next() (Event, error) {
 		}
 		// Unknown line shape (id:, retry:, ...). Emit immediately as
 		// keepalive so we don't lose bytes.
+		if d.curEvent != "" || len(d.dataLines) > 0 {
+			continue
+		}
 		raw := append([]byte(nil), d.rawBuf.Bytes()...)
 		d.rawBuf.Reset()
 		return Event{

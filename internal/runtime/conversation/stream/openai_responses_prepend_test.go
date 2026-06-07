@@ -55,14 +55,11 @@ func TestPrependOpenAIResponsesAssistantNotice_NoticeAtIndex0(t *testing.T) {
 	}
 
 	// Upstream msg_1 shifted from output_index 0 to output_index 1.
-	// Look for the upstream item's added event AFTER the notice block.
-	noticeEndIdx := strings.LastIndex(got, "msg_clawvisor_notice")
-	if noticeEndIdx < 0 {
-		t.Fatalf("can't find notice item")
+	if !strings.Contains(got, `"output_index":1`) || !strings.Contains(got, `msg_1`) {
+		t.Errorf("upstream item didn't shift to output_index 1:\n%s", got)
 	}
-	tail := got[noticeEndIdx:]
-	if !strings.Contains(tail, `"output_index":1`) {
-		t.Errorf("upstream item didn't shift to output_index 1:\n%s", tail)
+	if !strings.Contains(got, `"output":[{"content":[{"text":"`+notice) {
+		t.Errorf("completed response output does not include notice item:\n%s", got)
 	}
 
 	// Upstream "hello" content survives.

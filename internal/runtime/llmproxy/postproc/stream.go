@@ -117,9 +117,10 @@ func PostprocessStream(
 
 	finalResult, finalErr := session.finalize(req.Context(), toolUses, verdictByTU)
 	if finalErr != nil {
+		err := fmt.Errorf("approval hold storage failed: %w", finalErr)
 		return llmproxy.PostprocessResult{
-			SkippedReason: "approval hold storage failed: " + finalErr.Error(),
-		}, nil
+			SkippedReason: err.Error(),
+		}, err
 	}
 
 	if finalResult.Coalesced {

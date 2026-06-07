@@ -17,8 +17,7 @@ import (
 type eagerRequestMutator struct {
 	PanicMutator // panics on every method not overridden below
 
-	body        []byte
-	finalAudits []map[string]any
+	body []byte
 }
 
 // newEagerRequestMutator constructs a mutator with the initial body.

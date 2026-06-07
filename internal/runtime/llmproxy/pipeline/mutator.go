@@ -12,7 +12,9 @@ import "encoding/json"
 type RequestMutator interface {
 	// ReplaceBody swaps the entire request body bytes. Used by
 	// transformations that produce a whole-body output (e.g.,
-	// anthropic_sanitize). Later policies see the replaced body.
+	// anthropic_sanitize). Later policies see the replaced body through
+	// the ReadOnlyRequest passed to their own Evaluate call. A saved
+	// earlier ReadOnlyRequest remains immutable.
 	// Returns an error if the new body fails the per-provider parse
 	// check.
 	ReplaceBody(newBody []byte) error

@@ -6,6 +6,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/shellpolicy"
 	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 )
 
@@ -15,9 +16,9 @@ import (
 // command may LOOK read-only but the targeted file is sensitive
 // regardless.
 //
-// Runs UPSTREAM of ReadOnlyShellPassthroughPolicy in the chain so a
-// sensitive read-only command is Denied here rather than allowed
-// through downstream.
+// Standalone legacy policy. The composed production chain now folds
+// this signal into AuthorizationPolicy so sensitive read-only commands
+// still go through the task-scope approval flow.
 type SensitivePathPolicy struct {
 	inspector *inspector.Inspector
 	resolver  ReadOnlyShellResolver
@@ -56,7 +57,7 @@ func (p *SensitivePathPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 	if !toolnames.SensitiveFileGuardEnabled(tu.Name, in.AgentID, in.ToolRules) {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
-	cmd := shellCommandFromInput(tu.Input)
+	cmd := shellpolicy.ShellCommandFromInput(tu.Input)
 	if cmd == "" {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
@@ -75,7 +76,7 @@ func (p *SensitivePathPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 	return pipeline.ToolUseVerdict{
 		Outcome: pipeline.OutcomeSkip,
 		Facts: []pipeline.EvaluationFact{
-			pipeline.ScriptSessionFact{Outcome: "sensitive_path_in_read_only_shell"},
+			pipeline.AuthorizationFact{Outcome: "sensitive_path_in_read_only_shell"},
 		},
 	}, nil
 }

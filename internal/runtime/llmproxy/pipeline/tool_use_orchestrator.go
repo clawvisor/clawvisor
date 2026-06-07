@@ -82,6 +82,9 @@ func EvaluateToolUses(
 				Verdict:       verdict,
 			})
 			if verdict.Continue != nil {
+				if verdict.Outcome != OutcomeAllow && verdict.Outcome != OutcomeRewrite {
+					return nil, fmt.Errorf("evaluator %q on tool_use %q returned Continue with outcome %q; Continue requires Allow or Rewrite", ev.Name(), tu.ID, verdict.Outcome)
+				}
 				// Continuation short-circuits the whole pass.
 				result.Continue = verdict.Continue
 				result.ContinueFromToolUseID = tu.ID

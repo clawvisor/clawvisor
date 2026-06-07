@@ -56,6 +56,9 @@ func (d *OpenAIChatDecoder) Next() (Event, error) {
 
 		// SSE comment — emit immediately as keepalive.
 		if strings.HasPrefix(trimmed, ":") {
+			if len(d.dataLines) > 0 {
+				continue
+			}
 			raw := append([]byte(nil), d.rawBuf.Bytes()...)
 			d.rawBuf.Reset()
 			return Event{
@@ -79,6 +82,9 @@ func (d *OpenAIChatDecoder) Next() (Event, error) {
 		}
 
 		// Unknown line shape — emit raw as keepalive to avoid byte loss.
+		if len(d.dataLines) > 0 {
+			continue
+		}
 		raw := append([]byte(nil), d.rawBuf.Bytes()...)
 		d.rawBuf.Reset()
 		return Event{

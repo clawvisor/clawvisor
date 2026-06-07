@@ -40,10 +40,9 @@ type ToolUseChainConfig struct {
 	// adapted via boundaryResolverFromHosts when Boundary is nil.
 	Boundary        BoundaryResolver
 	TriggerMissAuth TriggerMissAuthorizer
-	// ReadOnlyShell, when set, wires ReadOnlyShellPassthroughPolicy +
-	// SensitivePathPolicy. They share the same per-call inputs
-	// (AgentID + ToolRules) so they share one resolver. Nil → both
-	// policies Skip.
+	// ReadOnlyShell, when set, lets AuthorizationPolicy apply the
+	// legacy read-only-shell and sensitive-path trigger-miss behavior
+	// after the decision engine has checked for explicit denies.
 	ReadOnlyShell ReadOnlyShellResolver
 	// Authorization, when set, wires AuthorizationPolicy. The resolver
 	// produces AuthorizationInputs (decision-engine inputs + hold
@@ -88,13 +87,6 @@ func ComposeToolUseEvaluatorChain(cfg ToolUseChainConfig) []pipeline.ToolUseEval
 	chain := make([]pipeline.ToolUseEvaluator, 0, 8)
 	chain = append(chain, NewControlToolUseEvaluator(cfg.Control))
 	chain = append(chain, NewScriptSessionEvaluator(cfg.ScriptSession))
-	// Trigger-miss special policies run before InspectorChain so they
-	// can claim Allow/Deny/Hold directly. SensitivePath emits a
-	// Fact-only Skip; AuthorizationPolicy reads the sensitive trail,
-	// runs EvaluateAuthorization, and handles the approval flow inline.
-	chain = append(chain, NewSensitivePathPolicy(cfg.Inspector, cfg.ReadOnlyShell))
-	chain = append(chain, NewShellPollPassthroughPolicy(cfg.Inspector))
-	chain = append(chain, NewReadOnlyShellPassthroughPolicy(cfg.Inspector, cfg.ReadOnlyShell))
 	chain = append(chain, NewAuthorizationPolicy(cfg.Inspector, cfg.Authorization))
 	chain = append(chain, inspectorChain)
 	chain = append(chain, NewTaskScopeEvaluator(cfg.TaskScope))

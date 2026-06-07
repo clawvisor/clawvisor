@@ -119,11 +119,10 @@ func applyJSONPathPatch(data []byte, patch FieldPatch) ([]byte, error) {
 	if patch.JSONPath == "" {
 		return nil, fmt.Errorf("empty JSONPath")
 	}
-	// Only top-level field support for now; refuse anything dotted so
-	// we don't silently swallow a malformed path.
-	for _, c := range patch.JSONPath {
-		if c == '.' {
-			return nil, fmt.Errorf("nested JSONPath %q not yet supported", patch.JSONPath)
+	for i, c := range patch.JSONPath {
+		valid := c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || i > 0 && c >= '0' && c <= '9'
+		if !valid {
+			return nil, fmt.Errorf("unsupported JSONPath %q: only top-level identifier fields are supported", patch.JSONPath)
 		}
 	}
 	return jsonpatch.SetTopLevelField(data, patch.JSONPath, patch.NewValue)

@@ -57,6 +57,9 @@ func (d *OpenAIResponsesDecoder) Next() (Event, error) {
 		}
 
 		if strings.HasPrefix(trimmed, ":") {
+			if d.curEvent != "" || len(d.dataLines) > 0 {
+				continue
+			}
 			raw := append([]byte(nil), d.rawBuf.Bytes()...)
 			d.rawBuf.Reset()
 			return Event{
@@ -76,6 +79,9 @@ func (d *OpenAIResponsesDecoder) Next() (Event, error) {
 			continue
 		}
 
+		if d.curEvent != "" || len(d.dataLines) > 0 {
+			continue
+		}
 		raw := append([]byte(nil), d.rawBuf.Bytes()...)
 		d.rawBuf.Reset()
 		return Event{

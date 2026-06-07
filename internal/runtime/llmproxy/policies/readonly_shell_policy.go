@@ -2,12 +2,11 @@ package policies
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/shellpolicy"
 	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -16,7 +15,8 @@ import (
 // (e.g., `ls`, `cat`, `find … -name …`) without going through full
 // task-scope authorization, when the agent has the
 // read-only-shell-commands-allowed rule. Sensitive-path commands are
-// rejected by SensitivePathPolicy, which runs upstream of this one.
+// left unclaimed so AuthorizationPolicy can route them through the
+// task-scope approval flow.
 type ReadOnlyShellPassthroughPolicy struct {
 	inspector *inspector.Inspector
 	resolver  ReadOnlyShellResolver
@@ -64,10 +64,10 @@ func (p *ReadOnlyShellPassthroughPolicy) Evaluate(ctx context.Context, _ pipelin
 	if in == nil {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
-	if !readOnlyShellCommandsAllowed(tu.Name, in.AgentID, in.ToolRules) {
+	if !shellpolicy.ReadOnlyShellCommandsAllowed(tu.Name, in.AgentID, in.ToolRules) {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
-	cmd := shellCommandFromInput(tu.Input)
+	cmd := shellpolicy.ShellCommandFromInput(tu.Input)
 	if cmd == "" {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
@@ -85,55 +85,9 @@ func (p *ReadOnlyShellPassthroughPolicy) Evaluate(ctx context.Context, _ pipelin
 		Outcome: pipeline.OutcomeAllow,
 		Reason:  "read-only shell command",
 		Facts: []pipeline.EvaluationFact{
-			pipeline.ScriptSessionFact{Outcome: "readonly_shell_pass_through"},
+			pipeline.AuthorizationFact{Outcome: "readonly_shell_pass_through"},
 		},
 	}, nil
 }
 
 var _ pipeline.ToolUseEvaluator = (*ReadOnlyShellPassthroughPolicy)(nil)
-
-// readOnlyShellCommandsAllowed walks rule list looking for a matching
-// read-only-shell-commands setting rule for this tool + agent.
-// Mirrors the helper in llmproxy/shell_helpers.go.
-func readOnlyShellCommandsAllowed(toolName, agentID string, rules []*store.RuntimePolicyRule) bool {
-	global := true
-	var agent *bool
-	for _, rule := range rules {
-		if rule == nil || !rule.Enabled || !toolnames.IsReadOnlyShellSettingRule(rule) || !toolnames.ToolNamesSameClass(rule.ToolName, toolName) {
-			continue
-		}
-		allowed := strings.EqualFold(strings.TrimSpace(rule.Action), "allow")
-		if rule.AgentID != nil {
-			if strings.TrimSpace(*rule.AgentID) == strings.TrimSpace(agentID) {
-				v := allowed
-				agent = &v
-			}
-			continue
-		}
-		global = allowed
-	}
-	if agent != nil {
-		return *agent
-	}
-	return global
-}
-
-// shellCommandFromInput extracts the command string from a shell-tool
-// input JSON. Claude Code's Bash uses `command`; Codex's exec_command
-// uses `cmd`. Returns "" when neither is present or non-string.
-func shellCommandFromInput(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var input map[string]any
-	if err := json.Unmarshal(raw, &input); err != nil {
-		return ""
-	}
-	if v, ok := input["cmd"].(string); ok && v != "" {
-		return v
-	}
-	if v, ok := input["command"].(string); ok {
-		return v
-	}
-	return ""
-}

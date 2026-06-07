@@ -109,3 +109,51 @@ func TestPrependAnthropicAssistantNotice_BlankIsCopy(t *testing.T) {
 		t.Fatalf("blank notice should copy verbatim\n--- want ---\n%s\n--- got ---\n%s", upstream, got)
 	}
 }
+
+func TestPrependAnthropicAssistantNotice_DefersPastThinkingBlock(t *testing.T) {
+	upstream := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_x","role":"assistant","model":"claude-sonnet-4"}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":"sig"}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reasoning"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hello"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":1}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+	const notice = "[Clawvisor] notice"
+
+	var buf bytes.Buffer
+	if err := stream.PrependAnthropicAssistantNotice(&buf, strings.NewReader(upstream), notice); err != nil {
+		t.Fatalf("PrependAnthropicAssistantNotice: %v", err)
+	}
+	got := buf.String()
+	if thinking := strings.Index(got, `"type":"thinking"`); thinking < 0 || thinking > strings.Index(got, notice) {
+		t.Fatalf("notice should be inserted after leading thinking block:\n%s", got)
+	}
+	if !strings.Contains(got, `"signature":"sig"`) {
+		t.Fatalf("thinking signature was not preserved:\n%s", got)
+	}
+	if !strings.Contains(got, `"index":1`) || !strings.Contains(got, notice) {
+		t.Fatalf("notice should be emitted at index 1:\n%s", got)
+	}
+	if !strings.Contains(got, `"index":2`) || !strings.Contains(got, `"text":"hello"`) {
+		t.Fatalf("text block should shift to index 2:\n%s", got)
+	}
+}

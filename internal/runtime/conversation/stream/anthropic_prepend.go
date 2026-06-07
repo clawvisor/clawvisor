@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,9 @@ func PrependAnthropicAssistantNotice(dst io.Writer, src io.Reader, notice string
 	e := NewAnthropicEncoder(dst)
 
 	injected := false
+	afterMessageStart := false
+	inThinkingBlock := false
+	noticeIndex := 0
 	for {
 		ev, err := d.Next()
 		if errors.Is(err, io.EOF) {
@@ -40,22 +44,44 @@ func PrependAnthropicAssistantNotice(dst io.Writer, src io.Reader, notice string
 			return fmt.Errorf("prepend notice: decode: %w", err)
 		}
 
-		// Inject the notice block right after message_start.
-		// We emit three REPLACED events (start/delta/stop) at index 0.
-		if ev.Kind == KindResponseStart && !injected {
+		if ev.Kind == KindResponseStart && !afterMessageStart {
 			if err := e.Encode(ev); err != nil {
 				return err
 			}
-			if err := writeAnthropicNoticeBlock(e, notice); err != nil {
-				return err
-			}
-			injected = true
+			afterMessageStart = true
 			continue
 		}
 
+		if afterMessageStart && !injected {
+			if ev.Kind == KindBlockStart && isAnthropicThinkingBlockStart(ev) {
+				if ev.Meta.AnthropicIndex >= noticeIndex {
+					noticeIndex = ev.Meta.AnthropicIndex + 1
+				}
+				inThinkingBlock = true
+				if err := e.Encode(ev); err != nil {
+					return err
+				}
+				continue
+			}
+			if inThinkingBlock {
+				if err := e.Encode(ev); err != nil {
+					return err
+				}
+				if ev.Kind == KindBlockEnd {
+					inThinkingBlock = false
+				}
+				continue
+			}
+			if err := writeAnthropicNoticeBlock(e, notice, noticeIndex); err != nil {
+				return err
+			}
+			injected = true
+		}
 		// Once the notice is injected, shift any content_block_* event
-		// index by +1 so upstream blocks slot in after the notice.
-		if injected && hasAnthropicIndex(ev.Kind) && ev.Meta.AnthropicIndex >= 0 {
+		// at or after the injected index by +1 so upstream blocks slot
+		// in after the notice while leading thinking blocks keep their
+		// original signed order.
+		if injected && hasAnthropicIndex(ev.Kind) && ev.Meta.AnthropicIndex >= noticeIndex {
 			shifted := ev.Meta.AnthropicIndex + 1
 			ev.FieldPatches = append(ev.FieldPatches, FieldPatch{
 				JSONPath: "index",
@@ -75,21 +101,21 @@ func PrependAnthropicAssistantNotice(dst io.Writer, src io.Reader, notice string
 // new text block at index 0 carrying the notice. Each event is in the
 // REPLACED state (Parsed populated, RawBytes empty) so the encoder
 // serializes from the typed payload.
-func writeAnthropicNoticeBlock(e *AnthropicEncoder, notice string) error {
+func writeAnthropicNoticeBlock(e *AnthropicEncoder, notice string, index int) error {
 	events := []Event{
 		{
 			Kind:   KindBlockStart,
-			Meta:   EventMeta{SSEEventName: "content_block_start", AnthropicIndex: 0},
+			Meta:   EventMeta{SSEEventName: "content_block_start", AnthropicIndex: index},
 			Parsed: TextBlock{},
 		},
 		{
 			Kind:   KindBlockDelta,
-			Meta:   EventMeta{SSEEventName: "content_block_delta", AnthropicIndex: 0},
+			Meta:   EventMeta{SSEEventName: "content_block_delta", AnthropicIndex: index},
 			Parsed: TextBlock{Text: notice},
 		},
 		{
 			Kind:   KindBlockEnd,
-			Meta:   EventMeta{SSEEventName: "content_block_stop", AnthropicIndex: 0},
+			Meta:   EventMeta{SSEEventName: "content_block_stop", AnthropicIndex: index},
 			Parsed: TextBlock{},
 		},
 	}
@@ -99,6 +125,39 @@ func writeAnthropicNoticeBlock(e *AnthropicEncoder, notice string) error {
 		}
 	}
 	return nil
+}
+
+func isAnthropicThinkingBlockStart(ev Event) bool {
+	if ev.Kind != KindBlockStart || len(ev.RawBytes) == 0 {
+		return false
+	}
+	data := sseDataPayload(ev.RawBytes)
+	if data == "" {
+		return false
+	}
+	var payload struct {
+		ContentBlock struct {
+			Type string `json:"type"`
+		} `json:"content_block"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return false
+	}
+	return payload.ContentBlock.Type == "thinking"
+}
+
+func sseDataPayload(raw []byte) string {
+	var out string
+	lines := bytes.Split(raw, []byte{'\n'})
+	for _, line := range lines {
+		if bytes.HasPrefix(line, []byte("data:")) {
+			if out != "" {
+				out += "\n"
+			}
+			out += string(bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:"))))
+		}
+	}
+	return out
 }
 
 // hasAnthropicIndex reports whether the event kind carries an `index`

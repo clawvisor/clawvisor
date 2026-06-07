@@ -205,6 +205,7 @@ func (f *Finalizer) Finalize(ctx context.Context) (FinalizeResult, error) {
 	if f == nil || f.deps == nil {
 		return FinalizeResult{}, nil
 	}
+	defer f.flushAudits(ctx)
 	if shouldCoalesce(f.captures) {
 		result, ok, err := f.commitCoalesced(ctx)
 		if err != nil {
@@ -220,7 +221,6 @@ func (f *Finalizer) Finalize(ctx context.Context) (FinalizeResult, error) {
 	if err := f.replayLegacy(ctx); err != nil {
 		return FinalizeResult{}, err
 	}
-	f.flushAudits(ctx)
 	return FinalizeResult{}, nil
 }
 
@@ -274,10 +274,13 @@ func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, bool, 
 	coalesced := f.deps.BuildCoalescedHold(f.captures)
 	submit, err := f.deps.SubmitHold(ctx, coalesced.Payload)
 	if err != nil {
+		if c, ok := firstReplayableCapture(f.captures); ok {
+			f.deps.WriteAudit(ctx, f.deps.BuildReplayFailedAudit(c, err))
+		}
 		return FinalizeResult{}, false, nil
 	}
 	if submit.Evicted != nil && len(f.captures) > 0 {
-		primary := f.captures[0]
+		primary := orderCapturesForCoalescedAudit(f.captures)[0]
 		if coalesced.EvictedAuditFor != nil {
 			f.deps.WriteAudit(ctx, coalesced.EvictedAuditFor(primary, submit.EvictedApprovalID))
 		}
@@ -330,6 +333,16 @@ func (f *Finalizer) flushAudits(ctx context.Context) {
 	for _, ev := range f.audits {
 		f.deps.WriteAudit(ctx, ev)
 	}
+	f.audits = nil
+}
+
+func firstReplayableCapture(captures []HoldCapture) (HoldCapture, bool) {
+	for _, c := range captures {
+		if c.Payload != nil {
+			return c, true
+		}
+	}
+	return HoldCapture{}, false
 }
 
 // shouldCoalesce decides whether the post-pass should replace the

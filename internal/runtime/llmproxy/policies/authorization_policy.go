@@ -44,6 +44,10 @@ type AuthorizationInputs struct {
 	// ReadOnlyShellPassthroughPolicy would have allowed this call.
 	// Set true → SkipIntentVerification on the authorization input.
 	ReadOnlyShellCommand bool
+	// ShellPoll reports whether this is a no-op background shell poll
+	// (`write_stdin` with empty chars). It is allowed only after
+	// EvaluateAuthorization confirms there is no explicit deny.
+	ShellPoll bool
 	// HoldHandler, when non-nil, is invoked on VerdictNeedsApproval to
 	// commit the hold + render the approval prompt. The policy
 	// supplies the inspector verdict + decision; the handler returns
@@ -128,7 +132,7 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeAllow,
 			Reason:  "no credential trigger",
-			Facts:   []pipeline.EvaluationFact{pipeline.ScriptSessionFact{Outcome: "pass_through"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.AuthorizationFact{Outcome: "pass_through"}},
 		}, nil
 	}
 	input := in.Input
@@ -138,7 +142,7 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  "Clawvisor: authorization failed — " + err.Error(),
-			Facts:   []pipeline.EvaluationFact{pipeline.ScriptSessionFact{Outcome: "decision_error"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.AuthorizationFact{Outcome: "decision_error"}},
 		}, nil
 	}
 	taskScopeFact := pipeline.TaskScopeFact{
@@ -164,6 +168,19 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 			Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 		}, nil
 	case runtimedecision.VerdictNeedsApproval:
+		if dec.Source == runtimedecision.SourceTaskScopeMissing && (in.ReadOnlyShellCommand || in.ShellPoll) {
+			reason := "read-only shell command"
+			outcome := "readonly_shell_pass_through"
+			if in.ShellPoll {
+				reason = "background-shell poll"
+				outcome = "shell_poll_pass_through"
+			}
+			return pipeline.ToolUseVerdict{
+				Outcome: pipeline.OutcomeAllow,
+				Reason:  reason,
+				Facts:   []pipeline.EvaluationFact{pipeline.AuthorizationFact{Outcome: outcome}, authFact, taskScopeFact},
+			}, nil
+		}
 		// Hold side-effects inline so the verdict carries the rendered
 		// approval prompt (with the approval ID in its footer).
 		if in.HoldHandler == nil {

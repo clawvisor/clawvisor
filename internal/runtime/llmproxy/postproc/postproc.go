@@ -142,7 +142,11 @@ func feedFinalizer(
 	if finalizer == nil {
 		return
 	}
-	holdByTU := make(map[string]capturedHold, len(holdSink.holds))
+	holdCount := 0
+	if holdSink != nil {
+		holdCount = len(holdSink.holds)
+	}
+	holdByTU := make(map[string]capturedHold, holdCount)
 	if holdSink != nil {
 		for _, h := range holdSink.holds {
 			holdByTU[h.Pending.ToolUse.ID] = h
@@ -214,7 +218,9 @@ func flushDirect(ctx context.Context, cfg llmproxy.PostprocessConfig, auditBuf *
 // evaluator appends audit rows through emit for the owning session.
 func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, emit func(conversation.AuditEvent)) conversation.ToolUseEvaluator {
 	if cfg.ToolUseEvaluatorFactory == nil {
-		panic("llmproxy/postproc: PostprocessConfig.ToolUseEvaluatorFactory is required — assign pipelineeval.Factory")
+		return func(conversation.ToolUse) conversation.ToolUseVerdict {
+			return conversation.ToolUseVerdict{Allowed: true, Outcome: conversation.OutcomeAllow}
+		}
 	}
 	return cfg.ToolUseEvaluatorFactory(req, cfg, provider, toolUses, emit)
 }

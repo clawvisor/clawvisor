@@ -7,6 +7,8 @@ import (
 	"io"
 )
 
+const openAIResponsesNoticeItemID = "msg_clawvisor_notice"
+
 // PrependOpenAIResponsesAssistantNotice consumes an OpenAI Responses
 // SSE stream from src, injects a six-event notice envelope at
 // output_index 0 immediately after response.created, and shifts every
@@ -18,13 +20,6 @@ import (
 // added → content_part.added → output_text.delta → output_text.done →
 // content_part.done → output_item.done, all sharing item_id
 // "msg_clawvisor_notice" at output_index 0.
-//
-// Limitation: response.completed rewriting (to include the notice
-// item in the final response.output array) isn't done yet. Strict
-// reconcilers that read response.output may not see the notice item
-// in the final state. Streaming consumers that watch the per-event
-// deltas see the notice text correctly. A future rewrite should handle
-// the embedded response object.
 func PrependOpenAIResponsesAssistantNotice(dst io.Writer, src io.Reader, notice string) error {
 	if notice == "" {
 		_, err := io.Copy(dst, src)
@@ -65,6 +60,16 @@ func PrependOpenAIResponsesAssistantNotice(dst io.Writer, src io.Reader, notice 
 			})
 			ev.Meta.OpenAIOutputIndex = shifted
 		}
+		if injected && ev.Meta.SSEEventName == "response.completed" {
+			raw, ok, err := rewriteOpenAIResponsesCompleted(ev.RawBytes, notice)
+			if err != nil {
+				return err
+			}
+			if ok {
+				ev.RawBytes = raw
+				ev.FieldPatches = nil
+			}
+		}
 
 		if err := e.Encode(ev); err != nil {
 			return err
@@ -78,8 +83,6 @@ func PrependOpenAIResponsesAssistantNotice(dst io.Writer, src io.Reader, notice 
 // individually self-contained on the wire; together they describe a
 // completed assistant message carrying the notice text.
 func writeOpenAIResponsesNoticeEnvelope(dst io.Writer, notice string) error {
-	const itemID = "msg_clawvisor_notice"
-
 	events := []struct {
 		name    string
 		payload map[string]any
@@ -91,7 +94,7 @@ func writeOpenAIResponsesNoticeEnvelope(dst io.Writer, notice string) error {
 				"output_index": 0,
 				"item": map[string]any{
 					"type":   "message",
-					"id":     itemID,
+					"id":     openAIResponsesNoticeItemID,
 					"role":   "assistant",
 					"status": "in_progress",
 				},
@@ -101,7 +104,7 @@ func writeOpenAIResponsesNoticeEnvelope(dst io.Writer, notice string) error {
 			name: "response.content_part.added",
 			payload: map[string]any{
 				"type":          "response.content_part.added",
-				"item_id":       itemID,
+				"item_id":       openAIResponsesNoticeItemID,
 				"output_index":  0,
 				"content_index": 0,
 				"part":          map[string]any{"type": "output_text", "text": ""},
@@ -111,7 +114,7 @@ func writeOpenAIResponsesNoticeEnvelope(dst io.Writer, notice string) error {
 			name: "response.output_text.delta",
 			payload: map[string]any{
 				"type":          "response.output_text.delta",
-				"item_id":       itemID,
+				"item_id":       openAIResponsesNoticeItemID,
 				"output_index":  0,
 				"content_index": 0,
 				"delta":         notice,
@@ -121,7 +124,7 @@ func writeOpenAIResponsesNoticeEnvelope(dst io.Writer, notice string) error {
 			name: "response.output_text.done",
 			payload: map[string]any{
 				"type":          "response.output_text.done",
-				"item_id":       itemID,
+				"item_id":       openAIResponsesNoticeItemID,
 				"output_index":  0,
 				"content_index": 0,
 				"text":          notice,
@@ -131,7 +134,7 @@ func writeOpenAIResponsesNoticeEnvelope(dst io.Writer, notice string) error {
 			name: "response.content_part.done",
 			payload: map[string]any{
 				"type":          "response.content_part.done",
-				"item_id":       itemID,
+				"item_id":       openAIResponsesNoticeItemID,
 				"output_index":  0,
 				"content_index": 0,
 				"part":          map[string]any{"type": "output_text", "text": notice},
@@ -144,7 +147,7 @@ func writeOpenAIResponsesNoticeEnvelope(dst io.Writer, notice string) error {
 				"output_index": 0,
 				"item": map[string]any{
 					"type":   "message",
-					"id":     itemID,
+					"id":     openAIResponsesNoticeItemID,
 					"role":   "assistant",
 					"status": "completed",
 					"content": []map[string]any{
@@ -165,4 +168,38 @@ func writeOpenAIResponsesNoticeEnvelope(dst io.Writer, notice string) error {
 		}
 	}
 	return nil
+}
+
+func rewriteOpenAIResponsesCompleted(raw []byte, notice string) ([]byte, bool, error) {
+	data := sseDataPayload(raw)
+	if data == "" {
+		return nil, false, nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return nil, false, err
+	}
+	response, ok := payload["response"].(map[string]any)
+	if !ok {
+		return nil, false, nil
+	}
+	output, _ := response["output"].([]any)
+	response["output"] = append([]any{openAIResponsesNoticeItem(notice)}, output...)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, err
+	}
+	return []byte(fmt.Sprintf("event: response.completed\ndata: %s\n\n", encoded)), true, nil
+}
+
+func openAIResponsesNoticeItem(notice string) map[string]any {
+	return map[string]any{
+		"type":   "message",
+		"id":     openAIResponsesNoticeItemID,
+		"role":   "assistant",
+		"status": "completed",
+		"content": []map[string]any{
+			{"type": "output_text", "text": notice},
+		},
+	}
 }

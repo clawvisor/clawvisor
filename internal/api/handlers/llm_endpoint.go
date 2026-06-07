@@ -514,7 +514,10 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			conversationID: conversationID,
 		}
 		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewTaskApprovalReply(h.PendingApprovals, agent, func(ctx context.Context, req policies.TaskApprovalReplyRequest) (policies.TaskApprovalReplyResult, error) {
-			pending, _ := req.PendingApproval.(llmproxy.PendingApprovalCache)
+			pending, ok := req.PendingApproval.(llmproxy.PendingApprovalCache)
+			if !ok || pending == nil {
+				return policies.TaskApprovalReplyResult{}, fmt.Errorf("task approval reply pending cache not configured")
+			}
 			rewrite, err := llmproxy.RewriteTaskApprovalReply(ctx, llmproxy.TaskReplyRewriteRequest{
 				HTTPRequest:     req.HTTPRequest,
 				Provider:        req.Provider,
@@ -578,7 +581,10 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewInlineTaskIntercept(
 			h.PendingApprovals, agent, requestID, func(ctx context.Context, req policies.InlineTaskApprovalRequest) (policies.InlineTaskApprovalResult, error) {
-				pending, _ := req.PendingApproval.(llmproxy.PendingApprovalCache)
+				pending, ok := req.PendingApproval.(llmproxy.PendingApprovalCache)
+				if !ok || pending == nil {
+					return policies.InlineTaskApprovalResult{}, fmt.Errorf("inline task approval pending cache not configured")
+				}
 				rewrite, err := llmproxy.RewriteInlineTaskApprovalReply(ctx, llmproxy.InlineApprovalRewriteRequest{
 					HTTPRequest:     req.HTTPRequest,
 					Provider:        req.Provider,
@@ -635,6 +641,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		for k, v := range result.AuditParams {
 			auditParams[k] = v
+		}
+		if result.AuditParams["inline_task_approval_rewritten"] == true {
+			inlineApprovalConsumed = true
 		}
 	}
 

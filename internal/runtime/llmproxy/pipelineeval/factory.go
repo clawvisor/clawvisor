@@ -472,11 +472,11 @@ func buildCredentialedTaskScope(
 				}
 				audit("block", string(dec.Source), dec.Reason, matchedTaskID)
 				return policies.TaskScopeDecision{
-					Allowed: false,
-					Reason:  "Clawvisor: approval required — " + dec.Reason,
-					TaskID:  matchedTaskID,
+					Allowed:        false,
+					Reason:         "Clawvisor: approval required — " + dec.Reason,
+					SubstituteText: approvaltext.ApprovalPrompt(tu, dec.Reason, approvalID),
+					TaskID:         matchedTaskID,
 				}
-				_ = approvalID
 			}
 		}
 		// Legacy TaskScope.Check + intent verify fallback.
@@ -539,6 +539,7 @@ func buildAuthorizationResolver(
 	return func(ctx context.Context, tu conversation.ToolUse, v inspector.Verdict) *policies.AuthorizationInputs {
 		hasPolicyConfig := auth.CandidateTasks != nil || auth.ToolRules != nil || auth.EgressRules != nil
 		readOnlyShell, sensitivePath := detectShellSpecials(tu, agent, auth)
+		shellPoll := shellpolicy.IsShellPollTool(tu.Name, tu.Input)
 		return &policies.AuthorizationInputs{
 			Input: runtimedecision.AuthorizationInput{
 				ToolUse:         tu,
@@ -554,6 +555,7 @@ func buildAuthorizationResolver(
 			HasPolicyConfig:      hasPolicyConfig,
 			ShellSensitivePath:   sensitivePath,
 			ReadOnlyShellCommand: readOnlyShell,
+			ShellPoll:            shellPoll,
 			HoldHandler:          holdHandler,
 			SlideTask:            slideTask,
 		}

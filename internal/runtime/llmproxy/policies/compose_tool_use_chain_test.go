@@ -11,17 +11,14 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 )
 
-// TestComposeToolUseEvaluatorChain_AssemblesAllSixStages pins the chain
+// TestComposeToolUseEvaluatorChain_AssemblesStages pins the chain
 // ordering and existence: every position must have an evaluator with
 // the expected name, in the order documented on the composer.
-func TestComposeToolUseEvaluatorChain_AssemblesAllSixStages(t *testing.T) {
+func TestComposeToolUseEvaluatorChain_AssemblesStages(t *testing.T) {
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{})
 	wantNames := []string{
 		"control_tool_use",
 		"script_session",
-		"sensitive_path",
-		"shell_poll_passthrough",
-		"readonly_shell_passthrough",
 		"authorization",
 		"inspector_chain",
 		"task_scope",

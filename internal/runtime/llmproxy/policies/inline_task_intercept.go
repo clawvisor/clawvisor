@@ -100,7 +100,7 @@ func (p *InlineTaskIntercept) Preprocess(ctx context.Context, req pipeline.ReadO
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  err.Error(),
 			AuditParams: map[string]any{
-				"deny_outcome": "malformed_request",
+				"deny_outcome": "inline_task_intercept_error",
 			},
 		}, nil
 	}

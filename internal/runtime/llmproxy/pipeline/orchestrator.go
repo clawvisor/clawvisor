@@ -94,6 +94,9 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 
 		switch verdict.Outcome {
 		case OutcomeDeny:
+			if verdict.ShortCircuit != nil {
+				return nil, fmt.Errorf("policy %q returned Deny outcome with ShortCircuit payload", policy.Name())
+			}
 			result.DenyReason = verdict.Reason
 			result.DeniedBy = policy.Name()
 			result.FinalBody = mut.Body()
@@ -102,13 +105,13 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 			if verdict.ShortCircuit == nil {
 				return nil, fmt.Errorf("policy %q returned ShortCircuit outcome with nil ShortCircuit payload", policy.Name())
 			}
-			if result.ShortCircuit != nil {
-				return nil, fmt.Errorf("policy %q is the second to ShortCircuit; only one allowed per request", policy.Name())
-			}
 			result.ShortCircuit = verdict.ShortCircuit
 			result.FinalBody = mut.Body()
 			return result, nil
 		case OutcomeAllow, OutcomeSkip:
+			if verdict.ShortCircuit != nil {
+				return nil, fmt.Errorf("policy %q returned %s outcome with ShortCircuit payload", policy.Name(), verdict.Outcome)
+			}
 			// Continue chain.
 		default:
 			return nil, fmt.Errorf("policy %q returned unsupported outcome %q for RunPre", policy.Name(), verdict.Outcome)

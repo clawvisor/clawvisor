@@ -90,12 +90,18 @@ func RunToolUseEvaluators(
 		}
 		// ContinueSignal carries structured synthetic-turn blocks; the
 		// rewriter reads the flattened ContinueWithToolResult string.
-		if v.Continue != nil && len(v.Continue.SyntheticToolResults) > 0 {
-			var combined []byte
-			for _, blk := range v.Continue.SyntheticToolResults {
-				combined = append(combined, blk...)
+		if v.Continue != nil {
+			switch len(v.Continue.SyntheticToolResults) {
+			case 0:
+			case 1:
+				v.ContinueWithToolResult = string(v.Continue.SyntheticToolResults[0])
+			default:
+				combined, err := json.Marshal(v.Continue.SyntheticToolResults)
+				if err != nil {
+					return conversation.ToolUseVerdict{Allowed: false, Outcome: OutcomeDeny, Reason: "Clawvisor: invalid continuation tool results: " + err.Error()}
+				}
+				v.ContinueWithToolResult = string(combined)
 			}
-			v.ContinueWithToolResult = string(combined)
 			v.PrependAssistantNotice = v.Continue.PrependNotice
 		}
 		return v

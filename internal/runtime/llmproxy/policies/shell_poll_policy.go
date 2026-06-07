@@ -53,7 +53,7 @@ func (p *ShellPollPassthroughPolicy) Evaluate(ctx context.Context, _ pipeline.Re
 		Outcome: pipeline.OutcomeAllow,
 		Reason:  "background-shell poll (" + tu.Name + ")",
 		Facts: []pipeline.EvaluationFact{
-			pipeline.ScriptSessionFact{Outcome: "shell_poll_pass_through"},
+			pipeline.AuthorizationFact{Outcome: "shell_poll_pass_through"},
 		},
 	}, nil
 }

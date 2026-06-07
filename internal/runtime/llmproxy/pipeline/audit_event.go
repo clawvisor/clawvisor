@@ -1,6 +1,10 @@
 package pipeline
 
-import "github.com/clawvisor/clawvisor/internal/runtime/conversation"
+import (
+	"sort"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+)
 
 // AuditEvent aliases conversation.AuditEvent so both pipeline
 // orchestrator output and postproc-side buffering share the same typed
@@ -86,9 +90,9 @@ func (r *ToolUseResult) AuditEvents(toolUses []conversation.ToolUse) []AuditEven
 	// detail). The synthesized event has empty EvaluatorName but carries
 	// the verdict's Outcome, Reason, and Facts so downstream emitters
 	// still get a usable row.
-	for tuID, v := range r.PerToolUse {
+	emitSynthetic := func(tuID string, v ToolUseVerdict) {
 		if !inScope(tuID) || seenWinner[tuID] {
-			continue
+			return
 		}
 		events = append(events, AuditEvent{
 			ToolUse:  byID[tuID],
@@ -98,6 +102,23 @@ func (r *ToolUseResult) AuditEvents(toolUses []conversation.ToolUse) []AuditEven
 			Facts:    v.Facts,
 			Winning:  true,
 		})
+		seenWinner[tuID] = true
+	}
+	for _, tu := range toolUses {
+		if v, ok := r.PerToolUse[tu.ID]; ok {
+			emitSynthetic(tu.ID, v)
+		}
+	}
+	remaining := make([]string, 0, len(r.PerToolUse))
+	for tuID := range r.PerToolUse {
+		if _, ok := byID[tuID]; ok {
+			continue
+		}
+		remaining = append(remaining, tuID)
+	}
+	sort.Strings(remaining)
+	for _, tuID := range remaining {
+		emitSynthetic(tuID, r.PerToolUse[tuID])
 	}
 	return events
 }
