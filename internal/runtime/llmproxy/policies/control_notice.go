@@ -79,9 +79,10 @@ func (p *ControlNotice) Preprocess(ctx context.Context, req pipeline.ReadOnlyReq
 	if err != nil {
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeDeny,
-			Reason:  err.Error(),
+			Reason:  ModelSafeInternalReason("control notice injection"),
 			AuditParams: map[string]any{
-				"deny_outcome": "malformed_request",
+				"deny_outcome":         "malformed_request",
+				"control_notice_error": err.Error(),
 			},
 		}, nil
 	}

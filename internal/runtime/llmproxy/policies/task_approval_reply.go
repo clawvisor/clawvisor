@@ -72,9 +72,10 @@ func (p *TaskApprovalReply) Preprocess(ctx context.Context, req pipeline.ReadOnl
 	if err != nil {
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeDeny,
-			Reason:  err.Error(),
+			Reason:  ModelSafeInternalReason("task approval reply rewrite"),
 			AuditParams: map[string]any{
-				"deny_outcome": "malformed_request",
+				"deny_outcome":              "malformed_request",
+				"task_approval_reply_error": err.Error(),
 			},
 		}, nil
 	}

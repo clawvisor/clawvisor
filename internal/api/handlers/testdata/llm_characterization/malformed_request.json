@@ -7,9 +7,11 @@
     "used_active_task_context": false,
     "used_lease_bias": false,
     "params": {
+      "anthropic_sanitize_error": "invalid character 'n' looking for beginning of object key string",
       "build_sha": "dev",
       "caller_auth_source": "authorization",
       "clawvisor_version": "dev",
+      "deny_outcome": "malformed_request",
       "event": "lite_proxy.endpoint_call",
       "http_status": 400,
       "method": "POST",

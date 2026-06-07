@@ -2,6 +2,8 @@ package policies_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,5 +81,33 @@ func TestTaskApprovalReply_AllowWithoutMutation(t *testing.T) {
 	}
 	if _, ok := verdict.AuditParams["approval_task_rewritten"]; ok {
 		t.Errorf("audit field should be absent when no rewrite occurs")
+	}
+}
+
+func TestTaskApprovalReply_DenyKeepsRawErrorInAuditOnly(t *testing.T) {
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Hour)
+	p := policies.NewTaskApprovalReply(cache, &store.Agent{ID: "a1", UserID: "u1"}, func(context.Context, policies.TaskApprovalReplyRequest) (policies.TaskApprovalReplyResult, error) {
+		return policies.TaskApprovalReplyResult{}, errors.New("pending cache backend unavailable")
+	})
+	req := &stubReadOnlyRequest{
+		provider: conversation.ProviderAnthropic,
+		rawBody:  []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"task"}]}`),
+		userID:   "u1",
+		agentID:  "a1",
+	}
+	mut := &recordingRequestMutator{}
+
+	verdict, err := p.Preprocess(context.Background(), req, mut)
+	if err != nil {
+		t.Fatalf("Preprocess: %v", err)
+	}
+	if verdict.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("Outcome = %q, want Deny", verdict.Outcome)
+	}
+	if got, _ := verdict.AuditParams["task_approval_reply_error"].(string); got != "pending cache backend unavailable" {
+		t.Fatalf("task_approval_reply_error = %q", got)
+	}
+	if strings.Contains(verdict.Reason, "pending cache backend unavailable") {
+		t.Fatalf("model-facing reason leaked raw error: %q", verdict.Reason)
 	}
 }

@@ -1583,8 +1583,11 @@ func TestLLMEndpoint_RejectsMalformedBody(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 harness-shaped error, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "invalid character") {
-		t.Fatalf("body should carry parse error message:\n%s", rec.Body.String())
+	if strings.Contains(rec.Body.String(), "invalid character") {
+		t.Fatalf("body leaked raw parse error message:\n%s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "details are in the Clawvisor audit log") {
+		t.Fatalf("body should carry model-safe parse failure guidance:\n%s", rec.Body.String())
 	}
 }
 

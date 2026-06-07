@@ -122,6 +122,27 @@ func TestBridgeToolUseEvaluator_DenyWithSubstitute(t *testing.T) {
 	}
 }
 
+func TestBridgeToolUseEvaluator_MissingToolUseFailsClosed(t *testing.T) {
+	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
+	tools := []conversation.ToolUse{{ID: "toolu_known", Name: "Read", Input: json.RawMessage(`{}`)}}
+
+	eval, _, err := pipeline.RunToolUseEvaluators(context.Background(), res, tools, nil)
+	if err != nil {
+		t.Fatalf("RunToolUseEvaluators: %v", err)
+	}
+
+	v := eval(conversation.ToolUse{ID: "toolu_missing", Name: "Bash", Input: json.RawMessage(`{}`)})
+	if v.Allowed {
+		t.Fatalf("missing tool_use verdict allowed execution: %+v", v)
+	}
+	if v.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("Outcome = %q, want Deny", v.Outcome)
+	}
+	if v.Reason == "" {
+		t.Fatalf("missing tool_use verdict should include a model-safe reason")
+	}
+}
+
 // TestBridgeToolUseEvaluator_ContinueStaysStructured pins that a
 // ContinueSignal remains structured on the triggering tool_use's
 // verdict; final adapters derive flat provider content only at the

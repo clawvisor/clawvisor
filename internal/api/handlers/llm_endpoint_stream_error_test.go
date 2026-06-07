@@ -22,6 +22,9 @@ func TestStreamingPostprocessErrorFrame_AnthropicSplicesErrorEvent(t *testing.T)
 	if !strings.Contains(got, "event: error") || !strings.Contains(got, "lost stream") {
 		t.Fatalf("unexpected stream error frame: %s", got)
 	}
+	if !strings.Contains(got, "event: message_stop") {
+		t.Fatalf("Anthropic stream error should terminate the message: %s", got)
+	}
 }
 
 func TestStreamingPostprocessErrorFrame_OpenAIResponsesSplicesFailedEvent(t *testing.T) {
@@ -34,8 +37,11 @@ func TestStreamingPostprocessErrorFrame_OpenAIResponsesSplicesFailedEvent(t *tes
 	if strings.Contains(got, "response.created") {
 		t.Fatalf("stream error frame started a new response: %s", got)
 	}
-	if !strings.Contains(got, "event: response.failed") || strings.Contains(got, "data: [DONE]") {
+	if !strings.Contains(got, "event: response.failed") {
 		t.Fatalf("unexpected stream error frame: %s", got)
+	}
+	if !strings.Contains(got, "data: [DONE]") {
+		t.Fatalf("OpenAI Responses stream error should terminate with DONE: %s", got)
 	}
 	if strings.Contains(got, "resp_clawvisor_error") {
 		t.Fatalf("stream error frame should not invent a response id: %s", got)

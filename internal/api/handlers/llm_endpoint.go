@@ -394,18 +394,18 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error. Please retry; details are in the Clawvisor audit log.")
 			return
 		}
+		for k, v := range result.AuditParams {
+			auditParams[k] = v
+		}
 		if result.DenyReason != "" {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = result.DenyReason
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+result.DenyReason+". This usually means a client bug; please retry.")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+strings.TrimRight(result.DenyReason, ". ")+". This usually means a client bug; please retry.")
 			return
 		}
 		body = result.FinalBody
-		for k, v := range result.AuditParams {
-			auditParams[k] = v
-		}
 	}
 	if _, err := parser.ParseRequest(body); err != nil {
 		auditStatus = http.StatusBadRequest
@@ -556,12 +556,15 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error. Please retry; details are in the Clawvisor audit log.")
 			return
 		}
+		for k, v := range result.AuditParams {
+			auditParams[k] = v
+		}
 		if result.DenyReason != "" {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = result.DenyReason
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the task-approval reply: "+result.DenyReason+". Please retry.")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the task-approval reply: "+strings.TrimRight(result.DenyReason, ". ")+". Please retry.")
 			return
 		}
 		if string(result.FinalBody) != string(body) {
@@ -574,9 +577,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
 				return
 			}
-		}
-		for k, v := range result.AuditParams {
-			auditParams[k] = v
 		}
 	}
 
@@ -636,12 +636,15 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error. Please retry; details are in the Clawvisor audit log.")
 			return
 		}
+		for k, v := range result.AuditParams {
+			auditParams[k] = v
+		}
 		if result.DenyReason != "" {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = result.DenyReason
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the inline-approval reply: "+result.DenyReason+". Please retry.")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the inline-approval reply: "+strings.TrimRight(result.DenyReason, ". ")+". Please retry.")
 			return
 		}
 		if string(result.FinalBody) != string(body) {
@@ -655,9 +658,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			inlineApprovalConsumed = true
-		}
-		for k, v := range result.AuditParams {
-			auditParams[k] = v
 		}
 		if result.AuditParams["inline_task_approval_rewritten"] == true {
 			inlineApprovalConsumed = true
@@ -737,12 +737,15 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "PIPELINE_ERROR", "internal pipeline error. Please retry; details are in the Clawvisor audit log.")
 			return
 		}
+		for k, v := range result.AuditParams {
+			auditParams[k] = v
+		}
 		if result.DenyReason != "" {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
 			auditOutcome = "malformed_request"
 			auditReason = result.DenyReason
-			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't inject the control notice: "+result.DenyReason+". Please retry.")
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't inject the control notice: "+strings.TrimRight(result.DenyReason, ". ")+". Please retry.")
 			return
 		}
 		if string(result.FinalBody) != string(body) {
@@ -756,9 +759,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			reqSummary = liteProxyRequestDebugSummary(provider, body)
-		}
-		for k, v := range result.AuditParams {
-			auditParams[k] = v
 		}
 	}
 	auditParams["model"] = reqSummary.Model
@@ -4653,7 +4653,7 @@ func streamingPostprocessErrorFrame(r *http.Request, provider conversation.Provi
 				"message": message,
 			},
 		})
-		return []byte("event: error\ndata: " + string(body) + "\n\n"), true
+		return []byte("event: error\ndata: " + string(body) + "\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"), true
 	case conversation.ProviderOpenAI:
 		if conversation.IsOpenAIChatCompletionsEndpoint(r) {
 			return conversation.SynthOpenAIChatTextSSE(message), true
@@ -4668,7 +4668,7 @@ func streamingPostprocessErrorFrame(r *http.Request, provider conversation.Provi
 				},
 			},
 		})
-		return []byte("event: response.failed\ndata: " + string(body) + "\n\n"), true
+		return []byte("event: response.failed\ndata: " + string(body) + "\n\ndata: [DONE]\n\n"), true
 	case conversation.ProviderGoogle:
 		body, _ := json.Marshal(map[string]any{
 			"error": map[string]any{

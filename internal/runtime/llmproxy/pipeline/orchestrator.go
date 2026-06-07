@@ -79,7 +79,8 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 	for _, policy := range policies {
 		verdict, err := policy.Preprocess(ctx, wrapper, mut)
 		if err != nil {
-			return nil, fmt.Errorf("policy %q: %w", policy.Name(), err)
+			result.FinalBody = mut.Body()
+			return result, fmt.Errorf("policy %q: %w", policy.Name(), err)
 		}
 		result.Verdicts = append(result.Verdicts, PolicyVerdict{Name: policy.Name(), Verdict: verdict})
 

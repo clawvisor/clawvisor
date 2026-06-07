@@ -81,6 +81,26 @@ func TestControlNotice_InjectsWhenGatesPass(t *testing.T) {
 	}
 }
 
+func TestControlNotice_DenyKeepsRawErrorInAuditOnly(t *testing.T) {
+	p := policies.NewControlNotice("http://localhost:25297", oneToolAvailable, noopToolRules)
+	req := newTestRequestForControlNotice(`{not valid json`)
+	mut := &recordingRequestMutator{}
+
+	verdict, err := p.Preprocess(context.Background(), req, mut)
+	if err != nil {
+		t.Fatalf("Preprocess: %v", err)
+	}
+	if verdict.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("Outcome = %q, want Deny", verdict.Outcome)
+	}
+	if got, _ := verdict.AuditParams["control_notice_error"].(string); got == "" || !strings.Contains(got, "invalid character") {
+		t.Fatalf("control_notice_error audit field = %q, want raw parse detail", got)
+	}
+	if strings.Contains(verdict.Reason, "invalid character") {
+		t.Fatalf("model-facing reason leaked raw parse detail: %q", verdict.Reason)
+	}
+}
+
 // --- test helpers ---
 
 func newTestRequestForControlNotice(body string) *stubReadOnlyRequest {

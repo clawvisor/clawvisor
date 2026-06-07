@@ -118,4 +118,10 @@ func TestAnthropicSanitize_DenyOnMalformedBody(t *testing.T) {
 	if got := verdict.AuditParams["deny_outcome"]; got != "malformed_request" {
 		t.Errorf("deny_outcome audit field = %v, want malformed_request", got)
 	}
+	if got, _ := verdict.AuditParams["anthropic_sanitize_error"].(string); got == "" || !strings.Contains(got, "invalid character") {
+		t.Errorf("anthropic_sanitize_error audit field = %q, want raw parse detail", got)
+	}
+	if strings.Contains(verdict.Reason, "invalid character") {
+		t.Errorf("model-facing reason leaked raw parse detail: %q", verdict.Reason)
+	}
 }

@@ -176,10 +176,11 @@ func TestCredentialRewriteEvaluator_RewriteSuccess(t *testing.T) {
 func TestCredentialRewriteEvaluator_MutatorFailurePropagates(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	mutErr := errors.New("mutator failed")
+	cache := &stubNonceCache{minted: "cv-nonce-abc"}
 	e := policies.NewCredentialRewriteEvaluator(func(_ context.Context, _ conversation.ToolUse) *policies.CredentialRewriteInputs {
 		return &policies.CredentialRewriteInputs{
 			Inspector:    insp,
-			CallerNonces: &stubNonceCache{minted: "cv-nonce-abc"},
+			CallerNonces: cache,
 			AgentID:      "agent-1",
 			RewriteOpts:  inspector.RewriteOpts{ResolverBaseURL: "http://localhost:25297/api/proxy"},
 		}
@@ -200,6 +201,15 @@ func TestCredentialRewriteEvaluator_MutatorFailurePropagates(t *testing.T) {
 	}
 	if v.Outcome != "" {
 		t.Fatalf("verdict on mutator error = %+v, want zero verdict", v)
+	}
+	if cache.consumed != 1 {
+		t.Fatalf("nonce consumed = %d, want 1", cache.consumed)
+	}
+	if cache.consumedNonce != "cv-nonce-abc" {
+		t.Fatalf("consumed nonce = %q", cache.consumedNonce)
+	}
+	if cache.consumedTgt != cache.lastTgt {
+		t.Fatalf("consumed target = %+v, want minted target %+v", cache.consumedTgt, cache.lastTgt)
 	}
 }
 

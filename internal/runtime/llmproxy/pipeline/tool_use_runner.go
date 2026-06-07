@@ -68,9 +68,14 @@ func RunToolUseEvaluators(
 		v, ok := result.PerToolUse[tu.ID]
 		if !ok {
 			// Tool_use wasn't in the input set (shouldn't happen for a
-			// rewriter reusing the same response object) — default to
-			// allow rather than silently substituting.
-			return conversation.ToolUseVerdict{Allowed: true}
+			// rewriter reusing the same response object). Fail closed so
+			// a parser/rewriter mismatch cannot accidentally bypass
+			// policy enforcement.
+			return conversation.ToolUseVerdict{
+				Allowed: false,
+				Outcome: conversation.OutcomeDeny,
+				Reason:  "Clawvisor: couldn't verify this tool use; refusing to run it",
+			}
 		}
 		// Verdict type is unified across pipeline and rewriters. Set
 		// the derived Allowed bool from Outcome so rewriter readers

@@ -255,9 +255,18 @@ func TestRunPre_PropagatesPolicyError(t *testing.T) {
 	}
 
 	req := &orchTestRequest{provider: conversation.ProviderAnthropic, body: []byte(`{}`)}
-	_, err := pipeline.RunPre(context.Background(), req, policies)
+	result, err := pipeline.RunPre(context.Background(), req, policies)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
+	}
+	if result == nil {
+		t.Fatalf("expected partial result on policy error")
+	}
+	if result.AuditParams["first_ran"] != true {
+		t.Fatalf("prior audit params were dropped on policy error: %+v", result.AuditParams)
+	}
+	if _, ok := result.AuditParams["third_ran"]; ok {
+		t.Fatalf("policy after error ran unexpectedly: %+v", result.AuditParams)
 	}
 }
 

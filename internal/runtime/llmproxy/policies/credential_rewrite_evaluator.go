@@ -100,11 +100,12 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 			}},
 		}, nil
 	}
-	nonce, mintErr := in.CallerNonces.Mint(ctx, in.AgentID, callernonce.NonceTarget{
+	target := callernonce.NonceTarget{
 		Host:   v.Host,
 		Method: v.Method,
 		Path:   v.Path,
-	})
+	}
+	nonce, mintErr := in.CallerNonces.Mint(ctx, in.AgentID, target)
 	if mintErr != nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
@@ -126,6 +127,7 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 		Input: tu.Input,
 	}, v, opts)
 	if err != nil {
+		_, _ = in.CallerNonces.Consume(ctx, nonce, target)
 		reason := rewritehelp.CredentialedRewriteRecoveryReason(v, err)
 		continuationPayload, _ := json.Marshal(reason)
 		return pipeline.ToolUseVerdict{
@@ -145,6 +147,7 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 	}
 	if mut != nil {
 		if err := mut.RewriteArgs(rewritten); err != nil {
+			_, _ = in.CallerNonces.Consume(ctx, nonce, target)
 			return pipeline.ToolUseVerdict{}, err
 		}
 	}

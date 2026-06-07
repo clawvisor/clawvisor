@@ -14,10 +14,13 @@ import (
 )
 
 type stubNonceCache struct {
-	mintErr  error
-	minted   string
-	lastTgt  llmproxy.NonceTarget
-	lastAgID string
+	mintErr       error
+	minted        string
+	lastTgt       llmproxy.NonceTarget
+	lastAgID      string
+	consumed      int
+	consumedTgt   llmproxy.NonceTarget
+	consumedNonce string
 }
 
 func (s *stubNonceCache) Mint(_ context.Context, agentID string, tgt llmproxy.NonceTarget) (string, error) {
@@ -32,7 +35,10 @@ func (s *stubNonceCache) Mint(_ context.Context, agentID string, tgt llmproxy.No
 	return s.minted, nil
 }
 
-func (s *stubNonceCache) Consume(_ context.Context, _ string, _ llmproxy.NonceTarget) (string, error) {
+func (s *stubNonceCache) Consume(_ context.Context, nonce string, tgt llmproxy.NonceTarget) (string, error) {
+	s.consumed++
+	s.consumedNonce = nonce
+	s.consumedTgt = tgt
 	return "", nil
 }
 
@@ -226,6 +232,38 @@ func TestControlToolUseEvaluator_RewriteSuccess(t *testing.T) {
 	}
 	if cache.lastAgID != "agent-1" {
 		t.Errorf("nonce minted for %q, want agent-1", cache.lastAgID)
+	}
+	if cache.consumed != 0 {
+		t.Errorf("nonce consumed on successful rewrite = %d, want 0", cache.consumed)
+	}
+}
+
+func TestControlToolUseEvaluator_ConsumesNonceOnMutatorFailure(t *testing.T) {
+	cache := &stubNonceCache{minted: "cv-nonce-abc123"}
+	mutErr := errors.New("mutator failed")
+	e := policies.NewControlToolUseEvaluator(func(_ context.Context, _ conversation.ToolUse) *policies.ControlToolUseInputs {
+		return &policies.ControlToolUseInputs{
+			ControlBaseURL: "http://localhost:25297",
+			AgentID:        "agent-1",
+			CallerNonces:   cache,
+		}
+	})
+	tu := conversation.ToolUse{
+		ID:    "toolu_1",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command":"curl -sS -X POST 'https://clawvisor.local/control/tasks' -H 'Content-Type: application/json' --data '{\"purpose\":\"x\"}'"}`),
+	}
+	if _, err := e.Evaluate(context.Background(), newStubResp(), tu, &failingRewriteMutator{err: mutErr}); !errors.Is(err, mutErr) {
+		t.Fatalf("Evaluate error = %v, want mutator failure", err)
+	}
+	if cache.consumed != 1 {
+		t.Fatalf("nonce consumed = %d, want 1", cache.consumed)
+	}
+	if cache.consumedNonce != "cv-nonce-abc123" {
+		t.Fatalf("consumed nonce = %q", cache.consumedNonce)
+	}
+	if cache.consumedTgt != cache.lastTgt {
+		t.Fatalf("consumed target = %+v, want minted target %+v", cache.consumedTgt, cache.lastTgt)
 	}
 }
 
