@@ -202,7 +202,7 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 		ApprovalID:      approvalID,
 	})
 	if err != nil {
-		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
+		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: "approval release unavailable; details are in the Clawvisor audit log."}
 	}
 	peeked := action.Hold
 	if peeked == nil {
@@ -251,7 +251,7 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 		ApprovalID:     peeked.ID,
 	})
 	if err != nil {
-		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
+		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: "approval release unavailable; details are in the Clawvisor audit log."}
 	}
 	if pending == nil {
 		// Peeked one moment ago but it's gone now — a concurrent

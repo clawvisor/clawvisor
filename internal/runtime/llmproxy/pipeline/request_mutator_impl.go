@@ -32,7 +32,7 @@ func newEagerRequestMutator(initialBody []byte) *eagerRequestMutator {
 // Body returns the current (possibly mutated) body bytes. Used by the
 // orchestrator between policy calls to thread the working body forward.
 func (m *eagerRequestMutator) Body() []byte {
-	return m.body
+	return append([]byte(nil), m.body...)
 }
 
 // ReplaceBody applies eagerly — subsequent policies see the new bytes.

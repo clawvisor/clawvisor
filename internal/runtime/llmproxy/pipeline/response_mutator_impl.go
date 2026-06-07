@@ -60,6 +60,9 @@ func (m *streamingResponseMutator) PrependAssistantText(text string) error {
 	if m.committed {
 		return fmt.Errorf("PrependAssistantText after Commit")
 	}
+	if m.hasSubstitute {
+		return fmt.Errorf("PrependAssistantText after SubstituteEntireResponse")
+	}
 	if m.prependText != "" {
 		return fmt.Errorf("PrependAssistantText already queued (multiple calls not yet supported)")
 	}
@@ -70,6 +73,12 @@ func (m *streamingResponseMutator) PrependAssistantText(text string) error {
 func (m *streamingResponseMutator) SubstituteEntireResponse(text string) error {
 	if m.committed {
 		return fmt.Errorf("SubstituteEntireResponse after Commit")
+	}
+	if m.prependText != "" {
+		return fmt.Errorf("SubstituteEntireResponse after PrependAssistantText")
+	}
+	if m.hasSubstitute {
+		return fmt.Errorf("SubstituteEntireResponse already queued")
 	}
 	m.hasSubstitute = true
 	m.substituteText = text
@@ -86,9 +95,8 @@ func (m *streamingResponseMutator) Commit() error {
 	defer func() { _ = m.src.Close() }()
 
 	if m.hasSubstitute {
-		// SubstituteEntireResponse takes precedence over Prepend — the
-		// upstream response is discarded and replaced with a synthetic
-		// one-text-block stream carrying the substitute text.
+		// The upstream response is discarded and replaced with a
+		// synthetic one-text-block stream carrying the substitute text.
 		switch m.shape {
 		case conversation.StreamShapeAnthropicMessages:
 			return stream.SubstituteAnthropicResponse(m.dst, m.src, m.substituteText)

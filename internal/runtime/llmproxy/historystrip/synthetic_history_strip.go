@@ -223,12 +223,12 @@ func isSyntheticApprovalPromptText(text string) bool {
 }
 
 func isBareSyntheticApprovalReply(text string) bool {
-	// containsInlineApprovalAugmentationMarker recognizes every
+	// ContainsInlineApprovalAugmentationMarker recognizes every
 	// proxy-substituted inline-task notice (approved / denied / error)
 	// via the shared `<clawvisor-notice kind="task-` substring. A turn
 	// carrying that substring is the proxy's own rewrite, not a bare
 	// approval verb from the user.
-	if containsInlineApprovalAugmentationMarker(text) {
+	if ContainsInlineApprovalAugmentationMarker(text) {
 		return false
 	}
 	verb, _ := conversation.ParseApprovalReplyText(text)

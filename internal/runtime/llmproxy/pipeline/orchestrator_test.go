@@ -78,6 +78,17 @@ func (p *bodyObservingPolicy) Preprocess(_ context.Context, req pipeline.ReadOnl
 	return pipeline.RequestVerdict{Outcome: pipeline.OutcomeAllow}, nil
 }
 
+type bodyMutatingPolicy struct{ name string }
+
+func (p *bodyMutatingPolicy) Name() string { return p.name }
+func (p *bodyMutatingPolicy) Preprocess(_ context.Context, req pipeline.ReadOnlyRequest, _ pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
+	body := req.RawBody()
+	if len(body) > 0 {
+		body[0] = '['
+	}
+	return pipeline.RequestVerdict{Outcome: pipeline.OutcomeAllow}, nil
+}
+
 // denyingPolicy returns OutcomeDeny.
 type denyingPolicy struct {
 	name string
@@ -153,6 +164,20 @@ func TestRunPre_AppliesPoliciesInOrderAndMergesAudit(t *testing.T) {
 	}
 	if len(result.Verdicts) != 4 {
 		t.Errorf("expected 4 verdicts, got %d", len(result.Verdicts))
+	}
+}
+
+func TestRunPre_RawBodyIsReadOnlyView(t *testing.T) {
+	original := []byte(`{"original":true}`)
+	req := &orchTestRequest{provider: conversation.ProviderAnthropic, body: original}
+	result, err := pipeline.RunPre(context.Background(), req, []pipeline.RequestPolicy{
+		&bodyMutatingPolicy{name: "mutator"},
+	})
+	if err != nil {
+		t.Fatalf("RunPre: %v", err)
+	}
+	if string(result.FinalBody) != string(original) {
+		t.Fatalf("FinalBody changed through RawBody alias: got %q want %q", result.FinalBody, original)
 	}
 }
 

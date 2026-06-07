@@ -79,3 +79,15 @@ func TestGoogleDecoder_IgnoresCommentInsideEventRawBytes(t *testing.T) {
 		t.Fatalf("event RawBytes included non-event lines: %q", ev.RawBytes)
 	}
 }
+
+func TestGoogleDecoder_RejectsRawChunkedJSON(t *testing.T) {
+	src := `[{"candidates":[{"content":{"parts":[{"text":"hello"}],"role":"model"}}]}]`
+	d := stream.NewGoogleDecoder(strings.NewReader(src))
+	_, err := d.Next()
+	if err == nil {
+		t.Fatal("Next error = nil, want non-SSE Gemini stream rejection")
+	}
+	if !strings.Contains(err.Error(), "alt=sse") {
+		t.Fatalf("Next error = %v, want alt=sse guidance", err)
+	}
+}

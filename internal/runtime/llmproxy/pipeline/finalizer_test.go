@@ -304,6 +304,27 @@ func TestFinalizerReplayFailureAttemptsAllRollbackDropsWithMixedErrors(t *testin
 	}
 }
 
+func TestFinalizerCapturesReturnsCopy(t *testing.T) {
+	f := pipeline.NewFinalizer(&finalizerTestDeps{})
+	f.AddCapture(pipeline.HoldCapture{
+		ToolUseID: "toolu_original",
+		Kind:      eval.HeldKindHintApproval,
+		Payload:   "pending",
+	})
+
+	captures := f.Captures()
+	captures[0].ToolUseID = "toolu_mutated"
+	captures = append(captures, pipeline.HoldCapture{ToolUseID: "toolu_appended"})
+
+	got := f.Captures()
+	if len(got) != 1 {
+		t.Fatalf("stored capture count = %d, want 1", len(got))
+	}
+	if got[0].ToolUseID != "toolu_original" {
+		t.Fatalf("stored capture mutated through Captures alias: %+v", got[0])
+	}
+}
+
 func TestFinalizerCoalescesApprovalWithAllowAndRewriteSiblings(t *testing.T) {
 	deps := &finalizerTestDeps{
 		submit: pipeline.HoldSubmitResult{ApprovalID: "cv-coalesced"},

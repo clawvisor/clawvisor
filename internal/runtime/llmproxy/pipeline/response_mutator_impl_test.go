@@ -111,6 +111,34 @@ func TestStreamingResponseMutator_RejectsCommitTwice(t *testing.T) {
 	}
 }
 
+func TestStreamingResponseMutator_RejectsPrependThenSubstitute(t *testing.T) {
+	var dst bytes.Buffer
+	m, err := pipeline.NewStreamingResponseMutator(&dst, io.NopCloser(strings.NewReader("")), conversation.StreamShapeAnthropicMessages)
+	if err != nil {
+		t.Fatalf("NewStreamingResponseMutator: %v", err)
+	}
+	if err := m.PrependAssistantText("notice"); err != nil {
+		t.Fatalf("PrependAssistantText: %v", err)
+	}
+	if err := m.SubstituteEntireResponse("replacement"); err == nil {
+		t.Fatal("SubstituteEntireResponse after PrependAssistantText error = nil, want explicit rejection")
+	}
+}
+
+func TestStreamingResponseMutator_RejectsSubstituteThenPrepend(t *testing.T) {
+	var dst bytes.Buffer
+	m, err := pipeline.NewStreamingResponseMutator(&dst, io.NopCloser(strings.NewReader("")), conversation.StreamShapeAnthropicMessages)
+	if err != nil {
+		t.Fatalf("NewStreamingResponseMutator: %v", err)
+	}
+	if err := m.SubstituteEntireResponse("replacement"); err != nil {
+		t.Fatalf("SubstituteEntireResponse: %v", err)
+	}
+	if err := m.PrependAssistantText("notice"); err == nil {
+		t.Fatal("PrependAssistantText after SubstituteEntireResponse error = nil, want explicit rejection")
+	}
+}
+
 // TestStreamingResponseMutator_RejectsUnsupportedShape pins the wire-
 // up gate: only Anthropic Messages is supported today. OpenAI shapes
 // arrive once their shape-specific prepend ports land.

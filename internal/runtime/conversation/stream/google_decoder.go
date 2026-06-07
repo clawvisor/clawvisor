@@ -75,6 +75,10 @@ func (d *GoogleDecoder) Next() (Event, error) {
 			continue
 		}
 
+		if len(d.dataLines) == 0 && looksLikeRawGeminiJSON(trimmed) {
+			return Event{}, fmt.Errorf("google decoder: non-SSE Gemini stream; request must use alt=sse before using the Gemini SSE codec")
+		}
+
 		if len(d.dataLines) > 0 {
 			discardLastRawLine(&d.rawBuf, line)
 			continue
@@ -116,4 +120,9 @@ func (d *GoogleDecoder) flushEvent() (Event, bool) {
 		RawBytes: raw,
 		Meta:     defaultMeta(),
 	}, true
+}
+
+func looksLikeRawGeminiJSON(line string) bool {
+	line = strings.TrimSpace(line)
+	return strings.HasPrefix(line, "{") || strings.HasPrefix(line, "[")
 }

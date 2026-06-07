@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -178,6 +179,12 @@ func TestControlToolUseEvaluator_DenyOnNonceMintError(t *testing.T) {
 	}
 	if got := controlFactOutcome(v.Facts); got != "caller_nonce_mint_failed" {
 		t.Errorf("control fact outcome = %v, want caller_nonce_mint_failed", got)
+	}
+	if strings.Contains(v.Reason, "redis down") {
+		t.Fatalf("Reason leaked raw nonce backend error: %q", v.Reason)
+	}
+	if !strings.Contains(v.Reason, "audit log") {
+		t.Fatalf("Reason = %q, want generic audit-log guidance", v.Reason)
 	}
 }
 

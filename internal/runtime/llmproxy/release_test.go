@@ -3,6 +3,7 @@ package llmproxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -13,6 +14,26 @@ import (
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
+
+type failingPendingApprovalCache struct{ err error }
+
+func (c failingPendingApprovalCache) Hold(context.Context, PendingLiteApproval) (HoldResult, error) {
+	return HoldResult{}, c.err
+}
+
+func (c failingPendingApprovalCache) Peek(context.Context, ResolveRequest) (*PendingLiteApproval, error) {
+	return nil, c.err
+}
+
+func (c failingPendingApprovalCache) Resolve(context.Context, ResolveRequest) (*PendingLiteApproval, error) {
+	return nil, c.err
+}
+
+func (c failingPendingApprovalCache) Drop(context.Context, ResolveRequest) error {
+	return c.err
+}
+
+var _ PendingApprovalCache = failingPendingApprovalCache{}
 
 func TestTryReleasePendingApprovalWrongExplicitIDDoesNotConsume(t *testing.T) {
 	ctx := context.Background()
@@ -48,6 +69,26 @@ func TestTryReleasePendingApprovalWrongExplicitIDDoesNotConsume(t *testing.T) {
 	}
 	if resolved == nil || resolved.ID != held.Pending.ID {
 		t.Fatalf("approval was consumed by wrong ID; resolved=%+v", resolved)
+	}
+}
+
+func TestTryReleasePendingApproval_DoesNotLeakCacheError(t *testing.T) {
+	result := TryReleasePendingApproval(context.Background(), ReleaseRequest{
+		Provider: conversation.ProviderAnthropic,
+		Body:     []byte(`{"messages":[{"role":"user","content":"approve"}]}`),
+		Agent:    &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: failingPendingApprovalCache{
+			err: errors.New("redis: MOVED internal topology detail"),
+		},
+	})
+	if !result.Handled || result.Outcome != "approval_release_error" {
+		t.Fatalf("result = %+v, want handled approval_release_error", result)
+	}
+	if strings.Contains(result.Reason, "redis") || strings.Contains(result.Reason, "MOVED") {
+		t.Fatalf("release reason leaked backend error: %q", result.Reason)
+	}
+	if !strings.Contains(result.Reason, "audit log") {
+		t.Fatalf("release reason = %q, want audit-log guidance", result.Reason)
 	}
 }
 

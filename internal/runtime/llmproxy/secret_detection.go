@@ -17,7 +17,6 @@ import (
 
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/historystrip"
 )
 
 type InboundSecretFinding struct {
@@ -70,25 +69,9 @@ type PendingSecretDecision struct {
 	ExpiresAt    time.Time
 }
 
-type SecretDecisionAction string
-
-const (
-	SecretDecisionNone      SecretDecisionAction = ""
-	SecretDecisionAllowOnce SecretDecisionAction = "allow_once"
-	SecretDecisionDiscard   SecretDecisionAction = "discard"
-	SecretDecisionNotSecret SecretDecisionAction = "not_secret"
-	SecretDecisionVault     SecretDecisionAction = "vault"
-)
-
 const (
 	SecretDecisionPromptMarker = "Clawvisor detected a possible raw secret"
-	SecretDecisionIDMarker     = historystrip.SecretDecisionIDMarker
 )
-
-type SecretDecisionReply struct {
-	Action    SecretDecisionAction
-	VaultName string
-}
 
 type PendingSecretDecisionCache interface {
 	HoldSecret(ctx context.Context, pending PendingSecretDecision) (PendingSecretDecision, error)
@@ -630,27 +613,6 @@ func SecretDecisionReplyFromBody(reqProvider conversation.Provider, body []byte)
 	return ParseSecretDecisionReply(text)
 }
 
-func ParseSecretDecisionReply(text string) SecretDecisionReply {
-	normalized := strings.ToLower(strings.TrimSpace(text))
-	normalized = strings.Trim(normalized, "`\"' ")
-	switch {
-	case normalized == "allow once" || normalized == "allow":
-		return SecretDecisionReply{Action: SecretDecisionAllowOnce}
-	case normalized == "discard" || normalized == "redact" || normalized == "discard secret" || normalized == "redact secret":
-		return SecretDecisionReply{Action: SecretDecisionDiscard}
-	case normalized == "not secret" || normalized == "not a secret" || normalized == "this is not a secret":
-		return SecretDecisionReply{Action: SecretDecisionNotSecret}
-	case strings.HasPrefix(normalized, "vault "):
-		name := strings.TrimSpace(normalized[len("vault "):])
-		if strings.HasPrefix(name, "as ") {
-			name = strings.TrimSpace(name[len("as "):])
-		}
-		return SecretDecisionReply{Action: SecretDecisionVault, VaultName: sanitizeVaultName(name)}
-	default:
-		return SecretDecisionReply{}
-	}
-}
-
 // secretDecisionIDRE captures the pending-decision ID emitted into the
 // assistant prompt that asks the user to allow/discard/vault a detected
 // secret. The marker is `[clawvisor:secret=<id>]` and the ID is
@@ -777,24 +739,6 @@ func LatestUserText(provider conversation.Provider, body []byte) string {
 		}
 	}
 	return ""
-}
-
-func normalizeSecretLabel(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	value = strings.ReplaceAll(value, " ", "_")
-	value = regexp.MustCompile(`[^a-z0-9._:-]+`).ReplaceAllString(value, "_")
-	return strings.Trim(value, "._:-")
-}
-
-func sanitizeVaultName(value string) string {
-	value = normalizeSecretLabel(value)
-	if value == "" {
-		return "secret"
-	}
-	if len(value) > 96 {
-		value = value[:96]
-	}
-	return value
 }
 
 func stringFromMap(m map[string]any, key string) string {

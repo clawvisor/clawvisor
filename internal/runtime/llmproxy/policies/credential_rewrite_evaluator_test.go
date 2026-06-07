@@ -126,6 +126,12 @@ func TestCredentialRewriteEvaluator_DenyOnNonceMintError(t *testing.T) {
 	if got := rewriteFactOutcome(v.Facts); got != "caller_nonce_mint_failed" {
 		t.Errorf("rewrite fact outcome = %v, want caller_nonce_mint_failed", got)
 	}
+	if strings.Contains(v.Reason, "redis down") {
+		t.Fatalf("Reason leaked raw nonce backend error: %q", v.Reason)
+	}
+	if !strings.Contains(v.Reason, "audit log") {
+		t.Fatalf("Reason = %q, want generic audit-log guidance", v.Reason)
+	}
 }
 
 func TestCredentialRewriteEvaluator_RewriteSuccess(t *testing.T) {

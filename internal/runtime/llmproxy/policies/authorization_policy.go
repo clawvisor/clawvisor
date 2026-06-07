@@ -139,7 +139,7 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 	if err != nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: authorization failed — " + err.Error(),
+			Reason:  ModelSafeInternalReason("authorization"),
 			Facts:   []pipeline.EvaluationFact{pipeline.AuthorizationFact{Outcome: "decision_error"}},
 		}, nil
 	}
@@ -203,14 +203,14 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		if holdErr != nil {
 			return pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeDeny,
-				Reason:  "Clawvisor: approval unavailable — " + holdErr.Error(),
+				Reason:  ModelSafeUnavailableReason("approval"),
 				Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 			}, nil
 		}
 		if held.Err != "" {
 			return pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeDeny,
-				Reason:  "Clawvisor: approval unavailable — " + held.Err,
+				Reason:  ModelSafeUnavailableReason("approval"),
 				Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 			}, nil
 		}

@@ -140,7 +140,7 @@ func (w *mutatingRequestWrapper) StreamShape() conversation.StreamShape {
 }
 func (w *mutatingRequestWrapper) Turns() []conversation.Turn { return w.base.Turns() }
 func (w *mutatingRequestWrapper) HTTPRequest() *http.Request { return w.base.HTTPRequest() }
-func (w *mutatingRequestWrapper) RawBody() []byte            { return w.body }
+func (w *mutatingRequestWrapper) RawBody() []byte            { return append([]byte(nil), w.body...) }
 func (w *mutatingRequestWrapper) IsFirstTurn() bool          { return w.base.IsFirstTurn() }
 func (w *mutatingRequestWrapper) ConversationID() string     { return w.base.ConversationID() }
 func (w *mutatingRequestWrapper) UserID() string             { return w.base.UserID() }

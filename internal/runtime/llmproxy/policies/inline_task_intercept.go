@@ -98,9 +98,10 @@ func (p *InlineTaskIntercept) Preprocess(ctx context.Context, req pipeline.ReadO
 	if err != nil {
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeDeny,
-			Reason:  err.Error(),
+			Reason:  ModelSafeInternalReason("inline task approval rewrite"),
 			AuditParams: map[string]any{
-				"deny_outcome": "inline_task_intercept_error",
+				"deny_outcome":                "inline_task_intercept_error",
+				"inline_task_intercept_error": err.Error(),
 			},
 		}, nil
 	}

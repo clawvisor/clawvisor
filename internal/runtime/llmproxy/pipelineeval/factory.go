@@ -93,7 +93,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 				Reason:      err.Error(),
 			})
 		}
-		errMsg := "Clawvisor: authorization pipeline failed — " + err.Error()
+		errMsg := policies.ModelSafeInternalReason("authorization pipeline")
 		return func(_ conversation.ToolUse) conversation.ToolUseVerdict {
 			return conversation.ToolUseVerdict{Allowed: false, Reason: errMsg}
 		}
@@ -428,7 +428,7 @@ func buildCredentialedTaskScope(
 			dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 			if err != nil {
 				audit("block", "decision_error", err.Error(), "")
-				return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: "Clawvisor: authorization failed — " + err.Error()}
+				return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: policies.ModelSafeInternalReason("authorization")}
 			}
 			matchedTaskID := ""
 			if dec.Task != nil {
@@ -462,7 +462,7 @@ func buildCredentialedTaskScope(
 					})
 					if herr != nil {
 						audit("block", "approval_hold_error", herr.Error(), "")
-						return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: "Clawvisor: approval unavailable — " + herr.Error()}
+						return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: policies.ModelSafeUnavailableReason("approval")}
 					}
 					if held.Evicted != nil {
 						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, "")

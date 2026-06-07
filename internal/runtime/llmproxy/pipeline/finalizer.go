@@ -283,7 +283,7 @@ func (f *Finalizer) Captures() []HoldCapture {
 	if f == nil {
 		return nil
 	}
-	return f.captures
+	return append([]HoldCapture(nil), f.captures...)
 }
 
 func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, error) {

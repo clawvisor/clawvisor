@@ -8,7 +8,7 @@ import (
 
 const SecretDecisionIDMarker = "[clawvisor:secret="
 const InlineApprovalSubstitutedPromptMarker = "Clawvisor wants to create a task to cover this work:"
-const inlineTaskNoticeOpenPrefix = `<clawvisor-notice kind="task-`
+const InlineTaskNoticeOpenPrefix = `<clawvisor-notice kind="task-`
 
 type SecretDecisionAction string
 
@@ -40,18 +40,18 @@ func ParseSecretDecisionReply(text string) SecretDecisionReply {
 		if strings.HasPrefix(name, "as ") {
 			name = strings.TrimSpace(name[len("as "):])
 		}
-		return SecretDecisionReply{Action: SecretDecisionVault, VaultName: sanitizeVaultName(name)}
+		return SecretDecisionReply{Action: SecretDecisionVault, VaultName: SanitizeVaultName(name)}
 	default:
 		return SecretDecisionReply{}
 	}
 }
 
-func containsInlineApprovalAugmentationMarker(text string) bool {
-	return strings.Contains(text, inlineTaskNoticeOpenPrefix)
+func ContainsInlineApprovalAugmentationMarker(text string) bool {
+	return strings.Contains(text, InlineTaskNoticeOpenPrefix)
 }
 
-func sanitizeVaultName(value string) string {
-	value = normalizeSecretLabel(value)
+func SanitizeVaultName(value string) string {
+	value = NormalizeSecretLabel(value)
 	if value == "" {
 		return "secret"
 	}
@@ -61,7 +61,7 @@ func sanitizeVaultName(value string) string {
 	return value
 }
 
-func normalizeSecretLabel(value string) string {
+func NormalizeSecretLabel(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.ReplaceAll(value, " ", "_")
 	value = regexp.MustCompile(`[^a-z0-9._:-]+`).ReplaceAllString(value, "_")

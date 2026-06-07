@@ -216,13 +216,6 @@ func inlineApprovalOutcomeFromRewrite(requestID string, out InlineApprovalRewrit
 	}
 }
 
-// InlineApprovalSubstitutedPromptMarker is the leading phrase of the
-// assistant text we substitute in place of a model-emitted POST
-// /api/control/tasks tool_use. The persistent-history rewriter looks for
-// this marker to find user "approve" turns that need their context
-// re-injected on every subsequent request.
-const InlineApprovalSubstitutedPromptMarker = "Clawvisor wants to create a task to cover this work:"
-
 // Notice kinds for the user-role injections the proxy substitutes into
 // inline-task approval turns. These land in user-role messages the LLM
 // reads (not in assistant text the human sees), so the structured
@@ -234,17 +227,6 @@ const (
 	NoticeKindTaskDenied   NoticeKind = "task-denied"
 	NoticeKindTaskError    NoticeKind = "task-error"
 )
-
-// inlineTaskNoticeOpenPrefix is the literal substring every inline-task
-// notice begins with. Used by containsInlineApprovalAugmentationMarker
-// and the human-turn filter to recognize that a user-role turn has
-// already been rewritten by the proxy, so it should not be re-augmented
-// and should not be classified as a fresh human instruction.
-const inlineTaskNoticeOpenPrefix = `<clawvisor-notice kind="task-`
-
-func containsInlineApprovalAugmentationMarker(text string) bool {
-	return strings.Contains(text, inlineTaskNoticeOpenPrefix)
-}
 
 // AugmentApprovedInlineTasksInHistory walks the conversation history
 // and re-injects the "[Clawvisor: ... task approved inline ...]"

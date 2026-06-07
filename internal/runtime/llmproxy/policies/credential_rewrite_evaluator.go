@@ -108,7 +108,7 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 	if mintErr != nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: caller nonce mint failed — " + mintErr.Error(),
+			Reason:  ModelSafeUnavailableReason("caller nonce minting"),
 			Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
 				Outcome:      "caller_nonce_mint_failed",
 				TargetHost:   v.Host,

@@ -8,8 +8,21 @@ type SyntheticApprovalHistoryStripRequest = historystrip.SyntheticApprovalHistor
 type SyntheticApprovalHistoryStripResult = historystrip.SyntheticApprovalHistoryStripResult
 type SecretDecisionHistoryStripRequest = historystrip.SecretDecisionHistoryStripRequest
 type SecretDecisionHistoryStripResult = historystrip.SecretDecisionHistoryStripResult
+type SecretDecisionAction = historystrip.SecretDecisionAction
+type SecretDecisionReply = historystrip.SecretDecisionReply
 
 const ToolApprovalSubstitutedPromptMarker = historystrip.ToolApprovalSubstitutedPromptMarker
+const InlineApprovalSubstitutedPromptMarker = historystrip.InlineApprovalSubstitutedPromptMarker
+const SecretDecisionIDMarker = historystrip.SecretDecisionIDMarker
+const inlineTaskNoticeOpenPrefix = historystrip.InlineTaskNoticeOpenPrefix
+
+const (
+	SecretDecisionNone      = historystrip.SecretDecisionNone
+	SecretDecisionAllowOnce = historystrip.SecretDecisionAllowOnce
+	SecretDecisionDiscard   = historystrip.SecretDecisionDiscard
+	SecretDecisionNotSecret = historystrip.SecretDecisionNotSecret
+	SecretDecisionVault     = historystrip.SecretDecisionVault
+)
 
 func StripSyntheticApprovalHistory(req SyntheticApprovalHistoryStripRequest) (SyntheticApprovalHistoryStripResult, error) {
 	return historystrip.StripSyntheticApprovalHistory(req)
@@ -17,4 +30,20 @@ func StripSyntheticApprovalHistory(req SyntheticApprovalHistoryStripRequest) (Sy
 
 func StripSecretDecisionHistory(req SecretDecisionHistoryStripRequest) (SecretDecisionHistoryStripResult, error) {
 	return historystrip.StripSecretDecisionHistory(req)
+}
+
+func ParseSecretDecisionReply(text string) SecretDecisionReply {
+	return historystrip.ParseSecretDecisionReply(text)
+}
+
+func normalizeSecretLabel(value string) string {
+	return historystrip.NormalizeSecretLabel(value)
+}
+
+func sanitizeVaultName(value string) string {
+	return historystrip.SanitizeVaultName(value)
+}
+
+func containsInlineApprovalAugmentationMarker(text string) bool {
+	return historystrip.ContainsInlineApprovalAugmentationMarker(text)
 }

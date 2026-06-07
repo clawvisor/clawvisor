@@ -115,7 +115,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 	if err != nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: caller nonce mint failed — " + err.Error(),
+			Reason:  ModelSafeUnavailableReason("caller nonce minting"),
 			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
 		}, nil
 	}
@@ -130,7 +130,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 	if rewriteErr != nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: control endpoint rewrite refused — " + rewriteErr.Error(),
+			Reason:  ModelSafeInternalReason("control endpoint rewrite"),
 			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
 		}, nil
 	}
@@ -167,7 +167,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 	if err != nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: caller nonce mint failed — " + err.Error(),
+			Reason:  ModelSafeUnavailableReason("caller nonce minting"),
 			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
 		}, nil
 	}
@@ -182,7 +182,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 	if rewriteErr != nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: control endpoint failure rewrite refused — " + rewriteErr.Error(),
+			Reason:  ModelSafeInternalReason("control endpoint failure rewrite"),
 			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
 		}, nil
 	}
