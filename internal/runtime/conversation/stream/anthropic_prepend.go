@@ -82,11 +82,8 @@ func PrependAnthropicAssistantNotice(dst io.Writer, src io.Reader, notice string
 		// at or after the injected index by +1 so upstream blocks slot
 		// in after the notice while leading thinking blocks keep their
 		// original signed order.
-		if injected && hasAnthropicIndex(ev.Kind) && (ev.Meta.AnthropicIndex < 0 || ev.Meta.AnthropicIndex >= noticeIndex) {
+		if injected && hasAnthropicIndex(ev.Kind) && ev.Meta.AnthropicIndex >= noticeIndex {
 			shifted := ev.Meta.AnthropicIndex + 1
-			if ev.Meta.AnthropicIndex < 0 {
-				shifted = noticeIndex + 1
-			}
 			ev.FieldPatches = append(ev.FieldPatches, FieldPatch{
 				JSONPath: "index",
 				NewValue: json.RawMessage(fmt.Sprintf("%d", shifted)),

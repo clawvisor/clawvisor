@@ -51,6 +51,16 @@ func (p *erroringResponsePolicy) Postprocess(_ context.Context, _ pipeline.ReadO
 	return pipeline.ResponseVerdict{}, errors.New("explode")
 }
 
+type auditOnlyResponsePolicy struct{ name string }
+
+func (p *auditOnlyResponsePolicy) Name() string { return p.name }
+func (p *auditOnlyResponsePolicy) Postprocess(context.Context, pipeline.ReadOnlyResponse, pipeline.ResponseMutator) (pipeline.ResponseVerdict, error) {
+	return pipeline.ResponseVerdict{
+		Outcome:     pipeline.OutcomeSkip,
+		AuditParams: map[string]any{p.name + "_ran": true},
+	}, nil
+}
+
 // denyingResponsePolicy returns an unsupported outcome to verify the
 // orchestrator's "Deny isn't supported in postprocess" check.
 type denyingResponsePolicy struct{ name string }
@@ -163,9 +173,10 @@ func TestRunPost_PropagatesPolicyError(t *testing.T) {
 	var dst bytes.Buffer
 	res := &orchTestResponse{provider: conversation.ProviderAnthropic, shape: conversation.StreamShapeAnthropicMessages}
 	policies := []pipeline.ResponsePolicy{
+		&auditOnlyResponsePolicy{name: "first"},
 		&erroringResponsePolicy{name: "exploder"},
 	}
-	_, err := pipeline.RunPost(
+	result, err := pipeline.RunPost(
 		context.Background(),
 		res,
 		&dst,
@@ -175,6 +186,12 @@ func TestRunPost_PropagatesPolicyError(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
+	}
+	if result == nil {
+		t.Fatalf("expected partial result on policy error")
+	}
+	if result.AuditParams["first_ran"] != true {
+		t.Fatalf("prior audit params dropped on policy error: %+v", result.AuditParams)
 	}
 }
 

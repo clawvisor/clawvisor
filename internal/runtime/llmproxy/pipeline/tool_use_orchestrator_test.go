@@ -170,7 +170,9 @@ func TestEvaluateToolUses_RejectsDuplicateToolUseIDs(t *testing.T) {
 }
 
 // TestEvaluateToolUses_ContinueShortCircuits pins continuation
-// semantics: a Continue signal halts the whole pass.
+// semantics: a Continue signal halts evaluator execution, and
+// remaining siblings get explicit allow verdicts so the final rewriter
+// bridge doesn't see them as unknown tool_uses.
 func TestEvaluateToolUses_ContinueShortCircuits(t *testing.T) {
 	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
 	tools := []conversation.ToolUse{
@@ -195,8 +197,10 @@ func TestEvaluateToolUses_ContinueShortCircuits(t *testing.T) {
 	if result.ContinueFromToolUseID != "toolu_local" {
 		t.Errorf("ContinueFromToolUseID = %q, want toolu_local", result.ContinueFromToolUseID)
 	}
-	if _, ok := result.PerToolUse["toolu_should_not_run"]; ok {
-		t.Errorf("tool_use after Continue was evaluated; should have been skipped")
+	if v, ok := result.PerToolUse["toolu_should_not_run"]; !ok {
+		t.Errorf("tool_use after Continue should get an explicit sibling verdict")
+	} else if v.Outcome != pipeline.OutcomeAllow {
+		t.Errorf("sibling verdict = %+v, want Allow", v)
 	}
 }
 
@@ -258,6 +262,23 @@ func TestEvaluateToolUses_HoldVerdictsPreservedPerTool(t *testing.T) {
 		if v.HoldKey != "shared-key" {
 			t.Errorf("%s: HoldKey = %q, want shared-key", id, v.HoldKey)
 		}
+	}
+}
+
+func TestEvaluateToolUses_UnclaimedAmbiguousCredentialedFactFailsClosed(t *testing.T) {
+	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
+	tools := []conversation.ToolUse{{ID: "toolu_ambiguous", Name: "Bash"}}
+
+	result, err := pipeline.EvaluateToolUses(context.Background(), res, tools, []pipeline.ToolUseEvaluator{
+		&skipWithInspectorFactEvaluator{name: "inspector", fact: pipeline.InspectorFact{IsAPICall: true, Ambiguous: true, Host: "api.github.com"}},
+	}, func(id string) pipeline.ToolUseMutator {
+		return &recordingToolUseMutator{id: id}
+	})
+	if err != nil {
+		t.Fatalf("EvaluateToolUses: %v", err)
+	}
+	if v := result.PerToolUse["toolu_ambiguous"]; v.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("unclaimed ambiguous credentialed fact verdict = %+v, want Deny", v)
 	}
 }
 
@@ -340,7 +361,7 @@ func TestEvaluateToolUses_AllSkipCredentialedAPIDenies(t *testing.T) {
 	}
 }
 
-func TestEvaluateToolUses_AllSkipAmbiguousAPIDoesNotUseDefaultCredentialDeny(t *testing.T) {
+func TestEvaluateToolUses_AllSkipAmbiguousAPIFailsClosed(t *testing.T) {
 	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
 	tools := []conversation.ToolUse{{ID: "toolu_ambiguous"}}
 
@@ -360,8 +381,8 @@ func TestEvaluateToolUses_AllSkipAmbiguousAPIDoesNotUseDefaultCredentialDeny(t *
 		t.Fatalf("EvaluateToolUses: %v", err)
 	}
 
-	if v := result.PerToolUse["toolu_ambiguous"]; v.Outcome != pipeline.OutcomeAllow {
-		t.Fatalf("ambiguous all-Skip Outcome = %q, want compatibility Allow because the default credential deny is only for non-ambiguous API facts", v.Outcome)
+	if v := result.PerToolUse["toolu_ambiguous"]; v.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("ambiguous all-Skip Outcome = %q, want Deny", v.Outcome)
 	}
 }
 

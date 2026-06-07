@@ -1035,13 +1035,21 @@ func TestLoadActiveSecretRewritesSkipsDeletedVaultItem(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateRuntimePolicyRule: %v", err)
 	}
-	if rewrites := h.loadActiveSecretRewrites(ctx, agent); len(rewrites) != 0 {
+	rewrites, err := h.loadActiveSecretRewrites(ctx, agent)
+	if err != nil {
+		t.Fatalf("loadActiveSecretRewrites: %v", err)
+	}
+	if len(rewrites) != 0 {
 		t.Fatalf("rewrite should be inactive when backing vault item is gone: %+v", rewrites)
 	}
 	if err := h.Vault.(*stubVault).Set(ctx, user.ID, "slack", []byte(rawSecret)); err != nil {
 		t.Fatalf("seed slack vault item: %v", err)
 	}
-	if rewrites := h.loadActiveSecretRewrites(ctx, agent); len(rewrites) != 1 {
+	rewrites, err = h.loadActiveSecretRewrites(ctx, agent)
+	if err != nil {
+		t.Fatalf("loadActiveSecretRewrites: %v", err)
+	}
+	if len(rewrites) != 1 {
 		t.Fatalf("rewrite should be active once backing vault item exists: %+v", rewrites)
 	}
 }

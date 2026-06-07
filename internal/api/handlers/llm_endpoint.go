@@ -567,7 +567,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the task-approval reply: "+strings.TrimRight(result.DenyReason, ". ")+". Please retry.")
 			return
 		}
-		if string(result.FinalBody) != string(body) {
+		if result.BodyReplaced {
 			body = result.FinalBody
 			if _, err := parser.ParseRequest(body); err != nil {
 				auditStatus = http.StatusBadRequest
@@ -647,7 +647,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't process the inline-approval reply: "+strings.TrimRight(result.DenyReason, ". ")+". Please retry.")
 			return
 		}
-		if string(result.FinalBody) != string(body) {
+		if result.BodyReplaced {
 			body = result.FinalBody
 			if _, err := parser.ParseRequest(body); err != nil {
 				auditStatus = http.StatusBadRequest
@@ -657,9 +657,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadRequest, "MALFORMED_REQUEST", "couldn't parse this request: "+err.Error()+". This usually means a client bug; please retry.")
 				return
 			}
-			inlineApprovalConsumed = true
-		}
-		if result.AuditParams["inline_task_approval_rewritten"] == true {
 			inlineApprovalConsumed = true
 		}
 	}
@@ -3160,13 +3157,21 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 			userID:   agent.UserID,
 			agentID:  agent.ID,
 		}
-		resolver := func(ctx context.Context, b []byte) ([]byte, bool) {
+		resolver := func(ctx context.Context, b []byte) ([]byte, bool, error) {
 			return h.applyRememberedSecretRewrites(ctx, agent, provider, requestID, b)
 		}
 		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewSecretRewrites(resolver))
 		if err != nil {
 			h.Logger.WarnContext(r.Context(), "lite-proxy secret rewrites pipeline failed",
 				"agent_id", agent.ID, "err", err.Error())
+			auditParams["secret_rewrites_error"] = err.Error()
+			*auditStatus = http.StatusInternalServerError
+			*auditDecide = "deny"
+			*auditOutcome = "secret_rewrites_failed"
+			*auditReason = "remembered secret rewrite failed"
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "SECRET_REWRITES_FAILED",
+				"couldn't apply remembered secret rewrites. Please retry; details are in the Clawvisor audit log.")
+			return body, true
 		} else {
 			body = result.FinalBody
 			for k, v := range result.AuditParams {
@@ -3637,18 +3642,21 @@ func (h *LLMEndpointHandler) rollbackPartialSecretVaults(ctx context.Context, ag
 	}
 }
 
-func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, agent *store.Agent, provider conversation.Provider, requestID string, body []byte) ([]byte, bool) {
+func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, agent *store.Agent, provider conversation.Provider, requestID string, body []byte) ([]byte, bool, error) {
 	if h == nil || h.Store == nil || agent == nil || len(body) == 0 {
-		return body, false
+		return body, false, nil
 	}
-	rewrites := h.loadActiveSecretRewrites(ctx, agent)
+	rewrites, err := h.loadActiveSecretRewrites(ctx, agent)
+	if err != nil {
+		return body, false, err
+	}
 	if len(rewrites) == 0 {
 		h.emitLiteSecretPipelineTrace(requestID, agent, "rewrite_scan_skipped", map[string]any{
 			"provider": string(provider),
 			"reason":   "no_active_rewrites",
 			"body_sha": liteSecretBodySHA(body),
 		})
-		return body, false
+		return body, false, nil
 	}
 	scan, found, err := llmproxy.ScanInboundSecretsWithOptions(ctx, llmproxy.InboundSecretScanOptions{
 		Provider: provider,
@@ -3662,7 +3670,7 @@ func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, 
 			"body_sha":      liteSecretBodySHA(body),
 			"error_message": err.Error(),
 		})
-		return body, false
+		return body, false, err
 	}
 	if !found {
 		h.emitLiteSecretPipelineTrace(requestID, agent, "rewrite_scan_no_findings", map[string]any{
@@ -3670,7 +3678,7 @@ func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, 
 			"active_rules": len(rewrites),
 			"body_sha":     liteSecretBodySHA(body),
 		})
-		return body, false
+		return body, false, nil
 	}
 	out := append([]byte{}, body...)
 	modified := false
@@ -3693,7 +3701,7 @@ func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, 
 				"body_sha":      liteSecretBodySHA(body),
 				"error_message": rewriteErr.Error(),
 			})
-			return body, false
+			return body, false, rewriteErr
 		}
 		out = rewritten
 		modified = rewriteModified
@@ -3709,7 +3717,7 @@ func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, 
 		"body_sha_before": liteSecretBodySHA(body),
 		"body_sha_after":  liteSecretBodySHA(out),
 	})
-	return out, modified
+	return out, modified, nil
 }
 
 func rewriteJSONStrings(body []byte, replacements map[string]string) ([]byte, bool, error) {
@@ -3784,10 +3792,10 @@ func rewriteJSONValueStrings(value any, replacements map[string]string, keys []s
 	}
 }
 
-func (h *LLMEndpointHandler) loadActiveSecretRewrites(ctx context.Context, agent *store.Agent) map[string]liteSecretVaultRewrite {
+func (h *LLMEndpointHandler) loadActiveSecretRewrites(ctx context.Context, agent *store.Agent) (map[string]liteSecretVaultRewrite, error) {
 	out := map[string]liteSecretVaultRewrite{}
 	if h == nil || h.Store == nil || agent == nil {
-		return out
+		return out, nil
 	}
 	enabled := true
 	rules, err := h.Store.ListRuntimePolicyRules(ctx, agent.UserID, store.RuntimePolicyRuleFilter{
@@ -3796,7 +3804,7 @@ func (h *LLMEndpointHandler) loadActiveSecretRewrites(ctx context.Context, agent
 		Enabled: &enabled,
 	})
 	if err != nil {
-		return out
+		return out, err
 	}
 	now := time.Now().UTC()
 	for _, rule := range rules {
@@ -3823,7 +3831,7 @@ func (h *LLMEndpointHandler) loadActiveSecretRewrites(ctx context.Context, agent
 			Placeholder: strings.TrimSpace(rule.Path),
 		}
 	}
-	return out
+	return out, nil
 }
 
 // liteSecretHoldOutcome is the result-returning shape of the

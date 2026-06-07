@@ -3,7 +3,6 @@ package intentverify
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
@@ -80,8 +79,9 @@ func (v decisionIntentVerifier) Verify(ctx context.Context, req runtimedecision.
 }
 
 // Run performs the per-task-scope intent check after a task/action match.
-// Returns (reason, ok); ok=false only when the verifier refuses or when
-// isCircuitOpen classifies an error as fail-closed.
+// Returns (reason, ok). Verifier denials and circuit-open errors fail closed;
+// other verifier errors intentionally fail open so transient LLM outages don't
+// block already-scoped tool use. The reason is still returned for audit.
 func Run(ctx context.Context, verifier Verifier, dec Decision, resolved ResolvedAction, tu conversation.ToolUse, isCircuitOpen IsCircuitOpenFunc) (string, bool) {
 	if verifier == nil || !dec.HasAction {
 		return "", true
@@ -91,8 +91,11 @@ func Run(ctx context.Context, verifier Verifier, dec Decision, resolved Resolved
 		return "", true
 	}
 	var params map[string]any
+	paramsParseReason := ""
 	if len(tu.Input) > 0 {
-		_ = json.Unmarshal(tu.Input, &params)
+		if err := json.Unmarshal(tu.Input, &params); err != nil {
+			paramsParseReason = "params_parse_failed"
+		}
 	}
 	verdict, err := verifier.Verify(ctx, Request{
 		TaskPurpose: dec.TaskPurpose,
@@ -108,13 +111,19 @@ func Run(ctx context.Context, verifier Verifier, dec Decision, resolved Resolved
 		if isCircuitOpen != nil && isCircuitOpen(err) {
 			return "verifier_circuit_open", false
 		}
-		return fmt.Sprintf("verifier_error: %s", err.Error()), false
+		return "verifier_error", true
 	}
 	if verdict == nil {
-		return "", true
+		return paramsParseReason, true
 	}
 	if verdict.Allow {
+		if verdict.Explanation == "" {
+			return paramsParseReason, true
+		}
 		return verdict.Explanation, true
+	}
+	if verdict.Explanation == "" {
+		return paramsParseReason, false
 	}
 	return verdict.Explanation, false
 }

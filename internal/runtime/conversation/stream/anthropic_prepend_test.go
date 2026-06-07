@@ -157,3 +157,25 @@ func TestPrependAnthropicAssistantNotice_DefersPastThinkingBlock(t *testing.T) {
 		t.Fatalf("text block should shift to index 2:\n%s", got)
 	}
 }
+
+func TestPrependAnthropicAssistantNotice_DoesNotAddMissingIndex(t *testing.T) {
+	upstream := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","model":"claude-sonnet-4"}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+	var buf strings.Builder
+	if err := stream.PrependAnthropicAssistantNotice(&buf, strings.NewReader(upstream), "[Clawvisor] notice"); err != nil {
+		t.Fatalf("PrependAnthropicAssistantNotice: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, `"text":"hello","index"`) || strings.Contains(got, `"index":1,"delta":{"type":"text_delta","text":"hello"}`) {
+		t.Fatalf("missing upstream index should not be synthesized:\n%s", got)
+	}
+}

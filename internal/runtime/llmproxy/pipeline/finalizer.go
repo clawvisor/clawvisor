@@ -277,7 +277,8 @@ func (f *Finalizer) HasCoalesceCandidates() bool {
 	return shouldCoalesce(f.captures)
 }
 
-// Captures returns a read-only view of the buffered hold captures.
+// Captures returns a shallow copy of the buffered hold-capture slice.
+// Payload values are shared with the Finalizer.
 // Stream code uses this to drive per-tool wire-format emission.
 func (f *Finalizer) Captures() []HoldCapture {
 	if f == nil {
@@ -288,13 +289,17 @@ func (f *Finalizer) Captures() []HoldCapture {
 
 func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, error) {
 	coalesced := f.deps.BuildCoalescedHold(f.captures)
+	ordered := orderCapturesForCoalescedAudit(f.captures)
+	if len(ordered) > 0 && coalesced.PerToolAuditFor == nil {
+		f.flushAudits(ctx)
+		return FinalizeResult{}, errors.New("pipeline.Finalizer: coalesced hold missing per-tool audit builder")
+	}
 	submit, err := f.deps.SubmitHold(ctx, coalesced.Payload)
 	if err != nil {
 		f.rollbackPendingTasks(ctx, f.captures)
 		return FinalizeResult{}, err
 	}
 	if submit.Evicted != nil && len(f.captures) > 0 {
-		ordered := orderCapturesForCoalescedAudit(f.captures)
 		if len(ordered) > 0 {
 			primary := ordered[0]
 			if coalesced.EvictedAuditFor != nil {
@@ -303,11 +308,8 @@ func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, error)
 		}
 		f.deps.CleanupEvictedHold(ctx, submit.Evicted)
 	}
-	ordered := orderCapturesForCoalescedAudit(f.captures)
 	for _, c := range ordered {
-		if coalesced.PerToolAuditFor != nil {
-			f.deps.WriteAudit(ctx, coalesced.PerToolAuditFor(c, submit.ApprovalID))
-		}
+		f.deps.WriteAudit(ctx, coalesced.PerToolAuditFor(c, submit.ApprovalID))
 	}
 	prompt := ""
 	if coalesced.Prompt != nil {

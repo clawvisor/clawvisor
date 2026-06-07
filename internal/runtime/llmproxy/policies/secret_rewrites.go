@@ -2,6 +2,7 @@ package policies
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
@@ -20,6 +21,7 @@ import (
 // dependencies.
 //
 // Outcomes:
+//   - resolver returns error → pipeline error; caller must fail closed.
 //   - resolver returns modified=false → Allow with no mutation.
 //   - resolver returns modified=true → Allow with ReplaceBody +
 //     `secret_rewrites_applied:true` audit flag.
@@ -29,8 +31,10 @@ type SecretRewrites struct {
 
 // SecretRewritesResolver returns the rewritten body and whether any
 // rewrites applied. The handler closes over (agent, requestID,
-// provider) at construction time.
-type SecretRewritesResolver func(ctx context.Context, body []byte) (rewritten []byte, modified bool)
+// provider) at construction time. Errors indicate the resolver could
+// not determine whether remembered secrets were present and should fail
+// closed rather than forwarding the original body.
+type SecretRewritesResolver func(ctx context.Context, body []byte) (rewritten []byte, modified bool, err error)
 
 // NewSecretRewrites constructs the policy. nil resolver → Skip.
 func NewSecretRewrites(resolver SecretRewritesResolver) *SecretRewrites {
@@ -46,7 +50,10 @@ func (p *SecretRewrites) Preprocess(ctx context.Context, req pipeline.ReadOnlyRe
 	if p.resolver == nil {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
-	rewritten, modified := p.resolver(ctx, req.RawBody())
+	rewritten, modified, err := p.resolver(ctx, req.RawBody())
+	if err != nil {
+		return pipeline.RequestVerdict{}, fmt.Errorf("secret rewrites: %w", err)
+	}
 	if !modified {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeAllow}, nil
 	}

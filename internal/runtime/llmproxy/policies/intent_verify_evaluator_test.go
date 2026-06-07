@@ -80,9 +80,9 @@ func TestIntentVerify_SilentPassSkips(t *testing.T) {
 	}
 }
 
-// TestIntentVerify_OptOutSkips pins the (false, "") path: verifier
-// chose not to act.
-func TestIntentVerify_OptOutSkips(t *testing.T) {
+// TestIntentVerify_EmptyDenyFailsClosed pins the (false, "") path:
+// resolver denials with missing explanations still deny.
+func TestIntentVerify_EmptyDenyFailsClosed(t *testing.T) {
 	resolver := func(_ context.Context, _ conversation.ToolUse) (bool, string) {
 		return false, ""
 	}
@@ -91,7 +91,10 @@ func TestIntentVerify_OptOutSkips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if v.Outcome != pipeline.OutcomeSkip {
-		t.Errorf("opt-out → Outcome = %q, want Skip", v.Outcome)
+	if v.Outcome != pipeline.OutcomeDeny {
+		t.Errorf("empty deny → Outcome = %q, want Deny", v.Outcome)
+	}
+	if v.Reason == "" {
+		t.Errorf("empty deny should get fallback reason")
 	}
 }

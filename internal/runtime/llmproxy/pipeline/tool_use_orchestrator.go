@@ -69,7 +69,7 @@ func EvaluateToolUses(
 	}
 
 	seenToolUseIDs := make(map[string]struct{}, len(toolUses))
-	for _, tu := range toolUses {
+	for i, tu := range toolUses {
 		if _, ok := seenToolUseIDs[tu.ID]; ok {
 			return nil, fmt.Errorf("pipeline.EvaluateToolUses: duplicate tool_use id %q", tu.ID)
 		}
@@ -95,6 +95,12 @@ func EvaluateToolUses(
 				result.Continue = verdict.Continue
 				result.ContinueFromToolUseID = tu.ID
 				result.PerToolUse[tu.ID] = verdict
+				for _, sibling := range toolUses[i+1:] {
+					result.PerToolUse[sibling.ID] = ToolUseVerdict{
+						Outcome: OutcomeAllow,
+						Reason:  "skipped because another tool_use requested continuation",
+					}
+				}
 				return result, nil
 			}
 			if verdict.Outcome != OutcomeSkip {
@@ -121,13 +127,8 @@ func defaultUnclaimedToolUseVerdict(evaluations []ToolUseEvaluation, toolUseID s
 		for _, fact := range ev.Verdict.Facts {
 			switch inspectorFact := fact.(type) {
 			case InspectorFact:
-				if credentialedFact == nil && inspectorFact.IsAPICall && !inspectorFact.Ambiguous {
+				if credentialedFact == nil && inspectorFact.IsAPICall {
 					copyFact := inspectorFact
-					credentialedFact = &copyFact
-				}
-			case *InspectorFact:
-				if credentialedFact == nil && inspectorFact != nil && inspectorFact.IsAPICall && !inspectorFact.Ambiguous {
-					copyFact := *inspectorFact
 					credentialedFact = &copyFact
 				}
 			}

@@ -2,6 +2,7 @@ package policies_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -25,8 +26,8 @@ func TestSecretRewrites_SkipsNilResolver(t *testing.T) {
 
 // TestSecretRewrites_AllowWithoutRewrite pins the no-op path.
 func TestSecretRewrites_AllowWithoutRewrite(t *testing.T) {
-	resolver := func(_ context.Context, body []byte) ([]byte, bool) {
-		return body, false
+	resolver := func(_ context.Context, body []byte) ([]byte, bool, error) {
+		return body, false, nil
 	}
 	p := policies.NewSecretRewrites(resolver)
 	req := &stubReadOnlyRequest{provider: conversation.ProviderAnthropic, rawBody: []byte(`{"clean":true}`)}
@@ -48,8 +49,8 @@ func TestSecretRewrites_AllowWithoutRewrite(t *testing.T) {
 // resolver returns modified=true → ReplaceBody + audit flag.
 func TestSecretRewrites_AppliesRewrite(t *testing.T) {
 	rewritten := []byte(`{"secret_redacted":true}`)
-	resolver := func(_ context.Context, _ []byte) ([]byte, bool) {
-		return rewritten, true
+	resolver := func(_ context.Context, _ []byte) ([]byte, bool, error) {
+		return rewritten, true, nil
 	}
 	p := policies.NewSecretRewrites(resolver)
 	req := &stubReadOnlyRequest{provider: conversation.ProviderAnthropic, rawBody: []byte(`{"secret":"ghp_xyz"}`)}
@@ -70,5 +71,22 @@ func TestSecretRewrites_AppliesRewrite(t *testing.T) {
 	}
 	if v := verdict.AuditParams["secret_rewrites_applied"]; v != true {
 		t.Errorf("secret_rewrites_applied = %v, want true", v)
+	}
+}
+
+func TestSecretRewrites_PropagatesResolverError(t *testing.T) {
+	resolverErr := errors.New("rewrite backend unavailable")
+	resolver := func(context.Context, []byte) ([]byte, bool, error) {
+		return nil, false, resolverErr
+	}
+	p := policies.NewSecretRewrites(resolver)
+	req := &stubReadOnlyRequest{provider: conversation.ProviderAnthropic, rawBody: []byte(`{"secret":"ghp_xyz"}`)}
+	mut := &recordingRequestMutator{}
+
+	if _, err := p.Preprocess(context.Background(), req, mut); !errors.Is(err, resolverErr) {
+		t.Fatalf("Preprocess error = %v, want resolver error", err)
+	}
+	if len(mut.ReplaceBodyCalls) != 0 {
+		t.Fatalf("resolver error should not mutate body")
 	}
 }

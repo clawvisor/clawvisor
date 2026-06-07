@@ -193,6 +193,56 @@ func TestAnthropicEncoder_PatchedIndexShiftOnly(t *testing.T) {
 	}
 }
 
+func TestAnthropicEncoder_PatchedCRLFDataLine(t *testing.T) {
+	original := strings.Join([]string{
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		``,
+	}, "\r\n")
+
+	d := stream.NewAnthropicDecoder(strings.NewReader(original))
+	ev, err := d.Next()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	ev.FieldPatches = []stream.FieldPatch{{
+		JSONPath: "index",
+		NewValue: json.RawMessage(`1`),
+	}}
+
+	var buf bytes.Buffer
+	if err := stream.NewAnthropicEncoder(&buf).Encode(ev); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	want := strings.Join([]string{
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+		``,
+	}, "\r\n")
+	if got := buf.String(); got != want {
+		t.Fatalf("patched CRLF encode wrong\n--- want ---\n%s\n--- got ---\n%s", want, got)
+	}
+}
+
+func TestAnthropicEncoder_PatchedEmptyDataLinePassesThrough(t *testing.T) {
+	ev := stream.Event{
+		Kind:     stream.KindUnknown,
+		RawBytes: []byte("event: ping\ndata:   \n\n"),
+		FieldPatches: []stream.FieldPatch{{
+			JSONPath: "index",
+			NewValue: json.RawMessage(`1`),
+		}},
+	}
+	var buf bytes.Buffer
+	if err := stream.NewAnthropicEncoder(&buf).Encode(ev); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if got, want := buf.String(), string(ev.RawBytes); got != want {
+		t.Fatalf("empty data line changed\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 // TestAnthropicEncoder_ReplacedTextBlock verifies the REPLACED state:
 // a fully synthesized TextBlock for a content_block_delta event encodes
 // to the expected SSE payload shape.
@@ -217,6 +267,22 @@ func TestAnthropicEncoder_ReplacedTextBlock(t *testing.T) {
 	want := "event: content_block_delta\ndata: {\"delta\":{\"text\":\"hello\",\"type\":\"text_delta\"},\"index\":0,\"type\":\"content_block_delta\"}\n\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("replaced encode wrong\n--- want ---\n%q\n--- got ---\n%q", want, got)
+	}
+}
+
+func TestAnthropicEncoder_ReplacedTextBlockRequiresIndex(t *testing.T) {
+	ev := stream.Event{
+		Kind: stream.KindBlockDelta,
+		Meta: stream.EventMeta{
+			SSEEventName:   "content_block_delta",
+			AnthropicIndex: -1,
+		},
+		Parsed: stream.TextBlock{Text: "hello"},
+	}
+	var buf bytes.Buffer
+	err := stream.NewAnthropicEncoder(&buf).Encode(ev)
+	if err == nil {
+		t.Fatalf("expected missing index error")
 	}
 }
 

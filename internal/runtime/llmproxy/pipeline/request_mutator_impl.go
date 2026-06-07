@@ -17,7 +17,8 @@ import (
 type eagerRequestMutator struct {
 	PanicMutator // panics on every method not overridden below
 
-	body []byte
+	body     []byte
+	replaced bool
 }
 
 // newEagerRequestMutator constructs a mutator with the initial body.
@@ -35,12 +36,17 @@ func (m *eagerRequestMutator) Body() []byte {
 	return append([]byte(nil), m.body...)
 }
 
+func (m *eagerRequestMutator) BodyReplaced() bool {
+	return m.replaced
+}
+
 // ReplaceBody applies eagerly — subsequent policies see the new bytes.
 func (m *eagerRequestMutator) ReplaceBody(newBody []byte) error {
 	if newBody == nil {
 		return fmt.Errorf("eagerRequestMutator: ReplaceBody nil")
 	}
 	m.body = append([]byte(nil), newBody...)
+	m.replaced = true
 	return nil
 }
 

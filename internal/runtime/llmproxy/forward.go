@@ -388,11 +388,13 @@ func scopesIncludes(raw json.RawMessage, want string) bool {
 func injectPassthroughOpenAIAuth(req *http.Request, authorization string) {
 	req.Header.Set("Authorization", authorization)
 	req.Header.Del("x-api-key")
+	req.Header.Del("x-goog-api-key")
 }
 
 func injectPassthroughAnthropicAuth(req *http.Request, authorization string) {
 	req.Header.Set("Authorization", authorization)
 	req.Header.Del("x-api-key")
+	req.Header.Del("x-goog-api-key")
 	if req.Header.Get("anthropic-version") == "" {
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
@@ -400,6 +402,7 @@ func injectPassthroughAnthropicAuth(req *http.Request, authorization string) {
 
 func injectPassthroughGoogleAuth(req *http.Request, authorization string) {
 	req.Header.Set("Authorization", authorization)
+	req.Header.Del("x-api-key")
 	req.Header.Del("x-goog-api-key")
 }
 
@@ -413,6 +416,7 @@ func injectPassthroughGoogleAuth(req *http.Request, authorization string) {
 var forwardSkipHeaders = map[string]struct{}{
 	"authorization":       {}, // agent token is for us, not upstream
 	"x-api-key":           {}, // agent token (Anthropic SDK convention) is for us
+	"x-goog-api-key":      {}, // agent token / Google upstream key is restored explicitly
 	"cookie":              {}, // session cookies for the clawvisor UI must not reach api.anthropic.com / api.openai.com
 	"connection":          {},
 	"keep-alive":          {},

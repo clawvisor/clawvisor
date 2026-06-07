@@ -73,7 +73,7 @@ func RunPost(
 	for _, policy := range policies {
 		verdict, err := policy.Postprocess(ctx, res, mut)
 		if err != nil {
-			return nil, fmt.Errorf("policy %q: %w", policy.Name(), err)
+			return result, fmt.Errorf("policy %q: %w", policy.Name(), err)
 		}
 		result.Verdicts = append(result.Verdicts, ResponsePolicyVerdict{Name: policy.Name(), Verdict: verdict})
 		for k, v := range verdict.AuditParams {
@@ -89,7 +89,7 @@ func RunPost(
 		case OutcomeAllow, OutcomeSkip:
 			// continue
 		default:
-			return nil, fmt.Errorf("policy %q returned unsupported outcome %q for RunPost", policy.Name(), verdict.Outcome)
+			return result, fmt.Errorf("policy %q returned unsupported outcome %q for RunPost", policy.Name(), verdict.Outcome)
 		}
 	}
 
@@ -98,10 +98,10 @@ func RunPost(
 	if !ok {
 		return nil, fmt.Errorf("pipeline.RunPost: mutator doesn't expose Commit")
 	}
-	if err := committer.Commit(); err != nil {
-		return nil, fmt.Errorf("pipeline.RunPost: commit: %w", err)
-	}
 	committed = true
+	if err := committer.Commit(); err != nil {
+		return result, fmt.Errorf("pipeline.RunPost: commit: %w", err)
+	}
 
 	return result, nil
 }

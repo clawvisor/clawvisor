@@ -22,8 +22,8 @@ import (
 //   - resolver returns ok=false → Deny with the verifier's reason in
 //     audit + verdict; the inspector chain's verdict authoritatively
 //     refuses the tool_use
-//   - resolver returns empty reason → Skip (verifier chose not to act —
-//     e.g., no task scope to verify against)
+//   - resolver returns ok=false with empty reason → Deny with a generic
+//     fallback; opt-out is represented by ok=true, reason="".
 type IntentVerifyEvaluator struct {
 	resolver IntentVerifyResolver
 }
@@ -32,9 +32,9 @@ type IntentVerifyEvaluator struct {
 // The handler implements this against the IntentVerifier instance,
 // closing over the IntentVerifyRequest's identity and scope inputs.
 //
-// Returns (ok=true, reason="") on Allow, (ok=false, reason=<verdict>)
-// on Deny. Empty reason on both fields signals "verifier chose not to
-// act" — the evaluator emits Skip.
+// Returns (ok=true, reason="") on Allow or opt-out, and
+// (ok=false, reason=<verdict>) on Deny. Empty deny reasons are denied
+// with a generic fallback instead of being treated as opt-out.
 type IntentVerifyResolver func(ctx context.Context, tu conversation.ToolUse) (ok bool, reason string)
 
 // NewIntentVerifyEvaluator constructs the evaluator. nil resolver → Skip.
@@ -61,8 +61,7 @@ func (e *IntentVerifyEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnl
 		}, nil
 	}
 	if reason == "" && !ok {
-		// Verifier chose not to act (no scope to verify against, etc.).
-		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
+		reason = "Clawvisor: intent verification denied this tool use"
 	}
 
 	fact := pipeline.IntentVerifyFact{Allowed: ok, Explanation: reason}

@@ -79,14 +79,24 @@ func applyAnthropicPatches(ev Event) ([]byte, error) {
 			nextI = len(ev.RawBytes)
 		}
 
-		if len(line) > 5 && string(line[:5]) == "data:" {
+		if len(line) >= 5 && string(line[:5]) == "data:" {
 			// Find the JSON payload's start position (skip "data:" and
 			// any leading whitespace).
 			payloadStart := 5
 			for payloadStart < len(line) && (line[payloadStart] == ' ' || line[payloadStart] == '\t') {
 				payloadStart++
 			}
-			payload := append([]byte(nil), line[payloadStart:]...)
+			payloadEnd := len(line)
+			hasCR := payloadEnd > 0 && line[payloadEnd-1] == '\r'
+			if hasCR {
+				payloadEnd--
+			}
+			if payloadStart >= payloadEnd {
+				out = append(out, ev.RawBytes[i:nextI]...)
+				i = nextI
+				continue
+			}
+			payload := append([]byte(nil), line[payloadStart:payloadEnd]...)
 			for _, patch := range ev.FieldPatches {
 				patched, err := applyJSONPathPatch(payload, patch)
 				if err != nil {
@@ -96,6 +106,9 @@ func applyAnthropicPatches(ev Event) ([]byte, error) {
 			}
 			out = append(out, line[:payloadStart]...)
 			out = append(out, payload...)
+			if hasCR {
+				out = append(out, '\r')
+			}
 			if j < len(ev.RawBytes) {
 				out = append(out, '\n')
 			}
@@ -158,10 +171,10 @@ func (e *AnthropicEncoder) emitReplaced(ev Event) error {
 func serializeAnthropicPayload(ev Event) ([]byte, error) {
 	switch p := ev.Parsed.(type) {
 	case TextBlock:
-		idx := 0
-		if ev.Meta.AnthropicIndex >= 0 {
-			idx = ev.Meta.AnthropicIndex
+		if ev.Meta.AnthropicIndex < 0 {
+			return nil, fmt.Errorf("anthropic stream: missing content block index for replaced %v event", ev.Kind)
 		}
+		idx := ev.Meta.AnthropicIndex
 		switch ev.Kind {
 		case KindBlockStart:
 			return json.Marshal(map[string]any{

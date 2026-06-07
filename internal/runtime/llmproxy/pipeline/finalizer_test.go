@@ -20,6 +20,7 @@ type finalizerTestDeps struct {
 	dropped                        []pipeline.HoldCapture
 	audits                         []conversation.AuditEvent
 	coalescedEvictedAuditToolUseID []string
+	omitCoalescedPerToolAudit      bool
 }
 
 func (d *finalizerTestDeps) SubmitHold(context.Context, any) (pipeline.HoldSubmitResult, error) {
@@ -40,7 +41,7 @@ func (d *finalizerTestDeps) DropHold(_ context.Context, c pipeline.HoldCapture) 
 }
 
 func (d *finalizerTestDeps) BuildCoalescedHold([]pipeline.HoldCapture) pipeline.CoalescedHold {
-	return pipeline.CoalescedHold{
+	hold := pipeline.CoalescedHold{
 		Payload: "coalesced",
 		EvictedAuditFor: func(c pipeline.HoldCapture, evictedID string) conversation.AuditEvent {
 			d.coalescedEvictedAuditToolUseID = append(d.coalescedEvictedAuditToolUseID, c.ToolUseID)
@@ -57,6 +58,10 @@ func (d *finalizerTestDeps) BuildCoalescedHold([]pipeline.HoldCapture) pipeline.
 		},
 		Prompt: func(string) string { return "approval required" },
 	}
+	if d.omitCoalescedPerToolAudit {
+		hold.PerToolAuditFor = nil
+	}
+	return hold
 }
 
 func (d *finalizerTestDeps) BuildReplayFailedAudit(pipeline.HoldCapture, error) conversation.AuditEvent {
@@ -164,6 +169,33 @@ func TestFinalizerCoalescedReplacesBufferedAudits(t *testing.T) {
 		if ev.OutcomeName != "coalesced_approval_pending" {
 			t.Fatalf("unexpected buffered audit leaked on coalesce path: %+v", deps.audits)
 		}
+	}
+}
+
+func TestFinalizerCoalescedRequiresPerToolAuditBeforeSubmit(t *testing.T) {
+	deps := &finalizerTestDeps{
+		submit:                    pipeline.HoldSubmitResult{ApprovalID: "cv-coalesced", Evicted: "old"},
+		omitCoalescedPerToolAudit: true,
+	}
+	f := pipeline.NewFinalizer(deps)
+	f.AddCapture(pipeline.HoldCapture{
+		ToolUseID: "toolu_hold",
+		Kind:      eval.HeldKindHintApproval,
+		Payload:   "pending",
+	})
+	f.AddCapture(pipeline.HoldCapture{
+		ToolUseID: "toolu_allow",
+		Kind:      eval.HeldKindHintAllow,
+	})
+
+	if _, err := f.Finalize(context.Background()); err == nil {
+		t.Fatal("expected missing coalesced audit builder error")
+	}
+	if deps.submitCalls != 0 {
+		t.Fatalf("SubmitHold called before validating audit builder")
+	}
+	if len(deps.coalescedEvictedAuditToolUseID) != 0 || len(deps.audits) != 0 {
+		t.Fatalf("destructive/audit side effects ran before validation: audits=%+v evicted=%+v", deps.audits, deps.coalescedEvictedAuditToolUseID)
 	}
 }
 

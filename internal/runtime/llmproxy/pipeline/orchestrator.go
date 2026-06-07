@@ -15,6 +15,11 @@ type PreResult struct {
 	// been applied. The handler forwards this to the upstream.
 	FinalBody []byte
 
+	// BodyReplaced is true when at least one policy explicitly replaced
+	// the body through the RequestMutator, even if the replacement bytes
+	// are equal to the original bytes.
+	BodyReplaced bool
+
 	// AuditParams is the aggregated map of audit-row fields each policy
 	// emitted. Conflicts go to the last writer (orderly via declared
 	// chain order). The handler merges this with its existing auditParams.
@@ -104,6 +109,7 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 
 		// Refresh the wrapper's body view in case the policy queued a
 		// ReplaceBody (eager apply means it's already on mut.body).
+		result.BodyReplaced = mut.BodyReplaced()
 		wrapper.body = mut.Body()
 
 		switch verdict.Outcome {
