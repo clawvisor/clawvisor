@@ -4,9 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/url"
-	"regexp"
 	"strings"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/placeholdershape"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -759,7 +759,7 @@ func scanHeadersForShadow(headers map[string]any) ([]CredentialLocation, []strin
 		// as a check —
 		// for v1 we conservatively don't extract the placeholder from
 		// Basic auth headers.
-		for _, candidate := range autovaultPlaceholderRE.FindAllString(value, -1) {
+		for _, candidate := range placeholdershape.FindAllAutovault(value) {
 			placeholders = append(placeholders, candidate)
 		}
 	}
@@ -767,7 +767,7 @@ func scanHeadersForShadow(headers map[string]any) ([]CredentialLocation, []strin
 }
 
 func headerMaybeContainsAutovaultPlaceholder(v string) bool {
-	if autovaultPlaceholderRE.MatchString(v) {
+	if placeholdershape.ContainsAutovaultString(v) {
 		return true
 	}
 	scheme, rest, ok := strings.Cut(v, " ")
@@ -778,13 +778,8 @@ func headerMaybeContainsAutovaultPlaceholder(v string) bool {
 	if err != nil {
 		return false
 	}
-	return autovaultPlaceholderRE.Match(raw)
+	return placeholdershape.ContainsAutovault(raw)
 }
-
-// autovaultPlaceholderRE pulls proxy-lite placeholder tokens out of a
-// header value without false-matching log-line / comment context that
-// may share part of the substring.
-var autovaultPlaceholderRE = regexp.MustCompile(`[A-Za-z0-9._:-]*autovault[A-Za-z0-9._:-]+`)
 
 func canonicalHeaderName(s string) string {
 	if s == "" {

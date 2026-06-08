@@ -89,6 +89,15 @@ type AuditEvent struct {
 	Winning          bool
 	InspectorVerdict eval.InspectorVerdictSnapshot
 	TaskID           string
+
+	// AnnotationFacts carries facts from non-winning evaluators for the
+	// same tool_use, surfaced so the audit row can record forensic
+	// signals (judge invocation cost, scope detail) that the chain's
+	// upstream stages produced before yielding to the winner. Kept
+	// separate from Facts so OutcomeName/MatchedTaskID lookups still
+	// derive from the winning evaluator's verdict, not from a Skip's
+	// side-channel record.
+	AnnotationFacts []EvaluationFact
 }
 
 // DecisionKind is the coarse audit-row classification.

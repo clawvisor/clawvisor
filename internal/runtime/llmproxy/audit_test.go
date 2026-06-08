@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -264,6 +265,145 @@ func TestAuditEmitter_LogToolUseInspected(t *testing.T) {
 	headers, _ := toolInput["headers"].(map[string]any)
 	if _, ok := headers["Authorization"]; ok {
 		t.Errorf("tool_input should not persist Authorization header: %+v", headers)
+	}
+}
+
+// TestAuditEmitter_WriteAuditEvent_ScriptSessionJudgeForensics
+// confirms that judge invocation forensics on a ScriptSessionFact
+// (prompt SHA, latency, token usage, error) round-trip into the
+// audit row's ParamsSafe JSON. Without persistence, operators can't
+// roll up judge cost or investigate flaky judge calls from the
+// audit store alone.
+func TestAuditEmitter_WriteAuditEvent_ScriptSessionJudgeForensics(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	em := NewAuditEmitter(st, nil, nil)
+
+	em.WriteAuditEvent(context.Background(), agent, "req-1", conversation.AuditEvent{
+		ToolUse: conversation.ToolUse{
+			ID:    "toolu_judge",
+			Name:  "Bash",
+			Input: json.RawMessage(`{"command":"curl http://localhost:25297/api/proxy/x"}`),
+		},
+		Decision:    conversation.DecisionAllow,
+		OutcomeName: "script_session_judge_allow",
+		Reason:      "variable holds the resolver URL",
+		Facts: []conversation.EvaluationFact{
+			conversation.ScriptSessionFact{
+				Outcome:           "script_session_judge_allow",
+				JudgePromptSHA:    "abc123def456",
+				JudgeLatencyMS:    47,
+				JudgeInputTokens:  1234,
+				JudgeOutputTokens: 56,
+			},
+		},
+	})
+
+	rows, _, _ := st.ListAuditEntries(context.Background(), agent.UserID, store.AuditFilter{})
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	var params map[string]any
+	if err := json.Unmarshal(rows[0].ParamsSafe, &params); err != nil {
+		t.Fatalf("unmarshal ParamsSafe: %v", err)
+	}
+	if params["script_session_judge_prompt_sha"] != "abc123def456" {
+		t.Errorf("prompt_sha = %v, want abc123def456", params["script_session_judge_prompt_sha"])
+	}
+	// JSON unmarshals numbers as float64.
+	if v, _ := params["script_session_judge_latency_ms"].(float64); v != 47 {
+		t.Errorf("latency_ms = %v, want 47", params["script_session_judge_latency_ms"])
+	}
+	if v, _ := params["script_session_judge_input_tokens"].(float64); v != 1234 {
+		t.Errorf("input_tokens = %v, want 1234", params["script_session_judge_input_tokens"])
+	}
+	if v, _ := params["script_session_judge_output_tokens"].(float64); v != 56 {
+		t.Errorf("output_tokens = %v, want 56", params["script_session_judge_output_tokens"])
+	}
+	if _, present := params["script_session_judge_error"]; present {
+		t.Errorf("judge_error should be absent on allow path, got %v", params["script_session_judge_error"])
+	}
+}
+
+// TestAuditEmitter_WriteAuditEvent_AnnotationFacts confirms that
+// judge forensics surface even when the script_session evaluator
+// yielded (Skip) and another evaluator claimed the tool_use. The
+// orchestrator records non-winning forensic facts on
+// AnnotationFacts; WriteAuditEvent walks them alongside Facts. Without
+// this, judge_error rows would only appear in the structured logger,
+// not the audit DB.
+func TestAuditEmitter_WriteAuditEvent_AnnotationFacts(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	em := NewAuditEmitter(st, nil, nil)
+
+	em.WriteAuditEvent(context.Background(), agent, "req-1", conversation.AuditEvent{
+		ToolUse: conversation.ToolUse{ID: "toolu_judge_err"},
+		// Winning event is from a different evaluator (e.g. inspector
+		// chain refused). The script_session evaluator's judge_error
+		// is on AnnotationFacts.
+		Decision:    conversation.DecisionBlock,
+		OutcomeName: "boundary_check_failed",
+		AnnotationFacts: []conversation.EvaluationFact{
+			conversation.ScriptSessionFact{
+				Outcome:        "script_session_judge_error",
+				JudgePromptSHA: "annot_sha",
+				JudgeLatencyMS: 42,
+				JudgeError:     "scriptjudge transport: timeout",
+			},
+		},
+	})
+
+	rows, _, _ := st.ListAuditEntries(context.Background(), agent.UserID, store.AuditFilter{})
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	var params map[string]any
+	_ = json.Unmarshal(rows[0].ParamsSafe, &params)
+	if params["script_session_judge_prompt_sha"] != "annot_sha" {
+		t.Errorf("AnnotationFacts prompt_sha not surfaced: %v", params["script_session_judge_prompt_sha"])
+	}
+	if v, _ := params["script_session_judge_latency_ms"].(float64); v != 42 {
+		t.Errorf("AnnotationFacts latency_ms not surfaced: %v", params["script_session_judge_latency_ms"])
+	}
+	if msg, _ := params["script_session_judge_error"].(string); !strings.Contains(msg, "scriptjudge transport") {
+		t.Errorf("AnnotationFacts judge_error not surfaced: %v", params["script_session_judge_error"])
+	}
+}
+
+// TestAuditEmitter_WriteAuditEvent_ScriptSessionJudgeError confirms
+// that a judge-error outcome surfaces the error string into
+// ParamsSafe — operators need to see transient transport failures
+// without re-reading proxy logs.
+func TestAuditEmitter_WriteAuditEvent_ScriptSessionJudgeError(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	em := NewAuditEmitter(st, nil, nil)
+
+	em.WriteAuditEvent(context.Background(), agent, "req-1", conversation.AuditEvent{
+		ToolUse: conversation.ToolUse{ID: "toolu_err", Name: "Bash"},
+		Decision:    conversation.DecisionAllow, // Skip = chain continues; decision recorded by later stage
+		OutcomeName: "script_session_judge_error",
+		Facts: []conversation.EvaluationFact{
+			conversation.ScriptSessionFact{
+				Outcome:        "script_session_judge_error",
+				JudgePromptSHA: "abc123",
+				JudgeLatencyMS: 31,
+				JudgeError:     "scriptjudge transport: connection reset",
+			},
+		},
+	})
+
+	rows, _, _ := st.ListAuditEntries(context.Background(), agent.UserID, store.AuditFilter{})
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	var params map[string]any
+	_ = json.Unmarshal(rows[0].ParamsSafe, &params)
+	msg, _ := params["script_session_judge_error"].(string)
+	if msg == "" {
+		t.Fatalf("script_session_judge_error not persisted: %v", params)
+	}
+	// auditErrorDetail may truncate, but the core message should survive.
+	if !strings.Contains(msg, "scriptjudge transport") {
+		t.Errorf("error detail %q should contain core message", msg)
 	}
 }
 

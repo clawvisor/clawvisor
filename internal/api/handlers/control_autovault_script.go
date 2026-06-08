@@ -382,7 +382,7 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 		"max_request_bytes":  scriptSessionMaxRequestBytes,
 		"max_total_bytes":    scriptSessionTotalBytesFor(maxUses),
 		"example_request":    exampleCurl,
-		"next_step": "Any script shape works (bash loops, xargs, Python, pipelines, parallel curls) — what matters is that every credentialed request inside matches `example_request`'s shape: route through " + resolverBase + " with all three headers. Calling the upstream URL directly with just the placeholder bypasses this session and falls back to the shape-restricted one-shot rewrite path. See GET /api/control/autovault/script for full schema.",
+		"next_step": "Any script shape works (bash loops, xargs, Python, pipelines, parallel curls) — what matters is that every credentialed request inside matches `example_request`'s shape: route through " + resolverBase + " with all three headers. Calling the upstream URL directly with just the placeholder bypasses this session and falls back to the shape-restricted one-shot rewrite path. Path-prefix scope is enforced per-request: list EVERY path your fan-out will hit in `path_prefixes`, or use a parent prefix that covers all of them — a mid-fan-out scope mismatch forces a re-mint and burns turns. See GET /api/control/autovault/script for full schema.",
 	}
 	// Surface the task's approved tool surface so the agent stays
 	// within it when executing the fan-out. Without this hint, agents

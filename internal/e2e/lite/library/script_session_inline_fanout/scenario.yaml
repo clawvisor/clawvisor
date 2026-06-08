@@ -1,0 +1,109 @@
+id: script_session_inline_fanout
+description: |
+  Regression coverage for the post-mint pitfalls the script-session
+  flow has historically tripped on:
+    1. Variable-izing the resolver URL or `-H` value
+       (`B='http://.../api/proxy/...'; curl "$B"`) — the proxy's
+       recognizer only inspects literal word prefixes, so the call
+       falls back to the one-shot rewrite path and fails on the
+       multi-statement bash refusal.
+    2. Pre-staging the curl loop to disk via Write/Edit before
+       running it — the inspector classifies file content with an
+       Authorization header as a credentialed call to localhost,
+       which fails the placeholder bound-service boundary check.
+
+  The mint response now spells both pitfalls out in a structured
+  `pitfalls` array. This scenario verifies the guidance actually
+  lands: the agent must mint ONE script session, fan out N inline
+  curls under it, and produce ZERO tool-use blocks along the way.
+
+  Naturalistic prompt shape: a GitHub triage ask covering several
+  issue numbers — explicit enough to require a fan-out, but with no
+  endpoint shapes, no header scaffolding, and no instructions about
+  shell variables. The agent has to mint a session and then issue
+  the per-issue curls under it without taking one of the two
+  shortcuts above.
+
+  Failure modes this scenario surfaces:
+    - Agent variable-izes URL/headers → tool_use.block > 0 with the
+      "script-session caller token (cv-script-…) detected, but the
+      proxy can't recognize the curl URL as targeting the resolver"
+      continuation.
+    - Agent writes the script to /tmp first → tool_use.block > 0
+      with "target host outside placeholder bound-service".
+    - Agent mints but doesn't use → script_session.use stays at 0
+      while script_session.mint >= 1.
+    - Agent never mints → script_session.mint == 0 (and
+      downstream.calls_total may still be > 0 via one-shot rewrites,
+      but this scenario is specifically testing the session-routed
+      path).
+
+agent:
+  name: triage-agent
+
+vault_items:
+  - id: github:personal
+    secret: ghp_fake_personal_secret_for_test
+
+script:
+  - say: |
+      I've got five GitHub issues on github.com/anthropics/example-repo
+      I want to look at — #142, #157, #163, #171, and #184. Pull each
+      one's title, state, and a short read on what it's about. Just a
+      compact rundown of all five, nothing fancy.
+    approval_floor: 1
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns_per_step: 18
+  max_tool_calls_total: 40
+  wall_clock_seconds: 420
+
+expectations:
+  hard:
+    # Task approval landed.
+    - count:
+        series: approvals.allow_session
+        gte: 1
+    # Agent took the script-session path — the whole point of this
+    # scenario is to verify the post-mint guidance works.
+    - count:
+        series: script_session.mint
+        gte: 1
+    # The session was actually used for fan-out, not just minted and
+    # ignored. Three uses is the floor — five is the ideal but the
+    # mock returns {"ok":true} for everything and a careful agent
+    # may stop early after recognizing the synthetic environment.
+    - count:
+        series: script_session.use
+        gte: 3
+    # Cap scope mismatches. One mid-stream re-mint after the agent
+    # picks a too-narrow scope is acceptable recovery; sustained
+    # mismatching indicates the per-field error guidance isn't
+    # landing.
+    - count:
+        series: script_session.scope_mismatch
+        lte: 2
+    # Cap block-style judge interventions. The judge IS supposed to
+    # fire on a malformed first attempt (variable-ized URL, etc.) —
+    # that's working as intended — but the agent should converge in
+    # 1-2 turns. A higher count indicates the judge guidance isn't
+    # actionable enough. This counter only ticks for judge-emitted
+    # blocks (not internal pipeline outcomes), so a value > 0
+    # without a corresponding successful recovery would mean the
+    # agent never read the guidance.
+    - count:
+        series: lite_proxy.tool_use.block
+        lte: 2
+  soft:
+    - "Preferred: agent minted ONE session, used it for all five issue fetches, inlined the resolver URL + `-H` values literally — zero blocks needed."
+    - "Acceptable: judge fires on a first-attempt mistake (variable-ized URL / Write-staged script) and the agent recovers within 1-2 turns. block counter == 1-2."
+    - "Acceptable: agent recognized the synthetic `{\"ok\":true}` pattern after one or two probes — in that case script_session.use will be 3-4 instead of 5."
+    - "Regression signal: block counter > 2 or scope_mismatch > 2 means recovery isn't converging — the per-field error or judge guidance has weakened."

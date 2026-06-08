@@ -283,10 +283,66 @@ func (e *AuditEmitter) WriteAuditEvent(ctx context.Context, agent *store.Agent, 
 		}
 		params["credential_locations"] = creds
 	}
+	// AuthorizationFact is a winning-evaluator concept (the
+	// evaluator that produced the authorization decision is by
+	// definition the chain winner). Walking AnnotationFacts for it
+	// would let a yielded upstream stage's stale auth detail
+	// overwrite the winner's — pre-refactor behavior limited this
+	// to winning facts and we preserve that here. ScriptSessionFact
+	// forensics, in contrast, are deliberately attached to
+	// non-winning script-session evaluations and need both factSet
+	// passes.
 	for _, fact := range ev.Facts {
 		if authFact, ok := fact.(conversation.AuthorizationFact); ok && authFact.Detail != "" {
-			params["authorization_error"] = auditErrorDetail(authFact.Detail)
-			break
+			if _, already := params["authorization_error"]; !already {
+				params["authorization_error"] = auditErrorDetail(authFact.Detail)
+			}
+		}
+	}
+	for _, factSet := range [][]conversation.EvaluationFact{ev.Facts, ev.AnnotationFacts} {
+		for _, fact := range factSet {
+			switch f := fact.(type) {
+			case conversation.ScriptSessionFact:
+				// Persist judge forensics so audit consumers can roll
+				// up invocation cost + provenance and so a flaky
+				// judge is investigable without re-reading the proxy
+				// logs. Only emit fields that were actually populated
+				// by the judge (the passthrough outcome doesn't
+				// consult an LLM and leaves these zero); a sparse
+				// params object is easier to query than a dense one
+				// of mostly-zero rows.
+				//
+				// First-wins guard parallels the AuthorizationFact
+				// branch: if a tool_use somehow produces multiple
+				// ScriptSessionFacts (e.g. judge invoked twice across
+				// chain stages), the earliest non-empty value sticks
+				// rather than the last silently overwriting.
+				if f.JudgePromptSHA != "" {
+					if _, already := params["script_session_judge_prompt_sha"]; !already {
+						params["script_session_judge_prompt_sha"] = f.JudgePromptSHA
+					}
+				}
+				if f.JudgeLatencyMS > 0 {
+					if _, already := params["script_session_judge_latency_ms"]; !already {
+						params["script_session_judge_latency_ms"] = f.JudgeLatencyMS
+					}
+				}
+				if f.JudgeInputTokens > 0 {
+					if _, already := params["script_session_judge_input_tokens"]; !already {
+						params["script_session_judge_input_tokens"] = f.JudgeInputTokens
+					}
+				}
+				if f.JudgeOutputTokens > 0 {
+					if _, already := params["script_session_judge_output_tokens"]; !already {
+						params["script_session_judge_output_tokens"] = f.JudgeOutputTokens
+					}
+				}
+				if f.JudgeError != "" {
+					if _, already := params["script_session_judge_error"]; !already {
+						params["script_session_judge_error"] = auditErrorDetail(f.JudgeError)
+					}
+				}
+			}
 		}
 	}
 	paramsJSON, _ := json.Marshal(params)

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -126,12 +127,132 @@ var (
 	ErrScriptSessionExhausted = errors.New("llmproxy: script session exhausted")
 
 	// ErrScriptSessionScopeMismatch — host/method/path/placeholder is
-	// outside the session's bound capability.
+	// outside the session's bound capability. Always wrapped in a
+	// ScopeMismatchDetail so callers can extract the exact offending
+	// field via errors.As; errors.Is(err, ErrScriptSessionScopeMismatch)
+	// still works via ScopeMismatchDetail.Is.
 	ErrScriptSessionScopeMismatch = errors.New("llmproxy: script session scope mismatch")
 
 	// ErrScriptSessionBytesExceeded — aggregate response byte cap reached.
 	ErrScriptSessionBytesExceeded = errors.New("llmproxy: script session bytes exceeded")
 )
+
+// ScopeMismatchDetail names the exact field that didn't match between
+// an inbound request and a bound script session, and exposes BOTH the
+// inbound value and the session's bound value for that field. Callers
+// (the middleware that surfaces errors to the agent) use this to emit
+// a continuation pointing at the precise gap — generic "scope
+// mismatch" messages drove agents into multi-turn debugging loops
+// because they couldn't tell whether the host, the method, the path,
+// or the placeholder was wrong.
+//
+// Field is one of: "host" | "method" | "path" | "placeholder".
+//
+// Got is what the inbound request carried. Expected describes the
+// session's bound value(s): a single host for "host", the methods list
+// for "method", the path-prefix list for "path", or the bound
+// placeholder for "placeholder". For "placeholder", Got may be empty
+// when no autovault placeholder was found in the request at all.
+type ScopeMismatchDetail struct {
+	Field    string
+	Got      string
+	Expected []string
+}
+
+// Error implements error.
+func (e *ScopeMismatchDetail) Error() string {
+	if e == nil {
+		return "llmproxy: script session scope mismatch"
+	}
+	switch e.Field {
+	case "host":
+		expected := ""
+		if len(e.Expected) > 0 {
+			expected = e.Expected[0]
+		}
+		return fmt.Sprintf("llmproxy: script session scope mismatch: target host %q is not the session's bound host %q", e.Got, expected)
+	case "method":
+		return fmt.Sprintf("llmproxy: script session scope mismatch: method %q is not in session's allowed methods %v", e.Got, e.Expected)
+	case "path":
+		return fmt.Sprintf("llmproxy: script session scope mismatch: path %q is not under any of the session's path_prefixes %v", e.Got, e.Expected)
+	case "placeholder":
+		expected := ""
+		if len(e.Expected) > 0 {
+			expected = e.Expected[0]
+		}
+		if e.Got == "" {
+			return fmt.Sprintf("llmproxy: script session scope mismatch: no autovault placeholder found in the request; session is bound to %q", expected)
+		}
+		return fmt.Sprintf("llmproxy: script session scope mismatch: placeholder %q is not the session's bound placeholder %q", e.Got, expected)
+	default:
+		return "llmproxy: script session scope mismatch"
+	}
+}
+
+// Is implements errors.Is so callers using
+// errors.Is(err, ErrScriptSessionScopeMismatch) continue to match.
+func (e *ScopeMismatchDetail) Is(target error) bool {
+	return target == ErrScriptSessionScopeMismatch
+}
+
+// AgentGuidance formats the detail as a one-sentence continuation
+// message the agent can act on. The message names the offending
+// field, the value the request carried, and the session's bound
+// value(s) — enough for the agent to either correct the call shape
+// or re-mint with a wider scope. Generic "scope mismatch" messages
+// caused multi-turn debugging loops where agents retried with the
+// wrong scope axis.
+//
+// Lives on the type (rather than in middleware) so the per-field
+// formatting is canonical: Error() is the operator-facing form,
+// AgentGuidance() is the agent-facing form, and both stay in lockstep
+// when a new field is added.
+func (e *ScopeMismatchDetail) AgentGuidance() string {
+	if e == nil {
+		return "request host/method/path/placeholder is outside the session's approved scope"
+	}
+	switch e.Field {
+	case "host":
+		expected := ""
+		if len(e.Expected) > 0 {
+			expected = e.Expected[0]
+		}
+		return fmt.Sprintf("target host mismatch: your X-Clawvisor-Target-Host (%q) doesn't match the session's bound host (%q). Either send the request with X-Clawvisor-Target-Host: %s, or mint a new session whose target_host covers the host you actually want to call.", e.Got, expected, expected)
+	case "method":
+		return fmt.Sprintf("method mismatch: request used %s, session allows [%s]. Either reshape this call to one of the allowed methods, or mint a new session whose `methods` include %s.", e.Got, quotedJoin(e.Expected), e.Got)
+	case "path":
+		return fmt.Sprintf("path mismatch: request path %q is not under any of the session's path_prefixes [%s]. Mint a new session whose path_prefixes covers %q (use a broader prefix like the parent directory when the fan-out will hit multiple sub-paths).", e.Got, quotedJoin(e.Expected), e.Got)
+	case "placeholder":
+		expected := ""
+		if len(e.Expected) > 0 {
+			expected = e.Expected[0]
+		}
+		if e.Got == "" {
+			return fmt.Sprintf("placeholder missing: no autovault placeholder found in the request's Authorization (or X-Api-Key) header. The session is bound to %s — include it as `Authorization: Bearer %s`.", expected, expected)
+		}
+		return fmt.Sprintf("placeholder mismatch: request carried %s, session is bound to %s. Use the placeholder returned at mint time, not a different one.", e.Got, expected)
+	default:
+		return "request host/method/path/placeholder is outside the session's approved scope"
+	}
+}
+
+// quotedJoin renders a string slice as `"a", "b", "c"` for inclusion
+// in agent-facing messages. Reads more naturally than Go's default
+// `[a b c]` and matches the rest of AgentGuidance's `%q`-style
+// quoting.
+func quotedJoin(s []string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, v := range s {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%q", v)
+	}
+	return b.String()
+}
 
 // generateScriptSessionToken returns a fresh token. 16 bytes of randomness
 // encoded with unpadded base32 (lowercase) — 26 chars after the prefix.
@@ -279,13 +400,19 @@ func (c *MemoryScriptSessionCache) Authorize(_ context.Context, token string, re
 	}
 	sess := entry.sess
 	if sess.TargetHost != req.Host {
-		return ScriptSession{}, ErrScriptSessionScopeMismatch
+		return ScriptSession{}, &ScopeMismatchDetail{
+			Field: "host", Got: req.Host, Expected: []string{sess.TargetHost},
+		}
 	}
 	if !sess.methodAllowed(req.Method) {
-		return ScriptSession{}, ErrScriptSessionScopeMismatch
+		return ScriptSession{}, &ScopeMismatchDetail{
+			Field: "method", Got: req.Method, Expected: append([]string{}, sess.Methods...),
+		}
 	}
 	if !sess.pathAllowed(req.Path) {
-		return ScriptSession{}, ErrScriptSessionScopeMismatch
+		return ScriptSession{}, &ScopeMismatchDetail{
+			Field: "path", Got: req.Path, Expected: append([]string{}, sess.PathPrefixes...),
+		}
 	}
 	// Placeholder binding is strict: req.Placeholder must be present
 	// AND exactly equal to the session's bound placeholder. An empty
@@ -296,7 +423,9 @@ func (c *MemoryScriptSessionCache) Authorize(_ context.Context, token string, re
 	// on the same host. Closing the gap here means an off-header
 	// placeholder fails fast with SCOPE_MISMATCH at auth time.
 	if req.Placeholder == "" || req.Placeholder != sess.Placeholder {
-		return ScriptSession{}, ErrScriptSessionScopeMismatch
+		return ScriptSession{}, &ScopeMismatchDetail{
+			Field: "placeholder", Got: req.Placeholder, Expected: []string{sess.Placeholder},
+		}
 	}
 	if sess.MaxUses > 0 && entry.sess.UsedCount >= sess.MaxUses {
 		return ScriptSession{}, ErrScriptSessionExhausted

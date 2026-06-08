@@ -28,6 +28,8 @@ func TestLoadAllLibraryScenarios(t *testing.T) {
 		"credential_not_needed_for_local",
 		"script_session_credentialed_fanout",
 		"script_session_scope_mismatch_recovery",
+		"script_session_inline_fanout",
+		"script_session_long_fanout_no_staging",
 	} {
 		name := name
 		t.Run(name, func(t *testing.T) {

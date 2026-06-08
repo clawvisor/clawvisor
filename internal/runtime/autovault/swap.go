@@ -4,11 +4,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
-)
 
-var placeholderTokenRE = regexp.MustCompile(`[A-Za-z0-9._:-]*autovault[A-Za-z0-9._:-]+`)
+	"github.com/clawvisor/clawvisor/internal/runtime/placeholdershape"
+)
 
 func ReplaceHeaderValue(value string, resolve func(placeholder string) (string, error)) (string, []string, error) {
 	if !HeaderMaybeContainsShadow(value) {
@@ -49,7 +48,7 @@ func ReplaceHeaderValue(value string, resolve func(placeholder string) (string, 
 		return "Basic " + encoded, replaced, nil
 	}
 
-	matches := placeholderTokenRE.FindAllString(value, -1)
+	matches := placeholdershape.FindAllAutovault(value)
 	if len(matches) == 0 {
 		return value, nil, nil
 	}

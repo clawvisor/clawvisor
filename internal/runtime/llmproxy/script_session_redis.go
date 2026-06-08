@@ -74,16 +74,16 @@ func (c *RedisScriptSessionCache) Authorize(ctx context.Context, token string, r
 				return err
 			}
 			if sess.TargetHost != req.Host {
-				return ErrScriptSessionScopeMismatch
+				return &ScopeMismatchDetail{Field: "host", Got: req.Host, Expected: []string{sess.TargetHost}}
 			}
 			if !sess.methodAllowed(req.Method) {
-				return ErrScriptSessionScopeMismatch
+				return &ScopeMismatchDetail{Field: "method", Got: req.Method, Expected: append([]string{}, sess.Methods...)}
 			}
 			if !sess.pathAllowed(req.Path) {
-				return ErrScriptSessionScopeMismatch
+				return &ScopeMismatchDetail{Field: "path", Got: req.Path, Expected: append([]string{}, sess.PathPrefixes...)}
 			}
 			if req.Placeholder == "" || req.Placeholder != sess.Placeholder {
-				return ErrScriptSessionScopeMismatch
+				return &ScopeMismatchDetail{Field: "placeholder", Got: req.Placeholder, Expected: []string{sess.Placeholder}}
 			}
 			if sess.MaxUses > 0 && sess.UsedCount >= sess.MaxUses {
 				return ErrScriptSessionExhausted

@@ -32,6 +32,7 @@ import (
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge/llmjudge"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -1248,6 +1249,14 @@ func (s *Server) registerLiteProxyRoutes(
 		if s.cfg.LLM.Verification.Enabled {
 			validator = inspector.NewLLMClientValidator(s.llmHealth.VerificationConfig, s.logger)
 			llmHandler.SecretAdjudicator = runtimeautovault.NewLLMSecretAdjudicator(s.llmHealth.VerificationConfig, s.logger)
+			// Use-time script-session judge: re-classifies tool_uses
+			// that carry cv-script + autovault signals but slipped
+			// past the deterministic recognizer (variable-ized URL/
+			// header, Write+Bash staging, language wrappers). When
+			// verification is disabled there's no LLM available, so
+			// the judge stays nil and the chain falls through to the
+			// inspector's generic refusal.
+			llmHandler.ScriptSessionJudge = llmjudge.New(s.llmHealth.VerificationConfig, s.logger)
 		}
 		llmHandler.Inspector = inspector.NewInspector(inspector.DefaultParser{}, validator)
 

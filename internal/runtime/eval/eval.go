@@ -126,8 +126,28 @@ type BoundaryFact struct {
 func (BoundaryFact) isEvaluationFact() {}
 
 // ScriptSessionFact captures the script-session evaluator's outcome.
+//
+// Outcome is the audit-row label (e.g. "script_session_passthrough",
+// "script_session_judge_allow", "script_session_judge_block").
+//
+// The Judge* fields are populated only on judge-consulted outcomes
+// (script_session_judge_*). They give operators forensic visibility
+// into a security-sensitive LLM decision: the prompt SHA pins which
+// prompt revision produced the verdict, latency surfaces the
+// hot-path cost, and the token counts let cost dashboards roll up
+// judge invocation spend. JudgeError is populated when the judge
+// returned an error and the evaluator fell through to the next chain
+// stage — the audit row still records that an attempt happened.
+//
+// Zero-valued Judge* fields on non-judge outcomes are the expected
+// shape; audit consumers should branch on Outcome before reading them.
 type ScriptSessionFact struct {
-	Outcome string
+	Outcome           string
+	JudgePromptSHA    string
+	JudgeLatencyMS    int64
+	JudgeInputTokens  int
+	JudgeOutputTokens int
+	JudgeError        string
 }
 
 func (ScriptSessionFact) isEvaluationFact() {}

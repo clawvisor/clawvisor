@@ -19,6 +19,7 @@ import (
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
@@ -88,6 +89,15 @@ type LLMEndpointHandler struct {
 	// opts in (strict | lenient). Optional: when nil, intent verification
 	// is not enforced.
 	IntentVerifier llmproxy.IntentVerifier
+
+	// ScriptSessionJudge re-classifies tool_uses that carry script-
+	// session signals (cv-script token + autovault placeholder) but
+	// slipped past the deterministic recognizer (variable-ized URL/
+	// header, Write+Bash staging, language wrappers). Optional: when
+	// nil, the chain falls through to the inspector's generic refusal.
+	// Server constructs an LLM-backed judge when verification is
+	// enabled.
+	ScriptSessionJudge scriptjudge.Judge
 
 	// PendingApprovals buffers proxy-lite tool_uses awaiting bare
 	// approve/deny replies per user/agent/provider.
@@ -1167,6 +1177,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					Store:        h.Store,
 					CallerNonces: h.CallerNonces,
 				},
+				ScriptSessionContext: llmproxy.ScriptSessionContext{
+					Judge: h.ScriptSessionJudge,
+				},
 				RoutingContext: llmproxy.RoutingContext{
 					ControlBaseURL: h.ControlBaseURL,
 				},
@@ -1573,6 +1586,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				Store:        h.Store,
 				CallerNonces: h.CallerNonces,
 			},
+			ScriptSessionContext: llmproxy.ScriptSessionContext{
+				Judge: h.ScriptSessionJudge,
+			},
 			RoutingContext: llmproxy.RoutingContext{
 				ControlBaseURL: h.ControlBaseURL,
 			},
@@ -1639,6 +1655,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					RewriteOpts:  opts,
 					Store:        h.Store,
 					CallerNonces: h.CallerNonces,
+				},
+				ScriptSessionContext: llmproxy.ScriptSessionContext{
+					Judge: h.ScriptSessionJudge,
 				},
 				RoutingContext: llmproxy.RoutingContext{
 					ControlBaseURL: h.ControlBaseURL,

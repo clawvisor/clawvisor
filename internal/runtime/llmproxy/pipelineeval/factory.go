@@ -59,7 +59,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
 		Control:       buildControlResolver(req, cfg.AgentContext, cfg.AuditContext, cfg.ApprovalContext, cfg.RewriteContext, cfg.RoutingContext, provider, emit),
-		ScriptSession: buildScriptSessionResolver(cfg.RewriteContext),
+		ScriptSession: buildScriptSessionResolver(cfg.RewriteContext, cfg.ScriptSessionContext),
 		Inspector:     cfg.Inspector,
 		Boundary:      buildBoundaryResolver(cfg.AgentContext, cfg.Store),
 		Authorization: buildAuthorizationResolver(cfg.AgentContext, cfg.AuditContext, cfg.AuthorizationContext, cfg.ApprovalContext, cfg.RewriteContext, provider),
@@ -131,8 +131,21 @@ func emitAuditEvents(
 	}
 	events := result.AuditEvents(toolUses)
 	factsByTU := make(map[string][]conversation.EvaluationFact, len(toolUses))
+	annotationsByTU := make(map[string][]conversation.EvaluationFact, len(toolUses))
 	for _, ev := range events {
 		factsByTU[ev.ToolUse.ID] = append(factsByTU[ev.ToolUse.ID], ev.Facts...)
+		// Non-winning evaluations carry forensic facts (e.g. judge
+		// invocation cost from a script-session Skip) that should
+		// still reach the audit row. Capture them into a separate
+		// bucket so the OutcomeName lookup (which uses winning-only
+		// ev.Facts) doesn't pick up the early-stage outcome string
+		// by accident. MatchedTaskID lookup deliberately walks the
+		// full factsByTU below — a non-winning task-scope evaluator
+		// may have matched the task even if a later stage produced
+		// the winning verdict.
+		if !ev.Winning && len(ev.Facts) > 0 {
+			annotationsByTU[ev.ToolUse.ID] = append(annotationsByTU[ev.ToolUse.ID], ev.Facts...)
+		}
 	}
 	emitted := make(map[string]bool, len(toolUses))
 	for _, ev := range events {
@@ -142,13 +155,14 @@ func emitAuditEvents(
 		emitted[ev.ToolUse.ID] = true
 		winningV := result.PerToolUse[ev.ToolUse.ID]
 		out := conversation.AuditEvent{
-			ToolUse:       ev.ToolUse,
-			EvaluatorName: ev.EvaluatorName,
-			Outcome:       ev.Outcome,
-			Decision:      ev.Decision,
-			Reason:        winningV.Reason,
-			Facts:         ev.Facts,
-			Winning:       true,
+			ToolUse:         ev.ToolUse,
+			EvaluatorName:   ev.EvaluatorName,
+			Outcome:         ev.Outcome,
+			Decision:        ev.Decision,
+			Reason:          winningV.Reason,
+			Facts:           ev.Facts,
+			AnnotationFacts: annotationsByTU[ev.ToolUse.ID],
+			Winning:         true,
 		}
 		if out.Reason == "" {
 			out.Reason = ev.Reason
@@ -700,17 +714,24 @@ func (h *authorizationHoldHandler) Hold(ctx context.Context, req policies.Author
 
 // buildScriptSessionResolver pins the resolver to the proxy's
 // /api/proxy mount so the policy can recognize already-rewritten
-// script-session curls.
+// script-session curls, and threads the LLM judge through so the
+// evaluator can re-classify URL-unrecognized tool_uses.
 //
-// RewriteContext supplies RewriteOpts; nothing else is reachable from
-// this builder's scope.
-func buildScriptSessionResolver(rewrite llmproxy.RewriteContext) policies.ScriptSessionResolver {
+// RewriteContext supplies the resolver base URL (routing concern);
+// ScriptSessionContext supplies the judge (recognition concern).
+// Splitting them keeps the rewrite context focused on rewriting
+// rather than becoming a kitchen-sink of cross-stage dependencies.
+func buildScriptSessionResolver(rewrite llmproxy.RewriteContext, scriptSess llmproxy.ScriptSessionContext) policies.ScriptSessionResolver {
 	if rewrite.RewriteOpts.ResolverBaseURL == "" {
 		return nil
 	}
 	resolverBaseURL := rewrite.RewriteOpts.ResolverBaseURL
+	judge := scriptSess.Judge
 	return func(_ context.Context, _ conversation.ToolUse) *policies.ScriptSessionInputs {
-		return &policies.ScriptSessionInputs{ResolverBaseURL: resolverBaseURL}
+		return &policies.ScriptSessionInputs{
+			ResolverBaseURL: resolverBaseURL,
+			Judge:           judge,
+		}
 	}
 }
 

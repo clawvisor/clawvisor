@@ -6,54 +6,95 @@ import (
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge"
+	"github.com/clawvisor/clawvisor/internal/runtime/placeholdershape"
 	"mvdan.cc/sh/v3/syntax"
 )
 
 // ScriptSessionPrefix is the leading byte sequence of every script-session token.
 const ScriptSessionPrefix = "cv-script-"
 
-// scriptSessionToolUse reports whether a tool_use input looks like a
-// legitimate script-session call: a curl (or structured tool_use) that
-// carries a cv-script-prefixed caller token AND targets our resolver
-// mount. When true the inspector is skipped — the resolver enforces
-// session scope on every actual request.
-//
-// The threat model accepts that the AGENT could construct mischief
-// with their cv-script token (use --proxy attacker, pipe to a remote
-// sink, etc.). The mitigation for that lives at the mint-time intent
-// verifier, which evaluates the agent's stated `why` against the
-// task's purpose before issuing the token, and the resolver, which
-// enforces scope on every actual request. Parser-level checks on the
-// agent's curl shape (single-curl-only, no variable expansion, flag
-// allowlists) don't add real defense — the agent could use any of
-// python/node/perl/etc. to achieve the same effect, and the parser
-// only knows curl. The asymmetry was creating friction (rejecting
-// legitimate `while read id; do curl …/${id}; done` loops) without a
-// matching security benefit.
-//
-// What this function still enforces:
-//   - a cv-script-prefixed token must appear at the X-Clawvisor-Caller
-//     header position (so we don't skip the inspector on a tool_use
-//     that merely mentions the prefix in a string literal), AND
-//   - at least one curl URL literal prefix must target our resolver
-//     mount (host:port + path-prefix, with traversal rejection). This
-//     is recognition, not enforcement: if the URL doesn't look like
-//     ours, we let the inspector run as usual; we're not claiming the
-//     call is safe.
-//
-// resolverBaseURL is the proxy's /api/proxy mount (e.g.
-// "http://localhost:25297/api/proxy"). Empty disables passthrough.
 // ScriptSessionToolUse reports whether a tool_use is the agent's
 // already-shaped script-session call (cv-script caller token + URL
-// targeting our resolver mount). Used by the
-// policies.ScriptSessionEvaluator.
+// targeting our resolver mount). Thin wrapper over Recognize for
+// callers that only need the passthrough boolean; see Recognize for
+// the full threat model + recognition rules.
 func ScriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
+	return Recognize(input, resolverBaseURL) == Passthrough
+}
+
+// Recognition classifies a tool_use against the script-session shapes
+// the proxy understands. Three states:
+//
+//   - NoMatch — no script-session signal in this tool_use. The
+//     evaluator skips and the chain falls through to the next stage.
+//   - Passthrough — the call is shaped for the resolver (cv-script
+//     token at header position + URL targets resolver mount). The
+//     evaluator allows; the resolver enforces scope per request.
+//   - URLUnrecognized — clear evidence of a script-session attempt
+//     (cv-script token + autovault placeholder) but the URL the
+//     literal-prefix recognizer can see doesn't target the resolver.
+//     The dominant cause is shell variables hiding the URL and/or
+//     header value from the AST walker. Callers route this to the
+//     LLM judge for re-classification; when no judge is wired they
+//     fall through to the inspector's generic refusal.
+type Recognition int
+
+const (
+	NoMatch Recognition = iota
+	Passthrough
+	URLUnrecognized
+)
+
+// Recognize is the tri-state classifier. The function does the JSON
+// decode, resolver-target derivation, and (for bash shapes) bash AST
+// walk exactly once and folds both the allow path and the
+// block-with-continuation path into a single verdict.
+//
+// Threat model. The AGENT could construct mischief with their
+// cv-script token (use --proxy attacker, pipe to a remote sink, etc.).
+// The mitigation lives at the mint-time intent verifier, which
+// evaluates the agent's stated `why` against the task's purpose
+// before issuing the token, and the resolver, which enforces scope on
+// every actual request. Parser-level checks on the agent's curl shape
+// (single-curl-only, no variable expansion, flag allowlists) don't
+// add real defense — the agent could use python/node/perl/etc. to
+// achieve the same effect, and the parser only knows curl.
+//
+// Passthrough recognition requires:
+//   - a cv-script-prefixed token at the X-Clawvisor-Caller header
+//     position (NOT a substring-anywhere match), AND
+//   - a URL literal prefix that targets our resolver mount (host:port
+//     + path-prefix, with traversal rejection).
+//
+// URLUnrecognized recognition fires when the agent clearly intended a
+// script-session call but the passthrough recognizer can't see the
+// URL:
+//
+//  1. Structured shape: cv-script token in the headers map but the
+//     top-level `url` either missing or off-resolver (traversal,
+//     wrong host, etc.). Variable expansion cannot happen in JSON
+//     literals, so a missing/off-host `url` IS the failure mode.
+//  2. Bash with literal headers: AST walker pulls a cv-script token
+//     out of a `-H`/`--header` value, but no curl URL literal in any
+//     arg targets the resolver. URL-only variable-ization.
+//  3. Bash with everything variable-ized: AST walker sees neither.
+//     Fall back to a substring scan for ScriptSessionPrefix in the
+//     cmd AND an autovault placeholder anywhere in the marshaled
+//     input. Either signal alone is too thin (prose mentions,
+//     comments); both together are strong evidence of intent. This
+//     is recognition, not enforcement — the continuation message is
+//     correctable guidance, not a security boundary.
+//
+// resolverBaseURL is the proxy's /api/proxy mount (e.g.
+// "http://localhost:25297/api/proxy"). Empty disables recognition.
+func Recognize(input json.RawMessage, resolverBaseURL string) Recognition {
 	if len(input) == 0 || resolverBaseURL == "" {
-		return false
+		return NoMatch
 	}
 	proxyHost, proxyPath := resolverPassthroughTarget(resolverBaseURL)
 	if proxyHost == "" {
-		return false
+		return NoMatch
 	}
 	var raw struct {
 		Headers map[string]json.RawMessage `json:"headers,omitempty"`
@@ -62,39 +103,66 @@ func ScriptSessionToolUse(input json.RawMessage, resolverBaseURL string) bool {
 		Command string                     `json:"command,omitempty"`
 	}
 	if err := json.Unmarshal(input, &raw); err != nil {
-		return false
+		return NoMatch
 	}
-	// Structured tool shape: top-level `url` + `headers` map.
-	if headerHasScriptSessionToken(raw.Headers) && urlTargetsResolver(raw.URL, proxyHost, proxyPath) {
-		return true
+	// Structured tool shape: cv-script token at the header position is
+	// dispositive of intent; the URL field then decides allow vs.
+	// block-with-continuation.
+	if headerHasScriptSessionToken(raw.Headers) {
+		if urlTargetsResolver(raw.URL, proxyHost, proxyPath) {
+			return Passthrough
+		}
+		return URLUnrecognized
 	}
-	// Bash/exec shape: walk the parsed cmd for any curl invocation
-	// with a cv-script caller header AND a URL whose literal prefix
-	// targets our resolver mount. Variable expansion after the
-	// literal prefix is fine — the resolver enforces scope on the
-	// actual expanded URL. Pipelines, multi-statement scripts,
-	// redirects, and additional shell wrappers are all allowed; the
-	// resolver is the perimeter.
 	cmd := raw.Cmd
 	if cmd == "" {
 		cmd = raw.Command
 	}
-	if cmd == "" {
-		return false
-	}
-	urls, headers := extractCurlIntent(cmd)
-	if len(urls) == 0 || len(headers) == 0 {
-		return false
-	}
-	if !headerValuesHaveScriptSessionToken(headers) {
-		return false
-	}
-	for _, u := range urls {
-		if urlTargetsResolver(u, proxyHost, proxyPath) {
-			return true
+	if cmd != "" {
+		// Bash AST walk + literal-prefix checks. Skipped entirely for
+		// tool_uses without a cmd field (Write/Edit/etc.) — those
+		// fall through to the marshaled-input substring fallback
+		// below.
+		urls, headers := extractCurlIntent(cmd)
+		headerHasToken := headerValuesHaveScriptSessionToken(headers)
+		urlAtResolver := false
+		for _, u := range urls {
+			if urlTargetsResolver(u, proxyHost, proxyPath) {
+				urlAtResolver = true
+				break
+			}
+		}
+		if headerHasToken && urlAtResolver {
+			return Passthrough
+		}
+		if headerHasToken {
+			return URLUnrecognized
 		}
 	}
-	return false
+	// Substring fallback. Two distinct shapes land here:
+	//
+	//   1. Variable-ized bash: cmd is non-empty but the AST walk
+	//      above couldn't see a literal cv-script header or
+	//      resolver URL because they're stashed in shell variables.
+	//   2. Write/Edit staging: the tool_use has no cmd at all — the
+	//      agent is writing the script (which embeds the cv-script
+	//      token and autovault placeholder in its content) to disk
+	//      for later execution. Without this branch, the Write
+	//      itself would never reach the judge; the inspector would
+	//      hit it instead and refuse on the boundary check.
+	//
+	// Both shapes require BOTH a complete `cv-script-<body>` token
+	// AND an autovault placeholder anywhere in the marshaled input.
+	// `scriptjudge.HasToken` shares the canonical regex with
+	// `ExtractToken` so the recognizer gate and the token extraction
+	// can't drift apart.
+	if !scriptjudge.HasToken(string(input)) {
+		return NoMatch
+	}
+	if !placeholdershape.ContainsAutovault(input) {
+		return NoMatch
+	}
+	return URLUnrecognized
 }
 
 // headerValuesHaveScriptSessionToken reports whether any
@@ -359,14 +427,20 @@ func urlTargetsResolver(rawURL, proxyHost, pathPrefix string) bool {
 }
 
 // hasScriptSessionToken reports whether v is a script-session caller-
-// auth value: a ScriptSessionPrefix-prefixed token, optionally wrapped
+// auth value: a COMPLETE `cv-script-<body>` token, optionally wrapped
 // in `Bearer ` (case-sensitive — Anthropic + OpenAI both use that
 // exact casing, and we don't want to encourage weirder forms).
+//
+// Uses scriptjudge.IsToken (anchored regex) on the trimmed value so
+// malformed shapes like `Bearer token=cv-script-abc` don't falsely
+// match — the resolver middleware later rejects those as invalid
+// caller-auth values, and recognizing them here as session intent
+// would either skip the inspector or fire the judge unnecessarily.
 func hasScriptSessionToken(v string) bool {
 	v = strings.TrimSpace(v)
 	const bearer = "Bearer "
 	if strings.HasPrefix(v, bearer) {
 		v = strings.TrimSpace(v[len(bearer):])
 	}
-	return strings.HasPrefix(v, ScriptSessionPrefix)
+	return scriptjudge.IsToken(v)
 }

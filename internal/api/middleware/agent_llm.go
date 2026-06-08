@@ -379,12 +379,32 @@ func handleScriptSessionAuth(w http.ResponseWriter, r *http.Request, st store.St
 			writeAuthError(w, http.StatusForbidden, "SCRIPT_SESSION_BYTES_EXCEEDED",
 				"script session response-bytes cap exhausted; mint a new session if more data is genuinely required")
 		case errors.Is(err, llmproxy.ErrScriptSessionScopeMismatch):
-			logger.WarnContext(r.Context(), "lite-proxy: script session scope mismatch",
+			// Surface the offending field. Without per-field context,
+			// agents debug the wrong scope axis (host vs. path vs.
+			// method) and burn turns. The structured detail lets the
+			// agent re-mint with the right delta.
+			var detail *llmproxy.ScopeMismatchDetail
+			scopeMsg := "request host/method/path/placeholder is outside the session's approved scope"
+			logFields := []any{
 				"host", req.Host, "method", req.Method, "path", req.Path,
 				"placeholder", placeholder, "remote_addr", r.RemoteAddr,
-			)
-			writeAuthError(w, http.StatusForbidden, "SCRIPT_SESSION_SCOPE_MISMATCH",
-				"request host/method/path/placeholder is outside the session's approved scope")
+			}
+			if errors.As(err, &detail) {
+				scopeMsg = detail.AgentGuidance()
+				// Surface the offending field + the session's bound
+				// value(s) as discrete structured fields so log
+				// consumers don't have to parse the free-form
+				// detail. Without per-field context, agents debug
+				// the wrong scope axis (host vs. path vs. method)
+				// and burn turns.
+				logFields = append(logFields,
+					"mismatch_field", detail.Field,
+					"mismatch_got", detail.Got,
+					"mismatch_expected", detail.Expected,
+				)
+			}
+			logger.WarnContext(r.Context(), "lite-proxy: script session scope mismatch", logFields...)
+			writeAuthError(w, http.StatusForbidden, "SCRIPT_SESSION_SCOPE_MISMATCH", scopeMsg)
 		default:
 			logger.WarnContext(r.Context(), "lite-proxy: script session authorize failed", "err", err.Error())
 			writeAuthError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",

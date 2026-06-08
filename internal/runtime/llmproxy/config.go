@@ -17,6 +17,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/intentverify"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -151,6 +152,20 @@ type RewriteContext struct {
 	Store        store.Store
 }
 
+// ScriptSessionContext groups the script-session evaluator's
+// dependencies. Carries the use-time LLM judge that re-classifies
+// tool_uses the deterministic recognizer flags as URL-unrecognized
+// (variable-ized URL/header, Write+Bash staging, language wrappers).
+// Nil judge disables the LLM path — the chain falls through to the
+// inspector's generic refusal.
+//
+// Lives in its own sub-context because the judge is a recognition
+// dependency, not a rewrite dependency. The resolver base URL still
+// comes from RewriteContext.RewriteOpts (it's a routing concern).
+type ScriptSessionContext struct {
+	Judge scriptjudge.Judge
+}
+
 // RoutingContext groups the response-routing dependencies: the
 // control-plane synthetic host, the first-turn routing notice, and the
 // registry of response rewriters.
@@ -175,6 +190,7 @@ type PostprocessConfig struct {
 	AuthorizationContext
 	ApprovalContext
 	RewriteContext
+	ScriptSessionContext
 	RoutingContext
 }
 

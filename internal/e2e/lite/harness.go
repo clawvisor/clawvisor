@@ -18,6 +18,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge/llmjudge"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -160,6 +161,28 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	h.InlineTaskCreator = recorder
 	h.TaskScope = llmproxy.NewStoreTaskScopeChecker(st)
+
+	// Use-time script-session judge: when the agent's tool_use carries
+	// cv-script + autovault signals but the literal-prefix recognizer
+	// can't see the URL (variable-ization, Write+Bash staging, language
+	// wrappers), the judge re-classifies via an LLM and either allows
+	// passthrough (resolver still enforces scope) or returns specific
+	// agent-actionable guidance.
+	//
+	// The judge runs at the proxy layer independent of which driver
+	// the test is exercising, so we wire it from whichever LLM key
+	// is available — preferring Anthropic (Haiku is the canonical
+	// judge model) and falling back to OpenAI when only that key is
+	// set. Without this fallback, tests running with only an OpenAI
+	// key would silently bypass every judge code path the
+	// script_session_inline_fanout / script_session_long_fanout_no_staging
+	// scenarios are meant to exercise.
+	if judgeCfg, ok := buildJudgeConfig(keys); ok {
+		h.ScriptSessionJudge = llmjudge.New(
+			func() config.VerificationConfig { return judgeCfg },
+			logger,
+		)
+	}
 
 	// Script sessions: the agent can mint one via the control
 	// endpoint and use it as caller-auth on later resolver calls. We
@@ -350,6 +373,39 @@ func (h *Harness) CountActiveTasksForAgent(ctx context.Context) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// buildJudgeConfig returns a VerificationConfig wired against the
+// first available LLM key. Anthropic takes precedence because Haiku
+// is the canonical judge model; OpenAI is the fallback for runs that
+// only carry an OpenAI key. Returns ok=false when neither key is
+// set, so the caller leaves the judge unwired.
+func buildJudgeConfig(keys Keys) (config.VerificationConfig, bool) {
+	switch {
+	case keys.Anthropic != "":
+		return config.VerificationConfig{
+			LLMProviderConfig: config.LLMProviderConfig{
+				Enabled:        true,
+				Provider:       "anthropic",
+				Endpoint:       "https://api.anthropic.com/v1",
+				APIKey:         keys.Anthropic,
+				Model:          "claude-haiku-4-5-20251001",
+				TimeoutSeconds: 15,
+			},
+		}, true
+	case keys.OpenAI != "":
+		return config.VerificationConfig{
+			LLMProviderConfig: config.LLMProviderConfig{
+				Enabled:        true,
+				Provider:       "openai",
+				Endpoint:       "https://api.openai.com/v1",
+				APIKey:         keys.OpenAI,
+				Model:          "gpt-5-mini",
+				TimeoutSeconds: 15,
+			},
+		}, true
+	}
+	return config.VerificationConfig{}, false
 }
 
 type testLogWriter struct{ t *testing.T }

@@ -351,6 +351,126 @@ func TestMemoryScriptSession_RejectsAdjacentPath(t *testing.T) {
 	}
 }
 
+// TestScopeMismatchDetail confirms the structured error carries the
+// offending field + values, AND that errors.Is still satisfies the
+// sentinel comparison so existing call sites don't regress.
+func TestScopeMismatchDetail(t *testing.T) {
+	c := NewMemoryScriptSessionCache()
+	tok := mustMintSession(t, c, sampleSession())
+
+	cases := []struct {
+		name       string
+		req        ScriptSessionRequest
+		wantField  string
+		wantGot    string
+		wantExpect []string
+	}{
+		{
+			name:       "host mismatch carries actual vs bound host",
+			req:        ScriptSessionRequest{Host: "evil.example", Method: "GET", Path: "/gmail/v1/users/me/messages", Placeholder: "autovault_x"},
+			wantField:  "host",
+			wantGot:    "evil.example",
+			wantExpect: []string{"gmail.googleapis.com"},
+		},
+		{
+			name:       "method mismatch carries actual + allowed list",
+			req:        ScriptSessionRequest{Host: "gmail.googleapis.com", Method: "POST", Path: "/gmail/v1/users/me/messages", Placeholder: "autovault_x"},
+			wantField:  "method",
+			wantGot:    "POST",
+			wantExpect: []string{"GET"},
+		},
+		{
+			name:       "path mismatch carries actual + path_prefixes",
+			req:        ScriptSessionRequest{Host: "gmail.googleapis.com", Method: "GET", Path: "/gmail/v1/users/me/labels", Placeholder: "autovault_x"},
+			wantField:  "path",
+			wantGot:    "/gmail/v1/users/me/labels",
+			wantExpect: []string{"/gmail/v1/users/me/messages"},
+		},
+		{
+			name:       "placeholder mismatch carries actual vs bound placeholder",
+			req:        ScriptSessionRequest{Host: "gmail.googleapis.com", Method: "GET", Path: "/gmail/v1/users/me/messages", Placeholder: "autovault_wrong"},
+			wantField:  "placeholder",
+			wantGot:    "autovault_wrong",
+			wantExpect: []string{"autovault_x"},
+		},
+		{
+			name:       "placeholder missing returns empty Got + bound expectation",
+			req:        ScriptSessionRequest{Host: "gmail.googleapis.com", Method: "GET", Path: "/gmail/v1/users/me/messages"},
+			wantField:  "placeholder",
+			wantGot:    "",
+			wantExpect: []string{"autovault_x"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := c.Authorize(context.Background(), tok, tc.req)
+			if err == nil {
+				t.Fatalf("expected scope mismatch, got nil")
+			}
+			if !errors.Is(err, ErrScriptSessionScopeMismatch) {
+				t.Errorf("errors.Is(err, ErrScriptSessionScopeMismatch) = false; expected legacy sentinel match to still work")
+			}
+			var detail *ScopeMismatchDetail
+			if !errors.As(err, &detail) {
+				t.Fatalf("errors.As(*ScopeMismatchDetail) = false; got %T %v", err, err)
+			}
+			if detail.Field != tc.wantField {
+				t.Errorf("Field = %q, want %q", detail.Field, tc.wantField)
+			}
+			if detail.Got != tc.wantGot {
+				t.Errorf("Got = %q, want %q", detail.Got, tc.wantGot)
+			}
+			if !equalStringSlices(detail.Expected, tc.wantExpect) {
+				t.Errorf("Expected = %v, want %v", detail.Expected, tc.wantExpect)
+			}
+			// Error text should be specific enough to be self-describing.
+			if !strings.Contains(detail.Error(), tc.wantField) {
+				t.Errorf("Error() %q should mention field %q", detail.Error(), tc.wantField)
+			}
+		})
+	}
+}
+
+// TestScopeMismatchDetail_AgentGuidance pins the per-field agent
+// continuation text. The method is the canonical formatter; the
+// middleware delegates to it, so this is where the per-field strings
+// are tested.
+func TestScopeMismatchDetail_AgentGuidance(t *testing.T) {
+	cases := []struct {
+		name        string
+		detail      *ScopeMismatchDetail
+		wantContain string
+	}{
+		{"nil receiver", nil, "outside the session's approved scope"},
+		{"host", &ScopeMismatchDetail{Field: "host", Got: "evil.example", Expected: []string{"api.github.com"}}, "target host mismatch"},
+		{"method", &ScopeMismatchDetail{Field: "method", Got: "POST", Expected: []string{"GET"}}, "method mismatch"},
+		{"path", &ScopeMismatchDetail{Field: "path", Got: "/x", Expected: []string{"/y"}}, "path mismatch"},
+		{"placeholder mismatch", &ScopeMismatchDetail{Field: "placeholder", Got: "autovault_wrong", Expected: []string{"autovault_right"}}, "placeholder mismatch"},
+		{"placeholder missing", &ScopeMismatchDetail{Field: "placeholder", Expected: []string{"autovault_right"}}, "placeholder missing"},
+		{"unknown field", &ScopeMismatchDetail{Field: "weird"}, "outside the session's approved scope"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.detail.AgentGuidance()
+			if !strings.Contains(got, tc.wantContain) {
+				t.Errorf("AgentGuidance() = %q, want substring %q", got, tc.wantContain)
+			}
+		})
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestMemoryScriptSession_RejectsBadPlaceholder(t *testing.T) {
 	c := NewMemoryScriptSessionCache()
 	tok := mustMintSession(t, c, sampleSession())
