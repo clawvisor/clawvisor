@@ -14,16 +14,27 @@ package placeholdershape
 import "regexp"
 
 // AutovaultRE matches an autovault placeholder substring anywhere in
-// a blob of text. The pattern allows word-character context on either
-// side because real placeholders appear inside Authorization headers,
-// shell variable assignments, JSON values, etc. — never as
-// stand-alone tokens.
+// a blob of text. Anchored to the `autovault` literal so extraction
+// (FindAllAutovault) returns just the placeholder, never the
+// surrounding token-alphabet context. Detection (MatchString/Match)
+// is unaffected — the pattern still matches whenever the placeholder
+// appears in a larger string.
 //
-// Format: optional word-character lead-in, the literal "autovault",
-// then at least one body char (alphanumeric, dot, underscore, colon,
-// dash). The body is intentionally permissive so future placeholder
-// formats (e.g. `autovault_v2_<service>_<id>`) still match.
-var AutovaultRE = regexp.MustCompile(`[A-Za-z0-9._:-]*autovault[A-Za-z0-9._:-]+`)
+// Format: the literal "autovault" followed by at least one body char
+// (alphanumeric, dot, underscore, colon, dash). The body is
+// permissive so future placeholder formats (e.g.
+// `autovault_v2_<service>_<id>`) still match. Underscore is in the
+// body class so real placeholders like `autovault_<svc>_<id>` are
+// matched as a single token.
+//
+// Previously this regex allowed `[A-Za-z0-9._:-]*` as an optional
+// prefix before `autovault`, which let FindAllAutovault return
+// strings like `xxxautovault_x` (extracted token glued to surrounding
+// context). Detection paths didn't care; extraction paths (audit-row
+// placeholder lists, autovault/swap's resolve(candidate)) silently
+// corrupted. The anchored form fixes that without affecting any
+// MatchString/Match call site.
+var AutovaultRE = regexp.MustCompile(`autovault[A-Za-z0-9._:-]+`)
 
 // ContainsAutovault reports whether raw carries an autovault
 // placeholder substring. Byte-flavored variant for callers that
