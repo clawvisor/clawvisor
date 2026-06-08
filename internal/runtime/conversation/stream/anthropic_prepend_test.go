@@ -179,3 +179,23 @@ func TestPrependAnthropicAssistantNotice_DoesNotAddMissingIndex(t *testing.T) {
 		t.Fatalf("missing upstream index should not be synthesized:\n%s", got)
 	}
 }
+
+func TestPrependAnthropicAssistantNotice_NoMessageStartDoesNotAppendNotice(t *testing.T) {
+	upstream := strings.Join([]string{
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	var buf bytes.Buffer
+	if err := stream.PrependAnthropicAssistantNotice(&buf, strings.NewReader(upstream), "[Clawvisor] notice"); err != nil {
+		t.Fatalf("PrependAnthropicAssistantNotice: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, "[Clawvisor] notice") {
+		t.Fatalf("notice must not be appended after message_stop without message_start:\n%s", got)
+	}
+	if got != upstream {
+		t.Fatalf("malformed stream should pass through unchanged\n--- want ---\n%s\n--- got ---\n%s", upstream, got)
+	}
+}

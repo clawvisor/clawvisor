@@ -3,6 +3,7 @@ package postproc
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
@@ -88,7 +89,31 @@ func (s *postprocessSession) dropCommitted(ctx context.Context, capture *pipelin
 	if s == nil || s.finalizer == nil || capture == nil {
 		return nil
 	}
-	return s.finalizer.DropCommittedHold(ctx, *capture)
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	return s.finalizer.DropCommittedHold(cleanupCtx, *capture)
+}
+
+func (s *postprocessSession) dropCommittedAndRollback(ctx context.Context, capture *pipeline.HoldCapture) error {
+	if s == nil || s.finalizer == nil || capture == nil {
+		return nil
+	}
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	return s.finalizer.DropCommittedAndRollback(cleanupCtx, *capture)
+}
+
+func (s *postprocessSession) dropAllCommittedAndRollback(ctx context.Context) error {
+	if s == nil || s.finalizer == nil {
+		return nil
+	}
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	return s.finalizer.DropAllCommittedAndRollback(cleanupCtx)
+}
+
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 }
 
 func (s *postprocessSession) captures() []pipeline.HoldCapture {

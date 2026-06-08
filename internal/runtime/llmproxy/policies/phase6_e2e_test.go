@@ -97,6 +97,7 @@ func TestPhase6_E2E_FullGoogleChain(t *testing.T) {
 	evalChain := []pipeline.ToolUseEvaluator{
 		policies.NewInspectorChain(nil, nil),
 		policies.NewTaskScopeEvaluator(nil),
+		policies.NewPassThroughEvaluator(),
 	}
 	geminiRes := &chainIntegrationResponse{provider: conversation.ProviderGoogle}
 	toolResult, err := pipeline.EvaluateToolUses(
@@ -110,7 +111,7 @@ func TestPhase6_E2E_FullGoogleChain(t *testing.T) {
 		t.Fatalf("EvaluateToolUses on Gemini tool_uses: %v", err)
 	}
 	if v := toolResult.PerToolUse["call_g1"]; v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("Gemini tool_use Outcome = %q, want Allow (default for all-Skip)", v.Outcome)
+		t.Errorf("Gemini tool_use Outcome = %q, want Allow (pass-through tail)", v.Outcome)
 	}
 
 	// --- Phase 6: forwarder resolves Gemini upstream URL ---

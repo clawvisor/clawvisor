@@ -24,6 +24,7 @@ func TestComposeToolUseEvaluatorChain_AssemblesStages(t *testing.T) {
 		"task_scope",
 		"intent_verify",
 		"credential_rewrite",
+		"pass_through",
 	}
 	if len(chain) != len(wantNames) {
 		t.Fatalf("chain length = %d, want %d", len(chain), len(wantNames))
@@ -37,8 +38,8 @@ func TestComposeToolUseEvaluatorChain_AssemblesStages(t *testing.T) {
 
 // TestComposeToolUseEvaluatorChain_EndToEndOnTriggerMiss pins the
 // full chain's behavior on a plain (no autovault) tool_use with all
-// resolvers nil — every stage should Skip, and the orchestrator's
-// default-Allow fallback should win.
+// resolvers nil — every gating stage should Skip, and the explicit
+// pass-through tail should win.
 func TestComposeToolUseEvaluatorChain_EndToEndOnTriggerMiss(t *testing.T) {
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
@@ -64,7 +65,7 @@ func TestComposeToolUseEvaluatorChain_EndToEndOnTriggerMiss(t *testing.T) {
 
 	v := result.PerToolUse[tu.ID]
 	if v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("Outcome = %q, want default-Allow", v.Outcome)
+		t.Errorf("Outcome = %q, want pass-through Allow", v.Outcome)
 	}
 }
 

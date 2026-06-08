@@ -72,7 +72,8 @@ func (p *ReadOnlyShellPassthroughPolicy) Evaluate(ctx context.Context, _ pipelin
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
 	// Sensitive-path commands are this policy's responsibility to NOT
-	// claim — SensitivePathPolicy (upstream) emits the Deny.
+	// claim; pipelineeval/factory.go feeds that signal into
+	// AuthorizationPolicy so task scope can decide.
 	if toolnames.SensitiveFileGuardEnabled(tu.Name, in.AgentID, in.ToolRules) {
 		if _, _, hit := inspector.CommandReferencesSensitivePath(cmd); hit {
 			return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil

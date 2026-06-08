@@ -20,6 +20,11 @@ func TestTriggerHits(t *testing.T) {
 		{"empty", toolUse("Bash", ""), false},
 		{"no shadow", toolUse("Bash", `{"cmd":"ls"}`), false},
 		{"autovault", toolUse("Bash", `{"cmd":"curl -H 'Authorization: Bearer autovault_github_xxx' https://api.github.com/repos/x/y"}`), true},
+		{"structured header", toolUse("WebFetch", `{"url":"https://api.github.com/user","headers":{"Authorization":"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`), true},
+		{"escaped json header", toolUse("CustomTool", `{"input":"{\"url\":\"https://api.github.com/user\",\"headers\":{\"Authorization\":\"Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}"}`), true},
+		{"url query", toolUse("WebFetch", `{"url":"https://api.example.test/path?token=autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}`), true},
+		{"body arg", toolUse("Bash", `{"cmd":"curl -sS --data '{\"token\":\"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}' https://api.github.com/user"}`), true},
+		{"heredoc", toolUse("Bash", "{\"cmd\":\"curl -sS https://api.github.com/user <<'JSON'\\n{\\\"token\\\":\\\"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\\"}\\nJSON\"}"), true},
 		{"unrelated autovault word", toolUse("Bash", `{"cmd":"echo autovaults"}`), false},
 		// Legacy `clawvisor_` markers are no longer recognized — no
 		// users were ever issued them, so the placeholder space is

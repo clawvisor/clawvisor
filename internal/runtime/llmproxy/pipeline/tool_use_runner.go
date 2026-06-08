@@ -47,7 +47,8 @@ func (m *captureMutator) ReplaceWithText(text string) error {
 // Final provider adapters call ToolUseVerdict.ContinuationToolResultContent
 // when they need the provider-specific tool_result text payload.
 // The orchestrator guarantees only one tool_use carries Continue, so
-// siblings fall back to Allowed.
+// later siblings receive explicit Deny verdicts rather than bypassing
+// evaluators that did not run.
 func RunToolUseEvaluators(
 	ctx context.Context,
 	res ReadOnlyResponse,

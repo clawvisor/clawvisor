@@ -691,6 +691,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			h.Logger.WarnContext(r.Context(), "lite-proxy inline task augmentation pipeline failed",
 				"request_id", requestID, "agent_id", agent.ID, "err", err.Error())
+			auditParams["inline_task_history_augment_error"] = liteProxyAuditErrorDetail(err)
 		} else {
 			body = result.FinalBody
 			for k, v := range result.AuditParams {
@@ -827,15 +828,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// response-write protocol. Mirrors what the legacy
 			// maybeHandleLiteApprovalRelease method did inline.
 			auditStatus = sc.StatusCode
-			if decision, ok := preResult.AuditParams["approval_release_decision"].(string); ok {
-				auditDecide = decision
-			}
-			if outcome, ok := preResult.AuditParams["approval_release_outcome"].(string); ok {
-				auditOutcome = outcome
-			}
-			if reason, ok := preResult.AuditParams["approval_release_reason"].(string); ok {
-				auditReason = reason
-			}
+			auditDecide, _ = preResult.AuditParams["approval_release_decision"].(string)
+			auditOutcome, _ = preResult.AuditParams["approval_release_outcome"].(string)
+			auditReason, _ = preResult.AuditParams["approval_release_reason"].(string)
 			// The decision-input-load-failed sentinel translates to the
 			// DECISION_INPUT_UNAVAILABLE error response shape.
 			if auditOutcome == "decision_input_load_failed" {
@@ -1215,7 +1210,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "POSTPROCESS_STREAM_ERROR",
 						"couldn't process the upstream stream. Please retry; details are in the Clawvisor audit log.")
 				} else {
-					llmproxy.WriteStreamError(streamW, r, provider, processed.StreamingResult,
+					postproc.WriteStreamError(streamW, r, provider, processed.StreamingResult,
 						"[Clawvisor] The upstream connection was lost before the response completed. The content above may be incomplete. Please retry; details are in the Clawvisor audit log.")
 				}
 				return
@@ -1248,11 +1243,11 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				case contErr != nil:
 					h.Logger.WarnContext(r.Context(), "lite-proxy streaming continuation failed",
 						"request_id", requestID, "agent_id", agent.ID, "err", contErr.Error())
+					auditStatus = http.StatusBadGateway
+					auditOutcome = "streaming_continuation_failed"
+					auditReason = contErr.Error()
 					if !streamResp.WroteHeader() {
-						clearHeaders(w.Header())
-						auditStatus = http.StatusBadGateway
-						auditOutcome = "streaming_continuation_failed"
-						auditReason = contErr.Error()
+						clearHeadersPreservingRequestIDs(w.Header())
 						h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "STREAMING_CONTINUATION_FAILED",
 							"couldn't continue the streamed tool result. Please retry; details are in the Clawvisor audit log.")
 					}
@@ -1265,11 +1260,11 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 							"skipped_reason", contFinal.SkippedReason,
 							"body_bytes", len(contFinal.Body),
 						)
+						auditStatus = http.StatusBadGateway
+						auditOutcome = "streaming_continuation_postprocess_error"
+						auditReason = contFinal.SkippedReason
 						if !streamResp.WroteHeader() {
-							clearHeaders(w.Header())
-							auditStatus = http.StatusBadGateway
-							auditOutcome = "streaming_continuation_postprocess_error"
-							auditReason = contFinal.SkippedReason
+							clearHeadersPreservingRequestIDs(w.Header())
 							h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "STREAMING_CONTINUATION_POSTPROCESS_ERROR",
 								"couldn't process the streamed continuation response. Please retry; details are in the Clawvisor audit log.")
 						}
@@ -1294,11 +1289,11 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 						if spliceErr != nil {
 							h.Logger.WarnContext(r.Context(), "lite-proxy streaming continuation splice failed",
 								"request_id", requestID, "agent_id", agent.ID, "err", spliceErr.Error())
+							auditStatus = http.StatusBadGateway
+							auditOutcome = "streaming_continuation_splice_failed"
+							auditReason = spliceErr.Error()
 							if !streamResp.WroteHeader() {
-								clearHeaders(w.Header())
-								auditStatus = http.StatusBadGateway
-								auditOutcome = "streaming_continuation_splice_failed"
-								auditReason = spliceErr.Error()
+								clearHeadersPreservingRequestIDs(w.Header())
 								h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "STREAMING_CONTINUATION_SPLICE_FAILED",
 									"couldn't merge the streamed continuation response. Please retry; details are in the Clawvisor audit log.")
 							}
@@ -1307,6 +1302,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 						if _, writeErr := streamW.Write(continuationBody); writeErr != nil {
 							h.Logger.WarnContext(r.Context(), "lite-proxy streaming continuation write failed",
 								"request_id", requestID, "agent_id", agent.ID, "err", writeErr.Error())
+							auditStatus = http.StatusBadGateway
+							auditOutcome = "streaming_continuation_write_failed"
+							auditReason = writeErr.Error()
 							return
 						}
 					}
@@ -3224,7 +3222,14 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 	if err != nil {
 		h.Logger.WarnContext(r.Context(), "lite-proxy secret hold pipeline failed",
 			"agent_id", agent.ID, "err", err.Error())
-		return body, false
+		auditParams["secret_hold_error"] = llmproxy.SafeAuditErrorDetail(err.Error())
+		*auditStatus = http.StatusInternalServerError
+		*auditDecide = "deny"
+		*auditOutcome = "secret_hold_failed"
+		*auditReason = "secret hold failed"
+		h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusInternalServerError, "SECRET_HOLD_FAILED",
+			"couldn't evaluate inbound secret handling. Please retry; details are in the Clawvisor audit log.")
+		return body, true
 	}
 	for k, v := range holdResult.AuditParams {
 		auditParams[k] = v
@@ -4584,6 +4589,13 @@ func truncateForLog(s string, max int) string {
 	return s[:max] + "...<truncated>"
 }
 
+func liteProxyAuditErrorDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	return llmproxy.SafeAuditErrorDetail(err.Error())
+}
+
 func firstNonEmptyLog(values ...string) string {
 	for _, v := range values {
 		if strings.TrimSpace(v) != "" {
@@ -4676,7 +4688,7 @@ func streamingPostprocessErrorFrame(r *http.Request, provider conversation.Provi
 				},
 			},
 		})
-		return []byte("event: response.failed\ndata: " + string(body) + "\n\ndata: [DONE]\n\n"), true
+		return []byte("event: response.failed\ndata: " + string(body) + "\n\n"), true
 	case conversation.ProviderGoogle:
 		body, _ := json.Marshal(map[string]any{
 			"error": map[string]any{

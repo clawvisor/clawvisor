@@ -101,6 +101,7 @@ func TestPhase6_StubProvider_ToolUseEvaluatorChainAcceptsNewProvider(t *testing.
 		policies.NewInspectorChain(nil, nil), // nil inspector → Skip
 		policies.NewTaskScopeEvaluator(nil),  // nil resolver → Skip
 		policies.NewIntentVerifyEvaluator(nil),
+		policies.NewPassThroughEvaluator(),
 	}
 
 	res := &chainIntegrationResponse{provider: providerStubGoogle}
@@ -115,9 +116,9 @@ func TestPhase6_StubProvider_ToolUseEvaluatorChainAcceptsNewProvider(t *testing.
 		t.Fatalf("EvaluateToolUses rejected stub provider: %v", err)
 	}
 
-	// All Skip → default-Allow.
+	// Gating evaluators Skip → explicit pass-through tail allows.
 	if v := result.PerToolUse["toolu_g1"]; v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("stub provider tool_use Outcome = %q, want Allow (default for all-Skip)", v.Outcome)
+		t.Errorf("stub provider tool_use Outcome = %q, want Allow (pass-through tail)", v.Outcome)
 	}
 }
 

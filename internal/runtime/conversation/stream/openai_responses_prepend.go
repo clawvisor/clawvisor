@@ -53,7 +53,7 @@ func PrependOpenAIResponsesAssistantNotice(dst io.Writer, src io.Reader, notice 
 
 		// After notice injection, every event carrying output_index
 		// must shift by +1 to make room at index 0.
-		if injected && ev.Meta.OpenAIOutputIndex >= 0 {
+		if injected && ev.Meta.OpenAIOutputIndex >= 0 && ev.Kind != KindResponseEnd {
 			shifted := ev.Meta.OpenAIOutputIndex + 1
 			ev.FieldPatches = append(ev.FieldPatches, FieldPatch{
 				JSONPath: "output_index",
@@ -66,18 +66,13 @@ func PrependOpenAIResponsesAssistantNotice(dst io.Writer, src io.Reader, notice 
 			if err != nil {
 				return err
 			}
-			ev.FieldPatches = nil
 			if ok {
 				ev.RawBytes = raw
+				ev.FieldPatches = nil
 			}
 		}
 
 		if err := e.Encode(ev); err != nil {
-			return err
-		}
-	}
-	if !injected {
-		if err := writeOpenAIResponsesNoticeEnvelope(dst, notice); err != nil {
 			return err
 		}
 	}
@@ -198,31 +193,65 @@ func openAIResponsesNoticeItem(notice string) map[string]any {
 	}
 }
 
+// rewriteFirstSSEDataPayload rewrites the first SSE event's joined data
+// payload and emits it back as one data line. It is intended for the
+// OpenAI Responses JSON event shape; callers that need to preserve
+// multi-line data encoding should not use this helper.
 func rewriteFirstSSEDataPayload(raw []byte, rewrite func([]byte) ([]byte, bool, error)) ([]byte, bool, error) {
 	lines := bytes.SplitAfter(raw, []byte{'\n'})
+	type dataLine struct {
+		lineStart  int
+		lineEnd    int
+		valueStart int
+		valueEnd   int
+	}
+	var dataLines []dataLine
 	offset := 0
 	for _, line := range lines {
 		trimmed := bytes.TrimRight(line, "\r\n")
-		if !bytes.HasPrefix(trimmed, []byte("data:")) {
-			offset += len(line)
-			continue
+		if bytes.HasPrefix(trimmed, []byte("data:")) {
+			valueStart := offset + len("data:")
+			for valueStart < offset+len(trimmed) && (raw[valueStart] == ' ' || raw[valueStart] == '\t') {
+				valueStart++
+			}
+			dataLines = append(dataLines, dataLine{
+				lineStart:  offset,
+				lineEnd:    offset + len(line),
+				valueStart: valueStart,
+				valueEnd:   offset + len(trimmed),
+			})
 		}
-		valueStart := offset + len("data:")
-		for valueStart < offset+len(trimmed) && (raw[valueStart] == ' ' || raw[valueStart] == '\t') {
-			valueStart++
-		}
-		valueEnd := offset + len(trimmed)
-		next, ok, err := rewrite(raw[valueStart:valueEnd])
-		if err != nil || !ok {
-			return nil, ok, err
-		}
-		out := make([]byte, 0, len(raw)+len(next)-(valueEnd-valueStart))
-		out = append(out, raw[:valueStart]...)
-		out = append(out, next...)
-		out = append(out, raw[valueEnd:]...)
-		return out, true, nil
+		offset += len(line)
 	}
-	return nil, false, nil
+	if len(dataLines) == 0 {
+		return nil, false, nil
+	}
+	values := make([][]byte, 0, len(dataLines))
+	for _, dl := range dataLines {
+		values = append(values, raw[dl.valueStart:dl.valueEnd])
+	}
+	joined := bytes.Join(values, []byte{'\n'})
+	next, ok, err := rewrite(joined)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	if bytes.ContainsAny(next, "\r\n") {
+		return nil, false, fmt.Errorf("rewritten SSE data payload contains a newline")
+	}
+	out := make([]byte, 0, len(raw)+len(next)-len(joined))
+	cursor := 0
+	for i, dl := range dataLines {
+		if i == 0 {
+			out = append(out, raw[cursor:dl.valueStart]...)
+			out = append(out, next...)
+			out = append(out, raw[dl.valueEnd:dl.lineEnd]...)
+		} else {
+			out = append(out, raw[cursor:dl.lineStart]...)
+		}
+		cursor = dl.lineEnd
+	}
+	out = append(out, raw[cursor:]...)
+	return out, true, nil
 }
 
 func insertNoticeIntoOutputArray(data []byte, noticeRaw []byte) ([]byte, bool, error) {

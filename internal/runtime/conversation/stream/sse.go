@@ -2,7 +2,7 @@ package stream
 
 import "bytes"
 
-const maxSSELineSize = 16 << 20
+const maxSSELineSize = 8 << 20
 
 func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	if i := bytes.IndexByte(data, '\n'); i >= 0 {

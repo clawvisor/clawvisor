@@ -83,6 +83,28 @@ func TestAuditEmitter_LogEndpointCall(t *testing.T) {
 	}
 }
 
+func TestAuditEmitter_LogEndpointCallRedactsReasonSecrets(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	em := NewAuditEmitter(st, nil, nil)
+
+	em.LogEndpointCall(context.Background(), agent, "req-secret", "anthropic", "lite_proxy.messages.create",
+		500, "deny", "upstream_error", "upstream rejected Bearer sk-ant-api03-secret-value", time.Millisecond, nil, EndpointCallExtras{})
+
+	rows, _, err := st.ListAuditEntries(context.Background(), agent.UserID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 audit row, got %d", len(rows))
+	}
+	if rows[0].Reason == nil {
+		t.Fatal("reason missing")
+	}
+	if got := *rows[0].Reason; got == "" || got == "upstream rejected Bearer sk-ant-api03-secret-value" {
+		t.Fatalf("reason not redacted: %q", got)
+	}
+}
+
 // TestAuditEmitter_LogEndpointCall_DedupCostUsesCanonicalAuditID
 // pins the FK-safety contract on the dedup path: when LogAudit
 // returns ErrConflict (the canonical row already exists for this

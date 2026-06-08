@@ -12,6 +12,21 @@ import (
 	"unicode/utf8"
 )
 
+func TestToolUseVerdictContinuationToolResultContentAllowsEmptyStructuredPayload(t *testing.T) {
+	v := ToolUseVerdict{
+		Continue: &ContinueSignal{
+			SyntheticToolResults: []json.RawMessage{json.RawMessage(`""`)},
+		},
+	}
+	content, ok := v.ContinuationToolResultContent()
+	if !ok {
+		t.Fatal("empty structured continuation payload should still be present")
+	}
+	if content != "" {
+		t.Fatalf("content = %q, want empty", content)
+	}
+}
+
 func TestSyntheticApprovalToolUseResponseOpenAIChatLiteProxyRoute(t *testing.T) {
 	t.Parallel()
 
@@ -1379,7 +1394,7 @@ func TestOpenAIResponseRewriterDoesNotMutateUnrelatedChoicesChatSSE(t *testing.T
 
 	t.Logf("rewritten body:\n%s", string(result.Body))
 	events := parseTestSSEEvents(t, string(result.Body))
-	
+
 	// We expect the rewritten events to synthesize both choices separately.
 	// Let's verify that the choice 0 gets finish_reason stop/blocked content,
 	// while choice 1 gets finish_reason tool_calls with its tool call preserved.
@@ -1897,7 +1912,7 @@ func TestAnthropicStreamRewriteMidStreamDropSignalsError(t *testing.T) {
 
 	var output bytes.Buffer
 	r := &testErroringReader{data: []byte(input), err: io.ErrUnexpectedEOF}
-	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), r, &output)
+	res, err := (AnthropicResponseRewriter{}).StreamRewrite(context.Background(), r, &output, nil)
 	if err == nil {
 		t.Fatal("expected StreamRewrite to fail due to early EOF")
 	}
@@ -1923,7 +1938,7 @@ func TestOpenAIChatStreamRewriteMidStreamDropSignalsError(t *testing.T) {
 
 	var output bytes.Buffer
 	r := &testErroringReader{data: []byte(input), err: io.ErrUnexpectedEOF}
-	res, err := (OpenAIResponseRewriter{}).StreamRewrite(context.Background(), r, &output)
+	res, err := (OpenAIResponseRewriter{}).StreamRewrite(context.Background(), r, &output, nil)
 	if err == nil {
 		t.Fatal("expected StreamRewrite to fail due to early EOF")
 	}
@@ -1951,7 +1966,7 @@ func TestOpenAIResponsesStreamRewriteMidStreamDropSignalsError(t *testing.T) {
 
 	var output bytes.Buffer
 	r := &testErroringReader{data: []byte(input), err: io.ErrUnexpectedEOF}
-	res, err := (OpenAIResponseRewriter{}).StreamRewrite(context.Background(), r, &output)
+	res, err := (OpenAIResponseRewriter{}).StreamRewrite(context.Background(), r, &output, nil)
 	if err == nil {
 		t.Fatal("expected StreamRewrite to fail due to early EOF")
 	}
@@ -1977,4 +1992,3 @@ func (r *testErroringReader) Read(p []byte) (n int, err error) {
 	r.off += n
 	return n, nil
 }
-

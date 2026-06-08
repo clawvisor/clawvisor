@@ -2,7 +2,6 @@ package policies
 
 import (
 	"context"
-	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -83,7 +82,7 @@ func (InspectorChain) Name() string { return "inspector_chain" }
 // check. Emits one composite verdict.
 func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyResponse, tu conversation.ToolUse, mut pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
 	if c.inspector == nil {
-		if strings.Contains(string(tu.Input), "autovault_") {
+		if inspector.TriggerHits(inspector.ToolUse{Input: tu.Input}) {
 			return pipeline.ToolUseVerdict{
 				Outcome: pipeline.OutcomeDeny,
 				Reason:  "Clawvisor: credential inspection is not configured",
@@ -140,11 +139,11 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 		}, nil
 	}
 
-	// Not an API call (per validator): allow through; nothing for
-	// the boundary check to validate.
+	// Not an API call (per validator): skip so downstream/default
+	// safeguards still get a chance to decide the tool_use.
 	if !v.IsAPICall {
 		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeAllow,
+			Outcome: pipeline.OutcomeSkip,
 			Facts:   []pipeline.EvaluationFact{inspectorFact},
 		}, nil
 	}

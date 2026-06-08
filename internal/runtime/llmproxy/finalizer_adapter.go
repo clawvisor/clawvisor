@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/eval"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -79,6 +80,11 @@ func (d *finalizerDeps) DropHold(ctx context.Context, capture pipeline.HoldCaptu
 	if !ok {
 		return nil
 	}
+	if pending.ID == "" {
+		// Drop uses capture.ApprovalID directly; this backfill is for
+		// expirePendingInlineTask's trace path below.
+		pending.ID = capture.ApprovalID
+	}
 	dropErr := d.pendingApprovals.Drop(ctx, ResolveRequest{
 		UserID:     pending.UserID,
 		AgentID:    pending.AgentID,
@@ -107,7 +113,7 @@ func (d *finalizerDeps) DropHold(ctx context.Context, capture pipeline.HoldCaptu
 func (d *finalizerDeps) BuildCoalescedHold(captures []pipeline.HoldCapture) pipeline.CoalescedHold {
 	primaryIdx := -1
 	for i, c := range captures {
-		if c.Kind == "approval" && c.Payload != nil {
+		if c.Kind == eval.HeldKindHintApproval && c.Payload != nil {
 			primaryIdx = i
 			break
 		}
@@ -198,7 +204,6 @@ func (d *finalizerDeps) BuildCoalescedHold(captures []pipeline.HoldCapture) pipe
 			return ev
 		},
 		Prompt: func(approvalID string) string {
-			pending.ID = approvalID
 			return coalescedApprovalPrompt(pending.AllHolds(), approvalID)
 		},
 	}
@@ -288,13 +293,13 @@ func (d *finalizerDeps) WriteAudit(ctx context.Context, ev conversation.AuditEve
 // prompt rendering still expect.
 func heldKindForCapture(c pipeline.HoldCapture) HeldToolUseKind {
 	switch c.Kind {
-	case "approval":
+	case eval.HeldKindHintApproval:
 		return HeldKindApproval
-	case "allow":
+	case eval.HeldKindHintAllow:
 		return HeldKindAllow
-	case "rewrite":
+	case eval.HeldKindHintRewrite:
 		return HeldKindRewrite
-	case "deny":
+	case eval.HeldKindHintDeny:
 		return HeldKindDeny
 	}
 	return HeldKindDeny

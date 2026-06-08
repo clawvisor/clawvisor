@@ -118,7 +118,7 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 		ParamsSafe: paramsJSON,
 		Decision:   decision,
 		Outcome:    outcome,
-		Reason:     nilIfEmpty(reason),
+		Reason:     nilIfEmpty(SafeAuditErrorDetail(reason)),
 		DurationMS: int(duration.Milliseconds()),
 	}
 	if err := e.Store.LogAudit(ctx, entry); err != nil {
@@ -282,6 +282,12 @@ func (e *AuditEmitter) WriteAuditEvent(ctx context.Context, agent *store.Agent, 
 			})
 		}
 		params["credential_locations"] = creds
+	}
+	for _, fact := range ev.Facts {
+		if authFact, ok := fact.(conversation.AuthorizationFact); ok && authFact.Detail != "" {
+			params["authorization_error"] = auditErrorDetail(authFact.Detail)
+			break
+		}
 	}
 	paramsJSON, _ := json.Marshal(params)
 
@@ -853,6 +859,25 @@ func truncateAuditString(s string, max int) string {
 		return s
 	}
 	return s[:max] + "...<truncated>"
+}
+
+func auditErrorDetail(s string) string {
+	return SafeAuditErrorDetail(s)
+}
+
+// SafeAuditErrorDetail returns a bounded, credential-redacted error
+// string suitable for audit params.
+func SafeAuditErrorDetail(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		if r < 0x20 {
+			return -1
+		}
+		return r
+	}, redactSecretsInString(s))
+	return truncateAuditString(s, 512)
 }
 
 // auditSecretValueRE matches the credential patterns we don't want

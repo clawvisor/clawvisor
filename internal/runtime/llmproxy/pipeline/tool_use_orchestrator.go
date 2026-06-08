@@ -97,8 +97,8 @@ func EvaluateToolUses(
 				result.PerToolUse[tu.ID] = verdict
 				for _, sibling := range toolUses[i+1:] {
 					result.PerToolUse[sibling.ID] = ToolUseVerdict{
-						Outcome: OutcomeAllow,
-						Reason:  "skipped because another tool_use requested continuation",
+						Outcome: OutcomeDeny,
+						Reason:  "Clawvisor: unprocessed sibling tool_use refused after continuation",
 					}
 				}
 				return result, nil
@@ -141,12 +141,10 @@ func defaultUnclaimedToolUseVerdict(evaluations []ToolUseEvaluation, toolUseID s
 			Facts:   []EvaluationFact{*credentialedFact},
 		}
 	}
-	// Compatibility fail-open default: no evaluator claimed this
-	// tool_use, so it is allowed. Every gating evaluator must
-	// explicitly claim its trigger cases with Allow, Deny, Hold, or
-	// Rewrite; returning Skip delegates non-credentialed calls to this
-	// pass-through behavior.
-	return ToolUseVerdict{Outcome: OutcomeAllow}
+	return ToolUseVerdict{
+		Outcome: OutcomeDeny,
+		Reason:  "Clawvisor: no policy claimed this tool use; refusing to run it",
+	}
 }
 
 func continueOutcomeValid(verdict ToolUseVerdict) bool {

@@ -29,13 +29,18 @@ type pipelineReadOnlyRequest struct {
 
 func (r *pipelineReadOnlyRequest) Provider() conversation.Provider       { return r.provider }
 func (r *pipelineReadOnlyRequest) StreamShape() conversation.StreamShape { return r.streamShape }
-func (r *pipelineReadOnlyRequest) Turns() []conversation.Turn            { return nil }
-func (r *pipelineReadOnlyRequest) HTTPRequest() *http.Request            { return r.httpReq }
-func (r *pipelineReadOnlyRequest) RawBody() []byte                       { return append([]byte(nil), r.body...) }
-func (r *pipelineReadOnlyRequest) IsFirstTurn() bool                     { return r.firstTurn }
-func (r *pipelineReadOnlyRequest) ConversationID() string                { return r.conversationID }
-func (r *pipelineReadOnlyRequest) UserID() string                        { return r.userID }
-func (r *pipelineReadOnlyRequest) AgentID() string                       { return r.agentID }
+
+// Turns is intentionally not populated on the handler bridge yet.
+// Migrated policies parse RawBody directly so a future typed-turn
+// policy must wire this explicitly instead of assuming an empty turn
+// list means "no conversation".
+func (r *pipelineReadOnlyRequest) Turns() []conversation.Turn { return nil }
+func (r *pipelineReadOnlyRequest) HTTPRequest() *http.Request { return r.httpReq }
+func (r *pipelineReadOnlyRequest) RawBody() []byte            { return append([]byte(nil), r.body...) }
+func (r *pipelineReadOnlyRequest) IsFirstTurn() bool          { return r.firstTurn }
+func (r *pipelineReadOnlyRequest) ConversationID() string     { return r.conversationID }
+func (r *pipelineReadOnlyRequest) UserID() string             { return r.userID }
+func (r *pipelineReadOnlyRequest) AgentID() string            { return r.agentID }
 
 var _ pipeline.ReadOnlyRequest = (*pipelineReadOnlyRequest)(nil)
 

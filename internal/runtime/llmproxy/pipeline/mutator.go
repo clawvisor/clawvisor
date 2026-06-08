@@ -77,6 +77,10 @@ type ResponseMutator interface {
 	// model's POST /api/control/tasks tool_use with a human approval
 	// prompt.
 	SubstituteEntireResponse(text string) error
+
+	// Commit streams the transformed response to the destination and
+	// closes the upstream body.
+	Commit() error
 }
 
 // ToolUseMutator scopes mutations to a single tool_use during evaluator

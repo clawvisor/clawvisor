@@ -171,8 +171,8 @@ func TestEvaluateToolUses_RejectsDuplicateToolUseIDs(t *testing.T) {
 
 // TestEvaluateToolUses_ContinueShortCircuits pins continuation
 // semantics: a Continue signal halts evaluator execution, and
-// remaining siblings get explicit allow verdicts so the final rewriter
-// bridge doesn't see them as unknown tool_uses.
+// remaining siblings get explicit deny verdicts so malformed multi-tool
+// output cannot bypass later inspector / authorization evaluators.
 func TestEvaluateToolUses_ContinueShortCircuits(t *testing.T) {
 	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
 	tools := []conversation.ToolUse{
@@ -199,8 +199,8 @@ func TestEvaluateToolUses_ContinueShortCircuits(t *testing.T) {
 	}
 	if v, ok := result.PerToolUse["toolu_should_not_run"]; !ok {
 		t.Errorf("tool_use after Continue should get an explicit sibling verdict")
-	} else if v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("sibling verdict = %+v, want Allow", v)
+	} else if v.Outcome != pipeline.OutcomeDeny {
+		t.Errorf("sibling verdict = %+v, want Deny", v)
 	}
 }
 
@@ -300,12 +300,12 @@ func TestEvaluateToolUses_AllSkipFallsThroughToAllow(t *testing.T) {
 		t.Fatalf("EvaluateToolUses: %v", err)
 	}
 
-	if v := result.PerToolUse["toolu_x"]; v.Outcome != pipeline.OutcomeAllow {
-		t.Errorf("all-Skip should default to Allow, got %q", v.Outcome)
+	if v := result.PerToolUse["toolu_x"]; v.Outcome != pipeline.OutcomeDeny {
+		t.Errorf("all-Skip should default to Deny, got %q", v.Outcome)
 	}
 }
 
-func TestEvaluateToolUses_AllSkipNonCredentialedInspectorFactAllows(t *testing.T) {
+func TestEvaluateToolUses_AllSkipNonCredentialedInspectorFactDenies(t *testing.T) {
 	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
 	tools := []conversation.ToolUse{{ID: "toolu_local", Name: "Bash"}}
 
@@ -326,8 +326,8 @@ func TestEvaluateToolUses_AllSkipNonCredentialedInspectorFactAllows(t *testing.T
 		t.Fatalf("EvaluateToolUses: %v", err)
 	}
 
-	if v := result.PerToolUse["toolu_local"]; v.Outcome != pipeline.OutcomeAllow {
-		t.Fatalf("non-credentialed all-Skip Outcome = %q, want Allow", v.Outcome)
+	if v := result.PerToolUse["toolu_local"]; v.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("non-credentialed all-Skip Outcome = %q, want Deny", v.Outcome)
 	}
 }
 

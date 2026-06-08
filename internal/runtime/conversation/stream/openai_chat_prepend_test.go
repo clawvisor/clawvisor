@@ -2,6 +2,7 @@ package stream_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -37,20 +38,31 @@ func TestPrependOpenAIChatAssistantNotice_LeadingChunk(t *testing.T) {
 	if strings.Index(got, notice) >= strings.Index(got, "hello") {
 		t.Errorf("notice did not precede hello:\n%s", got)
 	}
-	// Synthetic chunk carries role:"assistant" + content:<notice>.
+	// Synthetic chunk carries content:<notice> and intentionally omits
+	// role so clients do not see a duplicate assistant-role marker.
 	if !strings.Contains(got, `chatcmpl_clawvisor_notice`) {
 		t.Errorf("expected synthetic notice chunk ID present:\n%s", got)
 	}
-	// JSON key order is encoder-dependent, so assert on the individual
-	// fields rather than the full substring.
-	if !strings.Contains(got, `"role":"assistant"`) {
-		t.Errorf("synthetic chunk missing role:assistant:\n%s", got)
+	firstData := strings.TrimPrefix(strings.SplitN(got, "\n\n", 2)[0], "data: ")
+	var firstChunk struct {
+		Choices []struct {
+			Delta map[string]string `json:"delta"`
+		} `json:"choices"`
 	}
-	if !strings.Contains(got, `"content":"[Clawvisor] notice"`) {
-		t.Errorf("synthetic chunk missing notice content:\n%s", got)
+	if err := json.Unmarshal([]byte(firstData), &firstChunk); err != nil {
+		t.Fatalf("parse synthetic chunk: %v\n%s", err, firstData)
+	}
+	if len(firstChunk.Choices) != 1 {
+		t.Fatalf("synthetic chunk choices = %d, want 1", len(firstChunk.Choices))
+	}
+	if _, ok := firstChunk.Choices[0].Delta["role"]; ok {
+		t.Fatalf("synthetic chunk should omit role:\n%s", firstData)
+	}
+	if firstChunk.Choices[0].Delta["content"] != notice {
+		t.Fatalf("synthetic chunk content = %q, want %q", firstChunk.Choices[0].Delta["content"], notice)
 	}
 	// Upstream "hello" + " world" + [DONE] all survive.
-	for _, want := range []string{`"content":"hello"`, `"content":" world"`, `data: [DONE]`} {
+	for _, want := range []string{`"role":"assistant"`, `"content":"hello"`, `"content":" world"`, `data: [DONE]`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("upstream content lost: %s\n%s", want, got)
 		}
@@ -94,5 +106,23 @@ func TestPrependOpenAIChatAssistantNotice_OnlyDoneStillEmitsNotice(t *testing.T)
 	}
 	if strings.Index(got, notice) >= strings.Index(got, "data: [DONE]") {
 		t.Fatalf("notice should precede DONE sentinel:\n%s", got)
+	}
+}
+
+func TestPrependOpenAIChatAssistantNotice_SynthesizesDoneWhenMissing(t *testing.T) {
+	upstream := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hello"},"finish_reason":null}]}`
+	const notice = "[Clawvisor] truncated upstream"
+
+	var buf bytes.Buffer
+	if err := stream.PrependOpenAIChatAssistantNotice(&buf, strings.NewReader(upstream), notice); err != nil {
+		t.Fatalf("PrependOpenAIChatAssistantNotice: %v", err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, notice) || !strings.Contains(got, `"content":"hello"`) {
+		t.Fatalf("notice or upstream content missing:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "data: [DONE]\n\n") {
+		t.Fatalf("missing synthesized DONE sentinel:\n%s", got)
 	}
 }

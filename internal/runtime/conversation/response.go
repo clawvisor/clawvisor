@@ -119,9 +119,7 @@ type ContinuationToolResult struct {
 func (v ToolUseVerdict) ContinuationToolResultContent() (string, bool) {
 	if v.Continue != nil {
 		text := continuationToolResultContent(v.Continue.SyntheticToolResults)
-		if text != "" {
-			return text, true
-		}
+		return text, true
 	}
 	if v.ContinueWithToolResult != "" {
 		return v.ContinueWithToolResult, true

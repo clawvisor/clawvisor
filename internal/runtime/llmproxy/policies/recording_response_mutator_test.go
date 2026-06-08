@@ -22,6 +22,7 @@ func (m *recordingResponseMutator) SubstituteEntireResponse(text string) error {
 	m.SubstituteEntireResponseCalls = append(m.SubstituteEntireResponseCalls, text)
 	return nil
 }
+func (m *recordingResponseMutator) Commit() error { return nil }
 
 var _ pipeline.ResponseMutator = (*recordingResponseMutator)(nil)
 

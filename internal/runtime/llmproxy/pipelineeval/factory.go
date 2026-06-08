@@ -302,7 +302,11 @@ func conversationToPipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolU
 			v.Outcome = pipeline.OutcomeAllow
 		}
 	} else {
-		v.Outcome = pipeline.OutcomeDeny
+		if v.Continue == nil && (v.HeldKindHint == pipeline.HeldKindHintApproval || v.HoldKey != "" || v.SubstituteWith != "") {
+			v.Outcome = pipeline.OutcomeHold
+		} else {
+			v.Outcome = pipeline.OutcomeDeny
+		}
 	}
 	return v
 }
@@ -333,24 +337,59 @@ func buildBoundaryResolver(agent llmproxy.AgentContext, st store.Store) policies
 	userID := agent.AgentUserID
 	agentID := agent.AgentID
 	return func(ctx context.Context, v inspector.Verdict) policies.BoundaryDecision {
-		var placeholder string
-		if len(v.Placeholders) > 0 {
-			placeholder = v.Placeholders[0]
+		if len(v.Placeholders) == 0 {
+			return policies.BoundaryDecision{Allowed: true}
 		}
-		rec, err := st.GetRuntimePlaceholder(ctx, placeholder)
-		if err != nil || rec == nil {
-			return policies.BoundaryDecision{
-				DenyReason: pipeline.BoundaryDenyReasonPlaceholderUnknown,
-				Reason:     "Clawvisor: autovault placeholder not found in store",
+		var commonHosts map[string]struct{}
+		for _, placeholder := range v.Placeholders {
+			rec, err := st.GetRuntimePlaceholder(ctx, placeholder)
+			if err != nil || rec == nil {
+				return policies.BoundaryDecision{
+					DenyReason: pipeline.BoundaryDenyReasonPlaceholderUnknown,
+					Reason:     "Clawvisor: autovault placeholder not found in store",
+				}
+			}
+			if _, ok := placeholderpkg.ValidateRuntimePlaceholderAccess(ctx, st, rec, userID, agentID, time.Now().UTC()); !ok {
+				return policies.BoundaryDecision{
+					DenyReason: pipeline.BoundaryDenyReasonOwnershipMismatch,
+					Reason:     "Clawvisor: autovault placeholder belongs to a different agent",
+				}
+			}
+			hosts, hostReason := placeholderpkg.RuntimePlaceholderBoundHosts(ctx, st, rec)
+			if len(hosts) == 0 {
+				if hostReason == "" {
+					hostReason = "Clawvisor: credential grant host lookup failed"
+				}
+				return policies.BoundaryDecision{
+					DenyReason: pipeline.BoundaryDenyReasonHostNotAllowed,
+					Reason:     hostReason,
+				}
+			}
+			if commonHosts == nil {
+				commonHosts = make(map[string]struct{}, len(hosts))
+				for _, host := range hosts {
+					commonHosts[host] = struct{}{}
+				}
+				continue
+			}
+			nextCommonHosts := make(map[string]struct{}, len(commonHosts))
+			for _, host := range hosts {
+				if _, ok := commonHosts[host]; ok {
+					nextCommonHosts[host] = struct{}{}
+				}
+			}
+			commonHosts = nextCommonHosts
+			if len(commonHosts) == 0 {
+				return policies.BoundaryDecision{
+					DenyReason: pipeline.BoundaryDenyReasonHostNotAllowed,
+					Reason:     "Clawvisor: no shared host allowlist covers every autovault placeholder",
+				}
 			}
 		}
-		if _, ok := placeholderpkg.ValidateRuntimePlaceholderAccess(ctx, st, rec, userID, agentID, time.Now().UTC()); !ok {
-			return policies.BoundaryDecision{
-				DenyReason: pipeline.BoundaryDenyReasonOwnershipMismatch,
-				Reason:     "Clawvisor: autovault placeholder belongs to a different agent",
-			}
+		hosts := make([]string, 0, len(commonHosts))
+		for host := range commonHosts {
+			hosts = append(hosts, host)
 		}
-		hosts, _ := placeholderpkg.RuntimePlaceholderBoundHosts(ctx, st, rec)
 		ok, reason := inspector.BoundaryCheck(v, hosts)
 		decision := policies.BoundaryDecision{Allowed: ok, AllowedHosts: hosts, Reason: reason}
 		if !ok {

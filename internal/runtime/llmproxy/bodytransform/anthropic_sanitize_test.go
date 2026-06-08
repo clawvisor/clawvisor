@@ -62,3 +62,22 @@ func TestSanitizeAnthropicRequestNoop(t *testing.T) {
 		t.Fatalf("noop body changed: %s", got)
 	}
 }
+
+func TestSanitizeAnthropicRequestMalformedErrorDoesNotEchoBodySecrets(t *testing.T) {
+	secrets := []string{
+		"sk-ant-api03-secret-value",
+		"Bearer ghp_secretsecretsecret",
+		"autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+	}
+	body := []byte(`{"messages":[{"role":"user","content":"` + strings.Join(secrets, " ") + `"}],}`)
+	_, _, err := SanitizeAnthropicRequest(body)
+	if err == nil {
+		t.Fatal("expected malformed JSON error")
+	}
+	got := err.Error()
+	for _, secret := range secrets {
+		if strings.Contains(got, secret) {
+			t.Fatalf("malformed error echoed secret %q: %s", secret, got)
+		}
+	}
+}

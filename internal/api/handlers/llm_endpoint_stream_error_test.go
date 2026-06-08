@@ -40,8 +40,8 @@ func TestStreamingPostprocessErrorFrame_OpenAIResponsesSplicesFailedEvent(t *tes
 	if !strings.Contains(got, "event: response.failed") {
 		t.Fatalf("unexpected stream error frame: %s", got)
 	}
-	if !strings.Contains(got, "data: [DONE]") {
-		t.Fatalf("OpenAI Responses stream error should terminate with DONE: %s", got)
+	if strings.Contains(got, "data: [DONE]") {
+		t.Fatalf("OpenAI Responses stream error should not use chat-completions DONE sentinel: %s", got)
 	}
 	if strings.Contains(got, "resp_clawvisor_error") {
 		t.Fatalf("stream error frame should not invent a response id: %s", got)

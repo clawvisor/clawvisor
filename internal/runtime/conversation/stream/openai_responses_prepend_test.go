@@ -180,3 +180,23 @@ func TestPrependOpenAIResponsesAssistantNotice_CompletedWithoutOutputArrayPasses
 		})
 	}
 }
+
+func TestPrependOpenAIResponsesAssistantNotice_NoResponseStartDoesNotAppendNotice(t *testing.T) {
+	upstream := strings.Join([]string{
+		`event: response.completed`,
+		`data: {"type":"response.completed","response":{"id":"resp_done","output":[]}}`,
+		``,
+	}, "\n")
+
+	var buf bytes.Buffer
+	if err := stream.PrependOpenAIResponsesAssistantNotice(&buf, strings.NewReader(upstream), "[Clawvisor] notice"); err != nil {
+		t.Fatalf("PrependOpenAIResponsesAssistantNotice: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, `msg_clawvisor_notice`) || strings.Contains(got, `[Clawvisor] notice`) {
+		t.Fatalf("notice must not be appended after response.completed without response.created:\n%s", got)
+	}
+	if got != upstream {
+		t.Fatalf("malformed stream should pass through unchanged\n--- want ---\n%s\n--- got ---\n%s", upstream, got)
+	}
+}

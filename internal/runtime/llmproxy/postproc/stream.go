@@ -3,6 +3,7 @@ package postproc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -69,7 +70,15 @@ func PostprocessStream(
 	}
 	streamResult, err := streamingRewriter.StreamRewrite(ctx, r, w, onToolUse)
 	if err != nil {
-		return llmproxy.PostprocessResult{}, err
+		// StreamRewrite failed before the eval phase, so no holds or
+		// pending inline tasks have been created yet. Feeding partial
+		// tool_uses with no verdict map would only misclassify cleanup
+		// state as hard-deny captures.
+		return llmproxy.PostprocessResult{
+			ContentType:       contentType,
+			StreamingProvider: provider,
+			StreamingResult:   streamResult,
+		}, err
 	}
 	// Prefer the incrementally-collected tool_uses from the
 	// onToolUse callback. Result.ToolUses stays available as a
@@ -125,7 +134,11 @@ func PostprocessStream(
 	}
 
 	if finalResult.Coalesced {
-		if err := writeProviderBlockedPrompt(w, provider, streamResult, finalResult.CoalescedPrompt, streamingBlockedPromptIndex(provider, streamResult, len(session.captures()))); err != nil {
+		if err := writeProviderBlockedPrompt(w, provider, streamResult, finalResult.CoalescedPrompt, streamingBlockedPromptIndex(provider, streamResult, len(toolUses))); err != nil {
+			dropErr := session.dropCommittedAndRollback(req.Context(), finalResult.CoalescedCapture)
+			if dropErr != nil {
+				return llmproxy.PostprocessResult{}, fmt.Errorf("coalesced approval prompt write failed: %w", errors.Join(err, fmt.Errorf("rollback failed: %w", dropErr)))
+			}
 			return llmproxy.PostprocessResult{}, err
 		}
 		return llmproxy.PostprocessResult{
@@ -162,14 +175,23 @@ func PostprocessStream(
 		if strings.TrimSpace(subText) == "" {
 			subText = "Tool use was blocked by the Clawvisor proxy."
 		}
-		if err := writeProviderBlockedPrompt(w, provider, streamResult, subText, streamingBlockedPromptIndex(provider, streamResult, len(streamResult.ToolUses))); err != nil {
+		if err := writeProviderBlockedPrompt(w, provider, streamResult, subText, streamingBlockedPromptIndex(provider, streamResult, len(toolUses))); err != nil {
+			if dropErr := session.dropAllCommittedAndRollback(req.Context()); dropErr != nil {
+				return llmproxy.PostprocessResult{}, fmt.Errorf("blocked prompt write failed: %w", errors.Join(err, fmt.Errorf("rollback failed: %w", dropErr)))
+			}
 			return llmproxy.PostprocessResult{}, err
 		}
 	} else {
-		if err := writeProviderToolUses(w, provider, streamResult, streamResult.ToolUses, rewrittenInput); err != nil {
+		if err := writeProviderToolUses(w, provider, streamResult, toolUses, rewrittenInput); err != nil {
+			if dropErr := session.dropAllCommittedAndRollback(req.Context()); dropErr != nil {
+				return llmproxy.PostprocessResult{}, fmt.Errorf("tool_use write failed: %w", errors.Join(err, fmt.Errorf("rollback failed: %w", dropErr)))
+			}
 			return llmproxy.PostprocessResult{}, err
 		}
 		if err := writeProviderStop(w, provider, streamResult); err != nil {
+			if dropErr := session.dropAllCommittedAndRollback(req.Context()); dropErr != nil {
+				return llmproxy.PostprocessResult{}, fmt.Errorf("stop write failed: %w", errors.Join(err, fmt.Errorf("rollback failed: %w", dropErr)))
+			}
 			return llmproxy.PostprocessResult{}, err
 		}
 	}
@@ -181,8 +203,87 @@ func PostprocessStream(
 	}, nil
 }
 
+// WriteStreamError appends a provider-shaped terminal error to an
+// already-started stream. It is used only after headers/body bytes have
+// been committed, where the handler can no longer send a normal HTTP
+// error response.
+func WriteStreamError(w io.Writer, req *http.Request, provider conversation.Provider, result conversation.StreamingRewriteResult, message string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return
+	}
+	switch provider {
+	case conversation.ProviderAnthropic:
+		body, _ := json.Marshal(map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "stream_interrupted",
+				"message": message,
+			},
+			"message_id": firstNonEmptyStreamValue(result.StreamID, "msg_clawvisor_stream_error"),
+			"model":      firstNonEmptyStreamValue(result.Model, "unknown"),
+		})
+		_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", body)
+	case conversation.ProviderOpenAI:
+		if result.StreamFormat == "openai_chat" || conversation.IsOpenAIChatCompletionsEndpoint(req) {
+			id := firstNonEmptyStreamValue(result.StreamID, "chatcmpl_clawvisor_stream_error")
+			model := firstNonEmptyStreamValue(result.Model, "clawvisor-stream-error")
+			writeOpenAIChatChunk(w, id, model, map[string]any{"role": "assistant"}, nil)
+			writeOpenAIChatChunk(w, id, model, map[string]any{"content": message}, nil)
+			writeOpenAIChatChunk(w, id, model, map[string]any{}, "stop")
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		id := firstNonEmptyStreamValue(result.StreamID, "resp_clawvisor_stream_error")
+		body, _ := json.Marshal(map[string]any{
+			"type": "response.failed",
+			"response": map[string]any{
+				"id":     id,
+				"status": "failed",
+				"error": map[string]any{
+					"type":    "stream_interrupted",
+					"message": message,
+				},
+			},
+		})
+		_, _ = fmt.Fprintf(w, "event: response.failed\ndata: %s\n\n", body)
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	default:
+		for _, line := range strings.Split(message, "\n") {
+			_, _ = fmt.Fprintf(w, ": %s\n", line)
+		}
+		_, _ = io.WriteString(w, "\n")
+	}
+}
+
+func writeOpenAIChatChunk(w io.Writer, id, model string, delta map[string]any, finish any) {
+	body, _ := json.Marshal(map[string]any{
+		"id":     id,
+		"object": "chat.completion.chunk",
+		"model":  model,
+		"choices": []map[string]any{{
+			"index":         0,
+			"delta":         delta,
+			"finish_reason": finish,
+		}},
+	})
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", body)
+}
+
+func firstNonEmptyStreamValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func streamingBlockedPromptIndex(provider conversation.Provider, result conversation.StreamingRewriteResult, captureCount int) int {
-	if provider == conversation.ProviderAnthropic && result.NextAnthropicContentIndex > 0 {
+	if provider == conversation.ProviderAnthropic && result.NextAnthropicContentIndex >= 0 {
+		// Anthropic's stream parser always returns the next content
+		// index; 0 is a valid index when the response contained only
+		// tool_use blocks before the blocked prompt.
 		return result.NextAnthropicContentIndex
 	}
 	return captureCount

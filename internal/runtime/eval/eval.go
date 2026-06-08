@@ -136,6 +136,7 @@ func (ScriptSessionFact) isEvaluationFact() {}
 // outcome (the decision-engine Source string).
 type AuthorizationFact struct {
 	Outcome string
+	Detail  string
 }
 
 func (AuthorizationFact) isEvaluationFact() {}

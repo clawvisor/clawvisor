@@ -2225,11 +2225,16 @@ func TestPostprocessStream_MidStreamDropReturnsProviderAndResult(t *testing.T) {
 
 	var output bytes.Buffer
 	r := &postprocessErroringReader{data: []byte(input), err: io.ErrUnexpectedEOF}
-	result, err := PostprocessStream(context.Background(), req, r, &output, "text/event-stream", PostprocessConfig{
-		Inspector:   insp,
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
+	result, err := PostprocessStream(context.Background(), req, r, &output, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
+		AgentContext: llmproxy.AgentContext{
+			AgentUserID: userID,
+			AgentID:     agentID,
+		},
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector: insp,
+			Store:     st,
+		},
 	})
 
 	if err == nil {
@@ -2348,4 +2353,49 @@ func (r *postprocessErroringReader) Read(p []byte) (n int, err error) {
 	n = copy(p, r.data[r.off:])
 	r.off += n
 	return n, nil
+}
+
+func TestPostprocess_MultiplePlaceholdersRequireSharedHostBoundary(t *testing.T) {
+	githubPlaceholder := "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	slackPlaceholder := "autovault_slack_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	st, userID, agentID := seedPostprocessStore(t, githubPlaceholder)
+	if err := st.CreateRuntimePlaceholder(context.Background(), &store.RuntimePlaceholder{
+		Placeholder: slackPlaceholder,
+		UserID:      userID,
+		AgentID:     agentID,
+		ServiceID:   "slack",
+		VaultItemID: "slack",
+	}); err != nil {
+		t.Fatalf("CreateRuntimePlaceholder(slack): %v", err)
+	}
+
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer ` + githubPlaceholder + `","X-Other":"` + slackPlaceholder + `"}}`
+	body := anthropicJSONWithToolUse(input)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
+		AgentContext: llmproxy.AgentContext{
+			AgentUserID: userID,
+			AgentID:     agentID,
+		},
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
+			Store:        st,
+		},
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("expected blocked rewrite for mixed-service placeholders")
+	}
+	out := string(got.Body)
+	if !strings.Contains(out, "Clawvisor") {
+		t.Fatalf("expected blocked-explanation text, got %q", out)
+	}
+	if strings.Contains(out, "https://proxy.example/api/proxy") {
+		t.Fatalf("mixed-service placeholder request must not be rewritten to proxy URL:\n%s", out)
+	}
 }

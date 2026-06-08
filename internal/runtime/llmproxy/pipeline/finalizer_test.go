@@ -21,6 +21,7 @@ type finalizerTestDeps struct {
 	audits                         []conversation.AuditEvent
 	coalescedEvictedAuditToolUseID []string
 	omitCoalescedPerToolAudit      bool
+	rolledBack                     []pipeline.HoldCapture
 }
 
 func (d *finalizerTestDeps) SubmitHold(context.Context, any) (pipeline.HoldSubmitResult, error) {
@@ -77,7 +78,9 @@ func (d *finalizerTestDeps) BuildEvictedAudit(_ pipeline.HoldCapture, evictedID 
 
 func (d *finalizerTestDeps) CleanupEvictedHold(context.Context, any) {}
 
-func (d *finalizerTestDeps) RollbackPendingTask(context.Context, pipeline.HoldCapture) {}
+func (d *finalizerTestDeps) RollbackPendingTask(_ context.Context, c pipeline.HoldCapture) {
+	d.rolledBack = append(d.rolledBack, c)
+}
 
 func (d *finalizerTestDeps) WriteAudit(_ context.Context, ev conversation.AuditEvent) {
 	d.audits = append(d.audits, ev)
@@ -271,6 +274,9 @@ func TestFinalizerCoalescedSubmitFailureFlushesBufferedAudits(t *testing.T) {
 		deps.audits[0].OutcomeName != "approval_pending" ||
 		deps.audits[1].OutcomeName != "allow" {
 		t.Fatalf("audits = %+v, want buffered audits preserved on coalesced submit failure", deps.audits)
+	}
+	if len(deps.rolledBack) != 2 {
+		t.Fatalf("rolled back captures = %d, want 2", len(deps.rolledBack))
 	}
 }
 

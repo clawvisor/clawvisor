@@ -94,12 +94,8 @@ func RunPost(
 	}
 
 	// Commit: stream the transformed response to dst.
-	committer, ok := mut.(interface{ Commit() error })
-	if !ok {
-		return nil, fmt.Errorf("pipeline.RunPost: mutator doesn't expose Commit")
-	}
 	committed = true
-	if err := committer.Commit(); err != nil {
+	if err := mut.Commit(); err != nil {
 		return result, fmt.Errorf("pipeline.RunPost: commit: %w", err)
 	}
 

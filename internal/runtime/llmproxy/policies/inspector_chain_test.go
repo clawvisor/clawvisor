@@ -238,6 +238,22 @@ func TestInspectorChain_NilInspectorDeniesCredentialedInput(t *testing.T) {
 	}
 }
 
+func TestInspectorChain_NilInspectorIgnoresEmbeddedAutovaultSubstring(t *testing.T) {
+	chain := policies.NewInspectorChain(nil, nil)
+	tu := conversation.ToolUse{
+		ID:    "toolu_nil_inspector_embedded",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"cmd":"echo myautovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}`),
+	}
+	v, err := chain.Evaluate(context.Background(), nil, tu, evalToolUseMutator{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Outcome != pipeline.OutcomeSkip {
+		t.Fatalf("embedded substring → Outcome = %q, want Skip", v.Outcome)
+	}
+}
+
 // TestInspectorChain_StubPlaceholdersFailClosed pins the behavior where
 // short autovault_… literals fail closed instead of downgrading to
 // trigger-miss pass-through.

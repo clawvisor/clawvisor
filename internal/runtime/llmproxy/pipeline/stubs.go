@@ -32,6 +32,7 @@ func (PanicMutator) AppendContinuationTurn(SyntheticContinuation) error         
 
 func (PanicMutator) PrependAssistantText(string) error     { panic(panicMessage) }
 func (PanicMutator) SubstituteEntireResponse(string) error { panic(panicMessage) }
+func (PanicMutator) Commit() error                         { panic(panicMessage) }
 
 // --- ToolUseMutator ---------------------------------------------------
 

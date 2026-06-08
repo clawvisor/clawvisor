@@ -24,10 +24,15 @@ import (
 // (HoldCapture.Payload, HoldSubmitResult.Evicted) are opaque to this
 // package — the deps adapter unpacks them at the boundary.
 type Finalizer struct {
-	deps     FinalizerDeps
-	captures []HoldCapture // every tool_use (drives coalesce decision)
-	audits   []conversation.AuditEvent
+	deps              FinalizerDeps
+	captures          []HoldCapture // every tool_use (drives coalesce decision)
+	audits            []conversation.AuditEvent
+	pendingRolledBack bool
+	finalized         bool
+	committed         []HoldCapture
 }
+
+const coalescibleStageTool = "tool"
 
 // HoldCapture records one tool_use's eval outcome. Every tool_use
 // in the response produces a capture; only those that called Hold
@@ -215,19 +220,30 @@ func (f *Finalizer) Finalize(ctx context.Context) (FinalizeResult, error) {
 	if f == nil || f.deps == nil {
 		return FinalizeResult{}, nil
 	}
-	defer f.flushAudits(ctx)
+	if f.finalized {
+		return FinalizeResult{}, errors.New("pipeline.Finalizer: Finalize called after completion")
+	}
+	f.finalized = true
 	if shouldCoalesce(f.captures) {
 		result, err := f.commitCoalesced(ctx)
 		if err != nil {
+			f.rollbackPendingTasks(ctx, f.captures)
 			f.flushAudits(ctx)
 			return FinalizeResult{}, err
 		}
+		if result.CoalescedCapture != nil {
+			f.committed = []HoldCapture{*result.CoalescedCapture}
+		}
+		// Coalesced commits emit replacement per-tool audit rows from
+		// commitCoalesced; the original eval-pass audit rows would be
+		// duplicates and are intentionally discarded.
 		f.audits = nil
 		return result, nil
 	}
 	if err := f.replayLegacy(ctx); err != nil {
 		return FinalizeResult{}, err
 	}
+	f.flushAudits(ctx)
 	return FinalizeResult{}, nil
 }
 
@@ -237,6 +253,9 @@ func (f *Finalizer) Finalize(ctx context.Context) (FinalizeResult, error) {
 // buffered hold to durable storage.
 func (f *Finalizer) Rollback(ctx context.Context) {
 	if f == nil || f.deps == nil {
+		return
+	}
+	if f.finalized {
 		return
 	}
 	f.rollbackPendingTasks(ctx, f.captures)
@@ -263,7 +282,63 @@ func (f *Finalizer) DropCommittedHold(ctx context.Context, capture HoldCapture) 
 	if f == nil || f.deps == nil {
 		return nil
 	}
-	return f.deps.DropHold(ctx, capture)
+	err := f.deps.DropHold(ctx, capture)
+	f.removeCommittedCapture(capture)
+	return err
+}
+
+// DropCommittedAndRollback removes one committed hold and rolls back
+// any pending task rows created while preparing the captures. Used when
+// storage committed but rendering the user-visible prompt failed.
+func (f *Finalizer) DropCommittedAndRollback(ctx context.Context, capture HoldCapture) error {
+	if f == nil || f.deps == nil {
+		return nil
+	}
+	err := f.deps.DropHold(ctx, capture)
+	f.rollbackPendingTasks(ctx, f.captures)
+	f.committed = nil
+	f.captures = nil
+	return err
+}
+
+// DropAllCommittedAndRollback removes every hold committed by Finalize
+// and rolls back any pending task rows created while preparing captures.
+func (f *Finalizer) DropAllCommittedAndRollback(ctx context.Context) error {
+	if f == nil || f.deps == nil {
+		return nil
+	}
+	var err error
+	for _, capture := range f.committed {
+		err = errors.Join(err, f.deps.DropHold(ctx, capture))
+	}
+	f.rollbackPendingTasks(ctx, f.captures)
+	f.committed = nil
+	f.captures = nil
+	return err
+}
+
+func (f *Finalizer) removeCommittedCapture(capture HoldCapture) {
+	matches := func(c HoldCapture) bool {
+		if capture.ApprovalID != "" || c.ApprovalID != "" {
+			return c.ApprovalID == capture.ApprovalID
+		}
+		return c.ToolUseID == capture.ToolUseID
+	}
+	f.committed = removeCapture(f.committed, matches)
+	f.captures = removeCapture(f.captures, matches)
+}
+
+func removeCapture(in []HoldCapture, matches func(HoldCapture) bool) []HoldCapture {
+	out := in[:0]
+	for _, c := range in {
+		if !matches(c) {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // HasCoalesceCandidates reports whether shouldCoalesce would fire on
@@ -289,9 +364,11 @@ func (f *Finalizer) Captures() []HoldCapture {
 
 func (f *Finalizer) commitCoalesced(ctx context.Context) (FinalizeResult, error) {
 	coalesced := f.deps.BuildCoalescedHold(f.captures)
+	if coalesced.Payload == nil {
+		return FinalizeResult{}, errors.New("pipeline.Finalizer: coalesced hold missing payload")
+	}
 	ordered := orderCapturesForCoalescedAudit(f.captures)
 	if len(ordered) > 0 && coalesced.PerToolAuditFor == nil {
-		f.flushAudits(ctx)
 		return FinalizeResult{}, errors.New("pipeline.Finalizer: coalesced hold missing per-tool audit builder")
 	}
 	submit, err := f.deps.SubmitHold(ctx, coalesced.Payload)
@@ -356,12 +433,21 @@ func (f *Finalizer) replayLegacy(ctx context.Context) error {
 			f.deps.CleanupEvictedHold(ctx, res.Evicted)
 		}
 		c.ApprovalID = res.ApprovalID
+		f.captures[i].ApprovalID = res.ApprovalID
 		committed = append(committed, c)
 	}
+	f.committed = committed
 	return nil
 }
 
 func (f *Finalizer) rollbackPendingTasks(ctx context.Context, captures []HoldCapture) {
+	// This is only for pre-commit pending inline tasks. Once replay has
+	// committed holds, post-commit rollback drops the durable hold via
+	// DropHold, whose adapter expires the linked inline task.
+	if f.pendingRolledBack {
+		return
+	}
+	f.pendingRolledBack = true
 	for _, c := range captures {
 		f.deps.RollbackPendingTask(ctx, c)
 	}
@@ -377,7 +463,7 @@ func (f *Finalizer) flushAudits(ctx context.Context) {
 // shouldCoalesce decides whether the post-pass should replace the
 // per-tool holds with one coalesced hold. Coalescing requires at
 // least one approval-class capture AND every approval must be on a
-// coalescible stage (empty or "tool"). Deny captures suppress
+// coalescible stage (empty or coalescibleStageTool). Deny captures suppress
 // coalescing — the user shouldn't be prompted for an approval that
 // covers a definite-deny call.
 func shouldCoalesce(captures []HoldCapture) bool {
@@ -388,7 +474,7 @@ func shouldCoalesce(captures []HoldCapture) bool {
 	for _, c := range captures {
 		switch c.Kind {
 		case eval.HeldKindHintApproval:
-			if c.Stage != "" && c.Stage != "tool" {
+			if c.Stage != "" && c.Stage != coalescibleStageTool {
 				return false
 			}
 			if c.Payload != nil {

@@ -106,16 +106,6 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		Name:  tu.Name,
 		Input: tu.Input,
 	})
-	// Stub-placeholder guard matches InspectorChain: short
-	// autovault-looking strings should fail closed rather than become
-	// trigger-miss pass-through.
-	if v.Source != inspector.SourceTriggerMiss && inspector.AllPlaceholdersAreStubs(v.Placeholders) {
-		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: autovault placeholder is too short to validate safely",
-			Facts:   []pipeline.EvaluationFact{newInspectorFact(v)},
-		}, nil
-	}
 	if v.Source != inspector.SourceTriggerMiss {
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
@@ -140,7 +130,7 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
 			Reason:  ModelSafeInternalReason("authorization"),
-			Facts:   []pipeline.EvaluationFact{pipeline.AuthorizationFact{Outcome: "decision_error"}},
+			Facts:   []pipeline.EvaluationFact{pipeline.AuthorizationFact{Outcome: "decision_error", Detail: err.Error()}},
 		}, nil
 	}
 	taskScopeFact := pipeline.TaskScopeFact{
@@ -149,6 +139,9 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		MatchedTaskID: taskIDFromDecision(dec),
 	}
 	authFact := pipeline.AuthorizationFact{Outcome: string(dec.Source)}
+	if in.ShellSensitivePath && dec.Kind != runtimedecision.VerdictAllow {
+		authFact.Outcome = "sensitive_path_in_read_only_shell"
+	}
 	switch dec.Kind {
 	case runtimedecision.VerdictAllow:
 		if dec.Task != nil && in.SlideTask != nil {

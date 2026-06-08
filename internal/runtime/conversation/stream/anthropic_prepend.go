@@ -35,6 +35,7 @@ func PrependAnthropicAssistantNotice(dst io.Writer, src io.Reader, notice string
 	injected := false
 	afterMessageStart := false
 	inThinkingBlock := false
+	thinkingBlockIndex := -1
 	noticeIndex := 0
 	for {
 		ev, err := d.Next()
@@ -59,6 +60,7 @@ func PrependAnthropicAssistantNotice(dst io.Writer, src io.Reader, notice string
 					noticeIndex = ev.Meta.AnthropicIndex + 1
 				}
 				inThinkingBlock = true
+				thinkingBlockIndex = ev.Meta.AnthropicIndex
 				if err := e.Encode(ev); err != nil {
 					return err
 				}
@@ -68,8 +70,9 @@ func PrependAnthropicAssistantNotice(dst io.Writer, src io.Reader, notice string
 				if err := e.Encode(ev); err != nil {
 					return err
 				}
-				if ev.Kind == KindBlockEnd {
+				if ev.Kind == KindBlockEnd && ev.Meta.AnthropicIndex == thinkingBlockIndex {
 					inThinkingBlock = false
+					thinkingBlockIndex = -1
 				}
 				continue
 			}
@@ -95,7 +98,7 @@ func PrependAnthropicAssistantNotice(dst io.Writer, src io.Reader, notice string
 			return err
 		}
 	}
-	if !injected {
+	if afterMessageStart && !injected {
 		if err := writeAnthropicNoticeBlock(e, notice, noticeIndex); err != nil {
 			return err
 		}

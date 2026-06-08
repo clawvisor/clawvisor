@@ -29,9 +29,9 @@ func (AnthropicSanitize) Name() string { return "anthropic_sanitize" }
 // Preprocess runs the sanitizer iff the request targets Anthropic.
 // Non-Anthropic providers get OutcomeSkip with no mutations queued.
 //
-// On an Anthropic parse failure, the policy returns Outcome=Deny with
-// a model-safe reason — the orchestrator turns that into a 400
-// MALFORMED_REQUEST in the handler.
+// On an Anthropic parse failure, the policy returns Outcome=Deny with a
+// client-safe reason. The raw parse detail stays in audit params, where
+// audit writers apply their normal redaction/truncation.
 func (p *AnthropicSanitize) Preprocess(ctx context.Context, req pipeline.ReadOnlyRequest, mut pipeline.RequestMutator) (pipeline.RequestVerdict, error) {
 	if req.Provider() != conversation.ProviderAnthropic {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil

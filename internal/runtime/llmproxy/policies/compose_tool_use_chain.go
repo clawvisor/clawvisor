@@ -72,6 +72,8 @@ type ToolUseChainConfig struct {
 //  5. TaskScopeEvaluator — credentialed-path task-scope authorization.
 //  6. IntentVerifyEvaluator — LLM-backed intent check for matched tasks.
 //  7. CredentialRewriteEvaluator — nonce mint + URL rewrite.
+//  8. PassThroughEvaluator — explicit allow tail for unclaimed local
+//     tool_uses.
 //
 // Earlier evaluators short-circuit later ones via the orchestrator's
 // "first non-Skip wins" semantic. Nil resolvers degrade to Skip so the
@@ -83,7 +85,7 @@ func ComposeToolUseEvaluatorChain(cfg ToolUseChainConfig) []pipeline.ToolUseEval
 		inspectorChain = inspectorChain.WithBoundaryResolver(cfg.Boundary)
 	}
 	inspectorChain = inspectorChain.WithTriggerMissAuthorizer(cfg.TriggerMissAuth)
-	chain := make([]pipeline.ToolUseEvaluator, 0, 8)
+	chain := make([]pipeline.ToolUseEvaluator, 0, 9)
 	chain = append(chain, NewControlToolUseEvaluator(cfg.Control))
 	chain = append(chain, NewScriptSessionEvaluator(cfg.ScriptSession))
 	chain = append(chain, NewAuthorizationPolicy(cfg.Inspector, cfg.Authorization))
@@ -91,5 +93,6 @@ func ComposeToolUseEvaluatorChain(cfg ToolUseChainConfig) []pipeline.ToolUseEval
 	chain = append(chain, NewTaskScopeEvaluator(cfg.TaskScope))
 	chain = append(chain, NewIntentVerifyEvaluator(cfg.IntentVerify))
 	chain = append(chain, NewCredentialRewriteEvaluator(cfg.Rewrite))
+	chain = append(chain, NewPassThroughEvaluator())
 	return chain
 }

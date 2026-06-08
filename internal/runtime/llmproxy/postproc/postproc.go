@@ -56,8 +56,9 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		preExtracted = append(preExtracted, tu)
 		return conversation.ToolUseVerdict{Allowed: true}
 	}
-	if _, err := rewriter.Rewrite(body, contentType, collectorEval); err != nil && len(preExtracted) == 0 {
-		return failClosed("rewriter error during tool_use extraction: " + err.Error())
+	var collectorErr error
+	if _, err := rewriter.Rewrite(body, contentType, collectorEval); err != nil {
+		collectorErr = err
 	}
 
 	innerEval := session.evaluator(req, rewriter.Name(), preExtracted)
@@ -68,6 +69,18 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		v := innerEval(tu)
 		verdictByTU[tu.ID] = v
 		return v
+	}
+
+	if collectorErr != nil {
+		// The collector may have parsed tool_uses before failing later
+		// in the body. Evaluate only those parsed tools so any pending
+		// inline-task rows they create are rolled back below; the audit
+		// rows describe this local policy/rollback work, not an upstream
+		// tool call that reached the harness.
+		for _, tu := range preExtracted {
+			eval(tu)
+		}
+		return failClosed("rewriter error during tool_use extraction: " + collectorErr.Error())
 	}
 
 	result, err := rewriter.Rewrite(body, contentType, eval)
@@ -89,11 +102,13 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		firstReplaced := false
 		coalescedEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 			out := conversation.ToolUseVerdict{
-				Allowed: false,
-				Reason:  "Clawvisor: approval required (coalesced turn)",
+				Allowed:                false,
+				Reason:                 "Clawvisor: approval required (coalesced turn)",
+				SuppressSubstituteText: true,
 			}
 			if !firstReplaced {
 				out.SubstituteWith = finalResult.CoalescedPrompt
+				out.SuppressSubstituteText = false
 				firstReplaced = true
 			}
 			return out
@@ -107,7 +122,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 				Decisions:   coalescedResult.Decisions,
 			}
 		}
-		dropErr := session.dropCommitted(ctx, finalResult.CoalescedCapture)
+		dropErr := session.dropCommittedAndRollback(ctx, finalResult.CoalescedCapture)
 		reason := "coalesced approval rewrite failed: " + coalescedErr.Error()
 		if dropErr != nil {
 			reason += "; rollback failed: " + dropErr.Error()
@@ -137,15 +152,21 @@ func flushDirect(ctx context.Context, cfg llmproxy.PostprocessConfig, auditBuf *
 }
 
 // selectToolUseEvaluator dispatches to the cfg-supplied
-// ToolUseEvaluatorFactory. Nil is a programmer error — the handler
-// (and every test that exercises Postprocess) must assign
-// pipelineeval.Factory to cfg.ToolUseEvaluatorFactory explicitly.
+// ToolUseEvaluatorFactory. Missing factories fail closed instead of
+// panicking the serving goroutine.
 //
 // toolUses is the pre-extracted sibling set when known. The returned
 // evaluator appends audit rows through emit for the owning session.
 func selectToolUseEvaluator(req *http.Request, cfg llmproxy.PostprocessConfig, provider conversation.Provider, toolUses []conversation.ToolUse, emit func(conversation.AuditEvent)) conversation.ToolUseEvaluator {
 	if cfg.ToolUseEvaluatorFactory == nil {
-		panic(fmt.Sprintf("postproc: ToolUseEvaluatorFactory is nil for provider %q", provider))
+		reason := fmt.Sprintf("Clawvisor: postprocess evaluator is not configured for provider %q", provider)
+		return func(conversation.ToolUse) conversation.ToolUseVerdict {
+			return conversation.ToolUseVerdict{
+				Allowed: false,
+				Outcome: conversation.OutcomeDeny,
+				Reason:  reason,
+			}
+		}
 	}
 	return cfg.ToolUseEvaluatorFactory(req, cfg, provider, toolUses, emit)
 }
