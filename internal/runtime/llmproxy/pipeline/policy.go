@@ -71,6 +71,10 @@ type ReadOnlyRequest interface {
 	// AgentID is the authenticated agent. Same scoping shape as
 	// UserID; empty when the request is user-scoped only.
 	AgentID() string
+	// ValidateReplacementBody verifies bytes passed to
+	// RequestMutator.ReplaceBody for this request's provider/body shape.
+	// Adapters that do not have a provider parser may return nil.
+	ValidateReplacementBody([]byte) error
 }
 
 // ReadOnlyResponse exposes the response under inspection.

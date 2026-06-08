@@ -57,7 +57,7 @@ func (e *IntentVerifyEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnl
 		// downstream credential rewrite still needs to run.
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeSkip,
-			Facts:   []pipeline.EvaluationFact{pipeline.IntentVerifyFact{Allowed: true}},
+			Facts:   []pipeline.EvaluationFact{pipeline.IntentVerifyFact{Allowed: true, Outcome: "intent_verification_passed"}},
 		}, nil
 	}
 	if reason == "" && !ok {
@@ -67,11 +67,13 @@ func (e *IntentVerifyEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnl
 	fact := pipeline.IntentVerifyFact{Allowed: ok, Explanation: reason}
 
 	if ok {
+		fact.Outcome = "intent_verification_passed"
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeSkip,
 			Facts:   []pipeline.EvaluationFact{fact},
 		}, nil
 	}
+	fact.Outcome = "intent_verification_failed"
 	return pipeline.ToolUseVerdict{
 		Outcome: pipeline.OutcomeDeny,
 		Reason:  reason,

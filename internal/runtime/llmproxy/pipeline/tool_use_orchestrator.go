@@ -34,6 +34,7 @@ type ToolUseEvaluation struct {
 	EvaluatorName string
 	ToolUseID     string
 	Verdict       ToolUseVerdict
+	Winning       bool
 }
 
 // EvaluateToolUses runs every evaluator in declared order against
@@ -92,6 +93,7 @@ func EvaluateToolUses(
 					return nil, fmt.Errorf("evaluator %q on tool_use %q returned Continue with outcome %q; Continue requires Allow, Rewrite, or a local substitute fallback", ev.Name(), tu.ID, verdict.Outcome)
 				}
 				// Continuation short-circuits the whole pass.
+				result.Evaluations[len(result.Evaluations)-1].Winning = true
 				result.Continue = verdict.Continue
 				result.ContinueFromToolUseID = tu.ID
 				result.PerToolUse[tu.ID] = verdict
@@ -104,6 +106,7 @@ func EvaluateToolUses(
 				return result, nil
 			}
 			if verdict.Outcome != OutcomeSkip {
+				result.Evaluations[len(result.Evaluations)-1].Winning = true
 				v := verdict
 				winner = &v
 				break

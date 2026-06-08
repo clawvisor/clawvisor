@@ -6,7 +6,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 )
 
-const InlineApprovalIDMarker = "[clawvisor:approval="
+const InlineApprovalIDMarker = conversation.ApprovalIDMarker
 
 func ApprovalIDFooter(approvalID string) string {
 	if strings.TrimSpace(approvalID) == "" {

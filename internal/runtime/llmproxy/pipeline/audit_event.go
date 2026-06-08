@@ -44,16 +44,6 @@ func (r *ToolUseResult) AuditEvents(toolUses []conversation.ToolUse) []AuditEven
 	for _, tu := range toolUses {
 		byID[tu.ID] = tu
 	}
-	winner := make(map[string]string, len(toolUses))
-	for _, ev := range r.Evaluations {
-		if ev.Verdict.Outcome == OutcomeSkip {
-			continue
-		}
-		if _, already := winner[ev.ToolUseID]; already {
-			continue
-		}
-		winner[ev.ToolUseID] = ev.EvaluatorName
-	}
 	// inScope filters Evaluations to tool_uses the caller is interested
 	// in. nil toolUses (not zero-length slice) signals "no filter";
 	// callers wanting to suppress all rows pass an empty slice.
@@ -70,7 +60,7 @@ func (r *ToolUseResult) AuditEvents(toolUses []conversation.ToolUse) []AuditEven
 		if !inScope(ev.ToolUseID) {
 			continue
 		}
-		isWinning := winner[ev.ToolUseID] == ev.EvaluatorName
+		isWinning := ev.Winning
 		events = append(events, AuditEvent{
 			ToolUse:       byID[ev.ToolUseID],
 			EvaluatorName: ev.EvaluatorName,

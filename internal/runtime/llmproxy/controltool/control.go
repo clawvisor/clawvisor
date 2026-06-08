@@ -719,14 +719,7 @@ func sanitizeControlFailureCommand(cmd string) string {
 }
 
 func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	if !strings.Contains(s, "'") {
-		// codeql[go/unsafe-quoting] This branch only handles strings without single quotes; the branch below escapes embedded quotes.
-		return "'" + s + "'"
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return shellSingleQuote(s)
 }
 
 // controlToolUseMinYieldMs is the floor we clamp Codex's
@@ -830,10 +823,18 @@ func firstNonEmptyControl(values ...string) string {
 }
 
 func shellSingleQuote(s string) string {
-	if !strings.Contains(s, "'") {
-		return "'" + s + "'"
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('\'')
+	for _, r := range s {
+		if r == '\'' {
+			b.WriteString(`'\''`)
+			continue
+		}
+		b.WriteRune(r)
 	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	b.WriteByte('\'')
+	return b.String()
 }
 
 type ControlCall struct {

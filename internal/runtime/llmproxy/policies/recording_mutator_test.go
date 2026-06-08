@@ -88,5 +88,6 @@ func (s *stubReadOnlyRequest) IsFirstTurn() bool                     { return s.
 func (s *stubReadOnlyRequest) ConversationID() string                { return s.convID }
 func (s *stubReadOnlyRequest) UserID() string                        { return s.userID }
 func (s *stubReadOnlyRequest) AgentID() string                       { return s.agentID }
+func (s *stubReadOnlyRequest) ValidateReplacementBody([]byte) error  { return nil }
 
 var _ pipeline.ReadOnlyRequest = (*stubReadOnlyRequest)(nil)

@@ -183,9 +183,8 @@ type Store interface {
 	UpdateTaskApprovedFrom(ctx context.Context, id, fromStatus string, expiresAt time.Time, authorizedActions []TaskAction) (bool, error)
 	UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []TaskAction) error
 	UpdateTaskActions(ctx context.Context, id string, actions []TaskAction, expiresAt time.Time) error
-	// UpdateTaskExpiresAt sets expires_at unconditionally. Callers are
-	// responsible for choosing the new value (e.g., the sliding-lifetime
-	// path in llmproxy uses max(current, now+slide) before calling).
+	// UpdateTaskExpiresAt extends expires_at monotonically. Implementations
+	// must not move an existing later deadline backward.
 	UpdateTaskExpiresAt(ctx context.Context, id string, expiresAt time.Time) error
 	IncrementTaskRequestCount(ctx context.Context, id string) error
 	SetTaskPendingExpansion(ctx context.Context, id string, action *TaskAction, reason string) error
@@ -710,13 +709,13 @@ type LLMRequestCost struct {
 // single task. ByModel breaks the totals down per model so the UI
 // can show "X spent on Opus, Y on Sonnet" without re-querying.
 type TaskCostSummary struct {
-	TaskID           string                  `json:"task_id"`
-	RequestCount     int                     `json:"request_count"`
-	InputTokens      int64                   `json:"input_tokens"`
-	OutputTokens     int64                   `json:"output_tokens"`
-	CacheReadTokens  int64                   `json:"cache_read_tokens"`
-	CacheWriteTokens int64                   `json:"cache_write_tokens"`
-	CostMicros       int64                   `json:"cost_micros"`
+	TaskID           string `json:"task_id"`
+	RequestCount     int    `json:"request_count"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	CostMicros       int64  `json:"cost_micros"`
 	// UnknownModels and ByModel both serialize as `[]` when empty so
 	// consumers (TS client) get a consistent shape across all
 	// summaries and don't have to branch on undefined-vs-empty-array.

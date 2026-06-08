@@ -78,7 +78,7 @@ func (GoogleParser) ParseRequest(body []byte) ([]Turn, error) {
 	if err := json.Unmarshal(body, &r); err != nil {
 		return nil, err
 	}
-	out := make([]Turn, 0, len(r.Contents)+1)
+	var out []Turn
 	if r.SystemInstruction != nil {
 		if sys := flattenGoogleParts(r.SystemInstruction.Parts); sys != "" {
 			out = append(out, Turn{Role: RoleSystem, Content: sys})

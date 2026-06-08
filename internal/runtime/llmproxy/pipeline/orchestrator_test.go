@@ -17,6 +17,7 @@ import (
 type orchTestRequest struct {
 	provider conversation.Provider
 	body     []byte
+	validate func([]byte) error
 }
 
 func (r *orchTestRequest) Provider() conversation.Provider { return r.provider }
@@ -30,6 +31,12 @@ func (r *orchTestRequest) IsFirstTurn() bool          { return true }
 func (r *orchTestRequest) ConversationID() string     { return "" }
 func (r *orchTestRequest) UserID() string             { return "" }
 func (r *orchTestRequest) AgentID() string            { return "" }
+func (r *orchTestRequest) ValidateReplacementBody(body []byte) error {
+	if r.validate == nil {
+		return nil
+	}
+	return r.validate(body)
+}
 
 // allowingPolicy is a no-op RequestPolicy that emits one audit field.
 type allowingPolicy struct {
@@ -144,7 +151,7 @@ func TestRunPre_AppliesPoliciesInOrderAndMergesAudit(t *testing.T) {
 		&allowingPolicy{name: "tagger", field: "tagger_ran", value: true},
 	}
 
-	req := &orchTestRequest{provider: conversation.ProviderAnthropic, body: original}
+	req := &orchTestRequest{body: original}
 	result, err := pipeline.RunPre(context.Background(), req, policies)
 	if err != nil {
 		t.Fatalf("RunPre: %v", err)
@@ -178,6 +185,27 @@ func TestRunPre_RawBodyIsReadOnlyView(t *testing.T) {
 	}
 	if string(result.FinalBody) != string(original) {
 		t.Fatalf("FinalBody changed through RawBody alias: got %q want %q", result.FinalBody, original)
+	}
+}
+
+func TestRunPre_ReplaceBodyValidatesProviderRequestShape(t *testing.T) {
+	req := &orchTestRequest{
+		body: []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		validate: func([]byte) error {
+			return errors.New("parse failed")
+		},
+	}
+	result, err := pipeline.RunPre(context.Background(), req, []pipeline.RequestPolicy{
+		&bodyReplacingPolicy{name: "bad", newBody: []byte(`{"messages":`)},
+	})
+	if err == nil {
+		t.Fatal("RunPre error = nil, want malformed replacement body rejected")
+	}
+	if result == nil {
+		t.Fatal("RunPre result = nil")
+	}
+	if string(result.FinalBody) != string(req.body) {
+		t.Fatalf("FinalBody = %s, want original body preserved", result.FinalBody)
 	}
 }
 

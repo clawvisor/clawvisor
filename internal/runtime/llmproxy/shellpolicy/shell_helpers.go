@@ -57,7 +57,7 @@ func IsShellPollTool(name string, raw json.RawMessage) bool {
 	if !ok {
 		return false
 	}
-	return strings.TrimSpace(chars) == ""
+	return chars == ""
 }
 
 // ShellCommandFromInput extracts the command string from a shell-tool

@@ -3,6 +3,7 @@ package intentverify
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
@@ -86,7 +87,7 @@ func Run(ctx context.Context, verifier Verifier, dec Decision, resolved Resolved
 	if verifier == nil || !dec.HasAction {
 		return "", true
 	}
-	mode := dec.Verification
+	mode := strings.ToLower(strings.TrimSpace(dec.Verification))
 	if mode == "off" {
 		return "", true
 	}

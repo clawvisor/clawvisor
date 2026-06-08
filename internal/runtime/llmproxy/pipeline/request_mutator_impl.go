@@ -19,14 +19,16 @@ type eagerRequestMutator struct {
 
 	body     []byte
 	replaced bool
+	validate func([]byte) error
 }
 
 // newEagerRequestMutator constructs a mutator with the initial body.
 // The mutator captures audit fields each policy returns so the
 // orchestrator can flush them in a single audit row.
-func newEagerRequestMutator(initialBody []byte) *eagerRequestMutator {
+func newEagerRequestMutator(initialBody []byte, validate func([]byte) error) *eagerRequestMutator {
 	return &eagerRequestMutator{
-		body: append([]byte(nil), initialBody...),
+		body:     append([]byte(nil), initialBody...),
+		validate: validate,
 	}
 }
 
@@ -44,6 +46,11 @@ func (m *eagerRequestMutator) BodyReplaced() bool {
 func (m *eagerRequestMutator) ReplaceBody(newBody []byte) error {
 	if newBody == nil {
 		return fmt.Errorf("eagerRequestMutator: ReplaceBody nil")
+	}
+	if m.validate != nil {
+		if err := m.validate(newBody); err != nil {
+			return fmt.Errorf("eagerRequestMutator: ReplaceBody parse validation failed: %w", err)
+		}
 	}
 	m.body = append([]byte(nil), newBody...)
 	m.replaced = true

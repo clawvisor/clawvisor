@@ -1414,7 +1414,12 @@ func (s *Store) UpdateTaskActions(ctx context.Context, id string, actions []stor
 
 func (s *Store) UpdateTaskExpiresAt(ctx context.Context, id string, expiresAt time.Time) error {
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE tasks SET expires_at = $1 WHERE id = $2`, expiresAt, id)
+		`UPDATE tasks
+		 SET expires_at = CASE
+		   WHEN expires_at IS NULL OR expires_at < $1 THEN $1
+		   ELSE expires_at
+		 END
+		 WHERE id = $2`, expiresAt, id)
 	if err != nil {
 		return err
 	}

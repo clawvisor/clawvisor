@@ -3,6 +3,7 @@ package stream
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -77,7 +78,7 @@ func (d *OpenAIChatDecoder) Next() (Event, error) {
 			// closes the previous event when it looks like a new chat
 			// chunk. Otherwise, keep standard SSE multi-line data
 			// semantics and join the data lines with "\n".
-			if len(d.dataLines) > 0 && startsOpenAIChatEvent(dataValue) {
+			if len(d.dataLines) > 0 && openAIChatDataComplete(strings.Join(d.dataLines, "\n")) && startsOpenAIChatEvent(dataValue) {
 				ev, _ := d.flushDataLinesPreserveCurrent(rawLine, line)
 				return ev, nil
 			}
@@ -159,6 +160,13 @@ func (d *OpenAIChatDecoder) flushDataLinesPreserveCurrent(currentRawLine, curren
 
 func startsOpenAIChatEvent(data string) bool {
 	return data == "[DONE]" || strings.HasPrefix(data, "{")
+}
+
+func openAIChatDataComplete(data string) bool {
+	if data == "[DONE]" {
+		return true
+	}
+	return json.Valid([]byte(data))
 }
 
 func ensureSSETerminator(raw []byte) []byte {

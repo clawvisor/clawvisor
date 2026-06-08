@@ -1685,7 +1685,12 @@ func (s *Store) UpdateTaskActions(ctx context.Context, id string, actions []stor
 func (s *Store) UpdateTaskExpiresAt(ctx context.Context, id string, expiresAt time.Time) error {
 	exp := expiresAt.UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE tasks SET expires_at = ? WHERE id = ?`, exp, id)
+		`UPDATE tasks
+		 SET expires_at = CASE
+		   WHEN expires_at IS NULL OR expires_at < ? THEN ?
+		   ELSE expires_at
+		 END
+		 WHERE id = ?`, exp, exp, id)
 	if err != nil {
 		return err
 	}

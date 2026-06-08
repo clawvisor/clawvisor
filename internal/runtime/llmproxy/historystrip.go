@@ -36,14 +36,26 @@ func ParseSecretDecisionReply(text string) SecretDecisionReply {
 	return historystrip.ParseSecretDecisionReply(text)
 }
 
-func normalizeSecretLabel(value string) string {
+func NormalizeSecretLabel(value string) string {
 	return historystrip.NormalizeSecretLabel(value)
 }
 
-func sanitizeVaultName(value string) string {
+func SanitizeVaultName(value string) string {
 	return historystrip.SanitizeVaultName(value)
 }
 
-func containsInlineApprovalAugmentationMarker(text string) bool {
+func ContainsInlineApprovalAugmentationMarker(text string) bool {
 	return historystrip.ContainsInlineApprovalAugmentationMarker(text)
+}
+
+func normalizeSecretLabel(value string) string {
+	return NormalizeSecretLabel(value)
+}
+
+func sanitizeVaultName(value string) string {
+	return SanitizeVaultName(value)
+}
+
+func containsInlineApprovalAugmentationMarker(text string) bool {
+	return ContainsInlineApprovalAugmentationMarker(text)
 }

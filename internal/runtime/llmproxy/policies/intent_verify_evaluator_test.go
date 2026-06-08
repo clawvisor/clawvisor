@@ -36,13 +36,13 @@ func TestIntentVerify_SkipOnVerifierPass(t *testing.T) {
 	}
 	found := false
 	for _, f := range v.Facts {
-		if iv, ok := f.(pipeline.IntentVerifyFact); ok && iv.Allowed {
+		if iv, ok := f.(pipeline.IntentVerifyFact); ok && iv.Allowed && iv.Outcome == "intent_verification_passed" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("IntentVerifyFact.Allowed = false, want true (facts: %+v)", v.Facts)
+		t.Errorf("IntentVerifyFact pass outcome missing (facts: %+v)", v.Facts)
 	}
 }
 

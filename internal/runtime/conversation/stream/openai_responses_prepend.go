@@ -238,7 +238,7 @@ func rewriteFirstSSEDataPayload(raw []byte, rewrite func([]byte) ([]byte, bool, 
 	if bytes.ContainsAny(next, "\r\n") {
 		return nil, false, fmt.Errorf("rewritten SSE data payload contains a newline")
 	}
-	out := make([]byte, 0, len(raw)+len(next)-len(joined))
+	var out []byte
 	cursor := 0
 	for i, dl := range dataLines {
 		if i == 0 {
@@ -280,7 +280,7 @@ func insertNoticeIntoOutputArray(data []byte, noticeRaw []byte) ([]byte, bool, e
 		}
 		break
 	}
-	out := make([]byte, 0, len(data)+len(noticeRaw)+1)
+	var out []byte
 	out = append(out, data[:insertPos]...)
 	out = append(out, noticeRaw...)
 	if needsComma {

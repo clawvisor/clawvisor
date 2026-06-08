@@ -70,7 +70,7 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 		return nil, fmt.Errorf("pipeline.RunPre: nil request")
 	}
 
-	mut := newEagerRequestMutator(req.RawBody())
+	mut := newEagerRequestMutator(req.RawBody(), req.ValidateReplacementBody)
 	result := &PreResult{
 		AuditParams: make(map[string]any),
 		Verdicts:    make([]PolicyVerdict, 0, len(policies)),
@@ -152,5 +152,8 @@ func (w *mutatingRequestWrapper) IsFirstTurn() bool          { return w.base.IsF
 func (w *mutatingRequestWrapper) ConversationID() string     { return w.base.ConversationID() }
 func (w *mutatingRequestWrapper) UserID() string             { return w.base.UserID() }
 func (w *mutatingRequestWrapper) AgentID() string            { return w.base.AgentID() }
+func (w *mutatingRequestWrapper) ValidateReplacementBody(body []byte) error {
+	return w.base.ValidateReplacementBody(body)
+}
 
 var _ ReadOnlyRequest = (*mutatingRequestWrapper)(nil)

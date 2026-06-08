@@ -222,6 +222,10 @@ func OutcomeNameFromFacts(evaluatorName string, outcome Outcome, facts []Evaluat
 			if ff.Outcome != "" {
 				return ff.Outcome
 			}
+		case IntentVerifyFact:
+			if ff.Outcome != "" {
+				return ff.Outcome
+			}
 		case ScriptSessionFact:
 			if ff.Outcome != "" {
 				return ff.Outcome

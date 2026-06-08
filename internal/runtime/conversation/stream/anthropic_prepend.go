@@ -152,7 +152,7 @@ func isAnthropicThinkingBlockStart(ev Event) bool {
 	if err := json.Unmarshal([]byte(data), &payload); err != nil {
 		return false
 	}
-	return payload.ContentBlock.Type == "thinking"
+	return payload.ContentBlock.Type == "thinking" || payload.ContentBlock.Type == "redacted_thinking"
 }
 
 func sseDataPayload(raw []byte) string {

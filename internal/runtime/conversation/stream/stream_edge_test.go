@@ -320,6 +320,17 @@ func TestOpenAIChatRoundTrip_AdjacentCRLFChunksWithoutBlankLines(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatRoundTrip_MultilineContinuationCanStartWithObject(t *testing.T) {
+	input := strings.Join([]string{
+		`data: {"id":"chatcmpl_multi","object":"chat.completion.chunk","choices":[`,
+		`data: {"index":0,"delta":{"content":"hello"}}]}`,
+		``,
+	}, "\n")
+	if got := roundTripOpenAIChat(t, input); got != input {
+		t.Fatalf("multi-line object continuation round-trip not byte-identical\n--- want ---\n%q\n--- got ---\n%q", input, got)
+	}
+}
+
 func TestStreamDecoders_AllowLargeDataLineNearScannerCap(t *testing.T) {
 	largeText := strings.Repeat("x", 3<<20)
 

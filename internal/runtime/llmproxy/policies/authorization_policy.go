@@ -40,8 +40,8 @@ type AuthorizationInputs struct {
 	// no policy config is wired so sensitive-path + no-policy still
 	// routes through the approval flow.
 	ShellSensitivePath bool
-	// ReadOnlyShellCommand reports whether the upstream
-	// ReadOnlyShellPassthroughPolicy would have allowed this call.
+	// ReadOnlyShellCommand reports whether the shell-specials
+	// classifier determined this trigger miss is read-only.
 	// Set true → SkipIntentVerification on the authorization input.
 	ReadOnlyShellCommand bool
 	// ShellPoll reports whether this is a no-op background shell poll

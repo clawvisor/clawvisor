@@ -7,6 +7,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -41,6 +42,17 @@ func (r *pipelineReadOnlyRequest) IsFirstTurn() bool          { return r.firstTu
 func (r *pipelineReadOnlyRequest) ConversationID() string     { return r.conversationID }
 func (r *pipelineReadOnlyRequest) UserID() string             { return r.userID }
 func (r *pipelineReadOnlyRequest) AgentID() string            { return r.agentID }
+
+func (r *pipelineReadOnlyRequest) ValidateReplacementBody(body []byte) error {
+	parser := conversation.DefaultRegistry().ParserForProvider(r.provider)
+	if parser == nil {
+		return nil
+	}
+	if _, err := parser.ParseRequest(body); err != nil {
+		return fmt.Errorf("%s request parse: %w", r.provider, err)
+	}
+	return nil
+}
 
 var _ pipeline.ReadOnlyRequest = (*pipelineReadOnlyRequest)(nil)
 
