@@ -1,0 +1,28 @@
+internal/runtime/llmproxy/policies/inspector_chain_integration_test.go
+  s_813cf813d8b1d0::t_1c8be4bcb91ebf 1-8,10-20,25-32,34-35,37-41,44-47,95-105,107,109-145,148-166,169-211
+  s_522af339bc956c::t_22c9dcf9943416 48-80,92-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "886d434fe52617ebf256f52acab1eda5f43e3b3c",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

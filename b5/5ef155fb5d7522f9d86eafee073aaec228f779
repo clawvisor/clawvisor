@@ -1,0 +1,25 @@
+internal/runtime/llmproxy/pipeline/request_mutator_impl.go
+  s_813cf813d8b1d0::t_7b5e3752f4389c 1-49
+internal/runtime/llmproxy/pipeline/orchestrator.go
+  s_813cf813d8b1d0::t_72d7e35c009210 1-5,9-129,134-135
+  s_813cf813d8b1d0::t_9369ee43b562d9 130-133,136-142
+  s_813cf813d8b1d0::t_10d78a9c7163f9 6-8
+internal/runtime/llmproxy/pipeline/orchestrator_test.go
+  s_813cf813d8b1d0::t_934d1fabe2e359 1-271
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "b55ef155fb5d7522f9d86eafee073aaec228f779",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+internal/runtime/llmproxy/postprocess.go
+  s_f5f267b393c21f::t_6bc21dd4564974 1936
+  s_f5f267b393c21f::t_5233a4534c0821 488
+  s_f5f267b393c21f::t_8f3974b9c3d94f 1425
+  s_f5f267b393c21f::t_a8d03a25c3c98b 1380-1387,1390
+internal/runtime/llmproxy/postprocess_test.go
+  s_f5f267b393c21f::t_e9956ed6fbea1e 1252-1261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "d4d39a308b50025f60afc709e88d3af29462b9b1",
+  "prompts": {},
+  "sessions": {
+    "s_f5f267b393c21f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c0ba8503-0d83-412c-b0fe-d1d95d9ab730",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
