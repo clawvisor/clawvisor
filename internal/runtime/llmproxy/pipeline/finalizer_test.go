@@ -446,3 +446,42 @@ func TestFinalizerCoalescedEvictionAuditUsesApprovalPrimary(t *testing.T) {
 		t.Fatalf("coalesced eviction audit primary = %v, want approval capture", deps.coalescedEvictedAuditToolUseID)
 	}
 }
+
+func TestFinalizerReplayPartialFailureRollback(t *testing.T) {
+	submitErr := errors.New("third submit failed")
+	deps := &finalizerTestDeps{
+		submit:     pipeline.HoldSubmitResult{ApprovalID: "cv-committed"},
+		submitErrs: []error{nil, nil, submitErr},
+	}
+	f := pipeline.NewFinalizer(deps)
+	for _, id := range []string{"toolu_ok1", "toolu_ok2", "toolu_fail"} {
+		f.AddCapture(pipeline.HoldCapture{
+			ToolUseID: id,
+			Kind:      eval.HeldKindHintApproval,
+			Stage:     "inline_task",
+			Payload:   "pending-" + id,
+		})
+	}
+
+	_, err := f.Finalize(context.Background())
+	if !errors.Is(err, submitErr) {
+		t.Fatalf("Finalize error = %v, want %v", err, submitErr)
+	}
+
+	// Should drop the first two committed holds
+	if len(deps.dropped) != 2 {
+		t.Fatalf("dropped count = %d, want 2", len(deps.dropped))
+	}
+	if deps.dropped[0].ToolUseID != "toolu_ok1" || deps.dropped[1].ToolUseID != "toolu_ok2" {
+		t.Fatalf("dropped = %+v, want toolu_ok1 and toolu_ok2", deps.dropped)
+	}
+
+	// Should rollback pending tasks for the remaining (failed) captures (index 2 onwards)
+	if len(deps.rolledBack) != 1 {
+		t.Fatalf("rolledBack count = %d, want 1", len(deps.rolledBack))
+	}
+	if deps.rolledBack[0].ToolUseID != "toolu_fail" {
+		t.Fatalf("rolledBack = %+v, want toolu_fail", deps.rolledBack)
+	}
+}
+
