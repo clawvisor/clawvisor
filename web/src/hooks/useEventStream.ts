@@ -53,6 +53,7 @@ export function useEventStream() {
 
       es.addEventListener('queue', () => {
         qc.invalidateQueries({ queryKey: ['overview'] })
+        qc.invalidateQueries({ queryKey: ['inbox'] })
         qc.invalidateQueries({ queryKey: ['queue'] })
         qc.invalidateQueries({ queryKey: ['connections'] })
         qc.invalidateQueries({ queryKey: ['welcome'] })
@@ -61,6 +62,7 @@ export function useEventStream() {
       es.addEventListener('tasks', () => {
         qc.invalidateQueries({ queryKey: ['tasks'] })
         qc.invalidateQueries({ queryKey: ['overview'] })
+        qc.invalidateQueries({ queryKey: ['inbox'] })
       })
 
       es.addEventListener('devices', () => {
@@ -80,6 +82,7 @@ export function useEventStream() {
           qc.invalidateQueries({ queryKey: ['audit', { task_id: id }] })
         }
         qc.invalidateQueries({ queryKey: ['overview'] })
+        qc.invalidateQueries({ queryKey: ['inbox'] })
       })
 
       es.onerror = () => {

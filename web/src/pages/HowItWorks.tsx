@@ -119,7 +119,7 @@ export default function HowItWorks() {
   return (
     <div className="w-full max-w-3xl mx-auto px-4 sm:px-6 md:px-8 py-10 space-y-8">
       <header className="space-y-1">
-        <h1 className="text-2xl font-bold text-text-primary">How it works</h1>
+        <h1 className="page-title">How it works</h1>
         <p className="text-sm text-text-tertiary">
           A short tour of how Clawvisor sits between your agent and the services it uses.
         </p>
@@ -317,7 +317,7 @@ function TaskComposeVisual() {
   return (
     <div aria-hidden="true" className="grid sm:grid-cols-2 gap-8 max-w-2xl mx-auto">
       <div className="flex flex-col items-center">
-        <div className="text-[11px] uppercase tracking-wide text-text-tertiary mb-3">
+        <div className="text-sm uppercase tracking-wide text-text-tertiary mb-3">
           Without tasks
         </div>
         <svg viewBox="0 0 200 140" className="w-full max-w-[260px] h-auto" role="img">
@@ -327,7 +327,7 @@ function TaskComposeVisual() {
         </svg>
       </div>
       <div className="flex flex-col items-center">
-        <div className="text-[11px] uppercase tracking-wide text-text-tertiary mb-3">
+        <div className="text-sm uppercase tracking-wide text-text-tertiary mb-3">
           With tasks
         </div>
         <svg viewBox="0 0 200 140" className="w-full max-w-[260px] h-auto" role="img">
@@ -391,7 +391,7 @@ function TaskApprovalVisual() {
       </div>
 
       <div className="border-t border-border-subtle px-5 py-3">
-        <div className="text-[11px] uppercase tracking-wide text-text-tertiary mb-2">
+        <div className="text-sm uppercase tracking-wide text-text-tertiary mb-2">
           Tools requested
         </div>
         <div>
@@ -408,7 +408,7 @@ function TaskApprovalVisual() {
                 </div>
                 <div className="text-[12px] text-text-secondary mt-0.5">{t.use}</div>
               </div>
-              <span className="text-[10px] font-mono px-1.5 py-px rounded-full border border-border-subtle text-text-tertiary shrink-0 whitespace-nowrap">
+              <span className="text-sm font-mono px-1.5 py-px rounded-full border border-border-subtle text-text-tertiary shrink-0 whitespace-nowrap">
                 approve · strict
               </span>
             </div>
@@ -488,7 +488,7 @@ function CredentialSwapVisual() {
   return (
     <div className="grid sm:grid-cols-2 gap-3">
       <div className="bg-surface-1 border border-border-default rounded-md p-4">
-        <div className="text-[11px] uppercase tracking-wide text-text-tertiary mb-2">What the agent sees</div>
+        <div className="text-sm uppercase tracking-wide text-text-tertiary mb-2">What the agent sees</div>
         <code className="block font-mono text-sm text-text-primary break-all">
           autovault_password_k3sJ2nQ8vT4mB7xW
         </code>
@@ -497,7 +497,7 @@ function CredentialSwapVisual() {
         </p>
       </div>
       <div className="bg-surface-1 border border-brand/40 rounded-md p-4">
-        <div className="text-[11px] uppercase tracking-wide text-brand-strong mb-2">What the service sees</div>
+        <div className="text-sm uppercase tracking-wide text-brand-strong mb-2">What the service sees</div>
         <code className="block font-mono text-sm text-text-primary break-all">
           <button
             type="button"
@@ -529,7 +529,7 @@ function ObservationsVisual() {
   ]
   return (
     <div className="bg-surface-1 border border-border-default rounded-md overflow-hidden">
-      <div className="px-4 py-2 border-b border-border-default text-[11px] uppercase tracking-wide text-text-tertiary">
+      <div className="px-4 py-2 border-b border-border-default text-sm uppercase tracking-wide text-text-tertiary">
         Observations
       </div>
       <table className="w-full text-sm">

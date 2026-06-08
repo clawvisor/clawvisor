@@ -974,8 +974,9 @@ func (s *Server) routes() http.Handler {
 
 	// Audit (user JWT)
 	mux.Handle("GET /api/audit", user(auditHandler.List))
-	mux.Handle("GET /api/audit/{id}", user(auditHandler.Get))
+	mux.Handle("GET /api/audit/buckets", user(auditHandler.ActivityBuckets))
 	mux.Handle("GET /api/audit/mutes", user(auditHandler.ListMutes))
+	mux.Handle("GET /api/audit/{id}", user(auditHandler.Get))
 	mux.Handle("POST /api/audit/mutes", user(auditHandler.CreateMute))
 	mux.Handle("DELETE /api/audit/mutes/{id}", user(auditHandler.DeleteMute))
 

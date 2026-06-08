@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
@@ -56,6 +57,8 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 		DataOrigin:     q.Get("data_origin"),
 		TaskID:         q.Get("task_id"),
 		AgentID:        q.Get("agent_id"),
+		Since:          parseTimeQuery(q.Get("since")),
+		Until:          parseTimeQuery(q.Get("until")),
 		IncludeRuntime: &includeRuntime,
 		Limit:          limit,
 		Offset:         parseIntQuery(q.Get("offset"), 0),
@@ -76,6 +79,49 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total":   total,
 		"entries": respEntries,
+	})
+}
+
+// ActivityBuckets returns aggregated audit activity for a time window.
+//
+// GET /api/audit/buckets?days=14&bucket_minutes=1440
+// Auth: user JWT
+func (h *AuditHandler) ActivityBuckets(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	q := r.URL.Query()
+	days := parseIntQuery(q.Get("days"), 14)
+	if days < 1 {
+		days = 14
+	}
+	if days > 90 {
+		days = 90
+	}
+	bucketMinutes := parseIntQuery(q.Get("bucket_minutes"), 1440)
+	if bucketMinutes < 1 {
+		bucketMinutes = 1440
+	}
+	if bucketMinutes > 10080 {
+		bucketMinutes = 10080
+	}
+
+	since := time.Now().AddDate(0, 0, -days)
+	buckets, err := h.st.AuditActivityBuckets(r.Context(), user.ID, since, bucketMinutes)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load activity buckets")
+		return
+	}
+	if buckets == nil {
+		buckets = []store.ActivityBucket{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"buckets": buckets,
+		"days":    days,
+		"since":   since,
 	})
 }
 
@@ -191,6 +237,24 @@ func (h *AuditHandler) DeleteMute(w http.ResponseWriter, r *http.Request) {
 }
 
 const maxListLimit = 200
+
+// parseTimeQuery parses RFC3339 or YYYY-MM-DD query timestamps.
+func parseTimeQuery(s string) *time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return &t
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return &t
+	}
+	if t, err := time.Parse("2006-01-02T15:04", s); err == nil {
+		return &t
+	}
+	return nil
+}
 
 // parseIntQuery parses a query string integer, returning defaultVal if missing or invalid.
 func parseIntQuery(s string, defaultVal int) int {

@@ -264,7 +264,7 @@ export default function TaskCard({
   const showRationale = task.approval_source === 'telegram_group' && task.approval_rationale
 
   return (
-    <div className={`bg-surface-1 border border-border-default rounded-md border-l-[3px] ${leftBorder} overflow-hidden`}>
+    <div className={`dev-card border-l-2 ${leftBorder} overflow-hidden`}>
 
       {/* ── Compact row for non-actionable cards ── */}
       {!isActionable && (
@@ -277,7 +277,7 @@ export default function TaskCard({
             <span className={`text-text-primary text-sm flex-1 ${expanded ? '' : 'truncate'}`}>{task.purpose}</span>
             <svg className={`w-3.5 h-3.5 text-text-tertiary transition-transform shrink-0 ${expanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
           </div>
-          <div className="mt-1 pl-[20px] flex items-center gap-2 font-mono text-[11px] text-text-tertiary">
+          <div className="mt-1 pl-[20px] flex items-center gap-2 font-mono text-sm text-text-tertiary">
             <span>{agentName}</span>
             <span>&middot;</span>
             <span>
@@ -430,7 +430,7 @@ export default function TaskCard({
               <div className="bg-surface-0 border rounded overflow-hidden" style={{ borderColor: 'var(--color-warning-border-light)' }}>
                 <div className="px-3 py-1.5 border-b flex items-center gap-1.5" style={{ background: 'var(--color-warning-tint)', borderColor: 'var(--color-warning-border-subtle)' }}>
                   <span className="w-1.5 h-1.5 rounded-full bg-warning" />
-                  <span className="text-[10px] font-medium text-warning uppercase tracking-wider">New scope requested</span>
+                  <span className="text-sm font-medium text-warning uppercase tracking-wider">New scope requested</span>
                 </div>
                 <table className="w-full text-sm">
                   <tbody>
@@ -443,7 +443,7 @@ export default function TaskCard({
                 {task.pending_action.auto_execute && (
                   <div className="px-3 py-1.5 border-t border-border-subtle flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                    <span className="text-[10px] font-mono text-success">auto-execute</span>
+                    <span className="text-sm font-mono text-success">auto-execute</span>
                   </div>
                 )}
               </div>
@@ -632,7 +632,7 @@ function GroupedScopes({
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onMarkerClick?.() }}
-                            className="inline-flex items-center gap-1 px-1.5 py-px rounded-full border border-border-subtle text-[10px] text-text-tertiary hover:text-brand hover:border-brand/40 hover:bg-brand/[0.08] transition-colors"
+                            className="inline-flex items-center gap-1 px-1.5 py-px rounded-full border border-border-subtle text-sm text-text-tertiary hover:text-brand hover:border-brand/40 hover:bg-brand/[0.08] transition-colors"
                           >
                             <span className="w-1 h-1 rounded-full bg-current opacity-65" />
                             {planned.length} planned
@@ -667,7 +667,7 @@ function GroupedScopes({
                             <div key={j} className={j > 0 ? 'pt-2 border-t border-dashed border-border-subtle' : ''}>
                               <div className="text-[11.5px] text-text-secondary">— {p.reason}</div>
                               {p.params && Object.keys(p.params).length > 0 && (
-                                <div className="font-mono text-[11px] text-text-tertiary break-all mt-0.5">
+                                <div className="font-mono text-sm text-text-tertiary break-all mt-0.5">
                                   <PlannedParams params={p.params} />
                                 </div>
                               )}
@@ -714,7 +714,7 @@ function PlannedToggle({ on, count, onToggle }: { on: boolean; count: number; on
     <button
       type="button"
       onClick={onToggle}
-      className={`inline-flex items-center gap-[7px] py-[3px] pl-[6px] pr-[9px] rounded-full border text-[11px] transition-colors select-none ${
+      className={`inline-flex items-center gap-[7px] py-[3px] pl-[6px] pr-[9px] rounded-full border text-sm transition-colors select-none ${
         on
           ? 'bg-brand/10 border-brand/40 text-brand'
           : 'bg-white/[0.02] border-border-subtle text-text-tertiary hover:bg-white/[0.05] hover:text-text-secondary'
@@ -775,7 +775,7 @@ function ScopeGroupTables({ autoActions, manualActions }: {
         <div className="bg-surface-0 border border-border-subtle rounded overflow-hidden">
           <div className="px-3 py-1.5 border-b border-border-subtle flex items-center gap-1.5" style={{ background: 'var(--color-success-tint)' }}>
             <span className="w-1.5 h-1.5 rounded-full bg-success" />
-            <span className="text-[10px] font-medium text-success uppercase tracking-wider">Auto-execute</span>
+            <span className="text-sm font-medium text-success uppercase tracking-wider">Auto-execute</span>
           </div>
           <table className="w-full text-sm">
             <tbody>
@@ -793,7 +793,7 @@ function ScopeGroupTables({ autoActions, manualActions }: {
         <div className="bg-surface-0 border rounded overflow-hidden mt-2" style={{ borderColor: 'var(--color-warning-border-light)' }}>
           <div className="px-3 py-1.5 border-b flex items-center gap-1.5" style={{ background: 'var(--color-warning-tint)', borderColor: 'var(--color-warning-border-subtle)' }}>
             <span className="w-1.5 h-1.5 rounded-full bg-warning" />
-            <span className="text-[10px] font-medium text-warning uppercase tracking-wider">Requires approval</span>
+            <span className="text-sm font-medium text-warning uppercase tracking-wider">Requires approval</span>
           </div>
           <table className="w-full text-sm">
             <tbody>
@@ -828,22 +828,22 @@ function RuntimeEnvelopePanel({
     <div className="space-y-3">
       <div className="rounded border border-border-subtle bg-surface-0 p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-brand">Runtime envelope</span>
-          <span className="inline-flex items-center rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-mono text-brand">
+          <span className="text-sm font-medium uppercase tracking-wider text-brand">Runtime envelope</span>
+          <span className="inline-flex items-center rounded-full bg-brand/10 px-2 py-0.5 text-sm font-mono text-brand">
             schema v{schemaVersion ?? 2}
           </span>
           {intentVerificationMode && (
-            <span className="inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-mono text-text-secondary">
+            <span className="inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-sm font-mono text-text-secondary">
               verify {intentVerificationMode}
             </span>
           )}
           {expectedTools.length > 0 && (
-            <span className="inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-mono text-text-secondary">
+            <span className="inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-sm font-mono text-text-secondary">
               {expectedTools.length} tool{expectedTools.length === 1 ? '' : 's'}
             </span>
           )}
           {expectedEgress.length > 0 && (
-            <span className="inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-mono text-text-secondary">
+            <span className="inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-sm font-mono text-text-secondary">
               {expectedEgress.length} egress rule{expectedEgress.length === 1 ? '' : 's'}
             </span>
           )}
@@ -855,7 +855,7 @@ function RuntimeEnvelopePanel({
         <div className="rounded border border-border-subtle bg-surface-0 overflow-hidden">
           <div className="px-3 py-1.5 border-b border-border-subtle flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-            <span className="text-[10px] font-medium uppercase tracking-wider text-brand">Expected tools</span>
+            <span className="text-sm font-medium uppercase tracking-wider text-brand">Expected tools</span>
           </div>
           <div className="divide-y divide-border-subtle">
             {expectedTools.map((item, index) => (
@@ -863,12 +863,12 @@ function RuntimeEnvelopePanel({
                 <div className="font-mono text-xs text-text-primary">{item.tool_name}</div>
                 <div className="text-xs text-text-secondary">{item.why}</div>
                 {item.input_shape && Object.keys(item.input_shape).length > 0 && (
-                  <div className="font-mono text-[10px] text-text-tertiary break-all">
+                  <div className="font-mono text-sm text-text-tertiary break-all">
                     shape: {JSON.stringify(item.input_shape)}
                   </div>
                 )}
                 {item.input_regex && (
-                  <div className="font-mono text-[10px] text-text-tertiary break-all">
+                  <div className="font-mono text-sm text-text-tertiary break-all">
                     regex: {item.input_regex}
                   </div>
                 )}
@@ -882,7 +882,7 @@ function RuntimeEnvelopePanel({
         <div className="rounded border border-border-subtle bg-surface-0 overflow-hidden">
           <div className="px-3 py-1.5 border-b border-border-subtle flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-success" />
-            <span className="text-[10px] font-medium uppercase tracking-wider text-success">Expected egress</span>
+            <span className="text-sm font-medium uppercase tracking-wider text-success">Expected egress</span>
           </div>
           <div className="divide-y divide-border-subtle">
             {expectedEgress.map((item, index) => (
@@ -894,17 +894,17 @@ function RuntimeEnvelopePanel({
                 </div>
                 <div className="text-xs text-text-secondary">{item.why}</div>
                 {item.query_shape && Object.keys(item.query_shape).length > 0 && (
-                  <div className="font-mono text-[10px] text-text-tertiary break-all">
+                  <div className="font-mono text-sm text-text-tertiary break-all">
                     query: {JSON.stringify(item.query_shape)}
                   </div>
                 )}
                 {item.body_shape && Object.keys(item.body_shape).length > 0 && (
-                  <div className="font-mono text-[10px] text-text-tertiary break-all">
+                  <div className="font-mono text-sm text-text-tertiary break-all">
                     body: {JSON.stringify(item.body_shape)}
                   </div>
                 )}
                 {item.headers && Object.keys(item.headers).length > 0 && (
-                  <div className="font-mono text-[10px] text-text-tertiary break-all">
+                  <div className="font-mono text-sm text-text-tertiary break-all">
                     headers: {JSON.stringify(item.headers)}
                   </div>
                 )}
@@ -925,11 +925,11 @@ function AutoApprovalPanel({ rationale }: { rationale: ApprovalRationale }) {
       <div className="rounded overflow-hidden" style={{ background: 'rgba(96, 165, 250, 0.04)', border: '1px solid rgba(96, 165, 250, 0.15)' }}>
         <div className="px-3 py-1.5 flex items-center gap-1.5" style={{ borderBottom: '1px solid rgba(96, 165, 250, 0.10)' }}>
           <svg className="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
-          <span className="text-[10px] font-medium uppercase tracking-wider text-blue-400">Auto-Approved via Group Chat</span>
+          <span className="text-sm font-medium uppercase tracking-wider text-blue-400">Auto-Approved via Group Chat</span>
         </div>
         <div className="px-3 py-2.5 space-y-1.5">
           <p className="text-sm text-text-secondary">{rationale.explanation}</p>
-          <div className="text-[10px] font-mono text-text-tertiary pt-0.5">
+          <div className="text-sm font-mono text-text-tertiary pt-0.5">
             {rationale.confidence} confidence{isLocalHost ? ` · ${rationale.model}` : ''} &middot; {rationale.latency_ms}ms
           </div>
         </div>
@@ -962,7 +962,7 @@ function RiskPanel({ risk, level }: { risk: RiskAssessment; level: string }) {
             ? <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
             : <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
           }
-          <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: colors.color }}>Risk assessment &middot; {level}</span>
+          <span className="text-sm font-medium uppercase tracking-wider" style={{ color: colors.color }}>Risk assessment &middot; {level}</span>
         </div>
         <div className="px-3 py-2.5 space-y-2">
           <p className="text-sm text-text-secondary">{risk.explanation}</p>
@@ -1000,7 +1000,7 @@ function RiskPanel({ risk, level }: { risk: RiskAssessment; level: string }) {
             </div>
           )}
 
-          <div className="text-[10px] font-mono text-text-tertiary pt-1">{isLocalHost ? `${risk.model} · ` : ''}{risk.latency_ms}ms</div>
+          <div className="text-sm font-mono text-text-tertiary pt-1">{isLocalHost ? `${risk.model} · ` : ''}{risk.latency_ms}ms</div>
         </div>
       </div>
     </div>
@@ -1057,7 +1057,7 @@ function ActivityRow({ entry }: { entry: AuditEntry }) {
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] font-mono text-text-tertiary">
+          <span className="text-sm font-mono text-text-tertiary">
             {format(new Date(entry.timestamp), 'h:mm a')}
           </span>
           {entry.verification && (
@@ -1078,10 +1078,10 @@ function ActivityRow({ entry }: { entry: AuditEntry }) {
               : 'border-success'
             }`}>
               <div className="flex items-center gap-2">
-                <span className={`text-[10px] font-mono font-medium ${
+                <span className={`text-sm font-mono font-medium ${
                   entry.verification.param_scope === 'ok' ? 'text-success' : entry.verification.param_scope === 'violation' ? 'text-danger' : 'text-text-tertiary'
                 }`}>params: {entry.verification.param_scope}</span>
-                <span className={`text-[10px] font-mono font-medium ${
+                <span className={`text-sm font-mono font-medium ${
                   entry.verification.reason_coherence === 'ok' ? 'text-success'
                   : entry.verification.reason_coherence === 'incoherent' ? 'text-danger'
                   : entry.verification.reason_coherence === 'insufficient' ? 'text-warning'
@@ -1089,19 +1089,19 @@ function ActivityRow({ entry }: { entry: AuditEntry }) {
                 }`}>reason: {entry.verification.reason_coherence}</span>
               </div>
               <p className="text-xs text-text-secondary">{entry.verification.explanation}</p>
-              <div className="text-[10px] font-mono text-text-tertiary">{isLocalHost ? `${entry.verification.model} · ` : ''}{entry.verification.latency_ms}ms{entry.duration_ms ? ` · executed in ${entry.duration_ms}ms` : ''}</div>
+              <div className="text-sm font-mono text-text-tertiary">{isLocalHost ? `${entry.verification.model} · ` : ''}{entry.verification.latency_ms}ms{entry.duration_ms ? ` · executed in ${entry.duration_ms}ms` : ''}</div>
             </div>
           )}
           {entry.error_msg && (
             <div className="ml-3 pl-3 border-l-2 border-danger space-y-1">
-              <div className="text-[10px] font-mono font-medium text-danger">error</div>
+              <div className="text-sm font-mono font-medium text-danger">error</div>
               <pre className="text-xs text-danger whitespace-pre-wrap break-words font-mono max-h-48 overflow-auto">{entry.error_msg}</pre>
             </div>
           )}
           {!entry.verification && !entry.error_msg && (
             <div className="ml-3 pl-3 border-l-2 border-border-default space-y-1.5">
               {entry.reason && <p className="text-xs text-text-secondary">{entry.reason}</p>}
-              <div className="text-[10px] font-mono text-text-tertiary">{entry.duration_ms}ms</div>
+              <div className="text-sm font-mono text-text-tertiary">{entry.duration_ms}ms</div>
             </div>
           )}
           <ParamsTable params={entry.params_safe} />
@@ -1154,7 +1154,7 @@ function CostPanel({ data, loading }: { data: TaskCostSummary | undefined; loadi
           mono />
       </div>
       {hasUnknown && (
-        <div className="text-[11px] text-warning">
+        <div className="text-sm text-warning">
           Cost is a lower bound — pricing not configured for: {data.unknown_models.join(', ')}
         </div>
       )}
@@ -1197,7 +1197,7 @@ function CostPanel({ data, loading }: { data: TaskCostSummary | undefined; loadi
 function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="bg-surface-2 rounded px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wider text-text-tertiary">{label}</div>
+      <div className="text-sm uppercase tracking-wider text-text-tertiary">{label}</div>
       <div className={`text-sm text-text-primary mt-0.5 ${mono ? 'font-mono' : ''}`}>{value}</div>
     </div>
   )

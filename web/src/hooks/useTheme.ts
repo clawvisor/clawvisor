@@ -14,7 +14,9 @@ function resolve(theme: Theme): Resolved {
 }
 
 function apply(resolved: Resolved) {
-  document.documentElement.classList.toggle('dark', resolved === 'dark')
+  const root = document.documentElement
+  root.classList.toggle('dark', resolved === 'dark')
+  root.setAttribute('data-mode', resolved)
 }
 
 export function useTheme() {

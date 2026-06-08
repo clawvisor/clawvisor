@@ -1232,6 +1232,14 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		where += " AND agent_id = ?"
 		args = append(args, filter.AgentID)
 	}
+	if filter.Since != nil {
+		where += " AND timestamp >= ?"
+		args = append(args, filter.Since.UTC().Format(time.RFC3339))
+	}
+	if filter.Until != nil {
+		where += " AND timestamp <= ?"
+		args = append(args, filter.Until.UTC().Format(time.RFC3339))
+	}
 	if filter.IncludeRuntime != nil && !*filter.IncludeRuntime {
 		where += " AND service NOT LIKE 'runtime.%'"
 	}

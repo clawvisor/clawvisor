@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useCallback, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type ActivityMute, type Agent, type AuditEntry } from '../api/client'
+import { api, type ActivityMute, type AuditEntry } from '../api/client'
+import ActivityHeatmap from '../components/ActivityHeatmap'
+import ActivityHistoryTable from '../components/activity/ActivityHistoryTable'
+import PageLayout from '../components/layout/PageLayout'
+import { useAttentionDeepLinks } from '../hooks/useAttentionDeepLinks'
 import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow, format } from 'date-fns'
 import { actionName, formatServiceAction, serviceName } from '../lib/services'
@@ -44,15 +48,6 @@ function downloadCsv(csv: string, filename: string) {
   a.click()
   URL.revokeObjectURL(url)
 }
-
-const OUTCOMES = ['', 'executed', 'blocked', 'restricted', 'pending', 'denied', 'error', 'timeout']
-const ACTIVITY_TYPES = [
-  { value: '', label: 'All activity types' },
-  { value: 'runtime_egress', label: 'Runtime egress' },
-  { value: 'runtime_tool_use', label: 'Runtime tool use' },
-  { value: 'runtime', label: 'Other runtime activity' },
-  { value: 'service', label: 'Service activity' },
-] as const
 
 const OUTCOME_STYLE: Record<string, string> = {
   executed: 'bg-success/15 text-success',
@@ -142,15 +137,6 @@ function activityType(entry: AuditEntry): ActivityTypeFilter {
   if (entry.service === 'runtime.tool_use') return 'runtime_tool_use'
   if (entry.service.startsWith('runtime.')) return 'runtime'
   return 'service'
-}
-
-function matchesActivityType(entry: AuditEntry, filter: ActivityTypeFilter): boolean {
-  if (!filter) return true
-  return activityType(entry) === filter
-}
-
-function displayMode(filter: ActivityTypeFilter): DisplayMode {
-  return filter || 'default'
 }
 
 function escapeRegex(value: string): string {
@@ -480,7 +466,7 @@ function CreateMuteModal({
   )
 }
 
-function AuditRow({
+export function AuditRow({
   entry,
   mode,
   agentName,
@@ -548,7 +534,7 @@ function AuditRow({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div>
                 <div className="text-text-primary font-medium mb-1">{summary}</div>
-                <div className="text-text-tertiary text-[11px] mb-2">{serviceActionLabel}</div>
+                <div className="text-text-tertiary text-sm mb-2">{serviceActionLabel}</div>
                 <pre className="bg-surface-1 border border-border-default rounded p-2 overflow-auto max-h-48 text-text-secondary">
                   {JSON.stringify(entry.params_safe, null, 2)}
                 </pre>
@@ -637,7 +623,7 @@ function AuditRow({
                       )}
                     </div>
                     <div className="text-text-secondary">{entry.verification.explanation}</div>
-                    <div className="text-text-tertiary text-[10px]">{isLocalHost ? `${entry.verification.model} · ` : ''}{entry.verification.latency_ms}ms</div>
+                    <div className="text-text-tertiary text-sm">{isLocalHost ? `${entry.verification.model} · ` : ''}{entry.verification.latency_ms}ms</div>
                   </div>
                 )}
                 {(entry.session_id || entry.approval_id || entry.lease_id || entry.matched_task_id || entry.lease_task_id) && (
@@ -677,39 +663,15 @@ function AuditRow({
   )
 }
 
-const PAGE_SIZE = 50
-
 export default function Activity() {
   const qc = useQueryClient()
   const { currentOrg, features } = useAuth()
+  const { deepLinkResult, setDeepLinkResult } = useAttentionDeepLinks()
   const orgId = currentOrg?.id
   const runtimeActivityUI = !!features?.runtime_activity
   const runtimePolicyUI = !!features?.runtime_policy_ui
-  const [searchParams, setSearchParams] = useSearchParams()
-  const [outcomeFilter, setOutcomeFilter] = useState('')
-  const [serviceFilter, setServiceFilter] = useState('')
-  const [activityTypeFilter, setActivityTypeFilter] = useState<ActivityTypeFilter>('')
-  const [offset, setOffset] = useState(0)
   const [ruleModalEntry, setRuleModalEntry] = useState<AuditEntry | null>(null)
   const [muteModalEntry, setMuteModalEntry] = useState<AuditEntry | null>(null)
-  const agentFilter = searchParams.get('agent_id') ?? ''
-
-  const filter = {
-    outcome: outcomeFilter || undefined,
-    service: serviceFilter || undefined,
-    agent_id: agentFilter || undefined,
-    include_runtime: runtimeActivityUI || undefined,
-    limit: PAGE_SIZE,
-    offset,
-  }
-
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['audit', orgId ?? 'personal', { outcome: outcomeFilter, service: serviceFilter, agent_id: agentFilter, offset }],
-    queryFn: () => orgId
-      ? api.orgs.audit(orgId, filter)
-      : api.audit.list(filter),
-    refetchInterval: 30_000,
-  })
 
   const { data: agents = [] } = useQuery({
     queryKey: ['activity-agents', orgId ?? 'personal'],
@@ -736,25 +698,12 @@ export default function Activity() {
     enabled: fullRuntimeActive,
   })
 
-  const agentMap = useMemo(() => new Map(agents.map((agent: Agent) => [agent.id, agent.name])), [agents])
-  const activityTypeOptions = useMemo(
-    () => runtimeActivityUI ? ACTIVITY_TYPES : ACTIVITY_TYPES.filter(option => option.value === '' || option.value === 'service'),
-    [runtimeActivityUI],
-  )
-  const mode = displayMode(activityTypeFilter)
-  const rawEntries = data?.entries ?? []
-  const entries = useMemo(
-    () => rawEntries.filter(entry => matchesActivityType(entry, activityTypeFilter)),
-    [rawEntries, activityTypeFilter],
-  )
-  const total = data?.total ?? 0
   const [exporting, setExporting] = useState(false)
 
-  useEffect(() => {
-    if (!runtimeActivityUI && activityTypeFilter && activityTypeFilter !== 'service') {
-      setActivityTypeFilter('')
-    }
-  }, [activityTypeFilter, runtimeActivityUI])
+  const handleRefresh = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ['audit-history'] })
+    qc.invalidateQueries({ queryKey: ['audit-buckets'] })
+  }, [qc])
 
   const createRuleMut = useMutation({
     mutationFn: (rule: RuleDraft) => api.runtime.createRule(rule),
@@ -762,6 +711,7 @@ export default function Activity() {
       setRuleModalEntry(null)
       qc.invalidateQueries({ queryKey: ['runtime-rules'] })
       qc.invalidateQueries({ queryKey: ['audit'] })
+      qc.invalidateQueries({ queryKey: ['audit-history'] })
     },
   })
 
@@ -777,6 +727,7 @@ export default function Activity() {
       setRuleModalEntry(null)
       qc.invalidateQueries({ queryKey: ['restrictions'] })
       qc.invalidateQueries({ queryKey: ['audit'] })
+      qc.invalidateQueries({ queryKey: ['audit-history'] })
     },
   })
   const createMuteMut = useMutation({
@@ -784,6 +735,7 @@ export default function Activity() {
     onSuccess: () => {
       setMuteModalEntry(null)
       qc.invalidateQueries({ queryKey: ['audit'] })
+      qc.invalidateQueries({ queryKey: ['audit-history'] })
       qc.invalidateQueries({ queryKey: ['activity-mutes'] })
     },
   })
@@ -791,6 +743,7 @@ export default function Activity() {
     mutationFn: (id: string) => api.audit.deleteMute(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['audit'] })
+      qc.invalidateQueries({ queryKey: ['audit-history'] })
       qc.invalidateQueries({ queryKey: ['activity-mutes'] })
     },
   })
@@ -807,8 +760,6 @@ export default function Activity() {
       let batchOffset = 0
       while (true) {
         const batchFilter = {
-          outcome: outcomeFilter || undefined,
-          service: serviceFilter || undefined,
           include_runtime: runtimeActivityUI || undefined,
           limit: batchSize,
           offset: batchOffset,
@@ -820,46 +771,47 @@ export default function Activity() {
         if (allEntries.length >= batch.total || batch.entries.length < batchSize) break
         batchOffset += batchSize
       }
-      const filteredExportEntries = allEntries.filter(entry => matchesActivityType(entry, activityTypeFilter))
-      const csv = entriesToCsv(filteredExportEntries)
+      const csv = entriesToCsv(allEntries)
       const dateStr = format(new Date(), 'yyyy-MM-dd')
       downloadCsv(csv, `activity-log-${dateStr}.csv`)
     } finally {
       setExporting(false)
     }
-  }, [activityTypeFilter, orgId, outcomeFilter, runtimeActivityUI, serviceFilter])
-
-  const summaryHeading = mode === 'runtime_egress'
-    ? 'Runtime egress'
-    : mode === 'runtime_tool_use'
-      ? 'Runtime tool use'
-      : 'Summary'
+  }, [orgId, runtimeActivityUI])
 
   return (
-    <div className="p-4 sm:p-8 space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <h1 className="text-2xl font-bold text-text-primary">{orgId ? `${currentOrg!.name} Activity` : 'Activity'}</h1>
-        <div className="flex items-center gap-3">
+    <PageLayout
+      title="activity"
+      description="14-day heatmap and searchable activity history."
+      actions={
+        <>
           <button
             onClick={handleExport}
-            disabled={exporting || entries.length === 0}
-            className="text-sm text-brand hover:underline disabled:opacity-40 disabled:no-underline"
+            disabled={exporting}
+            className="dev-btn-ghost text-brand disabled:opacity-40"
           >
-            {exporting ? 'Exporting…' : 'Export CSV'}
+            {exporting ? 'exporting…' : 'export csv'}
           </button>
-          <button
-            onClick={() => refetch()}
-            className="text-sm text-brand hover:underline"
-          >
-            Refresh
+          <button onClick={handleRefresh} className="dev-btn-ghost text-brand">
+            refresh
           </button>
+        </>
+      }
+      className="space-y-6"
+    >
+      {deepLinkResult && (
+        <div className="dev-banner--info">
+          <span className="text-brand text-sm font-mono">{deepLinkResult}</span>
+          <button onClick={() => setDeepLinkResult(null)} className="dev-btn-ghost text-brand">dismiss</button>
         </div>
-      </div>
+      )}
+
+      <ActivityHeatmap days={14} />
 
       {ruleModalEntry && (
         <CreateRuleModal
           entry={ruleModalEntry}
-          agentName={ruleModalEntry.agent_id ? agentMap.get(ruleModalEntry.agent_id) : undefined}
+          agentName={ruleModalEntry.agent_id ? agents.find(a => a.id === ruleModalEntry.agent_id)?.name : undefined}
           onCancel={() => setRuleModalEntry(null)}
           onCreateRuntimeRule={draft => createRuleMut.mutate(draft)}
           onCreateRestriction={args => createRestrictionMut.mutate(args)}
@@ -876,49 +828,6 @@ export default function Activity() {
           busy={createMuteMut.isPending}
         />
       )}
-
-      <div className="flex gap-3 flex-wrap items-center">
-        {agentFilter && (
-          <div className="rounded-full border border-brand/20 bg-brand/5 px-3 py-1.5 text-xs text-brand">
-            Agent filter active
-            <button
-              onClick={() => {
-                const next = new URLSearchParams(searchParams)
-                next.delete('agent_id')
-                setSearchParams(next, { replace: true })
-              }}
-              className="ml-2 underline"
-            >
-              Clear
-            </button>
-          </div>
-        )}
-        <select
-          value={activityTypeFilter}
-          onChange={e => { setActivityTypeFilter(e.target.value as ActivityTypeFilter); setOffset(0) }}
-          className="text-sm rounded border border-border-default bg-surface-0 text-text-primary px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
-        >
-          {activityTypeOptions.map(option => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </select>
-        <select
-          value={outcomeFilter}
-          onChange={e => { setOutcomeFilter(e.target.value); setOffset(0) }}
-          className="text-sm rounded border border-border-default bg-surface-0 text-text-primary px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
-        >
-          <option value="">All outcomes</option>
-          {OUTCOMES.filter(Boolean).map(o => (
-            <option key={o} value={o}>{o}</option>
-          ))}
-        </select>
-        <input
-          value={serviceFilter}
-          onChange={e => { setServiceFilter(e.target.value); setOffset(0) }}
-          placeholder="Filter by service…"
-          className="text-sm rounded border border-border-default bg-surface-0 text-text-primary px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-        />
-      </div>
 
       {fullRuntimeActive && (mutedHosts?.entries?.length ?? 0) > 0 && (
         <div className="rounded-md border border-border-default bg-surface-1 p-4 space-y-3">
@@ -945,69 +854,15 @@ export default function Activity() {
         </div>
       )}
 
-      {isLoading && <div className="text-sm text-text-tertiary">Loading…</div>}
-
-      {!isLoading && entries.length === 0 && (
-        <div className="text-sm text-text-tertiary py-8 text-center">
-          {outcomeFilter || serviceFilter || activityTypeFilter
-            ? 'No entries match your filters.'
-            : "No activity yet. Your agent's requests will be logged here."}
-        </div>
-      )}
-
-      {entries.length > 0 && (
-        <div className="bg-surface-1 border border-border-default rounded-md overflow-x-auto">
-          <table className="w-full min-w-[720px]">
-            <thead className="bg-surface-2 text-xs text-text-tertiary font-medium">
-              <tr>
-                <th className="px-4 py-2 text-left">Time</th>
-                <th className="px-4 py-2 text-left">{summaryHeading}</th>
-                <th className="px-4 py-2 text-left">Agent</th>
-                <th className="px-4 py-2 text-left">Authorization</th>
-                <th className="px-4 py-2 text-left">Outcome</th>
-                <th className="px-4 py-2 text-left">Duration</th>
-                <th className="px-4 py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map(entry => (
-                <AuditRow
-                  key={entry.id}
-                  entry={entry}
-                  mode={mode}
-                  agentName={entry.agent_id ? agentMap.get(entry.agent_id) : undefined}
-                  canCreateRule={runtimePolicyUI || !entry.service.startsWith('runtime.')}
-                  canMute={fullRuntimeActive}
-                  onCreateRule={handleOpenCreateRule}
-                  onMute={setMuteModalEntry}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {total > PAGE_SIZE && (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-sm text-text-tertiary">
-          <span>Showing {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}</span>
-          <div className="flex gap-2">
-            <button
-              disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-              className="px-3 py-1 rounded border border-border-strong disabled:opacity-40 hover:bg-surface-2"
-            >
-              Previous
-            </button>
-            <button
-              disabled={offset + PAGE_SIZE >= total}
-              onClick={() => setOffset(offset + PAGE_SIZE)}
-              className="px-3 py-1 rounded border border-border-strong disabled:opacity-40 hover:bg-surface-2"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+      <ActivityHistoryTable
+        orgId={orgId}
+        agents={agents}
+        runtimeActivityUI={runtimeActivityUI}
+        runtimePolicyUI={runtimePolicyUI}
+        fullRuntimeActive={fullRuntimeActive}
+        onCreateRule={handleOpenCreateRule}
+        onMute={setMuteModalEntry}
+      />
+    </PageLayout>
   )
 }

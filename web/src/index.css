@@ -6,109 +6,499 @@
   :root {
     color-scheme: light;
 
-    /* Surfaces */
-    --color-surface-0: 255 255 255;
-    --color-surface-1: 249 250 251;
-    --color-surface-2: 243 244 246;
-    --color-surface-3: 229 231 235;
+    /* Typography roles */
+    --font-head: 'Geist Variable', 'Geist', ui-sans-serif, system-ui, sans-serif;
+    --font-body: var(--font-head);
+    --font-mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+    --font-size-min: 0.875rem; /* 14px — nothing smaller in dashboard UI */
 
-    /* Text */
-    --color-text-primary: 17 24 39;
-    --color-text-secondary: 75 85 99;
-    --color-text-tertiary: 156 163 175;
+    /* Radius — Atrona round mode */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+    --radius-pill: 999px;
 
-    /* Brand */
-    --color-brand: 99 102 241;
-    --color-brand-strong: 79 70 229;
+    --shadow-pop: 0 4px 16px -4px rgb(0 0 0 / 0.12);
+    --shadow-modal: 0 16px 48px -12px rgb(0 0 0 / 0.24);
 
-    /* Semantic */
-    --color-success: 22 163 74;
+    /* Mono light — Atrona semantic tokens */
+    --color-surface-0: 238 241 245;   /* --bg */
+    --color-surface-1: 255 255 255;   /* --surface */
+    --color-surface-2: 246 248 250;   /* --surface-2 */
+    --color-surface-3: 226 232 240;
+
+    --color-text-primary: 12 15 14;   /* --text */
+    --color-text-secondary: 71 85 105; /* --secondary */
+    --color-text-tertiary: 91 100 112; /* --text-muted */
+
+    --color-primary: 12 15 14;
+    --color-primary-contrast: 255 255 255;
+
+    --color-brand: 37 99 235;         /* --info (links, accents) */
+    --color-brand-strong: 29 78 216;
+    --color-info: 37 99 235;
+    --color-ring: 37 99 235;
+
+    --color-success: 21 128 61;
     --color-warning: 180 83 9;
-    --color-danger: 220 38 38;
-    --color-risk-orange: 234 88 12;
+    --color-danger: 185 28 28;
+    --color-risk-orange: 154 52 18;
 
-    /* Borders */
-    --color-border-default: 229 231 235;
-    --color-border-strong: 209 213 219;
+    --color-border-default: 226 232 240;
+    --color-border-strong: 148 163 184;
 
-    /* Pre-composed (no channel splitting needed) */
-    --color-brand-muted: rgba(99, 102, 241, 0.12);
-    --color-border-subtle: rgba(209, 213, 219, 0.5);
+    --color-brand-muted: #E8F0FE;
+    --color-info-bg: #E8F0FE;
+    --color-border-subtle: rgba(226, 232, 240, 0.85);
 
-    /* Chart tokens */
     --color-tooltip-bg: #ffffff;
-    --color-tooltip-border: #e5e7eb;
-    --color-tooltip-text: #111827;
-    --color-axis-tick: #6b7280;
+    --color-tooltip-border: #e2e8f0;
+    --color-tooltip-text: #0c0f0e;
+    --color-axis-tick: #5b6470;
 
-    /* Tint tokens for inline styles */
-    --color-success-tint: rgba(22, 163, 74, 0.04);
-    --color-danger-tint: rgba(220, 38, 38, 0.04);
-    --color-warning-tint: rgba(180, 83, 9, 0.04);
-    --color-warning-border-light: rgba(180, 83, 9, 0.3);
-    --color-warning-border-subtle: rgba(180, 83, 9, 0.15);
+    --color-success-tint: #E7F4EC;
+    --color-danger-tint: #FBE9E9;
+    --color-warning-tint: #FBF0E1;
+    --color-warning-border-light: rgba(180, 83, 9, 0.35);
+    --color-warning-border-subtle: rgba(180, 83, 9, 0.18);
+
+    --color-accent-glow: rgba(37, 99, 235, 0.12);
   }
 
-  .dark {
+  [data-shape="square"] {
+    --radius-sm: 0;
+    --radius-md: 0;
+    --radius-lg: 0;
+    --radius-xl: 0;
+    --radius-pill: 0;
+  }
+
+  .dark,
+  [data-mode="dark"] {
     color-scheme: dark;
 
-    /* Surfaces */
-    --color-surface-0: 10 12 16;
-    --color-surface-1: 15 17 23;
-    --color-surface-2: 22 25 35;
-    --color-surface-3: 30 33 48;
+    --color-surface-0: 12 15 14;
+    --color-surface-1: 21 25 26;
+    --color-surface-2: 30 36 34;
+    --color-surface-3: 42 48 46;
 
-    /* Text */
-    --color-text-primary: 240 241 243;
-    --color-text-secondary: 156 163 175;
-    --color-text-tertiary: 107 114 128;
+    --color-text-primary: 242 244 239;
+    --color-text-secondary: 138 147 140;
+    --color-text-tertiary: 154 163 156;
 
-    /* Brand */
-    --color-brand: 129 140 248;
-    --color-brand-strong: 165 180 252;
+    --color-primary: 242 244 239;
+    --color-primary-contrast: 12 15 14;
 
-    /* Semantic */
-    --color-success: 34 197 94;
+    --color-brand: 111 168 255;
+    --color-brand-strong: 147 197 253;
+    --color-info: 111 168 255;
+    --color-ring: 111 168 255;
+
+    --color-success: 74 222 128;
     --color-warning: 245 158 11;
-    --color-danger: 239 68 68;
-    --color-risk-orange: 249 115 22;
+    --color-danger: 248 113 113;
+    --color-risk-orange: 251 146 60;
 
-    /* Borders */
-    --color-border-default: 31 41 55;
-    --color-border-strong: 55 65 81;
+    --color-border-default: 42 48 46;
+    --color-border-strong: 90 99 94;
 
-    /* Pre-composed */
-    --color-brand-muted: rgba(129, 140, 248, 0.15);
-    --color-border-subtle: rgba(31, 41, 55, 0.5);
+    --color-brand-muted: #16263F;
+    --color-info-bg: #16263F;
+    --color-border-subtle: rgba(42, 48, 46, 0.85);
 
-    /* Chart tokens */
-    --color-tooltip-bg: #161923;
-    --color-tooltip-border: #1f2937;
-    --color-tooltip-text: #f0f1f3;
-    --color-axis-tick: #6b7280;
+    --color-tooltip-bg: #15191a;
+    --color-tooltip-border: #2a302e;
+    --color-tooltip-text: #f2f4ef;
+    --color-axis-tick: #9aa39c;
 
-    /* Tint tokens */
-    --color-success-tint: rgba(34, 197, 94, 0.04);
-    --color-danger-tint: rgba(239, 68, 68, 0.04);
-    --color-warning-tint: rgba(245, 158, 11, 0.04);
-    --color-warning-border-light: rgba(245, 158, 11, 0.3);
-    --color-warning-border-subtle: rgba(245, 158, 11, 0.15);
+    --color-success-tint: #10271A;
+    --color-danger-tint: #2E1414;
+    --color-warning-tint: #2E2008;
+    --color-warning-border-light: rgba(245, 158, 11, 0.35);
+    --color-warning-border-subtle: rgba(245, 158, 11, 0.18);
+
+    --color-accent-glow: rgba(111, 168, 255, 0.1);
+
+    --shadow-pop: 0 4px 16px -4px rgb(0 0 0 / 0.4);
+    --shadow-modal: 0 16px 48px -12px rgb(0 0 0 / 0.55);
   }
+
   html {
     background-color: rgb(var(--color-surface-0));
     color: rgb(var(--color-text-primary));
+    font-size: 16px;
+    font-feature-settings: 'tnum' 1, 'cv01' 1, 'ss01' 1;
   }
+
   body {
-    @apply bg-surface-0 text-text-primary antialiased;
+    @apply bg-surface-0 text-text-primary antialiased font-sans text-sm leading-normal;
+    font-size: var(--font-size-min);
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-sans font-semibold text-text-primary;
+  }
+
+  code, kbd, pre, samp {
+    @apply font-mono;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--color-ring));
+    outline-offset: 2px;
   }
 }
 
 @layer components {
+  /* ── Workspace & pages ─────────────────────────────────────────────── */
+  .dev-workspace {
+    background-color: rgb(var(--color-surface-0));
+  }
+
+  .page-shell {
+    @apply p-4 sm:p-6 lg:p-8 space-y-6 pb-20 md:pb-8 max-w-7xl;
+  }
+
+  .page-header {
+    @apply flex flex-wrap items-start justify-between gap-4 border-b border-border-default pb-4;
+  }
+
+  .page-title {
+    @apply font-semibold text-text-primary capitalize;
+    font-size: 1.875rem;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+
+  .page-desc {
+    @apply text-sm text-text-tertiary mt-1 max-w-2xl leading-normal;
+  }
+
+  .type-lead {
+    @apply text-text-secondary max-w-2xl;
+    font-size: 1.125rem;
+    line-height: 1.6;
+  }
+
+  .type-section {
+    @apply font-semibold text-text-primary;
+    font-size: 1.375rem;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+  }
+
+  .type-subsection {
+    @apply font-semibold text-text-primary;
+    font-size: 1.125rem;
+    line-height: 1.3;
+  }
+
+  .page-section-title {
+    @apply uppercase text-text-tertiary mb-3;
+    font-size: var(--font-size-min);
+    line-height: 1.5;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+
+  /* ── Panels & cards ─────────────────────────────────────────────────── */
+  .dev-panel {
+    @apply bg-surface-1 border border-border-default rounded-lg;
+  }
+
+  .dev-card {
+    @apply bg-surface-1 border border-border-default rounded-lg overflow-hidden;
+  }
+
+  .dev-card-accent-warning {
+    @apply dev-card border-l-2 border-l-warning;
+  }
+
+  .dev-card-accent-brand {
+    @apply dev-card border-l-2 border-l-brand;
+  }
+
+  .dev-card-accent-danger {
+    @apply dev-card border-l-2 border-l-danger;
+  }
+
+  .dev-inset {
+    @apply bg-surface-0 border border-border-subtle rounded-md;
+  }
+
+  /* ── Setup / connect pickers ────────────────────────────────────────── */
+  .dev-step-card {
+    @apply dev-panel px-5 py-4 scroll-mt-24 transition-colors;
+  }
+
+  .dev-step-num {
+    @apply w-6 h-6 rounded-md shrink-0 flex items-center justify-center font-sans text-sm font-medium border;
+  }
+
+  .dev-step-num--pending {
+    @apply dev-step-num bg-surface-2 text-text-primary border-border-default;
+  }
+
+  .dev-step-num--done {
+    @apply dev-step-num bg-success/15 text-success border-success/30;
+  }
+
+  .dev-pick-row {
+    @apply dev-panel flex items-center gap-3 px-3 py-2.5 no-underline text-inherit hover:border-border-strong transition-colors;
+  }
+
+  .dev-pick-icon {
+    @apply dev-inset w-8 h-8 shrink-0 flex items-center justify-center overflow-hidden;
+  }
+
+  .dev-pick-title {
+    @apply font-sans text-sm font-medium text-text-primary leading-normal;
+  }
+
+  .dev-pick-desc {
+    @apply font-sans text-sm font-medium text-text-tertiary mt-0.5 leading-normal;
+  }
+
+  .dev-pick-copy {
+    @apply p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-2 border border-transparent hover:border-border-default;
+  }
+
+  .dev-text-link {
+    @apply font-sans text-sm text-brand hover:underline leading-normal;
+  }
+
+  /* ── Banners & alerts ───────────────────────────────────────────────── */
+  .dev-banner {
+    @apply mx-4 mt-3 px-4 py-2.5 text-sm border rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2;
+  }
+
+  .dev-banner--info {
+    @apply dev-banner border-brand/25;
+    background-color: var(--color-info-bg);
+  }
+
+  .dev-banner--warning {
+    @apply dev-banner border-warning/30;
+    background-color: var(--color-warning-tint);
+  }
+
+  .dev-banner--danger {
+    @apply dev-banner border-danger/30;
+    background-color: var(--color-danger-tint);
+  }
+
+  .dev-banner--success {
+    @apply dev-banner border-success/30;
+    background-color: var(--color-success-tint);
+  }
+
+  .dev-empty {
+    @apply dev-panel px-5 py-4 flex items-center gap-3 text-sm;
+  }
+
+  .dev-empty--success {
+    @apply dev-empty border-success/30 text-success;
+    background-color: var(--color-success-tint);
+  }
+
+  .dev-step-card--done {
+    @apply border-success/30;
+    background-color: var(--color-success-tint);
+  }
+
+  /* ── Design system primitives (Atrona) ──────────────────────────────── */
+  .ds-input,
+  .ds-select {
+    @apply w-full font-sans text-sm px-3 py-2 h-10 border border-border-default bg-surface-1 text-text-primary rounded-md placeholder:text-text-tertiary;
+  }
+
+  .ds-input:focus,
+  .ds-select:focus {
+    outline: 2px solid rgb(var(--color-ring));
+    outline-offset: 2px;
+    border-color: rgb(var(--color-ring));
+  }
+
+  .ds-overline {
+    @apply uppercase text-text-tertiary text-sm;
+    line-height: 1.5;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+
+  .ds-data {
+    @apply font-mono text-sm tabular-nums text-text-secondary;
+  }
+
+  .ds-table-head {
+    @apply bg-surface-2 text-sm text-text-tertiary font-medium uppercase tracking-wider border-b border-border-default leading-normal;
+  }
+
+  .ds-table-row {
+    @apply border-t border-border-default hover:bg-surface-2/60 transition-colors;
+  }
+
+  .ds-link {
+    @apply text-sm text-brand hover:underline leading-normal;
+  }
+
+  .ds-page-loading {
+    @apply text-sm text-text-tertiary leading-normal;
+  }
+
+  /* ── Buttons ────────────────────────────────────────────────────────── */
+  .dev-btn {
+    @apply inline-flex items-center justify-center gap-1.5 font-sans text-sm font-medium rounded-md border transition-colors disabled:opacity-50 leading-normal;
+  }
+
+  .dev-btn-primary {
+    @apply dev-btn px-4 py-2 min-h-[40px] sm:min-h-0 sm:py-1.5 hover:opacity-90;
+    background-color: rgb(var(--color-primary));
+    color: rgb(var(--color-primary-contrast));
+    border-color: rgb(var(--color-primary));
+  }
+
+  .dev-btn-danger {
+    @apply dev-btn px-4 py-2 min-h-[40px] sm:min-h-0 sm:py-1.5 text-danger border-danger/30 hover:opacity-90;
+    background-color: var(--color-danger-tint);
+  }
+
+  .dev-btn-ghost {
+    @apply dev-btn px-3 py-1.5 bg-transparent text-text-secondary border-border-default hover:bg-surface-2 hover:text-text-primary;
+  }
+
+  /* ── Badges & chips ─────────────────────────────────────────────────── */
+  .dev-badge {
+    @apply inline-flex items-center gap-1 font-medium uppercase px-2 py-0.5 rounded-sm border text-sm;
+    line-height: 1.5;
+    letter-spacing: 0.08em;
+  }
+
+  .dev-badge--brand {
+    @apply dev-badge text-brand border-brand/25;
+    background-color: var(--color-info-bg);
+  }
+
+  .dev-badge--warning {
+    @apply dev-badge text-warning border-warning/30;
+    background-color: var(--color-warning-tint);
+  }
+
+  .dev-badge--success {
+    @apply dev-badge text-success border-success/30;
+    background-color: var(--color-success-tint);
+  }
+
+  .dev-badge--count {
+    @apply inline-flex items-center justify-center font-sans text-xs font-semibold h-[18px] min-w-[18px] px-1 rounded-full text-white border-0 leading-none tabular-nums;
+    background-color: rgb(var(--color-danger));
+  }
+
+  .dev-chip {
+    @apply inline-flex items-center gap-1.5 font-sans text-sm px-2.5 py-1 rounded-sm bg-surface-2 text-text-secondary border border-border-default leading-normal;
+  }
+
+  /* ── Sidebar chrome ─────────────────────────────────────────────────── */
+  .dev-sidebar {
+    @apply bg-surface-2 border-r border-border-default flex flex-col shrink-0;
+  }
+
+  .dev-sidebar-brand {
+    @apply px-5 py-4;
+  }
+
+  .dev-sidebar-logo {
+    @apply font-sans text-base font-semibold text-text-primary tracking-tight flex items-center gap-2;
+  }
+
+  .dev-brand-logo {
+    height: 1.5rem;
+    width: auto;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+
+  .dev-setup-drawer {
+    animation: dev-setup-drawer-in 0.2s ease-out;
+  }
+
+  @keyframes dev-setup-drawer-in {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  .dev-sidebar-prompt {
+    @apply text-sm text-text-tertiary mt-1 leading-normal;
+  }
+
+  .dev-nav-item + .dev-nav-item {
+    margin-top: 2px;
+  }
+
+  .dev-nav-link {
+    @apply flex items-center justify-between px-3 py-2 mx-2 rounded-md text-sm font-medium transition-colors border border-transparent leading-normal;
+  }
+
+  .dev-nav-link--active {
+    @apply bg-surface-1 text-text-primary border-border-default;
+  }
+
+  .dev-nav-link--idle {
+    @apply text-text-tertiary hover:bg-surface-1/80 hover:text-text-primary;
+  }
+
+  .dev-nav-path {
+    @apply font-mono text-sm text-text-tertiary tabular-nums leading-normal;
+  }
+
+  .dev-nav-section {
+    @apply px-5 pb-0.5 pt-4 uppercase text-text-tertiary font-normal;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    letter-spacing: 0.08em;
+  }
+
+  .dev-status-bar {
+    @apply px-4 py-2.5 border-t border-border-default text-sm text-text-tertiary space-y-1 leading-normal;
+  }
+
+  /* ── Auth terminal ──────────────────────────────────────────────────── */
+  .dev-terminal {
+    @apply max-w-lg w-full dev-panel overflow-hidden;
+  }
+
+  .dev-terminal-header {
+    @apply flex items-center gap-2 px-4 py-2 border-b border-border-default bg-surface-2 text-sm font-mono text-text-tertiary leading-normal;
+  }
+
+  .dev-terminal-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .dev-terminal-body {
+    @apply p-6 space-y-4 font-mono text-sm;
+  }
+
+  .dev-terminal-prompt {
+    @apply text-text-primary;
+  }
+
+  .dev-terminal-cursor {
+    @apply inline-block w-2 h-4 align-middle animate-pulse ml-0.5;
+    background-color: rgb(var(--color-primary));
+  }
+
+  /* ── Scope pill (existing) ──────────────────────────────────────────── */
   .scope-pill {
     position: relative;
     display: inline-block;
     height: 22px;
-    border-radius: 999px;
+    border-radius: 2px;
     border: 1px solid var(--color-border-subtle);
     background: rgba(255, 255, 255, 0.03);
     color: rgb(var(--color-text-tertiary));
@@ -137,8 +527,8 @@
   }
   .scope-pill--expanded {
     background: rgb(var(--color-surface-2));
-    border-color: rgba(129, 140, 248, 0.35);
-    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.08);
+    border-color: rgb(var(--color-border-strong));
+    box-shadow: none;
     cursor: default;
   }
   .scope-pill--disabled {
@@ -172,12 +562,12 @@
   .scope-pill__seg {
     display: inline-flex;
     background: rgba(255, 255, 255, 0.04);
-    border-radius: 999px;
+    border-radius: 2px;
     padding: 2px;
   }
   .scope-pill__seg button {
     padding: 2px 8px;
-    border-radius: 999px;
+    border-radius: 2px;
     color: rgb(var(--color-text-tertiary));
     font-size: 10.5px;
     transition: background .15s, color .15s;
@@ -185,7 +575,7 @@
   }
   .scope-pill__seg button:hover { color: rgb(var(--color-text-secondary)); }
   .scope-pill__seg button.is-active {
-    background: rgba(129, 140, 248, 0.18);
+    background: var(--color-brand-muted);
     color: rgb(var(--color-brand));
   }
   .scope-pill__divider {
@@ -199,11 +589,31 @@
     justify-content: center;
     width: 18px;
     height: 18px;
-    border-radius: 999px;
+    border-radius: 2px;
     color: rgb(var(--color-text-tertiary));
   }
   .scope-pill__close:hover {
     background: rgba(255, 255, 255, 0.06);
     color: rgb(var(--color-text-primary));
   }
+}
+
+@keyframes page-index-navigate {
+  0% {
+    transform: scale(1);
+    background-color: transparent;
+  }
+  35% {
+    transform: scale(0.97);
+    background-color: rgb(var(--color-surface-2));
+  }
+  100% {
+    transform: scale(1);
+    background-color: rgb(var(--color-surface-2) / 0.6);
+  }
+}
+
+.page-index-link--navigating {
+  animation: page-index-navigate 0.4s ease-out forwards;
+  color: rgb(var(--color-text-primary));
 }

@@ -63,7 +63,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const checkOnboarding = useCallback(() => {
     api.auth.onboarding.status()
       .then((s) => setOnboardingComplete(s.onboarding_completed))
-      .catch(() => setOnboardingComplete(null))
+      // Assume complete when status is unavailable so dashboard pages don't hang.
+      .catch(() => setOnboardingComplete(true))
   }, [])
 
   const refreshOnboarding = useCallback(async () => {
@@ -145,7 +146,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     api.features.get()
       .then((f) => { if (!cancelled) setFeatures(f) })
-      .catch((e) => console.warn('useAuth: failed to fetch features', e))
+      .catch((e) => {
+        console.warn('useAuth: failed to fetch features', e)
+        if (!cancelled) {
+          setFeatures({
+            multi_tenant: false,
+            email_verification: false,
+            passkeys: false,
+            sso: false,
+            teams: false,
+            usage_metering: false,
+            password_auth: false,
+            adapter_gen: false,
+            billing: false,
+            local_daemon: false,
+            mobile_pairing: false,
+            runtime_proxy: false,
+            proxy_lite: false,
+            secret_vault: false,
+            runtime_policy_ui: false,
+            runtime_activity: false,
+            agent_live_sessions: false,
+            service_presets: false,
+          })
+        }
+      })
     return () => { cancelled = true }
   }, [user, onboardingComplete])
 

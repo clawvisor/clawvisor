@@ -1,77 +1,19 @@
-import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link, useSearchParams } from 'react-router-dom'
-import { api, APIError, type Task, type QueueItem, type Agent, type ActivityBucket, type VerificationVerdict, type ConnectionRequest, type ApprovalRecord, type RuntimeStatus } from '../api/client'
-import { filterLiveRuntimeApprovals, isActiveRuntimeSession } from './Runtime'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
+import { api, type Task, type Agent, type ActivityBucket, type RuntimeStatus } from '../api/client'
+import { isActiveRuntimeSession } from './Runtime'
 import { useAuth } from '../hooks/useAuth'
+import { useAttentionItems } from '../hooks/useAttentionItems'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { serviceName, actionName } from '../lib/services'
-import { isLocalHost } from '../lib/env'
-import CountdownTimer from '../components/CountdownTimer'
 import TaskCard from '../components/TaskCard'
-import VerificationIcon from '../components/VerificationIcon'
-
-type AttentionItem =
-  | { kind: 'queue'; createdAt: string; item: QueueItem }
-  | { kind: 'runtime_approval'; createdAt: string; approval: ApprovalRecord }
-
+import PageLayout from '../components/layout/PageLayout'
 export default function Overview() {
   const { features } = useAuth()
-  const qc = useQueryClient()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const [deepLinkResult, setDeepLinkResult] = useState<string | null>(null)
   const runtimeActivityUI = !!features?.runtime_activity
   const liveSessionsUI = !!features?.agent_live_sessions
+  const { attentionCount } = useAttentionItems()
 
-  // Deep link mutations for approval requests (moved from Queue). taskId is
-  // forwarded when the notification's deep link supplied it, so the resolve
-  // hits the specific sibling instead of the request_id-only AMBIGUOUS route.
-  type DeepLinkVars = { requestId: string; taskId?: string }
-  const deepApproveRequest = useMutation({
-    mutationFn: ({ requestId, taskId }: DeepLinkVars) =>
-      api.approvals.approve(requestId, undefined, taskId),
-    onSuccess: (_data, vars) => {
-      setDeepLinkResult(`Request ${vars.requestId.slice(0, 8)}... approved.`)
-      qc.invalidateQueries({ queryKey: ['overview'] })
-    },
-    onError: (err: Error) => {
-      if (err instanceof APIError && err.code === 'INLINE_CHAT_BOUND') {
-        setDeepLinkResult('Reply approve/deny in the agent chat')
-      } else {
-        setDeepLinkResult(`Approve failed: ${err.message}`)
-      }
-    },
-  })
-  const deepDenyRequest = useMutation({
-    mutationFn: ({ requestId, taskId }: DeepLinkVars) => api.approvals.deny(requestId, taskId),
-    onSuccess: (_data, vars) => {
-      setDeepLinkResult(`Request ${vars.requestId.slice(0, 8)}... denied.`)
-      qc.invalidateQueries({ queryKey: ['overview'] })
-    },
-    onError: (err: Error) => {
-      if (err instanceof APIError && err.code === 'INLINE_CHAT_BOUND') {
-        setDeepLinkResult('Reply approve/deny in the agent chat')
-      } else {
-        setDeepLinkResult(`Deny failed: ${err.message}`)
-      }
-    },
-  })
-
-  // Handle deep link actions for approvals
-  useEffect(() => {
-    const action = searchParams.get('action')
-    const requestId = searchParams.get('request_id')
-    const taskId = searchParams.get('task_id') ?? undefined
-    if (!action || !requestId) return
-
-    setSearchParams({}, { replace: true })
-
-    if (action === 'approve') deepApproveRequest.mutate({ requestId, taskId })
-    else if (action === 'deny') deepDenyRequest.mutate({ requestId, taskId })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Bundled overview data (fallback polling; SSE pushes invalidations)
   const { data: overview } = useQuery({
     queryKey: ['overview'],
     queryFn: () => api.overview.get(),
@@ -89,18 +31,6 @@ export default function Overview() {
     refetchInterval: 30_000,
     enabled: runtimeActivityUI || liveSessionsUI,
   })
-  const { data: runtimeApprovals } = useQuery({
-    queryKey: ['runtime-approvals'],
-    queryFn: async () => {
-      try {
-        return await api.runtime.listApprovals()
-      } catch {
-        return { entries: [], total: 0 }
-      }
-    },
-    refetchInterval: 30_000,
-    enabled: !!runtimeStatus?.enabled,
-  })
   const { data: runtimeSessions } = useQuery({
     queryKey: ['runtime-sessions'],
     queryFn: async () => {
@@ -114,7 +44,6 @@ export default function Overview() {
     enabled: liveSessionsUI && !!runtimeStatus?.enabled,
   })
 
-  // Agents for name resolution
   const { data: agentsData } = useQuery({
     queryKey: ['agents'],
     queryFn: () => api.agents.list(),
@@ -128,26 +57,15 @@ export default function Overview() {
     return m
   }, [agentsData])
 
-  const queueItems = overview?.queue ?? []
-  const runtimeApprovalItems = useMemo(
-    () => (runtimeStatus?.enabled ? filterLiveRuntimeApprovals(runtimeApprovals?.entries ?? [], runtimeSessions?.entries ?? []) : []),
-    [runtimeApprovals, runtimeSessions, runtimeStatus?.enabled],
-  )
   const activeTasks = overview?.active_tasks ?? []
   const activity = overview?.activity ?? []
-  const attentionItems = useMemo<AttentionItem[]>(() => {
-    const combined: AttentionItem[] = [
-      ...queueItems.map(item => ({ kind: 'queue' as const, createdAt: item.created_at, item })),
-      ...runtimeApprovalItems.map(approval => ({ kind: 'runtime_approval' as const, createdAt: approval.created_at, approval })),
-    ]
-    return combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-  }, [queueItems, runtimeApprovalItems])
   const activeRuntimeSessions = useMemo(
-    () => (liveSessionsUI && runtimeStatus?.enabled ? (runtimeSessions?.entries ?? []).filter(isActiveRuntimeSession) : []),
+    () => (liveSessionsUI && runtimeStatus?.enabled
+      ? (runtimeSessions?.entries ?? []).filter(isActiveRuntimeSession)
+      : []),
     [runtimeSessions, liveSessionsUI, runtimeStatus?.enabled],
   )
 
-  // Track tasks that disappear from active_tasks and show them as "completed" for 60s
   const prevActiveRef = useRef<Map<string, Task>>(new Map())
   const [recentlyCompleted, setRecentlyCompleted] = useState<Task[]>([])
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
@@ -161,7 +79,6 @@ export default function Overview() {
     const prevMap = prevActiveRef.current
     const currentIds = new Set(activeTasks.map(t => t.id))
 
-    // Find tasks that were previously active but are now gone
     for (const [id, task] of prevMap) {
       if (!currentIds.has(id) && !timersRef.current.has(id)) {
         const completed = { ...task, status: 'completed' as const }
@@ -170,102 +87,71 @@ export default function Overview() {
       }
     }
 
-    // Update prev ref
     const nextMap = new Map<string, Task>()
     for (const t of activeTasks) nextMap.set(t.id, t)
     prevActiveRef.current = nextMap
   }, [activeTasks, removeCompleted])
 
-  // Clean up timers on unmount
   useEffect(() => {
     const timers = timersRef.current
     return () => { for (const t of timers.values()) clearTimeout(t) }
   }, [])
 
   return (
-    <div className="p-4 sm:p-8 space-y-8">
-      <h1 className="text-2xl font-bold text-text-primary">Dashboard</h1>
-
-      {/* Deep link result banner */}
-      {deepLinkResult && (
-        <div className="rounded-md border border-brand/30 bg-brand/10 px-5 py-3 flex items-center justify-between">
-          <span className="text-brand text-sm">{deepLinkResult}</span>
-          <button onClick={() => setDeepLinkResult(null)} className="text-brand text-xs hover:underline">Dismiss</button>
-        </div>
-      )}
+    <PageLayout title="home" className="space-y-8">
+      <section>
+        <Link
+          to="/dashboard/activity"
+          className={`block dev-panel px-5 py-4 transition-colors hover:border-brand/40 ${
+            attentionCount > 0
+              ? 'border-warning/40 bg-warning/10'
+              : 'border-success/30 bg-success/10'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              {attentionCount > 0 ? (
+                <span className="dev-badge--count shrink-0">
+                  {attentionCount}
+                </span>
+              ) : (
+                <span className="dev-badge--success shrink-0">ok</span>
+              )}
+              <span className={`text-sm ${attentionCount > 0 ? 'text-text-primary' : 'text-success'}`}>
+                {attentionCount > 0
+                  ? `${attentionCount} item${attentionCount === 1 ? '' : 's'} need attention`
+                  : 'queue clear'}
+              </span>
+            </div>
+            <span className="ds-link text-xs shrink-0">open activity →</span>
+          </div>
+        </Link>
+      </section>
 
       {runtimeActivityUI && runtimeStatus?.enabled && (
         <RuntimePolicyCard status={runtimeStatus} activeSessionCount={activeRuntimeSessions.length} />
       )}
 
-      {/* Queue section */}
       <section>
-        <div className="flex items-center gap-3 mb-3">
-          <h2 className="text-lg font-semibold text-text-primary">Needs your attention</h2>
-          {attentionItems.length > 0 && (
-            <span className="bg-warning text-surface-0 text-xs font-bold rounded px-2.5 py-0.5 font-mono">
-              {attentionItems.length}
-            </span>
-          )}
-        </div>
-
-        {attentionItems.length === 0 ? (
-          <div className="rounded-md border border-success/30 bg-success/10 px-5 py-4 flex items-center gap-3">
-            <svg className="w-5 h-5 text-success shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-              <polyline points="22 4 12 14.01 9 11.01" />
-            </svg>
-            <span className="text-success font-medium">All clear — nothing needs your attention</span>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {attentionItems.map(item => {
-              if (item.kind === 'runtime_approval') {
-                return <RuntimeApprovalCard key={item.approval.id} approval={item.approval} />
-              }
-              if (item.item.type === 'approval') {
-                return <ApprovalCard key={item.item.id} item={item.item} />
-              }
-              if (item.item.type === 'connection' && item.item.connection) {
-                return <ConnectionQueueCard key={item.item.id} connection={item.item.connection} />
-              }
-              if (item.item.task) {
-                return (
-                  <TaskCard
-                    key={item.item.id}
-                    task={item.item.task}
-                    agentName={agentMap.get(item.item.task.agent_id) ?? item.item.task.agent_id.slice(0, 8)}
-                  />
-                )
-              }
-              return null
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* Activity graph */}
-      <section>
-        <h2 className="text-lg font-semibold text-text-primary mb-3">Activity (last 60 min)</h2>
+        <h2 className="page-section-title">Activity · last 60m</h2>
         {activity.length === 0 ? (
-          <div className="rounded-md border border-border-subtle bg-surface-1 px-5 py-8 text-center text-sm text-text-tertiary">
-            No activity in the last 60 minutes
+          <div className="dev-panel px-5 py-8 text-center ds-page-loading">
+            no events in window
           </div>
         ) : (
           <ActivityChart data={activity} />
         )}
       </section>
 
-      {/* Active tasks */}
       {activeTasks.length > 0 && (
         <section>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold text-text-primary">
+            <h2 className="page-section-title mb-0">
               Active tasks
-              <span className="ml-2 text-sm font-normal text-text-tertiary">{activeTasks.length}</span>
+              <span className="ml-2 text-text-secondary normal-case tracking-normal">{activeTasks.length}</span>
             </h2>
-            <Link to="/dashboard/tasks" className="text-sm text-brand hover:underline">
-              View all
+            <Link to="/dashboard/tasks" className="font-mono text-xs text-brand hover:underline">
+              /tasks
             </Link>
           </div>
           <div className="space-y-3">
@@ -285,12 +171,11 @@ export default function Overview() {
         </section>
       )}
 
-      {/* Recently completed tasks */}
       {recentlyCompleted.length > 0 && (
         <section>
-          <h2 className="text-lg font-semibold text-text-primary mb-3">
+          <h2 className="page-section-title">
             Recently completed
-            <span className="ml-2 text-sm font-normal text-text-tertiary">{recentlyCompleted.length}</span>
+            <span className="ml-2 text-text-secondary normal-case tracking-normal">{recentlyCompleted.length}</span>
           </h2>
           <div className="space-y-3">
             {recentlyCompleted.map(task => (
@@ -303,11 +188,9 @@ export default function Overview() {
           </div>
         </section>
       )}
-    </div>
+    </PageLayout>
   )
 }
-
-// ── Activity chart ───────────────────────────────────────────────────────────
 
 interface ChartRow {
   time: string
@@ -332,7 +215,6 @@ function useChartColors() {
       tooltipBorder: style.getPropertyValue('--color-tooltip-border').trim(),
       tooltipText: style.getPropertyValue('--color-tooltip-text').trim(),
     }
-    // Re-compute when dark class changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [document.documentElement.classList.contains('dark')])
 }
@@ -340,47 +222,21 @@ function useChartColors() {
 function ActivityChart({ data }: { data: ActivityBucket[] }) {
   const colors = useChartColors()
   const rows = useMemo(() => {
-    // Build lookup from bucket timestamp → aggregated counts
     const counts = new Map<number, ChartRow>()
-    // Green bucket is keyed on outcome, not decision: a pending-approval row
-    // starts with decision="approve" but only flips to a success outcome
-    // when execution actually happens — denial, error, http_error, or
-    // timeout updates the same outcome in place (see UpdateAuditOutcome
-    // callers in handlers/approvals.go, gateway.go, runtime/proxy/
-    // policy_hook.go). Terminal success outcomes by source:
-    //   gateway / approval-then-execute / runtime egress: "executed"
-    //   runtime tool-use (pkg/runtime/proxy/tooluse_runtime.go): "approved"
-    //   llmproxy release (LogApprovalRelease): "approval_released"
-    //   llmproxy direct allow/rewrite (postprocess.go, inline_task_intercept.go):
-    //     "pass_through", "success", "shell_poll_pass_through",
-    //     "readonly_shell_pass_through", "auto_approved_from_conversation",
-    //     "inline_task_approved", "inline_task_auto_approved"
-    // Keep in sync when adding success outcomes in the emitter sources above.
     const successOutcomes = new Set([
-      'executed',
-      'approved',
-      'observed',
-      'approval_released',
-      'pass_through',
-      'success',
-      'shell_poll_pass_through',
-      'readonly_shell_pass_through',
-      'auto_approved_from_conversation',
-      'inline_task_approved',
-      'inline_task_auto_approved',
+      'executed', 'approved', 'observed', 'approval_released', 'pass_through', 'success',
+      'shell_poll_pass_through', 'readonly_shell_pass_through', 'auto_approved_from_conversation',
+      'inline_task_approved', 'inline_task_auto_approved',
     ])
     for (const b of data) {
       const ms = new Date(b.bucket).getTime()
-      if (!counts.has(ms)) {
-        counts.set(ms, { time: '', executed: 0, blocked: 0, pending: 0 })
-      }
+      if (!counts.has(ms)) counts.set(ms, { time: '', executed: 0, blocked: 0, pending: 0 })
       const row = counts.get(ms)!
       if (successOutcomes.has(b.outcome)) row.executed += b.count
       else if (b.outcome === 'blocked' || b.outcome === 'restricted') row.blocked += b.count
       else row.pending += b.count
     }
 
-    // Generate all 12 five-minute buckets covering the last hour
     const now = new Date()
     const startMs = now.getTime() - 60 * 60 * 1000
     const firstBucket = startMs - (startMs % (5 * 60 * 1000))
@@ -395,7 +251,7 @@ function ActivityChart({ data }: { data: ActivityBucket[] }) {
   }, [data])
 
   return (
-    <div className="bg-surface-1 border border-border-default rounded-md p-4">
+    <div className="dev-panel p-4">
       <ResponsiveContainer width="100%" height={180}>
         <BarChart data={rows}>
           <XAxis dataKey="time" tick={{ fontSize: 11, fill: colors.axisTick }} interval="preserveStartEnd" />
@@ -412,436 +268,54 @@ function ActivityChart({ data }: { data: ActivityBucket[] }) {
   )
 }
 
-// ── Approval card (standalone request approvals) ─────────────────────────────
-
-function ApprovalCard({ item }: { item: QueueItem }) {
-  const qc = useQueryClient()
-  const [result, setResult] = useState<string | null>(null)
-  const [verifyOpen, setVerifyOpen] = useState(false)
-  const a = item.approval!
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['overview'] })
-    qc.invalidateQueries({ queryKey: ['queue'] })
-    qc.invalidateQueries({ queryKey: ['tasks'] })
-  }
-
-  const approveMut = useMutation({
-    mutationFn: () => api.approvals.approve(a.request_id, 'allow_once', a.task_id),
-    onSuccess: (res) => {
-      setResult(res.status === 'executed' ? 'Approved & executed' : `Outcome: ${res.status}`)
-      invalidate()
-    },
-  })
-
-  const denyMut = useMutation({
-    mutationFn: () => api.approvals.deny(a.request_id, a.task_id),
-    onSuccess: () => {
-      setResult('Denied')
-      invalidate()
-    },
-  })
-
-  const isPending = approveMut.isPending || denyMut.isPending
-  const params = a.params ?? {}
-  const paramEntries = Object.entries(params)
-  const hasIssue = a.verification ? hasVerificationIssue(a.verification) : false
-  // Auto-expand when there's a problem
-  const showPanel = a.verification && (hasIssue || verifyOpen)
-
-  if (result) {
-    return (
-      <div className="border border-border-default rounded-md bg-surface-1 p-5">
-        <div className="p-3 bg-surface-2 rounded text-sm text-text-tertiary">{result}</div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="bg-surface-1 border border-border-default rounded-md border-l-[3px] border-l-warning overflow-hidden">
-      {/* Header */}
-      <div className="px-5 pt-5 pb-4">
-        <span className="font-mono text-lg font-semibold text-text-primary">{serviceName(a.service)} · {actionName(a.action)}</span>
-        {a.reason && (
-          <p className="text-sm text-text-secondary mt-1.5">{a.reason}</p>
-        )}
-        <div className="flex items-center gap-2 mt-2">
-          <span className="inline-flex items-center gap-1.5 text-xs font-mono font-medium px-2 py-0.5 rounded bg-warning/15 text-warning">
-            <span className="w-1.5 h-1.5 rounded-full bg-warning" />
-            approval
-          </span>
-          {item.expires_at && <CountdownTimer expiresAt={item.expires_at} />}
-        </div>
-      </div>
-
-      {/* Verification — auto-expanded for issues, collapsible toggle for clean */}
-      {a.verification && !hasIssue && (
-        <div className="px-5 pb-3">
-          <button
-            onClick={() => setVerifyOpen(o => !o)}
-            className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-secondary"
-          >
-            <svg className={`w-3 h-3 transition-transform ${verifyOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
-            <span className="font-medium">Verification</span>
-            <VerificationIcon result={a.verification.param_scope} type="param" />
-            <VerificationIcon result={a.verification.reason_coherence} type="reason" />
-          </button>
-        </div>
-      )}
-      {showPanel && (
-        <VerificationPanel verification={a.verification!} />
-      )}
-
-      {/* Parameters */}
-      {paramEntries.length > 0 && (
-        <div className="px-5 pb-3">
-          <div className="bg-surface-0 border border-border-subtle rounded overflow-hidden">
-            <table className="w-full text-xs">
-              <tbody>
-                {paramEntries.map(([key, value], i) => (
-                  <tr key={key} className={i < paramEntries.length - 1 ? 'border-b border-border-subtle' : ''}>
-                    <td className="px-3 py-1.5 font-mono text-text-tertiary w-28 align-top">{key}</td>
-                    <td className="px-3 py-1.5 font-mono text-text-primary break-all">
-                      {typeof value === 'string' ? value : JSON.stringify(value)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Actions */}
-      <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
-        <button
-          onClick={() => denyMut.mutate()}
-          disabled={isPending}
-          className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
-        >
-          Deny
-        </button>
-        <button
-          onClick={() => approveMut.mutate()}
-          disabled={isPending}
-          className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
-        >
-          {approveMut.isPending ? 'Approving...' : 'Approve'}
-        </button>
-      </div>
-    </div>
-  )
-}
-
 function RuntimePolicyCard({ status, activeSessionCount }: { status: RuntimeStatus; activeSessionCount: number }) {
-  if (!status.enabled && activeSessionCount === 0) {
-    return null
-  }
+  if (!status.enabled && activeSessionCount === 0) return null
 
   return (
     <section>
-      <div className="rounded-md border border-border-default bg-surface-1 p-5 space-y-3">
+      <div className="dev-panel p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-text-primary">Runtime policy</h2>
-            <p className="text-sm text-text-tertiary mt-1">
-              Local runtime enforcement and approval settings for proxy-backed agent runs.
+            <h2 className="page-section-title mb-1">Runtime policy</h2>
+            <p className="text-sm text-text-tertiary">
+              Local enforcement and approval settings for proxy-backed runs.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
-            <span className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 ${status.enabled ? 'bg-success/15 text-success' : 'bg-surface-2 text-text-tertiary'}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`dev-chip ${status.enabled ? 'text-success border-success/30' : ''}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${status.enabled ? 'bg-success' : 'bg-text-tertiary'}`} />
-              {status.enabled ? 'proxy enabled' : 'proxy disabled'}
+              {status.enabled ? 'proxy:on' : 'proxy:off'}
             </span>
-            <span className="inline-flex items-center rounded bg-surface-2 px-2.5 py-1 text-text-secondary">
-              {activeSessionCount} active session{activeSessionCount === 1 ? '' : 's'}
+            <span className="dev-chip">
+              sessions:{activeSessionCount}
             </span>
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 text-sm">
-          <div className="rounded border border-border-subtle bg-surface-0 p-3">
-            <div className="text-text-tertiary text-xs uppercase tracking-wider">Observation default</div>
-            <div className="mt-1 text-text-primary font-medium">
-              {status.observation_mode_default ? 'Observe only' : 'Enforcing'}
-            </div>
+          <div className="dev-inset p-3">
+            <div className="font-mono text-2xs uppercase tracking-widest text-text-tertiary">observation</div>
+            <div className="mt-1 text-text-primary font-mono text-sm">{status.observation_mode_default ? 'observe' : 'enforce'}</div>
           </div>
-          <div className="rounded border border-border-subtle bg-surface-0 p-3">
-            <div className="text-text-tertiary text-xs uppercase tracking-wider">Inline approvals</div>
-            <div className="mt-1 text-text-primary font-medium">
-              {status.inline_approval_enabled ? 'Enabled' : 'Disabled'}
-            </div>
+          <div className="dev-inset p-3">
+            <div className="font-mono text-2xs uppercase tracking-widest text-text-tertiary">inline approvals</div>
+            <div className="mt-1 text-text-primary font-mono text-sm">{status.inline_approval_enabled ? 'enabled' : 'disabled'}</div>
           </div>
-          <div className="rounded border border-border-subtle bg-surface-0 p-3">
-            <div className="text-text-tertiary text-xs uppercase tracking-wider">Lease timeout</div>
-            <div className="mt-1 text-text-primary font-medium">{status.tool_lease_timeout_seconds}s</div>
+          <div className="dev-inset p-3">
+            <div className="font-mono text-2xs uppercase tracking-widest text-text-tertiary">lease timeout</div>
+            <div className="mt-1 text-text-primary font-mono text-sm">{status.tool_lease_timeout_seconds}s</div>
           </div>
-          <div className="rounded border border-border-subtle bg-surface-0 p-3">
-            <div className="text-text-tertiary text-xs uppercase tracking-wider">One-off retry TTL</div>
-            <div className="mt-1 text-text-primary font-medium">{status.one_off_ttl_seconds}s</div>
+          <div className="dev-inset p-3">
+            <div className="font-mono text-2xs uppercase tracking-widest text-text-tertiary">retry ttl</div>
+            <div className="mt-1 text-text-primary font-mono text-sm">{status.one_off_ttl_seconds}s</div>
           </div>
         </div>
         {status.proxy_url && (
-          <div className="rounded border border-border-subtle bg-surface-0 p-3">
-            <div className="text-text-tertiary text-xs uppercase tracking-wider">Proxy endpoint</div>
-            <code className="mt-1 block text-xs text-text-primary break-all">{status.proxy_url}</code>
+          <div className="dev-inset p-3">
+            <div className="font-mono text-2xs uppercase tracking-widest text-text-tertiary">proxy endpoint</div>
+            <code className="mt-1 block text-xs text-brand break-all">{status.proxy_url}</code>
           </div>
         )}
       </div>
     </section>
-  )
-}
-
-function RuntimeApprovalCard({ approval }: { approval: ApprovalRecord }) {
-  const qc = useQueryClient()
-  const [result, setResult] = useState<string | null>(null)
-
-  const summary = runtimeSummary(approval)
-  const payload = runtimePayload(approval)
-  const primary = runtimeApprovalPrimary(payload, summary, approval.kind)
-  const reason = runtimeApprovalReason(payload, summary)
-  const detail = runtimeApprovalDetail(payload)
-  const allowLabel = approval.resolution_transport === 'release_held_tool_use' ? 'Release Tool Call' : 'Allow Once'
-
-  const resolveMut = useMutation({
-    mutationFn: (resolution: 'allow_once' | 'deny') => api.runtime.resolveApproval(approval.id, resolution),
-    onSuccess: (_res, resolution) => {
-      setResult(resolution === 'deny' ? 'Denied' : 'Allowed once')
-      qc.invalidateQueries({ queryKey: ['overview'] })
-      qc.invalidateQueries({ queryKey: ['runtime-approvals'] })
-      qc.invalidateQueries({ queryKey: ['queue'] })
-    },
-    onError: (err: Error) => setResult(`Failed: ${err.message}`),
-  })
-
-  if (result) {
-    return (
-      <div className="border border-border-default rounded-md bg-surface-1 p-5">
-        <div className="p-3 bg-surface-2 rounded text-sm text-text-tertiary">{result}</div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="bg-surface-1 border border-border-default rounded-md border-l-[3px] border-l-brand overflow-hidden">
-      <div className="px-5 pt-5 pb-4">
-        <span className="font-mono text-lg font-semibold text-text-primary break-all">{primary}</span>
-        {reason && <p className="text-sm text-text-secondary mt-1.5">{reason}</p>}
-        <div className="flex flex-wrap items-center gap-2 mt-2">
-          <span className="inline-flex items-center gap-1.5 text-xs font-mono font-medium px-2 py-0.5 rounded bg-brand/15 text-brand">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-            {approval.resolution_transport === 'release_held_tool_use' ? 'inline runtime approval' : 'runtime retry approval'}
-          </span>
-          {approval.session_id && (
-            <span className="text-xs text-text-tertiary">session <code className="font-mono">{approval.session_id.slice(0, 8)}</code></span>
-          )}
-          {approval.expires_at && <CountdownTimer expiresAt={approval.expires_at} />}
-        </div>
-        {payload && (
-          <div className="mt-3 bg-surface-0 border border-border-subtle rounded p-3 space-y-1">
-            {detail && <div className="text-[11px] font-mono text-text-tertiary break-all">{detail}</div>}
-            {payload.host && <div className="text-[11px] font-mono text-text-tertiary">host: {payload.host}</div>}
-            {payload.path && <div className="text-[11px] font-mono text-text-tertiary">path: {payload.path}</div>}
-            {payload.query && Object.keys(payload.query).length > 0 && (
-              <div className="text-[11px] font-mono text-text-tertiary break-all">query: {JSON.stringify(payload.query)}</div>
-            )}
-          </div>
-        )}
-      </div>
-      <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
-        <button
-          onClick={() => resolveMut.mutate('deny')}
-          disabled={resolveMut.isPending}
-          className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
-        >
-          Deny
-        </button>
-        <button
-          onClick={() => resolveMut.mutate('allow_once')}
-          disabled={resolveMut.isPending}
-          className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
-        >
-          {resolveMut.isPending ? 'Updating...' : allowLabel}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function runtimeSummary(approval: ApprovalRecord): Record<string, any> {
-  return approval.summary_json ?? {}
-}
-
-function runtimePayload(approval: ApprovalRecord): Record<string, any> | null {
-  return approval.payload_json ?? null
-}
-
-function runtimeApprovalPrimary(payload: Record<string, any> | null, summary: Record<string, any>, fallback: string): string {
-  if (payload?.tool_name) {
-    return String(payload.tool_name)
-  }
-  if (payload?.host) {
-    return `${String(payload.method ?? 'HTTP').toUpperCase()} ${payload.host}${payload.path ?? ''}`
-  }
-  if (summary.service && summary.action) {
-    return `${serviceName(summary.service)} · ${actionName(summary.action)}`
-  }
-  return fallback
-}
-
-function runtimeApprovalReason(payload: Record<string, any> | null, summary: Record<string, any>): string {
-  return String(payload?.reason ?? summary.reason ?? summary.policy_reason ?? payload?.host ?? '')
-}
-
-function runtimeApprovalDetail(payload: Record<string, any> | null): string {
-  if (!payload) return ''
-  const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : ''
-  const toolInput = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {}
-  if (toolName) {
-    const filePath = readRuntimeApprovalString(toolInput.file_path) || readRuntimeApprovalString(toolInput.path) || readRuntimeApprovalString(toolInput.directory)
-    if (filePath) return `${toolName} ${filePath}`
-    const pattern = readRuntimeApprovalString(toolInput.pattern)
-    if (pattern) return `${toolName} ${pattern}`
-    const command = readRuntimeApprovalString(toolInput.command)
-    if (command) return `${toolName} ${command}`
-    return toolName
-  }
-  if (typeof payload.host === 'string') {
-    return [payload.method, payload.host, payload.path].filter(Boolean).join(' ')
-  }
-  return ''
-}
-
-function readRuntimeApprovalString(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function hasVerificationIssue(v: VerificationVerdict): boolean {
-  return v.param_scope !== 'ok' || v.reason_coherence !== 'ok'
-}
-
-const VERIFY_COLORS = {
-  clean:   { bg: 'rgba(34, 197, 94, 0.04)', border: 'rgba(34, 197, 94, 0.15)', headerBorder: 'rgba(34, 197, 94, 0.10)', color: 'rgb(var(--color-success))' },
-  warning: { bg: 'rgba(245, 158, 11, 0.05)', border: 'rgba(245, 158, 11, 0.2)', headerBorder: 'rgba(245, 158, 11, 0.12)', color: 'rgb(var(--color-warning))' },
-  danger:  { bg: 'rgba(239, 68, 68, 0.06)', border: 'rgba(239, 68, 68, 0.25)', headerBorder: 'rgba(239, 68, 68, 0.15)', color: 'rgb(var(--color-danger))' },
-}
-
-function VerificationPanel({ verification: v }: { verification: VerificationVerdict }) {
-  const isDanger = v.param_scope === 'violation' || v.reason_coherence === 'incoherent'
-  const isClean = v.param_scope === 'ok' && v.reason_coherence === 'ok'
-  const colors = isClean ? VERIFY_COLORS.clean : isDanger ? VERIFY_COLORS.danger : VERIFY_COLORS.warning
-
-  let headerIcon: ReactNode
-  let headerLabel: string
-  if (isClean) {
-    headerIcon = <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
-    headerLabel = 'Verification Passed'
-  } else if (isDanger) {
-    headerIcon = <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-    headerLabel = 'Verification Warning'
-  } else {
-    headerIcon = <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-    headerLabel = 'Verification Notice'
-  }
-
-  return (
-    <div className="px-5 pb-3">
-      <div className="rounded overflow-hidden" style={{ background: colors.bg, border: `1px solid ${colors.border}` }}>
-        <div className="px-3 py-1.5 flex items-center gap-1.5" style={{ borderBottom: `1px solid ${colors.headerBorder}` }}>
-          {headerIcon}
-          <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: colors.color }}>
-            {headerLabel}
-          </span>
-        </div>
-        <div className="px-3 py-2.5 space-y-1.5">
-          <div className="flex items-center gap-3">
-            <span className={`text-[10px] font-mono font-medium ${
-              v.param_scope === 'ok' ? 'text-success' : v.param_scope === 'violation' ? 'text-danger' : 'text-text-tertiary'
-            }`}>params: {v.param_scope}</span>
-            <span className={`text-[10px] font-mono font-medium ${
-              v.reason_coherence === 'ok' ? 'text-success'
-              : v.reason_coherence === 'incoherent' ? 'text-danger'
-              : v.reason_coherence === 'insufficient' ? 'text-warning'
-              : 'text-text-tertiary'
-            }`}>reason: {v.reason_coherence}</span>
-          </div>
-          {v.explanation && <p className="text-xs text-text-secondary">{v.explanation}</p>}
-          <div className="text-[10px] font-mono text-text-tertiary">{isLocalHost ? `${v.model} · ` : ''}{v.latency_ms}ms</div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Connection request card (overview queue) ──────────────────────────────────
-
-function ConnectionQueueCard({ connection: cr }: { connection: ConnectionRequest }) {
-  const qc = useQueryClient()
-  const [result, setResult] = useState<string | null>(null)
-
-  const approveMut = useMutation({
-    mutationFn: () => api.connections.approve(cr.id),
-    onSuccess: () => {
-      setResult('Approved')
-      qc.invalidateQueries({ queryKey: ['overview'] })
-      qc.invalidateQueries({ queryKey: ['queue'] })
-      qc.invalidateQueries({ queryKey: ['agents'] })
-      qc.invalidateQueries({ queryKey: ['welcome'] })
-    },
-    onError: (err: Error) => setResult(`Failed: ${err.message}`),
-  })
-
-  const denyMut = useMutation({
-    mutationFn: () => api.connections.deny(cr.id),
-    onSuccess: () => {
-      setResult('Denied')
-      qc.invalidateQueries({ queryKey: ['overview'] })
-      qc.invalidateQueries({ queryKey: ['queue'] })
-    },
-    onError: (err: Error) => setResult(`Failed: ${err.message}`),
-  })
-
-  const isPending = approveMut.isPending || denyMut.isPending
-
-  if (result) {
-    return (
-      <div className="border border-border-default rounded-md bg-surface-1 p-5">
-        <div className="p-3 bg-surface-2 rounded text-sm text-text-tertiary">{result}</div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="bg-surface-1 border border-border-default rounded-md border-l-[3px] border-l-brand overflow-hidden">
-      <div className="px-5 pt-5 pb-4">
-        <span className="font-mono text-lg font-semibold text-text-primary">{cr.name}</span>
-        {cr.description && (
-          <p className="text-sm text-text-secondary mt-1.5">{cr.description}</p>
-        )}
-        <div className="flex items-center gap-2 mt-2">
-          <span className="inline-flex items-center gap-1.5 text-xs font-mono font-medium px-2 py-0.5 rounded bg-brand/15 text-brand">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-            agent connection
-          </span>
-          <span className="text-xs text-text-tertiary">IP: <code className="font-mono">{cr.ip_address}</code></span>
-          {cr.expires_at && <CountdownTimer expiresAt={cr.expires_at} />}
-        </div>
-      </div>
-
-      <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
-        <button
-          onClick={() => denyMut.mutate()}
-          disabled={isPending}
-          className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
-        >
-          Deny
-        </button>
-        <button
-          onClick={() => approveMut.mutate()}
-          disabled={isPending}
-          className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
-        >
-          {approveMut.isPending ? 'Approving...' : 'Approve'}
-        </button>
-      </div>
-    </div>
   )
 }

@@ -29,7 +29,7 @@ export default function Welcome() {
       <div className="max-w-md w-full mx-4">
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
-            <img src="/favicon.svg" alt="" className="w-10 h-10" />
+            <img src="/penrose-logo.png" alt="" className="h-10 w-auto shrink-0 object-contain" />
           </div>
           <h1 className="text-2xl font-bold text-text-primary">Welcome to Clawvisor</h1>
           <p className="text-text-secondary mt-2">

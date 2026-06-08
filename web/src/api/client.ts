@@ -478,6 +478,9 @@ export interface AuditFilter {
   outcome?: string
   task_id?: string
   agent_id?: string
+  data_origin?: string
+  since?: string
+  until?: string
   include_runtime?: boolean
   limit?: number
   offset?: number
@@ -1351,6 +1354,8 @@ export const api = {
   audit: {
     list: (filter?: AuditFilter) =>
       get<{ entries: AuditEntry[]; total: number }>('/api/audit', filter as Record<string, string | number | boolean | undefined>),
+    activityBuckets: (params?: { days?: number; bucket_minutes?: number }) =>
+      get<{ buckets: ActivityBucket[]; days: number; since: string }>('/api/audit/buckets', params),
     get: (id: string) => get<AuditEntry>(`/api/audit/${id}`),
     listMutes: () => get<{ entries: ActivityMute[]; total: number }>('/api/audit/mutes'),
     createMute: (host: string, pathPrefix?: string) =>

@@ -18,7 +18,7 @@ const methodColors: Record<string, string> = {
 
 function RiskBadge({ category, sensitivity }: { category: string; sensitivity: string }) {
   return (
-    <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded border ${riskColors[sensitivity] ?? riskColors.high}`}>
+    <span className={`px-1.5 py-0.5 text-sm font-medium rounded border ${riskColors[sensitivity] ?? riskColors.high}`}>
       {category}/{sensitivity}
     </span>
   )
@@ -36,17 +36,17 @@ function ActionRow({ action }: { action: AdapterGenActionPreview }) {
         className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-surface-0/50 transition-colors"
       >
         {action.method && (
-          <span className={`text-[10px] font-bold font-mono w-11 shrink-0 ${methodColors[action.method] ?? 'text-text-tertiary'}`}>
+          <span className={`text-sm font-bold font-mono w-11 shrink-0 ${methodColors[action.method] ?? 'text-text-tertiary'}`}>
             {action.method}
           </span>
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-text-primary">{action.display_name || action.name}</span>
-            <span className="text-[10px] font-mono text-text-tertiary">{action.name}</span>
+            <span className="text-sm font-mono text-text-tertiary">{action.name}</span>
           </div>
           {action.path && (
-            <p className="text-[10px] font-mono text-text-tertiary mt-0.5 truncate">{action.path}</p>
+            <p className="text-sm font-mono text-text-tertiary mt-0.5 truncate">{action.path}</p>
           )}
         </div>
         <RiskBadge category={action.category} sensitivity={action.sensitivity} />
@@ -113,11 +113,11 @@ function ResultPreview({
           <div className="flex items-center gap-3 mt-1">
             <span className="text-xs font-mono text-text-tertiary">{result.service_id}</span>
             <span className="text-xs text-text-tertiary">{result.base_url}</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-secondary font-medium">
+            <span className="text-sm px-1.5 py-0.5 rounded bg-surface-2 text-text-secondary font-medium">
               {result.auth_type}
             </span>
             {result.installed && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 font-medium">
+              <span className="text-sm px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 font-medium">
                 Installed
               </span>
             )}
@@ -213,7 +213,7 @@ function CopyButton({ text }: { text: string }) {
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
       }}
-      className="text-[10px] px-2 py-0.5 rounded border border-border-default text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors shrink-0"
+      className="text-sm px-2 py-0.5 rounded border border-border-default text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors shrink-0"
     >
       {copied ? 'Copied' : 'Copy'}
     </button>
@@ -316,7 +316,7 @@ export default function AdapterGen() {
   return (
     <div className="p-4 sm:p-8 space-y-6 max-w-5xl">
       <div>
-        <h1 className="text-2xl font-bold text-text-primary">Generate Integration</h1>
+        <h1 className="page-title">Generate Integration</h1>
         <p className="text-sm text-text-tertiary mt-1">
           Generate a Clawvisor integration from an API source. Risk is independently classified for each action.
         </p>

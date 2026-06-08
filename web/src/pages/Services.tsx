@@ -6,6 +6,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { serviceName, serviceDescription } from '../lib/services'
 import { useAuth } from '../hooks/useAuth'
 import { ServiceIconBadge } from '../components/ServiceIcon'
+import { ServiceCatalogGrid, buildServiceCatalog } from '../components/ServiceCatalogGrid'
 
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
 
@@ -1125,7 +1126,7 @@ export function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
             </label>
           )}
           {svc.key_description && (
-            <p className="text-[10px] text-text-tertiary whitespace-pre-line">{svc.key_description}</p>
+            <p className="text-sm text-text-tertiary whitespace-pre-line">{svc.key_description}</p>
           )}
           <div className="flex gap-2">
             <input
@@ -1174,13 +1175,14 @@ interface ServiceType {
   keyDescription?: string
 }
 
-function AddServiceModal({
+export function AddServiceModal({
   services,
   onClose,
   onSuccess,
   googleOAuthMissing,
   microsoftOAuthMissing,
   activeConnectionCount,
+  focusedServiceId,
 }: {
   services: ServiceInfo[]
   onClose: () => void
@@ -1188,6 +1190,8 @@ function AddServiceModal({
   googleOAuthMissing: boolean
   microsoftOAuthMissing: boolean
   activeConnectionCount: number
+  /** When set, show connect UI for a single service (no search/grid picker). */
+  focusedServiceId?: string
 }) {
   const qc = useQueryClient()
   const [aliasInputFor, setAliasInputFor] = useState<string | null>(null)
@@ -1229,6 +1233,7 @@ function AddServiceModal({
   } | null>(null)
   const [deviceFlowStatus, setDeviceFlowStatus] = useState<string>('pending')
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const autoActivatedRef = useRef<string | null>(null)
 
   // Close on Escape
   useEffect(() => {
@@ -1291,6 +1296,10 @@ function AddServiceModal({
         st.description.toLowerCase().includes(searchLower)
       )
     : allServiceTypes
+
+  const displayTypes = focusedServiceId
+    ? allServiceTypes.filter(st => st.baseId === focusedServiceId)
+    : serviceTypes
 
   async function handleActivateOAuth(serviceId: string, alias?: string, newAccount?: boolean) {
     setError(null)
@@ -1489,15 +1498,29 @@ function AddServiceModal({
   const isGoogleService = (id: string) => id.startsWith('google.')
   const isMicrosoftService = (id: string) => id.startsWith('microsoft.')
 
+  useEffect(() => {
+    if (!focusedServiceId) return
+    if (autoActivatedRef.current === focusedServiceId) return
+    const st = allServiceTypes.find(s => s.baseId === focusedServiceId)
+    if (!st) return
+    const blocked = (googleOAuthMissing && isGoogleService(st.baseId))
+      || (microsoftOAuthMissing && isMicrosoftService(st.baseId))
+    if (blocked) return
+    autoActivatedRef.current = focusedServiceId
+    handleActivate(st)
+  }, [focusedServiceId, allServiceTypes, googleOAuthMissing, microsoftOAuthMissing])
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative bg-surface-1 border border-border-default rounded-lg w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col shadow-xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border-default">
-          <h2 className="text-lg font-semibold text-text-primary">Connect a service</h2>
+      <div className="relative dev-panel rounded-lg w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col shadow-lg">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border-default">
+          <h2 className="page-section-title mb-0 normal-case tracking-tight text-sm text-text-primary">
+            {focusedServiceId ? `Connect ${serviceName(focusedServiceId)}` : 'Connect a service'}
+          </h2>
           <button
             onClick={onClose}
             className="text-text-tertiary hover:text-text-primary text-xl leading-none"
@@ -1506,16 +1529,18 @@ function AddServiceModal({
           </button>
         </div>
 
-        <div className="px-6 pt-4 pb-2">
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search services..."
-            className="w-full text-sm px-3 py-2 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-            autoFocus
-          />
-        </div>
+        {!focusedServiceId && (
+          <div className="px-6 pt-4 pb-2">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search services..."
+              className="ds-input"
+              autoFocus
+            />
+          </div>
+        )}
 
         <div className="px-6 py-3 overflow-y-auto">
           {atConnectionLimit && (
@@ -1528,15 +1553,15 @@ function AddServiceModal({
           )}
           {error && <p className="text-xs text-danger mb-3">{error}</p>}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {serviceTypes.map(st => {
+          <div className={focusedServiceId ? 'max-w-md mx-auto' : 'grid grid-cols-1 sm:grid-cols-2 gap-4'}>
+            {displayTypes.map(st => {
               const isActivated = st.activatedCount > 0
               const isGoogleBlocked = googleOAuthMissing && isGoogleService(st.baseId)
               const hasInlineUI = aliasInputFor === st.baseId || keyInputFor === st.baseId || pkceClientIdFor === st.baseId || (deviceFlowFor === st.baseId && deviceFlowData)
               return (
                 <div
                   key={st.baseId}
-                  className={`rounded-xl border border-border-default bg-surface-0/50 p-5 flex flex-col items-center text-center transition-all ${hasInlineUI ? '' : 'hover:border-brand/50 hover:shadow-md hover:shadow-brand/5'}`}
+                  className={`dev-panel bg-surface-1 p-4 flex flex-col items-center text-center transition-all ${hasInlineUI ? '' : 'hover:border-border-strong'}`}
                 >
                   {/* Icon with optional connected indicator */}
                   <div className="relative mb-3">
@@ -1550,10 +1575,10 @@ function AddServiceModal({
                   </div>
 
                   {/* Name */}
-                  <span className="font-semibold text-text-primary text-sm">{serviceName(st.baseId)}</span>
+                  <span className="text-sm font-medium text-text-primary">{serviceName(st.baseId)}</span>
 
                   {/* Description */}
-                  <p className="text-xs text-text-tertiary mt-1.5 mb-4 line-clamp-3 leading-relaxed">{st.description}</p>
+                  <p className="font-sans text-xs text-text-tertiary mt-1.5 mb-4 line-clamp-3 leading-relaxed">{st.description}</p>
 
                   {/* Spacer to push button to bottom */}
                   <div className="mt-auto w-full">
@@ -1562,22 +1587,22 @@ function AddServiceModal({
                       (isGoogleBlocked || (microsoftOAuthMissing && isMicrosoftService(st.baseId))) ? (
                         <a
                           href="/dashboard/settings"
-                          className="block w-full text-xs px-3 py-2 rounded-lg border border-border-strong text-text-tertiary hover:text-text-primary hover:bg-surface-2 text-center transition-colors"
+                          className="dev-btn-ghost w-full justify-center"
                         >
-                          Set up OAuth
+                          set up oauth
                         </a>
                       ) : isActivated && st.credentialFree ? (
-                        <span className="block w-full text-xs px-3 py-2 rounded-lg border border-border-subtle text-text-tertiary text-center">
-                          Connected
+                        <span className="dev-chip w-full justify-center text-text-tertiary">
+                          connected
                         </span>
                       ) : (
                         <button
                           onClick={() => handleActivate(st)}
                           disabled={atConnectionLimit}
-                          className={`w-full text-xs px-3 py-2 rounded-lg border transition-colors ${
+                          className={`dev-btn w-full justify-center ${
                             atConnectionLimit
                               ? 'border-border-subtle text-text-tertiary cursor-not-allowed'
-                              : 'border-border-strong text-text-primary hover:bg-surface-2 hover:border-brand/40'
+                              : 'dev-btn-ghost hover:border-border-strong'
                           }`}
                           title={atConnectionLimit ? `Connection limit reached (${activeConnectionCount}/${connectionLimit})` : undefined}
                         >
@@ -1626,7 +1651,7 @@ function AddServiceModal({
                               {v.required && <span className="text-danger ml-0.5">*</span>}
                             </label>
                             {v.description && (
-                              <p className="text-[10px] text-text-tertiary mb-1">{v.description}</p>
+                              <p className="text-sm text-text-tertiary mb-1">{v.description}</p>
                             )}
                             <input
                               type="text"
@@ -1645,7 +1670,7 @@ function AddServiceModal({
                             </label>
                           )}
                           {st.keyDescription && (
-                            <p className="text-[10px] text-text-tertiary mb-1 whitespace-pre-line">{st.keyDescription}</p>
+                            <p className="text-sm text-text-tertiary mb-1 whitespace-pre-line">{st.keyDescription}</p>
                           )}
                           <input
                             type="password"
@@ -1687,11 +1712,11 @@ function AddServiceModal({
                           onChange={e => setPkceClientIdValue(e.target.value)}
                           onKeyDown={e => e.key === 'Enter' && handleSubmitPKCEClientId(st)}
                           placeholder="Client ID"
-                          className="w-full text-xs px-2.5 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary font-mono"
+                          className="ds-input !text-xs !h-auto !py-1.5"
                           autoFocus
                         />
                         {st.setupUrl && (
-                          <p className="text-[10px] text-text-tertiary">
+                          <p className="text-sm text-text-tertiary">
                             Create an OAuth app at{' '}
                             <a href={st.setupUrl} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">{st.setupUrl}</a>
                           </p>
@@ -1756,8 +1781,10 @@ function AddServiceModal({
             })}
           </div>
 
-          {serviceTypes.length === 0 && (
-            <p className="text-sm text-text-tertiary py-4">No services available.</p>
+          {displayTypes.length === 0 && (
+            <p className="text-sm text-text-tertiary py-4">
+              {focusedServiceId ? 'This service is not available to connect.' : 'No services available.'}
+            </p>
           )}
         </div>
       </div>
@@ -1779,7 +1806,7 @@ function OrgServicesView({ orgId, orgName }: { orgId: string; orgName: string })
   return (
     <div className="p-4 sm:p-8 space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-text-primary">{orgName} Accounts</h1>
+        <h1 className="page-title">{orgName} Accounts</h1>
         <p className="text-sm text-text-tertiary mt-1">
           Org-wide shared credentials and per-user service activation.
         </p>
@@ -1984,11 +2011,23 @@ export default function Services() {
   const proxyLiteUI = !orgId && !!features?.proxy_lite
   const legacySecretVaultUI = secretVaultUI && !proxyLiteUI
   const [showModal, setShowModal] = useState(false)
+  const [focusedServiceId, setFocusedServiceId] = useState<string | null>(null)
+  const [catalogSearch, setCatalogSearch] = useState('')
   const [successService, setSuccessService] = useState<string | null>(null)
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  function handleConnectionSuccess(serviceId: string) {
+  function openConnect(serviceId?: string) {
+    setFocusedServiceId(serviceId ?? null)
+    setShowModal(true)
+  }
+
+  function closeConnectModal() {
     setShowModal(false)
+    setFocusedServiceId(null)
+  }
+
+  function handleConnectionSuccess(serviceId: string) {
+    closeConnectModal()
     setSuccessService(serviceId)
     if (successTimerRef.current) clearTimeout(successTimerRef.current)
     successTimerRef.current = setTimeout(() => setSuccessService(null), 5000)
@@ -2062,12 +2101,22 @@ export default function Services() {
   const hasMicrosoftServices = allServices.some(s => s.id.startsWith('microsoft.'))
   const microsoftOAuthMissing = !features?.multi_tenant && hasMicrosoftServices && microsoftOAuth != null && !microsoftOAuth.configured
   const useUnifiedVault = secretVaultUI && proxyLiteUI && !vaultItemsError
+  const catalogEntries = useMemo(() => buildServiceCatalog(allServices), [allServices])
+  const filteredCatalogEntries = useMemo(() => {
+    const q = catalogSearch.toLowerCase().trim()
+    if (!q) return catalogEntries
+    return catalogEntries.filter(entry =>
+      entry.label.toLowerCase().includes(q)
+      || entry.id.toLowerCase().includes(q)
+      || entry.description.toLowerCase().includes(q),
+    )
+  }, [catalogEntries, catalogSearch])
 
   return (
     <div className="p-4 sm:p-8 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Accounts</h1>
+          <h1 className="page-title">Accounts</h1>
           <p className="text-sm text-text-tertiary mt-1">
             {activeServices.length > 0
               ? `${activeServices.length} connected account${activeServices.length !== 1 ? 's' : ''}`
@@ -2089,10 +2138,10 @@ export default function Services() {
             </NavLink>
           )}
           <button
-            onClick={() => setShowModal(true)}
-            className="px-4 py-2 rounded-md bg-brand text-surface-0 text-sm font-medium hover:bg-brand-strong shadow-sm"
+            onClick={() => openConnect()}
+            className="dev-btn-primary"
           >
-            Connect service
+            connect service
           </button>
         </div>
       </div>
@@ -2121,20 +2170,6 @@ export default function Services() {
               Google services (Gmail, Calendar, Drive, Contacts) require OAuth credentials.{' '}
               <a href="/dashboard/settings" className="text-brand hover:underline">Go to Settings</a>{' '}
               to configure your Google Client ID and Client Secret.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {microsoftOAuthMissing && (
-        <div className="flex items-start gap-3 p-4 rounded-md border border-yellow-500/30 bg-yellow-500/5">
-          <span className="text-yellow-600 text-lg leading-none mt-0.5">!</span>
-          <div>
-            <p className="text-sm font-medium text-text-primary">Microsoft OAuth not configured</p>
-            <p className="text-xs text-text-secondary mt-0.5">
-              Microsoft services (Outlook, OneDrive, Teams) require OAuth credentials.{' '}
-              <a href="/dashboard/settings" className="text-brand hover:underline">Go to Settings</a>{' '}
-              to configure your Microsoft Client ID and Client Secret.
             </p>
           </div>
         </div>
@@ -2171,23 +2206,6 @@ export default function Services() {
         </>
       )}
 
-      {!isLoading && !error && activeServices.length === 0 && (
-        <button
-          onClick={() => setShowModal(true)}
-          className="w-full border-2 border-dashed border-border-default rounded-lg py-12 flex flex-col items-center gap-3 hover:border-brand/40 hover:bg-brand/[0.02] transition-colors cursor-pointer"
-        >
-          <div className="w-10 h-10 rounded-full bg-brand/10 flex items-center justify-center">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-brand" />
-            </svg>
-          </div>
-          <div className="text-center">
-            <p className="text-sm font-medium text-text-primary">Connect your first service</p>
-            <p className="text-xs text-text-tertiary mt-0.5">Slack, GitHub, Gmail, and more</p>
-          </div>
-        </button>
-      )}
-
       {activeServices.length > 0 && !useUnifiedVault && (
         <div className="bg-surface-1 border border-border-default rounded-lg divide-y divide-border-subtle overflow-hidden">
           {activeServices.map(svc => (
@@ -2196,12 +2214,35 @@ export default function Services() {
         </div>
       )}
 
+      {!isLoading && !error && (
+        <section className="space-y-4">
+          <p className="text-sm text-text-tertiary leading-relaxed">
+            Link an API like Gmail, GitHub, Slack, or Linear so your agents have something to act
+            on. Credentials stay in Clawvisor&apos;s vault — agents never see them.
+          </p>
+          <input
+            type="text"
+            value={catalogSearch}
+            onChange={e => setCatalogSearch(e.target.value)}
+            placeholder="Search services..."
+            aria-label="Search services"
+            className="ds-input w-full"
+          />
+          <ServiceCatalogGrid
+            entries={filteredCatalogEntries}
+            onSelect={id => openConnect(id)}
+            emptyMessage={catalogSearch.trim() ? 'No matching services.' : undefined}
+          />
+        </section>
+      )}
+
       {features?.local_daemon && <LocalServicesSection />}
 
       {showModal && (
         <AddServiceModal
           services={allServices}
-          onClose={() => setShowModal(false)}
+          focusedServiceId={focusedServiceId ?? undefined}
+          onClose={closeConnectModal}
           onSuccess={handleConnectionSuccess}
           googleOAuthMissing={googleOAuthMissing}
           microsoftOAuthMissing={microsoftOAuthMissing}

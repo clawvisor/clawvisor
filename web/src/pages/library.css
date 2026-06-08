@@ -1,0 +1,385 @@
+/* Clawvisor Library — layout mirrored from Hermes Achievements (ha-* → lib-*) */
+
+.lib-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1rem 1rem 2rem;
+  max-width: 72rem;
+}
+
+@media (min-width: 640px) {
+  .lib-page {
+    padding: 1.5rem 1.5rem 2.5rem;
+  }
+}
+
+.lib-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.lib-hero h2 {
+  margin: 0;
+  font-family: Geist Variable, Geist, ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: rgb(var(--color-text-primary));
+}
+
+.lib-hero p {
+  position: relative;
+  max-width: 52rem;
+  margin: 0.65rem 0 0;
+  color: rgb(var(--color-text-tertiary));
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.lib-guide {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 0.75rem;
+}
+
+.lib-guide-single {
+  grid-template-columns: 1fr;
+}
+
+.lib-guide > div {
+  border: 1px solid rgb(var(--color-border-default));
+  background: color-mix(in srgb, rgb(var(--color-surface-1)) 82%, transparent);
+  padding: 0.85rem 1rem;
+}
+
+.lib-guide strong {
+  display: block;
+  margin-bottom: 0.45rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgb(var(--color-text-secondary));
+}
+
+.lib-guide p {
+  margin: 0;
+  color: rgb(var(--color-text-tertiary));
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.lib-tier-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.lib-tier-step {
+  --lib-tier: rgb(var(--color-border-default));
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  color: var(--lib-tier);
+  border: 1px solid color-mix(in srgb, var(--lib-tier) 52%, rgb(var(--color-border-default)));
+  background: color-mix(in srgb, var(--lib-tier) 8%, transparent);
+  padding: 0.28rem 0.45rem;
+  font-size: 0.72rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.lib-tier-step i {
+  width: 0.55rem;
+  height: 0.55rem;
+  background: var(--lib-tier);
+  display: inline-block;
+}
+
+.lib-tier-arrow {
+  color: rgb(var(--color-text-tertiary));
+  font-size: 0.72rem;
+}
+
+/* Category accents */
+.lib-cat-start { --lib-tier: #b87333; }
+.lib-cat-approve { --lib-tier: rgb(var(--color-brand)); }
+.lib-cat-connect { --lib-tier: #f2c94c; }
+.lib-cat-policy { --lib-tier: #c0c7d2; }
+.lib-cat-review { --lib-tier: #c084fc; }
+
+.lib-flow {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+
+.lib-flow-step {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, rgb(var(--color-brand)) 40%, rgb(var(--color-border-default)));
+  background: color-mix(in srgb, rgb(var(--color-brand)) 8%, transparent);
+  color: rgb(var(--color-brand));
+  padding: 0.28rem 0.5rem;
+  font-size: 0.72rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.lib-card-highlight {
+  box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--color-brand)) 35%, transparent);
+}
+
+.lib-card-footer {
+  margin-top: auto;
+  padding-top: 0.25rem;
+}
+
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 0.9rem;
+}
+
+.lib-card {
+  --lib-tier: rgb(var(--color-border-default));
+  position: relative;
+  overflow: hidden;
+  min-height: 214px;
+  border: 1px solid rgb(var(--color-border-default));
+  border-radius: var(--radius-lg);
+  background: rgb(var(--color-surface-1));
+  transition: border-color 0.16s ease, background 0.16s ease;
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  cursor: pointer;
+}
+
+.lib-card:hover {
+  border-color: var(--lib-tier);
+  background: rgb(var(--color-surface-2));
+}
+
+.lib-card-content {
+  position: relative;
+  z-index: 1;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  height: 100%;
+}
+
+.lib-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.lib-icon {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  color: rgb(var(--color-text-secondary));
+  border-radius: var(--radius-md);
+  border: 1px solid rgb(var(--color-border-subtle));
+  background-color: rgb(var(--color-surface-0));
+}
+
+.lib-icon svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  stroke: currentColor;
+  fill: none;
+}
+
+.lib-card-title {
+  font-weight: 780;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  color: rgb(var(--color-text-primary));
+}
+
+.lib-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+.lib-state-badge,
+.lib-tier-badge {
+  border: 1px solid var(--lib-tier);
+  color: var(--lib-tier);
+  background: color-mix(in srgb, var(--lib-tier) 10%, transparent);
+  padding: 0.16rem 0.38rem;
+  font-size: 0.67rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.lib-description {
+  margin: 0;
+  color: rgb(var(--color-text-tertiary));
+  font-size: 0.86rem;
+  line-height: 1.45;
+  min-height: 2.4em;
+}
+
+.lib-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+
+.lib-card-head .lib-state-badge {
+  align-self: start;
+}
+
+.lib-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: auto;
+}
+
+.lib-progress-track {
+  flex: 1;
+  height: 0.48rem;
+  border: 1px solid color-mix(in srgb, var(--lib-tier) 34%, rgb(var(--color-border-default)));
+  background: rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+
+.lib-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--lib-tier), color-mix(in srgb, var(--lib-tier) 48%, white));
+  transition: width 0.3s ease;
+}
+
+.lib-progress-text {
+  min-width: 5.4rem;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgb(var(--color-text-tertiary));
+  font-size: 0.72rem;
+}
+
+.lib-error {
+  border: 1px solid rgb(var(--color-danger));
+  color: rgb(var(--color-danger));
+  background: color-mix(in srgb, rgb(var(--color-danger)) 10%, transparent);
+  padding: 0.65rem 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+}
+
+.lib-state-complete {
+  opacity: 0.92;
+}
+
+.lib-state-complete .lib-card-title {
+  color: color-mix(in srgb, rgb(var(--color-text-primary)) 82%, var(--lib-tier));
+}
+
+.lib-state-locked {
+  opacity: 0.55;
+  filter: grayscale(0.45);
+  pointer-events: none;
+}
+
+.lib-card-dormant {
+  --lib-card-dash: color-mix(in srgb, var(--lib-tier) 42%, rgb(var(--color-border-default)));
+  border-color: transparent;
+  cursor: default;
+}
+
+.lib-card-dormant::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: repeating-conic-gradient(
+    from -90deg,
+    var(--lib-card-dash) 0deg 9deg,
+    transparent 9deg 24deg
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.lib-card-dormant:hover {
+  --lib-card-dash: color-mix(in srgb, var(--lib-tier) 65%, rgb(var(--color-border-default)));
+  background: color-mix(in srgb, var(--lib-tier) 5%, rgb(var(--color-surface-1)));
+}
+
+.lib-state-locked::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(-45deg, transparent 0 8px, rgba(255, 255, 255, 0.035) 8px 10px);
+}
+
+.lib-setup-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid color-mix(in srgb, rgb(var(--color-brand)) 35%, rgb(var(--color-border-default)));
+  background: color-mix(in srgb, rgb(var(--color-surface-1)) 78%, transparent);
+  padding: 0.8rem 0.95rem;
+}
+
+.lib-setup-banner strong {
+  display: block;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgb(var(--color-text-primary));
+}
+
+.lib-setup-banner p {
+  margin: 0.25rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: rgb(var(--color-text-tertiary));
+}
+
+@media (max-width: 980px) {
+  .lib-guide {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 800px) {
+  .lib-badges {
+    grid-column: 1 / -1;
+    align-items: flex-start;
+    flex-direction: row;
+  }
+}

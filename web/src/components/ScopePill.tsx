@@ -77,7 +77,7 @@ export default function ScopePill({
           title={value.auto
             ? 'Run this action immediately without asking you first'
             : 'Require your approval before each run of this action'}
-          className="text-[11px] rounded border border-border-default bg-surface-0 text-text-primary px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand disabled:opacity-50"
+          className="text-sm rounded border border-border-default bg-surface-0 text-text-primary px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand disabled:opacity-50"
         >
           <option value="auto">auto</option>
           <option value="approve">approve</option>
@@ -87,7 +87,7 @@ export default function ScopePill({
           onChange={(e) => onChange({ ...value, verification: e.target.value as Verify })}
           disabled={disabled}
           title={VERIFICATION_TOOLTIPS[value.verification]}
-          className={`text-[11px] rounded border bg-surface-0 text-text-primary px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand disabled:opacity-50 ${dangerous ? 'border-danger/60' : 'border-border-default'}`}
+          className={`text-sm rounded border bg-surface-0 text-text-primary px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand disabled:opacity-50 ${dangerous ? 'border-danger/60' : 'border-border-default'}`}
         >
           <option value="strict">strict</option>
           <option value="lenient">lenient</option>

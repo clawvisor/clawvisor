@@ -1,18 +1,21 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams, Link, Navigate } from 'react-router-dom'
 import { api, APIError, type Agent } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import TaskCard from '../components/TaskCard'
+import PageLayout from '../components/layout/PageLayout'
+import { useAttentionItems } from '../hooks/useAttentionItems'
 
 const STATUS_FILTER_OPTIONS = [
   { value: '', label: 'All tasks' },
-  { value: 'actionable', label: 'Needs action' },
   { value: 'active', label: 'Active' },
   { value: 'completed', label: 'Completed' },
   { value: 'expired', label: 'Expired' },
   { value: 'denied', label: 'Denied' },
   { value: 'revoked', label: 'Revoked' },
+  { value: 'pending_approval', label: 'Pending approval' },
+  { value: 'pending_scope_expansion', label: 'Scope expansion' },
 ]
 
 const PAGE_SIZE = 25
@@ -20,11 +23,15 @@ const PAGE_SIZE = 25
 export default function Tasks() {
   const { currentOrg } = useAuth()
   const orgId = currentOrg?.id
-  const [filter, setFilter] = useState('')
-  const [offset, setOffset] = useState(0)
   const [searchParams, setSearchParams] = useSearchParams()
+  const initialFilter = searchParams.get('filter') ?? ''
+  const [filter, setFilter] = useState(
+    initialFilter === 'actionable' ? '' : initialFilter,
+  )
+  const [offset, setOffset] = useState(0)
   const qc = useQueryClient()
   const [deepLinkResult, setDeepLinkResult] = useState<string | null>(null)
+  const { attentionCount } = useAttentionItems()
 
   const deepApprove = useMutation({
     mutationFn: (taskId: string) => api.tasks.approve(taskId),
@@ -77,15 +84,9 @@ export default function Tasks() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Build query params for the API call.
-  // "actionable" uses active_only (pending_approval + pending_scope_expansion + active),
-  // then we filter client-side for just the pending statuses.
-  // All other filter values map to exact status matches.
   const queryParams = (() => {
     const params: { status?: string; limit: number; offset: number } = { limit: PAGE_SIZE, offset }
-    if (filter && filter !== 'actionable') {
-      params.status = filter
-    }
+    if (filter) params.status = filter
     return params
   })()
 
@@ -95,19 +96,7 @@ export default function Tasks() {
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['tasks', orgId ?? 'personal', { filter, offset }],
-    queryFn: async () => {
-      if (filter === 'actionable') {
-        const [approvals, expansions] = await Promise.all([
-          listFn({ status: 'pending_approval', limit: PAGE_SIZE, offset }),
-          listFn({ status: 'pending_scope_expansion', limit: PAGE_SIZE, offset }),
-        ])
-        return {
-          tasks: [...(approvals.tasks ?? []), ...(expansions.tasks ?? [])],
-          total: (approvals.total ?? 0) + (expansions.total ?? 0),
-        }
-      }
-      return listFn(queryParams)
-    },
+    queryFn: () => listFn(queryParams),
     refetchInterval: 30_000,
   })
 
@@ -124,70 +113,74 @@ export default function Tasks() {
   const tasks = data?.tasks ?? []
   const total = data?.total ?? 0
 
-  // Sort: actionable first, then active, then by created_at desc
-  const sorted = [...tasks].sort((a, b) => {
-    const priority = (s: string) => {
-      if (s === 'pending_approval' || s === 'pending_scope_expansion') return 0
-      if (s === 'active') return 1
-      return 2
-    }
-    const pa = priority(a.status), pb = priority(b.status)
-    if (pa !== pb) return pa - pb
-    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  })
+  const sorted = [...tasks].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  )
+
+  if (initialFilter === 'actionable') {
+    return <Navigate to="/dashboard/activity" replace />
+  }
 
   return (
-    <div className="p-4 sm:p-8 space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-text-primary">Tasks</h1>
-          {total > 0 && (
-            <span className="text-xs text-text-tertiary font-mono">
-              {total} total
-            </span>
-          )}
-        </div>
-        <button
-          onClick={() => refetch()}
-          className="text-sm text-brand hover:underline"
-        >
-          Refresh
+    <PageLayout
+      title="task history"
+      description="Browse and review past and active tasks. Items that need your decision live in Inbox."
+      actions={
+        <button onClick={() => refetch()} className="dev-btn-ghost">
+          refresh
         </button>
-      </div>
-
-      {/* Deep link result banner */}
-      {deepLinkResult && (
-        <div className="rounded-md border border-brand/30 bg-brand/10 px-5 py-3 flex items-center justify-between">
-          <span className="text-brand text-sm">{deepLinkResult}</span>
-          <button onClick={() => setDeepLinkResult(null)} className="text-brand text-xs hover:underline">Dismiss</button>
+      }
+    >
+      {attentionCount > 0 && (
+        <div className="dev-banner--warning">
+          <span className="text-sm text-text-primary font-mono">
+            {attentionCount} item{attentionCount === 1 ? '' : 's'} need attention in Inbox
+          </span>
+          <Link to="/dashboard/activity" className="font-mono text-xs text-brand hover:underline whitespace-nowrap">
+            open inbox →
+          </Link>
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex gap-3">
+      {deepLinkResult && (
+        <div className="dev-banner--info">
+          <span className="text-brand text-sm font-mono">{deepLinkResult}</span>
+          <button onClick={() => setDeepLinkResult(null)} className="dev-btn-ghost text-brand">dismiss</button>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
         <select
           value={filter}
           onChange={e => { setFilter(e.target.value); setOffset(0) }}
-          className="text-sm rounded border border-border-default bg-surface-0 text-text-primary px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
+          className="ds-select !h-auto !py-1.5 !text-xs !w-auto"
         >
           {STATUS_FILTER_OPTIONS.map(o => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
+        {total > 0 && (
+          <span className="font-mono text-xs text-text-tertiary">{total} total</span>
+        )}
       </div>
 
-      {isLoading && <div className="text-sm text-text-tertiary">Loading...</div>}
+      {isLoading && <div className="ds-page-loading">loading…</div>}
 
       {!isLoading && sorted.length === 0 && (
-        <div className="text-sm text-text-tertiary py-8 text-center">
+        <div className="dev-panel py-8 text-center ds-page-loading">
           {filter
-            ? 'No tasks match this filter.'
-            : <>When your agent requests permission to run a task, it'll appear here for your approval.{(agentsData ?? []).length === 0 && (<>{' '}<Link to="/dashboard/agents" className="text-brand hover:underline">Create an agent</Link> to get started.</>)}</>
-          }
+            ? 'no tasks match this filter'
+            : (
+              <>
+                tasks appear here as agents request permission.
+                {(agentsData ?? []).length === 0 && (
+                  <> <Link to="/dashboard/agents" className="text-brand hover:underline">connect an agent</Link> to get started.</>
+                )}
+              </>
+            )}
         </div>
       )}
 
-      {/* Task list */}
       <div className="space-y-3">
         {sorted.map(task => (
           <TaskCard
@@ -221,6 +214,6 @@ export default function Tasks() {
           </div>
         </div>
       )}
-    </div>
+    </PageLayout>
   )
 }

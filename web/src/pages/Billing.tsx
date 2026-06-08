@@ -39,7 +39,7 @@ export default function Billing() {
   if (isLoading) {
     return (
       <div className="p-4 sm:p-8">
-        <h1 className="text-2xl font-bold text-text-primary mb-6">Billing</h1>
+        <h1 className="page-title mb-6">Billing</h1>
         <div className="text-text-tertiary">Loading billing info...</div>
       </div>
     )
@@ -62,7 +62,7 @@ export default function Billing() {
 
   return (
     <div className="p-4 sm:p-8 space-y-10">
-      <h1 className="text-2xl font-bold text-text-primary">Billing</h1>
+      <h1 className="page-title">Billing</h1>
 
       {/* Plan Overview */}
       <section className="space-y-4">

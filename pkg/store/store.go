@@ -1087,8 +1087,10 @@ type AuditFilter struct {
 	DataOrigin     string // filter by data_origin
 	TaskID         string // filter by task_id
 	AgentID        string // filter by agent_id
-	IncludeRuntime *bool  // nil -> default include, false -> suppress runtime.* rows
-	Limit          int    // 0 -> default (50)
+	Since          *time.Time
+	Until          *time.Time
+	IncludeRuntime *bool // nil -> default include, false -> suppress runtime.* rows
+	Limit          int   // 0 -> default (50)
 	Offset         int
 }
 

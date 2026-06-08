@@ -14,7 +14,7 @@ export default function Settings() {
 
   return (
     <div className="p-4 sm:p-8 space-y-10">
-      <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
+      <h1 className="page-title">Settings</h1>
       <DaemonInfo />
       {!features?.multi_tenant && <LLMSection />}
       {!features?.multi_tenant && <OAuthCredentialsSection />}
@@ -1763,9 +1763,9 @@ function DaemonCard({ daemon, onDelete, deleting, enabledServiceIds }: {
                     {svc.description && <p className="text-xs text-text-tertiary leading-tight mt-0.5">{svc.description}</p>}
                   </div>
                   {enabled ? (
-                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success font-medium">Active</span>
+                    <span className="shrink-0 text-sm px-1.5 py-0.5 rounded bg-success/15 text-success font-medium">Active</span>
                   ) : (
-                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-tertiary font-medium">Inactive</span>
+                    <span className="shrink-0 text-sm px-1.5 py-0.5 rounded bg-surface-2 text-text-tertiary font-medium">Inactive</span>
                   )}
                 </div>
               )
