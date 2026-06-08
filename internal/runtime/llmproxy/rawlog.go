@@ -31,14 +31,20 @@ import (
 //     (post-decompression, since we force `Accept-Encoding: identity`).
 //   - "harness_response"  — the body we send back to the harness after
 //     postprocess (tool_use rewrites, substitutions, intercepts).
+//   - "resolver_received_request" — the /api/proxy request body before
+//     credential placeholder swap. Headers are allowlisted so swapped
+//     upstream credentials are not recorded.
+//   - "resolver_harness_response" — the /api/proxy response body actually
+//     returned to the harness, after script-session byte caps/truncation.
 //
 // Together these cover everything that enters or leaves the LLM, plus
-// what the harness sees. Diagnosing model loops requires knowing both
-// what the proxy received and what the model actually receives —
+// what the harness sees on resolver calls. Diagnosing model loops requires
+// knowing both what the proxy received and what the model actually receives —
 // guessing at conversation state from summaries has limits.
 //
 // Disabled by default. Operators enable by setting
-// CLAWVISOR_PROXY_LITE_RAW_LOG to a file path. Production should keep
+// CLAWVISOR_PROXY_LITE_RAW_LOG_PATH (or legacy
+// CLAWVISOR_PROXY_LITE_RAW_LOG) to a file path. Production should keep
 // this off — bodies contain prompts, tool outputs, and credentials in
 // the model's conversation history. (Autovault placeholders are in
 // there. Live autovault placeholders are redacted before writing; real

@@ -1252,6 +1252,9 @@ func (s *Server) registerLiteProxyRoutes(
 		llmHandler.Inspector = inspector.NewInspector(inspector.DefaultParser{}, validator)
 
 		tracePath := s.cfg.ProxyLite.TraceLogPath
+		if env := strings.TrimSpace(os.Getenv("CLAWVISOR_PROXY_LITE_TRACE_LOG_PATH")); env != "" {
+			tracePath = env
+		}
 		if env := strings.TrimSpace(os.Getenv("CLAWVISOR_PROXY_LITE_TRACE")); env != "" {
 			tracePath = env
 		}
@@ -1263,6 +1266,9 @@ func (s *Server) registerLiteProxyRoutes(
 		}
 
 		rawLogPath := s.cfg.ProxyLite.RawLogPath
+		if env := strings.TrimSpace(os.Getenv("CLAWVISOR_PROXY_LITE_RAW_LOG_PATH")); env != "" {
+			rawLogPath = env
+		}
 		if env := strings.TrimSpace(os.Getenv("CLAWVISOR_PROXY_LITE_RAW_LOG")); env != "" {
 			rawLogPath = env
 		}
@@ -1304,6 +1310,7 @@ func (s *Server) registerLiteProxyRoutes(
 		resolverHandler.SelfHostnames = s.cfg.ProxyLite.SelfHostnames
 		resolverHandler.AllowPrivateNetworks = s.cfg.ProxyLite.AllowPrivateNetworks
 		resolverHandler.AuditEmitter = auditEmitter
+		resolverHandler.RawIOLogger = llmHandler.RawIOLogger
 
 		callerNonces = s.callerNonces
 		if callerNonces == nil {

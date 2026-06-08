@@ -2,6 +2,7 @@ package llmproxy
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -20,6 +21,113 @@ func testRedisClient(t *testing.T) *redis.Client {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	return rdb
+}
+
+func TestRedisScriptSessionCacheCrossInstanceAuthorizeAndAccount(t *testing.T) {
+	rdb := testRedisClient(t)
+	minting := NewRedisScriptSessionCache(rdb)
+	resolver := NewRedisScriptSessionCache(rdb)
+	ctx := context.Background()
+
+	tok := mustMintSession(t, minting, sampleSession())
+	got, err := resolver.Authorize(ctx, tok, ScriptSessionRequest{
+		Host:        "gmail.googleapis.com:443",
+		Method:      "get",
+		Path:        "/gmail/v1/users/me/messages/abc?format=metadata",
+		Placeholder: "autovault_x",
+	})
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	if got.UsedCount != 1 {
+		t.Fatalf("UsedCount after authorize = %d, want 1", got.UsedCount)
+	}
+	if got.TotalBytesUsed != got.MaxRequestBytes {
+		t.Fatalf("TotalBytesUsed after reservation = %d, want %d", got.TotalBytesUsed, got.MaxRequestBytes)
+	}
+
+	got, err = minting.RecordBytes(ctx, tok, 12)
+	if err != nil {
+		t.Fatalf("record bytes: %v", err)
+	}
+	if got.TotalBytesUsed != 12 {
+		t.Fatalf("TotalBytesUsed after true-up = %d, want 12", got.TotalBytesUsed)
+	}
+}
+
+func TestRedisScriptSessionCacheRecordBytesClearsStaleSnapshotAfterRetryMiss(t *testing.T) {
+	rdb := testRedisClient(t)
+	cache := NewRedisScriptSessionCache(rdb)
+	ctx := context.Background()
+
+	tok := mustMintSession(t, cache, sampleSession())
+	if _, err := cache.Authorize(ctx, tok, validRequest()); err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	var raced bool
+	cache.beforeRecordBytesCommit = func(token string) {
+		if raced {
+			return
+		}
+		raced = true
+		if err := rdb.Del(ctx, redisScriptSessionKey(token)).Err(); err != nil {
+			t.Fatalf("delete during record race: %v", err)
+		}
+	}
+
+	got, err := cache.RecordBytes(ctx, tok, 12)
+	if err != nil {
+		t.Fatalf("record bytes: %v", err)
+	}
+	if !raced {
+		t.Fatal("test hook did not exercise retry path")
+	}
+	if got.ID != "" {
+		t.Fatalf("RecordBytes returned stale session after retry miss: %+v", got)
+	}
+}
+
+func TestRedisScriptSessionCacheReleaseAuthorizeUndoesUseAndReservation(t *testing.T) {
+	cache := NewRedisScriptSessionCache(testRedisClient(t))
+	ctx := context.Background()
+
+	tok := mustMintSession(t, cache, sampleSession())
+	if _, err := cache.Authorize(ctx, tok, validRequest()); err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	if err := cache.ReleaseAuthorize(ctx, tok); err != nil {
+		t.Fatalf("release authorize: %v", err)
+	}
+	got, err := cache.Authorize(ctx, tok, validRequest())
+	if err != nil {
+		t.Fatalf("authorize after release: %v", err)
+	}
+	if got.UsedCount != 1 {
+		t.Fatalf("UsedCount after release+authorize = %d, want 1", got.UsedCount)
+	}
+	if got.TotalBytesUsed != got.MaxRequestBytes {
+		t.Fatalf("TotalBytesUsed after release+authorize = %d, want %d", got.TotalBytesUsed, got.MaxRequestBytes)
+	}
+}
+
+func TestRedisScriptSessionCacheScopeMismatchDoesNotConsumeUse(t *testing.T) {
+	cache := NewRedisScriptSessionCache(testRedisClient(t))
+	ctx := context.Background()
+
+	tok := mustMintSession(t, cache, sampleSession())
+	_, err := cache.Authorize(ctx, tok, ScriptSessionRequest{
+		Host: "evil.example", Method: "GET", Path: "/gmail/v1/users/me/messages", Placeholder: "autovault_x",
+	})
+	if !errors.Is(err, ErrScriptSessionScopeMismatch) {
+		t.Fatalf("authorize mismatch err = %v, want scope mismatch", err)
+	}
+	got, err := cache.Authorize(ctx, tok, validRequest())
+	if err != nil {
+		t.Fatalf("authorize after mismatch: %v", err)
+	}
+	if got.UsedCount != 1 {
+		t.Fatalf("UsedCount after mismatch+authorize = %d, want 1", got.UsedCount)
+	}
 }
 
 func TestRedisPendingApprovalCacheResolvesBareApprovalLIFO(t *testing.T) {

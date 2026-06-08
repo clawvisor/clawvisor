@@ -148,6 +148,7 @@ type ServerOptions struct {
 	VerdictCache       intent.VerdictCacher
 	ExtractionTracker  handlers.ExtractionTracker
 	CallerNonceCache   llmproxy.CallerNonceCache
+	ScriptSessionCache llmproxy.ScriptSessionCache
 	PendingSecretCache llmproxy.PendingSecretDecisionCache
 	LiteApprovalCache  llmproxy.PendingApprovalCache
 	LiteOutcomeStore   llmproxy.InlineApprovalOutcomeStore

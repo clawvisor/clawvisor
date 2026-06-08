@@ -44,6 +44,12 @@ type ProxyResolverHandler struct {
 	// per placeholder swapped. nil disables audit logging.
 	AuditEmitter *llmproxy.AuditEmitter
 
+	// RawIOLogger, when non-nil, captures resolver request bodies and
+	// response bodies for diagnostic JSONL logs. It must never be used
+	// to log post-swap upstream request headers because those carry real
+	// credentials.
+	RawIOLogger *llmproxy.RawIOLogger
+
 	// MaxRequestBytes caps the inbound body. Defaults to 34 MiB to mirror
 	// the LLM proxy endpoint (2 MiB above Anthropic's 32 MB Messages cap).
 	MaxRequestBytes int64
@@ -59,7 +65,6 @@ type ProxyResolverHandler struct {
 	// targets are reachable. Defaults to false; flip in self-host
 	// development environments.
 	AllowPrivateNetworks bool
-
 }
 
 // NewProxyResolverHandler builds the handler with sensible defaults. The
@@ -342,6 +347,21 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
 		return
 	}
+	if h.RawIOLogger != nil {
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:       "resolver_received_request",
+			RequestID:   requestID,
+			UserID:      agent.UserID,
+			AgentID:     agent.ID,
+			Provider:    "resolver",
+			Method:      r.Method,
+			Path:        r.URL.RequestURI(),
+			ContentType: r.Header.Get("Content-Type"),
+			Headers:     llmproxy.SafeHeaderSnapshot(r.Header),
+			Body:        string(body),
+			BodyBytes:   len(body),
+		})
+	}
 
 	// Build outbound headers, swapping any header values that contain a
 	// shadow placeholder. The target host is the authoritative input to
@@ -532,6 +552,7 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 
 	flusher, _ := w.(http.Flusher)
 	buf := make([]byte, 4096)
+	var rawHarnessBody bytes.Buffer
 	// respBytes is declared at the top of Forward so the deferred
 	// script-session post-processor can read its final value on
 	// every exit path (including early errors that never reach this
@@ -551,6 +572,9 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 				if allowed > 0 {
 					if _, writeErr := w.Write(buf[:allowed]); writeErr != nil {
 						break
+					}
+					if h.RawIOLogger != nil {
+						rawHarnessBody.Write(buf[:allowed])
 					}
 					respBytes += allowed
 					if flusher != nil {
@@ -576,6 +600,9 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
 				break
 			}
+			if h.RawIOLogger != nil {
+				rawHarnessBody.Write(buf[:n])
+			}
 			respBytes += int64(n)
 			if flusher != nil {
 				flusher.Flush()
@@ -587,6 +614,20 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 		if readErr != nil {
 			break
 		}
+	}
+	if h.RawIOLogger != nil {
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:       "resolver_harness_response",
+			RequestID:   requestID,
+			UserID:      agent.UserID,
+			AgentID:     agent.ID,
+			Provider:    "resolver",
+			Status:      resp.StatusCode,
+			ContentType: resp.Header.Get("Content-Type"),
+			Headers:     llmproxy.SafeHeaderSnapshot(w.Header()),
+			Body:        rawHarnessBody.String(),
+			BodyBytes:   int(respBytes),
+		})
 	}
 
 	// Script-session post-stream RecordBytes + use-row audit emission

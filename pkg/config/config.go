@@ -319,7 +319,8 @@ type ProxyLiteConfig struct {
 	// contain conversation content; the file is written with mode
 	// 0600 but operators should still keep this off outside of
 	// diagnostic sessions. The env var
-	// CLAWVISOR_PROXY_LITE_RAW_LOG overrides this when set.
+	// CLAWVISOR_PROXY_LITE_RAW_LOG_PATH overrides this when set.
+	// CLAWVISOR_PROXY_LITE_RAW_LOG remains accepted as a legacy alias.
 	RawLogPath string `yaml:"raw_log_path"`
 }
 

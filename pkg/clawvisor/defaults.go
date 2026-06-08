@@ -456,6 +456,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	var dedupCache handlers.DedupCache
 	var verdictCache intent.VerdictCacher
 	var callerNonceCache llmproxy.CallerNonceCache
+	var scriptSessionCache llmproxy.ScriptSessionCache
 	var pendingSecretCache llmproxy.PendingSecretDecisionCache
 	var liteApprovalCache llmproxy.PendingApprovalCache
 	var liteOutcomeStore llmproxy.InlineApprovalOutcomeStore
@@ -498,6 +499,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		// (well under a minute in practice) plus held-tool-use release
 		// windows that re-mint a fresh nonce.
 		callerNonceCache = llmproxy.NewRedisCallerNonceCache(client, 5*time.Minute)
+		scriptSessionCache = llmproxy.NewRedisScriptSessionCache(client)
 		pendingSecretCache = llmproxy.NewRedisPendingSecretDecisionCache(client, 10*time.Minute)
 		liteApprovalCache = llmproxy.NewRedisPendingApprovalCache(client, 10*time.Minute)
 		liteOutcomeStore = llmproxy.NewRedisInlineApprovalOutcomeStore(client, 24*time.Hour)
@@ -550,6 +552,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		VerdictCache:       verdictCache,
 		ExtractionTracker:  extractionTracker,
 		CallerNonceCache:   callerNonceCache,
+		ScriptSessionCache: scriptSessionCache,
 		PendingSecretCache: pendingSecretCache,
 		LiteApprovalCache:  liteApprovalCache,
 		LiteOutcomeStore:   liteOutcomeStore,

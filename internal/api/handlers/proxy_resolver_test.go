@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -137,6 +138,8 @@ func TestResolver_HappyPath(t *testing.T) {
 	defer upstream.Close()
 
 	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
+	var rawLog bytes.Buffer
+	h.RawIOLogger = llmproxy.NewRawIOLogger(&rawLog)
 
 	h.Client = upstream.Client()
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
@@ -149,7 +152,9 @@ func TestResolver_HappyPath(t *testing.T) {
 	// The redirectTargetTransport sends the actual dial to httptest's
 	// loopback URL, but the resolver believes (and validates against)
 	// api.github.com.
-	req := httptest.NewRequest(http.MethodGet, "/api/proxy/repos/x/y/issues", strings.NewReader(""))
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/repos/x/y/issues", strings.NewReader(`{"filter":"open"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-Id", "req-raw-resolver")
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	// Harness sends the placeholder in the natural Authorization header.
@@ -169,7 +174,42 @@ func TestResolver_HappyPath(t *testing.T) {
 	if seenAuth != "Bearer real-gh-token" {
 		t.Fatalf("expected upstream Authorization=Bearer real-gh-token, got %q", seenAuth)
 	}
-	_ = seenBody
+	if string(seenBody) != `{"filter":"open"}` {
+		t.Fatalf("expected upstream body forwarded, got %q", string(seenBody))
+	}
+	rawLines := strings.Split(strings.TrimSpace(rawLog.String()), "\n")
+	if len(rawLines) != 2 {
+		t.Fatalf("expected 2 raw resolver log lines, got %d: %s", len(rawLines), rawLog.String())
+	}
+	var sawRequest, sawResponse bool
+	for _, line := range rawLines {
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("raw log line is not JSON: %v\n%s", err, line)
+		}
+		switch ev["phase"] {
+		case "resolver_received_request":
+			sawRequest = true
+			if ev["body"] != `{"filter":"open"}` {
+				t.Fatalf("resolver request raw body = %v", ev["body"])
+			}
+			headers, _ := ev["headers"].(map[string]any)
+			if _, ok := headers["Authorization"]; ok {
+				t.Fatalf("resolver raw request logged Authorization header: %#v", headers)
+			}
+		case "resolver_harness_response":
+			sawResponse = true
+			if ev["body"] != `{"ok":true}` {
+				t.Fatalf("resolver response raw body = %v", ev["body"])
+			}
+		}
+	}
+	if !sawRequest || !sawResponse {
+		t.Fatalf("missing resolver raw phases: request=%v response=%v log=%s", sawRequest, sawResponse, rawLog.String())
+	}
+	if strings.Contains(rawLog.String(), "real-gh-token") {
+		t.Fatalf("raw resolver log should not contain swapped credential: %s", rawLog.String())
+	}
 }
 
 func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) {

@@ -153,7 +153,8 @@ type LLMEndpointHandler struct {
 	// RawIOLogger, when non-nil, captures full raw HTTP bodies for
 	// inbound requests, upstream responses, and the bodies returned
 	// to the harness. Off by default; opted in via
-	// CLAWVISOR_PROXY_LITE_RAW_LOG or cfg.ProxyLite.RawLogPath.
+	// CLAWVISOR_PROXY_LITE_RAW_LOG_PATH or cfg.ProxyLite.RawLogPath
+	// (legacy CLAWVISOR_PROXY_LITE_RAW_LOG is still accepted).
 	// Bodies contain conversation content; the file is mode 0600 so
 	// only the daemon's user can read it, but operators should still
 	// avoid leaving this on outside of diagnostic sessions.
