@@ -114,10 +114,13 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 		"&harness=claude-code",
 		"~/.clawvisor/agents/$AGENT_NAME.json",
 		"INVALID_CLAIM",
-		// Step 2: PASSTHROUGH smoke test FIRST (no env clearing)
+		// Step 2: PASSTHROUGH smoke test FIRST (no env clearing).
+		// Control-plane and LLM-proxy URLs are deliberately separate env
+		// vars (CLAWVISOR_APP_URL vs CLAWVISOR_LLM_URL) — registration
+		// goes to the app host, model calls to the LLM proxy host.
 		"## 2. Smoke-test Clawvisor routing in **passthrough mode**",
 		"We do NOT\nclear `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY`",
-		"ANTHROPIC_BASE_URL=\"$CLAWVISOR_URL/api\"",
+		"ANTHROPIC_BASE_URL=\"$CLAWVISOR_LLM_URL/api\"",
 		"ANTHROPIC_CUSTOM_HEADERS=\"X-Clawvisor-Agent-Token: $TOKEN\"",
 		"claude -p \"respond with the word OK\"",
 		"`MODE=passthrough`",
@@ -228,7 +231,7 @@ func TestInstallerCodexRender(t *testing.T) {
 		// Step 2: write provider block in passthrough form
 		"## 2. Write the Clawvisor provider block (passthrough form)",
 		"[model_providers.clawvisor]",
-		`base_url = "$CLAWVISOR_URL/api/v1"`,
+		`base_url = "$CLAWVISOR_LLM_URL/api/v1"`,
 		"requires_openai_auth = true",
 		"X-Clawvisor-Agent-Token = \"CLAWVISOR_AGENT_TOKEN\"",
 		// Step 3: passthrough smoke test
@@ -709,40 +712,52 @@ func TestInstallerAllTargetsHaveFrontmatter(t *testing.T) {
 	}
 }
 
-func TestInstallerPrefersLLMProxyURL(t *testing.T) {
-	// When the deployment has a configured lite-proxy URL, all embedded curl
-	// URLs must use that — even if the app has its own public URL. Agents
-	// installing the skill need the LLM-proxy endpoint for both registration
-	// and model traffic.
-	//
-	// The new one-paste flow exports CLAWVISOR_URL once at the top of the
-	// skill body and uses $CLAWVISOR_URL everywhere downstream. So we
-	// assert the export line uses the proxy URL, plus that the app URL
-	// never appears anywhere in the body.
+func TestInstallerSplitsAppAndLLMURLs(t *testing.T) {
+	// Control plane (registration, dashboard, credentials, skill catalog)
+	// lives on the app host; the LLM proxy is a separate host. The install
+	// script exports both — CLAWVISOR_APP_URL for control-plane curls and
+	// CLAWVISOR_LLM_URL for what gets baked into ANTHROPIC_BASE_URL etc.
+	// Conflating the two (using the proxy URL for /api/agents/connect)
+	// 404s in split deployments — that's the regression this test guards.
 	h := NewInstallerHandler("", "", false, "https://llm.example.com", "https://app.example.com")
-	body := installerGet(t, h, "claude-code", "")
-	if !strings.Contains(body, `export CLAWVISOR_URL="https://llm.example.com"`) {
-		t.Errorf("expected CLAWVISOR_URL export to use configured LLM proxy URL; body excerpt:\n%s",
-			body[:min(len(body), 500)])
+	body := installerGet(t, h, "claude-code", "TESTCLAIM0")
+	if !strings.Contains(body, `export CLAWVISOR_APP_URL="https://app.example.com"`) {
+		t.Errorf("expected CLAWVISOR_APP_URL export to use server public URL; body excerpt:\n%s",
+			body[:min(len(body), 800)])
 	}
-	if strings.Contains(body, "https://app.example.com") {
-		t.Errorf("embedded URL should not use server public URL when LLM proxy URL is configured")
+	if !strings.Contains(body, `export CLAWVISOR_LLM_URL="https://llm.example.com"`) {
+		t.Errorf("expected CLAWVISOR_LLM_URL export to use LLM proxy URL; body excerpt:\n%s",
+			body[:min(len(body), 800)])
+	}
+	// Registration MUST hit the app host. Hitting it on the LLM host is
+	// what caused the original bug — guard explicitly.
+	if !strings.Contains(body, `"$CLAWVISOR_APP_URL/api/agents/connect`) {
+		t.Errorf("agent registration must target $CLAWVISOR_APP_URL, not the LLM proxy")
+	}
+	if strings.Contains(body, `"$CLAWVISOR_LLM_URL/api/agents/connect`) {
+		t.Errorf("agent registration must NOT target $CLAWVISOR_LLM_URL")
+	}
+	// Model traffic must hit the LLM host.
+	if !strings.Contains(body, `ANTHROPIC_BASE_URL="$CLAWVISOR_LLM_URL/api"`) {
+		t.Errorf("ANTHROPIC_BASE_URL must target $CLAWVISOR_LLM_URL")
 	}
 	if strings.Contains(body, "http://127.0.0.1:") {
-		t.Errorf("embedded URL should not fall back to request host when LLM proxy URL is configured")
+		t.Errorf("embedded URLs should not fall back to request host when both PublicURLs are configured")
 	}
 }
 
 func TestInstallerFallsBackToServerPublicURL(t *testing.T) {
-	// If there is no dedicated lite-proxy URL, use the general public URL
-	// before falling back to the request host. The new one-paste flow
-	// exports CLAWVISOR_URL once at the top and uses $CLAWVISOR_URL
-	// downstream — assert on the export line.
+	// If there is no dedicated lite-proxy URL, both AppURL and LLMURL fall
+	// back to Server.PublicURL (single-host deployment).
 	h := NewInstallerHandler("", "", false, "", "https://app.example.com")
 	body := installerGet(t, h, "codex", "")
-	if !strings.Contains(body, `export CLAWVISOR_URL="https://app.example.com"`) {
-		t.Errorf("expected CLAWVISOR_URL export to use server public URL; body excerpt:\n%s",
-			body[:min(len(body), 500)])
+	if !strings.Contains(body, `export CLAWVISOR_APP_URL="https://app.example.com"`) {
+		t.Errorf("expected CLAWVISOR_APP_URL export to use server public URL; body excerpt:\n%s",
+			body[:min(len(body), 800)])
+	}
+	if !strings.Contains(body, `export CLAWVISOR_LLM_URL="https://app.example.com"`) {
+		t.Errorf("expected CLAWVISOR_LLM_URL to fall back to server public URL when no proxy URL is set; body excerpt:\n%s",
+			body[:min(len(body), 800)])
 	}
 	if strings.Contains(body, "http://127.0.0.1:") {
 		t.Errorf("embedded URL should not fall back to request host when server public URL is configured")
@@ -750,9 +765,8 @@ func TestInstallerFallsBackToServerPublicURL(t *testing.T) {
 }
 
 func TestInstallerEmbedsRequestHost(t *testing.T) {
-	// When not via the relay, the resolved URL should mirror the request host so
-	// agents on the user's box talk to the daemon directly. The new one-paste
-	// flow embeds the URL via `export CLAWVISOR_URL=…` at the top of the body.
+	// When neither public URL is configured, both env vars fall through to
+	// the request host so agents on the user's box talk to the daemon directly.
 	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "claude-code", "")
 	if !strings.Contains(body, "ANTHROPIC_BASE_URL") {
@@ -761,11 +775,12 @@ func TestInstallerEmbedsRequestHost(t *testing.T) {
 	if !strings.Contains(body, "/api/runtime/llm-credentials/anthropic") {
 		t.Fatalf("rendered body missing llm-credentials endpoint: %s", body)
 	}
-	// The httptest server uses an ephemeral 127.0.0.1 host; the body should
-	// embed that as the CLAWVISOR_URL export so the user's curl actually
-	// reaches the daemon.
-	if !strings.Contains(body, `export CLAWVISOR_URL="http://127.0.0.1:`) {
-		t.Errorf("expected request host to be embedded as CLAWVISOR_URL export, body excerpt:\n%s", body[:min(len(body), 500)])
+	// httptest binds an ephemeral 127.0.0.1 host; both exports should embed it.
+	if !strings.Contains(body, `export CLAWVISOR_APP_URL="http://127.0.0.1:`) {
+		t.Errorf("expected request host to be embedded as CLAWVISOR_APP_URL export, body excerpt:\n%s", body[:min(len(body), 800)])
+	}
+	if !strings.Contains(body, `export CLAWVISOR_LLM_URL="http://127.0.0.1:`) {
+		t.Errorf("expected request host to be embedded as CLAWVISOR_LLM_URL export, body excerpt:\n%s", body[:min(len(body), 800)])
 	}
 }
 
