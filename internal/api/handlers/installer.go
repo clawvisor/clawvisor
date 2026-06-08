@@ -93,7 +93,19 @@ func NewInstallerHandler(relayHost, daemonID string, isLocal bool, llmProxyURL, 
 }
 
 type installerCtx struct {
-	ClawvisorURL    string
+	// AppURL is the control-plane / dashboard endpoint: where agent
+	// registration (/api/agents/connect), credential storage
+	// (/api/runtime/llm-credentials), the skill catalog, and the dashboard
+	// itself live. Resolves to cfg.Server.PublicURL, falling back to the
+	// request host. Distinct from LLMURL because in split deployments these
+	// two surfaces live on different hosts (e.g. app.clawvisor.com vs
+	// llm.clawvisor.com), and registering against the LLM host 404s.
+	AppURL string
+	// LLMURL is the data-plane / LLM-proxy endpoint: what gets baked into
+	// ANTHROPIC_BASE_URL, OpenAI base_url, etc. Resolves to
+	// cfg.ProxyLite.PublicURL when configured, otherwise falls back to
+	// AppURL (single-host deployments).
+	LLMURL          string
 	UserID          string // optional; rendered into the install context fallback path
 	Claim           string // optional; rendered into the mint URL
 	IsLocal         bool
@@ -130,9 +142,11 @@ func (h *InstallerHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	}
 	target := InstallerTarget(strings.TrimSuffix(rawTarget, ".md"))
 
+	appURL := h.resolveAppURL(r)
 	ctx := installerCtx{
-		ClawvisorURL: h.resolveURL(r),
-		IsLocal:      h.isLocal,
+		AppURL:  appURL,
+		LLMURL:  h.resolveLLMURL(appURL),
+		IsLocal: h.isLocal,
 	}
 	// `validUserID` (defined in onboarding.go) is `^[a-zA-Z0-9_-]+$` with no
 	// length bound — so a `?user_id=<10MB>` query param would pass the regex
@@ -205,9 +219,11 @@ func (h *InstallerHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	}
 	target := InstallerTarget(strings.TrimSuffix(rawTarget, ".md"))
 
+	appURL := h.resolveAppURL(r)
 	ctx := installerCtx{
-		ClawvisorURL: h.resolveURL(r),
-		IsLocal:      h.isLocal,
+		AppURL:  appURL,
+		LLMURL:  h.resolveLLMURL(appURL),
+		IsLocal: h.isLocal,
 	}
 	ctx.AgentName = string(target)
 	if n := r.URL.Query().Get("agent_name"); n != "" && validAgentName.MatchString(n) {
@@ -293,17 +309,17 @@ func providerKeyEnv(provider string) string {
 	return "ANTHROPIC_API_KEY"
 }
 
-func (h *InstallerHandler) resolveURL(r *http.Request) string {
-	// URL precedence for the agent-side installer:
-	// 1. Dedicated LLM proxy public URL, when configured.
-	// 2. General server public URL, when configured.
-	// 3. The actual request/relay/local server URL.
-	//
-	// This keeps CLAWVISOR_URL pointed at the endpoint the next agent can use
-	// for both registration curls and LLM proxy traffic.
-	if h.llmProxyURL != "" {
-		return h.llmProxyURL
-	}
+// resolveAppURL returns the control-plane / dashboard URL — where agent
+// registration, credentials, the skill catalog, and dashboard pages live.
+// Precedence:
+//
+//  1. cfg.Server.PublicURL, when configured.
+//  2. The actual request / relay / local server URL.
+//
+// Notably NOT cfg.ProxyLite.PublicURL — the LLM proxy host typically does
+// not serve the control-plane endpoints. Conflating them is what caused the
+// install script to POST /api/agents/connect at the proxy host and 404.
+func (h *InstallerHandler) resolveAppURL(r *http.Request) string {
 	if h.publicURL != "" {
 		return h.publicURL
 	}
@@ -321,6 +337,17 @@ func (h *InstallerHandler) resolveURL(r *http.Request) string {
 		return fmt.Sprintf("https://%s/d/%s", h.relayHost, h.daemonID)
 	}
 	return "http://localhost:25297"
+}
+
+// resolveLLMURL returns the data-plane / LLM-proxy URL — what gets baked
+// into ANTHROPIC_BASE_URL / OpenAI base_url. Prefers cfg.ProxyLite.PublicURL
+// when set; falls back to the app URL for single-host deployments where the
+// proxy lives on the same origin.
+func (h *InstallerHandler) resolveLLMURL(appURL string) string {
+	if h.llmProxyURL != "" {
+		return h.llmProxyURL
+	}
+	return appURL
 }
 
 // installerFrontmatter emits the YAML frontmatter every target's skill loader
@@ -577,15 +604,19 @@ rm -rf ~/.codex/skills/clawvisor-install`
 // the connect endpoint consumes it and auto-approves in one round-trip,
 // so the curl returns the agent token directly (no waiting, no second
 // dashboard click).
-func sectionClaimedConnect(harness, clawvisorURL, claim, agentName string) string {
+func sectionClaimedConnect(harness, appURL, llmURL, claim, agentName string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## 1. Register and persist the token\n\n")
 	fmt.Fprintf(&b, "The claim code below is the user's pre-authorization — the connect endpoint\n")
 	fmt.Fprintf(&b, "consumes it and returns the agent token immediately. No second dashboard\n")
 	fmt.Fprintf(&b, "click required.\n\n")
-	fmt.Fprintf(&b, "Set the variables this skill uses (already filled in):\n\n")
+	fmt.Fprintf(&b, "Set the variables this skill uses (already filled in). Two URLs because\n")
+	fmt.Fprintf(&b, "Clawvisor's control plane (registration, dashboard, credentials) and its\n")
+	fmt.Fprintf(&b, "LLM proxy (`ANTHROPIC_BASE_URL` / OpenAI `base_url`) can live on\n")
+	fmt.Fprintf(&b, "separate hosts in split deployments:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "export CLAWVISOR_URL=%q\n", clawvisorURL)
+	fmt.Fprintf(&b, "export CLAWVISOR_APP_URL=%q\n", appURL)
+	fmt.Fprintf(&b, "export CLAWVISOR_LLM_URL=%q\n", llmURL)
 	fmt.Fprintf(&b, "export AGENT_NAME=%q\n", agentName)
 	fmt.Fprintf(&b, "export TOKEN_FILE=~/.clawvisor/agents/$AGENT_NAME.json\n")
 	fmt.Fprintf(&b, "```\n\n")
@@ -605,7 +636,7 @@ func sectionClaimedConnect(harness, clawvisorURL, claim, agentName string) strin
 	fmt.Fprintf(&b, "> \n")
 	fmt.Fprintf(&b, "> **Yes** — register a new agent and rewrite the local token file. The old\n")
 	fmt.Fprintf(&b, "> agent's token still exists in the Clawvisor dashboard; revoke it from\n")
-	fmt.Fprintf(&b, "> `$CLAWVISOR_URL/dashboard/agents` when you're ready. The previous install's\n")
+	fmt.Fprintf(&b, "> `$CLAWVISOR_APP_URL/dashboard/agents` when you're ready. The previous install's\n")
 	fmt.Fprintf(&b, "> diff records under `~/.clawvisor/diffs/$AGENT_NAME/` are still there —\n")
 	fmt.Fprintf(&b, "> `/clawvisor-uninstall` can still cleanly reverse the original install.\n")
 	fmt.Fprintf(&b, "> \n")
@@ -624,7 +655,7 @@ func sectionClaimedConnect(harness, clawvisorURL, claim, agentName string) strin
 	fmt.Fprintf(&b, "mkdir -p ~/.clawvisor/agents\n")
 	if claim != "" {
 		fmt.Fprintf(&b, "curl -sf --remove-on-error -X POST \\\n")
-		fmt.Fprintf(&b, "  \"$CLAWVISOR_URL/api/agents/connect?claim=%s&name=$AGENT_NAME&harness=%s\" \\\n", claim, harness)
+		fmt.Fprintf(&b, "  \"$CLAWVISOR_APP_URL/api/agents/connect?claim=%s&name=$AGENT_NAME&harness=%s\" \\\n", claim, harness)
 		fmt.Fprintf(&b, "  -H \"Content-Type: application/json\" \\\n")
 		fmt.Fprintf(&b, "  -d '{\"description\":\"%s\"}' \\\n", harness)
 		fmt.Fprintf(&b, "  -o \"$TOKEN_FILE\"\n")
@@ -640,7 +671,7 @@ func sectionClaimedConnect(harness, clawvisorURL, claim, agentName string) strin
 	fmt.Fprintf(&b, "If `curl` exits non-zero or `$TOKEN` is empty after this block, surface the\n")
 	fmt.Fprintf(&b, "response to the user and STOP — do not retry. Common causes:\n\n")
 	fmt.Fprintf(&b, "- **INVALID_CLAIM** — the claim expired (5 min TTL) or was already consumed.\n")
-	fmt.Fprintf(&b, "  Ask the user to refresh `$CLAWVISOR_URL/dashboard/agents` and re-paste the\n")
+	fmt.Fprintf(&b, "  Ask the user to refresh `$CLAWVISOR_APP_URL/dashboard/agents` and re-paste the\n")
 	fmt.Fprintf(&b, "  one-liner from the Connect-an-Agent panel.\n")
 	fmt.Fprintf(&b, "- **AGENT_NAME_EXISTS** — an agent with this name already exists. The user\n")
 	fmt.Fprintf(&b, "  can delete the old one from the dashboard, or you can pick a fresh name\n")
@@ -709,7 +740,7 @@ func sectionVaultUpstreamKey(heading, provider, providerLabel, envVar, keyPrefix
 	fmt.Fprintf(&b, "If they say yes, vault via stdin pipe (value never enters argv):\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "printf '%%s' \"$%s\" | jq -Rs '{api_key:.}' | \\\n", envVar)
-	fmt.Fprintf(&b, "  curl -sS -X PUT \"$CLAWVISOR_URL/api/runtime/llm-credentials/%s\" \\\n", provider)
+	fmt.Fprintf(&b, "  curl -sS -X PUT \"$CLAWVISOR_APP_URL/api/runtime/llm-credentials/%s\" \\\n", provider)
 	fmt.Fprintf(&b, "    -H \"Authorization: Bearer $TOKEN\" \\\n")
 	fmt.Fprintf(&b, "    -H \"Content-Type: application/json\" \\\n")
 	fmt.Fprintf(&b, "    --data-binary @-\n")
@@ -723,7 +754,7 @@ func sectionVaultUpstreamKey(heading, provider, providerLabel, envVar, keyPrefix
 	fmt.Fprintf(&b, "we wrote in step 1:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "AGENT_ID=$(jq -r .agent_id \"$TOKEN_FILE\")\n")
-	fmt.Fprintf(&b, "echo \"$CLAWVISOR_URL%s?for=$AGENT_ID\"\n", dashboardPath)
+	fmt.Fprintf(&b, "echo \"$CLAWVISOR_APP_URL%s?for=$AGENT_ID\"\n", dashboardPath)
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Tell the user:\n\n")
 	fmt.Fprintf(&b, "> Open the URL above to add your %s key. I'll wait — once you save it,\n", providerLabel)
@@ -736,7 +767,7 @@ func sectionVaultUpstreamKey(heading, provider, providerLabel, envVar, keyPrefix
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "for i in $(seq 1 90); do\n")
 	fmt.Fprintf(&b, "  RESP=$(curl -sS -H \"Authorization: Bearer $TOKEN\" \\\n")
-	fmt.Fprintf(&b, "    \"$CLAWVISOR_URL/api/runtime/llm-credentials?agent_id=$AGENT_ID\")\n")
+	fmt.Fprintf(&b, "    \"$CLAWVISOR_APP_URL/api/runtime/llm-credentials?agent_id=$AGENT_ID\")\n")
 	fmt.Fprintf(&b, "  if echo \"$RESP\" | jq -e '.credentials[] | select(.provider==\"%s\" and (.stored==true or .agent_stored==true))' >/dev/null 2>&1; then\n", provider)
 	fmt.Fprintf(&b, "    echo \"key vaulted\"; break\n")
 	fmt.Fprintf(&b, "  fi\n")
@@ -935,7 +966,7 @@ func sectionSelfUninstallSetup(stepNum int, harness, installerTarget, uninstallS
 	fmt.Fprintf(&b, "back to the dashboard:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	// Use --create-dirs so the codex skill subdirectory is created if needed.
-	fmt.Fprintf(&b, "curl -sf \"$CLAWVISOR_URL/skill/uninstall/%s.md?agent_name=$AGENT_NAME\" \\\n", installerTarget)
+	fmt.Fprintf(&b, "curl -sf \"$CLAWVISOR_APP_URL/skill/uninstall/%s.md?agent_name=$AGENT_NAME\" \\\n", installerTarget)
 	fmt.Fprintf(&b, "  --create-dirs -o %s\n", uninstallSkillPath)
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**Remove this setup skill.** It's one-shot scaffolding, not needed once\n")
@@ -945,7 +976,7 @@ func sectionSelfUninstallSetup(stepNum int, harness, installerTarget, uninstallS
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Tell the user:\n\n")
 	fmt.Fprintf(&b, "- %s is now connected to Clawvisor as `$AGENT_NAME`.\n", harness)
-	fmt.Fprintf(&b, "- Manage it from `$CLAWVISOR_URL/dashboard/agents`.\n")
+	fmt.Fprintf(&b, "- Manage it from `$CLAWVISOR_APP_URL/dashboard/agents`.\n")
 	fmt.Fprintf(&b, "- **To revert at any time**, run `/clawvisor-uninstall` (Claude Code) or\n")
 	fmt.Fprintf(&b, "  invoke the `clawvisor-uninstall` skill (Codex). It cleans up the local\n")
 	fmt.Fprintf(&b, "  config, deletes the token file, and points you at the dashboard for\n")
@@ -973,7 +1004,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "API key on every call). Passthrough is the default; swap is the fallback\n")
 	fmt.Fprintf(&b, "for users with no working upstream auth.\n\n")
 
-	b.WriteString(sectionClaimedConnect("claude-code", ctx.ClawvisorURL, ctx.Claim, ctx.AgentName))
+	b.WriteString(sectionClaimedConnect("claude-code", ctx.AppURL, ctx.LLMURL, ctx.Claim, ctx.AgentName))
 
 	// Step 2: passthrough smoke test. Don't clear ANTHROPIC_AUTH_TOKEN /
 	// ANTHROPIC_API_KEY — let the user's existing auth (claude login OAuth
@@ -985,7 +1016,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "existing auth needs to flow through for passthrough mode to work.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "timeout 30 env \\\n")
-	fmt.Fprintf(&b, "  ANTHROPIC_BASE_URL=\"$CLAWVISOR_URL/api\" \\\n")
+	fmt.Fprintf(&b, "  ANTHROPIC_BASE_URL=\"$CLAWVISOR_LLM_URL/api\" \\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_CUSTOM_HEADERS=\"X-Clawvisor-Agent-Token: $TOKEN\" \\\n")
 	fmt.Fprintf(&b, "  claude -p \"respond with the word OK\"\n")
 	fmt.Fprintf(&b, "```\n\n")
@@ -1010,7 +1041,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "precedence.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "timeout 30 env \\\n")
-	fmt.Fprintf(&b, "  ANTHROPIC_BASE_URL=\"$CLAWVISOR_URL/api\" \\\n")
+	fmt.Fprintf(&b, "  ANTHROPIC_BASE_URL=\"$CLAWVISOR_LLM_URL/api\" \\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_AUTH_TOKEN=\"$TOKEN\" \\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_API_KEY= \\\n")
 	fmt.Fprintf(&b, "  claude -p \"respond with the word OK\"\n")
@@ -1042,7 +1073,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "Read `~/.claude/settings.json` (if it doesn't exist, treat as `{}`).\n")
 	fmt.Fprintf(&b, "Merge the entries below into the `env` object, **preserving every other\n")
 	fmt.Fprintf(&b, "top-level key and every other entry in `env`.** Substitute the actual\n")
-	fmt.Fprintf(&b, "values for `$CLAWVISOR_URL` and `$TOKEN`. Then record what you added in\n")
+	fmt.Fprintf(&b, "values for `$CLAWVISOR_LLM_URL` and `$TOKEN`. Then record what you added in\n")
 	fmt.Fprintf(&b, "an external diff file so the uninstall skill can reverse it — the user's\n")
 	fmt.Fprintf(&b, "settings.json stays clean of any Clawvisor-related metadata.\n\n")
 	fmt.Fprintf(&b, "**If MODE=passthrough** — keep the user's upstream auth flowing through.\n")
@@ -1050,7 +1081,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```json\n")
 	fmt.Fprintf(&b, "{\n")
 	fmt.Fprintf(&b, "  \"env\": {\n")
-	fmt.Fprintf(&b, "    \"ANTHROPIC_BASE_URL\": \"$CLAWVISOR_URL/api\",\n")
+	fmt.Fprintf(&b, "    \"ANTHROPIC_BASE_URL\": \"$CLAWVISOR_LLM_URL/api\",\n")
 	fmt.Fprintf(&b, "    \"ANTHROPIC_CUSTOM_HEADERS\": \"X-Clawvisor-Agent-Token: $TOKEN\"\n")
 	fmt.Fprintf(&b, "  }\n")
 	fmt.Fprintf(&b, "}\n")
@@ -1072,7 +1103,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```json\n")
 	fmt.Fprintf(&b, "{\n")
 	fmt.Fprintf(&b, "  \"env\": {\n")
-	fmt.Fprintf(&b, "    \"ANTHROPIC_BASE_URL\": \"$CLAWVISOR_URL/api\",\n")
+	fmt.Fprintf(&b, "    \"ANTHROPIC_BASE_URL\": \"$CLAWVISOR_LLM_URL/api\",\n")
 	fmt.Fprintf(&b, "    \"ANTHROPIC_AUTH_TOKEN\": \"$TOKEN\",\n")
 	fmt.Fprintf(&b, "    \"ANTHROPIC_API_KEY\": \"\"\n")
 	fmt.Fprintf(&b, "  }\n")
@@ -1119,7 +1150,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "CONTENT=$(cat <<EOF\n")
 	fmt.Fprintf(&b, "claude-cv() {\n")
-	fmt.Fprintf(&b, "  ANTHROPIC_BASE_URL=\"$CLAWVISOR_URL/api\" \\\\\n")
+	fmt.Fprintf(&b, "  ANTHROPIC_BASE_URL=\"$CLAWVISOR_LLM_URL/api\" \\\\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_CUSTOM_HEADERS=\"X-Clawvisor-Agent-Token: \\$(jq -r .token \\$HOME/.clawvisor/agents/$AGENT_NAME.json)\" \\\\\n")
 	fmt.Fprintf(&b, "  claude \"\\$@\"\n")
 	fmt.Fprintf(&b, "}\n")
@@ -1131,7 +1162,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "CONTENT=$(cat <<EOF\n")
 	fmt.Fprintf(&b, "claude-cv() {\n")
-	fmt.Fprintf(&b, "  ANTHROPIC_BASE_URL=\"$CLAWVISOR_URL/api\" \\\\\n")
+	fmt.Fprintf(&b, "  ANTHROPIC_BASE_URL=\"$CLAWVISOR_LLM_URL/api\" \\\\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_AUTH_TOKEN=\"\\$(jq -r .token \\$HOME/.clawvisor/agents/$AGENT_NAME.json)\" \\\\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_API_KEY= \\\\\n")
 	fmt.Fprintf(&b, "  claude \"\\$@\"\n")
@@ -1165,7 +1196,7 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "API key on every call). Passthrough is the default; swap is the fallback\n")
 	fmt.Fprintf(&b, "for users with no working upstream auth.\n\n")
 
-	b.WriteString(sectionClaimedConnect("codex", ctx.ClawvisorURL, ctx.Claim, ctx.AgentName))
+	b.WriteString(sectionClaimedConnect("codex", ctx.AppURL, ctx.LLMURL, ctx.Claim, ctx.AgentName))
 
 	// Step 2: write the provider block in passthrough form. `requires_openai_auth
 	// = true` makes Codex send its OAuth/env auth as Authorization upstream;
@@ -1187,7 +1218,7 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "  CONTENT=$(cat <<EOF\n")
 	fmt.Fprintf(&b, "[model_providers.clawvisor]\n")
 	fmt.Fprintf(&b, "name = \"Clawvisor\"\n")
-	fmt.Fprintf(&b, "base_url = \"$CLAWVISOR_URL/api/v1\"\n")
+	fmt.Fprintf(&b, "base_url = \"$CLAWVISOR_LLM_URL/api/v1\"\n")
 	fmt.Fprintf(&b, "wire_api = \"responses\"\n")
 	fmt.Fprintf(&b, "requires_openai_auth = true\n\n")
 	fmt.Fprintf(&b, "[model_providers.clawvisor.env_http_headers]\n")
@@ -1245,7 +1276,7 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "CONTENT=$(cat <<EOF\n")
 	fmt.Fprintf(&b, "[model_providers.clawvisor]\n")
 	fmt.Fprintf(&b, "name = \"Clawvisor\"\n")
-	fmt.Fprintf(&b, "base_url = \"$CLAWVISOR_URL/api/v1\"\n")
+	fmt.Fprintf(&b, "base_url = \"$CLAWVISOR_LLM_URL/api/v1\"\n")
 	fmt.Fprintf(&b, "wire_api = \"responses\"\n")
 	fmt.Fprintf(&b, "requires_openai_auth = false\n\n")
 	fmt.Fprintf(&b, "[model_providers.clawvisor.env_http_headers]\n")
@@ -1462,12 +1493,12 @@ func renderClaudeCodeUninstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "## 4. Tell the user about dashboard cleanup\n\n")
 	fmt.Fprintf(&b, "The agent token still exists server-side (Clawvisor doesn't know we removed\n")
 	fmt.Fprintf(&b, "the local config). Surface these so the user can finish the revert:\n\n")
-	fmt.Fprintf(&b, "- **Revoke the agent.** Open `%s/dashboard/agents`, find `$AGENT_NAME`, and\n", ctx.ClawvisorURL)
+	fmt.Fprintf(&b, "- **Revoke the agent.** Open `%s/dashboard/agents`, find `$AGENT_NAME`, and\n", ctx.AppURL)
 	fmt.Fprintf(&b, "  delete it. After delete, the token in `$TOKEN_FILE` (now gone anyway)\n")
 	fmt.Fprintf(&b, "  authenticates nothing.\n")
 	fmt.Fprintf(&b, "- **Vaulted upstream key (only if you used swap mode).** If you vaulted an\n")
 	fmt.Fprintf(&b, "  Anthropic API key during install and don't want Clawvisor to keep it,\n")
-	fmt.Fprintf(&b, "  open `%s/dashboard/keys/anthropic` and replace or clear it. Skip this\n", ctx.ClawvisorURL)
+	fmt.Fprintf(&b, "  open `%s/dashboard/keys/anthropic` and replace or clear it. Skip this\n", ctx.AppURL)
 	fmt.Fprintf(&b, "  if other agents are still using the vaulted key.\n\n")
 	fmt.Fprintf(&b, "Do NOT delete the vaulted key on the user's behalf — it may be shared with\n")
 	fmt.Fprintf(&b, "other agents the user wants to keep working.\n\n")
@@ -1552,10 +1583,10 @@ func renderCodexUninstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```\n\n")
 
 	fmt.Fprintf(&b, "## 4. Tell the user about dashboard cleanup\n\n")
-	fmt.Fprintf(&b, "- **Revoke the agent** at `%s/dashboard/agents` — find `$AGENT_NAME` and\n", ctx.ClawvisorURL)
+	fmt.Fprintf(&b, "- **Revoke the agent** at `%s/dashboard/agents` — find `$AGENT_NAME` and\n", ctx.AppURL)
 	fmt.Fprintf(&b, "  delete it.\n")
 	fmt.Fprintf(&b, "- **Vaulted upstream key (only if you used swap mode)** — open\n")
-	fmt.Fprintf(&b, "  `%s/dashboard/keys/openai` if you want to replace or clear the\n", ctx.ClawvisorURL)
+	fmt.Fprintf(&b, "  `%s/dashboard/keys/openai` if you want to replace or clear the\n", ctx.AppURL)
 	fmt.Fprintf(&b, "  vaulted key. Skip if other agents are still using it.\n\n")
 	fmt.Fprintf(&b, "Do NOT delete the vaulted key on the user's behalf.\n\n")
 
@@ -1579,7 +1610,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 	b.WriteString(installerFrontmatter("Hermes"))
 	fmt.Fprintf(&b, "# Connect Hermes to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are walking the user through connecting Hermes (Nous Research) to a\n")
-	fmt.Fprintf(&b, "running Clawvisor instance at `%s`. One-shot — do, verify, offer to\n", ctx.ClawvisorURL)
+	fmt.Fprintf(&b, "running Clawvisor instance at `%s`. One-shot — do, verify, offer to\n", ctx.AppURL)
 	fmt.Fprintf(&b, "remove yourself.\n\n")
 	fmt.Fprintf(&b, "Hermes runs in **swap mode**: Hermes presents the Clawvisor agent token as\n")
 	fmt.Fprintf(&b, "`%s`; Clawvisor swaps in the user's\n", keyEnv)
@@ -1588,7 +1619,8 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "The agent token has **already been minted** by the dashboard's bootstrap\n")
 	fmt.Fprintf(&b, "script and saved to `~/.clawvisor/agents/%s.json`. Do not re-mint;\n", ctx.AgentName)
 	fmt.Fprintf(&b, "the configure step below reads the token from disk.\n\n")
-	fmt.Fprintf(&b, "Set the endpoint:\n\n```bash\nexport CLAWVISOR_URL=%s\n```\n\n", ctx.ClawvisorURL)
+	fmt.Fprintf(&b, "Set the endpoints (control plane vs. LLM proxy — separate hosts in\n")
+	fmt.Fprintf(&b, "split deployments):\n\n```bash\nexport CLAWVISOR_APP_URL=%s\nexport CLAWVISOR_LLM_URL=%s\n```\n\n", ctx.AppURL, ctx.LLMURL)
 
 	b.WriteString(sectionDashboardAnswers(ctx,
 		"LLM provider: "+providerName,
@@ -1601,7 +1633,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 		b.WriteString(sectionHermesLocalProbe(ctx.HermesMode))
 	}
 
-	b.WriteString(sectionHermesPreflight(ctx.HermesMode, ctx.ClawvisorURL, ctx.AgentName))
+	b.WriteString(sectionHermesPreflight(ctx.HermesMode, ctx.LLMURL, ctx.AgentName))
 
 	// Step 3: Configure (mode-aware).
 	fmt.Fprintf(&b, "## 3. Configure Hermes\n\n")
@@ -1615,7 +1647,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 
 	switch ctx.HermesMode {
 	case "docker":
-		basePathHost := dockerHostURL(ctx.ClawvisorURL) + basePath
+		basePathHost := dockerHostURL(ctx.LLMURL) + basePath
 		fmt.Fprintf(&b, "**Env-var (recommended) — pass the token into the container at run time:**\n\n")
 		fmt.Fprintf(&b, "```bash\n")
 		fmt.Fprintf(&b, "TOKEN=$(jq -r .token ~/.clawvisor/agents/%s.json)\n", ctx.AgentName)
@@ -1665,7 +1697,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 	default: // host
 		fmt.Fprintf(&b, "**Env-var (recommended):**\n\n")
 		fmt.Fprintf(&b, "```bash\n")
-		fmt.Fprintf(&b, "%s=%s%s \\\n", baseEnv, ctx.ClawvisorURL, basePath)
+		fmt.Fprintf(&b, "%s=%s%s \\\n", baseEnv, ctx.LLMURL, basePath)
 		fmt.Fprintf(&b, "%s=$(jq -r .token ~/.clawvisor/agents/%s.json) \\\n", keyEnv, ctx.AgentName)
 		fmt.Fprintf(&b, "hermes chat\n")
 		fmt.Fprintf(&b, "```\n\n")
@@ -1674,7 +1706,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 		fmt.Fprintf(&b, "mkdir -p ~/.hermes && cat > ~/.hermes/config.yaml <<EOF\n")
 		fmt.Fprintf(&b, "model:\n")
 		fmt.Fprintf(&b, "  provider: custom\n")
-		fmt.Fprintf(&b, "  base_url: \"%s%s\"\n", ctx.ClawvisorURL, basePath)
+		fmt.Fprintf(&b, "  base_url: \"%s%s\"\n", ctx.LLMURL, basePath)
 		fmt.Fprintf(&b, "  api_key: \"$(jq -r .token ~/.clawvisor/agents/%s.json)\"\n", ctx.AgentName)
 		fmt.Fprintf(&b, "EOF\n")
 		fmt.Fprintf(&b, "```\n\n")
@@ -1691,7 +1723,7 @@ func renderHermesInstaller(ctx installerCtx) string {
 		fmt.Fprintf(&b, "```bash\n")
 		fmt.Fprintf(&b, "cat >> ~/.zshrc <<'EOF'\n")
 		fmt.Fprintf(&b, "hermes-cv() {\n")
-		fmt.Fprintf(&b, "  %s=%s%s \\\n", baseEnv, ctx.ClawvisorURL, basePath)
+		fmt.Fprintf(&b, "  %s=%s%s \\\n", baseEnv, ctx.LLMURL, basePath)
 		fmt.Fprintf(&b, "  %s=$(jq -r .token ~/.clawvisor/agents/%s.json) \\\n", keyEnv, ctx.AgentName)
 		fmt.Fprintf(&b, "  hermes \"$@\"\n")
 		fmt.Fprintf(&b, "}\n")
@@ -1852,7 +1884,7 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	b.WriteString(installerFrontmatter("OpenClaw"))
 	fmt.Fprintf(&b, "# Connect OpenClaw to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are walking the user through connecting an OpenClaw instance to a\n")
-	fmt.Fprintf(&b, "running Clawvisor at `%s`. The setup is intentionally simple: point\n", ctx.ClawvisorURL)
+	fmt.Fprintf(&b, "running Clawvisor at `%s`. The setup is intentionally simple: point\n", ctx.AppURL)
 	fmt.Fprintf(&b, "OpenClaw's LLM base URL at Clawvisor's %s-compatible endpoint and\n", providerName)
 	fmt.Fprintf(&b, "use the minted Clawvisor agent token as the custom API key. This skill is\n")
 	fmt.Fprintf(&b, "one-shot. The dashboard step before this skill collects the user's upstream\n")
@@ -1860,7 +1892,8 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "The agent token has **already been minted** by the dashboard's bootstrap\n")
 	fmt.Fprintf(&b, "script and saved to `~/.clawvisor/agents/%s.json`. Do not re-mint;\n", ctx.AgentName)
 	fmt.Fprintf(&b, "the configure step below reads the token from disk.\n\n")
-	fmt.Fprintf(&b, "Set the endpoint:\n\n```bash\nexport CLAWVISOR_URL=%s\n```\n\n", ctx.ClawvisorURL)
+	fmt.Fprintf(&b, "Set the endpoints (control plane vs. LLM proxy — separate hosts in\n")
+	fmt.Fprintf(&b, "split deployments):\n\n```bash\nexport CLAWVISOR_APP_URL=%s\nexport CLAWVISOR_LLM_URL=%s\n```\n\n", ctx.AppURL, ctx.LLMURL)
 	b.WriteString(sectionDashboardAnswers(ctx, "LLM provider: "+providerName, "OpenClaw running mode: "+ctx.OpenClawMode))
 
 	if ctx.OpenClawMode == "remote" {
@@ -1869,12 +1902,12 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 		b.WriteString(sectionOpenClawLocalProbe(ctx.OpenClawMode, ctx.LLMProvider))
 	}
 
-	b.WriteString(sectionOpenClawPreflight(ctx.OpenClawMode, ctx.ClawvisorURL, ctx.AgentName))
+	b.WriteString(sectionOpenClawPreflight(ctx.OpenClawMode, ctx.LLMURL, ctx.AgentName))
 
 	if ctx.OpenClawMode == "remote" {
-		b.WriteString(sectionOpenClawRemoteConfigure(ctx.ClawvisorURL, ctx.LLMProvider, ctx.AgentName))
+		b.WriteString(sectionOpenClawRemoteConfigure(ctx.LLMURL, ctx.LLMProvider, ctx.AgentName))
 	} else {
-		b.WriteString(sectionOpenClawLocalConfigure(ctx.ClawvisorURL, ctx.LLMProvider, ctx.AgentName))
+		b.WriteString(sectionOpenClawLocalConfigure(ctx.LLMURL, ctx.LLMProvider, ctx.AgentName))
 	}
 
 	b.WriteString(sectionUninstallDoc("openclaw", `1. Re-run OpenClaw onboarding and choose your previous non-Clawvisor provider/base URL.
