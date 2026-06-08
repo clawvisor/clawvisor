@@ -1323,8 +1323,6 @@ function LegacyPromptBlock({ prompt, copied, onCopy }: { prompt: string; copied:
 
 const PASTE_STEP_ADVANCE_MS = 5_000
 
-const HELPER_TRAFFIC_DWELL_MS = 5_000
-
 function AgentNameInput({
   agentName,
   onChange,
@@ -1371,10 +1369,8 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
   onCopy: (text: string) => void
 }) {
   const helperCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const step4UnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [helperCopyWatching, setHelperCopyWatching] = useState(false)
   const [prototypeTrafficDetected, setPrototypeTrafficDetected] = useState(false)
-  const [step4Unlocked, setStep4Unlocked] = useState(false)
   const [answers, setAnswers] = useState<InstallerAnswers>(() => defaultInstallerAnswers('openclaw'))
   const [setupQuestionsDone, setSetupQuestionsDone] = useState(false)
   const [credentialScope, setCredentialScope] = useState<CredentialScope>('user')
@@ -1401,7 +1397,6 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
   const nameTaken = !!agents?.find(a => a.name === agentName)
   useEffect(() => () => {
     if (helperCopyTimerRef.current) clearTimeout(helperCopyTimerRef.current)
-    if (step4UnlockTimerRef.current) clearTimeout(step4UnlockTimerRef.current)
   }, [])
 
   useEffect(() => {
@@ -1431,10 +1426,10 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
   )
 
   useEffect(() => {
-    if (apiKeyStepDone) helperStartedAtRef.current = Date.now()
-  }, [apiKeyStepDone])
+    if (setupQuestionsDone) helperStartedAtRef.current = Date.now()
+  }, [setupQuestionsDone])
 
-  const pollingHelper = apiKeyStepDone && !!approvedAgent?.id
+  const pollingHelper = setupQuestionsDone
   const { data: helperSessions } = useQuery({
     queryKey: ['runtime-sessions', 'legacy-openclaw-helper', approvedAgent?.id ?? 'none'],
     queryFn: () => api.runtime.listSessions(),
@@ -1454,34 +1449,14 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
     pollingHelper,
   )
   const trafficDetected = !!helperLiveSession || !!helperStartActivity || prototypeTrafficDetected
-  const verifyReady = step4Unlocked
-
-  useEffect(() => {
-    if (!trafficDetected) {
-      setStep4Unlocked(false)
-      if (step4UnlockTimerRef.current) {
-        clearTimeout(step4UnlockTimerRef.current)
-        step4UnlockTimerRef.current = null
-      }
-      return
-    }
-    if (step4Unlocked || step4UnlockTimerRef.current) return
-    step4UnlockTimerRef.current = setTimeout(() => {
-      setStep4Unlocked(true)
-      step4UnlockTimerRef.current = null
-    }, HELPER_TRAFFIC_DWELL_MS)
-  }, [trafficDetected, step4Unlocked])
+  const helperStepDone = trafficDetected || !!approvedAgent?.id
+  const verifyReady = apiKeyStepDone
 
   const handleHelperCopy = (text: string) => {
     onCopy(text)
     setPrototypeTrafficDetected(false)
-    setStep4Unlocked(false)
     setHelperCopyWatching(true)
     if (helperCopyTimerRef.current) clearTimeout(helperCopyTimerRef.current)
-    if (step4UnlockTimerRef.current) {
-      clearTimeout(step4UnlockTimerRef.current)
-      step4UnlockTimerRef.current = null
-    }
     helperCopyTimerRef.current = setTimeout(() => {
       setHelperCopyWatching(false)
       setPrototypeTrafficDetected(true)
@@ -1490,17 +1465,17 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
   }
 
   const setupQuestionsSatisfied = setupQuestionsDone
-  const step0Variant = setupQuestionsSatisfied ? 'complete' : 'active'
-  const step2Variant = apiKeyStepDone
+  const step1Variant = setupQuestionsSatisfied ? 'complete' : 'active'
+  const step2Variant = helperStepDone
     ? 'complete'
     : setupQuestionsSatisfied
       ? 'active'
       : 'upcoming'
   const step3Variant = apiKeyStepDone
-    ? verifyReady
-      ? 'complete'
-      : 'active'
-    : 'upcoming'
+    ? 'complete'
+    : helperStepDone
+      ? 'active'
+      : 'upcoming'
   const step4Variant = verifyReady ? 'active' : 'upcoming'
 
   return (
@@ -1525,7 +1500,7 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
               {providerLabel(answers.llmProvider)} · {OPENCLAW_DEPLOYMENT_LABELS[answers.openclawMode]}
             </>
           }
-          variant={step0Variant}
+          variant={step1Variant}
         >
           <InstallerSetupQuestions
             target="openclaw"
@@ -1556,6 +1531,39 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
 
         <SetupGuideStep
           step={2}
+          title="Install and run the helper"
+          description="Run the installer skill in Claude Code or Codex so it reads the token from disk and finishes configuring OpenClaw."
+          completedSummary={
+            <>
+              {INSTALLER_HELPERS[helper].pillLabel} · routed activity detected
+            </>
+          }
+          variant={step2Variant}
+        >
+          {setupQuestionsSatisfied ? (
+            <InstallHelperStepPanel
+              helper={helper}
+              onHelperChange={setHelper}
+              helperCommand={helperCommand}
+              skillPreviewUrl={skillURL}
+              frameworkLabel="OpenClaw"
+              onCopy={handleHelperCopy}
+              copied={copied}
+              agentName={approvedAgent?.name ?? agentName}
+              liveSession={helperLiveSession}
+              startActivity={helperStartActivity}
+              watching={helperCopyWatching}
+              prototypeDetected={prototypeTrafficDetected}
+            />
+          ) : (
+            <p className="text-xs text-text-tertiary">
+              Complete the setup questions above first — this step unlocks once you continue.
+            </p>
+          )}
+        </SetupGuideStep>
+
+        <SetupGuideStep
+          step={3}
           title={`Set the ${providerLabel(answers.llmProvider)} key`}
           description={<>Vault an upstream {providerLabel(answers.llmProvider)} key so Clawvisor can swap it in when {agentName} calls through the proxy.</>}
           completedSummary={
@@ -1563,9 +1571,9 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
               {CREDENTIAL_SCOPE_SUMMARY[credentialScope]} {providerLabel(answers.llmProvider)} key
             </>
           }
-          variant={step2Variant}
+          variant={step3Variant}
         >
-          {setupQuestionsSatisfied ? (
+          {helperStepDone ? (
             <>
               <AgentUpstreamKeySetupPanel
                 agentName={approvedAgent?.name ?? agentName}
@@ -1591,40 +1599,7 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
             </>
           ) : (
             <p className="text-xs text-text-tertiary">
-              Complete the setup questions above first — this step unlocks once you continue.
-            </p>
-          )}
-        </SetupGuideStep>
-
-        <SetupGuideStep
-          step={3}
-          title="Install and run the helper"
-          description="Run the installer skill in Claude Code or Codex so it reads the token from disk and finishes configuring OpenClaw."
-          completedSummary={
-            <>
-              {INSTALLER_HELPERS[helper].pillLabel} · routed activity detected
-            </>
-          }
-          variant={step3Variant}
-        >
-          {apiKeyStepDone ? (
-            <InstallHelperStepPanel
-              helper={helper}
-              onHelperChange={setHelper}
-              helperCommand={helperCommand}
-              skillPreviewUrl={skillURL}
-              frameworkLabel="OpenClaw"
-              onCopy={handleHelperCopy}
-              copied={copied}
-              agentName={approvedAgent?.name ?? agentName}
-              liveSession={helperLiveSession}
-              startActivity={helperStartActivity}
-              watching={helperCopyWatching}
-              prototypeDetected={prototypeTrafficDetected}
-            />
-          ) : (
-            <p className="text-xs text-text-tertiary">
-              Save your API key above first — this step unlocks once the key is configured.
+              Run the installer helper above first — this step unlocks once your agent is registered.
             </p>
           )}
         </SetupGuideStep>
