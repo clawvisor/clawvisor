@@ -12,6 +12,7 @@ import (
 )
 
 const codexBinary = "codex"
+const defaultCodexModel = "gpt-5.5"
 
 // Codex is the driver for the `codex` CLI (OpenAI Codex).
 type Codex struct{}
@@ -34,7 +35,11 @@ func (Codex) Start(_ context.Context, cfg Config) (Session, error) {
 	if cfg.LiteProxyURL == "" || cfg.AgentToken == "" || cfg.Workspace == "" {
 		return nil, fmt.Errorf("codex: cfg.LiteProxyURL, AgentToken, Workspace are required")
 	}
-	return &codexSession{cfg: cfg, model: cfg.Model}, nil
+	model := cfg.Model
+	if model == "" {
+		model = defaultCodexModel
+	}
+	return &codexSession{cfg: cfg, model: model}, nil
 }
 
 type codexSession struct {
@@ -103,12 +108,13 @@ func (s *codexSession) Send(ctx context.Context, message string) (*StepOutcome, 
 // `codex exec resume <id> ...` (follow-up). Returns whether the run is
 // expected to mint a fresh session id we should capture.
 //
-// `codex exec resume` does NOT accept -C / --add-dir / -m — those are
-// exec-only flags. The session remembers its workspace and model on
-// its own.
+// `codex exec resume` does NOT accept -C / --add-dir — those are
+// exec-only flags. The resume command accepts -m, and the e2e harness
+// passes it on every turn so Codex does not fall back to a CLI default
+// model that may be unsupported for the configured auth path.
 func (s *codexSession) buildArgs(prompt string) (args []string, capture bool, err error) {
 	cfgFlags := s.providerConfigFlags()
-	// `codex exec resume` rejects `--color`, `-C`, `-m`, `--add-dir`.
+	// `codex exec resume` rejects `--color`, `-C`, `--add-dir`.
 	// Keep the resume option set minimal and add the exec-only flags
 	// separately for the first call.
 	commonResume := []string{
@@ -118,17 +124,17 @@ func (s *codexSession) buildArgs(prompt string) (args []string, capture bool, er
 		"--ignore-user-config",
 	}
 	commonResume = append(commonResume, cfgFlags...)
+	if s.model != "" {
+		commonResume = append(commonResume, "-m", s.model)
+	}
 	if s.sessionID != "" {
-		args = append(args, "exec", "resume", s.sessionID)
+		args = append(args, "exec", "resume")
 		args = append(args, commonResume...)
-		args = append(args, prompt)
+		args = append(args, s.sessionID, prompt)
 		return args, false, nil
 	}
 	commonExec := append([]string{}, commonResume...)
 	commonExec = append(commonExec, "-C", s.cfg.Workspace, "--color", "never")
-	if s.model != "" {
-		commonExec = append(commonExec, "-m", s.model)
-	}
 	args = append(args, "exec")
 	args = append(args, commonExec...)
 	args = append(args, prompt)
