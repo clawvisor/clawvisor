@@ -541,8 +541,8 @@ export default function Library() {
   return (
     <div className="lib-page">
       <header className="lib-hero">
-        <h2>Achievements</h2>
-        <p>
+        <h1 className="page-title">Achievements</h1>
+        <p className="page-desc">
           Task-focused guides for operating agents through Clawvisor — connect agents, approve work,
           wire services, set policy, and audit what happened. Pick a task below to learn how and where to do it.
         </p>

@@ -39,11 +39,9 @@ const quickstartIcon = (
   </svg>
 )
 
-const configureNav: DashboardNavItem[] = [
-  { to: '/dashboard/agents', label: 'Agents', icon: <svg className={iconClass} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg> },
-  { to: '/dashboard/accounts', label: 'Accounts', icon: <svg className={iconClass} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg> },
-  { to: '/dashboard/policy', label: 'Policy', icon: <svg className={iconClass} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> },
-]
+const agentsNavIcon = <svg className={iconClass} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
+const accountsNavIcon = <svg className={iconClass} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
+const policyNavIcon = <svg className={iconClass} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
 
 const taskHistoryNavItem: DashboardNavItem = {
   to: '/dashboard/tasks',
@@ -80,7 +78,21 @@ export default function Dashboard() {
 
   const { attentionCount } = useAttentionItems()
   const inboxCount = attentionCount
-  const { isComplete: setupComplete, isLoading: setupLoading, steps: setupSteps } = useSetupProgress()
+  const { isComplete: setupComplete, isLoading: setupLoading, steps: setupSteps, agents } = useSetupProgress()
+
+  const configureNav = useMemo<DashboardNavItem[]>(() => {
+    const liveCount = agents.length
+    return [
+      {
+        to: '/dashboard/agents',
+        label: 'Agents',
+        icon: agentsNavIcon,
+        statusLabel: liveCount > 0 ? String(liveCount) : undefined,
+      },
+      { to: '/dashboard/accounts', label: 'Accounts', icon: accountsNavIcon },
+      { to: '/dashboard/policy', label: 'Policy', icon: policyNavIcon },
+    ]
+  }, [agents.length])
   const learnNav: DashboardNavItem[] = [howItWorksNavItem, libraryNavItem]
 
   const quickstartNav = useMemo<DashboardNavItem[]>(() => {

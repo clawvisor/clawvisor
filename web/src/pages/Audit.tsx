@@ -781,8 +781,8 @@ export default function Activity() {
 
   return (
     <PageLayout
-      title="activity"
-      description="14-day heatmap and searchable activity history."
+      title="Activity"
+      meta="14-day heatmap and searchable activity history."
       actions={
         <>
           <button
@@ -797,7 +797,6 @@ export default function Activity() {
           </button>
         </>
       }
-      className="space-y-6"
     >
       {deepLinkResult && (
         <div className="dev-banner--info">

@@ -22,7 +22,7 @@ export default function DashboardIndex() {
   }
 
   if (attentionLoading) {
-    return <div className="p-4 sm:p-8 ds-page-loading">loading…</div>
+    return <div className="page-shell ds-page-loading">loading…</div>
   }
 
   if (attentionCount > 0) {

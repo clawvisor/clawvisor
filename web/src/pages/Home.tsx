@@ -21,7 +21,7 @@ export default function Home() {
   })
 
   if (setupLoading || (agentsLoading && !agentsError)) {
-    return <div className="p-4 sm:p-8 ds-page-loading">loading…</div>
+    return <div className="page-shell ds-page-loading">loading…</div>
   }
 
   const hasAgent = steps.some(s => s.id === 'agent' && s.complete) || (agents ?? []).length > 0

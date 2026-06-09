@@ -123,8 +123,8 @@ export default function Tasks() {
 
   return (
     <PageLayout
-      title="task history"
-      description="Browse and review past and active tasks. Items that need your decision live in Inbox."
+      title="Task History"
+      meta="Browse and review past and active tasks. Items that need your decision live in Activity."
       actions={
         <button onClick={() => refetch()} className="dev-btn-ghost">
           refresh

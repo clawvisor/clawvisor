@@ -75,6 +75,7 @@ export default function SetupChecklist({ compact = false }: { compact?: boolean 
                 id="connect-agent"
                 title="Connect an agent"
                 stepNum={i + 1}
+                connectedAgents={agents}
               />
             ) : step.id === 'approval' && !step.complete ? (
               <ExpandedChecklistStep index={i + 1} label="See Clawvisor in action">

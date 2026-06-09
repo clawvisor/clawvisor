@@ -1,17 +1,7 @@
 /* Clawvisor Library — layout mirrored from Hermes Achievements (ha-* → lib-*) */
 
 .lib-page {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  padding: 1rem 1rem 2rem;
-  max-width: 72rem;
-}
-
-@media (min-width: 640px) {
-  .lib-page {
-    padding: 1.5rem 1.5rem 2.5rem;
-  }
+  @apply page-shell flex flex-col gap-6;
 }
 
 .lib-hero {
@@ -20,23 +10,9 @@
   gap: 0;
 }
 
-.lib-hero h2 {
-  margin: 0;
-  font-family: Geist Variable, Geist, ui-sans-serif, system-ui, sans-serif;
-  font-size: clamp(1.75rem, 4vw, 2.5rem);
-  font-weight: 600;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-  color: rgb(var(--color-text-primary));
-}
-
-.lib-hero p {
-  position: relative;
+.lib-hero .page-desc {
+  margin-top: 0.5rem;
   max-width: 52rem;
-  margin: 0.65rem 0 0;
-  color: rgb(var(--color-text-tertiary));
-  font-size: 0.86rem;
-  line-height: 1.45;
 }
 
 .lib-guide {

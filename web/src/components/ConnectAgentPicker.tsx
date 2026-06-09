@@ -1,13 +1,27 @@
+import { IconBrain, IconCloud } from '@tabler/icons-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
-import type { Agent } from '../api/client'
+import { type Agent } from '../api/client'
+import { resolveAgentTab } from './AgentListCard'
 import {
   AGENT_META,
   PROXY_LITE_AGENT_TABS,
-  agentMatchesTab,
   agentSetupPath,
+  type AgentPrimitive,
   type AgentTab,
 } from '../constants/agentTabs'
+
+function agentPickerSubtitle(primitive: AgentPrimitive): string {
+  switch (primitive) {
+    case 'Skill':
+      return 'Copy the installer to get started'
+    case 'Configuration profile':
+      return 'Follow the setup guide to get started'
+    case 'Manual':
+      return 'Follow the setup instructions to get started'
+  }
+}
 
 type ConnectAgentStepCardProps = {
   title?: string
@@ -66,15 +80,61 @@ export function ConnectAgentStepCard({
 
 const AGENT_REQUEST_ISSUE_URL = 'https://github.com/clawvisor/clawvisor/issues/new'
 
-export function AgentPickerContent({
-  connectedAgents = [],
-}: {
-  connectedAgents?: Agent[]
-}) {
-  const [requestOpen, setRequestOpen] = useState(false)
+function LiveAgentChip({ agent }: { agent: Agent }) {
+  const tab = resolveAgentTab(agent)
+  const meta = AGENT_META[tab]
 
-  const isAgentLive = (tab: AgentTab) =>
-    connectedAgents.some(agent => agentMatchesTab(agent, tab))
+  return (
+    <Link
+      to={`/dashboard/agents/${encodeURIComponent(agent.id)}`}
+      className="dev-pick-row group w-fit no-underline text-inherit"
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="dev-pick-icon group-hover:border-brand/30">
+          <AgentHarnessIcon tab={tab} />
+        </div>
+        <div className="min-w-0 flex flex-col">
+          <p className="dev-pick-title">{meta.label}</p>
+          <p className="dev-pick-desc mt-0 leading-snug line-clamp-1">
+            Connected Today
+          </p>
+        </div>
+        <svg
+          className="w-3.5 h-3.5 text-text-tertiary shrink-0 ml-2 group-hover:text-text-secondary transition-colors"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+          aria-hidden
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 6l6 6-6 6" />
+        </svg>
+      </div>
+    </Link>
+  )
+}
+
+function LiveAgentsSummary({ agents }: { agents: Agent[] }) {
+  if (agents.length === 0) return null
+
+  return (
+    <div className="mt-4 space-y-2">
+      <p className="text-sm font-medium text-text-secondary">Connected Agents</p>
+      {agents.length === 1 ? (
+        <LiveAgentChip agent={agents[0]} />
+      ) : (
+        <div className="flex flex-wrap items-stretch gap-3">
+          {agents.map((agent) => (
+            <LiveAgentChip key={agent.id} agent={agent} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function AgentPickerContent({ connectedAgents = [] }: { connectedAgents?: Agent[] }) {
+  const [requestOpen, setRequestOpen] = useState(false)
 
   return (
     <>
@@ -91,9 +151,7 @@ export function AgentPickerContent({
                 key={tab}
                 tab={tab}
                 label={meta.label}
-                description={meta.tagline}
                 primitive={meta.primitive}
-                live={isAgentLive(tab)}
                 icon={<AgentHarnessIcon tab={tab} />}
               />
             )
@@ -107,6 +165,7 @@ export function AgentPickerContent({
           <PlusCircleIcon className="w-3.5 h-3.5" />
           Request an agent framework
         </button>
+        <LiveAgentsSummary agents={connectedAgents} />
       </div>
       {requestOpen && (
         <RequestAgentModal onClose={() => setRequestOpen(false)} />
@@ -238,12 +297,18 @@ export function AgentHarnessIcon({ tab }: { tab: AgentTab }) {
     case 'claude-code':
     case 'claude-desktop':
       return <img src="/logos/claude-color.svg" alt="" className="w-5 h-5 object-contain" />
+    case 'codex':
+      return <img src="/logos/openai.svg" alt="" className="w-5 h-5 object-contain dark:invert" />
+    case 'hermes':
+      return <img src="/logos/hermes.svg" alt="" className="w-5 h-5 object-contain dark:invert" />
     case 'openclaw':
       return <img src="/logos/openclaw.svg" alt="" className="w-5 h-5 object-contain" />
     case 'cloud-agent':
-      return <img src="/logos/perplexity.svg" alt="" className="w-5 h-5 object-contain" />
+      return <IconCloud className="w-5 h-5 text-text-tertiary" stroke={1.5} />
+    case 'gbrain':
+      return <IconBrain className="w-5 h-5 text-text-tertiary" stroke={1.5} />
     case 'other':
-      return <OtherAgentIcon className="w-5 h-5 text-text-tertiary" />
+      return <AgentIcon className="w-5 h-5 text-text-tertiary" />
     default:
       return <GenericAgentIcon className="w-5 h-5 text-text-tertiary" />
   }
@@ -252,17 +317,13 @@ export function AgentHarnessIcon({ tab }: { tab: AgentTab }) {
 function AgentRow({
   tab,
   label,
-  description,
   primitive,
   icon,
-  live = false,
 }: {
   tab: AgentTab
   label: string
-  description: string
-  primitive: string
+  primitive: AgentPrimitive
   icon?: ReactNode
-  live?: boolean
 }) {
   const setupLink = `${window.location.origin}${agentSetupPath(tab)}`
 
@@ -280,57 +341,89 @@ function AgentRow({
         <div className="flex-1 min-w-0 w-full flex flex-col">
           <p className="dev-pick-title">{label}</p>
           <p className="dev-pick-desc mt-0 leading-snug line-clamp-1">
-            {description}
-            {!live && primitive !== 'Configuration profile' && (
-              <>
-                <span className="text-text-tertiary/50"> · </span>
-                {primitive}
-              </>
-            )}
+            {agentPickerSubtitle(primitive)}
           </p>
         </div>
-        {live && (
-          <div className="shrink-0 flex items-center self-center">
-            <span className="dev-badge--success normal-case tracking-normal">live</span>
-          </div>
+        {primitive !== 'Skill' && (
+          <svg
+            className="w-3.5 h-3.5 text-text-tertiary shrink-0 group-hover:text-text-secondary transition-colors"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            viewBox="0 0 24 24"
+            aria-hidden
+          >
+            <path d="M9 5l7 7-7 7" />
+          </svg>
         )}
       </Link>
-      <PickRowCopyHandle value={setupLink} label={label} />
+      {primitive === 'Skill' && (
+        <PickRowCopyHandle value={setupLink} label={label} />
+      )}
     </div>
   )
 }
 
 function PickRowCopyHandle({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false)
+  const [toastPhase, setToastPhase] = useState<'idle' | 'in' | 'out'>('idle')
+  const toastMessage = `${label} helper skill copied`
 
   function copy(e: React.MouseEvent) {
     e.preventDefault()
     e.stopPropagation()
     navigator.clipboard.writeText(value).then(() => {
       setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+      setToastPhase('in')
+      window.setTimeout(() => setCopied(false), 1500)
+      window.setTimeout(() => setToastPhase('out'), 2200)
     })
   }
 
   return (
-    <button
-      type="button"
-      onClick={copy}
-      title={copied ? 'Copied' : `Copy ${label} setup link`}
-      aria-label={copied ? 'Copied setup link' : `Copy ${label} setup link`}
-      className="dev-pick-copy shrink-0 self-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 transition-opacity"
-    >
-      {copied ? (
-        <svg className="w-3.5 h-3.5 text-success" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden>
-          <path d="M5 13l4 4L19 7" />
-        </svg>
-      ) : (
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden>
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-          <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-        </svg>
+    <>
+      <button
+        type="button"
+        onClick={copy}
+        title={copied ? 'Copied' : 'Copy skill'}
+        aria-label={copied ? 'Copied skill' : 'Copy skill'}
+        className="dev-pick-copy shrink-0 self-center"
+      >
+        {copied ? (
+          <svg className="w-3.5 h-3.5 text-success" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden>
+            <path d="M5 13l4 4L19 7" />
+          </svg>
+        ) : (
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden>
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+          </svg>
+        )}
+      </button>
+      {toastPhase !== 'idle' && createPortal(
+        <div
+          className={`dev-toast ${toastPhase === 'out' ? 'dev-toast--out' : 'dev-toast--in'}`}
+          role="status"
+          aria-live="polite"
+          onAnimationEnd={() => {
+            if (toastPhase === 'out') setToastPhase('idle')
+          }}
+        >
+          {toastMessage}
+        </div>,
+        document.body,
       )}
-    </button>
+    </>
+  )
+}
+
+function AgentIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+      <circle cx="8.5" cy="7" r="4" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M20 8v6M23 11h-6" />
+    </svg>
   )
 }
 
@@ -339,14 +432,6 @@ function GenericAgentIcon({ className }: { className?: string }) {
     <svg className={className} fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
       <rect x="4" y="4" width="16" height="16" rx="3" />
       <path strokeLinecap="round" d="M9 9h6M9 12h6M9 15h4" />
-    </svg>
-  )
-}
-
-function OtherAgentIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-      <path d="M7 8h10M7 12h10M7 16h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   )
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { PageHeader } from '../components/layout/PageLayout'
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6
 
@@ -117,13 +118,11 @@ export default function HowItWorks() {
   const liveText = useMemo(() => `Step ${step}. ${section.headline}.`, [step, section.headline])
 
   return (
-    <div className="w-full max-w-3xl mx-auto px-4 sm:px-6 md:px-8 py-10 space-y-8">
-      <header className="space-y-1">
-        <h1 className="page-title">How it works</h1>
-        <p className="text-sm text-text-tertiary">
-          A short tour of how Clawvisor sits between your agent and the services it uses.
-        </p>
-      </header>
+    <div className="page-shell max-w-3xl mx-auto">
+      <PageHeader
+        title="How it works"
+        meta="A short tour of how Clawvisor sits between your agent and the services it uses."
+      />
 
       <StepPills active={step} onChange={goToStep} />
 
@@ -176,7 +175,7 @@ function StepPills({ active, onChange }: { active: Step; onChange: (s: Step) => 
                 : 'bg-surface-1 text-text-secondary border-border-default hover:border-border-strong hover:text-text-primary'
             }`}
           >
-            <span className="text-text-tertiary mr-1.5">{s}.</span>
+            <span className={`mr-1.5 ${isActive ? 'text-white/80' : 'text-text-tertiary'}`}>{s}.</span>
             {SECTIONS[s].pill}
           </button>
         )

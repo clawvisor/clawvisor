@@ -157,7 +157,7 @@
   }
 
   .page-shell {
-    @apply p-4 sm:p-6 lg:p-8 space-y-6 pb-20 md:pb-8 max-w-7xl;
+    @apply p-4 sm:p-8 space-y-6 pb-20 md:pb-8 w-full min-h-0;
   }
 
   .page-header {
@@ -262,6 +262,42 @@
 
   .dev-pick-copy {
     @apply p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-2 border border-transparent hover:border-border-default;
+  }
+
+  .dev-toast {
+    @apply fixed top-4 left-1/2 z-[60] px-4 py-2.5 text-sm font-medium text-brand border border-brand/30 rounded-lg shadow-lg pointer-events-none;
+    background-color: var(--color-brand-muted);
+    transform: translateX(-50%);
+  }
+
+  .dev-toast--in {
+    animation: dev-toast-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  .dev-toast--out {
+    animation: dev-toast-out 0.2s ease-in forwards;
+  }
+
+  @keyframes dev-toast-in {
+    from {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-10px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0) scale(1);
+    }
+  }
+
+  @keyframes dev-toast-out {
+    from {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-8px) scale(0.98);
+    }
   }
 
   .dev-text-link {

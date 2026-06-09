@@ -98,7 +98,7 @@ export default function Overview() {
   }, [])
 
   return (
-    <PageLayout title="home" className="space-y-8">
+    <PageLayout title="Home">
       <section>
         <Link
           to="/dashboard/activity"

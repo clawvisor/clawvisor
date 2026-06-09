@@ -8,6 +8,7 @@ export type DashboardNavItem = {
   icon: ReactNode
   inboxBadge?: boolean
   progressLabel?: string
+  statusLabel?: string
 }
 
 function DashboardNavItemRow({
@@ -17,6 +18,7 @@ function DashboardNavItemRow({
   icon,
   inboxBadge,
   progressLabel,
+  statusLabel,
   inboxCount,
 }: DashboardNavItem & { inboxCount: number }) {
   return (
@@ -35,6 +37,10 @@ function DashboardNavItemRow({
         {progressLabel ? (
           <span className="font-mono text-xs text-text-tertiary shrink-0 tabular-nums">
             {progressLabel}
+          </span>
+        ) : statusLabel ? (
+          <span className="dev-badge--success normal-case tracking-normal shrink-0 text-2xs px-1.5">
+            {statusLabel}
           </span>
         ) : inboxBadge && inboxCount > 0 ? (
           <span className="dev-badge--count shrink-0">

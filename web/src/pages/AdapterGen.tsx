@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type AdapterGenResult, type AdapterGenActionPreview } from '../api/client'
+import { PageHeader } from '../components/layout/PageLayout'
 
 const riskColors: Record<string, string> = {
   low: 'bg-green-500/10 text-green-600 border-green-500/20',
@@ -314,13 +315,11 @@ export default function AdapterGen() {
   })
 
   return (
-    <div className="p-4 sm:p-8 space-y-6 max-w-5xl">
-      <div>
-        <h1 className="page-title">Generate Integration</h1>
-        <p className="text-sm text-text-tertiary mt-1">
-          Generate a Clawvisor integration from an API source. Risk is independently classified for each action.
-        </p>
-      </div>
+    <div className="page-shell max-w-5xl">
+      <PageHeader
+        title="Generate Integration"
+        meta="Generate a Clawvisor integration from an API source. Risk is independently classified for each action."
+      />
 
       {/* Tabs */}
       <div className="bg-surface-1 border border-border-default rounded-lg">

@@ -47,7 +47,11 @@ export default function OrgMembers() {
   })
 
   if (!currentOrg) {
-    return <p className="text-sm text-text-secondary">Select an organization to manage members.</p>
+    return (
+      <div className="page-shell">
+        <p className="text-sm text-text-secondary">Select an organization to manage members.</p>
+      </div>
+    )
   }
 
   const roleOptions: { value: string; label: string }[] = [
@@ -56,7 +60,7 @@ export default function OrgMembers() {
   ]
 
   return (
-    <div className="space-y-8">
+    <div className="page-shell">
       <div>
         <h2 className="text-lg font-semibold text-text-primary mb-4">
           Members &mdash; {currentOrg.name}

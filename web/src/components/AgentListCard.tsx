@@ -1,3 +1,4 @@
+import { IconBrain, IconCloud } from '@tabler/icons-react'
 import type { ReactNode } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import type { Agent } from '../api/client'
@@ -27,10 +28,24 @@ function agentHarnessIcon(tab: AgentTab): ReactNode {
     case 'claude-code':
     case 'claude-desktop':
       return <img src="/logos/claude-color.svg" alt="" className="w-5 h-5 object-contain" />
+    case 'codex':
+      return <img src="/logos/openai.svg" alt="" className="w-5 h-5 object-contain dark:invert" />
+    case 'hermes':
+      return <img src="/logos/hermes.svg" alt="" className="w-5 h-5 object-contain dark:invert" />
     case 'openclaw':
       return <img src="/logos/openclaw.svg" alt="" className="w-5 h-5 object-contain" />
     case 'cloud-agent':
-      return <img src="/logos/perplexity.svg" alt="" className="w-5 h-5 object-contain" />
+      return <IconCloud className="w-5 h-5 text-text-tertiary" stroke={1.5} />
+    case 'gbrain':
+      return <IconBrain className="w-5 h-5 text-text-tertiary" stroke={1.5} />
+    case 'other':
+      return (
+        <svg className="w-5 h-5 text-text-tertiary" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+          <circle cx="8.5" cy="7" r="4" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M20 8v6M23 11h-6" />
+        </svg>
+      )
     default:
       return (
         <svg className="w-5 h-5 text-text-tertiary" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">

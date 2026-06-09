@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Agent, type ApprovalRecord, type RuntimeEvent, type RuntimePolicyRule, type RuntimeStatus, type RuntimeSession, type StarterProfile } from '../api/client'
+import { PageHeader } from '../components/layout/PageLayout'
 
 export type RuleDraft = Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }
 
@@ -152,28 +153,26 @@ export default function Runtime() {
   }
 
   return (
-    <div className="p-4 sm:p-8 space-y-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="page-title">Runtime Controls</h1>
-          <p className="text-sm text-text-tertiary mt-1">
-            Tune runtime policy, starter profiles, approvals, and live sessions without dropping into raw proxy details.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-text-tertiary">Scope</label>
-          <select
-            value={agentFilter}
-            onChange={e => setAgentFilter(e.target.value)}
-            className="rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
-          >
-            <option value="all">All agents</option>
-            {agents.map(agent => (
-              <option key={agent.id} value={agent.id}>{agent.name}</option>
-            ))}
-          </select>
-        </div>
-      </div>
+    <div className="page-shell">
+      <PageHeader
+        title="Runtime Controls"
+        meta="Tune runtime policy, starter profiles, approvals, and live sessions without dropping into raw proxy details."
+        actions={
+          <>
+            <label className="text-xs text-text-tertiary">Scope</label>
+            <select
+              value={agentFilter}
+              onChange={e => setAgentFilter(e.target.value)}
+              className="rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+            >
+              <option value="all">All agents</option>
+              {agents.map(agent => (
+                <option key={agent.id} value={agent.id}>{agent.name}</option>
+              ))}
+            </select>
+          </>
+        }
+      />
 
       {runtimeError && (
         <div className="rounded border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">

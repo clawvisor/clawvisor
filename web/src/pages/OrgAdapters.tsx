@@ -13,11 +13,15 @@ export default function OrgAdapters() {
   })
 
   if (!currentOrg) {
-    return <p className="text-sm text-text-secondary">Select an organization to manage custom adapters.</p>
+    return (
+      <div className="page-shell">
+        <p className="text-sm text-text-secondary">Select an organization to manage custom adapters.</p>
+      </div>
+    )
   }
 
   return (
-    <div className="space-y-4">
+    <div className="page-shell">
       <h2 className="text-lg font-semibold text-text-primary">
         Custom Adapters &mdash; {currentOrg.name}
       </h2>

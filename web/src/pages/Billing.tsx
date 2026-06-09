@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useState } from 'react'
+import { PageHeader } from '../components/layout/PageLayout'
 
 export default function Billing() {
   const navigate = useNavigate()
@@ -38,8 +39,8 @@ export default function Billing() {
 
   if (isLoading) {
     return (
-      <div className="p-4 sm:p-8">
-        <h1 className="page-title mb-6">Billing</h1>
+      <div className="page-shell">
+        <PageHeader title="Billing" className="mb-6" />
         <div className="text-text-tertiary">Loading billing info...</div>
       </div>
     )
@@ -61,8 +62,8 @@ export default function Billing() {
   const requestsPct = requestsLimit > 0 ? Math.min(100, (requestsUsed / requestsLimit) * 100) : 0
 
   return (
-    <div className="p-4 sm:p-8 space-y-10">
-      <h1 className="page-title">Billing</h1>
+    <div className="page-shell">
+      <PageHeader title="Billing" />
 
       {/* Plan Overview */}
       <section className="space-y-4">

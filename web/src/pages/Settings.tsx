@@ -7,14 +7,15 @@ import { useAuth } from '../hooks/useAuth'
 import { QRCodeSVG } from 'qrcode.react'
 import CountdownTimer from '../components/CountdownTimer'
 import { formatDistanceToNow } from 'date-fns'
+import { PageHeader } from '../components/layout/PageLayout'
 
 export default function Settings() {
   const { features } = useAuth()
   const passwordAuth = features?.password_auth ?? false
 
   return (
-    <div className="p-4 sm:p-8 space-y-10">
-      <h1 className="page-title">Settings</h1>
+    <div className="page-shell">
+      <PageHeader title="Settings" />
       <DaemonInfo />
       {!features?.multi_tenant && <LLMSection />}
       {!features?.multi_tenant && <OAuthCredentialsSection />}

@@ -42,7 +42,7 @@ export default function OrgSettings() {
   })
 
   return (
-    <div className="space-y-8">
+    <div className="page-shell">
       <div>
         <h2 className="text-lg font-semibold text-text-primary mb-4">Organizations</h2>
 

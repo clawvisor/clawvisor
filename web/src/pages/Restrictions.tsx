@@ -213,8 +213,8 @@ export default function Policy() {
   return (
     <div className="lib-page">
       <header className="lib-hero">
-        <h2>Policy</h2>
-        <p>{policyDescription}</p>
+        <h1 className="page-title">Policy</h1>
+        <p className="page-desc">{policyDescription}</p>
       </header>
 
       {fullProxyActive && status && (

@@ -7,6 +7,7 @@ import { serviceName, serviceDescription } from '../lib/services'
 import { useAuth } from '../hooks/useAuth'
 import { ServiceIconBadge } from '../components/ServiceIcon'
 import { ServiceCatalogGrid, buildServiceCatalog } from '../components/ServiceCatalogGrid'
+import { PageHeader } from '../components/layout/PageLayout'
 
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
 
@@ -1804,13 +1805,11 @@ function OrgServicesView({ orgId, orgName }: { orgId: string; orgName: string })
   const services = data?.services ?? []
 
   return (
-    <div className="p-4 sm:p-8 space-y-6">
-      <div>
-        <h1 className="page-title">{orgName} Accounts</h1>
-        <p className="text-sm text-text-tertiary mt-1">
-          Org-wide shared credentials and per-user service activation.
-        </p>
-      </div>
+    <div className="page-shell">
+      <PageHeader
+        title={`${orgName} Accounts`}
+        meta="Org-wide shared credentials and per-user service activation."
+      />
 
       <div className="space-y-2">
         {services.map((s) => (
@@ -2113,22 +2112,21 @@ export default function Services() {
   }, [catalogEntries, catalogSearch])
 
   return (
-    <div className="p-4 sm:p-8 space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="page-title">Accounts</h1>
-          <p className="text-sm text-text-tertiary mt-1">
-            {activeServices.length > 0
-              ? `${activeServices.length} connected account${activeServices.length !== 1 ? 's' : ''}`
-              : 'Connect accounts so your agents can take actions.'}
-          </p>
-          <p className="text-xs text-text-tertiary mt-2 max-w-xl">
+    <div className="page-shell">
+      <PageHeader
+        title="Accounts"
+        meta={activeServices.length > 0
+          ? `${activeServices.length} connected account${activeServices.length !== 1 ? 's' : ''}`
+          : undefined}
+        description={
+          <>
             Your credentials are only used when your AI agent takes actions on your behalf.
             Clawvisor itself never accesses your accounts beyond fetching basic info
             (like your name or email) to label connections.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
+          </>
+        }
+        actions={
+          <>
           {features?.adapter_gen && (
             <NavLink
               to="/dashboard/adapter-gen"
@@ -2143,8 +2141,9 @@ export default function Services() {
           >
             connect service
           </button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {successService && (
         <div className="flex items-center gap-3 p-4 rounded-md border border-success/30 bg-success/5">

@@ -31,6 +31,7 @@ import {
   agentSetupPath,
   type AgentTab,
 } from '../constants/agentTabs'
+import { PageHeader } from '../components/layout/PageLayout'
 
 export default function Agents() {
   const { currentOrg, features } = useAuth()
@@ -126,11 +127,11 @@ export default function Agents() {
 
   if (agentId) {
     if (isLoading) {
-      return <div className="p-4 sm:p-8 text-sm text-text-tertiary">Loading…</div>
+      return <div className="page-shell text-sm text-text-tertiary">Loading…</div>
     }
     if (!selectedAgent) {
       return (
-        <div className="p-4 sm:p-8 space-y-4">
+        <div className="page-shell">
           <Link to="/dashboard/agents" className="text-sm text-brand hover:underline">← Back to agents</Link>
           <div className="rounded-md border border-border-default bg-surface-1 p-6 text-sm text-text-tertiary">
             Agent not found.
@@ -158,12 +159,16 @@ export default function Agents() {
   }
 
   return (
-    <div className="p-4 sm:p-8 space-y-8">
-      <h1 className="page-title">Agents</h1>
-      <p className="text-sm text-text-tertiary">
-        An agent is any AI system (Claude, a custom bot, etc.) that you want to give controlled access to your services.
-        Each agent gets a unique token — paste it into your agent's configuration to connect it to Clawvisor.
-      </p>
+    <div className="page-shell">
+      <PageHeader
+        title="Agents"
+        meta={
+          <>
+            An agent is any AI system (Claude, a custom bot, etc.) that you want to give controlled access to your services.
+            Each agent gets a unique token — paste it into your agent&apos;s configuration to connect it to Clawvisor.
+          </>
+        }
+      />
 
       {/* Connect an Agent guide (personal context only) */}
       {!orgId && <ConnectAgentGuide connectedAgents={agents ?? []} />}
@@ -292,7 +297,7 @@ function AgentDetailView({
   const showAgentSettings = showRuntimeSettings || proxyLiteActive
 
   return (
-    <div className="p-4 sm:p-8 space-y-8">
+    <div className="page-shell">
       <div className="space-y-3">
         <Link to="/dashboard/agents" className="text-sm text-brand hover:underline">← Back to agents</Link>
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -938,7 +943,7 @@ function AgentHarnessSetupView({ harness }: { harness: AgentTab | null }) {
 
   if (!harness) {
     return (
-      <div className="p-4 sm:p-8 space-y-4">
+      <div className="page-shell">
         <AgentSetupBreadcrumbs current="Setup" />
         <div className="rounded-md border border-border-default bg-surface-1 p-6 text-sm text-text-tertiary">
           Unknown agent type.{' '}
@@ -953,12 +958,12 @@ function AgentHarnessSetupView({ harness }: { harness: AgentTab | null }) {
   const meta = AGENT_META[harness]
 
   return (
-    <div className="p-4 sm:p-8 space-y-6">
+    <div className="page-shell">
       <AgentSetupBreadcrumbs current={meta.label} />
-      <header className="space-y-1">
-        <h1 className="page-title">Connect {meta.label}</h1>
-        <p className="text-sm text-text-tertiary">{HARNESS_SETUP_INTRO[harness] ?? meta.tagline}</p>
-      </header>
+      <PageHeader
+        title={`Connect ${meta.label}`}
+        meta={HARNESS_SETUP_INTRO[harness] ?? meta.tagline}
+      />
       <section className="bg-surface-1 border border-border-default rounded-md p-5">
         <AgentSetupWizardPanel
           picked={harness}
@@ -970,11 +975,7 @@ function AgentHarnessSetupView({ harness }: { harness: AgentTab | null }) {
   )
 }
 
-function ConnectAgentGuide({
-  connectedAgents = [],
-}: {
-  connectedAgents?: Agent[]
-}) {
+function ConnectAgentGuide({ connectedAgents = [] }: { connectedAgents?: Agent[] }) {
   return (
     <section className="bg-surface-1 border border-border-default rounded-md overflow-hidden">
       <div className="px-5 pt-5 pb-4">
@@ -1015,6 +1016,40 @@ function SetupStepNumber({ n, variant }: { n: number; variant: 'active' | 'upcom
   )
 }
 
+function SetupStepCopyHandle({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+
+  function copy(e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    navigator.clipboard.writeText(value).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={copied ? 'Copied' : `Copy ${label}`}
+      aria-label={copied ? 'Copied' : `Copy ${label}`}
+      className="dev-pick-copy shrink-0 self-start opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 transition-opacity"
+    >
+      {copied ? (
+        <svg className="w-3.5 h-3.5 text-success" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden>
+          <path d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden>
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 function SetupGuideStep({
   step,
   title,
@@ -1023,6 +1058,8 @@ function SetupGuideStep({
   variant,
   children,
   compactTop = false,
+  copyValue,
+  copyLabel,
 }: {
   step: number
   title: string
@@ -1031,6 +1068,8 @@ function SetupGuideStep({
   variant: 'active' | 'upcoming' | 'complete'
   children: ReactNode
   compactTop?: boolean
+  copyValue?: string
+  copyLabel?: string
 }) {
   const [userToggledOpen, setUserToggledOpen] = useState(false)
   const canToggle = variant !== 'active'
@@ -1043,10 +1082,10 @@ function SetupGuideStep({
 
   const paddingClass = compactTop ? 'px-4 pt-2 pb-4' : 'p-4'
   const shellClass = variant === 'active'
-    ? `rounded-md border border-brand/30 bg-surface-1 ${paddingClass}`
+    ? `group rounded-md border border-brand/30 bg-surface-1 ${paddingClass}`
     : variant === 'complete'
-      ? `rounded-md border border-border-default bg-surface-2/40 ${isExpanded ? paddingClass : 'p-4'}`
-      : `rounded-md border border-border-default ${isExpanded ? paddingClass : 'p-4'}`
+      ? `group rounded-md border border-border-default bg-surface-2/40 ${isExpanded ? paddingClass : 'p-4'}`
+      : `group rounded-md border border-border-default ${isExpanded ? paddingClass : 'p-4'}`
 
   const titleClass = variant === 'upcoming' ? 'text-text-secondary' : 'text-text-primary'
 
@@ -1063,19 +1102,24 @@ function SetupGuideStep({
           <div className="text-sm text-text-secondary leading-relaxed">{description}</div>
         )}
       </div>
-      {canToggle && (
-        <span className="shrink-0 self-start p-1 text-text-tertiary" aria-hidden>
-          <svg
-            className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            viewBox="0 0 24 24"
-          >
-            <path d="M9 6l6 6-6 6" />
-          </svg>
-        </span>
-      )}
+      <div className="shrink-0 self-start flex items-center gap-0.5">
+        {copyValue && (
+          <SetupStepCopyHandle value={copyValue} label={copyLabel ?? title} />
+        )}
+        {canToggle && (
+          <span className="p-1 text-text-tertiary" aria-hidden>
+            <svg
+              className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+          </span>
+        )}
+      </div>
     </>
   )
 
@@ -1539,6 +1583,8 @@ function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
             </>
           }
           variant={step2Variant}
+          copyValue={setupQuestionsSatisfied ? helperCommand : undefined}
+          copyLabel="helper command"
         >
           {setupQuestionsSatisfied ? (
             <InstallHelperStepPanel
@@ -1624,6 +1670,7 @@ function LegacyOtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
 }) {
   const [credentialScope, setCredentialScope] = useState<CredentialScope>('user')
   const [llmProvider, setLlmProvider] = useState<LLMProvider>('openai')
+  const [promptAcknowledged, setPromptAcknowledged] = useState(false)
   const { data: agents } = useQuery({
     queryKey: ['agents', 'personal'],
     queryFn: () => api.agents.list(),
@@ -1634,6 +1681,14 @@ function LegacyOtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
 
   const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
 
+  const step1Variant = promptAcknowledged ? 'complete' : 'active'
+  const step2Variant = connectedAgent
+    ? 'complete'
+    : promptAcknowledged
+      ? 'active'
+      : 'upcoming'
+  const step3Variant = connectedAgent ? 'active' : 'upcoming'
+
   return (
     <div className="space-y-5">
       <p className="text-sm text-text-secondary">
@@ -1641,44 +1696,67 @@ function LegacyOtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
         prompt below directly into your agent's chat — it will self-register and wait for your approval.
       </p>
 
-      <div className="space-y-4">
-        <div className="flex items-start gap-3">
-          <StepNumber n={1} />
-          <div className="space-y-1.5 min-w-0 flex-1">
-            <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
-            <LegacyPromptBlock prompt={prompt} copied={copied} onCopy={onCopy} />
-            <p className="text-xs text-text-tertiary">
-              The agent will follow the setup instructions at that URL — it registers itself,
-              sets up E2E encryption, and installs the Clawvisor skill.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-3">
-          <StepNumber n={2} />
-          <div className="space-y-1.5 min-w-0 flex-1">
-            <p className="text-sm font-medium text-text-primary">Approve the connection</p>
-            <p className="text-xs text-text-tertiary">
-              A connection request will appear in the <strong>Pending Connections</strong> section above.
-              Click <strong>Approve</strong> to grant the agent a token. Once approved, configure your API key below.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-3">
-          <StepNumber n={3} />
-          <div className="space-y-3 min-w-0 flex-1">
-            <p className="text-sm font-medium text-text-primary">Set the API key</p>
-            <QuestionToggleGroup
-              label="Which LLM provider does this agent use?"
-              value={llmProvider}
-              onChange={value => setLlmProvider(value as LLMProvider)}
-              options={[
-                ['openai', 'OpenAI'],
-                ['anthropic', 'Anthropic'],
-              ]}
+      <div className="space-y-3">
+        <SetupGuideStep
+          step={1}
+          title="Paste this into your agent"
+          description="The agent will follow the setup instructions at that URL — it registers itself, sets up E2E encryption, and installs the Clawvisor skill."
+          completedSummary="Setup prompt copied"
+          variant={step1Variant}
+          copyValue={prompt}
+          copyLabel="setup prompt"
+        >
+          <LegacyPromptBlock prompt={prompt} copied={copied} onCopy={onCopy} />
+          {!promptAcknowledged && (
+            <WizardNav
+              canBack={false}
+              canNext
+              onBack={() => {}}
+              onNext={() => setPromptAcknowledged(true)}
+              nextLabel="Continue"
+              showTopBorder={false}
+              alignNext="left"
             />
-            {connectedAgent ? (
+          )}
+        </SetupGuideStep>
+
+        <SetupGuideStep
+          step={2}
+          title="Approve the connection"
+          description={<>A connection request will appear in the <strong>Pending Connections</strong> section above. Click <strong>Approve</strong> to grant the agent a token.</>}
+          completedSummary={connectedAgent ? <>Registered as {connectedAgent.name}</> : undefined}
+          variant={step2Variant}
+        >
+          {promptAcknowledged ? (
+            <p className="text-xs text-text-tertiary">
+              {connectedAgent
+                ? <>Agent <strong className="text-text-secondary">{connectedAgent.name}</strong> is connected — continue to vault your API key.</>
+                : 'Waiting for your agent to register. Approve the pending connection when it appears above.'}
+            </p>
+          ) : (
+            <p className="text-xs text-text-tertiary">
+              Paste the setup prompt into your agent first — this step unlocks once you continue.
+            </p>
+          )}
+        </SetupGuideStep>
+
+        <SetupGuideStep
+          step={3}
+          title="Set the API key"
+          description="Vault an upstream key so Clawvisor can swap it in when your agent calls through the proxy."
+          variant={step3Variant}
+        >
+          {connectedAgent ? (
+            <>
+              <QuestionToggleGroup
+                label="Which LLM provider does this agent use?"
+                value={llmProvider}
+                onChange={value => setLlmProvider(value as LLMProvider)}
+                options={[
+                  ['openai', 'OpenAI'],
+                  ['anthropic', 'Anthropic'],
+                ]}
+              />
               <AgentUpstreamKeySetupPanel
                 agentName={connectedAgent.name}
                 agentId={connectedAgent.id}
@@ -1686,14 +1764,14 @@ function LegacyOtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
                 credentialScope={credentialScope}
                 onCredentialScopeChange={setCredentialScope}
               />
-            ) : (
-              <p className="text-xs text-text-tertiary">
-                Approve the connection first — this step unlocks once your agent is registered
-                {agentName !== 'my-agent' ? ` as ${agentName}` : ''}.
-              </p>
-            )}
-          </div>
-        </div>
+            </>
+          ) : (
+            <p className="text-xs text-text-tertiary">
+              Approve the connection first — this step unlocks once your agent is registered
+              {agentName !== 'my-agent' ? ` as ${agentName}` : ''}.
+            </p>
+          )}
+        </SetupGuideStep>
       </div>
 
       <details className="group">
@@ -1959,7 +2037,8 @@ function OtherAgentGuide({ setupURL, clawvisorURL, llmBaseURL, claim, newToken, 
   onCopy: (text: string) => void
   showSkillDefault: boolean
 }) {
-  const [step, setStep] = useState(0)
+  const [keyAcknowledged, setKeyAcknowledged] = useState(false)
+  const [useDone, setUseDone] = useState(false)
   const { data: agents } = useQuery({
     queryKey: ['agents', 'personal'],
     queryFn: () => api.agents.list(),
@@ -2006,12 +2085,20 @@ client = OpenAI(
     api_key="${tokenValue}",
 )`
   const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
+  const bootstrapCmd = buildBootstrapCommand(clawvisorURL, claim, agentName)
+  const keyStepDone = keyAcknowledged || keyReady
 
-  const wizardSteps: WizardStepDef[] = [
-    { id: 'bootstrap', title: 'Bootstrap agent', done: connected },
-    { id: 'key', title: 'Vault upstream key', done: keyReady },
-    { id: 'use', title: 'Use it', done: step > 2 },
-  ]
+  const step1Variant = connected ? 'complete' : 'active'
+  const step2Variant = keyStepDone
+    ? 'complete'
+    : connected
+      ? 'active'
+      : 'upcoming'
+  const step3Variant = useDone
+    ? 'complete'
+    : keyStepDone
+      ? 'active'
+      : 'upcoming'
 
   return (
     <div className="space-y-5">
@@ -2022,77 +2109,98 @@ client = OpenAI(
         a vaulted upstream key on each call. Three steps — bootstrap, vault, use.
       </p>
 
-      <div className="rounded-md border border-border-default bg-surface-1 px-4 py-5 space-y-4">
-        <StepBar steps={wizardSteps} activeIndex={step} />
-
-      {step === 0 && (
-        <BootstrapApproveStep
-          clawvisorURL={clawvisorURL}
-          claim={claim}
-          agentName={agentName}
-          setAgentName={setAgentName}
-          onCopy={onCopy}
-          onAdvance={() => setStep(1)}
-        />
-      )}
-
-      {step === 1 && myAgent && (
-        <>
-          <VaultKeyStep agentId={myAgent.id} />
-          <WizardNav
-            canBack
-            canNext={keyReady}
-            onBack={() => setStep(0)}
-            onNext={() => setStep(2)}
-            onSkip={() => setStep(2)}
-            skipLabel="Skip — I'll vault one elsewhere"
-            nextDisabledHint={keyReady ? undefined : 'Vault at least one provider key to continue'}
+      <div className="space-y-3">
+        <SetupGuideStep
+          step={1}
+          title="Bootstrap agent"
+          description="Run the registration command in your terminal, then approve the connection inline."
+          completedSummary={myAgent ? <>Registered as {myAgent.name}</> : undefined}
+          variant={step1Variant}
+          copyValue={bootstrapCmd}
+          copyLabel="bootstrap command"
+        >
+          <BootstrapApproveStep
+            clawvisorURL={clawvisorURL}
+            claim={claim}
+            agentName={agentName}
+            setAgentName={setAgentName}
+            onCopy={onCopy}
+            onAdvance={() => {}}
           />
-        </>
-      )}
+        </SetupGuideStep>
 
-      {step === 2 && (
-        <>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-text-primary">Anthropic SDK (Python)</p>
-              <CodeBlock onCopy={() => onCopy(anthropicSDK)}>{anthropicSDK}</CodeBlock>
-            </div>
+        <SetupGuideStep
+          step={2}
+          title="Vault upstream key"
+          description="Store your Anthropic or OpenAI key so Clawvisor can swap it in on each proxied call."
+          completedSummary={keyReady ? 'Upstream key configured' : 'Skipped'}
+          variant={step2Variant}
+        >
+          {myAgent ? (
+            <>
+              <VaultKeyStep agentId={myAgent.id} />
+              <WizardNav
+                canBack={false}
+                canNext={keyReady}
+                onBack={() => {}}
+                onNext={() => setKeyAcknowledged(true)}
+                onSkip={() => setKeyAcknowledged(true)}
+                skipLabel="Skip — I'll vault one elsewhere"
+                nextLabel="Continue"
+                showTopBorder={false}
+                alignNext="left"
+                nextDisabledHint={keyReady ? undefined : 'Vault at least one provider key to continue'}
+              />
+            </>
+          ) : (
+            <p className="text-xs text-text-tertiary">
+              Bootstrap your agent first — this step unlocks once the connection is approved.
+            </p>
+          )}
+        </SetupGuideStep>
 
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-text-primary">OpenAI SDK (Python)</p>
-              <CodeBlock onCopy={() => onCopy(openaiSDK)}>{openaiSDK}</CodeBlock>
-            </div>
-
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-text-primary">curl / direct HTTP</p>
-              <CodeBlock onCopy={() => onCopy(curlCmd)}>{curlCmd}</CodeBlock>
-              <p className="text-xs text-text-tertiary">
-                Needs <code className="font-mono text-text-secondary">jq</code> (<code className="font-mono text-text-secondary">brew install jq</code> on macOS).
-              </p>
-            </div>
-          </div>
-          <WizardNav
-            canBack
-            canNext
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
-            nextLabel="Done"
-          />
-        </>
-      )}
-
-      {step >= 3 && (
-        <div className="rounded border border-success/30 bg-success/10 px-4 py-3">
-          <p className="text-sm font-medium text-success">All set.</p>
-          <button
-            onClick={() => setStep(2)}
-            className="mt-2 text-xs text-brand hover:underline"
-          >
-            Show the SDK snippets again
-          </button>
-        </div>
-      )}
+        <SetupGuideStep
+          step={3}
+          title="Use it"
+          description="Point your agent's SDK or HTTP client at Clawvisor using the on-disk token."
+          completedSummary="SDK snippets configured"
+          variant={step3Variant}
+        >
+          {keyStepDone ? (
+            <>
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium text-text-primary">Anthropic SDK (Python)</p>
+                  <CodeBlock onCopy={() => onCopy(anthropicSDK)}>{anthropicSDK}</CodeBlock>
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium text-text-primary">OpenAI SDK (Python)</p>
+                  <CodeBlock onCopy={() => onCopy(openaiSDK)}>{openaiSDK}</CodeBlock>
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium text-text-primary">curl / direct HTTP</p>
+                  <CodeBlock onCopy={() => onCopy(curlCmd)}>{curlCmd}</CodeBlock>
+                  <p className="text-xs text-text-tertiary">
+                    Needs <code className="font-mono text-text-secondary">jq</code> (<code className="font-mono text-text-secondary">brew install jq</code> on macOS).
+                  </p>
+                </div>
+              </div>
+              <WizardNav
+                canBack={false}
+                canNext
+                onBack={() => {}}
+                onNext={() => setUseDone(true)}
+                nextLabel="Done"
+                showTopBorder={false}
+                alignNext="left"
+              />
+            </>
+          ) : (
+            <p className="text-xs text-text-tertiary">
+              Vault your upstream key first — this step unlocks once you continue.
+            </p>
+          )}
+        </SetupGuideStep>
       </div>
 
       <details className="group">
@@ -3608,7 +3716,22 @@ function CloudAgentPromptGuide({
   copied: boolean
   onCopy: (text: string) => void
 }) {
+  const [promptAcknowledged, setPromptAcknowledged] = useState(false)
+  const { data: agents } = useQuery({
+    queryKey: ['agents', 'personal'],
+    queryFn: () => api.agents.list(),
+    refetchInterval: 3000,
+  })
+  const connectedAgent = agents?.find(a => a.install_context?.harness === 'cloud-agent')
+
   const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
+
+  const step1Variant = promptAcknowledged ? 'complete' : 'active'
+  const step2Variant = connectedAgent
+    ? 'complete'
+    : promptAcknowledged
+      ? 'active'
+      : 'upcoming'
 
   return (
     <div className="space-y-5">
@@ -3620,30 +3743,49 @@ function CloudAgentPromptGuide({
         Clawvisor only intermediates external service calls.
       </p>
 
-      <div className="space-y-4">
-        <div className="flex items-start gap-3">
-          <StepNumber n={1} />
-          <div className="space-y-1.5 min-w-0 flex-1">
-            <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
-            <LegacyPromptBlock prompt={prompt} copied={copied} onCopy={onCopy} />
-            <p className="text-xs text-text-tertiary">
-              The agent follows the setup instructions at that URL — registers
-              itself, sets up E2E encryption, and installs the Clawvisor skill.
-            </p>
-          </div>
-        </div>
+      <div className="space-y-3">
+        <SetupGuideStep
+          step={1}
+          title="Paste this into your agent"
+          description="The agent follows the setup instructions at that URL — registers itself, sets up E2E encryption, and installs the Clawvisor skill."
+          completedSummary="Setup prompt copied"
+          variant={step1Variant}
+          copyValue={prompt}
+          copyLabel="setup prompt"
+        >
+          <LegacyPromptBlock prompt={prompt} copied={copied} onCopy={onCopy} />
+          {!promptAcknowledged && (
+            <WizardNav
+              canBack={false}
+              canNext
+              onBack={() => {}}
+              onNext={() => setPromptAcknowledged(true)}
+              nextLabel="Continue"
+              showTopBorder={false}
+              alignNext="left"
+            />
+          )}
+        </SetupGuideStep>
 
-        <div className="flex items-start gap-3">
-          <StepNumber n={2} />
-          <div className="space-y-1.5 min-w-0 flex-1">
-            <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+        <SetupGuideStep
+          step={2}
+          title="Approve the connection"
+          description={<>A connection request will appear in the <strong>Pending Connections</strong> section below. Click <strong>Approve</strong> to grant the agent a token.</>}
+          completedSummary={connectedAgent ? <>Connected as {connectedAgent.name}</> : undefined}
+          variant={step2Variant}
+        >
+          {promptAcknowledged ? (
             <p className="text-xs text-text-tertiary">
-              A connection request will appear in the <strong>Pending Connections</strong>{' '}
-              section below. Click <strong>Approve</strong> to grant the agent a token. It
-              receives the token automatically and is ready to go.
+              {connectedAgent
+                ? <>Agent <strong className="text-text-secondary">{connectedAgent.name}</strong> is connected and ready to go.</>
+                : 'Waiting for your agent to register. Approve the pending connection when it appears below.'}
             </p>
-          </div>
-        </div>
+          ) : (
+            <p className="text-xs text-text-tertiary">
+              Paste the setup prompt into your agent first — this step unlocks once you continue.
+            </p>
+          )}
+        </SetupGuideStep>
       </div>
 
       <details className="group">

@@ -30,11 +30,11 @@ export default function GetStarted() {
   const activeSection = useScrollSpy(sectionIds, isLoading)
 
   return (
-    <div className="w-full px-4 sm:px-6 md:px-8 lg:px-8 xl:px-10 py-10 scroll-smooth">
-      <div className="flex gap-6 lg:gap-8 xl:gap-10 items-start w-full">
+    <div className="page-shell scroll-smooth">
+      <div className="flex gap-6 lg:gap-8 items-start w-full">
 
         {/* ── Main content column ── */}
-        <div className="flex-1 min-w-0 space-y-14">
+        <div className="flex-1 min-w-0 space-y-6">
           <div className="space-y-6">
             <Hero ready={ready} services={services} agents={agents} isLoading={isLoading} />
             <SetupChecklist />
@@ -52,7 +52,7 @@ export default function GetStarted() {
 
         {/* ── "On this page" right sidebar ── */}
         <aside className="hidden lg:block w-fit shrink-0 sticky top-24 self-start max-h-[calc(100vh-8rem)] overflow-y-auto custom-scrollbar">
-          <nav className="inline-flex flex-col items-start gap-0.5 dev-panel px-2 py-1.5 shadow-sm w-fit">
+          <nav className="inline-flex flex-col items-start gap-1 dev-panel px-2 py-1.5 shadow-sm w-fit">
             <PageIndexLink 
               href="#overview" 
               label="Overview" 
@@ -222,9 +222,10 @@ function Hero({
 }) {
   return (
     <header id="overview" className="space-y-4">
-      <h2 className="text-2xl font-semibold text-text-primary">
+      <h1 className="page-title flex items-center gap-3">
+        <span className="shrink-0 text-[1.875rem] leading-none" aria-hidden>👋</span>
         Welcome, to Clawvisor!
-      </h2>
+      </h1>
       {isLoading ? (
         <p className="text-sm text-text-tertiary">Loading your setup…</p>
       ) : ready ? (

@@ -71,7 +71,7 @@ export const AGENT_META: Record<AgentTab, AgentMeta> = {
     primitive: 'Skill',
   },
   'cloud-agent': {
-    label: 'Cloud agent',
+    label: 'Cloud agent (Computer, ChatGPT, Claude)',
     tagline: 'Perplexity Computer, hosted ChatGPT',
     primitive: 'Manual',
   },
