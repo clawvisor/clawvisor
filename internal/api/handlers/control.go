@@ -224,7 +224,7 @@ func (h *LLMControlHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		"checkout_unavailable": checkoutUnavailable,
 		"total":                len(summaries),
 		"tasks":                summaries,
-		"next_step":            "To switch active tasks, POST /control/task/checkout with the target task_id. Checkout is only a routing preference; it does not grant new permission.",
+		"next_step":            "If a listed task's expected_tools, authorized_actions, and expected_egress already cover what you need, use it directly — do NOT POST a new task. When multiple tasks match, POST /control/task/checkout with the target task_id to focus one (checkout is routing only; it does not grant new permission). If nothing here matches, POST /control/tasks for fresh approval.",
 	})
 }
 

@@ -225,6 +225,7 @@ const (
 	SeriesDownstreamCallsTotal          = "downstream.calls_total"
 	SeriesDownstreamPlaceholderUsed     = "downstream.placeholder_used"
 	SeriesVaultItemsListed              = "control.vault_items_listed"
+	SeriesTasksListed                   = "control.tasks_listed"
 	SeriesLifetimeStanding              = "task_creates.lifetime_standing"
 	SeriesLifetimeSliding               = "task_creates.lifetime_sliding"
 	SeriesLifetimeSession               = "task_creates.lifetime_session"

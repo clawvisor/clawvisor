@@ -26,10 +26,17 @@ type Scenario struct {
 	// touches a marker file when invoked, so scenarios can assert via
 	// FilesAbsent that the agent did not reach for harness-side auth.
 	MCPStub    bool         `yaml:"mcp_stub,omitempty"`
-	Script     []Step       `yaml:"script"`
-	Approvals  Approvals    `yaml:"approvals"`
-	Budget     Budget       `yaml:"budget"`
-	Expects    Expectations `yaml:"expectations"`
+	// PreseededTasks are inserted into the store as active tasks
+	// owned by the scenario's user+agent BEFORE the agent boots, so
+	// scenarios can model "the user already approved this task in a
+	// prior conversation" without the agent watching the approval
+	// happen. Each entry seeds one task row; the harness fills in
+	// ID, UserID, AgentID, Status=active, and ApprovedAt=now.
+	PreseededTasks []PreseededTask `yaml:"preseeded_tasks,omitempty"`
+	Script         []Step          `yaml:"script"`
+	Approvals      Approvals       `yaml:"approvals"`
+	Budget         Budget          `yaml:"budget"`
+	Expects        Expectations    `yaml:"expectations"`
 
 	// Dir is the directory this scenario was loaded from (populated by
 	// LoadScenario). The workspace lives at filepath.Join(Dir,
@@ -46,6 +53,35 @@ type Scenario struct {
 type VaultItem struct {
 	ID     string `yaml:"id"`
 	Secret string `yaml:"secret"`
+}
+
+// PreseededTask is a task row inserted directly into the store before
+// the agent starts, modeling an approval the user gave in some prior
+// conversation. Only the fields scenarios actually need to set are
+// exposed; the harness fills in id/user/agent/status/timestamps.
+type PreseededTask struct {
+	Purpose                string                  `yaml:"purpose"`
+	Lifetime               string                  `yaml:"lifetime,omitempty"`
+	SchemaVersion          int                     `yaml:"schema_version,omitempty"`
+	IntentVerificationMode string                  `yaml:"intent_verification_mode,omitempty"`
+	ExpectedUse            string                  `yaml:"expected_use,omitempty"`
+	ExpectedTools          []PreseededExpectedTool `yaml:"expected_tools,omitempty"`
+	ExpectedEgress         []PreseededEgress       `yaml:"expected_egress,omitempty"`
+}
+
+// PreseededExpectedTool is the minimal shape used for an expected_tools
+// row inside a PreseededTask. Mirrors the v2 expected_tools entry the
+// inline task creator validates against at runtime.
+type PreseededExpectedTool struct {
+	ToolName string `yaml:"tool_name"`
+	Why      string `yaml:"why"`
+}
+
+// PreseededEgress is the minimal expected_egress entry shape for a
+// PreseededTask — just enough to declare host + reason.
+type PreseededEgress struct {
+	Host string `yaml:"host"`
+	Why  string `yaml:"why"`
 }
 
 // AgentSpec carries advisory fields about the agent identity. Tools
@@ -152,6 +188,10 @@ type HardExpect struct {
 //     GET /api/control/vault/items. Proves the agent discovered the
 //     available vault items via the control plane rather than guessing
 //     handle shapes.
+//   - control.tasks_listed — number of times the agent fetched
+//     GET /api/control/tasks. Proves the agent checked for an
+//     already-approved task that covered its scope before reaching
+//     for a fresh POST /control/tasks.
 //   - task_creates.lifetime_standing — approved tasks whose lifetime
 //     came back as `standing` (no expiry, reusable across follow-ups).
 //   - task_creates.lifetime_session — approved tasks whose lifetime
