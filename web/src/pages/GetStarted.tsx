@@ -223,8 +223,8 @@ function Hero({
   return (
     <header id="overview" className="space-y-4">
       <h1 className="page-title flex items-center gap-3">
-        <span className="shrink-0 text-[1.875rem] leading-none" aria-hidden>👋</span>
         Welcome, to Clawvisor!
+        <span className="shrink-0 text-[1.875rem] leading-none" aria-hidden>👋</span>
       </h1>
       {isLoading ? (
         <p className="text-sm text-text-tertiary">Loading your setup…</p>

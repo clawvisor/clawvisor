@@ -51,8 +51,7 @@ export default function SetupChecklist({ compact = false }: { compact?: boolean 
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="page-section-title mb-1">Setup checklist</h2>
-          <p className="text-sm text-text-tertiary">
+          <p className="text-body-sm text-text-secondary">
             Complete these steps to get agents running with approvals.
           </p>
         </div>
