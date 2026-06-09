@@ -246,8 +246,9 @@ export default function Dashboard() {
         </div>
       </nav>
 
-      {/* Main content */}
-      <main className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden pt-14 md:pt-0">
+      {/* Main content — reserves bottom space on mobile for the attention bar
+          so the bar never covers card actions when it appears. */}
+      <main className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden pt-14 pb-20 md:pt-0 md:pb-0">
         {versionData?.update_available && (
           <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">
@@ -364,7 +365,33 @@ export default function Dashboard() {
         </Routes>
       </main>
 
+      <MobileAttentionBar count={attentionCount} pathname={location.pathname} />
     </div>
+  )
+}
+
+// Fixed bottom bar visible on small screens when something needs attention.
+// Hidden on /dashboard/inbox itself so it doesn't redirect users to the page
+// they're already on, and pinned to the safe area so devices with a home
+// indicator don't clip the tap target.
+function MobileAttentionBar({ count, pathname }: { count: number; pathname: string }) {
+  if (count === 0) return null
+  if (pathname.startsWith('/dashboard/inbox')) return null
+  return (
+    <NavLink
+      to="/dashboard/inbox"
+      className="fixed inset-x-0 bottom-0 z-40 md:hidden bg-warning text-surface-0 px-4 flex items-center justify-between font-medium text-sm shadow-lg"
+      style={{
+        paddingTop: 'max(12px, env(safe-area-inset-top))',
+        paddingBottom: 'max(12px, env(safe-area-inset-bottom))',
+        minHeight: 56,
+      }}
+    >
+      <span>
+        {count > 9 ? '9+' : count} need{count === 1 ? 's' : ''} your attention
+      </span>
+      <span aria-hidden>→</span>
+    </NavLink>
   )
 }
 
