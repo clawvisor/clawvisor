@@ -47,7 +47,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	toolUses []conversation.ToolUse,
 	emit func(conversation.AuditEvent),
 ) conversation.ToolUseEvaluator {
-	credentialedTaskScope := buildCredentialedTaskScope(
+	credentialedBundle := buildCredentialedTaskScope(
 		cfg.AgentContext,
 		cfg.AuditContext,
 		cfg.AuthorizationContext,
@@ -57,13 +57,15 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		emit,
 	)
 
+	authBundle := buildAuthorizationResolver(cfg.AgentContext, cfg.AuditContext, cfg.AuthorizationContext, cfg.ApprovalContext, cfg.RewriteContext, provider)
+
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
 		Control:       buildControlResolver(req, cfg.AgentContext, cfg.AuditContext, cfg.ApprovalContext, cfg.RewriteContext, cfg.RoutingContext, provider, emit),
 		ScriptSession: buildScriptSessionResolver(cfg.RewriteContext, cfg.ScriptSessionContext),
 		Inspector:     cfg.Inspector,
 		Boundary:      buildBoundaryResolver(cfg.AgentContext, cfg.Store),
-		Authorization: buildAuthorizationResolver(cfg.AgentContext, cfg.AuditContext, cfg.AuthorizationContext, cfg.ApprovalContext, cfg.RewriteContext, provider),
-		TaskScope:     credentialedTaskScope,
+		Authorization: authBundle.Resolve,
+		TaskScope:     credentialedBundle.Resolve,
 		Rewrite:       buildRewriteResolver(cfg.AgentContext, cfg.RewriteContext),
 	})
 
@@ -79,6 +81,33 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		}
 	}
 	ctx := req.Context()
+	// Prime the authorization decision caches by batch-evaluating all
+	// sibling tool_uses' decision-engine inputs in parallel before the
+	// orchestrator's serial loop starts. This collapses N intent-verifier
+	// round-trips per turn (one per parallel tool_use) into a single
+	// wall-clock round-trip per path — the trigger-miss
+	// (AuthorizationPolicy) and credentialed (TaskScopeEvaluator) paths
+	// each maintain their own cache and run their batch independently.
+	// Per-tool-use side effects (audit emission, PendingApprovals.Hold,
+	// SlideTaskExpiry) still run serially inside the orchestrator's
+	// existing loop so approval-hold ordering and audit ordering are
+	// preserved.
+	//
+	// The two prefetches run sequentially, not concurrently. Both walk
+	// rewrite.Inspector over the full sibling set, and Inspector +
+	// Validator implementations don't document a concurrent-Inspect
+	// contract — wrapping an unsynchronized backend would race. The
+	// verifier calls INSIDE each batch still fan out via the decision
+	// engine's EvaluateAuthorizationBatch (which already requires
+	// IntentVerifier to be concurrency-safe), so the per-path wins are
+	// preserved. The only cost is the rare turn that mixes both paths,
+	// which pays two batch latencies instead of one.
+	if authBundle.Prefetch != nil {
+		authBundle.Prefetch(ctx, toolUses)
+	}
+	if credentialedBundle.Prefetch != nil {
+		credentialedBundle.Prefetch(ctx, toolUses)
+	}
 	res := &multiToolUseResponse{provider: provider, toolUses: toolUses}
 	evalFn, result, err := pipeline.RunToolUseEvaluators(ctx, res, toolUses, chain)
 	if err != nil {
@@ -413,6 +442,39 @@ func buildBoundaryResolver(agent llmproxy.AgentContext, st store.Store) policies
 	}
 }
 
+// credentialedTaskScopeBundle pairs the TaskScopeResolver
+// TaskScopeEvaluator consumes with an optional Prefetch hook the
+// Factory invokes once per response to batch the credentialed-path
+// decision-engine calls for every sibling tool_use in parallel.
+//
+// Prefetch is best-effort and only covers the modern decision-engine
+// path (auth.CandidateTasks / ToolRules / EgressRules set). The
+// legacy TaskScope.Check + runIntentVerify fallback stays serial: it
+// is a deprecated path that few callers exercise, and the side
+// effects there are interleaved with the verifier call in a way that
+// does not factor as cleanly.
+type credentialedTaskScopeBundle struct {
+	Resolve  policies.TaskScopeResolver
+	Prefetch func(ctx context.Context, toolUses []conversation.ToolUse)
+}
+
+// credentialedPlan captures everything the credentialed-path resolver
+// needs to apply side effects after a decision has been computed: the
+// inspector verdict + catalog resolution that drove the input, plus
+// the decision-engine input itself (required for Fingerprint on hold).
+type credentialedPlan struct {
+	Verdict       inspector.Verdict
+	Resolved      llmproxy.ResolvedAction
+	DecisionInput runtimedecision.AuthorizationInput
+}
+
+// credentialedOutcome is what Prefetch stashes in the per-response
+// cache: the planning context plus the batched decision outcome.
+type credentialedOutcome struct {
+	Plan    credentialedPlan
+	Outcome runtimedecision.AuthorizationOutcome
+}
+
 // buildCredentialedTaskScope builds the credentialed-path authorization
 // closure that TaskScopeEvaluator consumes via its TaskScopeResolver.
 // The closure runs the runtimedecision.EvaluateAuthorization flow on
@@ -422,8 +484,12 @@ func buildBoundaryResolver(agent llmproxy.AgentContext, st store.Store) policies
 // TaskScopeDecision when the call is authorized so TaskScopeEvaluator
 // Skips and downstream stages (IntentVerify, CredentialRewrite) run.
 //
-// This adapter is where the policy layer reaches the credentialed-path
-// authorization helper behavior without importing llmproxy directly.
+// Prefetch (returned alongside Resolve) batches the modern-path
+// EvaluateAuthorization calls across all sibling tool_uses so a turn
+// with N parallel credentialed tool_uses pays one verifier round-trip
+// of wall time, not N. Side effects (audit / Hold / SlideTaskExpiry)
+// still fire serially inside Resolve so hold-eviction ordering and
+// audit ordering are unchanged.
 func buildCredentialedTaskScope(
 	agent llmproxy.AgentContext,
 	auditCtx llmproxy.AuditContext,
@@ -432,12 +498,130 @@ func buildCredentialedTaskScope(
 	rewrite llmproxy.RewriteContext,
 	provider conversation.Provider,
 	emit func(conversation.AuditEvent),
-) policies.TaskScopeResolver {
+) credentialedTaskScopeBundle {
 	if rewrite.Inspector == nil {
-		return nil
+		return credentialedTaskScopeBundle{}
 	}
 	approvalCleanupCfg := llmproxy.PostprocessConfig{ApprovalContext: approval}
-	return func(ctx context.Context, tu conversation.ToolUse) policies.TaskScopeDecision {
+
+	// planModernPath builds the per-tool-use credentialedPlan for the
+	// modern decision-engine path. Returns (plan, true) when the tool_use
+	// is credentialed AND the modern path is configured. Returns
+	// (_, false) when the legacy fallback should handle it (or the
+	// tool_use is not credentialed at all).
+	planModernPath := func(ctx context.Context, tu conversation.ToolUse) (credentialedPlan, bool) {
+		v := rewrite.Inspector.Inspect(ctx, inspector.ToolUse{
+			ID:    tu.ID,
+			Name:  tu.Name,
+			Input: tu.Input,
+		})
+		if !v.IsAPICall || v.Ambiguous {
+			return credentialedPlan{}, false
+		}
+		if auth.CandidateTasks == nil && auth.ToolRules == nil && auth.EgressRules == nil {
+			return credentialedPlan{Verdict: v}, false
+		}
+		resolved := llmproxy.ResolvedAction{}
+		if auth.Catalog != nil {
+			resolved, _ = auth.Catalog.Resolve(v.Host, v.Method, v.Path)
+		}
+		return credentialedPlan{
+			Verdict:  v,
+			Resolved: resolved,
+			DecisionInput: runtimedecision.AuthorizationInput{
+				ToolUse:         tu,
+				UserID:          agent.AgentUserID,
+				AgentID:         agent.AgentID,
+				Posture:         auth.Posture,
+				Target:          runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
+				Service:         resolved.ServiceID,
+				Action:          resolved.ActionID,
+				CandidateTasks:  auth.CandidateTasks,
+				ToolRules:       auth.ToolRules,
+				EgressRules:     auth.EgressRules,
+				PreferredTaskID: auth.PreferredTaskID,
+				IntentVerifier:  intentverify.DecisionVerifierFor(auth.IntentVerifier),
+			},
+		}, true
+	}
+
+	// Per-response decision cache. Written by Prefetch after its
+	// goroutines join; read by Resolve serially from the orchestrator
+	// loop. No concurrent access.
+	cache := make(map[string]credentialedOutcome)
+
+	// applyModernDecision turns a (plan, decision, err) into the
+	// TaskScopeDecision the policy consumes, firing audit / Hold /
+	// SlideTaskExpiry side effects serially in tool_use order.
+	applyModernDecision := func(
+		ctx context.Context,
+		tu conversation.ToolUse,
+		plan credentialedPlan,
+		dec runtimedecision.AuthorizationDecision,
+		err error,
+		audit func(decision, outcome, reason, taskID string),
+	) policies.TaskScopeDecision {
+		if err != nil {
+			audit("block", "decision_error", err.Error(), "")
+			return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: policies.ModelSafeInternalReason("authorization")}
+		}
+		matchedTaskID := ""
+		if dec.Task != nil {
+			matchedTaskID = dec.Task.ID
+		}
+		switch dec.Kind {
+		case runtimedecision.VerdictAllow:
+			if dec.Task != nil && rewrite.Store != nil {
+				_, _, _ = tasklifetime.SlideTaskExpiry(ctx, rewrite.Store, dec.Task, time.Now().UTC())
+			}
+			return policies.TaskScopeDecision{}
+		case runtimedecision.VerdictDeny:
+			audit("block", string(dec.Source), dec.Reason, matchedTaskID)
+			return policies.TaskScopeDecision{
+				Kind:   policies.TaskScopeDecisionDeny,
+				Reason: "Clawvisor: " + dec.Reason,
+				TaskID: matchedTaskID,
+			}
+		case runtimedecision.VerdictNeedsApproval:
+			var approvalID string
+			if approval.PendingApprovals != nil {
+				held, herr := approval.PendingApprovals.Hold(ctx, llmproxy.PendingLiteApproval{
+					UserID:         agent.AgentUserID,
+					AgentID:        agent.AgentID,
+					Provider:       provider,
+					ConversationID: auditCtx.ConversationID,
+					ToolUse:        tu,
+					Inspector:      plan.Verdict,
+					Fingerprint:    runtimedecision.Fingerprint(dec, plan.DecisionInput),
+					Reason:         dec.Reason,
+				})
+				if herr != nil {
+					audit("block", "approval_hold_error", herr.Error(), "")
+					return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: policies.ModelSafeUnavailableReason("approval")}
+				}
+				if held.Evicted != nil {
+					audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, "")
+					llmproxy.CleanupEvictedInlineTask(ctx, approvalCleanupCfg, held.Evicted)
+				}
+				approvalID = held.Pending.ID
+			}
+			audit("block", string(dec.Source), dec.Reason, matchedTaskID)
+			return policies.TaskScopeDecision{
+				Kind:           policies.TaskScopeDecisionHold,
+				Allowed:        false,
+				Reason:         "Clawvisor: approval required — " + dec.Reason,
+				SubstituteText: approvaltext.ApprovalPrompt(tu, dec.Reason, approvalID),
+				TaskID:         matchedTaskID,
+			}
+		}
+		return policies.TaskScopeDecision{}
+	}
+
+	resolve := func(ctx context.Context, tu conversation.ToolUse) policies.TaskScopeDecision {
+		// Inspect once: needed for the not-credentialed early return,
+		// the audit emitter's snapshot, and the legacy fallback branch.
+		// Cheap and deterministic — duplicating the call against the
+		// prefetch path is acceptable.
 		v := rewrite.Inspector.Inspect(ctx, inspector.ToolUse{
 			ID:    tu.ID,
 			Name:  tu.Name,
@@ -460,77 +644,18 @@ func buildCredentialedTaskScope(
 			})
 		}
 		if auth.CandidateTasks != nil || auth.ToolRules != nil || auth.EgressRules != nil {
-			resolved := llmproxy.ResolvedAction{}
-			if auth.Catalog != nil {
-				resolved, _ = auth.Catalog.Resolve(v.Host, v.Method, v.Path)
+			if cached, ok := cache[tu.ID]; ok {
+				return applyModernDecision(ctx, tu, cached.Plan, cached.Outcome.Decision, cached.Outcome.Err, audit)
 			}
-			decisionInput := runtimedecision.AuthorizationInput{
-				ToolUse:         tu,
-				UserID:          agent.AgentUserID,
-				AgentID:         agent.AgentID,
-				Posture:         auth.Posture,
-				Target:          runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
-				Service:         resolved.ServiceID,
-				Action:          resolved.ActionID,
-				CandidateTasks:  auth.CandidateTasks,
-				ToolRules:       auth.ToolRules,
-				EgressRules:     auth.EgressRules,
-				PreferredTaskID: auth.PreferredTaskID,
-				IntentVerifier:  intentverify.DecisionVerifierFor(auth.IntentVerifier),
-			}
-			dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
-			if err != nil {
-				audit("block", "decision_error", err.Error(), "")
-				return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: policies.ModelSafeInternalReason("authorization")}
-			}
-			matchedTaskID := ""
-			if dec.Task != nil {
-				matchedTaskID = dec.Task.ID
-			}
-			switch dec.Kind {
-			case runtimedecision.VerdictAllow:
-				if dec.Task != nil && rewrite.Store != nil {
-					_, _, _ = tasklifetime.SlideTaskExpiry(ctx, rewrite.Store, dec.Task, time.Now().UTC())
-				}
-				return policies.TaskScopeDecision{}
-			case runtimedecision.VerdictDeny:
-				audit("block", string(dec.Source), dec.Reason, matchedTaskID)
-				return policies.TaskScopeDecision{
-					Kind:   policies.TaskScopeDecisionDeny,
-					Reason: "Clawvisor: " + dec.Reason,
-					TaskID: matchedTaskID,
-				}
-			case runtimedecision.VerdictNeedsApproval:
-				var approvalID string
-				if approval.PendingApprovals != nil {
-					held, herr := approval.PendingApprovals.Hold(ctx, llmproxy.PendingLiteApproval{
-						UserID:         agent.AgentUserID,
-						AgentID:        agent.AgentID,
-						Provider:       provider,
-						ConversationID: auditCtx.ConversationID,
-						ToolUse:        tu,
-						Inspector:      v,
-						Fingerprint:    runtimedecision.Fingerprint(dec, decisionInput),
-						Reason:         dec.Reason,
-					})
-					if herr != nil {
-						audit("block", "approval_hold_error", herr.Error(), "")
-						return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: policies.ModelSafeUnavailableReason("approval")}
-					}
-					if held.Evicted != nil {
-						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID, "")
-						llmproxy.CleanupEvictedInlineTask(ctx, approvalCleanupCfg, held.Evicted)
-					}
-					approvalID = held.Pending.ID
-				}
-				audit("block", string(dec.Source), dec.Reason, matchedTaskID)
-				return policies.TaskScopeDecision{
-					Kind:           policies.TaskScopeDecisionHold,
-					Allowed:        false,
-					Reason:         "Clawvisor: approval required — " + dec.Reason,
-					SubstituteText: approvaltext.ApprovalPrompt(tu, dec.Reason, approvalID),
-					TaskID:         matchedTaskID,
-				}
+			// Cache miss (Prefetch not invoked, or this tool_use was
+			// excluded from the batch). Fall back to inline evaluation.
+			plan, planned := planModernPath(ctx, tu)
+			if !planned {
+				// planModernPath agreed it's credentialed but the modern
+				// path isn't configured — fall through to legacy below.
+			} else {
+				dec, err := runtimedecision.EvaluateAuthorization(ctx, plan.DecisionInput)
+				return applyModernDecision(ctx, tu, plan, dec, err, audit)
 			}
 		}
 		// Legacy TaskScope.Check + intent verify fallback.
@@ -567,12 +692,64 @@ func buildCredentialedTaskScope(
 		}
 		return policies.TaskScopeDecision{}
 	}
+
+	prefetch := func(ctx context.Context, toolUses []conversation.ToolUse) {
+		// Modern-path inputs only. Tool_uses that don't reach
+		// EvaluateAuthorization (not credentialed, or legacy fallback)
+		// are skipped — Resolve handles them inline.
+		type pending struct {
+			tuID string
+			plan credentialedPlan
+		}
+		pendings := make([]pending, 0, len(toolUses))
+		for _, tu := range toolUses {
+			plan, planned := planModernPath(ctx, tu)
+			if !planned {
+				continue
+			}
+			pendings = append(pendings, pending{tuID: tu.ID, plan: plan})
+		}
+		if len(pendings) == 0 {
+			return
+		}
+		batchInputs := make([]runtimedecision.AuthorizationInput, len(pendings))
+		for i, p := range pendings {
+			batchInputs[i] = p.plan.DecisionInput
+		}
+		outcomes := runtimedecision.EvaluateAuthorizationBatch(ctx, batchInputs)
+		for i, out := range outcomes {
+			cache[pendings[i].tuID] = credentialedOutcome{
+				Plan:    pendings[i].plan,
+				Outcome: out,
+			}
+		}
+	}
+
+	return credentialedTaskScopeBundle{Resolve: resolve, Prefetch: prefetch}
+}
+
+// authorizationResolverBundle pairs the AuthorizationResolver
+// AuthorizationPolicy consumes with an optional Prefetch hook the
+// Factory invokes once per response to batch the decision-engine
+// calls for every sibling tool_use in parallel.
+//
+// Prefetch is best-effort: when the cache is primed, Resolve returns
+// AuthorizationInputs with Precomputed set, and AuthorizationPolicy
+// skips its inline EvaluateAuthorization call. When Prefetch was not
+// invoked (or a tool_use was excluded from the batch), Resolve
+// returns AuthorizationInputs without Precomputed and the policy
+// falls back to the inline call. Either way, the side-effect dispatch
+// (SlideTask / HoldHandler) still runs serially inside Evaluate so
+// approval-hold ordering and audit emission stay identical.
+type authorizationResolverBundle struct {
+	Resolve  policies.AuthorizationResolver
+	Prefetch func(ctx context.Context, toolUses []conversation.ToolUse)
 }
 
 // buildAuthorizationResolver wires AuthorizationPolicy to
 // PostprocessConfig's decision-engine inputs + PendingApprovals cache.
-// Returns nil when the policy has no role (no inspector, no policy
-// config, and no sensitive-path hook).
+// Returns an empty bundle when the policy has no role (no inspector
+// configured).
 func buildAuthorizationResolver(
 	agent llmproxy.AgentContext,
 	audit llmproxy.AuditContext,
@@ -580,9 +757,9 @@ func buildAuthorizationResolver(
 	approval llmproxy.ApprovalContext,
 	rewrite llmproxy.RewriteContext,
 	provider conversation.Provider,
-) policies.AuthorizationResolver {
+) authorizationResolverBundle {
 	if rewrite.Inspector == nil {
-		return nil
+		return authorizationResolverBundle{}
 	}
 	intentVerifier := intentverify.DecisionVerifierFor(auth.IntentVerifier)
 	holdHandler := &authorizationHoldHandler{
@@ -597,7 +774,12 @@ func buildAuthorizationResolver(
 		}
 		_, _, _ = tasklifetime.SlideTaskExpiry(ctx, rewrite.Store, task, time.Now().UTC())
 	}
-	return func(ctx context.Context, tu conversation.ToolUse, v inspector.Verdict) *policies.AuthorizationInputs {
+
+	// planFor builds the per-tool-use AuthorizationInputs the policy
+	// consumes. Shared by Resolve (per-tool-use) and Prefetch
+	// (response-scoped batch). Pure: no decision-engine call, no side
+	// effects.
+	planFor := func(tu conversation.ToolUse) *policies.AuthorizationInputs {
 		hasPolicyConfig := auth.CandidateTasks != nil || auth.ToolRules != nil || auth.EgressRules != nil
 		readOnlyShell, sensitivePath := detectShellSpecials(tu, agent, auth)
 		shellPoll := shellpolicy.IsShellPollTool(tu.Name, tu.Input)
@@ -621,6 +803,71 @@ func buildAuthorizationResolver(
 			SlideTask:            slideTask,
 		}
 	}
+
+	// Per-response decision cache. Written by Prefetch (after its
+	// goroutines join), read by Resolve from the orchestrator's
+	// serial Evaluate loop. No concurrent access — Prefetch returns
+	// before the orchestrator starts iterating.
+	cache := make(map[string]runtimedecision.AuthorizationOutcome)
+
+	resolve := func(_ context.Context, tu conversation.ToolUse, _ inspector.Verdict) *policies.AuthorizationInputs {
+		inputs := planFor(tu)
+		if out, ok := cache[tu.ID]; ok {
+			if out.Err != nil {
+				inputs.PrecomputedErr = out.Err
+			} else {
+				dec := out.Decision
+				inputs.Precomputed = &dec
+			}
+		}
+		return inputs
+	}
+
+	prefetch := func(ctx context.Context, toolUses []conversation.ToolUse) {
+		// Gather the inputs EvaluateAuthorization would actually
+		// consume for each sibling: only tool_uses the inspector
+		// classifies as trigger-miss AND that have policy config or
+		// sensitive-path. Tool_uses outside that set short-circuit in
+		// AuthorizationPolicy.Evaluate without a decision-engine call,
+		// so batching them would be wasted work.
+		type pending struct {
+			tuID  string
+			input runtimedecision.AuthorizationInput
+		}
+		pendings := make([]pending, 0, len(toolUses))
+		for _, tu := range toolUses {
+			v := rewrite.Inspector.Inspect(ctx, inspector.ToolUse{
+				ID:    tu.ID,
+				Name:  tu.Name,
+				Input: tu.Input,
+			})
+			if v.Source != inspector.SourceTriggerMiss {
+				continue
+			}
+			inputs := planFor(tu)
+			if !inputs.HasPolicyConfig && !inputs.ShellSensitivePath {
+				continue
+			}
+			// Mirror AuthorizationPolicy.Evaluate's SkipIntentVerification
+			// assignment so the cached decision matches the inline call.
+			in := inputs.Input
+			in.SkipIntentVerification = inputs.ReadOnlyShellCommand
+			pendings = append(pendings, pending{tuID: tu.ID, input: in})
+		}
+		if len(pendings) == 0 {
+			return
+		}
+		batchInputs := make([]runtimedecision.AuthorizationInput, len(pendings))
+		for i, p := range pendings {
+			batchInputs[i] = p.input
+		}
+		outcomes := runtimedecision.EvaluateAuthorizationBatch(ctx, batchInputs)
+		for i, out := range outcomes {
+			cache[pendings[i].tuID] = out
+		}
+	}
+
+	return authorizationResolverBundle{Resolve: resolve, Prefetch: prefetch}
 }
 
 // detectShellSpecials derives read-only-shell and sensitive-path flags

@@ -57,6 +57,20 @@ type AuthorizationInputs struct {
 	// matched task so the task's sliding lifetime bumps. The handler
 	// closes over the store and time.Now.
 	SlideTask func(ctx context.Context, task *store.Task)
+	// Precomputed, when non-nil, supplies the decision a caller already
+	// resolved (typically via a batched pre-pass over the response's
+	// sibling tool_uses, e.g. runtimedecision.EvaluateAuthorizationBatch).
+	// Evaluate uses it in place of an inline EvaluateAuthorization call —
+	// the side-effect dispatch (SlideTask / HoldHandler) still runs
+	// serially in the orchestrator's per-tool-use loop, so ordering is
+	// preserved.
+	//
+	// PrecomputedErr, when non-nil, surfaces a decision-engine error
+	// the pre-pass collected. It takes priority over Precomputed and
+	// yields the same Deny + "decision_error" fact path the inline
+	// call would have taken.
+	Precomputed    *runtimedecision.AuthorizationDecision
+	PrecomputedErr error
 }
 
 // AuthorizationHoldHandler is the typed interface PostprocessConfig
@@ -125,7 +139,18 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 	}
 	input := in.Input
 	input.SkipIntentVerification = in.ReadOnlyShellCommand
-	dec, err := runtimedecision.EvaluateAuthorization(ctx, input)
+	var (
+		dec runtimedecision.AuthorizationDecision
+		err error
+	)
+	switch {
+	case in.PrecomputedErr != nil:
+		err = in.PrecomputedErr
+	case in.Precomputed != nil:
+		dec = *in.Precomputed
+	default:
+		dec, err = runtimedecision.EvaluateAuthorization(ctx, input)
+	}
 	if err != nil {
 		return pipeline.ToolUseVerdict{
 			Outcome: pipeline.OutcomeDeny,
