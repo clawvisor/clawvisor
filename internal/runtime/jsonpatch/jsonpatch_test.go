@@ -77,3 +77,51 @@ func TestSetTopLevelField_ReplacesObjectValue(t *testing.T) {
 		t.Errorf("got %q, want %q", string(out), want)
 	}
 }
+
+func TestFlattenObject_PreservesKeyOrderAndValueBytes(t *testing.T) {
+	in := []byte(`{"zeta":"first","alpha":1,"mu":{"nested":true}}`)
+	fields, ok := jsonpatch.FlattenObject(in)
+	if !ok {
+		t.Fatal("FlattenObject returned ok=false on valid object")
+	}
+	if len(fields) != 3 {
+		t.Fatalf("expected 3 fields, got %d", len(fields))
+	}
+	if fields[0].Key != "zeta" || fields[1].Key != "alpha" || fields[2].Key != "mu" {
+		t.Fatalf("key order not preserved: %v", []string{fields[0].Key, fields[1].Key, fields[2].Key})
+	}
+	if string(fields[0].Value) != `"first"` || string(fields[1].Value) != `1` || string(fields[2].Value) != `{"nested":true}` {
+		t.Fatalf("value bytes not preserved: %v", fields)
+	}
+}
+
+func TestFlattenObject_RejectsNonObject(t *testing.T) {
+	if _, ok := jsonpatch.FlattenObject([]byte(`[1,2,3]`)); ok {
+		t.Error("expected ok=false for array input")
+	}
+	if _, ok := jsonpatch.FlattenObject([]byte(`"string"`)); ok {
+		t.Error("expected ok=false for string input")
+	}
+	if _, ok := jsonpatch.FlattenObject([]byte(`not json`)); ok {
+		t.Error("expected ok=false for garbage input")
+	}
+}
+
+func TestMarshalObjectFields_RoundTripPreservesKeyOrder(t *testing.T) {
+	in := []byte(`{"zeta":"first","alpha":1,"mu":true}`)
+	fields, ok := jsonpatch.FlattenObject(in)
+	if !ok {
+		t.Fatal("FlattenObject returned ok=false")
+	}
+	out := jsonpatch.MarshalObjectFields(fields)
+	if string(out) != string(in) {
+		t.Fatalf("round trip changed bytes.\nin:  %s\nout: %s", in, out)
+	}
+}
+
+func TestMarshalObjectFields_EmitsEmptyObject(t *testing.T) {
+	out := jsonpatch.MarshalObjectFields(nil)
+	if string(out) != `{}` {
+		t.Errorf("expected `{}`, got %q", out)
+	}
+}

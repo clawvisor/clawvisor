@@ -19,6 +19,7 @@ import (
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/bodytransform"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
@@ -3850,93 +3851,28 @@ func rewriteJSONArray(data []byte, replacements map[string]string, keys []string
 }
 
 func rewriteJSONObject(data []byte, replacements map[string]string, keys []string) ([]byte, bool, error) {
-	if isSignedThinkingBlock(data) {
+	if bodytransform.IsThinkingBlock(data) {
 		return data, false, nil
 	}
-	fields, ok := parseJSONObjectFields(data)
+	fields, ok := jsonsurgery.FlattenObject(data)
 	if !ok {
 		return data, false, nil
 	}
 	anyChanged := false
 	for i := range fields {
-		newVal, changed, err := rewriteJSONValue(fields[i].value, replacements, keys)
+		newVal, changed, err := rewriteJSONValue(fields[i].Value, replacements, keys)
 		if err != nil {
 			return nil, false, err
 		}
 		if changed {
-			fields[i].value = newVal
+			fields[i].Value = newVal
 			anyChanged = true
 		}
 	}
 	if !anyChanged {
 		return data, false, nil
 	}
-	return marshalJSONObjectFields(fields), true, nil
-}
-
-func isSignedThinkingBlock(data []byte) bool {
-	typeStart, typeEnd, ok := jsonsurgery.FindFieldValue(data, "type")
-	if !ok {
-		return false
-	}
-	var typ string
-	if err := json.Unmarshal(data[typeStart:typeEnd], &typ); err != nil {
-		return false
-	}
-	return typ == "thinking" || typ == "redacted_thinking"
-}
-
-type jsonObjectField struct {
-	key   string
-	value json.RawMessage
-}
-
-// parseJSONObjectFields iterates a JSON object's key/value pairs in
-// source order. Values come back as RawMessages over the original bytes
-// (including any internal whitespace), so unchanged values can be
-// reassembled verbatim.
-func parseJSONObjectFields(data []byte) ([]jsonObjectField, bool) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, false
-	}
-	if d, isDelim := tok.(json.Delim); !isDelim || d != '{' {
-		return nil, false
-	}
-	var fields []jsonObjectField
-	for dec.More() {
-		keyTok, err := dec.Token()
-		if err != nil {
-			return nil, false
-		}
-		key, ok := keyTok.(string)
-		if !ok {
-			return nil, false
-		}
-		var val json.RawMessage
-		if err := dec.Decode(&val); err != nil {
-			return nil, false
-		}
-		fields = append(fields, jsonObjectField{key: key, value: val})
-	}
-	return fields, true
-}
-
-func marshalJSONObjectFields(fields []jsonObjectField) []byte {
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	for i, f := range fields {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		keyEnc, _ := json.Marshal(f.key)
-		buf.Write(keyEnc)
-		buf.WriteByte(':')
-		buf.Write(f.value)
-	}
-	buf.WriteByte('}')
-	return buf.Bytes()
+	return jsonsurgery.MarshalObjectFields(fields), true, nil
 }
 
 func (h *LLMEndpointHandler) loadActiveSecretRewrites(ctx context.Context, agent *store.Agent) (map[string]liteSecretVaultRewrite, error) {

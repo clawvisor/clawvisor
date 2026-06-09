@@ -203,6 +203,22 @@ func sanitizeAnthropicContent(raw json.RawMessage) (json.RawMessage, bool, bool,
 	return encoded, true, false, err
 }
 
+// IsThinkingBlock reports whether block is an Anthropic `thinking` or
+// `redacted_thinking` content block. Both block types carry a signature
+// Anthropic verifies across turns; callers that walk assistant content
+// must preserve their bytes verbatim — even reordering sibling keys is
+// enough to invalidate the signature and produce
+// "thinking ... blocks in the latest assistant message cannot be modified"
+// on the next request.
+func IsThinkingBlock(block json.RawMessage) bool {
+	switch extractBlockType(block) {
+	case "thinking", "redacted_thinking":
+		return true
+	default:
+		return false
+	}
+}
+
 func extractBlockType(block json.RawMessage) string {
 	start, end, ok := jsonsurgery.FindFieldValue(block, "type")
 	if !ok {

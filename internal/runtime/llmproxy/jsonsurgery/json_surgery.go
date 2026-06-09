@@ -29,6 +29,20 @@ func FlattenArray(data []byte) ([]json.RawMessage, bool) {
 	return jsonpatch.FlattenArray(data)
 }
 
+// ObjectField is re-exported from jsonpatch — a single key/value pair
+// for use with FlattenObject / MarshalObjectFields.
+type ObjectField = jsonpatch.ObjectField
+
+// FlattenObject iterates a JSON object's key/value pairs in source order.
+func FlattenObject(data []byte) ([]ObjectField, bool) {
+	return jsonpatch.FlattenObject(data)
+}
+
+// MarshalObjectFields emits a JSON object preserving the given field order.
+func MarshalObjectFields(fields []ObjectField) []byte {
+	return jsonpatch.MarshalObjectFields(fields)
+}
+
 // LooksLikeString reports whether data is a JSON-encoded string after
 // leading JSON whitespace.
 func LooksLikeString(data []byte) bool {

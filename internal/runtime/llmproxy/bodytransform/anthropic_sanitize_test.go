@@ -63,6 +63,29 @@ func TestSanitizeAnthropicRequestNoop(t *testing.T) {
 	}
 }
 
+func TestIsThinkingBlock(t *testing.T) {
+	cases := []struct {
+		name  string
+		block string
+		want  bool
+	}{
+		{"thinking", `{"type":"thinking","thinking":"...","signature":"sig"}`, true},
+		{"redacted_thinking", `{"type":"redacted_thinking","data":"opaque"}`, true},
+		{"text", `{"type":"text","text":"hello"}`, false},
+		{"tool_use", `{"type":"tool_use","id":"t1","name":"n","input":{}}`, false},
+		{"missing_type", `{"thinking":"x"}`, false},
+		{"non_object", `"thinking"`, false},
+		{"reordered_thinking", `{"signature":"sig","thinking":"...","type":"thinking"}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsThinkingBlock(json.RawMessage(tc.block)); got != tc.want {
+				t.Errorf("IsThinkingBlock(%s) = %v, want %v", tc.block, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSanitizeAnthropicRequestMalformedErrorDoesNotEchoBodySecrets(t *testing.T) {
 	secrets := []string{
 		"sk-ant-api03-secret-value",
