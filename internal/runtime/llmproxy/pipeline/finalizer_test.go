@@ -447,7 +447,7 @@ func TestFinalizerCoalescedEvictionAuditUsesApprovalPrimary(t *testing.T) {
 	}
 }
 
-func TestFinalizerReplayPartialFailureRollback(t *testing.T) {
+func TestFinalizerReplayFailureRollsBackPendingTaskForFailedCapture(t *testing.T) {
 	submitErr := errors.New("third submit failed")
 	deps := &finalizerTestDeps{
 		submit:     pipeline.HoldSubmitResult{ApprovalID: "cv-committed"},
@@ -484,4 +484,3 @@ func TestFinalizerReplayPartialFailureRollback(t *testing.T) {
 		t.Fatalf("rolledBack = %+v, want toolu_fail", deps.rolledBack)
 	}
 }
-

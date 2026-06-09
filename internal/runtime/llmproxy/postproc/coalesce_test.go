@@ -1533,6 +1533,9 @@ func TestPostprocess_DropsCoalescedHoldOnPromptRewriteFailure(t *testing.T) {
 	if !strings.Contains(got.SkippedReason, "simulated prompt rewrite failure") {
 		t.Fatalf("expected simulated error in SkippedReason, got: %s", got.SkippedReason)
 	}
+	if got.Body != nil {
+		t.Fatalf("failClosed must drop body; got %d bytes", len(got.Body))
+	}
 
 	// The coalesced hold should have been committed during finalize but dropped/rolled back when rewrite failed.
 	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
@@ -1541,9 +1544,11 @@ func TestPostprocess_DropsCoalescedHoldOnPromptRewriteFailure(t *testing.T) {
 	}
 }
 
+// flakyRewriter intercepts rewrite passes. It identifies the coalesced rewrite
+// pass by inspecting the evaluation verdicts and triggers a failure during
+// that pass, simulating a rewrite failure after storage has already committed.
 type flakyRewriter struct {
-	inner        conversation.ResponseRewriter
-	rewriteCount int
+	inner conversation.ResponseRewriter
 }
 
 func (f *flakyRewriter) Name() conversation.Provider {
@@ -1555,10 +1560,20 @@ func (f *flakyRewriter) MatchesResponse(req *http.Request, resp *http.Response) 
 }
 
 func (f *flakyRewriter) Rewrite(body []byte, contentType string, eval conversation.ToolUseEvaluator) (conversation.RewriteResult, error) {
-	f.rewriteCount++
-	if f.rewriteCount == 3 {
+	isCoalescedPass := false
+	wrappedEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		verdict := eval(tu)
+		if strings.Contains(verdict.Reason, "coalesced turn") {
+			isCoalescedPass = true
+		}
+		return verdict
+	}
+	res, err := f.inner.Rewrite(body, contentType, wrappedEval)
+	if err != nil {
+		return res, err
+	}
+	if isCoalescedPass {
 		return conversation.RewriteResult{}, errors.New("simulated prompt rewrite failure")
 	}
-	return f.inner.Rewrite(body, contentType, eval)
+	return res, nil
 }
-
