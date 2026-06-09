@@ -195,6 +195,12 @@ func (s *claudeSession) baseArgs() []string {
 	if s.model != "" {
 		args = append(args, "--model", s.model)
 	}
+	if s.cfg.MCPConfigPath != "" {
+		// --bare skips user settings (including their MCP servers); the
+		// explicit --mcp-config feeds only the harness's stub server
+		// back in. Tests that don't set MCPConfigPath stay no-MCP.
+		args = append(args, "--mcp-config", s.cfg.MCPConfigPath)
+	}
 	return args
 }
 

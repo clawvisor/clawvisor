@@ -19,6 +19,13 @@ type Scenario struct {
 	// shape that can't live in tracked files (e.g. `git init && commit`).
 	SetupShell string       `yaml:"setup_shell,omitempty"`
 	VaultItems []VaultItem  `yaml:"vault_items,omitempty"`
+	// MCPStub, when true, asks the harness to launch a stub MCP server
+	// (see internal/e2e/lite/drivers/mcpstub) and write a workspace-local
+	// .mcp.json that Claude Code is pointed at via --mcp-config. The
+	// stub exposes one tool whose name contains "authenticate" and
+	// touches a marker file when invoked, so scenarios can assert via
+	// FilesAbsent that the agent did not reach for harness-side auth.
+	MCPStub    bool         `yaml:"mcp_stub,omitempty"`
 	Script     []Step       `yaml:"script"`
 	Approvals  Approvals    `yaml:"approvals"`
 	Budget     Budget       `yaml:"budget"`

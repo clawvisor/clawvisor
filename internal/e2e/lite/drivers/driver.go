@@ -48,6 +48,14 @@ type Config struct {
 
 	// Logf is a per-step logger (typically t.Logf). nil-safe.
 	Logf func(format string, args ...any)
+
+	// MCPConfigPath, when non-empty, is passed to drivers that support
+	// an MCP-config CLI flag. Used by scenarios that exercise the
+	// agent's behavior around harness-side authentication tools (the
+	// control-notice rule that says: check /vault/items BEFORE
+	// invoking any MCP `*authenticate*` tool). Empty for the default
+	// no-MCP scenario shape.
+	MCPConfigPath string
 }
 
 // Approver decides how to reply to an approval prompt the lite-proxy

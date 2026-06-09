@@ -26,6 +26,7 @@ func TestLoadAllLibraryScenarios(t *testing.T) {
 		"credential_standing_task",
 		"no_invented_placeholder",
 		"credential_not_needed_for_local",
+		"vault_first_before_mcp_auth",
 		"script_session_credentialed_fanout",
 		"script_session_scope_mismatch_recovery",
 		"script_session_inline_fanout",

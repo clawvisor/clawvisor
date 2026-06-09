@@ -2,12 +2,15 @@ package lite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -77,11 +80,23 @@ type Harness struct {
 	// downstream.placeholder_used.
 	MockUpstream *httptest.Server
 
+	// MCPConfigPath is the absolute path to a workspace-local .mcp.json
+	// written when scn.MCPStub is true. Empty otherwise. lite_test.go
+	// passes this through to drivers.Config so Claude Code can be
+	// pointed at the stub MCP server via --mcp-config.
+	MCPConfigPath string
+
 	// recorder is the InlineTaskCreator wrapper used by the mock
 	// upstream to recognize minted placeholders. Exposed so test
 	// helpers can also inspect what was minted.
 	recorder *recordingInlineCreator
 }
+
+// MCPStubMarkerFilename is the workspace-relative path the stub MCP
+// server writes when its `authenticate` tool is invoked. Exposed so
+// scenarios can name it in `files_absent` to assert the agent did NOT
+// reach for harness-side auth.
+const MCPStubMarkerFilename = ".mcp_auth_marker"
 
 // Start boots the harness for one scenario × driver run. The workspace
 // is library/<scenario>/workspace copied to t.TempDir() (then
@@ -278,18 +293,69 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 		return nil, err
 	}
 
+	var mcpConfigPath string
+	if scn.MCPStub {
+		path, err := setupMCPStub(ctx, dataDir, workspace)
+		if err != nil {
+			return nil, fmt.Errorf("mcp stub: %w", err)
+		}
+		mcpConfigPath = path
+	}
+
 	return &Harness{
-		Store:        st,
-		Endpoint:     srv,
-		UserID:       user.ID,
-		AgentID:      agent.ID,
-		AgentToken:   rawToken,
-		Workspace:    workspace,
-		Counters:     counters,
-		Logger:       logger,
-		MockUpstream: mockUpstream,
-		recorder:     recorder,
+		Store:         st,
+		Endpoint:      srv,
+		UserID:        user.ID,
+		AgentID:       agent.ID,
+		AgentToken:    rawToken,
+		Workspace:     workspace,
+		Counters:      counters,
+		Logger:        logger,
+		MockUpstream:  mockUpstream,
+		MCPConfigPath: mcpConfigPath,
+		recorder:      recorder,
 	}, nil
+}
+
+// setupMCPStub builds the stub MCP server binary into dataDir and
+// writes a workspace-local .mcp.json that points Claude Code at it.
+// The stub's MCP_STUB_MARKER_PATH env is wired to
+// <workspace>/MCPStubMarkerFilename so a scenario can assert on the
+// agent's choice by checking whether that file exists post-step.
+//
+// Returns the absolute path to the written .mcp.json (suitable for
+// --mcp-config). Returns an error if go build fails — surfaced via
+// the scenario load path so the failure mode is obvious rather than
+// a runtime "MCP server failed to start" inside Claude Code.
+func setupMCPStub(ctx context.Context, dataDir, workspace string) (string, error) {
+	binPath := filepath.Join(dataDir, "mcpstub")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binPath, "./drivers/mcpstub")
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("build stub: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	markerPath := filepath.Join(workspace, MCPStubMarkerFilename)
+	mcpConfig := map[string]any{
+		"mcpServers": map[string]any{
+			"gmailstub": map[string]any{
+				"command": binPath,
+				"args":    []string{},
+				"env": map[string]string{
+					"MCP_STUB_MARKER_PATH": markerPath,
+				},
+			},
+		},
+	}
+	mcpJSON, err := json.MarshalIndent(mcpConfig, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	mcpConfigPath := filepath.Join(dataDir, "mcp-config.json")
+	if err := os.WriteFile(mcpConfigPath, mcpJSON, 0o600); err != nil {
+		return "", err
+	}
+	return mcpConfigPath, nil
 }
 
 // newMockUpstream returns an httptest server that records every
