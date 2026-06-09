@@ -206,9 +206,15 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	}
 	peeked := action.Hold
 	if peeked == nil {
-		if approvalID != "" {
-			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "this approval is no longer valid — it may have expired, already been used, or been issued to another agent. Please retry your original request to get a fresh approval prompt."}
-		}
+		// approvalID may be non-empty here because the bare-reply
+		// parser scanned the assistant transcript for the latest
+		// [clawvisor:approval=cv-xxx] marker and attached a stale one.
+		// We can't distinguish that from a user explicitly typing
+		// "yes cv-xxx", and the former is the overwhelmingly common
+		// case (users type bare verbs; the marker just rides along).
+		// Fall through silently so an ordinary "yes" to an agent's
+		// own question isn't hijacked into a 404 once any earlier
+		// Clawvisor approval has been resolved in this conversation.
 		return ReleaseResult{}
 	}
 	// Preprocess-missing defense: if the hold the bare reply targets
@@ -255,10 +261,11 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	}
 	if pending == nil {
 		// Peeked one moment ago but it's gone now — a concurrent
-		// release/rewrite pass consumed it. Treat as not-found.
-		if approvalID != "" {
-			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "this approval is no longer valid — it may have expired, already been used, or been issued to another agent. Please retry your original request to get a fresh approval prompt."}
-		}
+		// release/rewrite pass consumed it. Fall through silently
+		// for the same reason as the peeked==nil branch above: we
+		// can't distinguish a user-typed cv-id from a stale marker
+		// scraped out of transcript history, and silently dropping
+		// is the safe behavior for bare yes/no replies.
 		return ReleaseResult{}
 	}
 	if verb == "deny" {

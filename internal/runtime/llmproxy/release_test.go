@@ -54,8 +54,15 @@ func TestTryReleasePendingApprovalWrongExplicitIDDoesNotConsume(t *testing.T) {
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
 		PendingApproval: cache,
 	})
-	if !result.Handled || result.HTTPStatus != 404 {
-		t.Fatalf("wrong explicit ID should be handled as not found: %+v", result)
+	// A non-matching cv-id falls through silently rather than emitting
+	// a 404. The release path can't distinguish a user-typed cv-id
+	// from one the bare-reply parser scraped out of stale assistant
+	// transcript history, and silently dropping is the safe behavior
+	// — otherwise an ordinary "yes" to an agent question would be
+	// hijacked into a 404 once any earlier Clawvisor approval has been
+	// resolved in this conversation.
+	if result.Handled {
+		t.Fatalf("wrong explicit ID should fall through, not be handled: %+v", result)
 	}
 
 	resolved, err := cache.Resolve(ctx, ResolveRequest{
@@ -69,6 +76,36 @@ func TestTryReleasePendingApprovalWrongExplicitIDDoesNotConsume(t *testing.T) {
 	}
 	if resolved == nil || resolved.ID != held.Pending.ID {
 		t.Fatalf("approval was consumed by wrong ID; resolved=%+v", resolved)
+	}
+}
+
+// TestTryReleasePendingApprovalBareReplyWithStaleHistoryMarkerFallsThrough
+// pins the fix for the hijack where a bare "yes" reply to the agent's
+// own question gets routed into approval_not_found because the
+// transcript still carries the [clawvisor:approval=cv-xxx] footer from
+// an already-resolved approval earlier in the conversation. The user
+// said yes to a non-Clawvisor question; the proxy must not synthesize
+// a 404 reply.
+func TestTryReleasePendingApprovalBareReplyWithStaleHistoryMarkerFallsThrough(t *testing.T) {
+	ctx := context.Background()
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+
+	body := []byte(`{"messages":[` +
+		`{"role":"user","content":"please do the thing"},` +
+		`{"role":"assistant","content":"Clawvisor paused this turn for approval. Reply 'y' to approve.\n[clawvisor:approval=cv-stalexxxxxxxx]"},` +
+		`{"role":"user","content":"y"},` +
+		`{"role":"assistant","content":"Done. Want me to continue?"},` +
+		`{"role":"user","content":"yes"}` +
+		`]}`)
+
+	result := TryReleasePendingApproval(ctx, ReleaseRequest{
+		Provider:        conversation.ProviderAnthropic,
+		Body:            body,
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+	})
+	if result.Handled {
+		t.Fatalf("bare reply with only a stale history marker must fall through, not synthesize a 404: %+v", result)
 	}
 }
 
