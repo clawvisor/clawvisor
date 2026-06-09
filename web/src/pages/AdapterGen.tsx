@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type AdapterGenResult, type AdapterGenActionPreview } from '../api/client'
+import { copyText } from '../lib/clipboard'
 
 const riskColors: Record<string, string> = {
   low: 'bg-green-500/10 text-green-600 border-green-500/20',
@@ -209,7 +210,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={() => {
-        navigator.clipboard.writeText(text)
+        copyText(text)
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
       }}

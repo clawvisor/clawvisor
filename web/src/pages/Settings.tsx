@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth'
 import { QRCodeSVG } from 'qrcode.react'
 import CountdownTimer from '../components/CountdownTimer'
 import { formatDistanceToNow } from 'date-fns'
+import { copyText } from '../lib/clipboard'
 
 export default function Settings() {
   const { features } = useAuth()
@@ -41,7 +42,7 @@ function DaemonInfo() {
   if (!pairInfo?.daemon_id) return null
 
   function copyId() {
-    navigator.clipboard.writeText(pairInfo!.daemon_id)
+    copyText(pairInfo!.daemon_id)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -1299,7 +1300,7 @@ function TelegramGroupCard({ group, onDisconnect }: { group: TelegramGroup; onDi
                   {agentPairingMut.data.instruction}
                 </pre>
                 <button
-                  onClick={() => navigator.clipboard.writeText(agentPairingMut.data!.instruction)}
+                  onClick={() => copyText(agentPairingMut.data!.instruction)}
                   className="px-3 py-1 text-xs rounded border border-border-default text-text-secondary hover:text-text-primary hover:border-border-hover"
                 >
                   Copy to Clipboard
@@ -1918,7 +1919,7 @@ function LocalDaemonPairing() {
   const copyButton = (text: string, copied: boolean, setCopied: (v: boolean) => void) => (
     <button
       onClick={() => {
-        navigator.clipboard.writeText(text)
+        copyText(text)
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
       }}
