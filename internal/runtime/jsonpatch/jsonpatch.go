@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"slices"
 )
 
@@ -88,6 +89,12 @@ type ObjectField struct {
 // (including internal whitespace), letting callers do surgical edits
 // without canonicalizing key order — important for Anthropic thinking
 // blocks where any byte change invalidates the signature.
+//
+// Returns ok=false for any input that is not exactly one well-formed
+// JSON object: truncated input (`{"a":1`), trailing garbage
+// (`{"a":1}xyz`), concatenated objects (`{"a":1}{"b":2}`), and so on.
+// This mirrors the strictness of FlattenArray (which uses json.Unmarshal)
+// so rewrite paths never operate on partial payloads.
 func FlattenObject(data []byte) ([]ObjectField, bool) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	tok, err := dec.Token()
@@ -112,6 +119,21 @@ func FlattenObject(data []byte) ([]ObjectField, bool) {
 			return nil, false
 		}
 		fields = append(fields, ObjectField{Key: key, Value: val})
+	}
+	// dec.More() returning false on a truncated object (no closing
+	// brace) doesn't itself signal error — the decoder just stops. We
+	// must explicitly consume the closing '}' and then confirm the
+	// stream is exhausted, so a missing '}' or trailing tokens both
+	// fail the parse instead of silently stripping bytes.
+	closeTok, err := dec.Token()
+	if err != nil {
+		return nil, false
+	}
+	if d, ok := closeTok.(json.Delim); !ok || d != '}' {
+		return nil, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, false
 	}
 	return fields, true
 }

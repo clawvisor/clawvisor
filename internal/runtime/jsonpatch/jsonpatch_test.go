@@ -107,6 +107,61 @@ func TestFlattenObject_RejectsNonObject(t *testing.T) {
 	}
 }
 
+// TestFlattenObject_RejectsMalformedAndTrailingGarbage locks in the
+// strictness contract: any input that isn't exactly one well-formed
+// JSON object must fail. The looser variant silently stripped trailing
+// bytes or accepted truncated objects, which let rewrite paths operate
+// on partial payloads.
+func TestFlattenObject_RejectsMalformedAndTrailingGarbage(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"trailing_garbage", `{"a":1}garbage`},
+		{"trailing_garbage_multifield", `{"a":1,"b":2}xyz`},
+		{"concatenated_objects", `{"a":1}{"b":2}`},
+		{"truncated_no_close", `{"a":1`},
+		{"truncated_after_comma", `{"a":1,`},
+		{"truncated_after_key", `{"a"`},
+		{"only_open_brace", `{`},
+		{"trailing_value", `{"a":1}null`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, ok := jsonpatch.FlattenObject([]byte(tc.input)); ok {
+				t.Errorf("FlattenObject(%q) returned ok=true; expected rejection", tc.input)
+			}
+		})
+	}
+}
+
+func TestFlattenObject_AcceptsTrailingWhitespace(t *testing.T) {
+	cases := []string{
+		`{"a":1}`,
+		`{"a":1}   `,
+		`{"a":1}` + "\n",
+		`  {"a":1}  `,
+		`{}`,
+	}
+	for _, c := range cases {
+		fields, ok := jsonpatch.FlattenObject([]byte(c))
+		if !ok {
+			t.Errorf("FlattenObject(%q) returned ok=false; expected success", c)
+			continue
+		}
+		// Empty object should produce zero fields; everything else has the "a":1 pair.
+		if c == `{}` {
+			if len(fields) != 0 {
+				t.Errorf("FlattenObject(%q): expected 0 fields, got %d", c, len(fields))
+			}
+			continue
+		}
+		if len(fields) != 1 || fields[0].Key != "a" || string(fields[0].Value) != `1` {
+			t.Errorf("FlattenObject(%q): unexpected fields %v", c, fields)
+		}
+	}
+}
+
 func TestMarshalObjectFields_RoundTripPreservesKeyOrder(t *testing.T) {
 	in := []byte(`{"zeta":"first","alpha":1,"mu":true}`)
 	fields, ok := jsonpatch.FlattenObject(in)
