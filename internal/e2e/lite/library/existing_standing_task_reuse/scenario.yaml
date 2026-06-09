@@ -67,13 +67,14 @@ budget:
 
 expectations:
   hard:
-    # The discovery happened: the agent reached for GET /control/tasks
-    # before doing the work, which is the whole point of the new
-    # prompt directive.
-    - count:
-        series: control.tasks_listed
-        gte: 1
     # No fresh task was created — the standing task covered the ask.
+    # Note: we intentionally don't assert control.tasks_listed >= 1.
+    # With the ACTIVE TASKS snapshot now in the system prompt at
+    # conversation start, an agent can recognize the seeded standing
+    # task purely from the snapshot and skip the round-trip — both
+    # paths are correct, so the hard assertions are the ones that
+    # capture the actual reuse behavior (no new approval, no proxy
+    # block).
     - count:
         series: approvals.allow_session
         eq: 0

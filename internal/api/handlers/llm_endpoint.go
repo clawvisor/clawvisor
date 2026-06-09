@@ -730,6 +730,15 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			return rules
 		}
+		// activeTasksSnapshotLoader runs once on first-turn injection and
+		// renders the conversation-start snapshot of the agent's active
+		// tasks. The sentinel-based dedup in InjectControlNoticeWith-
+		// Snapshot keeps the rendered string frozen across later turns,
+		// so prompt cache stays byte-stable even as task state drifts.
+		// Errors are non-fatal — the agent falls back to GET /control/tasks.
+		activeTasksSnapshotLoader := func(ctx context.Context, userID, agentID string) string {
+			return h.renderActiveTasksSnapshot(ctx, userID, agentID)
+		}
 		pipeReq := &pipelineReadOnlyRequest{
 			provider: provider,
 			httpReq:  r,
@@ -737,7 +746,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			userID:   agent.UserID,
 			agentID:  agent.ID,
 		}
-		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewControlNotice(h.ControlBaseURL, availableToolsFn, toolRulesLoader))
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewControlNoticeWithSnapshot(h.ControlBaseURL, availableToolsFn, toolRulesLoader, activeTasksSnapshotLoader))
 		if err != nil {
 			auditStatus = http.StatusInternalServerError
 			auditDecide = "deny"
@@ -2789,6 +2798,58 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 		egressRules = []*store.RuntimePolicyRule{}
 	}
 	return candidateTasks, toolRules, egressRules, nil
+}
+
+// renderActiveTasksSnapshot returns the compact bullet list embedded in
+// the ACTIVE TASKS section of the control notice. The format is one
+// line per task: id-prefix · purpose · lifetime [· expiry]. Returns ""
+// when the agent has no active tasks, in which case the control-notice
+// renderer emits the empty-state copy ("none active for you, skip the
+// list call"). Errors are swallowed — a snapshot failure shouldn't
+// block the notice; the agent can always fall back to GET /control/tasks.
+func (h *LLMEndpointHandler) renderActiveTasksSnapshot(ctx context.Context, userID, agentID string) string {
+	if h == nil || h.Store == nil || userID == "" || agentID == "" {
+		return ""
+	}
+	tasks, _, err := h.Store.ListTasks(ctx, userID, store.TaskFilter{ActiveOnly: true})
+	if err != nil {
+		h.Logger.WarnContext(ctx, "active-tasks snapshot skipped: list failed",
+			"user_id", userID, "agent_id", agentID, "err", err.Error())
+		return ""
+	}
+	now := time.Now().UTC()
+	const maxTasks = 10 // cap the snapshot so a runaway task count can't bloat the system prompt
+	var lines []string
+	for _, t := range tasks {
+		if t == nil || t.AgentID != agentID || t.Status != "active" {
+			continue
+		}
+		if t.ExpiresAt != nil && !t.ExpiresAt.After(now) {
+			continue
+		}
+		idPrefix := t.ID
+		if len(idPrefix) > 8 {
+			idPrefix = idPrefix[:8]
+		}
+		purpose := strings.TrimSpace(strings.ReplaceAll(t.Purpose, "\n", " "))
+		if len(purpose) > 120 {
+			purpose = purpose[:117] + "…"
+		}
+		expiry := "never"
+		if t.ExpiresAt != nil {
+			expiry = t.ExpiresAt.UTC().Format("2006-01-02T15:04Z")
+		}
+		lifetime := t.Lifetime
+		if lifetime == "" {
+			lifetime = "session"
+		}
+		lines = append(lines, fmt.Sprintf("  - %s · %s · lifetime=%s · expires=%s", idPrefix, purpose, lifetime, expiry))
+		if len(lines) >= maxTasks {
+			lines = append(lines, fmt.Sprintf("  - (+%d more — GET the tasks endpoint to see the rest)", len(tasks)-len(lines)+1))
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (h *LLMEndpointHandler) checkedOutTaskID(ctx context.Context, agent *store.Agent, conversationID string, candidateTasks []*store.Task) (string, error) {

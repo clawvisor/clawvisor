@@ -48,6 +48,8 @@ var scenarioDirs = []string{
 	"existing_standing_task_reuse",
 	"existing_task_referenced_by_user",
 	"existing_task_scope_mismatch_creates_new",
+	"start_of_conversation_zero_tasks",
+	"credentialed_standing_task_reuse",
 	"script_session_credentialed_fanout",
 	"script_session_scope_mismatch_recovery",
 	"script_session_inline_fanout",

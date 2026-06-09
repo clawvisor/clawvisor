@@ -23,14 +23,28 @@ const (
 )
 
 func ControlNotice(controlBaseURL string, availableTools []string) string {
-	return controlNotice(controlBaseURL, availableTools, nil)
+	return controlNotice(controlBaseURL, availableTools, nil, "")
 }
 
 func ControlNoticeWithPolicy(controlBaseURL string, availableTools []string, toolRules []*store.RuntimePolicyRule) string {
-	return controlNotice(controlBaseURL, availableTools, toolRules)
+	return controlNotice(controlBaseURL, availableTools, toolRules, "")
 }
 
-func controlNotice(controlBaseURL string, availableTools []string, toolRules []*store.RuntimePolicyRule) string {
+// ControlNoticeWithSnapshot extends ControlNoticeWithPolicy with an
+// ACTIVE TASKS snapshot describing the calling agent's already-approved
+// tasks at conversation start. The snapshot is a "frozen-at-issue-time"
+// hint: the proxy injects it once on the first turn so the agent can
+// answer "is there any chance an existing task covers this?" without a
+// round-trip in the common zero-tasks case. The snapshot is intentionally
+// NOT refreshed on subsequent turns — the existing controlNoticeAlready-
+// Present check skips re-injection so prompt cache stays byte-stable
+// across the conversation. Agents that need live state call
+// GET /control/tasks the same as before.
+func ControlNoticeWithSnapshot(controlBaseURL string, availableTools []string, toolRules []*store.RuntimePolicyRule, activeTasksSnapshot string) string {
+	return controlNotice(controlBaseURL, availableTools, toolRules, activeTasksSnapshot)
+}
+
+func controlNotice(controlBaseURL string, availableTools []string, toolRules []*store.RuntimePolicyRule, activeTasksSnapshot string) string {
 	// Always advertise the synthetic URL. Clawvisor rewrites it to the
 	// real daemon URL transparently and mints fresh auth on every call.
 	// Models that see (or guess) the daemon URL and call it directly
@@ -69,7 +83,9 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"",
 		"SCOPE DRIFT — a new task is needed when the user's follow-up, or what you've discovered while executing, SHIFTS the work outside the active task's scope: tools you didn't declare in `expected_tools`, files or services unrelated to the task's stated purpose, or a genuinely different goal. Adjacent edits that continue the same purpose stay under the existing task — that's iteration, not drift. (E.g., a \"rename Foo to Bar in src/foo.go\" task covers updating doc comments and fixing related typos in the same file with the same Edit tool. \"Now also delete src/helpers.go\" or \"now send a Slack message\" are scope shifts and need a new task.) When the new ask is genuinely different, POST a new task before continuing — don't quietly run drifted work under the old task's authorization, and don't wait for a tool call to be refused.",
 		"",
-		"REUSE EXISTING TASKS — before POSTing a new task, GET " + tasksURL + " IF there is a reasonable chance you already have an active task covering this work. The common cases: (1) the user is describing a RECURRING activity (\"each morning\", \"every PR\", \"as part of my daily/weekly…\") — they likely already approved a `standing` task for this in a prior conversation; (2) the user references a workflow you set up earlier (\"keep going with the Gmail triage\", \"continue the deployment review\"); (3) you're mid-conversation and want to confirm what the active task actually authorizes before doing borderline work. SKIP the list when the request is clearly new ground — a one-shot ask the user just described, with no signal of prior approval — since needless listing slows you down and noises up the audit trail. If the listing returns a task whose `expected_tools`, `authorized_actions`, and `expected_egress` all cover what you need to do, use that task directly: no new POST. When multiple matches are active, POST " + taskCheckoutURL + " to focus the right one. Checkout is routing only; the existing task's scope is what authorizes the work.",
+		"REUSE EXISTING TASKS — before POSTing a new task, check the ACTIVE TASKS snapshot just below. The snapshot is a one-shot list of every task already in active scope for you at conversation START; use it as the first cut on \"do I already have approval for this?\". If the snapshot shows ZERO tasks, skip GET " + tasksURL + " entirely and create the task you need — there is nothing to discover. If the snapshot shows tasks whose purposes plausibly cover the user's ask, GET " + tasksURL + " for full detail (the per-task `expected_tools`, `authorized_actions`, `expected_egress`, and any minted `autovault_*` placeholders bound to it) before POSTing anything new. The snapshot is frozen at the first turn for prompt-cache stability — if you've been working a long time, or you just completed/expanded a task and want to confirm live state, GET " + tasksURL + " to refresh. When multiple snapshot tasks match, POST " + taskCheckoutURL + " to focus the right one; checkout is routing only, the existing task's scope is what authorizes the work.",
+		"",
+		formatActiveTasksSnapshot(activeTasksSnapshot),
 		"",
 		"Task endpoint:",
 		"  - Interactive user present: POST " + tasksURLInline,
@@ -132,6 +148,20 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"   \"expires_in_seconds\":600}",
 		"  JSON",
 	}, "\n")
+}
+
+// formatActiveTasksSnapshot wraps the caller-supplied snapshot in the
+// canonical ACTIVE TASKS heading so the agent can recognize it. The
+// caller is expected to render the per-task lines; this helper just
+// supplies the framing and the empty-state fallback. The header text
+// is stable across calls so the sentinel-based dedup in
+// controlNoticeAlreadyPresent still catches it on subsequent turns.
+func formatActiveTasksSnapshot(snapshot string) string {
+	body := strings.TrimSpace(snapshot)
+	if body == "" {
+		return "ACTIVE TASKS — (none active for you at conversation start). Skip the REUSE EXISTING TASKS list call entirely; there is nothing to discover."
+	}
+	return "ACTIVE TASKS — already in active scope for you at conversation start. Use this as the first cut; GET the tasks endpoint for full scope detail + placeholders when a match looks plausible.\n" + body
 }
 
 func controlPlaneToolRule(shellTool string) string {
@@ -370,10 +400,17 @@ func InjectControlNotice(provider conversation.Provider, body []byte, controlBas
 }
 
 func InjectControlNoticeWithPolicy(provider conversation.Provider, body []byte, controlBaseURL string, availableTools []string, toolRules []*store.RuntimePolicyRule) ([]byte, bool, error) {
+	return InjectControlNoticeWithSnapshot(provider, body, controlBaseURL, availableTools, toolRules, "")
+}
+
+// InjectControlNoticeWithSnapshot is the snapshot-aware injector. It is
+// the path the lite-proxy uses today; the legacy InjectControlNotice* /
+// WithPolicy entry points delegate here with an empty snapshot.
+func InjectControlNoticeWithSnapshot(provider conversation.Provider, body []byte, controlBaseURL string, availableTools []string, toolRules []*store.RuntimePolicyRule, activeTasksSnapshot string) ([]byte, bool, error) {
 	if controlNoticeAlreadyPresent(provider, body) {
 		return body, false, nil
 	}
-	notice := ControlNoticeWithPolicy(controlBaseURL, availableTools, toolRules)
+	notice := ControlNoticeWithSnapshot(controlBaseURL, availableTools, toolRules, activeTasksSnapshot)
 	switch provider {
 	case conversation.ProviderAnthropic:
 		return injectAnthropicControlNotice(body, notice)

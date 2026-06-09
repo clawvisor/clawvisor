@@ -28,9 +28,10 @@ import (
 //     callbacks provided at construction. The handler owns the loaders
 //     so the policy stays decoupled from the Store.
 type ControlNotice struct {
-	controlBaseURL string
-	availableTools AvailableToolsFn
-	loadToolRules  ToolRulesLoader
+	controlBaseURL   string
+	availableTools   AvailableToolsFn
+	loadToolRules    ToolRulesLoader
+	loadActiveTasks  ActiveTasksSnapshotLoader
 }
 
 // AvailableToolsFn extracts the declared tool names from a request.
@@ -43,13 +44,32 @@ type AvailableToolsFn func(provider conversation.Provider, body []byte) []string
 // remains non-fatal.
 type ToolRulesLoader func(ctx context.Context, userID, agentID string) []*store.RuntimePolicyRule
 
+// ActiveTasksSnapshotLoader renders the conversation-start snapshot of
+// active tasks for the calling agent. The string is embedded verbatim
+// in the ACTIVE TASKS section of the control notice; an empty string is
+// fine and renders the empty-state copy. Returns "" on best-effort
+// error so notice injection remains non-fatal — the agent just falls
+// back to GET /control/tasks if it cares about live state.
+type ActiveTasksSnapshotLoader func(ctx context.Context, userID, agentID string) string
+
 // NewControlNotice constructs the policy. controlBaseURL "" skips.
-// availableTools and loadToolRules nil → Skip on every request.
+// availableTools and loadToolRules nil → Skip on every request. The
+// snapshot loader is optional — pass nil to inject the notice without
+// the ACTIVE TASKS section (legacy callers).
 func NewControlNotice(controlBaseURL string, availableTools AvailableToolsFn, loadToolRules ToolRulesLoader) *ControlNotice {
+	return NewControlNoticeWithSnapshot(controlBaseURL, availableTools, loadToolRules, nil)
+}
+
+// NewControlNoticeWithSnapshot is the snapshot-aware constructor. The
+// snapshot loader runs once on first-turn injection (the existing
+// sentinel-based dedup in InjectControlNoticeWithSnapshot keeps the
+// snapshot frozen for cache stability on later turns).
+func NewControlNoticeWithSnapshot(controlBaseURL string, availableTools AvailableToolsFn, loadToolRules ToolRulesLoader, loadActiveTasks ActiveTasksSnapshotLoader) *ControlNotice {
 	return &ControlNotice{
-		controlBaseURL: controlBaseURL,
-		availableTools: availableTools,
-		loadToolRules:  loadToolRules,
+		controlBaseURL:  controlBaseURL,
+		availableTools:  availableTools,
+		loadToolRules:   loadToolRules,
+		loadActiveTasks: loadActiveTasks,
 	}
 }
 
@@ -75,7 +95,12 @@ func (p *ControlNotice) Preprocess(ctx context.Context, req pipeline.ReadOnlyReq
 		rules = p.loadToolRules(ctx, req.UserID(), req.AgentID())
 	}
 
-	injected, modified, err := controltool.InjectControlNoticeWithPolicy(req.Provider(), req.RawBody(), p.controlBaseURL, tools, rules)
+	var activeTasks string
+	if p.loadActiveTasks != nil {
+		activeTasks = p.loadActiveTasks(ctx, req.UserID(), req.AgentID())
+	}
+
+	injected, modified, err := controltool.InjectControlNoticeWithSnapshot(req.Provider(), req.RawBody(), p.controlBaseURL, tools, rules, activeTasks)
 	if err != nil {
 		return pipeline.RequestVerdict{
 			Outcome: pipeline.OutcomeDeny,

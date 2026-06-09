@@ -60,13 +60,21 @@ type VaultItem struct {
 // conversation. Only the fields scenarios actually need to set are
 // exposed; the harness fills in id/user/agent/status/timestamps.
 type PreseededTask struct {
-	Purpose                string                  `yaml:"purpose"`
-	Lifetime               string                  `yaml:"lifetime,omitempty"`
-	SchemaVersion          int                     `yaml:"schema_version,omitempty"`
-	IntentVerificationMode string                  `yaml:"intent_verification_mode,omitempty"`
-	ExpectedUse            string                  `yaml:"expected_use,omitempty"`
-	ExpectedTools          []PreseededExpectedTool `yaml:"expected_tools,omitempty"`
-	ExpectedEgress         []PreseededEgress       `yaml:"expected_egress,omitempty"`
+	Purpose                string                   `yaml:"purpose"`
+	Lifetime               string                   `yaml:"lifetime,omitempty"`
+	SchemaVersion          int                      `yaml:"schema_version,omitempty"`
+	IntentVerificationMode string                   `yaml:"intent_verification_mode,omitempty"`
+	ExpectedUse            string                   `yaml:"expected_use,omitempty"`
+	ExpectedTools          []PreseededExpectedTool  `yaml:"expected_tools,omitempty"`
+	ExpectedEgress         []PreseededEgress        `yaml:"expected_egress,omitempty"`
+	// Placeholders are autovault_* handles bound to this task — the
+	// minted handles a prior conversation would have produced. Seed
+	// these alongside a credentialed standing task so an agent that
+	// discovers the task can use its placeholder directly without
+	// re-POSTing for a fresh mint. The vault_item_id must match a
+	// scenario.vault_items entry so the resolver can swap to a real
+	// (fake) secret at curl time.
+	Placeholders []PreseededPlaceholder `yaml:"placeholders,omitempty"`
 }
 
 // PreseededExpectedTool is the minimal shape used for an expected_tools
@@ -82,6 +90,15 @@ type PreseededExpectedTool struct {
 type PreseededEgress struct {
 	Host string `yaml:"host"`
 	Why  string `yaml:"why"`
+}
+
+// PreseededPlaceholder is the minimal RuntimePlaceholder shape used to
+// model a credential placeholder a prior conversation minted. The
+// harness binds it to its parent PreseededTask at seed time.
+type PreseededPlaceholder struct {
+	Placeholder string `yaml:"placeholder"`
+	ServiceID   string `yaml:"service_id"`
+	VaultItemID string `yaml:"vault_item_id,omitempty"`
 }
 
 // AgentSpec carries advisory fields about the agent identity. Tools

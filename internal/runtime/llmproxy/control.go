@@ -32,6 +32,10 @@ func InjectControlNoticeWithPolicy(provider conversation.Provider, body []byte, 
 	return controltool.InjectControlNoticeWithPolicy(provider, body, controlBaseURL, availableTools, toolRules)
 }
 
+func InjectControlNoticeWithSnapshot(provider conversation.Provider, body []byte, controlBaseURL string, availableTools []string, toolRules []*store.RuntimePolicyRule, activeTasksSnapshot string) ([]byte, bool, error) {
+	return controltool.InjectControlNoticeWithSnapshot(provider, body, controlBaseURL, availableTools, toolRules, activeTasksSnapshot)
+}
+
 func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, callerToken string) ([]byte, inspector.Verdict, bool, error) {
 	return controltool.RewriteControlToolUse(t, controlBaseURL, callerToken)
 }

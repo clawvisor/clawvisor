@@ -137,16 +137,31 @@ func (h *LLMControlHandler) Failure(w http.ResponseWriter, r *http.Request) {
 }
 
 type controlTaskSummary struct {
-	ID                string              `json:"id"`
-	Purpose           string              `json:"purpose"`
-	Status            string              `json:"status"`
-	Lifetime          string              `json:"lifetime,omitempty"`
-	ExpiresAt         *time.Time          `json:"expires_at,omitempty"`
-	AuthorizedActions []store.TaskAction  `json:"authorized_actions,omitempty"`
-	PlannedCalls      []store.PlannedCall `json:"planned_calls,omitempty"`
-	ExpectedTools     json.RawMessage     `json:"expected_tools,omitempty"`
-	ExpectedEgress    json.RawMessage     `json:"expected_egress,omitempty"`
-	CheckedOut        bool                `json:"checked_out"`
+	ID                string                     `json:"id"`
+	Purpose           string                     `json:"purpose"`
+	Status            string                     `json:"status"`
+	Lifetime          string                     `json:"lifetime,omitempty"`
+	ExpiresAt         *time.Time                 `json:"expires_at,omitempty"`
+	AuthorizedActions []store.TaskAction         `json:"authorized_actions,omitempty"`
+	PlannedCalls      []store.PlannedCall        `json:"planned_calls,omitempty"`
+	ExpectedTools     json.RawMessage            `json:"expected_tools,omitempty"`
+	ExpectedEgress    json.RawMessage            `json:"expected_egress,omitempty"`
+	Placeholders      []controlTaskPlaceholder   `json:"placeholders,omitempty"`
+	CheckedOut        bool                       `json:"checked_out"`
+}
+
+// controlTaskPlaceholder is the per-task autovault_* handle list returned
+// alongside a discovered task, so an agent that finds a credentialed
+// standing task from a prior conversation can use the placeholder
+// directly instead of having to re-POST the task to mint a fresh one.
+// The placeholder itself is not a secret — Clawvisor substitutes the
+// real credential at proxy time — so it is safe to surface here on the
+// same channel that already returns task scope.
+type controlTaskPlaceholder struct {
+	Placeholder string     `json:"placeholder"`
+	ServiceID   string     `json:"service_id,omitempty"`
+	VaultItemID string     `json:"vault_item_id,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
 
 func (h *LLMControlHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
@@ -173,6 +188,36 @@ func (h *LLMControlHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 			"message": "could not list active tasks",
 		})
 		return
+	}
+
+	// Pull live placeholders for this user once and bucket them by
+	// task_id, filtered to the calling agent and to handles that are
+	// still good (not revoked, not expired). Errors here are
+	// non-fatal — the listing still returns task scope; the agent
+	// just won't see placeholders this turn.
+	placeholdersByTask := map[string][]controlTaskPlaceholder{}
+	if phs, err := h.Store.ListRuntimePlaceholders(r.Context(), agent.UserID); err == nil {
+		now := time.Now().UTC()
+		for _, ph := range phs {
+			if ph == nil || ph.TaskID == "" {
+				continue
+			}
+			if ph.AgentID != "" && ph.AgentID != agent.ID {
+				continue
+			}
+			if ph.RevokedAt != nil {
+				continue
+			}
+			if ph.ExpiresAt != nil && !ph.ExpiresAt.After(now) {
+				continue
+			}
+			placeholdersByTask[ph.TaskID] = append(placeholdersByTask[ph.TaskID], controlTaskPlaceholder{
+				Placeholder: ph.Placeholder,
+				ServiceID:   ph.ServiceID,
+				VaultItemID: ph.VaultItemID,
+				ExpiresAt:   ph.ExpiresAt,
+			})
+		}
 	}
 
 	checkoutID := ""
@@ -211,6 +256,7 @@ func (h *LLMControlHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 			PlannedCalls:      task.PlannedCalls,
 			ExpectedTools:     task.ExpectedTools,
 			ExpectedEgress:    task.ExpectedEgress,
+			Placeholders:      placeholdersByTask[task.ID],
 			CheckedOut:        checkedOut,
 		})
 	}
@@ -224,7 +270,7 @@ func (h *LLMControlHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		"checkout_unavailable": checkoutUnavailable,
 		"total":                len(summaries),
 		"tasks":                summaries,
-		"next_step":            "If a listed task's expected_tools, authorized_actions, and expected_egress already cover what you need, use it directly — do NOT POST a new task. When multiple tasks match, POST /control/task/checkout with the target task_id to focus one (checkout is routing only; it does not grant new permission). If nothing here matches, POST /control/tasks for fresh approval.",
+		"next_step":            "If a listed task's expected_tools, authorized_actions, and expected_egress already cover what you need, use it directly — do NOT POST a new task. Each task includes any minted autovault_* placeholders bound to it: use those handles verbatim in subsequent curls without re-creating the task. When multiple tasks match, POST /control/task/checkout with the target task_id to focus one (checkout is routing only; it does not grant new permission). If nothing here matches, POST /control/tasks for fresh approval.",
 	})
 }
 

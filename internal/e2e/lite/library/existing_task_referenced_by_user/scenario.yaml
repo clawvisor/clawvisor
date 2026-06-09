@@ -66,11 +66,11 @@ budget:
 
 expectations:
   hard:
-    # Discovery happened.
-    - count:
-        series: control.tasks_listed
-        gte: 1
     # No new task / approval — the seeded sliding task covers it.
+    # control.tasks_listed is intentionally NOT asserted: the ACTIVE
+    # TASKS snapshot in the system prompt may make the listing
+    # round-trip unnecessary. The load-bearing signal is "the agent
+    # did the work without triggering a new approval."
     - count:
         series: approvals.allow_session
         eq: 0

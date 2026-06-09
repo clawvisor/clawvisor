@@ -158,9 +158,11 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 		}
 	}
 
-	if err := seedPreseededTasks(ctx, st, user.ID, agent.ID, scn.PreseededTasks); err != nil {
+	seededPlaceholders, err := seedPreseededTasks(ctx, st, user.ID, agent.ID, scn.PreseededTasks)
+	if err != nil {
 		return nil, err
 	}
+	_ = seededPlaceholders // currently unused beyond seeding; reserved for future scenario assertions
 
 	logger := slog.New(slog.NewTextHandler(testLogWriter{t: t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
@@ -445,15 +447,20 @@ func (h *Harness) EndpointURL() string {
 // active task owned by the scenario's user+agent, modeling an approval
 // the user granted in some prior conversation. Scope-relevant fields
 // (purpose, lifetime, expected_tools, expected_egress) come from the
-// YAML; everything else is filled in here.
-func seedPreseededTasks(ctx context.Context, st store.Store, userID, agentID string, seeds []PreseededTask) error {
+// YAML; everything else is filled in here. Any PreseededPlaceholder
+// entries are written as RuntimePlaceholder rows bound to the just-
+// created task — so a discovery scenario can model "the prior
+// conversation also minted a credential handle for this task." Returns
+// the list of seeded placeholder strings for downstream assertion.
+func seedPreseededTasks(ctx context.Context, st store.Store, userID, agentID string, seeds []PreseededTask) ([]string, error) {
 	if len(seeds) == 0 {
-		return nil
+		return nil, nil
 	}
 	now := time.Now().UTC()
+	var seededPlaceholders []string
 	for i, seed := range seeds {
 		if strings.TrimSpace(seed.Purpose) == "" {
-			return fmt.Errorf("preseeded_tasks[%d]: purpose is required", i)
+			return nil, fmt.Errorf("preseeded_tasks[%d]: purpose is required", i)
 		}
 		lifetime := seed.Lifetime
 		if lifetime == "" {
@@ -485,11 +492,11 @@ func seedPreseededTasks(ctx context.Context, st store.Store, userID, agentID str
 		}
 		expectedToolsJSON, err := json.Marshal(canonTools)
 		if err != nil {
-			return fmt.Errorf("preseeded_tasks[%d]: marshal expected_tools: %w", i, err)
+			return nil, fmt.Errorf("preseeded_tasks[%d]: marshal expected_tools: %w", i, err)
 		}
 		expectedEgressJSON, err := json.Marshal(canonEgress)
 		if err != nil {
-			return fmt.Errorf("preseeded_tasks[%d]: marshal expected_egress: %w", i, err)
+			return nil, fmt.Errorf("preseeded_tasks[%d]: marshal expected_egress: %w", i, err)
 		}
 		approvedAt := now
 		task := &store.Task{
@@ -507,10 +514,27 @@ func seedPreseededTasks(ctx context.Context, st store.Store, userID, agentID str
 			ApprovalSource:         "manual",
 		}
 		if err := st.CreateTask(ctx, task); err != nil {
-			return fmt.Errorf("preseeded_tasks[%d]: %w", i, err)
+			return nil, fmt.Errorf("preseeded_tasks[%d]: %w", i, err)
+		}
+		for j, ph := range seed.Placeholders {
+			if strings.TrimSpace(ph.Placeholder) == "" {
+				return nil, fmt.Errorf("preseeded_tasks[%d].placeholders[%d]: placeholder is required", i, j)
+			}
+			placeholder := &store.RuntimePlaceholder{
+				Placeholder: ph.Placeholder,
+				UserID:      userID,
+				AgentID:     agentID,
+				ServiceID:   ph.ServiceID,
+				VaultItemID: ph.VaultItemID,
+				TaskID:      task.ID,
+			}
+			if err := st.CreateRuntimePlaceholder(ctx, placeholder); err != nil {
+				return nil, fmt.Errorf("preseeded_tasks[%d].placeholders[%d]: %w", i, j, err)
+			}
+			seededPlaceholders = append(seededPlaceholders, ph.Placeholder)
 		}
 	}
-	return nil
+	return seededPlaceholders, nil
 }
 
 // CountActiveTasksForAgent reports how many active tasks belong to the

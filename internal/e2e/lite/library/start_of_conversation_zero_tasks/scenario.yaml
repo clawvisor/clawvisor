@@ -1,0 +1,58 @@
+id: start_of_conversation_zero_tasks
+description: |
+  Proves the ACTIVE TASKS snapshot in the system prompt eliminates the
+  round-trip in the common zero-tasks case. No preseeded_tasks, so the
+  snapshot the proxy injects on turn 1 renders the empty-state copy
+  ("none active for you at conversation start. Skip the REUSE EXISTING
+  TASKS list call entirely; there is nothing to discover.").
+
+  The user asks for clear new-ground work (write a one-paragraph file).
+  A correctly-behaving agent reads the snapshot, sees "none active",
+  and skips GET /control/tasks entirely — going straight to POSTing a
+  new task.
+
+  Failure modes this catches:
+    - Agent ignores the snapshot and calls GET /control/tasks
+      anyway, wasting the round-trip the snapshot was meant to save.
+    - Agent treats the empty-state copy as "I should still confirm"
+      and lists defensively.
+
+agent:
+  name: start-of-conversation-zero-tasks-agent
+
+script:
+  - say: |
+      Create workspace/notes/intro.md with a one-paragraph intro
+      describing a fictional project called Foo. Make up the content;
+      it just needs to be a real paragraph (not a placeholder).
+    approval_floor: 1
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns_per_step: 12
+  max_tool_calls_total: 20
+  wall_clock_seconds: 240
+
+expectations:
+  hard:
+    # The whole point of the snapshot: zero tasks at start should
+    # mean zero listing round-trips. Any value > 0 is a regression.
+    - count:
+        series: control.tasks_listed
+        eq: 0
+    # Exactly one new task created (and approved) for the intro file.
+    - count:
+        series: approvals.allow_session
+        eq: 1
+    - count:
+        series: lite_proxy.tool_use.block
+        eq: 0
+  soft:
+    - "Agent read the ACTIVE TASKS snapshot's empty-state copy, skipped the discovery round-trip entirely, POSTed a single task scoping Write (or apply_patch), and wrote workspace/notes/intro.md in one approval cycle."
