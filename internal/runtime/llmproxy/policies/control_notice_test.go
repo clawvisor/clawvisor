@@ -81,6 +81,48 @@ func TestControlNotice_InjectsWhenGatesPass(t *testing.T) {
 	}
 }
 
+// TestControlNotice_EarlyExitWhenNoticeAlreadyPresent pins the
+// performance fix: on turns 2+ the client returns the system prompt
+// with the sentinel already pinned, and Preprocess must short-circuit
+// before invoking the tool-rules / active-tasks loaders. Without the
+// early exit those loaders run on every turn and the result is
+// thrown away by the dedup inside InjectControlNoticeWithSnapshot.
+func TestControlNotice_EarlyExitWhenNoticeAlreadyPresent(t *testing.T) {
+	toolRulesCalls := 0
+	loadToolRules := func(_ context.Context, _, _ string) []*store.RuntimePolicyRule {
+		toolRulesCalls++
+		return nil
+	}
+	activeTasksCalls := 0
+	loadActiveTasks := func(_ context.Context, _, _ string) string {
+		activeTasksCalls++
+		return "  - 00000000 · purpose=\"stale\" · lifetime=standing · expires=never"
+	}
+	p := policies.NewControlNoticeWithSnapshot("http://localhost:25297", oneToolAvailable, loadToolRules, loadActiveTasks)
+
+	// System prompt already carries the sentinel — same shape as a
+	// second-turn request after the first turn injected the notice.
+	body := `{"model":"claude-sonnet-4","tools":[{"name":"Bash"}],"system":"Clawvisor proxy-lite control plane.\nrest of stale notice","messages":[]}`
+	req := newTestRequestForControlNotice(body)
+	mut := &recordingRequestMutator{}
+	verdict, err := p.Preprocess(context.Background(), req, mut)
+	if err != nil {
+		t.Fatalf("Preprocess: %v", err)
+	}
+	if verdict.Outcome != pipeline.OutcomeSkip {
+		t.Fatalf("Outcome = %q, want Skip", verdict.Outcome)
+	}
+	if toolRulesCalls != 0 {
+		t.Errorf("loadToolRules invoked %d times despite sentinel-present early-exit", toolRulesCalls)
+	}
+	if activeTasksCalls != 0 {
+		t.Errorf("loadActiveTasks invoked %d times despite sentinel-present early-exit", activeTasksCalls)
+	}
+	if len(mut.ReplaceBodyCalls) != 0 {
+		t.Errorf("ReplaceBody invoked %d times on dedup; want 0", len(mut.ReplaceBodyCalls))
+	}
+}
+
 func TestControlNotice_DenyKeepsRawErrorInAuditOnly(t *testing.T) {
 	p := policies.NewControlNotice("http://localhost:25297", oneToolAvailable, noopToolRules)
 	req := newTestRequestForControlNotice(`{not valid json`)

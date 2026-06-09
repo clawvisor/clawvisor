@@ -84,6 +84,14 @@ func (p *ControlNotice) Preprocess(ctx context.Context, req pipeline.ReadOnlyReq
 	if h := req.HTTPRequest(); h != nil && strings.HasSuffix(h.URL.Path, "/count_tokens") {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	}
+	// Sentinel-based early exit: turn 1 injects the notice and pins
+	// the sentinel into the system prompt; turn 2+ already has it, so
+	// InjectControlNoticeWithSnapshot below would no-op anyway. Bail
+	// here so we don't pay for loadToolRules / loadActiveTasks DB
+	// reads on every later turn when the result will be discarded.
+	if controltool.ControlNoticeAlreadyPresent(req.Provider(), req.RawBody()) {
+		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeSkip}, nil
+	}
 
 	tools := p.availableTools(req.Provider(), req.RawBody())
 	if len(tools) == 0 {
