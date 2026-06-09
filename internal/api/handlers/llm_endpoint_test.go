@@ -903,6 +903,101 @@ func TestRewriteJSONStringsDoesNotRewriteKeys(t *testing.T) {
 	}
 }
 
+// TestRewriteJSONStringsPreservesThinkingBlockBytes reproduces the
+// staging failure where Anthropic rejected requests with "thinking or
+// redacted_thinking blocks in the latest assistant message cannot be
+// modified" after a secret_rewrite rule triggered. Re-marshaling a
+// map[string]any alphabetizes object keys, which corrupts the byte
+// sequence Anthropic uses to verify the thinking-block signature.
+func TestRewriteJSONStringsPreservesThinkingBlockBytes(t *testing.T) {
+	thinkingBlock := `{"type":"thinking","thinking":"reasoning step","signature":"sig-abc123"}`
+	body := []byte(`{"model":"claude-opus-4-7","messages":[` +
+		`{"role":"assistant","content":[` +
+		thinkingBlock + `,` +
+		`{"type":"text","text":"see token tok_REDACT_ME for details"}` +
+		`]}` +
+		`]}`)
+	rewritten, modified, err := rewriteJSONStrings(body, map[string]string{
+		"tok_REDACT_ME": "{{vault.token}}",
+	})
+	if err != nil {
+		t.Fatalf("rewriteJSONStrings: %v", err)
+	}
+	if !modified {
+		t.Fatal("expected text-block replacement to register as modified")
+	}
+	if !bytes.Contains(rewritten, []byte(thinkingBlock)) {
+		t.Fatalf("thinking block bytes were modified by rewriteJSONStrings.\n"+
+			"want substring: %s\ngot: %s", thinkingBlock, rewritten)
+	}
+}
+
+// TestRewriteJSONStringsDoesNotRewriteInsideThinking confirms that
+// secret values appearing inside a thinking block's text are NOT
+// substituted. Substitution there would change the thinking-block bytes
+// the same way key reordering does, breaking signature verification.
+// The proxy can't safely redact the thinking content the model already
+// emitted; it must pass it back verbatim.
+func TestRewriteJSONStringsDoesNotRewriteInsideThinking(t *testing.T) {
+	thinkingBlock := `{"type":"thinking","thinking":"I considered tok_REDACT_ME carefully","signature":"sig-xyz"}`
+	body := []byte(`{"messages":[{"role":"assistant","content":[` + thinkingBlock + `]}]}`)
+	rewritten, modified, err := rewriteJSONStrings(body, map[string]string{
+		"tok_REDACT_ME": "{{vault.token}}",
+	})
+	if err != nil {
+		t.Fatalf("rewriteJSONStrings: %v", err)
+	}
+	if modified {
+		t.Fatalf("must not modify body when the only match is inside a thinking block: %s", rewritten)
+	}
+	if !bytes.Contains(rewritten, []byte(thinkingBlock)) {
+		t.Fatalf("thinking block bytes changed: %s", rewritten)
+	}
+}
+
+// TestRewriteJSONStringsPreservesRedactedThinkingBytes covers the
+// redacted_thinking variant (Anthropic returns these when thinking
+// content is filtered; same byte-fidelity contract as thinking blocks).
+func TestRewriteJSONStringsPreservesRedactedThinkingBytes(t *testing.T) {
+	redacted := `{"type":"redacted_thinking","data":"opaque-tok_REDACT_ME-payload"}`
+	body := []byte(`{"messages":[{"role":"assistant","content":[` + redacted +
+		`,{"type":"text","text":"surface tok_REDACT_ME mention"}]}]}`)
+	rewritten, modified, err := rewriteJSONStrings(body, map[string]string{
+		"tok_REDACT_ME": "{{vault.token}}",
+	})
+	if err != nil {
+		t.Fatalf("rewriteJSONStrings: %v", err)
+	}
+	if !modified {
+		t.Fatal("expected text-block replacement to register as modified")
+	}
+	if !bytes.Contains(rewritten, []byte(redacted)) {
+		t.Fatalf("redacted_thinking block bytes changed: %s", rewritten)
+	}
+}
+
+// TestRewriteJSONStringsPreservesKeyOrderInRewrittenObjects locks in
+// the byte-faithful invariant that even when an object is rewritten
+// (because a string value inside it changed), its sibling keys keep
+// their original source order. Re-marshaling via map[string]any
+// alphabetizes; the byte-faithful walker must not.
+func TestRewriteJSONStringsPreservesKeyOrderInRewrittenObjects(t *testing.T) {
+	body := []byte(`{"zeta":"see tok_REDACT_ME here","alpha":1,"mu":true}`)
+	rewritten, modified, err := rewriteJSONStrings(body, map[string]string{
+		"tok_REDACT_ME": "{{vault.token}}",
+	})
+	if err != nil {
+		t.Fatalf("rewriteJSONStrings: %v", err)
+	}
+	if !modified {
+		t.Fatal("expected modification")
+	}
+	want := `{"zeta":"see {{vault.token}} here","alpha":1,"mu":true}`
+	if string(rewritten) != want {
+		t.Fatalf("key order changed.\nwant: %s\ngot:  %s", want, rewritten)
+	}
+}
+
 func TestLLMEndpoint_InboundSecretAllowOnceAppliesRememberedRewrite(t *testing.T) {
 	var seenBody []byte
 	upstreamHits := 0
