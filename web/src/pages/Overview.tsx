@@ -8,6 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recha
 import { serviceName, actionName } from '../lib/services'
 import { isLocalHost } from '../lib/env'
 import CountdownTimer from '../components/CountdownTimer'
+import SetupChecklist from '../components/SetupChecklist'
 import TaskCard from '../components/TaskCard'
 import VerificationIcon from '../components/VerificationIcon'
 
@@ -193,6 +194,8 @@ export default function Overview() {
           <button onClick={() => setDeepLinkResult(null)} className="text-brand text-xs hover:underline">Dismiss</button>
         </div>
       )}
+
+      <SetupChecklist variant="compact" />
 
       {runtimeActivityUI && runtimeStatus?.enabled && (
         <RuntimePolicyCard status={runtimeStatus} activeSessionCount={activeRuntimeSessions.length} />
