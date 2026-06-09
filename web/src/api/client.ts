@@ -1406,7 +1406,7 @@ export const api = {
       }),
     listToolControls: (agentId: string) =>
       get<{ entries: RuntimeToolControl[]; total: number }>('/api/runtime/tool-controls', { agent_id: agentId }),
-    updateToolControl: (control: { agent_id: string; tool_name: string; action?: 'unset' | 'allow' | 'deny'; scope?: 'global' | 'agent'; read_only_commands_allowed?: boolean; sensitive_file_guard_enabled?: boolean }) =>
+    updateToolControl: (control: { agent_id: string; tool_name: string; action?: 'unset' | 'allow' | 'review' | 'deny'; scope?: 'global' | 'agent'; read_only_commands_allowed?: boolean; sensitive_file_guard_enabled?: boolean }) =>
       put<RuntimeToolControl>('/api/runtime/tool-controls', control),
     createRule: (rule: Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }) =>
       post<RuntimePolicyRule>('/api/runtime/rules', rule),
