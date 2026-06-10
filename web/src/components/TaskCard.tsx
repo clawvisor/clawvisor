@@ -444,6 +444,7 @@ export default function TaskCard({
                   parentTools={task.expected_tools ?? []}
                   parentEgress={task.expected_egress ?? []}
                   parentCredentials={task.required_credentials ?? []}
+                  parentActions={task.authorized_actions ?? []}
                   derivedActions={task.pending_derived_actions ?? []}
                 />
                 {task.pending_expansion.reason && (
@@ -830,12 +831,14 @@ function PendingExpansionEntries({
   parentTools,
   parentEgress,
   parentCredentials,
+  parentActions,
   derivedActions,
 }: {
   pending: PendingTaskExpansion
   parentTools: ExpectedTool[]
   parentEgress: ExpectedEgress[]
   parentCredentials: RequiredCredential[]
+  parentActions: TaskAction[]
   derivedActions: TaskAction[]
 }) {
   const tools = pending.expected_tools ?? []
@@ -878,6 +881,15 @@ function PendingExpansionEntries({
   for (const a of derivedActions) {
     derivedByKey.set(`${a.service}:${a.action}`.toLowerCase(), a)
   }
+  // Parent same-service wildcards: mergeAuthorizedActionsFromExpansion
+  // drops specific derivation when a wildcard covers it, so the
+  // derivedByKey map above won't have the entry. Without this map,
+  // the dashboard renders no badge at all on wildcard-covered actions
+  // — leaving the reviewer guessing about the effective disposition.
+  const parentWildcardByService = new Map<string, TaskAction>()
+  for (const a of parentActions) {
+    if (a.action === '*') parentWildcardByService.set(a.service.trim().toLowerCase(), a)
+  }
 
   const autoExecuteBadge = (toolName: string) => {
     // Mirror the Go helper (internal/tui/screens/helpers.go autoExecuteMarker):
@@ -889,19 +901,33 @@ function PendingExpansionEntries({
     const idx = trimmed.lastIndexOf(':')
     if (idx <= 0 || idx === trimmed.length - 1) return null
     const action = derivedByKey.get(trimmed.toLowerCase())
-    if (!action) return null
-    if (action.auto_execute) {
+    if (action) {
+      if (action.auto_execute) {
+        return (
+          <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-mono text-success">
+            <span className="w-1 h-1 rounded-full bg-success" />auto-execute
+          </span>
+        )
+      }
       return (
-        <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-mono text-success">
-          <span className="w-1 h-1 rounded-full bg-success" />auto-execute
+        <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-mono text-warning">
+          <span className="w-1 h-1 rounded-full bg-warning" />needs per-call approval
         </span>
       )
     }
-    return (
-      <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-mono text-warning">
-        <span className="w-1 h-1 rounded-full bg-warning" />needs per-call approval
-      </span>
-    )
+    const service = trimmed.slice(0, idx).trim().toLowerCase()
+    const wildcard = parentWildcardByService.get(service)
+    if (wildcard) {
+      const disposition = wildcard.auto_execute ? 'auto-execute' : 'per-call approval'
+      const colorClass = wildcard.auto_execute ? 'text-success' : 'text-warning'
+      const dotClass = wildcard.auto_execute ? 'bg-success' : 'bg-warning'
+      return (
+        <span className={`ml-2 inline-flex items-center gap-1 text-[10px] font-mono ${colorClass}`}>
+          <span className={`w-1 h-1 rounded-full ${dotClass}`} />covered by wildcard · {disposition}
+        </span>
+      )
+    }
+    return null
   }
 
   return (

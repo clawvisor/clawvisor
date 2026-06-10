@@ -857,9 +857,22 @@ func formatScopeExpansionMessage(req notify.ScopeExpansionRequest) string {
 // Telegram is the primary mobile approval surface — without this
 // marker, a user widening a task they expected to gate per-call could
 // silently flip to auto-execute for the new action.
+//
+// When the addition is already covered by a parent same-service
+// wildcard, the merger drops the specific derivation; we surface
+// "covered by existing wildcard" with the wildcard's actual
+// AutoExecute disposition so reviewers don't read a misleading
+// "needs per-call approval" pill on an action they already
+// auto-approved through the wildcard.
 func expansionToolDisposition(t notify.ExpansionTool) string {
 	if !t.GatewayAction {
 		return ""
+	}
+	if t.WildcardCovered {
+		if t.AutoExecute {
+			return " <i>(covered by wildcard · auto-execute)</i>"
+		}
+		return " <i>(covered by wildcard · per-call approval)</i>"
 	}
 	if t.AutoExecute {
 		return " <i>(auto-execute)</i>"

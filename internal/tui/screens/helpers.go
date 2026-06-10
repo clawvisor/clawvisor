@@ -112,6 +112,18 @@ func writePendingExpansionSummary(b *strings.Builder, t *client.Task) {
 	for _, a := range t.PendingDerivedActions {
 		derivedByKey[strings.ToLower(a.Service+":"+a.Action)] = a
 	}
+	// Parent same-service wildcards. The server's
+	// mergeAuthorizedActionsFromExpansion DROPS specific derivations
+	// when a wildcard already covers them — so the derived map above
+	// won't have them. Without this lookup, the TUI would show a
+	// "needs per-call approval" pill on an action the user
+	// already auto-approved through the wildcard.
+	parentWildcards := make(map[string]client.TaskAction)
+	for _, a := range t.AuthorizedActions {
+		if a.Action == "*" {
+			parentWildcards[strings.ToLower(strings.TrimSpace(a.Service))] = a
+		}
+	}
 
 	if len(pending.ExpectedTools) > 0 {
 		var tools []struct {
@@ -127,7 +139,7 @@ func writePendingExpansionSummary(b *strings.Builder, t *client.Task) {
 					prefix = "  ~ "
 				}
 				line := prefix + tool.ToolName
-				if marker := autoExecuteMarker(tool.ToolName, derivedByKey); marker != "" {
+				if marker := autoExecuteMarker(tool.ToolName, derivedByKey, parentWildcards); marker != "" {
 					line += "  " + marker
 				}
 				b.WriteString(line + "\n")
@@ -253,9 +265,14 @@ func credentialKey(c client.RequiredCredential) string {
 // entry that maps to a derived gateway scope. Local-only tools (no
 // service:action shape) return "" so the renderer omits the marker.
 //
-// The mapping is server-supplied via PendingDerivedActions — clients
-// don't need to know the RequiresHardcodedApproval table.
-func autoExecuteMarker(toolName string, derived map[string]client.TaskAction) string {
+// Lookup order: PendingDerivedActions first (the specific entry that
+// would be granted), then parent same-service wildcards (the merger
+// drops specific derivation when a wildcard covers them — see
+// mergeAuthorizedActionsFromExpansion). Without the wildcard
+// fallback, an action the user already auto-approved through a
+// wildcard would render here as "needs per-call approval", which is
+// misleading.
+func autoExecuteMarker(toolName string, derived map[string]client.TaskAction, parentWildcards map[string]client.TaskAction) string {
 	// idx is the colon's position inside the trimmed string, so the
 	// "colon is the last rune" guard must compare against the trimmed
 	// length too. An earlier version of this function compared idx
@@ -268,14 +285,20 @@ func autoExecuteMarker(toolName string, derived map[string]client.TaskAction) st
 		return ""
 	}
 	key := strings.ToLower(trimmed)
-	a, ok := derived[key]
-	if !ok {
-		return ""
+	if a, ok := derived[key]; ok {
+		if a.AutoExecute {
+			return tui.StyleGreen.Render("[auto-execute]")
+		}
+		return tui.StyleAmber.Render("[needs per-call approval]")
 	}
-	if a.AutoExecute {
-		return tui.StyleGreen.Render("[auto-execute]")
+	service := strings.ToLower(strings.TrimSpace(trimmed[:idx]))
+	if a, covered := parentWildcards[service]; covered {
+		if a.AutoExecute {
+			return tui.StyleGreen.Render("[covered by wildcard · auto-execute]")
+		}
+		return tui.StyleAmber.Render("[covered by wildcard · per-call]")
 	}
-	return tui.StyleAmber.Render("[needs per-call approval]")
+	return ""
 }
 
 func riskBadge(level string) string {

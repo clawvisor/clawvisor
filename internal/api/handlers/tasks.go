@@ -2319,18 +2319,18 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 // approvers see only the tool_name + why and have no signal whether
 // approve grants unmediated execution. The lookup map is keyed on
 // "service:action" (lowercased).
-func notifyExpansionTools(in []runtimetasks.ExpectedTool, derived map[string]store.TaskAction) []notify.ExpansionTool {
+func notifyExpansionTools(in []runtimetasks.ExpectedTool, lookup derivedActionLookup) []notify.ExpansionTool {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make([]notify.ExpansionTool, len(in))
 	for i, t := range in {
-		out[i] = expansionToolEntry(t, derived)
+		out[i] = expansionToolEntry(t, lookup)
 	}
 	return out
 }
 
-func notifyReplacedExpansionTools(in []runtimetasks.ReplacedExpectedTool, derived map[string]store.TaskAction) []notify.ReplacedExpansionTool {
+func notifyReplacedExpansionTools(in []runtimetasks.ReplacedExpectedTool, lookup derivedActionLookup) []notify.ReplacedExpansionTool {
 	if len(in) == 0 {
 		return nil
 	}
@@ -2338,7 +2338,7 @@ func notifyReplacedExpansionTools(in []runtimetasks.ReplacedExpectedTool, derive
 	for i, r := range in {
 		out[i] = notify.ReplacedExpansionTool{
 			Prior: notify.ExpansionTool{ToolName: r.Prior.ToolName, Why: r.Prior.Why},
-			New:   expansionToolEntry(r.New, derived),
+			New:   expansionToolEntry(r.New, lookup),
 		}
 	}
 	return out
@@ -2346,34 +2346,64 @@ func notifyReplacedExpansionTools(in []runtimetasks.ReplacedExpectedTool, derive
 
 // expansionToolEntry stamps the gateway-action / auto-execute disposition
 // onto an outgoing ExpansionTool. Local-harness tools (no service:action
-// shape) leave both fields false.
-func expansionToolEntry(t runtimetasks.ExpectedTool, derived map[string]store.TaskAction) notify.ExpansionTool {
+// shape) leave the gateway/auto fields zero.
+//
+// When the addition is covered by a parent same-service wildcard the
+// merger DROPS the specific derivation (the wildcard's broader scope
+// already authorizes it); we'd otherwise be left with no derived
+// entry and surfaces would render a misleading "needs per-call
+// approval" pill. Set WildcardCovered=true and inherit the wildcard's
+// AutoExecute so renderers can show the actual effective disposition.
+func expansionToolEntry(t runtimetasks.ExpectedTool, lookup derivedActionLookup) notify.ExpansionTool {
 	entry := notify.ExpansionTool{ToolName: t.ToolName, Why: t.Why}
 	service, action, ok := parseToolNameAsServiceAction(t.ToolName)
 	if !ok {
 		return entry
 	}
 	entry.GatewayAction = true
-	if a, found := derived[authorizedActionKey(service, action)]; found {
+	if a, found := lookup.derived[authorizedActionKey(service, action)]; found {
 		entry.AutoExecute = a.AutoExecute
+		return entry
+	}
+	if a, covered := lookup.wildcardByService[strings.ToLower(strings.TrimSpace(service))]; covered {
+		entry.AutoExecute = a.AutoExecute
+		entry.WildcardCovered = true
 	}
 	return entry
 }
 
+// derivedActionLookup carries the two indices renderers need to label
+// each addition correctly: the per-(service,action) derived entries
+// from the merge, plus the parent's wildcard entries keyed by
+// lowercase service. The wildcard map is what lets the
+// "wildcard-covered" branch in expansionToolEntry surface the
+// correct disposition for additions whose specific derivation was
+// dropped by mergeAuthorizedActionsFromExpansion.
+type derivedActionLookup struct {
+	derived           map[string]store.TaskAction
+	wildcardByService map[string]store.TaskAction
+}
+
 // indexDerivedActionsByKey precomputes the (service, action) →
-// AuthorizedAction lookup for the additions' derived gateway scopes.
-// Used by the notify translation to populate the per-entry auto-execute
-// disposition. Reuses mergeAuthorizedActionsFromExpansion so the
-// notification surface sees the same disposition the approve path
-// will persist. Keyed via authorizedActionKey so the lookup matches
-// regardless of the caller's casing.
-func indexDerivedActionsByKey(parent []store.TaskAction, taskIntentVerification string, additions []runtimetasks.ExpectedTool) map[string]store.TaskAction {
+// AuthorizedAction lookup for the additions' derived gateway scopes
+// AND the parent's same-service wildcard map. Reuses
+// mergeAuthorizedActionsFromExpansion so the notification surface
+// sees the same disposition the approve path will persist. Keyed via
+// authorizedActionKey so the lookup matches regardless of the
+// caller's casing.
+func indexDerivedActionsByKey(parent []store.TaskAction, taskIntentVerification string, additions []runtimetasks.ExpectedTool) derivedActionLookup {
 	merged := mergeAuthorizedActionsFromExpansion(parent, taskIntentVerification, additions)
-	out := make(map[string]store.TaskAction, len(merged))
+	derived := make(map[string]store.TaskAction, len(merged))
 	for _, a := range merged {
-		out[authorizedActionKey(a.Service, a.Action)] = a
+		derived[authorizedActionKey(a.Service, a.Action)] = a
 	}
-	return out
+	wildcards := make(map[string]store.TaskAction)
+	for _, a := range parent {
+		if a.Action == "*" {
+			wildcards[strings.ToLower(strings.TrimSpace(a.Service))] = a
+		}
+	}
+	return derivedActionLookup{derived: derived, wildcardByService: wildcards}
 }
 
 func notifyExpansionEgress(in []runtimetasks.ExpectedEgress) []notify.ExpansionEgress {

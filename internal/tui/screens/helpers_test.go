@@ -97,13 +97,52 @@ func TestAutoExecuteMarker_TrailingColonGuard(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := autoExecuteMarker(tc.tool, derived)
+			got := autoExecuteMarker(tc.tool, derived, nil)
 			has := got != ""
 			if has != tc.want {
 				t.Errorf("autoExecuteMarker(%q) = %q (rendered=%v), want rendered=%v", tc.tool, got, has, tc.want)
 			}
 		})
 	}
+}
+
+// TestAutoExecuteMarker_WildcardCoverage exercises the wildcard
+// fallback: an addition whose specific derivation was dropped by
+// mergeAuthorizedActionsFromExpansion (because parent has a
+// same-service wildcard) still renders a marker derived from the
+// wildcard's AutoExecute. Without this branch, the TUI would show
+// "needs per-call approval" on an action the user already
+// auto-approved through the wildcard.
+func TestAutoExecuteMarker_WildcardCoverage(t *testing.T) {
+	derived := map[string]client.TaskAction{}
+	wildcards := map[string]client.TaskAction{
+		"github": {Service: "github", Action: "*", AutoExecute: true},
+		"slack":  {Service: "slack", Action: "*", AutoExecute: false},
+	}
+	t.Run("auto-execute wildcard", func(t *testing.T) {
+		got := autoExecuteMarker("github:create_issue", derived, wildcards)
+		if !strings.Contains(got, "covered by wildcard") || !strings.Contains(got, "auto-execute") {
+			t.Errorf("got %q, want a wildcard auto-execute marker", got)
+		}
+	})
+	t.Run("per-call wildcard", func(t *testing.T) {
+		got := autoExecuteMarker("slack:post_message", derived, wildcards)
+		if !strings.Contains(got, "covered by wildcard") || !strings.Contains(got, "per-call") {
+			t.Errorf("got %q, want a wildcard per-call marker", got)
+		}
+	})
+	t.Run("derived wins over wildcard", func(t *testing.T) {
+		// When both exist, derived takes precedence (the specific
+		// entry is what would actually persist; the wildcard fallback
+		// is for the dropped-derivation case).
+		mixedDerived := map[string]client.TaskAction{
+			"github:create_issue": {Service: "github", Action: "create_issue", AutoExecute: false},
+		}
+		got := autoExecuteMarker("github:create_issue", mixedDerived, wildcards)
+		if strings.Contains(got, "covered by wildcard") {
+			t.Errorf("got %q, want the specific derived marker (no wildcard label)", got)
+		}
+	})
 }
 
 func mustMarshalT(t *testing.T, v any) json.RawMessage {

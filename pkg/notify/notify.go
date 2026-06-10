@@ -24,6 +24,16 @@ type ExpansionTool struct {
 	// GatewayAction=false and the AutoExecute value is meaningless.
 	GatewayAction bool
 	AutoExecute   bool
+	// WildcardCovered reports that this gateway action is already
+	// authorized by a same-service wildcard ({service, "*"}) on the
+	// parent task — the merger drops the specific derivation in that
+	// case so the wildcard's broader scope is the source of truth.
+	// AutoExecute mirrors the wildcard's own AutoExecute. Renderers
+	// should show an explicit "covered by wildcard" indication
+	// instead of a generic per-call/auto pill; without this, the
+	// reviewer would read a "needs per-call approval" pill on an
+	// action they already auto-approved through the wildcard.
+	WildcardCovered bool
 }
 
 type ExpansionEgress struct {
