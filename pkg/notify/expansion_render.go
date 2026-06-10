@@ -82,59 +82,83 @@ func credentialID(c ExpansionCredential) string {
 }
 
 // joinWithCap joins parts with sep and truncates with a "(+N more)"
-// suffix once adding the next part would exceed maxBytes. The cap
-// is hard: when this function returns, len(result) is guaranteed
-// to be ≤ maxBytes.
+// suffix when the joined string would exceed maxBytes. The cap is
+// hard: when this function returns, len(result) is guaranteed to be
+// ≤ maxBytes.
 //
-// The invariant: each iteration only writes its item if doing so
-// leaves enough room for the worst-case bail suffix on a LATER
-// iteration. That way a bail at iteration i+1 can append its
-// suffix without overshooting. The previous version checked the
-// next item's room but appended the suffix unconditionally on bail,
-// which let a first item that nearly filled the buffer combine
-// with a second-item-triggered bail to land past the cap.
-//
-// A single oversized first item is itself ellipsized so a runaway
-// model can't smuggle a long identifier past the cap by making it
-// the only entry.
+// Algorithm:
+//   - Fast path: if the full join fits, return it verbatim — no
+//     truncation, no suffix.
+//   - Otherwise the join overflows; find the largest k such that
+//     `parts[0..k]` joined plus its bail suffix `" (+N more)"`
+//     (N = remaining unwritten parts) fits within maxBytes. That k
+//     is where we stop. The previous "reserve suffix room every
+//     iteration" approach over-reserved for small parts: a
+//     two-item case where the full join easily fit was bailed
+//     anyway because the suffix length dominated maxBytes locally.
+//   - If even `parts[0]` alone with the smallest possible suffix
+//     can't fit, ellipsize `parts[0]` in place — keeps a runaway
+//     identifier from emitting an empty string.
 //
 // Returns "" if parts is empty.
 func joinWithCap(parts []string, sep string, maxBytes int) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	var sb strings.Builder
-	for i, p := range parts {
-		next := p
-		if i > 0 {
-			next = sep + p
-		}
-		remaining := len(parts) - i
-		suffix := " (+" + itoa(remaining) + " more)"
-		// Bail when writing `next` would leave too little room for
-		// the suffix we'd append on this bail. The reservation is
-		// computed against (maxBytes - len(suffix)) rather than
-		// against maxBytes alone so the bail's suffix-write doesn't
-		// land past the cap.
-		if sb.Len()+len(next) > maxBytes-len(suffix) {
-			if i == 0 {
-				// First item alone is too big for the cap. Truncate
-				// in place rather than emitting an empty string;
-				// reserve 3 bytes for the ellipsis.
-				if maxBytes > 3 && len(p) > maxBytes-3 {
-					sb.WriteString(p[:maxBytes-3])
-					sb.WriteString("...")
-					return sb.String()
-				}
-				sb.WriteString(p)
-				return sb.String()
-			}
-			sb.WriteString(suffix)
-			return sb.String()
-		}
-		sb.WriteString(next)
+	full := strings.Join(parts, sep)
+	if len(full) <= maxBytes {
+		return full
 	}
-	return sb.String()
+	// Full join overflows: find the largest prefix that still
+	// leaves room for its bail suffix.
+	bestK := -1
+	prefixLen := 0
+	sepLen := len(sep)
+	for k := 0; k < len(parts); k++ {
+		if k > 0 {
+			prefixLen += sepLen
+		}
+		prefixLen += len(parts[k])
+		remaining := len(parts) - k - 1
+		if remaining == 0 {
+			// k is the last index; the full join doesn't fit
+			// (checked above), so we never want this k. Skip
+			// rather than updating bestK.
+			continue
+		}
+		suffix := " (+" + itoa(remaining) + " more)"
+		if prefixLen+len(suffix) <= maxBytes {
+			bestK = k
+			continue
+		}
+		// Adding parts[k] put us past the cap-with-suffix. prefixLen
+		// only grows with k, so later k's can only fail too — stop.
+		break
+	}
+	if bestK >= 0 {
+		var sb strings.Builder
+		for k := 0; k <= bestK; k++ {
+			if k > 0 {
+				sb.WriteString(sep)
+			}
+			sb.WriteString(parts[k])
+		}
+		sb.WriteString(" (+")
+		sb.WriteString(itoa(len(parts) - bestK - 1))
+		sb.WriteString(" more)")
+		return sb.String()
+	}
+	// Couldn't fit parts[0] + the smallest possible bail suffix.
+	// Truncate parts[0] in place with an ellipsis so consumers
+	// don't render an empty string for a single runaway identifier.
+	p := parts[0]
+	if maxBytes > 3 && len(p) > maxBytes-3 {
+		return p[:maxBytes-3] + "..."
+	}
+	if len(p) <= maxBytes {
+		return p
+	}
+	return p[:maxBytes]
 }
 
 // itoa is a tiny stdlib-free int→ascii helper so this file doesn't

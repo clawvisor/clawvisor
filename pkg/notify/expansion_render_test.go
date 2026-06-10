@@ -34,6 +34,18 @@ func TestRenderExpansionSummary_TruncatesWithMoreSuffix(t *testing.T) {
 	}
 }
 
+// TestJoinWithCap_FullJoinFitsReturnedVerbatim guards against the
+// premature-truncation regression: a small cap that nevertheless
+// fits the full join must NOT trigger the bail-suffix path. The
+// earlier reserve-suffix-per-iteration approach over-reserved and
+// truncated "abc, def" (8 bytes) inside a 20-byte cap.
+func TestJoinWithCap_FullJoinFitsReturnedVerbatim(t *testing.T) {
+	out := joinWithCap([]string{"abc", "def"}, ", ", 20)
+	if out != "abc, def" {
+		t.Errorf("expected full join %q, got %q (premature truncation regressed)", "abc, def", out)
+	}
+}
+
 // TestJoinWithCap_NearFullFirstItemThenBail covers the bug where
 // the first item nearly fills the buffer and the second item's bail
 // appends "(+N more)" without checking suffix room — pushing the
