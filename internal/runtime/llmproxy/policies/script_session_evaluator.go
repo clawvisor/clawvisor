@@ -115,6 +115,30 @@ func (e *ScriptSessionEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOn
 			if errors.Is(err, scriptjudge.ErrNotConfigured) {
 				return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 			}
+
+			if ctx.Err() != nil {
+				return pipeline.ToolUseVerdict{}, ctx.Err()
+			}
+
+			// Bounded latency / timeout defense: if the LLM judge sub-context timed out
+			// (deadline exceeded while parent context is still active), deny the tool call
+			// with a clear retry message rather than falling back to a manual
+			// approval prompt (Skip) that would stall a headless session.
+			if errors.Is(err, context.DeadlineExceeded) || judgeCtx.Err() == context.DeadlineExceeded {
+				return pipeline.ToolUseVerdict{
+					Outcome: pipeline.OutcomeDeny,
+					Reason:  "Clawvisor: script-session call refused — LLM intent judge timed out (" + scriptSessionJudgeCallTimeout.String() + " limit reached). Please retry.",
+					Facts: []pipeline.EvaluationFact{pipeline.ScriptSessionFact{
+						Outcome:           "script_session_judge_timeout",
+						JudgePromptSHA:    verdict.PromptSHA,
+						JudgeLatencyMS:    verdict.LatencyMS,
+						JudgeInputTokens:  verdict.InputTokens,
+						JudgeOutputTokens: verdict.OutputTokens,
+						JudgeError:        "timeout",
+					}},
+				}, nil
+			}
+
 			// Real error: fall through to inspector chain, but
 			// emit an audit-only fact so the judge attempt is
 			// forensically visible — operators can see latency +

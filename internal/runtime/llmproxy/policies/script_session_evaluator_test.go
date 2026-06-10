@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
@@ -279,5 +280,116 @@ func TestScriptSessionEvaluator_URLUnrecognized_JudgeBlock_EmptyGuidance(t *test
 	}
 	if !strings.Contains(v.Reason, "doesn't appear to target the resolver") {
 		t.Errorf("Reason %q should carry generic fallback guidance when AgentGuidance is empty", v.Reason)
+	}
+}
+
+// TestScriptSessionEvaluator_URLUnrecognized_JudgeTimeout confirms that
+// when the LLM judge times out (deadline exceeded error), the evaluator
+// returns OutcomeDeny with the timeout message, rather than falling back
+// (Skip) to the inspector. The judge_timeout fact is emitted.
+func TestScriptSessionEvaluator_URLUnrecognized_JudgeTimeout(t *testing.T) {
+	judge := &stubJudge{
+		verdict: scriptjudge.Verdict{PromptSHA: "xyz789", LatencyMS: 8005},
+		err:     context.DeadlineExceeded,
+	}
+	e := policies.NewScriptSessionEvaluator(func(_ context.Context, _ conversation.ToolUse) *policies.ScriptSessionInputs {
+		return &policies.ScriptSessionInputs{ResolverBaseURL: "http://localhost:25297/api/proxy", Judge: judge}
+	})
+	v, err := e.Evaluate(context.Background(), newStubResp(), urlUnrecognizedToolUse(), &recordingMutator{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Outcome != pipeline.OutcomeDeny {
+		t.Errorf("Outcome = %q, want Deny (judge timed out)", v.Outcome)
+	}
+	if !strings.Contains(v.Reason, "LLM intent judge timed out (8s limit reached)") {
+		t.Errorf("Reason = %q, should contain timeout message with limit", v.Reason)
+	}
+	var fact pipeline.ScriptSessionFact
+	for _, f := range v.Facts {
+		if ss, ok := f.(pipeline.ScriptSessionFact); ok && ss.Outcome == "script_session_judge_timeout" {
+			fact = ss
+		}
+	}
+	if fact.Outcome == "" {
+		t.Fatalf("ScriptSessionFact judge_timeout missing (facts: %+v)", v.Facts)
+	}
+	if fact.JudgeError != "timeout" {
+		t.Errorf("JudgeError = %q, want 'timeout'", fact.JudgeError)
+	}
+	if fact.JudgePromptSHA != "xyz789" || fact.JudgeLatencyMS != 8005 {
+		t.Errorf("forensic fields not propagated: prompt_sha=%q latency=%d", fact.JudgePromptSHA, fact.JudgeLatencyMS)
+	}
+}
+
+// TestScriptSessionEvaluator_URLUnrecognized_ParentContextCanceled confirms that
+// if the parent context is cancelled, the evaluator propagates the context
+// cancellation error directly instead of returning an OutcomeDeny verdict.
+func TestScriptSessionEvaluator_URLUnrecognized_ParentContextCanceled(t *testing.T) {
+	judge := &stubJudge{
+		verdict: scriptjudge.Verdict{},
+		err:     context.Canceled,
+	}
+	e := policies.NewScriptSessionEvaluator(func(_ context.Context, _ conversation.ToolUse) *policies.ScriptSessionInputs {
+		return &policies.ScriptSessionInputs{ResolverBaseURL: "http://localhost:25297/api/proxy", Judge: judge}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel context before calling Evaluate
+	_, err := e.Evaluate(ctx, newStubResp(), urlUnrecognizedToolUse(), &recordingMutator{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Evaluate error = %v, want context.Canceled", err)
+	}
+}
+
+// TestScriptSessionEvaluator_URLUnrecognized_ParentContextTimedOut confirms that
+// if the parent context is timed out, the evaluator propagates the context
+// deadline exceeded error directly instead of returning an OutcomeDeny verdict.
+func TestScriptSessionEvaluator_URLUnrecognized_ParentContextTimedOut(t *testing.T) {
+	judge := &stubJudge{
+		verdict: scriptjudge.Verdict{},
+		err:     context.DeadlineExceeded,
+	}
+	e := policies.NewScriptSessionEvaluator(func(_ context.Context, _ conversation.ToolUse) *policies.ScriptSessionInputs {
+		return &policies.ScriptSessionInputs{ResolverBaseURL: "http://localhost:25297/api/proxy", Judge: judge}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Microsecond)
+	defer cancel()
+	<-ctx.Done() // Await timeout deterministically
+	_, err := e.Evaluate(ctx, newStubResp(), urlUnrecognizedToolUse(), &recordingMutator{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Evaluate error = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+// TestScriptSessionEvaluator_URLUnrecognized_JudgeCallCanceledParentActive confirms that
+// if the judge call is cancelled internally (or returns context.Canceled) but the
+// parent context is still active, the evaluator does not abort evaluation but falls back
+// with OutcomeSkip and a judge_error fact.
+func TestScriptSessionEvaluator_URLUnrecognized_JudgeCallCanceledParentActive(t *testing.T) {
+	judge := &stubJudge{
+		verdict: scriptjudge.Verdict{},
+		err:     context.Canceled,
+	}
+	e := policies.NewScriptSessionEvaluator(func(_ context.Context, _ conversation.ToolUse) *policies.ScriptSessionInputs {
+		return &policies.ScriptSessionInputs{ResolverBaseURL: "http://localhost:25297/api/proxy", Judge: judge}
+	})
+	v, err := e.Evaluate(context.Background(), newStubResp(), urlUnrecognizedToolUse(), &recordingMutator{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Outcome != pipeline.OutcomeSkip {
+		t.Errorf("Outcome = %q, want Skip (fallback to inspector chain)", v.Outcome)
+	}
+	var fact pipeline.ScriptSessionFact
+	for _, f := range v.Facts {
+		if ss, ok := f.(pipeline.ScriptSessionFact); ok && ss.Outcome == "script_session_judge_error" {
+			fact = ss
+		}
+	}
+	if fact.Outcome == "" {
+		t.Fatalf("ScriptSessionFact judge_error missing (facts: %+v)", v.Facts)
+	}
+	if !strings.Contains(fact.JudgeError, "context canceled") {
+		t.Errorf("JudgeError = %q, should contain 'context canceled'", fact.JudgeError)
 	}
 }
