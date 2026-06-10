@@ -30,9 +30,11 @@ type evalRequest struct {
 	Actions   []evalAction `json:"actions"`
 
 	// v2 envelope fields. Cases set either Actions (v1) or these (v2).
-	ExpectedTools          []evalExpectedTool `json:"expected_tools,omitempty"`
-	IntentVerificationMode string             `json:"intent_verification_mode,omitempty"`
-	ExpectedUse            string             `json:"expected_use,omitempty"`
+	ExpectedTools          []evalExpectedTool       `json:"expected_tools,omitempty"`
+	ExpectedEgress         []evalExpectedEgress     `json:"expected_egress,omitempty"`
+	RequiredCredentials    []evalRequiredCredential `json:"required_credentials,omitempty"`
+	IntentVerificationMode string                   `json:"intent_verification_mode,omitempty"`
+	ExpectedUse            string                   `json:"expected_use,omitempty"`
 }
 
 type evalAction struct {
@@ -47,6 +49,21 @@ type evalExpectedTool struct {
 	ToolName   string `json:"tool_name"`
 	Why        string `json:"why,omitempty"`
 	InputRegex string `json:"input_regex,omitempty"`
+}
+
+type evalExpectedEgress struct {
+	Host            string `json:"host"`
+	Why             string `json:"why,omitempty"`
+	Method          string `json:"method,omitempty"`
+	Path            string `json:"path,omitempty"`
+	PathRegex       string `json:"path_regex,omitempty"`
+	CredentialAlias string `json:"credential_alias,omitempty"`
+}
+
+type evalRequiredCredential struct {
+	VaultItemID     string `json:"vault_item_id,omitempty"`
+	VaultItemHandle string `json:"vault_item_handle,omitempty"`
+	Why             string `json:"why,omitempty"`
 }
 
 type evalExpect struct {
@@ -73,6 +90,11 @@ type evalResult struct {
 //     and CLAWVISOR_LLM_TASK_RISK_PROJECT=<gcp-project>. Optionally override
 //     CLAWVISOR_LLM_TASK_RISK_{MODEL,REGION}. Auth uses Application Default
 //     Credentials (run `gcloud auth application-default login`).
+//
+// Set CLAWVISOR_LLM_TASK_RISK_STRICT_MATCH=1 to ignore each case's accept_also
+// list — only exact risk_level matches count as a pass. Useful for seeing how
+// much of the headline accuracy depends on the adjacent-level acceptance band
+// vs. the model hitting the labeled level exactly.
 //
 // Skipped when neither configuration is present.
 func TestEvalTaskRiskAssessment(t *testing.T) {
@@ -161,6 +183,11 @@ func TestEvalTaskRiskAssessment(t *testing.T) {
 	})
 	assessor := NewLLMAssessor(health, nil, slog.Default())
 
+	strictMatch := os.Getenv("CLAWVISOR_LLM_TASK_RISK_STRICT_MATCH") == "1"
+	if strictMatch {
+		t.Logf("STRICT_MATCH=1 — accept_also is disabled; only exact risk_level matches count as a pass")
+	}
+
 	results := make([]evalResult, 0, len(cases))
 
 	for _, tc := range cases {
@@ -188,11 +215,34 @@ func TestEvalTaskRiskAssessment(t *testing.T) {
 				}
 			}
 
+			egress := make([]runtimetasks.ExpectedEgress, len(tc.Request.ExpectedEgress))
+			for i, e := range tc.Request.ExpectedEgress {
+				egress[i] = runtimetasks.ExpectedEgress{
+					Host:            e.Host,
+					Why:             e.Why,
+					Method:          e.Method,
+					Path:            e.Path,
+					PathRegex:       e.PathRegex,
+					CredentialAlias: e.CredentialAlias,
+				}
+			}
+
+			creds := make([]runtimetasks.RequiredCredential, len(tc.Request.RequiredCredentials))
+			for i, c := range tc.Request.RequiredCredentials {
+				creds[i] = runtimetasks.RequiredCredential{
+					VaultItemID:     c.VaultItemID,
+					VaultItemHandle: c.VaultItemHandle,
+					Why:             c.Why,
+				}
+			}
+
 			req := AssessRequest{
 				AgentName:              tc.Request.AgentName,
 				Purpose:                tc.Request.Purpose,
 				AuthorizedActions:      actions,
 				ExpectedTools:          tools,
+				ExpectedEgress:         egress,
+				RequiredCredentials:    creds,
 				IntentVerificationMode: tc.Request.IntentVerificationMode,
 				ExpectedUse:            tc.Request.ExpectedUse,
 			}
@@ -207,11 +257,19 @@ func TestEvalTaskRiskAssessment(t *testing.T) {
 
 			var mismatches []string
 
-			// Check risk level matches expected or is in accept_also.
-			acceptable := append([]string{tc.Expected.RiskLevel}, tc.Expected.AcceptAlso...)
+			// Check risk level matches expected (or accept_also unless STRICT_MATCH=1).
+			acceptable := []string{tc.Expected.RiskLevel}
+			if !strictMatch {
+				acceptable = append(acceptable, tc.Expected.AcceptAlso...)
+			}
 			if !slices.Contains(acceptable, assessment.RiskLevel) {
-				mismatches = append(mismatches, fmt.Sprintf("risk_level: got %q, want %q (also accept %v)",
-					assessment.RiskLevel, tc.Expected.RiskLevel, tc.Expected.AcceptAlso))
+				if strictMatch {
+					mismatches = append(mismatches, fmt.Sprintf("risk_level: got %q, want %q (strict match — accept_also disabled)",
+						assessment.RiskLevel, tc.Expected.RiskLevel))
+				} else {
+					mismatches = append(mismatches, fmt.Sprintf("risk_level: got %q, want %q (also accept %v)",
+						assessment.RiskLevel, tc.Expected.RiskLevel, tc.Expected.AcceptAlso))
+				}
 			}
 
 			// Check conflicts if expected.
@@ -272,6 +330,7 @@ func printEvalSummary(t *testing.T, results []evalResult) {
 		"multi_service",
 		"prompt_injection",
 		"intent_scoped_capability",
+		"llm_proxy_envelope",
 	}
 	for _, cat := range categories {
 		s, ok := categoryStats[cat]
