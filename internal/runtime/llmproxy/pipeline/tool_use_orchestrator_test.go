@@ -233,6 +233,85 @@ func TestEvaluateToolUses_DeniedContinueRequiresSubstituteFallback(t *testing.T)
 	}
 }
 
+// TestEvaluateToolUses_DeniedContinueDoesNotShortCircuitSiblings pins
+// that a recoverable Deny + Continue verdict (the
+// RecoverableDenyVerdict pattern used by script_session_evaluator,
+// boundary_check, the autovault stub guard, the malformed-control
+// paths, and the orchestrator's unrewritten-credentialed fallback)
+// does NOT abort sibling evaluation. Each sibling must still get its
+// own real verdict so audit, finalizer hooks, and the
+// terminal-substitute fallback surface the right reasons. Only
+// Allow/Rewrite + Continue (the inline-task auto-approve pattern,
+// which has already replaced the assistant turn locally) is allowed
+// to short-circuit.
+func TestEvaluateToolUses_DeniedContinueDoesNotShortCircuitSiblings(t *testing.T) {
+	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
+	tools := []conversation.ToolUse{
+		{ID: "toolu_recoverable", Name: "Bash"},
+		{ID: "toolu_sibling", Name: "Bash"},
+	}
+
+	// Recoverable Deny+Continue fires only on the first tool_use; the
+	// second tool_use Skips through it and lands on the allowEvaluator.
+	evaluators := []pipeline.ToolUseEvaluator{
+		&denyContinueForIDEvaluator{name: "first_recoverable", matchID: "toolu_recoverable", substitute: "first-fallback"},
+		&allowEvaluator{name: "second_real_verdict", tag: "real"},
+	}
+
+	result, err := pipeline.EvaluateToolUses(context.Background(), res, tools, evaluators, func(id string) pipeline.ToolUseMutator {
+		return &recordingToolUseMutator{id: id}
+	})
+	if err != nil {
+		t.Fatalf("EvaluateToolUses: %v", err)
+	}
+
+	first := result.PerToolUse["toolu_recoverable"]
+	if first.Outcome != pipeline.OutcomeDeny || first.Continue == nil {
+		t.Fatalf("first tool: Outcome=%q Continue=%v, want Deny+Continue", first.Outcome, first.Continue)
+	}
+
+	sibling, ok := result.PerToolUse["toolu_sibling"]
+	if !ok {
+		t.Fatal("sibling tool_use missing from PerToolUse")
+	}
+	if sibling.Reason == "Clawvisor: unprocessed sibling tool_use refused after continuation" {
+		t.Fatalf("sibling was short-circuited as 'unprocessed sibling refused'; recoverable Deny+Continue must keep evaluating siblings so they get their own real verdict (got %+v)", sibling)
+	}
+	if sibling.Outcome != pipeline.OutcomeAllow || sibling.Reason != "real" {
+		t.Fatalf("sibling verdict = %+v, want Allow tagged 'real' from the second evaluator", sibling)
+	}
+
+	if result.Continue == nil {
+		t.Fatal("expected Continue to remain set for the handler's tryContinuation path")
+	}
+	if result.ContinueFromToolUseID != "toolu_recoverable" {
+		t.Errorf("ContinueFromToolUseID = %q, want toolu_recoverable", result.ContinueFromToolUseID)
+	}
+}
+
+// denyContinueForIDEvaluator emits a recoverable Deny+Continue verdict
+// only for the tool_use whose ID matches matchID; other tool_uses get
+// Skip so downstream evaluators run normally.
+type denyContinueForIDEvaluator struct {
+	name       string
+	matchID    string
+	substitute string
+}
+
+func (e *denyContinueForIDEvaluator) Name() string { return e.name }
+func (e *denyContinueForIDEvaluator) Evaluate(_ context.Context, _ pipeline.ReadOnlyResponse, tu conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
+	if tu.ID != e.matchID {
+		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
+	}
+	return pipeline.ToolUseVerdict{
+		Outcome:        pipeline.OutcomeDeny,
+		SubstituteWith: e.substitute,
+		Continue: &pipeline.ContinueSignal{
+			SyntheticToolResults: []json.RawMessage{json.RawMessage(`"continued"`)},
+		},
+	}, nil
+}
+
 // TestEvaluateToolUses_HoldVerdictsPreservedPerTool pins that
 // per-tool-use Hold verdicts collect without coalescing (Phase 5 will
 // add coalescing on top).

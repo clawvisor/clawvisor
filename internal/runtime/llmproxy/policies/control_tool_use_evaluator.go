@@ -156,12 +156,9 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 
 func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator, in *ControlToolUseInputs) (pipeline.ToolUseVerdict, error) {
 	const failureReason = "malformed_control_command"
+	const malformedShapeReason = "Clawvisor: control endpoint rewrite refused — use a single foreground curl to the control endpoint, with no pipes, subshells, redirects to output files, or extra shell commands"
 	if in.CallerNonces == nil {
-		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: control endpoint rewrite refused — use a single foreground curl to the control endpoint, with no pipes, subshells, redirects to output files, or extra shell commands",
-			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}},
-		}, nil
+		return conversation.RecoverableDenyVerdict(malformedShapeReason, pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}), nil
 	}
 	target := callernonce.NonceTarget{
 		Host:   controltool.ControlSyntheticHost,
@@ -179,11 +176,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 	rewritten, ok, rewriteErr := controltool.RewriteControlFailureToolUse(tu, in.ControlBaseURL, nonce, failureReason)
 	if !ok {
 		_, _ = in.CallerNonces.Consume(ctx, nonce, target)
-		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: control endpoint rewrite refused — use a single foreground curl to the control endpoint, with no pipes, subshells, redirects to output files, or extra shell commands",
-			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
-		}, nil
+		return conversation.RecoverableDenyVerdict(malformedShapeReason, pipeline.ControlFact{Outcome: "control_rewriter_error"}), nil
 	}
 	if rewriteErr != nil {
 		_, _ = in.CallerNonces.Consume(ctx, nonce, target)

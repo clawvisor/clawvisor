@@ -158,7 +158,18 @@ func PostprocessStream(
 		}
 	}
 
-	if len(continuationResults) > 0 {
+	// Continuation only fires when every tool_use in the turn has a
+	// synthetic tool_result — Anthropic/OpenAI both 400 on an
+	// unbalanced tool_use/tool_result count, so the handler's
+	// tryContinuation skips the upstream call on a mismatch. Returning
+	// early with ContinuationToolResults populated when the 1:1
+	// invariant won't hold would leave the buffered tool_use blocks
+	// unwritten (StreamRewrite withholds them until the substitute or
+	// tool_use writer fires) and the harness would receive a truncated
+	// stream. Fall through to the substitute path so the wire carries
+	// a clean blocked-prompt turn in the mixed-recoverable-sibling
+	// case, mirroring the handler's own 1:1 check earlier in the flow.
+	if len(continuationResults) > 0 && len(continuationResults) == len(decisions) {
 		return llmproxy.PostprocessResult{
 			ContentType:             contentType,
 			Rewritten:               true,

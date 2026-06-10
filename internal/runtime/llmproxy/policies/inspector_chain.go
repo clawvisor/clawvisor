@@ -102,12 +102,8 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 	// bypassing boundary checks if the stub heuristic ever misclassifies
 	// a real placeholder. Fail closed instead.
 	if v.Source != inspector.SourceTriggerMiss && inspector.AllPlaceholdersAreStubs(v.Placeholders) {
-		inspectorFact := newInspectorFact(v)
-		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: autovault placeholder is too short to validate safely",
-			Facts:   []pipeline.EvaluationFact{inspectorFact},
-		}, nil
+		const reason = "Clawvisor: autovault placeholder is too short to validate safely"
+		return conversation.RecoverableDenyVerdict(reason, newInspectorFact(v)), nil
 	}
 
 	inspectorFact := newInspectorFact(v)
@@ -173,11 +169,7 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 		Host:        v.Host,
 	}
 	if !decision.Allowed {
-		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeDeny,
-			Reason:  decision.Reason,
-			Facts:   []pipeline.EvaluationFact{inspectorFact, boundaryFact},
-		}, nil
+		return conversation.RecoverableDenyVerdict(decision.Reason, inspectorFact, boundaryFact), nil
 	}
 
 	// Boundary passed — let downstream stages handle credentialed

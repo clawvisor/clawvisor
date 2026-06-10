@@ -150,6 +150,15 @@ func TestInspectorChain_TypedBoundaryDenyReasons(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("BoundaryFact.DenyReason = %q, want %q (facts: %+v)", got, tc.want, v.Facts)
 			}
+			if v.SubstituteWith == "" || v.SubstituteWith != v.Reason {
+				t.Errorf("SubstituteWith = %q, want = Reason for the terminal-fallback path", v.SubstituteWith)
+			}
+			if v.Continue == nil || len(v.Continue.SyntheticToolResults) != 1 {
+				t.Fatalf("Continue.SyntheticToolResults missing — boundary deny should be recoverable so the agent can retry against an allowed host")
+			}
+			if content, ok := v.ContinuationToolResultContent(); !ok || content != v.Reason {
+				t.Errorf("ContinuationToolResultContent = %q, %v; want Reason verbatim", content, ok)
+			}
 		})
 	}
 }
@@ -275,6 +284,15 @@ func TestInspectorChain_StubPlaceholdersFailClosed(t *testing.T) {
 	}
 	if v.Outcome != pipeline.OutcomeDeny {
 		t.Errorf("stub-length placeholder → Outcome = %q, want Deny", v.Outcome)
+	}
+	if v.SubstituteWith == "" || v.SubstituteWith != v.Reason {
+		t.Errorf("SubstituteWith = %q, want = Reason for the terminal-fallback path", v.SubstituteWith)
+	}
+	if v.Continue == nil || len(v.Continue.SyntheticToolResults) != 1 {
+		t.Fatalf("Continue.SyntheticToolResults missing — stub-placeholder block should be recoverable so the agent can retry with the full placeholder")
+	}
+	if content, ok := v.ContinuationToolResultContent(); !ok || content != v.Reason {
+		t.Errorf("ContinuationToolResultContent = %q, %v; want Reason verbatim", content, ok)
 	}
 }
 

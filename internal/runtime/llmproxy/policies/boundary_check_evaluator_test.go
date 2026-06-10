@@ -54,6 +54,15 @@ func TestBoundaryCheck_DenyOnMismatchedHost(t *testing.T) {
 	if boundaryFactPassed(result.Facts) {
 		t.Errorf("boundary_check_passed fact = true, want false (facts: %+v)", result.Facts)
 	}
+	if result.SubstituteWith == "" || result.SubstituteWith != result.Reason {
+		t.Errorf("SubstituteWith = %q, want = Reason for the terminal-fallback path", result.SubstituteWith)
+	}
+	if result.Continue == nil || len(result.Continue.SyntheticToolResults) != 1 {
+		t.Fatalf("Continue.SyntheticToolResults missing — boundary deny should be recoverable so the agent can retry against an allowed host")
+	}
+	if content, ok := result.ContinuationToolResultContent(); !ok || content != result.Reason {
+		t.Errorf("ContinuationToolResultContent = %q, %v; want Reason verbatim", content, ok)
+	}
 }
 
 func boundaryFactPassed(facts []pipeline.EvaluationFact) bool {

@@ -210,6 +210,15 @@ func TestScriptSessionEvaluator_URLUnrecognized_JudgeBlock(t *testing.T) {
 	if !strings.HasPrefix(v.Reason, "Clawvisor: script-session call refused — ") {
 		t.Errorf("Reason %q should have Clawvisor refusal prefix", v.Reason)
 	}
+	if v.SubstituteWith != v.Reason {
+		t.Errorf("SubstituteWith = %q, want = Reason for the terminal-fallback path", v.SubstituteWith)
+	}
+	if v.Continue == nil || len(v.Continue.SyntheticToolResults) != 1 {
+		t.Fatalf("Continue.SyntheticToolResults missing — judge block should flow guidance back to the agent as a recoverable tool_result")
+	}
+	if content, ok := v.ContinuationToolResultContent(); !ok || content != v.Reason {
+		t.Errorf("ContinuationToolResultContent = %q, %v; want Reason verbatim", content, ok)
+	}
 	found := false
 	for _, f := range v.Facts {
 		if ss, ok := f.(pipeline.ScriptSessionFact); ok && ss.Outcome == "script_session_judge_block" {

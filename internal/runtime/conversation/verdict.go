@@ -1,6 +1,8 @@
 package conversation
 
 import (
+	"encoding/json"
+
 	"github.com/clawvisor/clawvisor/internal/runtime/eval"
 )
 
@@ -60,6 +62,40 @@ type (
 // served locally and the pipeline should re-enter with a synthetic
 // continuation turn.
 type ContinueSignal = eval.ContinueSignal
+
+// RecoverableContinue wraps a reason string as a Continue signal that
+// flows the reason back to the agent as a synthetic tool_result.
+// Callers building a recoverable Deny verdict use the higher-level
+// RecoverableDenyVerdict; this primitive is exported for evaluators
+// that need a customized verdict shape (e.g. richer Continue
+// payloads, additional notice text).
+func RecoverableContinue(reason string) *ContinueSignal {
+	payload, _ := json.Marshal(reason)
+	return &ContinueSignal{
+		SyntheticToolResults: []json.RawMessage{payload},
+	}
+}
+
+// RecoverableDenyVerdict builds the standard recoverable-deny verdict
+// used by evaluators that block on a construction error the agent can
+// fix on its next attempt. The reason flows back to the agent as a
+// continuation tool_result (consumed by tryContinuation for the one
+// allowed retry per inbound request) and is retained as
+// SubstituteWith so the second-pass / mixed-turn fallback still
+// renders a terminal assistant message.
+//
+// The structural one-retry budget is enforced by tryContinuation's
+// non-recursion in the lite-proxy handler — no per-session state is
+// needed here.
+func RecoverableDenyVerdict(reason string, facts ...EvaluationFact) ToolUseVerdict {
+	return ToolUseVerdict{
+		Outcome:        OutcomeDeny,
+		Reason:         reason,
+		SubstituteWith: reason,
+		Continue:       RecoverableContinue(reason),
+		Facts:          facts,
+	}
+}
 
 // InspectorVerdictSnapshot is the audit-row projection of the
 // inspector's verdict.

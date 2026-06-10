@@ -156,17 +156,14 @@ func (e *ScriptSessionEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOn
 		if guidance == "" {
 			guidance = "the call doesn't appear to target the resolver at " + in.ResolverBaseURL
 		}
-		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeDeny,
-			Reason:  "Clawvisor: script-session call refused — " + guidance,
-			Facts: []pipeline.EvaluationFact{pipeline.ScriptSessionFact{
-				Outcome:           "script_session_judge_block",
-				JudgePromptSHA:    verdict.PromptSHA,
-				JudgeLatencyMS:    verdict.LatencyMS,
-				JudgeInputTokens:  verdict.InputTokens,
-				JudgeOutputTokens: verdict.OutputTokens,
-			}},
-		}, nil
+		reason := "Clawvisor: script-session call refused — " + guidance
+		return conversation.RecoverableDenyVerdict(reason, pipeline.ScriptSessionFact{
+			Outcome:           "script_session_judge_block",
+			JudgePromptSHA:    verdict.PromptSHA,
+			JudgeLatencyMS:    verdict.LatencyMS,
+			JudgeInputTokens:  verdict.InputTokens,
+			JudgeOutputTokens: verdict.OutputTokens,
+		}), nil
 	case scriptrecognition.NoMatch:
 		return pipeline.ToolUseVerdict{Outcome: pipeline.OutcomeSkip}, nil
 	default:

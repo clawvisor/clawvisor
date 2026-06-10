@@ -2,7 +2,6 @@ package policies
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/callernonce"
@@ -129,21 +128,12 @@ func (e *CredentialRewriteEvaluator) Evaluate(ctx context.Context, _ pipeline.Re
 	if err != nil {
 		_, _ = in.CallerNonces.Consume(ctx, nonce, target)
 		reason := rewritehelp.CredentialedRewriteRecoveryReason(v, err)
-		continuationPayload, _ := json.Marshal(reason)
-		return pipeline.ToolUseVerdict{
-			Outcome:        pipeline.OutcomeDeny,
-			Reason:         reason,
-			SubstituteWith: reason,
-			Continue: &pipeline.ContinueSignal{
-				SyntheticToolResults: []json.RawMessage{continuationPayload},
-			},
-			Facts: []pipeline.EvaluationFact{pipeline.RewriteFact{
-				Outcome:      "rewriter_error",
-				TargetHost:   v.Host,
-				TargetMethod: v.Method,
-				TargetPath:   v.Path,
-			}},
-		}, nil
+		return conversation.RecoverableDenyVerdict(reason, pipeline.RewriteFact{
+			Outcome:      "rewriter_error",
+			TargetHost:   v.Host,
+			TargetMethod: v.Method,
+			TargetPath:   v.Path,
+		}), nil
 	}
 	if mut != nil {
 		if err := mut.RewriteArgs(rewritten); err != nil {

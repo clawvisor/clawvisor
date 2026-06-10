@@ -92,18 +92,40 @@ func EvaluateToolUses(
 				if !continueOutcomeValid(verdict) {
 					return nil, fmt.Errorf("evaluator %q on tool_use %q returned Continue with outcome %q; Continue requires Allow, Rewrite, or a local substitute fallback", ev.Name(), tu.ID, verdict.Outcome)
 				}
-				// Continuation short-circuits the whole pass.
 				result.Evaluations[len(result.Evaluations)-1].Winning = true
-				result.Continue = verdict.Continue
-				result.ContinueFromToolUseID = tu.ID
-				result.PerToolUse[tu.ID] = verdict
-				for _, sibling := range toolUses[i+1:] {
-					result.PerToolUse[sibling.ID] = ToolUseVerdict{
-						Outcome: OutcomeDeny,
-						Reason:  "Clawvisor: unprocessed sibling tool_use refused after continuation",
+				if verdict.Outcome == OutcomeAllow || verdict.Outcome == OutcomeRewrite {
+					// Allow/Rewrite + Continue (the auto-approve /
+					// inline-task pattern) short-circuits the whole
+					// pass. The evaluator has already replaced the
+					// assistant turn locally, so running sibling
+					// evaluators against the now-stale turn shape
+					// would be incoherent.
+					result.Continue = verdict.Continue
+					result.ContinueFromToolUseID = tu.ID
+					result.PerToolUse[tu.ID] = verdict
+					for _, sibling := range toolUses[i+1:] {
+						result.PerToolUse[sibling.ID] = ToolUseVerdict{
+							Outcome: OutcomeDeny,
+							Reason:  "Clawvisor: unprocessed sibling tool_use refused after continuation",
+						}
 					}
+					return result, nil
 				}
-				return result, nil
+				// Deny + Continue (recoverable deny): record the
+				// per-tool verdict and keep evaluating siblings.
+				// The handler's tryContinuation collects every
+				// per-tool Continue and gates the upstream retry on
+				// the 1:1 tool_use/tool_result invariant; until
+				// then, siblings deserve their own real verdicts so
+				// audit, finalizer hooks, and the terminal-substitute
+				// fallback surface the right reasons.
+				if result.Continue == nil {
+					result.Continue = verdict.Continue
+					result.ContinueFromToolUseID = tu.ID
+				}
+				v := verdict
+				winner = &v
+				break
 			}
 			if verdict.Outcome != OutcomeSkip {
 				result.Evaluations[len(result.Evaluations)-1].Winning = true
@@ -138,6 +160,18 @@ func defaultUnclaimedToolUseVerdict(evaluations []ToolUseEvaluation, toolUseID s
 		}
 	}
 	if credentialedFact != nil {
+		// Terminal — not recoverable. This fires when InspectorChain
+		// classified the call as credentialed but no downstream
+		// evaluator (script-session, control-tool, credential-rewrite)
+		// claimed it. That's a policy-misconfiguration / fail-closed
+		// scenario, not an agent construction error: there is no
+		// alternate call shape the agent can try that would route
+		// around a missing claimant, so flowing the reason back as a
+		// recoverable continuation would just burn the one-retry
+		// budget and produce a confusing UX. The credential_rewrite
+		// evaluator's own rewriter-error path (which IS recoverable)
+		// carries actionable "switch to a script session" guidance
+		// for the cases where shape-changing actually helps.
 		return ToolUseVerdict{
 			Outcome: OutcomeDeny,
 			Reason:  "Clawvisor: credentialed API call was not rewritten; refusing to send original tool_use upstream",

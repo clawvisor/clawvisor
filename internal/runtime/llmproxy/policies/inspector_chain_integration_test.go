@@ -157,6 +157,15 @@ func TestInspectorChainIntegration_CredentialRewriteDivergenceFailsClosed(t *tes
 	if !strings.Contains(v.Reason, "credentialed API call was not rewritten") {
 		t.Fatalf("Reason = %q, want fail-closed rewrite-divergence message", v.Reason)
 	}
+	// Terminal — not recoverable. This is a policy-misconfiguration
+	// fail-closed; the agent has no alternate shape to retry that
+	// would route around a missing claimant evaluator.
+	if v.Continue != nil {
+		t.Errorf("Continue should be nil — unclaimed-credentialed fail-closed is not agent-recoverable (got %+v)", v.Continue)
+	}
+	if v.SubstituteWith != "" {
+		t.Errorf("SubstituteWith should be empty — terminal Deny falls back to the rewriter's default block prompt, not a custom continuation fallback (got %q)", v.SubstituteWith)
+	}
 	if got := len(result.Evaluations); got != 4 {
 		t.Fatalf("expected all four evaluators to Skip before default Deny, got %d: %+v", got, result.Evaluations)
 	}

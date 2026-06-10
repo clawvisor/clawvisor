@@ -246,6 +246,186 @@ func TestPostprocessStream_StructuredContinuationResult(t *testing.T) {
 	}
 }
 
+// TestPostprocessStream_RecoverableDenyEmitsContinuationAndSubstitute
+// pins the shape produced by the recoverable-deny pattern used by
+// script_session_evaluator, boundary_check, the autovault stub guard,
+// the orchestrator's unrewritten-credentialed fallback, and the
+// malformed-control-call paths. A Deny verdict that also carries
+// Continue + SubstituteWith must surface to the handler as both:
+//
+//   - ContinuationToolResults populated, so serve()'s tryContinuation
+//     branch fires and feeds the reason back to the agent on the
+//     next upstream call (the "one retry" path).
+//   - SubstituteWith preserved on the decision verdict, so when the
+//     handler's structurally-bounded continuation does not act on the
+//     signal (because the model's retry also Denies recoverably, or
+//     because the second pass cannot run), the substitute text
+//     renders as a terminal assistant turn.
+//
+// Together these enforce the "exactly one retry per tool_use per
+// turn" budget without per-session state: tryContinuation runs at
+// most once, and the second pass always lands on SubstituteWith if
+// the recoverable deny repeats.
+func TestPostprocessStream_RecoverableDenyEmitsContinuationAndSubstitute(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	input := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[]}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_recoverable","name":"Bash","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"echo hi\"}"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":15}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	const refusalText = "Clawvisor: script-session call refused — replace https://gmail.googleapis.com with the resolver mount"
+	factory := func(_ *http.Request, _ llmproxy.PostprocessConfig, _ conversation.Provider, _ []conversation.ToolUse, _ func(conversation.AuditEvent)) conversation.ToolUseEvaluator {
+		return func(conversation.ToolUse) conversation.ToolUseVerdict {
+			payload, _ := json.Marshal(refusalText)
+			return conversation.ToolUseVerdict{
+				Allowed:        false,
+				Outcome:        conversation.OutcomeDeny,
+				Reason:         refusalText,
+				SubstituteWith: refusalText,
+				Continue: &conversation.ContinueSignal{
+					SyntheticToolResults: []json.RawMessage{payload},
+				},
+			}
+		}
+	}
+
+	var output bytes.Buffer
+	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: factory,
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector: insp,
+		},
+	})
+	if err != nil {
+		t.Fatalf("PostprocessStream: %v", err)
+	}
+	if len(result.ContinuationToolResults) != 1 {
+		t.Fatalf("ContinuationToolResults = %+v, want one result so the handler triggers tryContinuation", result.ContinuationToolResults)
+	}
+	if got := result.ContinuationToolResults[0]; got.ToolUseID != "toolu_recoverable" || got.Content != refusalText {
+		t.Fatalf("ContinuationToolResults[0] = %+v, want refusal text routed back to the model as a tool_result for toolu_recoverable", got)
+	}
+	if len(result.Decisions) != 1 {
+		t.Fatalf("Decisions = %d, want 1", len(result.Decisions))
+	}
+	if result.Decisions[0].Verdict.SubstituteWith != refusalText {
+		t.Fatalf("decision verdict lost SubstituteWith fallback: %q", result.Decisions[0].Verdict.SubstituteWith)
+	}
+	if result.Decisions[0].Verdict.Continue == nil {
+		t.Fatal("decision verdict lost Continue signal — handler would skip tryContinuation")
+	}
+	if result.Decisions[0].Verdict.Outcome != conversation.OutcomeDeny {
+		t.Fatalf("decision Outcome = %q, want Deny (recoverable deny must remain typed as a deny)", result.Decisions[0].Verdict.Outcome)
+	}
+}
+
+// TestPostprocessStream_RecoverableDenyMixedSiblingsFallsThroughToSubstitute
+// pins the mixed-turn safety: when a recoverable Deny tool_use sits
+// next to a sibling that doesn't have a continuation tool_result,
+// the handler's tryContinuation cannot fire (Anthropic/OpenAI 400 on
+// an unbalanced tool_use/tool_result count). PostprocessStream MUST
+// detect this case and fall through to the substitute-prompt path so
+// the wire carries a clean blocked turn — leaving ContinuationToolResults
+// populated would withhold the buffered tool_use blocks until a
+// continuation that the handler will refuse to issue, truncating the
+// harness's stream.
+func TestPostprocessStream_RecoverableDenyMixedSiblingsFallsThroughToSubstitute(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	input := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[]}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_recoverable","name":"Bash","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"echo a\"}"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_allow","name":"Bash","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"echo b\"}"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":1}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":15}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	const refusalText = "Clawvisor: script-session call refused — switch to the resolver mount"
+	factory := func(_ *http.Request, _ llmproxy.PostprocessConfig, _ conversation.Provider, _ []conversation.ToolUse, _ func(conversation.AuditEvent)) conversation.ToolUseEvaluator {
+		return func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+			if tu.ID == "toolu_recoverable" {
+				payload, _ := json.Marshal(refusalText)
+				return conversation.ToolUseVerdict{
+					Allowed:        false,
+					Outcome:        conversation.OutcomeDeny,
+					Reason:         refusalText,
+					SubstituteWith: refusalText,
+					Continue: &conversation.ContinueSignal{
+						SyntheticToolResults: []json.RawMessage{payload},
+					},
+				}
+			}
+			return conversation.ToolUseVerdict{Allowed: true, Outcome: conversation.OutcomeAllow}
+		}
+	}
+
+	var output bytes.Buffer
+	result, err := PostprocessStream(context.Background(), req, strings.NewReader(input), &output, "text/event-stream", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: factory,
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector: insp,
+		},
+	})
+	if err != nil {
+		t.Fatalf("PostprocessStream: %v", err)
+	}
+	if len(result.ContinuationToolResults) != 0 {
+		t.Fatalf("ContinuationToolResults = %+v, want empty (mixed sibling makes 1:1 impossible; handler's tryContinuation would skip and leave the stream truncated)", result.ContinuationToolResults)
+	}
+	out := output.String()
+	// BlockedReasonText surfaces the recoverable Deny's SubstituteWith
+	// directly (no "Tool use was blocked..." prefix when any decision
+	// supplies a substitute), so the wire carries the refusal text as
+	// the assistant turn. The key invariant: a substitute IS written,
+	// not the bare unwritten tool_use blocks that StreamRewrite
+	// withheld.
+	if !strings.Contains(out, refusalText) {
+		t.Fatalf("substitute prompt missing from wire — mixed-sibling recoverable deny should fall through to writeProviderBlockedPrompt with the substitute text so the harness sees a clean blocked turn (got: %s)", out)
+	}
+	if strings.Contains(out, `"name":"Bash"`) {
+		t.Fatalf("wire still carries a tool_use block — recoverable+sibling case should NOT emit tool_use bytes when continuation can't fire (got: %s)", out)
+	}
+}
+
 func anthropicSSEIndexContaining(stream, needle string) (int, bool) {
 	events := strings.Split(strings.ReplaceAll(stream, "\r\n", "\n"), "\n\n")
 	for _, event := range events {

@@ -125,11 +125,7 @@ func (e *BoundaryCheckEvaluator) EvaluateWithVerdict(_ context.Context, v inspec
 			Facts:   []pipeline.EvaluationFact{fact},
 		}
 	}
-	return pipeline.ToolUseVerdict{
-		Outcome: pipeline.OutcomeDeny,
-		Reason:  reason,
-		Facts:   []pipeline.EvaluationFact{fact},
-	}
+	return conversation.RecoverableDenyVerdict(reason, fact)
 }
 
 var _ pipeline.ToolUseEvaluator = (*BoundaryCheckEvaluator)(nil)
