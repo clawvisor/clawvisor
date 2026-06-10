@@ -710,29 +710,54 @@ func TestStandingTask_ResponseOmitsExpiry(t *testing.T) {
 	t.Error("standing task not found in list response")
 }
 
-func TestStandingTask_Expand_Rejected(t *testing.T) {
+// TestStandingTask_Expand_PreservesLifetime locks in the lift of the
+// "standing tasks can't be expanded" rule. The expand path now
+// accepts standing-lifetime tasks; the approve transition preserves
+// the lifetime (the row stays at the far-future ExpiresAt sentinel
+// rather than collapsing to now via the now + 0 math). Without this
+// branch in expandApproveExpiresAt, an approved standing-task
+// expansion would immediately expire.
+func TestStandingTask_Expand_PreservesLifetime(t *testing.T) {
 	adapter := newMockAdapter("mock.echo", "echo", "other")
 	env := newTestEnv(t, adapter)
 	sc := newScenario(t, env, "automation")
 
 	taskID := sc.createApprovedStandingTask(t, env, "mock.echo", "echo", true)
 
-	// Try to expand the standing task — should fail
 	resp := env.do("POST", fmt.Sprintf("/api/tasks/%s/expand", taskID), sc.AgentToken, map[string]any{
 		"expected_tools": []map[string]any{
 			{"tool_name": "mock.echo:other", "why": "need other action"},
 		},
 		"reason": "need more",
 	})
-	body := mustStatus(t, resp, http.StatusConflict)
-	if body["code"] != "INVALID_OPERATION" {
-		t.Errorf("expected code=INVALID_OPERATION, got %v", body["code"])
+	mustStatus(t, resp, http.StatusAccepted)
+
+	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/expand/approve", taskID), nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	if body["status"] != "active" {
+		t.Errorf("status after approve = %v, want active", body["status"])
 	}
-	msg, _ := body["error"].(string)
-	strContains(t, msg, "standing tasks cannot be expanded", "error message")
+	// Standing tasks must NOT emit expires_at on the response, and
+	// the row must remain at lifetime=standing with the same
+	// no-expiry semantics it had before the expansion.
+	if _, hasExpiry := body["expires_at"]; hasExpiry {
+		t.Errorf("standing expand response leaked expires_at: %v", body["expires_at"])
+	}
+
+	resp = env.do("GET", fmt.Sprintf("/api/tasks/%s", taskID), sc.AgentToken, nil)
+	body = mustStatus(t, resp, http.StatusOK)
+	if body["lifetime"] != "standing" {
+		t.Errorf("lifetime after expand = %v, want standing", body["lifetime"])
+	}
+	if body["status"] != "active" {
+		t.Errorf("status after expand = %v, want active", body["status"])
+	}
+	if body["expires_at"] != nil {
+		t.Errorf("standing task expires_at = %v, want nil (sentinel must be hidden on response)", body["expires_at"])
+	}
 }
 
-func TestStandingTask_OutOfScope_MessageSuggestsNewTask(t *testing.T) {
+func TestStandingTask_OutOfScope_MessageSuggestsExpand(t *testing.T) {
 	adapter := newMockAdapter("mock.echo", "echo", "other")
 	env := newTestEnv(t, adapter)
 	sc := newScenario(t, env, "automation")
@@ -748,8 +773,13 @@ func TestStandingTask_OutOfScope_MessageSuggestsNewTask(t *testing.T) {
 		t.Errorf("expected status=pending_scope_expansion, got %v", result["status"])
 	}
 	msg, _ := result["message"].(string)
+	// Lifting the standing-cannot-expand rule means the out-of-scope
+	// message now steers the agent to expand instead of revoke+recreate.
+	// The "lifetime preserved" wording is what we want the model to
+	// see — it shouldn't think the standing-ness is at risk.
 	strContains(t, msg, "standing task", "gateway out-of-scope message for standing task")
-	strContains(t, msg, "cannot be expanded", "gateway out-of-scope message for standing task")
+	strContains(t, msg, "/expand", "gateway out-of-scope message should suggest expand for standing tasks")
+	strContains(t, msg, "lifetime will be preserved", "gateway out-of-scope message should reassure the model the standing lifetime survives")
 }
 
 func TestStandingTask_MissingSessionID_Error(t *testing.T) {

@@ -753,8 +753,8 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			msg := fmt.Sprintf("Action %s:%s is outside the approved task scope. Use POST /api/tasks/%s/expand to request it.",
 				req.Service, req.Action, req.TaskID)
 			if task.Lifetime == "standing" {
-				msg = fmt.Sprintf("Action %s:%s is outside this standing task's scope. Standing tasks cannot be expanded — create a separate session task for this action, or revoke this task and create a new one with the additional actions.",
-					req.Service, req.Action)
+				msg = fmt.Sprintf("Action %s:%s is outside this standing task's scope. Use POST /api/tasks/%s/expand to broaden the standing task's scope — the lifetime will be preserved.",
+					req.Service, req.Action, req.TaskID)
 			}
 			taskIDPtr := &req.TaskID
 			e := baseEntry("out_of_scope", "blocked", taskIDPtr)

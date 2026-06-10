@@ -781,6 +781,12 @@ func formatScopeExpansionMessage(req notify.ScopeExpansionRequest) string {
 		// task didn't.
 		sb.WriteString(fmt.Sprintf("<b>Risk:</b> %s %s\n", riskEmoji(req.RiskLevel), html.EscapeString(req.RiskLevel)))
 	}
+	if lt := strings.TrimSpace(req.Lifetime); lt != "" {
+		// Expansion preserves the parent's lifetime — surfacing it
+		// here makes the higher-blast-radius case (standing tasks)
+		// visible to the reviewer before they approve.
+		sb.WriteString(fmt.Sprintf("<b>Lifetime:</b> %s\n", html.EscapeString(lt)))
+	}
 
 	if len(req.AddedTools) > 0 {
 		sb.WriteString("\n<b>New tools:</b>\n")

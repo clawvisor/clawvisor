@@ -144,14 +144,17 @@ func MaybeInterceptInlineExpansion(
 		return conversation.ToolUseVerdict{}, false
 	}
 
-	// Fetch the parent task's purpose for the prompt. This is a
-	// best-effort lookup — on failure the prompt renders without it
-	// (parent id alone). We deliberately don't fail the whole flow
-	// here; the agent already knows which task they're expanding.
+	// Fetch the parent task's purpose + lifetime for the prompt.
+	// Best-effort lookup — on failure the prompt renders with what
+	// we have. Lifetime is what triggers the "standing (no expiry)"
+	// callout in renderExpansionApprovalPrompt for the higher-blast-
+	// radius case.
 	parentPurpose := ""
+	parentLifetime := ""
 	if cfg.Store != nil {
 		if parent, err := cfg.Store.GetTask(req.Context(), taskID); err == nil && parent != nil {
 			parentPurpose = parent.Purpose
+			parentLifetime = parent.Lifetime
 		}
 	}
 
@@ -198,7 +201,7 @@ func MaybeInterceptInlineExpansion(
 	return conversation.ToolUseVerdict{
 		Allowed:        false,
 		Reason:         "Clawvisor: awaiting inline scope-expansion approval",
-		SubstituteWith: renderExpansionApprovalPrompt(&additions, parsed.Reason, parentPurpose, taskID, innerHold.Pending.ID),
+		SubstituteWith: renderExpansionApprovalPrompt(&additions, parsed.Reason, parentPurpose, taskID, parentLifetime, innerHold.Pending.ID),
 		HeldKindHint:   "approval",
 	}, true
 }

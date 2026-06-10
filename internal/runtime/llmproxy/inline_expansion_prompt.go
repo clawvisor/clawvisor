@@ -23,7 +23,7 @@ import (
 // creation prompt uses, so the augmentation pipeline can share the
 // outcome-store keying. Approval ID extraction goes through
 // extractApprovalIDFromPrompt unchanged.
-func renderExpansionApprovalPrompt(additions *runtimetasks.Envelope, reason, parentPurpose, parentTaskID, approvalID string) string {
+func renderExpansionApprovalPrompt(additions *runtimetasks.Envelope, reason, parentPurpose, parentTaskID, parentLifetime, approvalID string) string {
 	suffix := approvalIDFooter(approvalID)
 	if additions == nil {
 		return "Clawvisor wants to expand a task's scope.\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel." + suffix
@@ -42,6 +42,14 @@ func renderExpansionApprovalPrompt(additions *runtimetasks.Envelope, reason, par
 	} else if id := strings.TrimSpace(parentTaskID); id != "" {
 		b.WriteString("Task\n  ")
 		b.WriteString(id)
+	}
+	// Expansion preserves the parent's lifetime; show it
+	// prominently when standing because the reviewer is broadening
+	// a permanent grant. Session/sliding lifetimes are the common
+	// case and don't need the extra line — the existing approval
+	// surfaces already imply a time-bounded grant.
+	if strings.EqualFold(strings.TrimSpace(parentLifetime), "standing") {
+		b.WriteString("\n  Lifetime: standing (no expiry — the expanded scope remains until you revoke the task)")
 	}
 
 	if r := sanitizeUserText(strings.TrimSpace(reason)); r != "" {

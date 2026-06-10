@@ -2173,11 +2173,13 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task must be active or expired to expand")
 		return
 	}
-	if task.Lifetime == "standing" {
-		writeError(w, http.StatusConflict, "INVALID_OPERATION",
-			"standing tasks cannot be expanded — revoke this task and create a new one with the additional actions, or create a separate session task for the new action")
-		return
-	}
+	// Standing tasks ARE expandable — the approve path branches the
+	// expires_at math so the sentinel persists rather than being
+	// overwritten by now + 0. The reviewer should still see a
+	// prominent lifetime cue on the approval prompt (the approval
+	// surfaces print "Lifetime: always" on standing-task expansions)
+	// because broadening a permanent grant is higher blast radius
+	// than broadening a session.
 
 	parentEnv, err := runtimetasks.EnvelopeFromTask(task)
 	if err != nil {
@@ -2278,6 +2280,7 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 			ReplacedCredentials: notifyReplacedExpansionCredentials(merge.ReplacedCredentials),
 			Reason:              req.Reason,
 			RiskLevel:           notifyRiskLevel,
+			Lifetime:            task.Lifetime,
 			ApproveURL:          approveURL,
 			DenyURL:             denyURL,
 		}); err != nil {
@@ -2507,16 +2510,6 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task has no pending scope expansion")
 		return
 	}
-	// Defense in depth against an invariant break upstream — Expand
-	// already rejects standing tasks before SetTaskPendingExpansion,
-	// but if a future caller or migration ever lands a standing task
-	// in pending_scope_expansion, the multiplication below would
-	// yield expiresAt = now (lifetime=standing carries
-	// ExpiresInSeconds=0). Refuse before mutating state.
-	if task.Lifetime == "standing" {
-		writeError(w, http.StatusConflict, "INVALID_STATE", "standing tasks cannot transition through scope expansion")
-		return
-	}
 
 	envUpdate, merged, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
@@ -2534,7 +2527,11 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
 		envUpdate.ExpectedPendingJSON = pendingJSON
 	}
-	expiresAt := time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+	// Standing tasks keep the far-future sentinel that Approve uses
+	// (taskCredentialExpiry mirrors the same shape). Without this
+	// branch, ExpiresInSeconds=0 would land expires_at=now on the
+	// row and the task would immediately collapse to expired.
+	expiresAt := expandApproveExpiresAt(task)
 
 	// CAS guards on (status='pending_scope_expansion', pending
 	// snapshot matches) so a concurrent ExpandDeny+re-expand
@@ -2562,11 +2559,27 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 
 	h.publishTasksAndQueue(user.ID)
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"task_id":    taskID,
-		"status":     "active",
-		"expires_at": expiresAt.Format(time.RFC3339),
-	})
+	resp := map[string]any{
+		"task_id": taskID,
+		"status":  "active",
+	}
+	if task.Lifetime != "standing" {
+		resp["expires_at"] = expiresAt.Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// expandApproveExpiresAt returns the expires_at that the approve
+// path should land on the task row. Standing tasks keep the
+// far-future sentinel that Approve uses (so expanding a standing
+// task can't accidentally collapse it to expired via the
+// now + ExpiresInSeconds math). Session/sliding tasks get a fresh
+// expires_in_seconds-from-now deadline.
+func expandApproveExpiresAt(task *store.Task) time.Time {
+	if task != nil && task.Lifetime == "standing" {
+		return time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	return time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 }
 
 // buildExpansionApprovalUpdate translates a task's PendingExpansion into
@@ -3095,9 +3108,6 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	if task.Status != "pending_scope_expansion" || task.PendingExpansion == nil {
 		return fmt.Errorf("task has no pending scope expansion")
 	}
-	if task.Lifetime == "standing" {
-		return fmt.Errorf("standing tasks cannot transition through scope expansion")
-	}
 
 	envUpdate, merged, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
@@ -3108,7 +3118,7 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
 		envUpdate.ExpectedPendingJSON = pendingJSON
 	}
-	expiresAt := time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+	expiresAt := expandApproveExpiresAt(task)
 	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)
 	if err != nil {
 		return err

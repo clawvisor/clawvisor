@@ -847,9 +847,6 @@ func (h *TasksHandler) CreatePendingInlineExpansion(
 	if task.Status != "active" && task.Status != "expired" {
 		return "", fmt.Errorf("task must be active or expired to expand (status=%q)", task.Status)
 	}
-	if task.Lifetime == "standing" {
-		return "", errors.New("standing tasks cannot be expanded")
-	}
 
 	// Validate derived gateway scopes up front so an unusable scope
 	// fails before the user sees an approval prompt. Mirrors the
@@ -945,9 +942,6 @@ func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userI
 	if task.Status != "pending_scope_expansion" || task.PendingExpansion == nil {
 		return nil, &llmproxy.ErrInlineExpansionAlreadyTerminal{Status: task.Status}
 	}
-	if task.Lifetime == "standing" {
-		return nil, errors.New("standing tasks cannot transition through scope expansion")
-	}
 
 	envUpdate, merged, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
@@ -957,7 +951,7 @@ func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userI
 	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
 		envUpdate.ExpectedPendingJSON = pendingJSON
 	}
-	expiresAt := time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+	expiresAt := expandApproveExpiresAt(task)
 
 	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)
 	if err != nil {
@@ -1017,7 +1011,11 @@ func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userI
 	if rec != nil {
 		out.ApprovalRecordID = rec.ID
 	}
-	if task.ExpiresAt != nil {
+	// Standing-task expansion: keep the response shape consistent
+	// with CreateInlineApprovedTask for standing tasks — omit the
+	// expires_at field rather than emitting the sentinel, so the
+	// model doesn't read "expires 9999-01-01" as a real value.
+	if task.Lifetime != "standing" && task.ExpiresAt != nil {
 		out.ExpiresAtRFC3339 = task.ExpiresAt.Format(time.RFC3339)
 	}
 	out.Credentials = inlineCredentialPlaceholders(placeholders)
