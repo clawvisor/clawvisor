@@ -1,0 +1,54 @@
+internal/api/handlers/installer.go
+  s_e7acd82f5fc355::t_4347e4681d9257 1496,1501
+  s_e7acd82f5fc355::t_eb367fc186e950 96-108
+  s_e7acd82f5fc355::t_1f60c6296a5747 658
+  s_e7acd82f5fc355::t_f74be328e8abfc 607,613-616,618-619
+  s_e7acd82f5fc355::t_17c3dbbdd414bf 1076
+  s_e7acd82f5fc355::t_16aab7799c5160 1279
+  s_e7acd82f5fc355::t_63c5ddec948aa4 1586,1589
+  s_e7acd82f5fc355::t_00dd287a512df5 674
+  s_e7acd82f5fc355::t_fe8bd4a01d8385 770
+  s_e7acd82f5fc355::t_311037337a7af5 222,224-226
+  s_e7acd82f5fc355::t_9fc7d9b0ae7f80 1726
+  s_e7acd82f5fc355::t_22b53240e73ddb 969
+  s_e7acd82f5fc355::t_5972342396910e 1007
+  s_e7acd82f5fc355::t_b7aa2003556d9d 1084
+  s_e7acd82f5fc355::t_a7c7a58a3798ed 145,147-149
+  s_e7acd82f5fc355::t_49102e224f90be 312-322,342-350
+  s_e7acd82f5fc355::t_9117ecc424dc1d 979
+  s_e7acd82f5fc355::t_f68bceb4e47f22 1199
+  s_e7acd82f5fc355::t_b69b88c46b6f07 1019
+  s_e7acd82f5fc355::t_d16267fca016cf 1650
+  s_e7acd82f5fc355::t_5aa4dda682aafd 757
+  s_e7acd82f5fc355::t_5320f6bf106f76 1700,1709
+  s_e7acd82f5fc355::t_ba6474d8fb0f2b 1887,1895-1896,1905,1908,1910
+  s_e7acd82f5fc355::t_f3c836d6484d9a 1106
+  s_e7acd82f5fc355::t_de61393a3b9142 743
+  s_e7acd82f5fc355::t_6de871ee3ece87 1044
+  s_e7acd82f5fc355::t_ff24aed29e4e75 1153,1165
+  s_e7acd82f5fc355::t_01624737b9bbb1 1221
+  s_e7acd82f5fc355::t_dd6a53867f0d5d 1613,1622-1623
+  s_e7acd82f5fc355::t_611aa8d41cb3dc 639
+  s_e7acd82f5fc355::t_0a8ae9ba8ed787 1636
+internal/api/handlers/installer_test.go
+  s_e7acd82f5fc355::t_cedb2ef05ef475 117-120,123
+  s_e7acd82f5fc355::t_3d37dfc8fa8eeb 723
+  s_e7acd82f5fc355::t_998c31e613f08c 234
+  s_e7acd82f5fc355::t_20e477d35166dd 715-721,724-735,737-742,745,750-751,754-760,768-769,778-783
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "670407ec3c10e33f5ecf27bfd9308dd3d81458bb",
+  "prompts": {},
+  "sessions": {
+    "s_e7acd82f5fc355": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fec213c9-f574-407c-9249-7df89f57a352",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
