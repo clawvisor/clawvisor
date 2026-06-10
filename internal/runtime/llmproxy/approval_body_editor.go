@@ -41,6 +41,16 @@ type anthropicApprovalBodyEditor struct {
 
 func (e anthropicApprovalBodyEditor) LatestApprovalReply() (string, string, bool) {
 	verb, approvalID := conversation.AnthropicApprovalReply(e.body)
+	if verb != "" {
+		return verb, approvalID, true
+	}
+	// Text path didn't match — try the AskUserQuestion path:
+	// the inline-approval intercept may have substituted the
+	// model's tool_use with a picker call, in which case the
+	// user's reply arrives as a tool_result block (not free text).
+	// Lives in llmproxy (not conversation) so the parser package
+	// stays harness-tool-name-agnostic.
+	verb, approvalID = anthropicAskUserQuestionApprovalReply(e.body)
 	return verb, approvalID, verb != ""
 }
 
@@ -117,25 +127,12 @@ func replaceAnthropicApprovalReply(body []byte, expectedVerb, expectedApprovalID
 		text := flattenAnthropicTaskReplyText(req.Messages[i].Content)
 		verb, parsedID := conversation.ParseApprovalReplyText(text)
 		if verb == "" {
-			// No plain-text reply. Try the AskUserQuestion shape — the
-			// user's answer arrives as a tool_result block whose parent
-			// assistant tool_use is AskUserQuestion(question carrying
-			// the inline-approval ID marker).
-			rewritten, replaced, ok := replaceAnthropicAskUserQuestionApprovalReply(req.Messages, i, expectedVerb, expectedApprovalID, replacement)
-			if !ok {
-				return body, false, nil
-			}
-			req.Messages[i].Content = rewritten
-			if !replaced {
-				return body, false, nil
-			}
-			messages, err := json.Marshal(req.Messages)
-			if err != nil {
-				return nil, false, err
-			}
-			raw["messages"] = messages
-			out, err := json.Marshal(raw)
-			return out, err == nil, err
+			// No plain-text reply. Try the AskUserQuestion shape —
+			// the user's answer arrives as a tool_result block whose
+			// parent assistant tool_use is AskUserQuestion with the
+			// inline-approval ID marker. The fallback parses the
+			// body itself, so we return its result directly here.
+			return rewriteAnthropicAskUserQuestionApprovalReply(body, expectedVerb, expectedApprovalID, replacement)
 		}
 		if verb != expectedVerb {
 			return body, false, nil
@@ -156,233 +153,70 @@ func replaceAnthropicApprovalReply(body []byte, expectedVerb, expectedApprovalID
 	return body, false, nil
 }
 
-// replaceAnthropicAskUserQuestionApprovalReply rewrites the
-// tool_result content of the user's matching AskUserQuestion answer
-// to the replacement notice. Returns (newContent, replaced, ok):
+// rewriteAnthropicAskUserQuestionApprovalReply is the body-editor
+// fallback for the AskUserQuestion shape: when the latest user turn
+// has no plain-text approval verb, the user's choice may instead
+// have arrived as a tool_result block linked to a synthesized
+// AskUserQuestion picker. This finds the answered call, validates
+// it against the expected verb/approvalID, and REPLACES the
+// tool_result block with a text block carrying the replacement
+// notice — block-shape swap so:
 //
-//   - ok=false: the user message isn't an AskUserQuestion-shaped
-//     approval reply at all (defer to text-path return false).
-//   - ok=true, replaced=false: AskUserQuestion shape matched but the
-//     verb or approvalID didn't (caller should return false to abort
-//     the rewrite, mirroring the text path's mismatch return).
-//   - ok=true, replaced=true: tool_result rewritten in place.
-//
-// The tool_use_id is preserved so the harness still associates the
-// reshaped result with the original AskUserQuestion call. Replacing
-// just the content (not the whole block) keeps the model from seeing
-// an orphaned tool_use.
-func replaceAnthropicAskUserQuestionApprovalReply(
-	messages []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	},
-	userIdx int,
-	expectedVerb, expectedApprovalID, replacement string,
-) (json.RawMessage, bool, bool) {
-	results := extractAnthropicToolResultBlocks(messages[userIdx].Content)
-	if len(results) == 0 {
-		return nil, false, false
-	}
-	questions := collectAnthropicAskUserQuestionInputs(messages, userIdx)
-	if len(questions) == 0 {
-		return nil, false, false
-	}
-	// Find the latest tool_result whose parent tool_use is an
-	// AskUserQuestion call with a marker. Matches the detection order
-	// in anthropicAskUserQuestionApprovalReply so probe and rewrite
-	// converge on the same block.
-	targetIdx := -1
-	var verb, parsedID string
-	for i := len(results) - 1; i >= 0; i-- {
-		tr := results[i]
-		questionText, ok := questions[tr.toolUseID]
-		if !ok {
-			continue
-		}
-		marker := conversation.FindLatestApprovalIDMarker(questionText)
-		if marker == "" {
-			continue
-		}
-		// Same wrapper-unwrap as approval_release.go's detection.
-		// Claude Code emits the harness-wrapped form; older / other
-		// harnesses may pass the answer through unwrapped, so fall
-		// back to the raw content when the wrapper isn't matched.
-		answer := conversation.ExtractAskUserQuestionAnswer(tr.content)
-		if answer == "" {
-			answer = tr.content
-		}
-		v, _ := conversation.ParseApprovalReplyText(answer)
-		if v == "" {
-			continue
-		}
-		targetIdx = i
-		verb = v
-		parsedID = marker
-		break
-	}
-	if targetIdx < 0 {
-		return nil, false, false
-	}
-	if verb != expectedVerb {
-		return messages[userIdx].Content, true, false
-	}
-	if !approvalIDMatchesExpectation(parsedID, expectedApprovalID) {
-		return messages[userIdx].Content, true, false
-	}
-	// Rebuild the content array with the chosen tool_result's content
-	// replaced by the notice. Other blocks pass through unchanged.
-	newContent, ok := rewriteAnthropicToolResultContent(messages[userIdx].Content, results[targetIdx].toolUseID, replacement)
-	if !ok {
-		return messages[userIdx].Content, true, false
-	}
-	return newContent, true, true
-}
-
-// collectAnthropicAskUserQuestionInputs walks every assistant message
-// before userIdx and returns a map of AskUserQuestion tool_use IDs to
-// the marker-search text for that specific call: the AskUserQuestion
-// input JSON plus the text blocks PRECEDING it in the same assistant
-// message (up to the prior AskUserQuestion). Mirrors the
-// conversation-package helper of the same name.
-//
-// Per-call pairing matters when an assistant turn contains multiple
-// AskUserQuestion calls — the inline-approval renderer emits each
-// call right after its own [clawvisor:approval=...] marker text, so
-// the marker for one call must NOT bleed into the search text of a
-// later call. Without this scoping, the rewrite could land on the
-// wrong tool_result and a chain of mixed-up approval replacements.
-//
-// Cross-conversation safety: callers gate by approvalID before
-// consuming the resolved hold, so a marker captured here can't
-// release a hold from a different conversation.
-func collectAnthropicAskUserQuestionInputs(
-	messages []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	},
-	userIdx int,
-) map[string]string {
-	out := make(map[string]string)
-	for i := 0; i < userIdx; i++ {
-		if messages[i].Role != "assistant" {
-			continue
-		}
-		var blocks []struct {
-			Type  string          `json:"type"`
-			ID    string          `json:"id"`
-			Name  string          `json:"name"`
-			Text  string          `json:"text"`
-			Input json.RawMessage `json:"input"`
-		}
-		if err := json.Unmarshal(messages[i].Content, &blocks); err != nil {
-			continue
-		}
-		var pendingTexts []string
-		for _, b := range blocks {
-			if b.Type == "text" && b.Text != "" {
-				pendingTexts = append(pendingTexts, b.Text)
-				continue
-			}
-			if b.Type != "tool_use" || b.Name != AskUserQuestionToolName || b.ID == "" {
-				continue
-			}
-			text := ""
-			if len(b.Input) > 0 {
-				text = string(b.Input)
-			}
-			if len(pendingTexts) > 0 {
-				preceding := strings.Join(pendingTexts, "\n")
-				if text != "" {
-					text += "\n" + preceding
-				} else {
-					text = preceding
-				}
-			}
-			if text != "" {
-				out[b.ID] = text
-			}
-			pendingTexts = pendingTexts[:0]
-		}
-	}
-	return out
-}
-
-type anthropicToolResultBlock struct {
-	toolUseID string
-	content   string
-}
-
-func extractAnthropicToolResultBlocks(raw json.RawMessage) []anthropicToolResultBlock {
-	if len(raw) == 0 {
-		return nil
-	}
-	var blocks []struct {
-		Type      string          `json:"type"`
-		ToolUseID string          `json:"tool_use_id"`
-		Content   json.RawMessage `json:"content"`
-	}
-	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return nil
-	}
-	var out []anthropicToolResultBlock
-	for _, b := range blocks {
-		if b.Type != "tool_result" || b.ToolUseID == "" {
-			continue
-		}
-		content := flattenAskUserQuestionToolResult(b.Content)
-		if content == "" {
-			continue
-		}
-		out = append(out, anthropicToolResultBlock{toolUseID: b.ToolUseID, content: content})
-	}
-	return out
-}
-
-func flattenAskUserQuestionToolResult(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var simple string
-	if err := json.Unmarshal(raw, &simple); err == nil {
-		return simple
-	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text,omitempty"`
-	}
-	if err := json.Unmarshal(raw, &blocks); err == nil {
-		var parts []string
-		for _, b := range blocks {
-			if b.Type == "text" && b.Text != "" {
-				parts = append(parts, b.Text)
-			}
-		}
-		if len(parts) > 0 {
-			return strings.Join(parts, "\n")
-		}
-	}
-	// JSON-object answer payload (e.g. {"answers":{"...":"yes"}}):
-	// fall back to the raw bytes so the verb parser can pick a
-	// "yes"/"no" token out of the embedded value.
-	return string(raw)
-}
-
-// rewriteAnthropicToolResultContent REPLACES the tool_result block
-// whose tool_use_id matches targetToolUseID with a plain text block
-// carrying the replacement string. This is the AskUserQuestion
-// counterpart to the text-substitution path's "replace the user's
-// 'yes' content with the notice" — done as a block-shape swap so:
-//
-//  1. The orphan tool_use_id (whose parent AskUserQuestion call gets
-//     stripped from history alongside the approval prompt) no longer
-//     refers to anything — Anthropic stops 400'ing the next request.
+//  1. The orphan tool_use_id (whose parent AskUserQuestion call
+//     gets stripped from history alongside the approval prompt) no
+//     longer refers to anything — Anthropic stops 400'ing the next
+//     request on orphan tool_result blocks.
 //  2. The notice text survives the historystrip's bare-verb check
 //     (the notice carries the <clawvisor-notice kind="task-...">
 //     marker, so isBareSyntheticApprovalReply returns false).
 //
-// Other blocks (text, image, additional tool_results) pass through
-// unchanged.
-func rewriteAnthropicToolResultContent(raw json.RawMessage, targetToolUseID, replacement string) (json.RawMessage, bool) {
+// Returns (body, false, nil) when the AskUserQuestion shape doesn't
+// match or the verb/approvalID expectation fails. Other blocks
+// (text, image, additional tool_results) pass through unchanged.
+func rewriteAnthropicAskUserQuestionApprovalReply(body []byte, expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
+	var req struct {
+		Messages []anthropicMessage `json:"messages"`
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, false, err
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, false, err
+	}
+	match, ok := findAnthropicAskUserQuestionMatch(req.Messages)
+	if !ok {
+		return body, false, nil
+	}
+	if match.Verb != expectedVerb {
+		return body, false, nil
+	}
+	if !approvalIDMatchesExpectation(match.ApprovalID, expectedApprovalID) {
+		return body, false, nil
+	}
+	newContent, swapped := swapAnthropicToolResultForTextBlock(req.Messages[match.UserIdx].Content, match.ToolUseID, replacement)
+	if !swapped {
+		return body, false, nil
+	}
+	req.Messages[match.UserIdx].Content = newContent
+	messages, err := json.Marshal(req.Messages)
+	if err != nil {
+		return nil, false, err
+	}
+	raw["messages"] = messages
+	out, err := json.Marshal(raw)
+	return out, err == nil, err
+}
+
+// swapAnthropicToolResultForTextBlock walks `raw` (a user message's
+// content blocks array) and replaces the tool_result block whose
+// tool_use_id matches targetToolUseID with a plain text block
+// carrying replacement. Other blocks pass through unchanged. The
+// block-shape swap (rather than a content-field rewrite) is what
+// keeps the next request's history valid after historystrip drops
+// the parent AskUserQuestion call — see
+// rewriteAnthropicAskUserQuestionApprovalReply for the rationale.
+func swapAnthropicToolResultForTextBlock(raw json.RawMessage, targetToolUseID, replacement string) (json.RawMessage, bool) {
 	if len(raw) == 0 {
 		return nil, false
 	}
@@ -402,10 +236,6 @@ func rewriteAnthropicToolResultContent(raw json.RawMessage, targetToolUseID, rep
 		if probe.Type != "tool_result" || probe.ToolUseID != targetToolUseID {
 			continue
 		}
-		// Swap the tool_result block for a text block carrying the
-		// notice. See the rewriteAnthropicToolResultContent header
-		// for why we replace the block shape rather than just the
-		// content field.
 		textBlock := map[string]string{"type": "text", "text": replacement}
 		newBlock, err := json.Marshal(textBlock)
 		if err != nil {

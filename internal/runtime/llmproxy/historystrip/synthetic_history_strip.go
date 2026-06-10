@@ -103,7 +103,7 @@ func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHisto
 			// Capture the AskUserQuestion tool_use IDs from this
 			// stripped assistant turn so the next user turn can
 			// drop the matching tool_result and not orphan it.
-			if ids := extractAskUserQuestionToolUseIDs(content); len(ids) > 0 {
+			if ids := extractClawvisorSyntheticToolUseIDs(content); len(ids) > 0 {
 				if orphanedToolUseIDs == nil {
 					orphanedToolUseIDs = make(map[string]struct{}, len(ids))
 				}
@@ -256,26 +256,33 @@ func isSyntheticApprovalPromptText(text string) bool {
 		strings.Contains(text, ToolApprovalSubstitutedPromptMarker)
 }
 
-// extractAskUserQuestionToolUseIDs walks an assistant message's
-// content blocks and returns the IDs of every AskUserQuestion
-// tool_use. The strip path uses these to delete the matching
-// tool_result blocks from the next user turn so Anthropic doesn't
-// see an orphan tool_result and 400 the request.
-func extractAskUserQuestionToolUseIDs(content json.RawMessage) []string {
+// extractClawvisorSyntheticToolUseIDs walks an assistant message's
+// content blocks and returns the IDs of every tool_use whose ID
+// carries the SyntheticToolUseIDPrefix namespace — i.e. the picker
+// calls Clawvisor synthesized for an inline approval substitution.
+// The strip path uses these to delete the matching tool_result
+// blocks from the next user turn so Anthropic doesn't see an
+// orphan tool_result and 400 the request.
+//
+// Filtering by prefix (not by tool name) keeps this package
+// harness-agnostic: the synthesizer is the only producer of the
+// prefix, so the strip doesn't need to know whether the substituted
+// tool is AskUserQuestion (Claude Code), some other native picker,
+// or a future variant.
+func extractClawvisorSyntheticToolUseIDs(content json.RawMessage) []string {
 	if len(content) == 0 {
 		return nil
 	}
 	var blocks []struct {
 		Type string `json:"type"`
 		ID   string `json:"id"`
-		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(content, &blocks); err != nil {
 		return nil
 	}
 	var ids []string
 	for _, b := range blocks {
-		if b.Type == "tool_use" && b.Name == "AskUserQuestion" && b.ID != "" {
+		if b.Type == "tool_use" && strings.HasPrefix(b.ID, SyntheticToolUseIDPrefix) {
 			ids = append(ids, b.ID)
 		}
 	}

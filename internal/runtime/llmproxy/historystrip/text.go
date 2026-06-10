@@ -10,6 +10,15 @@ const SecretDecisionIDMarker = "[clawvisor:secret="
 const InlineApprovalSubstitutedPromptMarker = "Clawvisor wants to create a task to cover this work:"
 const InlineTaskNoticeOpenPrefix = `<clawvisor-notice kind="task-`
 
+// SyntheticToolUseIDPrefix is the namespace the inline-approval
+// intercept stamps on every tool_use_id it synthesizes for a
+// substituted picker call. The strip path uses this prefix to find
+// orphan tool_results (whose parent tool_use was just stripped from
+// the assistant turn) without needing to know the specific harness
+// tool name — keeping this package harness-agnostic. Producers and
+// consumers must agree on the prefix; both reference this constant.
+const SyntheticToolUseIDPrefix = "toolu_clawvisor_"
+
 type SecretDecisionAction string
 
 const (

@@ -442,9 +442,12 @@ func inlineSubstitutionShape(useAskUserQuestion bool) string {
 // so audit logs and trace records correlate the AskUserQuestion call
 // back to the hold without an extra lookup.
 func buildAskUserQuestionToolCall(approvalID string) *conversation.SyntheticToolCall {
-	id := "toolu_clawvisor_ask"
+	// SyntheticToolUseIDPrefix is the same namespace historystrip
+	// uses to identify orphaned synthetic tool_uses on subsequent
+	// turns — keep producer/consumer in lockstep via this constant.
+	id := SyntheticToolUseIDPrefix + "ask"
 	if approvalID != "" {
-		id = "toolu_clawvisor_ask_" + approvalID
+		id = SyntheticToolUseIDPrefix + "ask_" + approvalID
 	}
 	return &conversation.SyntheticToolCall{
 		ID:   id,

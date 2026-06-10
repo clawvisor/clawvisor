@@ -16,6 +16,13 @@ const InlineApprovalSubstitutedPromptMarker = historystrip.InlineApprovalSubstit
 const SecretDecisionIDMarker = historystrip.SecretDecisionIDMarker
 const inlineTaskNoticeOpenPrefix = historystrip.InlineTaskNoticeOpenPrefix
 
+// SyntheticToolUseIDPrefix re-exports the historystrip-side constant
+// the inline-approval intercept stamps on every synthesized tool_use.
+// Lives here so producers in llmproxy don't need to import the
+// historystrip subpackage just to namespace an ID. See
+// historystrip.SyntheticToolUseIDPrefix for the contract details.
+const SyntheticToolUseIDPrefix = historystrip.SyntheticToolUseIDPrefix
+
 const (
 	SecretDecisionNone      = historystrip.SecretDecisionNone
 	SecretDecisionAllowOnce = historystrip.SecretDecisionAllowOnce
