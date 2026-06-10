@@ -243,13 +243,17 @@ func flattenAnthropicToolResultContent(raw json.RawMessage) string {
 
 // collectAnthropicAskUserQuestionInputs walks every assistant turn
 // before userIdx and returns a map of AskUserQuestion tool_use IDs to
-// the concatenated marker-search text for that call: the
-// AskUserQuestion input JSON PLUS any sibling text blocks from the
-// same assistant message. The inline-approval renderer emits the
-// task body (with the [clawvisor:approval=...] marker) as a text
-// block alongside a minimal AskUserQuestion picker — so the marker
-// may live in either place; concatenating both keeps the parser
-// agnostic to which slot the marker is in.
+// the marker-search text for that specific call: the AskUserQuestion
+// input JSON PLUS the text blocks that PRECEDE it in the same
+// assistant message (up to the previous AskUserQuestion, or the
+// start of the message).
+//
+// Per-call pairing matters when an assistant turn contains multiple
+// AskUserQuestion calls: the inline-approval renderer emits each
+// call right after its own [clawvisor:approval=...] marker text, so
+// the marker for call N MUST stay attached to call N and not bleed
+// into calls N+1, N+2, etc. — otherwise a tool_result for one call
+// could release the wrong hold.
 func collectAnthropicAskUserQuestionInputs(
 	messages []struct {
 		Role    string          `json:"role"`
@@ -272,35 +276,32 @@ func collectAnthropicAskUserQuestionInputs(
 		if err := json.Unmarshal(messages[i].Content, &blocks); err != nil {
 			continue
 		}
-		// Pass 1: collect ALL text from this assistant turn so it
-		// can be paired with any AskUserQuestion tool_use we find.
-		// The marker most commonly lives in a sibling text block
-		// emitted before the picker.
-		var siblingTexts []string
+		// Single pass: accumulate text into pendingText. When we
+		// hit an AskUserQuestion tool_use, flush pendingText into
+		// its entry and reset — that text belonged to this call,
+		// not any subsequent ones.
+		var pendingTexts []string
 		for _, b := range blocks {
 			if b.Type == "text" && b.Text != "" {
-				siblingTexts = append(siblingTexts, b.Text)
+				pendingTexts = append(pendingTexts, b.Text)
+				continue
 			}
-		}
-		siblingText := strings.Join(siblingTexts, "\n")
-		// Pass 2: for each AskUserQuestion tool_use, build the
-		// combined marker-search string (input JSON + sibling text).
-		for _, b := range blocks {
 			if b.Type != "tool_use" || b.Name != "AskUserQuestion" || b.ID == "" {
 				continue
 			}
 			text := flattenAskUserQuestionInput(b.Input)
-			if siblingText != "" {
+			if len(pendingTexts) > 0 {
+				preceding := strings.Join(pendingTexts, "\n")
 				if text != "" {
-					text += "\n" + siblingText
+					text += "\n" + preceding
 				} else {
-					text = siblingText
+					text = preceding
 				}
 			}
-			if text == "" {
-				continue
+			if text != "" {
+				out[b.ID] = text
 			}
-			out[b.ID] = text
+			pendingTexts = pendingTexts[:0]
 		}
 	}
 	return out

@@ -240,12 +240,17 @@ func replaceAnthropicAskUserQuestionApprovalReply(
 
 // collectAnthropicAskUserQuestionInputs walks every assistant message
 // before userIdx and returns a map of AskUserQuestion tool_use IDs to
-// the combined marker-search text: the AskUserQuestion input JSON
-// plus any sibling text blocks from the same assistant message.
-// Mirrors the conversation-package helper of the same name — the
-// inline-approval renderer puts the [clawvisor:approval=...] marker
-// in a sibling text block (not the picker question), so the parser
-// has to scan both slots to find it.
+// the marker-search text for that specific call: the AskUserQuestion
+// input JSON plus the text blocks PRECEDING it in the same assistant
+// message (up to the prior AskUserQuestion). Mirrors the
+// conversation-package helper of the same name.
+//
+// Per-call pairing matters when an assistant turn contains multiple
+// AskUserQuestion calls — the inline-approval renderer emits each
+// call right after its own [clawvisor:approval=...] marker text, so
+// the marker for one call must NOT bleed into the search text of a
+// later call. Without this scoping, the rewrite could land on the
+// wrong tool_result and a chain of mixed-up approval replacements.
 //
 // Cross-conversation safety: callers gate by approvalID before
 // consuming the resolved hold, so a marker captured here can't
@@ -272,14 +277,12 @@ func collectAnthropicAskUserQuestionInputs(
 		if err := json.Unmarshal(messages[i].Content, &blocks); err != nil {
 			continue
 		}
-		var siblingTexts []string
+		var pendingTexts []string
 		for _, b := range blocks {
 			if b.Type == "text" && b.Text != "" {
-				siblingTexts = append(siblingTexts, b.Text)
+				pendingTexts = append(pendingTexts, b.Text)
+				continue
 			}
-		}
-		siblingText := strings.Join(siblingTexts, "\n")
-		for _, b := range blocks {
 			if b.Type != "tool_use" || b.Name != AskUserQuestionToolName || b.ID == "" {
 				continue
 			}
@@ -287,17 +290,18 @@ func collectAnthropicAskUserQuestionInputs(
 			if len(b.Input) > 0 {
 				text = string(b.Input)
 			}
-			if siblingText != "" {
+			if len(pendingTexts) > 0 {
+				preceding := strings.Join(pendingTexts, "\n")
 				if text != "" {
-					text += "\n" + siblingText
+					text += "\n" + preceding
 				} else {
-					text = siblingText
+					text = preceding
 				}
 			}
-			if text == "" {
-				continue
+			if text != "" {
+				out[b.ID] = text
 			}
-			out[b.ID] = text
+			pendingTexts = pendingTexts[:0]
 		}
 	}
 	return out

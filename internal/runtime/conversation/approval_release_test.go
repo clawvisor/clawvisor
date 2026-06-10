@@ -337,6 +337,41 @@ func TestAnthropicApprovalReplyAskUserQuestionIgnoresUnrelatedToolResults(t *tes
 	}
 }
 
+func TestAnthropicApprovalReplyAskUserQuestionMultipleCallsScopeMarkerToTheirOwnText(t *testing.T) {
+	// Defense-in-depth: if an assistant turn ever contains TWO
+	// AskUserQuestion calls each preceded by its own marker text,
+	// the parser must scope each call's marker-search text to the
+	// text blocks PRECEDING that call (up to the prior call). A
+	// previous broadcast-all implementation matched the FIRST
+	// marker for BOTH calls' tool_results, releasing the wrong
+	// hold when the user only intended to act on one.
+	//
+	// In this fixture, the user answers ONLY the second question
+	// ("yes"). The parser should release cv-second2 — NOT
+	// cv-first1.
+	body := []byte(`{
+		"messages": [
+			{"role": "user", "content": "do two unrelated things"},
+			{"role": "assistant", "content": [
+				{"type": "text", "text": "Clawvisor wants to create a task to cover this work:\n\nPurpose\n  First task\n\n[clawvisor:approval=cv-first1]"},
+				{"type": "tool_use", "id": "toolu_call_first", "name": "AskUserQuestion", "input": {"questions": [{"question": "Approve this task?"}]}},
+				{"type": "text", "text": "Clawvisor wants to create a task to cover this work:\n\nPurpose\n  Second task\n\n[clawvisor:approval=cv-second2]"},
+				{"type": "tool_use", "id": "toolu_call_second", "name": "AskUserQuestion", "input": {"questions": [{"question": "Approve this task?"}]}}
+			]},
+			{"role": "user", "content": [
+				{"type": "tool_result", "tool_use_id": "toolu_call_second", "content": "Your questions have been answered: \"Approve this task?\"=\"yes\". You can now continue with these answers in mind."}
+			]}
+		]
+	}`)
+	verb, id := AnthropicApprovalReply(body)
+	if verb != "approve" {
+		t.Fatalf("verb = %q, want approve", verb)
+	}
+	if id != "cv-second2" {
+		t.Fatalf("id = %q, want cv-second2 (the marker preceding the answered call) — got cv-first1 would mean the first marker bled across calls", id)
+	}
+}
+
 func TestAnthropicApprovalReplyAskUserQuestionMarkerInSiblingTextBlock(t *testing.T) {
 	// New shape: the inline-approval renderer emits the task body
 	// (with the [clawvisor:approval=...] marker) as a sibling text
