@@ -68,12 +68,7 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 			}
 			newContent = append(newContent, block)
 		case "tool_use":
-			tu := PopulateCvReason(ToolUse{
-				ID:    block.ID,
-				Index: index,
-				Name:  block.Name,
-				Input: block.Input,
-			})
+			tu := NewToolUseFromInput(block.ID, index, block.Name, block.Input)
 			if tu.CvReason != "" {
 				block.Input = tu.Input
 				anyCvReasonStripped = true
@@ -142,7 +137,7 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 		return RewriteResult{
 			Body:          rewritten,
 			Decisions:     decisions,
-			Rewritten:     anyBlocked || anyRewritten,
+			Rewritten:     anyBlocked || anyRewritten || anyCvReasonStripped,
 			AssistantTurn: turn,
 		}, nil
 	}
@@ -280,12 +275,7 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		if pb.input.Len() > 0 {
 			inputRaw = json.RawMessage(pb.input.Bytes())
 		}
-		tu := PopulateCvReason(ToolUse{
-			ID:    pb.id,
-			Index: pb.index,
-			Name:  pb.name,
-			Input: inputRaw,
-		})
+		tu := NewToolUseFromInput(pb.id, pb.index, pb.name, inputRaw)
 		if tu.CvReason != "" {
 			pb.input.Reset()
 			pb.input.Write(tu.Input)
@@ -365,7 +355,7 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		return RewriteResult{
 			Body:          assembled,
 			Decisions:     decisions,
-			Rewritten:     anyBlocked || anyRewritten,
+			Rewritten:     anyBlocked || anyRewritten || anyCvReasonStripped,
 			AssistantTurn: turn,
 		}, nil
 	}
@@ -1414,12 +1404,7 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 		if pb.input.Len() > 0 {
 			inputRaw = json.RawMessage(pb.input.Bytes())
 		}
-		tu := PopulateCvReason(ToolUse{
-			ID:    pb.id,
-			Index: pb.index,
-			Name:  pb.name,
-			Input: inputRaw,
-		})
+		tu := NewToolUseFromInput(pb.id, pb.index, pb.name, inputRaw)
 		if tu.CvReason != "" {
 			pb.input.Reset()
 			pb.input.Write(tu.Input)

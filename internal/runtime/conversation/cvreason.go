@@ -50,9 +50,9 @@ func ExtractCvReason(input json.RawMessage) (reason string, stripped json.RawMes
 }
 
 // PopulateCvReason returns a copy of tu with cvreason extracted from
-// Input into CvReason. Construction sites in the response parsers call
-// this immediately after building a ToolUse so the rest of the pipeline
-// (eval, client output, audit transcript) sees the stripped form.
+// Input into CvReason. Prefer NewToolUseFromInput at construction sites;
+// PopulateCvReason exists for the occasional case where the ToolUse was
+// already built and we need to normalize it post-hoc.
 func PopulateCvReason(tu ToolUse) ToolUse {
 	reason, stripped, ok := ExtractCvReason(tu.Input)
 	if !ok {
@@ -61,4 +61,20 @@ func PopulateCvReason(tu ToolUse) ToolUse {
 	tu.CvReason = reason
 	tu.Input = stripped
 	return tu
+}
+
+// NewToolUseFromInput is the canonical constructor for a ToolUse built
+// from upstream-emitted input bytes. It extracts cvreason from the input
+// JSON, populates CvReason, and stores the stripped bytes in Input — so
+// every site that takes raw upstream bytes flows through one normalizer
+// instead of relying on per-site PopulateCvReason wrapping. New
+// construction sites in the response parsers should use this
+// constructor; raw ToolUse{...} literals leak cvreason to the client.
+func NewToolUseFromInput(id string, index int, name string, input json.RawMessage) ToolUse {
+	return PopulateCvReason(ToolUse{
+		ID:    id,
+		Index: index,
+		Name:  name,
+		Input: input,
+	})
 }

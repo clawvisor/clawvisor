@@ -72,6 +72,30 @@ func TestExtractCvReason(t *testing.T) {
 	}
 }
 
+func TestNewToolUseFromInputExtractsCvReason(t *testing.T) {
+	tu := NewToolUseFromInput("tu_1", 0, "Read", json.RawMessage(`{"path":"foo.go","cvreason":"checking imports"}`))
+	if tu.CvReason != "checking imports" {
+		t.Errorf("CvReason = %q, want %q", tu.CvReason, "checking imports")
+	}
+	if strings.Contains(string(tu.Input), "cvreason") {
+		t.Errorf("Input retained cvreason: %s", tu.Input)
+	}
+	if tu.ID != "tu_1" || tu.Index != 0 || tu.Name != "Read" {
+		t.Errorf("metadata fields lost: %+v", tu)
+	}
+}
+
+func TestNewToolUseFromInputNoOpWhenAbsent(t *testing.T) {
+	original := json.RawMessage(`{"path":"foo.go"}`)
+	tu := NewToolUseFromInput("tu_1", 0, "Read", original)
+	if tu.CvReason != "" {
+		t.Errorf("CvReason = %q, want empty", tu.CvReason)
+	}
+	if string(tu.Input) != string(original) {
+		t.Errorf("Input mutated when no cvreason present: got %s, want %s", tu.Input, original)
+	}
+}
+
 func TestPopulateCvReasonPopulatesField(t *testing.T) {
 	tu := ToolUse{
 		ID:    "tu_1",
