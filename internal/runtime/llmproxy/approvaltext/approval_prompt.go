@@ -28,6 +28,10 @@ func ApprovalPrompt(tu conversation.ToolUse, reason, approvalID string) string {
 		b.WriteString("\nReason: ")
 		b.WriteString(reason)
 	}
+	if cv := strings.TrimSpace(tu.CvReason); cv != "" {
+		b.WriteString("\nAgent says: ")
+		b.WriteString(cv)
+	}
 	if preview != "" {
 		b.WriteString("\nInput: ")
 		b.WriteString(preview)

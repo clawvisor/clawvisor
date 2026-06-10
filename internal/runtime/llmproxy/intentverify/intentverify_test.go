@@ -12,10 +12,12 @@ type stubVerifier struct {
 	verdict *Verdict
 	err     error
 	calls   int
+	lastReq Request
 }
 
-func (v *stubVerifier) Verify(context.Context, Request) (*Verdict, error) {
+func (v *stubVerifier) Verify(_ context.Context, req Request) (*Verdict, error) {
 	v.calls++
+	v.lastReq = req
 	return v.verdict, v.err
 }
 
@@ -52,6 +54,39 @@ func TestRunMalformedToolInputReturnsAuditBreadcrumb(t *testing.T) {
 	}
 	if reason != "params_parse_failed" {
 		t.Fatalf("reason = %q, want params_parse_failed", reason)
+	}
+}
+
+func TestRunPassesCvReasonAsVerifierReason(t *testing.T) {
+	dec := Decision{HasAction: true, Verification: "strict", TaskID: "task-1"}
+	resolved := ResolvedAction{ServiceID: "local.files", ActionID: "read_file"}
+	tu := conversation.ToolUse{
+		ID:       "toolu_1",
+		Name:     "Read",
+		Input:    []byte(`{"path":"/tmp/a"}`),
+		CvReason: "Inspecting fixture file referenced by the task",
+	}
+
+	stub := &stubVerifier{verdict: &Verdict{Allow: true}}
+	if _, ok := Run(context.Background(), stub, dec, resolved, tu, nil); !ok {
+		t.Fatalf("Run should allow")
+	}
+	if stub.lastReq.Reason != "Inspecting fixture file referenced by the task" {
+		t.Fatalf("verifier reason = %q, want cvreason text", stub.lastReq.Reason)
+	}
+}
+
+func TestRunFallsBackToSyntheticReasonWhenCvReasonEmpty(t *testing.T) {
+	dec := Decision{HasAction: true, Verification: "strict", TaskID: "task-1"}
+	resolved := ResolvedAction{ServiceID: "local.files", ActionID: "read_file"}
+	tu := conversation.ToolUse{ID: "toolu_1", Name: "Read", Input: []byte(`{"path":"/tmp/a"}`)}
+
+	stub := &stubVerifier{verdict: &Verdict{Allow: true}}
+	if _, ok := Run(context.Background(), stub, dec, resolved, tu, nil); !ok {
+		t.Fatalf("Run should allow")
+	}
+	if stub.lastReq.Reason != "lite-proxy tool_use Read" {
+		t.Fatalf("verifier reason = %q, want synthetic fallback", stub.lastReq.Reason)
 	}
 }
 

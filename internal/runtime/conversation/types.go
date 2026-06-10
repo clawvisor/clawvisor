@@ -38,4 +38,10 @@ type ToolUse struct {
 	Index int
 	Name  string
 	Input json.RawMessage
+	// CvReason is the agent-supplied per-call rationale extracted from
+	// the `cvreason` field of Input. The control notice instructs agents
+	// to include cvreason on every tool_use; the parser strips it from
+	// Input so it never reaches the client and stores it here for use
+	// by intent verification. Empty when the agent omitted it.
+	CvReason string
 }

@@ -272,6 +272,9 @@ func (e *AuditEmitter) WriteAuditEvent(ctx context.Context, agent *store.Agent, 
 		"parser_version":    parserVersion(),
 		"clawvisor_version": version.Version,
 	}
+	if cv := strings.TrimSpace(ev.ToolUse.CvReason); cv != "" {
+		params["tool_cvreason"] = cv
+	}
 	if len(ev.InspectorVerdict.CredentialLocations) > 0 {
 		creds := make([]map[string]string, 0, len(ev.InspectorVerdict.CredentialLocations))
 		for _, c := range ev.InspectorVerdict.CredentialLocations {

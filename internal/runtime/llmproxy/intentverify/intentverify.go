@@ -98,13 +98,23 @@ func Run(ctx context.Context, verifier Verifier, dec Decision, resolved Resolved
 			paramsParseReason = "params_parse_failed"
 		}
 	}
+	// The control notice instructs agents to attach a per-call `cvreason`
+	// to every tool_use; the response parser extracts it into
+	// tu.CvReason and strips it from tu.Input. Pass it through as the
+	// verifier's Reason so the LLM verifier can evaluate the agent's
+	// stated rationale instead of the synthetic "lite-proxy tool_use X"
+	// placeholder we used before this feature.
+	reason := strings.TrimSpace(tu.CvReason)
+	if reason == "" {
+		reason = "lite-proxy tool_use " + tu.Name
+	}
 	verdict, err := verifier.Verify(ctx, Request{
 		TaskPurpose: dec.TaskPurpose,
 		ExpectedUse: dec.ExpectedUse,
 		Service:     resolved.ServiceID,
 		Action:      resolved.ActionID,
 		Params:      params,
-		Reason:      "lite-proxy tool_use " + tu.Name,
+		Reason:      reason,
 		TaskID:      dec.TaskID,
 		Lenient:     mode == "lenient",
 	})

@@ -104,11 +104,12 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 		return RewriteResult{Body: body}, nil
 	}
 	var (
-		decisions    []ToolUseDecisionRecord
-		frags        []assistantFragment
-		anyBlocked   bool
-		anyRewritten bool
-		index        int
+		decisions           []ToolUseDecisionRecord
+		frags               []assistantFragment
+		anyBlocked          bool
+		anyRewritten        bool
+		anyCvReasonStripped bool
+		index               int
 	)
 	newOutput := make([]openAIResponseOutputItem, 0, len(resp.Output))
 	for _, item := range resp.Output {
@@ -122,11 +123,15 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 			newOutput = append(newOutput, item)
 		case "function_call":
 			args := stringifyOpenAIArguments(item.Arguments)
-			tu := ToolUse{
+			tu := PopulateCvReason(ToolUse{
 				ID:    firstNonEmpty(item.CallID, item.ID),
 				Index: index,
 				Name:  item.Name,
 				Input: rawIfJSONOpenAI(args),
+			})
+			if tu.CvReason != "" {
+				item.Arguments = string(tu.Input)
+				anyCvReasonStripped = true
 			}
 			index++
 			verdict := eval(tu)
@@ -173,6 +178,12 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 				newOutput = append(newOutput, item)
 				continue
 			}
+			tu = PopulateCvReason(tu)
+			if tu.CvReason != "" {
+				item.Input = string(tu.Input)
+				item.Arguments = nil
+				anyCvReasonStripped = true
+			}
 			index++
 			verdict := eval(tu)
 			decisions = append(decisions, ToolUseDecisionRecord{
@@ -211,7 +222,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 		}
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
-	if anyBlocked || anyRewritten {
+	if anyBlocked || anyRewritten || anyCvReasonStripped {
 		resp.Output = newOutput
 		var outputTextParts []string
 		for _, o := range newOutput {
@@ -228,7 +239,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 		if err != nil {
 			return RewriteResult{}, fmt.Errorf("openai responses: marshal rewritten response: %w", err)
 		}
-		return RewriteResult{Body: rewritten, Decisions: decisions, Rewritten: true, AssistantTurn: turn}, nil
+		return RewriteResult{Body: rewritten, Decisions: decisions, Rewritten: anyBlocked || anyRewritten, AssistantTurn: turn}, nil
 	}
 	return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 }
@@ -254,6 +265,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 	// the rewriter mutates one or more function_call arguments.
 	var orderedItems []orderedResponsesItem
 	anyBlocked := false
+	anyCvReasonStripped := false
 	anyRewritten := false
 	index := 0
 	for _, event := range events {
@@ -361,11 +373,17 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 					pc.arguments.WriteString(args)
 				}
 				originalArgs := pc.arguments.String()
-				tu := ToolUse{
+				tu := PopulateCvReason(ToolUse{
 					ID:    pc.callID,
 					Index: index,
 					Name:  pc.name,
 					Input: rawIfJSONOpenAI(originalArgs),
+				})
+				if tu.CvReason != "" {
+					originalArgs = string(tu.Input)
+					pc.arguments.Reset()
+					pc.arguments.WriteString(originalArgs)
+					anyCvReasonStripped = true
 				}
 				index++
 				verdict := eval(tu)
@@ -413,6 +431,12 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 				tu, ok := toolUseFromOpenAICustomToolCall(raw.Item, index)
 				if !ok {
 					continue
+				}
+				tu = PopulateCvReason(tu)
+				if tu.CvReason != "" {
+					raw.Item.Input = string(tu.Input)
+					raw.Item.Arguments = nil
+					anyCvReasonStripped = true
 				}
 				index++
 				verdict := eval(tu)
@@ -467,7 +491,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
 
-	if anyBlocked || anyRewritten {
+	if anyBlocked || anyRewritten || anyCvReasonStripped {
 		// Emit a synthesized Responses-API SSE stream with the rewritten
 		// function_call arguments substituted in. Other items pass
 		// through verbatim.
@@ -475,7 +499,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 		return RewriteResult{
 			Body:          out,
 			Decisions:     decisions,
-			Rewritten:     true,
+			Rewritten:     anyBlocked || anyRewritten,
 			AssistantTurn: turn,
 		}, nil
 	}
@@ -715,11 +739,12 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 		return RewriteResult{Body: body}, nil
 	}
 	var (
-		decisions    []ToolUseDecisionRecord
-		frags        []assistantFragment
-		anyBlocked   bool
-		anyRewritten bool
-		index        int
+		decisions           []ToolUseDecisionRecord
+		frags               []assistantFragment
+		anyBlocked          bool
+		anyRewritten        bool
+		anyCvReasonStripped bool
+		index               int
 	)
 	for ci, choice := range resp.Choices {
 		var (
@@ -727,17 +752,24 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 			blockedPrompts   []string
 			choiceBlocked    bool
 			choiceRewritten  bool
+			choiceCvStripped bool
 		)
 		originalText := flattenOpenAIContentFromAny(choice.Message.Content)
 		if originalText != "" {
 			frags = append(frags, assistantFragment{Text: originalText})
 		}
-		for _, call := range choice.Message.ToolCalls {
-			tu := ToolUse{
+		for i, call := range choice.Message.ToolCalls {
+			tu := PopulateCvReason(ToolUse{
 				ID:    firstNonEmpty(call.ID, fmt.Sprintf("chat-tool-%d", index)),
 				Index: index,
 				Name:  call.Function.Name,
 				Input: rawIfJSONOpenAI(call.Function.Arguments),
+			})
+			if tu.CvReason != "" {
+				call.Function.Arguments = string(tu.Input)
+				choice.Message.ToolCalls[i] = call
+				anyCvReasonStripped = true
+				choiceCvStripped = true
 			}
 			index++
 			verdict := eval(tu)
@@ -774,6 +806,10 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 		}
 		if choiceBlocked || choiceRewritten {
 			resp.Choices[ci].Message.ToolCalls = allowedToolCalls
+		} else if choiceCvStripped {
+			resp.Choices[ci].Message.ToolCalls = choice.Message.ToolCalls
+		}
+		if choiceBlocked || choiceRewritten {
 			if len(blockedPrompts) > 0 {
 				joinedPrompts := strings.Join(blockedPrompts, "\n\n")
 				switch typed := choice.Message.Content.(type) {
@@ -800,12 +836,12 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 		}
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
-	if anyBlocked || anyRewritten {
+	if anyBlocked || anyRewritten || anyCvReasonStripped {
 		rewritten, err := json.Marshal(resp)
 		if err != nil {
 			return RewriteResult{}, fmt.Errorf("openai chat: marshal rewritten response: %w", err)
 		}
-		return RewriteResult{Body: rewritten, Decisions: decisions, Rewritten: true, AssistantTurn: turn}, nil
+		return RewriteResult{Body: rewritten, Decisions: decisions, Rewritten: anyBlocked || anyRewritten, AssistantTurn: turn}, nil
 	}
 	return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 }
@@ -957,13 +993,19 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 
 			for _, toolCallIndex := range toolCallIndexes {
 				pc := boundary.pendingCalls[toolCallIndex]
-				tu := ToolUse{
+				tu := PopulateCvReason(ToolUse{
 					ID:    pc.id,
 					Index: toolCallIndex,
 					Name:  pc.name,
 					Input: rawIfJSONOpenAI(pc.args.String()),
-				}
+				})
 				verdict := eval(tu)
+				if tu.CvReason != "" && verdict.Allowed && len(verdict.RewriteInput) == 0 {
+					// Treat cvreason extraction as a synthetic
+					// rewrite so the SSE replay below substitutes
+					// the stripped bytes for the original args.
+					verdict.RewriteInput = tu.Input
+				}
 				decisions = append(decisions, ToolUseDecisionRecord{
 					ToolUse:          tu,
 					Verdict:          verdict,
@@ -1957,12 +1999,12 @@ func (rw OpenAIResponseRewriter) streamRewriteChatCompletions(ctx context.Contex
 					if delivered[idx] {
 						continue
 					}
-					onToolUse(ToolUse{
+					onToolUse(PopulateCvReason(ToolUse{
 						ID:    pc.id,
 						Index: idx,
 						Name:  pc.name,
 						Input: rawIfJSONOpenAI(pc.args.String()),
-					})
+					}))
 					delivered[idx] = true
 				}
 			}
@@ -1991,16 +2033,17 @@ func (rw OpenAIResponseRewriter) streamRewriteChatCompletions(ctx context.Contex
 	var tus []ToolUse
 	for _, toolCallIndex := range toolCallIndexes {
 		pc := pending[toolCallIndex]
-		tus = append(tus, ToolUse{
+		tu := PopulateCvReason(ToolUse{
 			ID:    pc.id,
 			Index: toolCallIndex,
 			Name:  pc.name,
 			Input: rawIfJSONOpenAI(pc.args.String()),
 		})
+		tus = append(tus, tu)
 		frags = append(frags, assistantFragment{
 			IsTool:   true,
 			ToolName: pc.name,
-			ToolArgs: rawIfJSONOpenAI(pc.args.String()),
+			ToolArgs: tu.Input,
 		})
 	}
 
@@ -2176,6 +2219,22 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 					pc.arguments.Reset()
 					pc.arguments.WriteString(args)
 				}
+				// Extract cvreason before snapshotting pc.arguments
+				// into orderedItems so the re-emitted SSE bytes don't
+				// carry cvreason.
+				var prepared ToolUse
+				if onToolUse != nil && !delivered[pc.itemID] {
+					prepared = PopulateCvReason(ToolUse{
+						ID:    pc.callID,
+						Index: nextDeliveredToolIndex,
+						Name:  pc.name,
+						Input: rawIfJSONOpenAI(pc.arguments.String()),
+					})
+					if prepared.CvReason != "" {
+						pc.arguments.Reset()
+						pc.arguments.WriteString(string(prepared.Input))
+					}
+				}
 				orderedItems = append(orderedItems, orderedResponsesItem{
 					outputIndex: pc.outputIndex,
 					itemID:      pc.itemID,
@@ -2184,12 +2243,7 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 					arguments:   pc.arguments.String(),
 				})
 				if onToolUse != nil && !delivered[pc.itemID] {
-					onToolUse(ToolUse{
-						ID:    pc.callID,
-						Index: nextDeliveredToolIndex,
-						Name:  pc.name,
-						Input: rawIfJSONOpenAI(pc.arguments.String()),
-					})
+					onToolUse(prepared)
 					delivered[pc.itemID] = true
 					nextDeliveredToolIndex++
 				}
@@ -2200,13 +2254,18 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 				if !ok {
 					return writeSSE(w, event, data)
 				}
+				tu = PopulateCvReason(tu)
+				customInput := customToolInputForReemit(raw.Item.Input, raw.Item.Arguments)
+				if tu.CvReason != "" {
+					customInput = string(tu.Input)
+				}
 				orderedItems = append(orderedItems, orderedResponsesItem{
 					isCustomToolCall: true,
 					outputIndex:      raw.OutputIndex,
 					itemID:           raw.Item.ID,
 					callID:           raw.Item.CallID,
 					name:             tu.Name,
-					customInput:      customToolInputForReemit(raw.Item.Input, raw.Item.Arguments),
+					customInput:      customInput,
 				})
 				if onToolUse != nil && !delivered[raw.Item.ID] {
 					tu.Index = nextDeliveredToolIndex
@@ -2285,17 +2344,18 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 		}
 		if item.isCustomToolCall {
 			inputRaw := rawOpenAICustomToolInputFromAny(item.customInput)
-			tus = append(tus, ToolUse{
+			tu := PopulateCvReason(ToolUse{
 				ID:    firstNonEmpty(item.callID, item.itemID),
 				Index: index,
 				Name:  item.name,
 				Input: inputRaw,
 			})
+			tus = append(tus, tu)
 			index++
 			frags = append(frags, assistantFragment{
 				IsTool:   true,
 				ToolName: item.name,
-				ToolArgs: inputRaw,
+				ToolArgs: tu.Input,
 			})
 			continue
 		}
@@ -2304,17 +2364,18 @@ func (rw OpenAIResponseRewriter) streamRewriteResponses(ctx context.Context, r i
 		if pc != nil && pc.arguments.Len() > 0 {
 			args = pc.arguments.String()
 		}
-		tus = append(tus, ToolUse{
+		tu := PopulateCvReason(ToolUse{
 			ID:    item.callID,
 			Index: index,
 			Name:  item.name,
 			Input: rawIfJSONOpenAI(args),
 		})
+		tus = append(tus, tu)
 		index++
 		frags = append(frags, assistantFragment{
 			IsTool:   true,
 			ToolName: item.name,
-			ToolArgs: rawIfJSONOpenAI(args),
+			ToolArgs: tu.Input,
 		})
 	}
 

@@ -57,6 +57,7 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 	var frags []assistantFragment
 	anyBlocked := false
 	anyRewritten := false
+	anyCvReasonStripped := false
 	index := 0
 	newContent := make([]anthropicJSONContent, 0, len(resp.Content))
 	for _, block := range resp.Content {
@@ -67,11 +68,15 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 			}
 			newContent = append(newContent, block)
 		case "tool_use":
-			tu := ToolUse{
+			tu := PopulateCvReason(ToolUse{
 				ID:    block.ID,
 				Index: index,
 				Name:  block.Name,
 				Input: block.Input,
+			})
+			if tu.CvReason != "" {
+				block.Input = tu.Input
+				anyCvReasonStripped = true
 			}
 			index++
 			verdict := eval(tu)
@@ -116,7 +121,7 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 	}
 
 	turn := assistantTurnFromFragments(frags, decisions)
-	if anyBlocked || anyRewritten {
+	if anyBlocked || anyRewritten || anyCvReasonStripped {
 		resp.Content = newContent
 		hasToolUse := false
 		for _, c := range newContent {
@@ -137,7 +142,7 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 		return RewriteResult{
 			Body:          rewritten,
 			Decisions:     decisions,
-			Rewritten:     true,
+			Rewritten:     anyBlocked || anyRewritten,
 			AssistantTurn: turn,
 		}, nil
 	}
@@ -161,6 +166,7 @@ type pendingBlock struct {
 	text      bytes.Buffer
 	signature string
 	blockType string
+	cvReason  string
 	isTU      bool
 	filtered  bool
 }
@@ -266,6 +272,7 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 	var decisions []ToolUseDecisionRecord
 	anyBlocked := false
 	anyRewritten := false
+	anyCvReasonStripped := false
 	rewrittenInput := map[*pendingBlock]json.RawMessage{}
 	verdicts := map[*pendingBlock]ToolUseVerdict{}
 	for _, pb := range orderedTUs {
@@ -273,11 +280,18 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		if pb.input.Len() > 0 {
 			inputRaw = json.RawMessage(pb.input.Bytes())
 		}
-		tu := ToolUse{
+		tu := PopulateCvReason(ToolUse{
 			ID:    pb.id,
 			Index: pb.index,
 			Name:  pb.name,
 			Input: inputRaw,
+		})
+		if tu.CvReason != "" {
+			pb.input.Reset()
+			pb.input.Write(tu.Input)
+			pb.cvReason = tu.CvReason
+			inputRaw = tu.Input
+			anyCvReasonStripped = true
 		}
 		verdict := eval(tu)
 		decisions = append(decisions, ToolUseDecisionRecord{
@@ -316,7 +330,7 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		}
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
-	if anyBlocked || anyRewritten {
+	if anyBlocked || anyRewritten || anyCvReasonStripped {
 		for _, pb := range orderedTUs {
 			verdict := verdicts[pb]
 			if !verdict.Allowed {
@@ -351,7 +365,7 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		return RewriteResult{
 			Body:          assembled,
 			Decisions:     decisions,
-			Rewritten:     true,
+			Rewritten:     anyBlocked || anyRewritten,
 			AssistantTurn: turn,
 		}, nil
 	}
@@ -1400,11 +1414,16 @@ func (rw AnthropicResponseRewriter) StreamRewrite(ctx context.Context, r io.Read
 		if pb.input.Len() > 0 {
 			inputRaw = json.RawMessage(pb.input.Bytes())
 		}
-		tu := ToolUse{
+		tu := PopulateCvReason(ToolUse{
 			ID:    pb.id,
 			Index: pb.index,
 			Name:  pb.name,
 			Input: inputRaw,
+		})
+		if tu.CvReason != "" {
+			pb.input.Reset()
+			pb.input.Write(tu.Input)
+			pb.cvReason = tu.CvReason
 		}
 		tus = append(tus, tu)
 		// Deliver each tool_use to the orchestrator once its index is
