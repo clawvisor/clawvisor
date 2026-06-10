@@ -425,3 +425,48 @@ func mustMarshal(t *testing.T, v any) json.RawMessage {
 	}
 	return b
 }
+
+// TestDerivedActionsFromPending_WildcardCoverageSurfaces locks in
+// the wildcard-covered synthesis path: an expansion adding a
+// specific service:action whose service has a wildcard on the
+// parent should appear in PendingDerivedActions with
+// WildcardCovered=true and the wildcard's AutoExecute /
+// Verification carried through. Without this synthesis API
+// consumers reading pending_derived_actions would see an empty
+// list and miss the scope-broaden signal entirely.
+func TestDerivedActionsFromPending_WildcardCoverageSurfaces(t *testing.T) {
+	task := &store.Task{
+		Status: "pending_scope_expansion",
+		AuthorizedActions: []store.TaskAction{
+			{Service: "github", Action: "*", AutoExecute: true, Verification: "lenient"},
+		},
+		PendingExpansion: &store.PendingTaskExpansion{
+			ExpectedTools: mustMarshal(t, []runtimetasks.ExpectedTool{
+				{ToolName: "github:create_issue", Why: "File the user-reported bug."},
+			}),
+		},
+	}
+	derived, err := derivedActionsFromPending(task)
+	if err != nil {
+		t.Fatalf("derivedActionsFromPending: %v", err)
+	}
+	if len(derived) != 1 {
+		t.Fatalf("derived = %d entries, want 1: %+v", len(derived), derived)
+	}
+	got := derived[0]
+	if got.Service != "github" || got.Action != "create_issue" {
+		t.Errorf("derived service/action = %q/%q, want github/create_issue", got.Service, got.Action)
+	}
+	if !got.WildcardCovered {
+		t.Errorf("WildcardCovered = false, want true for wildcard-covered addition")
+	}
+	if !got.AutoExecute {
+		t.Errorf("AutoExecute = false, want the wildcard's true")
+	}
+	if got.Verification != "lenient" {
+		t.Errorf("Verification = %q, want %q (carried from wildcard)", got.Verification, "lenient")
+	}
+	if got.ExpansionRationale != "File the user-reported bug." {
+		t.Errorf("ExpansionRationale = %q, want the addition's why", got.ExpansionRationale)
+	}
+}

@@ -1207,10 +1207,52 @@ func derivedActionsFromPending(t *store.Task) ([]store.TaskAction, error) {
 	}
 	merged := mergeAuthorizedActionsFromExpansion(t.AuthorizedActions, t.IntentVerificationMode, additions.ExpectedTools)
 	var derived []store.TaskAction
+	seen := make(map[string]struct{}, len(merged))
 	for _, a := range merged {
-		if _, proposed := currentKeys[authorizedActionKey(a.Service, a.Action)]; proposed {
-			derived = append(derived, a)
+		key := authorizedActionKey(a.Service, a.Action)
+		if _, proposed := currentKeys[key]; !proposed {
+			continue
 		}
+		derived = append(derived, a)
+		seen[key] = struct{}{}
+	}
+	// Synthesize WildcardCovered entries for additions whose specific
+	// service:action is covered by a same-service wildcard on the
+	// parent. mergeAuthorizedActionsFromExpansion drops these from
+	// the merged set (the wildcard already authorizes them, so
+	// persistence stays clean), but the response-only projection
+	// SHOULD surface them so API consumers see the same scope-broaden
+	// signal the dashboard/Telegram/TUI surfaces compute from
+	// parent.authorized_actions. The wildcard's AutoExecute /
+	// Verification carry through, and ExpansionRationale comes from
+	// the addition's per-entry Why.
+	wildcardByService := make(map[string]store.TaskAction)
+	for _, a := range t.AuthorizedActions {
+		if a.Action == "*" {
+			wildcardByService[strings.ToLower(strings.TrimSpace(a.Service))] = a
+		}
+	}
+	for _, tool := range additions.ExpectedTools {
+		service, action, ok := parseToolNameAsServiceAction(tool.ToolName)
+		if !ok {
+			continue
+		}
+		key := authorizedActionKey(service, action)
+		if _, already := seen[key]; already {
+			continue
+		}
+		wildcard, covered := wildcardByService[strings.ToLower(strings.TrimSpace(service))]
+		if !covered {
+			continue
+		}
+		derived = append(derived, store.TaskAction{
+			Service:            service,
+			Action:             action,
+			AutoExecute:        wildcard.AutoExecute,
+			Verification:       wildcard.Verification,
+			ExpansionRationale: strings.TrimSpace(tool.Why),
+			WildcardCovered:    true,
+		})
 	}
 	return derived, nil
 }

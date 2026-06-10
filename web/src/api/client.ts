@@ -592,6 +592,11 @@ export interface TaskAction {
   expected_use?: string
   verification?: 'strict' | 'lenient' | 'off'
   expansion_rationale?: string
+  // wildcard_covered is true on response-only pending_derived_actions
+  // entries synthesized for an addition whose service:action is
+  // already authorized by a same-service wildcard on the parent.
+  // auto_execute / verification reflect the wildcard's disposition.
+  wildcard_covered?: boolean
 }
 
 export interface ScopeOverride {

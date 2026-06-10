@@ -237,6 +237,11 @@ type TaskAction struct {
 	AutoExecute        bool   `json:"auto_execute"`
 	ExpectedUse        string `json:"expected_use,omitempty"`
 	ExpansionRationale string `json:"expansion_rationale,omitempty"`
+	// WildcardCovered is true on response-only PendingDerivedActions
+	// entries synthesized for an addition whose service:action is
+	// already authorized by a same-service wildcard on the parent.
+	// AutoExecute / Verification reflect the wildcard's disposition.
+	WildcardCovered bool `json:"wildcard_covered,omitempty"`
 }
 
 type RiskAssessment struct {

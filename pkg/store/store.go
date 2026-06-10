@@ -793,6 +793,15 @@ type TaskAction struct {
 	ExpansionRationale string          `json:"expansion_rationale,omitempty"` // set from the per-entry ExpectedTool.Why when a scope expansion approves; consumed by intent verification
 	// Verification controls intent verification for this scope: "strict" (default), "lenient", "off".
 	Verification string `json:"verification,omitempty"`
+	// WildcardCovered is set ONLY on response-only projections (the
+	// Task.PendingDerivedActions field): true when the entry was
+	// synthesized for an expansion addition whose specific
+	// service:action is already covered by a same-service wildcard
+	// on the parent. Carries the wildcard's AutoExecute / Verification
+	// so consumers see the effective disposition, plus the
+	// addition's per-entry Why on ExpansionRationale. Never persisted
+	// — omitempty hides it on real authorized_actions entries.
+	WildcardCovered bool `json:"wildcard_covered,omitempty"`
 }
 
 // PlannedCall is a concrete or templated API call that an agent declares at task
