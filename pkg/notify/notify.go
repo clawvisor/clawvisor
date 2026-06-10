@@ -160,7 +160,12 @@ type ScopeExpansionRequest struct {
 	// approval prompt — fresh from the reassessment ExpandApprove runs
 	// (parent risk + new scope can compose into a higher level than
 	// either alone). Empty when no assessor is configured.
-	RiskLevel  string
+	RiskLevel string
+	// Lifetime is the parent task's lifetime ("session" / "sliding" /
+	// "standing"). Expansion preserves it, so the reviewer needs to
+	// see it on the approval prompt — broadening a standing task is
+	// higher blast radius than broadening a session.
+	Lifetime   string
 	ApproveURL string
 	DenyURL    string
 }
