@@ -401,26 +401,54 @@ type substitutedBlock struct {
 // substituteToolCallsForBlocked walks the blocked decisions and
 // pairs each SubstituteWithToolCall payload with its decision's
 // SubstituteWith preamble text. The allHaveToolCall return is true
-// only when EVERY blocked decision supplies a SubstituteWithToolCall
-// — partial coverage falls back to the text path so a mixed turn
-// doesn't lose a separate refusal under an AskUserQuestion call the
-// user can't satisfy.
+// only when EVERY blocked decision supplies a USABLE
+// SubstituteWithToolCall (non-empty Name and a Marshal-able Input)
+// — partial coverage, or a malformed call that can't be marshaled,
+// fall back to the text path so the transport-level behavior matches
+// the buffered Anthropic rewriter (which also falls back to text on
+// the same invariants — see anthropicSubstituteToolUseBlock).
 func substituteToolCallsForBlocked(decisions []conversation.ToolUseDecisionRecord) (blocks []substitutedBlock, allHaveToolCall bool) {
 	allHaveToolCall = true
 	for _, dec := range decisions {
 		if dec.Verdict.Allowed {
 			continue
 		}
-		if dec.Verdict.SubstituteWithToolCall == nil {
+		call := dec.Verdict.SubstituteWithToolCall
+		if call == nil || !canRenderSyntheticToolCall(call) {
 			allHaveToolCall = false
 			continue
 		}
 		blocks = append(blocks, substitutedBlock{
 			Text: dec.Verdict.SubstituteWith,
-			Call: *dec.Verdict.SubstituteWithToolCall,
+			Call: *call,
 		})
 	}
 	return blocks, allHaveToolCall
+}
+
+// canRenderSyntheticToolCall mirrors the buffered-path invariant in
+// anthropicSubstituteToolUseBlock: a usable substitute call needs a
+// non-empty Name and Input that round-trips through json.Marshal.
+// Keeping the two transports' validity gates in sync prevents the
+// same blocked decision from rendering as text in the buffered
+// response yet as a tool_use in the streaming response — which
+// would surface inconsistent approval UX depending on whether the
+// upstream replied with text/event-stream or application/json.
+func canRenderSyntheticToolCall(call *conversation.SyntheticToolCall) bool {
+	if call == nil {
+		return false
+	}
+	if strings.TrimSpace(call.Name) == "" {
+		return false
+	}
+	input := call.Input
+	if input == nil {
+		input = map[string]any{}
+	}
+	if _, err := json.Marshal(input); err != nil {
+		return false
+	}
+	return true
 }
 
 // writeProviderSubstituteToolCalls emits, per blocked decision, an

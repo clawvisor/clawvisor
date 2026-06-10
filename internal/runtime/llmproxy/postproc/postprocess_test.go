@@ -2468,6 +2468,48 @@ func TestWriteProviderSubstituteToolCallsEmitsTextThenToolUse(t *testing.T) {
 	}
 }
 
+func TestSubstituteToolCallsForBlockedRejectsMalformedCall(t *testing.T) {
+	// Buffered + streaming paths must agree on what counts as a
+	// usable SubstituteWithToolCall — otherwise the same blocked
+	// decision can render as text via the buffered rewriter and as
+	// a tool_use via the streaming codec, giving the user
+	// inconsistent approval UX depending on transport. Both paths
+	// require non-empty Name and Marshal-able Input; mirror the
+	// invariant here so partial-coverage falls back to text.
+	t.Run("empty_name_falls_back_to_text", func(t *testing.T) {
+		decisions := []conversation.ToolUseDecisionRecord{{
+			Verdict: conversation.ToolUseVerdict{
+				Allowed:                false,
+				SubstituteWith:         "fallback",
+				SubstituteWithToolCall: &conversation.SyntheticToolCall{Name: "", Input: map[string]any{"x": 1}},
+			},
+		}}
+		blocks, allHaveToolCall := substituteToolCallsForBlocked(decisions)
+		if allHaveToolCall {
+			t.Fatalf("expected allHaveToolCall=false when Name is empty (buffered path falls back to text here too); got blocks=%v", blocks)
+		}
+	})
+	t.Run("unmarshalable_input_falls_back_to_text", func(t *testing.T) {
+		decisions := []conversation.ToolUseDecisionRecord{{
+			Verdict: conversation.ToolUseVerdict{
+				Allowed:        false,
+				SubstituteWith: "fallback",
+				SubstituteWithToolCall: &conversation.SyntheticToolCall{
+					Name: "AskUserQuestion",
+					// channels don't marshal to JSON — mirror the
+					// buffered path's marshalSyntheticToolCallInput
+					// failure-mode here so transport agreement holds.
+					Input: map[string]any{"bad": make(chan int)},
+				},
+			},
+		}}
+		blocks, allHaveToolCall := substituteToolCallsForBlocked(decisions)
+		if allHaveToolCall {
+			t.Fatalf("expected allHaveToolCall=false when Input fails json.Marshal; got blocks=%v", blocks)
+		}
+	})
+}
+
 func TestWriteProviderSubstituteToolCallsSkipsTextBlockWhenEmpty(t *testing.T) {
 	// If a verdict supplies SubstituteWithToolCall without a
 	// SubstituteWith preamble, the codec must NOT emit a text
