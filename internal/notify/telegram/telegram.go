@@ -775,6 +775,12 @@ func formatScopeExpansionMessage(req notify.ScopeExpansionRequest) string {
 	sb.WriteString("🔄 <b>Clawvisor — Scope Expansion Request</b>\n\n")
 	sb.WriteString(fmt.Sprintf("<b>Agent:</b> %s\n", html.EscapeString(req.AgentName)))
 	sb.WriteString(fmt.Sprintf("<b>Task:</b> %s\n", html.EscapeString(req.Purpose)))
+	if req.RiskLevel != "" && req.RiskLevel != "unknown" {
+		// Risk on an expansion is the merged-envelope reassessment —
+		// shows when the expanded scope crosses a threshold the parent
+		// task didn't.
+		sb.WriteString(fmt.Sprintf("<b>Risk:</b> %s %s\n", riskEmoji(req.RiskLevel), html.EscapeString(req.RiskLevel)))
+	}
 
 	if len(req.AddedTools) > 0 {
 		sb.WriteString("\n<b>New tools:</b>\n")

@@ -657,6 +657,7 @@ export interface Task {
   planned_calls?: PlannedCall[]
   expected_tools?: ExpectedTool[]
   expected_egress?: ExpectedEgress[]
+  required_credentials?: RequiredCredential[]
   intent_verification_mode?: 'strict' | 'lenient' | 'off'
   expected_use?: string
   schema_version?: number

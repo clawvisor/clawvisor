@@ -1073,6 +1073,78 @@ func TestExpand_CrossAgentRejected(t *testing.T) {
 	}
 }
 
+// TestExpand_ConcurrentApproveAndDenyRace asserts the CAS guards on
+// UpdateTaskEnvelopeFrom (approve) and ResolveTaskPendingExpansion
+// (deny) jointly admit exactly one writer when both fire against the
+// same pending row. The single existing deny test covers the typed
+// enum's correctness; this test fires them as goroutines so a future
+// refactor that splits clear-and-status into a non-atomic pair (or
+// loses the pending_scope_expansion CAS) regresses loudly.
+func TestExpand_ConcurrentApproveAndDenyRace(t *testing.T) {
+	adapter := newMockAdapter("mock.echo", "echo", "other")
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "automation")
+	sc.activateService(t, env, "mock.echo")
+
+	taskID := sc.createApprovedTask(t, env, "mock.echo", "echo", true)
+
+	resp := env.do("POST", fmt.Sprintf("/api/tasks/%s/expand", taskID), sc.AgentToken, map[string]any{
+		"expected_tools": []map[string]any{
+			{"tool_name": "mock.echo:other", "why": "Need other action"},
+		},
+		"reason": "race-test",
+	})
+	mustStatus(t, resp, http.StatusAccepted)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	statusCh := make(chan int, 2)
+	go func() {
+		defer wg.Done()
+		r := sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/expand/approve", taskID), nil)
+		defer r.Body.Close()
+		statusCh <- r.StatusCode
+	}()
+	go func() {
+		defer wg.Done()
+		r := sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/expand/deny", taskID), nil)
+		defer r.Body.Close()
+		statusCh <- r.StatusCode
+	}()
+	wg.Wait()
+	close(statusCh)
+
+	var oks, conflicts int
+	for s := range statusCh {
+		switch s {
+		case http.StatusOK:
+			oks++
+		case http.StatusConflict:
+			conflicts++
+		default:
+			t.Errorf("unexpected status %d", s)
+		}
+	}
+	if oks != 1 || conflicts != 1 {
+		t.Fatalf("race outcome: oks=%d conflicts=%d, want exactly 1 each", oks, conflicts)
+	}
+
+	// Final task state must match whichever side won — either active
+	// with the merged scope OR active without it (parent scope only).
+	// Both pending_expansion and status must be coherent: a denied
+	// row returns to active with no pending JSON; an approved row is
+	// active with no pending JSON too. The crucial invariant is that
+	// pending_expansion is cleared either way.
+	resp = env.do("GET", fmt.Sprintf("/api/tasks/%s", taskID), sc.AgentToken, nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	if body["status"] != "active" {
+		t.Errorf("status after race = %v, want active", body["status"])
+	}
+	if body["pending_expansion"] != nil {
+		t.Errorf("pending_expansion = %v after race; want cleared regardless of winner", body["pending_expansion"])
+	}
+}
+
 // TestExpand_DerivedActionRejectedForUnsupportedAction confirms that a
 // service:action where the service exists but the adapter does not
 // support that action is rejected up front.

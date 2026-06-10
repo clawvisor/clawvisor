@@ -131,15 +131,16 @@ func TestMergeEnvelopes_ToolReplacePreservesInputShape(t *testing.T) {
 	}
 }
 
-// TestMergeEnvelopes_EgressReplacePreservesShapeFields is the
-// load-bearing P1 fix: when an expansion reuses a host with different
-// Method / Path / regex / shape constraints, the parent's structural
-// fields are preserved. Otherwise an addition `{Host: "api.github.com",
-// Method: "POST"}` would silently strip the parent's `Method: "GET"`
-// match, and the gateway's per-call matcher would start rejecting GET
-// calls the original task authorized — with no signal in the approval
-// prompt.
-func TestMergeEnvelopes_EgressReplacePreservesShapeFields(t *testing.T) {
+// TestMergeEnvelopes_EgressStructuralMismatchAppends is the
+// load-bearing P1 fix: when an expansion names the same host with
+// DIFFERENT structural fields (Method, Path, …), the addition lands
+// as a NEW row rather than silently collapsing onto the parent. The
+// previous behavior — "same host, replace only why, preserve parent's
+// shape" — showed the addition's POST /orgs in the approval prompt
+// but persisted the parent's GET /user/repos, so the user approved
+// a delta that never actually authorized any new traffic. The
+// reviewer must approve what they see.
+func TestMergeEnvelopes_EgressStructuralMismatchAppends(t *testing.T) {
 	parent := Envelope{
 		ExpectedEgress: []ExpectedEgress{
 			{
@@ -153,11 +154,58 @@ func TestMergeEnvelopes_EgressReplacePreservesShapeFields(t *testing.T) {
 	}
 	additions := Envelope{
 		ExpectedEgress: []ExpectedEgress{
-			// Agent re-states the host with different structural
-			// fields. Replace-by-name should ignore everything except
-			// Why; the gateway's per-call match for GET /user/repos
-			// must continue to authorize the parent's original calls.
-			{Host: "api.github.com", Why: "List repos AND comment on issues", Method: "POST", Path: "/repos"},
+			{Host: "api.github.com", Why: "Comment on issues", Method: "POST", Path: "/repos/{owner}/{repo}/issues/{n}/comments"},
+		},
+	}
+	res := MergeEnvelopes(parent, additions)
+	if got := len(res.Merged.ExpectedEgress); got != 2 {
+		t.Fatalf("merged egress = %d, want 2 (structural delta must NOT collapse onto the parent)", got)
+	}
+	// Parent row unchanged.
+	if res.Merged.ExpectedEgress[0].Method != "GET" || res.Merged.ExpectedEgress[0].Path != "/user/repos" {
+		t.Errorf("parent row was modified: %+v", res.Merged.ExpectedEgress[0])
+	}
+	if res.Merged.ExpectedEgress[0].Why != "List repos for the user" {
+		t.Errorf("parent Why = %q, want unchanged", res.Merged.ExpectedEgress[0].Why)
+	}
+	// Addition lands intact as a new row.
+	added := res.Merged.ExpectedEgress[1]
+	if added.Method != "POST" || added.Path != "/repos/{owner}/{repo}/issues/{n}/comments" {
+		t.Errorf("addition row = %+v, want POST/.../comments", added)
+	}
+	if added.Why != "Comment on issues" {
+		t.Errorf("addition Why = %q, want the new why", added.Why)
+	}
+	if len(res.AddedEgress) != 1 || res.AddedEgress[0].Path != "/repos/{owner}/{repo}/issues/{n}/comments" {
+		t.Errorf("AddedEgress = %+v, want one entry for the new endpoint", res.AddedEgress)
+	}
+	if len(res.ReplacedEgress) != 0 {
+		t.Errorf("ReplacedEgress = %+v, want empty (structural mismatch is NOT a replacement)", res.ReplacedEgress)
+	}
+}
+
+// TestMergeEnvelopes_EgressWhyOnlyUpdatePreservesShape locks in the
+// other side of the structural rule: an addition that restates a host
+// WITHOUT structural fields is a why-update and preserves the parent's
+// shape. Silently relaxing the parent's Method/Path/regex would widen
+// the previously approved scope without a signal in the approval
+// prompt (which only diffs `why`).
+func TestMergeEnvelopes_EgressWhyOnlyUpdatePreservesShape(t *testing.T) {
+	parent := Envelope{
+		ExpectedEgress: []ExpectedEgress{
+			{
+				Host:       "api.github.com",
+				Why:        "List repos for the user",
+				Method:     "GET",
+				Path:       "/user/repos",
+				QueryShape: map[string]any{"per_page": map[string]any{"<=": 100}},
+			},
+		},
+	}
+	additions := Envelope{
+		ExpectedEgress: []ExpectedEgress{
+			// No method/path → agent is only revising the rationale.
+			{Host: "api.github.com", Why: "List repos AND pre-cache for the daily digest"},
 		},
 	}
 	res := MergeEnvelopes(parent, additions)
@@ -166,16 +214,84 @@ func TestMergeEnvelopes_EgressReplacePreservesShapeFields(t *testing.T) {
 	}
 	merged := res.Merged.ExpectedEgress[0]
 	if merged.Method != "GET" {
-		t.Errorf("Method = %q; parent's Method was silently overwritten (gateway narrowing!)", merged.Method)
+		t.Errorf("Method = %q; parent's GET was silently dropped by an empty-method why-update", merged.Method)
 	}
 	if merged.Path != "/user/repos" {
-		t.Errorf("Path = %q; parent's Path was silently overwritten", merged.Path)
+		t.Errorf("Path = %q; parent's Path was silently dropped", merged.Path)
 	}
 	if merged.QueryShape == nil {
 		t.Errorf("QueryShape = nil; parent's structural constraint was silently dropped")
 	}
-	if merged.Why != "List repos AND comment on issues" {
+	if merged.Why != "List repos AND pre-cache for the daily digest" {
 		t.Errorf("Why = %q, want the new why", merged.Why)
+	}
+	if len(res.ReplacedEgress) != 1 {
+		t.Errorf("ReplacedEgress len = %d, want 1", len(res.ReplacedEgress))
+	}
+}
+
+// TestMergeEnvelopes_ToolStructuralMismatchAppends is the tool-side
+// equivalent of EgressStructuralMismatchAppends. An addition restates
+// the same tool name with a different InputRegex → distinct endpoint
+// under the same harness tool, lands as a new row.
+func TestMergeEnvelopes_ToolStructuralMismatchAppends(t *testing.T) {
+	parent := Envelope{
+		ExpectedTools: []ExpectedTool{
+			{ToolName: "Bash", Why: "list emails", InputRegex: `^curl `},
+		},
+	}
+	additions := Envelope{
+		ExpectedTools: []ExpectedTool{
+			{ToolName: "Bash", Why: "run the processing script", InputRegex: `^python `},
+		},
+	}
+	res := MergeEnvelopes(parent, additions)
+	if got := len(res.Merged.ExpectedTools); got != 2 {
+		t.Fatalf("merged tools = %d, want 2 (different InputRegex = different endpoint)", got)
+	}
+	if res.Merged.ExpectedTools[0].InputRegex != `^curl ` {
+		t.Errorf("parent InputRegex was modified: %q", res.Merged.ExpectedTools[0].InputRegex)
+	}
+	if res.Merged.ExpectedTools[1].InputRegex != `^python ` {
+		t.Errorf("addition InputRegex = %q, want ^python ", res.Merged.ExpectedTools[1].InputRegex)
+	}
+	if len(res.AddedTools) != 1 {
+		t.Errorf("AddedTools = %+v, want one new entry", res.AddedTools)
+	}
+	if len(res.ReplacedTools) != 0 {
+		t.Errorf("ReplacedTools = %+v, want empty", res.ReplacedTools)
+	}
+}
+
+// TestMergeEnvelopes_CredentialReplacePreservesParentCasing locks in
+// the case-insensitive dedup + parent-casing-preserved contract for
+// credentials. The vault lookup is case-sensitive on the stored
+// identifier, so re-stamping the parent's `github:foo` to the
+// addition's `GITHUB:FOO` would silently change the lookup target.
+// Mirrors the tools/egress preservation rule.
+func TestMergeEnvelopes_CredentialReplacePreservesParentCasing(t *testing.T) {
+	parent := Envelope{
+		RequiredCredentials: []RequiredCredential{
+			{VaultItemID: "github:foo", Why: "List issues"},
+		},
+	}
+	additions := Envelope{
+		RequiredCredentials: []RequiredCredential{
+			{VaultItemID: "GITHUB:FOO", Why: "Comment on issues"},
+		},
+	}
+	res := MergeEnvelopes(parent, additions)
+	if got := len(res.Merged.RequiredCredentials); got != 1 {
+		t.Fatalf("merged credentials = %d, want 1 (case-insensitive dedup)", got)
+	}
+	if got, want := res.Merged.RequiredCredentials[0].VaultItemID, "github:foo"; got != want {
+		t.Errorf("VaultItemID = %q, want %q (parent casing must be preserved on replace)", got, want)
+	}
+	if got, want := res.Merged.RequiredCredentials[0].Why, "Comment on issues"; got != want {
+		t.Errorf("Why = %q, want %q", got, want)
+	}
+	if len(res.ReplacedCredentials) != 1 {
+		t.Errorf("ReplacedCredentials = %v, want one entry", res.ReplacedCredentials)
 	}
 }
 

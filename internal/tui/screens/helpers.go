@@ -60,8 +60,15 @@ func formatTaskDetail(t *client.Task) string {
 				auto = "auto"
 			}
 			b.WriteString(fmt.Sprintf("  %s/%s (%s)", a.Service, a.Action, auto))
-			if a.ExpectedUse != "" {
-				b.WriteString("  — " + a.ExpectedUse)
+			// Fall back to the expansion rationale when no create-time
+			// expected_use was supplied. Without this, a derived
+			// authorized_action (materialized from an expansion's
+			// ExpectedTool) renders blank even though the agent
+			// declared a per-entry why on expand.
+			if note := a.ExpectedUse; note != "" {
+				b.WriteString("  — " + note)
+			} else if a.ExpansionRationale != "" {
+				b.WriteString("  — " + a.ExpansionRationale)
 			}
 			b.WriteString("\n")
 		}
@@ -96,6 +103,7 @@ func writePendingExpansionSummary(b *strings.Builder, t *client.Task) {
 	// replacements vs. new entries client-side.
 	parentToolWhy := indexParentToolsByName(t.ExpectedTools)
 	parentEgressWhy := indexParentEgressByHost(t.ExpectedEgress)
+	parentCredWhy := indexParentCredentialsByKey(t.RequiredCredentials)
 
 	// Derived gateway scopes (server-computed). Match by service:action
 	// so we can stamp an "auto-execute" / "needs approval" marker next
@@ -156,21 +164,25 @@ func writePendingExpansionSummary(b *strings.Builder, t *client.Task) {
 		}
 	}
 	if len(pending.RequiredCredentials) > 0 {
-		var creds []struct {
-			VaultItemID     string `json:"vault_item_id"`
-			VaultItemHandle string `json:"vault_item_handle"`
-			Why             string `json:"why"`
-		}
+		var creds []client.RequiredCredential
 		if json.Unmarshal(pending.RequiredCredentials, &creds) == nil {
 			for _, c := range creds {
 				id := c.VaultItemID
 				if id == "" {
 					id = c.VaultItemHandle
 				}
-				if c.Why != "" {
-					b.WriteString(fmt.Sprintf("  • %s — %s\n", id, c.Why))
-				} else {
-					b.WriteString(fmt.Sprintf("  • %s\n", id))
+				key := credentialKey(c)
+				prefix := "  + "
+				prior, replaced := parentCredWhy[key]
+				if replaced {
+					prefix = "  ~ "
+				}
+				b.WriteString(prefix + id + "\n")
+				if replaced && prior != c.Why {
+					b.WriteString("      was: " + prior + "\n")
+					b.WriteString("      now: " + c.Why + "\n")
+				} else if c.Why != "" {
+					b.WriteString("      " + c.Why + "\n")
 				}
 			}
 		}
@@ -205,6 +217,36 @@ func indexParentEgressByHost(parent []client.ExpectedEgress) map[string]string {
 		out[key] = e.Why
 	}
 	return out
+}
+
+// indexParentCredentialsByKey is the credential analogue of
+// indexParentToolsByName: kind-scoped (id vs handle) so a value
+// collision across kinds doesn't masquerade as a replace. Mirrors the
+// envelope merger's canonical key.
+func indexParentCredentialsByKey(parent []client.RequiredCredential) map[string]string {
+	out := make(map[string]string, len(parent))
+	for _, c := range parent {
+		key := credentialKey(c)
+		if key == "" {
+			continue
+		}
+		out[key] = c.Why
+	}
+	return out
+}
+
+// credentialKey mirrors the envelope merger's requiredCredentialKey
+// shape (kind:value, lowercased). Keeping the lookup key in lockstep
+// with the server's dedup keeps the dashboard / TUI was/now diff
+// labels exactly aligned with what the merge persists.
+func credentialKey(c client.RequiredCredential) string {
+	if id := strings.ToLower(strings.TrimSpace(c.VaultItemID)); id != "" {
+		return "id:" + id
+	}
+	if handle := strings.ToLower(strings.TrimSpace(c.VaultItemHandle)); handle != "" {
+		return "handle:" + handle
+	}
+	return ""
 }
 
 // autoExecuteMarker returns the auto-execute disposition tag for a tool

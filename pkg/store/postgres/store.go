@@ -1427,6 +1427,14 @@ func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus strin
 	expectedToolsJSON := rawJSONOrDefaultBytes(env.ExpectedTools, "[]")
 	expectedEgressJSON := rawJSONOrDefaultBytes(env.ExpectedEgress, "[]")
 	requiredCredentialsJSON := rawJSONOrDefaultBytes(env.RequiredCredentials, "[]")
+	// Risk columns are conditionally updated: an empty RiskLevel
+	// means the caller didn't re-assess (assessor disabled or
+	// failed), so we leave the create-time risk intact rather than
+	// blanking it out.
+	riskDetailsJSON := []byte(nil)
+	if len(env.RiskDetails) > 0 {
+		riskDetailsJSON = []byte(env.RiskDetails)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE tasks SET authorized_actions = $1,
 			expected_tools_json = $2,
@@ -1434,9 +1442,12 @@ func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus strin
 			required_credentials_json = $4,
 			expires_at = $5,
 			status = 'active',
-			pending_expansion_json = NULL
+			pending_expansion_json = NULL,
+			risk_level = CASE WHEN $8 != '' THEN $8 ELSE risk_level END,
+			risk_details = CASE WHEN $8 != '' THEN $9::text ELSE risk_details END
 		WHERE id = $6 AND status = $7
-	`, actionsJSON, expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON, expiresAt, id, fromStatus)
+	`, actionsJSON, expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON, expiresAt, id, fromStatus,
+		env.RiskLevel, string(riskDetailsJSON))
 	if err != nil {
 		return false, err
 	}
@@ -1493,7 +1504,9 @@ func (s *Store) SetTaskPendingExpansion(ctx context.Context, id string, pending 
 
 func (s *Store) ResolveTaskPendingExpansion(ctx context.Context, id string, newStatus store.ResolveExpansionStatus) (bool, error) {
 	switch newStatus {
-	case store.ResolveExpansionStatusActive, store.ResolveExpansionStatusExpired:
+	case store.ResolveExpansionStatusActive,
+		store.ResolveExpansionStatusExpired,
+		store.ResolveExpansionStatusDenied:
 		// allowed
 	default:
 		return false, fmt.Errorf("ResolveTaskPendingExpansion: invalid newStatus %q", newStatus)

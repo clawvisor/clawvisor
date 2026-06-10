@@ -30,7 +30,7 @@ func TestBuildExpansionApprovalUpdate_ReplaceByName(t *testing.T) {
 		},
 	}
 
-	out, err := buildExpansionApprovalUpdate(task)
+	out, _, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
 		t.Fatalf("buildExpansionApprovalUpdate: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestBuildExpansionApprovalUpdate_LocalToolKeepsActions(t *testing.T) {
 			Reason: "need to write a script",
 		},
 	}
-	out, err := buildExpansionApprovalUpdate(task)
+	out, _, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
 		t.Fatalf("buildExpansionApprovalUpdate: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestBuildExpansionApprovalUpdate_DerivesActionFromServiceColonAction(t *tes
 			Reason: "follow-up call needed",
 		},
 	}
-	out, err := buildExpansionApprovalUpdate(task)
+	out, _, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
 		t.Fatalf("buildExpansionApprovalUpdate: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestMergeAuthorizedActions_DerivedActionDefaultsToManual(t *testing.T) {
 		{ToolName: "mock.echo:other", Why: "Need other action on same service"},
 		{ToolName: "github:create_issue", Why: "Net-new service"},
 	}
-	merged := mergeAuthorizedActionsFromExpansion(parent, additions)
+	merged := mergeAuthorizedActionsFromExpansion(parent, "", additions)
 	if len(merged) != 3 {
 		t.Fatalf("merged len = %d, want 3", len(merged))
 	}
@@ -158,7 +158,7 @@ func TestMergeAuthorizedActions_CaseInsensitiveDedup(t *testing.T) {
 	additions := []runtimetasks.ExpectedTool{
 		{ToolName: "GitHub:Create_Issue", Why: "Broader reason"},
 	}
-	merged := mergeAuthorizedActionsFromExpansion(parent, additions)
+	merged := mergeAuthorizedActionsFromExpansion(parent, "", additions)
 	if len(merged) != 1 {
 		t.Fatalf("merged len = %d, want 1 (case-insensitive dedup failed)", len(merged))
 	}
@@ -183,7 +183,7 @@ func TestBuildExpansionApprovalUpdate_DedupReplacesActionRationale(t *testing.T)
 			}),
 		},
 	}
-	out, err := buildExpansionApprovalUpdate(task)
+	out, _, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
 		t.Fatalf("buildExpansionApprovalUpdate: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestBuildExpansionApprovalUpdate_AppendsCredentials(t *testing.T) {
 			RequiredCredentials: pending,
 		},
 	}
-	out, err := buildExpansionApprovalUpdate(task)
+	out, _, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
 		t.Fatalf("buildExpansionApprovalUpdate: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestBuildExpansionApprovalUpdate_HandlesEmptyParent(t *testing.T) {
 			}),
 		},
 	}
-	out, err := buildExpansionApprovalUpdate(task)
+	out, _, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
 		t.Fatalf("buildExpansionApprovalUpdate: %v", err)
 	}

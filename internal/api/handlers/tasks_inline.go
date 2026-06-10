@@ -156,27 +156,17 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 		expiresAt := approvedAt.Add(time.Duration(expiresIn) * time.Second)
 		task.ExpiresAt = &expiresAt
 	}
-	if len(req.ExpectedTools) > 0 {
-		raw, err := json.Marshal(req.ExpectedTools)
-		if err != nil {
-			return nil, fmt.Errorf("encode expected_tools: %w", err)
-		}
-		task.ExpectedTools = json.RawMessage(raw)
+	toolsRaw, egressRaw, credsRaw, err := runtimetasks.EnvelopeToRawColumns(runtimetasks.Envelope{
+		ExpectedTools:       req.ExpectedTools,
+		ExpectedEgress:      req.ExpectedEgress,
+		RequiredCredentials: req.RequiredCredentials,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode task envelope: %w", err)
 	}
-	if len(req.ExpectedEgress) > 0 {
-		raw, err := json.Marshal(req.ExpectedEgress)
-		if err != nil {
-			return nil, fmt.Errorf("encode expected_egress: %w", err)
-		}
-		task.ExpectedEgress = json.RawMessage(raw)
-	}
-	if len(req.RequiredCredentials) > 0 {
-		raw, err := json.Marshal(req.RequiredCredentials)
-		if err != nil {
-			return nil, fmt.Errorf("encode required_credentials: %w", err)
-		}
-		task.RequiredCredentials = json.RawMessage(raw)
-	}
+	task.ExpectedTools = toolsRaw
+	task.ExpectedEgress = egressRaw
+	task.RequiredCredentials = credsRaw
 	if err := h.validateTaskRequiredCredentials(ctx, task, requiredCredentials); err != nil {
 		return nil, err
 	}
@@ -450,27 +440,17 @@ func (h *TasksHandler) CreatePendingInlineTask(ctx context.Context, agent *store
 		ExpiresInSeconds:       expiresIn,
 		ApprovalSource:         "inline_chat",
 	}
-	if len(req.ExpectedTools) > 0 {
-		raw, err := json.Marshal(req.ExpectedTools)
-		if err != nil {
-			return "", fmt.Errorf("encode expected_tools: %w", err)
-		}
-		task.ExpectedTools = json.RawMessage(raw)
+	toolsRaw, egressRaw, credsRaw, err := runtimetasks.EnvelopeToRawColumns(runtimetasks.Envelope{
+		ExpectedTools:       req.ExpectedTools,
+		ExpectedEgress:      req.ExpectedEgress,
+		RequiredCredentials: req.RequiredCredentials,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode task envelope: %w", err)
 	}
-	if len(req.ExpectedEgress) > 0 {
-		raw, err := json.Marshal(req.ExpectedEgress)
-		if err != nil {
-			return "", fmt.Errorf("encode expected_egress: %w", err)
-		}
-		task.ExpectedEgress = json.RawMessage(raw)
-	}
-	if len(req.RequiredCredentials) > 0 {
-		raw, err := json.Marshal(req.RequiredCredentials)
-		if err != nil {
-			return "", fmt.Errorf("encode required_credentials: %w", err)
-		}
-		task.RequiredCredentials = json.RawMessage(raw)
-	}
+	task.ExpectedTools = toolsRaw
+	task.ExpectedEgress = egressRaw
+	task.RequiredCredentials = credsRaw
 	// Validate credential availability up front so the user doesn't
 	// see an approval prompt for a task that can't possibly authorize
 	// — matches the dashboard Create flow's behavior. Placeholder

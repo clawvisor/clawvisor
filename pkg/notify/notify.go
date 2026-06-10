@@ -146,8 +146,13 @@ type ScopeExpansionRequest struct {
 	AddedCredentials    []ExpansionCredential
 	ReplacedCredentials []ReplacedExpansionCredential
 	Reason              string
-	ApproveURL          string
-	DenyURL             string
+	// RiskLevel is the merged-envelope risk assessment as of the
+	// approval prompt — fresh from the reassessment ExpandApprove runs
+	// (parent risk + new scope can compose into a higher level than
+	// either alone). Empty when no assessor is configured.
+	RiskLevel  string
+	ApproveURL string
+	DenyURL    string
 }
 
 // ConnectionRequest carries the data for an agent connection request notification.

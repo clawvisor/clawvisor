@@ -809,9 +809,20 @@ type PlannedCall struct {
 }
 
 // ResolveExpansionStatus is the constrained-enum target status for
-// ResolveTaskPendingExpansion. Only "active" (the user denied; task
-// returns to active) and "expired" (the user denied but the underlying
-// task had already passed its deadline) are valid landing states.
+// ResolveTaskPendingExpansion.
+//
+// Valid landing states:
+//   - Active: user denied the expansion request; task returns to
+//     active at its prior scope and deadline.
+//   - Expired: user denied the expansion but the underlying task had
+//     already passed its deadline; task lands terminal-expired.
+//   - Denied: user denied the entire task (not just the expansion).
+//     Routed here so pending_expansion_json clears atomically with
+//     the status flip — leaving a denied task with stale pending JSON
+//     would violate the "only pending_scope_expansion rows carry
+//     pending_expansion_json" invariant SetTaskPendingExpansion's
+//     docstring promises.
+//
 // Defining this as a typed alias prevents callers from corrupting the
 // lifecycle with arbitrary strings.
 type ResolveExpansionStatus string
@@ -819,6 +830,7 @@ type ResolveExpansionStatus string
 const (
 	ResolveExpansionStatusActive  ResolveExpansionStatus = "active"
 	ResolveExpansionStatusExpired ResolveExpansionStatus = "expired"
+	ResolveExpansionStatusDenied  ResolveExpansionStatus = "denied"
 )
 
 // PendingTaskExpansion captures an in-flight scope-expansion request
@@ -843,11 +855,20 @@ type PendingTaskExpansion struct {
 // TaskEnvelopeUpdate is the payload for UpdateTaskEnvelopeFrom. AuthorizedActions
 // reflects the merged state; the JSON-encoded envelope fields hold the merged
 // envelope (parent + additions after replace-by-name dedup).
+//
+// RiskLevel and RiskDetails are OPTIONAL. When RiskLevel is non-empty
+// the store overwrites both columns in the same CAS — keeping the
+// recompute atomic with the envelope landing. Empty RiskLevel leaves
+// the existing assessment intact (the handler's assessor may be
+// disabled or have failed; we don't blank out the create-time risk
+// just because a re-assessment didn't run).
 type TaskEnvelopeUpdate struct {
 	AuthorizedActions   []TaskAction
 	ExpectedTools       json.RawMessage
 	ExpectedEgress      json.RawMessage
 	RequiredCredentials json.RawMessage
+	RiskLevel           string
+	RiskDetails         json.RawMessage
 }
 
 // Task represents a task-scoped authorization.
@@ -856,7 +877,21 @@ type Task struct {
 	UserID                 string          `json:"user_id"`
 	AgentID                string          `json:"agent_id"`
 	Purpose                string          `json:"purpose"`
-	Status                 string          `json:"status"`   // pending_approval | active | completed | expired | denied | cancelled | pending_scope_expansion | revoked
+	// Status: pending_approval | active | completed | expired |
+	// denied | cancelled | pending_scope_expansion | revoked.
+	//
+	// "expired" is recoverable through scope expansion. An expired
+	// session task whose agent posts a successful Expand passes the
+	// SetTaskPendingExpansion CAS (which accepts 'active' OR 'expired'
+	// as the source state) and lands in pending_scope_expansion. On
+	// approve, UpdateTaskEnvelopeFrom sets status='active' with a
+	// fresh expires_at — re-arming the task with the expanded scope
+	// in one atomic transition. This is intentional: an expansion
+	// reason explains why MORE scope is needed, and tearing down +
+	// re-creating the task to recover from a timing race would lose
+	// the chain of audit. revoked / denied / completed remain
+	// terminal because they encode a user-initiated stop signal.
+	Status                 string          `json:"status"`
 	Lifetime               string          `json:"lifetime"` // session | sliding | standing
 	AuthorizedActions      []TaskAction    `json:"authorized_actions"`
 	PlannedCalls           []PlannedCall   `json:"planned_calls,omitempty"`

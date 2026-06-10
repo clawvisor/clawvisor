@@ -181,6 +181,17 @@ type ExpectedEgress struct {
 	CredentialAlias string         `json:"credential_alias,omitempty"`
 }
 
+// RequiredCredential mirrors the wire shape of a parent task's
+// required_credentials entry. Exposing it on the TUI Task means
+// the credential was/now diff renders symmetrically with the
+// dashboard surface — without it, the TUI couldn't tell apart a
+// credential addition from a why-revision on an existing entry.
+type RequiredCredential struct {
+	VaultItemID     string `json:"vault_item_id,omitempty"`
+	VaultItemHandle string `json:"vault_item_handle,omitempty"`
+	Why             string `json:"why"`
+}
+
 type Task struct {
 	ID                     string           `json:"id"`
 	UserID                 string           `json:"user_id"`
@@ -191,9 +202,10 @@ type Task struct {
 	Status                 string           `json:"status"`
 	AuthorizedActions      []TaskAction     `json:"authorized_actions"`
 	PlannedCalls           []PlannedCall    `json:"planned_calls,omitempty"`
-	ExpectedTools          []ExpectedTool   `json:"expected_tools,omitempty"`
-	ExpectedEgress         []ExpectedEgress `json:"expected_egress,omitempty"`
-	IntentVerificationMode string           `json:"intent_verification_mode,omitempty"`
+	ExpectedTools          []ExpectedTool       `json:"expected_tools,omitempty"`
+	ExpectedEgress         []ExpectedEgress     `json:"expected_egress,omitempty"`
+	RequiredCredentials    []RequiredCredential `json:"required_credentials,omitempty"`
+	IntentVerificationMode string               `json:"intent_verification_mode,omitempty"`
 	ExpectedUse            string           `json:"expected_use,omitempty"`
 	SchemaVersion          int              `json:"schema_version,omitempty"`
 	CallbackURL            string           `json:"callback_url,omitempty"`

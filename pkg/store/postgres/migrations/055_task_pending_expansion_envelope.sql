@@ -11,24 +11,36 @@ ALTER TABLE tasks ADD COLUMN pending_expansion_json JSONB;
 -- that should remain frozen until the cleanup sweeper would have
 -- caught them.
 --
+-- The legacy pending_action / pending_reason columns are blanked in
+-- the SAME statement so an old-code instance polling for "pending
+-- action on an active task" doesn't see a phantom from the pre-deploy
+-- state. Without this NULL'ing, the dual-write window during a
+-- rolling deploy lets stale singular-shape data drive old-binary
+-- decisions even though the new code has cleared the row's
+-- pending_scope_expansion status.
+--
 -- In-flight expansion requests at deploy time ARE lost — any agent
 -- long-polling on /api/tasks/{id}/expand will time out without a
 -- verdict. This is an unavoidable cost of the shape change; agents
 -- will retry naturally on the next request. Operators should announce
 -- a brief expand-flow blackout around the deploy.
 UPDATE tasks
-SET status = 'active'
+SET status = 'active',
+    pending_action = NULL,
+    pending_reason = ''
 WHERE status = 'pending_scope_expansion'
   AND (lifetime = 'standing' OR expires_at IS NULL OR expires_at > NOW());
 
 UPDATE tasks
-SET status = 'expired'
+SET status = 'expired',
+    pending_action = NULL,
+    pending_reason = ''
 WHERE status = 'pending_scope_expansion';
 
 -- Legacy pending_action / pending_reason columns are no longer read by
--- the store. We intentionally do NOT drop them here: during a rolling
--- deploy an old instance still SELECTing those columns would see
--- "column does not exist" until it was rotated out. A follow-up
+-- the new store. We intentionally do NOT drop them here: during a
+-- rolling deploy an old instance still SELECTing those columns would
+-- see "column does not exist" until it was rotated out. A follow-up
 -- migration (e.g. 056_drop_legacy_pending_action.sql, after all
 -- instances are on the new code) handles the drop.
 --

@@ -1695,6 +1695,8 @@ func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus strin
 	expectedEgressJSON := rawJSONOrDefault(env.ExpectedEgress, "[]")
 	requiredCredentialsJSON := rawJSONOrDefault(env.RequiredCredentials, "[]")
 	exp := expiresAt.UTC().Format(time.RFC3339)
+	// Risk columns are conditionally updated — see the postgres impl
+	// for the empty-RiskLevel rationale.
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE tasks SET authorized_actions = ?,
 			expected_tools_json = ?,
@@ -1702,9 +1704,14 @@ func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus strin
 			required_credentials_json = ?,
 			expires_at = ?,
 			status = 'active',
-			pending_expansion_json = NULL
+			pending_expansion_json = NULL,
+			risk_level = CASE WHEN ? != '' THEN ? ELSE risk_level END,
+			risk_details = CASE WHEN ? != '' THEN ? ELSE risk_details END
 		WHERE id = ? AND status = ?
-	`, string(actionsJSON), expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON, exp, id, fromStatus)
+	`, string(actionsJSON), expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON, exp,
+		env.RiskLevel, env.RiskLevel,
+		env.RiskLevel, string(env.RiskDetails),
+		id, fromStatus)
 	if err != nil {
 		return false, err
 	}
@@ -1761,7 +1768,9 @@ func (s *Store) SetTaskPendingExpansion(ctx context.Context, id string, pending 
 
 func (s *Store) ResolveTaskPendingExpansion(ctx context.Context, id string, newStatus store.ResolveExpansionStatus) (bool, error) {
 	switch newStatus {
-	case store.ResolveExpansionStatusActive, store.ResolveExpansionStatusExpired:
+	case store.ResolveExpansionStatusActive,
+		store.ResolveExpansionStatusExpired,
+		store.ResolveExpansionStatusDenied:
 		// allowed
 	default:
 		return false, fmt.Errorf("ResolveTaskPendingExpansion: invalid newStatus %q", newStatus)

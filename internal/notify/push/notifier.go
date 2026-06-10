@@ -226,29 +226,41 @@ func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskA
 }
 
 func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.ScopeExpansionRequest) (string, error) {
-	summary := scopeExpansionSummary(req)
-	body := fmt.Sprintf("%s wants to expand task scope: %s", req.AgentName, req.Reason)
+	// Shared with Telegram via the pkg/notify renderer so both
+	// surfaces agree on the +/~ vocabulary; CapExpansionBody bounds
+	// the runaway-reason case against the ~4KB APNs/FCM payload
+	// limit.
+	summary := notify.RenderExpansionSummary(req)
+	body := notify.CapExpansionBody(fmt.Sprintf("%s wants to expand task scope: %s", req.AgentName, req.Reason))
+	data := map[string]string{
+		"target_id":      req.TaskID,
+		"type":           "scope_expansion",
+		"daemon_url":     n.daemonURL,
+		"purpose":        req.Purpose,
+		"action_summary": summary,
+	}
+	if req.RiskLevel != "" {
+		data["risk_level"] = req.RiskLevel
+	}
+	attrs := map[string]string{
+		"targetID":      req.TaskID,
+		"daemonURL":     n.daemonURL,
+		"requestType":   "scope_expansion",
+		"category":      "SCOPE_EXPANSION",
+		"purpose":       req.Purpose,
+		"actionSummary": summary,
+	}
+	if req.RiskLevel != "" {
+		attrs["riskLevel"] = req.RiskLevel
+	}
 	return n.sendToDevices(ctx, req.UserID, pushPayload{
 		Category: "SCOPE_EXPANSION",
 		Title:    "Scope Expansion Request",
 		Body:     body,
-		Data: map[string]string{
-			"target_id":      req.TaskID,
-			"type":           "scope_expansion",
-			"daemon_url":     n.daemonURL,
-			"purpose":        req.Purpose,
-			"action_summary": summary,
-		},
+		Data:     data,
 		LiveActivity: &liveActivityPayload{
 			AttributesType: "ApprovalActivityAttributes",
-			Attributes: map[string]string{
-				"targetID":      req.TaskID,
-				"daemonURL":     n.daemonURL,
-				"requestType":   "scope_expansion",
-				"category":      "SCOPE_EXPANSION",
-				"purpose":       req.Purpose,
-				"actionSummary": summary,
-			},
+			Attributes:     attrs,
 			ContentState: map[string]any{
 				"status":        "pending",
 				"resultMessage": nil,
@@ -257,45 +269,6 @@ func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.Sco
 			AlertBody:  body,
 		},
 	})
-}
-
-// scopeExpansionSummary renders a short one-line summary of an expansion
-// envelope for surfaces (push notification action_summary, live-activity
-// status) that can't fit the full diff. New entries are listed first,
-// replaced ones second; identifiers only (no `why`) since the
-// notification body already names the reason.
-func scopeExpansionSummary(req notify.ScopeExpansionRequest) string {
-	var parts []string
-	for _, t := range req.AddedTools {
-		parts = append(parts, "+"+t.ToolName)
-	}
-	for _, t := range req.ReplacedTools {
-		parts = append(parts, "~"+t.New.ToolName)
-	}
-	for _, e := range req.AddedEgress {
-		parts = append(parts, "+"+e.Host)
-	}
-	for _, e := range req.ReplacedEgress {
-		parts = append(parts, "~"+e.New.Host)
-	}
-	for _, c := range req.AddedCredentials {
-		id := c.VaultItemID
-		if id == "" {
-			id = c.VaultItemHandle
-		}
-		parts = append(parts, "+"+id)
-	}
-	for _, c := range req.ReplacedCredentials {
-		id := c.New.VaultItemID
-		if id == "" {
-			id = c.New.VaultItemHandle
-		}
-		parts = append(parts, "~"+id)
-	}
-	if len(parts) == 0 {
-		return "scope_expansion"
-	}
-	return strings.Join(parts, ", ")
 }
 
 func (n *Notifier) SendConnectionRequest(ctx context.Context, req notify.ConnectionRequest) (string, error) {

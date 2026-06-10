@@ -141,24 +141,33 @@ func toolDefs() []Tool {
 					"task_id": {"type": "string", "description": "The task ID to expand"},
 					"expected_tools": {
 						"type": "array",
-						"description": "New tools the task needs. Each entry: {tool_name, why}. For agent-routed gateway calls, use 'service:action' (e.g. 'github:create_issue'); for local tools, use the bare name (e.g. 'Edit', 'Bash').",
+						"description": "New tools the task needs. Each entry: {tool_name, why} plus optional input_shape/input_regex constraints (same shape as create_task). For agent-routed gateway calls, use 'service:action' (e.g. 'github:create_issue'); for local tools, use the bare name (e.g. 'Edit', 'Bash'). Constraints not declared here cannot tighten an existing entry — restate the parent's constraint plus your additional intent if you want to reuse the row's why slot.",
 						"items": {
 							"type": "object",
 							"properties": {
 								"tool_name": {"type": "string"},
-								"why": {"type": "string"}
+								"why": {"type": "string"},
+								"input_shape": {"type": "object", "description": "Optional. Constraint shape on the tool's input (same semantics as create_task)."},
+								"input_regex": {"type": "string", "description": "Optional. Regex matched against the tool's stringified input."}
 							},
 							"required": ["tool_name", "why"]
 						}
 					},
 					"expected_egress": {
 						"type": "array",
-						"description": "New non-control hosts the task may reach. Each entry: {host, why}.",
+						"description": "New non-control hosts the task may reach. Each entry: {host, why} plus optional method/path/path_regex/query_shape/body_shape/headers/credential_alias (same shape as create_task). An addition that names the same host as an existing entry but DIFFERS on a structural field (Method, Path, …) lands as a NEW row — both endpoints coexist. To revise an existing row's why, leave structural fields empty.",
 						"items": {
 							"type": "object",
 							"properties": {
 								"host": {"type": "string"},
-								"why": {"type": "string"}
+								"why": {"type": "string"},
+								"method": {"type": "string", "description": "Optional. HTTP method (GET / POST / PUT / PATCH / DELETE / HEAD / OPTIONS)."},
+								"path": {"type": "string", "description": "Optional. Exact path. Mutually exclusive with path_regex."},
+								"path_regex": {"type": "string", "description": "Optional. Path regex. Mutually exclusive with path."},
+								"query_shape": {"type": "object", "description": "Optional. Constraint shape on the query string."},
+								"body_shape": {"type": "object", "description": "Optional. Constraint shape on the request body."},
+								"headers": {"type": "object", "description": "Optional. Constraint shape on the request headers."},
+								"credential_alias": {"type": "string", "description": "Optional. Bind a specific credential alias to this egress endpoint."}
 							},
 							"required": ["host", "why"]
 						}

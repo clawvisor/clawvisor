@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -122,20 +123,34 @@ type EnvelopeMergeResult struct {
 	ReplacedCredentials []ReplacedRequiredCredential
 }
 
-// MergeEnvelopes folds an expansion envelope into a parent envelope
-// using replace-by-name dedup. For each addition whose canonical key
-// (lowercased tool_name / host / vault_item_id-or-handle) matches an
-// existing entry, the new `why` wholesale replaces the old one — no
-// merge, no append. Genuinely new keys are appended.
+// MergeEnvelopes folds an expansion envelope into a parent envelope.
 //
-// The contract forces the agent to write a single coherent `why` that
-// subsumes both old and new purposes if it wants continuity, rather
-// than letting "and also X" sprawl accumulate in the audit trail.
+// Dedup rules:
+//   - "Identifier match" — same lowercased tool_name / host / vault
+//     id-or-handle (kind-scoped).
+//   - "Structurally compatible" — the addition's non-empty structural
+//     fields (InputShape/InputRegex for tools; Method/Path/PathRegex/
+//     QueryShape/BodyShape/Headers/CredentialAlias for egress) all
+//     match the parent entry's. An addition that leaves a structural
+//     field empty does not constrain it; an addition that sets it to a
+//     different value names a different endpoint.
+//   - On an identifier+structural match: the addition is a "why
+//     update". The new `why` replaces the old; the parent's identifier
+//     casing and structural fields are preserved. This protects the
+//     approved scope shape from silent narrowing/widening (the
+//     approval prompts only diff `why`).
+//   - On an identifier match with structural mismatch: the addition
+//     names a different endpoint under the same host/tool. It is
+//     APPENDED as a new entry. Both rows coexist in the merged
+//     envelope; the reviewer sees both in the approval prompt; the
+//     gateway matcher honors both.
+//   - On no identifier match: appended.
 //
-// Non-`why` fields on a replaced entry (InputShape, Method, etc.) are
-// taken from the addition. The expectation is that an expansion
-// effectively redefines the entry; a partial expansion that wants to
-// preserve an existing field shape should restate it.
+// Credentials have no structural fields beyond the identifier kind, so
+// the merge is always a why-update on identifier match. The parent's
+// identifier casing is preserved (mirroring the tools/egress rule) so
+// a case-mismatched re-statement doesn't silently change the vault
+// lookup target.
 func MergeEnvelopes(parent, additions Envelope) EnvelopeMergeResult {
 	out := EnvelopeMergeResult{
 		Merged: Envelope{
@@ -161,14 +176,18 @@ func mergeExpectedTools(parent, additions []ExpectedTool) (merged, added []Expec
 	if len(additions) == 0 {
 		return slices.Clone(parent), nil, nil
 	}
-	index := make(map[string]int, len(parent))
+	// index maps each identifier key to ALL parent indices with that
+	// key. After the structural-collision fix, two parent entries can
+	// share a tool_name when their InputShape/InputRegex differ —
+	// they're separate endpoints in the same harness tool.
+	index := make(map[string][]int, len(parent))
 	merged = slices.Clone(parent)
 	for i, item := range parent {
 		key := expectedToolKey(item)
 		if key == "" {
 			continue
 		}
-		index[key] = i
+		index[key] = append(index[key], i)
 	}
 	for _, item := range additions {
 		key := expectedToolKey(item)
@@ -179,29 +198,33 @@ func mergeExpectedTools(parent, additions []ExpectedTool) (merged, added []Expec
 			// surprise if a caller skips validation.
 			continue
 		}
-		if idx, ok := index[key]; ok {
-			// Replace-by-name is a *why* update, not a tool rename or
-			// shape change. Preserve:
-			//   - the parent's identifier casing (so a case-mismatched
-			//     addition doesn't render as a rename in the approval
-			//     prompt — `Bash` vs `bash`)
-			//   - InputShape / InputRegex (silently relaxing these
-			//     would widen the previously approved tool's shape
-			//     without the reviewer seeing the change — the prompt
-			//     only diffs `why`).
-			// Agents that genuinely need to change shape must create a
-			// new task or use the dashboard's scope-overrides surface.
-			prior := merged[idx]
-			merged[idx] = ExpectedTool{
+		matched := -1
+		for _, idx := range index[key] {
+			if expectedToolStructurallyMatches(merged[idx], item) {
+				matched = idx
+				break
+			}
+		}
+		if matched >= 0 {
+			// Why-update: preserve the parent's identifier casing and
+			// structural fields. Silently relaxing InputShape /
+			// InputRegex would widen the previously approved tool's
+			// shape without the reviewer seeing the change.
+			prior := merged[matched]
+			merged[matched] = ExpectedTool{
 				ToolName:   prior.ToolName,
 				Why:        item.Why,
 				InputShape: prior.InputShape,
 				InputRegex: prior.InputRegex,
 			}
-			replaced = append(replaced, ReplacedExpectedTool{Prior: prior, New: merged[idx]})
+			replaced = append(replaced, ReplacedExpectedTool{Prior: prior, New: merged[matched]})
 			continue
 		}
-		index[key] = len(merged)
+		// Structurally distinct from every parent entry sharing the
+		// same tool_name → append as a new row. The reviewer sees the
+		// addition's full shape in the approval prompt, and the
+		// gateway matcher honors it on call.
+		index[key] = append(index[key], len(merged))
 		merged = append(merged, item)
 		added = append(added, item)
 	}
@@ -212,34 +235,34 @@ func mergeExpectedEgress(parent, additions []ExpectedEgress) (merged, added []Ex
 	if len(additions) == 0 {
 		return slices.Clone(parent), nil, nil
 	}
-	index := make(map[string]int, len(parent))
+	index := make(map[string][]int, len(parent))
 	merged = slices.Clone(parent)
 	for i, item := range parent {
 		key := expectedEgressKey(item)
 		if key == "" {
 			continue
 		}
-		index[key] = i
+		index[key] = append(index[key], i)
 	}
 	for _, item := range additions {
 		key := expectedEgressKey(item)
 		if key == "" {
 			continue
 		}
-		if idx, ok := index[key]; ok {
-			// Replace-by-name is a *why* update only. Preserve every
-			// structural field from the parent — Method, Path,
-			// PathRegex, QueryShape, BodyShape, Headers,
-			// CredentialAlias, and the host casing — so an addition
-			// that names the same host but changes (say) Method from
-			// GET to POST does NOT silently narrow the parent's
-			// already-approved scope. The approval prompt diffs only
-			// `why`; if structural fields could change here, the
-			// reviewer would have no signal that the gateway's
-			// per-call matcher (bestEgressMatchInTask) is about to
-			// reject calls the parent task previously authorized.
-			prior := merged[idx]
-			merged[idx] = ExpectedEgress{
+		matched := -1
+		for _, idx := range index[key] {
+			if expectedEgressStructurallyMatches(merged[idx], item) {
+				matched = idx
+				break
+			}
+		}
+		if matched >= 0 {
+			// Why-update: preserve the parent's identifier casing and
+			// every structural field. Silently narrowing or widening
+			// the structural shape would land invisibly in the
+			// approval prompt (which diffs only `why`).
+			prior := merged[matched]
+			merged[matched] = ExpectedEgress{
 				Host:            prior.Host,
 				Why:             item.Why,
 				Method:          prior.Method,
@@ -250,10 +273,15 @@ func mergeExpectedEgress(parent, additions []ExpectedEgress) (merged, added []Ex
 				Headers:         prior.Headers,
 				CredentialAlias: prior.CredentialAlias,
 			}
-			replaced = append(replaced, ReplacedExpectedEgress{Prior: prior, New: merged[idx]})
+			replaced = append(replaced, ReplacedExpectedEgress{Prior: prior, New: merged[matched]})
 			continue
 		}
-		index[key] = len(merged)
+		// Same host, different structural shape (e.g. POST /orgs vs
+		// parent's GET /user/repos): treat as a new endpoint. Without
+		// this, the approval prompt would show the addition's shape
+		// while persistence kept the parent's — the reviewer would
+		// approve a delta that never actually lands.
+		index[key] = append(index[key], len(merged))
 		merged = append(merged, item)
 		added = append(added, item)
 	}
@@ -279,8 +307,19 @@ func mergeRequiredCredentials(parent, additions []RequiredCredential) (merged, a
 			continue
 		}
 		if idx, ok := index[key]; ok {
-			replaced = append(replaced, ReplacedRequiredCredential{Prior: merged[idx], New: item})
-			merged[idx] = item
+			// Preserve the parent's identifier casing. Credentials are
+			// case-sensitive in vault lookup, so a case-mismatched
+			// re-statement (e.g. addition writes `GITHUB:FOO` over a
+			// parent `github:foo` on the same lowercased key) must not
+			// re-stamp the identifier — only the `why` updates. Matches
+			// the tools/egress contract.
+			prior := merged[idx]
+			merged[idx] = RequiredCredential{
+				VaultItemID:     prior.VaultItemID,
+				VaultItemHandle: prior.VaultItemHandle,
+				Why:             item.Why,
+			}
+			replaced = append(replaced, ReplacedRequiredCredential{Prior: prior, New: merged[idx]})
 			continue
 		}
 		index[key] = len(merged)
@@ -288,6 +327,49 @@ func mergeRequiredCredentials(parent, additions []RequiredCredential) (merged, a
 		added = append(added, item)
 	}
 	return merged, added, replaced
+}
+
+// expectedToolStructurallyMatches reports whether an addition tool is
+// a "why update" for a parent tool entry — i.e. each of the addition's
+// non-empty structural fields equals the parent's. An addition that
+// leaves a field empty does not constrain it; one that sets it to a
+// non-empty different value names a different endpoint.
+func expectedToolStructurallyMatches(parent, addition ExpectedTool) bool {
+	if addition.InputRegex != "" && addition.InputRegex != parent.InputRegex {
+		return false
+	}
+	if addition.InputShape != nil && !reflect.DeepEqual(addition.InputShape, parent.InputShape) {
+		return false
+	}
+	return true
+}
+
+// expectedEgressStructurallyMatches mirrors expectedToolStructurallyMatches
+// for egress entries. Method comparison is case-insensitive; all other
+// structural fields use exact / deep equality.
+func expectedEgressStructurallyMatches(parent, addition ExpectedEgress) bool {
+	if addition.Method != "" && !strings.EqualFold(addition.Method, parent.Method) {
+		return false
+	}
+	if addition.Path != "" && addition.Path != parent.Path {
+		return false
+	}
+	if addition.PathRegex != "" && addition.PathRegex != parent.PathRegex {
+		return false
+	}
+	if addition.CredentialAlias != "" && addition.CredentialAlias != parent.CredentialAlias {
+		return false
+	}
+	if addition.QueryShape != nil && !reflect.DeepEqual(addition.QueryShape, parent.QueryShape) {
+		return false
+	}
+	if addition.BodyShape != nil && !reflect.DeepEqual(addition.BodyShape, parent.BodyShape) {
+		return false
+	}
+	if addition.Headers != nil && !reflect.DeepEqual(addition.Headers, parent.Headers) {
+		return false
+	}
+	return true
 }
 
 // expectedToolKey is the canonical dedup key for a tool entry. Tool
@@ -299,11 +381,11 @@ func expectedToolKey(t ExpectedTool) string {
 }
 
 // expectedEgressKey is the canonical dedup key for an egress entry.
-// Hosts are case-insensitive per RFC 3986; we lowercase to match. Two
-// egress entries to the same host but different paths still collide
-// here because the agent's `why` is per-host in practice and a per-
-// path dedup would let an agent quietly widen scope by appending a new
-// path entry alongside the existing host.
+// Hosts are case-insensitive per RFC 3986; we lowercase to match.
+// Two egress entries to the same host but different structural shapes
+// (Method, Path, PathRegex, …) do NOT collide here — they're separate
+// endpoints under the same host. See expectedEgressStructurallyMatches
+// for the structural compatibility check applied at merge time.
 func expectedEgressKey(e ExpectedEgress) string {
 	return strings.ToLower(strings.TrimSpace(e.Host))
 }
@@ -353,4 +435,59 @@ func EnvelopeFromTask(task *store.Task) (Envelope, error) {
 		}
 	}
 	return env, nil
+}
+
+// PendingFromAdditions encodes an additions envelope into the
+// store.PendingTaskExpansion shape (each envelope array marshalled
+// individually as raw JSON, plus the agent's reason). Symmetric to
+// the handler's pendingExpansionToEnvelope decode and shares the same
+// per-field marshal pattern as EnvelopeToRawColumns. Returns nil
+// pending when there are no additions and no reason — callers gate
+// that case before reaching here, but the helper stays total.
+//
+// Lives next to EnvelopeFromTask/EnvelopeToRawColumns so the four
+// envelope-encode call sites in handlers go through one tested code
+// path.
+func PendingFromAdditions(additions Envelope, reason string) (*store.PendingTaskExpansion, error) {
+	toolsRaw, egressRaw, credsRaw, err := EnvelopeToRawColumns(additions)
+	if err != nil {
+		return nil, err
+	}
+	return &store.PendingTaskExpansion{
+		ExpectedTools:       toolsRaw,
+		ExpectedEgress:      egressRaw,
+		RequiredCredentials: credsRaw,
+		Reason:              reason,
+	}, nil
+}
+
+// EnvelopeToRawColumns serializes the envelope arrays for storage as
+// the per-field JSON columns on the tasks row. Empty arrays serialize
+// to nil so the caller can pass to the store as "no change" / "default
+// to []". Symmetric to EnvelopeFromTask: read and write go through one
+// pair, so the four create/expand call sites can't drift on the
+// per-field error handling.
+func EnvelopeToRawColumns(env Envelope) (toolsRaw, egressRaw, credsRaw json.RawMessage, err error) {
+	if len(env.ExpectedTools) > 0 {
+		b, mErr := json.Marshal(env.ExpectedTools)
+		if mErr != nil {
+			return nil, nil, nil, mErr
+		}
+		toolsRaw = b
+	}
+	if len(env.ExpectedEgress) > 0 {
+		b, mErr := json.Marshal(env.ExpectedEgress)
+		if mErr != nil {
+			return nil, nil, nil, mErr
+		}
+		egressRaw = b
+	}
+	if len(env.RequiredCredentials) > 0 {
+		b, mErr := json.Marshal(env.RequiredCredentials)
+		if mErr != nil {
+			return nil, nil, nil, mErr
+		}
+		credsRaw = b
+	}
+	return toolsRaw, egressRaw, credsRaw, nil
 }
