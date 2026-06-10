@@ -42,7 +42,20 @@ type InlineApprovalOutcome struct {
 	RequestID string
 	// ResolvedAt is when the proxy resolved the inline approval.
 	ResolvedAt time.Time
+	// Kind distinguishes a task-creation approval ("task_create",
+	// default) from a scope-expansion approval ("task_expand"). The
+	// augmenter dispatches on this when rendering re-injected history
+	// — without it, a previously-approved expansion would surface
+	// the task-creation "Task was created" body on later turns,
+	// confusing the model about whether a fresh task exists.
+	Kind string
 }
+
+// Outcome Kind values.
+const (
+	InlineApprovalOutcomeKindTaskCreate = "task_create"
+	InlineApprovalOutcomeKindTaskExpand = "task_expand"
+)
 
 // InlineApprovalOutcomeKey scopes an outcome record. The approval ID
 // alone is unguessable in practice (16 random bytes), but every other

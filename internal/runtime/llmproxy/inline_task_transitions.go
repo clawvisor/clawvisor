@@ -215,22 +215,22 @@ func resolveInlineExpansionApproval(ctx context.Context, req InlineApprovalRewri
 		out.Decision = "deny"
 		out.Outcome = "inline_expansion_creator_missing"
 		out.Reason = "no inline expansion creator configured"
-		return renderInlineTaskCreatorErrorReply("inline scope expansion is not available on this daemon"), out
+		return renderInlineExpansionCreatorErrorReply("inline scope expansion is not available on this daemon"), out
 	case resolved == nil:
 		out.Decision = "deny"
 		out.Outcome = "inline_expansion_definition_missing"
 		out.Reason = "missing approval hold on resolve"
-		return renderInlineTaskCreatorErrorReply("missing approval hold on resolve"), out
+		return renderInlineExpansionCreatorErrorReply("missing approval hold on resolve"), out
 	case resolved.ExpansionTaskID == "":
 		out.Decision = "deny"
 		out.Outcome = "inline_expansion_definition_missing"
 		out.Reason = "approval hold missing expansion task id"
-		return renderInlineTaskCreatorErrorReply("approval hold missing expansion context"), out
+		return renderInlineExpansionCreatorErrorReply("approval hold missing expansion context"), out
 	case req.Agent == nil:
 		out.Decision = "deny"
 		out.Outcome = "inline_expansion_agent_missing"
 		out.Reason = "missing agent on approval"
-		return renderInlineTaskCreatorErrorReply("missing agent on approval"), out
+		return renderInlineExpansionCreatorErrorReply("missing agent on approval"), out
 	}
 
 	expanded, createErr := expansionCreator.ApproveInlineExpansion(ctx, resolved.ExpansionTaskID, req.Agent.UserID)
@@ -245,7 +245,7 @@ func resolveInlineExpansionApproval(ctx context.Context, req InlineApprovalRewri
 		out.Decision = "deny"
 		out.Outcome = "inline_expansion_approve_failed"
 		out.Reason = "approve failed: " + createErr.Error()
-		return renderInlineTaskCreatorErrorReply(createErr.Error()), out
+		return renderInlineExpansionCreatorErrorReply(createErr.Error()), out
 	}
 
 	out.Decision = "allow"

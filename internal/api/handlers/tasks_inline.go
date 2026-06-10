@@ -905,12 +905,20 @@ func (h *TasksHandler) CreatePendingInlineExpansion(
 
 	if err := h.createCanonicalInlineExpansionApprovalRecord(ctx, task); err != nil {
 		// Rollback the pending row so we don't leave the task wedged
-		// in pending_scope_expansion with no anchor. Detached context
-		// with a tight budget — same pattern as the inline-task path.
+		// in pending_scope_expansion with no anchor. Pick Active /
+		// Expired based on the task's actual deadline — SetTaskPendingExpansion
+		// CAS-allowed expand from BOTH active and expired, so we
+		// can't just restore to active (that would revive an already-
+		// expired session task as a side effect of a transient
+		// record-create failure).
+		rollbackStatus := store.ResolveExpansionStatusActive
+		if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
+			rollbackStatus = store.ResolveExpansionStatusExpired
+		}
 		h.logger.ErrorContext(ctx, "failed to create inline expansion approval record; rolling back pending",
-			"task_id", task.ID, "err", err)
+			"task_id", task.ID, "rollback_status", rollbackStatus, "err", err)
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		_, _ = h.st.ResolveTaskPendingExpansion(rollbackCtx, taskID, store.ResolveExpansionStatusActive)
+		_, _ = h.st.ResolveTaskPendingExpansion(rollbackCtx, taskID, rollbackStatus)
 		cancel()
 		return "", fmt.Errorf("create inline expansion approval record: %w", err)
 	}
@@ -971,14 +979,30 @@ func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userI
 	}
 	task.Status = "active"
 	task.ExpiresAt = &expiresAt
+	// Hydrate the in-memory task's RequiredCredentials from the
+	// MERGED envelope we just persisted — without this,
+	// taskRequiredCredentials(task) would return the parent's
+	// pre-expansion credential set and newly-added credentials
+	// would never get placeholders minted (ensureTaskCredentialPlaceholders
+	// is idempotent on already-minted items; missing items are
+	// silently dropped). envUpdate.RequiredCredentials is the
+	// post-merge JSON written to the row above.
+	task.RequiredCredentials = envUpdate.RequiredCredentials
 
-	// Mint credential placeholders for any newly-added credentials so
-	// the chat reply can hand them back to the model in the same shape
-	// the inline-task approve path does. The placeholders are scoped to
-	// the merged set; ensureTaskCredentialPlaceholders is idempotent on
-	// already-minted vault items so re-running for replaced entries
-	// doesn't double-mint.
-	requiredCredentials, _ := taskRequiredCredentials(task)
+	// Mint credential placeholders for the merged credential set so
+	// any newly-added entries get placeholders alongside the
+	// already-minted ones. ensureTaskCredentialPlaceholders is
+	// idempotent on already-minted vault items.
+	requiredCredentials, credParseErr := taskRequiredCredentials(task)
+	if credParseErr != nil {
+		// Don't roll the envelope back — the user already approved
+		// the expansion and the row is at status='active'. Surface
+		// the parse failure loudly so operators see it; the chat
+		// reply will omit placeholders for credentials we couldn't
+		// decode, mirroring the post-CAS mint-failure path below.
+		h.logger.ErrorContext(ctx, "post-CAS merged credentials parse failed; chat reply will omit placeholders",
+			"task_id", task.ID, "err", credParseErr)
+	}
 	var placeholders []*store.RuntimePlaceholder
 	if len(requiredCredentials) > 0 {
 		var ensureErr error
@@ -1064,12 +1088,17 @@ func (h *TasksHandler) DenyInlineExpansion(ctx context.Context, taskID, userID s
 }
 
 // ExpireInlineExpansion is called when the LRU cache evicts an
-// inline-expansion hold under capacity pressure. The chat anchor is
-// gone, so chat approve can no longer resolve the row. Mirrors
-// ExpireInlineTask: clears pending state and marks the task as
-// expired so the dashboard doesn't keep showing "reply in chat"
-// guidance for a hold that can never be resolved from chat.
-// Idempotent on already-resolved rows.
+// inline-expansion hold under capacity pressure, OR as a rollback
+// path when the intercept's Hold call fails after the pending row
+// landed. Despite the name (kept for symmetry with ExpireInlineTask
+// on the InlineTaskPendingCreator interface), this method does NOT
+// unconditionally mark the parent task expired — that would terminate
+// a previously-active task because the cache dropped its anchor.
+//
+// Instead we mirror DenyInlineExpansion's pattern: pick Active /
+// Expired based on the parent's actual ExpiresAt. The expansion
+// attempt is dropped either way; the parent's prior status is
+// preserved. Idempotent on already-resolved rows.
 func (h *TasksHandler) ExpireInlineExpansion(ctx context.Context, taskID, userID string) error {
 	task, err := h.st.GetTask(ctx, taskID)
 	if err != nil {
@@ -1081,14 +1110,21 @@ func (h *TasksHandler) ExpireInlineExpansion(ctx context.Context, taskID, userID
 	if task.Status != "pending_scope_expansion" {
 		return nil
 	}
-	won, err := h.st.ResolveTaskPendingExpansion(ctx, taskID, store.ResolveExpansionStatusExpired)
+	// Mirror DenyInlineExpansion: the EXPANSION is what's dropped,
+	// not the parent task. A still-alive parent (ExpiresAt > now)
+	// must return to 'active', not be expired by the cache eviction.
+	newStatus := store.ResolveExpansionStatusActive
+	if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
+		newStatus = store.ResolveExpansionStatusExpired
+	}
+	won, err := h.st.ResolveTaskPendingExpansion(ctx, taskID, newStatus)
 	if err != nil {
 		return err
 	}
 	if !won {
 		return nil
 	}
-	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "expired")
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", string(newStatus))
 	if h.eventHub != nil {
 		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
 	}

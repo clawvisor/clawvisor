@@ -166,6 +166,19 @@ func renderInlineExpansionDenyReply() string {
 	return Render(NoticeKindTaskDenied, "The user denied the scope-expansion request. The parent task's existing scope is unchanged; do not retry the same expansion. Acknowledge the denial; if the user still wants the work done, ask whether they prefer a narrower expansion or a different approach.")
 }
 
+// renderInlineExpansionCreatorErrorReply is the expansion-side
+// counterpart to renderInlineTaskCreatorErrorReply. Uses
+// "expansion failed" framing so the model isn't told a task
+// creation failed when the actual failure was the expansion (e.g.
+// creator missing, hold lost, approve gate failed). Reusing the
+// task-creation renderer would mislead the model into thinking
+// no task exists when in fact the parent task is still alive at
+// its prior scope.
+func renderInlineExpansionCreatorErrorReply(msg string) string {
+	msg = sanitizeInlineTaskNoticeBody(msg)
+	return Render(NoticeKindTaskError, "Scope expansion failed — "+msg+". The parent task's existing scope is unchanged; acknowledge the failure to the user and do not retry without changes.")
+}
+
 // renderInlineExpansionAlreadyTerminalReply is the chat-side reply
 // when the user's "approve" reaches us after the expansion was
 // resolved on another surface (dashboard / notifier approve or deny,

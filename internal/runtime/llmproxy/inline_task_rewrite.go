@@ -215,6 +215,16 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 }
 
 func inlineApprovalOutcomeFromRewrite(requestID string, out InlineApprovalRewriteResult) InlineApprovalOutcome {
+	// Kind is derived from the outcome string the resolver emitted —
+	// outcomes starting with "inline_expansion_" came from the
+	// expansion path, anything else is the task-creation path. The
+	// augmenter dispatches on Kind so a previously-approved expansion
+	// renders "scope was expanded" history rather than the task-
+	// creation "Task was created" body.
+	kind := InlineApprovalOutcomeKindTaskCreate
+	if strings.HasPrefix(out.Outcome, "inline_expansion_") {
+		kind = InlineApprovalOutcomeKindTaskExpand
+	}
 	return InlineApprovalOutcome{
 		Decision:         out.Decision,
 		Outcome:          out.Outcome,
@@ -226,6 +236,7 @@ func inlineApprovalOutcomeFromRewrite(requestID string, out InlineApprovalRewrit
 		FailureReason:    out.Reason,
 		RequestID:        requestID,
 		ResolvedAt:       time.Now().UTC(),
+		Kind:             kind,
 	}
 }
 
@@ -295,6 +306,14 @@ func augmentationContextForOutcome(key InlineApprovalOutcomeKey, store InlineApp
 		return "", false
 	}
 	if outcome.Succeeded {
+		// Dispatch on Kind so a previously-approved expansion
+		// renders the "scope was expanded" body (which tells the
+		// model the parent task still exists with broader scope)
+		// rather than the task-creation body (which would mislead
+		// the model into thinking a fresh task was just minted).
+		if outcome.Kind == InlineApprovalOutcomeKindTaskExpand {
+			return inlineExpansionApprovedReplyAugmentationContext(outcome.TaskID, outcome.Credentials), true
+		}
 		return inlineApprovedReplyAugmentationContext(outcome.TaskID, outcome.CheckedOut, outcome.Credentials), true
 	}
 	return inlineFailedReplyAugmentationContext(outcome.FailureReason), true

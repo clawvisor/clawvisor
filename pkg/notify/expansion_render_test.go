@@ -34,6 +34,20 @@ func TestRenderExpansionSummary_TruncatesWithMoreSuffix(t *testing.T) {
 	}
 }
 
+// TestJoinWithCap_NearFullFirstItemThenBail covers the bug where
+// the first item nearly fills the buffer and the second item's bail
+// appends "(+N more)" without checking suffix room — pushing the
+// total past maxBytes. The reservation-against-(maxBytes - suffix)
+// fix bails at item 1 BEFORE writing it so the suffix lands inside
+// the cap.
+func TestJoinWithCap_NearFullFirstItemThenBail(t *testing.T) {
+	cap := 20
+	out := joinWithCap([]string{strings.Repeat("a", 15), strings.Repeat("b", 20)}, ", ", cap)
+	if len(out) > cap {
+		t.Errorf("output len = %d exceeds cap %d: %q", len(out), cap, out)
+	}
+}
+
 // TestRenderExpansionSummary_SingleOversizedItemIsEllipsized is the
 // regression test for the joinWithCap i==0 bug: a single tool with
 // a name longer than scopeExpansionMaxCompactLen used to bypass the

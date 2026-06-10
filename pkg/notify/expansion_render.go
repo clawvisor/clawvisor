@@ -82,13 +82,21 @@ func credentialID(c ExpansionCredential) string {
 }
 
 // joinWithCap joins parts with sep and truncates with a "(+N more)"
-// suffix once adding the next part would exceed maxBytes. A single
-// oversized first item is itself ellipsized so a runaway model
-// can't smuggle a long identifier past the cap by making it the
-// only entry. The "(+N more)" suffix length is reserved against
-// maxBytes proactively so the final output stays at or below the
-// cap — the previous version appended the suffix unconditionally
-// and could overshoot by ~14 bytes.
+// suffix once adding the next part would exceed maxBytes. The cap
+// is hard: when this function returns, len(result) is guaranteed
+// to be ≤ maxBytes.
+//
+// The invariant: each iteration only writes its item if doing so
+// leaves enough room for the worst-case bail suffix on a LATER
+// iteration. That way a bail at iteration i+1 can append its
+// suffix without overshooting. The previous version checked the
+// next item's room but appended the suffix unconditionally on bail,
+// which let a first item that nearly filled the buffer combine
+// with a second-item-triggered bail to land past the cap.
+//
+// A single oversized first item is itself ellipsized so a runaway
+// model can't smuggle a long identifier past the cap by making it
+// the only entry.
 //
 // Returns "" if parts is empty.
 func joinWithCap(parts []string, sep string, maxBytes int) string {
@@ -102,19 +110,17 @@ func joinWithCap(parts []string, sep string, maxBytes int) string {
 			next = sep + p
 		}
 		remaining := len(parts) - i
-		// Compute the worst-case suffix length for THIS index ("+ N more)")
-		// so the bail threshold reserves room for it; the suffix is
-		// appended only when i > 0, but reserving for it earlier is
-		// harmless (the only effect is we may bail one entry sooner).
 		suffix := " (+" + itoa(remaining) + " more)"
-		// Bail when adding `next` would push the running total OR the
-		// running total + suffix over maxBytes. Without the second
-		// check, the suffix could land past the cap.
-		if sb.Len()+len(next) > maxBytes || (i > 0 && sb.Len()+len(next)+len(suffix) > maxBytes) {
+		// Bail when writing `next` would leave too little room for
+		// the suffix we'd append on this bail. The reservation is
+		// computed against (maxBytes - len(suffix)) rather than
+		// against maxBytes alone so the bail's suffix-write doesn't
+		// land past the cap.
+		if sb.Len()+len(next) > maxBytes-len(suffix) {
 			if i == 0 {
-				// Single oversized entry: truncate it in place
-				// rather than emitting an empty string. Reserve
-				// 3 bytes for the ellipsis.
+				// First item alone is too big for the cap. Truncate
+				// in place rather than emitting an empty string;
+				// reserve 3 bytes for the ellipsis.
 				if maxBytes > 3 && len(p) > maxBytes-3 {
 					sb.WriteString(p[:maxBytes-3])
 					sb.WriteString("...")

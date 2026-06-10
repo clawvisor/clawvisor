@@ -876,7 +876,11 @@ function PendingExpansionEntries({
   // structural compatibility is computed identically on both surfaces.
   const deepEqual = (a: unknown, b: unknown): boolean => {
     if (a === b) return true
-    if (a == null || b == null) return a == b
+    // Strict equality on the null/undefined fall-through so null and
+    // undefined are NOT treated as equal — they're semantically
+    // different (server returns null for an explicitly-cleared field
+    // vs. undefined for a never-set field).
+    if (a == null || b == null) return a === b
     if (typeof a !== 'object' || typeof b !== 'object') return false
     if (Array.isArray(a) || Array.isArray(b)) {
       if (!Array.isArray(a) || !Array.isArray(b)) return false
