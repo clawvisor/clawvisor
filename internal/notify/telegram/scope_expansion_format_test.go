@@ -30,8 +30,8 @@ func TestFormatScopeExpansion_ReplacementShowsWasAndNow(t *testing.T) {
 		},
 		ReplacedCredentials: []notify.ReplacedExpansionCredential{
 			{
-				Prior: notify.ExpansionCredential{VaultItemID: "github:personal", Why: "List issues"},
-				New:   notify.ExpansionCredential{VaultItemID: "github:personal", Why: "List AND comment on issues"},
+				Prior: notify.ExpansionCredential{VaultItemID: "github:personal", Why: "Auth read-only API for listing"},
+				New:   notify.ExpansionCredential{VaultItemID: "github:personal", Why: "Auth read AND write for issue comments"},
 			},
 		},
 		Reason: "follow-up call needed after listing",
@@ -51,6 +51,8 @@ func TestFormatScopeExpansion_ReplacementShowsWasAndNow(t *testing.T) {
 	mustContain("now: List AND comment on issues", "new egress why")
 	// Credential: identifier surfaced from the New entry, both whys visible.
 	mustContain("github:personal", "credential id")
+	mustContain("was: Auth read-only API for listing", "prior credential why")
+	mustContain("now: Auth read AND write for issue comments", "new credential why")
 }
 
 // TestFormatScopeExpansion_GatewayActionShowsAutoExecuteDisposition is

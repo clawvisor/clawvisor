@@ -217,9 +217,13 @@ type Store interface {
 	// re-armed the deadline. Returns (true, nil) on win, (false, nil)
 	// when the CAS lost.
 	//
-	// newStatus must be one of ResolveExpansionStatusActive or
-	// ResolveExpansionStatusExpired — these are the only legitimate
-	// post-deny states. Implementations should reject other values
+	// newStatus must be one of the ResolveExpansionStatus enum values
+	// (Active for an expansion-only deny that returns the task to
+	// active; Expired when the underlying task had already passed
+	// its deadline; Denied when a full task-level deny is routed
+	// through here so pending_expansion_json clears atomically with
+	// the status flip — see the enum's own docstring for the
+	// per-value semantics). Implementations reject any other value
 	// rather than corrupting the task lifecycle.
 	ResolveTaskPendingExpansion(ctx context.Context, id string, newStatus ResolveExpansionStatus) (bool, error)
 	ListExpiredTasks(ctx context.Context) ([]*Task, error)
@@ -928,8 +932,12 @@ type Task struct {
 	RequestCount        int        `json:"request_count"`
 	// PendingExpansion holds the in-flight scope-expansion envelope
 	// awaiting user approval. Populated when status='pending_scope_expansion';
-	// cleared on approve (UpdateTaskEnvelopeFrom) or
-	// explicit deny (SetTaskPendingExpansion with nil).
+	// cleared on approve (UpdateTaskEnvelopeFrom) or on deny
+	// (ResolveTaskPendingExpansion). SetTaskPendingExpansion is the
+	// WRITE path only — it requires a non-nil pending and explicitly
+	// refuses nil; clearing the field belongs to
+	// ResolveTaskPendingExpansion so the status flip stays atomic
+	// with the clear.
 	PendingExpansion *PendingTaskExpansion `json:"pending_expansion,omitempty"`
 	// PendingDerivedActions is a response-only projection of the
 	// AuthorizedActions that would be granted if the pending expansion

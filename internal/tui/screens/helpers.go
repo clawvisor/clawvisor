@@ -3,6 +3,7 @@ package screens
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -126,16 +127,12 @@ func writePendingExpansionSummary(b *strings.Builder, t *client.Task) {
 	}
 
 	if len(pending.ExpectedTools) > 0 {
-		var tools []struct {
-			ToolName string `json:"tool_name"`
-			Why      string `json:"why"`
-		}
+		var tools []client.ExpectedTool
 		if json.Unmarshal(pending.ExpectedTools, &tools) == nil {
 			for _, tool := range tools {
-				key := strings.ToLower(strings.TrimSpace(tool.ToolName))
+				match := matchingParentTool(parentToolWhy, tool)
 				prefix := "  + "
-				prior, replaced := parentToolWhy[key]
-				if replaced {
+				if match != nil {
 					prefix = "  ~ "
 				}
 				line := prefix + tool.ToolName
@@ -143,8 +140,8 @@ func writePendingExpansionSummary(b *strings.Builder, t *client.Task) {
 					line += "  " + marker
 				}
 				b.WriteString(line + "\n")
-				if replaced && prior != tool.Why {
-					b.WriteString("      was: " + prior + "\n")
+				if match != nil && match.Why != tool.Why {
+					b.WriteString("      was: " + match.Why + "\n")
 					b.WriteString("      now: " + tool.Why + "\n")
 				} else if tool.Why != "" {
 					b.WriteString("      " + tool.Why + "\n")
@@ -153,21 +150,17 @@ func writePendingExpansionSummary(b *strings.Builder, t *client.Task) {
 		}
 	}
 	if len(pending.ExpectedEgress) > 0 {
-		var egress []struct {
-			Host string `json:"host"`
-			Why  string `json:"why"`
-		}
+		var egress []client.ExpectedEgress
 		if json.Unmarshal(pending.ExpectedEgress, &egress) == nil {
 			for _, e := range egress {
-				key := strings.ToLower(strings.TrimSpace(e.Host))
+				match := matchingParentEgress(parentEgressWhy, e)
 				prefix := "  + "
-				prior, replaced := parentEgressWhy[key]
-				if replaced {
+				if match != nil {
 					prefix = "  ~ "
 				}
 				b.WriteString(prefix + e.Host + "\n")
-				if replaced && prior != e.Why {
-					b.WriteString("      was: " + prior + "\n")
+				if match != nil && match.Why != e.Why {
+					b.WriteString("      was: " + match.Why + "\n")
 					b.WriteString("      now: " + e.Why + "\n")
 				} else if e.Why != "" {
 					b.WriteString("      " + e.Why + "\n")
@@ -204,31 +197,90 @@ func writePendingExpansionSummary(b *strings.Builder, t *client.Task) {
 	}
 }
 
-// indexParentToolsByName builds a case-insensitive lookup from tool name
-// to the parent's why. Used by writePendingExpansionSummary to detect
-// replacements without re-running the merge logic.
-func indexParentToolsByName(parent []client.ExpectedTool) map[string]string {
-	out := make(map[string]string, len(parent))
+// indexParentToolsByName builds a case-insensitive lookup from tool
+// name to the parent's full entries. The map value is a SLICE because
+// the structural-collision fix lets the parent carry multiple entries
+// with the same tool_name when they differ in input_shape /
+// input_regex — the renderer needs to find a STRUCTURALLY-MATCHING
+// parent entry to label correctly. A simple name → why map would
+// mislabel a structurally-new addition as a replacement.
+func indexParentToolsByName(parent []client.ExpectedTool) map[string][]client.ExpectedTool {
+	out := make(map[string][]client.ExpectedTool, len(parent))
 	for _, t := range parent {
 		key := strings.ToLower(strings.TrimSpace(t.ToolName))
 		if key == "" {
 			continue
 		}
-		out[key] = t.Why
+		out[key] = append(out[key], t)
 	}
 	return out
 }
 
-func indexParentEgressByHost(parent []client.ExpectedEgress) map[string]string {
-	out := make(map[string]string, len(parent))
+func indexParentEgressByHost(parent []client.ExpectedEgress) map[string][]client.ExpectedEgress {
+	out := make(map[string][]client.ExpectedEgress, len(parent))
 	for _, e := range parent {
 		key := strings.ToLower(strings.TrimSpace(e.Host))
 		if key == "" {
 			continue
 		}
-		out[key] = e.Why
+		out[key] = append(out[key], e)
 	}
 	return out
+}
+
+// matchingParentTool mirrors internal/runtime/tasks.expectedToolStructurallyMatches
+// so the dashboard / TUI replacement label agrees with what the
+// server's merger actually persists. An addition that names the
+// same tool with DIFFERENT InputShape/InputRegex lands as a new
+// row server-side; the renderer must label it as "+" (added), not
+// "~" (replaced).
+func matchingParentTool(index map[string][]client.ExpectedTool, addition client.ExpectedTool) *client.ExpectedTool {
+	candidates := index[strings.ToLower(strings.TrimSpace(addition.ToolName))]
+	for i := range candidates {
+		parent := candidates[i]
+		if addition.InputRegex != "" && addition.InputRegex != parent.InputRegex {
+			continue
+		}
+		if addition.InputShape != nil && !reflect.DeepEqual(addition.InputShape, parent.InputShape) {
+			continue
+		}
+		return &candidates[i]
+	}
+	return nil
+}
+
+// matchingParentEgress mirrors internal/runtime/tasks.expectedEgressStructurallyMatches.
+// Method is case-insensitive; all other structural fields use exact /
+// deep equality so a same-host addition with a different Method or
+// Path is rendered as a new endpoint rather than a why-update.
+func matchingParentEgress(index map[string][]client.ExpectedEgress, addition client.ExpectedEgress) *client.ExpectedEgress {
+	candidates := index[strings.ToLower(strings.TrimSpace(addition.Host))]
+	for i := range candidates {
+		parent := candidates[i]
+		if addition.Method != "" && !strings.EqualFold(addition.Method, parent.Method) {
+			continue
+		}
+		if addition.Path != "" && addition.Path != parent.Path {
+			continue
+		}
+		if addition.PathRegex != "" && addition.PathRegex != parent.PathRegex {
+			continue
+		}
+		if addition.CredentialAlias != "" && addition.CredentialAlias != parent.CredentialAlias {
+			continue
+		}
+		if addition.QueryShape != nil && !reflect.DeepEqual(addition.QueryShape, parent.QueryShape) {
+			continue
+		}
+		if addition.BodyShape != nil && !reflect.DeepEqual(addition.BodyShape, parent.BodyShape) {
+			continue
+		}
+		if addition.Headers != nil && !reflect.DeepEqual(addition.Headers, parent.Headers) {
+			continue
+		}
+		return &candidates[i]
+	}
+	return nil
 }
 
 // indexParentCredentialsByKey is the credential analogue of

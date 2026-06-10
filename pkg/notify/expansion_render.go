@@ -85,7 +85,12 @@ func credentialID(c ExpansionCredential) string {
 // suffix once adding the next part would exceed maxBytes. A single
 // oversized first item is itself ellipsized so a runaway model
 // can't smuggle a long identifier past the cap by making it the
-// only entry. Returns "" if parts is empty.
+// only entry. The "(+N more)" suffix length is reserved against
+// maxBytes proactively so the final output stays at or below the
+// cap — the previous version appended the suffix unconditionally
+// and could overshoot by ~14 bytes.
+//
+// Returns "" if parts is empty.
 func joinWithCap(parts []string, sep string, maxBytes int) string {
 	if len(parts) == 0 {
 		return ""
@@ -97,7 +102,15 @@ func joinWithCap(parts []string, sep string, maxBytes int) string {
 			next = sep + p
 		}
 		remaining := len(parts) - i
-		if sb.Len()+len(next) > maxBytes {
+		// Compute the worst-case suffix length for THIS index ("+ N more)")
+		// so the bail threshold reserves room for it; the suffix is
+		// appended only when i > 0, but reserving for it earlier is
+		// harmless (the only effect is we may bail one entry sooner).
+		suffix := " (+" + itoa(remaining) + " more)"
+		// Bail when adding `next` would push the running total OR the
+		// running total + suffix over maxBytes. Without the second
+		// check, the suffix could land past the cap.
+		if sb.Len()+len(next) > maxBytes || (i > 0 && sb.Len()+len(next)+len(suffix) > maxBytes) {
 			if i == 0 {
 				// Single oversized entry: truncate it in place
 				// rather than emitting an empty string. Reserve
@@ -110,11 +123,6 @@ func joinWithCap(parts []string, sep string, maxBytes int) string {
 				sb.WriteString(p)
 				return sb.String()
 			}
-			// Reserve ~14 bytes for the "(+N more)" suffix so the
-			// total stays under maxBytes.
-			suffix := " (+"
-			suffix += itoa(remaining)
-			suffix += " more)"
 			sb.WriteString(suffix)
 			return sb.String()
 		}

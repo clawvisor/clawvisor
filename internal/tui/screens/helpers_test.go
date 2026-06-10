@@ -72,6 +72,83 @@ func TestWritePendingExpansionSummary_RendersDiff(t *testing.T) {
 	}
 }
 
+// TestWritePendingExpansionSummary_StructuralMismatchIsAdded covers
+// the structural-collision case: an addition that names the same tool
+// as the parent but with a DIFFERENT InputRegex is appended server-
+// side as a separate row, so the renderer must label it "+" (added),
+// not "~" (replaced). Without this, the dashboard / TUI lie about
+// what the user is approving — they'd see "Bash replaced" when the
+// merge actually persists two Bash entries with different shapes.
+func TestWritePendingExpansionSummary_StructuralMismatchIsAdded(t *testing.T) {
+	task := &client.Task{
+		ExpectedTools: []client.ExpectedTool{
+			{ToolName: "Bash", Why: "Run curl to list emails", InputRegex: `^curl `},
+		},
+		ExpectedEgress: []client.ExpectedEgress{
+			{Host: "api.github.com", Why: "List repos", Method: "GET", Path: "/user/repos"},
+		},
+		PendingExpansion: &client.PendingTaskExpansion{
+			ExpectedTools: mustMarshalT(t, []map[string]any{
+				// Same name, DIFFERENT input_regex → new endpoint.
+				{"tool_name": "Bash", "why": "Run python data processing", "input_regex": `^python `},
+			}),
+			ExpectedEgress: mustMarshalT(t, []map[string]any{
+				// Same host, DIFFERENT path → new endpoint.
+				{"host": "api.github.com", "why": "Comment on issues", "method": "POST", "path": "/repos/{owner}/{repo}/issues/{n}/comments"},
+			}),
+		},
+	}
+	var b strings.Builder
+	writePendingExpansionSummary(&b, task)
+	out := b.String()
+
+	// Both entries must be labelled "+" (added), NOT "~" (replaced).
+	if !strings.Contains(out, "+ Bash") {
+		t.Errorf("structurally-new Bash should be '+', not '~'\n---\n%s", out)
+	}
+	if strings.Contains(out, "~ Bash") {
+		t.Errorf("structurally-new Bash mislabelled as replacement\n---\n%s", out)
+	}
+	if !strings.Contains(out, "+ api.github.com") {
+		t.Errorf("structurally-new api.github.com should be '+', not '~'\n---\n%s", out)
+	}
+	if strings.Contains(out, "~ api.github.com") {
+		t.Errorf("structurally-new api.github.com mislabelled as replacement\n---\n%s", out)
+	}
+	// A structurally-new entry has no prior; was/now diff must not fire.
+	if strings.Contains(out, "was:") {
+		t.Errorf("structurally-new entry rendered with was/now diff; it has no prior\n---\n%s", out)
+	}
+}
+
+// TestWritePendingExpansionSummary_StructurallyEmptyAdditionIsReplaced
+// is the complement: an addition that names the same tool/host but
+// leaves structural fields empty IS a why-update (the server merger
+// preserves the parent's shape and overwrites only `why`). Renderer
+// must label it "~" with a was/now diff.
+func TestWritePendingExpansionSummary_StructurallyEmptyAdditionIsReplaced(t *testing.T) {
+	task := &client.Task{
+		ExpectedTools: []client.ExpectedTool{
+			{ToolName: "Bash", Why: "Run curl to list emails", InputRegex: `^curl `},
+		},
+		PendingExpansion: &client.PendingTaskExpansion{
+			ExpectedTools: mustMarshalT(t, []map[string]any{
+				// Same name, NO structural fields → why-update.
+				{"tool_name": "Bash", "why": "List emails AND run a follow-up curl"},
+			}),
+		},
+	}
+	var b strings.Builder
+	writePendingExpansionSummary(&b, task)
+	out := b.String()
+	if !strings.Contains(out, "~ Bash") {
+		t.Errorf("why-only addition should be '~', not '+'\n---\n%s", out)
+	}
+	if !strings.Contains(out, "was: Run curl to list emails") {
+		t.Errorf("why-only addition missing was/now diff\n---\n%s", out)
+	}
+}
+
 // TestAutoExecuteMarker_TrailingColonGuard locks in the colon-guard
 // fix the inline comment describes: an earlier version compared idx
 // (from trimmed) against len(toolName) (untrimmed), which let

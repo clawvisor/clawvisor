@@ -849,16 +849,75 @@ function PendingExpansionEntries({
   }
 
   // Case-insensitive lookup maps so we can flag replacements client-side
-  // without re-running the server's merge logic.
-  const parentToolWhy = new Map<string, string>()
+  // without re-running the server's merge logic. Values are ARRAYS:
+  // the structural-collision fix lets the server keep multiple parent
+  // entries with the same name when InputRegex/Method/Path/etc. differ,
+  // and we need to find a structurally-matching parent to label
+  // correctly. A simple name → entry map would mislabel a
+  // structurally-new addition as a replacement.
+  const parentToolsByKey = new Map<string, ExpectedTool[]>()
   for (const t of parentTools) {
     const key = (t.tool_name ?? '').trim().toLowerCase()
-    if (key) parentToolWhy.set(key, t.why ?? '')
+    if (!key) continue
+    const list = parentToolsByKey.get(key) ?? []
+    list.push(t)
+    parentToolsByKey.set(key, list)
   }
-  const parentEgressWhy = new Map<string, string>()
+  const parentEgressByKey = new Map<string, ExpectedEgress[]>()
   for (const e of parentEgress) {
     const key = (e.host ?? '').trim().toLowerCase()
-    if (key) parentEgressWhy.set(key, e.why ?? '')
+    if (!key) continue
+    const list = parentEgressByKey.get(key) ?? []
+    list.push(e)
+    parentEgressByKey.set(key, list)
+  }
+  // Deep-equality on the optional shape maps (input_shape, query_shape,
+  // body_shape, headers). Mirrors reflect.DeepEqual on the Go side so
+  // structural compatibility is computed identically on both surfaces.
+  const deepEqual = (a: unknown, b: unknown): boolean => {
+    if (a === b) return true
+    if (a == null || b == null) return a == b
+    if (typeof a !== 'object' || typeof b !== 'object') return false
+    if (Array.isArray(a) || Array.isArray(b)) {
+      if (!Array.isArray(a) || !Array.isArray(b)) return false
+      if (a.length !== b.length) return false
+      for (let i = 0; i < a.length; i++) if (!deepEqual(a[i], b[i])) return false
+      return true
+    }
+    const ka = Object.keys(a as object)
+    const kb = Object.keys(b as object)
+    if (ka.length !== kb.length) return false
+    for (const k of ka) {
+      if (!deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false
+    }
+    return true
+  }
+  // Structural-match helpers mirror internal/runtime/tasks.expectedTool/EgressStructurallyMatches.
+  // An addition that names the same tool/host but with a DIFFERENT
+  // non-empty structural field lands as a NEW row server-side; the
+  // renderer must label it '+' rather than '~'.
+  const matchingParentTool = (addition: ExpectedTool): ExpectedTool | undefined => {
+    const candidates = parentToolsByKey.get((addition.tool_name ?? '').trim().toLowerCase())
+    if (!candidates) return undefined
+    return candidates.find(parent => {
+      if (addition.input_regex && addition.input_regex !== parent.input_regex) return false
+      if (addition.input_shape && !deepEqual(addition.input_shape, parent.input_shape)) return false
+      return true
+    })
+  }
+  const matchingParentEgress = (addition: ExpectedEgress): ExpectedEgress | undefined => {
+    const candidates = parentEgressByKey.get((addition.host ?? '').trim().toLowerCase())
+    if (!candidates) return undefined
+    return candidates.find(parent => {
+      if (addition.method && addition.method.toUpperCase() !== (parent.method ?? '').toUpperCase()) return false
+      if (addition.path && addition.path !== parent.path) return false
+      if (addition.path_regex && addition.path_regex !== parent.path_regex) return false
+      if (addition.credential_alias && addition.credential_alias !== parent.credential_alias) return false
+      if (addition.query_shape && !deepEqual(addition.query_shape, parent.query_shape)) return false
+      if (addition.body_shape && !deepEqual(addition.body_shape, parent.body_shape)) return false
+      if (addition.headers && !deepEqual(addition.headers, parent.headers)) return false
+      return true
+    })
   }
   // Credentials are kind-scoped (id vs handle) so a value collision
   // across kinds doesn't masquerade as a replace — mirrors the
@@ -934,9 +993,9 @@ function PendingExpansionEntries({
     <table className="w-full text-sm">
       <tbody>
         {tools.map((t, i) => {
-          const key = (t.tool_name ?? '').trim().toLowerCase()
-          const priorWhy = parentToolWhy.get(key)
-          const replaced = priorWhy !== undefined
+          const match = matchingParentTool(t)
+          const priorWhy = match?.why
+          const replaced = match !== undefined
           return (
             <tr key={`tool-${t.tool_name}-${i}`} className="border-b border-border-subtle last:border-b-0">
               <td className="px-3 py-2 font-mono text-text-primary w-48 align-top">
@@ -957,9 +1016,9 @@ function PendingExpansionEntries({
           )
         })}
         {egress.map((e, i) => {
-          const key = (e.host ?? '').trim().toLowerCase()
-          const priorWhy = parentEgressWhy.get(key)
-          const replaced = priorWhy !== undefined
+          const match = matchingParentEgress(e)
+          const priorWhy = match?.why
+          const replaced = match !== undefined
           return (
             <tr key={`egress-${e.host}-${i}`} className="border-b border-border-subtle last:border-b-0">
               <td className="px-3 py-2 font-mono text-text-primary w-48 align-top">

@@ -23,9 +23,11 @@ func TestRenderExpansionSummary_TruncatesWithMoreSuffix(t *testing.T) {
 		tools = append(tools, ExpansionTool{ToolName: "service.tool_" + strings.Repeat("x", 8)})
 	}
 	out := RenderExpansionSummary(ScopeExpansionRequest{AddedTools: tools})
-	if len(out) > scopeExpansionMaxCompactLen+20 {
-		// 20-byte fudge for the "(+N more)" suffix overhead.
-		t.Errorf("output len = %d exceeds cap %d (no truncation): %q", len(out), scopeExpansionMaxCompactLen+20, out)
+	if len(out) > scopeExpansionMaxCompactLen {
+		// joinWithCap now reserves the suffix length against the cap;
+		// final output must stay at or below maxBytes, not just within
+		// "maxBytes + suffix slack".
+		t.Errorf("output len = %d exceeds cap %d (suffix should be reserved): %q", len(out), scopeExpansionMaxCompactLen, out)
 	}
 	if !strings.Contains(out, "more)") {
 		t.Errorf("output missing 'more)' suffix; truncation did not fire: %q", out)
