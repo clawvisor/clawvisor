@@ -181,6 +181,87 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 	}
 }
 
+// resolveInlineExpansionApproval is the expansion analogue of
+// resolveInlineTaskApproval. The chat-side approve/deny verb resolves
+// the existing pending-scope-expansion row through the
+// InlineExpansionCreator interface (which TasksHandler implements
+// via type assertion on the same field as the task creator). The
+// returned substitution text is what replaces the user's "approve" /
+// "deny" turn so the model sees the verdict in context.
+func resolveInlineExpansionApproval(ctx context.Context, req InlineApprovalRewriteRequest, resolved *PendingLiteApproval, verb string) (string, InlineApprovalRewriteResult) {
+	out := InlineApprovalRewriteResult{Body: req.Body}
+
+	expansionCreator, hasExpansion := req.Creator.(InlineExpansionCreator)
+	// Deny is the same shape as inline-task deny: guaranteed user-facing
+	// success, optimistic side effect on the pending row. Side-effect
+	// failure surfaces in the outcome name without flipping the
+	// user-facing reply (the user denied; the row's eventual cleanup is
+	// an operator concern).
+	if verb == "deny" {
+		out.Decision = "deny"
+		out.Outcome = "inline_expansion_denied"
+		out.Reason = "user denied inline expansion"
+		if hasExpansion && resolved != nil && resolved.ExpansionTaskID != "" && req.Agent != nil {
+			if err := expansionCreator.DenyInlineExpansion(ctx, resolved.ExpansionTaskID, req.Agent.UserID); err != nil {
+				out.Outcome = "inline_expansion_denied_with_rollback_error"
+				out.Reason = "user denied inline expansion; deny side-effect failed: " + err.Error()
+			}
+		}
+		return renderInlineExpansionDenyReply(), out
+	}
+
+	switch {
+	case !hasExpansion || expansionCreator == nil:
+		out.Decision = "deny"
+		out.Outcome = "inline_expansion_creator_missing"
+		out.Reason = "no inline expansion creator configured"
+		return renderInlineTaskCreatorErrorReply("inline scope expansion is not available on this daemon"), out
+	case resolved == nil:
+		out.Decision = "deny"
+		out.Outcome = "inline_expansion_definition_missing"
+		out.Reason = "missing approval hold on resolve"
+		return renderInlineTaskCreatorErrorReply("missing approval hold on resolve"), out
+	case resolved.ExpansionTaskID == "":
+		out.Decision = "deny"
+		out.Outcome = "inline_expansion_definition_missing"
+		out.Reason = "approval hold missing expansion task id"
+		return renderInlineTaskCreatorErrorReply("approval hold missing expansion context"), out
+	case req.Agent == nil:
+		out.Decision = "deny"
+		out.Outcome = "inline_expansion_agent_missing"
+		out.Reason = "missing agent on approval"
+		return renderInlineTaskCreatorErrorReply("missing agent on approval"), out
+	}
+
+	expanded, createErr := expansionCreator.ApproveInlineExpansion(ctx, resolved.ExpansionTaskID, req.Agent.UserID)
+	if createErr != nil {
+		var terminal *ErrInlineExpansionAlreadyTerminal
+		if errors.As(createErr, &terminal) {
+			out.Decision = "deny"
+			out.Outcome = "inline_expansion_already_terminal"
+			out.Reason = "expansion already " + terminal.Status + " from another surface before approve landed"
+			return renderInlineExpansionAlreadyTerminalReply(terminal.Status), out
+		}
+		out.Decision = "deny"
+		out.Outcome = "inline_expansion_approve_failed"
+		out.Reason = "approve failed: " + createErr.Error()
+		return renderInlineTaskCreatorErrorReply(createErr.Error()), out
+	}
+
+	out.Decision = "allow"
+	out.Outcome = "inline_expansion_approved"
+	out.TaskID = expanded.TaskID
+	out.ApprovalRecordID = expanded.ApprovalRecordID
+	out.Credentials = expanded.Credentials
+	// Note: we do NOT call Checkouts.Set here — the parent task was
+	// likely already the agent's active task (we just expanded it),
+	// and overwriting an existing checkout from a sibling
+	// conversation would silently steal focus on the next call. The
+	// caller can re-checkout explicitly via /control/task/checkout if
+	// they want to switch.
+	return inlineExpansionApprovedReplyAugmentationContext(expanded.TaskID, expanded.Credentials), out
+}
+
 // finalizeInlineApproval performs the post-approval bookkeeping shared
 // by the pending-task and legacy create-on-approve paths: checkout,
 // audit emission, return shape. Mutates `out` and returns the

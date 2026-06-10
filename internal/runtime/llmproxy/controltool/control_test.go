@@ -65,10 +65,11 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	// approves a duplicate task instead of an envelope expansion.
 	if !strings.Contains(notice, "EXPAND vs NEW TASK") ||
 		!strings.Contains(notice, "Same body of work") ||
+		!strings.Contains(notice, "/control/tasks/<id>/expand?surface=inline") ||
 		!strings.Contains(notice, "/control/tasks/<id>/expand?wait=true") ||
 		!strings.Contains(notice, "Genuinely different goal") ||
 		!strings.Contains(notice, `lifetime is `+"`"+`"standing"`+"`"+` → CANNOT be expanded`) {
-		t.Fatalf("notice should teach EXPAND vs NEW TASK with the expand endpoint and standing-task carve-out; got:\n%s", notice)
+		t.Fatalf("notice should teach EXPAND vs NEW TASK with both inline and headless endpoints and the standing-task carve-out; got:\n%s", notice)
 	}
 	// Replace-by-name on expand is the only non-obvious semantic: a
 	// re-stated entry's `why` wholesale overwrites the prior, and

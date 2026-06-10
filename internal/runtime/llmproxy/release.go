@@ -94,6 +94,85 @@ type InlineTaskPendingCreator interface {
 	ExpireInlineTask(ctx context.Context, taskID, userID string) error
 }
 
+// InlineExpansionCreator is the lite-proxy's contract for landing,
+// approving, and denying an inline-chat scope expansion. Mirrors
+// InlineTaskPendingCreator's shape (create pending row → wait for the
+// chat verb → flip to active or back to active/expired/denied) but
+// targets the existing pending-expansion state machine
+// (SetTaskPendingExpansion → UpdateTaskEnvelopeFrom on approve,
+// ResolveTaskPendingExpansion on deny). TasksHandler implements this;
+// the inline-task creator field is reused via type assertion so the
+// pipeline factory only has to wire one creator.
+type InlineExpansionCreator interface {
+	// CreatePendingInlineExpansion runs the same validation +
+	// derived-action gates as the public Expand handler, lands the
+	// pending state via SetTaskPendingExpansion (CAS on
+	// active/expired), and stamps the canonical approval record's
+	// Surface as "inline_chat". Returns the parent task id on success
+	// so the caller can pin the cache hold to it.
+	CreatePendingInlineExpansion(
+		ctx context.Context,
+		agent *store.Agent,
+		taskID string,
+		additions *runtimetasks.Envelope,
+		reason string,
+	) (string, error)
+	// ApproveInlineExpansion flips a pending_scope_expansion task to
+	// active via UpdateTaskEnvelopeFrom (atomic merge + risk
+	// reassessment + pending-snapshot guard). Bypasses any dashboard
+	// chat-surface guard; the chat IS the surface. Returns the same
+	// shape ApproveInlineTask does so the rewrite path can share the
+	// approved-augmentation renderer.
+	ApproveInlineExpansion(ctx context.Context, taskID, userID string) (*InlineApprovedExpansion, error)
+	// DenyInlineExpansion routes a chat-side deny through
+	// ResolveTaskPendingExpansion. Mirrors DenyInlineTask: the task
+	// returns to active (or expired, mirroring the parent task's
+	// deadline) — denying the EXPANSION, not the parent task.
+	DenyInlineExpansion(ctx context.Context, taskID, userID string) error
+	// ExpireInlineExpansion is called when the LRU cache evicts the
+	// hold (the chat anchor is gone). Routes ResolveTaskPendingExpansion
+	// with status=expired so the dashboard doesn't keep showing
+	// "reply in chat" guidance for a hold that can no longer be
+	// resolved from chat. Idempotent on already-resolved rows.
+	ExpireInlineExpansion(ctx context.Context, taskID, userID string) error
+}
+
+// InlineApprovedExpansion is the slice of the expanded task surfaced
+// back through the synthetic release response. Parallel shape to
+// InlineApprovedTask so the renderer can share code. The task already
+// exists, so we surface only what the model needs to know: the parent
+// task id (so chat context remains anchored) and any credential
+// placeholders the expansion minted.
+type InlineApprovedExpansion struct {
+	TaskID           string                            `json:"task_id"`
+	Status           string                            `json:"status"`
+	Purpose          string                            `json:"purpose,omitempty"`
+	Lifetime         string                            `json:"lifetime,omitempty"`
+	ApprovalRecordID string                            `json:"approval_record_id,omitempty"`
+	ExpiresAtRFC3339 string                            `json:"expires_at,omitempty"`
+	Credentials      []InlineTaskCredentialPlaceholder `json:"credential_placeholders,omitempty"`
+}
+
+// ErrInlineExpansionAlreadyTerminal is the typed error
+// ApproveInlineExpansion returns when the chat-side "approve" reply
+// arrives after the expansion has already been resolved from a
+// non-chat surface (dashboard / notifier Approve or Deny, the
+// pending-expansion expiry sweep). Same role as
+// ErrInlineTaskAlreadyTerminal for the task-creation flow.
+type ErrInlineExpansionAlreadyTerminal struct {
+	// Status is the actual landing state ("active", "expired",
+	// "denied", "revoked") so the rendered chat reply matches what
+	// the user already saw on the other surface.
+	Status string
+}
+
+func (e *ErrInlineExpansionAlreadyTerminal) Error() string {
+	if e == nil {
+		return "inline-chat expansion already terminal"
+	}
+	return "inline-chat expansion already terminal: " + e.Status
+}
+
 // ErrInlineTaskAlreadyTerminal is the typed error
 // ApproveInlineTask returns when the chat-side "approve" reply
 // arrives after the task has already been terminated through a
@@ -224,8 +303,9 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	// naming an inline-task hold directly. Older inline holds sitting
 	// behind a newer non-inline hold are NOT the user's target here
 	// and stay in the cache untouched.
-	if action.Kind == approvalReplyActionApproveInlineTask || action.Kind == approvalReplyActionDenyInlineTask {
-		req.logRelease(ctx, peeked, "deny", "blocked", "inline-task hold reached release path; preprocess not wired")
+	if action.Kind == approvalReplyActionApproveInlineTask || action.Kind == approvalReplyActionDenyInlineTask ||
+		action.Kind == approvalReplyActionApproveInlineExpansion || action.Kind == approvalReplyActionDenyInlineExpansion {
+		req.logRelease(ctx, peeked, "deny", "blocked", "inline-task/expansion hold reached release path; preprocess not wired")
 		// 503 (Service Unavailable) reads more honestly than 500
 		// here: the inline-approval preprocess is missing, the
 		// feature isn't currently servable. The hold stays in the

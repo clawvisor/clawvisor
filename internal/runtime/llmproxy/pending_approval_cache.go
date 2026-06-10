@@ -44,6 +44,13 @@ const (
 	// links back to the original tool hold. We're waiting for the user
 	// to yes/no.
 	StageAwaitingTaskApproval PendingApprovalStage = "awaiting_task_approval"
+	// StageAwaitingExpansionApproval — model has emitted a
+	// POST /api/control/tasks/{id}/expand?surface=inline. The hold's
+	// ToolUse is the expand POST itself; ExpansionTaskID names the
+	// parent task being expanded and ExpansionAdditions / ExpansionReason
+	// carry the proposed delta so the resolver can land it on approve.
+	// We're waiting for the user to yes/no.
+	StageAwaitingExpansionApproval PendingApprovalStage = "awaiting_expansion_approval"
 )
 
 type PendingLiteApproval struct {
@@ -104,6 +111,23 @@ type PendingLiteApproval struct {
 	// resolve time. The dashboard Tasks page renders the same row as a
 	// pending task while the cache hold awaits the user's reply.
 	PendingTaskID string
+
+	// ExpansionTaskID names the parent task being expanded. Set ONLY on
+	// StageAwaitingExpansionApproval holds; empty otherwise. The
+	// expansion intercept lands the task at status='pending_scope_expansion'
+	// BEFORE calling Hold; the resolve path uses this id to call
+	// ApproveInlineExpansion / DenyInlineExpansion against the same row.
+	ExpansionTaskID string
+
+	// ExpansionAdditions carries the envelope additions the agent
+	// proposed. Used to render the inline approval prompt. Persistence
+	// already landed via SetTaskPendingExpansion at intercept time;
+	// this is purely for the prompt + audit.
+	ExpansionAdditions *runtimetasks.Envelope
+
+	// ExpansionReason is the one-line summary the agent gave. Surfaces
+	// verbatim in the inline approval prompt and on dashboards.
+	ExpansionReason string
 
 	// Additional carries the other tool_uses that share this hold when
 	// multiple tool_uses in a single upstream response are coalesced into

@@ -325,7 +325,8 @@ func buildControlResolver(
 				// silently dropped events like inline_task.held and
 				// inline_task.substitution_shape — invisible to
 				// operators trying to debug whether the AskUserQuestion
-				// substitution fired.
+				// substitution fired. Also serves the expansion
+				// intercept's tracing (inline_expansion.held etc.).
 				traceFn := func(event string, kv ...any) {
 					if audit.Trace == nil {
 						return
@@ -345,6 +346,15 @@ func buildControlResolver(
 						payload[key] = kv[i+1]
 					}
 					audit.Trace.Emit(payload)
+				}
+				// Expansion intercept runs first: it matches a
+				// strict-prefix path (.../tasks/<id>/expand) so it
+				// can't claim a creation POST (.../tasks). If it
+				// passes, the creation intercept gets its turn; if
+				// neither claims, fall through to the regular
+				// control-rewrite path.
+				if convV, claimed := llmproxy.MaybeInterceptInlineExpansion(req, interceptCfg, auditFn, traceFn, provider, tu, call); claimed {
+					return conversationToPipelineVerdict(convV), true
 				}
 				convV, claimed := llmproxy.MaybeInterceptInlineTaskDefinition(req, interceptCfg, auditFn, traceFn, provider, tu, call)
 				if !claimed {

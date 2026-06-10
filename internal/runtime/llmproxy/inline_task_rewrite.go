@@ -111,9 +111,16 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	if err != nil {
 		return InlineApprovalRewriteResult{Body: req.Body}, err
 	}
-	if action.Kind != approvalReplyActionApproveInlineTask && action.Kind != approvalReplyActionDenyInlineTask {
-		// Most recent hold isn't an inline-task hold (or the named
-		// approval isn't one). Defer to TryReleasePendingApproval.
+	switch action.Kind {
+	case approvalReplyActionApproveInlineTask,
+		approvalReplyActionDenyInlineTask,
+		approvalReplyActionApproveInlineExpansion,
+		approvalReplyActionDenyInlineExpansion:
+		// handled below
+	default:
+		// Most recent hold isn't an inline-task or inline-expansion
+		// hold (or the named approval isn't one). Defer to
+		// TryReleasePendingApproval.
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
 	if action.Hold == nil {
@@ -168,7 +175,13 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	// re-matching subsequent approval prompts. The model will re-emit
 	// the original tool naturally now that the task scope covers it.
 	dropLinkedToolHold(ctx, req.PendingApproval, req.Agent, req.Provider, req.ConversationID, resolved)
-	replacement, out := resolveInlineTaskApproval(ctx, req, resolved, verb)
+	var replacement string
+	switch action.Kind {
+	case approvalReplyActionApproveInlineExpansion, approvalReplyActionDenyInlineExpansion:
+		replacement, out = resolveInlineExpansionApproval(ctx, req, resolved, verb)
+	default:
+		replacement, out = resolveInlineTaskApproval(ctx, req, resolved, verb)
+	}
 
 	// Record the outcome before returning. The augmenter on later
 	// turns reads this to decide whether to inject success or failure

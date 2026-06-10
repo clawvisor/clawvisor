@@ -780,6 +780,375 @@ func (h *TasksHandler) ExpireInlineTask(ctx context.Context, taskID, userID stri
 	return nil
 }
 
+// ── Inline-chat scope expansion ───────────────────────────────────────────────
+
+// CreatePendingInlineExpansion is the lite-proxy entry point for the
+// expansion intercept. Runs the same validation / derived-action /
+// credential gates as the public Expand handler and lands the pending
+// state via SetTaskPendingExpansion (CAS on active/expired). The
+// canonical approval record's Surface is "inline_chat" so the
+// dashboard treats it like an inline-chat task: visible, but resolved
+// in chat. Returns the parent task id on success so the caller can
+// pin the cache hold to it.
+//
+// Side effects:
+//   - SetTaskPendingExpansion lands the pending envelope.
+//   - createCanonicalInlineExpansionApprovalRecord writes the
+//     approval_records row with Kind="task_expand", Surface="inline_chat",
+//     Status="pending".
+//   - SSE 'tasks' event so the Tasks page reflects the new state.
+//
+// Explicitly NOT done here (the chat is the only surface for THIS hold):
+//   - No Telegram / push notification — those would race the chat
+//     anchor and risk approving on two surfaces.
+func (h *TasksHandler) CreatePendingInlineExpansion(
+	ctx context.Context,
+	agent *store.Agent,
+	taskID string,
+	additions *runtimetasks.Envelope,
+	reason string,
+) (string, error) {
+	if agent == nil {
+		return "", errors.New("agent is required")
+	}
+	if strings.TrimSpace(taskID) == "" {
+		return "", errors.New("task id is required")
+	}
+	if additions == nil {
+		return "", errors.New("expansion additions are required")
+	}
+	if strings.TrimSpace(reason) == "" {
+		return "", errors.New("expansion reason is required")
+	}
+	if len(reason) > 512 {
+		return "", fmt.Errorf("reason exceeds 512 bytes")
+	}
+	if len(additions.ExpectedTools) == 0 && len(additions.ExpectedEgress) == 0 && len(additions.RequiredCredentials) == 0 {
+		return "", errors.New("expansion must declare at least one tool / egress / credential entry")
+	}
+	if issues := runtimepolicy.ValidateTaskEnvelopeAdditions(*additions); len(issues) > 0 {
+		var msgs []string
+		for _, issue := range issues {
+			msgs = append(msgs, issue.Field+": "+issue.Message)
+		}
+		return "", fmt.Errorf("expansion envelope invalid: %s", strings.Join(msgs, "; "))
+	}
+
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return "", err
+	}
+	if task.UserID != agent.UserID {
+		return "", errors.New("not your task")
+	}
+	if task.AgentID != agent.ID {
+		return "", errors.New("not your task")
+	}
+	if task.Status != "active" && task.Status != "expired" {
+		return "", fmt.Errorf("task must be active or expired to expand (status=%q)", task.Status)
+	}
+	if task.Lifetime == "standing" {
+		return "", errors.New("standing tasks cannot be expanded")
+	}
+
+	// Validate derived gateway scopes up front so an unusable scope
+	// fails before the user sees an approval prompt. Mirrors the
+	// public Expand handler's per-entry gate; isolating it as an error
+	// here means the intercept can fall through to the dashboard
+	// rewrite cleanly, with the same diagnostic the agent would have
+	// received from a direct POST.
+	for i, tool := range additions.ExpectedTools {
+		service, action, isGatewayAction := parseToolNameAsServiceAction(tool.ToolName)
+		if !isGatewayAction {
+			continue
+		}
+		field := fmt.Sprintf("expected_tools[%d]", i)
+		if detail, _, ok := h.validateDerivedAuthorizedAction(ctx, agent.UserID, service, action, field); !ok {
+			return "", errors.New(detail.Error)
+		}
+	}
+
+	// Validate credentials (added + would-be-replaced). Mirrors Expand's
+	// validation so a chat-side intercept rejects unusable credentials
+	// before the user sees an approval prompt.
+	parentEnv, err := runtimetasks.EnvelopeFromTask(task)
+	if err != nil {
+		return "", fmt.Errorf("load parent envelope: %w", err)
+	}
+	merge := runtimetasks.MergeEnvelopes(parentEnv, *additions)
+	credsToValidate := append([]runtimetasks.RequiredCredential(nil), merge.AddedCredentials...)
+	for _, r := range merge.ReplacedCredentials {
+		credsToValidate = append(credsToValidate, r.New)
+	}
+	if len(credsToValidate) > 0 {
+		if err := h.validateTaskRequiredCredentials(ctx, task, credsToValidate); err != nil {
+			return "", err
+		}
+	}
+
+	pending, err := runtimetasks.PendingFromAdditions(*additions, reason)
+	if err != nil {
+		return "", fmt.Errorf("encode expansion envelope: %w", err)
+	}
+
+	won, err := h.st.SetTaskPendingExpansion(ctx, taskID, pending)
+	if err != nil {
+		return "", fmt.Errorf("set pending expansion: %w", err)
+	}
+	if !won {
+		// CAS lost: the task left active/expired between our GetTask
+		// and the CAS write. Surface as a 409-shaped error so the
+		// intercept can fall through cleanly.
+		return "", fmt.Errorf("task is no longer in a state that can be expanded; re-fetch and retry")
+	}
+	// Hydrate the in-memory shape so the canonical-record helpers see
+	// the diff in the same form the dashboard renderer would.
+	task.PendingExpansion = pending
+	task.Status = "pending_scope_expansion"
+
+	if err := h.createCanonicalInlineExpansionApprovalRecord(ctx, task); err != nil {
+		// Rollback the pending row so we don't leave the task wedged
+		// in pending_scope_expansion with no anchor. Detached context
+		// with a tight budget — same pattern as the inline-task path.
+		h.logger.ErrorContext(ctx, "failed to create inline expansion approval record; rolling back pending",
+			"task_id", task.ID, "err", err)
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		_, _ = h.st.ResolveTaskPendingExpansion(rollbackCtx, taskID, store.ResolveExpansionStatusActive)
+		cancel()
+		return "", fmt.Errorf("create inline expansion approval record: %w", err)
+	}
+
+	if h.eventHub != nil {
+		h.eventHub.Publish(agent.UserID, events.Event{Type: "tasks"})
+	}
+	return taskID, nil
+}
+
+// ApproveInlineExpansion is the chat-side approve path for an
+// inline-chat scope expansion. Flips the pending_scope_expansion row
+// through UpdateTaskEnvelopeFrom (same atomic merge + risk reassess +
+// pending-snapshot guard as the public ExpandApprove handler), mints
+// any new credential placeholders, and resolves the canonical
+// approval record. Returns the InlineApprovedExpansion shape the
+// rewrite path renders to the LLM.
+func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userID string) (*llmproxy.InlineApprovedExpansion, error) {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if task.UserID != userID {
+		return nil, errors.New("not your task")
+	}
+	// Detect "already resolved on another surface" up front, same
+	// shape as the inline-task path: dashboard / notifier could have
+	// approved or denied the expansion before our chat reply landed.
+	if task.Status != "pending_scope_expansion" || task.PendingExpansion == nil {
+		return nil, &llmproxy.ErrInlineExpansionAlreadyTerminal{Status: task.Status}
+	}
+	if task.Lifetime == "standing" {
+		return nil, errors.New("standing tasks cannot transition through scope expansion")
+	}
+
+	envUpdate, merged, err := buildExpansionApprovalUpdate(task)
+	if err != nil {
+		return nil, fmt.Errorf("build expansion update: %w", err)
+	}
+	reassessExpansionRisk(task, merged, &envUpdate)
+	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
+		envUpdate.ExpectedPendingJSON = pendingJSON
+	}
+	expiresAt := time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+
+	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("apply expansion: %w", err)
+	}
+	if !won {
+		// Re-fetch to surface the terminal state if the row landed at
+		// a known terminal status — matches the inline-task ApproveInlineTask
+		// re-fetch idiom so the chat reply can be specific.
+		if reread, rereadErr := h.st.GetTask(ctx, taskID); rereadErr == nil && reread != nil {
+			switch reread.Status {
+			case "active", "denied", "expired", "revoked":
+				return nil, &llmproxy.ErrInlineExpansionAlreadyTerminal{Status: reread.Status}
+			}
+		}
+		return nil, errors.New("expansion was resolved by another caller")
+	}
+	task.Status = "active"
+	task.ExpiresAt = &expiresAt
+
+	// Mint credential placeholders for any newly-added credentials so
+	// the chat reply can hand them back to the model in the same shape
+	// the inline-task approve path does. The placeholders are scoped to
+	// the merged set; ensureTaskCredentialPlaceholders is idempotent on
+	// already-minted vault items so re-running for replaced entries
+	// doesn't double-mint.
+	requiredCredentials, _ := taskRequiredCredentials(task)
+	var placeholders []*store.RuntimePlaceholder
+	if len(requiredCredentials) > 0 {
+		var ensureErr error
+		placeholders, ensureErr = h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt)
+		if ensureErr != nil {
+			// Placeholder mint failed after the CAS landed. Distinct from
+			// the inline-task path: we don't roll the envelope back here
+			// because the user has already approved scope expansion that
+			// is structurally valid; the credential mint failure is a
+			// follow-up operational issue, not a permission decision. Log
+			// loudly and proceed with the chat reply minus the
+			// placeholders so the model can ask the user to retry.
+			h.logger.ErrorContext(ctx, "post-CAS expansion credential mint failed; chat reply will omit placeholders",
+				"task_id", task.ID, "err", ensureErr)
+		}
+	}
+
+	rec, _ := h.findPendingTaskApprovalRecord(ctx, userID, taskID, "task_expand")
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "allow_session", "approved")
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
+	}
+
+	out := &llmproxy.InlineApprovedExpansion{
+		TaskID:   task.ID,
+		Status:   task.Status,
+		Purpose:  task.Purpose,
+		Lifetime: task.Lifetime,
+	}
+	if rec != nil {
+		out.ApprovalRecordID = rec.ID
+	}
+	if task.ExpiresAt != nil {
+		out.ExpiresAtRFC3339 = task.ExpiresAt.Format(time.RFC3339)
+	}
+	out.Credentials = inlineCredentialPlaceholders(placeholders)
+	return out, nil
+}
+
+// DenyInlineExpansion is the chat-side deny path. Routes through
+// ResolveTaskPendingExpansion (clears pending_expansion_json AND sets
+// status atomically). The task returns to active or expired —
+// denying the EXPANSION, not the parent task, matching the public
+// ExpandDeny handler's semantics. Idempotent on already-resolved rows.
+func (h *TasksHandler) DenyInlineExpansion(ctx context.Context, taskID, userID string) error {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return errors.New("not your task")
+	}
+	if task.Status != "pending_scope_expansion" {
+		// Already resolved — treat as a success no-op. Same reasoning
+		// as DenyInlineTask: the user's intent matches the terminal
+		// state.
+		return nil
+	}
+
+	newStatus := store.ResolveExpansionStatusActive
+	if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
+		newStatus = store.ResolveExpansionStatusExpired
+	}
+	won, err := h.st.ResolveTaskPendingExpansion(ctx, taskID, newStatus)
+	if err != nil {
+		return err
+	}
+	if !won {
+		// Lost CAS to another resolver (sweep, dashboard, notifier).
+		// Terminal state was reached; report success so the chat-side
+		// caller doesn't double-publish.
+		return nil
+	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "denied")
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
+	}
+	return nil
+}
+
+// ExpireInlineExpansion is called when the LRU cache evicts an
+// inline-expansion hold under capacity pressure. The chat anchor is
+// gone, so chat approve can no longer resolve the row. Mirrors
+// ExpireInlineTask: clears pending state and marks the task as
+// expired so the dashboard doesn't keep showing "reply in chat"
+// guidance for a hold that can never be resolved from chat.
+// Idempotent on already-resolved rows.
+func (h *TasksHandler) ExpireInlineExpansion(ctx context.Context, taskID, userID string) error {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return errors.New("not your task")
+	}
+	if task.Status != "pending_scope_expansion" {
+		return nil
+	}
+	won, err := h.st.ResolveTaskPendingExpansion(ctx, taskID, store.ResolveExpansionStatusExpired)
+	if err != nil {
+		return err
+	}
+	if !won {
+		return nil
+	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "expired")
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
+	}
+	return nil
+}
+
+// createCanonicalInlineExpansionApprovalRecord writes the canonical
+// approval_records row anchoring a chat-bound pending scope expansion.
+// Surface is "inline_chat" (vs. the dashboard path's "dashboard") so
+// dashboards filtering by surface see the inline-bound expansion
+// distinctly. Mirrors createCanonicalPendingInlineApprovalRecord for
+// task creation.
+func (h *TasksHandler) createCanonicalInlineExpansionApprovalRecord(ctx context.Context, task *store.Task) error {
+	payload, err := json.Marshal(task)
+	if err != nil {
+		return err
+	}
+	summary := map[string]any{
+		"purpose":    task.Purpose,
+		"lifetime":   task.Lifetime,
+		"risk_level": task.RiskLevel,
+	}
+	if task.PendingExpansion != nil {
+		additions, decErr := pendingExpansionToEnvelope(task.PendingExpansion)
+		if decErr != nil {
+			summary["decode_error"] = decErr.Error()
+		} else {
+			if len(additions.ExpectedTools) > 0 {
+				summary["expected_tools"] = additions.ExpectedTools
+			}
+			if len(additions.ExpectedEgress) > 0 {
+				summary["expected_egress"] = additions.ExpectedEgress
+			}
+			if len(additions.RequiredCredentials) > 0 {
+				summary["required_credentials"] = additions.RequiredCredentials
+			}
+		}
+		summary["reason"] = task.PendingExpansion.Reason
+	}
+	summaryJSON, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+	rec := &store.ApprovalRecord{
+		ID:                  uuid.New().String(),
+		Kind:                "task_expand",
+		UserID:              task.UserID,
+		AgentID:             &task.AgentID,
+		TaskID:              &task.ID,
+		Status:              "pending",
+		Surface:             "inline_chat",
+		SummaryJSON:         json.RawMessage(summaryJSON),
+		PayloadJSON:         json.RawMessage(payload),
+		ResolutionTransport: "inline_chat",
+	}
+	return h.st.CreateApprovalRecord(ctx, rec)
+}
+
 // createCanonicalPendingInlineApprovalRecord writes the canonical
 // approval_records row anchoring a chat-bound pending task. Status is
 // "pending" with no Resolution/ResolvedAt — those land at chat-approve

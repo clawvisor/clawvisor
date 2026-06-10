@@ -60,6 +60,7 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 	// <id> is a literal placeholder the model substitutes with the
 	// active task's id — the URL is a template, not a fixed endpoint.
 	expandURL := tasksURL + "/<id>/expand"
+	expandURLInline := expandURL + "?surface=inline"
 	toolExamples := controlToolExamples(availableTools)
 	shellTool := controlShellTool(availableTools)
 	shellToolExample := shellTool
@@ -87,7 +88,7 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"SCOPE DRIFT — a control-plane action is needed when the user's follow-up, or what you've discovered while executing, SHIFTS the work outside the active task's scope: tools you didn't declare in `expected_tools`, files or services unrelated to the task's stated purpose, or a genuinely different goal. Adjacent edits that continue the same purpose stay under the existing task — that's iteration, not drift. (E.g., a \"rename Foo to Bar in src/foo.go\" task covers updating doc comments and fixing related typos in the same file with the same Edit tool. \"Now also delete src/helpers.go\" or \"now send a Slack message\" are scope shifts and need a control-plane action.) Don't quietly run drifted work under the old task's authorization, and don't wait for a tool call to be refused — pick the right control-plane action below.",
 		"",
 		"EXPAND vs NEW TASK — when SCOPE DRIFT says you need control-plane action, choose between expanding the active task and creating a new one:",
-		"  - Same body of work, just need MORE capability under the existing purpose → POST " + expandURL + "?wait=true. The active task stays alive; merged scope plus a refreshed deadline land on approve. (E.g., the active task is \"Refactor src/foo.go\" and now also needs Edit on src/bar.go: expand with the missing tool.)",
+		"  - Same body of work, just need MORE capability under the existing purpose → POST " + expandURLInline + " (interactive user) or POST " + expandURL + "?wait=true (headless). The active task stays alive; merged scope plus a refreshed deadline land on approve. (E.g., the active task is \"Refactor src/foo.go\" and now also needs Edit on src/bar.go: expand with the missing tool.)",
 		"  - Genuinely different goal (the active task's stated purpose no longer describes what you're doing) → POST a NEW task. (E.g., active task is \"Refactor src/foo.go\" and the user now says \"also send a Slack summary\": purpose has changed; new task.)",
 		"  - Active task lifetime is `\"standing\"` → CANNOT be expanded. Create a NEW task with the additional scope (or revoke + recreate when the broader scope should replace).",
 		"",
@@ -99,8 +100,8 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"",
 		"REPLACE-BY-NAME on expand — if you re-state an existing tool/host/credential the new `why` OVERWRITES the prior wholesale; write a `why` that subsumes BOTH the prior purpose AND the new one or the audit trail loses context. Structural fields (`input_regex`, `method`, `path`, etc.) preserve the parent's on a name match — an addition with a DIFFERENT structural shape under the same name lands as a SEPARATE row, not a narrowing of the parent. To genuinely change a structural constraint, expansion is the wrong tool; create a new task instead.",
 		"",
-		"Canonical expand curl:",
-		"  curl -sS -X POST '" + expandURL + "?wait=true' \\",
+		"Canonical expand curl (interactive user; the model emits the POST and the proxy substitutes a yes/no prompt for the user to approve in chat):",
+		"  curl -sS -X POST '" + expandURLInline + "' \\",
 		"    -H 'Content-Type: application/json' \\",
 		"    --data @- <<'JSON'",
 		"  {\"expected_tools\":[{\"tool_name\":\"" + shellToolExample + "\",\"why\":\"<why the existing scope no longer covers it>\"}],",

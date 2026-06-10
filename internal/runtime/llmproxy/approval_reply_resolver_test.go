@@ -96,6 +96,25 @@ func TestResolveApprovalReplyActionCharacterizesRouting(t *testing.T) {
 			verb:     "maybe",
 			wantKind: approvalReplyActionNoop,
 		},
+		{
+			name: "bare_approve_routes_expansion_stage_to_inline_expansion",
+			holds: []PendingLiteApproval{
+				resolverTestHold("cv-pppppppppppppppppppppppppp", StageTool),
+				resolverTestHold("cv-qqqqqqqqqqqqqqqqqqqqqqqqqq", StageAwaitingExpansionApproval),
+			},
+			verb:     "approve",
+			wantKind: approvalReplyActionApproveInlineExpansion,
+			wantID:   "cv-qqqqqqqqqqqqqqqqqqqqqqqqqq",
+		},
+		{
+			name: "bare_deny_routes_expansion_stage_to_inline_expansion",
+			holds: []PendingLiteApproval{
+				resolverTestHold("cv-rrrrrrrrrrrrrrrrrrrrrrrrrr", StageAwaitingExpansionApproval),
+			},
+			verb:     "deny",
+			wantKind: approvalReplyActionDenyInlineExpansion,
+			wantID:   "cv-rrrrrrrrrrrrrrrrrrrrrrrrrr",
+		},
 	}
 
 	for _, tc := range tests {

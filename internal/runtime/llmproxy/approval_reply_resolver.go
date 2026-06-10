@@ -14,6 +14,8 @@ const (
 	approvalReplyActionStartInlineTaskDefinition approvalReplyActionKind = "start_inline_task_definition"
 	approvalReplyActionApproveInlineTask         approvalReplyActionKind = "approve_inline_task"
 	approvalReplyActionDenyInlineTask            approvalReplyActionKind = "deny_inline_task"
+	approvalReplyActionApproveInlineExpansion    approvalReplyActionKind = "approve_inline_expansion"
+	approvalReplyActionDenyInlineExpansion       approvalReplyActionKind = "deny_inline_expansion"
 )
 
 type approvalReplyAction struct {
@@ -79,15 +81,21 @@ func resolveApprovalReplyAction(ctx context.Context, req approvalReplyRoutingReq
 	case "task":
 		action.Kind = approvalReplyActionStartInlineTaskDefinition
 	case "approve":
-		if hold.Stage == StageAwaitingTaskApproval {
+		switch hold.Stage {
+		case StageAwaitingTaskApproval:
 			action.Kind = approvalReplyActionApproveInlineTask
-		} else {
+		case StageAwaitingExpansionApproval:
+			action.Kind = approvalReplyActionApproveInlineExpansion
+		default:
 			action.Kind = approvalReplyActionReleaseTool
 		}
 	case "deny":
-		if hold.Stage == StageAwaitingTaskApproval {
+		switch hold.Stage {
+		case StageAwaitingTaskApproval:
 			action.Kind = approvalReplyActionDenyInlineTask
-		} else {
+		case StageAwaitingExpansionApproval:
+			action.Kind = approvalReplyActionDenyInlineExpansion
+		default:
 			action.Kind = approvalReplyActionReleaseTool
 		}
 	}
