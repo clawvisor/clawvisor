@@ -56,8 +56,29 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if !strings.Contains(notice, "SCOPE DRIFT") ||
 		!strings.Contains(notice, "SHIFTS the work outside the active task's scope") ||
 		!strings.Contains(notice, "iteration, not drift") ||
-		!strings.Contains(notice, "POST a new task before continuing") {
-		t.Fatalf("notice should distinguish iteration (covered) from drift (new task); got:\n%s", notice)
+		!strings.Contains(notice, "pick the right control-plane action below") {
+		t.Fatalf("notice should distinguish iteration (covered) from drift (control-plane action needed); got:\n%s", notice)
+	}
+	// EXPAND vs NEW TASK is the operative resolution under SCOPE DRIFT;
+	// without it, the model defaults to create-new even when the
+	// existing task's purpose still describes the work, and the user
+	// approves a duplicate task instead of an envelope expansion.
+	if !strings.Contains(notice, "EXPAND vs NEW TASK") ||
+		!strings.Contains(notice, "Same body of work") ||
+		!strings.Contains(notice, "/control/tasks/<id>/expand?wait=true") ||
+		!strings.Contains(notice, "Genuinely different goal") ||
+		!strings.Contains(notice, `lifetime is `+"`"+`"standing"`+"`"+` → CANNOT be expanded`) {
+		t.Fatalf("notice should teach EXPAND vs NEW TASK with the expand endpoint and standing-task carve-out; got:\n%s", notice)
+	}
+	// Replace-by-name on expand is the only non-obvious semantic: a
+	// re-stated entry's `why` wholesale overwrites the prior, and
+	// structural fields preserve the parent's on a name match. Without
+	// teaching this, the model writes thin `why` strings that destroy
+	// the audit trail's prior context on every expansion.
+	if !strings.Contains(notice, "REPLACE-BY-NAME on expand") ||
+		!strings.Contains(notice, "OVERWRITES the prior wholesale") ||
+		!strings.Contains(notice, "lands as a SEPARATE row") {
+		t.Fatalf("notice should teach the replace-by-name `why`-overwrite semantic on expand; got:\n%s", notice)
 	}
 	if !strings.Contains(notice, "`lifetime`") ||
 		!strings.Contains(notice, `"lifetime":"standing"`) ||

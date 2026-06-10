@@ -57,6 +57,9 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 	tasksURL := "https://" + ControlSyntheticHost + ControlSyntheticPath + "/tasks"
 	tasksURLInline := tasksURL + "?surface=inline"
 	taskCheckoutURL := "https://" + ControlSyntheticHost + ControlSyntheticPath + "/task/checkout"
+	// <id> is a literal placeholder the model substitutes with the
+	// active task's id — the URL is a template, not a fixed endpoint.
+	expandURL := tasksURL + "/<id>/expand"
 	toolExamples := controlToolExamples(availableTools)
 	shellTool := controlShellTool(availableTools)
 	shellToolExample := shellTool
@@ -81,7 +84,28 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"  - \"Show me the last 5 commits\" / \"What does `gh pr view` say?\" / \"Run `npm ls`\" → task FIRST. `git`, `gh`, `npm`, and the like are NOT on the read-only allowlist below, even when the specific subcommand happens to be read-only. Do not rationalize \"but this invocation is safe\" — if the binary isn't on the allowlist, you create a task. Do not fabricate output you didn't run, and do not refuse on the user's behalf — create the task, get approval, then actually run the command.",
 		"  - \"Show me what's in README.md\" → no task. One cat is fully allowed, and any chain of allowlisted read-only calls on the same request stays no-task.",
 		"",
-		"SCOPE DRIFT — a new task is needed when the user's follow-up, or what you've discovered while executing, SHIFTS the work outside the active task's scope: tools you didn't declare in `expected_tools`, files or services unrelated to the task's stated purpose, or a genuinely different goal. Adjacent edits that continue the same purpose stay under the existing task — that's iteration, not drift. (E.g., a \"rename Foo to Bar in src/foo.go\" task covers updating doc comments and fixing related typos in the same file with the same Edit tool. \"Now also delete src/helpers.go\" or \"now send a Slack message\" are scope shifts and need a new task.) When the new ask is genuinely different, POST a new task before continuing — don't quietly run drifted work under the old task's authorization, and don't wait for a tool call to be refused.",
+		"SCOPE DRIFT — a control-plane action is needed when the user's follow-up, or what you've discovered while executing, SHIFTS the work outside the active task's scope: tools you didn't declare in `expected_tools`, files or services unrelated to the task's stated purpose, or a genuinely different goal. Adjacent edits that continue the same purpose stay under the existing task — that's iteration, not drift. (E.g., a \"rename Foo to Bar in src/foo.go\" task covers updating doc comments and fixing related typos in the same file with the same Edit tool. \"Now also delete src/helpers.go\" or \"now send a Slack message\" are scope shifts and need a control-plane action.) Don't quietly run drifted work under the old task's authorization, and don't wait for a tool call to be refused — pick the right control-plane action below.",
+		"",
+		"EXPAND vs NEW TASK — when SCOPE DRIFT says you need control-plane action, choose between expanding the active task and creating a new one:",
+		"  - Same body of work, just need MORE capability under the existing purpose → POST " + expandURL + "?wait=true. The active task stays alive; merged scope plus a refreshed deadline land on approve. (E.g., the active task is \"Refactor src/foo.go\" and now also needs Edit on src/bar.go: expand with the missing tool.)",
+		"  - Genuinely different goal (the active task's stated purpose no longer describes what you're doing) → POST a NEW task. (E.g., active task is \"Refactor src/foo.go\" and the user now says \"also send a Slack summary\": purpose has changed; new task.)",
+		"  - Active task lifetime is `\"standing\"` → CANNOT be expanded. Create a NEW task with the additional scope (or revoke + recreate when the broader scope should replace).",
+		"",
+		"Expand body — mirrors task creation MINUS `purpose`, `lifetime`, `expires_in_seconds` (purpose and lifetime are preserved; the deadline refreshes on approve). `reason` is required and is surfaced verbatim in the approval prompt. The three envelope arrays are INDEPENDENTLY optional — a credentials-only expansion is valid:",
+		"  {\"expected_tools\":[{\"tool_name\":\"<tool>\",\"why\":\"<why>\"}],",
+		"   \"expected_egress\":[{\"host\":\"<host>\",\"why\":\"<why>\"}],",
+		"   \"required_credentials\":[{\"vault_item_id\":\"<id>\",\"why\":\"<why>\"}],",
+		"   \"reason\":\"<one-line summary of why this expansion is needed>\"}",
+		"",
+		"REPLACE-BY-NAME on expand — if you re-state an existing tool/host/credential the new `why` OVERWRITES the prior wholesale; write a `why` that subsumes BOTH the prior purpose AND the new one or the audit trail loses context. Structural fields (`input_regex`, `method`, `path`, etc.) preserve the parent's on a name match — an addition with a DIFFERENT structural shape under the same name lands as a SEPARATE row, not a narrowing of the parent. To genuinely change a structural constraint, expansion is the wrong tool; create a new task instead.",
+		"",
+		"Canonical expand curl:",
+		"  curl -sS -X POST '" + expandURL + "?wait=true' \\",
+		"    -H 'Content-Type: application/json' \\",
+		"    --data @- <<'JSON'",
+		"  {\"expected_tools\":[{\"tool_name\":\"" + shellToolExample + "\",\"why\":\"<why the existing scope no longer covers it>\"}],",
+		"   \"reason\":\"<one-line summary>\"}",
+		"  JSON",
 		"",
 		"REUSE EXISTING TASKS — before POSTing a new task, check the ACTIVE TASKS snapshot just below. The snapshot is a one-shot list of every task already in active scope for you at conversation START; use it as the first cut on \"do I already have approval for this?\". If the snapshot shows ZERO tasks, skip GET " + tasksURL + " entirely and create the task you need — there is nothing to discover. If the snapshot shows tasks whose purposes plausibly cover the user's ask, GET " + tasksURL + " for full detail (the per-task `expected_tools`, `authorized_actions`, `expected_egress`, and any minted `autovault_*` placeholders bound to it) before POSTing anything new. The snapshot is frozen at the first turn for prompt-cache stability — if you've been working a long time, or you just completed/expanded a task and want to confirm live state, GET " + tasksURL + " to refresh. When multiple snapshot tasks match, POST " + taskCheckoutURL + " to focus the right one; checkout is routing only, the existing task's scope is what authorizes the work.",
 		"",

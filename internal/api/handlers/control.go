@@ -98,10 +98,13 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 			"method": "POST",
 			"path":   "/control/tasks/{id}/expand",
 			"body": map[string]any{
-				"service":      "github",
-				"action":       "create_issue",
-				"auto_execute": true,
-				"reason":       "Explain why the existing task scope is insufficient.",
+				"expected_tools": []map[string]any{
+					{"tool_name": "github:create_issue", "why": "File the bug the user just reported under the same repo we've been working in."},
+				},
+				"required_credentials": []map[string]any{
+					{"vault_item_id": "github:personal", "why": "Authenticate the create_issue call against the user's GitHub."},
+				},
+				"reason": "Existing scope authorizes reading repo state but not creating issues; user just asked us to file the bug we found.",
 			},
 		},
 		"checkout_task": map[string]any{
