@@ -951,9 +951,15 @@ func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userI
 		return nil, fmt.Errorf("build expansion update: %w", err)
 	}
 	reassessExpansionRisk(task, merged, &envUpdate)
-	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
-		envUpdate.ExpectedPendingJSON = pendingJSON
+	// See ExpandApprove for the snapshot CAS rationale. Marshal
+	// failure fails closed — silently skipping the guard would
+	// disable stale-approve protection on the same approval that
+	// surfaced the marshal bug.
+	pendingJSON, mErr := json.Marshal(task.PendingExpansion)
+	if mErr != nil {
+		return nil, fmt.Errorf("snapshot pending expansion: %w", mErr)
 	}
+	envUpdate.ExpectedPendingJSON = pendingJSON
 	expiresAt := taskApprovedExpiresAt(task)
 
 	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)

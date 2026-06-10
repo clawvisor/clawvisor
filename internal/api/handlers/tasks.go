@@ -2516,10 +2516,15 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 	// replaces it before our approve write lands. Without this the
 	// CAS would still succeed (status would match again) and a
 	// stale merged envelope would silently overwrite the new
-	// pending state.
-	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
-		envUpdate.ExpectedPendingJSON = pendingJSON
+	// pending state. Marshal failure is fatal: silently skipping the
+	// guard would disable stale-approve protection on the same
+	// approval that hit the marshal bug.
+	pendingJSON, mErr := json.Marshal(task.PendingExpansion)
+	if mErr != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not snapshot pending expansion for CAS guard")
+		return
 	}
+	envUpdate.ExpectedPendingJSON = pendingJSON
 	// Standing tasks keep the far-future sentinel that Approve uses
 	// (taskCredentialExpiry mirrors the same shape). Without this
 	// branch, ExpiresInSeconds=0 would land expires_at=now on the
@@ -3103,10 +3108,13 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 		return err
 	}
 	reassessExpansionRisk(task, merged, &envUpdate)
-	// See the ExpandApprove handler — same pending-snapshot CAS guard.
-	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
-		envUpdate.ExpectedPendingJSON = pendingJSON
+	// See the ExpandApprove handler — same pending-snapshot CAS
+	// guard, same fail-closed marshal handling.
+	pendingJSON, mErr := json.Marshal(task.PendingExpansion)
+	if mErr != nil {
+		return fmt.Errorf("snapshot pending expansion: %w", mErr)
 	}
+	envUpdate.ExpectedPendingJSON = pendingJSON
 	expiresAt := taskApprovedExpiresAt(task)
 	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)
 	if err != nil {
