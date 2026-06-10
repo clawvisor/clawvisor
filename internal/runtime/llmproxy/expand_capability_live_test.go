@@ -120,6 +120,217 @@ func TestLive_AgentCreatesNewTaskForDifferentGoal(t *testing.T) {
 	})
 }
 
+// TestLive_AgentExpandsAfterMidConversationTaskCreation reproduces a
+// failure mode observed in production: the ACTIVE TASKS snapshot is
+// frozen at conversation start and says "none", a task gets created
+// mid-conversation, then the user asks for follow-on work that
+// belongs to the same body of work but needs additional capability.
+// Production behavior: the model creates a SECOND task instead of
+// expanding the just-created one.
+//
+// The setup mirrors the raw-log capture under
+// ~/.clawvisor/logs/lite-proxy-raw.jsonl: empty active-tasks
+// snapshot + inlineApprovedReplyAugmentationContext seeded into the
+// conversation history under a <clawvisor-notice kind="task-approved">
+// frame + a user follow-on ask. The synthetic GET /control/tasks
+// gate returns the just-created task (mirroring what the real
+// daemon would surface on a refresh GET).
+//
+// The assertion intentionally expects EXPAND so this test FAILS
+// while the bug exists and PASSES once the augmentation grows the
+// expand teaching that pulls the model toward the right URL.
+func TestLive_AgentExpandsAfterMidConversationTaskCreation(t *testing.T) {
+	apiKey := os.Getenv("CLAWVISOR_LLM_API_KEY")
+	if apiKey == "" {
+		t.Skip("CLAWVISOR_LLM_API_KEY not set; skipping live mid-conversation expand test")
+	}
+	model := os.Getenv("CLAWVISOR_LLM_MODEL")
+	if model == "" {
+		model = liveExpandModelDefault
+	}
+	endpoint := os.Getenv("CLAWVISOR_LLM_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "https://api.anthropic.com/v1"
+	}
+
+	// Empty snapshot — production behavior. The snapshot freezes at
+	// turn 0 so a task created mid-conversation doesn't show up here.
+	availableTools := []string{"read", "edit", "write", "bash", "exec"}
+	system := controltool.ControlNoticeWithSnapshot("http://localhost:25297", availableTools, nil, "")
+	tools := []map[string]any{
+		{
+			"name":        "bash",
+			"description": "Run a single bash command in the foreground. Returns stdout/stderr.",
+			"input_schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"command": map[string]any{"type": "string", "description": "Bash command to run"},
+				},
+				"required": []string{"command"},
+			},
+		},
+	}
+
+	// Synthesize prior-turn history: user asked for the first piece
+	// of work, the model created a task (mocked via assistant text
+	// — a tool_use+result pair is heavier and not the load-bearing
+	// piece here), and the proxy substituted the user's "approve"
+	// reply with the augmentation that includes Task ID: task-abc.
+	// The augmentation body is copied verbatim from
+	// inlineApprovedReplyAugmentationContext so the scenario tracks
+	// the production text.
+	priorTaskID := "task-abc"
+	augmentation := "<clawvisor-notice kind=\"task-approved\">Task was created and approved by the user. " +
+		"The task covers the originally requested work; proceed by emitting your next tool_use(s). " +
+		"Do NOT POST /control/tasks again for the same work. If an earlier tool_use already completed successfully, " +
+		"do NOT re-emit it; move on to the next step using the results above. Task ID: " + priorTaskID + ". " +
+		"Task " + priorTaskID + " is now the active task." +
+		"</clawvisor-notice>"
+
+	// Active task state for synthetic GET /control/tasks responses.
+	sc := expandScenario{
+		name:                "mid_conv_expand_after_task_creation",
+		activeTaskID:        priorTaskID,
+		activeTaskPurpose:   "Check the latest PRs in the clawvisor/cloud repository",
+		activeTaskLifetime:  "sliding",
+		activeTaskExpiresIn: 25 * time.Minute,
+		// Original task only had bash — the agent posted bash for the
+		// curl + listing work. Posting a github comment needs the
+		// same bash but routes through a credentialed POST, which
+		// IS allowed under bash. The interesting case here is the
+		// model's REASONING: does it bind the new work to the
+		// existing task or spin up a new one?
+		activeTaskTools: []string{"bash"},
+	}
+
+	messages := []map[string]any{
+		// Turn 1: user asks for the original work.
+		{"role": "user", "content": "Can you check the latest PRs in the clawvisor/cloud repo?"},
+		// Turn 1 assistant response: a short ack (we don't need the
+		// real tool_use here; the augmentation below is what carries
+		// the "task active" signal).
+		{"role": "assistant", "content": "I'll create a task to check the latest PRs."},
+		// Turn 2: the substituted user message after the user
+		// approved task creation. This mirrors the proxy's rewrite.
+		{"role": "user", "content": augmentation},
+		// Turn 2 assistant: a brief "ok will do" so the next user
+		// turn doesn't read as racing the augmentation.
+		{"role": "assistant", "content": "Task " + priorTaskID + " is active. Ready for the next step."},
+		// Turn 3: the user follow-on — same body of work (PR
+		// review), needs to leave a comment on PR 165.
+		{"role": "user", "content": "Now leave a comment on PR 165 — 'Looks good to me.'"},
+	}
+
+	const maxTurns = 5
+	sawExpand := false
+	sawCreate := false
+	for turn := 0; turn < maxTurns; turn++ {
+		reqBody := map[string]any{
+			"model":      model,
+			"max_tokens": 1024,
+			"system": []map[string]any{{
+				"type":          "text",
+				"text":          system,
+				"cache_control": map[string]string{"type": "ephemeral"},
+			}},
+			"tools":    tools,
+			"messages": messages,
+		}
+		body, err := json.Marshal(reqBody)
+		if err != nil {
+			t.Fatalf("[turn %d] marshal: %v", turn, err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/messages", bytes.NewReader(body))
+		if err != nil {
+			cancel()
+			t.Fatalf("[turn %d] build request: %v", turn, err)
+		}
+		httpReq.Header.Set("x-api-key", apiKey)
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(httpReq)
+		cancel()
+		if err != nil {
+			t.Fatalf("[turn %d] anthropic call: %v", turn, err)
+		}
+		respBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("[turn %d] status=%d body=%s", turn, resp.StatusCode, string(respBytes))
+		}
+		var parsed struct {
+			Content    []rawContentBlock `json:"content"`
+			StopReason string            `json:"stop_reason"`
+		}
+		if err := json.Unmarshal(respBytes, &parsed); err != nil {
+			t.Fatalf("[turn %d] unmarshal: %v body=%s", turn, err, string(respBytes))
+		}
+
+		messages = append(messages, map[string]any{
+			"role":    "assistant",
+			"content": parsed.Content,
+		})
+
+		toolResults := []map[string]any{}
+		decided := false
+		for _, c := range parsed.Content {
+			if c.Type != "tool_use" {
+				continue
+			}
+			var input struct {
+				Command string `json:"command"`
+			}
+			_ = json.Unmarshal(c.Input, &input)
+			cmd := strings.TrimSpace(input.Command)
+			t.Logf("[mid_conv turn %d] tool_use.command = %s", turn, truncateForLog(cmd, 280))
+
+			if commandTargetsExpand(cmd, sc.activeTaskID) {
+				sawExpand = true
+				decided = true
+				break
+			}
+			if commandTargetsNewTask(cmd) {
+				sawCreate = true
+				decided = true
+				break
+			}
+			toolResults = append(toolResults, map[string]any{
+				"type":        "tool_result",
+				"tool_use_id": c.ID,
+				"content":     syntheticToolResult(sc, cmd),
+			})
+		}
+		if decided {
+			break
+		}
+		if len(toolResults) == 0 || parsed.StopReason == "end_turn" {
+			for _, c := range parsed.Content {
+				if c.Type == "text" {
+					t.Logf("[mid_conv turn %d] text content: %s", turn, truncateForLog(c.Text, 400))
+				}
+			}
+			break
+		}
+		messages = append(messages, map[string]any{
+			"role":    "user",
+			"content": toolResults,
+		})
+	}
+
+	// Both outcomes are logged so a developer reading test output
+	// sees the model's actual chosen path, not just pass/fail.
+	t.Logf("[mid_conv] final: sawExpand=%v sawCreate=%v", sawExpand, sawCreate)
+
+	if !sawExpand {
+		t.Errorf("mid-conversation expand failed: model did not POST /tasks/%s/expand. "+
+			"sawCreate=%v (production bug: model creates a NEW task instead of expanding "+
+			"the active one after mid-conversation task creation; the active-tasks snapshot "+
+			"is frozen at turn 0 and the augmentation doesn't teach expand).",
+			sc.activeTaskID, sawCreate)
+	}
+}
+
 func TestLive_AgentExpandsStandingTaskForSameBodyOfWork(t *testing.T) {
 	runExpandScenario(t, expandScenario{
 		name:                "standing_task_expanded_for_same_body",
