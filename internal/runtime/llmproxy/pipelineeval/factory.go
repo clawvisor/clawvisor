@@ -60,7 +60,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	authBundle := buildAuthorizationResolver(cfg.AgentContext, cfg.AuditContext, cfg.AuthorizationContext, cfg.ApprovalContext, cfg.RewriteContext, provider)
 
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
-		Control:       buildControlResolver(req, cfg.AgentContext, cfg.AuditContext, cfg.ApprovalContext, cfg.RewriteContext, cfg.RoutingContext, cfg.AvailableTools, provider, emit),
+		Control:       buildControlResolver(req, cfg.AgentContext, cfg.AuditContext, cfg.ApprovalContext, cfg.RewriteContext, cfg.RoutingContext, provider, emit),
 		ScriptSession: buildScriptSessionResolver(cfg.RewriteContext, cfg.ScriptSessionContext),
 		Inspector:     cfg.Inspector,
 		Boundary:      buildBoundaryResolver(cfg.AgentContext, cfg.Store),
@@ -290,7 +290,6 @@ func buildControlResolver(
 	approval llmproxy.ApprovalContext,
 	rewrite llmproxy.RewriteContext,
 	routing llmproxy.RoutingContext,
-	availableTools []string,
 	provider conversation.Provider,
 	emit func(conversation.AuditEvent),
 ) policies.ControlToolUseResolver {
@@ -300,20 +299,12 @@ func buildControlResolver(
 	controlBaseURL := routing.ControlBaseURL
 	agentID := agent.AgentID
 	cache := rewrite.CallerNonces
-	// availableTools is a top-level PostprocessConfig field (request
-	// metadata, not approval-flow dependency); thread it through the
-	// intercept so MaybeInterceptInlineTaskDefinition can decide
-	// whether to substitute with an AskUserQuestion picker or the
-	// text prompt. Plumbing it here was missed when the field was
-	// promoted out of ApprovalContext — without this assignment the
-	// intercept always saw an empty list and fell back to text.
 	interceptCfg := llmproxy.PostprocessConfig{
 		AgentContext:    agent,
 		AuditContext:    audit,
 		ApprovalContext: approval,
 		RewriteContext:  rewrite,
 		RoutingContext:  routing,
-		AvailableTools:  availableTools,
 	}
 	return func(_ context.Context, _ conversation.ToolUse) *policies.ControlToolUseInputs {
 		return &policies.ControlToolUseInputs{

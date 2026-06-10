@@ -132,7 +132,8 @@ type AuthorizationContext struct {
 // ApprovalContext groups the inline-approval flow's dependencies:
 // pending cache, risk assessor, the human-context turns the assessor
 // reads, the inline-task-creator, the auto-approve threshold + default
-// expiry, and the checkout registry.
+// expiry, the checkout registry, and the inbound tool list the
+// renderer reads to pick the substitution shape.
 type ApprovalContext struct {
 	PendingApprovals                 PendingApprovalCache
 	TaskRiskAssessor                 TaskRiskAssessor
@@ -141,6 +142,19 @@ type ApprovalContext struct {
 	ConversationAutoApproveThreshold string
 	Checkouts                        TaskCheckoutStore
 	DefaultTaskExpirySeconds         int
+	// AvailableTools is the inbound request's declared tool list
+	// (e.g. Anthropic tools[].name). Consumed by the inline-approval
+	// intercept to decide whether to substitute the held tool_use
+	// with an AskUserQuestion picker (when that harness tool is
+	// declared) or a plain text prompt.
+	//
+	// Technically per-request request metadata rather than an
+	// approval-flow input, but living on ApprovalContext keeps the
+	// existing buildControlResolver param-passing pattern intact:
+	// the intercept is built from sub-contexts, and a top-level
+	// PostprocessConfig field was demonstrably easy to forget to
+	// plumb through.
+	AvailableTools []string
 }
 
 // RewriteContext groups the credentialed-rewrite path's dependencies:
@@ -192,16 +206,6 @@ type PostprocessConfig struct {
 	RewriteContext
 	ScriptSessionContext
 	RoutingContext
-
-	// AvailableTools is the inbound request's declared tool list
-	// (e.g. Anthropic tools[].name). Per-request request metadata,
-	// not an approval-flow dependency — sits at the top level so
-	// any stage that needs to branch on what the harness declared
-	// can read it without dragging it into a sub-context whose
-	// charter doesn't cover it. Currently consumed by the inline-
-	// approval intercept (to decide whether to substitute with an
-	// AskUserQuestion picker or a text prompt).
-	AvailableTools []string
 }
 
 // PostprocessResult is what postproc.Postprocess +

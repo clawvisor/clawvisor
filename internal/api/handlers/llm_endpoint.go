@@ -1181,6 +1181,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					InlineTaskCreator:                h.InlineTaskCreator,
 					Checkouts:                        h.TaskCheckouts,
 					DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
+					AvailableTools:                   reqSummary.AvailableTools,
 				},
 				RewriteContext: llmproxy.RewriteContext{
 					Inspector:    h.Inspector,
@@ -1194,7 +1195,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				RoutingContext: llmproxy.RoutingContext{
 					ControlBaseURL: h.ControlBaseURL,
 				},
-				AvailableTools: reqSummary.AvailableTools,
 			}
 			// First-turn routing notice. Mirrors the buffered path's
 			// invocation below (search "first-turn routing notice").
@@ -1591,6 +1591,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				InlineTaskCreator:                h.InlineTaskCreator,
 				Checkouts:                        h.TaskCheckouts,
 				DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
+				AvailableTools:                   reqSummary.AvailableTools,
 			},
 			RewriteContext: llmproxy.RewriteContext{
 				Inspector:    h.Inspector,
@@ -1604,7 +1605,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			RoutingContext: llmproxy.RoutingContext{
 				ControlBaseURL: h.ControlBaseURL,
 			},
-			AvailableTools: reqSummary.AvailableTools,
 		})
 		h.Logger.DebugContext(r.Context(), "lite-proxy postprocess complete",
 			"request_id", requestID,
@@ -1662,6 +1662,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					InlineTaskCreator:                h.InlineTaskCreator,
 					Checkouts:                        h.TaskCheckouts,
 					DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
+					AvailableTools:                   reqSummary.AvailableTools,
 				},
 				RewriteContext: llmproxy.RewriteContext{
 					Inspector:    h.Inspector,
@@ -1675,7 +1676,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				RoutingContext: llmproxy.RoutingContext{
 					ControlBaseURL: h.ControlBaseURL,
 				},
-				AvailableTools: reqSummary.AvailableTools,
 			})
 			switch {
 			case contErr != nil:
