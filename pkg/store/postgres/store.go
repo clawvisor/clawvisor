@@ -1440,8 +1440,21 @@ func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus strin
 	// caller read. jsonb equality is semantic so the canonicalized
 	// stored value compares equal to the input regardless of
 	// whitespace / key ordering differences.
+	//
+	// When the guard is omitted (legacy callers), bind NULL for the
+	// snapshot argument rather than an empty string. Even with the
+	// `$10::boolean = false` short-circuit, postgres still parses
+	// and casts `$11::jsonb` — an empty-string cast fails with
+	// "invalid input syntax for type json" before short-circuit has
+	// a chance to fire. Binding NULL → `NULL::jsonb` is a valid
+	// cast and lets the guard cleanly degrade to a no-op for any
+	// caller that reuses this method without snapshotting.
 	expectedPending := []byte(env.ExpectedPendingJSON)
 	hasGuard := len(expectedPending) > 0
+	var pendingArg any
+	if hasGuard {
+		pendingArg = string(expectedPending)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE tasks SET authorized_actions = $1,
 			expected_tools_json = $2,
@@ -1455,7 +1468,7 @@ func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus strin
 		WHERE id = $6 AND status = $7
 		  AND ($10::boolean = false OR pending_expansion_json = $11::jsonb)
 	`, actionsJSON, expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON, expiresAt, id, fromStatus,
-		env.RiskLevel, string(riskDetailsJSON), hasGuard, string(expectedPending))
+		env.RiskLevel, string(riskDetailsJSON), hasGuard, pendingArg)
 	if err != nil {
 		return false, err
 	}
