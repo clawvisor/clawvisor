@@ -10,6 +10,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -191,6 +192,49 @@ func TestResolveInlineExpansionApproval_AlreadyTerminal(t *testing.T) {
 	}
 	if !strings.Contains(body, "already") {
 		t.Errorf("body should describe the already-resolved race, got:\n%s", body)
+	}
+}
+
+// TestRenderExpansionApprovalPrompt_RisksRender confirms the
+// expansion prompt surfaces the merged-envelope risk level (and
+// explanation when present) in the same shape the task-creation
+// prompt uses. Without this the reviewer would only see the
+// addition + lifetime — broadening to a "high"-risk scope would
+// land silently.
+func TestRenderExpansionApprovalPrompt_RisksRender(t *testing.T) {
+	additions := &runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{
+			{ToolName: "bash", Why: "Run git commit and push."},
+		},
+	}
+	risk := &taskrisk.RiskAssessment{
+		RiskLevel:   "high",
+		Explanation: "Adds shell access to a previously read-only task.",
+	}
+	prompt := renderExpansionApprovalPrompt(additions, "land the change", "Refactor src/foo.go", "task-abc", "session", risk, "cv-aaa")
+	if !strings.Contains(prompt, "Risk") {
+		t.Errorf("prompt missing risk section:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "high") {
+		t.Errorf("prompt missing risk level:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Adds shell access") {
+		t.Errorf("prompt missing risk explanation:\n%s", prompt)
+	}
+}
+
+// TestRenderExpansionApprovalPrompt_NoRiskSilent guards the
+// inverse: when the assessor returns nothing usable, the prompt
+// must NOT render an empty "Risk" header. Avoids the
+// "Risk:" + blank case the reviewer would otherwise see when the
+// assessor is unconfigured or returns "unknown" / empty.
+func TestRenderExpansionApprovalPrompt_NoRiskSilent(t *testing.T) {
+	additions := &runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{{ToolName: "edit", Why: "small fix"}},
+	}
+	prompt := renderExpansionApprovalPrompt(additions, "land it", "purpose", "task-abc", "session", nil, "cv-aaa")
+	if strings.Contains(prompt, "\nRisk\n") || strings.Contains(prompt, "\n\nRisk\n") {
+		t.Errorf("prompt rendered empty Risk section:\n%s", prompt)
 	}
 }
 

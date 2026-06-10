@@ -1296,14 +1296,7 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Standing tasks have no expiry; session tasks expire after ExpiresInSeconds.
-	var expiresAt time.Time
-	if task.Lifetime == "standing" {
-		// Far-future sentinel — standing tasks are revoked manually, not expired.
-		expiresAt = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
-	} else {
-		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
-	}
+	expiresAt := taskApprovedExpiresAt(task)
 
 	credentialPlaceholders, err := h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt)
 	if err != nil {
@@ -2531,7 +2524,7 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 	// (taskCredentialExpiry mirrors the same shape). Without this
 	// branch, ExpiresInSeconds=0 would land expires_at=now on the
 	// row and the task would immediately collapse to expired.
-	expiresAt := expandApproveExpiresAt(task)
+	expiresAt := taskApprovedExpiresAt(task)
 
 	// CAS guards on (status='pending_scope_expansion', pending
 	// snapshot matches) so a concurrent ExpandDeny+re-expand
@@ -2569,13 +2562,14 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// expandApproveExpiresAt returns the expires_at that the approve
-// path should land on the task row. Standing tasks keep the
-// far-future sentinel that Approve uses (so expanding a standing
-// task can't accidentally collapse it to expired via the
-// now + ExpiresInSeconds math). Session/sliding tasks get a fresh
-// expires_in_seconds-from-now deadline.
-func expandApproveExpiresAt(task *store.Task) time.Time {
+// taskApprovedExpiresAt returns the expires_at the approve path
+// should land on the task row. Standing tasks keep the far-future
+// sentinel; session/sliding tasks get a fresh
+// ExpiresInSeconds-from-now deadline. Shared by every Approve-class
+// surface — direct Approve, ApproveByTaskID, ApproveInlineTask,
+// ExpandApprove, ExpandApproveByTaskID, ApproveInlineExpansion —
+// so the standing-task math has exactly one definition.
+func taskApprovedExpiresAt(task *store.Task) time.Time {
 	if task != nil && task.Lifetime == "standing" {
 		return time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
@@ -3019,12 +3013,7 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 		return err
 	}
 
-	var expiresAt time.Time
-	if task.Lifetime == "standing" {
-		expiresAt = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
-	} else {
-		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
-	}
+	expiresAt := taskApprovedExpiresAt(task)
 	if _, err := h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt); err != nil {
 		return err
 	}
@@ -3118,7 +3107,7 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
 		envUpdate.ExpectedPendingJSON = pendingJSON
 	}
-	expiresAt := expandApproveExpiresAt(task)
+	expiresAt := taskApprovedExpiresAt(task)
 	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)
 	if err != nil {
 		return err

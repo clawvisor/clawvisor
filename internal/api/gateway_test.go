@@ -715,7 +715,7 @@ func TestStandingTask_ResponseOmitsExpiry(t *testing.T) {
 // accepts standing-lifetime tasks; the approve transition preserves
 // the lifetime (the row stays at the far-future ExpiresAt sentinel
 // rather than collapsing to now via the now + 0 math). Without this
-// branch in expandApproveExpiresAt, an approved standing-task
+// branch in taskApprovedExpiresAt, an approved standing-task
 // expansion would immediately expire.
 func TestStandingTask_Expand_PreservesLifetime(t *testing.T) {
 	adapter := newMockAdapter("mock.echo", "echo", "other")

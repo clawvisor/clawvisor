@@ -130,10 +130,15 @@ type InlineExpansionCreator interface {
 	// deadline) — denying the EXPANSION, not the parent task.
 	DenyInlineExpansion(ctx context.Context, taskID, userID string) error
 	// ExpireInlineExpansion is called when the LRU cache evicts the
-	// hold (the chat anchor is gone). Routes ResolveTaskPendingExpansion
-	// with status=expired so the dashboard doesn't keep showing
-	// "reply in chat" guidance for a hold that can no longer be
-	// resolved from chat. Idempotent on already-resolved rows.
+	// hold (the chat anchor is gone) and also on hold-creation /
+	// record-write rollbacks from the intercept. Despite the
+	// "Expire" name — kept for symmetry with ExpireInlineTask on the
+	// task-creation interface — implementations MUST pick Active vs
+	// Expired based on the PARENT task's actual deadline, NOT
+	// unconditionally land Expired. The expansion attempt is what's
+	// dropped; the parent task's prior status (typically active) must
+	// be preserved on revert so a transient cache failure can't kill
+	// a previously-healthy task. Idempotent on already-resolved rows.
 	ExpireInlineExpansion(ctx context.Context, taskID, userID string) error
 }
 

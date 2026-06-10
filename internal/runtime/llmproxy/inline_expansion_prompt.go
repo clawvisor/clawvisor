@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 )
 
 // renderExpansionApprovalPrompt builds the inline yes/no prompt the
@@ -23,7 +24,7 @@ import (
 // creation prompt uses, so the augmentation pipeline can share the
 // outcome-store keying. Approval ID extraction goes through
 // extractApprovalIDFromPrompt unchanged.
-func renderExpansionApprovalPrompt(additions *runtimetasks.Envelope, reason, parentPurpose, parentTaskID, parentLifetime, approvalID string) string {
+func renderExpansionApprovalPrompt(additions *runtimetasks.Envelope, reason, parentPurpose, parentTaskID, parentLifetime string, risk *taskrisk.RiskAssessment, approvalID string) string {
 	suffix := approvalIDFooter(approvalID)
 	if additions == nil {
 		return "Clawvisor wants to expand a task's scope.\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel." + suffix
@@ -105,6 +106,26 @@ func renderExpansionApprovalPrompt(additions *runtimetasks.Envelope, reason, par
 				b.WriteString(" — ")
 				b.WriteString(wrapForPrompt(why, 80, "      "))
 			}
+		}
+	}
+
+	// Risk block: the merged-envelope reassessment so the reviewer
+	// sees the level the post-approve task would land at. The
+	// rendering mirrors renderTaskApprovalPromptWithRisk so a user
+	// alternating between task-creation and expansion approvals
+	// reads them in the same shape.
+	if risk != nil && strings.TrimSpace(risk.RiskLevel) != "" {
+		level := strings.TrimSpace(risk.RiskLevel)
+		b.WriteString("\n\nRisk")
+		b.WriteString("\n  ")
+		if emoji := riskEmoji(level); emoji != "" {
+			b.WriteString(emoji)
+			b.WriteString(" ")
+		}
+		b.WriteString(level)
+		if explanation := strings.TrimSpace(risk.Explanation); explanation != "" {
+			b.WriteString(" — ")
+			b.WriteString(wrapForPrompt(explanation, 80, "      "))
 		}
 	}
 

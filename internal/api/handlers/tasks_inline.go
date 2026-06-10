@@ -576,12 +576,7 @@ func (h *TasksHandler) ApproveInlineTask(ctx context.Context, taskID, userID str
 		return nil, err
 	}
 
-	var expiresAt time.Time
-	if task.Lifetime == "standing" {
-		expiresAt = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
-	} else {
-		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
-	}
+	expiresAt := taskApprovedExpiresAt(task)
 
 	// CAS pending → active FIRST, then mint placeholders. The expiry
 	// sweeper specifically targets approval_source='inline_chat'
@@ -959,7 +954,7 @@ func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userI
 	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
 		envUpdate.ExpectedPendingJSON = pendingJSON
 	}
-	expiresAt := expandApproveExpiresAt(task)
+	expiresAt := taskApprovedExpiresAt(task)
 
 	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)
 	if err != nil {

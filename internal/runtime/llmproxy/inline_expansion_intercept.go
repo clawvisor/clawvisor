@@ -10,6 +10,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -144,17 +145,27 @@ func MaybeInterceptInlineExpansion(
 		return conversation.ToolUseVerdict{}, false
 	}
 
-	// Fetch the parent task's purpose + lifetime for the prompt.
-	// Best-effort lookup — on failure the prompt renders with what
-	// we have. Lifetime is what triggers the "standing (no expiry)"
-	// callout in renderExpansionApprovalPrompt for the higher-blast-
-	// radius case.
+	// Fetch the parent task's purpose + lifetime AND derive the
+	// merged-envelope risk for the prompt. Best-effort lookup — on
+	// failure the prompt renders with what we have. Lifetime is what
+	// triggers the "standing (no expiry)" callout for the higher-
+	// blast-radius case; risk is the merged-envelope reassessment
+	// (same shape ExpandApprove writes to the row on approve) so the
+	// reviewer sees the same level they'll get post-approve, not
+	// just the parent's pre-expansion level.
 	parentPurpose := ""
 	parentLifetime := ""
+	var expansionRisk *taskrisk.RiskAssessment
 	if cfg.Store != nil {
 		if parent, err := cfg.Store.GetTask(req.Context(), taskID); err == nil && parent != nil {
 			parentPurpose = parent.Purpose
 			parentLifetime = parent.Lifetime
+			if parentEnv, envErr := runtimetasks.EnvelopeFromTask(parent); envErr == nil {
+				merge := runtimetasks.MergeEnvelopes(parentEnv, additions)
+				if assessment := runtimepolicy.AssessTaskEnvelope(parent.Purpose, merge.Merged); assessment != nil && strings.TrimSpace(assessment.RiskLevel) != "" {
+					expansionRisk = assessment
+				}
+			}
 		}
 	}
 
@@ -198,12 +209,34 @@ func MaybeInterceptInlineExpansion(
 		"task_id", taskID,
 		"signal", "query",
 	)
-	return conversation.ToolUseVerdict{
+	promptText := renderExpansionApprovalPrompt(&additions, parsed.Reason, parentPurpose, taskID, parentLifetime, expansionRisk, innerHold.Pending.ID)
+	verdict := conversation.ToolUseVerdict{
 		Allowed:        false,
 		Reason:         "Clawvisor: awaiting inline scope-expansion approval",
-		SubstituteWith: renderExpansionApprovalPrompt(&additions, parsed.Reason, parentPurpose, taskID, parentLifetime, innerHold.Pending.ID),
+		SubstituteWith: promptText,
 		HeldKindHint:   "approval",
-	}, true
+	}
+	// AskUserQuestion substitution mirrors the task-creation path:
+	// when the harness declares the picker tool, emit the prompt as
+	// a text block AND a synthetic AskUserQuestion call so the user
+	// gets a click UI instead of typing yes/no. The picker question
+	// is expansion-specific ("Approve this scope expansion?") but
+	// the call shape is shared via buildAskUserQuestionApprovalCall.
+	useAskUserQuestion := askUserQuestionAvailable(cfg.AvailableTools)
+	trace("inline_expansion.substitution_shape",
+		"approval_id", innerHold.Pending.ID,
+		"shape", inlineSubstitutionShape(useAskUserQuestion),
+		"ask_user_question_present", useAskUserQuestion,
+		"available_tool_count", len(cfg.AvailableTools),
+	)
+	if useAskUserQuestion {
+		verdict.SubstituteWithToolCall = buildAskUserQuestionApprovalCall(innerHold.Pending.ID, askUserQuestionApprovalSpec{
+			Question:       "Approve this scope expansion?",
+			Header:         "Expand task",
+			YesDescription: "Authorize the additional scope",
+		})
+	}
+	return verdict, true
 }
 
 // cleanupEvictedInlineExpansion mirrors CleanupEvictedInlineTask for

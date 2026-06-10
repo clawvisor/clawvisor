@@ -522,6 +522,57 @@ func (e *AuditEmitter) LogInlineTaskApproved(ctx context.Context, agent *store.A
 	}
 }
 
+// LogInlineExpansionApproved records the one-row audit trail for an
+// inline-approved scope expansion. Parallel to LogInlineTaskApproved
+// for the task-creation surface — without it the only persisted
+// record of a chat-side expansion approval is the canonical
+// approval_records row, leaving audit dashboards filtering by
+// surface=inline_chat with no per-event signal that an expansion
+// (vs. a fresh task creation) was the gesture.
+func (e *AuditEmitter) LogInlineExpansionApproved(ctx context.Context, agent *store.Agent, requestID string, inner *PendingLiteApproval, expanded *InlineApprovedExpansion) {
+	if e == nil || e.Store == nil || agent == nil || inner == nil || expanded == nil {
+		return
+	}
+	params := map[string]any{
+		"event":              "lite_proxy.task_expand.inline_approved",
+		"approval_id":        inner.ID,
+		"task_id":            expanded.TaskID,
+		"approval_record_id": expanded.ApprovalRecordID,
+		// approval_record_missing semantics match LogInlineTaskApproved
+		// — the row was approved but the canonical record write failed,
+		// so the audit trail is degraded.
+		"approval_record_missing": expanded.ApprovalRecordID == "",
+		"task_status":             expanded.Status,
+		"task_lifetime":           expanded.Lifetime,
+		"surface":                 "inline_chat",
+		"build_sha":               buildSHA(),
+		"clawvisor_version":       version.Version,
+	}
+	paramsJSON, _ := json.Marshal(params)
+	toolUseID := inner.ToolUse.ID
+	id := uuid.NewString()
+	dedupKey := liteProxyEventDedupKey("task_expand.inline_approved", requestID, inner.ID, expanded.TaskID)
+	entry := &store.AuditEntry{
+		ID:         id,
+		UserID:     agent.UserID,
+		AgentID:    &agent.ID,
+		RequestID:  requestID,
+		DedupKey:   &dedupKey,
+		ToolUseID:  &toolUseID,
+		TaskID:     &expanded.TaskID,
+		Timestamp:  time.Now().UTC(),
+		Service:    "runtime.tool_use",
+		Action:     "lite_proxy.task_expand.inline_approved",
+		ParamsSafe: paramsJSON,
+		Decision:   "allow",
+		Outcome:    "inline_expansion_approved",
+	}
+	if err := e.Store.LogAudit(ctx, entry); err != nil && !errors.Is(err, store.ErrConflict) {
+		e.Logger.WarnContext(ctx, "lite-proxy: inline expansion approval audit failed",
+			"agent_id", agent.ID, "approval_id", inner.ID, "task_id", expanded.TaskID, "err", err.Error())
+	}
+}
+
 // LogInlineTaskAutoApproved records the audit trail for an inline task
 // that bypassed the human approval prompt via the conversation-based
 // auto-approval gate. Distinct from LogInlineTaskApproved because the

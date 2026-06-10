@@ -259,6 +259,14 @@ func resolveInlineExpansionApproval(ctx context.Context, req InlineApprovalRewri
 	// conversation would silently steal focus on the next call. The
 	// caller can re-checkout explicitly via /control/task/checkout if
 	// they want to switch.
+	if req.Audit != nil {
+		// Audit-trail symmetry with the task-creation path
+		// (LogInlineTaskApproved): without this row, dashboards
+		// filtering by surface=inline_chat see no per-event signal
+		// that an expansion (vs. a fresh task creation) was the
+		// gesture.
+		req.Audit.LogInlineExpansionApproved(ctx, req.Agent, req.RequestID, resolved, expanded)
+	}
 	return inlineExpansionApprovedReplyAugmentationContext(expanded.TaskID, expanded.Credentials), out
 }
 
