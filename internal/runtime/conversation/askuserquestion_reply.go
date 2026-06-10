@@ -1,31 +1,36 @@
-package llmproxy
+package conversation
 
 import (
 	"encoding/json"
 	"regexp"
 	"sort"
 	"strings"
-
-	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 )
 
-// AskUserQuestion-aware approval parsing for Anthropic bodies. The
-// generic verb parser (conversation.AnthropicApprovalReply) handles
-// the text-reply path; this file handles the case where the inline-
-// approval intercept substituted an AskUserQuestion picker and the
-// user's choice came back as a tool_result block instead of free
-// text. Lives in llmproxy so the conversation package stays
-// harness-agnostic — it doesn't need to know that "AskUserQuestion"
-// is a specific Claude Code harness tool.
+// AskUserQuestion-aware approval parsing for Anthropic bodies.
+//
+// The conversation package owns approval-reply parsing for ALL its
+// downstream callers (lite-proxy via the body editor, runtime proxy
+// via parseApprovalReplyForProvider, ad-hoc tooling). Keeping the
+// AskUserQuestion shape outside this package — as a private fallback
+// inside llmproxy's body editor — silently broke approval-release
+// for the runtime proxy, which only goes through
+// AnthropicApprovalReply. Cubic flagged that as a P1; the shared
+// entry point must handle the shared work.
+//
+// `AskUserQuestion` is a Claude Code harness tool name; conversation
+// already carries Clawvisor-specific knowledge of approval markers
+// and notice tags, so one more harness-tool literal is in keeping
+// with the existing surface area.
 
-// anthropicMessage is the minimal Anthropic message shape both the
-// detector and the body editor decode against. Local to this file
-// so the helpers can be called without re-decoding into ad-hoc
-// anonymous structs at each call site.
-type anthropicMessage struct {
-	Role    string          `json:"role"`
-	Content json.RawMessage `json:"content"`
-}
+// AskUserQuestionToolName is the Claude Code (Anthropic harness)
+// tool the inline-approval intercept synthesizes when AskUserQuestion
+// is declared in the inbound tools[] list. Exported so producers
+// (the intercept) and consumers (this parser) reference one literal.
+const AskUserQuestionToolName = "AskUserQuestion"
+
+// anthropicMessage is defined in parser.go — shared across the
+// package for any Anthropic message decoding.
 
 // anthropicAskUserQuestionApprovalReply scans the latest user turn
 // of an Anthropic body for a tool_result whose parent assistant
@@ -34,38 +39,43 @@ type anthropicMessage struct {
 // approve/deny verb plus the marker, or ("", "") when no matching
 // pair exists. Callers fall through to the text-path result.
 func anthropicAskUserQuestionApprovalReply(body []byte) (verb, id string) {
-	var req struct {
-		Messages []anthropicMessage `json:"messages"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return "", ""
-	}
-	match, ok := findAnthropicAskUserQuestionMatch(req.Messages)
+	match, ok := FindAnthropicAskUserQuestionApprovalMatch(body)
 	if !ok {
 		return "", ""
 	}
 	return match.Verb, match.ApprovalID
 }
 
-// anthropicAskUserQuestionMatch is the structured result of pairing
+// AnthropicAskUserQuestionMatch is the structured result of pairing
 // the latest user-turn AskUserQuestion tool_result with its parent
 // assistant tool_use and the [clawvisor:approval=...] marker in
-// that turn. Both the read-only detector and the body editor
-// consume this — keeping one finder so detection and rewrite never
-// drift on which tool_result counts as the answer.
-type anthropicAskUserQuestionMatch struct {
+// that turn. Both the read-only release path and the body editor
+// (in llmproxy, which still owns the block-shape swap on rewrite)
+// consume this — one finder so detection and rewrite never drift
+// on which tool_result counts as the answer.
+type AnthropicAskUserQuestionMatch struct {
 	UserIdx    int    // index of the user message holding the tool_result
 	ToolUseID  string // tool_use_id of the answered AskUserQuestion call
 	Verb       string // normalized approve/deny verb
 	ApprovalID string // [clawvisor:approval=cv-...] marker the question carried
 }
 
-// findAnthropicAskUserQuestionMatch performs the shared finding
-// logic used by both anthropicAskUserQuestionApprovalReply (detect-
-// only) and replaceAnthropicAskUserQuestionApprovalReply (rewrite).
-// Returns (match, true) on a successful pair or (_, false) when no
-// AskUserQuestion-shaped approval reply exists in the body.
-func findAnthropicAskUserQuestionMatch(messages []anthropicMessage) (anthropicAskUserQuestionMatch, bool) {
+// FindAnthropicAskUserQuestionApprovalMatch parses body and returns
+// the AskUserQuestion-shaped approval reply if one exists.
+// Exported so the llmproxy body editor can locate the matching
+// tool_result block to rewrite — the rewrite itself stays in
+// llmproxy because the block-shape swap is approval-flow-specific.
+func FindAnthropicAskUserQuestionApprovalMatch(body []byte) (AnthropicAskUserQuestionMatch, bool) {
+	var req struct {
+		Messages []anthropicMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return AnthropicAskUserQuestionMatch{}, false
+	}
+	return findAnthropicAskUserQuestionMatch(req.Messages)
+}
+
+func findAnthropicAskUserQuestionMatch(messages []anthropicMessage) (AnthropicAskUserQuestionMatch, bool) {
 	userIdx := -1
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
@@ -74,15 +84,15 @@ func findAnthropicAskUserQuestionMatch(messages []anthropicMessage) (anthropicAs
 		}
 	}
 	if userIdx < 0 {
-		return anthropicAskUserQuestionMatch{}, false
+		return AnthropicAskUserQuestionMatch{}, false
 	}
 	results := extractAnthropicToolResults(messages[userIdx].Content)
 	if len(results) == 0 {
-		return anthropicAskUserQuestionMatch{}, false
+		return AnthropicAskUserQuestionMatch{}, false
 	}
 	questions := collectAnthropicAskUserQuestionInputs(messages, userIdx)
 	if len(questions) == 0 {
-		return anthropicAskUserQuestionMatch{}, false
+		return AnthropicAskUserQuestionMatch{}, false
 	}
 	// Walk tool_results in reverse so the latest answer wins when
 	// the same turn carries multiple tool_results.
@@ -92,7 +102,7 @@ func findAnthropicAskUserQuestionMatch(messages []anthropicMessage) (anthropicAs
 		if !ok {
 			continue
 		}
-		marker := conversation.FindLatestApprovalIDMarker(questionText)
+		marker := FindLatestApprovalIDMarker(questionText)
 		if marker == "" {
 			continue
 		}
@@ -109,18 +119,18 @@ func findAnthropicAskUserQuestionMatch(messages []anthropicMessage) (anthropicAs
 			// tool_result content still releases the hold.
 			answer = tr.Content
 		}
-		v, _ := conversation.ParseApprovalReplyText(answer)
+		v, _ := ParseApprovalReplyText(answer)
 		if v == "" {
 			continue
 		}
-		return anthropicAskUserQuestionMatch{
+		return AnthropicAskUserQuestionMatch{
 			UserIdx:    userIdx,
 			ToolUseID:  tr.ToolUseID,
 			Verb:       v,
 			ApprovalID: marker,
 		}, true
 	}
-	return anthropicAskUserQuestionMatch{}, false
+	return AnthropicAskUserQuestionMatch{}, false
 }
 
 // askUserQuestionAnswerRE pulls the answer label out of the harness-
@@ -151,8 +161,8 @@ func extractAskUserQuestionAnswer(content string) string {
 }
 
 // ExtractAskUserQuestionAnswer is the exported entry point sibling
-// packages call so they share the same wrapper-unwrap logic as the
-// release path.
+// packages and tests call so they share the same wrapper-unwrap
+// logic as the release path.
 func ExtractAskUserQuestionAnswer(content string) string {
 	return extractAskUserQuestionAnswer(content)
 }
@@ -304,11 +314,6 @@ func collectJSONLeafStrings(v any) []string {
 // Cross-conversation safety: callers gate by approvalID before
 // consuming the resolved hold, so a marker captured here can't
 // release a hold from a different conversation.
-//
-// Shared between anthropicAskUserQuestionApprovalReply (read-only
-// detection) and replaceAnthropicAskUserQuestionApprovalReply (body
-// rewrite) so the two never drift on what counts as a per-call
-// marker-search string.
 func collectAnthropicAskUserQuestionInputs(messages []anthropicMessage, userIdx int) map[string]string {
 	out := make(map[string]string)
 	for i := 0; i < userIdx; i++ {

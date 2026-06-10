@@ -311,6 +311,45 @@ func TestAnthropicResponseRewriterFallsBackToTextWhenSubstituteToolCallInvalid(t
 	}
 }
 
+func TestAnthropicResponseRewriterRejectsEmptyToolCallID(t *testing.T) {
+	// A synthetic tool_use with no ID would alias every other
+	// no-ID substitution on the same turn under the same fallback
+	// string — breaking the harness's tool_result-by-id
+	// correlation. Treat empty ID as invalid and fall back to
+	// text, same shape as the empty-Name check.
+	t.Parallel()
+
+	body := []byte(`{
+	  "id":"msg_eid","type":"message","role":"assistant","model":"claude-test",
+	  "content":[{"type":"tool_use","id":"toolu_orig","name":"Bash","input":{}}],
+	  "stop_reason":"tool_use"
+	}`)
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "application/json", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:        false,
+			SubstituteWith: "readable refusal",
+			SubstituteWithToolCall: &SyntheticToolCall{
+				Name:  "AskUserQuestion",
+				ID:    "", // empty — must fall back
+				Input: map[string]any{"questions": []map[string]any{{"question": "?"}}},
+			},
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(result.Body, &out)
+	content := out["content"].([]any)
+	block := content[0].(map[string]any)
+	if block["type"] != "text" {
+		t.Fatalf("expected fallback text block when ID is empty, got %v", block)
+	}
+	if block["text"] != "readable refusal" {
+		t.Fatalf("expected SubstituteWith fallback text, got %v", block)
+	}
+}
+
 func TestAnthropicResponseRewriterFallsBackToTextWhenSubstituteToolCallInvalidSSE(t *testing.T) {
 	// Buffered-SSE counterpart to the JSON test above: the SSE
 	// rewriter must apply the same validity gate as the JSON path

@@ -40,17 +40,12 @@ type anthropicApprovalBodyEditor struct {
 }
 
 func (e anthropicApprovalBodyEditor) LatestApprovalReply() (string, string, bool) {
+	// conversation.AnthropicApprovalReply tries the text path first
+	// and falls back to the AskUserQuestion shape internally, so
+	// every caller of the shared entry point (lite-proxy body
+	// editor, runtime proxy, ad-hoc tooling) sees the same release
+	// behavior.
 	verb, approvalID := conversation.AnthropicApprovalReply(e.body)
-	if verb != "" {
-		return verb, approvalID, true
-	}
-	// Text path didn't match — try the AskUserQuestion path:
-	// the inline-approval intercept may have substituted the
-	// model's tool_use with a picker call, in which case the
-	// user's reply arrives as a tool_result block (not free text).
-	// Lives in llmproxy (not conversation) so the parser package
-	// stays harness-tool-name-agnostic.
-	verb, approvalID = anthropicAskUserQuestionApprovalReply(e.body)
 	return verb, approvalID, verb != ""
 }
 
@@ -174,8 +169,26 @@ func replaceAnthropicApprovalReply(body []byte, expectedVerb, expectedApprovalID
 // match or the verb/approvalID expectation fails. Other blocks
 // (text, image, additional tool_results) pass through unchanged.
 func rewriteAnthropicAskUserQuestionApprovalReply(body []byte, expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
+	match, ok := conversation.FindAnthropicAskUserQuestionApprovalMatch(body)
+	if !ok {
+		return body, false, nil
+	}
+	if match.Verb != expectedVerb {
+		return body, false, nil
+	}
+	if !approvalIDMatchesExpectation(match.ApprovalID, expectedApprovalID) {
+		return body, false, nil
+	}
+	// Re-parse just enough of the body to splice in the rewritten
+	// content. The detector runs against an immutable snapshot;
+	// the rewriter walks the same body to keep top-level keys in
+	// the original order (byte-fidelity invariant the
+	// historystrip's surveyors lean on).
 	var req struct {
-		Messages []anthropicMessage `json:"messages"`
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -184,14 +197,7 @@ func rewriteAnthropicAskUserQuestionApprovalReply(body []byte, expectedVerb, exp
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, false, err
 	}
-	match, ok := findAnthropicAskUserQuestionMatch(req.Messages)
-	if !ok {
-		return body, false, nil
-	}
-	if match.Verb != expectedVerb {
-		return body, false, nil
-	}
-	if !approvalIDMatchesExpectation(match.ApprovalID, expectedApprovalID) {
+	if match.UserIdx < 0 || match.UserIdx >= len(req.Messages) {
 		return body, false, nil
 	}
 	newContent, swapped := swapAnthropicToolResultForTextBlock(req.Messages[match.UserIdx].Content, match.ToolUseID, replacement)

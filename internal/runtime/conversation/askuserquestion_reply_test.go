@@ -1,11 +1,37 @@
-package llmproxy
+package conversation
 
 import "testing"
 
-// AskUserQuestion-aware approval-reply parsing lives in llmproxy
-// (not in the conversation package) so the wire-format layer stays
-// harness-tool-name-agnostic. Coverage for the AskUserQuestion shape
-// lives here, alongside the helper.
+// AskUserQuestion-aware approval-reply parsing lives in this
+// package so every caller of the shared AnthropicApprovalReply
+// entry point (lite-proxy body editor, runtime proxy, ad-hoc
+// tooling) sees the same release behavior. Coverage for the
+// AskUserQuestion shape lives here, alongside the helper.
+
+// TestApprovalReplyForProviderSharedEntryPointHandlesAskUserQuestion
+// is the regression test for the P1 cubic flagged: the shared entry
+// point ApprovalReplyForProvider (which the runtime proxy calls via
+// parseApprovalReplyForProvider) MUST recognize AskUserQuestion
+// tool_result replies, not just the body editor's overlay. Without
+// this, inline approvals release in lite-proxy but silently fail in
+// the runtime proxy.
+func TestApprovalReplyForProviderSharedEntryPointHandlesAskUserQuestion(t *testing.T) {
+	body := []byte(`{
+		"messages": [
+			{"role": "assistant", "content": [
+				{"type": "text", "text": "Clawvisor wants to create a task...\n\n[clawvisor:approval=cv-sharedentry01]"},
+				{"type": "tool_use", "id": "toolu_shared", "name": "AskUserQuestion", "input": {"questions": [{"question": "Approve this task?"}]}}
+			]},
+			{"role": "user", "content": [
+				{"type": "tool_result", "tool_use_id": "toolu_shared", "content": "Your questions have been answered: \"Approve this task?\"=\"yes\". You can now continue with these answers in mind."}
+			]}
+		]
+	}`)
+	verb, id := ApprovalReplyForProvider(ProviderAnthropic, body)
+	if verb != "approve" || id != "cv-sharedentry01" {
+		t.Fatalf("ApprovalReplyForProvider=(%q,%q), want (approve, cv-sharedentry01) — shared entry point must see AskUserQuestion releases", verb, id)
+	}
+}
 
 func TestAnthropicAskUserQuestionApprovalReplyApproves(t *testing.T) {
 	body := []byte(`{
@@ -19,7 +45,7 @@ func TestAnthropicAskUserQuestionApprovalReplyApproves(t *testing.T) {
 			]}
 		]
 	}`)
-	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	verb, id := AnthropicApprovalReply(body)
 	if verb != "approve" {
 		t.Fatalf("verb = %q, want approve from AskUserQuestion result", verb)
 	}
@@ -39,7 +65,7 @@ func TestAnthropicAskUserQuestionApprovalReplyDenies(t *testing.T) {
 			]}
 		]
 	}`)
-	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	verb, id := AnthropicApprovalReply(body)
 	if verb != "deny" {
 		t.Fatalf("verb = %q, want deny", verb)
 	}
@@ -63,7 +89,7 @@ func TestAnthropicAskUserQuestionApprovalReplyBlockContent(t *testing.T) {
 			]}
 		]
 	}`)
-	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	verb, id := AnthropicApprovalReply(body)
 	if verb != "approve" || id != "cv-askuq00000003" {
 		t.Fatalf("verb=%q id=%q, want approve cv-askuq00000003 from block-array tool_result", verb, id)
 	}
@@ -85,7 +111,7 @@ func TestAnthropicAskUserQuestionApprovalReplyWithoutMarkerSkips(t *testing.T) {
 			]}
 		]
 	}`)
-	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	verb, id := AnthropicApprovalReply(body)
 	if verb != "" || id != "" {
 		t.Fatalf("verb=%q id=%q, want empty (no marker → no release)", verb, id)
 	}
@@ -106,7 +132,7 @@ func TestAnthropicAskUserQuestionApprovalReplyIgnoresUnrelatedToolResults(t *tes
 			]}
 		]
 	}`)
-	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	verb, id := AnthropicApprovalReply(body)
 	if verb != "" || id != "" {
 		t.Fatalf("verb=%q id=%q, want empty (non-AskUserQuestion tool_result must not release)", verb, id)
 	}
@@ -138,7 +164,7 @@ func TestAnthropicAskUserQuestionApprovalReplyMultipleCallsScopeMarkerToTheirOwn
 			]}
 		]
 	}`)
-	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	verb, id := AnthropicApprovalReply(body)
 	if verb != "approve" {
 		t.Fatalf("verb = %q, want approve", verb)
 	}
@@ -166,7 +192,7 @@ func TestAnthropicAskUserQuestionApprovalReplyMarkerInSiblingTextBlock(t *testin
 			]}
 		]
 	}`)
-	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	verb, id := AnthropicApprovalReply(body)
 	if verb != "approve" {
 		t.Fatalf("verb = %q, want approve from sibling-text marker", verb)
 	}
@@ -192,7 +218,7 @@ func TestAnthropicAskUserQuestionApprovalReplyClaudeCodeWrapperFormat(t *testing
 			]}
 		]
 	}`)
-	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	verb, id := AnthropicApprovalReply(body)
 	if verb != "approve" {
 		t.Fatalf("verb = %q, want approve from Claude Code wrapper", verb)
 	}
@@ -239,7 +265,7 @@ func TestAnthropicAskUserQuestionApprovalReplyStructuredJSONAnswerPayload(t *tes
 			]}
 		]
 	}`)
-	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	verb, id := AnthropicApprovalReply(body)
 	if verb != "approve" {
 		t.Fatalf("verb = %q, want approve from structured-JSON answer payload", verb)
 	}
@@ -263,7 +289,7 @@ func TestAnthropicAskUserQuestionApprovalReplyStructuredJSONNestedArrayAnswer(t 
 			]}
 		]
 	}`)
-	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	verb, id := AnthropicApprovalReply(body)
 	if verb != "approve" {
 		t.Fatalf("verb = %q, want approve from array-shaped JSON answer", verb)
 	}

@@ -38,23 +38,26 @@ type anthropicJSONResponse struct {
 
 // anthropicSubstituteToolUseBlock converts a SyntheticToolCall into a
 // JSON content block ready to splice into the buffered response.
-// Returns (block, false) if Name is empty or input fails to marshal —
-// callers should fall back to the text substitution in that case.
+// Returns (block, false) when the call is missing fields the wire
+// shape requires — callers fall back to the text substitution in
+// that case. Required fields:
+//
+//   - non-empty Name (rejects unrenderable blocks)
+//   - non-empty ID (correlation key for the harness's eventual
+//     tool_result; a fallback fixed string would alias multiple
+//     substitutions on the same turn)
+//   - Input that round-trips through json.Marshal
 func anthropicSubstituteToolUseBlock(call *SyntheticToolCall) (anthropicJSONContent, bool) {
-	if call == nil || strings.TrimSpace(call.Name) == "" {
+	if call == nil || strings.TrimSpace(call.Name) == "" || call.ID == "" {
 		return anthropicJSONContent{}, false
 	}
 	inputJSON, ok := marshalSyntheticToolCallInput(call)
 	if !ok {
 		return anthropicJSONContent{}, false
 	}
-	id := call.ID
-	if id == "" {
-		id = "toolu_clawvisor_subst"
-	}
 	return anthropicJSONContent{
 		Type:  "tool_use",
-		ID:    id,
+		ID:    call.ID,
 		Name:  call.Name,
 		Input: inputJSON,
 	}, true

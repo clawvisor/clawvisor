@@ -428,7 +428,9 @@ func substituteToolCallsForBlocked(decisions []conversation.ToolUseDecisionRecor
 
 // canRenderSyntheticToolCall mirrors the buffered-path invariant in
 // anthropicSubstituteToolUseBlock: a usable substitute call needs a
-// non-empty Name and Input that round-trips through json.Marshal.
+// non-empty Name, a non-empty ID (correlation key for the eventual
+// tool_result — fallback IDs alias multiple substitutions on the
+// same turn), and Input that round-trips through json.Marshal.
 // Keeping the two transports' validity gates in sync prevents the
 // same blocked decision from rendering as text in the buffered
 // response yet as a tool_use in the streaming response — which
@@ -438,7 +440,7 @@ func canRenderSyntheticToolCall(call *conversation.SyntheticToolCall) bool {
 	if call == nil {
 		return false
 	}
-	if strings.TrimSpace(call.Name) == "" {
+	if strings.TrimSpace(call.Name) == "" || call.ID == "" {
 		return false
 	}
 	input := call.Input

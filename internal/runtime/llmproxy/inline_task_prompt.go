@@ -4,6 +4,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/approvaltext"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
@@ -41,12 +42,13 @@ func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest, approvalID st
 	return renderTaskApprovalPromptWithRiskAndTools(req, approvalID, nil, 0, nil)
 }
 
-// AskUserQuestionToolName is the harness tool that surfaces a structured
-// question UI to the user. When this tool is declared in the inbound
-// request's tools[], the inline approval renderer instructs the model
-// to use it for the yes/no instead of asking via plain text — so the
-// user gets a click-to-answer affordance rather than typing "y".
-const AskUserQuestionToolName = "AskUserQuestion"
+// AskUserQuestionToolName re-exports the canonical constant from
+// the conversation package so producers in llmproxy don't have to
+// import the parser-side package just to reference the tool name.
+// Producer (the inline-approval intercept) and consumer (the
+// AskUserQuestion-aware parser) must agree on the literal; one
+// shared definition keeps them in lockstep.
+const AskUserQuestionToolName = conversation.AskUserQuestionToolName
 
 // askUserQuestionAvailable reports whether AskUserQuestionToolName
 // appears in the request's declared tool list. Match is case-sensitive
