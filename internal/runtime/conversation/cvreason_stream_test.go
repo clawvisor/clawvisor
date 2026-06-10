@@ -3,6 +3,7 @@ package conversation
 import (
 	"bytes"
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -64,6 +65,54 @@ func TestAnthropicStreamRewriteExtractsCvReason(t *testing.T) {
 	}
 	if delivered[0].CvReason != tu.CvReason {
 		t.Errorf("onToolUse CvReason = %q, want %q", delivered[0].CvReason, tu.CvReason)
+	}
+}
+
+// TestOpenAIChatCompletionsSSEStripsCvReasonWithoutPolicyVerdict verifies
+// that the chat-completions SSE rewriter's cvreason-only path produces
+// stripped output bytes and reports Rewritten=true without coercing
+// the policy-rewrite verdict. The replay machinery is shared between
+// policy rewrites and cvreason normalization; this test pins that
+// shared substitution path on the cvreason-only branch.
+func TestOpenAIChatCompletionsSSEStripsCvReasonWithoutPolicyVerdict(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("no OpenAI rewriter")
+	}
+
+	body := []byte(strings.Join([]string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"src/auth.go\",\"cvreason\":\"locate the login handler\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n"))
+
+	var seen ToolUse
+	res, err := rewriter.Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		seen = tu
+		return ToolUseVerdict{Allowed: true}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if seen.CvReason != "locate the login handler" {
+		t.Errorf("eval CvReason = %q, want extracted text", seen.CvReason)
+	}
+	if !res.Rewritten {
+		t.Errorf("Rewritten=false; want true so downstream drops the stale Content-Length")
+	}
+	if strings.Contains(string(res.Body), "cvreason") {
+		t.Errorf("SSE output retained cvreason: %s", res.Body)
+	}
+	if !strings.Contains(string(res.Body), "src/auth.go") {
+		t.Errorf("SSE output lost real params: %s", res.Body)
 	}
 }
 
