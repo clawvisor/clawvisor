@@ -186,10 +186,14 @@ type Store interface {
 	// UpdateTaskEnvelopeFrom atomically applies the merged envelope
 	// (authorized_actions, expected_*, required_credentials, expires_at,
 	// status='active', pending_expansion_json=NULL) only when status
-	// currently matches fromStatus. The CAS guard is the only variant —
-	// there is no non-CAS UpdateTaskEnvelope; an unguarded write would
-	// let a concurrent ExpandDeny's just-applied clear be silently
-	// overwritten by a racing approve verdict. Returns true on win.
+	// currently matches fromStatus AND (when env.ExpectedPendingJSON is
+	// non-empty) pending_expansion_json still equals the snapshot the
+	// caller read. The CAS guard is the only variant — there is no
+	// non-CAS UpdateTaskEnvelope. The pending-snapshot guard closes
+	// the deny+re-expand race: a stale approve whose merged envelope
+	// was built from snapshot A can no longer land if the row's
+	// pending was cleared by a concurrent deny AND replaced by a
+	// fresh expand (whose snapshot B differs). Returns true on win.
 	UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus string, env TaskEnvelopeUpdate, expiresAt time.Time) (bool, error)
 	// UpdateTaskExpiresAt extends expires_at monotonically. Implementations
 	// must not move an existing later deadline backward.
@@ -862,6 +866,15 @@ type PendingTaskExpansion struct {
 // the existing assessment intact (the handler's assessor may be
 // disabled or have failed; we don't blank out the create-time risk
 // just because a re-assessment didn't run).
+//
+// ExpectedPendingJSON is the pending_expansion_json snapshot the caller
+// READ before computing the merged envelope. UpdateTaskEnvelopeFrom
+// guards the CAS on this value (in addition to status) so a stale
+// approve can never overwrite a row whose pending was already cleared
+// AND replaced by a subsequent deny+expand sequence. Empty means the
+// caller did not snapshot — legacy code paths that don't carry the
+// pending shape skip the guard, but the expansion-approve path always
+// fills it.
 type TaskEnvelopeUpdate struct {
 	AuthorizedActions   []TaskAction
 	ExpectedTools       json.RawMessage
@@ -869,6 +882,7 @@ type TaskEnvelopeUpdate struct {
 	RequiredCredentials json.RawMessage
 	RiskLevel           string
 	RiskDetails         json.RawMessage
+	ExpectedPendingJSON json.RawMessage
 }
 
 // Task represents a task-scoped authorization.

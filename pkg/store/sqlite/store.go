@@ -1697,6 +1697,17 @@ func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus strin
 	exp := expiresAt.UTC().Format(time.RFC3339)
 	// Risk columns are conditionally updated — see the postgres impl
 	// for the empty-RiskLevel rationale.
+	//
+	// Pending snapshot guard: sqlite stores pending_expansion_json as
+	// TEXT so byte-equality is what we get; the marshal procedure on
+	// SetTaskPendingExpansion and the caller's re-marshal both go
+	// through Go's encoding/json with the same struct definition, so
+	// the bytes match deterministically.
+	expectedPending := string(env.ExpectedPendingJSON)
+	hasGuard := 0
+	if len(env.ExpectedPendingJSON) > 0 {
+		hasGuard = 1
+	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE tasks SET authorized_actions = ?,
 			expected_tools_json = ?,
@@ -1708,10 +1719,12 @@ func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus strin
 			risk_level = CASE WHEN ? != '' THEN ? ELSE risk_level END,
 			risk_details = CASE WHEN ? != '' THEN ? ELSE risk_details END
 		WHERE id = ? AND status = ?
+		  AND (? = 0 OR pending_expansion_json = ?)
 	`, string(actionsJSON), expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON, exp,
 		env.RiskLevel, env.RiskLevel,
 		env.RiskLevel, string(env.RiskDetails),
-		id, fromStatus)
+		id, fromStatus,
+		hasGuard, expectedPending)
 	if err != nil {
 		return false, err
 	}

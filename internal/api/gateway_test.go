@@ -1145,6 +1145,115 @@ func TestExpand_ConcurrentApproveAndDenyRace(t *testing.T) {
 	}
 }
 
+// TestExpand_StaleApproveRejectedAfterDenyAndReExpand exercises the
+// pending-snapshot CAS guard on UpdateTaskEnvelopeFrom. Sequence:
+// (1) agent expands → pending #A;
+// (2) approve handler reads task with pending #A;
+// (3) before the approve writes, a different caller denies (clearing
+//     pending);
+// (4) agent expands again → pending #B;
+// (5) the original approve from (2) finally writes — its CAS must
+//     LOSE because pending_expansion_json no longer matches snapshot
+//     #A, even though status is again 'pending_scope_expansion'.
+// Without the snapshot guard, the stale approve would grant scope
+// #A that the user already denied. The store-layer test goes
+// directly through UpdateTaskEnvelopeFrom so we exercise the SQL
+// guard (the handler always sets ExpectedPendingJSON, so the only
+// way to assert behavior at the bytes level is from the store).
+func TestExpand_StaleApproveRejectedAfterDenyAndReExpand(t *testing.T) {
+	adapter := newMockAdapter("mock.echo", "echo", "other")
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "automation")
+	sc.activateService(t, env, "mock.echo")
+
+	taskID := sc.createApprovedTask(t, env, "mock.echo", "echo", true)
+
+	// Step 1: pending #A
+	resp := env.do("POST", fmt.Sprintf("/api/tasks/%s/expand", taskID), sc.AgentToken, map[string]any{
+		"expected_tools": []map[string]any{
+			{"tool_name": "mock.echo:other", "why": "Need A"},
+		},
+		"reason": "A",
+	})
+	mustStatus(t, resp, http.StatusAccepted)
+
+	// Step 2: snapshot the task with pending #A
+	resp = env.do("GET", fmt.Sprintf("/api/tasks/%s", taskID), sc.AgentToken, nil)
+	mustStatus(t, resp, http.StatusOK)
+	snapshotA, err := env.Store.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("snapshot A: %v", err)
+	}
+	if snapshotA.PendingExpansion == nil {
+		t.Fatalf("snapshot A has no PendingExpansion")
+	}
+	pendingA, err := json.Marshal(snapshotA.PendingExpansion)
+	if err != nil {
+		t.Fatalf("marshal pending A: %v", err)
+	}
+
+	// Step 3: deny — clears pending and restores status='active'
+	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/expand/deny", taskID), nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	// Step 4: pending #B
+	resp = env.do("POST", fmt.Sprintf("/api/tasks/%s/expand", taskID), sc.AgentToken, map[string]any{
+		"expected_tools": []map[string]any{
+			{"tool_name": "mock.echo:other", "why": "Need B (different reason)"},
+		},
+		"reason": "B",
+	})
+	mustStatus(t, resp, http.StatusAccepted)
+
+	// Step 5: build envUpdate from snapshot A and attempt the stale
+	// write with the snapshot guard. CAS must LOSE because the
+	// stored pending_expansion_json now matches B's bytes, not A's.
+	envUpdate := store.TaskEnvelopeUpdate{
+		AuthorizedActions:   snapshotA.AuthorizedActions,
+		ExpectedTools:       snapshotA.ExpectedTools,
+		ExpectedEgress:      snapshotA.ExpectedEgress,
+		RequiredCredentials: snapshotA.RequiredCredentials,
+		ExpectedPendingJSON: pendingA,
+	}
+	won, err := env.Store.UpdateTaskEnvelopeFrom(
+		context.Background(),
+		taskID,
+		"pending_scope_expansion",
+		envUpdate,
+		time.Now().UTC().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("UpdateTaskEnvelopeFrom: %v", err)
+	}
+	if won {
+		t.Fatalf("CAS won with stale snapshot — pending-snapshot guard regressed; the deny+re-expand sequence must reject the stale approve")
+	}
+
+	// Sanity: a write with the CURRENT (B) snapshot still succeeds.
+	snapshotB, err := env.Store.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("snapshot B: %v", err)
+	}
+	pendingB, err := json.Marshal(snapshotB.PendingExpansion)
+	if err != nil {
+		t.Fatalf("marshal pending B: %v", err)
+	}
+	envUpdate.ExpectedPendingJSON = pendingB
+	won, err = env.Store.UpdateTaskEnvelopeFrom(
+		context.Background(),
+		taskID,
+		"pending_scope_expansion",
+		envUpdate,
+		time.Now().UTC().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("UpdateTaskEnvelopeFrom with current snapshot: %v", err)
+	}
+	if !won {
+		t.Fatalf("CAS lost with the current pending snapshot; the guard should only reject stale writes")
+	}
+}
+
 // TestExpand_DerivedActionRejectedForUnsupportedAction confirms that a
 // service:action where the service exists but the adapter does not
 // support that action is rejected up front.

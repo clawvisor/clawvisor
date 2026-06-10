@@ -1435,6 +1435,13 @@ func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus strin
 	if len(env.RiskDetails) > 0 {
 		riskDetailsJSON = []byte(env.RiskDetails)
 	}
+	// Pending snapshot guard: when supplied, the CAS requires the
+	// stored pending_expansion_json to still match the bytes the
+	// caller read. jsonb equality is semantic so the canonicalized
+	// stored value compares equal to the input regardless of
+	// whitespace / key ordering differences.
+	expectedPending := []byte(env.ExpectedPendingJSON)
+	hasGuard := len(expectedPending) > 0
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE tasks SET authorized_actions = $1,
 			expected_tools_json = $2,
@@ -1446,8 +1453,9 @@ func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus strin
 			risk_level = CASE WHEN $8 != '' THEN $8 ELSE risk_level END,
 			risk_details = CASE WHEN $8 != '' THEN $9::text ELSE risk_details END
 		WHERE id = $6 AND status = $7
+		  AND ($10::boolean = false OR pending_expansion_json = $11::jsonb)
 	`, actionsJSON, expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON, expiresAt, id, fromStatus,
-		env.RiskLevel, string(riskDetailsJSON))
+		env.RiskLevel, string(riskDetailsJSON), hasGuard, string(expectedPending))
 	if err != nil {
 		return false, err
 	}

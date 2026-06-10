@@ -2524,11 +2524,21 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reassessExpansionRisk(task, merged, &envUpdate)
+	// Snapshot the pending row we read so the CAS rejects writes
+	// computed from a stale pending — protects against a deny that
+	// clears pending_expansion_json AND a subsequent expand that
+	// replaces it before our approve write lands. Without this the
+	// CAS would still succeed (status would match again) and a
+	// stale merged envelope would silently overwrite the new
+	// pending state.
+	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
+		envUpdate.ExpectedPendingJSON = pendingJSON
+	}
 	expiresAt := time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 
-	// CAS on status='pending_scope_expansion' so a concurrent
-	// ExpandDeny that landed first via ResolveTaskPendingExpansion
-	// cannot have its just-applied clear overwritten by an approve.
+	// CAS guards on (status='pending_scope_expansion', pending
+	// snapshot matches) so a concurrent ExpandDeny+re-expand
+	// sequence cannot let a stale approve land its merged envelope.
 	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not expand task")
@@ -3094,6 +3104,10 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 		return err
 	}
 	reassessExpansionRisk(task, merged, &envUpdate)
+	// See the ExpandApprove handler — same pending-snapshot CAS guard.
+	if pendingJSON, mErr := json.Marshal(task.PendingExpansion); mErr == nil {
+		envUpdate.ExpectedPendingJSON = pendingJSON
+	}
 	expiresAt := time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)
 	if err != nil {
