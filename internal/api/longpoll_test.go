@@ -257,7 +257,10 @@ func TestGetTask_LongPoll_ScopeExpansionApproval(t *testing.T) {
 
 	// Request scope expansion.
 	resp := env.do("POST", fmt.Sprintf("/api/tasks/%s/expand", taskID), sc.AgentToken, map[string]any{
-		"service": "mock.echo", "action": "ping", "reason": "need ping",
+		"expected_tools": []map[string]any{
+			{"tool_name": "mock.echo:ping", "why": "need ping"},
+		},
+		"reason": "need ping",
 	})
 	mustStatus(t, resp, http.StatusAccepted)
 

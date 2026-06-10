@@ -1367,14 +1367,14 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	expectedToolsJSON := rawJSONOrDefault(task.ExpectedTools, "[]")
 	expectedEgressJSON := rawJSONOrDefault(task.ExpectedEgress, "[]")
 	requiredCredentialsJSON := rawJSONOrDefault(task.RequiredCredentials, "[]")
-	var pendingActionJSON *string
-	if task.PendingAction != nil {
-		b, err := json.Marshal(task.PendingAction)
+	var pendingExpansionJSON *string
+	if task.PendingExpansion != nil {
+		b, err := json.Marshal(task.PendingExpansion)
 		if err != nil {
 			return err
 		}
 		str := string(b)
-		pendingActionJSON = &str
+		pendingExpansionJSON = &str
 	}
 	var approvedAt, expiresAt *string
 	if task.ApprovedAt != nil {
@@ -1389,13 +1389,13 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	approvalRationale := string(task.ApprovalRationale)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
-			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
+			expires_in_seconds, approved_at, expires_at, pending_expansion_json, lifetime,
 			risk_level, risk_details, approval_source, approval_rationale, expected_tools_json,
 			expected_egress_json, required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
 		string(actionsJSON), string(plannedCallsJSON), task.CallbackURL, task.ExpiresInSeconds,
-		approvedAt, expiresAt, pendingActionJSON, task.PendingReason, task.Lifetime,
+		approvedAt, expiresAt, pendingExpansionJSON, task.Lifetime,
 		task.RiskLevel, riskDetails, task.ApprovalSource, approvalRationale, expectedToolsJSON,
 		expectedEgressJSON, requiredCredentialsJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion,
 		task.ChainExtractionMode)
@@ -1405,19 +1405,19 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
 	var actionsStr, plannedCallsStr, createdAt string
-	var approvedAt, expiresAt, pendingActionStr *string
+	var approvedAt, expiresAt, pendingExpansionStr *string
 	var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
 	var chainExtractionMode *string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime, risk_level, risk_details,
+		       pending_expansion_json, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
 		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks WHERE id = ?
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 		&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
-		&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
+		&t.RequestCount, &pendingExpansionStr, &t.Lifetime,
 		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
 		&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
 		&chainExtractionMode)
@@ -1444,12 +1444,12 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 			return nil, fmt.Errorf("unmarshal planned_calls: %w", err)
 		}
 	}
-	if pendingActionStr != nil {
-		var pa store.TaskAction
-		if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err != nil {
-			return nil, fmt.Errorf("unmarshal pending_action: %w", err)
+	if pendingExpansionStr != nil {
+		var pe store.PendingTaskExpansion
+		if err := json.Unmarshal([]byte(*pendingExpansionStr), &pe); err != nil {
+			return nil, fmt.Errorf("unmarshal pending_expansion_json: %w", err)
 		}
-		t.PendingAction = &pa
+		t.PendingExpansion = &pe
 	}
 	if riskDetailsStr != "" {
 		t.RiskDetails = json.RawMessage(riskDetailsStr)
@@ -1494,7 +1494,7 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 
 	query := `SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime, risk_level, risk_details,
+		       pending_expansion_json, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
 		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
@@ -1514,12 +1514,12 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 	for rows.Next() {
 		t := &store.Task{}
 		var actionsStr, plannedCallsStr, createdAt string
-		var approvedAt, expiresAt, pendingActionStr *string
+		var approvedAt, expiresAt, pendingExpansionStr *string
 		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
-			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
+			&t.RequestCount, &pendingExpansionStr, &t.Lifetime,
 			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
 			&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
 			&chainExtractionMode); err != nil {
@@ -1545,12 +1545,12 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 				return nil, 0, fmt.Errorf("unmarshal planned_calls for task %s: %w", t.ID, err)
 			}
 		}
-		if pendingActionStr != nil {
-			var pa store.TaskAction
-			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err != nil {
-				return nil, 0, fmt.Errorf("unmarshal pending_action for task %s: %w", t.ID, err)
+		if pendingExpansionStr != nil {
+			var pe store.PendingTaskExpansion
+			if err := json.Unmarshal([]byte(*pendingExpansionStr), &pe); err != nil {
+				return nil, 0, fmt.Errorf("unmarshal pending_expansion_json for task %s: %w", t.ID, err)
 			}
-			t.PendingAction = &pa
+			t.PendingExpansion = &pe
 		}
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
@@ -1661,6 +1661,10 @@ func (s *Store) UpdateTaskAuthorizedActions(ctx context.Context, id string, acti
 	return nil
 }
 
+// UpdateTaskActions persists a new AuthorizedActions list with a
+// refreshed expiry, sets status='active', and clears any pending
+// expansion. Used outside the envelope-shape expansion flow; see the
+// postgres counterpart for the full contract.
 func (s *Store) UpdateTaskActions(ctx context.Context, id string, actions []store.TaskAction, expiresAt time.Time) error {
 	actionsJSON, err := json.Marshal(actions)
 	if err != nil {
@@ -1669,7 +1673,7 @@ func (s *Store) UpdateTaskActions(ctx context.Context, id string, actions []stor
 	exp := expiresAt.UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE tasks SET authorized_actions = ?, expires_at = ?, status = 'active',
-			pending_action = NULL, pending_reason = ''
+			pending_expansion_json = NULL
 		WHERE id = ?
 	`, string(actionsJSON), exp, id)
 	if err != nil {
@@ -1680,6 +1684,32 @@ func (s *Store) UpdateTaskActions(ctx context.Context, id string, actions []stor
 		return store.ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus string, env store.TaskEnvelopeUpdate, expiresAt time.Time) (bool, error) {
+	actionsJSON, err := json.Marshal(env.AuthorizedActions)
+	if err != nil {
+		return false, err
+	}
+	expectedToolsJSON := rawJSONOrDefault(env.ExpectedTools, "[]")
+	expectedEgressJSON := rawJSONOrDefault(env.ExpectedEgress, "[]")
+	requiredCredentialsJSON := rawJSONOrDefault(env.RequiredCredentials, "[]")
+	exp := expiresAt.UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET authorized_actions = ?,
+			expected_tools_json = ?,
+			expected_egress_json = ?,
+			required_credentials_json = ?,
+			expires_at = ?,
+			status = 'active',
+			pending_expansion_json = NULL
+		WHERE id = ? AND status = ?
+	`, string(actionsJSON), expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON, exp, id, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (s *Store) UpdateTaskExpiresAt(ctx context.Context, id string, expiresAt time.Time) error {
@@ -1707,25 +1737,44 @@ func (s *Store) IncrementTaskRequestCount(ctx context.Context, id string) error 
 	return err
 }
 
-func (s *Store) SetTaskPendingExpansion(ctx context.Context, id string, action *store.TaskAction, reason string) error {
-	var pendingActionJSON *string
-	if action != nil {
-		b, _ := json.Marshal(action)
-		str := string(b)
-		pendingActionJSON = &str
+func (s *Store) SetTaskPendingExpansion(ctx context.Context, id string, pending *store.PendingTaskExpansion) (bool, error) {
+	if pending == nil {
+		return false, fmt.Errorf("SetTaskPendingExpansion: pending is required; use ResolveTaskPendingExpansion to clear")
 	}
-	res, err := s.db.ExecContext(ctx, `
-		UPDATE tasks SET status = 'pending_scope_expansion', pending_action = ?, pending_reason = ?
-		WHERE id = ?
-	`, pendingActionJSON, reason, id)
+	pendingJSON, err := json.Marshal(pending)
 	if err != nil {
-		return err
+		return false, err
+	}
+	str := string(pendingJSON)
+	// CAS on 'active' or 'expired' — see the postgres impl for the
+	// revoked-task revival rationale.
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = 'pending_scope_expansion', pending_expansion_json = ?
+		WHERE id = ? AND status IN ('active', 'expired')
+	`, str, id)
+	if err != nil {
+		return false, err
 	}
 	n, _ := res.RowsAffected()
-	if n == 0 {
-		return store.ErrNotFound
+	return n > 0, nil
+}
+
+func (s *Store) ResolveTaskPendingExpansion(ctx context.Context, id string, newStatus store.ResolveExpansionStatus) (bool, error) {
+	switch newStatus {
+	case store.ResolveExpansionStatusActive, store.ResolveExpansionStatusExpired:
+		// allowed
+	default:
+		return false, fmt.Errorf("ResolveTaskPendingExpansion: invalid newStatus %q", newStatus)
 	}
-	return nil
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = ?, pending_expansion_json = NULL
+		WHERE id = ? AND status = 'pending_scope_expansion'
+	`, string(newStatus), id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (s *Store) RevokeTask(ctx context.Context, id, userID string) error {
@@ -1759,7 +1808,7 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions,
 		       planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime, risk_level, risk_details,
+		       pending_expansion_json, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
 		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < datetime('now')
@@ -1774,12 +1823,12 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		t := &store.Task{}
 		var actionsStr, createdAt string
 		var plannedCallsStr *string
-		var approvedAt, expiresAt, pendingActionStr *string
+		var approvedAt, expiresAt, pendingExpansionStr *string
 		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
-			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
+			&t.RequestCount, &pendingExpansionStr, &t.Lifetime,
 			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
 			&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
 			&chainExtractionMode); err != nil {
@@ -1805,12 +1854,12 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 				return nil, fmt.Errorf("unmarshal planned_calls for task %s: %w", t.ID, err)
 			}
 		}
-		if pendingActionStr != nil {
-			var pa store.TaskAction
-			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err != nil {
-				return nil, fmt.Errorf("unmarshal pending_action for task %s: %w", t.ID, err)
+		if pendingExpansionStr != nil {
+			var pe store.PendingTaskExpansion
+			if err := json.Unmarshal([]byte(*pendingExpansionStr), &pe); err != nil {
+				return nil, fmt.Errorf("unmarshal pending_expansion_json for task %s: %w", t.ID, err)
 			}
-			t.PendingAction = &pa
+			t.PendingExpansion = &pe
 		}
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
@@ -1842,7 +1891,7 @@ func (s *Store) ListExpiredInlineChatPendingTasks(ctx context.Context, cutoff ti
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions,
 		       planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime, risk_level, risk_details,
+		       pending_expansion_json, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
 		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks
@@ -1860,12 +1909,12 @@ func (s *Store) ListExpiredInlineChatPendingTasks(ctx context.Context, cutoff ti
 		t := &store.Task{}
 		var actionsStr, createdAt string
 		var plannedCallsStr *string
-		var approvedAt, expiresAt, pendingActionStr *string
+		var approvedAt, expiresAt, pendingExpansionStr *string
 		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
-			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
+			&t.RequestCount, &pendingExpansionStr, &t.Lifetime,
 			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
 			&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
 			&chainExtractionMode); err != nil {
@@ -1891,12 +1940,12 @@ func (s *Store) ListExpiredInlineChatPendingTasks(ctx context.Context, cutoff ti
 				return nil, fmt.Errorf("unmarshal planned_calls for task %s: %w", t.ID, err)
 			}
 		}
-		if pendingActionStr != nil {
-			var pa store.TaskAction
-			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err != nil {
-				return nil, fmt.Errorf("unmarshal pending_action for task %s: %w", t.ID, err)
+		if pendingExpansionStr != nil {
+			var pe store.PendingTaskExpansion
+			if err := json.Unmarshal([]byte(*pendingExpansionStr), &pe); err != nil {
+				return nil, fmt.Errorf("unmarshal pending_expansion_json for task %s: %w", t.ID, err)
 			}
-			t.PendingAction = &pa
+			t.PendingExpansion = &pe
 		}
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)

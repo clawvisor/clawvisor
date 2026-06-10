@@ -776,19 +776,89 @@ func formatScopeExpansionMessage(req notify.ScopeExpansionRequest) string {
 	sb.WriteString(fmt.Sprintf("<b>Agent:</b> %s\n", html.EscapeString(req.AgentName)))
 	sb.WriteString(fmt.Sprintf("<b>Task:</b> %s\n", html.EscapeString(req.Purpose)))
 
-	mode := "auto-execute"
-	if !req.NewAction.AutoExecute {
-		mode = "requires per-request approval"
+	if len(req.AddedTools) > 0 {
+		sb.WriteString("\n<b>New tools:</b>\n")
+		for _, t := range req.AddedTools {
+			sb.WriteString(fmt.Sprintf("• %s%s — %s\n",
+				html.EscapeString(t.ToolName),
+				expansionToolDisposition(t),
+				html.EscapeString(t.Why)))
+		}
 	}
-	sb.WriteString(fmt.Sprintf("\n<b>New action:</b> %s (%s)\n",
-		html.EscapeString(display.FormatServiceAction(req.NewAction.Service, req.NewAction.Action)),
-		mode))
+	if len(req.ReplacedTools) > 0 {
+		sb.WriteString("\n<b>Updated tools (why replaced):</b>\n")
+		for _, t := range req.ReplacedTools {
+			sb.WriteString(fmt.Sprintf("• %s%s\n   was: %s\n   now: %s\n",
+				html.EscapeString(t.New.ToolName),
+				expansionToolDisposition(t.New),
+				html.EscapeString(t.Prior.Why),
+				html.EscapeString(t.New.Why)))
+		}
+	}
+	if len(req.AddedEgress) > 0 {
+		sb.WriteString("\n<b>New egress:</b>\n")
+		for _, e := range req.AddedEgress {
+			sb.WriteString(fmt.Sprintf("• %s — %s\n",
+				html.EscapeString(e.Host), html.EscapeString(e.Why)))
+		}
+	}
+	if len(req.ReplacedEgress) > 0 {
+		sb.WriteString("\n<b>Updated egress (why replaced):</b>\n")
+		for _, e := range req.ReplacedEgress {
+			sb.WriteString(fmt.Sprintf("• %s\n   was: %s\n   now: %s\n",
+				html.EscapeString(e.New.Host),
+				html.EscapeString(e.Prior.Why),
+				html.EscapeString(e.New.Why)))
+		}
+	}
+	if len(req.AddedCredentials) > 0 {
+		sb.WriteString("\n<b>New credentials:</b>\n")
+		for _, c := range req.AddedCredentials {
+			id := c.VaultItemID
+			if id == "" {
+				id = c.VaultItemHandle
+			}
+			sb.WriteString(fmt.Sprintf("• %s — %s\n",
+				html.EscapeString(id), html.EscapeString(c.Why)))
+		}
+	}
+	if len(req.ReplacedCredentials) > 0 {
+		sb.WriteString("\n<b>Updated credentials (why replaced):</b>\n")
+		for _, c := range req.ReplacedCredentials {
+			id := c.New.VaultItemID
+			if id == "" {
+				id = c.New.VaultItemHandle
+			}
+			sb.WriteString(fmt.Sprintf("• %s\n   was: %s\n   now: %s\n",
+				html.EscapeString(id),
+				html.EscapeString(c.Prior.Why),
+				html.EscapeString(c.New.Why)))
+		}
+	}
 
 	if req.Reason != "" {
 		sb.WriteString(fmt.Sprintf("\n<b>Reason:</b> %s\n", html.EscapeString(req.Reason)))
 	}
 
 	return sb.String()
+}
+
+// expansionToolDisposition renders the auto-execute safety posture
+// next to a tool entry's name when the entry would materialize as a
+// gateway scope. Local-harness tools (GatewayAction=false) return ""
+// so the renderer omits the marker.
+//
+// Telegram is the primary mobile approval surface — without this
+// marker, a user widening a task they expected to gate per-call could
+// silently flip to auto-execute for the new action.
+func expansionToolDisposition(t notify.ExpansionTool) string {
+	if !t.GatewayAction {
+		return ""
+	}
+	if t.AutoExecute {
+		return " <i>(auto-execute)</i>"
+	}
+	return " <i>(per-call approval)</i>"
 }
 
 func formatConnectionRequestMessage(req notify.ConnectionRequest) string {

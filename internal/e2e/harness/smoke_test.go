@@ -620,7 +620,10 @@ func TestHarnessSmokeTaskExpand(t *testing.T) {
 	}
 
 	// Expand with fetch_url.
-	expandBody := `{"service": "test.echo", "action": "fetch_url", "auto_execute": true, "reason": "need fetch"}`
+	expandBody := `{
+		"expected_tools": [{"tool_name": "test.echo:fetch_url", "why": "need fetch for downstream summary"}],
+		"reason": "need fetch"
+	}`
 	resp, _ = sess.Client.Post("https://"+APIHost+"/api/tasks/"+created.TaskID+"/expand", "application/json", bytes.NewBufferString(expandBody))
 	eb, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1123,7 +1124,12 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 //   - Standing tasks: nil out the sentinel expiry so it doesn't leak.
 //   - Active session tasks past their expiry: report status as "expired"
 //     even if the background cleanup goroutine hasn't swept them yet.
+//   - Pending-scope-expansion tasks: populate PendingDerivedActions
+//     so clients can render the auto-execute disposition for each
+//     derived gateway scope without replicating the hardcoded-approval
+//     table client-side.
 func sanitizeTaskForResponse(t *store.Task) (nowExpired bool) {
+	populatePendingDerivedActions(t)
 	if t.Lifetime == "standing" {
 		t.ExpiresAt = nil
 		t.ExpiresInSeconds = 0
@@ -1134,6 +1140,82 @@ func sanitizeTaskForResponse(t *store.Task) (nowExpired bool) {
 		return true
 	}
 	return false
+}
+
+// populatePendingDerivedActions fills the response-only
+// PendingDerivedActions field on a task in pending_scope_expansion.
+// Each ExpectedTool whose tool_name parses as service:action is
+// materialized into its effective TaskAction so the reviewer sees:
+//   - which service / action will be granted,
+//   - the per-entry why (carried into ExpansionRationale),
+//   - the AutoExecute disposition: derived NEW actions always land with
+//     AutoExecute=false (strict opt-in), and REPLACED actions preserve
+//     the parent's AutoExecute. The reviewer relaxes per-action via
+//     the dashboard's scope-overrides surface after approving.
+//
+// A corrupt pending row produces no derived actions — the read endpoint
+// can still return the rest of the task, and buildExpansionApprovalUpdate
+// will surface the corruption on approve.
+func populatePendingDerivedActions(t *store.Task) {
+	if t == nil {
+		return
+	}
+	derived, err := derivedActionsFromPending(t)
+	if err != nil || len(derived) == 0 {
+		return
+	}
+	t.PendingDerivedActions = derived
+}
+
+// derivedActionsFromPending returns the TaskAction entries that the
+// currently-pending expansion proposes — net-new actions plus
+// replacements of existing entries' rationale. The filter is keyed on
+// the CURRENT additions' ExpectedTools service:action set, not on
+// whether the merged entry has a non-empty ExpansionRationale: that
+// rationale persists from prior approved expansions and would
+// otherwise leak into the pending diff on re-expansion.
+//
+// Shared by populatePendingDerivedActions (response rendering) and
+// buildExpansionApprovalUpdate (persistence) so the two paths can't
+// drift on "what counts as a derived action".
+//
+// Returns (nil, nil) when the task is not in pending_scope_expansion
+// or has no PendingExpansion — both are normal cases for non-pending
+// reads. Returns a non-nil error only when the pending JSON is corrupt;
+// callers decide whether to fail-loud (approve path) or skip silently
+// (read path).
+func derivedActionsFromPending(t *store.Task) ([]store.TaskAction, error) {
+	if t == nil || t.Status != "pending_scope_expansion" || t.PendingExpansion == nil {
+		return nil, nil
+	}
+	additions, err := pendingExpansionToEnvelope(t.PendingExpansion)
+	if err != nil {
+		return nil, err
+	}
+	// Build the set of (service, action) keys that the CURRENT
+	// additions actually propose. Only entries in this set should
+	// surface as derived — a prior expansion's rationale on a parent
+	// action would otherwise misrepresent itself as part of this
+	// pending diff.
+	currentKeys := make(map[string]struct{}, len(additions.ExpectedTools))
+	for _, tool := range additions.ExpectedTools {
+		service, action, ok := parseToolNameAsServiceAction(tool.ToolName)
+		if !ok {
+			continue
+		}
+		currentKeys[authorizedActionKey(service, action)] = struct{}{}
+	}
+	if len(currentKeys) == 0 {
+		return nil, nil
+	}
+	merged := mergeAuthorizedActionsFromExpansion(t.AuthorizedActions, additions.ExpectedTools)
+	var derived []store.TaskAction
+	for _, a := range merged {
+		if _, proposed := currentKeys[authorizedActionKey(a.Service, a.Action)]; proposed {
+			derived = append(derived, a)
+		}
+	}
+	return derived, nil
 }
 
 // ── Approve ───────────────────────────────────────────────────────────────────
@@ -1951,14 +2033,23 @@ func (h *TasksHandler) End(w http.ResponseWriter, r *http.Request) {
 
 // ── Expand ────────────────────────────────────────────────────────────────────
 
+// expandTaskRequest mirrors the runtime envelope the agent posts at task
+// creation time. The reason is the one-line summary of why these
+// additions are needed — it gets surfaced verbatim in the approval
+// prompt (inline + dashboard + Telegram). The body intentionally
+// excludes purpose / lifetime / expires_in_seconds: an expansion
+// inherits those from the parent task.
 type expandTaskRequest struct {
-	Service     string `json:"service"`
-	Action      string `json:"action"`
-	AutoExecute bool   `json:"auto_execute"`
-	Reason      string `json:"reason"`
+	ExpectedTools       []runtimetasks.ExpectedTool       `json:"expected_tools,omitempty"`
+	ExpectedEgress      []runtimetasks.ExpectedEgress     `json:"expected_egress,omitempty"`
+	RequiredCredentials []runtimetasks.RequiredCredential `json:"required_credentials,omitempty"`
+	Reason              string                            `json:"reason"`
 }
 
-// Expand requests adding a new action to a task's scope.
+// Expand requests adding tools / egress / credentials to a task's
+// envelope. The body shape mirrors task creation so an agent that
+// realizes mid-task it needs more capabilities can declare the same
+// kind of (tool, why) entries it would have declared up front.
 //
 // POST /api/tasks/{id}/expand
 // Auth: agent bearer token
@@ -1975,42 +2066,49 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Service == "" || req.Action == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service and action are required")
+
+	if strings.TrimSpace(req.Reason) == "" {
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error:         "missing required field: reason",
+			Code:          "INVALID_REQUEST",
+			MissingFields: []string{"reason"},
+			Hint:          "reason is the one-line summary surfaced verbatim in the approval prompts (Telegram, dashboard, inline). The intent verifier also reads it via expansion_rationale, so an empty value degrades every downstream surface.",
+		})
 		return
 	}
 
-	// Validate service and action exist.
-	serviceType, serviceAlias := parseServiceAlias(req.Service)
-	if isLocalService(serviceType) {
-		if err := h.validateLocalService(ctx, agent.UserID, serviceType, req.Action); err != nil {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
-			return
-		}
+	additions := runtimetasks.Envelope{
+		ExpectedTools:       req.ExpectedTools,
+		ExpectedEgress:      req.ExpectedEgress,
+		RequiredCredentials: req.RequiredCredentials,
 	}
-	if !isGuardVirtualService(serviceType) && !isLocalService(serviceType) {
-		adapter, ok := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
-		if !ok {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-				fmt.Sprintf("unknown service %q", req.Service))
-			return
-		}
-		if !adapterSupportsAction(adapter, req.Action) {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-				fmt.Sprintf("service %q does not support action %q", serviceType, req.Action))
-			return
-		}
-		if !h.serviceActivated(ctx, agent.UserID, serviceType, serviceAlias, adapter) {
-			code, userErr, _ := serviceNotActivatedResponse(ctx, h.vault, h.st, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, adapter)
-			writeError(w, http.StatusBadRequest, code, userErr)
-			return
-		}
+	if !envelopeHasAdditions(additions) {
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error: "expansion must declare at least one new expected_tools, expected_egress, or required_credentials entry",
+			Code:  "INVALID_REQUEST",
+			Hint:  "Send the same envelope shape used at task creation: a list of {tool_name, why} (and/or egress/credentials) describing the scope you now need.",
+			Example: map[string]any{
+				"expected_tools": []map[string]any{
+					{"tool_name": "Edit", "why": "Apply fixes to the processing script"},
+				},
+				"reason": "Need to write a local script to process the fetched results",
+			},
+		})
+		return
 	}
-
-	// Validate hardcode.
-	if req.AutoExecute && RequiresHardcodedApproval(req.Service, req.Action) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-			fmt.Sprintf("action %s:%s has hardcoded approval — auto_execute must be false", req.Service, req.Action))
+	if issues := runtimepolicy.ValidateTaskEnvelopeAdditions(additions); len(issues) > 0 {
+		var messages []string
+		var fields []string
+		for _, issue := range issues {
+			messages = append(messages, issue.Field+": "+issue.Message)
+			fields = append(fields, issue.Field)
+		}
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error:         strings.Join(messages, "; "),
+			Code:          "INVALID_REQUEST",
+			MissingFields: fields,
+			Hint:          "Each expansion entry must declare a specific tool / host / credential with a valid shape and a human-readable why.",
+		})
 		return
 	}
 
@@ -2027,6 +2125,13 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
 		return
 	}
+	if task.AgentID != agent.ID {
+		// Agent-bound: an agent may not expand another agent's task, even
+		// under the same user. Cross-agent expansion would silently
+		// broaden an unrelated session's scope.
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
+		return
+	}
 	if task.Status != "active" && task.Status != "expired" {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task must be active or expired to expand")
 		return
@@ -2037,18 +2142,94 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pendingAction := &store.TaskAction{
-		Service:     req.Service,
-		Action:      req.Action,
-		AutoExecute: req.AutoExecute,
+	parentEnv, err := runtimetasks.EnvelopeFromTask(task)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load task envelope")
+		return
+	}
+	merge := runtimetasks.MergeEnvelopes(parentEnv, additions)
+
+	// Validate derived gateway scopes BEFORE landing the pending state.
+	// Each ExpectedTool whose tool_name parses as "service:action" will
+	// be materialized as an AuthorizedAction on approve (see
+	// mergeAuthorizedActionsFromExpansion), so it must pass the same
+	// service-exists / adapter-supports / service-activated / OAuth-scope
+	// / hardcoded-approval gates that Create runs up front. Without this
+	// check, a user could approve a (service, action) pair that Create
+	// would have rejected — and the expanded scope would be unusable
+	// after the round-trip.
+	for i, tool := range additions.ExpectedTools {
+		service, action, isGatewayAction := parseToolNameAsServiceAction(tool.ToolName)
+		if !isGatewayAction {
+			continue
+		}
+		field := fmt.Sprintf("expected_tools[%d]", i)
+		if detail, status, ok := h.validateDerivedAuthorizedAction(ctx, agent.UserID, service, action, field); !ok {
+			writeDetailedError(w, status, detail)
+			return
+		}
 	}
 
-	if err := h.st.SetTaskPendingExpansion(ctx, taskID, pendingAction, req.Reason); err != nil {
+	// Validate added AND replaced credentials. Replacement is keyed
+	// per-kind (id vs. handle) so a replacement always preserves the
+	// identifier kind — but the literal id/handle string can still
+	// change between parent and addition (e.g. agent re-spelled the
+	// vault item with an account alias). Without revalidating the New
+	// side, an expansion could land a replacement whose new identifier
+	// doesn't resolve to a real vault item.
+	credsToValidate := append([]runtimetasks.RequiredCredential(nil), merge.AddedCredentials...)
+	for _, r := range merge.ReplacedCredentials {
+		credsToValidate = append(credsToValidate, r.New)
+	}
+	if len(credsToValidate) > 0 {
+		if err := h.validateTaskRequiredCredentials(ctx, task, credsToValidate); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+			return
+		}
+	}
+
+	pending := &store.PendingTaskExpansion{
+		Reason: req.Reason,
+	}
+	if len(additions.ExpectedTools) > 0 {
+		b, err := json.Marshal(additions.ExpectedTools)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not encode expected_tools")
+			return
+		}
+		pending.ExpectedTools = b
+	}
+	if len(additions.ExpectedEgress) > 0 {
+		b, err := json.Marshal(additions.ExpectedEgress)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not encode expected_egress")
+			return
+		}
+		pending.ExpectedEgress = b
+	}
+	if len(additions.RequiredCredentials) > 0 {
+		b, err := json.Marshal(additions.RequiredCredentials)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not encode required_credentials")
+			return
+		}
+		pending.RequiredCredentials = b
+	}
+
+	won, err := h.st.SetTaskPendingExpansion(ctx, taskID, pending)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not request scope expansion")
 		return
 	}
-	task.PendingAction = pendingAction
-	task.PendingReason = req.Reason
+	if !won {
+		// Race lost: the row left 'active'/'expired' between our load
+		// and the CAS write (cleanup sweep, revocation, concurrent
+		// expansion). 409 surfaces this honestly instead of stamping
+		// pending_scope_expansion onto a terminal task.
+		writeError(w, http.StatusConflict, "INVALID_STATE", "task is no longer in a state that can be expanded; re-fetch and retry")
+		return
+	}
+	task.PendingExpansion = pending
 	task.Status = "pending_scope_expansion"
 	if err := h.createCanonicalTaskApproval(ctx, task, "task_expand"); err != nil {
 		h.logger.ErrorContext(ctx, "failed to create canonical scope expansion approval", "task_id", taskID, "err", err)
@@ -2059,15 +2240,21 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		approveURL := fmt.Sprintf("%s/dashboard/tasks?action=expand_approve&task_id=%s", h.baseURL, taskID)
 		denyURL := fmt.Sprintf("%s/dashboard/tasks?action=expand_deny&task_id=%s", h.baseURL, taskID)
 
+		derivedByKey := indexDerivedActionsByKey(task.AuthorizedActions, additions.ExpectedTools)
 		if msgID, err := h.notifier.SendScopeExpansionRequest(ctx, notify.ScopeExpansionRequest{
-			TaskID:     taskID,
-			UserID:     agent.UserID,
-			AgentName:  agent.Name,
-			Purpose:    task.Purpose,
-			NewAction:  *pendingAction,
-			Reason:     req.Reason,
-			ApproveURL: approveURL,
-			DenyURL:    denyURL,
+			TaskID:              taskID,
+			UserID:              agent.UserID,
+			AgentName:           agent.Name,
+			Purpose:             task.Purpose,
+			AddedTools:          notifyExpansionTools(merge.AddedTools, derivedByKey),
+			ReplacedTools:       notifyReplacedExpansionTools(merge.ReplacedTools, derivedByKey),
+			AddedEgress:         notifyExpansionEgress(merge.AddedEgress),
+			ReplacedEgress:      notifyReplacedExpansionEgress(merge.ReplacedEgress),
+			AddedCredentials:    notifyExpansionCredentials(merge.AddedCredentials),
+			ReplacedCredentials: notifyReplacedExpansionCredentials(merge.ReplacedCredentials),
+			Reason:              req.Reason,
+			ApproveURL:          approveURL,
+			DenyURL:             denyURL,
 		}); err != nil {
 			h.logger.WarnContext(ctx, "failed to send scope expansion notification", "task_id", taskID, "err", err)
 		} else if msgID != "" {
@@ -2091,8 +2278,148 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"task_id": taskID,
 		"status":  "pending_scope_expansion",
-		"message": fmt.Sprintf("Scope expansion requested for %s:%s. Waiting for approval.", req.Service, req.Action),
+		"message": "Scope expansion requested. Waiting for approval.",
 	})
+}
+
+// notifyExpansion* helpers translate envelope merge results from the
+// runtime tasks types into the pkg/notify wire shape. AGENTS.md keeps
+// pkg/ free of internal/ imports, so the translation has to live in
+// the handler (which already imports both sides). Each helper is a
+// straight field-by-field copy — kept narrow so the boundary stays
+// auditable.
+//
+// For tool entries, we also fold in the auto-execute disposition each
+// derived gateway scope would land with. Without this, Telegram-only
+// approvers see only the tool_name + why and have no signal whether
+// approve grants unmediated execution. The lookup map is keyed on
+// "service:action" (lowercased).
+func notifyExpansionTools(in []runtimetasks.ExpectedTool, derived map[string]store.TaskAction) []notify.ExpansionTool {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]notify.ExpansionTool, len(in))
+	for i, t := range in {
+		out[i] = expansionToolEntry(t, derived)
+	}
+	return out
+}
+
+func notifyReplacedExpansionTools(in []runtimetasks.ReplacedExpectedTool, derived map[string]store.TaskAction) []notify.ReplacedExpansionTool {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]notify.ReplacedExpansionTool, len(in))
+	for i, r := range in {
+		out[i] = notify.ReplacedExpansionTool{
+			Prior: notify.ExpansionTool{ToolName: r.Prior.ToolName, Why: r.Prior.Why},
+			New:   expansionToolEntry(r.New, derived),
+		}
+	}
+	return out
+}
+
+// expansionToolEntry stamps the gateway-action / auto-execute disposition
+// onto an outgoing ExpansionTool. Local-harness tools (no service:action
+// shape) leave both fields false.
+func expansionToolEntry(t runtimetasks.ExpectedTool, derived map[string]store.TaskAction) notify.ExpansionTool {
+	entry := notify.ExpansionTool{ToolName: t.ToolName, Why: t.Why}
+	service, action, ok := parseToolNameAsServiceAction(t.ToolName)
+	if !ok {
+		return entry
+	}
+	entry.GatewayAction = true
+	if a, found := derived[authorizedActionKey(service, action)]; found {
+		entry.AutoExecute = a.AutoExecute
+	}
+	return entry
+}
+
+// indexDerivedActionsByKey precomputes the (service, action) →
+// AuthorizedAction lookup for the additions' derived gateway scopes.
+// Used by the notify translation to populate the per-entry auto-execute
+// disposition. Reuses mergeAuthorizedActionsFromExpansion so the
+// notification surface sees the same disposition the approve path
+// will persist. Keyed via authorizedActionKey so the lookup matches
+// regardless of the caller's casing.
+func indexDerivedActionsByKey(parent []store.TaskAction, additions []runtimetasks.ExpectedTool) map[string]store.TaskAction {
+	merged := mergeAuthorizedActionsFromExpansion(parent, additions)
+	out := make(map[string]store.TaskAction, len(merged))
+	for _, a := range merged {
+		out[authorizedActionKey(a.Service, a.Action)] = a
+	}
+	return out
+}
+
+func notifyExpansionEgress(in []runtimetasks.ExpectedEgress) []notify.ExpansionEgress {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]notify.ExpansionEgress, len(in))
+	for i, e := range in {
+		out[i] = notify.ExpansionEgress{Host: e.Host, Why: e.Why}
+	}
+	return out
+}
+
+func notifyReplacedExpansionEgress(in []runtimetasks.ReplacedExpectedEgress) []notify.ReplacedExpansionEgress {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]notify.ReplacedExpansionEgress, len(in))
+	for i, r := range in {
+		out[i] = notify.ReplacedExpansionEgress{
+			Prior: notify.ExpansionEgress{Host: r.Prior.Host, Why: r.Prior.Why},
+			New:   notify.ExpansionEgress{Host: r.New.Host, Why: r.New.Why},
+		}
+	}
+	return out
+}
+
+func notifyExpansionCredentials(in []runtimetasks.RequiredCredential) []notify.ExpansionCredential {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]notify.ExpansionCredential, len(in))
+	for i, c := range in {
+		out[i] = notify.ExpansionCredential{
+			VaultItemID:     c.VaultItemID,
+			VaultItemHandle: c.VaultItemHandle,
+			Why:             c.Why,
+		}
+	}
+	return out
+}
+
+func notifyReplacedExpansionCredentials(in []runtimetasks.ReplacedRequiredCredential) []notify.ReplacedExpansionCredential {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]notify.ReplacedExpansionCredential, len(in))
+	for i, r := range in {
+		out[i] = notify.ReplacedExpansionCredential{
+			Prior: notify.ExpansionCredential{
+				VaultItemID:     r.Prior.VaultItemID,
+				VaultItemHandle: r.Prior.VaultItemHandle,
+				Why:             r.Prior.Why,
+			},
+			New: notify.ExpansionCredential{
+				VaultItemID:     r.New.VaultItemID,
+				VaultItemHandle: r.New.VaultItemHandle,
+				Why:             r.New.Why,
+			},
+		}
+	}
+	return out
+}
+
+// envelopeHasAdditions reports whether at least one envelope field
+// carries a non-empty entry. Used by Expand to reject empty bodies
+// before reaching the validator, which would otherwise let an empty
+// body silently flip the task to pending_scope_expansion with no
+// actual delta.
+func envelopeHasAdditions(env runtimetasks.Envelope) bool {
+	return len(env.ExpectedTools) > 0 || len(env.ExpectedEgress) > 0 || len(env.RequiredCredentials) > 0
 }
 
 // ExpandApprove approves a pending scope expansion.
@@ -2121,22 +2448,28 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
 		return
 	}
-	if task.Status != "pending_scope_expansion" || task.PendingAction == nil {
+	if task.Status != "pending_scope_expansion" || task.PendingExpansion == nil {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task has no pending scope expansion")
 		return
 	}
 
-	// Carry the expansion rationale into the action for intent verification.
-	if task.PendingReason != "" {
-		task.PendingAction.ExpansionRationale = task.PendingReason
+	envUpdate, err := buildExpansionApprovalUpdate(task)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
 	}
-
-	// Add the pending action to authorized_actions.
-	newActions := append(task.AuthorizedActions, *task.PendingAction)
 	expiresAt := time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 
-	if err := h.st.UpdateTaskActions(ctx, taskID, newActions, expiresAt); err != nil {
+	// CAS on status='pending_scope_expansion' so a concurrent
+	// ExpandDeny that landed first via ResolveTaskPendingExpansion
+	// cannot have its just-applied clear overwritten by an approve.
+	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not expand task")
+		return
+	}
+	if !won {
+		writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "scope expansion was resolved by another caller")
 		return
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "allow_session", "approved")
@@ -2158,6 +2491,285 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		"status":     "active",
 		"expires_at": expiresAt.Format(time.RFC3339),
 	})
+}
+
+// buildExpansionApprovalUpdate translates a task's PendingExpansion into
+// the TaskEnvelopeUpdate that UpdateTaskEnvelope wants. It applies
+// replace-by-name dedup against the parent envelope (so the persisted
+// envelope has at most one entry per canonical key) AND derives new
+// AuthorizedActions from any ExpectedTool whose tool_name parses as
+// "service:action". The derived actions go through the same (service,
+// action) replace-by-name dedup against the parent's AuthorizedActions
+// — without this, the gateway's CheckTaskScope (which reads only
+// AuthorizedActions) would refuse the newly approved scope even though
+// the envelope shows it.
+func buildExpansionApprovalUpdate(task *store.Task) (store.TaskEnvelopeUpdate, error) {
+	parentEnv, err := runtimetasks.EnvelopeFromTask(task)
+	if err != nil {
+		return store.TaskEnvelopeUpdate{}, fmt.Errorf("load parent envelope: %w", err)
+	}
+	additions, err := pendingExpansionToEnvelope(task.PendingExpansion)
+	if err != nil {
+		return store.TaskEnvelopeUpdate{}, err
+	}
+	merge := runtimetasks.MergeEnvelopes(parentEnv, additions)
+	out := store.TaskEnvelopeUpdate{
+		AuthorizedActions: mergeAuthorizedActionsFromExpansion(task.AuthorizedActions, additions.ExpectedTools),
+	}
+	if len(merge.Merged.ExpectedTools) > 0 {
+		b, err := json.Marshal(merge.Merged.ExpectedTools)
+		if err != nil {
+			return store.TaskEnvelopeUpdate{}, fmt.Errorf("encode expected_tools: %w", err)
+		}
+		out.ExpectedTools = b
+	}
+	if len(merge.Merged.ExpectedEgress) > 0 {
+		b, err := json.Marshal(merge.Merged.ExpectedEgress)
+		if err != nil {
+			return store.TaskEnvelopeUpdate{}, fmt.Errorf("encode expected_egress: %w", err)
+		}
+		out.ExpectedEgress = b
+	}
+	if len(merge.Merged.RequiredCredentials) > 0 {
+		b, err := json.Marshal(merge.Merged.RequiredCredentials)
+		if err != nil {
+			return store.TaskEnvelopeUpdate{}, fmt.Errorf("encode required_credentials: %w", err)
+		}
+		out.RequiredCredentials = b
+	}
+	return out, nil
+}
+
+// validateDerivedAuthorizedAction mirrors Create's per-action gates
+// (adapter-known service, supported action, service activated, OAuth
+// scopes) for an AuthorizedAction that the Expand approve path will
+// materialize from an ExpectedTool with a `service:action` name. The
+// expand path uses this BEFORE landing the pending state so an
+// unusable scope is rejected up front rather than after the user wastes
+// approval time on a verdict the dashboard would have refused at create.
+//
+// The hardcoded-approval gate Create runs is intentionally skipped:
+// derived NEW actions always land with AutoExecute=false (see
+// mergeAuthorizedActionsFromExpansion), so the hardcoded-approval
+// safety property — "this action ALWAYS requires per-call approval" —
+// is already satisfied by the default posture. If the AutoExecute
+// default ever flips, restore the RequiresHardcodedApproval check here.
+//
+// field is the JSON path of the offending entry (e.g. "expected_tools[2]")
+// — surfaced in the error so the agent knows which entry to fix.
+//
+// Returns (apiErrorDetail, status, false) on a failed gate; the caller
+// writes the response. Returns ok=true with a zero detail on pass.
+func (h *TasksHandler) validateDerivedAuthorizedAction(ctx context.Context, userID, service, action, field string) (apiErrorDetail, int, bool) {
+	if service == "" || action == "" {
+		return apiErrorDetail{
+			Error: fmt.Sprintf("%s.tool_name parses as service:action but service or action is empty", field),
+			Code:  "INVALID_REQUEST",
+			Hint:  "Use the form \"<service>:<action>\" with both parts non-empty (e.g. \"github:create_issue\").",
+		}, http.StatusBadRequest, false
+	}
+	if action == "*" {
+		// Wildcard authorizations are intentionally NOT allowed via
+		// expansion. The dashboard would surface them with the same
+		// auto-execute pill as a specific action, while hardcoded
+		// actions under the wildcard would still gate at call time —
+		// a misleading approval prompt. Agents must enumerate the
+		// specific actions they need.
+		return apiErrorDetail{
+			Error: fmt.Sprintf("%s.tool_name uses wildcard action; expansions must name a specific action", field),
+			Code:  "INVALID_REQUEST",
+			Hint:  "Replace \"*\" with the specific action you need (e.g. \"github:create_issue\"). To grant wildcard scope, create a new task with explicit authorized_actions.",
+		}, http.StatusBadRequest, false
+	}
+	serviceType, serviceAlias := parseServiceAlias(service)
+
+	if isLocalService(serviceType) {
+		if err := h.validateLocalService(ctx, userID, serviceType, action); err != nil {
+			return apiErrorDetail{
+				Error: fmt.Sprintf("%s: %s", field, err.Error()),
+				Code:  "INVALID_REQUEST",
+			}, http.StatusBadRequest, false
+		}
+		return apiErrorDetail{}, http.StatusOK, true
+	}
+
+	if isGuardVirtualService(serviceType) {
+		// Guard virtual services bypass adapter lookup at create — same
+		// here. Return ok to mirror Create's behavior.
+		return apiErrorDetail{}, http.StatusOK, true
+	}
+
+	adapter, ok := h.adapterReg.GetForUser(ctx, serviceType, userID)
+	if !ok {
+		available := h.adapterReg.SupportedServices()
+		var ids []string
+		for _, s := range available {
+			ids = append(ids, s.ID)
+		}
+		return apiErrorDetail{
+			Error:     fmt.Sprintf("%s: unknown service %q", field, service),
+			Code:      "INVALID_REQUEST",
+			Hint:      "Use the service ID from the catalog (GET /api/skill/catalog).",
+			Available: ids,
+		}, http.StatusBadRequest, false
+	}
+	if action != "*" && !adapterSupportsAction(adapter, action) {
+		return apiErrorDetail{
+			Error:     fmt.Sprintf("%s: service %q does not support action %q", field, serviceType, action),
+			Code:      "INVALID_REQUEST",
+			Hint:      "Use \"*\" to authorize all actions, or pick from the supported actions for this service.",
+			Available: adapter.SupportedActions(),
+		}, http.StatusBadRequest, false
+	}
+	if !h.serviceActivated(ctx, userID, serviceType, serviceAlias, adapter) {
+		code, userErr, _ := serviceNotActivatedResponse(ctx, h.vault, h.st, h.adapterReg, userID, serviceType, serviceAlias, service, adapter)
+		return apiErrorDetail{
+			Error: fmt.Sprintf("%s: %s", field, userErr),
+			Code:  code,
+		}, http.StatusBadRequest, false
+	}
+	if missing := h.missingCredentialScopes(ctx, userID, serviceType, serviceAlias, action, adapter); len(missing) > 0 {
+		return apiErrorDetail{
+			Error: fmt.Sprintf("%s: service %q is connected but missing required OAuth scopes: %s — the user needs to reconnect the service to grant these permissions",
+				field, service, strings.Join(missing, ", ")),
+			Code: "MISSING_SCOPES",
+		}, http.StatusBadRequest, false
+	}
+	return apiErrorDetail{}, http.StatusOK, true
+}
+
+// mergeAuthorizedActionsFromExpansion derives new AuthorizedActions
+// from the additions' ExpectedTools and merges them with the parent's
+// AuthorizedActions using (service, action) dedup.
+//
+// Derivation rules:
+//   - tool_name parses as "service:action" → AuthorizedAction{Service,
+//     Action, ExpansionRationale=why}. The colon split picks the LAST
+//     colon so service ids containing aliases (e.g. "github:personal:list_repos"
+//     → service="github:personal", action="list_repos") work as expected.
+//   - tool_name without a colon (e.g. "Bash", "Edit") is a local tool —
+//     no AuthorizedAction derived. The envelope still carries the entry,
+//     but the gateway path doesn't gate on it.
+//
+// Replace-by-name (same service+action) overwrites the existing entry's
+// ExpansionRationale with the new per-entry why so intent verification
+// later sees the most recent rationale for the granted scope.
+// AutoExecute on a REPLACED action is preserved from the matching
+// parent entry to honor any prior dashboard tuning.
+//
+// AutoExecute on a derived NEW action defaults to FALSE — every
+// per-call gate stays on until the user explicitly relaxes it via the
+// dashboard's scope overrides. We deliberately do NOT inherit from
+// the parent's same-service entries: a benign `github:list_issues`
+// auto-execute approval should not silently extend to a destructive
+// `github:delete_repo`. The hardcoded-approval allowlist is unlikely
+// to be complete across every (service, action) pair, so it cannot
+// be the only safety net. The dashboard approval prompt surfaces the
+// "per-call approval" disposition pill so the reviewer can decide
+// whether to relax it after approving.
+func mergeAuthorizedActionsFromExpansion(parent []store.TaskAction, additions []runtimetasks.ExpectedTool) []store.TaskAction {
+	// Always return a fresh slice — callers store the result in
+	// TaskEnvelopeUpdate / map values, and any future caller-side
+	// mutation must not aliasingly modify the original task's
+	// AuthorizedActions. The cost of a clone-on-empty is trivial; the
+	// cost of a future aliasing bug is not.
+	out := slices.Clone(parent)
+	if len(additions) == 0 {
+		return out
+	}
+	index := make(map[string]int, len(out))
+	for i, a := range out {
+		index[authorizedActionKey(a.Service, a.Action)] = i
+	}
+	for _, tool := range additions {
+		service, action, ok := parseToolNameAsServiceAction(tool.ToolName)
+		if !ok {
+			continue
+		}
+		key := authorizedActionKey(service, action)
+		why := strings.TrimSpace(tool.Why)
+		if idx, exists := index[key]; exists {
+			out[idx].ExpansionRationale = why
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, store.TaskAction{
+			Service:            service,
+			Action:             action,
+			AutoExecute:        false,
+			ExpansionRationale: why,
+		})
+	}
+	return out
+}
+
+// authorizedActionKey returns the canonical dedup key for (service,
+// action). Lowercased so the AuthorizedActions dedup and the
+// ExpectedTools dedup (which lowercases tool_name) agree — otherwise
+// an addition with mismatched casing lands as both a "replacement" in
+// the envelope and a "new" AuthorizedAction, silently drifting the
+// two surfaces.
+func authorizedActionKey(service, action string) string {
+	return strings.ToLower(strings.TrimSpace(service)) + ":" + strings.ToLower(strings.TrimSpace(action))
+}
+
+// parseToolNameAsServiceAction recognizes tool names shaped as
+// "<service>:<action>" and returns the components. Service identifiers
+// may themselves contain a colon (e.g. account-aliased
+// "google.gmail:work"), so we split on the LAST colon. A bare tool name
+// without any colon returns ok=false — those are local-harness tools
+// (Bash, Edit, Read, …) and do not authorize a gateway-routed scope.
+//
+// Empty service or empty action also returns ok=false. Defensive:
+// callers iterate user-supplied data and shouldn't materialize a
+// half-shaped AuthorizedAction with a blank field that would later
+// match anything under one of the lookup paths.
+func parseToolNameAsServiceAction(toolName string) (service, action string, ok bool) {
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		return "", "", false
+	}
+	idx := strings.LastIndex(name, ":")
+	if idx <= 0 || idx == len(name)-1 {
+		return "", "", false
+	}
+	service = strings.TrimSpace(name[:idx])
+	action = strings.TrimSpace(name[idx+1:])
+	if service == "" || action == "" {
+		return "", "", false
+	}
+	return service, action, true
+}
+
+// pendingExpansionToEnvelope decodes a PendingTaskExpansion (raw JSON
+// per field) into an Envelope for merging. Decode errors fail-closed
+// rather than silently dropping the field: validation at Expand time
+// guarantees a well-formed row, so encountering corruption at approve
+// time is a system-level problem. Silently approving an empty merge
+// while the dashboard shows the original (pre-store) pending JSON would
+// commit a different shape than the user thought they approved —
+// strictly worse than surfacing a 500 and prompting investigation.
+func pendingExpansionToEnvelope(pending *store.PendingTaskExpansion) (runtimetasks.Envelope, error) {
+	if pending == nil {
+		return runtimetasks.Envelope{}, nil
+	}
+	var env runtimetasks.Envelope
+	if len(pending.ExpectedTools) > 0 {
+		if err := json.Unmarshal(pending.ExpectedTools, &env.ExpectedTools); err != nil {
+			return runtimetasks.Envelope{}, fmt.Errorf("pending_expansion_json.expected_tools corrupt: %w", err)
+		}
+	}
+	if len(pending.ExpectedEgress) > 0 {
+		if err := json.Unmarshal(pending.ExpectedEgress, &env.ExpectedEgress); err != nil {
+			return runtimetasks.Envelope{}, fmt.Errorf("pending_expansion_json.expected_egress corrupt: %w", err)
+		}
+	}
+	if len(pending.RequiredCredentials) > 0 {
+		if err := json.Unmarshal(pending.RequiredCredentials, &env.RequiredCredentials); err != nil {
+			return runtimetasks.Envelope{}, fmt.Errorf("pending_expansion_json.required_credentials corrupt: %w", err)
+		}
+	}
+	return env, nil
 }
 
 // ExpandDeny denies a pending scope expansion.
@@ -2192,26 +2804,21 @@ func (h *TasksHandler) ExpandDeny(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Revert to active (or expired if it was expired before).
-	newStatus := "active"
+	newStatus := store.ResolveExpansionStatusActive
 	if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
-		newStatus = "expired"
+		newStatus = store.ResolveExpansionStatusExpired
 	}
 
-	// Clear pending_action by updating with the same actions (no new one added)
-	// and keeping the same expiry.
-	exp := time.Now().UTC()
-	if task.ExpiresAt != nil {
-		exp = *task.ExpiresAt
-	}
-	if err := h.st.UpdateTaskActions(ctx, taskID, task.AuthorizedActions, exp); err != nil {
+	won, err := h.st.ResolveTaskPendingExpansion(ctx, taskID, newStatus)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not deny expansion")
 		return
 	}
-	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "denied")
-	// Restore proper status (UpdateTaskActions sets status to active).
-	if newStatus != "active" {
-		_ = h.st.UpdateTaskStatus(ctx, taskID, newStatus)
+	if !won {
+		writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "scope expansion was resolved by another caller")
+		return
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "denied")
 
 	h.publishTasksAndQueue(user.ID)
 
@@ -2361,20 +2968,24 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	if task.UserID != userID {
 		return fmt.Errorf("not your task")
 	}
-	if task.Status != "pending_scope_expansion" || task.PendingAction == nil {
+	if task.Status != "pending_scope_expansion" || task.PendingExpansion == nil {
 		return fmt.Errorf("task has no pending scope expansion")
 	}
 
-	// Carry the expansion rationale into the action for intent verification.
-	if task.PendingReason != "" {
-		task.PendingAction.ExpansionRationale = task.PendingReason
-	}
-
-	newActions := append(task.AuthorizedActions, *task.PendingAction)
-	expiresAt := time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
-
-	if err := h.st.UpdateTaskActions(ctx, taskID, newActions, expiresAt); err != nil {
+	envUpdate, err := buildExpansionApprovalUpdate(task)
+	if err != nil {
 		return err
+	}
+	expiresAt := time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+	won, err := h.st.UpdateTaskEnvelopeFrom(ctx, taskID, "pending_scope_expansion", envUpdate, expiresAt)
+	if err != nil {
+		return err
+	}
+	if !won {
+		// Concurrent resolution lost the race; surface a clean error
+		// to the Telegram/notifier callback so the caller can refresh
+		// state instead of believing it approved.
+		return fmt.Errorf("scope expansion was resolved by another caller")
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "allow_session", "approved")
 
@@ -2405,22 +3016,20 @@ func (h *TasksHandler) ExpandDenyByTaskID(ctx context.Context, taskID, userID st
 		return fmt.Errorf("task has no pending scope expansion")
 	}
 
-	newStatus := "active"
+	newStatus := store.ResolveExpansionStatusActive
 	if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
-		newStatus = "expired"
+		newStatus = store.ResolveExpansionStatusExpired
 	}
-
-	exp := time.Now().UTC()
-	if task.ExpiresAt != nil {
-		exp = *task.ExpiresAt
-	}
-	if err := h.st.UpdateTaskActions(ctx, taskID, task.AuthorizedActions, exp); err != nil {
+	// Atomic clear+status; CAS on pending_scope_expansion so a
+	// concurrent approve that landed first can't be clobbered.
+	won, err := h.st.ResolveTaskPendingExpansion(ctx, taskID, newStatus)
+	if err != nil {
 		return err
 	}
-	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "denied")
-	if newStatus != "active" {
-		_ = h.st.UpdateTaskStatus(ctx, taskID, newStatus)
+	if !won {
+		return fmt.Errorf("scope expansion was resolved by another caller")
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "denied")
 
 	h.updateNotificationMsg(ctx, "task", taskID, userID, "❌ <b>Scope expansion denied</b>")
 	h.decrementNotifierPolling(userID)
@@ -2472,7 +3081,7 @@ func isInlineChatPending(task *store.Task) bool {
 }
 
 func canonicalTaskApprovalKind(task *store.Task) string {
-	if task.Status == "pending_scope_expansion" || task.PendingAction != nil {
+	if task.Status == "pending_scope_expansion" || task.PendingExpansion != nil {
 		return "task_expand"
 	}
 	return "task_create"
@@ -2496,10 +3105,31 @@ func (h *TasksHandler) createCanonicalTaskApproval(ctx context.Context, task *st
 		"lifetime":   task.Lifetime,
 		"risk_level": task.RiskLevel,
 	}
-	if kind == "task_expand" && task.PendingAction != nil {
-		summary["service"] = task.PendingAction.Service
-		summary["action"] = task.PendingAction.Action
-		summary["reason"] = task.PendingReason
+	if kind == "task_expand" && task.PendingExpansion != nil {
+		// Surface the envelope diff at the same fidelity as the
+		// inline / Telegram approval prompts so a dashboard reviewer
+		// can audit the same shape the user-facing approval surfaces
+		// show.
+		additions, decErr := pendingExpansionToEnvelope(task.PendingExpansion)
+		if decErr != nil {
+			// Corrupt pending row: surface the issue in the approval
+			// record summary so the audit trail shows the decode failed
+			// rather than fabricating a clean diff. The approve handler
+			// will independently 500 when buildExpansionApprovalUpdate
+			// hits the same decode.
+			summary["decode_error"] = decErr.Error()
+		} else {
+			if len(additions.ExpectedTools) > 0 {
+				summary["expected_tools"] = additions.ExpectedTools
+			}
+			if len(additions.ExpectedEgress) > 0 {
+				summary["expected_egress"] = additions.ExpectedEgress
+			}
+			if len(additions.RequiredCredentials) > 0 {
+				summary["required_credentials"] = additions.RequiredCredentials
+			}
+		}
+		summary["reason"] = task.PendingExpansion.Reason
 	}
 	summaryJSON, err := json.Marshal(summary)
 	if err != nil {

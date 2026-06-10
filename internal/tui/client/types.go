@@ -202,17 +202,29 @@ type Task struct {
 	ExpiresAt              *time.Time       `json:"expires_at,omitempty"`
 	ExpiresInSeconds       int              `json:"expires_in_seconds"`
 	RequestCount           int              `json:"request_count"`
-	PendingAction          *TaskAction      `json:"pending_action,omitempty"`
-	PendingReason          string           `json:"pending_reason,omitempty"`
-	RiskLevel              string           `json:"risk_level,omitempty"`
-	RiskDetails            json.RawMessage  `json:"risk_details,omitempty"`
+	PendingExpansion       *PendingTaskExpansion `json:"pending_expansion,omitempty"`
+	PendingDerivedActions  []TaskAction          `json:"pending_derived_actions,omitempty"`
+	RiskLevel              string                `json:"risk_level,omitempty"`
+	RiskDetails            json.RawMessage       `json:"risk_details,omitempty"`
+}
+
+// PendingTaskExpansion mirrors store.PendingTaskExpansion for the TUI
+// client. The envelope fields are raw JSON so the TUI can decode
+// them lazily into ExpectedTool / ExpectedEgress / RequiredCredential
+// when rendering — display surfaces are read-only.
+type PendingTaskExpansion struct {
+	ExpectedTools       json.RawMessage `json:"expected_tools,omitempty"`
+	ExpectedEgress      json.RawMessage `json:"expected_egress,omitempty"`
+	RequiredCredentials json.RawMessage `json:"required_credentials,omitempty"`
+	Reason              string          `json:"reason,omitempty"`
 }
 
 type TaskAction struct {
-	Service     string `json:"service"`
-	Action      string `json:"action"`
-	AutoExecute bool   `json:"auto_execute"`
-	ExpectedUse string `json:"expected_use,omitempty"`
+	Service            string `json:"service"`
+	Action             string `json:"action"`
+	AutoExecute        bool   `json:"auto_execute"`
+	ExpectedUse        string `json:"expected_use,omitempty"`
+	ExpansionRationale string `json:"expansion_rationale,omitempty"`
 }
 
 type RiskAssessment struct {

@@ -67,15 +67,173 @@ func formatTaskDetail(t *client.Task) string {
 		}
 	}
 
-	if t.PendingAction != nil {
+	if t.PendingExpansion != nil {
 		b.WriteString("\n" + tui.StyleAmber.Render("Pending Expansion") + "\n")
-		b.WriteString(fmt.Sprintf("  %s/%s\n", t.PendingAction.Service, t.PendingAction.Action))
-		if t.PendingReason != "" {
-			b.WriteString("  Reason: " + t.PendingReason + "\n")
-		}
+		writePendingExpansionSummary(&b, t)
 	}
 
 	return b.String()
+}
+
+// writePendingExpansionSummary renders a multi-line view of an in-flight
+// expansion: each requested addition (tool / egress / credential) as a
+// bullet, marked as a NEW entry or a REPLACE-by-name against the parent
+// envelope (with a was/now diff for replacements so the reviewer sees
+// what is genuinely changing, not just the new value). Derived gateway
+// scopes (tool_name shaped as service:action) carry an auto-execute
+// marker from the server's pre-computed PendingDerivedActions.
+//
+// Decode errors leave the relevant section out rather than panicking —
+// display surfaces are read-only and an unrenderable pending row should
+// still let the rest of the task details be inspected.
+func writePendingExpansionSummary(b *strings.Builder, t *client.Task) {
+	if t == nil || t.PendingExpansion == nil {
+		return
+	}
+	pending := t.PendingExpansion
+
+	// Parent envelope: case-insensitive key → prior why. Used to detect
+	// replacements vs. new entries client-side.
+	parentToolWhy := indexParentToolsByName(t.ExpectedTools)
+	parentEgressWhy := indexParentEgressByHost(t.ExpectedEgress)
+
+	// Derived gateway scopes (server-computed). Match by service:action
+	// so we can stamp an "auto-execute" / "needs approval" marker next
+	// to each derived ExpectedTool entry.
+	derivedByKey := make(map[string]client.TaskAction, len(t.PendingDerivedActions))
+	for _, a := range t.PendingDerivedActions {
+		derivedByKey[strings.ToLower(a.Service+":"+a.Action)] = a
+	}
+
+	if len(pending.ExpectedTools) > 0 {
+		var tools []struct {
+			ToolName string `json:"tool_name"`
+			Why      string `json:"why"`
+		}
+		if json.Unmarshal(pending.ExpectedTools, &tools) == nil {
+			for _, tool := range tools {
+				key := strings.ToLower(strings.TrimSpace(tool.ToolName))
+				prefix := "  + "
+				prior, replaced := parentToolWhy[key]
+				if replaced {
+					prefix = "  ~ "
+				}
+				line := prefix + tool.ToolName
+				if marker := autoExecuteMarker(tool.ToolName, derivedByKey); marker != "" {
+					line += "  " + marker
+				}
+				b.WriteString(line + "\n")
+				if replaced && prior != tool.Why {
+					b.WriteString("      was: " + prior + "\n")
+					b.WriteString("      now: " + tool.Why + "\n")
+				} else if tool.Why != "" {
+					b.WriteString("      " + tool.Why + "\n")
+				}
+			}
+		}
+	}
+	if len(pending.ExpectedEgress) > 0 {
+		var egress []struct {
+			Host string `json:"host"`
+			Why  string `json:"why"`
+		}
+		if json.Unmarshal(pending.ExpectedEgress, &egress) == nil {
+			for _, e := range egress {
+				key := strings.ToLower(strings.TrimSpace(e.Host))
+				prefix := "  + "
+				prior, replaced := parentEgressWhy[key]
+				if replaced {
+					prefix = "  ~ "
+				}
+				b.WriteString(prefix + e.Host + "\n")
+				if replaced && prior != e.Why {
+					b.WriteString("      was: " + prior + "\n")
+					b.WriteString("      now: " + e.Why + "\n")
+				} else if e.Why != "" {
+					b.WriteString("      " + e.Why + "\n")
+				}
+			}
+		}
+	}
+	if len(pending.RequiredCredentials) > 0 {
+		var creds []struct {
+			VaultItemID     string `json:"vault_item_id"`
+			VaultItemHandle string `json:"vault_item_handle"`
+			Why             string `json:"why"`
+		}
+		if json.Unmarshal(pending.RequiredCredentials, &creds) == nil {
+			for _, c := range creds {
+				id := c.VaultItemID
+				if id == "" {
+					id = c.VaultItemHandle
+				}
+				if c.Why != "" {
+					b.WriteString(fmt.Sprintf("  • %s — %s\n", id, c.Why))
+				} else {
+					b.WriteString(fmt.Sprintf("  • %s\n", id))
+				}
+			}
+		}
+	}
+	if pending.Reason != "" {
+		b.WriteString("  Reason: " + pending.Reason + "\n")
+	}
+}
+
+// indexParentToolsByName builds a case-insensitive lookup from tool name
+// to the parent's why. Used by writePendingExpansionSummary to detect
+// replacements without re-running the merge logic.
+func indexParentToolsByName(parent []client.ExpectedTool) map[string]string {
+	out := make(map[string]string, len(parent))
+	for _, t := range parent {
+		key := strings.ToLower(strings.TrimSpace(t.ToolName))
+		if key == "" {
+			continue
+		}
+		out[key] = t.Why
+	}
+	return out
+}
+
+func indexParentEgressByHost(parent []client.ExpectedEgress) map[string]string {
+	out := make(map[string]string, len(parent))
+	for _, e := range parent {
+		key := strings.ToLower(strings.TrimSpace(e.Host))
+		if key == "" {
+			continue
+		}
+		out[key] = e.Why
+	}
+	return out
+}
+
+// autoExecuteMarker returns the auto-execute disposition tag for a tool
+// entry that maps to a derived gateway scope. Local-only tools (no
+// service:action shape) return "" so the renderer omits the marker.
+//
+// The mapping is server-supplied via PendingDerivedActions — clients
+// don't need to know the RequiresHardcodedApproval table.
+func autoExecuteMarker(toolName string, derived map[string]client.TaskAction) string {
+	// idx is the colon's position inside the trimmed string, so the
+	// "colon is the last rune" guard must compare against the trimmed
+	// length too. An earlier version of this function compared idx
+	// against len(toolName) (the untrimmed length), which off-by-Ns
+	// past the trimmed terminator and silently let trailing-colon
+	// inputs like "github:" slip past the guard with an empty action.
+	trimmed := strings.TrimSpace(toolName)
+	idx := strings.LastIndex(trimmed, ":")
+	if idx <= 0 || idx == len(trimmed)-1 {
+		return ""
+	}
+	key := strings.ToLower(trimmed)
+	a, ok := derived[key]
+	if !ok {
+		return ""
+	}
+	if a.AutoExecute {
+		return tui.StyleGreen.Render("[auto-execute]")
+	}
+	return tui.StyleAmber.Render("[needs per-call approval]")
 }
 
 func riskBadge(level string) string {

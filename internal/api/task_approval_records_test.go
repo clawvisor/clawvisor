@@ -80,10 +80,10 @@ func TestTaskExpansionApprovalRecordsResolveCanonically(t *testing.T) {
 	taskID := sc.createApprovedTask(t, env, "mock.task-expand", "read", true)
 
 	resp := env.do("POST", fmt.Sprintf("/api/tasks/%s/expand", taskID), sc.AgentToken, map[string]any{
-		"service":      "mock.task-expand",
-		"action":       "write",
-		"auto_execute": false,
-		"reason":       "write back the summary after review",
+		"expected_tools": []map[string]any{
+			{"tool_name": "mock.task-expand:write", "why": "write back the summary after review"},
+		},
+		"reason": "write back the summary after review",
 	})
 	mustStatus(t, resp, http.StatusAccepted)
 

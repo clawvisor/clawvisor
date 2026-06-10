@@ -183,11 +183,41 @@ type Store interface {
 	UpdateTaskApprovedFrom(ctx context.Context, id, fromStatus string, expiresAt time.Time, authorizedActions []TaskAction) (bool, error)
 	UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []TaskAction) error
 	UpdateTaskActions(ctx context.Context, id string, actions []TaskAction, expiresAt time.Time) error
+	// UpdateTaskEnvelopeFrom atomically applies the merged envelope
+	// (authorized_actions, expected_*, required_credentials, expires_at,
+	// status='active', pending_expansion_json=NULL) only when status
+	// currently matches fromStatus. The CAS guard is the only variant —
+	// there is no non-CAS UpdateTaskEnvelope; an unguarded write would
+	// let a concurrent ExpandDeny's just-applied clear be silently
+	// overwritten by a racing approve verdict. Returns true on win.
+	UpdateTaskEnvelopeFrom(ctx context.Context, id, fromStatus string, env TaskEnvelopeUpdate, expiresAt time.Time) (bool, error)
 	// UpdateTaskExpiresAt extends expires_at monotonically. Implementations
 	// must not move an existing later deadline backward.
 	UpdateTaskExpiresAt(ctx context.Context, id string, expiresAt time.Time) error
 	IncrementTaskRequestCount(ctx context.Context, id string) error
-	SetTaskPendingExpansion(ctx context.Context, id string, action *TaskAction, reason string) error
+	// SetTaskPendingExpansion stores the envelope additions the agent
+	// proposed for an expansion plus the one-line reason, and CAS-flips
+	// the task to status='pending_scope_expansion' only when its current
+	// status is 'active' or 'expired'. Returns (true, nil) on win,
+	// (false, nil) when the row was in another state (the caller raced
+	// with cleanup / revocation / a concurrent expansion). Callers
+	// wanting to clear the pending state must use
+	// ResolveTaskPendingExpansion so the status transition stays atomic
+	// with the clear.
+	SetTaskPendingExpansion(ctx context.Context, id string, pending *PendingTaskExpansion) (bool, error)
+	// ResolveTaskPendingExpansion atomically clears pending_expansion_json
+	// AND sets status to the caller-supplied value, ONLY when the row
+	// is currently in status='pending_scope_expansion'. The CAS guard
+	// prevents a deny that read the pre-expand expiry and computed
+	// 'expired' from clobbering a concurrent approve that just
+	// re-armed the deadline. Returns (true, nil) on win, (false, nil)
+	// when the CAS lost.
+	//
+	// newStatus must be one of ResolveExpansionStatusActive or
+	// ResolveExpansionStatusExpired — these are the only legitimate
+	// post-deny states. Implementations should reject other values
+	// rather than corrupting the task lifecycle.
+	ResolveTaskPendingExpansion(ctx context.Context, id string, newStatus ResolveExpansionStatus) (bool, error)
 	ListExpiredTasks(ctx context.Context) ([]*Task, error)
 	// ListExpiredInlineChatPendingTasks returns chat-bound pending
 	// tasks (status='pending_approval', approval_source='inline_chat')
@@ -752,7 +782,7 @@ type TaskAction struct {
 	AutoExecute        bool            `json:"auto_execute"`
 	ResponseFilters    json.RawMessage `json:"response_filters,omitempty"`
 	ExpectedUse        string          `json:"expected_use,omitempty"`
-	ExpansionRationale string          `json:"expansion_rationale,omitempty"` // set from PendingReason when scope expansion is approved
+	ExpansionRationale string          `json:"expansion_rationale,omitempty"` // set from the per-entry ExpectedTool.Why when a scope expansion approves; consumed by intent verification
 	// Verification controls intent verification for this scope: "strict" (default), "lenient", "off".
 	Verification string `json:"verification,omitempty"`
 }
@@ -776,6 +806,48 @@ type PlannedCall struct {
 	Action  string         `json:"action"`
 	Params  map[string]any `json:"params,omitempty"` // required for matching; "$chain" values match chain context
 	Reason  string         `json:"reason"`           // why this call will be made
+}
+
+// ResolveExpansionStatus is the constrained-enum target status for
+// ResolveTaskPendingExpansion. Only "active" (the user denied; task
+// returns to active) and "expired" (the user denied but the underlying
+// task had already passed its deadline) are valid landing states.
+// Defining this as a typed alias prevents callers from corrupting the
+// lifecycle with arbitrary strings.
+type ResolveExpansionStatus string
+
+const (
+	ResolveExpansionStatusActive  ResolveExpansionStatus = "active"
+	ResolveExpansionStatusExpired ResolveExpansionStatus = "expired"
+)
+
+// PendingTaskExpansion captures an in-flight scope-expansion request
+// awaiting user approval. It stores the same envelope shape the model
+// posts (`expected_tools`, `expected_egress`, `required_credentials`)
+// plus the one-line reason — replace-by-name dedup against the parent
+// task is applied on approval, not at pending-write time, so the user
+// approves exactly what the agent proposed.
+//
+// The pending data is short-lived: ExpandApprove either merges and
+// commits it, or ExpandDeny clears it. Tasks in
+// status='pending_scope_expansion' always have a populated
+// PendingExpansion; this is the v2 replacement for the legacy
+// PendingAction/PendingReason singular shape.
+type PendingTaskExpansion struct {
+	ExpectedTools       json.RawMessage `json:"expected_tools,omitempty"`
+	ExpectedEgress      json.RawMessage `json:"expected_egress,omitempty"`
+	RequiredCredentials json.RawMessage `json:"required_credentials,omitempty"`
+	Reason              string          `json:"reason,omitempty"`
+}
+
+// TaskEnvelopeUpdate is the payload for UpdateTaskEnvelopeFrom. AuthorizedActions
+// reflects the merged state; the JSON-encoded envelope fields hold the merged
+// envelope (parent + additions after replace-by-name dedup).
+type TaskEnvelopeUpdate struct {
+	AuthorizedActions   []TaskAction
+	ExpectedTools       json.RawMessage
+	ExpectedEgress      json.RawMessage
+	RequiredCredentials json.RawMessage
 }
 
 // Task represents a task-scoped authorization.
@@ -805,9 +877,20 @@ type Task struct {
 	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
 	ExpiresInSeconds    int        `json:"expires_in_seconds,omitempty"`
 	RequestCount        int        `json:"request_count"`
-	// PendingAction holds the action awaiting scope expansion approval.
-	PendingAction *TaskAction `json:"pending_action,omitempty"`
-	PendingReason string      `json:"pending_reason,omitempty"`
+	// PendingExpansion holds the in-flight scope-expansion envelope
+	// awaiting user approval. Populated when status='pending_scope_expansion';
+	// cleared on approve (UpdateTaskEnvelopeFrom) or
+	// explicit deny (SetTaskPendingExpansion with nil).
+	PendingExpansion *PendingTaskExpansion `json:"pending_expansion,omitempty"`
+	// PendingDerivedActions is a response-only projection of the
+	// AuthorizedActions that would be granted if the pending expansion
+	// is approved (i.e. the materialized service:action entries with
+	// effective AutoExecute / ExpansionRationale). The handler fills
+	// it before serializing for read endpoints; it is NEVER persisted.
+	// Surfaces let the dashboard and TUI render the auto-execute
+	// disposition for each derived gateway scope without replicating
+	// the RequiresHardcodedApproval table client-side.
+	PendingDerivedActions []TaskAction `json:"pending_derived_actions,omitempty"`
 	// RiskLevel is the LLM-assessed risk level ("low", "medium", "high", "critical", "unknown", or "").
 	RiskLevel   string          `json:"risk_level,omitempty"`
 	RiskDetails json.RawMessage `json:"risk_details,omitempty"`

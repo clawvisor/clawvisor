@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Task, type TaskAction, type AuditEntry, type RiskAssessment, type ApprovalRationale, type ScopeOverride, type PlannedCall, type ExpectedTool, type ExpectedEgress, type TaskCostSummary } from '../api/client'
+import { api, type Task, type TaskAction, type AuditEntry, type RiskAssessment, type ApprovalRationale, type ScopeOverride, type PlannedCall, type ExpectedTool, type ExpectedEgress, type TaskCostSummary, type PendingTaskExpansion } from '../api/client'
 import { format } from 'date-fns'
 import { serviceName, actionName } from '../lib/services'
 import { isLocalHost } from '../lib/env'
@@ -425,25 +425,22 @@ export default function TaskCard({
               <ScopeGroupTables autoActions={autoActions} manualActions={manualActions} />
             </div>
           )}
-          {task.pending_action && (
+          {task.pending_expansion && (
             <div className="px-4 pb-3">
               <div className="bg-surface-0 border rounded overflow-hidden" style={{ borderColor: 'var(--color-warning-border-light)' }}>
                 <div className="px-3 py-1.5 border-b flex items-center gap-1.5" style={{ background: 'var(--color-warning-tint)', borderColor: 'var(--color-warning-border-subtle)' }}>
                   <span className="w-1.5 h-1.5 rounded-full bg-warning" />
                   <span className="text-[10px] font-medium text-warning uppercase tracking-wider">New scope requested</span>
                 </div>
-                <table className="w-full text-sm">
-                  <tbody>
-                    <tr>
-                      <td className="px-3 py-2 font-mono text-text-primary w-40">{serviceName(task.pending_action.service)} · {actionName(task.pending_action.action)}</td>
-                      <td className="px-3 py-2 text-sm text-text-secondary">{task.pending_reason ?? ''}</td>
-                    </tr>
-                  </tbody>
-                </table>
-                {task.pending_action.auto_execute && (
-                  <div className="px-3 py-1.5 border-t border-border-subtle flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                    <span className="text-[10px] font-mono text-success">auto-execute</span>
+                <PendingExpansionEntries
+                  pending={task.pending_expansion}
+                  parentTools={task.expected_tools ?? []}
+                  parentEgress={task.expected_egress ?? []}
+                  derivedActions={task.pending_derived_actions ?? []}
+                />
+                {task.pending_expansion.reason && (
+                  <div className="px-3 py-2 border-t border-border-subtle text-sm text-text-secondary">
+                    <span className="text-text-tertiary">Reason: </span>{task.pending_expansion.reason}
                   </div>
                 )}
               </div>
@@ -808,6 +805,136 @@ function ScopeGroupTables({ autoActions, manualActions }: {
         </div>
       )}
     </>
+  )
+}
+
+// PendingExpansionEntries renders the bullet-list view of a pending
+// scope expansion — what tools / egress / credentials the agent is
+// asking for, each with the why it provided. Each tool / egress entry
+// is marked as a NEW addition or a REPLACEMENT of an existing entry's
+// why (with the was/now diff visible), so the reviewer sees what is
+// actually changing rather than just the new value. Derived gateway
+// scopes (tool_name shaped as service:action) carry an auto-execute
+// disposition pill computed server-side via PendingDerivedActions —
+// the dashboard never needs the hardcoded-approval table locally.
+function PendingExpansionEntries({
+  pending,
+  parentTools,
+  parentEgress,
+  derivedActions,
+}: {
+  pending: PendingTaskExpansion
+  parentTools: ExpectedTool[]
+  parentEgress: ExpectedEgress[]
+  derivedActions: TaskAction[]
+}) {
+  const tools = pending.expected_tools ?? []
+  const egress = pending.expected_egress ?? []
+  const creds = pending.required_credentials ?? []
+  if (tools.length === 0 && egress.length === 0 && creds.length === 0) {
+    return null
+  }
+
+  // Case-insensitive lookup maps so we can flag replacements client-side
+  // without re-running the server's merge logic.
+  const parentToolWhy = new Map<string, string>()
+  for (const t of parentTools) {
+    const key = (t.tool_name ?? '').trim().toLowerCase()
+    if (key) parentToolWhy.set(key, t.why ?? '')
+  }
+  const parentEgressWhy = new Map<string, string>()
+  for (const e of parentEgress) {
+    const key = (e.host ?? '').trim().toLowerCase()
+    if (key) parentEgressWhy.set(key, e.why ?? '')
+  }
+  const derivedByKey = new Map<string, TaskAction>()
+  for (const a of derivedActions) {
+    derivedByKey.set(`${a.service}:${a.action}`.toLowerCase(), a)
+  }
+
+  const autoExecuteBadge = (toolName: string) => {
+    // Mirror the Go helper (internal/tui/screens/helpers.go autoExecuteMarker):
+    // both the colon search and the trailing-colon guard must reference
+    // the same trimmed string. Comparing idx (from trimmed) against
+    // toolName.length-1 (untrimmed) would let "github:\t" slip past
+    // the guard and look up a malformed key.
+    const trimmed = toolName.trim()
+    const idx = trimmed.lastIndexOf(':')
+    if (idx <= 0 || idx === trimmed.length - 1) return null
+    const action = derivedByKey.get(trimmed.toLowerCase())
+    if (!action) return null
+    if (action.auto_execute) {
+      return (
+        <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-mono text-success">
+          <span className="w-1 h-1 rounded-full bg-success" />auto-execute
+        </span>
+      )
+    }
+    return (
+      <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-mono text-warning">
+        <span className="w-1 h-1 rounded-full bg-warning" />needs per-call approval
+      </span>
+    )
+  }
+
+  return (
+    <table className="w-full text-sm">
+      <tbody>
+        {tools.map((t, i) => {
+          const key = (t.tool_name ?? '').trim().toLowerCase()
+          const priorWhy = parentToolWhy.get(key)
+          const replaced = priorWhy !== undefined
+          return (
+            <tr key={`tool-${i}`} className="border-b border-border-subtle last:border-b-0">
+              <td className="px-3 py-2 font-mono text-text-primary w-48 align-top">
+                <span className="text-text-tertiary text-xs">{replaced ? 'tool ~' : 'tool +'}</span> {t.tool_name}
+                {autoExecuteBadge(t.tool_name ?? '')}
+              </td>
+              <td className="px-3 py-2 text-sm text-text-secondary">
+                {replaced && priorWhy !== t.why ? (
+                  <>
+                    <div><span className="text-text-tertiary">was:</span> {priorWhy}</div>
+                    <div><span className="text-text-tertiary">now:</span> {t.why}</div>
+                  </>
+                ) : (
+                  t.why
+                )}
+              </td>
+            </tr>
+          )
+        })}
+        {egress.map((e, i) => {
+          const key = (e.host ?? '').trim().toLowerCase()
+          const priorWhy = parentEgressWhy.get(key)
+          const replaced = priorWhy !== undefined
+          return (
+            <tr key={`egress-${i}`} className="border-b border-border-subtle last:border-b-0">
+              <td className="px-3 py-2 font-mono text-text-primary w-48 align-top">
+                <span className="text-text-tertiary text-xs">{replaced ? 'egress ~' : 'egress +'}</span> {e.host}
+              </td>
+              <td className="px-3 py-2 text-sm text-text-secondary">
+                {replaced && priorWhy !== e.why ? (
+                  <>
+                    <div><span className="text-text-tertiary">was:</span> {priorWhy}</div>
+                    <div><span className="text-text-tertiary">now:</span> {e.why}</div>
+                  </>
+                ) : (
+                  e.why
+                )}
+              </td>
+            </tr>
+          )
+        })}
+        {creds.map((c, i) => (
+          <tr key={`cred-${i}`} className="border-b border-border-subtle last:border-b-0">
+            <td className="px-3 py-2 font-mono text-text-primary w-48 align-top">
+              <span className="text-text-tertiary text-xs">cred +</span> {c.vault_item_id || c.vault_item_handle || ''}
+            </td>
+            <td className="px-3 py-2 text-sm text-text-secondary">{c.why}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   )
 }
 

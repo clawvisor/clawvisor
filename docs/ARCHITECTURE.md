@@ -386,7 +386,7 @@ Migrations are embedded in the binary and run automatically on startup. Each mig
 
 **Authorization:**
 - `restrictions` — hard blocks on `(user_id, service, action)` with wildcard support. Unique constraint on the triple.
-- `tasks` — purpose, status, lifetime, authorized_actions (JSON), pending_action (JSON), expiry, request count. FK → users, agents.
+- `tasks` — purpose, status, lifetime, authorized_actions (JSON), pending_expansion_json (JSON: in-flight scope-expansion envelope awaiting user approval), expiry, request count. FK → users, agents.
 
 **Service management:**
 - `service_meta` — tracks which services are activated per user, with alias support for multi-account. Unique on `(user_id, service_id, alias)`.

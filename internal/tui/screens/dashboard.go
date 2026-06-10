@@ -640,12 +640,9 @@ func (s *DashboardScreen) renderTaskAuditView() string {
 		}
 	}
 
-	if s.drillTask.PendingAction != nil {
+	if s.drillTask.PendingExpansion != nil {
 		b.WriteString("\n" + tui.StyleAmber.Render("Pending Expansion") + "\n")
-		b.WriteString(fmt.Sprintf("  %s/%s\n", s.drillTask.PendingAction.Service, s.drillTask.PendingAction.Action))
-		if s.drillTask.PendingReason != "" {
-			b.WriteString("  Reason: " + s.drillTask.PendingReason + "\n")
-		}
+		writePendingExpansionSummary(&b, s.drillTask)
 	}
 	b.WriteString("\n")
 
