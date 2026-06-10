@@ -142,7 +142,7 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 		return RewriteResult{
 			Body:          rewritten,
 			Decisions:     decisions,
-			Rewritten:     anyBlocked || anyRewritten,
+			Rewritten:     anyBlocked || anyRewritten || anyCvReasonStripped,
 			AssistantTurn: turn,
 		}, nil
 	}
@@ -365,7 +365,7 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		return RewriteResult{
 			Body:          assembled,
 			Decisions:     decisions,
-			Rewritten:     anyBlocked || anyRewritten,
+			Rewritten:     anyBlocked || anyRewritten || anyCvReasonStripped,
 			AssistantTurn: turn,
 		}, nil
 	}

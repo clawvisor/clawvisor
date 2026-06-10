@@ -239,7 +239,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 		if err != nil {
 			return RewriteResult{}, fmt.Errorf("openai responses: marshal rewritten response: %w", err)
 		}
-		return RewriteResult{Body: rewritten, Decisions: decisions, Rewritten: anyBlocked || anyRewritten, AssistantTurn: turn}, nil
+		return RewriteResult{Body: rewritten, Decisions: decisions, Rewritten: anyBlocked || anyRewritten || anyCvReasonStripped, AssistantTurn: turn}, nil
 	}
 	return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 }
@@ -499,7 +499,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 		return RewriteResult{
 			Body:          out,
 			Decisions:     decisions,
-			Rewritten:     anyBlocked || anyRewritten,
+			Rewritten:     anyBlocked || anyRewritten || anyCvReasonStripped,
 			AssistantTurn: turn,
 		}, nil
 	}
@@ -841,7 +841,7 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 		if err != nil {
 			return RewriteResult{}, fmt.Errorf("openai chat: marshal rewritten response: %w", err)
 		}
-		return RewriteResult{Body: rewritten, Decisions: decisions, Rewritten: anyBlocked || anyRewritten, AssistantTurn: turn}, nil
+		return RewriteResult{Body: rewritten, Decisions: decisions, Rewritten: anyBlocked || anyRewritten || anyCvReasonStripped, AssistantTurn: turn}, nil
 	}
 	return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 }
