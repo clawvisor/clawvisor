@@ -221,3 +221,53 @@ func TestExtractAskUserQuestionAnswerHandlesMultipleQuestions(t *testing.T) {
 		t.Fatalf("multi-question: want last match \"no\", got %q", got)
 	}
 }
+
+func TestAnthropicAskUserQuestionApprovalReplyStructuredJSONAnswerPayload(t *testing.T) {
+	// AskUserQuestion's input schema documents `answers` as a map
+	// from question text to chosen label. A harness that returns
+	// the answers as a structured JSON object (instead of the
+	// Claude Code text wrapper) must still resolve — the raw-JSON
+	// fallback used to return the unparsed bytes, which never
+	// matched the verb regex's line-anchored shape.
+	body := []byte(`{
+		"messages": [
+			{"role": "assistant", "content": [
+				{"type": "tool_use", "id": "toolu_structured", "name": "AskUserQuestion", "input": {"questions": [{"question": "Approve this task? [clawvisor:approval=cv-structured01]"}]}}
+			]},
+			{"role": "user", "content": [
+				{"type": "tool_result", "tool_use_id": "toolu_structured", "content": {"answers": {"Approve this task?": "yes"}}}
+			]}
+		]
+	}`)
+	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	if verb != "approve" {
+		t.Fatalf("verb = %q, want approve from structured-JSON answer payload", verb)
+	}
+	if id != "cv-structured01" {
+		t.Fatalf("id = %q, want cv-structured01", id)
+	}
+}
+
+func TestAnthropicAskUserQuestionApprovalReplyStructuredJSONNestedArrayAnswer(t *testing.T) {
+	// Defense-in-depth: a harness emitting answers as an array of
+	// strings (rather than a map) should also resolve. Walking
+	// leaf strings recursively is what protects us against
+	// harness-specific payload shapes.
+	body := []byte(`{
+		"messages": [
+			{"role": "assistant", "content": [
+				{"type": "tool_use", "id": "toolu_arr", "name": "AskUserQuestion", "input": {"questions": [{"question": "Approve? [clawvisor:approval=cv-arrayshape01]"}]}}
+			]},
+			{"role": "user", "content": [
+				{"type": "tool_result", "tool_use_id": "toolu_arr", "content": ["yes"]}
+			]}
+		]
+	}`)
+	verb, id := anthropicAskUserQuestionApprovalReply(body)
+	if verb != "approve" {
+		t.Fatalf("verb = %q, want approve from array-shaped JSON answer", verb)
+	}
+	if id != "cv-arrayshape01" {
+		t.Fatalf("id = %q, want cv-arrayshape01", id)
+	}
+}

@@ -402,13 +402,18 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 					// re-emit loop in buildAnthropicMultiBlockSSE
 					// surfaces an AskUserQuestion (etc.) block to the
 					// harness instead of a plain text block.
-					if inputJSON, ok := marshalSyntheticToolCallInput(verdict.SubstituteWithToolCall); ok {
-						pb.name = verdict.SubstituteWithToolCall.Name
-						if verdict.SubstituteWithToolCall.ID != "" {
-							pb.id = verdict.SubstituteWithToolCall.ID
-						}
+					//
+					// Validity gate matches the buffered JSON path's
+					// anthropicSubstituteToolUseBlock — empty Name or
+					// unmarshalable Input falls back to the text
+					// substitution so transport doesn't decide
+					// whether the user sees a broken tool_use block
+					// or a readable refusal text.
+					if substBlock, ok := anthropicSubstituteToolUseBlock(verdict.SubstituteWithToolCall); ok {
+						pb.name = substBlock.Name
+						pb.id = substBlock.ID
 						pb.input.Reset()
-						pb.input.Write(inputJSON)
+						pb.input.Write(substBlock.Input)
 						continue
 					}
 				}

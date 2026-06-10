@@ -311,6 +311,55 @@ func TestAnthropicResponseRewriterFallsBackToTextWhenSubstituteToolCallInvalid(t
 	}
 }
 
+func TestAnthropicResponseRewriterFallsBackToTextWhenSubstituteToolCallInvalidSSE(t *testing.T) {
+	// Buffered-SSE counterpart to the JSON test above: the SSE
+	// rewriter must apply the same validity gate as the JSON path
+	// so transport doesn't decide whether the user sees an invalid
+	// tool_use block or a readable refusal text. An empty Name
+	// should land in the text fallback either way.
+	t.Parallel()
+
+	body := []byte(`event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_orig","name":"Bash","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":5}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`)
+
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "text/event-stream", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:                false,
+			SubstituteWith:         "readable refusal",
+			SubstituteWithToolCall: &SyntheticToolCall{Name: ""}, // invalid
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	got := string(result.Body)
+	// Should fall back to text — NOT emit an empty-name tool_use
+	// block that the harness can't render.
+	if strings.Contains(got, `"name":""`) {
+		t.Fatalf("SSE rewriter emitted an empty-name tool_use block; expected text fallback. Got: %s", got)
+	}
+	if !strings.Contains(got, "readable refusal") {
+		t.Fatalf("SSE rewriter did not surface the SubstituteWith fallback text. Got: %s", got)
+	}
+}
+
 func TestAnthropicResponseRewriterOmitsEmptyTextBlocksWhenRewritingSSE(t *testing.T) {
 	t.Parallel()
 

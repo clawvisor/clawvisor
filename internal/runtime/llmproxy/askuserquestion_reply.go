@@ -3,6 +3,7 @@ package llmproxy
 import (
 	"encoding/json"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -193,12 +194,20 @@ func extractAnthropicToolResults(raw json.RawMessage) []anthropicToolResult {
 	return out
 }
 
-// flattenAnthropicToolResultContent accepts the two shapes
-// Anthropic's tool_result.content field permits — a bare string or
-// an array of typed blocks — and returns the concatenated text.
-// JSON-typed answer payloads (e.g. {"answers":{"...":"yes"}})
-// flatten to their raw JSON so the verb parser can still pick out
-// "yes"/"no" tokens.
+// flattenAnthropicToolResultContent accepts the three shapes
+// Anthropic's tool_result.content field permits in practice — a bare
+// string, an array of typed blocks, or a JSON object/array carrying
+// the answer payload — and returns text ParseApprovalReplyText can
+// scan.
+//
+// For JSON object payloads (e.g. {"answers":{"Approve?":"yes"}} —
+// the shape AskUserQuestion's input-schema describes for collected
+// answers) every string value in the structure is collected, one
+// per line, so the verb regex (which is anchored at line ends) can
+// match the "yes"/"no" token even when it's nested inside a map.
+// Falling back to the raw JSON string would never match because
+// `{"answers":{"x":"yes"}}` puts the verb between quotes and braces
+// instead of on its own line.
 func flattenAnthropicToolResultContent(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -207,6 +216,10 @@ func flattenAnthropicToolResultContent(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &simple); err == nil {
 		return simple
 	}
+	// Array shape: try the typed-block list first (the
+	// well-documented Anthropic block form) before falling through
+	// to the generic JSON walker — typed text blocks should round-
+	// trip exactly, not via the per-line stringification path.
 	var blocks []struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
@@ -222,10 +235,56 @@ func flattenAnthropicToolResultContent(raw json.RawMessage) string {
 			return strings.Join(parts, "\n")
 		}
 	}
-	// Fallback: return the raw JSON so downstream verb parsing can
-	// pick "yes"/"no" out of a structured answer payload the harness
-	// emits as an object rather than a string.
+	// Generic JSON walker: object or array of arbitrary shape.
+	// Collect every leaf string so the verb parser can scan them
+	// line-by-line.
+	var generic any
+	if err := json.Unmarshal(raw, &generic); err == nil {
+		strs := collectJSONLeafStrings(generic)
+		if len(strs) > 0 {
+			return strings.Join(strs, "\n")
+		}
+	}
+	// Last-resort fallback: raw JSON. ParseApprovalReplyText
+	// generally won't match this, but at least the caller has
+	// SOMETHING to log/debug instead of an empty string.
 	return string(raw)
+}
+
+// collectJSONLeafStrings recursively walks a decoded JSON value and
+// returns every string leaf in document order. Used to surface
+// answer labels buried inside structured tool_result content so the
+// verb parser can scan them with its line-anchored regex.
+func collectJSONLeafStrings(v any) []string {
+	switch t := v.(type) {
+	case string:
+		if t == "" {
+			return nil
+		}
+		return []string{t}
+	case []any:
+		var out []string
+		for _, e := range t {
+			out = append(out, collectJSONLeafStrings(e)...)
+		}
+		return out
+	case map[string]any:
+		// Sort keys for deterministic ordering — go's map iteration
+		// is random, and a non-deterministic verb-extraction order
+		// would make multi-answer payloads flaky. Keys are usually
+		// the original question text; values are the chosen labels.
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var out []string
+		for _, k := range keys {
+			out = append(out, collectJSONLeafStrings(t[k])...)
+		}
+		return out
+	}
+	return nil
 }
 
 // collectAnthropicAskUserQuestionInputs walks every assistant
