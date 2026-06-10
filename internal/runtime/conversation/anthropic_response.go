@@ -36,6 +36,49 @@ type anthropicJSONResponse struct {
 	Usage      json.RawMessage        `json:"usage,omitempty"`
 }
 
+// anthropicSubstituteToolUseBlock converts a SyntheticToolCall into a
+// JSON content block ready to splice into the buffered response.
+// Returns (block, false) if Name is empty or input fails to marshal —
+// callers should fall back to the text substitution in that case.
+func anthropicSubstituteToolUseBlock(call *SyntheticToolCall) (anthropicJSONContent, bool) {
+	if call == nil || strings.TrimSpace(call.Name) == "" {
+		return anthropicJSONContent{}, false
+	}
+	inputJSON, ok := marshalSyntheticToolCallInput(call)
+	if !ok {
+		return anthropicJSONContent{}, false
+	}
+	id := call.ID
+	if id == "" {
+		id = "toolu_clawvisor_subst"
+	}
+	return anthropicJSONContent{
+		Type:  "tool_use",
+		ID:    id,
+		Name:  call.Name,
+		Input: inputJSON,
+	}, true
+}
+
+// marshalSyntheticToolCallInput marshals call.Input into a JSON
+// fragment suitable for embedding into the response. nil/empty input
+// is normalized to "{}" so the harness still parses a valid object
+// when the caller doesn't supply any args.
+func marshalSyntheticToolCallInput(call *SyntheticToolCall) (json.RawMessage, bool) {
+	if call == nil {
+		return nil, false
+	}
+	input := call.Input
+	if input == nil {
+		input = map[string]any{}
+	}
+	out, err := json.Marshal(input)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
 type anthropicJSONContent struct {
 	Type  string          `json:"type"`
 	Text  string          `json:"text,omitempty"`
@@ -83,6 +126,34 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 			finalInput := block.Input
 			if !verdict.Allowed {
 				anyBlocked = true
+				if verdict.SubstituteWithToolCall != nil {
+					// Replace the blocked tool_use with a synthetic
+					// tool_use of a different tool (e.g.
+					// AskUserQuestion) so the harness surfaces its
+					// native UI for that tool instead of an
+					// assistant text block. When SubstituteWith is
+					// also set, emit it as a preceding text block so
+					// the harness shows the prompt body in chat AND
+					// the picker UI for yes/no — keeping the
+					// approval-marker correlation in the visible
+					// text while the picker stays uncluttered.
+					if newBlock, ok := anthropicSubstituteToolUseBlock(verdict.SubstituteWithToolCall); ok {
+						if txt := strings.TrimSpace(verdict.SubstituteWith); txt != "" {
+							newContent = append(newContent, anthropicJSONContent{
+								Type: "text",
+								Text: verdict.SubstituteWith,
+							})
+							frags = append(frags, assistantFragment{Text: verdict.SubstituteWith})
+						}
+						newContent = append(newContent, newBlock)
+						frags = append(frags, assistantFragment{
+							IsTool:   true,
+							ToolName: newBlock.Name,
+							ToolArgs: newBlock.Input,
+						})
+						continue
+					}
+				}
 				txt := verdict.SubstituteWith
 				if txt == "" && !verdict.SuppressSubstituteText {
 					reason := verdict.Reason
@@ -324,6 +395,23 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		for _, pb := range orderedTUs {
 			verdict := verdicts[pb]
 			if !verdict.Allowed {
+				if verdict.SubstituteWithToolCall != nil {
+					// Substitute the blocked tool_use with a synthetic
+					// tool_use of a different name/input — keep
+					// pb.isTU=true and rewrite name/id/input so the
+					// re-emit loop in buildAnthropicMultiBlockSSE
+					// surfaces an AskUserQuestion (etc.) block to the
+					// harness instead of a plain text block.
+					if inputJSON, ok := marshalSyntheticToolCallInput(verdict.SubstituteWithToolCall); ok {
+						pb.name = verdict.SubstituteWithToolCall.Name
+						if verdict.SubstituteWithToolCall.ID != "" {
+							pb.id = verdict.SubstituteWithToolCall.ID
+						}
+						pb.input.Reset()
+						pb.input.Write(inputJSON)
+						continue
+					}
+				}
 				txt := verdict.SubstituteWith
 				if txt == "" && !verdict.SuppressSubstituteText {
 					reason := verdict.Reason

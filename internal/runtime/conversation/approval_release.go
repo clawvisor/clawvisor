@@ -3,6 +3,7 @@ package conversation
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -45,23 +46,278 @@ func AnthropicApprovalReply(body []byte) (verb, id string) {
 		return "", ""
 	}
 	verb, id = ParseApprovalReplyText(flattenAnthropicUserText(req.Messages[userIdx].Content))
-	if verb == "" || id != "" {
+	if verb != "" {
+		if id == "" {
+			// Bare reply (e.g. "y"): scan back through assistant messages for the
+			// most recent approval-ID marker. Without this, a "y" lands on whatever
+			// hold the cache picks LIFO — which can be the wrong agent's when
+			// several share a Clawvisor token. The marker pins the reply to the
+			// specific approval prompt this transcript is looking at.
+			for i := userIdx - 1; i >= 0; i-- {
+				if req.Messages[i].Role != "assistant" {
+					continue
+				}
+				if marker := FindLatestApprovalIDMarker(flattenAnthropicUserText(req.Messages[i].Content)); marker != "" {
+					return verb, marker
+				}
+			}
+		}
 		return verb, id
 	}
-	// Bare reply (e.g. "y"): scan back through assistant messages for the
-	// most recent approval-ID marker. Without this, a "y" lands on whatever
-	// hold the cache picks LIFO — which can be the wrong agent's when
-	// several share a Clawvisor token. The marker pins the reply to the
-	// specific approval prompt this transcript is looking at.
-	for i := userIdx - 1; i >= 0; i-- {
-		if req.Messages[i].Role != "assistant" {
+	// No plain-text approval reply on the user turn. Try the
+	// AskUserQuestion path: the model surfaced the yes/no through the
+	// harness's structured AskUserQuestion tool, and the user's choice
+	// arrives as a tool_result block (not as text). Pair each
+	// tool_result with the assistant's prior AskUserQuestion tool_use
+	// and parse the chosen answer.
+	return anthropicAskUserQuestionApprovalReply(req.Messages, userIdx)
+}
+
+// anthropicAskUserQuestionApprovalReply scans the latest user turn for
+// a tool_result whose parent assistant tool_use is an AskUserQuestion
+// call that carries the inline-approval ID marker in its question
+// text. The tool_result content is the user's chosen answer (e.g.
+// "yes" or "no"), which the existing verb parser normalizes to
+// approve/deny.
+//
+// Returns ("", "") when no matching pair is found. Callers fall
+// through to the legacy text path, so a harness that doesn't expose
+// AskUserQuestion keeps the existing behavior unchanged.
+func anthropicAskUserQuestionApprovalReply(
+	messages []struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	},
+	userIdx int,
+) (verb, id string) {
+	results := extractAnthropicToolResults(messages[userIdx].Content)
+	if len(results) == 0 {
+		return "", ""
+	}
+	// Build a map of tool_use_id → question text for every
+	// AskUserQuestion call in any prior assistant turn. We scan all
+	// assistant turns (not just the most recent) because the harness
+	// may send multiple tool_results in a single user turn after
+	// several parallel AskUserQuestion calls.
+	questions := collectAnthropicAskUserQuestionInputs(messages, userIdx)
+	if len(questions) == 0 {
+		return "", ""
+	}
+	// Walk tool_results in reverse so the latest answer wins when the
+	// same hold has multiple tool_results in the same turn (unusual
+	// but possible if the harness retries).
+	for i := len(results) - 1; i >= 0; i-- {
+		tr := results[i]
+		questionText, ok := questions[tr.ToolUseID]
+		if !ok {
 			continue
 		}
-		if marker := FindLatestApprovalIDMarker(flattenAnthropicUserText(req.Messages[i].Content)); marker != "" {
-			return verb, marker
+		marker := FindLatestApprovalIDMarker(questionText)
+		if marker == "" {
+			continue
+		}
+		// AskUserQuestion harnesses wrap the user's choice. Claude
+		// Code emits `Your questions have been answered: "<q>"="<a>".
+		// You can now continue with these answers in mind.` — the
+		// raw answer label sits between the trailing `="..."` pair.
+		// Strip the wrapper before handing the content to the bare-
+		// verb parser, which only matches single-line yes/no/etc.
+		answer := extractAskUserQuestionAnswer(tr.Content)
+		if answer == "" {
+			// Some harnesses pass the answer through unwrapped; fall
+			// back to the generic parser so a plain "yes" tool_result
+			// content still releases the hold.
+			answer = tr.Content
+		}
+		v, _ := ParseApprovalReplyText(answer)
+		if v == "" {
+			continue
+		}
+		return v, marker
+	}
+	return "", ""
+}
+
+// askUserQuestionAnswerRE pulls the answer label out of the harness-
+// wrapped AskUserQuestion tool_result content. The leading question
+// text is unbounded (spans newlines, contains arbitrary characters),
+// the answer is what follows the trailing `"="` separator and lives
+// between the next pair of double quotes. Non-greedy `[^"]*` on the
+// answer keeps the match anchored to the rightmost answer slot when
+// the wrapper trailer omits the period (older harness builds).
+var askUserQuestionAnswerRE = regexp.MustCompile(`"="([^"]*)"`)
+
+// ExtractAskUserQuestionAnswer is the exported entry point sibling
+// packages (the llmproxy body editor) call so they share the same
+// wrapper-unwrap logic as the release path.
+func ExtractAskUserQuestionAnswer(content string) string {
+	return extractAskUserQuestionAnswer(content)
+}
+
+// extractAskUserQuestionAnswer returns the answer label embedded in a
+// harness-wrapped AskUserQuestion result. Returns "" when the
+// content doesn't match the wrapper shape — callers fall through to
+// the generic verb parser on the raw content.
+func extractAskUserQuestionAnswer(content string) string {
+	matches := askUserQuestionAnswerRE.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	// Last match handles multi-question results (each question gets
+	// its own `"="..."` slot). For an inline-approval prompt we only
+	// emit a single question, so the last match equals the only
+	// match in production; the slice walk just makes the contract
+	// explicit for future multi-question reuse.
+	return matches[len(matches)-1][1]
+}
+
+type anthropicToolResult struct {
+	ToolUseID string
+	Content   string
+}
+
+// extractAnthropicToolResults pulls tool_result blocks out of an
+// Anthropic role:"user" content field, flattening any text-shaped
+// content to a single string per block. Non-text content (image, etc.)
+// is skipped — the AskUserQuestion answer is always text.
+func extractAnthropicToolResults(raw json.RawMessage) []anthropicToolResult {
+	if len(raw) == 0 {
+		return nil
+	}
+	var blocks []struct {
+		Type      string          `json:"type"`
+		ToolUseID string          `json:"tool_use_id"`
+		Content   json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return nil
+	}
+	var out []anthropicToolResult
+	for _, b := range blocks {
+		if b.Type != "tool_result" || b.ToolUseID == "" {
+			continue
+		}
+		content := flattenAnthropicToolResultContent(b.Content)
+		if content == "" {
+			continue
+		}
+		out = append(out, anthropicToolResult{ToolUseID: b.ToolUseID, Content: content})
+	}
+	return out
+}
+
+// flattenAnthropicToolResultContent accepts the two shapes Anthropic's
+// tool_result.content field permits — a bare string or an array of
+// typed blocks — and returns the concatenated text. JSON-typed answer
+// payloads (e.g. {"answers":{"...":"yes"}}) flatten to their raw JSON
+// here; ParseApprovalReplyText then picks the verb out of the embedded
+// text. Empty/unparseable input returns "".
+func flattenAnthropicToolResultContent(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var simple string
+	if err := json.Unmarshal(raw, &simple); err == nil {
+		return simple
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err == nil {
+		var parts []string
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "\n")
 		}
 	}
-	return verb, ""
+	// Fallback: return the raw JSON so downstream verb parsing can
+	// pick "yes"/"no" out of a structured answer payload the harness
+	// emits as an object rather than a string.
+	return string(raw)
+}
+
+// collectAnthropicAskUserQuestionInputs walks every assistant turn
+// before userIdx and returns a map of AskUserQuestion tool_use IDs to
+// the concatenated marker-search text for that call: the
+// AskUserQuestion input JSON PLUS any sibling text blocks from the
+// same assistant message. The inline-approval renderer emits the
+// task body (with the [clawvisor:approval=...] marker) as a text
+// block alongside a minimal AskUserQuestion picker — so the marker
+// may live in either place; concatenating both keeps the parser
+// agnostic to which slot the marker is in.
+func collectAnthropicAskUserQuestionInputs(
+	messages []struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	},
+	userIdx int,
+) map[string]string {
+	out := make(map[string]string)
+	for i := 0; i < userIdx; i++ {
+		if messages[i].Role != "assistant" {
+			continue
+		}
+		var blocks []struct {
+			Type  string          `json:"type"`
+			ID    string          `json:"id"`
+			Name  string          `json:"name"`
+			Text  string          `json:"text"`
+			Input json.RawMessage `json:"input"`
+		}
+		if err := json.Unmarshal(messages[i].Content, &blocks); err != nil {
+			continue
+		}
+		// Pass 1: collect ALL text from this assistant turn so it
+		// can be paired with any AskUserQuestion tool_use we find.
+		// The marker most commonly lives in a sibling text block
+		// emitted before the picker.
+		var siblingTexts []string
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				siblingTexts = append(siblingTexts, b.Text)
+			}
+		}
+		siblingText := strings.Join(siblingTexts, "\n")
+		// Pass 2: for each AskUserQuestion tool_use, build the
+		// combined marker-search string (input JSON + sibling text).
+		for _, b := range blocks {
+			if b.Type != "tool_use" || b.Name != "AskUserQuestion" || b.ID == "" {
+				continue
+			}
+			text := flattenAskUserQuestionInput(b.Input)
+			if siblingText != "" {
+				if text != "" {
+					text += "\n" + siblingText
+				} else {
+					text = siblingText
+				}
+			}
+			if text == "" {
+				continue
+			}
+			out[b.ID] = text
+		}
+	}
+	return out
+}
+
+// flattenAskUserQuestionInput pulls human-readable question text out
+// of an AskUserQuestion tool_use input. The schema nests questions
+// under questions[].question plus questions[].options[].label /
+// .description; we concatenate everything since the marker may live in
+// the question or in an option description depending on how the model
+// rendered it. The raw JSON is also included as a fallback so a
+// model that drops the marker in an unexpected slot still matches.
+func flattenAskUserQuestionInput(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	return string(raw)
 }
 
 // SyntheticToolCall is one tool_use entry in a (possibly multi-block)

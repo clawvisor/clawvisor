@@ -391,12 +391,78 @@ func MaybeInterceptInlineTaskDefinition(
 		"purpose", parsed.Purpose,
 		"signal", "query",
 	)
-	return conversation.ToolUseVerdict{
+	promptText := renderTaskApprovalPromptWithRiskAndTools(parsed, innerHold.Pending.ID, assessment, cfg.DefaultTaskExpirySeconds, cfg.AvailableTools)
+	verdict := conversation.ToolUseVerdict{
 		Allowed:        false,
 		Reason:         "Clawvisor: awaiting inline task approval",
-		SubstituteWith: renderTaskApprovalPromptWithRisk(parsed, innerHold.Pending.ID, assessment, cfg.DefaultTaskExpirySeconds),
+		SubstituteWith: promptText,
 		HeldKindHint:   "approval",
-	}, true
+	}
+	useAskUserQuestion := askUserQuestionAvailable(cfg.AvailableTools)
+	trace("inline_task.substitution_shape",
+		"approval_id", innerHold.Pending.ID,
+		"shape", inlineSubstitutionShape(useAskUserQuestion),
+		"available_tool_count", len(cfg.AvailableTools),
+		"ask_user_question_present", useAskUserQuestion,
+		"available_tools", cfg.AvailableTools,
+	)
+	if useAskUserQuestion {
+		// Emit a text block (the rendered prompt with the approval
+		// marker — via SubstituteWith) PLUS a minimal
+		// AskUserQuestion(yes/no) tool_use call. The codec writes
+		// the text block first so the harness surfaces the task
+		// definition in chat, then the picker pops up with just
+		// "Approve this task?" — the task body doesn't get
+		// duplicated inside the picker. The parser scans the same
+		// assistant turn's text content for the [clawvisor:approval=...]
+		// marker, so correlation still works without burying the
+		// marker in the picker question.
+		verdict.SubstituteWithToolCall = buildAskUserQuestionToolCall(innerHold.Pending.ID)
+	}
+	return verdict, true
+}
+
+func inlineSubstitutionShape(useAskUserQuestion bool) string {
+	if useAskUserQuestion {
+		return "ask_user_question"
+	}
+	return "text"
+}
+
+// buildAskUserQuestionToolCall constructs the synthetic
+// AskUserQuestion tool_use the harness sees when AskUserQuestion is
+// in the agent's declared tool list. The question is intentionally
+// minimal ("Approve this task?") — the task body lives in a sibling
+// text block emitted alongside this tool_use, so duplicating it
+// inside the picker would just clutter the UI.
+//
+// The [clawvisor:approval=cv-...] marker is NOT embedded here; it
+// lives in the sibling text block and is found there by the parser.
+// The synthetic tool_use_id still namespaces under the approval ID
+// so audit logs and trace records correlate the AskUserQuestion call
+// back to the hold without an extra lookup.
+func buildAskUserQuestionToolCall(approvalID string) *conversation.SyntheticToolCall {
+	id := "toolu_clawvisor_ask"
+	if approvalID != "" {
+		id = "toolu_clawvisor_ask_" + approvalID
+	}
+	return &conversation.SyntheticToolCall{
+		ID:   id,
+		Name: AskUserQuestionToolName,
+		Input: map[string]any{
+			"questions": []map[string]any{
+				{
+					"question":    "Approve this task?",
+					"header":      "Approve task",
+					"multiSelect": false,
+					"options": []map[string]any{
+						{"label": "yes", "description": "Authorize the task"},
+						{"label": "no", "description": "Cancel"},
+					},
+				},
+			},
+		},
+	}
 }
 
 // CleanupEvictedInlineTask expires the store.Task row anchoring an

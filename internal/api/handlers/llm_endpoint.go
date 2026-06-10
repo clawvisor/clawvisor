@@ -1181,6 +1181,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					InlineTaskCreator:                h.InlineTaskCreator,
 					Checkouts:                        h.TaskCheckouts,
 					DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
+					AvailableTools:                   reqSummary.AvailableTools,
 				},
 				RewriteContext: llmproxy.RewriteContext{
 					Inspector:    h.Inspector,
@@ -1590,6 +1591,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				InlineTaskCreator:                h.InlineTaskCreator,
 				Checkouts:                        h.TaskCheckouts,
 				DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
+				AvailableTools:                   reqSummary.AvailableTools,
 			},
 			RewriteContext: llmproxy.RewriteContext{
 				Inspector:    h.Inspector,
@@ -1660,6 +1662,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					InlineTaskCreator:                h.InlineTaskCreator,
 					Checkouts:                        h.TaskCheckouts,
 					DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
+					AvailableTools:                   reqSummary.AvailableTools,
 				},
 				RewriteContext: llmproxy.RewriteContext{
 					Inspector:    h.Inspector,

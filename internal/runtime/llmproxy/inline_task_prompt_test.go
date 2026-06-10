@@ -127,6 +127,61 @@ func TestRenderTaskApprovalPromptWrapsLongPurpose(t *testing.T) {
 	}
 }
 
+
+
+func TestBuildAskUserQuestionToolCallShape(t *testing.T) {
+	const approvalID = "cv-abc123def456"
+	call := buildAskUserQuestionToolCall(approvalID)
+	if call == nil {
+		t.Fatal("expected synthetic tool call, got nil")
+	}
+	if call.Name != "AskUserQuestion" {
+		t.Errorf("Name=%q, want AskUserQuestion", call.Name)
+	}
+	if !strings.Contains(call.ID, approvalID) {
+		t.Errorf("ID=%q must namespace under approval ID for log correlation", call.ID)
+	}
+	questions, ok := call.Input["questions"].([]map[string]any)
+	if !ok || len(questions) != 1 {
+		t.Fatalf("Input.questions must be a 1-element []map[string]any, got %#v", call.Input["questions"])
+	}
+	q := questions[0]
+	question, _ := q["question"].(string)
+	// The question text is intentionally minimal — the task body
+	// lives in the sibling text content_block, not inside the
+	// picker. Asserting NOT-equal to the full prompt would still
+	// pass if we accidentally re-bloated it; assert the short shape
+	// directly so a regression jumps out.
+	if !strings.Contains(question, "Approve") {
+		t.Errorf("question should be a short yes/no prompt (e.g. \"Approve this task?\"), got %q", question)
+	}
+	if strings.Contains(question, "[clawvisor:approval=") {
+		t.Errorf("approval marker must NOT be in the picker question — it lives in the sibling text block, got %q", question)
+	}
+	multi, _ := q["multiSelect"].(bool)
+	if multi {
+		t.Errorf("multiSelect must be false for a yes/no approval question")
+	}
+	opts, _ := q["options"].([]map[string]any)
+	if len(opts) != 2 {
+		t.Fatalf("expected exactly 2 options (yes/no), got %d", len(opts))
+	}
+	if opts[0]["label"] != "yes" || opts[1]["label"] != "no" {
+		t.Errorf("expected options [yes,no] (parser maps yes→approve / no→deny), got %v", opts)
+	}
+}
+
+func TestBuildAskUserQuestionToolCallHandlesEmptyApprovalID(t *testing.T) {
+	// Empty approvalID is a degenerate but possible shape (renderer
+	// short-circuits omit the footer). The synthetic tool_use_id must
+	// still be non-empty so the harness can pair the eventual
+	// tool_result back to the call.
+	call := buildAskUserQuestionToolCall("")
+	if call.ID == "" {
+		t.Fatal("expected a non-empty synthetic tool_use_id even when approvalID is empty")
+	}
+}
+
 func TestRenderTaskApprovalPromptRendersEgress(t *testing.T) {
 	prompt := renderTaskApprovalPrompt(&runtimetasks.TaskCreateRequest{
 		Purpose: "Fetch GitHub stars",

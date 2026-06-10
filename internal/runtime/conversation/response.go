@@ -28,6 +28,20 @@ type ToolUseVerdict struct {
 	// assistant block in the rewritten response. Used by approval-prompt
 	// rendering, inline-task interception, etc.
 	SubstituteWith string
+	// SubstituteWithToolCall, when non-nil, replaces the blocked
+	// tool_use block with a synthetic tool_use of the named tool and
+	// supplied input — instead of a text block. The inline-approval
+	// path uses this to swap the model's POST /api/control/tasks call
+	// for an AskUserQuestion tool_use so the harness can surface the
+	// yes/no through its structured picker UI rather than as a chat
+	// message the user has to read and reply to in text.
+	//
+	// When BOTH SubstituteWith and SubstituteWithToolCall are set the
+	// rewriters MUST prefer SubstituteWithToolCall — SubstituteWith
+	// stays populated as a back-compat fallback for adapters that
+	// haven't been taught the new shape yet (audit serialization,
+	// non-Anthropic providers).
+	SubstituteWithToolCall *SyntheticToolCall
 	// SuppressSubstituteText, when true and Allowed=false, prevents the
 	// rewriter/formatter from falling back to a default "Tool 'X' was
 	// blocked by Clawvisor policy: ..." text when SubstituteWith is empty.

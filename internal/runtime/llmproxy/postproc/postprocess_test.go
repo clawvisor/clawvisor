@@ -2399,3 +2399,98 @@ func TestPostprocess_MultiplePlaceholdersRequireSharedHostBoundary(t *testing.T)
 		t.Fatalf("mixed-service placeholder request must not be rewritten to proxy URL:\n%s", out)
 	}
 }
+
+func TestWriteProviderSubstituteToolCallsEmitsTextThenToolUse(t *testing.T) {
+	// The streaming substitution path must surface BOTH the
+	// approval-prompt text block (where the [clawvisor:approval=...]
+	// marker lives) AND the synthetic AskUserQuestion tool_use
+	// block — text first, picker second. Asserts the SSE event
+	// sequence and the trailing message_delta/message_stop envelope.
+	var buf bytes.Buffer
+	err := writeProviderSubstituteToolCalls(
+		&buf,
+		conversation.ProviderAnthropic,
+		conversation.StreamingRewriteResult{
+			NextAnthropicContentIndex: 0,
+			StreamID:                  "msg_test",
+			Model:                     "claude-test",
+			Role:                      "assistant",
+		},
+		[]substitutedBlock{
+			{
+				Text: "Clawvisor wants to create a task...\n\n[clawvisor:approval=cv-substtest1]",
+				Call: conversation.SyntheticToolCall{
+					ID:   "toolu_clawvisor_ask_cv-substtest1",
+					Name: "AskUserQuestion",
+					Input: map[string]any{
+						"questions": []map[string]any{{"question": "Approve this task?", "options": []map[string]any{{"label": "yes"}, {"label": "no"}}}},
+					},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("writeProviderSubstituteToolCalls error: %v", err)
+	}
+	got := buf.String()
+	// The text content_block at index 0 must carry the marker
+	// verbatim (verified end-to-end: parser-side test recovers the
+	// marker from sibling text in AnthropicApprovalReply).
+	if !strings.Contains(got, `"index":0`) || !strings.Contains(got, `"type":"text"`) {
+		t.Fatalf("expected text content_block at index 0, got:\n%s", got)
+	}
+	if !strings.Contains(got, "clawvisor:approval=cv-substtest1") {
+		t.Fatalf("text block must carry the approval marker verbatim, got:\n%s", got)
+	}
+	// The tool_use content_block at index 1 must be the
+	// AskUserQuestion call with the picker-only question (no
+	// duplicate of the prompt body in the picker).
+	if !strings.Contains(got, `"index":1`) || !strings.Contains(got, `"type":"tool_use"`) {
+		t.Fatalf("expected tool_use content_block at index 1, got:\n%s", got)
+	}
+	if !strings.Contains(got, `"name":"AskUserQuestion"`) {
+		t.Fatalf("expected AskUserQuestion tool_use, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Approve this task?") {
+		t.Fatalf("picker question must be the short \"Approve this task?\" prompt, got:\n%s", got)
+	}
+	// Order matters — text first, then tool_use.
+	textIdx := strings.Index(got, `"type":"text"`)
+	toolIdx := strings.Index(got, `"type":"tool_use"`)
+	if textIdx < 0 || toolIdx < 0 || textIdx >= toolIdx {
+		t.Fatalf("expected text block to precede tool_use block, got text@%d tool_use@%d:\n%s", textIdx, toolIdx, got)
+	}
+	// Trailing envelope: message_delta with stop_reason=tool_use,
+	// then message_stop. Confirms the picker shows up as the
+	// terminal action of this assistant turn.
+	if !strings.Contains(got, `"stop_reason":"tool_use"`) {
+		t.Fatalf("expected trailing stop_reason=tool_use, got:\n%s", got)
+	}
+}
+
+func TestWriteProviderSubstituteToolCallsSkipsTextBlockWhenEmpty(t *testing.T) {
+	// If a verdict supplies SubstituteWithToolCall without a
+	// SubstituteWith preamble, the codec must NOT emit a text
+	// block — that would leak a content_block_start/_delta/_stop
+	// triple with no content. Picker-only emission stays clean.
+	var buf bytes.Buffer
+	err := writeProviderSubstituteToolCalls(
+		&buf,
+		conversation.ProviderAnthropic,
+		conversation.StreamingRewriteResult{NextAnthropicContentIndex: 0, StreamID: "msg_t", Model: "m", Role: "assistant"},
+		[]substitutedBlock{{
+			Text: "   ", // whitespace only — treated as empty by writer
+			Call: conversation.SyntheticToolCall{ID: "toolu_a", Name: "AskUserQuestion", Input: map[string]any{"questions": []map[string]any{{"question": "Approve?"}}}},
+		}},
+	)
+	if err != nil {
+		t.Fatalf("writeProviderSubstituteToolCalls error: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, `"type":"text"`) {
+		t.Fatalf("whitespace-only SubstituteWith must NOT emit a text block, got:\n%s", got)
+	}
+	if !strings.Contains(got, `"type":"tool_use"`) {
+		t.Fatalf("tool_use block missing, got:\n%s", got)
+	}
+}

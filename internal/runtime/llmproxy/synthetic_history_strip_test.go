@@ -46,6 +46,107 @@ func TestStripSyntheticApprovalHistory_DropsInlinePromptAndBareReply(t *testing.
 	}
 }
 
+func TestStripSyntheticApprovalHistory_DropsAskUserQuestionToolResultOrphan(t *testing.T) {
+	// New AskUserQuestion substitution shape: the proxy emits a
+	// text block (with marker) + tool_use(AskUserQuestion) in the
+	// assistant turn. The harness sends back a tool_result for the
+	// AskUserQuestion call in the next user turn. When the strip
+	// removes the assistant turn, the tool_result is orphaned and
+	// Anthropic returns 400 — so the strip must also drop the
+	// matching tool_result blocks from the next user turn.
+	const approvalID = "cv-askuq-strip-1"
+	body, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "Can you create a haiku file?"},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": "Clawvisor wants to create a task to cover this work:\n\nPurpose\n  Create haiku\n\n[clawvisor:approval=" + approvalID + "]"},
+				{"type": "tool_use", "id": "toolu_clawvisor_ask_" + approvalID, "name": "AskUserQuestion", "input": map[string]any{
+					"questions": []map[string]any{{"question": "Approve this task?", "options": []map[string]any{{"label": "yes"}, {"label": "no"}}}},
+				}},
+			}},
+			{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "toolu_clawvisor_ask_" + approvalID, "content": "Your questions have been answered: \"Approve this task?\"=\"yes\". You can now continue with these answers in mind."},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider: conversation.ProviderAnthropic,
+		Body:     body,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Modified {
+		t.Fatal("expected strip to modify body (assistant turn + orphan tool_result)")
+	}
+	text := string(out.Body)
+	if strings.Contains(text, "toolu_clawvisor_ask_"+approvalID) {
+		t.Fatalf("orphan AskUserQuestion tool_use_id still present in stripped body: %s", text)
+	}
+	if strings.Contains(text, "tool_result") {
+		t.Fatalf("orphan tool_result block still present in stripped body: %s", text)
+	}
+	var decoded struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(out.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Messages) != 1 {
+		t.Fatalf("expected only the original user query to remain; got %+v", decoded.Messages)
+	}
+}
+
+func TestStripSyntheticApprovalHistory_KeepsSiblingTextBlocksAfterStrippingOrphanToolResult(t *testing.T) {
+	// Real Claude Code shape: the harness packs the next-turn
+	// system-reminders alongside the AskUserQuestion tool_result
+	// in the same user message. When we strip the orphan
+	// tool_result we must keep the sibling text blocks; dropping
+	// the whole message would lose the system-reminders the model
+	// needs.
+	const approvalID = "cv-askuq-strip-2"
+	body, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "Can you create a haiku file?"},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": "Clawvisor wants to create a task to cover this work:\n\nPurpose\n  Create haiku\n\n[clawvisor:approval=" + approvalID + "]"},
+				{"type": "tool_use", "id": "toolu_clawvisor_ask_" + approvalID, "name": "AskUserQuestion", "input": map[string]any{
+					"questions": []map[string]any{{"question": "Approve this task?"}},
+				}},
+			}},
+			{"role": "user", "content": []map[string]any{
+				{"type": "text", "text": "<system-reminder>important context</system-reminder>"},
+				{"type": "tool_result", "tool_use_id": "toolu_clawvisor_ask_" + approvalID, "content": "Your questions have been answered: \"Approve this task?\"=\"yes\". You can now continue with these answers in mind."},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider: conversation.ProviderAnthropic,
+		Body:     body,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out.Body)
+	if strings.Contains(got, "tool_result") {
+		t.Fatalf("orphan tool_result should be stripped, got: %s", got)
+	}
+	if !strings.Contains(got, "important context") {
+		t.Fatalf("sibling text block must survive the strip, got: %s", got)
+	}
+}
+
 func TestStripSyntheticApprovalHistory_KeepsInlineOutcomeContext(t *testing.T) {
 	note := inlineApprovedReplyAugmentation()
 	body := anthropicTextBody(

@@ -320,7 +320,32 @@ func buildControlResolver(
 						Reason:      reason,
 					})
 				}
-				traceFn := func(_ string, _ ...any) {}
+				// Forward trace events through the real TraceLogger
+				// when one is configured. Previous stub callback
+				// silently dropped events like inline_task.held and
+				// inline_task.substitution_shape — invisible to
+				// operators trying to debug whether the AskUserQuestion
+				// substitution fired.
+				traceFn := func(event string, kv ...any) {
+					if audit.Trace == nil {
+						return
+					}
+					payload := map[string]any{
+						"event":           event,
+						"agent_id":        agentID,
+						"request_id":      audit.RequestID,
+						"conversation_id": audit.ConversationID,
+						"tool_use_id":     tu.ID,
+					}
+					for i := 0; i+1 < len(kv); i += 2 {
+						key, ok := kv[i].(string)
+						if !ok {
+							continue
+						}
+						payload[key] = kv[i+1]
+					}
+					audit.Trace.Emit(payload)
+				}
 				convV, claimed := llmproxy.MaybeInterceptInlineTaskDefinition(req, interceptCfg, auditFn, traceFn, provider, tu, call)
 				if !claimed {
 					return pipeline.ToolUseVerdict{}, false

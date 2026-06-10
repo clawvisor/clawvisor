@@ -137,6 +137,180 @@ func TestAnthropicResponseRewriterBlocksToolUseJSON(t *testing.T) {
 	}
 }
 
+func TestAnthropicResponseRewriterSubstitutesToolCallJSON(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+	  "id":"msg_3",
+	  "type":"message",
+	  "role":"assistant",
+	  "model":"claude-test",
+	  "content":[{"type":"tool_use","id":"toolu_orig","name":"Bash","input":{"command":"curl ..."}}],
+	  "stop_reason":"tool_use"
+	}`)
+
+	const preamble = "Clawvisor wants to create a task...\n\n[clawvisor:approval=cv-xyz]"
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "application/json", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed: false,
+			Reason:  "requires approval",
+			// SubstituteWith carries the prompt body (with the
+			// approval marker). The rewriter emits this as a text
+			// content_block BEFORE the AskUserQuestion tool_use so
+			// the harness can surface the task definition in chat
+			// while keeping the picker UI minimal.
+			SubstituteWith: preamble,
+			SubstituteWithToolCall: &SyntheticToolCall{
+				ID:   "toolu_clawvisor_ask_cv-xyz",
+				Name: "AskUserQuestion",
+				Input: map[string]any{
+					"questions": []map[string]any{{"question": "Approve this task?", "options": []map[string]any{{"label": "yes"}, {"label": "no"}}}},
+				},
+			},
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten response")
+	}
+	var out map[string]any
+	if err := json.Unmarshal(result.Body, &out); err != nil {
+		t.Fatalf("unmarshal rewritten response: %v", err)
+	}
+	content := out["content"].([]any)
+	if len(content) != 2 {
+		t.Fatalf("expected [text, tool_use], got %d blocks: %v", len(content), content)
+	}
+	textBlock := content[0].(map[string]any)
+	if textBlock["type"] != "text" {
+		t.Fatalf("expected first block to be text, got %v", textBlock)
+	}
+	if textBlock["text"] != preamble {
+		t.Fatalf("text block must carry SubstituteWith verbatim, got %v", textBlock["text"])
+	}
+	block := content[1].(map[string]any)
+	if block["type"] != "tool_use" {
+		t.Fatalf("expected second block to be tool_use, got %v", block)
+	}
+	if block["name"] != "AskUserQuestion" {
+		t.Fatalf("expected substituted tool_use name=AskUserQuestion, got %v", block["name"])
+	}
+	if block["id"] != "toolu_clawvisor_ask_cv-xyz" {
+		t.Fatalf("expected substituted tool_use id to come from SyntheticToolCall, got %v", block["id"])
+	}
+	if out["stop_reason"] != "tool_use" {
+		t.Fatalf("expected stop_reason=tool_use, got %v", out["stop_reason"])
+	}
+}
+
+func TestAnthropicResponseRewriterSubstitutesToolCallSSE(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_orig","name":"Bash","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"curl\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":5}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`)
+
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "text/event-stream", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:        false,
+			Reason:         "requires approval",
+			SubstituteWith: "fallback text",
+			SubstituteWithToolCall: &SyntheticToolCall{
+				ID:   "toolu_clawvisor_ask_cv-sse",
+				Name: "AskUserQuestion",
+				Input: map[string]any{
+					"questions": []map[string]any{{"question": "Approve? [clawvisor:approval=cv-sse]", "options": []map[string]any{{"label": "yes"}, {"label": "no"}}}},
+				},
+			},
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten SSE response")
+	}
+	got := string(result.Body)
+	// The rewritten stream must emit a tool_use content_block_start
+	// for AskUserQuestion (not a text block) and must NOT leak the
+	// original Bash name or the SubstituteWith fallback text.
+	if !strings.Contains(got, `"type":"tool_use"`) {
+		t.Fatalf("SSE: expected substituted tool_use block, got: %s", got)
+	}
+	if !strings.Contains(got, `"name":"AskUserQuestion"`) {
+		t.Fatalf("SSE: expected substituted tool_use name=AskUserQuestion, got: %s", got)
+	}
+	if !strings.Contains(got, `"id":"toolu_clawvisor_ask_cv-sse"`) {
+		t.Fatalf("SSE: expected substituted tool_use_id, got: %s", got)
+	}
+	if strings.Contains(got, `"name":"Bash"`) {
+		t.Fatalf("SSE: original blocked tool name should be replaced, got: %s", got)
+	}
+	if strings.Contains(got, "fallback text") {
+		t.Fatalf("SSE: tool_call substitution must take precedence over SubstituteWith text, got: %s", got)
+	}
+	if !strings.Contains(got, `"stop_reason":"tool_use"`) {
+		t.Fatalf("SSE: expected stop_reason=tool_use, got: %s", got)
+	}
+	// The synthesized input JSON should carry the approval marker
+	// verbatim so the next-turn parser can correlate the result.
+	if !strings.Contains(got, "clawvisor:approval=cv-sse") {
+		t.Fatalf("SSE: expected approval marker to survive into question text, got: %s", got)
+	}
+}
+
+func TestAnthropicResponseRewriterFallsBackToTextWhenSubstituteToolCallInvalid(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+	  "id":"msg_4","type":"message","role":"assistant","model":"claude-test",
+	  "content":[{"type":"tool_use","id":"toolu_4","name":"Bash","input":{}}],
+	  "stop_reason":"tool_use"
+	}`)
+
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "application/json", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:        false,
+			SubstituteWith: "fallback text",
+			// Name is empty — anthropicSubstituteToolUseBlock
+			// rejects this and the rewriter falls back to the text
+			// path so the harness still sees something usable.
+			SubstituteWithToolCall: &SyntheticToolCall{Name: ""},
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(result.Body, &out)
+	content := out["content"].([]any)
+	block := content[0].(map[string]any)
+	if block["type"] != "text" {
+		t.Fatalf("expected fallback to text block, got %v", block)
+	}
+	if block["text"] != "fallback text" {
+		t.Fatalf("expected fallback text content, got %v", block)
+	}
+}
+
 func TestAnthropicResponseRewriterOmitsEmptyTextBlocksWhenRewritingSSE(t *testing.T) {
 	t.Parallel()
 

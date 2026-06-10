@@ -141,6 +141,12 @@ type ApprovalContext struct {
 	ConversationAutoApproveThreshold string
 	Checkouts                        TaskCheckoutStore
 	DefaultTaskExpirySeconds         int
+	// AvailableTools is the inbound request's declared tool list
+	// (e.g. Anthropic tools[].name). The inline approval renderer
+	// reads it to decide whether to instruct the model to surface
+	// the yes/no via AskUserQuestion (when the harness exposes that
+	// tool) or to relay the prompt as plain text.
+	AvailableTools []string
 }
 
 // RewriteContext groups the credentialed-rewrite path's dependencies:

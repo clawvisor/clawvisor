@@ -171,6 +171,30 @@ func PostprocessStream(
 	}
 
 	if anyBlocked {
+		// Tool-call substitution path: when every blocked decision
+		// supplies a SubstituteWithToolCall, the streaming codec emits
+		// those tool_use blocks directly instead of a blocked-prompt
+		// text block. The inline-approval flow uses this to surface
+		// the yes/no via AskUserQuestion's native picker UI when
+		// AskUserQuestion is in the agent's declared tool list.
+		//
+		// Mixed shapes (some decisions have SubstituteWithToolCall and
+		// others don't) fall through to the legacy text path so we
+		// don't accidentally hide a separate refusal under an
+		// AskUserQuestion call the user couldn't act on.
+		if substBlocks, allHaveToolCall := substituteToolCallsForBlocked(decisions); allHaveToolCall && len(substBlocks) > 0 {
+			if err := writeProviderSubstituteToolCalls(w, provider, streamResult, substBlocks); err != nil {
+				if dropErr := session.dropAllCommittedAndRollback(req.Context()); dropErr != nil {
+					return llmproxy.PostprocessResult{}, fmt.Errorf("substitute tool_call write failed: %w", errors.Join(err, fmt.Errorf("rollback failed: %w", dropErr)))
+				}
+				return llmproxy.PostprocessResult{}, err
+			}
+			return llmproxy.PostprocessResult{
+				ContentType: contentType,
+				Rewritten:   true,
+				Decisions:   decisions,
+			}, nil
+		}
 		subText := conversation.BlockedReasonText(decisions)
 		if strings.TrimSpace(subText) == "" {
 			subText = "Tool use was blocked by the Clawvisor proxy."
@@ -361,6 +385,146 @@ func writeProviderBlockedPrompt(w io.Writer, provider conversation.Provider, res
 		return err
 	}
 	return nil
+}
+
+// substitutedBlock pairs a blocked decision's SubstituteWith preamble
+// text with its SubstituteWithToolCall payload. The streaming codec
+// emits the text content_block first so the harness surfaces the
+// approval-prompt body in chat, then the tool_use content_block so
+// the picker UI opens for the user's yes/no choice. Text may be ""
+// when the decision intentionally only ships a tool_use.
+type substitutedBlock struct {
+	Text string
+	Call conversation.SyntheticToolCall
+}
+
+// substituteToolCallsForBlocked walks the blocked decisions and
+// pairs each SubstituteWithToolCall payload with its decision's
+// SubstituteWith preamble text. The allHaveToolCall return is true
+// only when EVERY blocked decision supplies a SubstituteWithToolCall
+// — partial coverage falls back to the text path so a mixed turn
+// doesn't lose a separate refusal under an AskUserQuestion call the
+// user can't satisfy.
+func substituteToolCallsForBlocked(decisions []conversation.ToolUseDecisionRecord) (blocks []substitutedBlock, allHaveToolCall bool) {
+	allHaveToolCall = true
+	for _, dec := range decisions {
+		if dec.Verdict.Allowed {
+			continue
+		}
+		if dec.Verdict.SubstituteWithToolCall == nil {
+			allHaveToolCall = false
+			continue
+		}
+		blocks = append(blocks, substitutedBlock{
+			Text: dec.Verdict.SubstituteWith,
+			Call: *dec.Verdict.SubstituteWithToolCall,
+		})
+	}
+	return blocks, allHaveToolCall
+}
+
+// writeProviderSubstituteToolCalls emits, per blocked decision, an
+// optional preamble text content_block followed by the synthetic
+// tool_use content_block — using the same continuation shape as
+// writeProviderBlockedPrompt: just content_block_* events plus a
+// trailing message_delta/message_stop. The upstream message_start
+// was already forwarded by StreamRewrite, so we do NOT emit a new
+// message_start — that would double-up the message envelope.
+//
+// Only the Anthropic provider is wired today; OpenAI callers fall
+// back to the text path via the gate in PostprocessStream.
+func writeProviderSubstituteToolCalls(w io.Writer, provider conversation.Provider, result conversation.StreamingRewriteResult, blocks []substitutedBlock) error {
+	switch provider {
+	case conversation.ProviderAnthropic:
+		// Index starts after any pass-through text/thinking blocks
+		// the upstream stream already wrote to the client. The
+		// blocked-prompt path uses the same source.
+		idx := result.NextAnthropicContentIndex
+		if idx < 0 {
+			idx = 0
+		}
+		for _, blk := range blocks {
+			if strings.TrimSpace(blk.Text) != "" {
+				if err := writeAnthropicTextBlock(w, idx, blk.Text); err != nil {
+					return err
+				}
+				idx++
+			}
+			if err := writeAnthropicToolUseBlock(w, idx, blk.Call); err != nil {
+				return err
+			}
+			idx++
+		}
+		return writeAnthropicStopSSE(w, "tool_use")
+	}
+	return nil
+}
+
+// writeAnthropicTextBlock emits one text content_block (start +
+// delta + stop) at the given index. Shared between
+// writeProviderBlockedPrompt and writeProviderSubstituteToolCalls.
+func writeAnthropicTextBlock(w io.Writer, index int, text string) error {
+	if err := writeSSE(w, "content_block_start", map[string]any{
+		"type":  "content_block_start",
+		"index": index,
+		"content_block": map[string]any{
+			"type": "text",
+			"text": "",
+		},
+	}); err != nil {
+		return err
+	}
+	if err := writeSSE(w, "content_block_delta", map[string]any{
+		"type":  "content_block_delta",
+		"index": index,
+		"delta": map[string]any{
+			"type": "text_delta",
+			"text": text,
+		},
+	}); err != nil {
+		return err
+	}
+	return writeSSE(w, "content_block_stop", map[string]any{
+		"type":  "content_block_stop",
+		"index": index,
+	})
+}
+
+// writeAnthropicToolUseBlock emits one tool_use content_block (start
+// + input_json_delta + stop) at the given index. Used to surface a
+// synthetic tool_use (e.g. AskUserQuestion) as part of a substituted
+// assistant turn.
+func writeAnthropicToolUseBlock(w io.Writer, index int, call conversation.SyntheticToolCall) error {
+	inputJSON, err := json.Marshal(call.Input)
+	if err != nil {
+		inputJSON = []byte("{}")
+	}
+	if err := writeSSE(w, "content_block_start", map[string]any{
+		"type":  "content_block_start",
+		"index": index,
+		"content_block": map[string]any{
+			"type":  "tool_use",
+			"id":    call.ID,
+			"name":  call.Name,
+			"input": map[string]any{},
+		},
+	}); err != nil {
+		return err
+	}
+	if err := writeSSE(w, "content_block_delta", map[string]any{
+		"type":  "content_block_delta",
+		"index": index,
+		"delta": map[string]any{
+			"type":         "input_json_delta",
+			"partial_json": string(inputJSON),
+		},
+	}); err != nil {
+		return err
+	}
+	return writeSSE(w, "content_block_stop", map[string]any{
+		"type":  "content_block_stop",
+		"index": index,
+	})
 }
 
 func writeProviderToolUses(w io.Writer, provider conversation.Provider, result conversation.StreamingRewriteResult, tus []conversation.ToolUse, rewrittenInput map[string]json.RawMessage) error {

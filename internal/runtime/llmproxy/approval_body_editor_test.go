@@ -264,3 +264,119 @@ func TestReplaceLatestUserText_ApprovalIDExpectation(t *testing.T) {
 		})
 	}
 }
+
+// TestApprovalBodyEditorAskUserQuestionRewriteAnthropic covers the
+// AskUserQuestion shape on the Anthropic editor: the user's choice
+// arrives as a tool_result block linked to a prior AskUserQuestion
+// tool_use whose question text carries the approval marker. The
+// editor should detect this as approve+id and rewrite the
+// tool_result's content (preserving the tool_use_id) to the notice.
+func TestApprovalBodyEditorAskUserQuestionRewriteAnthropic(t *testing.T) {
+	const approvalID = "cv-askuq00000099"
+	const replacement = "[task created cv-task1]"
+	body := `{"messages":[` +
+		`{"role":"user","content":"please do the thing"},` +
+		`{"role":"assistant","content":[` +
+		`{"type":"tool_use","id":"toolu_x","name":"AskUserQuestion","input":{"questions":[{"question":"go ahead? [clawvisor:approval=` + approvalID + `]","options":[{"label":"yes"},{"label":"no"}]}]}}` +
+		`]},` +
+		`{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"toolu_x","content":"yes"}` +
+		`]}` +
+		`]}`
+
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	editor, ok := newApprovalBodyEditor(req, conversation.ProviderAnthropic, []byte(body))
+	if !ok {
+		t.Fatal("expected anthropic body editor")
+	}
+	verb, gotID, ok := editor.LatestApprovalReply()
+	if !ok || verb != "approve" || gotID != approvalID {
+		t.Fatalf("LatestApprovalReply=(%q,%q,%v), want (approve,%q,true)", verb, gotID, ok, approvalID)
+	}
+
+	out, rewrote, err := editor.ReplaceLatestUserText("approve", approvalID, replacement)
+	if err != nil {
+		t.Fatalf("ReplaceLatestUserText error: %v", err)
+	}
+	if !rewrote {
+		t.Fatalf("expected AskUserQuestion-shaped rewrite to succeed, body: %s", out)
+	}
+	if !json.Valid(out) {
+		t.Fatalf("rewritten body not valid JSON: %s", out)
+	}
+	got := string(out)
+	if !strings.Contains(got, replacement) {
+		t.Fatalf("rewritten body missing replacement %q: %s", replacement, got)
+	}
+	// tool_result block must be REPLACED with a text block. The
+	// orphan tool_use_id is gone (so historystrip can drop the
+	// dangling AskUserQuestion call without Anthropic 400'ing the
+	// next request) and the notice survives as a plain text block.
+	if strings.Contains(got, `"tool_use_id":"toolu_x"`) {
+		t.Fatalf("expected tool_result block to be replaced with text block (dropping tool_use_id), got: %s", got)
+	}
+	if !strings.Contains(got, `"type":"text"`) {
+		t.Fatalf("expected text block in rewritten body, got: %s", got)
+	}
+	// the original "yes" content should be replaced, not appended
+	if strings.Contains(got, `"content":"yes"`) {
+		t.Fatalf("rewritten body still carries original tool_result content: %s", got)
+	}
+}
+
+// TestApprovalBodyEditorAskUserQuestionMismatchedIDRefuses guards the
+// cross-conversation spoofing path: a tool_result whose question
+// marker doesn't match the expected approval ID must NOT rewrite,
+// matching the text path's mismatched-ID refusal semantics.
+func TestApprovalBodyEditorAskUserQuestionMismatchedIDRefuses(t *testing.T) {
+	const questionID = "cv-askuq00000010"
+	const expectedID = "cv-different0000"
+	body := `{"messages":[` +
+		`{"role":"assistant","content":[` +
+		`{"type":"tool_use","id":"toolu_y","name":"AskUserQuestion","input":{"questions":[{"question":"go? [clawvisor:approval=` + questionID + `]","options":[{"label":"yes"},{"label":"no"}]}]}}` +
+		`]},` +
+		`{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"toolu_y","content":"yes"}` +
+		`]}` +
+		`]}`
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	editor, ok := newApprovalBodyEditor(req, conversation.ProviderAnthropic, []byte(body))
+	if !ok {
+		t.Fatal("expected anthropic body editor")
+	}
+	out, rewrote, err := editor.ReplaceLatestUserText("approve", expectedID, "[notice]")
+	if err != nil {
+		t.Fatalf("ReplaceLatestUserText error: %v", err)
+	}
+	if rewrote {
+		t.Fatalf("expected rewrite to refuse on ID mismatch; got rewrite: %s", out)
+	}
+	if strings.Contains(string(out), "[notice]") {
+		t.Fatalf("body must remain unchanged on ID mismatch: %s", out)
+	}
+}
+
+// TestApprovalBodyEditorAskUserQuestionUnrelatedToolResultRefuses
+// confirms a tool_result for a non-AskUserQuestion tool_use never
+// triggers the approval rewrite, even if the result content happens
+// to read "yes". The detection path must verify the parent tool_use's
+// name AND the marker before treating the reply as an approval.
+func TestApprovalBodyEditorAskUserQuestionUnrelatedToolResultRefuses(t *testing.T) {
+	body := `{"messages":[` +
+		`{"role":"assistant","content":[` +
+		`{"type":"tool_use","id":"toolu_z","name":"Bash","input":{"command":"echo yes"}}` +
+		`]},` +
+		`{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"toolu_z","content":"yes\n"}` +
+		`]}` +
+		`]}`
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	editor, ok := newApprovalBodyEditor(req, conversation.ProviderAnthropic, []byte(body))
+	if !ok {
+		t.Fatal("expected anthropic body editor")
+	}
+	verb, gotID, replyOK := editor.LatestApprovalReply()
+	if replyOK || verb != "" || gotID != "" {
+		t.Fatalf("LatestApprovalReply=(%q,%q,%v), want empty (non-AskUserQuestion tool_use)", verb, gotID, replyOK)
+	}
+}
