@@ -382,11 +382,25 @@ func inlineApprovedReplyAugmentation() string {
 // control-plane state rather than a fresh user instruction.
 func inlineApprovedReplyAugmentationContext(taskID string, checkedOut bool, credentials []InlineTaskCredentialPlaceholder) string {
 	var b strings.Builder
-	b.WriteString("Task was created and approved by the user. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work. If an earlier tool_use already completed successfully, do NOT re-emit it; move on to the next step using the results above.")
+	b.WriteString("Task was created and approved by the user. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks to CREATE another task for the same body of work. If an earlier tool_use already completed successfully, do NOT re-emit it; move on to the next step using the results above.")
 	if strings.TrimSpace(taskID) != "" {
 		b.WriteString(" Task ID: ")
 		b.WriteString(strings.TrimSpace(taskID))
 		b.WriteString(".")
+		// Action-oriented expand pointer with the just-created task_id
+		// substituted. The system prompt teaches EXPAND vs NEW TASK at
+		// the top of the control notice, but the immediate decision
+		// point is several thousand tokens away by the time the model
+		// reads it on a later turn — this concrete URL with the
+		// agent's actual task_id removes the recall-and-substitute
+		// burden. The DEFAULT for any follow-up ask MUST be
+		// EXPAND-this-task; only a recognizably-different goal earns
+		// a new task. The choice is forced because the prior
+		// "Do NOT POST /control/tasks" guidance was too easy to
+		// satisfy by just emitting another /control/tasks POST anyway.
+		b.WriteString(" For the user's NEXT ask in this conversation, CHOOSE between two actions before emitting any tool_use: (A) follow-up in the SAME body of work (additional steps under the task's stated purpose — comments, replies, verifications, further API calls, additional tools/hosts/credentials) → POST https://clawvisor.local/control/tasks/")
+		b.WriteString(strings.TrimSpace(taskID))
+		b.WriteString("/expand?surface=inline against THIS task; (B) genuinely-different goal (purpose no longer describes the work) → POST a new /control/tasks?surface=inline. Default to (A) when in doubt. Never silently create a second task for related work.")
 	}
 	if checkedOut && strings.TrimSpace(taskID) != "" {
 		b.WriteString(" Task ")

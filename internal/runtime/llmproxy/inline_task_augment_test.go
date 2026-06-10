@@ -66,8 +66,11 @@ func TestAugment_InjectsContextOnBareYesAfterSubstitutedPrompt(t *testing.T) {
 	if !strings.Contains(s, inlineTaskNoticeOpenPrefixJSON) {
 		t.Fatalf("output missing augmentation marker: %s", s)
 	}
-	if !strings.Contains(s, "Do NOT POST /control/tasks again") {
+	if !strings.Contains(s, "Do NOT POST /control/tasks to CREATE another task") {
 		t.Fatalf("output missing do-not-repost guidance: %s", s)
+	}
+	if !strings.Contains(s, "/expand?surface=inline") {
+		t.Fatalf("output missing expand URL pointer: %s", s)
 	}
 	// The augmented user content is just the notice element — no
 	// leading "approve" verb. Earlier code prepended "approve\n\n",

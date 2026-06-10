@@ -180,10 +180,20 @@ func TestLive_AgentExpandsAfterMidConversationTaskCreation(t *testing.T) {
 	// inlineApprovedReplyAugmentationContext so the scenario tracks
 	// the production text.
 	priorTaskID := "task-abc"
+	// Seed text mirrors inlineApprovedReplyAugmentationContext —
+	// keep in sync if the production text changes. The
+	// expand-aware imperative is the load-bearing piece for this
+	// test; everything else is contextual filler matching what
+	// the model would see in production.
 	augmentation := "<clawvisor-notice kind=\"task-approved\">Task was created and approved by the user. " +
 		"The task covers the originally requested work; proceed by emitting your next tool_use(s). " +
-		"Do NOT POST /control/tasks again for the same work. If an earlier tool_use already completed successfully, " +
+		"Do NOT POST /control/tasks to CREATE another task for the same body of work. If an earlier tool_use already completed successfully, " +
 		"do NOT re-emit it; move on to the next step using the results above. Task ID: " + priorTaskID + ". " +
+		"For the user's NEXT ask in this conversation, CHOOSE between two actions before emitting any tool_use: " +
+		"(A) follow-up in the SAME body of work (additional steps under the task's stated purpose — comments, replies, verifications, further API calls, additional tools/hosts/credentials) " +
+		"→ POST https://clawvisor.local/control/tasks/" + priorTaskID + "/expand?surface=inline against THIS task; " +
+		"(B) genuinely-different goal (purpose no longer describes the work) → POST a new /control/tasks?surface=inline. " +
+		"Default to (A) when in doubt. Never silently create a second task for related work. " +
 		"Task " + priorTaskID + " is now the active task." +
 		"</clawvisor-notice>"
 

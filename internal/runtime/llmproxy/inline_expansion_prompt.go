@@ -155,7 +155,13 @@ func inlineExpansionApprovedReplyAugmentationContext(taskID string, credentials 
 	} else {
 		b.WriteString("the active task")
 	}
-	b.WriteString(". Proceed with your next tool_use(s) using the expanded scope. Do NOT POST /control/tasks/<id>/expand again for the same delta.")
+	b.WriteString(". Proceed with your next tool_use(s) using the expanded scope. Do NOT POST /control/tasks/<id>/expand again for the same delta. For further follow-up work in the SAME body of work, POST https://clawvisor.local/control/tasks/")
+	if id := strings.TrimSpace(taskID); id != "" {
+		b.WriteString(id)
+	} else {
+		b.WriteString("<id>")
+	}
+	b.WriteString("/expand?surface=inline with the new tools / egress / credentials (NOT a fresh /control/tasks POST). Only create a new task when the follow-up is a genuinely different goal.")
 	if len(credentials) > 0 {
 		b.WriteString(" Credential placeholders minted for the expansion:")
 		for _, cred := range credentials {
