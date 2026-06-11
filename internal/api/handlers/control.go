@@ -440,7 +440,7 @@ func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Reque
 					})
 					return
 				}
-				writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+				writeDeniedJSON(w, nil)
 				return
 			} else {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{
@@ -466,7 +466,7 @@ func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Reque
 				writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+			writeDeniedJSON(w, task)
 			return
 		}
 	}
@@ -492,7 +492,11 @@ func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Reque
 				writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
 				return
 			} else if resolvedTask.Status != "pending_approval" {
-				writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+				if resolvedTask.Status == "deleted" {
+					writeDeniedJSON(w, nil)
+				} else {
+					writeDeniedJSON(w, resolvedTask)
+				}
 				return
 			}
 		} else if pending != nil && h.PendingApprovals != nil {
@@ -524,7 +528,7 @@ func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Reque
 					t, err := h.Store.GetTask(r.Context(), taskID)
 					if err != nil {
 						if errors.Is(err, store.ErrNotFound) {
-							writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+							writeDeniedJSON(w, nil)
 							return
 						}
 					} else if t.Status != "pending_approval" {
@@ -532,7 +536,11 @@ func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Reque
 							writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
 							return
 						}
-						writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+						if t.Status == "deleted" {
+							writeDeniedJSON(w, nil)
+						} else {
+							writeDeniedJSON(w, t)
+						}
 						return
 					}
 				} else if pending != nil && h.PendingApprovals != nil {
@@ -550,6 +558,40 @@ func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Reque
 		"status":      "pending",
 		"retry_after": 1000,
 	})
+}
+
+func writeDeniedJSON(w http.ResponseWriter, task *store.Task) {
+	resp := map[string]any{
+		"status": "denied",
+	}
+	if task != nil {
+		reason := "user_rejected"
+		switch task.Status {
+		case "expired", "cancelled", "revoked", "completed", "pending_scope_expansion":
+			reason = task.Status
+		}
+		resp["reason"] = reason
+
+		if len(task.ApprovalRationale) > 0 {
+			var rationale struct {
+				Reason   string `json:"reason"`
+				Message  string `json:"message"`
+				Feedback string `json:"feedback"`
+			}
+			if err := json.Unmarshal(task.ApprovalRationale, &rationale); err == nil {
+				if rationale.Reason != "" {
+					resp["reason"] = rationale.Reason
+				}
+				if rationale.Message != "" {
+					resp["message"] = rationale.Message
+				}
+				if rationale.Feedback != "" {
+					resp["feedback"] = rationale.Feedback
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *LLMControlHandler) NotFound(w http.ResponseWriter, r *http.Request) {

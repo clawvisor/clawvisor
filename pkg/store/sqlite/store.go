@@ -1406,7 +1406,8 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
 	var actionsStr, plannedCallsStr, createdAt string
 	var approvedAt, expiresAt, pendingActionStr *string
-	var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
+	var riskDetailsStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
+	var approvalRationaleStr *string
 	var chainExtractionMode *string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
@@ -1454,8 +1455,8 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	if riskDetailsStr != "" {
 		t.RiskDetails = json.RawMessage(riskDetailsStr)
 	}
-	if approvalRationaleStr != "" {
-		t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
+	if approvalRationaleStr != nil && *approvalRationaleStr != "" {
+		t.ApprovalRationale = json.RawMessage(*approvalRationaleStr)
 	}
 	if expectedToolsStr != "" {
 		t.ExpectedTools = json.RawMessage(expectedToolsStr)
@@ -1515,7 +1516,8 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		t := &store.Task{}
 		var actionsStr, plannedCallsStr, createdAt string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
+		var riskDetailsStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
+		var approvalRationaleStr *string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
@@ -1555,8 +1557,8 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
 		}
-		if approvalRationaleStr != "" {
-			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
+		if approvalRationaleStr != nil && *approvalRationaleStr != "" {
+			t.ApprovalRationale = json.RawMessage(*approvalRationaleStr)
 		}
 		if expectedToolsStr != "" {
 			t.ExpectedTools = json.RawMessage(expectedToolsStr)
@@ -1619,6 +1621,59 @@ func (s *Store) UpdateTaskStatusFrom(ctx context.Context, id, fromStatus, toStat
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+func (s *Store) UpdateTaskStatusWithRationale(ctx context.Context, id, status string, rationale json.RawMessage) error {
+	var err error
+	var rowsAffected int64
+	if len(rationale) > 0 {
+		res, execErr := s.db.ExecContext(ctx,
+			`UPDATE tasks SET status = ?, approval_rationale = ? WHERE id = ?`, status, string(rationale), id)
+		err = execErr
+		if execErr == nil {
+			rowsAffected, err = res.RowsAffected()
+		}
+	} else {
+		res, execErr := s.db.ExecContext(ctx,
+			`UPDATE tasks SET status = ?, approval_rationale = NULL WHERE id = ?`, status, id)
+		err = execErr
+		if execErr == nil {
+			rowsAffected, err = res.RowsAffected()
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdateTaskStatusWithRationaleFrom(ctx context.Context, id, fromStatus, toStatus string, rationale json.RawMessage) (bool, error) {
+	var err error
+	var rowsAffected int64
+	if len(rationale) > 0 {
+		res, execErr := s.db.ExecContext(ctx,
+			`UPDATE tasks SET status = ?, approval_rationale = ? WHERE id = ? AND status = ?`,
+			toStatus, string(rationale), id, fromStatus)
+		err = execErr
+		if execErr == nil {
+			rowsAffected, err = res.RowsAffected()
+		}
+	} else {
+		res, execErr := s.db.ExecContext(ctx,
+			`UPDATE tasks SET status = ?, approval_rationale = NULL WHERE id = ? AND status = ?`,
+			toStatus, id, fromStatus)
+		err = execErr
+		if execErr == nil {
+			rowsAffected, err = res.RowsAffected()
+		}
+	}
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
 
 // UpdateTaskApprovedFrom is the CAS variant of UpdateTaskApproved. The
@@ -1775,7 +1830,8 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		var actionsStr, createdAt string
 		var plannedCallsStr *string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
+		var riskDetailsStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
+		var approvalRationaleStr *string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
@@ -1815,8 +1871,8 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
 		}
-		if approvalRationaleStr != "" {
-			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
+		if approvalRationaleStr != nil && *approvalRationaleStr != "" {
+			t.ApprovalRationale = json.RawMessage(*approvalRationaleStr)
 		}
 		if expectedToolsStr != "" {
 			t.ExpectedTools = json.RawMessage(expectedToolsStr)
@@ -1861,7 +1917,8 @@ func (s *Store) ListExpiredInlineChatPendingTasks(ctx context.Context, cutoff ti
 		var actionsStr, createdAt string
 		var plannedCallsStr *string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
+		var riskDetailsStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
+		var approvalRationaleStr *string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
@@ -1901,8 +1958,8 @@ func (s *Store) ListExpiredInlineChatPendingTasks(ctx context.Context, cutoff ti
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
 		}
-		if approvalRationaleStr != "" {
-			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
+		if approvalRationaleStr != nil && *approvalRationaleStr != "" {
+			t.ApprovalRationale = json.RawMessage(*approvalRationaleStr)
 		}
 		if expectedToolsStr != "" {
 			t.ExpectedTools = json.RawMessage(expectedToolsStr)

@@ -728,7 +728,7 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		// the sibling active-session expiry loop above and to keep
 		// the distinction between user-driven denial and timeout in
 		// the dashboard's Tasks page.
-		won, statusErr := h.st.UpdateTaskStatusFrom(ctx, task.ID, "pending_approval", "expired")
+		won, statusErr := h.st.UpdateTaskStatusWithRationaleFrom(ctx, task.ID, "pending_approval", "expired", json.RawMessage(`{"reason": "expired", "message": "Task request expired."}`))
 		if statusErr != nil {
 			h.logger.WarnContext(ctx, "inline-chat pending expiry sweep: status flip failed",
 				"task_id", task.ID, "err", statusErr)

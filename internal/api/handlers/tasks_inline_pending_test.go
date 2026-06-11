@@ -731,3 +731,172 @@ func (evalThenErrorRewriter) Rewrite(body []byte, _ string, eval conversation.To
 	}
 	return conversation.RewriteResult{}, errors.New("simulated rewriter failure after eval")
 }
+
+func TestDeny_Validation(t *testing.T) {
+	h, st, user, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	createTask := func(id string) {
+		task := &store.Task{
+			ID:                     id,
+			UserID:                 user.ID,
+			AgentID:                agent.ID,
+			Purpose:                "test validation",
+			Status:                 "pending_approval",
+			Lifetime:               "session",
+			IntentVerificationMode: "strict",
+		}
+		if err := st.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+	}
+
+	// 1. Valid custom reason
+	{
+		taskID := "task-valid-custom"
+		createTask(taskID)
+
+		body := `{"reason": "my_custom_reason", "message": "Denied because reasons"}`
+		r := httptest.NewRequest("POST", "/api/tasks/"+taskID+"/deny", strings.NewReader(body))
+		r.SetPathValue("id", taskID)
+		r = r.WithContext(context.WithValue(r.Context(), middleware.UserContextKey, user))
+		w := httptest.NewRecorder()
+		h.Deny(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d, body: %s", w.Code, w.Body.String())
+		}
+
+		got, err := st.GetTask(ctx, taskID)
+		if err != nil {
+			t.Fatalf("GetTask: %v", err)
+		}
+		if got.Status != "denied" {
+			t.Errorf("expected status denied, got %s", got.Status)
+		}
+		var rationale struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal(got.ApprovalRationale, &rationale); err != nil {
+			t.Fatalf("unmarshal approval rationale: %v", err)
+		}
+		if rationale.Reason != "my_custom_reason" {
+			t.Errorf("expected rationale.Reason my_custom_reason, got %s", rationale.Reason)
+		}
+	}
+
+	// 2. Invalid system reason (expired)
+	{
+		taskID := "task-invalid-expired"
+		createTask(taskID)
+
+		body := `{"reason": "expired"}`
+		r := httptest.NewRequest("POST", "/api/tasks/"+taskID+"/deny", strings.NewReader(body))
+		r.SetPathValue("id", taskID)
+		r = r.WithContext(context.WithValue(r.Context(), middleware.UserContextKey, user))
+		w := httptest.NewRecorder()
+		h.Deny(w, r)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d, body: %s", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "INVALID_REASON") {
+			t.Errorf("expected body to contain INVALID_REASON, got: %s", w.Body.String())
+		}
+	}
+
+	// 3. Case-insensitive and trimmed spaces system reason ( EXPIRED )
+	{
+		taskID := "task-invalid-case-spaces"
+		createTask(taskID)
+
+		body := `{"reason": "  EXPIRED  "}`
+		r := httptest.NewRequest("POST", "/api/tasks/"+taskID+"/deny", strings.NewReader(body))
+		r.SetPathValue("id", taskID)
+		r = r.WithContext(context.WithValue(r.Context(), middleware.UserContextKey, user))
+		w := httptest.NewRecorder()
+		h.Deny(w, r)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d, body: %s", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "INVALID_REASON") {
+			t.Errorf("expected body to contain INVALID_REASON, got: %s", w.Body.String())
+		}
+	}
+
+	// 4. Invalid status reason (active)
+	{
+		taskID := "task-invalid-active"
+		createTask(taskID)
+
+		body := `{"reason": "active"}`
+		r := httptest.NewRequest("POST", "/api/tasks/"+taskID+"/deny", strings.NewReader(body))
+		r.SetPathValue("id", taskID)
+		r = r.WithContext(context.WithValue(r.Context(), middleware.UserContextKey, user))
+		w := httptest.NewRecorder()
+		h.Deny(w, r)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d, body: %s", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "INVALID_REASON") {
+			t.Errorf("expected body to contain INVALID_REASON, got: %s", w.Body.String())
+		}
+	}
+
+	// 5. Invalid system reason (deleted)
+	{
+		taskID := "task-invalid-deleted"
+		createTask(taskID)
+
+		body := `{"reason": "deleted"}`
+		r := httptest.NewRequest("POST", "/api/tasks/"+taskID+"/deny", strings.NewReader(body))
+		r.SetPathValue("id", taskID)
+		r = r.WithContext(context.WithValue(r.Context(), middleware.UserContextKey, user))
+		w := httptest.NewRecorder()
+		h.Deny(w, r)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d, body: %s", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "INVALID_REASON") {
+			t.Errorf("expected body to contain INVALID_REASON, got: %s", w.Body.String())
+		}
+	}
+
+	// 6. Whitespace-only custom reason defaults to user_rejected
+	{
+		taskID := "task-whitespace-only"
+		createTask(taskID)
+
+		body := `{"reason": "    "}`
+		r := httptest.NewRequest("POST", "/api/tasks/"+taskID+"/deny", strings.NewReader(body))
+		r.SetPathValue("id", taskID)
+		r = r.WithContext(context.WithValue(r.Context(), middleware.UserContextKey, user))
+		w := httptest.NewRecorder()
+		h.Deny(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d, body: %s", w.Code, w.Body.String())
+		}
+
+		got, err := st.GetTask(ctx, taskID)
+		if err != nil {
+			t.Fatalf("GetTask: %v", err)
+		}
+		if got.Status != "denied" {
+			t.Errorf("expected status denied, got %s", got.Status)
+		}
+		var rationale struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal(got.ApprovalRationale, &rationale); err != nil {
+			t.Fatalf("unmarshal approval rationale: %v", err)
+		}
+		if rationale.Reason != "user_rejected" {
+			t.Errorf("expected rationale.Reason user_rejected, got %s", rationale.Reason)
+		}
+	}
+}
+

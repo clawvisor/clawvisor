@@ -736,7 +736,7 @@ func (h *TasksHandler) DenyInlineTask(ctx context.Context, taskID, userID string
 	default:
 		return fmt.Errorf("task is not a pending inline-chat task (status=%q, source=%q)", task.Status, task.ApprovalSource)
 	}
-	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, "pending_approval", "denied")
+	won, err := h.st.UpdateTaskStatusWithRationaleFrom(ctx, taskID, "pending_approval", "denied", json.RawMessage(`{"reason": "user_rejected", "message": "User rejected the request in chat."}`))
 	if err != nil {
 		return err
 	}
@@ -782,7 +782,7 @@ func (h *TasksHandler) ExpireInlineTask(ctx context.Context, taskID, userID stri
 	default:
 		return fmt.Errorf("task is not a pending inline-chat task (status=%q, source=%q)", task.Status, task.ApprovalSource)
 	}
-	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, "pending_approval", "expired")
+	won, err := h.st.UpdateTaskStatusWithRationaleFrom(ctx, taskID, "pending_approval", "expired", json.RawMessage(`{"reason": "expired", "message": "Task request expired due to inactivity."}`))
 	if err != nil {
 		return err
 	}

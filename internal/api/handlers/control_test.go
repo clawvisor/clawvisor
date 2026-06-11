@@ -419,4 +419,113 @@ func TestControlWaitForApproval(t *testing.T) {
 			t.Errorf("expected Forbidden (403) for pending hold ownership mismatch, got %d", res2.Code)
 		}
 	}
+
+	// 7. Expired task
+	{
+		task := &store.Task{
+			ID:       "task-expired",
+			UserID:   user.ID,
+			AgentID:  agent.ID,
+			Purpose:  "expired work",
+			Status:   "expired",
+			Lifetime: "session",
+		}
+		if err := st.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/control/approvals/task-expired/wait", nil)
+		req.SetPathValue("id", "task-expired")
+		req = req.WithContext(store.WithAgent(req.Context(), agent))
+		res := httptest.NewRecorder()
+		h.WaitForApproval(res, req)
+		if res.Code != http.StatusOK {
+			t.Errorf("expected OK, got %d", res.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if payload["status"] != "denied" {
+			t.Errorf("expected status denied, got %v", payload["status"])
+		}
+		if payload["reason"] != "expired" {
+			t.Errorf("expected reason expired, got %v", payload["reason"])
+		}
+	}
+
+	// 8. Denied task with rationale
+	{
+		task := &store.Task{
+			ID:                "task-denied-rationale",
+			UserID:            user.ID,
+			AgentID:           agent.ID,
+			Purpose:           "denied work",
+			Status:            "denied",
+			Lifetime:          "session",
+			ApprovalRationale: json.RawMessage(`{"reason":"custom_reason","message":"no go","feedback":"try again"}`),
+		}
+		if err := st.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/control/approvals/task-denied-rationale/wait", nil)
+		req.SetPathValue("id", "task-denied-rationale")
+		req = req.WithContext(store.WithAgent(req.Context(), agent))
+		res := httptest.NewRecorder()
+		h.WaitForApproval(res, req)
+		if res.Code != http.StatusOK {
+			t.Errorf("expected OK, got %d", res.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if payload["status"] != "denied" {
+			t.Errorf("expected status denied, got %v", payload["status"])
+		}
+		if payload["reason"] != "custom_reason" {
+			t.Errorf("expected reason custom_reason, got %v", payload["reason"])
+		}
+		if payload["message"] != "no go" {
+			t.Errorf("expected message no go, got %v", payload["message"])
+		}
+		if payload["feedback"] != "try again" {
+			t.Errorf("expected feedback try again, got %v", payload["feedback"])
+		}
+	}
+
+	// 9. Cancelled task (non-user outcome)
+	{
+		task := &store.Task{
+			ID:       "task-cancelled",
+			UserID:   user.ID,
+			AgentID:  agent.ID,
+			Purpose:  "cancelled work",
+			Status:   "cancelled",
+			Lifetime: "session",
+		}
+		if err := st.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/control/approvals/task-cancelled/wait", nil)
+		req.SetPathValue("id", "task-cancelled")
+		req = req.WithContext(store.WithAgent(req.Context(), agent))
+		res := httptest.NewRecorder()
+		h.WaitForApproval(res, req)
+		if res.Code != http.StatusOK {
+			t.Errorf("expected OK, got %d", res.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if payload["status"] != "denied" {
+			t.Errorf("expected status denied, got %v", payload["status"])
+		}
+		if payload["reason"] != "cancelled" {
+			t.Errorf("expected reason cancelled, got %v", payload["reason"])
+		}
+	}
 }

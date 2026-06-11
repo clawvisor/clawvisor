@@ -1213,7 +1213,8 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
 	var actionsJSON, plannedCallsJSON, pendingActionJSON, expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON []byte
-	var riskDetailsStr, approvalRationaleStr string
+	var riskDetailsStr string
+	var approvalRationaleStr *string
 	var chainExtractionMode *string
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
@@ -1252,8 +1253,8 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	if riskDetailsStr != "" {
 		t.RiskDetails = json.RawMessage(riskDetailsStr)
 	}
-	if approvalRationaleStr != "" {
-		t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
+	if approvalRationaleStr != nil && *approvalRationaleStr != "" {
+		t.ApprovalRationale = json.RawMessage(*approvalRationaleStr)
 	}
 	if expectedToolsJSON != nil {
 		t.ExpectedTools = json.RawMessage(expectedToolsJSON)
@@ -1357,6 +1358,59 @@ func (s *Store) UpdateTaskStatusFrom(ctx context.Context, id, fromStatus, toStat
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+func (s *Store) UpdateTaskStatusWithRationale(ctx context.Context, id, status string, rationale json.RawMessage) error {
+	var err error
+	var rowsAffected int64
+	if len(rationale) > 0 {
+		tag, execErr := s.pool.Exec(ctx,
+			`UPDATE tasks SET status = $1, approval_rationale = $2 WHERE id = $3`, status, string(rationale), id)
+		err = execErr
+		if execErr == nil {
+			rowsAffected = tag.RowsAffected()
+		}
+	} else {
+		tag, execErr := s.pool.Exec(ctx,
+			`UPDATE tasks SET status = $1, approval_rationale = NULL WHERE id = $2`, status, id)
+		err = execErr
+		if execErr == nil {
+			rowsAffected = tag.RowsAffected()
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdateTaskStatusWithRationaleFrom(ctx context.Context, id, fromStatus, toStatus string, rationale json.RawMessage) (bool, error) {
+	var err error
+	var rowsAffected int64
+	if len(rationale) > 0 {
+		tag, execErr := s.pool.Exec(ctx,
+			`UPDATE tasks SET status = $1, approval_rationale = $2 WHERE id = $3 AND status = $4`,
+			toStatus, string(rationale), id, fromStatus)
+		err = execErr
+		if execErr == nil {
+			rowsAffected = tag.RowsAffected()
+		}
+	} else {
+		tag, execErr := s.pool.Exec(ctx,
+			`UPDATE tasks SET status = $1, approval_rationale = NULL WHERE id = $2 AND status = $3`,
+			toStatus, id, fromStatus)
+		err = execErr
+		if execErr == nil {
+			rowsAffected = tag.RowsAffected()
+		}
+	}
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
 
 // UpdateTaskApprovedFrom is the CAS variant of UpdateTaskApproved.
@@ -1521,7 +1575,8 @@ func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 	for rows.Next() {
 		t := &store.Task{}
 		var actionsJSON, plannedCallsJSON, pendingActionJSON, expectedToolsJSON, expectedEgressJSON, requiredCredentialsJSON []byte
-		var riskDetailsStr, approvalRationaleStr string
+		var riskDetailsStr string
+		var approvalRationaleStr *string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsJSON,
 			&plannedCallsJSON, &t.CallbackURL, &t.CreatedAt, &t.ApprovedAt, &t.ExpiresAt, &t.ExpiresInSeconds,
@@ -1555,8 +1610,8 @@ func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
 		}
-		if approvalRationaleStr != "" {
-			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
+		if approvalRationaleStr != nil && *approvalRationaleStr != "" {
+			t.ApprovalRationale = json.RawMessage(*approvalRationaleStr)
 		}
 		if expectedToolsJSON != nil {
 			t.ExpectedTools = json.RawMessage(expectedToolsJSON)

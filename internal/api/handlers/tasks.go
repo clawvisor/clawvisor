@@ -1783,7 +1783,35 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	// message to the model. Approve, by contrast, remains chat-only
 	// because it grants scope+credentials that need the in-flight
 	// cache hold to land coherently.
-	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, task.Status, "denied")
+	var req struct {
+		Reason   string `json:"reason,omitempty"`
+		Message  string `json:"message,omitempty"`
+		Feedback string `json:"feedback,omitempty"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "INVALID_BODY", "could not parse body")
+			return
+		}
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.Reason == "" {
+		req.Reason = "user_rejected"
+	} else {
+		normalizedReason := strings.ToLower(req.Reason)
+		switch normalizedReason {
+		case "expired", "cancelled", "revoked", "completed", "pending_scope_expansion", "active", "pending_approval", "denied", "approved", "pending", "deleted":
+			writeError(w, http.StatusBadRequest, "INVALID_REASON", "cannot spoof system reason codes")
+			return
+		}
+	}
+	rationaleJSON, err := json.Marshal(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not serialize rationale")
+		return
+	}
+
+	won, err := h.st.UpdateTaskStatusWithRationaleFrom(ctx, taskID, task.Status, "denied", rationaleJSON)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not deny task")
 		return

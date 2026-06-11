@@ -177,6 +177,8 @@ type Store interface {
 	// caller). Use this for any approve/deny/expand path that can be raced
 	// across UI, Telegram, and API channels.
 	UpdateTaskStatusFrom(ctx context.Context, id, fromStatus, toStatus string) (bool, error)
+	UpdateTaskStatusWithRationale(ctx context.Context, id, status string, rationale json.RawMessage) error
+	UpdateTaskStatusWithRationaleFrom(ctx context.Context, id, fromStatus, toStatus string, rationale json.RawMessage) (bool, error)
 	// UpdateTaskApprovedFrom atomically promotes a task from fromStatus to
 	// "active" with approved_at/expires_at/authorized_actions set, returning
 	// true on win. Replaces UpdateTaskApproved for race-prone code paths.
