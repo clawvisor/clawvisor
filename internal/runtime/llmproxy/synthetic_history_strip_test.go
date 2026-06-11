@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/historystrip"
 )
 
 func TestStripSyntheticApprovalHistory_DropsInlinePromptAndBareReply(t *testing.T) {
@@ -203,6 +204,147 @@ func TestStripSyntheticApprovalHistory_PreservesReconstructedTurns(t *testing.T)
 	}
 	if !strings.Contains(got, "Task scope was expanded and approved") {
 		t.Errorf("reconstructed tool_result content should survive strip: %s", got)
+	}
+}
+
+// TestStripSyntheticApprovalHistory_ReconstructsViaLookup pins
+// the persistent-reconstruction contract: on every turn after the
+// approval, the strip path REPLACES the substituted-prompt assistant
+// turn with a synthetic [tool_use(original)] and pairs the user-turn
+// tool_result to that reconstructed id. Without this the model's
+// evidence of having called /expand is one-shot (visible only on
+// the first post-approval turn) and turns N+2 onwards lose it.
+func TestStripSyntheticApprovalHistory_ReconstructsViaLookup(t *testing.T) {
+	const approvalID = "cv-persistreconst1"
+	const askToolUseID = "toolu_clawvisor_ask_" + approvalID
+	const originalToolUseID = "toolu_01OriginalReconstruct"
+	body, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "expand the task"},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": "Clawvisor wants to expand the scope of an existing task:\n[clawvisor:approval=" + approvalID + "]"},
+				{"type": "tool_use", "id": askToolUseID, "name": "AskUserQuestion", "input": map[string]any{
+					"questions": []map[string]any{{"question": "approve?"}},
+				}},
+			}},
+			{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": askToolUseID, "content": "yes"},
+			}},
+			{"role": "assistant", "content": "Got it, proceeding."},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(id string) *historystrip.ReconstructedPair {
+		if id != approvalID {
+			return nil
+		}
+		return &historystrip.ReconstructedPair{
+			ToolUseID:  originalToolUseID,
+			ToolName:   "Bash",
+			Input:      json.RawMessage(`{"command":"curl -X POST .../expand?surface=inline ..."}`),
+			ResultText: "[clawvisor-notice] scope was expanded; do not re-emit",
+		}
+	}
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider:             conversation.ProviderAnthropic,
+		Body:                 body,
+		ReconstructionLookup: lookup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Modified {
+		t.Fatalf("strip should rewrite the body for reconstruction; got unchanged: %s", out.Body)
+	}
+	got := string(out.Body)
+	// The substituted-prompt text and AskUserQuestion tool_use_id
+	// must NOT survive — that's what we're replacing.
+	if strings.Contains(got, "Clawvisor wants to expand") {
+		t.Errorf("substituted-prompt text leaked: %s", got)
+	}
+	if strings.Contains(got, askToolUseID) {
+		t.Errorf("AskUserQuestion tool_use_id leaked: %s", got)
+	}
+	// The reconstructed tool_use_id and notice MUST appear.
+	if !strings.Contains(got, originalToolUseID) {
+		t.Errorf("reconstructed tool_use_id missing: %s", got)
+	}
+	if !strings.Contains(got, "scope was expanded; do not re-emit") {
+		t.Errorf("reconstructed ResultText missing: %s", got)
+	}
+	if !strings.Contains(got, "curl -X POST") {
+		t.Errorf("reconstructed tool_input missing: %s", got)
+	}
+}
+
+// TestStripSyntheticApprovalHistory_ReconstructionIdempotentAcrossTurns
+// confirms a second strip pass on an already-reconstructed body is
+// a no-op. Without idempotency a persistent-reconstruction loop
+// could re-strip the synthetic pair (no Clawvisor marker on it, so
+// the detector shouldn't fire) — but pin it explicitly.
+func TestStripSyntheticApprovalHistory_ReconstructionIdempotentAcrossTurns(t *testing.T) {
+	const approvalID = "cv-persistidempo1"
+	const askToolUseID = "toolu_clawvisor_ask_" + approvalID
+	const originalToolUseID = "toolu_01ReconstructIdempo"
+	bodyV1, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "expand the task"},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": "Clawvisor wants to expand the scope of an existing task:\n[clawvisor:approval=" + approvalID + "]"},
+				{"type": "tool_use", "id": askToolUseID, "name": "AskUserQuestion", "input": map[string]any{
+					"questions": []map[string]any{{"question": "approve?"}},
+				}},
+			}},
+			{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": askToolUseID, "content": "yes"},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(id string) *historystrip.ReconstructedPair {
+		if id != approvalID {
+			return nil
+		}
+		return &historystrip.ReconstructedPair{
+			ToolUseID:  originalToolUseID,
+			ToolName:   "Bash",
+			Input:      json.RawMessage(`{"command":"curl ..."}`),
+			ResultText: "scope expanded",
+		}
+	}
+	// First pass: should reconstruct.
+	pass1, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider:             conversation.ProviderAnthropic,
+		Body:                 bodyV1,
+		ReconstructionLookup: lookup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pass1.Modified {
+		t.Fatalf("first pass should reconstruct, got: %s", pass1.Body)
+	}
+	// Second pass on the already-reconstructed body should be a
+	// no-op: no Clawvisor marker remains in the assistant text.
+	pass2, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider:             conversation.ProviderAnthropic,
+		Body:                 pass1.Body,
+		ReconstructionLookup: lookup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pass2.Modified {
+		t.Errorf("second pass on reconstructed body should be a no-op: %s", pass2.Body)
+	}
+	if string(pass1.Body) != string(pass2.Body) {
+		t.Errorf("idempotency broken: pass1 != pass2\npass1=%s\npass2=%s", pass1.Body, pass2.Body)
 	}
 }
 

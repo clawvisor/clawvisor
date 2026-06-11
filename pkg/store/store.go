@@ -338,9 +338,21 @@ type Store interface {
 	GetTaskLifecycleEventByApprovalID(ctx context.Context, approvalID string) (*TaskLifecycleEvent, error)
 	// ListTaskLifecycleEvents returns rows for a task in occurred_at
 	// order (ascending). Caller-scoped by user_id so cross-user
-	// reads can't leak. Limit 0 means "no limit" but the underlying
-	// driver may apply a defensive cap.
+	// reads can't leak. Capped at 1000 rows (oldest-first) so a
+	// runaway long-lived task can't bloat a read; recovery / audit
+	// callers that need a specific approval should use
+	// ListTaskLifecycleEventsByApprovalID instead, which is bounded
+	// by per-approval row count (typically two).
 	ListTaskLifecycleEvents(ctx context.Context, userID, taskID string) ([]*TaskLifecycleEvent, error)
+	// ListTaskLifecycleEventsByApprovalID returns every event row
+	// whose approval_id matches, ascending by occurred_at. Per-
+	// approval rows are bounded (pending + terminal in the typical
+	// case) so no cap is applied. Hits the
+	// idx_task_lifecycle_events_approval index — recovery uses this
+	// instead of paging through ListTaskLifecycleEvents, which can
+	// drop the relevant rows on a long-lived task with >1000
+	// events.
+	ListTaskLifecycleEventsByApprovalID(ctx context.Context, approvalID string) ([]*TaskLifecycleEvent, error)
 
 	CreateRuntimePolicyRule(ctx context.Context, rule *RuntimePolicyRule) error
 	GetRuntimePolicyRule(ctx context.Context, id string) (*RuntimePolicyRule, error)

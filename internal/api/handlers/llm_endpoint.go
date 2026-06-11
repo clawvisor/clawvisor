@@ -967,7 +967,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			agentID:        agent.ID,
 			conversationID: conversationID,
 		}
-		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewSyntheticHistoryStrip())
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewSyntheticHistoryStripWithLookup(
+			llmproxy.NewLifecycleReconstructionBuilder(h.Store),
+		))
 		if err != nil {
 			h.Logger.WarnContext(r.Context(), "lite-proxy synthetic approval history strip pipeline failed",
 				"request_id", requestID, "agent_id", agent.ID, "err", err.Error())

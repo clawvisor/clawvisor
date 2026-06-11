@@ -185,21 +185,30 @@ func recoveredApprovalReplacementText(recovered *recoveredApproval) string {
 	}
 }
 
-// lookupOriginalCallForApproval walks the task's lifecycle events
-// looking for the *_pending row that captured the agent's original
-// tool_use. The pending row is written at hold-creation time before
-// the terminal row, so it's always older — list-by-task is ascending
-// by occurred_at, so we walk forward and return the first matching
-// approval_id with a non-empty tool_use_id. Returns nil when no
-// pending row exists (older approvals written before the lifecycle
-// audit was wired) or the pending row stripped the tool input.
+// lookupOriginalCallForApproval queries the lifecycle-events table
+// for the *_pending row that captured the agent's original tool_use.
+// Uses the approval-id index so we hit at most one or two rows per
+// lookup (pending + terminal), not the task's whole history — a
+// task-scoped scan would silently drop the pending row on long-lived
+// tasks once event count exceeded the per-task LIMIT cap.
+//
+// Returns nil when no pending row exists (older approvals written
+// before the lifecycle audit was wired) or the pending row stripped
+// the tool input.
 func lookupOriginalCallForApproval(ctx context.Context, st store.Store, userID, taskID, approvalID string) *InlineApprovalOriginalCall {
-	events, err := st.ListTaskLifecycleEvents(ctx, userID, taskID)
+	events, err := st.ListTaskLifecycleEventsByApprovalID(ctx, approvalID)
 	if err != nil {
 		return nil
 	}
 	for _, ev := range events {
-		if ev == nil || ev.ApprovalID != approvalID {
+		if ev == nil {
+			continue
+		}
+		// Defense-in-depth: the approval-id index already scopes
+		// rows by approval_id, but verifying (userID, taskID)
+		// match keeps any (hypothetical) collision from surfacing
+		// cross-task data to the recovery path.
+		if ev.UserID != userID || ev.TaskID != taskID {
 			continue
 		}
 		if ev.ToolUseID == "" || ev.ToolName == "" {

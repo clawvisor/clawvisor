@@ -2730,6 +2730,34 @@ func (s *Store) ListTaskLifecycleEvents(ctx context.Context, userID, taskID stri
 	return out, rows.Err()
 }
 
+func (s *Store) ListTaskLifecycleEventsByApprovalID(ctx context.Context, approvalID string) ([]*store.TaskLifecycleEvent, error) {
+	if approvalID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, task_id, user_id, agent_id, event_type, occurred_at,
+		       approval_id, approval_surface, conversation_id, request_id,
+		       tool_use_id, tool_name, tool_input_json, payload_json,
+		       notes, created_at
+		FROM task_lifecycle_events
+		WHERE approval_id = ?
+		ORDER BY occurred_at ASC
+	`, approvalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.TaskLifecycleEvent
+	for rows.Next() {
+		event, err := scanSQLiteTaskLifecycleEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
 func scanSQLiteTaskLifecycleEvent(scanner interface{ Scan(dest ...any) error }) (*store.TaskLifecycleEvent, error) {
 	event := &store.TaskLifecycleEvent{}
 	var occurredAt, createdAt, payloadJSON string

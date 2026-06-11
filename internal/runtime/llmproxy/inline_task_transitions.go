@@ -159,9 +159,6 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 	// those callers.
 	switch {
 	case hasPending && resolved.PendingTaskID != "" && req.Agent != nil:
-		logTaskLifecycleEventResolution(ctx, taskLifecycleAuditCtxFromRewrite(req),
-			resolved.PendingTaskID, resolved.ID,
-			store.TaskLifecycleEventTaskCreateApproved, "inline_chat", nil)
 		created, createErr := pendingCreator.ApproveInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID)
 		if createErr != nil {
 			// Distinct branch when the task was already terminated
@@ -183,6 +180,15 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 			out.Reason = "approve failed: " + createErr.Error()
 			return renderInlineTaskCreatorErrorReply(createErr.Error()), out
 		}
+		// Log the *_approved event ONLY after ApproveInlineTask
+		// succeeded. Logging before risks recording a "task
+		// approved" audit row for a task that's still pending
+		// (already_terminal race, store failure), which would
+		// then mislead the lifecycle-recovery path on a restart
+		// retry into reconstructing an approve that didn't land.
+		logTaskLifecycleEventResolution(ctx, taskLifecycleAuditCtxFromRewrite(req),
+			resolved.PendingTaskID, resolved.ID,
+			store.TaskLifecycleEventTaskCreateApproved, "inline_chat", nil)
 		return finalizeInlineApproval(ctx, req, resolved, created, &out)
 
 	case resolved.TaskDefinition != nil:
@@ -285,9 +291,6 @@ func resolveInlineExpansionApproval(ctx context.Context, req InlineApprovalRewri
 		return renderInlineExpansionCreatorErrorReply("missing agent on approval"), out
 	}
 
-	logTaskLifecycleEventResolution(ctx, taskLifecycleAuditCtxFromRewrite(req),
-		resolved.ExpansionTaskID, resolved.ID,
-		store.TaskLifecycleEventTaskExpandApproved, "inline_chat", nil)
 	expanded, createErr := expansionCreator.ApproveInlineExpansion(ctx, resolved.ExpansionTaskID, req.Agent.UserID)
 	if createErr != nil {
 		var terminal *ErrInlineExpansionAlreadyTerminal
@@ -302,6 +305,13 @@ func resolveInlineExpansionApproval(ctx context.Context, req InlineApprovalRewri
 		out.Reason = "approve failed: " + createErr.Error()
 		return renderInlineExpansionCreatorErrorReply(createErr.Error()), out
 	}
+	// Log the *_approved event ONLY after ApproveInlineExpansion
+	// succeeded. Same rationale as the task-creation approve path:
+	// a logged approve for an expansion that didn't land would
+	// confuse the recovery path on restart retry.
+	logTaskLifecycleEventResolution(ctx, taskLifecycleAuditCtxFromRewrite(req),
+		resolved.ExpansionTaskID, resolved.ID,
+		store.TaskLifecycleEventTaskExpandApproved, "inline_chat", nil)
 
 	out.Decision = "allow"
 	out.Outcome = "inline_expansion_approved"

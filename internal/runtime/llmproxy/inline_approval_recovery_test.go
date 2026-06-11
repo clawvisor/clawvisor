@@ -14,11 +14,11 @@ import (
 // the two TaskLifecycleEvent methods recovery uses. Other Store
 // methods panic — tests targeting recovery should never touch them.
 type fakeLifecycleStore struct {
-	store.Store // embed so unused methods compile; nil receiver panics if called
-	byApproval  map[string]*store.TaskLifecycleEvent
-	byTask      map[string][]*store.TaskLifecycleEvent
-	listErr     error
-	getErr      error
+	store.Store                                            // embed so unused methods compile; nil receiver panics if called
+	byApproval     map[string]*store.TaskLifecycleEvent    // most-recent event per approval (Get lookups)
+	byApprovalList map[string][]*store.TaskLifecycleEvent  // all events per approval (List lookups)
+	listErr        error
+	getErr         error
 }
 
 func (f *fakeLifecycleStore) GetTaskLifecycleEventByApprovalID(_ context.Context, approvalID string) (*store.TaskLifecycleEvent, error) {
@@ -32,11 +32,11 @@ func (f *fakeLifecycleStore) GetTaskLifecycleEventByApprovalID(_ context.Context
 	return ev, nil
 }
 
-func (f *fakeLifecycleStore) ListTaskLifecycleEvents(_ context.Context, _ string, taskID string) ([]*store.TaskLifecycleEvent, error) {
+func (f *fakeLifecycleStore) ListTaskLifecycleEventsByApprovalID(_ context.Context, approvalID string) ([]*store.TaskLifecycleEvent, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	return f.byTask[taskID], nil
+	return f.byApprovalList[approvalID], nil
 }
 
 // TestTryRecoverApprovalFromLifecycle_ApprovedExpansion exercises
@@ -63,8 +63,8 @@ func TestTryRecoverApprovalFromLifecycle_ApprovedExpansion(t *testing.T) {
 		ApprovalID: approvalID,
 	}
 	st := &fakeLifecycleStore{
-		byApproval: map[string]*store.TaskLifecycleEvent{approvalID: approved},
-		byTask:     map[string][]*store.TaskLifecycleEvent{taskID: {pending, approved}},
+		byApproval:     map[string]*store.TaskLifecycleEvent{approvalID: approved},
+		byApprovalList: map[string][]*store.TaskLifecycleEvent{approvalID: {pending, approved}},
 	}
 
 	got := tryRecoverApprovalFromLifecycle(context.Background(), st, approvalID, "approve")

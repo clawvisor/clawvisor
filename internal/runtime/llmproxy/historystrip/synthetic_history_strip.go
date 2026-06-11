@@ -11,6 +11,48 @@ import (
 type SyntheticApprovalHistoryStripRequest struct {
 	Provider conversation.Provider
 	Body     []byte
+	// ReconstructionLookup, when non-nil, lets the strip path
+	// REPLACE the substituted-prompt assistant turn with a
+	// synthetic [tool_use(original)] + paired tool_result rather
+	// than dropping it. Without this, reconstruction is one-shot
+	// (only the post-approval body editor sees the reconstructed
+	// pair) and subsequent turns lose evidence of the original
+	// call.
+	//
+	// The lookup is keyed by the approval_id parsed from the
+	// substituted-prompt marker. Returns nil when no
+	// reconstruction is available (older approvals predating the
+	// lifecycle audit, or store outage) — strip falls back to
+	// drop-the-turn behavior.
+	//
+	// Callers wire this with whatever store they have. The
+	// historystrip package itself stays storage-agnostic.
+	ReconstructionLookup ReconstructionLookup
+}
+
+// ReconstructionLookup queries the lifecycle audit (or any
+// equivalent source) for the data needed to reconstruct the model's
+// missing assistant turn after a substituted-prompt approval.
+//
+// Returns nil when reconstruction is not possible for this
+// approval_id; the caller falls through to the drop-the-turn path.
+type ReconstructionLookup func(approvalID string) *ReconstructedPair
+
+// ReconstructedPair carries everything the strip path needs to
+// inject a synthetic [tool_use, tool_result] pair where the
+// substituted-prompt turn used to live.
+//
+// ToolUseID / ToolName / Input are the agent's verbatim original
+// tool_use (captured at hold time, stored in task_lifecycle_events).
+// ResultText is the notice the synthetic tool_result content
+// carries — typically the same body the augmenter emits ("scope was
+// expanded…" or "task was created…"), composed by the caller from
+// the event Kind.
+type ReconstructedPair struct {
+	ToolUseID  string
+	ToolName   string
+	Input      json.RawMessage
+	ResultText string
 }
 
 type SyntheticApprovalHistoryStripResult struct {
@@ -32,7 +74,7 @@ func StripSyntheticApprovalHistory(req SyntheticApprovalHistoryStripRequest) (Sy
 	body := req.Body
 	modified := false
 	if req.Provider == conversation.ProviderAnthropic {
-		res, err := stripAnthropicSyntheticApprovalHistory(body)
+		res, err := stripAnthropicSyntheticApprovalHistory(body, req.ReconstructionLookup)
 		if err != nil {
 			return SyntheticApprovalHistoryStripResult{Body: body}, err
 		}
@@ -45,7 +87,7 @@ func StripSyntheticApprovalHistory(req SyntheticApprovalHistoryStripRequest) (Sy
 	return SyntheticApprovalHistoryStripResult{Body: body}, nil
 }
 
-func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHistoryStripResult, error) {
+func stripAnthropicSyntheticApprovalHistory(body []byte, lookup ReconstructionLookup) (SyntheticApprovalHistoryStripResult, error) {
 	if !strings.Contains(string(body), "Clawvisor") {
 		return SyntheticApprovalHistoryStripResult{Body: body}, nil
 	}
@@ -70,6 +112,12 @@ func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHisto
 	// in history anymore — Anthropic rejects orphan tool_results with
 	// a 400, so the strip must clean both ends of the pair together.
 	var orphanedToolUseIDs map[string]struct{}
+	// pendingReconstruction, when set, signals that the next user
+	// turn's tool_result for orphanedToolUseIDs[*] should be REPLACED
+	// (not stripped) with a tool_result paired to the reconstruction's
+	// ToolUseID. Carries the synthetic-ID → reconstruction mapping so
+	// the next-turn handler knows which tool_result to swap.
+	var pendingReconstruction *ReconstructedPair
 	for _, msg := range messages {
 		role := extractMessageRole(msg)
 		content := extractMessageContent(msg)
@@ -82,28 +130,80 @@ func stripAnthropicSyntheticApprovalHistory(body []byte) (SyntheticApprovalHisto
 			}
 		}
 		if role == "user" && len(orphanedToolUseIDs) > 0 {
-			cleaned, dropped, changed, err := stripToolResultsByID(content, orphanedToolUseIDs)
-			orphanedToolUseIDs = nil
-			if err == nil && changed {
-				modified = true
-				if dropped {
-					// User message had only the orphan tool_result
-					// (and maybe blank text). Drop the whole turn.
-					continue
+			// When a reconstruction is in flight, REPLACE the
+			// matching tool_result block with one paired to the
+			// reconstructed tool_use_id; otherwise strip the
+			// orphan (current behavior).
+			if pendingReconstruction != nil {
+				swapped, swapChanged, swapErr := replaceToolResultsForReconstruction(content, orphanedToolUseIDs, pendingReconstruction)
+				orphanedToolUseIDs = nil
+				pendingReconstruction = nil
+				if swapErr == nil && swapChanged {
+					modified = true
+					newMsg, err := jsonsurgery.SetField(msg, "content", swapped)
+					if err == nil {
+						msg = newMsg
+					}
 				}
-				newMsg, err := jsonsurgery.SetField(msg, "content", cleaned)
-				if err == nil {
-					msg = newMsg
+			} else {
+				cleaned, dropped, changed, err := stripToolResultsByID(content, orphanedToolUseIDs)
+				orphanedToolUseIDs = nil
+				if err == nil && changed {
+					modified = true
+					if dropped {
+						// User message had only the orphan tool_result
+						// (and maybe blank text). Drop the whole turn.
+						continue
+					}
+					newMsg, err := jsonsurgery.SetField(msg, "content", cleaned)
+					if err == nil {
+						msg = newMsg
+					}
 				}
 			}
 		}
 		if role == "assistant" && isSyntheticApprovalPromptText(contentText) {
+			// Try reconstruction first: if the lookup callback
+			// returns a faithful tool_use snapshot for this
+			// approval, REPLACE this turn with a synthetic
+			// [tool_use(original)] instead of dropping it. The
+			// model sees its own call on every subsequent turn
+			// (not just the post-approval one).
+			ids := extractClawvisorSyntheticToolUseIDs(content)
+			var reconstructed *ReconstructedPair
+			if lookup != nil {
+				if approvalID := findApprovalIDInPrompt(contentText); approvalID != "" {
+					reconstructed = lookup(approvalID)
+				}
+			}
+			if reconstructed != nil && reconstructed.ToolUseID != "" && reconstructed.ToolName != "" && len(reconstructed.Input) > 0 {
+				replacement, ok := buildReconstructedAssistantBlock(reconstructed)
+				if ok {
+					newMsg, err := jsonsurgery.SetField(msg, "content", replacement)
+					if err == nil {
+						msg = newMsg
+						modified = true
+						survivors = append(survivors, msg)
+						// Signal the next user turn to SWAP
+						// (not strip) the orphan tool_result.
+						if len(ids) > 0 {
+							orphanedToolUseIDs = make(map[string]struct{}, len(ids))
+							for _, id := range ids {
+								orphanedToolUseIDs[id] = struct{}{}
+							}
+							pendingReconstruction = reconstructed
+						}
+						skipNextBareApprovalReply = true
+						continue
+					}
+				}
+			}
+			// Fall through to drop-the-turn behavior when
+			// reconstruction is unavailable or block-building
+			// failed.
 			modified = true
 			skipNextBareApprovalReply = true
-			// Capture the AskUserQuestion tool_use IDs from this
-			// stripped assistant turn so the next user turn can
-			// drop the matching tool_result and not orphan it.
-			if ids := extractClawvisorSyntheticToolUseIDs(content); len(ids) > 0 {
+			if len(ids) > 0 {
 				if orphanedToolUseIDs == nil {
 					orphanedToolUseIDs = make(map[string]struct{}, len(ids))
 				}
@@ -255,6 +355,100 @@ func isSyntheticApprovalPromptText(text string) bool {
 	return strings.Contains(text, InlineApprovalSubstitutedPromptMarker) ||
 		strings.Contains(text, InlineExpansionApprovalSubstitutedPromptMarker) ||
 		strings.Contains(text, ToolApprovalSubstitutedPromptMarker)
+}
+
+// buildReconstructedAssistantBlock renders the synthetic
+// [tool_use(original)] content that replaces the substituted-prompt
+// assistant turn. The block is wrapped in a single-element JSON
+// array (Anthropic content shape) so the caller can drop it
+// straight into a message's content field.
+func buildReconstructedAssistantBlock(rec *ReconstructedPair) (json.RawMessage, bool) {
+	if rec == nil || rec.ToolUseID == "" || rec.ToolName == "" || len(rec.Input) == 0 {
+		return nil, false
+	}
+	block := map[string]any{
+		"type":  "tool_use",
+		"id":    rec.ToolUseID,
+		"name":  rec.ToolName,
+		"input": rec.Input,
+	}
+	raw, err := json.Marshal([]any{block})
+	if err != nil {
+		return nil, false
+	}
+	return raw, true
+}
+
+// replaceToolResultsForReconstruction walks the user-turn content,
+// replacing tool_result blocks whose tool_use_id matches any of the
+// stripped synthetic ids with a tool_result paired to the
+// reconstructed tool_use_id (carrying the reconstruction's
+// ResultText as content). Other blocks pass through unchanged.
+func replaceToolResultsForReconstruction(raw json.RawMessage, orphans map[string]struct{}, rec *ReconstructedPair) (json.RawMessage, bool, error) {
+	if len(raw) == 0 || rec == nil || rec.ToolUseID == "" {
+		return raw, false, nil
+	}
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return raw, false, nil
+	}
+	changed := false
+	for i, blk := range blocks {
+		var probe struct {
+			Type      string `json:"type"`
+			ToolUseID string `json:"tool_use_id"`
+		}
+		if err := json.Unmarshal(blk, &probe); err != nil {
+			continue
+		}
+		if probe.Type != "tool_result" {
+			continue
+		}
+		if _, ok := orphans[probe.ToolUseID]; !ok {
+			continue
+		}
+		newBlock, err := json.Marshal(map[string]any{
+			"type":        "tool_result",
+			"tool_use_id": rec.ToolUseID,
+			"content":     rec.ResultText,
+		})
+		if err != nil {
+			continue
+		}
+		blocks[i] = newBlock
+		changed = true
+	}
+	if !changed {
+		return raw, false, nil
+	}
+	out, err := json.Marshal(blocks)
+	if err != nil {
+		return raw, false, err
+	}
+	return out, true, nil
+}
+
+// findApprovalIDInPrompt extracts the cv-<id> marker from the
+// substituted-prompt text so the lookup callback can query the
+// lifecycle audit. Mirrors conversation.FindLatestApprovalIDMarker's
+// regex without taking a cross-package dep (the historystrip
+// package's only external dep is conversation.Provider).
+func findApprovalIDInPrompt(text string) string {
+	const marker = "[clawvisor:approval="
+	idx := strings.LastIndex(text, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := text[idx+len(marker):]
+	end := strings.Index(rest, "]")
+	if end < 0 {
+		return ""
+	}
+	id := strings.TrimSpace(rest[:end])
+	if !strings.HasPrefix(id, "cv-") {
+		return ""
+	}
+	return strings.ToLower(id)
 }
 
 // extractClawvisorSyntheticToolUseIDs walks an assistant message's

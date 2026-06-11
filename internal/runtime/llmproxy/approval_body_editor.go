@@ -281,15 +281,19 @@ func buildReconstructedAssistantContent(original *InlineApprovalOriginalCall) (j
 	if original == nil || original.ToolUseID == "" || original.ToolName == "" {
 		return nil, false
 	}
-	input := original.Input
-	if len(input) == 0 {
-		input = json.RawMessage(`{}`)
+	if len(original.Input) == 0 {
+		// Fabricating `{}` here would show the model a tool_use it
+		// never emitted (its real call had a non-empty body),
+		// inviting confusion or re-emission. Falling through to
+		// the legacy text-block swap is the correct degradation
+		// when we don't have a faithful reconstruction.
+		return nil, false
 	}
 	block := map[string]any{
 		"type":  "tool_use",
 		"id":    original.ToolUseID,
 		"name":  original.ToolName,
-		"input": input,
+		"input": original.Input,
 	}
 	raw, err := json.Marshal([]any{block})
 	if err != nil {
