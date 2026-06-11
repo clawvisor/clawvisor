@@ -501,8 +501,8 @@ func buildAskUserQuestionApprovalCall(approvalID string, spec askUserQuestionApp
 					"header":      spec.Header,
 					"multiSelect": false,
 					"options": []map[string]any{
-						{"label": "yes", "description": spec.YesDescription},
-						{"label": "no", "description": "Cancel"},
+						{"label": "Yes", "description": spec.YesDescription},
+						{"label": "No", "description": "Cancel"},
 					},
 				},
 			},
