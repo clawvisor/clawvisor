@@ -166,8 +166,8 @@ func TestBuildAskUserQuestionToolCallShape(t *testing.T) {
 	if len(opts) != 2 {
 		t.Fatalf("expected exactly 2 options (yes/no), got %d", len(opts))
 	}
-	if opts[0]["label"] != "yes" || opts[1]["label"] != "no" {
-		t.Errorf("expected options [yes,no] (parser maps yes→approve / no→deny), got %v", opts)
+	if opts[0]["label"] != "Yes" || opts[1]["label"] != "No" {
+		t.Errorf("expected options [Yes,No] (parser maps yes→approve / no→deny, case-insensitive), got %v", opts)
 	}
 }
 
