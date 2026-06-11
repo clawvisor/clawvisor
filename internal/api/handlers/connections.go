@@ -614,7 +614,7 @@ func (h *ConnectionsHandler) PollStatus(w http.ResponseWriter, r *http.Request) 
 func (h *ConnectionsHandler) waitForConnectionResolution(ctx context.Context, connID, userID string, timeout time.Duration) *store.ConnectionRequest {
 	return events.WaitFor(ctx, h.eventHub, userID, timeout,
 		nil, // any event type
-		func(c context.Context) (*store.ConnectionRequest, bool) {
+		func(c context.Context, _ *events.Event) (*store.ConnectionRequest, bool) {
 			cr, err := h.st.GetConnectionRequest(c, connID)
 			if err != nil {
 				return &store.ConnectionRequest{ID: connID, Status: "pending"}, false

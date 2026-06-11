@@ -348,14 +348,17 @@ func TestControlWaitForApproval(t *testing.T) {
 		h.EventHub = hub
 		defer func() { h.EventHub = nil }()
 
+		errCh := make(chan error, 1)
 		// Start a goroutine to approve the task after a delay
 		go func() {
 			time.Sleep(50 * time.Millisecond)
 			// Update task in sqlite store
 			if err := st.UpdateTaskStatus(ctx, "task-async-pending", "active"); err != nil {
-				t.Errorf("failed to update task: %v", err)
+				errCh <- err
+				return
 			}
 			hub.Publish(user.ID, events.Event{Type: "tasks", ID: "task-async-pending"})
+			close(errCh)
 		}()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/control/approvals/task-async-pending/wait?timeout=2", nil)
@@ -363,6 +366,10 @@ func TestControlWaitForApproval(t *testing.T) {
 		req = req.WithContext(store.WithAgent(req.Context(), agent))
 		res := httptest.NewRecorder()
 		h.WaitForApproval(res, req)
+
+		if err := <-errCh; err != nil {
+			t.Errorf("failed to update task in goroutine: %v", err)
+		}
 
 		if res.Code != http.StatusOK {
 			t.Errorf("expected OK, got %d", res.Code)
@@ -373,6 +380,43 @@ func TestControlWaitForApproval(t *testing.T) {
 		}
 		if payload["status"] != "approved" {
 			t.Errorf("expected status approved, got %v", payload["status"])
+		}
+	}
+
+	// 6. Ownership rejection
+	{
+		otherAgent, err := st.CreateAgent(ctx, user.ID, "other-agent", "other-token-hash")
+		if err != nil {
+			t.Fatalf("CreateAgent: %v", err)
+		}
+
+		// (a) Task belongs to a different agent
+		req1 := httptest.NewRequest(http.MethodGet, "/api/control/approvals/task-active/wait", nil)
+		req1.SetPathValue("id", "task-active")
+		req1 = req1.WithContext(store.WithAgent(req1.Context(), otherAgent))
+		res1 := httptest.NewRecorder()
+		h.WaitForApproval(res1, req1)
+		if res1.Code != http.StatusForbidden {
+			t.Errorf("expected Forbidden (403) for task ownership mismatch, got %d", res1.Code)
+		}
+
+		// (b) Pending approval hold belongs to a different agent
+		pendingHold := llmproxy.PendingLiteApproval{
+			ID:      "cv-otherhold",
+			UserID:  user.ID,
+			AgentID: agent.ID,
+		}
+		if _, err := h.PendingApprovals.Hold(ctx, pendingHold); err != nil {
+			t.Fatalf("Hold: %v", err)
+		}
+
+		req2 := httptest.NewRequest(http.MethodGet, "/api/control/approvals/cv-otherhold/wait", nil)
+		req2.SetPathValue("id", "cv-otherhold")
+		req2 = req2.WithContext(store.WithAgent(req2.Context(), otherAgent))
+		res2 := httptest.NewRecorder()
+		h.WaitForApproval(res2, req2)
+		if res2.Code != http.StatusForbidden {
+			t.Errorf("expected Forbidden (403) for pending hold ownership mismatch, got %d", res2.Code)
 		}
 	}
 }

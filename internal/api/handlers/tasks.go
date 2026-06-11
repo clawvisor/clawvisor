@@ -1050,7 +1050,10 @@ func isTaskPending(status string) bool {
 func (h *TasksHandler) waitForTaskResolution(ctx context.Context, taskID, userID string, timeout time.Duration) *store.Task {
 	return events.WaitFor(ctx, h.eventHub, userID, timeout,
 		[]string{"tasks"},
-		func(c context.Context) (*store.Task, bool) {
+		func(c context.Context, evt *events.Event) (*store.Task, bool) {
+			if evt != nil && evt.ID != "" && evt.ID != taskID {
+				return nil, false
+			}
 			t, err := h.st.GetTask(c, taskID)
 			if err != nil {
 				return &store.Task{ID: taskID}, false

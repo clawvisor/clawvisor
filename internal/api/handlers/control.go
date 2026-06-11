@@ -371,6 +371,8 @@ func (h *LLMControlHandler) CheckoutTask(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+var errSentinelHold = &llmproxy.PendingLiteApproval{ID: "err-sentinel"}
+
 func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Request) {
 	agent := middleware.AgentFromContext(r.Context())
 	if agent == nil {
@@ -418,24 +420,27 @@ func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Reque
 		taskID = pending.PendingTaskID
 	}
 
-	task, err := h.Store.GetTask(r.Context(), taskID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			if pending == nil {
-				writeJSON(w, http.StatusNotFound, map[string]any{
-					"error":   "not_found",
-					"message": "approval or task not found",
+	var task *store.Task
+	if pending == nil || pending.PendingTaskID != "" {
+		task, err = h.Store.GetTask(r.Context(), taskID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				if pending == nil {
+					writeJSON(w, http.StatusNotFound, map[string]any{
+						"error":   "not_found",
+						"message": "approval or task not found",
+					})
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+				return
+			} else {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":   "internal_error",
+					"message": "failed to lookup task: " + err.Error(),
 				})
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
-			return
-		} else {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{
-				"error":   "internal_error",
-				"message": "failed to lookup task: " + err.Error(),
-			})
-			return
 		}
 	}
 
@@ -462,7 +467,10 @@ func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Reque
 
 	if h.EventHub != nil {
 		if task != nil {
-			resolvedTask := events.WaitFor(r.Context(), h.EventHub, agent.UserID, timeout, []string{"tasks"}, func(c context.Context) (*store.Task, bool) {
+			resolvedTask := events.WaitFor(r.Context(), h.EventHub, agent.UserID, timeout, []string{"tasks"}, func(c context.Context, evt *events.Event) (*store.Task, bool) {
+				if evt != nil && evt.ID != "" && evt.ID != taskID {
+					return nil, false
+				}
 				t, err := h.Store.GetTask(c, taskID)
 				if err != nil {
 					if errors.Is(err, store.ErrNotFound) {
@@ -480,10 +488,13 @@ func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Reque
 				return
 			}
 		} else if pending != nil && h.PendingApprovals != nil {
-			resolvedHold := events.WaitFor(r.Context(), h.EventHub, agent.UserID, timeout, []string{"audit", "queue"}, func(c context.Context) (*llmproxy.PendingLiteApproval, bool) {
+			resolvedHold := events.WaitFor(r.Context(), h.EventHub, agent.UserID, timeout, []string{"audit", "queue"}, func(c context.Context, evt *events.Event) (*llmproxy.PendingLiteApproval, bool) {
+				if evt != nil && evt.ID != "" && evt.ID != id && (pending.PendingTaskID == "" || evt.ID != pending.PendingTaskID) {
+					return nil, false
+				}
 				p, err := h.PendingApprovals.PeekByID(c, id)
 				if err != nil {
-					return nil, false
+					return errSentinelHold, false
 				}
 				return p, p == nil
 			})

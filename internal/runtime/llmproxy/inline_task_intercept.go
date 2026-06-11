@@ -115,7 +115,11 @@ func MaybeInterceptInlineTaskDefinition(
 		if cfg.Store != nil && cfg.ConversationID != "" {
 			activity, err := cfg.Store.GetConversationActivity(req.Context(), cfg.ConversationID)
 			if err == nil && activity != nil {
-				threshold := time.Duration(cfg.InactivityThresholdSeconds) * time.Second
+				thresholdSecs := cfg.InactivityThresholdSeconds
+				if thresholdSecs <= 0 {
+					thresholdSecs = 300
+				}
+				threshold := time.Duration(thresholdSecs) * time.Second
 				if time.Since(activity.LastUserMessageAt) <= threshold {
 					isInactive = false
 				}

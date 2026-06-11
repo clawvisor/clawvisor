@@ -166,6 +166,9 @@ type LLMEndpointHandler struct {
 	// for routing approvals to external notification channels.
 	InactivityThresholdSeconds int
 
+	activityDebounceMu sync.Mutex
+	activityDebounce   map[string]time.Time
+
 	// RawIOLogger, when non-nil, captures full raw HTTP bodies for
 	// inbound requests, upstream responses, and the bodies returned
 	// to the harness. Off by default; opted in via
@@ -218,6 +221,28 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		InactivityThresholdSeconds: 300,
 		defaultToolRulesSeen:       map[string]map[string]struct{}{},
 	}
+}
+
+func (h *LLMEndpointHandler) shouldDebounceActivity(conversationID string) bool {
+	h.activityDebounceMu.Lock()
+	defer h.activityDebounceMu.Unlock()
+	if h.activityDebounce == nil {
+		h.activityDebounce = make(map[string]time.Time)
+	}
+	now := time.Now()
+	last, exists := h.activityDebounce[conversationID]
+	if exists && now.Sub(last) < 10*time.Second {
+		return true
+	}
+	h.activityDebounce[conversationID] = now
+	if len(h.activityDebounce) > 1000 {
+		for k, v := range h.activityDebounce {
+			if now.Sub(v) >= 10*time.Second {
+				delete(h.activityDebounce, k)
+			}
+		}
+	}
+	return false
 }
 
 // Messages handles `POST /api/v1/messages` (Anthropic) and `POST
@@ -538,9 +563,11 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	if conversationID != "" {
 		auditParams["conversation_id"] = conversationID
 		if llmproxy.HasNewUserMessage(provider, body) && h.Store != nil {
-			if err := h.Store.UpdateConversationActivity(r.Context(), conversationID, time.Now()); err != nil {
-				h.Logger.WarnContext(r.Context(), "failed to update conversation activity",
-					"request_id", requestID, "conversation_id", conversationID, "err", err.Error())
+			if !h.shouldDebounceActivity(conversationID) {
+				if err := h.Store.UpdateConversationActivity(r.Context(), conversationID, time.Now()); err != nil {
+					h.Logger.WarnContext(r.Context(), "failed to update conversation activity",
+						"request_id", requestID, "conversation_id", conversationID, "err", err.Error())
+				}
 			}
 		}
 	}
