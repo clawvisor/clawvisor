@@ -44,16 +44,19 @@ actions:
       calendar_id: { type: string, default: "primary", location: path }
       from:
         type: string
+        aliases: [time_min]
         default_expr: "now()"
         transform: "rfc3339(from)"
         map_to: timeMin
         location: query
       to:
         type: string
+        aliases: [time_max]
         transform: "endOfDay(to)"
         map_to: timeMax
         location: query
-      max_results: { type: int, default: 10, max: 50, map_to: maxResults, location: query }
+      q: { type: string, location: query }
+      max_results: { type: int, default: 10, max: 2500, map_to: maxResults, location: query }
       page_token: { type: string, map_to: pageToken, location: query }
       single_events: { type: string, default: "true", map_to: singleEvents, location: query }
       order_by: { type: string, default: "startTime", map_to: orderBy, location: query }
@@ -128,6 +131,7 @@ actions:
       send_updates: { type: string, default: "none", location: query, map_to: sendUpdates }
       summary: { type: string, required: true, location: body }
       description: { type: string, location: body }
+      location: { type: string, location: body }
       start:
         type: string
         required: true
@@ -170,6 +174,7 @@ actions:
       send_updates: { type: string, default: "none", location: query, map_to: sendUpdates }
       summary: { type: string, location: body }
       description: { type: string, location: body }
+      location: { type: string, location: body }
       start:
         type: string
         location: body

@@ -175,6 +175,20 @@ func resolveParamWithExpr(params map[string]any, name string, def yamldef.Param,
 	val, ok := params[name]
 	provided := ok && val != nil
 
+	// Fall back to aliases if the primary name was not supplied. The transform
+	// step below copies the resolved value back into env[name], so transform
+	// expressions referencing the primary name still work.
+	if !ok || val == nil {
+		for _, alias := range def.Aliases {
+			if av, has := params[alias]; has && av != nil {
+				val = av
+				ok = true
+				provided = true
+				break
+			}
+		}
+	}
+
 	if !ok || val == nil {
 		// Try dynamic default first, then static.
 		if ca != nil {

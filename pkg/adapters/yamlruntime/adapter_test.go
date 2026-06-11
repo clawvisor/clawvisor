@@ -863,6 +863,71 @@ func TestYAMLAdapter_ParamTransformExpr(t *testing.T) {
 	}
 }
 
+func TestYAMLAdapter_ParamAliasResolution(t *testing.T) {
+	var seenTimeMin string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenTimeMin = r.URL.Query().Get("timeMin")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"list": {
+				Method: "GET", Path: "/events",
+				Params: map[string]yamldef.Param{
+					"from": {
+						Type:      "string",
+						Aliases:   []string{"time_min"},
+						Transform: "rfc3339(from)",
+						MapTo:     "timeMin",
+						Location:  "query",
+					},
+				},
+				Response: yamldef.ResponseDef{Summary: "done"},
+			},
+		},
+	}
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	// Primary name still works.
+	if _, err := adapter.Execute(context.Background(), adapters.Request{
+		Action: "list", Params: map[string]any{"from": "2024-06-15"}, Credential: testCred("t"),
+	}); err != nil {
+		t.Fatalf("primary execute: %v", err)
+	}
+	if seenTimeMin != "2024-06-15T00:00:00Z" {
+		t.Errorf("primary: expected RFC3339 timeMin, got %q", seenTimeMin)
+	}
+
+	// Alias name resolves to the same query param, with transform applied.
+	seenTimeMin = ""
+	if _, err := adapter.Execute(context.Background(), adapters.Request{
+		Action: "list", Params: map[string]any{"time_min": "2024-07-20"}, Credential: testCred("t"),
+	}); err != nil {
+		t.Fatalf("alias execute: %v", err)
+	}
+	if seenTimeMin != "2024-07-20T00:00:00Z" {
+		t.Errorf("alias: expected RFC3339 timeMin, got %q", seenTimeMin)
+	}
+
+	// Alias is reported as a known param via ActionParams.
+	params := adapter.ActionParams("list")
+	if len(params) != 1 || params[0].Name != "from" {
+		t.Fatalf("unexpected ActionParams: %+v", params)
+	}
+	if len(params[0].Aliases) != 1 || params[0].Aliases[0] != "time_min" {
+		t.Errorf("expected alias 'time_min', got %v", params[0].Aliases)
+	}
+}
+
 func TestCustomFunctions(t *testing.T) {
 	tests := []struct {
 		name string

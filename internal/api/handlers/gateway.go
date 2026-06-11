@@ -2600,19 +2600,32 @@ func validateRequestParams(adapter adapters.Adapter, action string, params map[s
 		return nil, nil
 	}
 
-	// Build a set of known param names.
+	// Build a set of known param names (including aliases).
 	known := make(map[string]bool, len(paramDefs))
 	for _, p := range paramDefs {
 		known[p.Name] = true
+		for _, a := range p.Aliases {
+			known[a] = true
+		}
 	}
 
-	// Check for missing required params.
+	// Check for missing required params. An alias satisfies the primary.
 	var missing []string
 	for _, p := range paramDefs {
 		if !p.Required {
 			continue
 		}
-		if _, provided := params[p.Name]; !provided {
+		if _, provided := params[p.Name]; provided {
+			continue
+		}
+		var aliasProvided bool
+		for _, a := range p.Aliases {
+			if _, ok := params[a]; ok {
+				aliasProvided = true
+				break
+			}
+		}
+		if !aliasProvided {
 			missing = append(missing, p.Name)
 		}
 	}

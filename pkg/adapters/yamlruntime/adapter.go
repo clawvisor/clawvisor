@@ -84,6 +84,7 @@ func (a *YAMLAdapter) ActionParams(actionName string) []adapters.ParamInfo {
 			Name:     name,
 			Type:     p.Type,
 			Required: p.Required,
+			Aliases:  p.Aliases,
 		})
 	}
 	sort.Slice(params, func(i, j int) bool { return params[i].Name < params[j].Name })
