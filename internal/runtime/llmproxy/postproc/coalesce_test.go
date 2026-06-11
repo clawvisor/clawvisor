@@ -1101,6 +1101,9 @@ func (c *flakyHoldFromCallN) Hold(ctx context.Context, p llmproxy.PendingLiteApp
 func (c *flakyHoldFromCallN) Peek(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Peek(ctx, r)
 }
+func (c *flakyHoldFromCallN) PeekByID(ctx context.Context, id string) (*llmproxy.PendingLiteApproval, error) {
+	return c.inner.PeekByID(ctx, id)
+}
 func (c *flakyHoldFromCallN) Resolve(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Resolve(ctx, r)
 }
@@ -1119,6 +1122,9 @@ func (c *countingHoldCache) Hold(ctx context.Context, p llmproxy.PendingLiteAppr
 }
 func (c *countingHoldCache) Peek(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Peek(ctx, r)
+}
+func (c *countingHoldCache) PeekByID(ctx context.Context, id string) (*llmproxy.PendingLiteApproval, error) {
+	return c.inner.PeekByID(ctx, id)
 }
 func (c *countingHoldCache) Resolve(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Resolve(ctx, r)
@@ -1408,6 +1414,9 @@ func (c *flakyHoldCache) Hold(ctx context.Context, p llmproxy.PendingLiteApprova
 }
 func (c *flakyHoldCache) Peek(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Peek(ctx, r)
+}
+func (c *flakyHoldCache) PeekByID(ctx context.Context, id string) (*llmproxy.PendingLiteApproval, error) {
+	return c.inner.PeekByID(ctx, id)
 }
 func (c *flakyHoldCache) Resolve(ctx context.Context, r llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Resolve(ctx, r)

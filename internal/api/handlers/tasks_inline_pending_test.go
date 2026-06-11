@@ -13,8 +13,8 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -252,15 +252,15 @@ func TestPostprocess_ReplayFailureExpiresPendingInlineTask(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: agent.UserID,
-			AgentID: agent.ID,
-			AgentName: agent.Name,
+			AgentID:     agent.ID,
+			AgentName:   agent.Name,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
-			PendingApprovals: cache,
+			PendingApprovals:  cache,
 			InlineTaskCreator: h,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+			Inspector:   inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
 		},
 		RoutingContext: llmproxy.RoutingContext{
@@ -310,19 +310,19 @@ func TestPostprocess_RewriterFailureExpiresPendingInlineTask(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: agent.UserID,
-			AgentID: agent.ID,
-			AgentName: agent.Name,
+			AgentID:     agent.ID,
+			AgentName:   agent.Name,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
-			PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
+			PendingApprovals:  llmproxy.NewMemoryPendingApprovalCache(time.Minute),
 			InlineTaskCreator: h,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+			Inspector:   inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 			RewriteOpts: inspector.DefaultRewriteOpts("http://localhost:25297"),
 		},
 		RoutingContext: llmproxy.RoutingContext{
-			ControlBaseURL: "http://localhost:25297",
+			ControlBaseURL:   "http://localhost:25297",
 			ResponseRegistry: conversation.NewResponseRegistry(evalThenErrorRewriter{}),
 		},
 	})
@@ -685,6 +685,10 @@ func (c *failingInlineTaskHoldCache) Hold(context.Context, llmproxy.PendingLiteA
 }
 
 func (c *failingInlineTaskHoldCache) Peek(context.Context, llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
+	return nil, nil
+}
+
+func (c *failingInlineTaskHoldCache) PeekByID(context.Context, string) (*llmproxy.PendingLiteApproval, error) {
 	return nil, nil
 }
 

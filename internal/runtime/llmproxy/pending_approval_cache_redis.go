@@ -99,6 +99,15 @@ func (c *RedisPendingApprovalCache) Hold(ctx context.Context, pending PendingLit
 	).Result(); err != nil && !errors.Is(err, redis.Nil) {
 		return HoldResult{}, err
 	}
+	mapPrefix := "clawvisor:lite_pending_approval_map:"
+	if err := c.rdb.Set(ctx, mapPrefix+pending.ID, key, keyTTL).Err(); err != nil {
+		return HoldResult{}, err
+	}
+	if pending.PendingTaskID != "" {
+		if err := c.rdb.Set(ctx, mapPrefix+pending.PendingTaskID, key, keyTTL).Err(); err != nil {
+			return HoldResult{}, err
+		}
+	}
 	return HoldResult{Pending: pending, Evicted: evicted}, nil
 }
 
@@ -138,6 +147,11 @@ func (c *RedisPendingApprovalCache) Resolve(ctx context.Context, req ResolveRequ
 		if !found.ExpiresAt.IsZero() && !found.ExpiresAt.After(c.now().UTC()) {
 			continue
 		}
+		mapPrefix := "clawvisor:lite_pending_approval_map:"
+		c.rdb.Del(ctx, mapPrefix+found.ID)
+		if found.PendingTaskID != "" {
+			c.rdb.Del(ctx, mapPrefix+found.PendingTaskID)
+		}
 		return &found, nil
 	}
 }
@@ -154,6 +168,12 @@ func (c *RedisPendingApprovalCache) Drop(ctx context.Context, req ResolveRequest
 	_, raw, err := c.find(ctx, req)
 	if err != nil || raw == "" {
 		return err
+	}
+	mapPrefix := "clawvisor:lite_pending_approval_map:"
+	c.rdb.Del(ctx, mapPrefix+req.ApprovalID)
+	var pending PendingLiteApproval
+	if json.Unmarshal([]byte(raw), &pending) == nil && pending.PendingTaskID != "" {
+		c.rdb.Del(ctx, mapPrefix+pending.PendingTaskID)
 	}
 	return c.rdb.LRem(ctx, key, 1, raw).Err()
 }
@@ -298,5 +318,40 @@ for i = 0, len - 1 do
 end
 return nil
 `)
+
+func (c *RedisPendingApprovalCache) PeekByID(ctx context.Context, id string) (*PendingLiteApproval, error) {
+	if c == nil || c.rdb == nil {
+		return nil, nil
+	}
+	now := c.now().UTC()
+	mapPrefix := "clawvisor:lite_pending_approval_map:"
+	listKey, err := c.rdb.Get(ctx, mapPrefix+id).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	rawItems, err := c.rdb.LRange(ctx, listKey, 0, -1).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	for _, raw := range rawItems {
+		var pending PendingLiteApproval
+		if err := json.Unmarshal([]byte(raw), &pending); err != nil {
+			continue
+		}
+		if !pending.ExpiresAt.IsZero() && !pending.ExpiresAt.After(now) {
+			continue
+		}
+		if pending.ID == id || pending.PendingTaskID == id {
+			return &pending, nil
+		}
+	}
+	return nil, nil
+}
 
 var _ PendingApprovalCache = (*RedisPendingApprovalCache)(nil)

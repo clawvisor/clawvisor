@@ -388,6 +388,10 @@ type Store interface {
 	// Aggregate counts (telemetry)
 	TelemetryCounts(ctx context.Context) (*TelemetryCounts, error)
 
+	// Conversations
+	UpdateConversationActivity(ctx context.Context, conversationID string, lastUserMessageAt time.Time) error
+	GetConversationActivity(ctx context.Context, conversationID string) (*ConversationActivity, error)
+
 	// Health
 	Ping(ctx context.Context) error
 	Close() error
@@ -1345,4 +1349,10 @@ type NPSStats struct {
 	AverageScore   float64 `json:"average_score"`
 	LastScore      int     `json:"last_score"`
 	LastFeedback   string  `json:"last_feedback,omitempty"`
+}
+
+// ConversationActivity tracks the last user message time for inactivity detection.
+type ConversationActivity struct {
+	ConversationID    string    `json:"conversation_id"`
+	LastUserMessageAt time.Time `json:"last_user_message_at"`
 }

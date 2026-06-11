@@ -329,3 +329,99 @@ func tailLimit(in []string, n int) []string {
 	copy(out, in[len(in)-n:])
 	return out
 }
+
+// HasNewUserMessage reports whether the very last message in the request body is a genuine user turn.
+func HasNewUserMessage(provider conversation.Provider, body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	switch provider {
+	case conversation.ProviderAnthropic:
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(body, &raw); err != nil {
+			return false
+		}
+		msgsRaw, ok := raw["messages"]
+		if !ok {
+			return false
+		}
+		var messages []map[string]json.RawMessage
+		if err := json.Unmarshal(msgsRaw, &messages); err != nil {
+			return false
+		}
+		if len(messages) == 0 {
+			return false
+		}
+		lastMsg := messages[len(messages)-1]
+		var role string
+		if err := json.Unmarshal(lastMsg["role"], &role); err != nil {
+			return false
+		}
+		if role != "user" {
+			return false
+		}
+		text := strings.TrimSpace(extractAnthropicUserText(lastMsg["content"]))
+		if text == "" || isClawvisorInternalUserText(text) {
+			return false
+		}
+		return true
+
+	case conversation.ProviderOpenAI:
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(body, &raw); err != nil {
+			return false
+		}
+		if msgsRaw, ok := raw["messages"]; ok {
+			var messages []map[string]json.RawMessage
+			if err := json.Unmarshal(msgsRaw, &messages); err == nil && len(messages) > 0 {
+				lastMsg := messages[len(messages)-1]
+				var role string
+				if err := json.Unmarshal(lastMsg["role"], &role); err != nil {
+					return false
+				}
+				if role != "user" {
+					return false
+				}
+				text := strings.TrimSpace(flattenOpenAIChatContent(lastMsg["content"]))
+				if text == "" || isClawvisorInternalUserText(text) {
+					return false
+				}
+				return true
+			}
+		}
+		if inputRaw, ok := raw["input"]; ok {
+			var asString string
+			if err := json.Unmarshal(inputRaw, &asString); err == nil {
+				text := strings.TrimSpace(asString)
+				return text != "" && !isClawvisorInternalUserText(text)
+			}
+			var items []map[string]json.RawMessage
+			if err := json.Unmarshal(inputRaw, &items); err == nil && len(items) > 0 {
+				lastItem := items[len(items)-1]
+				var typ string
+				if err := json.Unmarshal(lastItem["type"], &typ); err != nil {
+					return false
+				}
+				if typ != "" && typ != "message" {
+					return false
+				}
+				var role string
+				if err := json.Unmarshal(lastItem["role"], &role); err != nil {
+					return false
+				}
+				if role != "user" {
+					return false
+				}
+				text := strings.TrimSpace(flattenOpenAIChatContent(lastItem["content"]))
+				if text == "" || isClawvisorInternalUserText(text) {
+					return false
+				}
+				return true
+			}
+		}
+		return false
+
+	default:
+		return false
+	}
+}

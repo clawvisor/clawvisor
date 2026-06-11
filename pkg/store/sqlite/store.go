@@ -4271,6 +4271,33 @@ func (s *Store) GetAgentLastNPSTime(ctx context.Context, agentID string) (*time.
 	return &t, nil
 }
 
+func (s *Store) UpdateConversationActivity(ctx context.Context, conversationID string, lastUserMessageAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO conversations (id, last_user_message_at)
+		VALUES (?, ?)
+		ON CONFLICT (id) DO UPDATE SET
+			last_user_message_at = excluded.last_user_message_at
+	`, conversationID, lastUserMessageAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+func (s *Store) GetConversationActivity(ctx context.Context, conversationID string) (*store.ConversationActivity, error) {
+	var lastUserMessageAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT last_user_message_at FROM conversations WHERE id = ?
+	`, conversationID).Scan(&lastUserMessageAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &store.ConversationActivity{
+		ConversationID:    conversationID,
+		LastUserMessageAt: parseTime(lastUserMessageAt),
+	}, nil
+}
+
 // Ensure Store implements store.Store at compile time.
 var _ store.Store = (*Store)(nil)
 

@@ -25,6 +25,10 @@ func (c failingPendingApprovalCache) Peek(context.Context, ResolveRequest) (*Pen
 	return nil, c.err
 }
 
+func (c failingPendingApprovalCache) PeekByID(context.Context, string) (*PendingLiteApproval, error) {
+	return nil, c.err
+}
+
 func (c failingPendingApprovalCache) Resolve(context.Context, ResolveRequest) (*PendingLiteApproval, error) {
 	return nil, c.err
 }

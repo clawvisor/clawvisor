@@ -142,19 +142,8 @@ type ApprovalContext struct {
 	ConversationAutoApproveThreshold string
 	Checkouts                        TaskCheckoutStore
 	DefaultTaskExpirySeconds         int
-	// AvailableTools is the inbound request's declared tool list
-	// (e.g. Anthropic tools[].name). Consumed by the inline-approval
-	// intercept to decide whether to substitute the held tool_use
-	// with an AskUserQuestion picker (when that harness tool is
-	// declared) or a plain text prompt.
-	//
-	// Technically per-request request metadata rather than an
-	// approval-flow input, but living on ApprovalContext keeps the
-	// existing buildControlResolver param-passing pattern intact:
-	// the intercept is built from sub-contexts, and a top-level
-	// PostprocessConfig field was demonstrably easy to forget to
-	// plumb through.
-	AvailableTools []string
+	AvailableTools                   []string
+	InactivityThresholdSeconds       int
 }
 
 // RewriteContext groups the credentialed-rewrite path's dependencies:

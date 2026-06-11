@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
@@ -198,5 +199,180 @@ func TestControlListTasksReturnsAgentActiveTasksAndCheckout(t *testing.T) {
 	}
 	if !strings.Contains(payload.NextStep, "/control/task/checkout") {
 		t.Fatalf("expected checkout guidance, got %q", payload.NextStep)
+	}
+}
+
+func TestControlWaitForApproval(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "control-wait.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "wait-user@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "agent", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	h := &LLMControlHandler{
+		BaseURL:          "http://localhost:25297",
+		Store:            st,
+		PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(time.Minute),
+	}
+
+	// 1. Task not found / ID required
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/control/approvals//wait", nil)
+		req = req.WithContext(store.WithAgent(req.Context(), agent))
+		res := httptest.NewRecorder()
+		h.WaitForApproval(res, req)
+		if res.Code != http.StatusBadRequest {
+			t.Errorf("expected bad request, got %d", res.Code)
+		}
+	}
+
+	// 2. Task exists and is approved (active)
+	{
+		task := &store.Task{
+			ID:       "task-active",
+			UserID:   user.ID,
+			AgentID:  agent.ID,
+			Purpose:  "approved work",
+			Status:   "active",
+			Lifetime: "session",
+		}
+		if err := st.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/control/approvals/task-active/wait", nil)
+		req.SetPathValue("id", "task-active")
+		req = req.WithContext(store.WithAgent(req.Context(), agent))
+		res := httptest.NewRecorder()
+		h.WaitForApproval(res, req)
+		if res.Code != http.StatusOK {
+			t.Errorf("expected OK, got %d: %s", res.Code, res.Body.String())
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if payload["status"] != "approved" {
+			t.Errorf("expected status approved, got %v", payload["status"])
+		}
+	}
+
+	// 3. Task exists and is denied
+	{
+		task := &store.Task{
+			ID:       "task-denied",
+			UserID:   user.ID,
+			AgentID:  agent.ID,
+			Purpose:  "denied work",
+			Status:   "denied",
+			Lifetime: "session",
+		}
+		if err := st.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/control/approvals/task-denied/wait", nil)
+		req.SetPathValue("id", "task-denied")
+		req = req.WithContext(store.WithAgent(req.Context(), agent))
+		res := httptest.NewRecorder()
+		h.WaitForApproval(res, req)
+		if res.Code != http.StatusOK {
+			t.Errorf("expected OK, got %d", res.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if payload["status"] != "denied" {
+			t.Errorf("expected status denied, got %v", payload["status"])
+		}
+	}
+
+	// 4. Task pending approval, times out
+	{
+		task := &store.Task{
+			ID:       "task-pending",
+			UserID:   user.ID,
+			AgentID:  agent.ID,
+			Purpose:  "pending work",
+			Status:   "pending_approval",
+			Lifetime: "session",
+		}
+		if err := st.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/control/approvals/task-pending/wait?timeout=1", nil)
+		req.SetPathValue("id", "task-pending")
+		req = req.WithContext(store.WithAgent(req.Context(), agent))
+		res := httptest.NewRecorder()
+		h.WaitForApproval(res, req)
+		if res.Code != http.StatusOK {
+			t.Errorf("expected OK, got %d", res.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if payload["status"] != "pending" {
+			t.Errorf("expected status pending, got %v", payload["status"])
+		}
+	}
+
+	// 5. EventHub set: async task approval
+	{
+		task := &store.Task{
+			ID:       "task-async-pending",
+			UserID:   user.ID,
+			AgentID:  agent.ID,
+			Purpose:  "async work",
+			Status:   "pending_approval",
+			Lifetime: "session",
+		}
+		if err := st.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+
+		hub := events.NewHub()
+		h.EventHub = hub
+		defer func() { h.EventHub = nil }()
+
+		// Start a goroutine to approve the task after a delay
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			// Update task in sqlite store
+			if err := st.UpdateTaskStatus(ctx, "task-async-pending", "active"); err != nil {
+				t.Errorf("failed to update task: %v", err)
+			}
+			hub.Publish(user.ID, events.Event{Type: "tasks", ID: "task-async-pending"})
+		}()
+
+		req := httptest.NewRequest(http.MethodGet, "/api/control/approvals/task-async-pending/wait?timeout=2", nil)
+		req.SetPathValue("id", "task-async-pending")
+		req = req.WithContext(store.WithAgent(req.Context(), agent))
+		res := httptest.NewRecorder()
+		h.WaitForApproval(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Errorf("expected OK, got %d", res.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if payload["status"] != "approved" {
+			t.Errorf("expected status approved, got %v", payload["status"])
+		}
 	}
 }

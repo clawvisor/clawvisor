@@ -3734,3 +3734,30 @@ func (s *Store) GetAgentLastNPSTime(ctx context.Context, agentID string) (*time.
 	}
 	return &createdAt, nil
 }
+
+func (s *Store) UpdateConversationActivity(ctx context.Context, conversationID string, lastUserMessageAt time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO conversations (id, last_user_message_at)
+		VALUES ($1, $2)
+		ON CONFLICT (id) DO UPDATE SET
+			last_user_message_at = EXCLUDED.last_user_message_at
+	`, conversationID, lastUserMessageAt.UTC())
+	return err
+}
+
+func (s *Store) GetConversationActivity(ctx context.Context, conversationID string) (*store.ConversationActivity, error) {
+	var lastUserMessageAt time.Time
+	err := s.pool.QueryRow(ctx, `
+		SELECT last_user_message_at FROM conversations WHERE id = $1
+	`, conversationID).Scan(&lastUserMessageAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &store.ConversationActivity{
+		ConversationID:    conversationID,
+		LastUserMessageAt: lastUserMessageAt,
+	}, nil
+}
