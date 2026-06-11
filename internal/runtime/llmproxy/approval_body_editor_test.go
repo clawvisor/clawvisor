@@ -97,7 +97,7 @@ func TestApprovalBodyEditorProviderShapes(t *testing.T) {
 			if ok != tc.wantReply || verb != tc.wantVerb || approvalID != tc.wantID {
 				t.Fatalf("LatestApprovalReply=(%q,%q,%v), want (%q,%q,%v)", verb, approvalID, ok, tc.wantVerb, tc.wantID, tc.wantReply)
 			}
-			out, ok, err := editor.ReplaceLatestUserText("approve", "", replacement)
+			out, ok, err := editor.ReplaceLatestUserText("approve", "", replacement, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,7 +182,7 @@ func TestReplaceLatestUserText_ApprovalIDExpectation(t *testing.T) {
 			if !ok {
 				t.Fatal("expected provider body editor")
 			}
-			out, rewrote, err := editor.ReplaceLatestUserText("approve", differentID, "[replacement]")
+			out, rewrote, err := editor.ReplaceLatestUserText("approve", differentID, "[replacement]", nil)
 			if err != nil {
 				t.Fatalf("ReplaceLatestUserText error: %v", err)
 			}
@@ -196,7 +196,7 @@ func TestReplaceLatestUserText_ApprovalIDExpectation(t *testing.T) {
 			if !ok {
 				t.Fatal("expected provider body editor")
 			}
-			out, rewrote, err := editor.ReplaceLatestUserText("approve", actualID, "[replacement]")
+			out, rewrote, err := editor.ReplaceLatestUserText("approve", actualID, "[replacement]", nil)
 			if err != nil {
 				t.Fatalf("ReplaceLatestUserText error: %v", err)
 			}
@@ -251,7 +251,7 @@ func TestReplaceLatestUserText_ApprovalIDExpectation(t *testing.T) {
 			if !ok {
 				t.Fatal("expected provider body editor")
 			}
-			out, rewrote, err := editor.ReplaceLatestUserText("approve", actualID, "[replacement]")
+			out, rewrote, err := editor.ReplaceLatestUserText("approve", actualID, "[replacement]", nil)
 			if err != nil {
 				t.Fatalf("ReplaceLatestUserText error: %v", err)
 			}
@@ -294,7 +294,7 @@ func TestApprovalBodyEditorAskUserQuestionRewriteAnthropic(t *testing.T) {
 		t.Fatalf("LatestApprovalReply=(%q,%q,%v), want (approve,%q,true)", verb, gotID, ok, approvalID)
 	}
 
-	out, rewrote, err := editor.ReplaceLatestUserText("approve", approvalID, replacement)
+	out, rewrote, err := editor.ReplaceLatestUserText("approve", approvalID, replacement, nil)
 	if err != nil {
 		t.Fatalf("ReplaceLatestUserText error: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestApprovalBodyEditorAskUserQuestionMismatchedIDRefuses(t *testing.T) {
 	if !ok {
 		t.Fatal("expected anthropic body editor")
 	}
-	out, rewrote, err := editor.ReplaceLatestUserText("approve", expectedID, "[notice]")
+	out, rewrote, err := editor.ReplaceLatestUserText("approve", expectedID, "[notice]", nil)
 	if err != nil {
 		t.Fatalf("ReplaceLatestUserText error: %v", err)
 	}
@@ -378,5 +378,125 @@ func TestApprovalBodyEditorAskUserQuestionUnrelatedToolResultRefuses(t *testing.
 	verb, gotID, replyOK := editor.LatestApprovalReply()
 	if replyOK || verb != "" || gotID != "" {
 		t.Fatalf("LatestApprovalReply=(%q,%q,%v), want empty (non-AskUserQuestion tool_use)", verb, gotID, replyOK)
+	}
+}
+
+// TestApprovalBodyEditorAskUserQuestionReconstructsOriginalCall pins
+// the conversation-reconstruction fix: when the body editor is given
+// a non-nil OriginalCall snapshot, it MUST replace the substituted-
+// prompt assistant turn with a synthetic [tool_use(original)] turn
+// AND pair the user-turn tool_result against that reconstructed
+// tool_use_id. Without this the model has no record in history of
+// having called the substituted endpoint and re-emits the same call
+// on the next turn — the user-reported "agent keeps trying to
+// expand" failure mode this fix targets.
+func TestApprovalBodyEditorAskUserQuestionReconstructsOriginalCall(t *testing.T) {
+	const approvalID = "cv-askuq00000020"
+	const askToolUseID = "toolu_clawvisor_ask_x"
+	const originalToolUseID = "toolu_01OriginalCurlPOST"
+	body := `{"messages":[` +
+		`{"role":"user","content":"expand the task"},` +
+		`{"role":"assistant","content":[` +
+		`{"type":"text","text":"Clawvisor wants to expand the scope of an existing task. [clawvisor:approval=` + approvalID + `]"},` +
+		`{"type":"tool_use","id":"` + askToolUseID + `","name":"AskUserQuestion","input":{"questions":[{"question":"approve? [clawvisor:approval=` + approvalID + `]","options":[{"label":"yes"},{"label":"no"}]}]}}` +
+		`]},` +
+		`{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"` + askToolUseID + `","content":"yes"}` +
+		`]}` +
+		`]}`
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	editor, ok := newApprovalBodyEditor(req, conversation.ProviderAnthropic, []byte(body))
+	if !ok {
+		t.Fatal("expected anthropic body editor")
+	}
+	reconstruction := &InlineApprovalOriginalCall{
+		ToolUseID: originalToolUseID,
+		ToolName:  "Bash",
+		Input:     json.RawMessage(`{"command":"curl -X POST /api/control/tasks/X/expand?surface=inline ..."}`),
+	}
+	out, rewrote, err := editor.ReplaceLatestUserText("approve", approvalID, "[clawvisor-notice] Task scope was expanded and approved.", reconstruction)
+	if err != nil {
+		t.Fatalf("ReplaceLatestUserText: %v", err)
+	}
+	if !rewrote {
+		t.Fatalf("expected reconstruction rewrite to succeed; body: %s", out)
+	}
+	got := string(out)
+
+	// The synthetic assistant turn must carry the model's original
+	// tool_use_id, not the AskUserQuestion id (which would orphan).
+	if !strings.Contains(got, `"id":"`+originalToolUseID+`"`) {
+		t.Errorf("reconstructed assistant turn missing original tool_use_id: %s", got)
+	}
+	if strings.Contains(got, `"id":"`+askToolUseID+`"`) {
+		t.Errorf("reconstructed body must not retain the AskUserQuestion tool_use id; got: %s", got)
+	}
+	// The tool input must round-trip verbatim — the model expects
+	// to see exactly what it would have emitted.
+	if !strings.Contains(got, "curl -X POST /api/control/tasks/X/expand") {
+		t.Errorf("reconstructed tool_input missing original curl command: %s", got)
+	}
+	// The user-turn tool_result must be PAIRED to the reconstructed
+	// tool_use_id, not the AskUserQuestion id. Otherwise Anthropic
+	// rejects the next request with the same orphan-tool_use_id 400
+	// that the historystrip fix targeted.
+	if !strings.Contains(got, `"tool_use_id":"`+originalToolUseID+`"`) {
+		t.Errorf("reconstructed tool_result must pair against original tool_use_id: %s", got)
+	}
+	// The augmentation notice text lands on the tool_result content
+	// (the model's "what came back from my call").
+	if !strings.Contains(got, "Task scope was expanded and approved") {
+		t.Errorf("reconstructed tool_result missing notice text: %s", got)
+	}
+	if !json.Valid(out) {
+		t.Errorf("rewritten body not valid JSON: %s", got)
+	}
+}
+
+// TestApprovalBodyEditorReconstructionDenySkipped confirms the
+// rewrite path does NOT reconstruct on a deny — the model should
+// see the denial, not synthetic evidence of a successful call. The
+// rewrite caller already gates on verb=="approve" before passing
+// reconstruction, but this test pins the body editor's behavior
+// regardless: a deny verb with a nil reconstruction falls through
+// to the legacy text-block swap.
+func TestApprovalBodyEditorReconstructionDenySkipped(t *testing.T) {
+	const approvalID = "cv-askuq00000021"
+	const askToolUseID = "toolu_clawvisor_ask_y"
+	body := `{"messages":[` +
+		`{"role":"assistant","content":[` +
+		`{"type":"tool_use","id":"` + askToolUseID + `","name":"AskUserQuestion","input":{"questions":[{"question":"approve? [clawvisor:approval=` + approvalID + `]","options":[{"label":"yes"},{"label":"no"}]}]}}` +
+		`]},` +
+		`{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"` + askToolUseID + `","content":"no"}` +
+		`]}` +
+		`]}`
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	editor, ok := newApprovalBodyEditor(req, conversation.ProviderAnthropic, []byte(body))
+	if !ok {
+		t.Fatal("expected anthropic body editor")
+	}
+	out, rewrote, err := editor.ReplaceLatestUserText("deny", approvalID, "[notice] denied", nil)
+	if err != nil {
+		t.Fatalf("ReplaceLatestUserText: %v", err)
+	}
+	if !rewrote {
+		t.Fatalf("expected deny rewrite to succeed: %s", out)
+	}
+	// The legacy text-block swap path leaves the AskUserQuestion
+	// tool_use in the assistant turn (historystrip cleans it up
+	// later) — so the original tool_use_id MAY still appear. What
+	// matters is that nothing NEW was synthesized: the AskUserQuestion
+	// tool_use is the only tool_use in the body.
+	if strings.Count(string(out), `"type":"tool_use"`) > 1 {
+		t.Errorf("deny rewrite must not synthesize an additional tool_use; got: %s", out)
+	}
+	// The user turn must carry the notice as a text block (not a
+	// tool_result paired against some other tool_use_id).
+	if !strings.Contains(string(out), `"type":"text"`) {
+		t.Errorf("deny rewrite must replace tool_result with text block: %s", out)
+	}
+	if !strings.Contains(string(out), "[notice] denied") {
+		t.Errorf("deny notice missing from rewritten body: %s", out)
 	}
 }

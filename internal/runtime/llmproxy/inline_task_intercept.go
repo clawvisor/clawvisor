@@ -391,6 +391,24 @@ func MaybeInterceptInlineTaskDefinition(
 		"purpose", parsed.Purpose,
 		"signal", "query",
 	)
+	// Audit the in-flight task creation into task_lifecycle_events.
+	// Same rationale as the expansion-side write: the body editor on
+	// the next turn falls back to this row when the in-memory
+	// outcome cache misses (proxy restart between hold and approval).
+	// Best-effort; failures land in the trace channel and do NOT
+	// strand the hold.
+	if pendingTaskID != "" {
+		if payload, marshalErr := json.Marshal(parsed); marshalErr == nil {
+			logTaskLifecycleEventFromHold(req.Context(), taskLifecycleAuditCtx{
+				st:             cfg.Store,
+				trace:          trace,
+				userID:         cfg.AgentUserID,
+				agentID:        cfg.AgentID,
+				conversationID: cfg.ConversationID,
+				requestID:      cfg.RequestID,
+			}, pendingTaskID, innerHold.Pending.ID, store.TaskLifecycleEventTaskCreatePending, "inline_chat", tu, payload)
+		}
+	}
 	promptText := renderTaskApprovalPromptWithRiskAndTools(parsed, innerHold.Pending.ID, assessment, cfg.DefaultTaskExpirySeconds, cfg.AvailableTools)
 	verdict := conversation.ToolUseVerdict{
 		Allowed:        false,

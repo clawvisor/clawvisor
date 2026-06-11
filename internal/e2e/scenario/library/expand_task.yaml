@@ -29,21 +29,48 @@ goal: |
 
   Phase 2 — expand the same task to add fetch_url:
     POST https://api.clawvisor.test/api/tasks/<task_id>/expand
-    {"service": "test.echo", "action": "fetch_url",
-     "auto_execute": true, "reason": "need to fetch a url too"}
-    Wait for the (second) approval. Then exercise the new action:
+    {
+      "expected_tools": [
+        {"tool_name": "test.echo:fetch_url",
+         "why": "phase 2 needs to fetch a URL via the same task"}
+      ],
+      "reason": "need to fetch a url too"
+    }
+    Wait for the (second) approval. Expansion-derived actions
+    default to auto_execute=false, so the next gateway call will
+    return 202 pending and require a per-call approval. Exercise it:
+
     POST https://api.clawvisor.test/api/gateway/request
     {"service": "test.echo", "action": "fetch_url",
      "reason": "phase 2 fetch", "task_id": "<id>",
      "params": {"url": "https://api.targetsvc.test/who"}}
 
-  Report when both phases complete.
+    The 202 response carries a request_id. After the per-call
+    approval lands, claim execution:
+    POST https://api.clawvisor.test/api/gateway/request/{request_id}/execute
+    (empty body) — the response contains the fetched payload.
+
+  Report the echo result AND the fetched payload when both phases
+  complete.
 persona: |
   You are an automation engineer iterating on a workflow. Be terse.
   Your VERY FIRST message MUST include both URLs verbatim, the
   initial task body, AND the eventual /expand body — do not drop the
-  api. prefix. If the agent reports both phases succeeded, accept it
-  and stop.
+  api. prefix.
+
+  Phase 2 is ONLY complete when the gateway returned a fetched
+  payload from api.targetsvc.test. The /expand POST returning 202 is
+  the START of phase 2 — it means the expansion is pending approval,
+  NOT that the work is done.
+
+  If the agent claims success after only /expand returning 202,
+  push back: "/expand returned 202 (pending). You still need to
+  poll the task until fetch_url is in authorized_actions, then
+  POST /api/gateway/request with action=fetch_url. Complete that
+  before reporting success."
+
+  Accept success only when the agent reports both the echo result
+  AND the fetched payload from api.targetsvc.test.
 agent_name: expand-agent
 
 fixture:
@@ -68,6 +95,15 @@ approvals:
     - match:
         kind: task_expand
       resolution: allow_session
+    # Expansion-derived actions default to auto_execute=false (see
+    # mergeAuthorizedActionsFromExpansion's docstring), so the phase-2
+    # fetch_url call goes through a request_once gate. allow_once lets
+    # the agent execute it after the per-call approval lands without
+    # widening the resolution kind beyond what the scenario should
+    # exercise.
+    - match:
+        kind: request_once
+      resolution: allow_once
 
 budget:
   max_turns: 8

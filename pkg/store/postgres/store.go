@@ -1556,8 +1556,14 @@ func (s *Store) RevokeTask(ctx context.Context, id, userID string) error {
 }
 
 func (s *Store) RevokeTasksByAgent(ctx context.Context, agentID, userID string) (int, error) {
+	// Also NULL pending_expansion_json so revoked rows don't leave
+	// stale pending-expansion state behind. The invariant downstream
+	// readers rely on is "only pending_scope_expansion rows carry
+	// pending_expansion_json"; without this NULL'ing, a revoked row
+	// would violate that promise and the dashboard/proxy would render
+	// pending guidance for a row that can no longer be approved.
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE tasks SET status = 'revoked'
+		`UPDATE tasks SET status = 'revoked', pending_expansion_json = NULL
 		 WHERE agent_id = $1 AND user_id = $2 AND status IN ('active', 'pending_approval', 'pending_scope_expansion')`,
 		agentID, userID)
 	if err != nil {
@@ -2369,6 +2375,141 @@ func (s *Store) ListRuntimeEvents(ctx context.Context, userID string, filter sto
 		out = append(out, event)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) CreateTaskLifecycleEvent(ctx context.Context, event *store.TaskLifecycleEvent) error {
+	if event == nil {
+		return fmt.Errorf("task lifecycle event is required")
+	}
+	if event.ID == "" {
+		event.ID = uuid.New().String()
+	}
+	now := time.Now().UTC()
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = now
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = now
+	}
+	var approvalID, conversationID, requestID, toolUseID *string
+	if event.ApprovalID != "" {
+		v := event.ApprovalID
+		approvalID = &v
+	}
+	if event.ConversationID != "" {
+		v := event.ConversationID
+		conversationID = &v
+	}
+	if event.RequestID != "" {
+		v := event.RequestID
+		requestID = &v
+	}
+	if event.ToolUseID != "" {
+		v := event.ToolUseID
+		toolUseID = &v
+	}
+	var toolInput any
+	if len(event.ToolInputJSON) > 0 {
+		toolInput = []byte(event.ToolInputJSON)
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO task_lifecycle_events (
+			id, task_id, user_id, agent_id, event_type, occurred_at,
+			approval_id, approval_surface, conversation_id, request_id,
+			tool_use_id, tool_name, tool_input_json, payload_json,
+			notes, created_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+	`, event.ID, event.TaskID, event.UserID, event.AgentID, event.EventType, event.OccurredAt,
+		approvalID, event.ApprovalSurface, conversationID, requestID,
+		toolUseID, event.ToolName, toolInput, rawJSONOrDefaultBytes(event.PayloadJSON, "{}"),
+		event.Notes, event.CreatedAt)
+	return err
+}
+
+func (s *Store) GetTaskLifecycleEventByApprovalID(ctx context.Context, approvalID string) (*store.TaskLifecycleEvent, error) {
+	if approvalID == "" {
+		return nil, store.ErrNotFound
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, task_id, user_id, agent_id, event_type, occurred_at,
+		       approval_id, approval_surface, conversation_id, request_id,
+		       tool_use_id, tool_name, tool_input_json, payload_json,
+		       notes, created_at
+		FROM task_lifecycle_events
+		WHERE approval_id = $1
+		ORDER BY occurred_at DESC
+		LIMIT 1
+	`, approvalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanTaskLifecycleEvent(rows)
+}
+
+func (s *Store) ListTaskLifecycleEvents(ctx context.Context, userID, taskID string) ([]*store.TaskLifecycleEvent, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, task_id, user_id, agent_id, event_type, occurred_at,
+		       approval_id, approval_surface, conversation_id, request_id,
+		       tool_use_id, tool_name, tool_input_json, payload_json,
+		       notes, created_at
+		FROM task_lifecycle_events
+		WHERE user_id = $1 AND task_id = $2
+		ORDER BY occurred_at ASC
+		LIMIT 1000
+	`, userID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.TaskLifecycleEvent
+	for rows.Next() {
+		event, err := scanTaskLifecycleEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
+func scanTaskLifecycleEvent(scanner interface{ Scan(dest ...any) error }) (*store.TaskLifecycleEvent, error) {
+	event := &store.TaskLifecycleEvent{}
+	var approvalID, conversationID, requestID, toolUseID *string
+	var toolInputJSON, payloadJSON []byte
+	if err := scanner.Scan(
+		&event.ID, &event.TaskID, &event.UserID, &event.AgentID, &event.EventType, &event.OccurredAt,
+		&approvalID, &event.ApprovalSurface, &conversationID, &requestID,
+		&toolUseID, &event.ToolName, &toolInputJSON, &payloadJSON,
+		&event.Notes, &event.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	if approvalID != nil {
+		event.ApprovalID = *approvalID
+	}
+	if conversationID != nil {
+		event.ConversationID = *conversationID
+	}
+	if requestID != nil {
+		event.RequestID = *requestID
+	}
+	if toolUseID != nil {
+		event.ToolUseID = *toolUseID
+	}
+	if len(toolInputJSON) > 0 {
+		event.ToolInputJSON = json.RawMessage(toolInputJSON)
+	}
+	if len(payloadJSON) > 0 {
+		event.PayloadJSON = json.RawMessage(payloadJSON)
+	}
+	return event, nil
 }
 
 func (s *Store) CreateRuntimePolicyRule(ctx context.Context, rule *store.RuntimePolicyRule) error {

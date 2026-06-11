@@ -8,6 +8,30 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
+// taskLifecycleAuditCtxFromRewrite pulls the audit context out of the
+// rewrite request so resolution-time event writes can run from the
+// same call site as the side-effect dispatch. Wraps the store +
+// trace + scoping IDs into the struct the writer expects. Returns a
+// zero ctx (st nil) when the request has no store wired, which makes
+// the writer skip silently — that path triggers in unit tests that
+// fake the rewrite without a backing store.
+func taskLifecycleAuditCtxFromRewrite(req InlineApprovalRewriteRequest) taskLifecycleAuditCtx {
+	userID := ""
+	agentID := ""
+	if req.Agent != nil {
+		userID = req.Agent.UserID
+		agentID = req.Agent.ID
+	}
+	return taskLifecycleAuditCtx{
+		st:             req.Store,
+		trace:          req.Trace,
+		userID:         userID,
+		agentID:        agentID,
+		conversationID: req.ConversationID,
+		requestID:      req.RequestID,
+	}
+}
+
 func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest, action approvalReplyAction, editor approvalBodyEditor) (TaskReplyRewriteResult, error) {
 	// Conversation scope flows through to the cache so the consumed hold
 	// is picked from this conversation's bucket, even when another
@@ -38,7 +62,7 @@ func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest,
 	// one call and the sibling reviewed calls re-prompt on retry,
 	// defeating the point of the gesture. Single-tool holds collapse
 	// to the legacy single-element prompt unchanged.
-	rewritten, ok, err := editor.ReplaceLatestUserText("task", pendingApprovalID, TaskCreationPromptForHolds(pending.AllHolds()))
+	rewritten, ok, err := editor.ReplaceLatestUserText("task", pendingApprovalID, TaskCreationPromptForHolds(pending.AllHolds()), nil)
 	if err != nil || !ok {
 		return TaskReplyRewriteResult{Body: req.Body}, err
 	}
@@ -87,6 +111,7 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 		out.Decision = "deny"
 		out.Outcome = "inline_task_denied"
 		out.Reason = "user denied inline task"
+		denySideEffectLanded := false
 		if hasPending && resolved != nil && resolved.PendingTaskID != "" && req.Agent != nil {
 			if err := pendingCreator.DenyInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID); err != nil {
 				// Distinct outcome on rollback error so audit
@@ -97,7 +122,18 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 				// effect just didn't land.
 				out.Outcome = "inline_task_denied_with_rollback_error"
 				out.Reason = "user denied inline task; deny side-effect failed: " + err.Error()
+			} else {
+				denySideEffectLanded = true
 			}
+		}
+		// Only log the *_denied lifecycle event when the deny side
+		// effect actually landed. Otherwise the recovery path could
+		// read a "denied" event for a task that's still pending,
+		// causing audit/state split-brain on next-turn restart.
+		if denySideEffectLanded {
+			logTaskLifecycleEventResolution(ctx, taskLifecycleAuditCtxFromRewrite(req),
+				resolved.PendingTaskID, resolved.ID,
+				store.TaskLifecycleEventTaskCreateDenied, "inline_chat", nil)
 		}
 		return renderInlineTaskDenyReply(), out
 	}
@@ -123,6 +159,9 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 	// those callers.
 	switch {
 	case hasPending && resolved.PendingTaskID != "" && req.Agent != nil:
+		logTaskLifecycleEventResolution(ctx, taskLifecycleAuditCtxFromRewrite(req),
+			resolved.PendingTaskID, resolved.ID,
+			store.TaskLifecycleEventTaskCreateApproved, "inline_chat", nil)
 		created, createErr := pendingCreator.ApproveInlineTask(ctx, resolved.PendingTaskID, req.Agent.UserID)
 		if createErr != nil {
 			// Distinct branch when the task was already terminated
@@ -201,11 +240,24 @@ func resolveInlineExpansionApproval(ctx context.Context, req InlineApprovalRewri
 		out.Decision = "deny"
 		out.Outcome = "inline_expansion_denied"
 		out.Reason = "user denied inline expansion"
+		denySideEffectLanded := false
 		if hasExpansion && resolved != nil && resolved.ExpansionTaskID != "" && req.Agent != nil {
 			if err := expansionCreator.DenyInlineExpansion(ctx, resolved.ExpansionTaskID, req.Agent.UserID); err != nil {
 				out.Outcome = "inline_expansion_denied_with_rollback_error"
 				out.Reason = "user denied inline expansion; deny side-effect failed: " + err.Error()
+			} else {
+				denySideEffectLanded = true
 			}
+		}
+		// Only log the *_denied lifecycle event when the deny side
+		// effect landed. A logged-denied audit row for a task still
+		// in pending_scope_expansion would mislead the recovery path
+		// (lifecycle-recovered approve→deny becomes a no-op when the
+		// real task is still pending and recoverable).
+		if denySideEffectLanded {
+			logTaskLifecycleEventResolution(ctx, taskLifecycleAuditCtxFromRewrite(req),
+				resolved.ExpansionTaskID, resolved.ID,
+				store.TaskLifecycleEventTaskExpandDenied, "inline_chat", nil)
 		}
 		return renderInlineExpansionDenyReply(), out
 	}
@@ -233,6 +285,9 @@ func resolveInlineExpansionApproval(ctx context.Context, req InlineApprovalRewri
 		return renderInlineExpansionCreatorErrorReply("missing agent on approval"), out
 	}
 
+	logTaskLifecycleEventResolution(ctx, taskLifecycleAuditCtxFromRewrite(req),
+		resolved.ExpansionTaskID, resolved.ID,
+		store.TaskLifecycleEventTaskExpandApproved, "inline_chat", nil)
 	expanded, createErr := expansionCreator.ApproveInlineExpansion(ctx, resolved.ExpansionTaskID, req.Agent.UserID)
 	if createErr != nil {
 		var terminal *ErrInlineExpansionAlreadyTerminal
@@ -267,7 +322,9 @@ func resolveInlineExpansionApproval(ctx context.Context, req InlineApprovalRewri
 		// gesture.
 		req.Audit.LogInlineExpansionApproved(ctx, req.Agent, req.RequestID, resolved, expanded)
 	}
-	return inlineExpansionApprovedReplyAugmentationContext(expanded.TaskID, expanded.Credentials), out
+	return inlineExpansionApprovedReplyAugmentationContextWithMintStatus(
+		expanded.TaskID, expanded.Credentials, expanded.CredentialMintFailed,
+	), out
 }
 
 // finalizeInlineApproval performs the post-approval bookkeeping shared

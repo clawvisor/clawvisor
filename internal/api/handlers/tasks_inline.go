@@ -849,9 +849,24 @@ func (h *TasksHandler) CreatePendingInlineExpansion(
 	// here means the intercept can fall through to the dashboard
 	// rewrite cleanly, with the same diagnostic the agent would have
 	// received from a direct POST.
+	// Mirror the public Expand handler's wildcard skip so the
+	// inline and dashboard flows agree on what counts as
+	// redundant: when the parent already has a same-service
+	// wildcard, mergeAuthorizedActionsFromExpansion silently drops
+	// the derivation, so validating it would reject a harmless
+	// `why`-only refinement.
+	wildcardCoveredServices := make(map[string]struct{})
+	for _, a := range task.AuthorizedActions {
+		if a.Action == "*" {
+			wildcardCoveredServices[strings.ToLower(strings.TrimSpace(a.Service))] = struct{}{}
+		}
+	}
 	for i, tool := range additions.ExpectedTools {
 		service, action, isGatewayAction := parseToolNameAsServiceAction(tool.ToolName)
 		if !isGatewayAction {
+			continue
+		}
+		if _, covered := wildcardCoveredServices[strings.ToLower(strings.TrimSpace(service))]; covered {
 			continue
 		}
 		field := fmt.Sprintf("expected_tools[%d]", i)
@@ -913,8 +928,23 @@ func (h *TasksHandler) CreatePendingInlineExpansion(
 		h.logger.ErrorContext(ctx, "failed to create inline expansion approval record; rolling back pending",
 			"task_id", task.ID, "rollback_status", rollbackStatus, "err", err)
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		_, _ = h.st.ResolveTaskPendingExpansion(rollbackCtx, taskID, rollbackStatus)
+		rolled, rollbackErr := h.st.ResolveTaskPendingExpansion(rollbackCtx, taskID, rollbackStatus)
 		cancel()
+		// If the rollback CAS errored OR lost (rolled=false because
+		// the row already left pending_scope_expansion through
+		// another path), the task is wedged in pending_scope_expansion
+		// with no chat anchor that can resolve it. The pending_expansion_json
+		// invariant is also at risk. Surface as CRITICAL so operators
+		// see a wedged-task alert — the chat-bound expiry sweep will
+		// eventually clear it, but that's the 24h fallback, not the
+		// happy path.
+		if rollbackErr != nil {
+			h.logger.ErrorContext(ctx, "CRITICAL: inline expansion record-create failed AND rollback errored; task wedged in pending_scope_expansion",
+				"task_id", task.ID, "record_err", err, "rollback_err", rollbackErr)
+		} else if !rolled {
+			h.logger.ErrorContext(ctx, "CRITICAL: inline expansion record-create failed AND rollback lost CAS; task may be wedged",
+				"task_id", task.ID, "record_err", err)
+		}
 		return "", fmt.Errorf("create inline expansion approval record: %w", err)
 	}
 
@@ -1005,6 +1035,7 @@ func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userI
 			"task_id", task.ID, "err", credParseErr)
 	}
 	var placeholders []*store.RuntimePlaceholder
+	credentialMintFailed := false
 	if len(requiredCredentials) > 0 {
 		var ensureErr error
 		placeholders, ensureErr = h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt)
@@ -1014,15 +1045,24 @@ func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userI
 			// because the user has already approved scope expansion that
 			// is structurally valid; the credential mint failure is a
 			// follow-up operational issue, not a permission decision. Log
-			// loudly and proceed with the chat reply minus the
-			// placeholders so the model can ask the user to retry.
-			h.logger.ErrorContext(ctx, "post-CAS expansion credential mint failed; chat reply will omit placeholders",
+			// loudly AND surface to the model via CredentialMintFailed so
+			// the chat-reply augmentation can tell the model "scope
+			// landed but creds didn't mint; ask the user to retry" rather
+			// than silently omitting placeholders the model expects.
+			h.logger.ErrorContext(ctx, "post-CAS expansion credential mint failed; surfacing to model via CredentialMintFailed",
 				"task_id", task.ID, "err", ensureErr)
+			credentialMintFailed = true
 		}
+	}
+	// Also surface a parse failure as a mint failure to the model —
+	// from the model's perspective both lead to the same outcome
+	// (credentials it expected aren't usable).
+	if credParseErr != nil {
+		credentialMintFailed = true
 	}
 
 	rec, _ := h.findPendingTaskApprovalRecord(ctx, userID, taskID, "task_expand")
-	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "allow_session", "approved")
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", taskApprovalResolution(task), "approved")
 	if h.eventHub != nil {
 		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
 	}
@@ -1044,6 +1084,7 @@ func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userI
 		out.ExpiresAtRFC3339 = task.ExpiresAt.Format(time.RFC3339)
 	}
 	out.Credentials = inlineCredentialPlaceholders(placeholders)
+	out.CredentialMintFailed = credentialMintFailed
 	return out, nil
 }
 

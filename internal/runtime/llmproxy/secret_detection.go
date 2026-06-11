@@ -463,6 +463,7 @@ func stripClawvisorGeneratedMarkers(value string) string {
 	markers := []string{
 		InlineApprovalIDMarker,
 		InlineApprovalSubstitutedPromptMarker,
+		InlineExpansionApprovalSubstitutedPromptMarker,
 		SecretDecisionIDMarker,
 		SecretDecisionPromptMarker,
 		ClawvisorManagedMarker,

@@ -104,6 +104,108 @@ func TestStripSyntheticApprovalHistory_DropsAskUserQuestionToolResultOrphan(t *t
 	}
 }
 
+// TestStripSyntheticApprovalHistory_DropsExpansionApprovalPromptAndToolResultOrphan
+// pins the fix for a 400 "tool use concurrency issues" that fired when
+// the user approved a scope-expansion via the AskUserQuestion picker:
+// the body editor swapped the user-turn tool_result for a text block,
+// but the historystrip's substituted-prompt detector only recognized
+// the task-creation marker, so the assistant turn (and its
+// AskUserQuestion tool_use) stayed in history with no matching
+// tool_result. The strip must recognize the expansion-prompt marker
+// and remove both ends of the pair.
+func TestStripSyntheticApprovalHistory_DropsExpansionApprovalPromptAndToolResultOrphan(t *testing.T) {
+	const approvalID = "cv-askuq-expand-1"
+	body, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "Also reply to the comment."},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": "Clawvisor wants to expand the scope of an existing task:\n\nTask\n  Investigate alerts\n\nAdditional tools\n  • curl\n\n[clawvisor:approval=" + approvalID + "]"},
+				{"type": "tool_use", "id": "toolu_clawvisor_ask_" + approvalID, "name": "AskUserQuestion", "input": map[string]any{
+					"questions": []map[string]any{{"question": "Approve this scope expansion?", "options": []map[string]any{{"label": "yes"}, {"label": "no"}}}},
+				}},
+			}},
+			{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "toolu_clawvisor_ask_" + approvalID, "content": "Your questions have been answered: \"Approve this scope expansion?\"=\"yes\". You can now continue with these answers in mind."},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider: conversation.ProviderAnthropic,
+		Body:     body,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Modified {
+		t.Fatal("expected expansion approval prompt + orphan tool_result to be stripped")
+	}
+	text := string(out.Body)
+	if strings.Contains(text, "toolu_clawvisor_ask_"+approvalID) {
+		t.Fatalf("orphan AskUserQuestion tool_use_id still present after strip: %s", text)
+	}
+	if strings.Contains(text, "tool_result") {
+		t.Fatalf("orphan tool_result still present after strip: %s", text)
+	}
+	if strings.Contains(text, InlineExpansionApprovalSubstitutedPromptMarker) {
+		t.Fatalf("expansion approval prompt leaked upstream: %s", text)
+	}
+}
+
+// TestStripSyntheticApprovalHistory_PreservesReconstructedTurns
+// pins that the historystrip leaves the body-editor's reconstructed
+// [tool_use, tool_result] pair alone on subsequent turns. The body
+// editor replaces the substituted-prompt assistant turn with a
+// synthetic [tool_use(original)] turn (no Clawvisor markers) and
+// pairs a tool_result against the reconstructed tool_use_id. On the
+// next request the strip MUST NOT remove either: the model needs
+// the evidence of its own call to avoid re-emitting.
+func TestStripSyntheticApprovalHistory_PreservesReconstructedTurns(t *testing.T) {
+	// Conversation shape after the body editor reconstructed:
+	//   - user (original ask)
+	//   - assistant [tool_use(original Bash POST)]
+	//   - user [tool_result(original_id, "scope was expanded notice")]
+	//   - assistant text (model's next move)
+	body, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "expand the task"},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "tool_use", "id": "toolu_01OriginalCurl", "name": "Bash", "input": map[string]any{
+					"command": "curl -X POST .../api/control/tasks/X/expand?surface=inline ...",
+				}},
+			}},
+			{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": "toolu_01OriginalCurl", "content": "Task scope was expanded and approved."},
+			}},
+			{"role": "assistant", "content": "Acknowledged. Proceeding."},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider: conversation.ProviderAnthropic,
+		Body:     body,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Modified {
+		t.Fatalf("strip must leave reconstructed pair alone; got modified body: %s", out.Body)
+	}
+	got := string(out.Body)
+	if !strings.Contains(got, "toolu_01OriginalCurl") {
+		t.Errorf("reconstructed tool_use_id should survive strip: %s", got)
+	}
+	if !strings.Contains(got, "Task scope was expanded and approved") {
+		t.Errorf("reconstructed tool_result content should survive strip: %s", got)
+	}
+}
+
 func TestStripSyntheticApprovalHistory_KeepsSiblingTextBlocksAfterStrippingOrphanToolResult(t *testing.T) {
 	// Real Claude Code shape: the harness packs the next-turn
 	// system-reminders alongside the AskUserQuestion tool_result

@@ -27,7 +27,12 @@ import (
 func renderExpansionApprovalPrompt(additions *runtimetasks.Envelope, reason, parentPurpose, parentTaskID, parentLifetime string, risk *taskrisk.RiskAssessment, approvalID string) string {
 	suffix := approvalIDFooter(approvalID)
 	if additions == nil {
-		return "Clawvisor wants to expand a task's scope.\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel." + suffix
+		// Use the same opening clause as the populated branch so the
+		// historystrip's substituted-prompt marker still matches even
+		// when no additions were diffed (defensive — the intercept
+		// shouldn't call this path without additions). See
+		// InlineExpansionApprovalSubstitutedPromptMarker.
+		return "Clawvisor wants to expand the scope of an existing task.\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel." + suffix
 	}
 
 	var b strings.Builder
@@ -147,7 +152,24 @@ func renderExpansionApprovalPrompt(additions *runtimetasks.Envelope, reason, par
 // later-turn augmentation hurts more than the missing specifics
 // help. The model can re-fetch the task via /control/tasks if it
 // needs the merged shape.
+// credentialMintFailed, when true, appends a warning that the
+// scope expansion landed structurally but credential placeholder
+// minting failed AFTER the CAS. The new tools / egress are usable;
+// the new credentials are not. The model is told to ask the user
+// to retry rather than blindly proceed assuming placeholders exist.
+func inlineExpansionApprovedReplyAugmentationContextWithMintStatus(taskID string, credentials []InlineTaskCredentialPlaceholder, credentialMintFailed bool) string {
+	body := inlineExpansionApprovedReplyAugmentationBody(taskID, credentials)
+	if credentialMintFailed {
+		body += " NOTE: scope was expanded successfully (new tools and egress are usable) BUT credential placeholder minting FAILED post-approval. If your follow-up needs the newly-declared credentials, ask the user to retry the credential setup before proceeding."
+	}
+	return Render(NoticeKindTaskApproved, body)
+}
+
 func inlineExpansionApprovedReplyAugmentationContext(taskID string, credentials []InlineTaskCredentialPlaceholder) string {
+	return inlineExpansionApprovedReplyAugmentationContextWithMintStatus(taskID, credentials, false)
+}
+
+func inlineExpansionApprovedReplyAugmentationBody(taskID string, credentials []InlineTaskCredentialPlaceholder) string {
 	var b strings.Builder
 	b.WriteString("Task scope was expanded and approved by the user. The new tools / egress / credentials are now part of task ")
 	if id := strings.TrimSpace(taskID); id != "" {
@@ -183,7 +205,7 @@ func inlineExpansionApprovedReplyAugmentationContext(taskID string, credentials 
 		}
 		b.WriteString(" use these exact placeholder values in Authorization headers or curl arguments.")
 	}
-	return Render(NoticeKindTaskApproved, b.String())
+	return b.String()
 }
 
 // renderInlineExpansionDenyReply mirrors renderInlineTaskDenyReply for

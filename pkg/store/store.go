@@ -323,6 +323,25 @@ type Store interface {
 	CreateRuntimeEvent(ctx context.Context, event *RuntimeEvent) error
 	GetRuntimeEvent(ctx context.Context, id string) (*RuntimeEvent, error)
 	ListRuntimeEvents(ctx context.Context, userID string, filter RuntimeEventFilter) ([]*RuntimeEvent, error)
+
+	// CreateTaskLifecycleEvent appends an audit row for one task
+	// lifecycle transition. ID and CreatedAt are populated when
+	// empty. OccurredAt MUST be set by the caller (it's the
+	// authoritative "when did this happen" timestamp; CreatedAt is
+	// just when the row landed in the DB).
+	CreateTaskLifecycleEvent(ctx context.Context, event *TaskLifecycleEvent) error
+	// GetTaskLifecycleEventByApprovalID returns the most recent
+	// event row whose approval_id matches. Returns ErrNotFound when
+	// no row matches. Used by the proxy's body-editor reconstruction
+	// path as a fallback when the in-memory outcome cache misses
+	// (proxy restart between hold and the next request).
+	GetTaskLifecycleEventByApprovalID(ctx context.Context, approvalID string) (*TaskLifecycleEvent, error)
+	// ListTaskLifecycleEvents returns rows for a task in occurred_at
+	// order (ascending). Caller-scoped by user_id so cross-user
+	// reads can't leak. Limit 0 means "no limit" but the underlying
+	// driver may apply a defensive cap.
+	ListTaskLifecycleEvents(ctx context.Context, userID, taskID string) ([]*TaskLifecycleEvent, error)
+
 	CreateRuntimePolicyRule(ctx context.Context, rule *RuntimePolicyRule) error
 	GetRuntimePolicyRule(ctx context.Context, id string) (*RuntimePolicyRule, error)
 	ListRuntimePolicyRules(ctx context.Context, userID string, filter RuntimePolicyRuleFilter) ([]*RuntimePolicyRule, error)
@@ -1217,6 +1236,59 @@ type RuntimeEventFilter struct {
 	EventType string
 	Limit     int
 }
+
+// TaskLifecycleEvent is an append-only audit row capturing one
+// transition in a task's lifecycle (create-pending, create-approved,
+// expand-pending, expand-approved, deny, expire, revoke, complete).
+// Rows accumulate per task; replaying them gives the full history of
+// who asked for what, when, and how it resolved.
+//
+// The agent-side fields (ConversationID, RequestID, ToolUseID,
+// ToolName, ToolInputJSON) capture the EXACT tool_use the agent
+// emitted that triggered the event. The proxy uses this to
+// reconstruct the model's missing assistant turn after a substituted-
+// prompt approval (without the original tool_use in history the
+// model has no record of having called expand and re-emits it). For
+// non-agent-driven events (sweep expiry, manual revoke) these fields
+// are empty.
+//
+// PayloadJSON is the event-specific delta: full envelope for
+// task_create_*, additions for task_expand_*, merged result for
+// resolution events. Append-only; never updated.
+type TaskLifecycleEvent struct {
+	ID              string          `json:"id"`
+	TaskID          string          `json:"task_id"`
+	UserID          string          `json:"user_id"`
+	AgentID         string          `json:"agent_id"`
+	EventType       string          `json:"event_type"`
+	OccurredAt      time.Time       `json:"occurred_at"`
+	ApprovalID      string          `json:"approval_id,omitempty"`
+	ApprovalSurface string          `json:"approval_surface,omitempty"`
+	ConversationID  string          `json:"conversation_id,omitempty"`
+	RequestID       string          `json:"request_id,omitempty"`
+	ToolUseID       string          `json:"tool_use_id,omitempty"`
+	ToolName        string          `json:"tool_name,omitempty"`
+	ToolInputJSON   json.RawMessage `json:"tool_input_json,omitempty"`
+	PayloadJSON     json.RawMessage `json:"payload_json,omitempty"`
+	Notes           string          `json:"notes,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+}
+
+// TaskLifecycleEventType enumerates the canonical event_type values.
+// Readers MUST treat unknown values as "other lifecycle event"
+// rather than failing — new types can be added without a migration.
+const (
+	TaskLifecycleEventTaskCreatePending  = "task_create_pending"
+	TaskLifecycleEventTaskCreateApproved = "task_create_approved"
+	TaskLifecycleEventTaskCreateDenied   = "task_create_denied"
+	TaskLifecycleEventTaskExpandPending  = "task_expand_pending"
+	TaskLifecycleEventTaskExpandApproved = "task_expand_approved"
+	TaskLifecycleEventTaskExpandDenied   = "task_expand_denied"
+	TaskLifecycleEventTaskExpandExpired  = "task_expand_expired"
+	TaskLifecycleEventTaskRevoked        = "task_revoked"
+	TaskLifecycleEventTaskCompleted      = "task_completed"
+	TaskLifecycleEventTaskExpired        = "task_expired"
+)
 
 // TaskFilter controls which tasks are returned by ListTasks.
 // Zero values mean "no filter" (backwards compatible).

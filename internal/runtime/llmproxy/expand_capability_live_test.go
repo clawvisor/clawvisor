@@ -341,6 +341,260 @@ func TestLive_AgentExpandsAfterMidConversationTaskCreation(t *testing.T) {
 	}
 }
 
+// TestLive_AgentDoesNotReEmitExpandAfterApproval pins the
+// conversation-reconstruction fix end-to-end. Reproduces the failure
+// mode from production raw logs: after the user approved a scope
+// expansion via the AskUserQuestion picker, the body editor
+// (pre-fix) stripped the substituted-prompt assistant turn and
+// rewrote the user's tool_result to a "scope was expanded" text
+// block. The model, having no record in history of its own expand
+// POST, re-emitted the same call on its next turn — sometimes
+// multiple times in a row.
+//
+// The fix synthesizes a reconstructed [tool_use(original), tool_result]
+// pair where the substituted-prompt turn used to be, giving the
+// model evidence of its own call. This test sets up that exact
+// reconstructed history and asks the model to do the actual
+// follow-on work; it MUST NOT re-emit the expand POST.
+//
+// Without the fix the model emits another expand POST in roughly
+// 90% of trials (matching production logs). With the fix the model
+// proceeds to the real work tool_use (Write/Bash for the file
+// creation).
+func TestLive_AgentDoesNotReEmitExpandAfterApproval(t *testing.T) {
+	apiKey := os.Getenv("CLAWVISOR_LLM_API_KEY")
+	if apiKey == "" {
+		t.Skip("CLAWVISOR_LLM_API_KEY not set; skipping live no-re-emit-expand test")
+	}
+	model := os.Getenv("CLAWVISOR_LLM_MODEL")
+	if model == "" {
+		model = liveExpandModelDefault
+	}
+	endpoint := os.Getenv("CLAWVISOR_LLM_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "https://api.anthropic.com/v1"
+	}
+
+	const priorTaskID = "task-haiku-456"
+	availableTools := []string{"read", "edit", "write", "bash", "exec"}
+	// Active-tasks snapshot shows the parent task with its
+	// post-expansion scope (write was just approved).
+	expiry := time.Now().UTC().Add(25 * time.Minute).Format("2006-01-02T15:04Z")
+	snapshot := fmt.Sprintf("  - %s · purpose=%q · lifetime=sliding · expires=%s",
+		priorTaskID, "Create three haiku files under /tmp/claude-test-haiku", expiry)
+	system := controltool.ControlNoticeWithSnapshot("http://localhost:25297", availableTools, nil, snapshot)
+	tools := []map[string]any{
+		{
+			"name":        "bash",
+			"description": "Run a single bash command. Returns stdout/stderr.",
+			"input_schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"command": map[string]any{"type": "string", "description": "Bash command to run"},
+				},
+				"required": []string{"command"},
+			},
+		},
+		{
+			"name":        "write",
+			"description": "Write a file to disk. Returns ok on success.",
+			"input_schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":    map[string]any{"type": "string"},
+					"content": map[string]any{"type": "string"},
+				},
+				"required": []string{"path", "content"},
+			},
+		},
+	}
+
+	// The reconstructed-history shape: the model emitted a Bash
+	// tool_use to POST /expand (the body editor's "OriginalCall"),
+	// the proxy paired it with a synthetic tool_result carrying the
+	// "scope was expanded" notice. This is exactly what the body
+	// editor produces post-fix.
+	originalExpandToolUseID := "toolu_01ReconstructedExpand"
+	originalExpandCommand := fmt.Sprintf(
+		"curl -sS -X POST 'http://localhost:25297/api/control/tasks/%s/expand?surface=inline' "+
+			"-H 'Content-Type: application/json' "+
+			"--data '{\"expected_tools\":[{\"tool_name\":\"write\",\"why\":\"write haiku files into /tmp/claude-test-haiku\"}],"+
+			"\"reason\":\"User asked to create three haiku files; need write scope.\"}'",
+		priorTaskID)
+	reconstructedToolResult := fmt.Sprintf(
+		"<clawvisor-notice kind=\"task-approved\">Task scope was expanded and approved by the user. "+
+			"The new tools / egress / credentials are now part of task %s. "+
+			"Proceed with your next tool_use(s) using the expanded scope. "+
+			"Do NOT POST /control/tasks/%s/expand again for the same delta. "+
+			"For further follow-up work in the SAME body of work, POST https://clawvisor.local/control/tasks/%s/expand?surface=inline "+
+			"with the new tools / egress / credentials (NOT a fresh /control/tasks POST). "+
+			"Only create a new task when the follow-up is a genuinely different goal.</clawvisor-notice>",
+		priorTaskID, priorTaskID, priorTaskID)
+
+	sc := expandScenario{
+		name:               "no_reemit_after_approval",
+		activeTaskID:       priorTaskID,
+		activeTaskPurpose:  "Create three haiku files under /tmp/claude-test-haiku",
+		activeTaskLifetime: "sliding",
+		activeTaskTools:    []string{"bash", "write"},
+	}
+
+	messages := []map[string]any{
+		{"role": "user", "content": "Can you create three files with a haiku in each under /tmp/claude-test-haiku?"},
+		{"role": "assistant", "content": "I'll create a task and then write the haiku files."},
+		// (Task-creation augmentation elided — this test focuses on
+		// the post-expand behavior, not task-creation correctness.)
+		{"role": "user", "content": "Task " + priorTaskID + " is active. Go ahead."},
+		// Model attempted to write but got scope-drift (the
+		// pre-expansion task only had bash). It then emitted the
+		// reconstructed expand call.
+		{"role": "assistant", "content": []map[string]any{
+			{"type": "text", "text": "I need write scope to create the haiku files. Expanding the task."},
+			{"type": "tool_use", "id": originalExpandToolUseID, "name": "bash", "input": map[string]any{
+				"command": originalExpandCommand,
+			}},
+		}},
+		// The body editor's reconstructed tool_result: paired against
+		// the SAME tool_use_id, carrying the augmentation notice.
+		{"role": "user", "content": []map[string]any{
+			{"type": "tool_result", "tool_use_id": originalExpandToolUseID, "content": reconstructedToolResult},
+		}},
+		// The follow-up: actually do the work.
+		{"role": "user", "content": "Great, please go ahead and create the haiku files now."},
+	}
+
+	const maxTurns = 4
+	const trials = 5
+	const passingThreshold = 4 // 4/5 must NOT re-emit expand
+
+	reEmitCount := 0
+	proceededCount := 0
+	for trial := 0; trial < trials; trial++ {
+		// Reset conversation for each trial so trials are
+		// independent. Copying via append keeps each trial's history
+		// separate when later turns mutate it.
+		convo := make([]map[string]any, len(messages))
+		copy(convo, messages)
+		reEmittedExpand := false
+		emittedRealWork := false
+		for turn := 0; turn < maxTurns; turn++ {
+			reqBody := map[string]any{
+				"model":      model,
+				"max_tokens": 1024,
+				"system": []map[string]any{{
+					"type":          "text",
+					"text":          system,
+					"cache_control": map[string]string{"type": "ephemeral"},
+				}},
+				"tools":    tools,
+				"messages": convo,
+			}
+			body, err := json.Marshal(reqBody)
+			if err != nil {
+				t.Fatalf("[trial %d turn %d] marshal: %v", trial, turn, err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/messages", bytes.NewReader(body))
+			if err != nil {
+				cancel()
+				t.Fatalf("[trial %d turn %d] build request: %v", trial, turn, err)
+			}
+			httpReq.Header.Set("x-api-key", apiKey)
+			httpReq.Header.Set("anthropic-version", "2023-06-01")
+			httpReq.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(httpReq)
+			cancel()
+			if err != nil {
+				t.Fatalf("[trial %d turn %d] anthropic call: %v", trial, turn, err)
+			}
+			respBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("[trial %d turn %d] status=%d body=%s", trial, turn, resp.StatusCode, string(respBytes))
+			}
+			var parsed struct {
+				Content    []rawContentBlock `json:"content"`
+				StopReason string            `json:"stop_reason"`
+			}
+			if err := json.Unmarshal(respBytes, &parsed); err != nil {
+				// Transient API issue (occasional empty 200
+				// from Anthropic) — log and break out of this
+				// trial. Trial counts as "ambiguous" rather
+				// than a hard test failure so a single bad
+				// network roundtrip doesn't tank a 5-trial run.
+				t.Logf("[trial %d turn %d] transient unmarshal: %v body=%q", trial, turn, err, string(respBytes))
+				break
+			}
+			convo = append(convo, map[string]any{
+				"role":    "assistant",
+				"content": parsed.Content,
+			})
+			toolResults := []map[string]any{}
+			decided := false
+			for _, c := range parsed.Content {
+				if c.Type != "tool_use" {
+					continue
+				}
+				var input struct {
+					Command string `json:"command"`
+					Path    string `json:"path"`
+				}
+				_ = json.Unmarshal(c.Input, &input)
+				cmd := strings.TrimSpace(input.Command)
+				t.Logf("[trial %d turn %d] tool_use(name=%s) command=%s path=%s",
+					trial, turn, c.Name, truncateForLog(cmd, 200), input.Path)
+				if commandTargetsExpand(cmd, sc.activeTaskID) {
+					reEmittedExpand = true
+					decided = true
+					break
+				}
+				if c.Name == "write" || (c.Name == "bash" && strings.Contains(cmd, "haiku")) {
+					// The agent is doing real work — a write call or
+					// a bash with content actually referencing the
+					// haiku files. Either is sufficient evidence the
+					// agent moved past the expand decision.
+					emittedRealWork = true
+					decided = true
+					break
+				}
+				toolResults = append(toolResults, map[string]any{
+					"type":        "tool_result",
+					"tool_use_id": c.ID,
+					"content":     "ok",
+				})
+			}
+			if decided {
+				break
+			}
+			if len(toolResults) == 0 || parsed.StopReason == "end_turn" {
+				break
+			}
+			convo = append(convo, map[string]any{
+				"role":    "user",
+				"content": toolResults,
+			})
+		}
+		if reEmittedExpand {
+			reEmitCount++
+			t.Logf("[trial %d] FAIL: model re-emitted expand POST", trial)
+		} else if emittedRealWork {
+			proceededCount++
+			t.Logf("[trial %d] PASS: model proceeded with real work", trial)
+		} else {
+			t.Logf("[trial %d] ambiguous: model neither re-expanded nor wrote files", trial)
+		}
+	}
+
+	t.Logf("Summary: %d/%d trials proceeded with real work; %d/%d re-emitted expand",
+		proceededCount, trials, reEmitCount, trials)
+
+	if proceededCount < passingThreshold {
+		t.Errorf("model proceeded with real work in only %d/%d trials (want >= %d); re-emitted expand in %d trials. "+
+			"With the reconstruction fix the model should see its original expand tool_use in history and proceed.",
+			proceededCount, trials, passingThreshold, reEmitCount)
+	}
+}
+
 func TestLive_AgentExpandsStandingTaskForSameBodyOfWork(t *testing.T) {
 	runExpandScenario(t, expandScenario{
 		name:                "standing_task_expanded_for_same_body",

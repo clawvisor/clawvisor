@@ -156,6 +156,16 @@ type InlineApprovedExpansion struct {
 	ApprovalRecordID string                            `json:"approval_record_id,omitempty"`
 	ExpiresAtRFC3339 string                            `json:"expires_at,omitempty"`
 	Credentials      []InlineTaskCredentialPlaceholder `json:"credential_placeholders,omitempty"`
+	// CredentialMintFailed is set when the expansion's CAS landed
+	// (envelope is broadened, status='active') but post-CAS
+	// credential placeholder minting failed. The model sees the
+	// success notice but ALSO a "credentials missing — ask the user
+	// to retry" follow-up so it doesn't blindly proceed assuming
+	// vault placeholders exist for the new required_credentials.
+	// Distinct from a hard failure: the new tools / egress entries
+	// in the envelope ARE usable; only the credential dimension is
+	// incomplete.
+	CredentialMintFailed bool `json:"credential_mint_failed,omitempty"`
 }
 
 // ErrInlineExpansionAlreadyTerminal is the typed error

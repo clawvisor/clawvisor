@@ -71,6 +71,29 @@ func (t *TraceLogger) Emit(event map[string]any) {
 	_, _ = t.w.Write([]byte{'\n'})
 }
 
+// TraceLoggerEmit returns a func(event, kv...) adapter that calls
+// (*TraceLogger).Emit. nil-safe: a nil receiver returns nil so
+// callers can plug the result straight into an optional Trace field
+// without a nil-guard. Used by call sites outside the lite-proxy
+// pipeline (the inline-approval rewrite path, lifecycle audit
+// writers) that want the simpler key/value variadic shape.
+func TraceLoggerEmit(t *TraceLogger) func(event string, kv ...any) {
+	if t == nil {
+		return nil
+	}
+	return func(event string, kv ...any) {
+		payload := map[string]any{"event": event}
+		for i := 0; i+1 < len(kv); i += 2 {
+			key, ok := kv[i].(string)
+			if !ok {
+				continue
+			}
+			payload[key] = kv[i+1]
+		}
+		t.Emit(payload)
+	}
+}
+
 // Event-name constants. Operators grep on these to find specific
 // stages of the decision pipeline.
 const (

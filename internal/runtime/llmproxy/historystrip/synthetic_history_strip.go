@@ -253,6 +253,7 @@ func rawMessageString(raw json.RawMessage) string {
 
 func isSyntheticApprovalPromptText(text string) bool {
 	return strings.Contains(text, InlineApprovalSubstitutedPromptMarker) ||
+		strings.Contains(text, InlineExpansionApprovalSubstitutedPromptMarker) ||
 		strings.Contains(text, ToolApprovalSubstitutedPromptMarker)
 }
 

@@ -209,6 +209,27 @@ func MaybeInterceptInlineExpansion(
 		"task_id", taskID,
 		"signal", "query",
 	)
+	// Audit the in-flight expand into task_lifecycle_events so the
+	// body editor on the next turn can reconstruct the model's
+	// missing assistant turn after the substituted-prompt strip
+	// (without the original tool_use the model has no record of
+	// having called expand and re-emits it). Best-effort: a store
+	// outage here must not strand the hold.
+	if payload, marshalErr := json.Marshal(map[string]any{
+		"expected_tools":       additions.ExpectedTools,
+		"expected_egress":      additions.ExpectedEgress,
+		"required_credentials": additions.RequiredCredentials,
+		"reason":               parsed.Reason,
+	}); marshalErr == nil {
+		logTaskLifecycleEventFromHold(req.Context(), taskLifecycleAuditCtx{
+			st:             cfg.Store,
+			trace:          trace,
+			userID:         cfg.AgentUserID,
+			agentID:        cfg.AgentID,
+			conversationID: cfg.ConversationID,
+			requestID:      cfg.RequestID,
+		}, taskID, innerHold.Pending.ID, store.TaskLifecycleEventTaskExpandPending, "inline_chat", tu, payload)
+	}
 	promptText := renderExpansionApprovalPrompt(&additions, parsed.Reason, parentPurpose, taskID, parentLifetime, expansionRisk, innerHold.Pending.ID)
 	verdict := conversation.ToolUseVerdict{
 		Allowed:        false,

@@ -1,6 +1,7 @@
 package llmproxy
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 )
@@ -49,6 +50,30 @@ type InlineApprovalOutcome struct {
 	// the task-creation "Task was created" body on later turns,
 	// confusing the model about whether a fresh task exists.
 	Kind string
+
+	// OriginalCall captures the agent's verbatim tool_use that the
+	// proxy intercepted and substituted with the approval prompt.
+	// Populated at resolution time from the consumed hold record;
+	// nil when the rewrite path bypassed the hold (legacy callers,
+	// tests with no cache).
+	//
+	// Used by the body-editor reconstruction path to inject a
+	// synthetic assistant turn carrying this tool_use back into the
+	// model's history. Without it the model has no record of having
+	// called the substituted endpoint (POST /control/tasks or
+	// /expand) and re-emits the same call on the next turn — the
+	// failure mode the audit table exists to fix.
+	OriginalCall *InlineApprovalOriginalCall
+}
+
+// InlineApprovalOriginalCall is the in-memory snapshot of the
+// agent's intercepted tool_use shape. Mirrors the agent-side fields
+// of store.TaskLifecycleEvent so a cache miss + DB fallback hydrate
+// the same struct.
+type InlineApprovalOriginalCall struct {
+	ToolUseID string
+	ToolName  string
+	Input     json.RawMessage
 }
 
 // Outcome Kind values.

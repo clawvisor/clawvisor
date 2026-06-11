@@ -627,6 +627,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					RequestID:       req.RequestID,
 					Outcomes:        h.InlineApprovalOutcomes,
 					Checkouts:       h.TaskCheckouts,
+					Store:           h.Store,
+					Trace:           llmproxy.TraceLoggerEmit(h.TraceLogger),
 				})
 				if err != nil {
 					return policies.InlineTaskApprovalResult{}, err
@@ -2807,12 +2809,19 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 
 // renderActiveTasksSnapshot returns the compact bullet list embedded in
 // the ACTIVE TASKS section of the control notice. The format is one
-// line per task: id-prefix · purpose="…" · lifetime=… · expires=…
+// line per task: id · purpose="…" · lifetime=… · expires=…
 // Returns "" when the agent has no active tasks, in which case the
 // control-notice renderer emits the empty-state copy ("none active for
 // you, skip the list call"). Errors are swallowed — a snapshot failure
 // shouldn't block the notice; the agent can always fall back to
 // GET /control/tasks.
+//
+// The full task ID is rendered (not a prefix) so the model can paste
+// it directly into expand URLs (POST /control/tasks/{id}/expand) and
+// other ID-keyed endpoints. An earlier 8-char prefix saved a handful
+// of bytes per row but the model treated the prefix as an addressable
+// ID and got NOT_FOUND on the expand call — the bytes were the wrong
+// tradeoff.
 //
 // SECURITY: task purpose text is agent-supplied. An agent that creates
 // tasks can write arbitrary content into Purpose, and that content
@@ -2845,10 +2854,6 @@ func (h *LLMEndpointHandler) renderActiveTasksSnapshot(ctx context.Context, user
 		if t.ExpiresAt != nil && !t.ExpiresAt.After(now) {
 			continue
 		}
-		idPrefix := t.ID
-		if len(idPrefix) > 8 {
-			idPrefix = idPrefix[:8]
-		}
 		purpose := sanitizeTaskPurposeForSnapshot(t.Purpose)
 		expiry := "never"
 		if t.ExpiresAt != nil {
@@ -2858,7 +2863,7 @@ func (h *LLMEndpointHandler) renderActiveTasksSnapshot(ctx context.Context, user
 		if lifetime == "" {
 			lifetime = "session"
 		}
-		lines = append(lines, fmt.Sprintf("  - %s · purpose=%q · lifetime=%s · expires=%s", idPrefix, purpose, lifetime, expiry))
+		lines = append(lines, fmt.Sprintf("  - %s · purpose=%q · lifetime=%s · expires=%s", t.ID, purpose, lifetime, expiry))
 		if len(lines) >= maxTasks {
 			lines = append(lines, fmt.Sprintf("  - (+%d more — GET the tasks endpoint to see the rest)", len(tasks)-len(lines)+1))
 			break

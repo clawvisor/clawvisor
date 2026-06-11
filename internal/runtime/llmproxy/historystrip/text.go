@@ -8,6 +8,19 @@ import (
 
 const SecretDecisionIDMarker = "[clawvisor:secret="
 const InlineApprovalSubstitutedPromptMarker = "Clawvisor wants to create a task to cover this work:"
+
+// InlineExpansionApprovalSubstitutedPromptMarker is the expansion-side
+// counterpart to InlineApprovalSubstitutedPromptMarker. Both prompts
+// land in assistant text the historystrip uses to identify a
+// substituted approval turn (so the next bare-verb user reply and the
+// AskUserQuestion tool_use pair can both be removed before forwarding
+// to the upstream model). Without an expansion-specific marker the
+// strip would skip the expansion's assistant turn, leave the
+// AskUserQuestion tool_use in place, and then orphan the rewritten
+// user turn (Anthropic 400: "tool use concurrency issues"). Keep this
+// in sync with renderExpansionApprovalPrompt's opening line.
+const InlineExpansionApprovalSubstitutedPromptMarker = "Clawvisor wants to expand the scope of an existing task"
+
 const InlineTaskNoticeOpenPrefix = `<clawvisor-notice kind="task-`
 
 // SyntheticToolUseIDPrefix is the namespace the inline-approval

@@ -17,7 +17,18 @@ type approvalBodyEditor interface {
 	// matching approval ID — without this check, a hold resolved by
 	// Peek+ApprovalID could be released by a different verb-matching
 	// message that races into the body between peek and rewrite.
-	ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error)
+	//
+	// reconstruction, when non-nil, signals the editor to ALSO
+	// reconstruct the model's original tool_use that the proxy
+	// substituted away. For Anthropic + AskUserQuestion shape this
+	// means: replace the substituted-prompt assistant turn with a
+	// synthetic [tool_use(original)] turn, and pair a synthetic
+	// tool_result block alongside the replacement text in the user
+	// turn. Other shapes (plain-text approval, openAI providers) fall
+	// back to the no-reconstruction path silently. The body editor
+	// owns codec-specific shape decisions; the caller just hands over
+	// the snapshot.
+	ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string, reconstruction *InlineApprovalOriginalCall) ([]byte, bool, error)
 	AugmentInlineApprovalHistory(outcomes InlineApprovalOutcomeStore, userID, agentID string) ([]byte, bool, error)
 }
 
@@ -49,8 +60,8 @@ func (e anthropicApprovalBodyEditor) LatestApprovalReply() (string, string, bool
 	return verb, approvalID, verb != ""
 }
 
-func (e anthropicApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
-	return replaceAnthropicApprovalReply(e.body, expectedVerb, expectedApprovalID, replacement)
+func (e anthropicApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string, reconstruction *InlineApprovalOriginalCall) ([]byte, bool, error) {
+	return replaceAnthropicApprovalReply(e.body, expectedVerb, expectedApprovalID, replacement, reconstruction)
 }
 
 func (e anthropicApprovalBodyEditor) AugmentInlineApprovalHistory(outcomes InlineApprovalOutcomeStore, userID, agentID string) ([]byte, bool, error) {
@@ -66,7 +77,9 @@ func (e openAIChatApprovalBodyEditor) LatestApprovalReply() (string, string, boo
 	return verb, approvalID, verb != ""
 }
 
-func (e openAIChatApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
+func (e openAIChatApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string, _ *InlineApprovalOriginalCall) ([]byte, bool, error) {
+	// OpenAI Chat Completions has no AskUserQuestion-equivalent
+	// substituted-tool-use shape, so reconstruction is a no-op here.
 	return replaceOpenAIChatApprovalReply(e.body, expectedVerb, expectedApprovalID, replacement)
 }
 
@@ -93,7 +106,10 @@ func (e openAIResponsesApprovalBodyEditor) LatestApprovalReply() (string, string
 	return verb, approvalID, verb != ""
 }
 
-func (e openAIResponsesApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
+func (e openAIResponsesApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string, _ *InlineApprovalOriginalCall) ([]byte, bool, error) {
+	// OpenAI Responses has no AskUserQuestion-equivalent
+	// substituted-tool-use shape (the substitution lands as plain
+	// text in this codec), so reconstruction is a no-op here.
 	return replaceOpenAIResponsesApprovalReply(e.body, expectedVerb, expectedApprovalID, replacement)
 }
 
@@ -101,7 +117,7 @@ func (e openAIResponsesApprovalBodyEditor) AugmentInlineApprovalHistory(_ Inline
 	return e.body, false, nil
 }
 
-func replaceAnthropicApprovalReply(body []byte, expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
+func replaceAnthropicApprovalReply(body []byte, expectedVerb, expectedApprovalID, replacement string, reconstruction *InlineApprovalOriginalCall) ([]byte, bool, error) {
 	var req struct {
 		Messages []struct {
 			Role    string          `json:"role"`
@@ -127,7 +143,7 @@ func replaceAnthropicApprovalReply(body []byte, expectedVerb, expectedApprovalID
 			// parent assistant tool_use is AskUserQuestion with the
 			// inline-approval ID marker. The fallback parses the
 			// body itself, so we return its result directly here.
-			return rewriteAnthropicAskUserQuestionApprovalReply(body, expectedVerb, expectedApprovalID, replacement)
+			return rewriteAnthropicAskUserQuestionApprovalReply(body, expectedVerb, expectedApprovalID, replacement, reconstruction)
 		}
 		if verb != expectedVerb {
 			return body, false, nil
@@ -165,10 +181,19 @@ func replaceAnthropicApprovalReply(body []byte, expectedVerb, expectedApprovalID
 //     (the notice carries the <clawvisor-notice kind="task-...">
 //     marker, so isBareSyntheticApprovalReply returns false).
 //
+// When reconstruction is non-nil, the rewriter ALSO replaces the
+// preceding assistant turn (the substituted-prompt + AskUserQuestion
+// pair) with a synthetic [tool_use(reconstruction)] turn, and pairs
+// the user-turn replacement as a tool_result against that
+// reconstructed tool_use_id. This restores the model's evidence of
+// having called the substituted endpoint — without it the model has
+// no record of having emitted the original POST and re-emits it on
+// the next turn (the "agent keeps trying to expand" failure mode).
+//
 // Returns (body, false, nil) when the AskUserQuestion shape doesn't
 // match or the verb/approvalID expectation fails. Other blocks
 // (text, image, additional tool_results) pass through unchanged.
-func rewriteAnthropicAskUserQuestionApprovalReply(body []byte, expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
+func rewriteAnthropicAskUserQuestionApprovalReply(body []byte, expectedVerb, expectedApprovalID, replacement string, reconstruction *InlineApprovalOriginalCall) ([]byte, bool, error) {
 	match, ok := conversation.FindAnthropicAskUserQuestionApprovalMatch(body)
 	if !ok {
 		return body, false, nil
@@ -200,6 +225,38 @@ func rewriteAnthropicAskUserQuestionApprovalReply(body []byte, expectedVerb, exp
 	if match.UserIdx < 0 || match.UserIdx >= len(req.Messages) {
 		return body, false, nil
 	}
+
+	// Reconstruction path: replace the substituted-prompt assistant
+	// turn (synthetic AskUserQuestion + text) with a synthetic
+	// [tool_use(original)] turn, AND swap the AskUserQuestion
+	// tool_result for a tool_result PAIRED to the reconstructed
+	// tool_use_id. The model sees its own call + a result, instead
+	// of the absence of a call followed by a "you did this" notice.
+	if reconstruction != nil && reconstruction.ToolUseID != "" {
+		assistantIdx := match.UserIdx - 1
+		if assistantIdx >= 0 && req.Messages[assistantIdx].Role == "assistant" {
+			newAssistant, assistantOK := buildReconstructedAssistantContent(reconstruction)
+			newUser, userOK := swapAnthropicToolResultForReconstructedPair(
+				req.Messages[match.UserIdx].Content, match.ToolUseID, reconstruction.ToolUseID, replacement)
+			if assistantOK && userOK {
+				req.Messages[assistantIdx].Content = newAssistant
+				req.Messages[match.UserIdx].Content = newUser
+				messages, err := json.Marshal(req.Messages)
+				if err != nil {
+					return nil, false, err
+				}
+				raw["messages"] = messages
+				out, err := json.Marshal(raw)
+				return out, err == nil, err
+			}
+		}
+		// Reconstruction shape didn't fit (no preceding assistant
+		// turn, or block build failed). Fall through to the legacy
+		// text-block swap so the user still sees the notice — the
+		// model will re-emit but at least the conversation doesn't
+		// stall.
+	}
+
 	newContent, swapped := swapAnthropicToolResultForTextBlock(req.Messages[match.UserIdx].Content, match.ToolUseID, replacement)
 	if !swapped {
 		return body, false, nil
@@ -212,6 +269,81 @@ func rewriteAnthropicAskUserQuestionApprovalReply(body []byte, expectedVerb, exp
 	raw["messages"] = messages
 	out, err := json.Marshal(raw)
 	return out, err == nil, err
+}
+
+// buildReconstructedAssistantContent renders the synthetic
+// [tool_use] assistant turn carrying the model's original
+// tool_use_id, name, and input. The input is taken verbatim from the
+// hold record so the model sees the exact bytes it would have
+// emitted. Returns (nil, false) when the original input is empty (no
+// reconstruction possible).
+func buildReconstructedAssistantContent(original *InlineApprovalOriginalCall) (json.RawMessage, bool) {
+	if original == nil || original.ToolUseID == "" || original.ToolName == "" {
+		return nil, false
+	}
+	input := original.Input
+	if len(input) == 0 {
+		input = json.RawMessage(`{}`)
+	}
+	block := map[string]any{
+		"type":  "tool_use",
+		"id":    original.ToolUseID,
+		"name":  original.ToolName,
+		"input": input,
+	}
+	raw, err := json.Marshal([]any{block})
+	if err != nil {
+		return nil, false
+	}
+	return raw, true
+}
+
+// swapAnthropicToolResultForReconstructedPair walks the user turn's
+// content blocks and replaces the AskUserQuestion tool_result
+// (whose tool_use_id matches askToolUseID) with a tool_result
+// PAIRED to the reconstructed tool_use_id, carrying the replacement
+// notice as its content. Other blocks survive unchanged. The pairing
+// keeps the assistant→user tool_use/tool_result invariant Anthropic
+// validates at request time.
+func swapAnthropicToolResultForReconstructedPair(raw json.RawMessage, askToolUseID, reconstructedToolUseID, replacement string) (json.RawMessage, bool) {
+	if len(raw) == 0 || reconstructedToolUseID == "" {
+		return nil, false
+	}
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return nil, false
+	}
+	rewritten := false
+	for i, blk := range blocks {
+		var probe struct {
+			Type      string `json:"type"`
+			ToolUseID string `json:"tool_use_id"`
+		}
+		if err := json.Unmarshal(blk, &probe); err != nil {
+			continue
+		}
+		if probe.Type != "tool_result" || probe.ToolUseID != askToolUseID {
+			continue
+		}
+		newBlock, err := json.Marshal(map[string]any{
+			"type":        "tool_result",
+			"tool_use_id": reconstructedToolUseID,
+			"content":     replacement,
+		})
+		if err != nil {
+			continue
+		}
+		blocks[i] = newBlock
+		rewritten = true
+	}
+	if !rewritten {
+		return nil, false
+	}
+	out, err := json.Marshal(blocks)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 // swapAnthropicToolResultForTextBlock walks `raw` (a user message's
@@ -426,7 +558,8 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 			continue
 		}
 		priorText := flattenAnthropicTaskReplyText(priorMsg[priorContentStart:priorContentEnd])
-		if !strings.Contains(priorText, InlineApprovalSubstitutedPromptMarker) {
+		if !strings.Contains(priorText, InlineApprovalSubstitutedPromptMarker) &&
+			!strings.Contains(priorText, InlineExpansionApprovalSubstitutedPromptMarker) {
 			continue
 		}
 

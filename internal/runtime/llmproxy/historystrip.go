@@ -13,6 +13,7 @@ type SecretDecisionReply = historystrip.SecretDecisionReply
 
 const ToolApprovalSubstitutedPromptMarker = historystrip.ToolApprovalSubstitutedPromptMarker
 const InlineApprovalSubstitutedPromptMarker = historystrip.InlineApprovalSubstitutedPromptMarker
+const InlineExpansionApprovalSubstitutedPromptMarker = historystrip.InlineExpansionApprovalSubstitutedPromptMarker
 const SecretDecisionIDMarker = historystrip.SecretDecisionIDMarker
 const inlineTaskNoticeOpenPrefix = historystrip.InlineTaskNoticeOpenPrefix
 

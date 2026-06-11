@@ -2232,9 +2232,26 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 	// check, a user could approve a (service, action) pair that Create
 	// would have rejected — and the expanded scope would be unusable
 	// after the round-trip.
+	//
+	// EXCEPT when the parent task already has a same-service wildcard
+	// covering the addition: the merge silently drops the derivation
+	// (no new AuthorizedAction is materialized), so the validation
+	// gate would otherwise reject a harmless `why`-only refinement of
+	// an already-authorized scope. Mirror the wildcard check from
+	// mergeAuthorizedActionsFromExpansion so the validation and merge
+	// agree on what counts as "redundant."
+	wildcardCoveredServices := make(map[string]struct{})
+	for _, a := range task.AuthorizedActions {
+		if a.Action == "*" {
+			wildcardCoveredServices[strings.ToLower(strings.TrimSpace(a.Service))] = struct{}{}
+		}
+	}
 	for i, tool := range additions.ExpectedTools {
 		service, action, isGatewayAction := parseToolNameAsServiceAction(tool.ToolName)
 		if !isGatewayAction {
+			continue
+		}
+		if _, covered := wildcardCoveredServices[strings.ToLower(strings.TrimSpace(service))]; covered {
 			continue
 		}
 		field := fmt.Sprintf("expected_tools[%d]", i)
@@ -2585,7 +2602,7 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "scope expansion was resolved by another caller")
 		return
 	}
-	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "allow_session", "approved")
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", taskApprovalResolution(task), "approved")
 
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
@@ -3168,7 +3185,7 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 		// state instead of believing it approved.
 		return fmt.Errorf("scope expansion was resolved by another caller")
 	}
-	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "allow_session", "approved")
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", taskApprovalResolution(task), "approved")
 
 	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Scope expanded</b>")
 	h.publishTasksAndQueue(userID)
