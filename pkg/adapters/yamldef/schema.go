@@ -162,6 +162,12 @@ type Param struct {
 	Max      *int   `yaml:"max,omitempty"`
 	Location string `yaml:"location,omitempty"` // "query", "body", "path"
 
+	// Aliases are alternative caller-facing names for this parameter. When the
+	// primary name is absent from the request, the runtime falls back to the
+	// first alias that appears. Used for backward-compatibility renames and
+	// for accepting common synonyms (e.g. "from" with alias "time_min").
+	Aliases []string `yaml:"aliases,omitempty"`
+
 	MapTo       string `yaml:"map_to,omitempty"`       // API-side parameter name (if different from YAML name)
 	Transform   string `yaml:"transform,omitempty"`     // expr expression applied to the resolved value
 	DefaultExpr string `yaml:"default_expr,omitempty"` // expr expression for dynamic default (e.g. "rfc3339(now())")

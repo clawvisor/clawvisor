@@ -250,9 +250,10 @@ type Adapter interface {
 
 // ParamInfo describes a single action parameter for validation and error reporting.
 type ParamInfo struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"` // "string", "int", "bool", "object", "array"
-	Required bool   `json:"required"`
+	Name     string   `json:"name"`
+	Type     string   `json:"type"` // "string", "int", "bool", "object", "array"
+	Required bool     `json:"required"`
+	Aliases  []string `json:"aliases,omitempty"` // alternative caller-facing names; an alias satisfies Required
 }
 
 // ActionParamDescriber is an optional interface that adapters can implement
