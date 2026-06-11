@@ -688,8 +688,10 @@ func TestUninstallCodexRender(t *testing.T) {
 		// Legacy fallback for pre-diff-records installs (still strips by
 		// section header / sed line-delete).
 		"legacy install",
+		// awk strips any [model_providers.clawvisor*] block; sed regex catches
+		// all three env-derived slugs (clawvisor, clawvisor-staging, clawvisor-dev).
 		`awk 'BEGIN{skip=0} /^\[model_providers\.clawvisor/{skip=1; next}`,
-		`sed -i.bak '/^model_provider = "clawvisor"$/d' ~/.codex/config.toml`,
+		`sed -i.bak -E '/^model_provider = "clawvisor(-staging|-dev)?"$/d' ~/.codex/config.toml`,
 		"CLAWVISOR_AGENT_TOKEN",
 		"codex-cv()",
 		// 3 / 4 / 5
