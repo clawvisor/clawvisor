@@ -676,7 +676,19 @@ func sectionClaimedConnect(harness, appURL, llmURL, claim, agentName string) str
 	fmt.Fprintf(&b, "- **AGENT_NAME_EXISTS** — an agent with this name already exists. The user\n")
 	fmt.Fprintf(&b, "  can delete the old one from the dashboard, or you can pick a fresh name\n")
 	fmt.Fprintf(&b, "  (e.g. `%s-2`) by re-running with `AGENT_NAME` set differently.\n", agentName)
-	fmt.Fprintf(&b, "- **HTTP 5xx** — Clawvisor is unhealthy. Ask the user to check the daemon.\n\n")
+	fmt.Fprintf(&b, "- **HTTP 5xx** — Clawvisor is unhealthy. Ask the user to check the daemon.\n")
+	fmt.Fprintf(&b, "- **Connection refused / network unreachable / curl exit 7** — *not\n")
+	fmt.Fprintf(&b, "  automatically a \"Clawvisor is down\".* If you are an agent running inside\n")
+	fmt.Fprintf(&b, "  a network sandbox (Codex with restrictive `sandbox_mode`, or any harness\n")
+	fmt.Fprintf(&b, "  with default-deny egress), the sandbox is the more likely cause — the\n")
+	fmt.Fprintf(&b, "  user's normal shell can reach `$CLAWVISOR_APP_URL`, but yours can't. Ask\n")
+	fmt.Fprintf(&b, "  the user verbatim: \"My sandbox is refusing the connection to Clawvisor\n")
+	fmt.Fprintf(&b, "  at `$CLAWVISOR_APP_URL`. Can you grant me elevated local network access\n")
+	fmt.Fprintf(&b, "  (e.g. approve workspace-write with `network_access=true`, or rerun me\n")
+	fmt.Fprintf(&b, "  with `--full-auto` / `--dangerously-bypass-approvals-and-sandbox`) so\n")
+	fmt.Fprintf(&b, "  the install can reach the daemon?\" Only conclude \"Clawvisor is down\"\n")
+	fmt.Fprintf(&b, "  after the user confirms they can `curl $CLAWVISOR_APP_URL/api/status`\n")
+	fmt.Fprintf(&b, "  successfully from their own shell.\n\n")
 	return b.String()
 }
 
@@ -937,10 +949,58 @@ func classifySmokeFailure(authFailureNextStep string) string {
 	fmt.Fprintf(&b, "  has no working upstream auth. %s\n", authFailureNextStep)
 	fmt.Fprintf(&b, "- **HTTP 404** — the Clawvisor URL is wrong, or `proxy_lite.enabled` is\n")
 	fmt.Fprintf(&b, "  not set in the daemon config. Surface and STOP — the user fixes it.\n")
-	fmt.Fprintf(&b, "- **Connection refused** — Clawvisor daemon is not running. Surface and STOP.\n")
+	fmt.Fprintf(&b, "- **Connection refused / network unreachable** — *don't jump to \"Clawvisor\n")
+	fmt.Fprintf(&b, "  is down\".* If you are an agent running inside a network sandbox (Codex\n")
+	fmt.Fprintf(&b, "  with restrictive `sandbox_mode`, or any harness with default-deny\n")
+	fmt.Fprintf(&b, "  egress), the sandbox is the more likely cause — your sibling `codex` or\n")
+	fmt.Fprintf(&b, "  `claude` process inherits the same restriction and can't reach\n")
+	fmt.Fprintf(&b, "  `$CLAWVISOR_LLM_URL`. Ask the user verbatim: \"My sandbox is refusing\n")
+	fmt.Fprintf(&b, "  the connection to Clawvisor at `$CLAWVISOR_LLM_URL`. Can you grant me\n")
+	fmt.Fprintf(&b, "  elevated local network access (e.g. approve workspace-write with\n")
+	fmt.Fprintf(&b, "  `network_access=true`, or rerun me with `--full-auto` /\n")
+	fmt.Fprintf(&b, "  `--dangerously-bypass-approvals-and-sandbox`) so the smoke test can\n")
+	fmt.Fprintf(&b, "  reach the daemon?\" Only after the user confirms they can\n")
+	fmt.Fprintf(&b, "  `curl $CLAWVISOR_LLM_URL/api/status` successfully from their own shell\n")
+	fmt.Fprintf(&b, "  is it correct to say \"Clawvisor daemon is not running\". Either way,\n")
+	fmt.Fprintf(&b, "  surface and STOP.\n")
 	fmt.Fprintf(&b, "- **Timeout** — Clawvisor is unreachable or hung. Surface and STOP.\n")
 	fmt.Fprintf(&b, "- **Anything else** — surface and STOP. Don't write any config; don't\n")
 	fmt.Fprintf(&b, "  guess at a fix. The user can re-run the install after debugging.\n\n")
+	return b.String()
+}
+
+// sectionInstallSummary renders the one-screen summary the agent prints to the
+// user right before self-uninstall. The fields are derived from in-context
+// state the agent already tracked: $AGENT_NAME, $MODE (passthrough|swap), and
+// the user's default-vs-alias answer from the make-default question. The
+// harness-specific bits — provider label and the revert command — come in as
+// arguments.
+func sectionInstallSummary(stepNum int, harness, provider, revertCmd, aliasName string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %d. Print the install summary for the user\n\n", stepNum)
+	fmt.Fprintf(&b, "Before the self-uninstall step, surface a one-screen recap so the user can\n")
+	fmt.Fprintf(&b, "see exactly what landed and how to revert. Substitute concrete values for\n")
+	fmt.Fprintf(&b, "every placeholder — no `$VAR`, no `<…>` — using the state you tracked\n")
+	fmt.Fprintf(&b, "during the install (`$AGENT_NAME`, `$MODE`, the user's default-vs-alias\n")
+	fmt.Fprintf(&b, "answer) and the actual paths you wrote to.\n\n")
+	fmt.Fprintf(&b, "Print this block verbatim (with substitutions) — no extra prose around it:\n\n")
+	fmt.Fprintf(&b, "```\n")
+	fmt.Fprintf(&b, "Clawvisor install complete\n")
+	fmt.Fprintf(&b, "──────────────────────────\n")
+	fmt.Fprintf(&b, "Agent:        <$AGENT_NAME>\n")
+	fmt.Fprintf(&b, "Harness:      %s\n", harness)
+	fmt.Fprintf(&b, "Provider:     %s\n", provider)
+	fmt.Fprintf(&b, "Routing:      <default for every `%s` invocation  |  alias-only via `%s`>\n", strings.ToLower(harness), aliasName)
+	fmt.Fprintf(&b, "Auth mode:    <passthrough | swap>\n")
+	fmt.Fprintf(&b, "Files changed:\n")
+	fmt.Fprintf(&b, "  - ~/.clawvisor/agents/<$AGENT_NAME>.json   (token, mode 600)\n")
+	fmt.Fprintf(&b, "  - <every other file you actually touched, with a 1-line reason>\n")
+	fmt.Fprintf(&b, "Revert:       %s\n", revertCmd)
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Pick exactly one option in the angle-brackets — don't print both. For\n")
+	fmt.Fprintf(&b, "**Files changed**, list every file the install wrote to (config files,\n")
+	fmt.Fprintf(&b, "shell rc, diff records under `~/.clawvisor/diffs/<$AGENT_NAME>/`) so the\n")
+	fmt.Fprintf(&b, "user can audit and so they understand what `Revert` will undo.\n\n")
 	return b.String()
 }
 
@@ -1015,7 +1075,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "clear `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` here — the user's\n")
 	fmt.Fprintf(&b, "existing auth needs to flow through for passthrough mode to work.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "timeout 30 env \\\n")
+	fmt.Fprintf(&b, "env \\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_BASE_URL=\"$CLAWVISOR_LLM_URL/api\" \\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_CUSTOM_HEADERS=\"X-Clawvisor-Agent-Token: $TOKEN\" \\\n")
 	fmt.Fprintf(&b, "  claude -p \"respond with the word OK\"\n")
@@ -1040,7 +1100,7 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "Anthropic. `ANTHROPIC_API_KEY` is cleared so it can't accidentally take\n")
 	fmt.Fprintf(&b, "precedence.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "timeout 30 env \\\n")
+	fmt.Fprintf(&b, "env \\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_BASE_URL=\"$CLAWVISOR_LLM_URL/api\" \\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_AUTH_TOKEN=\"$TOKEN\" \\\n")
 	fmt.Fprintf(&b, "  ANTHROPIC_API_KEY= \\\n")
@@ -1176,13 +1236,41 @@ func renderClaudeCodeInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "Tell the user to `source \"$RC\"` (or restart their shell), then run\n")
 	fmt.Fprintf(&b, "`claude-cv` instead of `claude` when they want Clawvisor routing.\n\n")
 
-	b.WriteString(sectionSelfUninstallSetup(6, "Claude Code", "claude-code", "~/.claude/commands/clawvisor-uninstall.md", "rm -f ~/.claude/commands/clawvisor-setup.md"))
+	b.WriteString(sectionInstallSummary(6, "Claude Code", "Anthropic", "`/clawvisor-uninstall`", "claude-cv"))
+	b.WriteString(sectionSelfUninstallSetup(7, "Claude Code", "claude-code", "~/.claude/commands/clawvisor-uninstall.md", "rm -f ~/.claude/commands/clawvisor-setup.md"))
 
 	return b.String()
 }
 
+// codexProviderID derives the [model_providers.<slug>] key (and matching
+// display name) for the Codex config block from the LLM proxy URL host. Lets
+// the user install prod, staging, and dev side-by-side in one ~/.codex/config.toml
+// without the blocks colliding.
+//
+//	llm.staging.clawvisor.com → "clawvisor-staging" / "Clawvisor (staging)"
+//	llm.clawvisor.com         → "clawvisor"         / "Clawvisor"
+//	localhost / anything else → "clawvisor-dev"     / "Clawvisor (dev)"
+func codexProviderID(llmURL string) (slug, display string) {
+	u, err := url.Parse(llmURL)
+	host := ""
+	if err == nil && u != nil {
+		host = strings.ToLower(u.Hostname())
+	}
+	switch {
+	case strings.Contains(host, "staging"):
+		return "clawvisor-staging", "Clawvisor (staging)"
+	case strings.HasSuffix(host, "clawvisor.com") && !strings.Contains(host, "dev"):
+		return "clawvisor", "Clawvisor"
+	default:
+		return "clawvisor-dev", "Clawvisor (dev)"
+	}
+}
+
 func renderCodexInstaller(ctx installerCtx) string {
 	var b strings.Builder
+	// Env-aware provider slug + display name keyed off the LLM proxy host so
+	// prod / staging / dev installs can coexist in one ~/.codex/config.toml.
+	slug, display := codexProviderID(ctx.LLMURL)
 	b.WriteString(setupFrontmatter("Codex"))
 	fmt.Fprintf(&b, "# Connect Codex to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are running a one-shot setup skill. The dashboard pre-baked everything\n")
@@ -1202,26 +1290,28 @@ func renderCodexInstaller(ctx installerCtx) string {
 	// = true` makes Codex send its OAuth/env auth as Authorization upstream;
 	// the X-Clawvisor-Agent-Token custom header rides alongside for policy ID.
 	fmt.Fprintf(&b, "## 2. Write the Clawvisor provider block (passthrough form)\n\n")
-	fmt.Fprintf(&b, "Codex reads `~/.codex/config.toml`. We add a `[model_providers.clawvisor]`\n")
-	fmt.Fprintf(&b, "block so `codex -c model_provider=clawvisor` (and the smoke test below)\n")
-	fmt.Fprintf(&b, "can target it. `requires_openai_auth = true` keeps Codex's normal\n")
-	fmt.Fprintf(&b, "subscription / env-key auth flowing through; the cvis_ token rides in a\n")
-	fmt.Fprintf(&b, "custom header for policy ID only. (If the smoke test fails because the\n")
-	fmt.Fprintf(&b, "user has no working upstream auth, step 3 rewrites this block to swap\n")
-	fmt.Fprintf(&b, "form.)\n\n")
+	fmt.Fprintf(&b, "Codex reads `~/.codex/config.toml`. We add a `[model_providers.%s]`\n", slug)
+	fmt.Fprintf(&b, "block so `codex -c model_provider=%s` (and the smoke test below)\n", slug)
+	fmt.Fprintf(&b, "can target it. The slug is env-derived from the LLM proxy host\n")
+	fmt.Fprintf(&b, "(`%s` for this install) so a user with prod + staging + dev installs can\n", slug)
+	fmt.Fprintf(&b, "keep all three blocks side-by-side in one config.toml without colliding.\n")
+	fmt.Fprintf(&b, "`requires_openai_auth = true` keeps Codex's normal subscription / env-key\n")
+	fmt.Fprintf(&b, "auth flowing through; the cvis_ token rides in a custom header for policy\n")
+	fmt.Fprintf(&b, "ID only. (If the smoke test fails because the user has no working upstream\n")
+	fmt.Fprintf(&b, "auth, step 3 rewrites this block to swap form.)\n\n")
 	fmt.Fprintf(&b, "**Idempotent — grep first.** Codex rejects duplicate `[model_providers.<n>]`\n")
 	fmt.Fprintf(&b, "entries on startup. We append only the block itself; the uninstall trail\n")
 	fmt.Fprintf(&b, "lives outside the file in `~/.clawvisor/diffs/$AGENT_NAME/`.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "mkdir -p ~/.codex ~/.clawvisor/diffs/$AGENT_NAME\n")
-	fmt.Fprintf(&b, "if ! grep -q '^\\[model_providers\\.clawvisor\\]' ~/.codex/config.toml 2>/dev/null; then\n")
+	fmt.Fprintf(&b, "if ! grep -q '^\\[model_providers\\.%s\\]' ~/.codex/config.toml 2>/dev/null; then\n", slug)
 	fmt.Fprintf(&b, "  CONTENT=$(cat <<EOF\n")
-	fmt.Fprintf(&b, "[model_providers.clawvisor]\n")
-	fmt.Fprintf(&b, "name = \"Clawvisor\"\n")
+	fmt.Fprintf(&b, "[model_providers.%s]\n", slug)
+	fmt.Fprintf(&b, "name = \"%s\"\n", display)
 	fmt.Fprintf(&b, "base_url = \"$CLAWVISOR_LLM_URL/api/v1\"\n")
 	fmt.Fprintf(&b, "wire_api = \"responses\"\n")
 	fmt.Fprintf(&b, "requires_openai_auth = true\n\n")
-	fmt.Fprintf(&b, "[model_providers.clawvisor.env_http_headers]\n")
+	fmt.Fprintf(&b, "[model_providers.%s.env_http_headers]\n", slug)
 	fmt.Fprintf(&b, "X-Clawvisor-Agent-Token = \"CLAWVISOR_AGENT_TOKEN\"\n")
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "  )\n")
@@ -1237,9 +1327,10 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "Run a fresh `codex` in a child process targeting the block from step 2.\n")
 	fmt.Fprintf(&b, "The user's existing `codex login` or env `OPENAI_API_KEY` flows through.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "CLAWVISOR_AGENT_TOKEN=\"$TOKEN\" timeout 30 codex \\\n")
-	fmt.Fprintf(&b, "  -c model_provider=clawvisor \\\n")
-	fmt.Fprintf(&b, "  exec \"respond with the word OK\"\n")
+	fmt.Fprintf(&b, "CLAWVISOR_AGENT_TOKEN=\"$TOKEN\" codex \\\n")
+	fmt.Fprintf(&b, "  -c model_provider=%s \\\n", slug)
+	fmt.Fprintf(&b, "  -c sandbox_workspace_write.network_access=true \\\n")
+	fmt.Fprintf(&b, "  exec --skip-git-repo-check \"respond with the word OK\"\n")
 	fmt.Fprintf(&b, "```\n\n")
 	b.WriteString(classifySmokeFailure("Continue to step 4 to vault a key, rewrite the provider block to swap form, and retry."))
 	fmt.Fprintf(&b, "**On pass**, the user has working upstream auth. Set `MODE=passthrough` in\n")
@@ -1274,12 +1365,12 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "    with open(target, 'w') as f: f.write(body)\n")
 	fmt.Fprintf(&b, "PY\n")
 	fmt.Fprintf(&b, "CONTENT=$(cat <<EOF\n")
-	fmt.Fprintf(&b, "[model_providers.clawvisor]\n")
-	fmt.Fprintf(&b, "name = \"Clawvisor\"\n")
+	fmt.Fprintf(&b, "[model_providers.%s]\n", slug)
+	fmt.Fprintf(&b, "name = \"%s\"\n", display)
 	fmt.Fprintf(&b, "base_url = \"$CLAWVISOR_LLM_URL/api/v1\"\n")
 	fmt.Fprintf(&b, "wire_api = \"responses\"\n")
 	fmt.Fprintf(&b, "requires_openai_auth = false\n\n")
-	fmt.Fprintf(&b, "[model_providers.clawvisor.env_http_headers]\n")
+	fmt.Fprintf(&b, "[model_providers.%s.env_http_headers]\n", slug)
 	fmt.Fprintf(&b, "Authorization = \"CLAWVISOR_AGENT_BEARER\"\n")
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, ")\n")
@@ -1290,9 +1381,10 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "### 4.c. Re-run the smoke test in swap mode\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "CLAWVISOR_AGENT_BEARER=\"Bearer $TOKEN\" timeout 30 codex \\\n")
-	fmt.Fprintf(&b, "  -c model_provider=clawvisor \\\n")
-	fmt.Fprintf(&b, "  exec \"respond with the word OK\"\n")
+	fmt.Fprintf(&b, "CLAWVISOR_AGENT_BEARER=\"Bearer $TOKEN\" codex \\\n")
+	fmt.Fprintf(&b, "  -c model_provider=%s \\\n", slug)
+	fmt.Fprintf(&b, "  -c sandbox_workspace_write.network_access=true \\\n")
+	fmt.Fprintf(&b, "  exec --skip-git-repo-check \"respond with the word OK\"\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**Pass criteria:** exit code 0 AND stdout contains `OK`.\n\n")
 	fmt.Fprintf(&b, "**On pass**, the vaulted key works. Set `MODE=swap` in your head and\n")
@@ -1306,7 +1398,7 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "Smoke test passed (in either passthrough or swap mode — `$MODE` is set).\n")
 	fmt.Fprintf(&b, "Now ask exactly one question — verbatim or close to it:\n\n")
 	fmt.Fprintf(&b, "> Make Clawvisor the default for every Codex session? I'll set\n")
-	fmt.Fprintf(&b, "> `model_provider = \"clawvisor\"` at the top of `~/.codex/config.toml` so\n")
+	fmt.Fprintf(&b, "> `model_provider = \"%s\"` at the top of `~/.codex/config.toml` so\n", slug)
 	fmt.Fprintf(&b, "> all future `codex` invocations route through Clawvisor automatically.\n")
 	fmt.Fprintf(&b, "> \n")
 	fmt.Fprintf(&b, "> The alternative is a `codex-cv` shell function — your regular `codex`\n")
@@ -1319,13 +1411,13 @@ func renderCodexInstaller(ctx installerCtx) string {
 	// env var (CLAWVISOR_AGENT_TOKEN for passthrough, CLAWVISOR_AGENT_BEARER
 	// for swap). The provider block is already in the right form.
 	fmt.Fprintf(&b, "## 6. Apply the user's choice\n\n")
-	fmt.Fprintf(&b, "### 6.a. Default-everywhere — set `model_provider = \"clawvisor\"` as the default\n\n")
-	fmt.Fprintf(&b, "Prepend a top-level `model_provider = \"clawvisor\"` line to\n")
+	fmt.Fprintf(&b, "### 6.a. Default-everywhere — set `model_provider = \"%s\"` as the default\n\n", slug)
+	fmt.Fprintf(&b, "Prepend a top-level `model_provider = \"%s\"` line to\n", slug)
 	fmt.Fprintf(&b, "`~/.codex/config.toml` (outside any `[…]` section). Record the diff so\n")
 	fmt.Fprintf(&b, "the uninstall can find and remove this exact line:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "if ! grep -q '^model_provider = \"clawvisor\"$' ~/.codex/config.toml 2>/dev/null; then\n")
-	fmt.Fprintf(&b, "  CONTENT='model_provider = \"clawvisor\"'\n")
+	fmt.Fprintf(&b, "if ! grep -q '^model_provider = \"%s\"$' ~/.codex/config.toml 2>/dev/null; then\n", slug)
+	fmt.Fprintf(&b, "  CONTENT='model_provider = \"%s\"'\n", slug)
 	fmt.Fprintf(&b, "  { printf '%%s\\n\\n' \"$CONTENT\"; cat ~/.codex/config.toml; } > ~/.codex/config.toml.new && \\\n")
 	fmt.Fprintf(&b, "    mv ~/.codex/config.toml.new ~/.codex/config.toml\n")
 	fmt.Fprintf(&b, "  jq -n --arg file \"$HOME/.codex/config.toml\" --arg content \"$CONTENT\" \\\n")
@@ -1378,7 +1470,7 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "> Codex's local prompts and sandbox won't. Default is **no**.\n\n")
 	fmt.Fprintf(&b, "Remember the answer as `$YOLO` (yes/no). If yes, the rendered function\n")
 	fmt.Fprintf(&b, "below adds ` --dangerously-bypass-approvals-and-sandbox` between `codex`\n")
-	fmt.Fprintf(&b, "and the `-c model_provider=clawvisor` flag.\n\n")
+	fmt.Fprintf(&b, "and the `-c model_provider=%s` flag.\n\n", slug)
 	fmt.Fprintf(&b, "Append a `codex-cv` function (leaves bare `codex` untouched). The rc file\n")
 	fmt.Fprintf(&b, "gets only the function — the uninstall trail lives in\n")
 	fmt.Fprintf(&b, "`~/.clawvisor/diffs/$AGENT_NAME/codex_cv.json`.\n\n")
@@ -1395,7 +1487,7 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "CONTENT=$(cat <<EOF\n")
 	fmt.Fprintf(&b, "codex-cv() {\n")
 	fmt.Fprintf(&b, "  CLAWVISOR_AGENT_TOKEN=\\$(jq -r .token \\$HOME/.clawvisor/agents/$AGENT_NAME.json) \\\\\n")
-	fmt.Fprintf(&b, "  codex -c model_provider=clawvisor \"\\$@\"\n")
+	fmt.Fprintf(&b, "  codex -c model_provider=%s \"\\$@\"\n", slug)
 	fmt.Fprintf(&b, "}\n")
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, ")\n")
@@ -1406,7 +1498,7 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "CONTENT=$(cat <<EOF\n")
 	fmt.Fprintf(&b, "codex-cv() {\n")
 	fmt.Fprintf(&b, "  CLAWVISOR_AGENT_BEARER=\"Bearer \\$(jq -r .token \\$HOME/.clawvisor/agents/$AGENT_NAME.json)\" \\\\\n")
-	fmt.Fprintf(&b, "  codex -c model_provider=clawvisor \"\\$@\"\n")
+	fmt.Fprintf(&b, "  codex -c model_provider=%s \"\\$@\"\n", slug)
 	fmt.Fprintf(&b, "}\n")
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, ")\n")
@@ -1415,7 +1507,8 @@ func renderCodexInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "Tell the user to `source \"$RC\"` (or restart their shell), then run\n")
 	fmt.Fprintf(&b, "`codex-cv` instead of `codex` when they want Clawvisor routing.\n\n")
 
-	b.WriteString(sectionSelfUninstallSetup(7, "Codex", "codex", "~/.codex/skills/clawvisor-uninstall/SKILL.md", "rm -rf ~/.codex/skills/clawvisor-setup"))
+	b.WriteString(sectionInstallSummary(7, "Codex", "OpenAI", "invoke the `clawvisor-uninstall` skill", "codex-cv"))
+	b.WriteString(sectionSelfUninstallSetup(8, "Codex", "codex", "~/.codex/skills/clawvisor-uninstall/SKILL.md", "rm -rf ~/.codex/skills/clawvisor-setup"))
 
 	return b.String()
 }
@@ -1528,10 +1621,13 @@ func renderCodexUninstaller(ctx installerCtx) string {
 
 	fmt.Fprintf(&b, "## 1. Detect the install state\n\n")
 	fmt.Fprintf(&b, "Read `~/.codex/config.toml` and the user's shell rc files:\n\n")
-	fmt.Fprintf(&b, "- **Provider block present** — config.toml has a `[model_providers.clawvisor]`\n")
-	fmt.Fprintf(&b, "  block. Always installed by the install skill regardless of mode.\n")
+	fmt.Fprintf(&b, "- **Provider block present** — config.toml has a `[model_providers.clawvisor]`,\n")
+	fmt.Fprintf(&b, "  `[model_providers.clawvisor-staging]`, or `[model_providers.clawvisor-dev]`\n")
+	fmt.Fprintf(&b, "  block (the install picks the slug from the LLM proxy host so prod /\n")
+	fmt.Fprintf(&b, "  staging / dev installs don't collide). Always installed by the install\n")
+	fmt.Fprintf(&b, "  skill regardless of mode.\n")
 	fmt.Fprintf(&b, "- **Default-everywhere** — config.toml has a top-level\n")
-	fmt.Fprintf(&b, "  `model_provider = \"clawvisor\"` line (outside any `[…]` section), and\n")
+	fmt.Fprintf(&b, "  `model_provider = \"clawvisor…\"` line (outside any `[…]` section), and\n")
 	fmt.Fprintf(&b, "  the shell rc has an `export CLAWVISOR_AGENT_TOKEN=…` or\n")
 	fmt.Fprintf(&b, "  `export CLAWVISOR_AGENT_BEARER=…` line pointing at\n")
 	fmt.Fprintf(&b, "  `~/.clawvisor/agents/$AGENT_NAME.json`.\n")
@@ -1561,13 +1657,15 @@ func renderCodexUninstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "If `~/.clawvisor/diffs/$AGENT_NAME/` is missing (legacy install or\n")
 	fmt.Fprintf(&b, "user-deleted), fall back to surgical removal:\n\n")
-	fmt.Fprintf(&b, "- `~/.codex/config.toml`: strip the `[model_providers.clawvisor]` block\n")
-	fmt.Fprintf(&b, "  (everything between the table header and the next `[…]` header) and\n")
-	fmt.Fprintf(&b, "  delete any top-level `model_provider = \"clawvisor\"` line.\n")
+	fmt.Fprintf(&b, "- `~/.codex/config.toml`: strip any `[model_providers.clawvisor*]` block\n")
+	fmt.Fprintf(&b, "  (everything between the table header and the next `[…]` header — the\n")
+	fmt.Fprintf(&b, "  `clawvisor` prefix covers all three env slugs `clawvisor`,\n")
+	fmt.Fprintf(&b, "  `clawvisor-staging`, `clawvisor-dev`) and delete any top-level\n")
+	fmt.Fprintf(&b, "  `model_provider = \"clawvisor…\"` line.\n")
 	fmt.Fprintf(&b, "  ```bash\n")
 	fmt.Fprintf(&b, "  awk 'BEGIN{skip=0} /^\\[model_providers\\.clawvisor/{skip=1; next} /^\\[/ && skip{skip=0} !skip' \\\n")
 	fmt.Fprintf(&b, "    ~/.codex/config.toml > ~/.codex/config.toml.new && mv ~/.codex/config.toml.new ~/.codex/config.toml\n")
-	fmt.Fprintf(&b, "  sed -i.bak '/^model_provider = \"clawvisor\"$/d' ~/.codex/config.toml\n")
+	fmt.Fprintf(&b, "  sed -i.bak -E '/^model_provider = \"clawvisor(-staging|-dev)?\"$/d' ~/.codex/config.toml\n")
 	fmt.Fprintf(&b, "  rm -f ~/.codex/config.toml.bak\n")
 	fmt.Fprintf(&b, "  ```\n")
 	fmt.Fprintf(&b, "- Shell rc: surgically delete any `export CLAWVISOR_AGENT_TOKEN=…` /\n")

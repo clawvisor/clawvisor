@@ -168,8 +168,15 @@ func TestInstallerClaudeCodeRender(t *testing.T) {
 		// settings.json without crashing the install partway through.
 		`jq -c 'if type == "object" then . else {} end'`,
 		`[ -n "$PRIOR_JSON" ] || PRIOR_JSON='{}'`,
-		// Step 6: drop uninstall skill + self-uninstall the setup file
-		"## 6. Drop the uninstall skill, then self-uninstall",
+		// Step 6: install summary
+		"## 6. Print the install summary for the user",
+		"Clawvisor install complete",
+		"Harness:      Claude Code",
+		"Provider:     Anthropic",
+		"alias-only via `claude-cv`",
+		"Revert:       `/clawvisor-uninstall`",
+		// Step 7: drop uninstall skill + self-uninstall the setup file
+		"## 7. Drop the uninstall skill, then self-uninstall",
 		"/skill/uninstall/claude-code.md?agent_name=$AGENT_NAME",
 		"~/.claude/commands/clawvisor-uninstall.md",
 		"rm -f ~/.claude/commands/clawvisor-setup.md",
@@ -228,17 +235,20 @@ func TestInstallerCodexRender(t *testing.T) {
 		"/api/agents/connect?claim=CLAIMCODE0",
 		"&harness=codex",
 		"~/.clawvisor/agents/$AGENT_NAME.json",
-		// Step 2: write provider block in passthrough form
+		// Step 2: write provider block in passthrough form. Test URL host is
+		// 127.0.0.1 → env-derived slug is `clawvisor-dev` (see codexProviderID).
 		"## 2. Write the Clawvisor provider block (passthrough form)",
-		"[model_providers.clawvisor]",
+		"[model_providers.clawvisor-dev]",
+		`name = "Clawvisor (dev)"`,
 		`base_url = "$CLAWVISOR_LLM_URL/api/v1"`,
 		"requires_openai_auth = true",
 		"X-Clawvisor-Agent-Token = \"CLAWVISOR_AGENT_TOKEN\"",
 		// Step 3: passthrough smoke test
 		"## 3. Smoke-test Clawvisor routing in **passthrough mode**",
-		"timeout 30 codex",
-		"-c model_provider=clawvisor",
-		`exec "respond with the word OK"`,
+		"CLAWVISOR_AGENT_TOKEN=\"$TOKEN\" codex",
+		"-c model_provider=clawvisor-dev",
+		`exec --skip-git-repo-check "respond with the word OK"`,
+		"-c sandbox_workspace_write.network_access=true",
 		"`MODE=passthrough`",
 		// Step 4: swap-mode fallback
 		"## 4. Fall back to **swap mode**",
@@ -260,7 +270,7 @@ func TestInstallerCodexRender(t *testing.T) {
 		"`codex-cv` shell function",
 		// Step 6: apply
 		"## 6. Apply the user's choice",
-		`### 6.a. Default-everywhere — set ` + "`model_provider = \"clawvisor\"`" + ` as the default`,
+		`### 6.a. Default-everywhere — set ` + "`model_provider = \"clawvisor-dev\"`" + ` as the default`,
 		"**If MODE=passthrough**",
 		"**If MODE=swap**",
 		"CLAWVISOR_AGENT_BEARER",
@@ -278,8 +288,15 @@ func TestInstallerCodexRender(t *testing.T) {
 		"~/.clawvisor/diffs/$AGENT_NAME/codex_cv.json",
 		`type: "text_append"`,
 		`type: "text_prepend"`,
-		// Step 7: drop uninstall skill + self-uninstall the setup directory
-		"## 7. Drop the uninstall skill, then self-uninstall",
+		// Step 7: install summary
+		"## 7. Print the install summary for the user",
+		"Clawvisor install complete",
+		"Harness:      Codex",
+		"Provider:     OpenAI",
+		"alias-only via `codex-cv`",
+		"Revert:       invoke the `clawvisor-uninstall` skill",
+		// Step 8: drop uninstall skill + self-uninstall the setup directory
+		"## 8. Drop the uninstall skill, then self-uninstall",
 		"/skill/uninstall/codex.md?agent_name=$AGENT_NAME",
 		"~/.codex/skills/clawvisor-uninstall/SKILL.md",
 		"rm -rf ~/.codex/skills/clawvisor-setup",
@@ -299,6 +316,67 @@ func TestInstallerCodexRender(t *testing.T) {
 	}
 	if strings.Contains(body, "Check for an existing token") {
 		t.Errorf("installer should not offer to reuse an existing token")
+	}
+}
+
+// TestInstallerCodexProviderSlugByEnv locks the mapping from LLM proxy URL host
+// to the [model_providers.<slug>] key in the rendered Codex install skill, so
+// prod / staging / dev installs can coexist in one ~/.codex/config.toml without
+// the blocks colliding. Hosts come from the canonical Clawvisor deployments;
+// fallback for unknown hosts is dev.
+func TestInstallerCodexProviderSlugByEnv(t *testing.T) {
+	cases := []struct {
+		name          string
+		llmProxyURL   string
+		wantSlug      string
+		wantDisplay   string
+		wantNotPresent []string
+	}{
+		{
+			name:        "production",
+			llmProxyURL: "https://llm.clawvisor.com",
+			wantSlug:    "clawvisor",
+			wantDisplay: "Clawvisor",
+			wantNotPresent: []string{
+				"[model_providers.clawvisor-staging]",
+				"[model_providers.clawvisor-dev]",
+			},
+		},
+		{
+			name:        "staging",
+			llmProxyURL: "https://llm.staging.clawvisor.com",
+			wantSlug:    "clawvisor-staging",
+			wantDisplay: "Clawvisor (staging)",
+			wantNotPresent: []string{
+				"[model_providers.clawvisor-dev]",
+			},
+		},
+		{
+			name:        "dev_localhost_default",
+			llmProxyURL: "", // empty → fallback to request host (127.0.0.1) → dev
+			wantSlug:    "clawvisor-dev",
+			wantDisplay: "Clawvisor (dev)",
+			wantNotPresent: []string{
+				"[model_providers.clawvisor-staging]",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewInstallerHandler("", "", true, tc.llmProxyURL, "")
+			body := installerGet(t, h, "codex", "CLAIMCODE0")
+			assertContainsAll(t, body,
+				"[model_providers."+tc.wantSlug+"]",
+				`name = "`+tc.wantDisplay+`"`,
+				"-c model_provider="+tc.wantSlug,
+				`model_provider = "`+tc.wantSlug+`"`,
+			)
+			for _, np := range tc.wantNotPresent {
+				if strings.Contains(body, np) {
+					t.Errorf("unexpected %q in body (should only appear for that env)", np)
+				}
+			}
+		})
 	}
 }
 
