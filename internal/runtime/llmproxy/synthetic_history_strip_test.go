@@ -348,6 +348,199 @@ func TestStripSyntheticApprovalHistory_ReconstructionIdempotentAcrossTurns(t *te
 	}
 }
 
+// TestStripSyntheticApprovalHistory_WrapsTextOnlyUserTurnAsToolResult
+// pins the fix for the text-shape inline-approval path: when the
+// substituted-prompt assistant turn had no AskUserQuestion (Codex,
+// Telegram-bot agents, any harness without an AskUserQuestion-style
+// picker), the body editor lands the approval notice as a plain
+// string user content. After the strip reconstructs the assistant
+// turn into [tool_use(original)], that user turn would dangle as an
+// unpaired text message and Anthropic would 400 with
+// "messages.N: tool_use ids were found without tool_result blocks
+// immediately after". The strip must wrap the notice into a
+// tool_result paired to the reconstructed tool_use_id.
+func TestStripSyntheticApprovalHistory_WrapsTextOnlyUserTurnAsToolResult(t *testing.T) {
+	const approvalID = "cv-textwrapcurr01"
+	const originalToolUseID = "toolu_01TextOnlyOriginal"
+	notice := `<clawvisor-notice kind="task-approved">Task was created and approved by the user. Task ID: task-x.</clawvisor-notice>`
+	body, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "create the task"},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": "Clawvisor wants to create a task to cover this work:\n\nPurpose\n  Bootstrap\n\n[clawvisor:approval=" + approvalID + "]"},
+			}},
+			// Plain-string content: the body editor's text-shape
+			// rewrite (replaceAnthropicApprovalReply) produces this
+			// shape after a user "y" / "approve" reply.
+			{"role": "user", "content": notice},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(id string) *historystrip.ReconstructedPair {
+		if id != approvalID {
+			return nil
+		}
+		return &historystrip.ReconstructedPair{
+			ToolUseID:  originalToolUseID,
+			ToolName:   "exec",
+			Input:      json.RawMessage(`{"command":"curl -X POST .../control/tasks?surface=inline ..."}`),
+			ResultText: notice,
+		}
+	}
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider:             conversation.ProviderAnthropic,
+		Body:                 body,
+		ReconstructionLookup: lookup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Modified {
+		t.Fatalf("strip should rewrite body for text-shape reconstruction; got unchanged: %s", out.Body)
+	}
+	got := string(out.Body)
+	// Substituted-prompt text must not survive.
+	if strings.Contains(got, "Clawvisor wants to create a task") {
+		t.Errorf("substituted-prompt text leaked: %s", got)
+	}
+	// Assistant turn becomes [tool_use(original)].
+	if !strings.Contains(got, `"id":"`+originalToolUseID+`"`) {
+		t.Errorf("reconstructed tool_use_id missing: %s", got)
+	}
+	// User turn must be wrapped as a tool_result paired to the
+	// reconstructed tool_use_id — this is the adjacency Anthropic
+	// validates. Without the wrap, the user turn would be a plain
+	// string and the next request would 400.
+	if !strings.Contains(got, `"type":"tool_result"`) {
+		t.Errorf("expected tool_result wrap on user turn; got: %s", got)
+	}
+	if !strings.Contains(got, `"tool_use_id":"`+originalToolUseID+`"`) {
+		t.Errorf("tool_result must pair against reconstructed tool_use_id; got: %s", got)
+	}
+	// The notice text must round-trip into the tool_result's content.
+	if !strings.Contains(got, "Task was created and approved") {
+		t.Errorf("notice text missing from rewritten body: %s", got)
+	}
+	if !json.Valid(out.Body) {
+		t.Errorf("rewritten body not valid JSON: %s", got)
+	}
+}
+
+// TestStripSyntheticApprovalHistory_WrapsTextBlockUserTurnAsToolResult
+// covers the persistent-augment path: on turn N+1 (and later) the
+// client echoes back the original "approve" verb, the augmenter
+// splices the notice into the user text block, and the strip then
+// reconstructs the older assistant turn. The user content is an
+// ARRAY of text blocks (notice + sibling system reminders), not a
+// plain string — the wrap must move the notice into the tool_result
+// while keeping unrelated text blocks alongside.
+func TestStripSyntheticApprovalHistory_WrapsTextBlockUserTurnAsToolResult(t *testing.T) {
+	const approvalID = "cv-textwrapblks02"
+	const originalToolUseID = "toolu_01TextBlocksOrig"
+	notice := `<clawvisor-notice kind="task-approved">Task was created. Task ID: task-y.</clawvisor-notice>`
+	body, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "do the thing"},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": "Clawvisor wants to create a task to cover this work:\n\n[clawvisor:approval=" + approvalID + "]"},
+			}},
+			{"role": "user", "content": []map[string]any{
+				{"type": "text", "text": notice},
+				{"type": "text", "text": "<system-reminder>preserve me</system-reminder>"},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(id string) *historystrip.ReconstructedPair {
+		if id != approvalID {
+			return nil
+		}
+		return &historystrip.ReconstructedPair{
+			ToolUseID:  originalToolUseID,
+			ToolName:   "exec",
+			Input:      json.RawMessage(`{"command":"curl ..."}`),
+			ResultText: notice,
+		}
+	}
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider:             conversation.ProviderAnthropic,
+		Body:                 body,
+		ReconstructionLookup: lookup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Modified {
+		t.Fatalf("strip should rewrite body for text-blocks reconstruction; got unchanged: %s", out.Body)
+	}
+	got := string(out.Body)
+	if !strings.Contains(got, `"type":"tool_result"`) {
+		t.Errorf("expected tool_result wrap; got: %s", got)
+	}
+	if !strings.Contains(got, `"tool_use_id":"`+originalToolUseID+`"`) {
+		t.Errorf("tool_result must pair against reconstructed tool_use_id; got: %s", got)
+	}
+	// The system-reminder text block must survive alongside the
+	// tool_result — the harness relies on it for context.
+	if !strings.Contains(got, "preserve me") {
+		t.Errorf("sibling system-reminder text block must survive the wrap; got: %s", got)
+	}
+	if !json.Valid(out.Body) {
+		t.Errorf("rewritten body not valid JSON: %s", got)
+	}
+}
+
+// TestStripSyntheticApprovalHistory_NoOrphanWhenReconstructionUnavailable
+// pins the safety property: when the reconstruction lookup returns
+// nil (no lifecycle audit data, store outage, predates the audit),
+// the strip falls back to drop-the-turn. A text-shape user turn
+// must NOT get wrapped as a tool_result in that case — there's no
+// reconstructed tool_use_id to pair against, so the wrap would
+// introduce a fresh orphan and 400 the next request.
+func TestStripSyntheticApprovalHistory_NoOrphanWhenReconstructionUnavailable(t *testing.T) {
+	const approvalID = "cv-textnorec0003a"
+	notice := `<clawvisor-notice kind="task-approved">Task was created.</clawvisor-notice>`
+	body, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "create the task"},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": "Clawvisor wants to create a task to cover this work:\n\n[clawvisor:approval=" + approvalID + "]"},
+			}},
+			{"role": "user", "content": notice},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(id string) *historystrip.ReconstructedPair { return nil }
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider:             conversation.ProviderAnthropic,
+		Body:                 body,
+		ReconstructionLookup: lookup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out.Body)
+	// No tool_result anywhere — wrapping without a reconstruction
+	// would orphan immediately.
+	if strings.Contains(got, `"type":"tool_result"`) {
+		t.Errorf("no reconstruction available — must not wrap as tool_result; got: %s", got)
+	}
+	// User notice must still survive as text (not stripped) since
+	// it's not a bare verb.
+	if !strings.Contains(got, "Task was created") {
+		t.Errorf("notice text must pass through unchanged: %s", got)
+	}
+}
+
 func TestStripSyntheticApprovalHistory_KeepsSiblingTextBlocksAfterStrippingOrphanToolResult(t *testing.T) {
 	// Real Claude Code shape: the harness packs the next-turn
 	// system-reminders alongside the AskUserQuestion tool_result

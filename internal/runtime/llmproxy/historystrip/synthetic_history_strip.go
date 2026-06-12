@@ -113,10 +113,21 @@ func stripAnthropicSyntheticApprovalHistory(body []byte, lookup ReconstructionLo
 	// a 400, so the strip must clean both ends of the pair together.
 	var orphanedToolUseIDs map[string]struct{}
 	// pendingReconstruction, when set, signals that the next user
-	// turn's tool_result for orphanedToolUseIDs[*] should be REPLACED
-	// (not stripped) with a tool_result paired to the reconstruction's
-	// ToolUseID. Carries the synthetic-ID → reconstruction mapping so
-	// the next-turn handler knows which tool_result to swap.
+	// turn must be paired with the reconstruction's ToolUseID. Two
+	// shapes feed in here:
+	//   - AskUserQuestion path: the substituted assistant turn carried
+	//     a synthetic picker tool_use; orphanedToolUseIDs holds its id
+	//     and the user's tool_result for it gets SWAPPED to point at
+	//     the reconstructed tool_use_id.
+	//   - Text-only path: no synthetic picker tool_use existed, so
+	//     orphanedToolUseIDs is empty. The user's content (a plain
+	//     notice text the body editor or augmenter spliced in) gets
+	//     WRAPPED into a fresh tool_result paired to the reconstructed
+	//     tool_use_id. Without the wrap the next request goes upstream
+	//     with a reconstructed [tool_use] but a plain-text user turn,
+	//     and Anthropic rejects with "tool_use ids were found without
+	//     tool_result blocks immediately after" (the Telegram-bot /
+	//     Codex agents failure mode).
 	var pendingReconstruction *ReconstructedPair
 	for _, msg := range messages {
 		role := extractMessageRole(msg)
@@ -129,15 +140,12 @@ func stripAnthropicSyntheticApprovalHistory(body []byte, lookup ReconstructionLo
 				continue
 			}
 		}
-		if role == "user" && len(orphanedToolUseIDs) > 0 {
-			// When a reconstruction is in flight, REPLACE the
-			// matching tool_result block with one paired to the
-			// reconstructed tool_use_id; otherwise strip the
-			// orphan (current behavior).
-			if pendingReconstruction != nil {
+		if role == "user" && pendingReconstruction != nil {
+			if len(orphanedToolUseIDs) > 0 {
+				// AskUserQuestion path: replace the orphan
+				// tool_result block with one paired to the
+				// reconstructed tool_use_id.
 				swapped, swapChanged, swapErr := replaceToolResultsForReconstruction(content, orphanedToolUseIDs, pendingReconstruction)
-				orphanedToolUseIDs = nil
-				pendingReconstruction = nil
 				if swapErr == nil && swapChanged {
 					modified = true
 					newMsg, err := jsonsurgery.SetField(msg, "content", swapped)
@@ -146,19 +154,37 @@ func stripAnthropicSyntheticApprovalHistory(body []byte, lookup ReconstructionLo
 					}
 				}
 			} else {
-				cleaned, dropped, changed, err := stripToolResultsByID(content, orphanedToolUseIDs)
-				orphanedToolUseIDs = nil
-				if err == nil && changed {
+				// Text-only path: the original substituted turn
+				// carried no synthetic picker tool_use, so the
+				// user content has no orphan tool_result to swap.
+				// Wrap the user's notice text as a fresh
+				// tool_result paired to the reconstructed
+				// tool_use_id so Anthropic's
+				// tool_use→tool_result adjacency holds.
+				wrapped, wrapChanged, wrapErr := wrapUserContentAsToolResult(content, pendingReconstruction)
+				if wrapErr == nil && wrapChanged {
 					modified = true
-					if dropped {
-						// User message had only the orphan tool_result
-						// (and maybe blank text). Drop the whole turn.
-						continue
-					}
-					newMsg, err := jsonsurgery.SetField(msg, "content", cleaned)
+					newMsg, err := jsonsurgery.SetField(msg, "content", wrapped)
 					if err == nil {
 						msg = newMsg
 					}
+				}
+			}
+			orphanedToolUseIDs = nil
+			pendingReconstruction = nil
+		} else if role == "user" && len(orphanedToolUseIDs) > 0 {
+			cleaned, dropped, changed, err := stripToolResultsByID(content, orphanedToolUseIDs)
+			orphanedToolUseIDs = nil
+			if err == nil && changed {
+				modified = true
+				if dropped {
+					// User message had only the orphan tool_result
+					// (and maybe blank text). Drop the whole turn.
+					continue
+				}
+				newMsg, err := jsonsurgery.SetField(msg, "content", cleaned)
+				if err == nil {
+					msg = newMsg
 				}
 			}
 		}
@@ -184,14 +210,22 @@ func stripAnthropicSyntheticApprovalHistory(body []byte, lookup ReconstructionLo
 						msg = newMsg
 						modified = true
 						survivors = append(survivors, msg)
-						// Signal the next user turn to SWAP
-						// (not strip) the orphan tool_result.
+						// Signal the next user turn to pair
+						// up with the reconstructed tool_use:
+						// SWAP an existing tool_result (when
+						// the substituted turn carried a
+						// synthetic picker call) or WRAP the
+						// user's text content as a fresh
+						// tool_result (text-only path). The
+						// pendingReconstruction flag carries
+						// the data; orphanedToolUseIDs
+						// selects between the two paths.
+						pendingReconstruction = reconstructed
 						if len(ids) > 0 {
 							orphanedToolUseIDs = make(map[string]struct{}, len(ids))
 							for _, id := range ids {
 								orphanedToolUseIDs[id] = struct{}{}
 							}
-							pendingReconstruction = reconstructed
 						}
 						skipNextBareApprovalReply = true
 						continue
@@ -377,6 +411,116 @@ func buildReconstructedAssistantBlock(rec *ReconstructedPair) (json.RawMessage, 
 		return nil, false
 	}
 	return raw, true
+}
+
+// wrapUserContentAsToolResult is the text-only-path counterpart to
+// replaceToolResultsForReconstruction. When the substituted-prompt
+// assistant turn carried no synthetic picker tool_use (the
+// AskUserQuestion-less path used by Codex / Telegram-bot agents), the
+// user turn has no orphan tool_result to swap — just a notice text
+// block (or plain string content) the body editor / augmenter
+// produced. Wrap that notice into a fresh tool_result block paired to
+// the reconstruction's ToolUseID so the next request's
+// [reconstructed tool_use] → [user tool_result] adjacency is valid.
+//
+// Skips when:
+//   - content already contains a tool_result block (already wrapped,
+//     or paired against an unrelated exchange — don't double-wrap).
+//   - content blocks contain non-text shapes (tool_use, image, …) —
+//     unsafe to re-shape into a single tool_result content.
+//   - content is a multi-text-block array with no notice marker —
+//     we can't tell which block is the approval reply, so refuse to
+//     guess.
+//
+// On wrap, the tool_result becomes the first content block and any
+// non-notice text blocks (e.g. system reminders the harness appended)
+// pass through unchanged alongside it.
+func wrapUserContentAsToolResult(raw json.RawMessage, rec *ReconstructedPair) (json.RawMessage, bool, error) {
+	if len(raw) == 0 || rec == nil || rec.ToolUseID == "" {
+		return raw, false, nil
+	}
+	// Plain-string content: the body editor's text-shape rewrite
+	// (replaceAnthropicApprovalReply) lands here. Wrap the whole
+	// string as the tool_result's content.
+	var simple string
+	if err := json.Unmarshal(raw, &simple); err == nil {
+		block, err := json.Marshal(map[string]any{
+			"type":        "tool_result",
+			"tool_use_id": rec.ToolUseID,
+			"content":     simple,
+		})
+		if err != nil {
+			return raw, false, err
+		}
+		out, err := json.Marshal([]json.RawMessage{block})
+		if err != nil {
+			return raw, false, err
+		}
+		return out, true, nil
+	}
+	// Block-array content: the persistent augmenter
+	// (augmentAnthropicApprovedInlineTasks) lands here after splicing
+	// the notice into a text block.
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return raw, false, nil
+	}
+	noticeIdx := -1
+	var noticeText string
+	for i, blk := range blocks {
+		var probe struct {
+			Type      string `json:"type"`
+			Text      string `json:"text"`
+			ToolUseID string `json:"tool_use_id"`
+		}
+		if err := json.Unmarshal(blk, &probe); err != nil {
+			return raw, false, nil
+		}
+		switch probe.Type {
+		case "tool_result":
+			// Existing tool_result block — leave the message
+			// alone rather than risk a double-wrap.
+			return raw, false, nil
+		case "text":
+			if noticeIdx < 0 && ContainsInlineApprovalAugmentationMarker(probe.Text) {
+				noticeIdx = i
+				noticeText = probe.Text
+			}
+		default:
+			// Non-text, non-tool_result block (tool_use, image,
+			// document, …). Refuse to re-shape; the wrap path
+			// isn't equipped to preserve the semantics.
+			return raw, false, nil
+		}
+	}
+	if noticeIdx < 0 {
+		// No notice marker in any text block — can't tell which
+		// block belongs in the tool_result. Skip rather than guess.
+		return raw, false, nil
+	}
+	toolResultBlock, err := json.Marshal(map[string]any{
+		"type":        "tool_result",
+		"tool_use_id": rec.ToolUseID,
+		"content":     noticeText,
+	})
+	if err != nil {
+		return raw, false, err
+	}
+	// Prepend the tool_result; drop the original notice text block;
+	// preserve the remaining blocks (system reminders, etc.) in order.
+	newBlocks := make([]json.RawMessage, 0, len(blocks))
+	newBlocks = append(newBlocks, toolResultBlock)
+	for i, blk := range blocks {
+		if i == noticeIdx {
+			continue
+		}
+		newBlocks = append(newBlocks, blk)
+	}
+	out, err := json.Marshal(newBlocks)
+	if err != nil {
+		return raw, false, err
+	}
+	return out, true, nil
 }
 
 // replaceToolResultsForReconstruction walks the user-turn content,
