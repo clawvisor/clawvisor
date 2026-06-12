@@ -432,6 +432,16 @@ func TestInstallerHermesRender(t *testing.T) {
 		`"$KEY_ENV=$TOKEN"`,
 		"~/.hermes/config.yaml",
 		"hermes-cv",
+		// Config-file mode: secrets in ~/.hermes/.env (Hermes docs are
+		// explicit — config.yaml carries non-secret config only), with
+		// ${HERMES_CV_API_KEY} substitution into config.yaml.
+		"~/.hermes/.env",
+		"HERMES_CV_API_KEY=$TOKEN",
+		`chmod 600 ~/.hermes/.env`,
+		// Backslash-escaped in the heredoc so bash doesn't expand it; the
+		// file that actually lands on disk is `api_key: "${HERMES_CV_API_KEY}"`,
+		// which Hermes resolves from ~/.hermes/.env at runtime.
+		`api_key: "\${HERMES_CV_API_KEY}"`,
 		// Setup-shape cleanup paths.
 		"rm -f ~/.claude/commands/clawvisor-setup.md",
 		"rm -rf ~/.codex/skills/clawvisor-setup",
@@ -472,14 +482,17 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"claim=CLAIMOPEN12",
 		"/api/agents/connect",
 		`"$TOKEN_FILE"`,
-		// Step 2: detect provider — reads env + models.json provider keys
-		// via jq (jq is safe — it can extract structured fields without
-		// dumping arbitrary content).
+		// Step 2: detect provider — reads env + the global openclaw.json
+		// provider keys via jq (no per-agent models.json file exists, per
+		// docs.openclaw.ai/concepts/model-providers).
 		"## 2. Detect the upstream LLM provider",
-		`for cfg in ~/.openclaw/agents/*/agent/models.json`,
+		`~/.openclaw/openclaw.json`,
+		`jq -r '.models.providers // {} | keys[]?'`,
 		"anthropic*|claude*",
 		"openai*|gpt*",
-		// Case block (same as Hermes — shared via providerCaseBlock).
+		// Case block (shared with Hermes via providerCaseBlock). OPENCLAW_API
+		// is the on-disk `api` field value (distinct from the
+		// --custom-compatibility flag value that onboard takes).
 		`case "$PROVIDER" in`,
 		"PROVIDER_LABEL='Anthropic'",
 		"PROVIDER_LABEL='OpenAI'",
@@ -487,34 +500,38 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"MODEL_ID='gpt-5.4'",
 		"CONTEXT_WINDOW=200000",
 		"CONTEXT_WINDOW=1000000",
+		"OPENCLAW_API='anthropic-messages'",
+		"OPENCLAW_API='openai-completions'",
 		// Step 3: ensure vaulted key (provider-agnostic title).
 		"## 3. Ensure a vaulted upstream key exists",
 		"/api/runtime/llm-credentials",
 		`### 3.a. Vault a $PROVIDER_LABEL API key`,
-		// Step 4-5: probe + preflight.
+		// Step 4-5: probe + preflight. Probe uses bare `openclaw` binary
+		// (not `openclaw-cli`).
 		"## 4. Probe the OpenClaw deployment",
+		`command -v openclaw >/dev/null 2>&1`,
 		"$OPENCLAW_MODE",
 		"## 5. Preflight: confirm OpenClaw can reach Clawvisor",
 		"-H \"X-Clawvisor-Agent-Token: $CLAWVISOR_TOKEN\"",
 		"host.docker.internal:",
 		"/api/skill/catalog",
-		// Step 6: configure — onboard uses $PROVIDER / $MODEL_ID / $BASE_PATH.
+		// Step 6: configure via `openclaw config set models.providers.clawvisor`.
+		// Onboard is for first-time auth, not provider registration —
+		// docs.openclaw.ai/cli/config covers the merge pattern.
 		"## 6. Point OpenClaw at Clawvisor",
-		"openclaw-cli onboard --non-interactive",
-		"--auth-choice custom-api-key",
-		`--custom-base-url "$CLAWVISOR_LLM_URL$BASE_PATH"`,
-		`--custom-model-id "$MODEL_ID"`,
-		"--custom-api-key \"$TOKEN\"",
-		`--custom-compatibility "$PROVIDER" --accept-risk`,
-		`docker exec "$OPENCLAW_CONTAINER" openclaw-cli onboard`,
-		"OPENCLAW_MAX_TOKENS=8192",
-		`1M beta context`,
-		"models.json",
-		`jq --arg model "$MODEL_ID"`,
+		"PROVIDER_JSON=$(jq -n",
+		`--arg baseUrl "$CLAWVISOR_LLM_URL$BASE_PATH"`,
+		`--arg apiKey  "$TOKEN"`,
+		`--arg api     "$OPENCLAW_API"`,
+		`--arg modelId "$MODEL_ID"`,
 		`--argjson contextWindow "$CONTEXT_WINDOW"`,
-		// Remote mode rendered alongside host/docker.
-		"ssh \"$OPENCLAW_REMOTE\" \"openclaw-cli onboard",
-		"REMOTE_OPENCLAW_PATCH",
+		"--argjson maxTokens 8192",
+		`openclaw config set models.providers.clawvisor "$PROVIDER_JSON" --strict-json --merge`,
+		`docker exec "$OPENCLAW_CONTAINER" openclaw config set models.providers.clawvisor`,
+		// Remote uses $(cat) substitution to pipe the JSON over stdin.
+		`ssh "$OPENCLAW_REMOTE" 'openclaw config set models.providers.clawvisor "$(cat)" --strict-json --merge'`,
+		"export OPENCLAW_CLAWVISOR_URL",
+		"$OPENCLAW_CLAWVISOR_URL$BASE_PATH",
 		// Setup-shape cleanup paths.
 		"rm -f ~/.claude/commands/clawvisor-setup.md",
 		"rm -rf ~/.codex/skills/clawvisor-setup",
@@ -530,13 +547,26 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"clawvisor-webhook",
 		"clawhub install",
 		"rm -f ~/.claude/commands/clawvisor-install.md",
-		// Provider-baked literals (must come from $PROVIDER / $MODEL_ID).
+		// The community `openclaw-cli` shim is NOT the install target;
+		// the real binary is `openclaw`.
+		"openclaw-cli",
+		// `openclaw onboard` is the first-time auth flow, not the path for
+		// adding a custom provider after install. Verified against
+		// docs.openclaw.ai/cli/onboard — onboard doesn't support idempotent
+		// re-runs for provider switching.
+		"openclaw onboard --non-interactive",
+		// Old per-agent models.json patch — there is no such file. All
+		// provider config lives in the global ~/.openclaw/openclaw.json.
+		"REMOTE_OPENCLAW_PATCH",
+		"OPENCLAW_MODELS_JSON",
+		"/agents/*/agent/models.json",
+		// --custom-compatibility used the wrong value (`anthropic` instead
+		// of `anthropic-messages`) — keep the door closed on that.
+		"--custom-compatibility anthropic --accept-risk",
+		// Per-provider literals would mean we baked the choice instead of
+		// deriving from the case block.
 		"## 2. Ensure a Anthropic key is vaulted",
 		"## 2. Ensure a OpenAI key is vaulted",
-		"--custom-compatibility anthropic --accept-risk",
-		"--custom-compatibility openai --accept-risk",
-		`--custom-model-id "claude-sonnet-4-6"`,
-		`--custom-model-id "gpt-5.4"`,
 		"OPENCLAW_MODEL_CONTEXT_WINDOW=200000",
 		"OPENCLAW_MODEL_CONTEXT_WINDOW=1000000",
 	} {
@@ -551,23 +581,23 @@ func TestInstallerOpenClawRendersAllModes(t *testing.T) {
 	// picked by the dashboard — the helper probes and picks at runtime, so
 	// the rendered markdown must contain command variants for all three.
 	// Provider is also no longer baked, so the per-mode snippets use the
-	// $BASE_PATH shell var instead of a hardcoded /api or /api/v1 path.
+	// $BASE_PATH / $OPENCLAW_API shell vars instead of hardcoded literals.
 	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGet(t, h, "openclaw", "CLAIMOPEN12")
 
 	assertContainsAll(t, body,
-		// Host: bare openclaw-cli onboard.
-		"openclaw-cli onboard --non-interactive",
+		// Host: bare `openclaw config set` (no openclaw-cli; no onboard).
+		`openclaw config set models.providers.clawvisor "$PROVIDER_JSON" --strict-json --merge`,
 		// Docker: docker exec into the already-running container (probe
-		// captures its name as $OPENCLAW_CONTAINER). $BASE_PATH gets
-		// substituted from the case block at install time.
-		`docker exec "$OPENCLAW_CONTAINER" openclaw-cli onboard`,
+		// captures its name as $OPENCLAW_CONTAINER), then `openclaw config
+		// set` inside the container against the mounted ~/.openclaw.
+		`docker exec "$OPENCLAW_CONTAINER" openclaw config set models.providers.clawvisor`,
 		"host.docker.internal:",
-		// Remote: ssh-wrapped onboard + remote models.json patch.
-		"ssh \"$OPENCLAW_REMOTE\" \"openclaw-cli onboard",
+		// Remote: ssh + stdin-piped JSON via $(cat) so the embedded double
+		// quotes don't fight with ssh argv quoting.
+		`ssh "$OPENCLAW_REMOTE" 'openclaw config set models.providers.clawvisor "$(cat)" --strict-json --merge'`,
 		"export OPENCLAW_CLAWVISOR_URL",
 		"$OPENCLAW_CLAWVISOR_URL$BASE_PATH",
-		"REMOTE_OPENCLAW_PATCH",
 	)
 }
 

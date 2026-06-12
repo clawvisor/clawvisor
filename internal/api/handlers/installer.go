@@ -607,6 +607,11 @@ rm -rf ~/.codex/skills/clawvisor-setup`
 // Sonnet 4's 1M beta only kicks in for Anthropic orgs that have it
 // enabled, so we surface 200K as the conservative floor and tell the
 // helper to override only when the user explicitly opts in.
+// `OPENCLAW_API` is the on-disk value the OpenClaw provider registry uses
+// (verified against docs.openclaw.ai/concepts/model-providers). It's
+// distinct from the `--custom-compatibility` flag value used by
+// `openclaw onboard`; we configure via `openclaw config set --strict-json
+// --merge` and write the on-disk value directly.
 const providerCaseBlock = `case "$PROVIDER" in
   anthropic)
     PROVIDER_LABEL='Anthropic'
@@ -617,6 +622,7 @@ const providerCaseBlock = `case "$PROVIDER" in
     KEY_PREFIX='sk-ant-'
     MODEL_ID='claude-sonnet-4-6'
     CONTEXT_WINDOW=200000
+    OPENCLAW_API='anthropic-messages'
     ;;
   openai)
     PROVIDER_LABEL='OpenAI'
@@ -627,6 +633,7 @@ const providerCaseBlock = `case "$PROVIDER" in
     KEY_PREFIX='sk-'
     MODEL_ID='gpt-5.4'
     CONTEXT_WINDOW=1000000
+    OPENCLAW_API='openai-completions'
     ;;
   *)
     echo "unsupported provider: $PROVIDER" >&2; exit 1
@@ -674,11 +681,12 @@ func sectionDetectProviderHermes(step int) string {
 }
 
 // sectionDetectProviderOpenClaw emits the provider-detection step for the
-// OpenClaw installer. It probes env vars and scans
-// ~/.openclaw/agents/*/agent/models.json for provider keys via jq —
-// jq is safe here because it can extract structured fields without
-// dumping arbitrary content. As with Hermes, single hit → confirm;
-// multiple → ask which; none → ask.
+// OpenClaw installer. It probes env vars and reads provider keys from
+// ~/.openclaw/openclaw.json — which is OpenClaw's single global config
+// file (per docs.openclaw.ai/concepts/model-providers, all agents inherit
+// from `models.providers` here; no per-agent models.json file exists).
+// jq is safe because it extracts only the provider id keys, never the
+// nested apiKey values.
 func sectionDetectProviderOpenClaw(step int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %d. Detect the upstream LLM provider\n\n", step)
@@ -690,19 +698,15 @@ func sectionDetectProviderOpenClaw(step int) string {
 	fmt.Fprintf(&b, "# Env vars — presence only, never value\n")
 	fmt.Fprintf(&b, "[ -n \"$ANTHROPIC_API_KEY\" ] && DETECTED=\"$DETECTED anthropic\"\n")
 	fmt.Fprintf(&b, "[ -n \"$OPENAI_API_KEY\" ]   && DETECTED=\"$DETECTED openai\"\n")
-	fmt.Fprintf(&b, "# Existing OpenClaw provider registry\n")
-	fmt.Fprintf(&b, "for cfg in ~/.openclaw/agents/*/agent/models.json; do\n")
-	fmt.Fprintf(&b, "  test -f \"$cfg\" || continue\n")
-	fmt.Fprintf(&b, "  for p in $(jq -r '\n")
-	fmt.Fprintf(&b, "    (if .models.providers then .models.providers elif .providers then .providers else {} end)\n")
-	fmt.Fprintf(&b, "    | keys[]?\n")
-	fmt.Fprintf(&b, "  ' \"$cfg\" 2>/dev/null); do\n")
+	fmt.Fprintf(&b, "# Existing OpenClaw provider registry — global, under models.providers\n")
+	fmt.Fprintf(&b, "if [ -f ~/.openclaw/openclaw.json ]; then\n")
+	fmt.Fprintf(&b, "  for p in $(jq -r '.models.providers // {} | keys[]?' ~/.openclaw/openclaw.json 2>/dev/null); do\n")
 	fmt.Fprintf(&b, "    case \"$p\" in\n")
 	fmt.Fprintf(&b, "      anthropic*|claude*) DETECTED=\"$DETECTED anthropic\" ;;\n")
 	fmt.Fprintf(&b, "      openai*|gpt*)       DETECTED=\"$DETECTED openai\" ;;\n")
 	fmt.Fprintf(&b, "    esac\n")
 	fmt.Fprintf(&b, "  done\n")
-	fmt.Fprintf(&b, "done\n")
+	fmt.Fprintf(&b, "fi\n")
 	fmt.Fprintf(&b, "UNIQ=$(printf '%%s\\n' $DETECTED | sort -u | tr '\\n' ' ' | sed 's/ $//')\n")
 	fmt.Fprintf(&b, "echo \"detected: ${UNIQ:-none}\"\n")
 	fmt.Fprintf(&b, "```\n\n")
@@ -2077,27 +2081,46 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" \"$BASE_ENV='$HERMES_CLAWVISOR_URL$BASE_PATH' $KEY_ENV='$TOKEN' hermes chat\"\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "### 6.b. Config-file snippets (when `$HERMES_CONFIG=file`)\n\n")
-	fmt.Fprintf(&b, "The config bakes the current token in. If the user re-runs setup, the\n")
-	fmt.Fprintf(&b, "token rotates and the file must be re-written.\n\n")
+	fmt.Fprintf(&b, "Hermes's docs are explicit: secrets go in `~/.hermes/.env`, everything\n")
+	fmt.Fprintf(&b, "else in `~/.hermes/config.yaml`. The YAML references the env var via\n")
+	fmt.Fprintf(&b, "`${HERMES_CV_API_KEY}` substitution, so the token doesn't sit inline\n")
+	fmt.Fprintf(&b, "next to the rest of the config. (Use `HERMES_CV_API_KEY` rather than\n")
+	fmt.Fprintf(&b, "`$KEY_ENV`'s value here — `$KEY_ENV` is the upstream provider's env\n")
+	fmt.Fprintf(&b, "var, which Hermes also recognizes, and writing both forms in the\n")
+	fmt.Fprintf(&b, "same file would shadow each other.)\n\n")
+	fmt.Fprintf(&b, "If the user re-runs setup, the token rotates and `.env` must be\n")
+	fmt.Fprintf(&b, "re-written; `config.yaml` survives unchanged.\n\n")
 	fmt.Fprintf(&b, "**host:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "mkdir -p ~/.hermes && cat > ~/.hermes/config.yaml <<EOF\n")
+	fmt.Fprintf(&b, "mkdir -p ~/.hermes\n")
+	fmt.Fprintf(&b, "# Token to .env — strip any prior HERMES_CV_API_KEY entry first so\n")
+	fmt.Fprintf(&b, "# re-runs don't append duplicates.\n")
+	fmt.Fprintf(&b, "touch ~/.hermes/.env\n")
+	fmt.Fprintf(&b, "{ grep -v '^HERMES_CV_API_KEY=' ~/.hermes/.env 2>/dev/null; echo \"HERMES_CV_API_KEY=$TOKEN\"; } > ~/.hermes/.env.tmp \\\n")
+	fmt.Fprintf(&b, "  && mv ~/.hermes/.env.tmp ~/.hermes/.env\n")
+	fmt.Fprintf(&b, "chmod 600 ~/.hermes/.env\n")
+	fmt.Fprintf(&b, "# Non-secret config — references the .env var via ${VAR} substitution\n")
+	fmt.Fprintf(&b, "cat > ~/.hermes/config.yaml <<EOF\n")
 	fmt.Fprintf(&b, "model:\n")
 	fmt.Fprintf(&b, "  provider: custom\n")
 	fmt.Fprintf(&b, "  base_url: \"$CLAWVISOR_LLM_URL$BASE_PATH\"\n")
-	fmt.Fprintf(&b, "  api_key: \"$TOKEN\"\n")
+	fmt.Fprintf(&b, "  api_key: \"\\${HERMES_CV_API_KEY}\"\n")
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "**docker:** same content, but write the host's `~/.hermes/config.yaml`\n")
-	fmt.Fprintf(&b, "(must be mounted into the container, commonly at `/root/.hermes`) with\n")
-	fmt.Fprintf(&b, "`base_url: \"%s$BASE_PATH\"`.\n\n", llmHost)
+	fmt.Fprintf(&b, "**docker:** same shape, but write both files to the host path that's\n")
+	fmt.Fprintf(&b, "mounted into the container (`~/.hermes`, typically at `/root/.hermes`\n")
+	fmt.Fprintf(&b, "in the container). Use `base_url: \"%s$BASE_PATH\"` so the container\n", llmHost)
+	fmt.Fprintf(&b, "can resolve the Clawvisor host.\n\n")
 	fmt.Fprintf(&b, "**remote:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" \"mkdir -p ~/.hermes && cat > ~/.hermes/config.yaml\" <<EOF\n")
+	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" \"mkdir -p ~/.hermes && touch ~/.hermes/.env && \\\n")
+	fmt.Fprintf(&b, "  { grep -v '^HERMES_CV_API_KEY=' ~/.hermes/.env 2>/dev/null; echo HERMES_CV_API_KEY='$TOKEN'; } > ~/.hermes/.env.tmp && \\\n")
+	fmt.Fprintf(&b, "  mv ~/.hermes/.env.tmp ~/.hermes/.env && chmod 600 ~/.hermes/.env\"\n")
+	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" \"cat > ~/.hermes/config.yaml\" <<EOF\n")
 	fmt.Fprintf(&b, "model:\n")
 	fmt.Fprintf(&b, "  provider: custom\n")
 	fmt.Fprintf(&b, "  base_url: \"$HERMES_CLAWVISOR_URL$BASE_PATH\"\n")
-	fmt.Fprintf(&b, "  api_key: \"$TOKEN\"\n")
+	fmt.Fprintf(&b, "  api_key: \"\\${HERMES_CV_API_KEY}\"\n")
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "```\n\n")
 
@@ -2106,10 +2129,11 @@ func renderHermesInstaller(ctx installerCtx) string {
 	// provider at install time — the uninstall reference is read after
 	// install, so the actual names are resolved when the user reads it.
 	b.WriteString(sectionUninstallDoc("hermes", `1. Remove the `+"`model:`"+` block from `+"`~/.hermes/config.yaml`"+` (or unset the provider's `+"`*_BASE_URL`"+`/`+"`*_API_KEY`"+` env vars if you used env vars).
-2. Remove the `+"`hermes-cv`"+` function from your shell rc if you added one (diff record in `+"`~/.clawvisor/diffs/"+ctx.AgentName+"/hermes_cv.json`"+`).
-3. Delete the token file: `+"`rm ~/.clawvisor/agents/"+ctx.AgentName+".json`"+`.
-4. Revoke the agent in the Clawvisor dashboard under Agents → `+ctx.AgentName+` → Delete.
-5. Optional: remove the user-level upstream key from Clawvisor credentials if no other agents use it (Anthropic or OpenAI, depending on what you vaulted).
+2. Remove the `+"`HERMES_CV_API_KEY`"+` line from `+"`~/.hermes/.env`"+` if you used the config-file path.
+3. Remove the `+"`hermes-cv`"+` function from your shell rc if you added one (diff record in `+"`~/.clawvisor/diffs/"+ctx.AgentName+"/hermes_cv.json`"+`).
+4. Delete the token file: `+"`rm ~/.clawvisor/agents/"+ctx.AgentName+".json`"+`.
+5. Revoke the agent in the Clawvisor dashboard under Agents → `+ctx.AgentName+` → Delete.
+6. Optional: remove the user-level upstream key from Clawvisor credentials if no other agents use it (Anthropic or OpenAI, depending on what you vaulted).
 `, 7))
 
 	// Step 8: self-uninstall — remove this setup skill from the helper.
@@ -2154,12 +2178,12 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "compose dir it false-negatives on running containers (e.g. a real\n")
 	fmt.Fprintf(&b, "`openclaw-openclaw-gateway-1` container will be missed).\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "command -v openclaw-cli >/dev/null 2>&1 && echo 'host openclaw-cli present'\n")
+	fmt.Fprintf(&b, "command -v openclaw >/dev/null 2>&1 && echo 'host openclaw present'\n")
 	fmt.Fprintf(&b, "docker ps --format '{{.Names}}\\t{{.Image}}' 2>/dev/null | grep -i openclaw\n")
-	fmt.Fprintf(&b, "test -d ~/.openclaw && echo '~/.openclaw exists'\n")
+	fmt.Fprintf(&b, "test -f ~/.openclaw/openclaw.json && echo 'openclaw.json exists'\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Pick one of three modes and remember it as `$OPENCLAW_MODE`:\n\n")
-	fmt.Fprintf(&b, "- **host** — `openclaw-cli` is on `$PATH` on this machine.\n")
+	fmt.Fprintf(&b, "- **host** — `openclaw` is on `$PATH` on this machine.\n")
 	fmt.Fprintf(&b, "- **docker** — `docker ps` matched a running container. Capture its\n")
 	fmt.Fprintf(&b, "  exact name (first column) as `$OPENCLAW_CONTAINER` — the rest of the\n")
 	fmt.Fprintf(&b, "  skill uses `docker exec \"$OPENCLAW_CONTAINER\"` to run commands inside\n")
@@ -2171,8 +2195,10 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 
 	// Step 5: preflight — verify connectivity from OpenClaw's network namespace.
 	fmt.Fprintf(&b, "## 5. Preflight: confirm OpenClaw can reach Clawvisor\n\n")
-	fmt.Fprintf(&b, "Before `openclaw-cli onboard` bakes a Clawvisor URL into OpenClaw's\n")
-	fmt.Fprintf(&b, "config, prove the URL works from OpenClaw's own execution context.\n\n")
+	fmt.Fprintf(&b, "Before `openclaw config set` writes a Clawvisor provider entry into\n")
+	fmt.Fprintf(&b, "`~/.openclaw/openclaw.json`, prove the URL works from OpenClaw's own\n")
+	fmt.Fprintf(&b, "execution context (not just the helper's shell, which may be a\n")
+	fmt.Fprintf(&b, "different network namespace).\n\n")
 	fmt.Fprintf(&b, "**If `$OPENCLAW_MODE=host`:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "curl -fsSL -H \"X-Clawvisor-Agent-Token: $TOKEN\" \\\n")
@@ -2202,102 +2228,85 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Don't proceed past this step until preflight returns `OK`.\n\n")
 
-	// Step 6: configure — onboard + models.json patch. Each onboard
-	// invocation reads $BASE_PATH / $MODEL_ID / $PROVIDER from the case
-	// block set up in step 2.
+	// Step 6: configure — `openclaw config set models.providers.<id>` writes
+	// the Clawvisor provider into the global ~/.openclaw/openclaw.json
+	// registry (per docs.openclaw.ai/concepts/model-providers — there's no
+	// per-agent models.json file; all agents inherit from
+	// models.providers). `--strict-json` says the value is a JSON value
+	// (not a string); `--merge` preserves any sibling providers the user
+	// already had configured. `onboard` is for first-time auth, not for
+	// adding additional providers, so we don't use it.
 	fmt.Fprintf(&b, "## 6. Point OpenClaw at Clawvisor\n\n")
-	fmt.Fprintf(&b, "Run OpenClaw's onboarding command using Clawvisor's `$PROVIDER`-compatible\n")
-	fmt.Fprintf(&b, "base URL and the agent token from `$TOKEN`. Pick the variant matching\n")
-	fmt.Fprintf(&b, "`$OPENCLAW_MODE`.\n\n")
+	fmt.Fprintf(&b, "Build the provider JSON once (uses `$BASE_PATH` / `$OPENCLAW_API` /\n")
+	fmt.Fprintf(&b, "`$MODEL_ID` / `$CONTEXT_WINDOW` / `$PROVIDER_LABEL` from the case block\n")
+	fmt.Fprintf(&b, "in step 2; `$TOKEN` is the Clawvisor agent token from step 1):\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "PROVIDER_JSON=$(jq -n \\\n")
+	fmt.Fprintf(&b, "  --arg baseUrl \"$CLAWVISOR_LLM_URL$BASE_PATH\" \\\n")
+	fmt.Fprintf(&b, "  --arg apiKey  \"$TOKEN\" \\\n")
+	fmt.Fprintf(&b, "  --arg api     \"$OPENCLAW_API\" \\\n")
+	fmt.Fprintf(&b, "  --arg modelId \"$MODEL_ID\" \\\n")
+	fmt.Fprintf(&b, "  --arg modelName \"Clawvisor ($PROVIDER_LABEL)\" \\\n")
+	fmt.Fprintf(&b, "  --argjson contextWindow \"$CONTEXT_WINDOW\" \\\n")
+	fmt.Fprintf(&b, "  --argjson maxTokens %d \\\n", maxTokens)
+	fmt.Fprintf(&b, "  '{baseUrl:$baseUrl, apiKey:$apiKey, api:$api,\n")
+	fmt.Fprintf(&b, "    models:[{id:$modelId, name:$modelName,\n")
+	fmt.Fprintf(&b, "             contextWindow:$contextWindow, maxTokens:$maxTokens}]}')\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Then write it via `openclaw config set` in the variant matching\n")
+	fmt.Fprintf(&b, "`$OPENCLAW_MODE`. The same `$PROVIDER_JSON` value is reused across all\n")
+	fmt.Fprintf(&b, "three. (`--merge` preserves any existing providers; `--strict-json`\n")
+	fmt.Fprintf(&b, "treats the value as a JSON object, not a string.)\n\n")
 	fmt.Fprintf(&b, "**host:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "openclaw-cli onboard --non-interactive \\\n")
-	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
-	fmt.Fprintf(&b, "  --custom-base-url \"$CLAWVISOR_LLM_URL$BASE_PATH\" \\\n")
-	fmt.Fprintf(&b, "  --custom-model-id \"$MODEL_ID\" \\\n")
-	fmt.Fprintf(&b, "  --custom-api-key \"$TOKEN\" \\\n")
-	fmt.Fprintf(&b, "  --custom-compatibility \"$PROVIDER\" --accept-risk\n")
+	fmt.Fprintf(&b, "openclaw config set models.providers.clawvisor \"$PROVIDER_JSON\" --strict-json --merge\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**docker:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "docker exec \"$OPENCLAW_CONTAINER\" openclaw-cli onboard --non-interactive \\\n")
-	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
-	fmt.Fprintf(&b, "  --custom-base-url \"%s$BASE_PATH\" \\\n", llmHost)
-	fmt.Fprintf(&b, "  --custom-model-id \"$MODEL_ID\" \\\n")
-	fmt.Fprintf(&b, "  --custom-api-key \"$TOKEN\" \\\n")
-	fmt.Fprintf(&b, "  --custom-compatibility \"$PROVIDER\" --accept-risk\n")
+	fmt.Fprintf(&b, "# `docker exec` doesn't expand the helper's $PROVIDER_JSON inside the\n")
+	fmt.Fprintf(&b, "# container — pass it via argv after the host shell substitution.\n")
+	fmt.Fprintf(&b, "docker exec \"$OPENCLAW_CONTAINER\" openclaw config set models.providers.clawvisor \"$PROVIDER_JSON\" --strict-json --merge\n")
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "**remote:**\n\n")
+	fmt.Fprintf(&b, "Note: the docker variant writes Clawvisor's `$CLAWVISOR_LLM_URL`\n")
+	fmt.Fprintf(&b, "verbatim. If Clawvisor runs on the host (not in a separate container\n")
+	fmt.Fprintf(&b, "network), rebuild `$PROVIDER_JSON` with `%s` substituted for\n", llmHost)
+	fmt.Fprintf(&b, "`$CLAWVISOR_LLM_URL` so the container can reach it.\n\n")
+	fmt.Fprintf(&b, "**remote:** pipe `$PROVIDER_JSON` over SSH via stdin substitution so\n")
+	fmt.Fprintf(&b, "the JSON's double quotes don't fight with ssh's argv quoting:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"openclaw-cli onboard --non-interactive \\\n")
-	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
-	fmt.Fprintf(&b, "  --custom-base-url '$OPENCLAW_CLAWVISOR_URL$BASE_PATH' \\\n")
-	fmt.Fprintf(&b, "  --custom-model-id '$MODEL_ID' \\\n")
-	fmt.Fprintf(&b, "  --custom-api-key '$TOKEN' \\\n")
-	fmt.Fprintf(&b, "  --custom-compatibility '$PROVIDER' --accept-risk\"\n")
-	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "Then patch OpenClaw's custom-provider model metadata so it does not keep\n")
-	fmt.Fprintf(&b, "the low fallback context window written by some OpenClaw versions. The\n")
-	fmt.Fprintf(&b, "case block in step 2 set `$CONTEXT_WINDOW` to the picked provider's\n")
-	fmt.Fprintf(&b, "native maximum (200K for Anthropic, 1M for OpenAI). For Claude Sonnet 4's\n")
-	fmt.Fprintf(&b, "1M beta context, override `CONTEXT_WINDOW=1000000` only if the user's\n")
-	fmt.Fprintf(&b, "Anthropic org and request headers support it.\n\n")
-	fmt.Fprintf(&b, "**host/docker** (patch runs on the host that owns OpenClaw's\n")
-	fmt.Fprintf(&b, "`models.json`):\n\n")
-	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "OPENCLAW_MAX_TOKENS=%d\n", maxTokens)
-	fmt.Fprintf(&b, "OPENCLAW_MODELS_JSON=${OPENCLAW_MODELS_JSON:-$(find \"${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/agents\" -path '*/agent/models.json' -print | sort | tail -n 1)}\n")
-	fmt.Fprintf(&b, "test -n \"$OPENCLAW_MODELS_JSON\" && test -f \"$OPENCLAW_MODELS_JSON\"\n")
-	fmt.Fprintf(&b, "tmp=$(mktemp)\n")
-	fmt.Fprintf(&b, "jq --arg model \"$MODEL_ID\" \\\n")
+	fmt.Fprintf(&b, "# Rebuild $PROVIDER_JSON for the remote host so the URL is reachable\n")
+	fmt.Fprintf(&b, "# from there (uses $OPENCLAW_CLAWVISOR_URL exported in step 5):\n")
+	fmt.Fprintf(&b, "PROVIDER_JSON_REMOTE=$(jq -n \\\n")
+	fmt.Fprintf(&b, "  --arg baseUrl \"$OPENCLAW_CLAWVISOR_URL$BASE_PATH\" \\\n")
+	fmt.Fprintf(&b, "  --arg apiKey  \"$TOKEN\" \\\n")
+	fmt.Fprintf(&b, "  --arg api     \"$OPENCLAW_API\" \\\n")
+	fmt.Fprintf(&b, "  --arg modelId \"$MODEL_ID\" \\\n")
+	fmt.Fprintf(&b, "  --arg modelName \"Clawvisor ($PROVIDER_LABEL)\" \\\n")
 	fmt.Fprintf(&b, "  --argjson contextWindow \"$CONTEXT_WINDOW\" \\\n")
-	fmt.Fprintf(&b, "  --argjson maxTokens \"$OPENCLAW_MAX_TOKENS\" '\n")
-	fmt.Fprintf(&b, "  def patchProvider:\n")
-	fmt.Fprintf(&b, "    .models |= ((. // []) | map(if .id == $model then . + {\n")
-	fmt.Fprintf(&b, "      contextWindow: $contextWindow,\n")
-	fmt.Fprintf(&b, "      maxTokens: $maxTokens\n")
-	fmt.Fprintf(&b, "    } else . end));\n")
-	fmt.Fprintf(&b, "  if .models.providers then\n")
-	fmt.Fprintf(&b, "    .models.providers |= with_entries(.value |= patchProvider)\n")
-	fmt.Fprintf(&b, "  elif .providers then\n")
-	fmt.Fprintf(&b, "    .providers |= with_entries(.value |= patchProvider)\n")
-	fmt.Fprintf(&b, "  else\n")
-	fmt.Fprintf(&b, "    error(\"No OpenClaw provider registry found\")\n")
-	fmt.Fprintf(&b, "  end\n")
-	fmt.Fprintf(&b, "' \"$OPENCLAW_MODELS_JSON\" > \"$tmp\" && mv \"$tmp\" \"$OPENCLAW_MODELS_JSON\"\n")
+	fmt.Fprintf(&b, "  --argjson maxTokens %d \\\n", maxTokens)
+	fmt.Fprintf(&b, "  '{baseUrl:$baseUrl, apiKey:$apiKey, api:$api,\n")
+	fmt.Fprintf(&b, "    models:[{id:$modelId, name:$modelName,\n")
+	fmt.Fprintf(&b, "             contextWindow:$contextWindow, maxTokens:$maxTokens}]}')\n")
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'openclaw config set models.providers.clawvisor \"$(cat)\" --strict-json --merge' <<EOF\n")
+	fmt.Fprintf(&b, "$PROVIDER_JSON_REMOTE\n")
+	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "**remote** (run the same patch over SSH; substitute the resolved\n")
-	fmt.Fprintf(&b, "values from `$MODEL_ID` / `$CONTEXT_WINDOW` into the remote env):\n\n")
-	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"MODEL_ID='$MODEL_ID' CONTEXT_WINDOW=$CONTEXT_WINDOW OPENCLAW_MAX_TOKENS=%d sh -s\" <<'REMOTE_OPENCLAW_PATCH'\n", maxTokens)
-	fmt.Fprintf(&b, "set -eu\n")
-	fmt.Fprintf(&b, "OPENCLAW_MODELS_JSON=${OPENCLAW_MODELS_JSON:-$(find \"${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/agents\" -path '*/agent/models.json' -print | sort | tail -n 1)}\n")
-	fmt.Fprintf(&b, "test -n \"$OPENCLAW_MODELS_JSON\" && test -f \"$OPENCLAW_MODELS_JSON\"\n")
-	fmt.Fprintf(&b, "tmp=$(mktemp)\n")
-	fmt.Fprintf(&b, "jq --arg model \"$MODEL_ID\" \\\n")
-	fmt.Fprintf(&b, "  --argjson contextWindow \"$CONTEXT_WINDOW\" \\\n")
-	fmt.Fprintf(&b, "  --argjson maxTokens \"$OPENCLAW_MAX_TOKENS\" '\n")
-	fmt.Fprintf(&b, "  def patchProvider:\n")
-	fmt.Fprintf(&b, "    .models |= ((. // []) | map(if .id == $model then . + {\n")
-	fmt.Fprintf(&b, "      contextWindow: $contextWindow,\n")
-	fmt.Fprintf(&b, "      maxTokens: $maxTokens\n")
-	fmt.Fprintf(&b, "    } else . end));\n")
-	fmt.Fprintf(&b, "  if .models.providers then\n")
-	fmt.Fprintf(&b, "    .models.providers |= with_entries(.value |= patchProvider)\n")
-	fmt.Fprintf(&b, "  elif .providers then\n")
-	fmt.Fprintf(&b, "    .providers |= with_entries(.value |= patchProvider)\n")
-	fmt.Fprintf(&b, "  else\n")
-	fmt.Fprintf(&b, "    error(\"No OpenClaw provider registry found\")\n")
-	fmt.Fprintf(&b, "  end\n")
-	fmt.Fprintf(&b, "' \"$OPENCLAW_MODELS_JSON\" > \"$tmp\" && mv \"$tmp\" \"$OPENCLAW_MODELS_JSON\"\n")
-	fmt.Fprintf(&b, "REMOTE_OPENCLAW_PATCH\n")
-	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "If `openclaw config set` exits non-zero with \"refusing to overwrite\n")
+	fmt.Fprintf(&b, "protected map\" or similar, the user already has a `clawvisor` provider\n")
+	fmt.Fprintf(&b, "and the merge tried to do something destructive — re-run with\n")
+	fmt.Fprintf(&b, "`--replace` added. If it fails with \"openclaw not initialized\" or\n")
+	fmt.Fprintf(&b, "similar, the user hasn't run `openclaw onboard` yet — surface that to\n")
+	fmt.Fprintf(&b, "the user and STOP (it's a prerequisite, outside this skill's scope).\n\n")
+	fmt.Fprintf(&b, "After `openclaw config set` lands, the new provider is available to\n")
+	fmt.Fprintf(&b, "every OpenClaw agent. The user can select it from OpenClaw's model\n")
+	fmt.Fprintf(&b, "picker (TUI) or by setting `models.default` in `openclaw.json`.\n\n")
 
 	// Step 7: uninstall reference doc.
-	b.WriteString(sectionUninstallDoc("openclaw", `1. Re-run OpenClaw onboarding and choose your previous non-Clawvisor provider/base URL.
-2. Delete the token file: `+"`rm ~/.clawvisor/agents/"+ctx.AgentName+".json`"+`.
-3. Revoke the agent in the Clawvisor dashboard under Agents → `+ctx.AgentName+` → Delete.
-4. Optional: remove the user-level upstream key from Clawvisor credentials if no other agents use it (Anthropic or OpenAI, depending on what you vaulted).
+	b.WriteString(sectionUninstallDoc("openclaw", `1. Remove the Clawvisor provider entry: `+"`openclaw config set models.providers.clawvisor null --strict-json --replace`"+` (or hand-edit `+"`~/.openclaw/openclaw.json`"+` to remove the `+"`clawvisor`"+` key under `+"`models.providers`"+`).
+2. If you set `+"`models.default`"+` to the Clawvisor model, point it back at your prior default.
+3. Delete the token file: `+"`rm ~/.clawvisor/agents/"+ctx.AgentName+".json`"+`.
+4. Revoke the agent in the Clawvisor dashboard under Agents → `+ctx.AgentName+` → Delete.
+5. Optional: remove the user-level upstream key from Clawvisor credentials if no other agents use it (Anthropic or OpenAI, depending on what you vaulted).
 `, 7))
 
 	// Step 8: self-uninstall — remove this setup skill from the helper.
