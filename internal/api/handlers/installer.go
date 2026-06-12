@@ -595,6 +595,233 @@ func helperSetupCleanupCommands() string {
 rm -rf ~/.codex/skills/clawvisor-setup`
 }
 
+// providerCaseBlock is the shell `case "$PROVIDER"` block emitted at the
+// end of sectionDetectProvider. Once $PROVIDER is set to "anthropic" or
+// "openai", it derives every other per-provider value (label, URL path,
+// env-var names, key prefix, default model id, native context window) as
+// shell variables that the rest of the skill consumes. Centralizing this
+// here means later steps reference $BASE_PATH / $KEY_ENV / $MODEL_ID
+// uniformly — they don't care which provider was picked.
+//
+// CONTEXT_WINDOW is set per provider's native maximum here: Claude
+// Sonnet 4's 1M beta only kicks in for Anthropic orgs that have it
+// enabled, so we surface 200K as the conservative floor and tell the
+// helper to override only when the user explicitly opts in.
+const providerCaseBlock = `case "$PROVIDER" in
+  anthropic)
+    PROVIDER_LABEL='Anthropic'
+    BASE_PATH='/api'
+    BASE_ENV='ANTHROPIC_BASE_URL'
+    KEY_ENV='ANTHROPIC_API_KEY'
+    KEY_VALUE="$ANTHROPIC_API_KEY"
+    KEY_PREFIX='sk-ant-'
+    MODEL_ID='claude-sonnet-4-6'
+    CONTEXT_WINDOW=200000
+    ;;
+  openai)
+    PROVIDER_LABEL='OpenAI'
+    BASE_PATH='/api/v1'
+    BASE_ENV='OPENAI_BASE_URL'
+    KEY_ENV='OPENAI_API_KEY'
+    KEY_VALUE="$OPENAI_API_KEY"
+    KEY_PREFIX='sk-'
+    MODEL_ID='gpt-5.4'
+    CONTEXT_WINDOW=1000000
+    ;;
+  *)
+    echo "unsupported provider: $PROVIDER" >&2; exit 1
+    ;;
+esac
+KEY_PREFIX_LEN=${#KEY_PREFIX}
+`
+
+// sectionDetectProviderHermes emits the provider-detection step for the
+// Hermes installer. It probes env vars (presence only, never values) and
+// reads only the model.base_url field of ~/.hermes/config.yaml via python
+// yaml — deliberately avoiding cat/grep/head/tail of the file because the
+// adjacent api_key field carries the secret. Once a provider is picked
+// (single hit → confirm; multiple → ask; none → ask), $PROVIDER is set
+// and the shared providerCaseBlock derives every other variable.
+func sectionDetectProviderHermes(step int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %d. Detect the upstream LLM provider\n\n", step)
+	fmt.Fprintf(&b, "Clawvisor's proxy-lite swaps in a vaulted upstream key on every call.\n")
+	fmt.Fprintf(&b, "Figure out which provider — Anthropic or OpenAI — by looking at how\n")
+	fmt.Fprintf(&b, "Hermes is configured today.\n\n")
+	fmt.Fprintf(&b, "**Read only safe-to-print metadata.** `~/.hermes/config.yaml` carries\n")
+	fmt.Fprintf(&b, "an `api_key` field — DO NOT `cat`, `grep`, `head`, or `tail` it. The\n")
+	fmt.Fprintf(&b, "probe below uses `python3 -c yaml.safe_load(...)` to read only\n")
+	fmt.Fprintf(&b, "`model.base_url`, which doesn't carry the secret.\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "DETECTED=''\n")
+	fmt.Fprintf(&b, "# Env vars — presence only, never value\n")
+	fmt.Fprintf(&b, "[ -n \"$ANTHROPIC_API_KEY\" ] && DETECTED=\"$DETECTED anthropic\"\n")
+	fmt.Fprintf(&b, "[ -n \"$OPENAI_API_KEY\" ]   && DETECTED=\"$DETECTED openai\"\n")
+	fmt.Fprintf(&b, "# Hermes config — extract just base_url, infer provider from host\n")
+	fmt.Fprintf(&b, "if [ -f ~/.hermes/config.yaml ]; then\n")
+	fmt.Fprintf(&b, "  BASE=$(python3 -c \"import yaml; d=yaml.safe_load(open('$HOME/.hermes/config.yaml')); print((d.get('model') or {}).get('base_url') or '')\" 2>/dev/null || true)\n")
+	fmt.Fprintf(&b, "  case \"$BASE\" in\n")
+	fmt.Fprintf(&b, "    *anthropic.com*) DETECTED=\"$DETECTED anthropic\" ;;\n")
+	fmt.Fprintf(&b, "    *openai.com*)    DETECTED=\"$DETECTED openai\" ;;\n")
+	fmt.Fprintf(&b, "    *clawvisor*)     echo 'Hermes already points at Clawvisor — looks like a re-install' ;;\n")
+	fmt.Fprintf(&b, "  esac\n")
+	fmt.Fprintf(&b, "fi\n")
+	fmt.Fprintf(&b, "UNIQ=$(printf '%%s\\n' $DETECTED | sort -u | tr '\\n' ' ' | sed 's/ $//')\n")
+	fmt.Fprintf(&b, "echo \"detected: ${UNIQ:-none}\"\n")
+	fmt.Fprintf(&b, "```\n\n")
+	b.WriteString(sectionDetectProviderAskAndCase("Hermes"))
+	return b.String()
+}
+
+// sectionDetectProviderOpenClaw emits the provider-detection step for the
+// OpenClaw installer. It probes env vars and scans
+// ~/.openclaw/agents/*/agent/models.json for provider keys via jq —
+// jq is safe here because it can extract structured fields without
+// dumping arbitrary content. As with Hermes, single hit → confirm;
+// multiple → ask which; none → ask.
+func sectionDetectProviderOpenClaw(step int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %d. Detect the upstream LLM provider\n\n", step)
+	fmt.Fprintf(&b, "Clawvisor's proxy-lite swaps in a vaulted upstream key on every call.\n")
+	fmt.Fprintf(&b, "Figure out which provider — Anthropic or OpenAI — by looking at how\n")
+	fmt.Fprintf(&b, "OpenClaw is configured today.\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "DETECTED=''\n")
+	fmt.Fprintf(&b, "# Env vars — presence only, never value\n")
+	fmt.Fprintf(&b, "[ -n \"$ANTHROPIC_API_KEY\" ] && DETECTED=\"$DETECTED anthropic\"\n")
+	fmt.Fprintf(&b, "[ -n \"$OPENAI_API_KEY\" ]   && DETECTED=\"$DETECTED openai\"\n")
+	fmt.Fprintf(&b, "# Existing OpenClaw provider registry\n")
+	fmt.Fprintf(&b, "for cfg in ~/.openclaw/agents/*/agent/models.json; do\n")
+	fmt.Fprintf(&b, "  test -f \"$cfg\" || continue\n")
+	fmt.Fprintf(&b, "  for p in $(jq -r '\n")
+	fmt.Fprintf(&b, "    (if .models.providers then .models.providers elif .providers then .providers else {} end)\n")
+	fmt.Fprintf(&b, "    | keys[]?\n")
+	fmt.Fprintf(&b, "  ' \"$cfg\" 2>/dev/null); do\n")
+	fmt.Fprintf(&b, "    case \"$p\" in\n")
+	fmt.Fprintf(&b, "      anthropic*|claude*) DETECTED=\"$DETECTED anthropic\" ;;\n")
+	fmt.Fprintf(&b, "      openai*|gpt*)       DETECTED=\"$DETECTED openai\" ;;\n")
+	fmt.Fprintf(&b, "    esac\n")
+	fmt.Fprintf(&b, "  done\n")
+	fmt.Fprintf(&b, "done\n")
+	fmt.Fprintf(&b, "UNIQ=$(printf '%%s\\n' $DETECTED | sort -u | tr '\\n' ' ' | sed 's/ $//')\n")
+	fmt.Fprintf(&b, "echo \"detected: ${UNIQ:-none}\"\n")
+	fmt.Fprintf(&b, "```\n\n")
+	b.WriteString(sectionDetectProviderAskAndCase("OpenClaw"))
+	return b.String()
+}
+
+// sectionDetectProviderAskAndCase is the trailing portion shared by both
+// Hermes and OpenClaw detect steps: surface what was detected, ask the
+// user (single / multiple / none), set $PROVIDER, and emit the case
+// block that derives every other per-provider variable.
+func sectionDetectProviderAskAndCase(harness string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Now ask the user — pick the branch matching `$UNIQ`:\n\n")
+	fmt.Fprintf(&b, "- **One provider detected** (e.g. `anthropic`): confirm with the user:\n")
+	fmt.Fprintf(&b, "  > I see %s is set up for `<provider>`. Vault a `<provider>` key in\n", harness)
+	fmt.Fprintf(&b, "  > Clawvisor so the proxy can route there?\n\n")
+	fmt.Fprintf(&b, "- **Multiple detected** (`anthropic openai`): ask which to route:\n")
+	fmt.Fprintf(&b, "  > %s has both `anthropic` and `openai` configured. Which one should\n", harness)
+	fmt.Fprintf(&b, "  > I route through Clawvisor?\n\n")
+	fmt.Fprintf(&b, "- **None detected** (`UNIQ` empty): ask the user to pick:\n")
+	fmt.Fprintf(&b, "  > I couldn't detect a current LLM provider for %s. Clawvisor's\n", harness)
+	fmt.Fprintf(&b, "  > proxy-lite supports `anthropic` and `openai`. Which one would you\n")
+	fmt.Fprintf(&b, "  > like to use?\n\n")
+	fmt.Fprintf(&b, "Set `$PROVIDER` to the chosen value (`anthropic` or `openai`), then derive\n")
+	fmt.Fprintf(&b, "the per-provider details all later steps consume:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	b.WriteString(providerCaseBlock)
+	fmt.Fprintf(&b, "```\n\n")
+	return b.String()
+}
+
+// sectionEnsureVaultedKeyDynamic is the shell-variable-driven equivalent
+// of sectionEnsureVaultedKey for the swap-mode-only harnesses (Hermes,
+// OpenClaw) where the provider isn't known until the detect step picked
+// it. Uses $PROVIDER / $KEY_ENV / $KEY_VALUE / $KEY_PREFIX from the
+// preceding detect-step case block, so this step is provider-agnostic at
+// render time — the helper picks the path at runtime.
+//
+// Same HARD CONSTRAINTS as sectionVaultUpstreamKey: no reading rc files,
+// no echoing the value, no argv. The detect step's python yaml read of
+// ~/.hermes/config.yaml deliberately extracts only base_url; this step
+// must not loosen that constraint.
+func sectionEnsureVaultedKeyDynamic(step int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %d. Ensure a vaulted upstream key exists\n\n", step)
+	fmt.Fprintf(&b, "Check if Clawvisor already has a `$PROVIDER` key for this user (or this\n")
+	fmt.Fprintf(&b, "agent). Accept either scope — a prior install (Claude Code, Codex,\n")
+	fmt.Fprintf(&b, "another agent) may have saved at either.\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "AGENT_ID=$(jq -r .agent_id \"$TOKEN_FILE\")\n")
+	fmt.Fprintf(&b, "EXISTING=$(curl -sS -H \"Authorization: Bearer $TOKEN\" \\\n")
+	fmt.Fprintf(&b, "  \"$CLAWVISOR_APP_URL/api/runtime/llm-credentials?agent_id=$AGENT_ID\")\n")
+	fmt.Fprintf(&b, "if echo \"$EXISTING\" | jq -e --arg p \"$PROVIDER\" '.credentials[] | select(.provider==$p and (.stored==true or .agent_stored==true))' >/dev/null 2>&1; then\n")
+	fmt.Fprintf(&b, "  echo \"existing $PROVIDER_LABEL key found — skipping vault\"\n")
+	fmt.Fprintf(&b, "  KEY_VAULTED=1\n")
+	fmt.Fprintf(&b, "else\n")
+	fmt.Fprintf(&b, "  KEY_VAULTED=0\n")
+	fmt.Fprintf(&b, "fi\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "If `KEY_VAULTED=1`, skip the sub-steps below and continue. Otherwise:\n\n")
+	fmt.Fprintf(&b, "### %d.a. Vault a $PROVIDER_LABEL API key\n\n", step)
+	fmt.Fprintf(&b, "**HARD CONSTRAINTS — read carefully, these are non-negotiable:**\n\n")
+	fmt.Fprintf(&b, "- DO NOT `grep`, `cat`, `head`, `tail` `~/.zshrc`, `~/.bashrc`,\n")
+	fmt.Fprintf(&b, "  `~/.zshenv`, `~/.profile`, `.env`, `.envrc`,\n")
+	fmt.Fprintf(&b, "  `~/.config/fish/config.fish`, `~/.hermes/config.yaml`, or any file\n")
+	fmt.Fprintf(&b, "  that might contain `$KEY_ENV=…` or the key value in plaintext.\n")
+	fmt.Fprintf(&b, "- DO NOT `echo \"$KEY_VALUE\"`, `printenv`, or print the value any way.\n")
+	fmt.Fprintf(&b, "- DO NOT use `set -x`, `bash -x`, or any trace mode.\n")
+	fmt.Fprintf(&b, "- DO NOT pass the value through argv (`jq --arg`, `curl -d \"key=$VAR\"`).\n")
+	fmt.Fprintf(&b, "  Argv shows up in `/proc` and process listings. Use stdin pipes only.\n")
+	fmt.Fprintf(&b, "- Use ONLY the live environment of the shell you're running in right now.\n\n")
+	fmt.Fprintf(&b, "Detect (prefix + length only — zero entropy revealed):\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "if [ -n \"$KEY_VALUE\" ]; then\n")
+	fmt.Fprintf(&b, "  printf 'present prefix=%%s length=%%d\\n' \\\n")
+	fmt.Fprintf(&b, "    \"$(printf '%%s' \"$KEY_VALUE\" | head -c \"$KEY_PREFIX_LEN\")\" \\\n")
+	fmt.Fprintf(&b, "    \"${#KEY_VALUE}\"\n")
+	fmt.Fprintf(&b, "else\n")
+	fmt.Fprintf(&b, "  echo absent\n")
+	fmt.Fprintf(&b, "fi\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "**If output is `present prefix=<KEY_PREFIX> length=<N>`**, ask the user:\n\n")
+	fmt.Fprintf(&b, "> I see a `$PROVIDER_LABEL` API key in your environment (prefix\n")
+	fmt.Fprintf(&b, "> `$KEY_PREFIX`, `<N>` chars). Vault it in Clawvisor so this agent can\n")
+	fmt.Fprintf(&b, "> route through proxy-lite? I won't read the key — it'll pipe straight\n")
+	fmt.Fprintf(&b, "> from your shell into Clawvisor's vault.\n\n")
+	fmt.Fprintf(&b, "If yes, vault via stdin pipe (value never enters argv):\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "printf '%%s' \"$KEY_VALUE\" | jq -Rs '{api_key:.}' | \\\n")
+	fmt.Fprintf(&b, "  curl -sS -X PUT \"$CLAWVISOR_APP_URL/api/runtime/llm-credentials/$PROVIDER\" \\\n")
+	fmt.Fprintf(&b, "    -H \"Authorization: Bearer $TOKEN\" \\\n")
+	fmt.Fprintf(&b, "    -H \"Content-Type: application/json\" \\\n")
+	fmt.Fprintf(&b, "    --data-binary @-\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Expected response: `{\"provider\":\"<provider>\",\"service_id\":\"…\",\"status\":\"stored\"}`\n")
+	fmt.Fprintf(&b, "(or `\"rotated\"` / `\"unchanged\"`). No key is echoed back.\n\n")
+	fmt.Fprintf(&b, "**If env var is `absent` or user declined**, fall back to the dashboard:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "echo \"$CLAWVISOR_APP_URL/dashboard/keys/$PROVIDER?for=$AGENT_ID\"\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "Tell the user:\n\n")
+	fmt.Fprintf(&b, "> Open the URL above to add your `$PROVIDER_LABEL` key. I'll wait — once\n")
+	fmt.Fprintf(&b, "> you save it, I'll continue automatically.\n\n")
+	fmt.Fprintf(&b, "Then poll (up to ~3 min); accept user-scope OR agent-scope as success:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "for i in $(seq 1 90); do\n")
+	fmt.Fprintf(&b, "  RESP=$(curl -sS -H \"Authorization: Bearer $TOKEN\" \\\n")
+	fmt.Fprintf(&b, "    \"$CLAWVISOR_APP_URL/api/runtime/llm-credentials?agent_id=$AGENT_ID\")\n")
+	fmt.Fprintf(&b, "  if echo \"$RESP\" | jq -e --arg p \"$PROVIDER\" '.credentials[] | select(.provider==$p and (.stored==true or .agent_stored==true))' >/dev/null 2>&1; then\n")
+	fmt.Fprintf(&b, "    echo 'key vaulted'; break\n")
+	fmt.Fprintf(&b, "  fi\n")
+	fmt.Fprintf(&b, "  sleep 2\n")
+	fmt.Fprintf(&b, "done\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "If the loop ends without `key vaulted`, surface that to the user and STOP.\n\n")
+	return b.String()
+}
+
 // upstreamKeyPrefix returns the canonical leading characters for the
 // provider's API keys. Used by the env-detect probe in sectionVaultUpstreamKey
 // to confirm the env var holds a plausibly-shaped key without revealing the
@@ -604,61 +831,6 @@ func upstreamKeyPrefix(provider string) string {
 		return "sk-"
 	}
 	return "sk-ant-"
-}
-
-// sectionEnsureVaultedKey is the swap-mode-only equivalent of
-// sectionVaultUpstreamKey. Hermes and OpenClaw have no passthrough path —
-// every call must swap in a vaulted upstream key — so this step runs
-// unconditionally and short-circuits if Clawvisor already has a key for
-// the chosen provider (e.g. vaulted during a prior install of Claude Code,
-// Codex, or another Hermes/OpenClaw agent).
-//
-// Flow:
-//
-//	1. GET /api/runtime/llm-credentials?agent_id=<id> with the freshly-minted
-//	   agent token. Accept either user-scope OR agent-scope as "already
-//	   vaulted" — the user may have saved at either scope from another
-//	   install path. If found → skip.
-//	2. Otherwise fall through to sectionVaultUpstreamKey, which env-detects
-//	   $PROVIDER_API_KEY and vaults via stdin pipe (no key in argv, no key in
-//	   transcript) with a dashboard-page fallback.
-//
-// `step` is the markdown step number this section claims (e.g. 2 in the
-// Hermes flow). Sub-steps inside sectionVaultUpstreamKey are rendered as
-// `<step>.a`, etc.
-func sectionEnsureVaultedKey(step int, provider string) string {
-	var b strings.Builder
-	providerLabel := installerProviderDisplayName(provider)
-	envVar := providerKeyEnv(provider)
-	keyPrefix := upstreamKeyPrefix(provider)
-	dashboardPath := "/dashboard/keys/" + provider
-
-	fmt.Fprintf(&b, "## %d. Ensure a %s key is vaulted\n\n", step, providerLabel)
-	fmt.Fprintf(&b, "The target harness has no passthrough auth — every model call swaps in\n")
-	fmt.Fprintf(&b, "a vaulted upstream key on the Clawvisor side. First check whether the\n")
-	fmt.Fprintf(&b, "user already has one for this provider; only vault a fresh key if not.\n\n")
-	fmt.Fprintf(&b, "Accept either a user-scope or an agent-scope credential — the user may\n")
-	fmt.Fprintf(&b, "have saved either way during a prior install (e.g. Claude Code, or\n")
-	fmt.Fprintf(&b, "another %s agent).\n\n", providerLabel)
-	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "AGENT_ID=$(jq -r .agent_id \"$TOKEN_FILE\")\n")
-	fmt.Fprintf(&b, "EXISTING=$(curl -sS -H \"Authorization: Bearer $TOKEN\" \\\n")
-	fmt.Fprintf(&b, "  \"$CLAWVISOR_APP_URL/api/runtime/llm-credentials?agent_id=$AGENT_ID\")\n")
-	fmt.Fprintf(&b, "if echo \"$EXISTING\" | jq -e '.credentials[] | select(.provider==\"%s\" and (.stored==true or .agent_stored==true))' >/dev/null 2>&1; then\n", provider)
-	fmt.Fprintf(&b, "  echo 'existing %s key found — skipping vault'\n", providerLabel)
-	fmt.Fprintf(&b, "  KEY_VAULTED=1\n")
-	fmt.Fprintf(&b, "else\n")
-	fmt.Fprintf(&b, "  KEY_VAULTED=0\n")
-	fmt.Fprintf(&b, "fi\n")
-	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "If `KEY_VAULTED=1`, skip the sub-steps below and continue to the next\n")
-	fmt.Fprintf(&b, "section. Otherwise vault one now.\n\n")
-	preamble := fmt.Sprintf("No existing %s key is vaulted for this user, so we need to add one\nbefore the target harness can route. We try the live shell environment\nfirst; if `%s` is set, the value pipes directly from the shell into\nClawvisor's vault without ever materializing in your conversation context.\n\n", providerLabel, envVar)
-	b.WriteString(sectionVaultUpstreamKeyWithPreamble(
-		fmt.Sprintf("### %d.a. Vault a %s API key", step, providerLabel),
-		preamble, provider, providerLabel, envVar, keyPrefix, dashboardPath,
-	))
-	return b.String()
 }
 
 // ── Shared helpers for the one-paste setup skill (Claude Code, Codex) ────────
@@ -1773,29 +1945,30 @@ func renderCodexUninstaller(ctx installerCtx) string {
 
 func renderHermesInstaller(ctx installerCtx) string {
 	var b strings.Builder
-	providerName := installerProviderDisplayName(ctx.LLMProvider)
-	basePath := providerBasePath(ctx.LLMProvider)
-	baseEnv := providerBaseEnv(ctx.LLMProvider)
-	keyEnv := providerKeyEnv(ctx.LLMProvider)
 	llmHost := dockerHostURL(ctx.LLMURL)
 	b.WriteString(setupFrontmatter("Hermes"))
 	fmt.Fprintf(&b, "# Connect Hermes to Clawvisor\n\n")
 	fmt.Fprintf(&b, "You are running a one-shot setup skill. The dashboard pre-baked the\n")
 	fmt.Fprintf(&b, "Clawvisor URL, a single-use claim code, and the agent name into this file.\n")
 	fmt.Fprintf(&b, "The dashboard already approved the connection — no second click is needed.\n\n")
-	fmt.Fprintf(&b, "Hermes runs in **swap mode**: Hermes presents the Clawvisor agent token as\n")
-	fmt.Fprintf(&b, "`%s`; Clawvisor swaps in the user's vaulted upstream %s key on each\n", keyEnv, providerName)
-	fmt.Fprintf(&b, "call. This skill detects whether the user already has a vaulted upstream\n")
-	fmt.Fprintf(&b, "%s key and only walks them through vaulting if not.\n\n", providerName)
+	fmt.Fprintf(&b, "Hermes runs in **swap mode**: Hermes presents the Clawvisor agent token\n")
+	fmt.Fprintf(&b, "as the upstream provider's API-key env var; Clawvisor swaps in the user's\n")
+	fmt.Fprintf(&b, "vaulted upstream key on each call. This skill first detects which\n")
+	fmt.Fprintf(&b, "provider Hermes is using today (Anthropic or OpenAI), confirms with the\n")
+	fmt.Fprintf(&b, "user, then vaults a key (if one isn't already vaulted) and reconfigures\n")
+	fmt.Fprintf(&b, "Hermes to point at Clawvisor.\n\n")
 
 	// Step 1: auto-approved claim connect → token saved to $TOKEN_FILE.
 	b.WriteString(sectionClaimedConnect("hermes", ctx.AppURL, ctx.LLMURL, ctx.Claim, ctx.AgentName))
 
-	// Step 2: detect existing vaulted credential; vault one if absent.
-	b.WriteString(sectionEnsureVaultedKey(2, ctx.LLMProvider))
+	// Step 2: detect the provider (sets $PROVIDER + shell-derived vars).
+	b.WriteString(sectionDetectProviderHermes(2))
 
-	// Step 3: probe Hermes deployment (helper picks mode at runtime).
-	fmt.Fprintf(&b, "## 3. Probe the Hermes deployment\n\n")
+	// Step 3: detect existing vaulted credential; vault one if absent.
+	b.WriteString(sectionEnsureVaultedKeyDynamic(3))
+
+	// Step 4: probe Hermes deployment (helper picks mode at runtime).
+	fmt.Fprintf(&b, "## 4. Probe the Hermes deployment\n\n")
 	fmt.Fprintf(&b, "Figure out where Hermes runs on this user's machine — the rest of the\n")
 	fmt.Fprintf(&b, "skill branches on the answer. Use shell commands first; ask the user only\n")
 	fmt.Fprintf(&b, "when the machine can't tell you.\n\n")
@@ -1821,10 +1994,10 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "  STOP and surface what the probe found — don't guess.\n\n")
 	fmt.Fprintf(&b, "Surface what you picked and why in chat so the user can correct you.\n\n")
 
-	// Step 4: preflight — prove the harness can reach Clawvisor from its own
+	// Step 5: preflight — prove the harness can reach Clawvisor from its own
 	// execution context. Covers all three modes because the helper picked at
 	// runtime.
-	fmt.Fprintf(&b, "## 4. Preflight: confirm Hermes can reach Clawvisor\n\n")
+	fmt.Fprintf(&b, "## 5. Preflight: confirm Hermes can reach Clawvisor\n\n")
 	fmt.Fprintf(&b, "A curl from this helper's shell only proves *the helper* can reach\n")
 	fmt.Fprintf(&b, "Clawvisor — Hermes may run in a different network namespace (Docker\n")
 	fmt.Fprintf(&b, "container, remote host). Run the variant matching `$HERMES_MODE`.\n\n")
@@ -1858,21 +2031,28 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "Don't proceed past this step until preflight returns `OK`. Wrong URL\n")
 	fmt.Fprintf(&b, "now means Hermes can't reach Clawvisor after configure bakes the URL in.\n\n")
 
-	// Step 5: configure. Ask user env vs file; emit per-mode snippets.
-	fmt.Fprintf(&b, "## 5. Configure Hermes\n\n")
+	// Step 6: configure. Ask user env vs file; emit per-mode snippets that
+	// substitute $BASE_ENV / $KEY_ENV at install time so the resolved
+	// provider's variable names land in the rc / config file.
+	fmt.Fprintf(&b, "## 6. Configure Hermes\n\n")
 	fmt.Fprintf(&b, "Ask the user once:\n\n")
 	fmt.Fprintf(&b, "> Should I configure Hermes via **environment variables on each launch**\n")
 	fmt.Fprintf(&b, "> (recommended — clean, no persistent state) or via a **persistent\n")
 	fmt.Fprintf(&b, "> `~/.hermes/config.yaml`** (set-and-forget)? Default is env.\n\n")
 	fmt.Fprintf(&b, "Remember the answer as `$HERMES_CONFIG` (`env` or `file`).\n\n")
-	fmt.Fprintf(&b, "### 5.a. Env-var snippets (when `$HERMES_CONFIG=env`)\n\n")
-	fmt.Fprintf(&b, "**host:**\n\n")
+	fmt.Fprintf(&b, "### 6.a. Env-var snippets (when `$HERMES_CONFIG=env`)\n\n")
+	fmt.Fprintf(&b, "**host:** `env` accepts NAME=VALUE pairs in argv, so we can set\n")
+	fmt.Fprintf(&b, "dynamically-named provider env vars from `$BASE_ENV` / `$KEY_ENV`:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "%s=%s%s \\\n", baseEnv, ctx.LLMURL, basePath)
-	fmt.Fprintf(&b, "%s=\"$TOKEN\" \\\n", keyEnv)
-	fmt.Fprintf(&b, "hermes chat\n")
+	fmt.Fprintf(&b, "env \\\n")
+	fmt.Fprintf(&b, "  \"$BASE_ENV=$CLAWVISOR_LLM_URL$BASE_PATH\" \\\n")
+	fmt.Fprintf(&b, "  \"$KEY_ENV=$TOKEN\" \\\n")
+	fmt.Fprintf(&b, "  hermes chat\n")
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "Optional ergonomic alias (`hermes-cv`) — append to the user's shell rc:\n\n")
+	fmt.Fprintf(&b, "Optional ergonomic alias (`hermes-cv`) — append to the user's shell rc.\n")
+	fmt.Fprintf(&b, "The function body is constructed with the *resolved* names from\n")
+	fmt.Fprintf(&b, "`$BASE_ENV` / `$KEY_ENV`, so what lands in the rc is e.g.\n")
+	fmt.Fprintf(&b, "`ANTHROPIC_BASE_URL=...` or `OPENAI_BASE_URL=...` literally:\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "case \"$SHELL\" in\n")
 	fmt.Fprintf(&b, "  */zsh)  RC=~/.zshrc ;;\n")
@@ -1880,29 +2060,23 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "  *)      RC=\"\"; echo \"unknown shell: $SHELL — append manually\" ;;\n")
 	fmt.Fprintf(&b, "esac\n")
 	fmt.Fprintf(&b, "if [ -n \"$RC\" ]; then\n")
-	fmt.Fprintf(&b, "  CONTENT=$(cat <<EOF\n")
-	fmt.Fprintf(&b, "hermes-cv() {\n")
-	fmt.Fprintf(&b, "  %s=%s%s \\\\\n", baseEnv, ctx.LLMURL, basePath)
-	fmt.Fprintf(&b, "  %s=\\$(jq -r .token \\$HOME/.clawvisor/agents/%s.json) \\\\\n", keyEnv, ctx.AgentName)
-	fmt.Fprintf(&b, "  hermes \"\\$@\"\n")
-	fmt.Fprintf(&b, "}\n")
-	fmt.Fprintf(&b, "EOF\n")
-	fmt.Fprintf(&b, "  )\n")
+	fmt.Fprintf(&b, "  CONTENT=$(printf 'hermes-cv() {\\n  %%s=\"%%s\" \\\\\\n  %%s=$(jq -r .token $HOME/.clawvisor/agents/%s.json) \\\\\\n  hermes \"$@\"\\n}\\n' \\\n", ctx.AgentName)
+	fmt.Fprintf(&b, "    \"$BASE_ENV\" \"$CLAWVISOR_LLM_URL$BASE_PATH\" \"$KEY_ENV\")\n")
 	b.WriteString(recordTextDiff("hermes_cv", `"$RC"`))
 	fmt.Fprintf(&b, "fi\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**docker:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "docker exec -it \\\n")
-	fmt.Fprintf(&b, "  -e %s=\"%s%s\" \\\n", baseEnv, llmHost, basePath)
-	fmt.Fprintf(&b, "  -e %s=\"$TOKEN\" \\\n", keyEnv)
+	fmt.Fprintf(&b, "  -e \"$BASE_ENV=%s$BASE_PATH\" \\\n", llmHost)
+	fmt.Fprintf(&b, "  -e \"$KEY_ENV=$TOKEN\" \\\n")
 	fmt.Fprintf(&b, "  \"$HERMES_CONTAINER\" hermes chat\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**remote:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" \"%s='$HERMES_CLAWVISOR_URL%s' %s='$TOKEN' hermes chat\"\n", baseEnv, basePath, keyEnv)
+	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" \"$BASE_ENV='$HERMES_CLAWVISOR_URL$BASE_PATH' $KEY_ENV='$TOKEN' hermes chat\"\n")
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "### 5.b. Config-file snippets (when `$HERMES_CONFIG=file`)\n\n")
+	fmt.Fprintf(&b, "### 6.b. Config-file snippets (when `$HERMES_CONFIG=file`)\n\n")
 	fmt.Fprintf(&b, "The config bakes the current token in. If the user re-runs setup, the\n")
 	fmt.Fprintf(&b, "token rotates and the file must be re-written.\n\n")
 	fmt.Fprintf(&b, "**host:**\n\n")
@@ -1910,33 +2084,36 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "mkdir -p ~/.hermes && cat > ~/.hermes/config.yaml <<EOF\n")
 	fmt.Fprintf(&b, "model:\n")
 	fmt.Fprintf(&b, "  provider: custom\n")
-	fmt.Fprintf(&b, "  base_url: \"%s%s\"\n", ctx.LLMURL, basePath)
+	fmt.Fprintf(&b, "  base_url: \"$CLAWVISOR_LLM_URL$BASE_PATH\"\n")
 	fmt.Fprintf(&b, "  api_key: \"$TOKEN\"\n")
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**docker:** same content, but write the host's `~/.hermes/config.yaml`\n")
 	fmt.Fprintf(&b, "(must be mounted into the container, commonly at `/root/.hermes`) with\n")
-	fmt.Fprintf(&b, "`base_url: \"%s%s\"`.\n\n", llmHost, basePath)
+	fmt.Fprintf(&b, "`base_url: \"%s$BASE_PATH\"`.\n\n", llmHost)
 	fmt.Fprintf(&b, "**remote:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" \"mkdir -p ~/.hermes && cat > ~/.hermes/config.yaml\" <<EOF\n")
 	fmt.Fprintf(&b, "model:\n")
 	fmt.Fprintf(&b, "  provider: custom\n")
-	fmt.Fprintf(&b, "  base_url: \"$HERMES_CLAWVISOR_URL%s\"\n", basePath)
+	fmt.Fprintf(&b, "  base_url: \"$HERMES_CLAWVISOR_URL$BASE_PATH\"\n")
 	fmt.Fprintf(&b, "  api_key: \"$TOKEN\"\n")
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "```\n\n")
 
-	// Step 6: uninstall reference doc.
-	b.WriteString(sectionUninstallDoc("hermes", `1. Remove the `+"`model:`"+` block from `+"`~/.hermes/config.yaml`"+` (or unset `+"`"+baseEnv+"`"+`/`+"`"+keyEnv+"`"+` if you used env vars).
+	// Step 7: uninstall reference doc. Refer to the env var names by their
+	// shell-variable form ($BASE_ENV / $KEY_ENV) since the user picked the
+	// provider at install time — the uninstall reference is read after
+	// install, so the actual names are resolved when the user reads it.
+	b.WriteString(sectionUninstallDoc("hermes", `1. Remove the `+"`model:`"+` block from `+"`~/.hermes/config.yaml`"+` (or unset the provider's `+"`*_BASE_URL`"+`/`+"`*_API_KEY`"+` env vars if you used env vars).
 2. Remove the `+"`hermes-cv`"+` function from your shell rc if you added one (diff record in `+"`~/.clawvisor/diffs/"+ctx.AgentName+"/hermes_cv.json`"+`).
 3. Delete the token file: `+"`rm ~/.clawvisor/agents/"+ctx.AgentName+".json`"+`.
 4. Revoke the agent in the Clawvisor dashboard under Agents → `+ctx.AgentName+` → Delete.
-5. Optional: remove the user-level `+providerName+` key from Clawvisor credentials if no other agents use it.
-`, 6))
+5. Optional: remove the user-level upstream key from Clawvisor credentials if no other agents use it (Anthropic or OpenAI, depending on what you vaulted).
+`, 7))
 
-	// Step 7: self-uninstall — remove this setup skill from the helper.
-	b.WriteString(sectionSelfUninstall("hermes", helperSetupCleanupCommands(), 7))
+	// Step 8: self-uninstall — remove this setup skill from the helper.
+	b.WriteString(sectionSelfUninstall("hermes", helperSetupCleanupCommands(), 8))
 
 	return b.String()
 }
@@ -1944,10 +2121,6 @@ func renderHermesInstaller(ctx installerCtx) string {
 
 func renderOpenClawInstaller(ctx installerCtx) string {
 	var b strings.Builder
-	providerName := installerProviderDisplayName(ctx.LLMProvider)
-	basePath := "/api/v1"
-	model := providerDefaultModel(ctx.LLMProvider)
-	contextWindow := providerDefaultContextWindow(ctx.LLMProvider)
 	maxTokens := openClawDefaultMaxTokens()
 	llmHost := dockerHostURL(ctx.LLMURL)
 	b.WriteString(setupFrontmatter("OpenClaw"))
@@ -1955,22 +2128,26 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "You are running a one-shot setup skill. The dashboard pre-baked the\n")
 	fmt.Fprintf(&b, "Clawvisor URL, a single-use claim code, and the agent name into this file.\n")
 	fmt.Fprintf(&b, "The dashboard already approved the connection — no second click is needed.\n\n")
-	fmt.Fprintf(&b, "OpenClaw points its LLM base URL at Clawvisor's %s-compatible endpoint\n", providerName)
-	fmt.Fprintf(&b, "and uses the minted Clawvisor agent token as the custom API key. This\n")
-	fmt.Fprintf(&b, "skill detects whether the user already has a vaulted upstream %s key\n", providerName)
-	fmt.Fprintf(&b, "and only walks them through vaulting if not.\n\n")
+	fmt.Fprintf(&b, "OpenClaw points its LLM base URL at Clawvisor's provider-compatible\n")
+	fmt.Fprintf(&b, "endpoint and uses the minted Clawvisor agent token as the custom API\n")
+	fmt.Fprintf(&b, "key. This skill first detects which provider OpenClaw is using today\n")
+	fmt.Fprintf(&b, "(Anthropic or OpenAI), confirms with the user, then vaults a key (if one\n")
+	fmt.Fprintf(&b, "isn't already vaulted) and reconfigures OpenClaw to point at Clawvisor.\n\n")
 
 	// Step 1: auto-approved claim connect → token saved to $TOKEN_FILE.
 	b.WriteString(sectionClaimedConnect("openclaw", ctx.AppURL, ctx.LLMURL, ctx.Claim, ctx.AgentName))
 
-	// Step 2: detect existing vaulted credential; vault one if absent.
-	b.WriteString(sectionEnsureVaultedKey(2, ctx.LLMProvider))
+	// Step 2: detect the provider (sets $PROVIDER + shell-derived vars).
+	b.WriteString(sectionDetectProviderOpenClaw(2))
 
-	// Step 3: probe — helper picks mode at runtime.
-	fmt.Fprintf(&b, "## 3. Probe the OpenClaw deployment\n\n")
+	// Step 3: detect existing vaulted credential; vault one if absent.
+	b.WriteString(sectionEnsureVaultedKeyDynamic(3))
+
+	// Step 4: probe — helper picks mode at runtime.
+	fmt.Fprintf(&b, "## 4. Probe the OpenClaw deployment\n\n")
 	fmt.Fprintf(&b, "Figure out how the user runs OpenClaw's onboarding command. Don't install\n")
 	fmt.Fprintf(&b, "extra OpenClaw components — just learn enough to invoke the right launch\n")
-	fmt.Fprintf(&b, "form in step 5.\n\n")
+	fmt.Fprintf(&b, "form in step 6.\n\n")
 	fmt.Fprintf(&b, "Use `docker ps` (not `docker compose ps`) for the container check — the\n")
 	fmt.Fprintf(&b, "compose form only sees containers from the current working directory's\n")
 	fmt.Fprintf(&b, "compose project, so if you're in `~/` or anywhere outside the user's\n")
@@ -1992,8 +2169,8 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "  store it as `$OPENCLAW_REMOTE`. If they decline, STOP — don't guess.\n\n")
 	fmt.Fprintf(&b, "Surface what you picked in chat so the user can correct you.\n\n")
 
-	// Step 4: preflight — verify connectivity from OpenClaw's network namespace.
-	fmt.Fprintf(&b, "## 4. Preflight: confirm OpenClaw can reach Clawvisor\n\n")
+	// Step 5: preflight — verify connectivity from OpenClaw's network namespace.
+	fmt.Fprintf(&b, "## 5. Preflight: confirm OpenClaw can reach Clawvisor\n\n")
 	fmt.Fprintf(&b, "Before `openclaw-cli onboard` bakes a Clawvisor URL into OpenClaw's\n")
 	fmt.Fprintf(&b, "config, prove the URL works from OpenClaw's own execution context.\n\n")
 	fmt.Fprintf(&b, "**If `$OPENCLAW_MODE=host`:**\n\n")
@@ -2025,56 +2202,55 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Don't proceed past this step until preflight returns `OK`.\n\n")
 
-	// Step 5: configure — onboard + models.json patch.
-	fmt.Fprintf(&b, "## 5. Point OpenClaw at Clawvisor\n\n")
-	fmt.Fprintf(&b, "Run OpenClaw's onboarding command using Clawvisor's %s-compatible base\n", providerName)
-	fmt.Fprintf(&b, "URL and the agent token from `$TOKEN`. Pick the variant matching\n")
+	// Step 6: configure — onboard + models.json patch. Each onboard
+	// invocation reads $BASE_PATH / $MODEL_ID / $PROVIDER from the case
+	// block set up in step 2.
+	fmt.Fprintf(&b, "## 6. Point OpenClaw at Clawvisor\n\n")
+	fmt.Fprintf(&b, "Run OpenClaw's onboarding command using Clawvisor's `$PROVIDER`-compatible\n")
+	fmt.Fprintf(&b, "base URL and the agent token from `$TOKEN`. Pick the variant matching\n")
 	fmt.Fprintf(&b, "`$OPENCLAW_MODE`.\n\n")
 	fmt.Fprintf(&b, "**host:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "openclaw-cli onboard --non-interactive \\\n")
 	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
-	fmt.Fprintf(&b, "  --custom-base-url \"%s%s\" \\\n", ctx.LLMURL, basePath)
-	fmt.Fprintf(&b, "  --custom-model-id \"%s\" \\\n", model)
+	fmt.Fprintf(&b, "  --custom-base-url \"$CLAWVISOR_LLM_URL$BASE_PATH\" \\\n")
+	fmt.Fprintf(&b, "  --custom-model-id \"$MODEL_ID\" \\\n")
 	fmt.Fprintf(&b, "  --custom-api-key \"$TOKEN\" \\\n")
-	fmt.Fprintf(&b, "  --custom-compatibility %s --accept-risk\n", ctx.LLMProvider)
+	fmt.Fprintf(&b, "  --custom-compatibility \"$PROVIDER\" --accept-risk\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**docker:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "docker exec \"$OPENCLAW_CONTAINER\" openclaw-cli onboard --non-interactive \\\n")
 	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
-	fmt.Fprintf(&b, "  --custom-base-url \"%s%s\" \\\n", llmHost, basePath)
-	fmt.Fprintf(&b, "  --custom-model-id \"%s\" \\\n", model)
+	fmt.Fprintf(&b, "  --custom-base-url \"%s$BASE_PATH\" \\\n", llmHost)
+	fmt.Fprintf(&b, "  --custom-model-id \"$MODEL_ID\" \\\n")
 	fmt.Fprintf(&b, "  --custom-api-key \"$TOKEN\" \\\n")
-	fmt.Fprintf(&b, "  --custom-compatibility %s --accept-risk\n", ctx.LLMProvider)
+	fmt.Fprintf(&b, "  --custom-compatibility \"$PROVIDER\" --accept-risk\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**remote:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"openclaw-cli onboard --non-interactive \\\n")
 	fmt.Fprintf(&b, "  --auth-choice custom-api-key \\\n")
-	fmt.Fprintf(&b, "  --custom-base-url '$OPENCLAW_CLAWVISOR_URL%s' \\\n", basePath)
-	fmt.Fprintf(&b, "  --custom-model-id '%s' \\\n", model)
+	fmt.Fprintf(&b, "  --custom-base-url '$OPENCLAW_CLAWVISOR_URL$BASE_PATH' \\\n")
+	fmt.Fprintf(&b, "  --custom-model-id '$MODEL_ID' \\\n")
 	fmt.Fprintf(&b, "  --custom-api-key '$TOKEN' \\\n")
-	fmt.Fprintf(&b, "  --custom-compatibility %s --accept-risk\"\n", ctx.LLMProvider)
+	fmt.Fprintf(&b, "  --custom-compatibility '$PROVIDER' --accept-risk\"\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Then patch OpenClaw's custom-provider model metadata so it does not keep\n")
-	fmt.Fprintf(&b, "the low fallback context window written by some OpenClaw versions. If you\n")
-	fmt.Fprintf(&b, "changed the model ID above, set `OPENCLAW_MODEL_CONTEXT_WINDOW` to that\n")
-	fmt.Fprintf(&b, "model's native maximum. Clawvisor uses 200K as the conservative floor for\n")
-	fmt.Fprintf(&b, "modern models, with higher values only for known model IDs.\n")
-	fmt.Fprintf(&b, "For Claude Sonnet 4's 1M beta context, only set `1000000` if the user's\n")
+	fmt.Fprintf(&b, "the low fallback context window written by some OpenClaw versions. The\n")
+	fmt.Fprintf(&b, "case block in step 2 set `$CONTEXT_WINDOW` to the picked provider's\n")
+	fmt.Fprintf(&b, "native maximum (200K for Anthropic, 1M for OpenAI). For Claude Sonnet 4's\n")
+	fmt.Fprintf(&b, "1M beta context, override `CONTEXT_WINDOW=1000000` only if the user's\n")
 	fmt.Fprintf(&b, "Anthropic org and request headers support it.\n\n")
 	fmt.Fprintf(&b, "**host/docker** (patch runs on the host that owns OpenClaw's\n")
 	fmt.Fprintf(&b, "`models.json`):\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "OPENCLAW_MODEL_ID=%q\n", model)
-	fmt.Fprintf(&b, "OPENCLAW_MODEL_CONTEXT_WINDOW=%d\n", contextWindow)
 	fmt.Fprintf(&b, "OPENCLAW_MAX_TOKENS=%d\n", maxTokens)
 	fmt.Fprintf(&b, "OPENCLAW_MODELS_JSON=${OPENCLAW_MODELS_JSON:-$(find \"${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/agents\" -path '*/agent/models.json' -print | sort | tail -n 1)}\n")
 	fmt.Fprintf(&b, "test -n \"$OPENCLAW_MODELS_JSON\" && test -f \"$OPENCLAW_MODELS_JSON\"\n")
 	fmt.Fprintf(&b, "tmp=$(mktemp)\n")
-	fmt.Fprintf(&b, "jq --arg model \"$OPENCLAW_MODEL_ID\" \\\n")
-	fmt.Fprintf(&b, "  --argjson contextWindow \"$OPENCLAW_MODEL_CONTEXT_WINDOW\" \\\n")
+	fmt.Fprintf(&b, "jq --arg model \"$MODEL_ID\" \\\n")
+	fmt.Fprintf(&b, "  --argjson contextWindow \"$CONTEXT_WINDOW\" \\\n")
 	fmt.Fprintf(&b, "  --argjson maxTokens \"$OPENCLAW_MAX_TOKENS\" '\n")
 	fmt.Fprintf(&b, "  def patchProvider:\n")
 	fmt.Fprintf(&b, "    .models |= ((. // []) | map(if .id == $model then . + {\n")
@@ -2090,15 +2266,16 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "  end\n")
 	fmt.Fprintf(&b, "' \"$OPENCLAW_MODELS_JSON\" > \"$tmp\" && mv \"$tmp\" \"$OPENCLAW_MODELS_JSON\"\n")
 	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "**remote** (run the same patch over SSH):\n\n")
+	fmt.Fprintf(&b, "**remote** (run the same patch over SSH; substitute the resolved\n")
+	fmt.Fprintf(&b, "values from `$MODEL_ID` / `$CONTEXT_WINDOW` into the remote env):\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'OPENCLAW_MODEL_ID=%q OPENCLAW_MODEL_CONTEXT_WINDOW=%d OPENCLAW_MAX_TOKENS=%d sh -s' <<'REMOTE_OPENCLAW_PATCH'\n", model, contextWindow, maxTokens)
+	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" \"MODEL_ID='$MODEL_ID' CONTEXT_WINDOW=$CONTEXT_WINDOW OPENCLAW_MAX_TOKENS=%d sh -s\" <<'REMOTE_OPENCLAW_PATCH'\n", maxTokens)
 	fmt.Fprintf(&b, "set -eu\n")
 	fmt.Fprintf(&b, "OPENCLAW_MODELS_JSON=${OPENCLAW_MODELS_JSON:-$(find \"${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/agents\" -path '*/agent/models.json' -print | sort | tail -n 1)}\n")
 	fmt.Fprintf(&b, "test -n \"$OPENCLAW_MODELS_JSON\" && test -f \"$OPENCLAW_MODELS_JSON\"\n")
 	fmt.Fprintf(&b, "tmp=$(mktemp)\n")
-	fmt.Fprintf(&b, "jq --arg model \"$OPENCLAW_MODEL_ID\" \\\n")
-	fmt.Fprintf(&b, "  --argjson contextWindow \"$OPENCLAW_MODEL_CONTEXT_WINDOW\" \\\n")
+	fmt.Fprintf(&b, "jq --arg model \"$MODEL_ID\" \\\n")
+	fmt.Fprintf(&b, "  --argjson contextWindow \"$CONTEXT_WINDOW\" \\\n")
 	fmt.Fprintf(&b, "  --argjson maxTokens \"$OPENCLAW_MAX_TOKENS\" '\n")
 	fmt.Fprintf(&b, "  def patchProvider:\n")
 	fmt.Fprintf(&b, "    .models |= ((. // []) | map(if .id == $model then . + {\n")
@@ -2116,15 +2293,15 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "REMOTE_OPENCLAW_PATCH\n")
 	fmt.Fprintf(&b, "```\n\n")
 
-	// Step 6: uninstall reference doc.
+	// Step 7: uninstall reference doc.
 	b.WriteString(sectionUninstallDoc("openclaw", `1. Re-run OpenClaw onboarding and choose your previous non-Clawvisor provider/base URL.
 2. Delete the token file: `+"`rm ~/.clawvisor/agents/"+ctx.AgentName+".json`"+`.
 3. Revoke the agent in the Clawvisor dashboard under Agents → `+ctx.AgentName+` → Delete.
-4. Optional: remove the user-level `+providerName+` key from Clawvisor credentials if no other agents use it.
-`, 6))
+4. Optional: remove the user-level upstream key from Clawvisor credentials if no other agents use it (Anthropic or OpenAI, depending on what you vaulted).
+`, 7))
 
-	// Step 7: self-uninstall — remove this setup skill from the helper.
-	b.WriteString(sectionSelfUninstall("openclaw", helperSetupCleanupCommands(), 7))
+	// Step 8: self-uninstall — remove this setup skill from the helper.
+	b.WriteString(sectionSelfUninstall("openclaw", helperSetupCleanupCommands(), 8))
 
 	return b.String()
 }
