@@ -102,9 +102,14 @@ echo ""
 # serves the live frontend; the backend's embedded SPA is just
 # web/dist/placeholder.html in a dev checkout). Vite proxies /api/* back to
 # the backend's actual listen port.
-PORT="$BACKEND_PORT" SERVER_HOST="127.0.0.1" \
-    PUBLIC_URL="http://localhost:$FRONTEND_PORT" \
-    air -c .air.toml &
+#
+# Honor a pre-set PUBLIC_URL in the calling shell (e.g. when developing
+# from a Docker host and you need `host.docker.internal:25297` so a
+# container-side OpenClaw can reach back). Same goes for SERVER_HOST.
+: "${PUBLIC_URL:=http://localhost:$FRONTEND_PORT}"
+: "${SERVER_HOST:=127.0.0.1}"
+export PUBLIC_URL SERVER_HOST
+PORT="$BACKEND_PORT" air -c .air.toml &
 BACKEND_PID=$!
 
 BACKEND_PORT="$BACKEND_PORT" npm --prefix "$REPO_ROOT/web" run dev -- --port "$FRONTEND_PORT" --strictPort &
