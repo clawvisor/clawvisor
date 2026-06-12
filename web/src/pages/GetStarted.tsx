@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { api, type TaskSuggestion, type WelcomeData, type WelcomeService, type WelcomeAgent, type WalkthroughExample } from '../api/client'
 import { ServiceIcon } from '../components/ServiceIcon'
 import { useAuth } from '../hooks/useAuth'
+import { copyText } from '../lib/clipboard'
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
@@ -621,7 +622,7 @@ function SuggestionCard({
   const [copied, setCopied] = useState(false)
 
   function copy() {
-    navigator.clipboard.writeText(suggestion.prompt).then(() => {
+    copyText(suggestion.prompt).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })

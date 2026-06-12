@@ -96,6 +96,10 @@ function ActionRow({
   }
 
   function handleConfirmBlock() {
+    // Enter-key on the reason input bypasses the Block button's disabled
+    // state, so guard the mutation here too — otherwise a fast double-Enter
+    // queues two identical create requests before the first one finishes.
+    if (createMut.isPending) return
     createMut.mutate(reason.trim())
   }
 
@@ -190,6 +194,7 @@ function WildcardToggle({
   }
 
   function handleConfirmBlock() {
+    if (createMut.isPending) return
     createMut.mutate(reason.trim())
   }
 
@@ -387,7 +392,7 @@ export default function Policy() {
     onSuccess: refreshRuntime,
   })
   const updateToolControlMut = useMutation({
-    mutationFn: (control: { agent_id: string; tool_name: string; action?: 'unset' | 'allow' | 'deny'; scope: 'global' | 'agent'; read_only_commands_allowed?: boolean; sensitive_file_guard_enabled?: boolean }) => api.runtime.updateToolControl(control),
+    mutationFn: (control: { agent_id: string; tool_name: string; action?: 'unset' | 'allow' | 'review' | 'deny'; scope: 'global' | 'agent'; read_only_commands_allowed?: boolean; sensitive_file_guard_enabled?: boolean }) => api.runtime.updateToolControl(control),
     onSuccess: refreshRuntime,
   })
 
@@ -618,7 +623,7 @@ function ProxyLiteToolControlsPanel({
   controls: RuntimeToolControl[]
   agents: Map<string, Agent>
   busy: boolean
-  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
+  onChange: (toolName: string, action: 'unset' | 'allow' | 'review' | 'deny', scope: 'global' | 'agent') => void
   onReadOnlyCommandsChange: (toolName: string, allowed: boolean, scope: 'global' | 'agent') => void
   onSensitiveFileGuardChange: (toolName: string, enabled: boolean, scope: 'global' | 'agent') => void
   ruleBusy: boolean
@@ -756,7 +761,7 @@ function ToolControlListSection({
   agentId: string
   busy: boolean
   ruleBusy: boolean
-  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
+  onChange: (toolName: string, action: 'unset' | 'allow' | 'review' | 'deny', scope: 'global' | 'agent') => void
   onReadOnlyCommandsChange: (toolName: string, allowed: boolean, scope: 'global' | 'agent') => void
   onSensitiveFileGuardChange: (toolName: string, enabled: boolean, scope: 'global' | 'agent') => void
   onSaveRule: (draft: RuleDraft) => Promise<void>
@@ -824,7 +829,7 @@ function ToolControlRow({
   agentId: string
   busy: boolean
   ruleBusy: boolean
-  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
+  onChange: (toolName: string, action: 'unset' | 'allow' | 'review' | 'deny', scope: 'global' | 'agent') => void
   onReadOnlyCommandsChange: (toolName: string, allowed: boolean, scope: 'global' | 'agent') => void
   onSensitiveFileGuardChange: (toolName: string, enabled: boolean, scope: 'global' | 'agent') => void
   onSaveRule: (draft: RuleDraft) => Promise<void>
@@ -849,12 +854,24 @@ function ToolControlRow({
   const readOnlyCommandsExplicit = sectionScope === 'global'
     ? control.global_read_only_commands_allowed !== undefined
     : control.agent_read_only_commands_allowed !== undefined
+  // When agent scope has nothing set but global does, the policy is still
+  // being enforced via inheritance — surface that so the hint doesn't
+  // read "Default on" when there's actually an explicit global rule
+  // shaping behaviour.
+  const readOnlyCommandsInherited =
+    sectionScope === 'agent'
+    && control.agent_read_only_commands_allowed === undefined
+    && control.global_read_only_commands_allowed !== undefined
   const sensitiveGuardEnabled = sectionScope === 'global'
     ? control.global_sensitive_file_guard_enabled ?? true
     : control.agent_sensitive_file_guard_enabled ?? control.global_sensitive_file_guard_enabled ?? true
   const sensitiveGuardExplicit = sectionScope === 'global'
     ? control.global_sensitive_file_guard_enabled !== undefined
     : control.agent_sensitive_file_guard_enabled !== undefined
+  const sensitiveGuardInherited =
+    sectionScope === 'agent'
+    && control.agent_sensitive_file_guard_enabled === undefined
+    && control.global_sensitive_file_guard_enabled !== undefined
   return (
     <div className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -898,7 +915,11 @@ function ToolControlRow({
               Allow read-only commands
             </label>
             <div className="mt-1 text-xs text-text-tertiary">
-              {readOnlyCommandsExplicit ? 'Explicit policy' : 'Default on'} · applies to commands like ls, cat, grep, rg, find, wc, and pwd.
+              {readOnlyCommandsExplicit
+                ? 'Explicit policy'
+                : readOnlyCommandsInherited
+                  ? 'Inherited from global'
+                  : 'Default on'} · applies to commands like ls, cat, grep, rg, find, wc, and pwd.
             </div>
           </div>
           <span className={`rounded px-2 py-0.5 text-xs ${readOnlyCommandsAllowed ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>
@@ -920,7 +941,11 @@ function ToolControlRow({
               Require approval to read sensitive files
             </label>
             <div className="mt-1 text-xs text-text-tertiary">
-              {sensitiveGuardExplicit ? 'Explicit policy' : 'Default on'} · routes reads of .env, ~/.ssh, ~/.aws, *.pem and similar through task scope / approval.
+              {sensitiveGuardExplicit
+                ? 'Explicit policy'
+                : sensitiveGuardInherited
+                  ? 'Inherited from global'
+                  : 'Default on'} · routes reads of .env, ~/.ssh, ~/.aws, *.pem and similar through task scope / approval.
             </div>
           </div>
           <span className={`rounded px-2 py-0.5 text-xs ${sensitiveGuardEnabled ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'}`}>
@@ -1044,23 +1069,32 @@ function isShellLikeToolName(name: string): boolean {
   return SHELL_LIKE_TOOL_NAMES.includes(name.trim().toLowerCase())
 }
 
+type ToolControlAction = 'unset' | 'allow' | 'review' | 'deny'
+
+const TOOL_CONTROL_ACTIONS: ReadonlySet<ToolControlAction> = new Set(['unset', 'allow', 'review', 'deny'])
+
 function SegmentedToolAction({
   value,
   disabled,
   onChange,
 }: {
-  value: 'unset' | 'allow' | 'review' | 'deny'
+  value: ToolControlAction
   disabled?: boolean
-  onChange: (action: 'unset' | 'allow' | 'deny') => void
+  onChange: (action: ToolControlAction) => void
 }) {
-  const normalizedValue: 'unset' | 'allow' | 'deny' = value === 'allow' || value === 'deny' ? value : 'unset'
-  const options: Array<{ value: 'unset' | 'allow' | 'deny'; label: string }> = [
+  // Accept every backend-supported action verbatim. Earlier this control
+  // silently coerced `review` to `unset` and dropped it from the option
+  // list, so users could never set a tool to "review each call" from the
+  // UI even though the runtime API and backend both support it.
+  const normalizedValue: ToolControlAction = TOOL_CONTROL_ACTIONS.has(value) ? value : 'unset'
+  const options: Array<{ value: ToolControlAction; label: string }> = [
     { value: 'unset', label: 'Unset' },
     { value: 'allow', label: 'Always allow' },
+    { value: 'review', label: 'Review each call' },
     { value: 'deny', label: 'Always deny' },
   ]
   return (
-    <div className="inline-flex rounded-md border border-border-default bg-surface-1 p-1">
+    <div className="inline-flex flex-wrap rounded-md border border-border-default bg-surface-1 p-1">
       {options.map(option => {
         const active = normalizedValue === option.value
         return (
@@ -1077,7 +1111,9 @@ function SegmentedToolAction({
                   ? 'bg-success/15 text-success'
                   : option.value === 'deny'
                     ? 'bg-danger/15 text-danger'
-                    : 'bg-surface-2 text-text-secondary'
+                    : option.value === 'review'
+                      ? 'bg-warning/15 text-warning'
+                      : 'bg-surface-2 text-text-secondary'
                 : 'text-text-tertiary hover:text-text-primary'
             }`}
           >
@@ -1695,7 +1731,7 @@ function ServicePresetsPanel({
         enabled: true,
         source: 'system' as const,
       }
-      const rules = [
+      const rules: RuleDraft[] = [
         {
           ...baseRule,
           path_regex: '^/bot[^/]+/(getMe|getUpdates|deleteWebhook)$',
@@ -1707,7 +1743,23 @@ function ServicePresetsPanel({
           reason: 'Telegram bot messaging actions',
         },
       ]
+      // Dedup against existing egress rules at the same scope so a re-apply
+      // doesn't pile up duplicate copies of the same preset. We only skip
+      // rules that already exist verbatim on this scope; anything the user
+      // tuned by hand is left alone.
+      const existing = await api.runtime.listRules({
+        kind: 'egress',
+        agent_id: agentId || undefined,
+      })
+      const ruleKey = (r: { method?: string; host?: string; path_regex?: string; action?: string; agent_id?: string }) =>
+        `${r.method ?? ''}|${r.host ?? ''}|${r.path_regex ?? ''}|${r.action ?? ''}|${r.agent_id ?? ''}`
+      const existingKeys = new Set(
+        (existing.entries ?? [])
+          .filter(rule => (agentId ? rule.agent_id === agentId : !rule.agent_id))
+          .map(ruleKey),
+      )
       for (const rule of rules) {
+        if (existingKeys.has(ruleKey(rule))) continue
         await api.runtime.createRule(rule)
       }
     },

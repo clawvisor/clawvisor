@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { NavLink, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
+import { useAttentionItems } from '../hooks/useAttentionItems'
 import { useEventStream } from '../hooks/useEventStream'
 import { useTheme } from '../hooks/useTheme'
 import { api } from '../api/client'
@@ -11,8 +12,11 @@ import Activity from './Audit'
 import Agents from './Agents'
 import Settings from './Settings'
 import Overview from './Overview'
-import GetStarted from './GetStarted'
+import DashboardIndex from './DashboardIndex'
 import HowItWorks from './HowItWorks'
+import Inbox from './Inbox'
+import Library from './Library'
+import Quickstart from './Quickstart'
 import Tasks from './Tasks'
 import AdapterGen from './AdapterGen'
 import OrgSettings from './OrgSettings'
@@ -22,12 +26,14 @@ import OrgMCPServers from './OrgMCPServers'
 import Billing from './Billing'
 import KeyVault from './KeyVault'
 import OrgSelector from '../components/OrgSelector'
-import OnboardingBanner from '../components/OnboardingBanner'
 
+// Unified nav: same labels and routes across every deployment mode. Per-flag
+// content variation lives inside individual pages now, not in the nav array.
 const navItems = [
-  { to: '/dashboard/how-it-works', label: 'How it works', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg> },
-  { to: '/dashboard', label: 'Overview', end: true, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> },
-  { to: '/dashboard/get-started', label: 'Get Started', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg> },
+  { to: '/dashboard/home', label: 'Home', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> },
+  { to: '/dashboard/inbox', label: 'Inbox', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg> },
+  { to: '/dashboard/quickstart', label: 'Quickstart', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg> },
+  { to: '/dashboard/library', label: 'Library', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> },
   { to: '/dashboard/tasks', label: 'Tasks', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> },
   { to: '/dashboard/accounts', label: 'Accounts', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg> },
   { to: '/dashboard/policy', label: 'Policy', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> },
@@ -36,7 +42,7 @@ const navItems = [
   { to: '/dashboard/settings', label: 'Settings', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg> },
 ]
 
-const billingNavItem = { to: '/dashboard/billing', label: 'Billing', end: undefined as boolean | undefined, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><path d="M1 10h22"/></svg> }
+const billingNavItem = { to: '/dashboard/billing', label: 'Billing', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><path d="M1 10h22"/></svg> }
 
 const orgNavItems = [
   { to: '/dashboard/org', label: 'Organization', end: true, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> },
@@ -51,7 +57,6 @@ export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
-  const runtimeActivityUI = !!features?.runtime_activity
 
   // Close sidebar on route change (mobile)
   useEffect(() => { setSidebarOpen(false) }, [location.pathname])
@@ -59,37 +64,10 @@ export default function Dashboard() {
   // SSE event stream for instant dashboard updates
   useEventStream()
 
-  // Queue count for sidebar badge (SSE pushes invalidations)
-  const { data: queueData } = useQuery({
-    queryKey: ['queue'],
-    queryFn: () => api.queue.list(),
-    refetchInterval: 30_000,
-  })
-  const { data: runtimeStatus } = useQuery({
-    queryKey: ['runtime-status'],
-    queryFn: async () => {
-      try {
-        return await api.runtime.status()
-      } catch {
-        return null
-      }
-    },
-    refetchInterval: 30_000,
-    enabled: runtimeActivityUI,
-  })
-  const { data: runtimeApprovalData } = useQuery({
-    queryKey: ['runtime-approvals'],
-    queryFn: async () => {
-      try {
-        return await api.runtime.listApprovals()
-      } catch {
-        return { entries: [], total: 0 }
-      }
-    },
-    refetchInterval: 30_000,
-    enabled: !!runtimeStatus?.enabled,
-  })
-  const queueCount = (queueData?.total ?? 0) + (runtimeStatus?.enabled ? (runtimeApprovalData?.total ?? 0) : 0)
+  // Sidebar badge and the Inbox both pull from the same hook so the count in
+  // the nav matches the page (live runtime approvals only — dead approvals
+  // are filtered out via filterLiveRuntimeApprovals inside the hook).
+  const { count: attentionCount } = useAttentionItems()
 
   // Check for version updates (infrequently)
   const { data: versionData } = useQuery({
@@ -135,12 +113,12 @@ export default function Dashboard() {
           <img src="/favicon.svg" alt="" className="w-5 h-5" />
           Clawvisor
         </span>
-        {queueCount > 0 && (
+        {attentionCount > 0 && (
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate('/dashboard/inbox')}
             className="text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-warning text-surface-0 ml-auto"
           >
-            {queueCount > 9 ? '9+' : queueCount}
+            {attentionCount > 9 ? '9+' : attentionCount}
           </button>
         )}
       </div>
@@ -163,17 +141,12 @@ export default function Dashboard() {
         </div>
         <ul className="flex-1 py-2 overflow-y-auto">
           {[
-            ...navItems.filter((i) => {
-              if (i.to === '/dashboard/how-it-works') return !!features?.proxy_lite
-              if (i.to === '/dashboard/get-started') return !features?.proxy_lite
-              return true
-            }),
+            ...navItems,
             ...(features?.billing ? [billingNavItem] : []),
-          ].map(({ to, label, end, icon }) => (
+          ].map(({ to, label, icon }) => (
             <li key={to}>
               <NavLink
                 to={to}
-                end={end}
                 className={({ isActive }) =>
                   `flex items-center justify-between px-4 py-2 text-sm font-medium transition-colors border-l-2 ${
                     isActive
@@ -186,9 +159,9 @@ export default function Dashboard() {
                   {icon}
                   {label}
                 </span>
-                {label === 'Overview' && queueCount > 0 && (
+                {label === 'Inbox' && attentionCount > 0 && (
                   <span className="text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-warning text-surface-0">
-                    {queueCount > 9 ? '9+' : queueCount}
+                    {attentionCount > 9 ? '9+' : attentionCount}
                   </span>
                 )}
               </NavLink>
@@ -274,8 +247,9 @@ export default function Dashboard() {
         </div>
       </nav>
 
-      {/* Main content */}
-      <main className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden pt-14 md:pt-0">
+      {/* Main content — reserves bottom space on mobile for the attention bar
+          so the bar never covers card actions when it appears. */}
+      <main className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden pt-14 pb-20 md:pt-0 md:pb-0">
         {versionData?.update_available && (
           <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">
@@ -305,7 +279,6 @@ export default function Dashboard() {
             </span>
           </div>
         )}
-        <OnboardingBanner />
         {llmStatus?.spend_cap_exhausted && (
           <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">
@@ -349,10 +322,18 @@ export default function Dashboard() {
           </div>
         )}
         <Routes>
-          <Route index element={<Overview />} />
+          <Route index element={<DashboardIndex />} />
+          <Route path="home" element={<Overview />} />
+          <Route path="quickstart" element={<Quickstart />} />
+          {/* HowItWorks stays reachable at its existing URL until the real
+              Quickstart page (Epic 5) absorbs its step-by-step content; the
+              other legacy paths redirect to Quickstart with hash anchors
+              preserved so docs like /dashboard/get-started#install-helper
+              still land on the right section after the move. */}
           <Route path="how-it-works" element={<HowItWorks />} />
-          <Route path="what-is-clawvisor" element={<Navigate to="/dashboard/how-it-works" replace />} />
-          <Route path="get-started" element={<GetStarted />} />
+          <Route path="what-is-clawvisor" element={<LegacyRedirect to="/dashboard/how-it-works" />} />
+          <Route path="get-started" element={<LegacyRedirect to="/dashboard/quickstart" />} />
+          <Route path="setup" element={<LegacyRedirect to="/dashboard/quickstart" />} />
           <Route path="tasks" element={<Tasks />} />
           <Route path="accounts" element={<Services />} />
           <Route path="services" element={<Navigate to="/dashboard/accounts" replace />} />
@@ -361,6 +342,8 @@ export default function Dashboard() {
           {features?.adapter_gen && <Route path="adapter-gen" element={<AdapterGen />} />}
           <Route path="activity" element={<Activity />} />
           <Route path="audit" element={<Navigate to="/dashboard/activity" replace />} />
+          <Route path="inbox" element={<Inbox />} />
+          <Route path="library" element={<Library />} />
           <Route path="agents" element={<Agents />} />
           <Route path="agents/:agentId" element={<Agents />} />
           {/* Focused deep-link page for vaulting one upstream LLM API key.
@@ -383,6 +366,45 @@ export default function Dashboard() {
         </Routes>
       </main>
 
+      <MobileAttentionBar count={attentionCount} pathname={location.pathname} />
     </div>
+  )
+}
+
+// Fixed bottom bar visible on small screens when something needs attention.
+// Hidden on /dashboard/inbox itself so it doesn't redirect users to the page
+// they're already on, and pinned to the safe area so devices with a home
+// indicator don't clip the tap target.
+function MobileAttentionBar({ count, pathname }: { count: number; pathname: string }) {
+  if (count === 0) return null
+  if (pathname.startsWith('/dashboard/inbox')) return null
+  return (
+    <NavLink
+      to="/dashboard/inbox"
+      className="fixed inset-x-0 bottom-0 z-40 md:hidden bg-warning text-surface-0 px-4 flex items-center justify-between font-medium text-sm shadow-lg"
+      style={{
+        paddingTop: 'max(12px, env(safe-area-inset-top))',
+        paddingBottom: 'max(12px, env(safe-area-inset-bottom))',
+        minHeight: 56,
+      }}
+    >
+      <span>
+        {count > 9 ? '9+' : count} need{count === 1 ? 's' : ''} your attention
+      </span>
+      <span aria-hidden>→</span>
+    </NavLink>
+  )
+}
+
+// Navigate that preserves the source location's search + hash, so external
+// links like /dashboard/get-started#install-helper still land at the right
+// anchor after the Quickstart rename.
+function LegacyRedirect({ to }: { to: string }) {
+  const location = useLocation()
+  return (
+    <Navigate
+      to={{ pathname: to, search: location.search, hash: location.hash }}
+      replace
+    />
   )
 }

@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
 import TaskCard from '../components/TaskCard'
+import { copyText } from '../lib/clipboard'
 import { RuntimeApprovalsPanel, RuntimeSessionsPanel, filterLiveRuntimeApprovals, isActiveRuntimeSession } from './Runtime'
 import { ActiveServiceRow, openOAuthUrl } from './Services'
 
@@ -174,7 +175,7 @@ export default function Agents() {
               {newToken}
             </code>
             <button
-              onClick={() => navigator.clipboard.writeText(newToken)}
+              onClick={() => copyText(newToken)}
               className="text-xs px-3 py-1.5 rounded border border-success/30 text-success hover:bg-success/10"
             >
               Copy
@@ -997,8 +998,8 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
     ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}/skill/setup${userIdParam}`
     : `${window.location.origin}/skill/setup${userIdParam}`
 
-  const copyText = (text: string) => {
-    navigator.clipboard.writeText(text)
+  const copyAndNotify = (text: string) => {
+    copyText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -1035,21 +1036,21 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
 
             {proxyLiteUI ? (
               <>
-                {picked === 'openclaw' && <InstallerSkillGuide target="openclaw" installerBaseURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
-                {picked === 'hermes' && <InstallerSkillGuide target="hermes" installerBaseURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyText} />}
-                {picked === 'claude-code' && <OnePasteGuide target="claude-code" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} />}
-                {picked === 'codex' && <OnePasteGuide target="codex" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} />}
+                {picked === 'openclaw' && <InstallerSkillGuide target="openclaw" installerBaseURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyAndNotify} />}
+                {picked === 'hermes' && <InstallerSkillGuide target="hermes" installerBaseURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} onCopy={copyAndNotify} />}
+                {picked === 'claude-code' && <OnePasteGuide target="claude-code" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyAndNotify} />}
+                {picked === 'codex' && <OnePasteGuide target="codex" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyAndNotify} />}
                 {picked === 'claude-desktop' && <ClaudeDesktopProfileGuide />}
-                {picked === 'gbrain' && <GBrainStreamlinedGuide clawvisorURL={clawvisorURL} onCopy={copyText} />}
-                {picked === 'cloud-agent' && <CloudAgentPromptGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
-                {picked === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+                {picked === 'gbrain' && <GBrainStreamlinedGuide clawvisorURL={clawvisorURL} onCopy={copyAndNotify} />}
+                {picked === 'cloud-agent' && <CloudAgentPromptGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyAndNotify} />}
+                {picked === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyAndNotify} showSkillDefault={showSkillDefault} />}
               </>
             ) : (
               <>
-                {picked === 'openclaw' && <LegacyOpenClawGuide setupURL={setupURL} copied={copied} onCopy={copyText} />}
-                {picked === 'claude-code' && <LegacyClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
-                {picked === 'claude-desktop' && <LegacyClaudeDesktopGuide isLocal={isLocal} onCopy={copyText} />}
-                {picked === 'other' && <LegacyOtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
+                {picked === 'openclaw' && <LegacyOpenClawGuide setupURL={setupURL} copied={copied} onCopy={copyAndNotify} />}
+                {picked === 'claude-code' && <LegacyClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyAndNotify} />}
+                {picked === 'claude-desktop' && <LegacyClaudeDesktopGuide isLocal={isLocal} onCopy={copyAndNotify} />}
+                {picked === 'other' && <LegacyOtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyAndNotify} />}
               </>
             )}
 
@@ -4266,12 +4267,12 @@ function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
     // navigator.clipboard is undefined in insecure (http://) or sandboxed
     // contexts. Calling .writeText on undefined throws synchronously, so
     // the .catch handler below never runs. Guard before dispatching.
-    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+    if (!navigator.clipboard || typeof copyText !== 'function') {
       setCopied(`${label}-failed`)
       setTimeout(() => setCopied(null), 2000)
       return
     }
-    navigator.clipboard.writeText(value)
+    copyText(value)
       .then(() => {
         setCopied(label)
         setTimeout(() => setCopied(null), 2000)

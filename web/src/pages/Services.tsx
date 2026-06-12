@@ -6,6 +6,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { serviceName, serviceDescription } from '../lib/services'
 import { useAuth } from '../hooks/useAuth'
 import { ServiceIconBadge } from '../components/ServiceIcon'
+import { copyText } from '../lib/clipboard'
 
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
 
@@ -395,7 +396,7 @@ function ShadowTokensSection({
           <div className="mt-2 flex items-center gap-2">
             <code className="flex-1 break-all rounded border border-success/20 bg-surface-0 px-3 py-2 text-xs text-text-primary">{freshToken}</code>
             <button
-              onClick={() => navigator.clipboard.writeText(freshToken)}
+              onClick={() => copyText(freshToken)}
               className="rounded border border-success/20 px-3 py-2 text-xs text-success hover:bg-success/10"
             >
               Copy
@@ -421,7 +422,7 @@ function ShadowTokensSection({
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => navigator.clipboard.writeText(entry.placeholder)}
+                onClick={() => copyText(entry.placeholder)}
                 className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
               >
                 Copy
@@ -649,7 +650,7 @@ function VaultServiceActions({ svc }: { svc: ServiceInfo }) {
               {deviceCode.userCode}
             </code>
             <button
-              onClick={() => navigator.clipboard.writeText(deviceCode.userCode)}
+              onClick={() => copyText(deviceCode.userCode)}
               className="text-xs px-2 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
             >
               Copy
@@ -790,7 +791,7 @@ function VaultPlaceholderMintControls({ item, agents }: { item: VaultItem; agent
   async function copyPlaceholder() {
     if (!minted?.placeholder) return
     try {
-      await navigator.clipboard.writeText(minted.placeholder)
+      await copyText(minted.placeholder)
     } catch {
       setError('Could not copy placeholder')
     }
@@ -1100,7 +1101,7 @@ export function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
               {deviceCode.userCode}
             </code>
             <button
-              onClick={() => navigator.clipboard.writeText(deviceCode.userCode)}
+              onClick={() => copyText(deviceCode.userCode)}
               className="text-xs px-2 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
             >
               Copy
@@ -1725,7 +1726,7 @@ function AddServiceModal({
                             {deviceFlowData.userCode}
                           </code>
                           <button
-                            onClick={() => navigator.clipboard.writeText(deviceFlowData.userCode)}
+                            onClick={() => copyText(deviceFlowData.userCode)}
                             className="text-xs px-2 py-1 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2"
                           >
                             Copy
