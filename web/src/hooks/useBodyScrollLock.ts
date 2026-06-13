@@ -7,8 +7,41 @@ import { useEffect } from 'react'
 // restored once on the final release.
 let lockCount = 0
 let savedOverflow: string | null = null
+let observer: MutationObserver | null = null
+
+function reconcileScrollLock() {
+  const activeElements = document.querySelectorAll('[data-body-scroll-lock="true"]')
+  if (activeElements.length === 0) {
+    lockCount = 0
+    if (document.body.style.overflow === 'hidden') {
+      document.body.style.overflow = savedOverflow ?? ''
+      savedOverflow = null
+    }
+  } else {
+    lockCount = activeElements.length
+    if (document.body.style.overflow !== 'hidden') {
+      savedOverflow = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+    }
+  }
+}
+
+function initMutationObserver() {
+  if (typeof window === 'undefined' || observer) return
+  observer = new MutationObserver(() => {
+    reconcileScrollLock()
+  })
+  observer.observe(document.body, { childList: true, subtree: true })
+}
 
 export function useBodyScrollLock(enabled = true) {
+  useEffect(() => {
+    initMutationObserver()
+    return () => {
+      setTimeout(reconcileScrollLock, 0)
+    }
+  }, [])
+
   useEffect(() => {
     if (!enabled) return
     if (lockCount === 0) {
@@ -22,6 +55,7 @@ export function useBodyScrollLock(enabled = true) {
         document.body.style.overflow = savedOverflow ?? ''
         savedOverflow = null
       }
+      setTimeout(reconcileScrollLock, 0)
     }
   }, [enabled])
 }

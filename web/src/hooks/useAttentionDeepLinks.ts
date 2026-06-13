@@ -73,7 +73,9 @@ export function useAttentionDeepLinks() {
     let dispatched = false
 
     if (requestId) {
-      if (action === 'approve') {
+      if (currentOrg) {
+        setResult('Switch to your personal context to act on this request.')
+      } else if (action === 'approve') {
         approveRequest.mutate({ requestId, taskId })
         dispatched = true
       } else if (action === 'deny') {
@@ -83,7 +85,6 @@ export function useAttentionDeepLinks() {
     } else if (taskId) {
       if (currentOrg) {
         setResult('Switch to your personal context to act on this task.')
-        dispatched = true
       } else {
         switch (action) {
           case 'approve': approveTask.mutate(taskId); dispatched = true; break

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useBodyScrollLock, useEscapeKey } from '../hooks/useBodyScrollLock'
+import { copyText } from '../lib/clipboard'
 
 interface Props {
   title: string
@@ -26,16 +27,22 @@ export default function LibraryTaskDrawer({
   useBodyScrollLock()
   useEscapeKey(onClose)
   const [copied, setCopied] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
 
   function copyPrompt() {
-    navigator.clipboard.writeText(prompt).then(
-      () => { setCopied(true); setTimeout(() => setCopied(false), 2000) },
-      () => { /* clipboard rejection — silently swallow, the button remains visible */ },
-    )
+    copyText(prompt).then((success) => {
+      if (success) {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      } else {
+        setCopyFailed(true)
+        setTimeout(() => setCopyFailed(false), 3000)
+      }
+    })
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
+    <div className="fixed inset-0 z-50 flex justify-end" data-body-scroll-lock="true">
       <button
         type="button"
         className="absolute inset-0 bg-black/40"
@@ -76,9 +83,9 @@ export default function LibraryTaskDrawer({
             <button
               type="button"
               onClick={copyPrompt}
-              className="mt-2 text-xs text-brand hover:underline"
+              className={`mt-2 text-xs hover:underline ${copyFailed ? 'text-danger' : 'text-brand'}`}
             >
-              {copied ? 'Copied!' : 'Copy prompt'}
+              {copied ? 'Copied!' : copyFailed ? 'Failed to copy. Please copy manually.' : 'Copy prompt'}
             </button>
           </div>
           <div>

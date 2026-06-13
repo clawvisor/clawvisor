@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, type Agent, type Restriction, type OrgRestriction, type RuntimePolicyRule, type RuntimeToolControl, type ServiceInfo } from '../api/client'
@@ -61,6 +61,7 @@ function ActionRow({
   const qc = useQueryClient()
   const [reason, setReason] = useState('')
   const [showReason, setShowReason] = useState(false)
+  const isSubmitting = useRef(false)
 
   const createMut = useMutation({
     mutationFn: async (r: string) => {
@@ -71,6 +72,9 @@ function ActionRow({
       setReason('')
       setShowReason(false)
       qc.invalidateQueries({ queryKey: ['restrictions'] })
+    },
+    onSettled: () => {
+      isSubmitting.current = false
     },
   })
 
@@ -99,7 +103,8 @@ function ActionRow({
     // Enter-key on the reason input bypasses the Block button's disabled
     // state, so guard the mutation here too — otherwise a fast double-Enter
     // queues two identical create requests before the first one finishes.
-    if (createMut.isPending) return
+    if (isSubmitting.current || createMut.isPending) return
+    isSubmitting.current = true
     createMut.mutate(reason.trim())
   }
 
@@ -159,6 +164,7 @@ function WildcardToggle({
   const qc = useQueryClient()
   const [reason, setReason] = useState('')
   const [showReason, setShowReason] = useState(false)
+  const isSubmitting = useRef(false)
 
   const createMut = useMutation({
     mutationFn: async (r: string) => {
@@ -169,6 +175,9 @@ function WildcardToggle({
       setReason('')
       setShowReason(false)
       qc.invalidateQueries({ queryKey: ['restrictions'] })
+    },
+    onSettled: () => {
+      isSubmitting.current = false
     },
   })
 
@@ -194,7 +203,8 @@ function WildcardToggle({
   }
 
   function handleConfirmBlock() {
-    if (createMut.isPending) return
+    if (isSubmitting.current || createMut.isPending) return
+    isSubmitting.current = true
     createMut.mutate(reason.trim())
   }
 

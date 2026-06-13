@@ -999,9 +999,12 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
     : `${window.location.origin}/skill/setup${userIdParam}`
 
   const copyAndNotify = (text: string) => {
-    copyText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    copyText(text).then((success) => {
+      if (success) {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      }
+    })
   }
 
   return (
@@ -4264,25 +4267,14 @@ function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
   const [copied, setCopied] = useState<string | null>(null)
 
   function copy(label: string, value: string) {
-    // navigator.clipboard is undefined in insecure (http://) or sandboxed
-    // contexts. Calling .writeText on undefined throws synchronously, so
-    // the .catch handler below never runs. Guard before dispatching.
-    if (!navigator.clipboard || typeof copyText !== 'function') {
-      setCopied(`${label}-failed`)
-      setTimeout(() => setCopied(null), 2000)
-      return
-    }
-    copyText(value)
-      .then(() => {
+    copyText(value).then((success) => {
+      if (success) {
         setCopied(label)
-        setTimeout(() => setCopied(null), 2000)
-      })
-      .catch(() => {
-        // writeText can also reject asynchronously (permission denied,
-        // user gesture missing on Safari, etc.).
+      } else {
         setCopied(`${label}-failed`)
-        setTimeout(() => setCopied(null), 2000)
-      })
+      }
+      setTimeout(() => setCopied(null), 2000)
+    })
   }
 
   // Anthropic SDK + Claude CLI: env var is the API family base; the SDK appends
