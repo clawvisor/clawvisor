@@ -48,6 +48,16 @@ type Verdict struct {
 	// Triggers fail-closed at the rewriter.
 	Ambiguous bool
 
+	// AgentRecoverable narrows Ambiguous=true verdicts to the subset
+	// where the refusal reason describes a deterministic, agent-fixable
+	// problem with the tool_use shape (e.g. `$(...)` inside a curl
+	// pipeline, multiple credentialed calls in one statement). The
+	// policy layer surfaces these as RecoverableDenyVerdict so the
+	// model can self-correct via the proxy's one-shot continuation
+	// retry, instead of falling through to OutcomeHold and waiting on
+	// human approval.
+	AgentRecoverable bool
+
 	// Method is the inferred HTTP verb (uppercased: GET, POST, ...).
 	Method string
 

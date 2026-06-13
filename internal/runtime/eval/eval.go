@@ -61,14 +61,15 @@ type EvaluationFact interface {
 // so this package stays a leaf — translation happens at the policy /
 // inspector boundary.
 type InspectorFact struct {
-	Source       string
-	Host         string
-	Method       string
-	Path         string
-	Placeholders []string
-	IsAPICall    bool
-	Ambiguous    bool
-	Reason       string
+	Source           string
+	Host             string
+	Method           string
+	Path             string
+	Placeholders     []string
+	IsAPICall        bool
+	Ambiguous        bool
+	AgentRecoverable bool
+	Reason           string
 }
 
 func (InspectorFact) isEvaluationFact() {}

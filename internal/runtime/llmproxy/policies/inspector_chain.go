@@ -124,8 +124,20 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 		}, nil
 	}
 
-	// Ambiguous: fail closed with per-tool HoldKey.
+	// Ambiguous: fail closed. Two sub-cases:
+	//  - AgentRecoverable=true → deterministic parser refusal whose
+	//    reason names the unsafe construct (e.g. `$(...)` in a curl
+	//    pipeline). Wire through RecoverableDenyVerdict so the proxy's
+	//    one-shot continuation retry feeds the reason back as a
+	//    synthetic tool_result and the agent can re-emit a simpler shape
+	//    inside the same inbound request — no human approval needed.
+	//  - Otherwise → genuine inspector uncertainty (validator couldn't
+	//    classify, opaque shape). Fall through to OutcomeHold so a human
+	//    decides.
 	if v.Ambiguous {
+		if v.AgentRecoverable {
+			return conversation.RecoverableDenyVerdict(v.Reason, inspectorFact), nil
+		}
 		return pipeline.ToolUseVerdict{
 			Outcome:      pipeline.OutcomeHold,
 			Reason:       v.Reason,
@@ -185,14 +197,15 @@ func (c *InspectorChain) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRespon
 // the same fact shape regardless of which path runs.
 func newInspectorFact(v inspector.Verdict) pipeline.InspectorFact {
 	return pipeline.InspectorFact{
-		Source:       string(v.Source),
-		Host:         v.Host,
-		Method:       v.Method,
-		Path:         v.Path,
-		Placeholders: append([]string(nil), v.Placeholders...),
-		IsAPICall:    v.IsAPICall,
-		Ambiguous:    v.Ambiguous,
-		Reason:       v.Reason,
+		Source:           string(v.Source),
+		Host:             v.Host,
+		Method:           v.Method,
+		Path:             v.Path,
+		Placeholders:     append([]string(nil), v.Placeholders...),
+		IsAPICall:        v.IsAPICall,
+		Ambiguous:        v.Ambiguous,
+		AgentRecoverable: v.AgentRecoverable,
+		Reason:           v.Reason,
 	}
 }
 
