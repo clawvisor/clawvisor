@@ -194,6 +194,7 @@ type InspectorVerdictSnapshot struct {
 	Reason              string
 	IsAPICall           bool
 	Ambiguous           bool
+	AgentRecoverable    bool
 	Placeholders        []string
 	CredentialLocations []CredentialLocation
 }
