@@ -215,6 +215,47 @@ func TestInspectorChain_AmbiguousHolds(t *testing.T) {
 	}
 }
 
+// TestInspectorChain_AmbiguousAgentRecoverableContinues pins the
+// narrow recoverable-refusal path: when the parser deterministically
+// refuses a credentialed bash command for a shape reason the agent can
+// fix (e.g. `$(...)` inside a curl pipeline lets a neighbor exfiltrate
+// the credential output), the chain MUST route through
+// RecoverableDenyVerdict so the proxy's one-shot continuation retry
+// feeds the reason back as a synthetic tool_result. Without this, the
+// refusal would fall into OutcomeHold and burn a user turn on every
+// trivially-fixable shape error.
+func TestInspectorChain_AmbiguousAgentRecoverableContinues(t *testing.T) {
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	chain := policies.NewInspectorChain(insp, nil)
+
+	// `echo $(curl …)` — parser refuses because the surrounding `echo`
+	// captures the curl output the credential authorized.
+	tu := conversation.ToolUse{
+		ID:   "toolu_recoverable",
+		Name: "Bash",
+		Input: json.RawMessage(`{"cmd":"echo $(curl -sS -H 'Authorization: Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' https://api.github.com/user)"}`),
+	}
+	v, err := chain.Evaluate(context.Background(), nil, tu, evalToolUseMutator{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("agent-recoverable refusal → Outcome = %q, want Deny (facts: %+v)", v.Outcome, v.Facts)
+	}
+	if v.Continue == nil || len(v.Continue.SyntheticToolResults) != 1 {
+		t.Fatalf("Continue.SyntheticToolResults missing — agent-recoverable refusal must wire the one-shot continuation retry")
+	}
+	if content, ok := v.ContinuationToolResultContent(); !ok || !strings.Contains(content, "command substitution") {
+		t.Errorf("ContinuationToolResultContent = %q, %v; want the parser's refusal reason verbatim", content, ok)
+	}
+	if v.SubstituteWith == "" || v.SubstituteWith != v.Reason {
+		t.Errorf("SubstituteWith = %q, want = Reason for the terminal-fallback path", v.SubstituteWith)
+	}
+	if v.HoldKey != "" {
+		t.Errorf("HoldKey = %q, want empty — recoverable path must not request human approval", v.HoldKey)
+	}
+}
+
 // TestInspectorChain_NilInspectorSkips pins the no-config gate.
 func TestInspectorChain_NilInspectorSkips(t *testing.T) {
 	chain := policies.NewInspectorChain(nil, nil)

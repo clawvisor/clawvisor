@@ -12,14 +12,15 @@ import (
 // imported.
 func InspectorSnapshot(v inspector.Verdict) eval.InspectorVerdictSnapshot {
 	snap := eval.InspectorVerdictSnapshot{
-		Source:       string(v.Source),
-		Host:         v.Host,
-		Method:       v.Method,
-		Path:         v.Path,
-		Reason:       v.Reason,
-		IsAPICall:    v.IsAPICall,
-		Ambiguous:    v.Ambiguous,
-		Placeholders: append([]string(nil), v.Placeholders...),
+		Source:           string(v.Source),
+		Host:             v.Host,
+		Method:           v.Method,
+		Path:             v.Path,
+		Reason:           v.Reason,
+		IsAPICall:        v.IsAPICall,
+		Ambiguous:        v.Ambiguous,
+		AgentRecoverable: v.AgentRecoverable,
+		Placeholders:     append([]string(nil), v.Placeholders...),
 	}
 	if len(v.CredentialLocations) > 0 {
 		snap.CredentialLocations = make([]eval.CredentialLocation, len(v.CredentialLocations))
@@ -40,14 +41,15 @@ func InspectorSnapshot(v inspector.Verdict) eval.InspectorVerdictSnapshot {
 // carries a typed Verdict).
 func InspectorVerdictFromSnapshot(snap eval.InspectorVerdictSnapshot) inspector.Verdict {
 	v := inspector.Verdict{
-		Source:       inspector.VerdictSource(snap.Source),
-		Host:         snap.Host,
-		Method:       snap.Method,
-		Path:         snap.Path,
-		Reason:       snap.Reason,
-		IsAPICall:    snap.IsAPICall,
-		Ambiguous:    snap.Ambiguous,
-		Placeholders: append([]string(nil), snap.Placeholders...),
+		Source:           inspector.VerdictSource(snap.Source),
+		Host:             snap.Host,
+		Method:           snap.Method,
+		Path:             snap.Path,
+		Reason:           snap.Reason,
+		IsAPICall:        snap.IsAPICall,
+		Ambiguous:        snap.Ambiguous,
+		AgentRecoverable: snap.AgentRecoverable,
+		Placeholders:     append([]string(nil), snap.Placeholders...),
 	}
 	if len(snap.CredentialLocations) > 0 {
 		v.CredentialLocations = make([]inspector.CredentialLocation, len(snap.CredentialLocations))

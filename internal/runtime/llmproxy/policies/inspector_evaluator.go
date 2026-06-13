@@ -52,11 +52,17 @@ func (e *InspectorEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 	})
 	fact := newInspectorFact(v)
 
-	// Ambiguous verdict → Hold per-tool. The legacy code fails closed
-	// here; the policy preserves that. HoldKey is per-tool (no
-	// coalescing across siblings) because ambiguous-different-reasons
-	// shouldn't merge into one approval prompt.
+	// Ambiguous verdict → fail closed. Mirrors InspectorChain's split:
+	// AgentRecoverable=true (deterministic parser refusal naming a
+	// fixable shape, e.g. `$(...)` in a curl pipeline) → route through
+	// RecoverableDenyVerdict so the proxy's one-shot continuation retry
+	// feeds the reason back as a synthetic tool_result. Otherwise →
+	// OutcomeHold (per-tool key so ambiguous-different-reasons don't
+	// coalesce into one approval prompt).
 	if v.Ambiguous {
+		if v.AgentRecoverable {
+			return conversation.RecoverableDenyVerdict(v.Reason, fact), nil
+		}
 		return pipeline.ToolUseVerdict{
 			Outcome:      pipeline.OutcomeHold,
 			Reason:       v.Reason,

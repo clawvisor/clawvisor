@@ -328,7 +328,13 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 	// substitution, backticks, process substitution) is present.
 	seg, segErr := extractCredentialedCurlSegment(cmd)
 	if segErr != "" {
-		return Verdict{IsAPICall: false, Ambiguous: true, Reason: segErr}, true
+		// segErr strings are deterministic refusal reasons (multi-statement,
+		// $(...) / <(...) / backgrounded / multiple credentialed / parse
+		// error) that the agent can fix by re-emitting a simpler tool_use.
+		// Mark AgentRecoverable so InspectorChain routes through
+		// RecoverableDenyVerdict's one-shot continuation retry instead of
+		// the generic Ambiguous→Hold human-approval fallthrough.
+		return Verdict{IsAPICall: false, Ambiguous: true, AgentRecoverable: true, Reason: segErr}, true
 	}
 	if seg.text == "" {
 		// No credentialed sub-command found. Could be a non-curl call
