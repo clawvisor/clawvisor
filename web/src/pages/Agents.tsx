@@ -2381,7 +2381,7 @@ function OnePasteGuide({
             {helperSpec.label} and runs the setup skill as the first turn. The skill:
             calls <code className="font-mono">/api/agents/connect</code> with the
             claim (auto-approved), writes the agent token to{' '}
-            <code className="font-mono">~/.clawvisor/agents/{spec.baseName}.json</code>,
+            <code className="font-mono">~/.clawvisor/agents/{matchingAgent?.name || agentName}.json</code>,
             checks for an existing vaulted upstream key (vaults one if absent —{' '}
             <em>without ever reading the value into the conversation</em>),{' '}
             {spec.selfInstall

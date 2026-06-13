@@ -3,9 +3,11 @@ package llmproxy
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -54,6 +56,14 @@ func TestOpenRawIOLoggerTightensExistingFilePermissions(t *testing.T) {
 	}
 	if l == nil {
 		t.Fatal("expected logger")
+	}
+	defer func() {
+		if closer, ok := l.w.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	}()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping file permission check on Windows")
 	}
 	info, err := os.Stat(path)
 	if err != nil {

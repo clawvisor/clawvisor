@@ -14,6 +14,8 @@ type ValidationIssue struct {
 	Message string
 }
 
+var alphanumericWhitelist = regexp.MustCompile(`^[a-zA-Z0-9 ._:\-]+$`)
+
 func ValidateTaskEnvelope(env runtimetasks.Envelope) []ValidationIssue {
 	var issues []ValidationIssue
 
@@ -62,6 +64,11 @@ func validateTaskEnvelopeBody(env runtimetasks.Envelope) []ValidationIssue {
 			issues = append(issues, ValidationIssue{
 				Field:   fieldPrefix + ".tool_name",
 				Message: "tool_name is required",
+			})
+		} else if !alphanumericWhitelist.MatchString(item.ToolName) {
+			issues = append(issues, ValidationIssue{
+				Field:   fieldPrefix + ".tool_name",
+				Message: "must contain only alphanumeric characters, spaces, dots, colons, dashes, and underscores",
 			})
 		}
 		if strings.TrimSpace(item.Why) == "" {
@@ -148,6 +155,18 @@ func ValidateRequiredCredentials(required []runtimetasks.RequiredCredential) []V
 			issues = append(issues, ValidationIssue{
 				Field:   fieldPrefix + ".vault_item_id",
 				Message: "vault_item_id or vault_item_handle is required",
+			})
+		}
+		if idSet && !alphanumericWhitelist.MatchString(item.VaultItemID) {
+			issues = append(issues, ValidationIssue{
+				Field:   fieldPrefix + ".vault_item_id",
+				Message: "must contain only alphanumeric characters, spaces, dots, colons, dashes, and underscores",
+			})
+		}
+		if handleSet && !alphanumericWhitelist.MatchString(item.VaultItemHandle) {
+			issues = append(issues, ValidationIssue{
+				Field:   fieldPrefix + ".vault_item_handle",
+				Message: "must contain only alphanumeric characters, spaces, dots, colons, dashes, and underscores",
 			})
 		}
 		if idSet && handleSet {

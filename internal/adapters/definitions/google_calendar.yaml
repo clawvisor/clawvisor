@@ -52,7 +52,7 @@ actions:
       to:
         type: string
         aliases: [time_max]
-        transform: "endOfDay(to)"
+        transform: "(time_max != nil) ? rfc3339(to) : endOfDay(to)"
         map_to: timeMax
         location: query
       q: { type: string, location: query }

@@ -221,7 +221,7 @@ func buildAssessUserMessage(req AssessRequest, verificationEnabled bool, actionC
 		if len(req.ExpectedTools) > 0 {
 			fmt.Fprintf(&b, "\nExpected tools (%d):\n", len(req.ExpectedTools))
 			for i, t := range req.ExpectedTools {
-				fmt.Fprintf(&b, "  %d. %s", i+1, t.ToolName)
+				fmt.Fprintf(&b, "  %d. %q", i+1, t.ToolName)
 				if t.InputRegex != "" {
 					fmt.Fprintf(&b, " (input_regex=%q — amplifies risk: regex widens matcher)", t.InputRegex)
 				}
@@ -267,7 +267,7 @@ func buildAssessUserMessage(req AssessRequest, verificationEnabled bool, actionC
 				if display == "" {
 					display = c.VaultItemHandle
 				}
-				fmt.Fprintf(&b, "  %d. %s", i+1, display)
+				fmt.Fprintf(&b, "  %d. %q", i+1, display)
 				if why := strings.TrimSpace(c.Why); why != "" {
 					fmt.Fprintf(&b, " — why: %q", why)
 				}

@@ -393,10 +393,11 @@ func TestInstallerHermesRender(t *testing.T) {
 		"/api/agents/connect",
 		`"$TOKEN_FILE"`,
 		// Step 2: detect provider — read env + ~/.hermes/config.yaml safely
-		// (python yaml extracts only base_url, never the api_key).
+		// (python extracts only base_url, never the api_key).
 		"## 2. Detect the upstream LLM provider",
-		"python3 -c \"import yaml",
-		"model.base_url",
+		"python3 - <<'EOF'",
+		"import os, re",
+		"print(d.get('model', {}).get('base_url', ''))",
 		"DO NOT `cat`, `grep`, `head`, or `tail`",
 		// Detection branches by signal (env + config base_url host).
 		`[ -n "$ANTHROPIC_API_KEY" ]`,
@@ -410,8 +411,7 @@ func TestInstallerHermesRender(t *testing.T) {
 		"*/api|*/api/",
 		// model.default name pattern — actively-used model is the
 		// strongest single hint.
-		`DEFAULT=$(python3 -c "import yaml`,
-		`(d.get('model') or {}).get('default')`,
+		"print(d.get('model', {}).get('default', ''))",
 		"anthropic/*|*claude*",
 		"openai/*|*gpt*|*o1-*|*o3-*|*o4-*",
 		// HARD CONSTRAINT: the helper must ask the user and wait for a
@@ -547,7 +547,7 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		"-H \"X-Clawvisor-Agent-Token: $CLAWVISOR_TOKEN\"",
 		"host.docker.internal:",
 		"/api/skill/catalog",
-		// Step 6: configure via `openclaw config set models.providers.clawvisor`.
+		// Step 6: configure via python3 stdin merge.
 		// Onboard is for first-time auth, not provider registration —
 		// docs.openclaw.ai/cli/config covers the merge pattern.
 		"## 6. Point OpenClaw at Clawvisor",
@@ -558,10 +558,10 @@ func TestInstallerOpenClawRender(t *testing.T) {
 		`--arg modelId "$MODEL_ID"`,
 		`--argjson contextWindow "$CONTEXT_WINDOW"`,
 		"--argjson maxTokens 8192",
-		`openclaw config set models.providers.clawvisor "$PROVIDER_JSON" --strict-json --merge`,
-		`docker exec "$OPENCLAW_CONTAINER" openclaw config set models.providers.clawvisor`,
-		// Remote uses $(cat) substitution to pipe the JSON over stdin.
-		`ssh "$OPENCLAW_REMOTE" 'openclaw config set models.providers.clawvisor "$(cat)" --strict-json --merge'`,
+		`python3 -c 'import json, os, sys; fn = os.path.expanduser("~/.openclaw/openclaw.json")`,
+		`docker exec -i "$OPENCLAW_CONTAINER" python3 -c 'import json`,
+		// Remote uses python3 to merge JSON over stdin.
+		`ssh "$OPENCLAW_REMOTE" 'python3 -c "import json, os, sys; fn = os.path.expanduser(\"~/.openclaw/openclaw.json\");`,
 		"export OPENCLAW_CLAWVISOR_URL",
 		"$OPENCLAW_CLAWVISOR_URL$BASE_PATH",
 		// Setup-shape cleanup paths.
@@ -618,16 +618,13 @@ func TestInstallerOpenClawRendersAllModes(t *testing.T) {
 	body := installerGet(t, h, "openclaw", "CLAIMOPEN12")
 
 	assertContainsAll(t, body,
-		// Host: bare `openclaw config set` (no openclaw-cli; no onboard).
-		`openclaw config set models.providers.clawvisor "$PROVIDER_JSON" --strict-json --merge`,
-		// Docker: docker exec into the already-running container (probe
-		// captures its name as $OPENCLAW_CONTAINER), then `openclaw config
-		// set` inside the container against the mounted ~/.openclaw.
-		`docker exec "$OPENCLAW_CONTAINER" openclaw config set models.providers.clawvisor`,
+		// Host: python3 stdin merge
+		`python3 -c 'import json, os, sys; fn = os.path.expanduser("~/.openclaw/openclaw.json")`,
+		// Docker: python3 stdin merge inside container
+		`docker exec -i "$OPENCLAW_CONTAINER" python3 -c 'import json`,
 		"host.docker.internal:",
-		// Remote: ssh + stdin-piped JSON via $(cat) so the embedded double
-		// quotes don't fight with ssh argv quoting.
-		`ssh "$OPENCLAW_REMOTE" 'openclaw config set models.providers.clawvisor "$(cat)" --strict-json --merge'`,
+		// Remote: python3 stdin merge over ssh
+		`ssh "$OPENCLAW_REMOTE" 'python3 -c "import json, os, sys; fn = os.path.expanduser(\"~/.openclaw/openclaw.json\");`,
 		"export OPENCLAW_CLAWVISOR_URL",
 		"$OPENCLAW_CLAWVISOR_URL$BASE_PATH",
 	)

@@ -2683,6 +2683,13 @@ func closestParamName(input string, defs []adapters.ParamInfo) string {
 			bestDist = d
 			best = p.Name
 		}
+		for _, alias := range p.Aliases {
+			dAlias := editDistance(input, alias)
+			if dAlias < bestDist {
+				bestDist = dAlias
+				best = alias
+			}
+		}
 	}
 	return best
 }

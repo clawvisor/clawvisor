@@ -751,3 +751,58 @@ func TestStripSyntheticApprovalHistory_DoesNotTouchUserMention(t *testing.T) {
 		t.Fatalf("user-authored diagnostic text should be preserved: %s", out.Body)
 	}
 }
+
+func TestStripSyntheticApprovalHistory_IntermediateUserTurnDoesNotCorruptReconstruction(t *testing.T) {
+	const approvalID = "cv-persistreconst1"
+	const askToolUseID = "toolu_clawvisor_ask_" + approvalID
+	const originalToolUseID = "toolu_01OriginalReconstruct"
+	body, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "expand the task"},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": "Clawvisor wants to expand the scope of an existing task:\n[clawvisor:approval=" + approvalID + "]"},
+				{"type": "tool_use", "id": askToolUseID, "name": "AskUserQuestion", "input": map[string]any{
+					"questions": []map[string]any{{"question": "approve?"}},
+				}},
+			}},
+			{"role": "user", "content": "System warning: rate limit reached soon"}, // intermediate turn
+			{"role": "user", "content": []map[string]any{
+				{"type": "tool_result", "tool_use_id": askToolUseID, "content": "yes"},
+			}},
+			{"role": "assistant", "content": "Got it, proceeding."},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(id string) *historystrip.ReconstructedPair {
+		if id != approvalID {
+			return nil
+		}
+		return &historystrip.ReconstructedPair{
+			ToolUseID:  originalToolUseID,
+			ToolName:   "Bash",
+			Input:      json.RawMessage(`{"command":"curl -X POST .../expand?surface=inline ..."}`),
+			ResultText: "[clawvisor-notice] scope was expanded; do not re-emit",
+		}
+	}
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider:             conversation.ProviderAnthropic,
+		Body:                 body,
+		ReconstructionLookup: lookup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Modified {
+		t.Fatal("expected history strip to modify body")
+	}
+	got := string(out.Body)
+	if !strings.Contains(got, originalToolUseID) {
+		t.Errorf("expected reconstructed tool_use_id %q to be present: %s", originalToolUseID, got)
+	}
+	if !strings.Contains(got, "[clawvisor-notice] scope was expanded") {
+		t.Errorf("expected reconstructed tool_result content to be present: %s", got)
+	}
+}

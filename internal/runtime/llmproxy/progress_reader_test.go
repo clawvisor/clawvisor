@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ProgressReader must be a transparent pass-through — the data path
@@ -27,6 +28,7 @@ func TestProgressReader_StatsCountReadBytes(t *testing.T) {
 	src := bytes.NewReader([]byte("0123456789"))
 	pr := NewProgressReader(src, nil, nil, "req-pr-stats")
 	var out [10]byte
+	time.Sleep(5 * time.Millisecond)
 	if _, err := io.ReadFull(pr, out[:]); err != nil {
 		t.Fatal(err)
 	}

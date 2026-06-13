@@ -657,7 +657,7 @@ func sectionDetectProviderHermes(step int) string {
 	fmt.Fprintf(&b, "Hermes is configured today.\n\n")
 	fmt.Fprintf(&b, "**Read only safe-to-print metadata.** `~/.hermes/config.yaml` carries\n")
 	fmt.Fprintf(&b, "an `api_key` field — DO NOT `cat`, `grep`, `head`, or `tail` it. The\n")
-	fmt.Fprintf(&b, "probe below uses `python3 -c yaml.safe_load(...)` to read only\n")
+	fmt.Fprintf(&b, "probe below uses `python3 -c` with `re` to read only\n")
 	fmt.Fprintf(&b, "`model.base_url`, which doesn't carry the secret.\n\n")
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "DETECTED=''\n")
@@ -668,7 +668,7 @@ func sectionDetectProviderHermes(step int) string {
 	fmt.Fprintf(&b, "  # base_url path / host — `*/api/v1*` and `*/api` catch re-install\n")
 	fmt.Fprintf(&b, "  # cases where base_url points at a Clawvisor instance and the\n")
 	fmt.Fprintf(&b, "  # trailing path tells us which provider was picked last time.\n")
-	fmt.Fprintf(&b, "  BASE=$(python3 -c \"import yaml; d=yaml.safe_load(open('$HOME/.hermes/config.yaml')) or {}; print((d.get('model') or {}).get('base_url') or '')\" 2>/dev/null || true)\n")
+	fmt.Fprintf(&b, "  BASE=$(%s)\n", hermesYamlParserPython("base_url"))
 	fmt.Fprintf(&b, "  case \"$BASE\" in\n")
 	fmt.Fprintf(&b, "    *anthropic.com*)      DETECTED=\"$DETECTED anthropic\" ;;\n")
 	fmt.Fprintf(&b, "    *openai.com*)         DETECTED=\"$DETECTED openai\" ;;\n")
@@ -677,7 +677,7 @@ func sectionDetectProviderHermes(step int) string {
 	fmt.Fprintf(&b, "  esac\n")
 	fmt.Fprintf(&b, "  # model.default name pattern — strongest hint of what's *actively*\n")
 	fmt.Fprintf(&b, "  # used, since base_url alone doesn't say which model is selected.\n")
-	fmt.Fprintf(&b, "  DEFAULT=$(python3 -c \"import yaml; d=yaml.safe_load(open('$HOME/.hermes/config.yaml')) or {}; print((d.get('model') or {}).get('default') or '')\" 2>/dev/null || true)\n")
+	fmt.Fprintf(&b, "  DEFAULT=$(%s)\n", hermesYamlParserPython("default"))
 	fmt.Fprintf(&b, "  case \"$DEFAULT\" in\n")
 	fmt.Fprintf(&b, "    anthropic/*|*claude*)            DETECTED=\"$DETECTED anthropic\" ;;\n")
 	fmt.Fprintf(&b, "    openai/*|*gpt*|*o1-*|*o3-*|*o4-*) DETECTED=\"$DETECTED openai\" ;;\n")
@@ -688,6 +688,30 @@ func sectionDetectProviderHermes(step int) string {
 	fmt.Fprintf(&b, "```\n\n")
 	b.WriteString(sectionDetectProviderAskAndCase("Hermes"))
 	return b.String()
+}
+
+func hermesYamlParserPython(field string) string {
+	return `python3 - <<'EOF' 2>/dev/null || true
+import os, re
+fn = os.path.expanduser('~/.hermes/config.yaml')
+if os.path.exists(fn):
+    d = {}
+    st, ind = [d], [-1]
+    for l in open(fn):
+        l = re.sub(r'#.*', '', l)
+        if ':' not in l: continue
+        indent = len(l) - len(l.lstrip())
+        k, v = l.strip().split(':', 1)
+        k, v = k.strip(), v.strip().strip('\'"')
+        while ind and indent <= ind[-1]: st.pop(); ind.pop()
+        if not v:
+            nm = {}
+            st[-1][k] = nm
+            st.append(nm)
+            ind.append(indent)
+        else: st[-1][k] = v
+    print(d.get('model', {}).get('` + field + `', ''))
+EOF`
 }
 
 // sectionDetectProviderOpenClaw emits the provider-detection step for the
@@ -2132,7 +2156,10 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**remote:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" \"$BASE_ENV='$HERMES_CLAWVISOR_URL$BASE_PATH' $KEY_ENV='$TOKEN' hermes chat\"\n")
+	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" 'mkdir -p ~/.hermes && umask 077 && cat > ~/.hermes/.token.tmp && (sleep 15; rm -f ~/.hermes/.token.tmp) >/dev/null 2>&1 &' <<EOF\n")
+	fmt.Fprintf(&b, "$TOKEN\n")
+	fmt.Fprintf(&b, "EOF\n")
+	fmt.Fprintf(&b, `ssh -t "$HERMES_REMOTE" "token=\$(cat ~/.hermes/.token.tmp); rm -f ~/.hermes/.token.tmp; export $BASE_ENV='$HERMES_CLAWVISOR_URL$BASE_PATH' $KEY_ENV=\"\$token\" && hermes chat"`+"\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "### 6.b. Config-file snippets (when `$HERMES_CONFIG=file`)\n\n")
 	fmt.Fprintf(&b, "Hermes's docs are explicit: secrets go in `~/.hermes/.env`, everything\n")
@@ -2167,9 +2194,11 @@ func renderHermesInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "can resolve the Clawvisor host.\n\n")
 	fmt.Fprintf(&b, "**remote:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" \"mkdir -p ~/.hermes && touch ~/.hermes/.env && \\\n")
-	fmt.Fprintf(&b, "  { grep -v '^HERMES_CV_API_KEY=' ~/.hermes/.env 2>/dev/null; echo HERMES_CV_API_KEY='$TOKEN'; } > ~/.hermes/.env.tmp && \\\n")
-	fmt.Fprintf(&b, "  mv ~/.hermes/.env.tmp ~/.hermes/.env && chmod 600 ~/.hermes/.env\"\n")
+	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" 'mkdir -p ~/.hermes && touch ~/.hermes/.env && \\\n")
+	fmt.Fprintf(&b, "  { grep -v \"^HERMES_CV_API_KEY=\" ~/.hermes/.env 2>/dev/null; echo \"HERMES_CV_API_KEY=$(cat)\"; } > ~/.hermes/.env.tmp && \\\n")
+	fmt.Fprintf(&b, "  mv ~/.hermes/.env.tmp ~/.hermes/.env && chmod 600 ~/.hermes/.env' <<EOF\n")
+	fmt.Fprintf(&b, "$TOKEN\n")
+	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "ssh \"$HERMES_REMOTE\" \"cat > ~/.hermes/config.yaml\" <<EOF\n")
 	fmt.Fprintf(&b, "model:\n")
 	fmt.Fprintf(&b, "  provider: custom\n")
@@ -2313,13 +2342,15 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "treats the value as a JSON object, not a string.)\n\n")
 	fmt.Fprintf(&b, "**host:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "openclaw config set models.providers.clawvisor \"$PROVIDER_JSON\" --strict-json --merge\n")
+	fmt.Fprintf(&b, `python3 -c 'import json, os, sys; fn = os.path.expanduser("~/.openclaw/openclaw.json"); os.makedirs(os.path.dirname(fn), exist_ok=True); d = json.load(open(fn)) if os.path.exists(fn) else {}; p = json.load(sys.stdin); d.setdefault("models", {}).setdefault("providers", {})["clawvisor"] = p; json.dump(d, open(fn, "w"), indent=2)' <<EOF`+"\n")
+	fmt.Fprintf(&b, "$PROVIDER_JSON\n")
+	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "**docker:**\n\n")
 	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "# `docker exec` doesn't expand the helper's $PROVIDER_JSON inside the\n")
-	fmt.Fprintf(&b, "# container — pass it via argv after the host shell substitution.\n")
-	fmt.Fprintf(&b, "docker exec \"$OPENCLAW_CONTAINER\" openclaw config set models.providers.clawvisor \"$PROVIDER_JSON\" --strict-json --merge\n")
+	fmt.Fprintf(&b, `docker exec -i "$OPENCLAW_CONTAINER" python3 -c 'import json, os, sys; fn = os.path.expanduser("~/.openclaw/openclaw.json"); os.makedirs(os.path.dirname(fn), exist_ok=True); d = json.load(open(fn)) if os.path.exists(fn) else {}; p = json.load(sys.stdin); d.setdefault("models", {}).setdefault("providers", {})["clawvisor"] = p; json.dump(d, open(fn, "w"), indent=2)' <<EOF`+"\n")
+	fmt.Fprintf(&b, "$PROVIDER_JSON\n")
+	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Note: the docker variant writes Clawvisor's `$CLAWVISOR_LLM_URL`\n")
 	fmt.Fprintf(&b, "verbatim. If Clawvisor runs on the host (not in a separate container\n")
@@ -2341,7 +2372,7 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 	fmt.Fprintf(&b, "  '{baseUrl:$baseUrl, apiKey:$apiKey, api:$api,\n")
 	fmt.Fprintf(&b, "    models:[{id:$modelId, name:$modelName,\n")
 	fmt.Fprintf(&b, "             contextWindow:$contextWindow, maxTokens:$maxTokens}]}')\n")
-	fmt.Fprintf(&b, "ssh \"$OPENCLAW_REMOTE\" 'openclaw config set models.providers.clawvisor \"$(cat)\" --strict-json --merge' <<EOF\n")
+	fmt.Fprintf(&b, `ssh "$OPENCLAW_REMOTE" 'python3 -c "import json, os, sys; fn = os.path.expanduser(\"~/.openclaw/openclaw.json\"); os.makedirs(os.path.dirname(fn), exist_ok=True); d = json.load(open(fn)) if os.path.exists(fn) else {}; p = json.load(sys.stdin); d.setdefault(\"models\", {}).setdefault(\"providers\", {})[\"clawvisor\"] = p; json.dump(d, open(fn, \"w\"), indent=2)"' <<EOF`+"\n")
 	fmt.Fprintf(&b, "$PROVIDER_JSON_REMOTE\n")
 	fmt.Fprintf(&b, "EOF\n")
 	fmt.Fprintf(&b, "```\n\n")

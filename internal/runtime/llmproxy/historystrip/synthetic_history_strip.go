@@ -141,16 +141,18 @@ func stripAnthropicSyntheticApprovalHistory(body []byte, lookup ReconstructionLo
 			}
 		}
 		if role == "user" && pendingReconstruction != nil {
+			applied := false
 			if len(orphanedToolUseIDs) > 0 {
 				// AskUserQuestion path: replace the orphan
 				// tool_result block with one paired to the
 				// reconstructed tool_use_id.
 				swapped, swapChanged, swapErr := replaceToolResultsForReconstruction(content, orphanedToolUseIDs, pendingReconstruction)
 				if swapErr == nil && swapChanged {
-					modified = true
 					newMsg, err := jsonsurgery.SetField(msg, "content", swapped)
 					if err == nil {
 						msg = newMsg
+						modified = true
+						applied = true
 					}
 				}
 			} else {
@@ -163,21 +165,24 @@ func stripAnthropicSyntheticApprovalHistory(body []byte, lookup ReconstructionLo
 				// tool_use→tool_result adjacency holds.
 				wrapped, wrapChanged, wrapErr := wrapUserContentAsToolResult(content, pendingReconstruction)
 				if wrapErr == nil && wrapChanged {
-					modified = true
 					newMsg, err := jsonsurgery.SetField(msg, "content", wrapped)
 					if err == nil {
 						msg = newMsg
+						modified = true
+						applied = true
 					}
 				}
 			}
-			orphanedToolUseIDs = nil
-			pendingReconstruction = nil
+			if applied {
+				orphanedToolUseIDs = nil
+				pendingReconstruction = nil
+			}
 		} else if role == "user" && len(orphanedToolUseIDs) > 0 {
 			cleaned, dropped, changed, err := stripToolResultsByID(content, orphanedToolUseIDs)
-			orphanedToolUseIDs = nil
 			if err == nil && changed {
-				modified = true
 				if dropped {
+					orphanedToolUseIDs = nil
+					modified = true
 					// User message had only the orphan tool_result
 					// (and maybe blank text). Drop the whole turn.
 					continue
@@ -185,6 +190,8 @@ func stripAnthropicSyntheticApprovalHistory(body []byte, lookup ReconstructionLo
 				newMsg, err := jsonsurgery.SetField(msg, "content", cleaned)
 				if err == nil {
 					msg = newMsg
+					orphanedToolUseIDs = nil
+					modified = true
 				}
 			}
 		}
