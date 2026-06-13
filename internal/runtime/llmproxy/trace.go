@@ -37,7 +37,7 @@ func OpenTraceLogger(path string) (*TraceLogger, error) {
 	if path == "" {
 		return nil, nil
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("lite-proxy: open trace log %q: %w", path, err)
 	}
