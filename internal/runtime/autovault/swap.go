@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/placeholdershape"
@@ -52,9 +53,29 @@ func ReplaceHeaderValue(value string, resolve func(placeholder string) (string, 
 	if len(matches) == 0 {
 		return value, nil, nil
 	}
+	// Sort matches by descending length so a shorter placeholder that
+	// is a prefix of a longer one (e.g., `autovault_x_aa` vs
+	// `autovault_x_aaa`) doesn't corrupt the longer placeholder when
+	// strings.ReplaceAll runs against the same buffer. With 96-bit
+	// random suffixes the collision is astronomically unlikely in
+	// practice, but the code shape is fragile to future placeholder
+	// format changes — sort defensively. Deduplicate while sorting
+	// so a value carrying the same placeholder twice doesn't call
+	// resolve() twice.
+	seen := make(map[string]struct{}, len(matches))
+	uniq := matches[:0]
+	for _, m := range matches {
+		if _, ok := seen[m]; ok {
+			continue
+		}
+		seen[m] = struct{}{}
+		uniq = append(uniq, m)
+	}
+	sort.Slice(uniq, func(i, j int) bool { return len(uniq[i]) > len(uniq[j]) })
+
 	out := value
 	var replaced []string
-	for _, candidate := range matches {
+	for _, candidate := range uniq {
 		if !LooksLikeShadow(candidate) {
 			continue
 		}

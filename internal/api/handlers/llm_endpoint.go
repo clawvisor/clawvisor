@@ -1082,10 +1082,22 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 	// Mirror upstream status + headers. Strip hop-by-hop. We rewrite
 	// Content-Length below if postprocess mutates the body.
+	//
+	// Also strip any `X-Clawvisor-*` headers the upstream emits. The
+	// inbound side (forward.go) already refuses to forward these to
+	// upstream; on the response leg the symmetric rule keeps a
+	// compromised or malicious upstream provider from attaching e.g.
+	// `X-Clawvisor-Caller` or `X-Clawvisor-Target-Host` to its response
+	// and having the harness or any future client trust them as if the
+	// proxy had emitted them.
 	for name, values := range resp.Header {
-		switch http.CanonicalHeaderKey(name) {
+		canonical := http.CanonicalHeaderKey(name)
+		switch canonical {
 		case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
 			"Te", "Trailer", "Transfer-Encoding", "Upgrade":
+			continue
+		}
+		if strings.HasPrefix(canonical, "X-Clawvisor-") {
 			continue
 		}
 		for _, v := range values {
@@ -3213,9 +3225,17 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 		"ttfb_headers_ms", upstreamHeadersMs,
 	)
 	for name, values := range resp.Header {
-		switch http.CanonicalHeaderKey(name) {
+		canonical := http.CanonicalHeaderKey(name)
+		switch canonical {
 		case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
 			"Te", "Trailer", "Transfer-Encoding", "Upgrade":
+			continue
+		}
+		// Strip X-Clawvisor-* even in passthrough mode. The upstream
+		// is the user's own provider account in this path, but the
+		// principle is the same: nothing the upstream sends should be
+		// trustable as a Clawvisor-emitted header by the harness.
+		if strings.HasPrefix(canonical, "X-Clawvisor-") {
 			continue
 		}
 		for _, v := range values {

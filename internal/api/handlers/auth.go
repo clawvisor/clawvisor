@@ -123,7 +123,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.st.GetUserByEmail(r.Context(), body.Email)
 	if err != nil {
-		// Return generic message to avoid user enumeration
+		// Spend a bcrypt comparison on the not-found path so the
+		// response timing doesn't distinguish "no such email" from
+		// "wrong password". Without this, a network observer can
+		// enumerate registered accounts by the latency delta between
+		// an immediate 401 and a cost-12 bcrypt 401.
+		auth.DummyCheckPassword(body.Password)
 		writeError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid email or password")
 		return
 	}

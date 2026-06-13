@@ -516,7 +516,7 @@ func connectedVaultItemID(binding VaultServiceBinding) string {
 
 func llmProviderFromVaultKey(key string) string {
 	switch key {
-	case "anthropic", "openai":
+	case "anthropic", "openai", "google":
 		return key
 	default:
 		return ""
@@ -534,7 +534,7 @@ func parseAgentScopedLLMKey(key string) (agentID, provider string, ok bool) {
 		return "", "", false
 	}
 	switch parts[2] {
-	case "anthropic", "openai":
+	case "anthropic", "openai", "google":
 		return parts[1], parts[2], true
 	default:
 		return "", "", false

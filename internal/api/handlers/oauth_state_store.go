@@ -44,7 +44,16 @@ func (s *memoryOAuthStateStore) LoadAndDeleteOAuth(state string) (oauthStateEntr
 	if !ok {
 		return oauthStateEntry{}, false
 	}
-	return val.(oauthStateEntry), true
+	entry := val.(oauthStateEntry)
+	// Enforce expiry at the store boundary so a caller that forgets
+	// the ExpiresAt check at the use site can't be tricked into honoring
+	// a stale state value. The Cleanup() goroutine sweeps periodically
+	// but a state can still be loaded between expiry and the next sweep
+	// without this gate.
+	if !entry.ExpiresAt.IsZero() && time.Now().After(entry.ExpiresAt) {
+		return oauthStateEntry{}, false
+	}
+	return entry, true
 }
 
 func (s *memoryOAuthStateStore) StoreDeviceFlow(flowID string, entry deviceFlowEntry) {
@@ -56,7 +65,12 @@ func (s *memoryOAuthStateStore) LoadDeviceFlow(flowID string) (deviceFlowEntry, 
 	if !ok {
 		return deviceFlowEntry{}, false
 	}
-	return val.(deviceFlowEntry), true
+	entry := val.(deviceFlowEntry)
+	if !entry.ExpiresAt.IsZero() && time.Now().After(entry.ExpiresAt) {
+		s.deviceFlows.Delete(flowID)
+		return deviceFlowEntry{}, false
+	}
+	return entry, true
 }
 
 func (s *memoryOAuthStateStore) UpdateDeviceFlow(flowID string, entry deviceFlowEntry) {
@@ -76,7 +90,11 @@ func (s *memoryOAuthStateStore) LoadAndDeletePKCE(state string) (pkceFlowEntry, 
 	if !ok {
 		return pkceFlowEntry{}, false
 	}
-	return val.(pkceFlowEntry), true
+	entry := val.(pkceFlowEntry)
+	if !entry.ExpiresAt.IsZero() && time.Now().After(entry.ExpiresAt) {
+		return pkceFlowEntry{}, false
+	}
+	return entry, true
 }
 
 func (s *memoryOAuthStateStore) Cleanup() {
