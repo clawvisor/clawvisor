@@ -163,7 +163,13 @@ func TestTaskCreateV2AcceptsVirtualLLMCredentialItem(t *testing.T) {
 	}
 }
 
-func TestTaskApprovalRejectsOtherAgentVirtualLLMCredentialItem(t *testing.T) {
+// TestTaskCreateRejectsOtherAgentVirtualLLMCredentialItem pins that
+// submission-time vault validation rejects a cross-agent LLM credential
+// handle. Before #558 this rejection landed at approval-time and the
+// task spent the intervening window queued as pending_approval; now the
+// agent gets the directive on its own POST response so it can self-
+// correct without burning a user approval gesture.
+func TestTaskCreateRejectsOtherAgentVirtualLLMCredentialItem(t *testing.T) {
 	env := newTestEnv(t)
 	sc := newScenario(t, env, "task-v2-llm-credential-cross-agent")
 
@@ -189,10 +195,6 @@ func TestTaskApprovalRejectsOtherAgentVirtualLLMCredentialItem(t *testing.T) {
 			"why":           "Use this agent-scoped Anthropic key only for the approved request.",
 		}},
 	})
-	body := mustStatus(t, resp, http.StatusCreated)
-	taskID := str(t, body, "task_id")
-
-	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/approve", taskID), nil)
 	rejected := mustStatus(t, resp, http.StatusBadRequest)
 	if rejected["code"] != "INVALID_CREDENTIAL_REQUEST" {
 		t.Fatalf("expected INVALID_CREDENTIAL_REQUEST, got %v", rejected["code"])
@@ -202,7 +204,12 @@ func TestTaskApprovalRejectsOtherAgentVirtualLLMCredentialItem(t *testing.T) {
 	}
 }
 
-func TestTaskApprovalRejectsOtherAgentRawLLMStorageKey(t *testing.T) {
+// TestTaskCreateRejectsOtherAgentRawLLMStorageKey pins that the raw
+// internal storage key shape is rejected at submission time. The
+// directive ("use a vault item id, not a storage key") flows back on
+// the agent's POST response — same rejection-at-submission rationale as
+// the cross-agent-virtual case above.
+func TestTaskCreateRejectsOtherAgentRawLLMStorageKey(t *testing.T) {
 	env := newTestEnv(t)
 	sc := newScenario(t, env, "task-v2-llm-credential-cross-agent-storage-key")
 
@@ -226,10 +233,6 @@ func TestTaskApprovalRejectsOtherAgentRawLLMStorageKey(t *testing.T) {
 			"why":           "Use this agent-scoped Anthropic key only for the approved request.",
 		}},
 	})
-	body := mustStatus(t, resp, http.StatusCreated)
-	taskID := str(t, body, "task_id")
-
-	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/approve", taskID), nil)
 	rejected := mustStatus(t, resp, http.StatusBadRequest)
 	if rejected["code"] != "INVALID_CREDENTIAL_REQUEST" {
 		t.Fatalf("expected INVALID_CREDENTIAL_REQUEST, got %v", rejected["code"])
@@ -275,7 +278,11 @@ func TestTaskCreateV2SharedCredentialItemKeepsServiceScope(t *testing.T) {
 	}
 }
 
-func TestTaskApprovalRejectsSharedCredentialBackingKey(t *testing.T) {
+// TestTaskCreateRejectsSharedCredentialBackingKey pins that asking for
+// a hidden shared backing key (rather than the service-specific item
+// id) is rejected at submission time. Same rejection-at-submission
+// rationale as the cross-agent cases above.
+func TestTaskCreateRejectsSharedCredentialBackingKey(t *testing.T) {
 	env := newTestEnv(t,
 		newSharedVaultMockAdapter("mock.mail", "mock.shared", "read"),
 		newSharedVaultMockAdapter("mock.calendar", "mock.shared", "read"),
@@ -302,10 +309,6 @@ func TestTaskApprovalRejectsSharedCredentialBackingKey(t *testing.T) {
 			"why":           "Use the mail credential only for mail.",
 		}},
 	})
-	body := mustStatus(t, resp, http.StatusCreated)
-	taskID := str(t, body, "task_id")
-
-	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/approve", taskID), nil)
 	rejected := mustStatus(t, resp, http.StatusBadRequest)
 	if rejected["code"] != "INVALID_CREDENTIAL_REQUEST" {
 		t.Fatalf("expected INVALID_CREDENTIAL_REQUEST, got %v", rejected["code"])
