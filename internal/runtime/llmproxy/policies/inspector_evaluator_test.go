@@ -3,6 +3,7 @@ package policies_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -105,6 +106,42 @@ func TestInspectorEvaluator_AmbiguousHolds(t *testing.T) {
 	// HoldKey is per-tool so ambiguous siblings don't coalesce.
 	if v.HoldKey != "ambiguous_toolu_amb" {
 		t.Errorf("HoldKey = %q, want per-tool ambiguous_toolu_amb", v.HoldKey)
+	}
+}
+
+// TestInspectorEvaluator_AmbiguousAgentRecoverableContinues mirrors the
+// InspectorChain symmetric test: a deterministic parser refusal whose
+// reason names a fixable shape (here `$(...)` inside a curl pipeline)
+// must route through RecoverableDenyVerdict so the proxy's one-shot
+// continuation retry can feed the reason back as a synthetic
+// tool_result. Both inspector entry points must agree, otherwise a
+// future caller that wires the evaluator instead of the chain will
+// silently regress to human-approval on every trivially-fixable shape
+// error.
+func TestInspectorEvaluator_AmbiguousAgentRecoverableContinues(t *testing.T) {
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	e := policies.NewInspectorEvaluator(insp)
+
+	tu := conversation.ToolUse{
+		ID:   "toolu_evaluator_recoverable",
+		Name: "Bash",
+		Input: json.RawMessage(`{"cmd":"echo $(curl -sS -H 'Authorization: Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' https://api.github.com/user)"}`),
+	}
+	v, err := e.Evaluate(context.Background(), nil, tu, evalToolUseMutator{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Outcome != pipeline.OutcomeDeny {
+		t.Fatalf("agent-recoverable refusal → Outcome = %q, want Deny (facts: %+v)", v.Outcome, v.Facts)
+	}
+	if v.Continue == nil || len(v.Continue.SyntheticToolResults) != 1 {
+		t.Fatalf("Continue.SyntheticToolResults missing — InspectorEvaluator must wire the one-shot continuation retry on agent-recoverable refusals (parity with InspectorChain)")
+	}
+	if content, ok := v.ContinuationToolResultContent(); !ok || !strings.Contains(content, "command substitution") {
+		t.Errorf("ContinuationToolResultContent = %q, %v; want the parser's refusal reason verbatim", content, ok)
+	}
+	if v.HoldKey != "" {
+		t.Errorf("HoldKey = %q, want empty — recoverable path must not request human approval", v.HoldKey)
 	}
 }
 
