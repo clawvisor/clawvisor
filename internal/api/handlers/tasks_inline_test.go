@@ -118,6 +118,113 @@ func TestCreateInlineApprovedTaskWithAssessment_NilPrecomputedFallsThrough(t *te
 	}
 }
 
+// TestCreateTaskFailsFastOnMissingVaultItem pins the submission-time
+// vault-existence check on the direct POST /api/control/tasks handler.
+// Before the check, the handler accepted the task as pending_approval
+// without ever verifying the requested vault item existed — so the
+// agent's POST got back a success-shaped response and the validation
+// error only surfaced (silently) on the user's approval surface. A
+// brand-new user observed this as their agent re-submitting the same
+// bad handle 5× in a row because the agent received no actionable
+// signal on the wire. The handler must now reject with 400
+// INVALID_CREDENTIAL_REQUEST carrying the directive + candidates so the
+// agent self-corrects on its next turn — and the user is never asked
+// to approve a task that couldn't have authorized.
+func TestCreateTaskFailsFastOnMissingVaultItem(t *testing.T) {
+	h, _, _, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	// Vault has the account-aliased handle "github:work" — agent asks
+	// for the bare service id "github". The candidate helper's prefix
+	// rule (existing id begins with requested id + ":" or ".") should
+	// surface "github:work" as the "did you mean" suggestion inlined
+	// into the error message.
+	v := &stubVault{}
+	if err := v.Set(ctx, agent.UserID, "github:work", []byte("real-token")); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+	h.vault = v
+
+	body := []byte(`{
+		"purpose":"Open a GitHub issue summarizing the run",
+		"intent_verification_mode":"strict",
+		"expires_in_seconds":600,
+		"expected_tools":[{"tool_name":"Bash","why":"Call the GitHub API"}],
+		"required_credentials":[{"vault_item_id":"github","why":"Open issues on the user's behalf"}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/control/tasks?surface=inline", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(store.WithAgent(req.Context(), agent))
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Create status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v; body = %s", err, rec.Body.String())
+	}
+	if got := resp["code"]; got != "INVALID_CREDENTIAL_REQUEST" {
+		t.Errorf("code = %v, want INVALID_CREDENTIAL_REQUEST (body = %s)", got, rec.Body.String())
+	}
+	errMsg, _ := resp["error"].(string)
+	if !strings.Contains(errMsg, `"github"`) {
+		t.Errorf("error message should name the bad handle so the agent can correlate; got %q", errMsg)
+	}
+	if !strings.Contains(errMsg, `"github:work"`) {
+		t.Errorf("error message should inline the matching candidate (vaultItemNotAvailableError's did-you-mean branch); got %q", errMsg)
+	}
+	if strings.Contains(strings.ToLower(errMsg), "pending_approval") {
+		t.Errorf("error must not surface pending_approval — failure is at submission, not after approval; got %q", errMsg)
+	}
+}
+
+// TestCreateTaskFailsFastWithGenericHintWhenNoCandidate covers the
+// other branch of vaultItemNotAvailableError: when no prefix-matching
+// candidate is in the vault, the directive falls back to "list GET
+// /control/vault/items …". The fail-fast contract holds either way —
+// the handler still returns 400 INVALID_CREDENTIAL_REQUEST, not
+// pending_approval.
+func TestCreateTaskFailsFastWithGenericHintWhenNoCandidate(t *testing.T) {
+	h, _, _, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	// Empty vault — no candidates to inline.
+	h.vault = &stubVault{}
+	_ = ctx
+
+	body := []byte(`{
+		"purpose":"Read recent Gmail messages",
+		"intent_verification_mode":"strict",
+		"expires_in_seconds":600,
+		"expected_tools":[{"tool_name":"Bash","why":"Call the Gmail API"}],
+		"required_credentials":[{"vault_item_id":"gmail","why":"Authenticate"}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/control/tasks?surface=inline", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(store.WithAgent(req.Context(), agent))
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Create status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v; body = %s", err, rec.Body.String())
+	}
+	if got := resp["code"]; got != "INVALID_CREDENTIAL_REQUEST" {
+		t.Errorf("code = %v, want INVALID_CREDENTIAL_REQUEST", got)
+	}
+	errMsg, _ := resp["error"].(string)
+	if !strings.Contains(errMsg, "/control/vault/items") {
+		t.Errorf("no-candidate branch must include the GET /control/vault/items directive so the agent has a recovery path; got %q", errMsg)
+	}
+}
+
 func TestCreateInlineApprovedTaskHappyPath(t *testing.T) {
 	h, st, _, agent := newInlineTasksHandlerForTest(t)
 	ctx := context.Background()

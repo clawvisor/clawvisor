@@ -300,6 +300,23 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Fail fast on credential handles that aren't in the vault. Without
+	// this, the task lands in pending_approval and the user is asked to
+	// approve something that can't possibly authorize — and the
+	// validation error never reaches the agent (it fires at release
+	// time, after the agent's POST already got back "pending_approval").
+	// validateTaskRequiredCredentials only reads UserID + AgentID off
+	// the task, so a stub is sufficient pre-persistence. Matches the
+	// proxy-intercept submission path in CreatePendingInlineTask, which
+	// has done this check since inline tasks shipped.
+	if hasCredentialRequests {
+		stubTask := &store.Task{UserID: agent.UserID, AgentID: agent.ID}
+		if err := h.validateTaskRequiredCredentials(ctx, stubTask, req.RequiredCredentials); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_CREDENTIAL_REQUEST", err.Error())
+			return
+		}
+	}
+
 	// Validate each authorized action.
 	for i, a := range req.AuthorizedActions {
 		// Validate that each action entry has the required service and action fields.
