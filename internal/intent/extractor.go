@@ -855,7 +855,7 @@ func builtinPatternsRaw(service, action string) []extractionPattern {
 		)
 	case "google.sheets":
 		return append(generic,
-			extractionPattern{FactType: "file_id", Regex:    `"spreadsheetId":\s*"([^"]+)"`},
+			extractionPattern{FactType: "file_id", Regex: `"spreadsheet_id":\s*"([^"]+)"`},
 		)
 	case "google.calendar":
 		// Google Calendar event IDs are lowercase base32 (5-1024 chars),
