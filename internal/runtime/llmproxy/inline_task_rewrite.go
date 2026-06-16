@@ -50,6 +50,13 @@ type InlineApprovalRewriteRequest struct {
 	// "task_lifecycle.write_failed" alongside the existing
 	// inline_task.* / inline_expansion.* events. Optional.
 	Trace func(event string, kv ...any)
+	// ScopeDrifts, when non-nil, lets the resolver mint the scope-drift
+	// pre-clear after a successful inline task / expansion approval
+	// when the hold carries a ScopeDriftID. The agent's retry of the
+	// originally-blocked tool_use then consumes the pre-clear and
+	// passes scope check once. Nil-safe: holds without a drift link
+	// fall through to the standard release path.
+	ScopeDrifts ScopeDriftRegistry
 }
 
 // InlineApprovalRewriteResult reports what happened. When Rewritten
@@ -205,6 +212,23 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 		replacement, out = resolveInlineExpansionApproval(ctx, req, resolved, verb)
 	default:
 		replacement, out = resolveInlineTaskApproval(ctx, req, resolved, verb)
+	}
+
+	// Mirror the resolver's allow/deny verdict onto the scope-drift
+	// registry when the hold was linked to one. The pre-clear is
+	// minted via SetOutcome(Succeeded) here so the agent's next attempt
+	// at the originally-blocked tool_use passes scope check once;
+	// SetOutcome(Denied) closes the drift so a stale poll doesn't show
+	// it pending forever. Best-effort: a registry error degrades to
+	// "drift will TTL-expire" rather than blocking the rewrite. Only
+	// fires when the hold actually carried a ScopeDriftID — created /
+	// expanded tasks without a drift link are unaffected.
+	if req.ScopeDrifts != nil && resolved.ScopeDriftID != "" {
+		driftOutcome := ScopeDriftOutcomeSucceeded
+		if out.Decision == "deny" || out.Decision == "" {
+			driftOutcome = ScopeDriftOutcomeDenied
+		}
+		_ = req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, driftOutcome)
 	}
 
 	// Record the outcome before returning. The augmenter on later

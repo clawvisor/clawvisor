@@ -53,11 +53,12 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		cfg.AuthorizationContext,
 		cfg.ApprovalContext,
 		cfg.RewriteContext,
+		cfg.RoutingContext,
 		provider,
 		emit,
 	)
 
-	authBundle := buildAuthorizationResolver(cfg.AgentContext, cfg.AuditContext, cfg.AuthorizationContext, cfg.ApprovalContext, cfg.RewriteContext, provider)
+	authBundle := buildAuthorizationResolver(cfg.AgentContext, cfg.AuditContext, cfg.AuthorizationContext, cfg.ApprovalContext, cfg.RewriteContext, cfg.RoutingContext, provider)
 
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
 		Control:       buildControlResolver(req, cfg.AgentContext, cfg.AuditContext, cfg.ApprovalContext, cfg.RewriteContext, cfg.RoutingContext, provider, emit),
@@ -531,6 +532,7 @@ func buildCredentialedTaskScope(
 	auth llmproxy.AuthorizationContext,
 	approval llmproxy.ApprovalContext,
 	rewrite llmproxy.RewriteContext,
+	routing llmproxy.RoutingContext,
 	provider conversation.Provider,
 	emit func(conversation.AuditEvent),
 ) credentialedTaskScopeBundle {
@@ -618,6 +620,49 @@ func buildCredentialedTaskScope(
 				TaskID: matchedTaskID,
 			}
 		case runtimedecision.VerdictNeedsApproval:
+			// Scope drift: when the block is "no covering task scope"
+			// (missing or ambiguous), redirect the agent to the
+			// continuation menu instead of parking a user-facing
+			// approval prompt. The agent picks expand / new_task /
+			// one_off / implicit-fall-through; user approval still
+			// gates options (a)/(b)/(c) via their own flows. Layer 2
+			// hardcoded approvals (SourceRuleReview) keep the existing
+			// user-prompt path — those are NOT scope drift and stay
+			// user-facing per the design's Non-Goals.
+			if auth.ScopeDrifts != nil && isScopeDriftDecisionSource(dec.Source) {
+				flatReason := "Clawvisor: no active task scope covers " + plan.Resolved.ServiceID + "." + plan.Resolved.ActionID + " — " + dec.Reason
+				menuText, driftID, mintErr := llmproxy.BuildScopeDriftContinuation(ctx, auth.ScopeDrifts, llmproxy.ScopeDrift{
+					UserID:         agent.AgentUserID,
+					AgentID:        agent.AgentID,
+					ConversationID: auditCtx.ConversationID,
+					Provider:       provider,
+					ToolUse:        tu,
+					Service:        plan.Resolved.ServiceID,
+					Action:         plan.Resolved.ActionID,
+					Host:           plan.Verdict.Host,
+					Method:         plan.Verdict.Method,
+					Path:           plan.Verdict.Path,
+					TaskID:         matchedTaskID,
+					Source:         llmproxy.ScopeDriftSourceTaskScope,
+					ReasonText:     dec.Reason,
+				}, routing.ControlBaseURL)
+				if mintErr == nil {
+					audit("block", "scope_drift_minted", "drift_id="+driftID+"; "+dec.Reason, matchedTaskID)
+					return policies.TaskScopeDecision{
+						Kind:                   policies.TaskScopeDecisionHold,
+						Allowed:                false,
+						Reason:                 flatReason,
+						SubstituteText:         menuText,
+						ContinueWithToolResult: menuText,
+						TaskID:                 matchedTaskID,
+					}
+				}
+				// Registry write failed — fall through to the legacy
+				// approval-hold path rather than emit a menu with no
+				// usable drift_id. The audit row records the mint
+				// failure so operators can investigate.
+				audit("block", "scope_drift_mint_failed", mintErr.Error(), matchedTaskID)
+			}
 			var approvalID string
 			if approval.PendingApprovals != nil {
 				held, herr := approval.PendingApprovals.Hold(ctx, llmproxy.PendingLiteApproval{
@@ -677,6 +722,34 @@ func buildCredentialedTaskScope(
 				Reason:           reason,
 				TaskID:           taskID,
 			})
+		}
+		// Scope-drift pre-clear: if the agent is retrying a tool_use the
+		// user just approved (via expand / new_task / one_off), the
+		// registry has a one-shot pre-clear entry keyed on
+		// (agent, fingerprint(tool_use)). Consume it here so the retry
+		// passes scope check once without re-running the full
+		// EvaluateAuthorization path — the user's prior approval IS the
+		// authorization. The lookup CONSUMES the entry; a second retry
+		// of the same call lands back on the normal scope-check path
+		// and either passes (if a covering task was created) or mints a
+		// fresh drift.
+		if auth.ScopeDrifts != nil && auth.Catalog != nil {
+			if resolved, ok := auth.Catalog.Resolve(v.Host, v.Method, v.Path); ok && resolved.ServiceID != "" && resolved.ActionID != "" {
+				fp := llmproxy.ScopeDrift{
+					AgentID:        agent.AgentID,
+					ConversationID: auditCtx.ConversationID,
+					ToolUse:        tu,
+					Service:        resolved.ServiceID,
+					Action:         resolved.ActionID,
+					Host:           v.Host,
+					Method:         v.Method,
+					Path:           v.Path,
+				}.Fingerprint()
+				if driftID, hit := auth.ScopeDrifts.LookupPreClear(ctx, agent.AgentID, fp); hit {
+					audit("allow", "scope_drift_pre_clear", "drift_id="+driftID, "")
+					return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionAllow, Allowed: true}
+				}
+			}
 		}
 		if auth.CandidateTasks != nil || auth.ToolRules != nil || auth.EgressRules != nil {
 			if cached, ok := cache[tu.ID]; ok {
@@ -791,6 +864,7 @@ func buildAuthorizationResolver(
 	auth llmproxy.AuthorizationContext,
 	approval llmproxy.ApprovalContext,
 	rewrite llmproxy.RewriteContext,
+	routing llmproxy.RoutingContext,
 	provider conversation.Provider,
 ) authorizationResolverBundle {
 	if rewrite.Inspector == nil {
@@ -798,10 +872,12 @@ func buildAuthorizationResolver(
 	}
 	intentVerifier := intentverify.DecisionVerifierFor(auth.IntentVerifier)
 	holdHandler := &authorizationHoldHandler{
-		agent:    agent,
-		audit:    audit,
-		approval: approval,
-		provider: provider,
+		agent:          agent,
+		audit:          audit,
+		approval:       approval,
+		provider:       provider,
+		scopeDrifts:    auth.ScopeDrifts,
+		controlBaseURL: routing.ControlBaseURL,
 	}
 	slideTask := func(ctx context.Context, task *store.Task) {
 		if rewrite.Store == nil || task == nil {
@@ -956,17 +1032,52 @@ func runIntentVerify(ctx context.Context, verifier llmproxy.IntentVerifier, dec 
 }
 
 // authorizationHoldHandler implements policies.AuthorizationHoldHandler
-// for AuthorizationPolicy's approval flow. Commits the hold via
-// PendingApprovals.Hold, renders the approval prompt with the
-// resulting approval ID, and cleans up any evicted inline task.
+// for AuthorizationPolicy's approval flow. On a scope-drift source
+// (task_scope_missing / task_scope_ambiguous) with a registry wired,
+// mints a drift and returns ContinueWithToolResult so the policy
+// surfaces the agent-facing menu instead of parking a user hold.
+// Otherwise commits the hold via PendingApprovals.Hold, renders the
+// approval prompt, and cleans up any evicted inline task.
 type authorizationHoldHandler struct {
-	agent    llmproxy.AgentContext
-	audit    llmproxy.AuditContext
-	approval llmproxy.ApprovalContext
-	provider conversation.Provider
+	agent          llmproxy.AgentContext
+	audit          llmproxy.AuditContext
+	approval       llmproxy.ApprovalContext
+	provider       conversation.Provider
+	scopeDrifts    llmproxy.ScopeDriftRegistry
+	controlBaseURL string
 }
 
 func (h *authorizationHoldHandler) Hold(ctx context.Context, req policies.AuthorizationHoldRequest) (policies.AuthorizationHoldResult, error) {
+	// Scope-drift continuation: when the block is "no covering task
+	// scope" (missing or ambiguous), redirect the agent to the menu
+	// instead of parking a user-facing approval prompt. Layer 2
+	// hardcoded approvals (SourceRuleReview etc.) keep the existing
+	// user-prompt path. The fallback on mint failure is the legacy
+	// hold path below — same shape as the credentialed path's
+	// scope-drift hook in applyModernDecision.
+	if h.scopeDrifts != nil && isScopeDriftDecisionSource(req.Decision.Source) {
+		v := req.InspectorVerdict
+		menuText, _, mintErr := llmproxy.BuildScopeDriftContinuation(ctx, h.scopeDrifts, llmproxy.ScopeDrift{
+			UserID:         h.agent.AgentUserID,
+			AgentID:        h.agent.AgentID,
+			ConversationID: h.audit.ConversationID,
+			Provider:       h.provider,
+			ToolUse:        req.ToolUse,
+			Host:           v.Host,
+			Method:         v.Method,
+			Path:           v.Path,
+			Source:         llmproxy.ScopeDriftSourceTaskScope,
+			ReasonText:     req.Decision.Reason,
+		}, h.controlBaseURL)
+		if mintErr == nil {
+			return policies.AuthorizationHoldResult{
+				ContinueWithToolResult: menuText,
+				SubstituteText:         menuText,
+			}, nil
+		}
+		// Mint failed — fall through to the legacy approval-hold path
+		// rather than emit a menu with no usable drift_id.
+	}
 	if h.approval.PendingApprovals == nil {
 		// Fail closed in the policy.
 		return policies.AuthorizationHoldResult{Err: "approval cache not configured"}, nil
@@ -1039,4 +1150,17 @@ func buildRewriteResolver(agent llmproxy.AgentContext, rewrite llmproxy.RewriteC
 			RewriteOpts:  opts,
 		}
 	}
+}
+
+// isScopeDriftDecisionSource reports whether the decision engine's
+// VerdictNeedsApproval came from a missing/ambiguous task scope (Layer
+// 3 in docs/ARCHITECTURE.md), rather than a hardcoded Layer 2 approval
+// rule. Drift mint only applies to the former; Layer 2 keeps its
+// user-facing approval prompt.
+func isScopeDriftDecisionSource(source runtimedecision.DecisionSource) bool {
+	switch source {
+	case runtimedecision.SourceTaskScopeMissing, runtimedecision.SourceTaskScopeAmbiguous:
+		return true
+	}
+	return false
 }

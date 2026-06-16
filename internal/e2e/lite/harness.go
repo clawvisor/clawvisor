@@ -184,6 +184,11 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	h.InlineTaskCreator = recorder
 	h.TaskScope = llmproxy.NewStoreTaskScopeChecker(st)
+	// Instrument the scope-drift registry NewLLMEndpointHandler wired
+	// by default so scenarios can assert on the menu lifecycle
+	// (mint → claim → outcome → pre-clear consumed). The inner
+	// registry stays the production in-memory one.
+	h.ScopeDrifts = &countingScopeDriftRegistry{inner: h.ScopeDrifts, counters: counters}
 
 	// Use-time script-session judge: when the agent's tool_use carries
 	// cv-script + autovault signals but the literal-prefix recognizer

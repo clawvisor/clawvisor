@@ -124,7 +124,11 @@ type AuthorizationContext struct {
 	PreferredTaskID string
 	TaskScope       TaskScopeChecker
 	IntentVerifier  IntentVerifier
-	Catalog         interface {
+	// ScopeDrifts holds per-block drift records used by the scope-drift
+	// continuation menu. Nil disables the menu and falls back to the
+	// pre-existing inline approval prompt.
+	ScopeDrifts ScopeDriftRegistry
+	Catalog     interface {
 		Resolve(host, method, path string) (ResolvedAction, bool)
 	}
 }

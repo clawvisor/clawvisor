@@ -43,6 +43,7 @@
       "build_sha": "dev",
       "caller_auth_source": "authorization",
       "clawvisor_version": "dev",
+      "continuation_usage_recorded": true,
       "conversation_id_source": "empty",
       "event": "lite_proxy.endpoint_call",
       "first_turn": true,

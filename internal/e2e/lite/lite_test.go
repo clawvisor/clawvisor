@@ -26,6 +26,7 @@ var scenarioDirs = []string{
 	"non_default_cli",
 	"pure_inspection",
 	"scope_drift_followup",
+	"scope_drift_menu_after_block",
 	"pivot_mid_execution",
 	"denied_then_explain",
 	// "incremental_within_scope" — removed: agents consistently

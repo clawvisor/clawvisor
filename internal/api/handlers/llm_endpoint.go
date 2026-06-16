@@ -105,6 +105,12 @@ type LLMEndpointHandler struct {
 	// approve/deny replies per user/agent/provider.
 	PendingApprovals llmproxy.PendingApprovalCache
 
+	// ScopeDrifts holds per-block drift records used by the scope-drift
+	// continuation menu. Optional — when nil the menu doesn't fire and
+	// scope mismatches fall back to the legacy approval prompt. The
+	// constructor wires an in-memory registry by default.
+	ScopeDrifts llmproxy.ScopeDriftRegistry
+
 	// PendingSecrets buffers inbound requests that appear to contain raw
 	// secrets until the user decides whether to vault, discard, allow
 	// once, or mark them as non-secrets.
@@ -203,6 +209,7 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		Parsers:                conversation.DefaultRegistry(),
 		Logger:                 logger,
 		PendingApprovals:       llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
+		ScopeDrifts:            llmproxy.NewMemoryScopeDriftRegistry(0),
 		PendingSecrets:         llmproxy.NewMemoryPendingSecretDecisionCache(10 * time.Minute),
 		InlineApprovalOutcomes: llmproxy.NewMemoryInlineApprovalOutcomeStore(24 * time.Hour),
 		TaskCheckouts:          llmproxy.NewMemoryTaskCheckoutStore(24 * time.Hour),
@@ -629,6 +636,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					Checkouts:       h.TaskCheckouts,
 					Store:           h.Store,
 					Trace:           llmproxy.TraceLoggerEmit(h.TraceLogger),
+					ScopeDrifts:     h.ScopeDrifts,
 				})
 				if err != nil {
 					return policies.InlineTaskApprovalResult{}, err
@@ -1176,6 +1184,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					ToolRules:       toolRules,
 					EgressRules:     egressRules,
 					PreferredTaskID: preferredTaskID,
+				ScopeDrifts:     h.ScopeDrifts,
 				},
 				ApprovalContext: llmproxy.ApprovalContext{
 					PendingApprovals:                 h.PendingApprovals,
@@ -1586,6 +1595,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				ToolRules:       toolRules,
 				EgressRules:     egressRules,
 				PreferredTaskID: preferredTaskID,
+				ScopeDrifts:     h.ScopeDrifts,
 			},
 			ApprovalContext: llmproxy.ApprovalContext{
 				PendingApprovals:                 h.PendingApprovals,
@@ -1657,6 +1667,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					ToolRules:       toolRules,
 					EgressRules:     egressRules,
 					PreferredTaskID: preferredTaskID,
+				ScopeDrifts:     h.ScopeDrifts,
 				},
 				ApprovalContext: llmproxy.ApprovalContext{
 					PendingApprovals:                 h.PendingApprovals,

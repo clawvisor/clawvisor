@@ -350,6 +350,7 @@ func MaybeInterceptInlineTaskDefinition(
 		TaskDefinition:  parsed,
 		PrecomputedRisk: assessment,
 		PendingTaskID:   pendingTaskID,
+		ScopeDriftID:    parsed.DriftID,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(inlineTaskApprovalHoldTTL),
 	})

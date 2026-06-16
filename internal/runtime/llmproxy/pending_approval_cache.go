@@ -51,6 +51,14 @@ const (
 	// carry the proposed delta so the resolver can land it on approve.
 	// We're waiting for the user to yes/no.
 	StageAwaitingExpansionApproval PendingApprovalStage = "awaiting_expansion_approval"
+	// StageAwaitingScopeDriftOneOff — model emitted a
+	// <clawvisor:decision option="one-off"> markup against a blocked
+	// tool call. ScopeDriftID names the drift in the registry; the
+	// hold's ToolUse is the ORIGINAL blocked tool_use (preserved at
+	// drift mint time) so the user prompt can render what was actually
+	// requested. ScopeDriftAgentNote carries the agent's rationale
+	// verbatim so the user sees it in the approval prompt.
+	StageAwaitingScopeDriftOneOff PendingApprovalStage = "awaiting_scope_drift_one_off"
 )
 
 type PendingLiteApproval struct {
@@ -128,6 +136,17 @@ type PendingLiteApproval struct {
 	// ExpansionReason is the one-line summary the agent gave. Surfaces
 	// verbatim in the inline approval prompt and on dashboards.
 	ExpansionReason string
+
+	// ScopeDriftID names the drift in the ScopeDriftRegistry. Set ONLY
+	// on StageAwaitingScopeDriftOneOff holds; empty otherwise. The
+	// scope-drift reply rewriter uses this to call SetOutcome on
+	// approve/deny.
+	ScopeDriftID string
+
+	// ScopeDriftAgentNote is the agent's one-off rationale captured at
+	// ClaimOption time. Surfaces verbatim in the user-facing one-off
+	// approval prompt. Empty for non-drift holds.
+	ScopeDriftAgentNote string
 
 	// Additional carries the other tool_uses that share this hold when
 	// multiple tool_uses in a single upstream response are coalesced into

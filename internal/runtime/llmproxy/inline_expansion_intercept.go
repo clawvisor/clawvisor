@@ -33,6 +33,11 @@ type inlineExpandRequestBody struct {
 	ExpectedEgress      []runtimetasks.ExpectedEgress     `json:"expected_egress,omitempty"`
 	RequiredCredentials []runtimetasks.RequiredCredential `json:"required_credentials,omitempty"`
 	Reason              string                            `json:"reason"`
+	// DriftID, when non-empty, links this expand to a scope-drift menu
+	// the agent just resolved. On user approval the resolver calls
+	// ScopeDriftRegistry.SetOutcome so the agent's retry of the
+	// originally-blocked tool_use consumes the one-shot pre-clear.
+	DriftID string `json:"drift_id,omitempty"`
 }
 
 // MaybeInterceptInlineExpansion is the postprocess hook that routes a
@@ -181,6 +186,7 @@ func MaybeInterceptInlineExpansion(
 		ExpansionTaskID:    taskID,
 		ExpansionAdditions: &additions,
 		ExpansionReason:    parsed.Reason,
+		ScopeDriftID:       parsed.DriftID,
 		CreatedAt:          now,
 		ExpiresAt:          now.Add(inlineTaskApprovalHoldTTL),
 	})

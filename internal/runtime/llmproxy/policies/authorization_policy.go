@@ -2,6 +2,7 @@ package policies
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -95,6 +96,14 @@ type AuthorizationHoldResult struct {
 	// SubstituteText is the rendered approval prompt the policy
 	// surfaces via the verdict's SubstituteWith field.
 	SubstituteText string
+	// ContinueWithToolResult, when non-empty, signals the handler took
+	// the scope-drift menu path instead of parking a user-facing
+	// approval hold. The policy returns a Continue verdict so the
+	// agent gets the menu as a synthetic tool_result and picks one of
+	// the labeled recovery options (expand / new_task / one_off /
+	// implicit fall-through). SubstituteText is still populated as the
+	// harness fallback if the continuation round-trip fails.
+	ContinueWithToolResult string
 	// Err, when non-empty, signals a hold storage failure. The policy
 	// returns Deny.
 	Err string
@@ -231,6 +240,28 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 				Reason:  ModelSafeUnavailableReason("approval"),
 				Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 			}, nil
+		}
+		// Scope-drift continuation: when the hold handler chose the
+		// menu path (drift mint + substitution), surface a Continue
+		// signal so the agent gets the menu as a synthetic tool_result
+		// and decides between expand / new_task / one_off / implicit.
+		// SubstituteText stays populated as the harness fallback if the
+		// continuation round-trip fails.
+		if held.ContinueWithToolResult != "" {
+			payload, marshalErr := json.Marshal(held.ContinueWithToolResult)
+			if marshalErr == nil {
+				return pipeline.ToolUseVerdict{
+					Outcome:        pipeline.OutcomeDeny,
+					Reason:         dec.Reason,
+					SubstituteWith: held.SubstituteText,
+					Continue: &conversation.ContinueSignal{
+						SyntheticToolResults: []json.RawMessage{payload},
+					},
+					Facts: []pipeline.EvaluationFact{authFact, taskScopeFact},
+				}, nil
+			}
+			// json.Marshal of a string can't fail in practice; fall
+			// through to the standard hold path defensively.
 		}
 		return pipeline.ToolUseVerdict{
 			Outcome:        pipeline.OutcomeHold,

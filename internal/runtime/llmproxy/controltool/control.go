@@ -108,6 +108,8 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"   \"reason\":\"<one-line summary>\"}",
 		"  JSON",
 		"",
+		"If a tool call IS refused as a scope drift (proactive task creation slipped), the proxy substitutes a structured menu into the tool_result naming a `Drift ID` and labeled recovery options. Read it and pick one of the labeled paths exactly as instructed; each drift_id resolves at most once.",
+		"",
 		"REUSE EXISTING TASKS — before POSTing a new task, check the ACTIVE TASKS snapshot just below. The snapshot is a one-shot list of every task already in active scope for you at conversation START; use it as the first cut on \"do I already have approval for this?\". If the snapshot shows ZERO tasks, skip GET " + tasksURL + " entirely and create the task you need — there is nothing to discover. If the snapshot shows tasks whose purposes plausibly cover the user's ask, GET " + tasksURL + " for full detail (the per-task `expected_tools`, `authorized_actions`, `expected_egress`, and any minted `autovault_*` placeholders bound to it) before POSTing anything new. The snapshot is frozen at the first turn for prompt-cache stability — if you've been working a long time, or you just completed/expanded a task and want to confirm live state, GET " + tasksURL + " to refresh. When multiple snapshot tasks match, POST " + taskCheckoutURL + " to focus the right one; checkout is routing only, the existing task's scope is what authorizes the work.",
 		"",
 		formatActiveTasksSnapshot(activeTasksSnapshot),

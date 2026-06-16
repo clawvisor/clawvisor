@@ -66,6 +66,13 @@ type TaskCreateRequest struct {
 	ExpiresInSeconds       int                  `json:"expires_in_seconds,omitempty"`
 	CallbackURL            string               `json:"callback_url,omitempty"`
 	Lifetime               string               `json:"lifetime,omitempty"`
+	// DriftID links this task definition back to a scope-drift menu the
+	// agent just resolved. Empty when the agent created the task
+	// independently (e.g., proactively at session start). When set and
+	// the inline-approval flow lands the corresponding hold, the
+	// resolver calls ScopeDriftRegistry.SetOutcome so the agent's retry
+	// of the originally-blocked tool_use consumes the one-shot pre-clear.
+	DriftID string `json:"drift_id,omitempty"`
 }
 
 // PendingExpansion is the in-flight expansion request awaiting user

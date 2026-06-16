@@ -16,6 +16,8 @@ const (
 	approvalReplyActionDenyInlineTask            approvalReplyActionKind = "deny_inline_task"
 	approvalReplyActionApproveInlineExpansion    approvalReplyActionKind = "approve_inline_expansion"
 	approvalReplyActionDenyInlineExpansion       approvalReplyActionKind = "deny_inline_expansion"
+	approvalReplyActionApproveScopeDriftOneOff   approvalReplyActionKind = "approve_scope_drift_one_off"
+	approvalReplyActionDenyScopeDriftOneOff      approvalReplyActionKind = "deny_scope_drift_one_off"
 )
 
 type approvalReplyAction struct {
@@ -86,6 +88,8 @@ func resolveApprovalReplyAction(ctx context.Context, req approvalReplyRoutingReq
 			action.Kind = approvalReplyActionApproveInlineTask
 		case StageAwaitingExpansionApproval:
 			action.Kind = approvalReplyActionApproveInlineExpansion
+		case StageAwaitingScopeDriftOneOff:
+			action.Kind = approvalReplyActionApproveScopeDriftOneOff
 		default:
 			action.Kind = approvalReplyActionReleaseTool
 		}
@@ -95,6 +99,8 @@ func resolveApprovalReplyAction(ctx context.Context, req approvalReplyRoutingReq
 			action.Kind = approvalReplyActionDenyInlineTask
 		case StageAwaitingExpansionApproval:
 			action.Kind = approvalReplyActionDenyInlineExpansion
+		case StageAwaitingScopeDriftOneOff:
+			action.Kind = approvalReplyActionDenyScopeDriftOneOff
 		default:
 			action.Kind = approvalReplyActionReleaseTool
 		}

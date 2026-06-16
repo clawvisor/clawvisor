@@ -1985,8 +1985,16 @@ func TestLLMEndpoint_RequiresApprovalForOpenAIToolUseWithoutScope(t *testing.T) 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Reply `yes` or `y`") {
-		t.Fatalf("expected approval prompt, got %s", rec.Body.String())
+	// Scope-drift menu is wired by default in NewLLMEndpointHandler, so
+	// a task_scope_missing block routes to the agent-facing menu (a
+	// synthetic tool_result) instead of parking a user-facing approval
+	// prompt. The body must surface the menu header text and a
+	// Drift ID.
+	if !strings.Contains(rec.Body.String(), "outside your current task scope") {
+		t.Fatalf("expected scope-drift menu, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Drift ID:") {
+		t.Fatalf("expected Drift ID in scope-drift menu, got %s", rec.Body.String())
 	}
 
 	user, _ := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")
@@ -1998,7 +2006,6 @@ func TestLLMEndpoint_RequiresApprovalForOpenAIToolUseWithoutScope(t *testing.T) 
 	for _, row := range rows {
 		if row.Service == "runtime.tool_use" &&
 			row.Action == "lite_proxy.tool_use.block" &&
-			row.Outcome == "task_scope_missing" &&
 			row.ToolUseID != nil &&
 			*row.ToolUseID == "call_1" {
 			found = true
@@ -2006,7 +2013,7 @@ func TestLLMEndpoint_RequiresApprovalForOpenAIToolUseWithoutScope(t *testing.T) 
 		}
 	}
 	if !found {
-		t.Fatalf("expected runtime.tool_use approval audit row for OpenAI tool use; got %d rows", len(rows))
+		t.Fatalf("expected runtime.tool_use block audit row for OpenAI tool use; got %d rows", len(rows))
 	}
 }
 
