@@ -115,9 +115,8 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		}
 		coalescedResult, coalescedErr := rewriter.Rewrite(body, contentType, coalescedEval)
 		if coalescedErr == nil {
-			coalescedBody, _ := applyScopeDriftDecisions(ctx, cfg, rewriter.Name(), coalescedResult.Body)
 			return llmproxy.PostprocessResult{
-				Body:        coalescedBody,
+				Body:        coalescedResult.Body,
 				ContentType: contentType,
 				Rewritten:   true,
 				Decisions:   coalescedResult.Decisions,
@@ -131,29 +130,12 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		return failClosed(reason)
 	}
 
-	finalBody, driftMutated := applyScopeDriftDecisions(ctx, cfg, rewriter.Name(), result.Body)
 	return llmproxy.PostprocessResult{
-		Body:        finalBody,
+		Body:        result.Body,
 		ContentType: contentType,
-		Rewritten:   result.Rewritten || driftMutated,
+		Rewritten:   result.Rewritten,
 		Decisions:   result.Decisions,
 	}
-}
-
-// applyScopeDriftDecisions resolves any <clawvisor:decision> markup in
-// the body via the llmproxy package, narrowing the dependency surface
-// to the ScopeDriftResolveContext (built from AgentContext +
-// ConversationID + registry + pending-approval cache). Nil registry
-// short-circuits, so callers that don't configure scope drift see a
-// no-op.
-func applyScopeDriftDecisions(ctx context.Context, cfg llmproxy.PostprocessConfig, provider conversation.Provider, body []byte) ([]byte, bool) {
-	rc := llmproxy.ScopeDriftResolveContext{
-		AgentContext:     cfg.AgentContext,
-		ConversationID:   cfg.ConversationID,
-		Registry:         cfg.ScopeDrifts,
-		PendingApprovals: cfg.PendingApprovals,
-	}
-	return llmproxy.ApplyScopeDriftDecisions(ctx, rc, provider, body)
 }
 
 func flushDirect(ctx context.Context, cfg llmproxy.PostprocessConfig, auditBuf *pendingAuditEventBuffer) {

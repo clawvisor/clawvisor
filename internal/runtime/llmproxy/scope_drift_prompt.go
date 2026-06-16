@@ -11,13 +11,18 @@ import (
 // continuation, so the agent sees a continuation of the same
 // conversation rather than an opaque error.
 //
-// Options (a) expand and (b) new_task reuse existing control-plane
-// endpoints: the agent just makes a normal POST /control/tasks{,/expand}
-// tool call. Option (c) one_off is emitted as a <clawvisor:decision>
-// markup block in the agent's assistant text — the SSE postproc
-// resolver parses that markup server-side, so no new agent-facing HTTP
-// surface is required. The markup carries the drift_id verbatim so the
-// proxy can match the decision to the original block.
+// All three options reuse the same control-plane POST shape:
+//   (a) expand:     POST /api/control/tasks/<task_id>/expand?surface=inline
+//   (b) new_task:   POST /api/control/tasks?surface=inline
+//   (c) one_off:    POST /api/control/scope-drifts/<drift_id>/one-off?surface=inline
+//
+// The agent emits any of these as a normal POST tool call; the
+// respective intercept opens an inline approval hold and the user's
+// yes/no resolves it. There is no inline assistant-text markup
+// machinery — when option (c) was encoded that way, the rendered
+// menu's example markup self-matched server-side, consuming the
+// one-shot cap before the agent could pick. Routing all three through
+// the same intercept shape eliminates that whole class of bug.
 //
 // There is also an implicit fourth path: the agent picks none of the
 // above and just emits its next turn normally. The menu names this in
@@ -88,25 +93,11 @@ func renderScopeDriftMenu(menu MenuFields, controlBaseURL string) string {
 	fmt.Fprintf(&b, "    POST %s/control/tasks?surface=inline\n", base)
 	b.WriteString("    Body: <task envelope as documented in /control/skill, plus \"drift_id\":\"" + menu.DriftID + "\">\n")
 
-	// (c) One-off — markup, not an HTTP call. The agent's rationale is
-	// shown to the user verbatim in the approval prompt.
-	//
-	// The example markup MUST sit inside a triple-backtick fence: the
-	// SSE postproc's parseScopeDriftDecisions runs over the rewritten
-	// response body which contains this menu (the rewriter substitutes
-	// blocked tool_use → SubstituteWith → this menu text), and an
-	// unfenced example would self-match — the parser would treat it as
-	// a real agent decision, consume the one-shot cap, and splice in a
-	// one-off approval prompt before the agent ever picks an option.
-	// insideTripleFenceBlock recognizes line-leading ``` fences and
-	// suppresses matches inside them; the agent's own emission won't
-	// be fenced.
-	fmt.Fprintf(&b, "\n(c) One-off — emit this in your assistant text (NOT inside a code block) to ask the user to authorize a single execution:\n")
-	b.WriteString("```\n")
-	fmt.Fprintf(&b, "<clawvisor:decision drift=%q option=\"one-off\">\n", menu.DriftID)
-	b.WriteString("A one-sentence rationale shown verbatim to the user. Why is this throwaway?\n")
-	b.WriteString("</clawvisor:decision>\n")
-	b.WriteString("```\n")
+	// (c) One-off — a normal POST that matches the (a)/(b) shape so the
+	// proxy's intercept chain handles all three identically.
+	b.WriteString("\n(c) One-off — you genuinely need this single call and it does not fit (a) or (b).\n")
+	fmt.Fprintf(&b, "    POST %s/api/control/scope-drifts/%s/one-off?surface=inline\n", base, menu.DriftID)
+	b.WriteString("    Body: {\"rationale\":\"<one-sentence rationale shown verbatim to the user. Why is this throwaway?>\"}\n")
 	b.WriteString("    The user sees the original tool, the block reason, and your rationale, then approves or denies. On approve, Clawvisor pre-clears this single call. On deny, the drift is closed.\n")
 
 	// Implicit fall-through.

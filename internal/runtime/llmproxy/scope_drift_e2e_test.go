@@ -86,92 +86,42 @@ func anthropicReplyBody(verb, approvalID string) []byte {
 	return []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"` + verb + ` ` + approvalID + `"}]}]}`)
 }
 
-// ── Menu self-claim regression ───────────────────────────────────────────────────
-
-// TestScopeDriftE2E_MenuIsNotSelfClaiming guards a sharp-edge bug: the
-// rendered menu includes an example <clawvisor:decision> block as
-// documentation. The rewriter splices the menu into the response body
-// in place of the blocked tool_use, and applyScopeDriftDecisions then
-// scans the same body for markup. Without a code-fence guard, the
-// parser sees the example markup, claims option=one_off against the
-// real drift_id rendered into the example, opens a hold, and splices
-// in a user-facing one-off approval prompt — all before the agent has
-// chosen anything. The one-shot cap is consumed and the agent's actual
-// choice is locked out.
-//
-// This test renders the menu, feeds it through ApplyScopeDriftDecisions
-// (mirroring the postproc pipeline), and asserts:
-//
-//   1. The body is unchanged — the parser refused to match the example.
-//   2. The drift's ChosenOption is still empty — no claim happened.
-//   3. No pending-approval hold was opened.
-func TestScopeDriftE2E_MenuIsNotSelfClaiming(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	reg := NewMemoryScopeDriftRegistry(0)
-	cache := NewMemoryPendingApprovalCache(time.Minute)
-
-	drift, _ := mintDriftFixture(t, reg, ScopeDriftSourceTaskScope)
-	menuText, _, err := BuildScopeDriftContinuation(ctx, reg, ScopeDrift{
-		// Use a fresh template so BuildScopeDriftContinuation gets a
-		// distinct drift to render. The fixture drift above is the one
-		// the agent would have at block time; we just need any menu
-		// text for the regression check.
-		UserID:         driftTestUserID,
-		AgentID:        driftTestAgentID,
-		ConversationID: driftTestConvID,
-		ToolUse:        drift.ToolUse,
-		Service:        drift.Service,
-		Action:         drift.Action,
-		Host:           drift.Host,
-		Method:         drift.Method,
-		Path:           drift.Path,
-		Source:         ScopeDriftSourceTaskScope,
-		ReasonText:     drift.ReasonText,
-	}, "https://clawvisor.local")
-	if err != nil {
-		t.Fatalf("BuildScopeDriftContinuation: %v", err)
+// invokeOneOffIntercept calls MaybeInterceptScopeDriftOneOff with a
+// synthetic tool_use that POSTs to the new one-off endpoint. Returns
+// (verdict, claimed) like the real intercept. driftID is rendered into
+// the path; rationale into the body.
+func invokeOneOffIntercept(t *testing.T, reg ScopeDriftRegistry, cache PendingApprovalCache, agentID, convID, driftID, rationale string) (conversation.ToolUseVerdict, bool) {
+	t.Helper()
+	cfg := PostprocessConfig{
+		AgentContext:    AgentContext{AgentID: agentID, AgentUserID: driftTestUserID},
+		AuditContext:    AuditContext{ConversationID: convID},
+		AuthorizationContext: AuthorizationContext{
+			ScopeDrifts: reg,
+		},
+		ApprovalContext: ApprovalContext{PendingApprovals: cache},
 	}
-	if !strings.Contains(menuText, "<clawvisor:decision") {
-		t.Fatalf("menu must include an example <clawvisor:decision> block; got: %s", menuText)
+	httpReq := httptest.NewRequest("POST", "http://daemon/api/control/scope-drifts/"+driftID+"/one-off?surface=inline", nil)
+	call := ControlCall{Method: "POST", URL: httpReq.URL}
+	body := map[string]any{"rationale": rationale}
+	bodyJSON, _ := json.Marshal(body)
+	tu := conversation.ToolUse{
+		ID:    "tu-one-off",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"body":` + string(mustJSON(string(bodyJSON))) + `}`),
 	}
-
-	// Wrap the menu in a JSON-shaped body the way the rewriter would
-	// have spliced it into an assistant text block. This is the shape
-	// applyScopeDriftDecisions actually sees in production.
-	body := []byte(`{"content":[{"type":"text","text":` + string(mustJSON(menuText)) + `}]}`)
-	rc := ScopeDriftResolveContext{
-		AgentContext:     AgentContext{AgentID: driftTestAgentID, AgentUserID: driftTestUserID},
-		ConversationID:   driftTestConvID,
-		Registry:         reg,
-		PendingApprovals: cache,
-	}
-	out, changed := ApplyScopeDriftDecisions(ctx, rc, conversation.ProviderAnthropic, body)
-	if changed {
-		t.Fatalf("menu's example markup was matched and substituted; body diff:\nbefore: %s\nafter:  %s", body, out)
-	}
-
-	// All drifts must remain unclaimed — the menu rendered TWO drifts
-	// in this test (the fixture + the BuildScopeDriftContinuation), and
-	// neither should have a chosen option.
-	got, _ := reg.Get(ctx, drift.ID)
-	if got.ChosenOption != "" {
-		t.Fatalf("fixture drift was self-claimed; ChosenOption=%q", got.ChosenOption)
-	}
-	if holds := peekAllHolds(ctx, cache); len(holds) != 0 {
-		t.Fatalf("menu self-claim opened a hold; want 0, got %d", len(holds))
-	}
+	return MaybeInterceptScopeDriftOneOff(httpReq, cfg, func(string, string, string) {}, func(string, ...any) {}, conversation.ProviderAnthropic, tu, call)
 }
 
 // ── (c) One-off: approve path ───────────────────────────────────────────────────
 
-// TestScopeDriftE2E_OneOffApprove walks the markup → user-approve →
+// TestScopeDriftE2E_OneOffApprove walks the POST → user-approve →
 // pre-clear path:
 //
-//	1. agent emits <clawvisor:decision option="one-off"> in assistant text
-//	2. ApplyScopeDriftDecisions claims the option + opens a
-//	   StageAwaitingScopeDriftOneOff hold + substitutes the markup with
-//	   the user-facing approval prompt
+//	1. agent POSTs /api/control/scope-drifts/<id>/one-off?surface=inline
+//	   with a one-line rationale
+//	2. MaybeInterceptScopeDriftOneOff claims the option + opens a
+//	   StageAwaitingScopeDriftOneOff hold + substitutes the tool_result
+//	   with the user-facing approval prompt
 //	3. user replies "yes <approval_id>"
 //	4. RewriteScopeDriftOneOffApprovalReply resolves the hold + sets
 //	   the drift outcome to Succeeded + mints the pre-clear
@@ -184,33 +134,23 @@ func TestScopeDriftE2E_OneOffApprove(t *testing.T) {
 
 	drift, blockedTU := mintDriftFixture(t, reg, ScopeDriftSourceTaskScope)
 
-	// Step 1 + 2: the agent emits markup; the postproc resolver claims
-	// and substitutes. Wrap the markup in a JSON string field to match
-	// how an Anthropic assistant turn would carry it on the wire (the
-	// resolver's substitution targets JSON-escaped content).
-	body := []byte(`{"content":[{"type":"text","text":"I'll request a one-off. <clawvisor:decision drift=\"` + drift.ID + `\" option=\"one-off\">need this single call to file the issue.</clawvisor:decision>"}]}`)
-	rc := ScopeDriftResolveContext{
-		AgentContext:     AgentContext{AgentID: driftTestAgentID, AgentUserID: driftTestUserID},
-		ConversationID:   driftTestConvID,
-		Registry:         reg,
-		PendingApprovals: cache,
+	// Step 1 + 2: agent POSTs the one-off; intercept claims and opens hold.
+	verdict, claimed := invokeOneOffIntercept(t, reg, cache, driftTestAgentID, driftTestConvID, drift.ID, "need this single call to file the issue.")
+	if !claimed {
+		t.Fatal("expected MaybeInterceptScopeDriftOneOff to claim the POST")
 	}
-	out, changed := ApplyScopeDriftDecisions(ctx, rc, conversation.ProviderAnthropic, body)
-	if !changed {
-		t.Fatal("ApplyScopeDriftDecisions: expected the markup to be substituted")
+	if verdict.Allowed {
+		t.Fatalf("verdict should be a held block (Allowed=false); got %+v", verdict)
 	}
-	if strings.Contains(string(out), "<clawvisor:decision") {
-		t.Fatalf("markup was not stripped from body: %s", out)
-	}
-	if !strings.Contains(string(out), "Reply `yes` or `y`") {
-		t.Fatalf("expected user-facing approval prompt in body: %s", out)
+	if !strings.Contains(verdict.SubstituteWith, "Reply `yes` or `y`") {
+		t.Fatalf("expected user-facing approval prompt in SubstituteWith: %s", verdict.SubstituteWith)
 	}
 
-	// Step 3: the resolver should have opened exactly one hold at the
+	// Step 3: the intercept should have opened exactly one hold at the
 	// scope-drift one-off stage.
 	holds := peekAllHolds(ctx, cache)
 	if len(holds) != 1 {
-		t.Fatalf("want 1 hold after resolve, got %d", len(holds))
+		t.Fatalf("want 1 hold after intercept, got %d", len(holds))
 	}
 	if holds[0].Stage != StageAwaitingScopeDriftOneOff {
 		t.Fatalf("hold stage = %q, want %q", holds[0].Stage, StageAwaitingScopeDriftOneOff)
@@ -221,10 +161,11 @@ func TestScopeDriftE2E_OneOffApprove(t *testing.T) {
 	approvalID := holds[0].ID
 
 	// Confirm the registry recorded the claim.
-	claimed, _ := reg.Get(ctx, drift.ID)
-	if claimed.ChosenOption != ScopeDriftOptionOneOff || claimed.Outcome != ScopeDriftOutcomePending {
-		t.Fatalf("registry state after claim: %+v", claimed)
+	got, _ := reg.Get(ctx, drift.ID)
+	if got.ChosenOption != ScopeDriftOptionOneOff || got.Outcome != ScopeDriftOutcomePending {
+		t.Fatalf("registry state after claim: %+v", got)
 	}
+	_ = claimed
 
 	// Step 4: user types "yes <approval-id>". The reply rewriter
 	// resolves the hold and flips the drift to Succeeded.
@@ -286,15 +227,9 @@ func TestScopeDriftE2E_OneOffDeny(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 
 	drift, blockedTU := mintDriftFixture(t, reg, ScopeDriftSourceTaskScope)
-	body := []byte(`{"content":[{"type":"text","text":"<clawvisor:decision drift=\"` + drift.ID + `\" option=\"one-off\">need it once</clawvisor:decision>"}]}`)
-	rc := ScopeDriftResolveContext{
-		AgentContext:     AgentContext{AgentID: driftTestAgentID, AgentUserID: driftTestUserID},
-		ConversationID:   driftTestConvID,
-		Registry:         reg,
-		PendingApprovals: cache,
-	}
-	if _, changed := ApplyScopeDriftDecisions(ctx, rc, conversation.ProviderAnthropic, body); !changed {
-		t.Fatal("expected markup to be substituted")
+	_, claimed := invokeOneOffIntercept(t, reg, cache, driftTestAgentID, driftTestConvID, drift.ID, "need it once")
+	if !claimed {
+		t.Fatal("expected intercept to claim")
 	}
 	holds := peekAllHolds(ctx, cache)
 	if len(holds) != 1 {
@@ -340,9 +275,10 @@ func TestScopeDriftE2E_OneOffDeny(t *testing.T) {
 
 // ── One-shot cap ────────────────────────────────────────────────────────────────
 
-// TestScopeDriftE2E_OneShotCap confirms a second <clawvisor:decision>
-// markup against the same drift_id is rejected with an "already
-// resolved" status, and the original claim's hold is unaffected.
+// TestScopeDriftE2E_OneShotCap confirms a second POST against the same
+// drift_id is refused: the registry's ClaimOption returns
+// ErrDriftAlreadyResolved, the intercept falls through (no hold opens),
+// and the original claim's hold is unaffected.
 func TestScopeDriftE2E_OneShotCap(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -350,28 +286,15 @@ func TestScopeDriftE2E_OneShotCap(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	drift, _ := mintDriftFixture(t, reg, ScopeDriftSourceTaskScope)
 
-	rc := ScopeDriftResolveContext{
-		AgentContext:     AgentContext{AgentID: driftTestAgentID, AgentUserID: driftTestUserID},
-		ConversationID:   driftTestConvID,
-		Registry:         reg,
-		PendingApprovals: cache,
+	if _, claimed := invokeOneOffIntercept(t, reg, cache, driftTestAgentID, driftTestConvID, drift.ID, "first try"); !claimed {
+		t.Fatal("first claim: expected intercept to claim")
 	}
-	first := []byte(`{"content":[{"type":"text","text":"<clawvisor:decision drift=\"` + drift.ID + `\" option=\"one-off\">first try</clawvisor:decision>"}]}`)
-	if _, changed := ApplyScopeDriftDecisions(ctx, rc, conversation.ProviderAnthropic, first); !changed {
-		t.Fatal("first claim: expected substitution")
+	// Second POST against the same drift_id. The intercept must fall
+	// through (return claimed=false) because ClaimOption now rejects.
+	if _, claimed := invokeOneOffIntercept(t, reg, cache, driftTestAgentID, driftTestConvID, drift.ID, "second try"); claimed {
+		t.Fatal("second claim: expected intercept to fall through (one-shot cap)")
 	}
-	// Second markup against the same drift_id. Use a fresh body so the
-	// offsets are independent.
-	second := []byte(`{"content":[{"type":"text","text":"<clawvisor:decision drift=\"` + drift.ID + `\" option=\"one-off\">second try</clawvisor:decision>"}]}`)
-	out, changed := ApplyScopeDriftDecisions(ctx, rc, conversation.ProviderAnthropic, second)
-	if !changed {
-		t.Fatal("second claim: expected substitution (with rejection status)")
-	}
-	if !strings.Contains(string(out), "already resolved") {
-		t.Fatalf("second claim should report 'already resolved'; body: %s", out)
-	}
-	// The first claim's hold is the only one in the cache; the second
-	// claim must not have opened a new hold.
+	// The first claim's hold is the only one in the cache.
 	holds := peekAllHolds(ctx, cache)
 	if len(holds) != 1 {
 		t.Fatalf("want exactly 1 hold (first claim's), got %d", len(holds))
@@ -380,11 +303,13 @@ func TestScopeDriftE2E_OneShotCap(t *testing.T) {
 
 // ── Cross-conversation guard ────────────────────────────────────────────────────
 
-// TestScopeDriftE2E_CrossConversationGuard confirms a markup carrying a
-// drift_id minted in a different conversation is rejected without
-// claiming the drift. This is the guard that stops a stale assistant
-// transcript copied across sessions from consuming approvals in the
-// wrong session.
+// TestScopeDriftE2E_CrossConversationGuard confirms a POST carrying a
+// drift_id minted in a different conversation is refused at peek time:
+// the intercept never claims, the drift stays pending for the rightful
+// conversation to resolve, and no hold opens. Rejecting BEFORE claim
+// (rather than claim-then-rollback) closes the denial-of-service path
+// where a leaked drift_id could be used to permanently terminate
+// someone else's pending one-off.
 func TestScopeDriftE2E_CrossConversationGuard(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -392,36 +317,30 @@ func TestScopeDriftE2E_CrossConversationGuard(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	drift, _ := mintDriftFixture(t, reg, ScopeDriftSourceTaskScope) // minted in conv-drift-1
 
-	// Resolver invoked from a DIFFERENT conversation.
-	rc := ScopeDriftResolveContext{
-		AgentContext:     AgentContext{AgentID: driftTestAgentID, AgentUserID: driftTestUserID},
-		ConversationID:   "conv-other",
-		Registry:         reg,
-		PendingApprovals: cache,
+	if _, claimed := invokeOneOffIntercept(t, reg, cache, driftTestAgentID, "conv-other", drift.ID, "x"); claimed {
+		t.Fatal("expected intercept to fall through (wrong conversation)")
 	}
-	body := []byte(`{"content":[{"type":"text","text":"<clawvisor:decision drift=\"` + drift.ID + `\" option=\"one-off\">x</clawvisor:decision>"}]}`)
-	out, changed := ApplyScopeDriftDecisions(ctx, rc, conversation.ProviderAnthropic, body)
-	if !changed {
-		t.Fatal("expected substitution (with rejection status)")
-	}
-	if !strings.Contains(string(out), "belongs to a different conversation") {
-		t.Fatalf("expected cross-conversation rejection; body: %s", out)
-	}
-	// The drift must still be UNCLAIMED so the rightful conversation
-	// can resolve it.
 	got, _ := reg.Get(ctx, drift.ID)
 	if got.ChosenOption != "" {
-		t.Fatalf("cross-conversation refusal must not claim; got ChosenOption=%q", got.ChosenOption)
+		t.Fatalf("wrong-conversation POST must not claim; got ChosenOption=%q", got.ChosenOption)
+	}
+	if got.Outcome != "" {
+		t.Fatalf("wrong-conversation POST must leave drift unresolved; got %+v", got)
 	}
 	if len(peekAllHolds(ctx, cache)) != 0 {
 		t.Fatal("cross-conversation refusal must not open a hold")
+	}
+	// The legitimate session can still claim afterwards.
+	if _, claimed := invokeOneOffIntercept(t, reg, cache, driftTestAgentID, driftTestConvID, drift.ID, "legit"); !claimed {
+		t.Fatal("legitimate session must still be able to claim the drift")
 	}
 }
 
 // ── Cross-agent guard ───────────────────────────────────────────────────────────
 
 // TestScopeDriftE2E_CrossAgentGuard mirrors the cross-conversation
-// test for the agent_id mismatch case.
+// test for the agent_id mismatch case: refuse at peek time so the
+// legitimate agent can still claim.
 func TestScopeDriftE2E_CrossAgentGuard(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -429,23 +348,21 @@ func TestScopeDriftE2E_CrossAgentGuard(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	drift, _ := mintDriftFixture(t, reg, ScopeDriftSourceTaskScope)
 
-	rc := ScopeDriftResolveContext{
-		AgentContext:     AgentContext{AgentID: "agent-other", AgentUserID: driftTestUserID},
-		ConversationID:   driftTestConvID,
-		Registry:         reg,
-		PendingApprovals: cache,
-	}
-	body := []byte(`{"content":[{"type":"text","text":"<clawvisor:decision drift=\"` + drift.ID + `\" option=\"one-off\">x</clawvisor:decision>"}]}`)
-	out, changed := ApplyScopeDriftDecisions(ctx, rc, conversation.ProviderAnthropic, body)
-	if !changed {
-		t.Fatal("expected substitution (with rejection status)")
-	}
-	if !strings.Contains(string(out), "minted for a different agent") {
-		t.Fatalf("expected cross-agent rejection; body: %s", out)
+	if _, claimed := invokeOneOffIntercept(t, reg, cache, "agent-other", driftTestConvID, drift.ID, "x"); claimed {
+		t.Fatal("expected intercept to fall through (wrong agent)")
 	}
 	got, _ := reg.Get(ctx, drift.ID)
 	if got.ChosenOption != "" {
-		t.Fatalf("cross-agent refusal must not claim; got %q", got.ChosenOption)
+		t.Fatalf("wrong-agent POST must not claim; got ChosenOption=%q", got.ChosenOption)
+	}
+	if got.Outcome != "" {
+		t.Fatalf("wrong-agent POST must leave drift unresolved; got %+v", got)
+	}
+	if len(peekAllHolds(ctx, cache)) != 0 {
+		t.Fatal("cross-agent refusal must not open a hold")
+	}
+	if _, claimed := invokeOneOffIntercept(t, reg, cache, driftTestAgentID, driftTestConvID, drift.ID, "legit"); !claimed {
+		t.Fatal("legitimate agent must still be able to claim the drift")
 	}
 }
 

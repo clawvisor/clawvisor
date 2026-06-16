@@ -150,9 +150,9 @@ func RewriteScopeDriftOneOffApprovalReply(ctx context.Context, req ScopeDriftRep
 		logger = slog.Default()
 	}
 
-	// Decide the would-be outcome BEFORE the final body rewrite. Defer
-	// SetOutcome until after ReplaceLatestUserText succeeds so the
-	// drift's terminal state reflects what actually landed on the wire.
+	// Decide the would-be outcome and compute the replacement up front
+	// so the SetOutcome and body rewrite below operate on a single
+	// pre-committed plan.
 	var (
 		replacement     string
 		intendedOutcome ScopeDriftOutcome
@@ -169,41 +169,57 @@ func RewriteScopeDriftOneOffApprovalReply(ctx context.Context, req ScopeDriftRep
 		replacement = "[Clawvisor scope-drift] The one-off was denied. This drift_id is now closed. Do not retry under it — re-emit the original tool call only after you have a new plan (a fresh expand, a new task, or a different approach)."
 	}
 
-	rewritten, ok, err := editor.ReplaceLatestUserText(verb, resolved.ID, replacement, nil)
-	if err != nil {
-		if denyErr := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, ScopeDriftOutcomeDenied); denyErr != nil {
-			logger.WarnContext(ctx, "scope-drift outcome denied write failed after rewrite error; drift will TTL out",
-				"drift_id", resolved.ScopeDriftID, "err", denyErr)
-		}
-		return out, err
-	}
-	if !ok {
-		if denyErr := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, ScopeDriftOutcomeDenied); denyErr != nil {
-			logger.WarnContext(ctx, "scope-drift outcome denied write failed after rewrite returned not-ok; drift will TTL out",
-				"drift_id", resolved.ScopeDriftID, "err", denyErr)
-		}
-		out.Decision = "deny"
-		out.Outcome = "scope_drift_body_rewrite_unsupported"
-		out.Reason = "body shape changed between probe and rewrite"
-		return out, nil
-	}
-
-	// Rewrite committed. NOW write the drift outcome — on approve,
-	// SetOutcome(Succeeded) inserts the one-shot pre-clear keyed by
-	// (agent, fingerprint) so the agent's next attempt of the original
-	// blocked tool_use passes scope+intent verification.
+	// Write the registry outcome BEFORE the body rewrite. SetOutcome
+	// is what mints the pre-clear on Succeeded; sequencing the body
+	// rewrite after it means a successful body claiming "pre-clear is
+	// ready" can never land without the pre-clear actually existing.
+	// The earlier order had the opposite failure mode (body says
+	// success, no pre-clear; agent retries and gets blocked again
+	// with no clear explanation).
+	//
+	// If SetOutcome fails on the success path, downgrade to a denial
+	// in both the metadata and the user-facing body so the agent
+	// doesn't get a stale "approval landed" message backed by no
+	// pre-clear. On the deny path a SetOutcome failure just means the
+	// drift will TTL out as unresolved — non-fatal.
 	if err := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, intendedOutcome); err != nil {
-		logger.ErrorContext(ctx, "scope-drift outcome write failed after body rewrite committed",
+		logger.ErrorContext(ctx, "scope-drift outcome write failed before body rewrite",
 			"drift_id", resolved.ScopeDriftID, "intended_outcome", intendedOutcome, "err", err)
 		if intendedOutcome == ScopeDriftOutcomeSucceeded {
+			intendedOutcome = ScopeDriftOutcomeDenied
+			out.Decision = "deny"
+			out.Outcome = "scope_drift_pre_clear_failed"
+			out.Reason = err.Error()
+			replacement = "[Clawvisor scope-drift] Your approval landed, but Clawvisor could not record the pre-clear (" + err.Error() + "). This drift_id is now closed — re-emit the original tool call to start over with a fresh menu."
 			if denyErr := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, ScopeDriftOutcomeDenied); denyErr != nil {
 				logger.WarnContext(ctx, "scope-drift post-failure denied write also failed; drift will TTL out",
 					"drift_id", resolved.ScopeDriftID, "err", denyErr)
 			}
-			out.Decision = "deny"
-			out.Outcome = "scope_drift_pre_clear_failed"
-			out.Reason = err.Error()
 		}
+	}
+
+	rewritten, ok, err := editor.ReplaceLatestUserText(verb, resolved.ID, replacement, nil)
+	if err != nil {
+		// Body rewrite errored after the registry already committed.
+		// The agent will see the bare verb upstream. On the Succeeded
+		// path that's fine — the pre-clear is real and the retry
+		// will pass. On the Denied path it's also fine — the model
+		// reading bare "no" recovers reasonably.
+		logger.WarnContext(ctx, "scope-drift body rewrite failed after registry committed",
+			"drift_id", resolved.ScopeDriftID, "outcome", intendedOutcome, "err", err)
+		return out, err
+	}
+	if !ok {
+		// Rewrite probe passed but the actual replacement is
+		// unsupported by the current body shape. Same reasoning as
+		// the error branch above — registry already reflects the
+		// truth, bare verb upstream is recoverable.
+		logger.WarnContext(ctx, "scope-drift body rewrite returned not-ok after registry committed",
+			"drift_id", resolved.ScopeDriftID, "outcome", intendedOutcome)
+		out.Decision = "deny"
+		out.Outcome = "scope_drift_body_rewrite_unsupported"
+		out.Reason = "body shape changed between probe and rewrite"
+		return out, nil
 	}
 	out.Body = rewritten
 	out.Rewritten = true
