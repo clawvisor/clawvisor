@@ -311,6 +311,13 @@ const (
 	NoticeKindTaskApproved NoticeKind = "task-approved"
 	NoticeKindTaskDenied   NoticeKind = "task-denied"
 	NoticeKindTaskError    NoticeKind = "task-error"
+	// NoticeKindTaskExpired marks the per-conversation announcement that
+	// the agent's currently-checked-out task has lapsed past its
+	// ExpiresAt. The proxy prepends one of these to the first genuine
+	// user-role message after expiry so the model can acknowledge the
+	// lapse and POST a new task (or check out a different active one)
+	// before its next tool_use is denied by task-scope.
+	NoticeKindTaskExpired NoticeKind = "task-expired"
 )
 
 // AugmentApprovedInlineTasksInHistory walks the conversation history

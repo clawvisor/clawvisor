@@ -714,6 +714,62 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// expired_task_notice runs BEFORE control_notice so the prepended
+	// user-role notice survives any byte-stability checks the control
+	// notice does on the system prompt (the two policies edit different
+	// regions of the body, but ordering keeps the audit log readable).
+	// The loader looks up the agent's checked-out task and reports
+	// expired=true only when the task is past its ExpiresAt; standing
+	// tasks (ExpiresAt == nil) and missing checkouts skip the policy
+	// entirely. Sentinel-based idempotency in the policy keeps the
+	// notice from re-injecting on later turns once Anthropic echoes the
+	// augmented history back.
+	{
+		expiredTaskLoader := func(ctx context.Context, userID, agentID, conversationID string) (string, string, bool) {
+			if h.TaskCheckouts == nil || h.Store == nil {
+				return "", "", false
+			}
+			scopedKey := llmproxy.TaskCheckoutKey{
+				UserID:         userID,
+				AgentID:        agentID,
+				ConversationID: conversationID,
+			}
+			taskID, purpose, expired := h.loadExpiredCheckoutTask(ctx, scopedKey)
+			if taskID != "" || expired {
+				return taskID, purpose, expired
+			}
+			if conversationID == "" {
+				return "", "", false
+			}
+			legacyKey := llmproxy.TaskCheckoutKey{
+				UserID:  userID,
+				AgentID: agentID,
+			}
+			return h.loadExpiredCheckoutTask(ctx, legacyKey)
+		}
+		expiredTaskInjector := func(body []byte, p conversation.Provider, taskID, purpose string) ([]byte, bool, error) {
+			return llmproxy.PrependExpiredTaskNoticeToLastUserMessage(body, p, taskID, purpose)
+		}
+		pipeReq := &pipelineReadOnlyRequest{
+			provider:       provider,
+			httpReq:        r,
+			body:           body,
+			userID:         agent.UserID,
+			agentID:        agent.ID,
+			conversationID: conversationID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewExpiredTaskNotice(expiredTaskLoader, expiredTaskInjector))
+		if err != nil {
+			h.Logger.WarnContext(r.Context(), "lite-proxy expired-task notice pipeline failed",
+				"request_id", requestID, "agent_id", agent.ID, "err", err.Error())
+			auditParams["expired_task_notice_error"] = liteProxyAuditErrorDetail(err)
+		} else {
+			body = result.FinalBody
+			for k, v := range result.AuditParams {
+				auditParams[k] = v
+			}
+		}
+	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	h.ensureDefaultToolRules(r.Context(), agent, reqSummary.AvailableTools)
 	// Fifth migrated call site through pipeline: control_notice. The
@@ -2988,6 +3044,49 @@ func (h *LLMEndpointHandler) resolveCheckedOutTaskID(ctx context.Context, key ll
 		return "", err
 	}
 	return "", nil
+}
+
+// loadExpiredCheckoutTask reads the checkout entry at key and reports
+// expired=true when the pointed-to task is non-standing (ExpiresAt
+// != nil) and past its expiry. Standing tasks (ExpiresAt == nil),
+// future-dated tasks, missing checkouts, store errors, and tasks
+// whose AgentID doesn't match the checkout owner all return
+// expired=false with empty strings. Errors are swallowed (logged at
+// debug level only) so a transient store outage doesn't surface as
+// a denial to the model — the proxy stays silent instead.
+//
+// The Status field is intentionally NOT consulted here: when the
+// in-DB expiry sweep marks a task "expired" we still want to surface
+// it (the model needs to know the lapse happened), and when the
+// sweep hasn't run yet we still want to surface it (ExpiresAt is the
+// authoritative wall-clock check). Filtering by Status would split
+// the behavior across the sweep racing the request.
+func (h *LLMEndpointHandler) loadExpiredCheckoutTask(ctx context.Context, key llmproxy.TaskCheckoutKey) (string, string, bool) {
+	if h == nil || h.TaskCheckouts == nil || h.Store == nil {
+		return "", "", false
+	}
+	checkout, ok, err := h.TaskCheckouts.Get(ctx, key)
+	if err != nil || !ok {
+		return "", "", false
+	}
+	taskID := strings.TrimSpace(checkout.TaskID)
+	if taskID == "" {
+		return "", "", false
+	}
+	task, err := h.Store.GetTask(ctx, taskID)
+	if err != nil || task == nil {
+		return "", "", false
+	}
+	if task.AgentID != key.AgentID {
+		return "", "", false
+	}
+	if task.ExpiresAt == nil {
+		return "", "", false
+	}
+	if task.ExpiresAt.After(time.Now()) {
+		return "", "", false
+	}
+	return task.ID, task.Purpose, true
 }
 
 func (h *LLMEndpointHandler) ensureDefaultToolRules(ctx context.Context, agent *store.Agent, availableTools []string) {
