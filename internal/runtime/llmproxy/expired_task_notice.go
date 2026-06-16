@@ -147,7 +147,7 @@ func prependAnthropicLastUserNotice(body []byte, notice string) ([]byte, bool, e
 			continue
 		}
 		content := msg["content"]
-		text := strings.TrimSpace(extractAnthropicUserText(content))
+		text := strings.TrimSpace(extractAnthropicHumanText(content))
 		if text == "" || isClawvisorInternalUserText(text) {
 			continue
 		}

@@ -72,7 +72,7 @@ func extractAnthropicHumanTurns(body []byte) []string {
 		if role != "user" {
 			continue
 		}
-		text := strings.TrimSpace(extractAnthropicUserText(msg["content"]))
+		text := strings.TrimSpace(extractAnthropicHumanText(msg["content"]))
 		if text == "" {
 			continue
 		}
@@ -84,12 +84,25 @@ func extractAnthropicHumanTurns(body []byte) []string {
 	return tailLimit(turns, maxRecentHumanTurns)
 }
 
-// extractAnthropicUserText flattens an Anthropic role:"user" content
-// field to plain text. Tool result blocks are skipped — they are
-// harness output, not human input. Content can be either a plain string
-// (older shape) or a heterogeneous block array (current shape with
-// type:"text" / "tool_result" entries).
-func extractAnthropicUserText(contentRaw json.RawMessage) string {
+// extractAnthropicHumanText returns the human-authored portion of an
+// Anthropic role:"user" content field, flattened to plain text. The
+// helper's contract is "what did the human type, ignoring everything
+// the harness or the proxy injected" — concretely, it skips two
+// categories of non-human content:
+//
+//  1. Tool-result blocks (harness output replayed back to the model).
+//  2. Proxy-emitted <clawvisor-notice> blocks (proxy-issued control
+//     state — task-approved / task-denied / task-expired envelopes).
+//
+// Both filters live here so every consumer (recent-human-turn
+// extraction, expired-task-notice anchoring, future intent-style
+// inspectors) gets the same shape without each one re-deriving the
+// "what counts as the user's authoring?" decision.
+//
+// Content can be either a plain string (older shape) or a
+// heterogeneous block array (current shape with type:"text" /
+// "tool_result" entries).
+func extractAnthropicHumanText(contentRaw json.RawMessage) string {
 	if len(contentRaw) == 0 {
 		return ""
 	}
@@ -117,9 +130,22 @@ func extractAnthropicUserText(contentRaw json.RawMessage) string {
 		if b.Type != "text" && b.Type != "input_text" {
 			continue
 		}
-		if b.Text != "" {
-			parts = append(parts, b.Text)
+		if b.Text == "" {
+			continue
 		}
+		// Filter (2): drop proxy-emitted Clawvisor notice blocks.
+		// PrependExpiredTaskNoticeToLastUserMessage produces a
+		// [notice_block, user_text_block] shape; without this skip,
+		// the flattened text would lead with the notice envelope and
+		// downstream isClawvisorInternalUserText's exact-shape match
+		// (which expects the ENTIRE trimmed text to be one notice)
+		// would reject the prefix-followed-by-text combination,
+		// letting the augmented turn surface as a "genuine human
+		// turn" in auto-approval / intent-verify policies.
+		if isExactClawvisorNoticeShape(b.Text) {
+			continue
+		}
+		parts = append(parts, b.Text)
 	}
 	return strings.Join(parts, "\n")
 }
@@ -229,7 +255,7 @@ func flattenOpenAIChatContent(raw json.RawMessage) string {
 //     authoring turn.
 //
 // Tool results and other non-human content are already filtered at the
-// content-shape level (see extractAnthropicUserText), so this helper
+// content-shape level (see extractAnthropicHumanText), so this helper
 // only needs to recognize the conversational-verb cases.
 func isClawvisorInternalUserText(text string) bool {
 	// containsInlineApprovalAugmentationMarker catches the user-side
