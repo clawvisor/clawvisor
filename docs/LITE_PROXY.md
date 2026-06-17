@@ -65,6 +65,7 @@ The proxy is gated by `proxy_lite.enabled`. When on, the daemon exposes:
 | `POST /api/control/tasks` | Task creation. Agents POST here to request scope before doing non-trivial work. |
 | `GET /api/control/tasks/{id}` | Status lookup. |
 | `POST /api/control/tasks/{id}/expand` | Add scope to an existing task. |
+| `POST /api/control/tasks/{id}/complete` | Close out a task whose work is done. Releases scope and clears chain-fact context. Unilateral (no user approval); accepts `active` or `expired` tasks. |
 
 Agents should be prompted to use the shorter synthetic URL
 `https://clawvisor.local/control/...`. Proxy-lite rewrites that model-facing
