@@ -207,6 +207,116 @@ func TestStripSyntheticApprovalHistory_PreservesReconstructedTurns(t *testing.T)
 	}
 }
 
+// TestStripSyntheticApprovalHistory_PreservesCacheControlOnSwap pins
+// the cache-stability invariant: when the strip rewrites the user
+// turn's tool_result block to pair with the reconstructed
+// tool_use_id, any cache_control attribute the harness placed on the
+// original block survives the rewrite.
+//
+// Anthropic's prompt cache is keyed by breakpoint position; the
+// harness's deepest breakpoint sits on the most recent user
+// tool_result. Dropping cache_control here forces Anthropic to fall
+// back to a system-level cache that doesn't reliably hit, busting
+// ~15k cached tokens on the immediate post-approval turn.
+func TestStripSyntheticApprovalHistory_PreservesCacheControlOnSwap(t *testing.T) {
+	const approvalID = "cv-cacheswap1"
+	const askToolUseID = "toolu_clawvisor_ask_" + approvalID
+	const originalToolUseID = "toolu_01OriginalSwap"
+	body, err := json.Marshal(map[string]any{
+		"model": "claude-haiku-4-5",
+		"messages": []map[string]any{
+			{"role": "user", "content": "expand the task"},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": "Clawvisor wants to expand the scope of an existing task:\n[clawvisor:approval=" + approvalID + "]"},
+				{"type": "tool_use", "id": askToolUseID, "name": "AskUserQuestion", "input": map[string]any{
+					"questions": []map[string]any{{"question": "approve?"}},
+				}},
+			}},
+			{"role": "user", "content": []map[string]any{
+				{
+					"type":          "tool_result",
+					"tool_use_id":   askToolUseID,
+					"content":       "yes",
+					"cache_control": map[string]any{"type": "ephemeral", "ttl": "1h"},
+				},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(id string) *historystrip.ReconstructedPair {
+		if id != approvalID {
+			return nil
+		}
+		return &historystrip.ReconstructedPair{
+			ToolUseID:  originalToolUseID,
+			ToolName:   "Bash",
+			Input:      json.RawMessage(`{"command":"curl -X POST .../expand?surface=inline ..."}`),
+			ResultText: "[clawvisor-notice] scope was expanded; do not re-emit",
+		}
+	}
+	out, err := StripSyntheticApprovalHistory(SyntheticApprovalHistoryStripRequest{
+		Provider:             conversation.ProviderAnthropic,
+		Body:                 body,
+		ReconstructionLookup: lookup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Modified {
+		t.Fatalf("strip should rewrite the body for reconstruction")
+	}
+	// Parse the rewritten user message and confirm the new tool_result
+	// block carries cache_control with the same TTL the harness set.
+	var parsed struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(out.Body, &parsed); err != nil {
+		t.Fatalf("parse rewritten body: %v", err)
+	}
+	if n := len(parsed.Messages); n < 3 {
+		t.Fatalf("expected >=3 messages, got %d", n)
+	}
+	userMsg := parsed.Messages[2]
+	if userMsg.Role != "user" {
+		t.Fatalf("messages[2] role=%q want user", userMsg.Role)
+	}
+	var contentBlocks []json.RawMessage
+	if err := json.Unmarshal(userMsg.Content, &contentBlocks); err != nil {
+		t.Fatalf("user content not a block array: %v body=%s", err, userMsg.Content)
+	}
+	if len(contentBlocks) == 0 {
+		t.Fatal("user content blocks is empty")
+	}
+	var block struct {
+		Type         string         `json:"type"`
+		ToolUseID    string         `json:"tool_use_id"`
+		CacheControl map[string]any `json:"cache_control"`
+	}
+	if err := json.Unmarshal(contentBlocks[0], &block); err != nil {
+		t.Fatalf("parse user tool_result: %v", err)
+	}
+	if block.Type != "tool_result" {
+		t.Fatalf("type=%q want tool_result", block.Type)
+	}
+	if block.ToolUseID != originalToolUseID {
+		t.Fatalf("tool_use_id=%q want %q (reconstructed)", block.ToolUseID, originalToolUseID)
+	}
+	if block.CacheControl == nil {
+		t.Fatalf("cache_control dropped: %s", contentBlocks[0])
+	}
+	if got, want := block.CacheControl["type"], "ephemeral"; got != want {
+		t.Errorf("cache_control.type=%v want %v", got, want)
+	}
+	if got, want := block.CacheControl["ttl"], "1h"; got != want {
+		t.Errorf("cache_control.ttl=%v want %v", got, want)
+	}
+}
+
 // TestStripSyntheticApprovalHistory_ReconstructsViaLookup pins
 // the persistent-reconstruction contract: on every turn after the
 // approval, the strip path REPLACES the substituted-prompt assistant

@@ -94,7 +94,7 @@ func TestControlNotice_EarlyExitWhenNoticeAlreadyPresent(t *testing.T) {
 		return nil
 	}
 	activeTasksCalls := 0
-	loadActiveTasks := func(_ context.Context, _, _ string) string {
+	loadActiveTasks := func(_ context.Context, _, _, _ string) string {
 		activeTasksCalls++
 		return "  - 00000000 · purpose=\"stale\" · lifetime=standing · expires=never"
 	}

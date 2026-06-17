@@ -50,7 +50,15 @@ type ToolRulesLoader func(ctx context.Context, userID, agentID string) []*store.
 // fine and renders the empty-state copy. Returns "" on best-effort
 // error so notice injection remains non-fatal — the agent just falls
 // back to GET /control/tasks if it cares about live state.
-type ActiveTasksSnapshotLoader func(ctx context.Context, userID, agentID string) string
+//
+// The conversationID is the scope for caching the rendered snapshot.
+// The control-notice is injected fresh on every request (the harness
+// never carries the proxy-injected system blocks back), so the loader
+// must freeze its output per-conversation itself or Anthropic's
+// prompt cache invalidates ~15k tokens whenever the task list shifts
+// (a new task created, a stale one expired). Snapshot content lives
+// above the cache breakpoints in the system prompt.
+type ActiveTasksSnapshotLoader func(ctx context.Context, userID, agentID, conversationID string) string
 
 // NewControlNotice constructs the policy. controlBaseURL "" skips.
 // availableTools and loadToolRules nil → Skip on every request. The
@@ -61,9 +69,11 @@ func NewControlNotice(controlBaseURL string, availableTools AvailableToolsFn, lo
 }
 
 // NewControlNoticeWithSnapshot is the snapshot-aware constructor. The
-// snapshot loader runs once on first-turn injection (the existing
-// sentinel-based dedup in InjectControlNoticeWithSnapshot keeps the
-// snapshot frozen for cache stability on later turns).
+// loader runs once per turn (the harness never carries the proxy-
+// injected system blocks back, so the sentinel-based dedup further
+// down only short-circuits within a single request, not across them).
+// The loader itself is responsible for freezing the snapshot per
+// conversationID — see internal/runtime/llmproxy.ActiveTasksSnapshotCache.
 func NewControlNoticeWithSnapshot(controlBaseURL string, availableTools AvailableToolsFn, loadToolRules ToolRulesLoader, loadActiveTasks ActiveTasksSnapshotLoader) *ControlNotice {
 	return &ControlNotice{
 		controlBaseURL:  controlBaseURL,
@@ -105,7 +115,7 @@ func (p *ControlNotice) Preprocess(ctx context.Context, req pipeline.ReadOnlyReq
 
 	var activeTasks string
 	if p.loadActiveTasks != nil {
-		activeTasks = p.loadActiveTasks(ctx, req.UserID(), req.AgentID())
+		activeTasks = p.loadActiveTasks(ctx, req.UserID(), req.AgentID(), req.ConversationID())
 	}
 
 	injected, modified, err := controltool.InjectControlNoticeWithSnapshot(req.Provider(), req.RawBody(), p.controlBaseURL, tools, rules, activeTasks)

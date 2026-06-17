@@ -137,6 +137,18 @@ type LLMEndpointHandler struct {
 	// than the prior unconditional "task approved" claim).
 	InlineApprovalOutcomes llmproxy.InlineApprovalOutcomeStore
 
+	// ActiveTasksSnapshots freezes the ACTIVE TASKS snapshot text for
+	// the lifetime of a conversation so Anthropic's prompt cache stays
+	// byte-stable across turns. Without it, a task created mid-
+	// conversation re-renders the snapshot's bullet rows, drifts the
+	// system prompt by ~140 bytes, and busts the system-block cache
+	// breakpoint (~15k cached tokens lost on the next request). The
+	// agent still learns about mid-conversation tasks via the
+	// augmenter's task-approved notice and via GET /control/tasks.
+	// Optional — when nil, the snapshot re-renders fresh every turn
+	// (the pre-cache behavior).
+	ActiveTasksSnapshots llmproxy.ActiveTasksSnapshotCache
+
 	// TaskCheckouts stores the current task focus for an agent. The decision
 	// layer treats this as a preference among already-valid task candidates.
 	TaskCheckouts llmproxy.TaskCheckoutStore
@@ -212,6 +224,7 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		ScopeDrifts:            llmproxy.NewMemoryScopeDriftRegistry(0),
 		PendingSecrets:         llmproxy.NewMemoryPendingSecretDecisionCache(10 * time.Minute),
 		InlineApprovalOutcomes: llmproxy.NewMemoryInlineApprovalOutcomeStore(24 * time.Hour),
+		ActiveTasksSnapshots:   llmproxy.NewMemoryActiveTasksSnapshotCache(24*time.Hour, 0),
 		TaskCheckouts:          llmproxy.NewMemoryTaskCheckoutStore(24 * time.Hour),
 		// Default in-process nonce cache; production wires the Redis-
 		// backed cache via WithCallerNonceCache. Cache instance is
@@ -768,21 +781,36 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			return rules
 		}
-		// activeTasksSnapshotLoader runs once on first-turn injection and
-		// renders the conversation-start snapshot of the agent's active
-		// tasks. The sentinel-based dedup in InjectControlNoticeWith-
-		// Snapshot keeps the rendered string frozen across later turns,
-		// so prompt cache stays byte-stable even as task state drifts.
-		// Errors are non-fatal — the agent falls back to GET /control/tasks.
-		activeTasksSnapshotLoader := func(ctx context.Context, userID, agentID string) string {
+		// activeTasksSnapshotLoader renders the conversation-start
+		// snapshot of the agent's active tasks. The snapshot lives
+		// ABOVE Anthropic's prompt cache breakpoints in the system
+		// prompt, so it must stay byte-stable for the lifetime of a
+		// conversation. h.ActiveTasksSnapshots caches the rendered
+		// string per (user, agent, conversation) so a task created
+		// mid-conversation doesn't drift the snapshot's bullet rows
+		// and bust ~15k cached tokens on the next turn. The agent
+		// still learns about new tasks via the augmenter's
+		// task-approved notice (below the cache breakpoint) and via
+		// GET /control/tasks. Errors are non-fatal.
+		activeTasksSnapshotLoader := func(ctx context.Context, userID, agentID, conversationID string) string {
+			if h.ActiveTasksSnapshots != nil && conversationID != "" {
+				key := llmproxy.ActiveTasksSnapshotKey{UserID: userID, AgentID: agentID, ConversationID: conversationID}
+				if cached, ok := h.ActiveTasksSnapshots.Lookup(key); ok {
+					return cached
+				}
+				fresh := h.renderActiveTasksSnapshot(ctx, userID, agentID)
+				h.ActiveTasksSnapshots.Record(key, fresh)
+				return fresh
+			}
 			return h.renderActiveTasksSnapshot(ctx, userID, agentID)
 		}
 		pipeReq := &pipelineReadOnlyRequest{
-			provider: provider,
-			httpReq:  r,
-			body:     body,
-			userID:   agent.UserID,
-			agentID:  agent.ID,
+			provider:       provider,
+			httpReq:        r,
+			body:           body,
+			userID:         agent.UserID,
+			agentID:        agent.ID,
+			conversationID: conversationID,
 		}
 		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewControlNoticeWithSnapshot(h.ControlBaseURL, availableToolsFn, toolRulesLoader, activeTasksSnapshotLoader))
 		if err != nil {
