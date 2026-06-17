@@ -207,6 +207,12 @@ type ScopeDriftRegistry interface {
 	// assistant turn must work on every future inbound while the
 	// substitution is live. Returns (zero, false) on miss.
 	LookupPendingSubstitution(ctx context.Context, key PendingSubstitutionKey) (PendingSubstitution, bool)
+
+	// DeletePendingSubstitution removes a previously-registered
+	// substitution. Used by the postproc rollback path so a registry
+	// write that landed during a request whose response was later
+	// failClosed'd doesn't leave an orphan entry behind. No-op on miss.
+	DeletePendingSubstitution(ctx context.Context, key PendingSubstitutionKey)
 }
 
 // substitutionTTL is the time-to-live for pending substitution
@@ -390,6 +396,15 @@ func (r *memoryScopeDriftRegistry) LookupPendingSubstitution(_ context.Context, 
 		return PendingSubstitution{}, false
 	}
 	return entry.Substitution, true
+}
+
+func (r *memoryScopeDriftRegistry) DeletePendingSubstitution(_ context.Context, key PendingSubstitutionKey) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.pending, pendingSubstitutionStorageKey(key))
 }
 
 func (r *memoryScopeDriftRegistry) pruneLocked() {

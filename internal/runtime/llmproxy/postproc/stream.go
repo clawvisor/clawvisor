@@ -97,9 +97,24 @@ func PostprocessStream(
 	innerEval := session.evaluator(req, provider, toolUses)
 
 	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(toolUses))
+	var registeredSubstitutions []llmproxy.PendingSubstitutionKey
+	rollbackSubstitutions := func() {
+		registry := cfg.AuthorizationContext.ScopeDrifts
+		if registry == nil {
+			return
+		}
+		for _, key := range registeredSubstitutions {
+			registry.DeletePendingSubstitution(req.Context(), key)
+		}
+		registeredSubstitutions = registeredSubstitutions[:0]
+	}
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
-		v = transformRecoverableDenyToPlaceholder(req.Context(), v, tu, cfg)
+		var registered *llmproxy.PendingSubstitutionKey
+		v, registered = transformRecoverableDenyToPlaceholder(req.Context(), v, tu, cfg)
+		if registered != nil {
+			registeredSubstitutions = append(registeredSubstitutions, *registered)
+		}
 		verdictByTU[tu.ID] = v
 		return v
 	}
@@ -128,6 +143,7 @@ func PostprocessStream(
 	finalResult, finalErr := session.finalize(req.Context(), toolUses, verdictByTU)
 	if finalErr != nil {
 		session.rollback(req.Context(), toolUses, verdictByTU)
+		rollbackSubstitutions()
 		err := finalErr
 		return llmproxy.PostprocessResult{
 			SkippedReason: err.Error(),

@@ -31,7 +31,13 @@ func TestTransformRecoverableDenyToPlaceholder(t *testing.T) {
 			ScopeDrifts: reg,
 		},
 	}
-	got := transformRecoverableDenyToPlaceholder(context.Background(), original, tu, cfg)
+	got, registered := transformRecoverableDenyToPlaceholder(context.Background(), original, tu, cfg)
+	if registered == nil {
+		t.Fatal("expected registered key from transform so rollback can revert on failure")
+	}
+	if registered.AgentID != cfg.AgentContext.AgentID || registered.ToolUseID != tu.ID {
+		t.Fatalf("registered key mismatch: %+v", *registered)
+	}
 	if got.Continue != nil {
 		t.Fatalf("expected Continue signal cleared after migration, got %+v", got.Continue)
 	}
@@ -99,7 +105,10 @@ func TestTransformRecoverableDenyToPlaceholderLeavesAutoApproveAlone(t *testing.
 		AuditContext: llmproxy.AuditContext{ConversationID: "conv-auto-1"},
 		AuthorizationContext: llmproxy.AuthorizationContext{ScopeDrifts: reg},
 	}
-	got := transformRecoverableDenyToPlaceholder(context.Background(), verdict, tu, cfg)
+	got, registered := transformRecoverableDenyToPlaceholder(context.Background(), verdict, tu, cfg)
+	if registered != nil {
+		t.Fatalf("auto-approve must NOT register a substitution; got key %+v", *registered)
+	}
 	if got.Continue == nil {
 		t.Fatal("auto-approve Continue signal must be preserved")
 	}
@@ -112,5 +121,32 @@ func TestTransformRecoverableDenyToPlaceholderLeavesAutoApproveAlone(t *testing.
 		ToolUseID:      tu.ID,
 	}); ok {
 		t.Fatal("auto-approve must NOT register a pending substitution")
+	}
+}
+
+// TestDeletePendingSubstitutionRollback locks the rollback path the
+// transformRecoverableDenyToPlaceholder callers rely on: a registry
+// write that happens during a request whose response is later
+// failClosed'd must be revertible so it doesn't survive as an orphan.
+func TestDeletePendingSubstitutionRollback(t *testing.T) {
+	reg := llmproxy.NewMemoryScopeDriftRegistry(0)
+	key := llmproxy.PendingSubstitutionKey{
+		AgentID:        "agent-rollback",
+		ConversationID: "conv-rollback",
+		ToolUseID:      "tu-rollback",
+	}
+	if err := reg.RegisterPendingSubstitution(context.Background(), key, llmproxy.PendingSubstitution{
+		MenuText:          "reason",
+		OriginalToolName:  "Bash",
+		OriginalToolInput: []byte(`{"command":":"}`),
+	}); err != nil {
+		t.Fatalf("RegisterPendingSubstitution: %v", err)
+	}
+	if _, ok := reg.LookupPendingSubstitution(context.Background(), key); !ok {
+		t.Fatal("substitution should be registered before rollback")
+	}
+	reg.DeletePendingSubstitution(context.Background(), key)
+	if _, ok := reg.LookupPendingSubstitution(context.Background(), key); ok {
+		t.Fatal("substitution should be gone after delete")
 	}
 }

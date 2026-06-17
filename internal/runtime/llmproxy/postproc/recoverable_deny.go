@@ -22,30 +22,32 @@ import (
 // see its own "create task" call answered by the result of a
 // post-creation step).
 //
-// Returns the (possibly unchanged) verdict. Any failure to register
-// the substitution leaves the verdict alone so the legacy continuation
-// path remains the fallback.
-func transformRecoverableDenyToPlaceholder(ctx context.Context, v conversation.ToolUseVerdict, tu conversation.ToolUse, cfg llmproxy.PostprocessConfig) conversation.ToolUseVerdict {
+// Returns the (possibly unchanged) verdict and, when a substitution
+// was registered, the key the caller should hand to the rollback path
+// so a later failClosed / rewrite-error can revert the registry write.
+// Any failure to register leaves the verdict alone so the legacy
+// continuation path remains the fallback.
+func transformRecoverableDenyToPlaceholder(ctx context.Context, v conversation.ToolUseVerdict, tu conversation.ToolUse, cfg llmproxy.PostprocessConfig) (conversation.ToolUseVerdict, *llmproxy.PendingSubstitutionKey) {
 	if v.Outcome != conversation.OutcomeDeny || v.Continue == nil {
-		return v
+		return v, nil
 	}
 	// Another policy already chose a placeholder shape (scope-drift
 	// sets SubstituteWithToolCall directly). Honour it.
 	if v.SubstituteWithToolCall != nil {
-		return v
+		return v, nil
 	}
 	registry := cfg.AuthorizationContext.ScopeDrifts
 	if registry == nil {
-		return v
+		return v, nil
 	}
 	if cfg.AgentContext.AgentID == "" {
 		// Without an agent id the inbound rewriter can't key the
 		// substitution; better to leave the legacy path alone.
-		return v
+		return v, nil
 	}
 	reason, ok := extractRecoverableContinueReason(v.Continue)
 	if !ok {
-		return v
+		return v, nil
 	}
 	sentinel := &conversation.SyntheticToolCall{
 		ID:   tu.ID,
@@ -54,25 +56,25 @@ func transformRecoverableDenyToPlaceholder(ctx context.Context, v conversation.T
 			"command": llmproxy.BuildRecoverableDenyPlaceholderCommand(tu.Name, reason),
 		},
 	}
-	if err := registry.RegisterPendingSubstitution(ctx,
-		llmproxy.PendingSubstitutionKey{
-			AgentID:        cfg.AgentContext.AgentID,
-			ConversationID: cfg.AuditContext.ConversationID,
-			ToolUseID:      tu.ID,
-		},
+	key := llmproxy.PendingSubstitutionKey{
+		AgentID:        cfg.AgentContext.AgentID,
+		ConversationID: cfg.AuditContext.ConversationID,
+		ToolUseID:      tu.ID,
+	}
+	if err := registry.RegisterPendingSubstitution(ctx, key,
 		llmproxy.PendingSubstitution{
 			MenuText:          reason,
 			OriginalToolName:  tu.Name,
 			OriginalToolInput: append([]byte(nil), tu.Input...),
 		},
 	); err != nil {
-		return v
+		return v, nil
 	}
 	v.SubstituteWithToolCall = sentinel
 	v.SuppressSubstituteText = true
 	v.SubstituteWith = ""
 	v.Continue = nil
-	return v
+	return v, &key
 }
 
 // extractRecoverableContinueReason pulls the reason string back out of

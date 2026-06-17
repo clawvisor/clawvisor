@@ -96,3 +96,7 @@ func (c *countingScopeDriftRegistry) LookupPendingSubstitution(ctx context.Conte
 	}
 	return value, ok
 }
+
+func (c *countingScopeDriftRegistry) DeletePendingSubstitution(ctx context.Context, key llmproxy.PendingSubstitutionKey) {
+	c.inner.DeletePendingSubstitution(ctx, key)
+}

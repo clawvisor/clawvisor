@@ -39,8 +39,20 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 
 	var preExtracted []conversation.ToolUse
 	var verdictByTU map[string]conversation.ToolUseVerdict
+	var registeredSubstitutions []llmproxy.PendingSubstitutionKey
+	rollbackSubstitutions := func() {
+		registry := cfg.AuthorizationContext.ScopeDrifts
+		if registry == nil {
+			return
+		}
+		for _, key := range registeredSubstitutions {
+			registry.DeletePendingSubstitution(req.Context(), key)
+		}
+		registeredSubstitutions = registeredSubstitutions[:0]
+	}
 	failClosed := func(reason string) llmproxy.PostprocessResult {
 		session.rollback(req.Context(), preExtracted, verdictByTU)
+		rollbackSubstitutions()
 		return llmproxy.PostprocessResult{
 			Body:          nil,
 			ContentType:   contentType,
@@ -67,7 +79,11 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	verdictByTU = make(map[string]conversation.ToolUseVerdict, len(preExtracted))
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
-		v = transformRecoverableDenyToPlaceholder(req.Context(), v, tu, cfg)
+		var registered *llmproxy.PendingSubstitutionKey
+		v, registered = transformRecoverableDenyToPlaceholder(req.Context(), v, tu, cfg)
+		if registered != nil {
+			registeredSubstitutions = append(registeredSubstitutions, *registered)
+		}
 		verdictByTU[tu.ID] = v
 		return v
 	}
