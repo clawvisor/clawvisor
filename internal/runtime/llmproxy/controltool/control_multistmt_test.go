@@ -107,6 +107,74 @@ func TestParseControlToolUse_TasksCurlWithBodyIsPOST(t *testing.T) {
 	}
 }
 
+// TestParseControlToolUse_BodylessCompleteCurlIsPOST is the
+// end-to-end regression for the control-plane completion path.
+// Without this, a bare `curl https://.../complete` would mint a GET
+// nonce (controlMethodForCall's default), the daemon would dispatch
+// POST, and the middleware would 403 with NONCE_TARGET_MISMATCH.
+// The explicit /complete rule in controlMethodForCall ensures the
+// verdict reaches the minter as POST regardless of -X presence.
+func TestParseControlToolUse_BodylessCompleteCurlIsPOST(t *testing.T) {
+	tu := conversation.ToolUse{
+		ID:    "tu_1",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command":"curl -sS https://clawvisor.local/control/tasks/task-abc/complete"}`),
+	}
+
+	call, ok := ParseControlToolUse(tu)
+	if !ok {
+		t.Fatal("expected control call to parse")
+	}
+	if call.Method != "POST" {
+		t.Fatalf("method=%q, want POST for bodyless complete curl", call.Method)
+	}
+	if call.Verdict.Method != "POST" {
+		t.Fatalf("verdict method=%q, want POST", call.Verdict.Method)
+	}
+	if !strings.HasSuffix(call.URL.Path, "/api/control/tasks/task-abc/complete") {
+		t.Fatalf("URL path = %q, want suffix /api/control/tasks/task-abc/complete", call.URL.Path)
+	}
+}
+
+// TestRewriteControlToolUse_CompleteCurlInjectsCallerAuth covers the
+// rewrite shape the agent's tool_use actually goes through: the
+// synthetic clawvisor.local URL becomes the real daemon URL, the
+// minted caller nonce lands in X-Clawvisor-Caller, and the method
+// stays POST. This is the test the design called out (test 14) as the
+// concrete regression for the rewriter+nonce binding on completion.
+func TestRewriteControlToolUse_CompleteCurlInjectsCallerAuth(t *testing.T) {
+	tu := conversation.ToolUse{
+		ID:   "tu_1",
+		Name: "Bash",
+		Input: json.RawMessage(`{
+			"command": "curl -sS -X POST https://clawvisor.local/control/tasks/task-abc/complete"
+		}`),
+	}
+	const minted = "cv-nonce-complete-xyz"
+	rewritten, verdict, ok, err := RewriteControlToolUse(tu, "https://clawvisor.example", minted)
+	if err != nil || !ok {
+		t.Fatalf("expected rewrite to succeed, got ok=%v err=%v", ok, err)
+	}
+	if verdict.Method != "POST" {
+		t.Errorf("verdict method = %q, want POST", verdict.Method)
+	}
+	cmd := string(rewritten)
+	if !strings.Contains(cmd, minted) {
+		t.Errorf("rewritten command should embed the minted caller nonce; got %s", cmd)
+	}
+	if !strings.Contains(cmd, "/api/control/tasks/task-abc/complete") {
+		t.Errorf("rewritten command should target the daemon's /api/control/.../complete path; got %s", cmd)
+	}
+	// The URL itself is rewritten away from clawvisor.local, but the
+	// rewriter still records the synthetic host in an
+	// X-Clawvisor-Target-Host header so the daemon knows which
+	// target the original tool_use was for. Assert the URL flip
+	// happened (no clawvisor.local *URL*) without flagging the header.
+	if strings.Contains(cmd, "https://clawvisor.local") {
+		t.Errorf("rewritten command's URL should no longer be the synthetic host; got %s", cmd)
+	}
+}
+
 func TestParseControlCmd_MultiStmtCatHeredocPlusCurl(t *testing.T) {
 	args, dataFiles, ok := parseControlCmd(multiStmtCatCurlCmd)
 	if !ok {
