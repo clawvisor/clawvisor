@@ -453,6 +453,94 @@ func TestApprovalBodyEditorAskUserQuestionReconstructsOriginalCall(t *testing.T)
 	}
 }
 
+// TestApprovalBodyEditorPreservesCacheControlOnReconstruction pins the
+// cache-stability invariant for the one-shot rewrite path: when the
+// harness pinned its prompt-cache breakpoint on the AskUserQuestion
+// tool_result, the swap that pairs it against the reconstructed
+// tool_use_id must preserve cache_control on the new block. Dropping
+// it forces Anthropic to fall back to a system-level cache that
+// doesn't reliably hit, busting ~15k cached tokens on the immediate
+// post-approval turn (the failure mode raw-log diagnostic surfaced).
+func TestApprovalBodyEditorPreservesCacheControlOnReconstruction(t *testing.T) {
+	const approvalID = "cv-askuqcache001"
+	const askToolUseID = "toolu_clawvisor_ask_cv-askuqcache001"
+	const originalToolUseID = "toolu_01OriginalCacheCC"
+	body := `{"messages":[` +
+		`{"role":"user","content":"create the task"},` +
+		`{"role":"assistant","content":[` +
+		`{"type":"text","text":"Clawvisor wants to create a task to cover this work. [clawvisor:approval=` + approvalID + `]"},` +
+		`{"type":"tool_use","id":"` + askToolUseID + `","name":"AskUserQuestion","input":{"questions":[{"question":"approve? [clawvisor:approval=` + approvalID + `]","options":[{"label":"yes"},{"label":"no"}]}]}}` +
+		`]},` +
+		`{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"` + askToolUseID + `","content":"yes","cache_control":{"type":"ephemeral","ttl":"1h"}}` +
+		`]}` +
+		`]}`
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	editor, ok := newApprovalBodyEditor(req, conversation.ProviderAnthropic, []byte(body))
+	if !ok {
+		t.Fatal("expected anthropic body editor")
+	}
+	reconstruction := &InlineApprovalOriginalCall{
+		ToolUseID: originalToolUseID,
+		ToolName:  "Bash",
+		Input:     json.RawMessage(`{"command":"curl -X POST /api/control/tasks ..."}`),
+	}
+	out, rewrote, err := editor.ReplaceLatestUserText("approve", approvalID, "[clawvisor-notice] task created", reconstruction)
+	if err != nil {
+		t.Fatalf("ReplaceLatestUserText: %v", err)
+	}
+	if !rewrote {
+		t.Fatalf("expected rewrite to succeed; body: %s", out)
+	}
+
+	// Find the user turn's tool_result in the rewritten body and
+	// assert cache_control survived alongside the swapped tool_use_id.
+	var decoded struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(out, &decoded); err != nil {
+		t.Fatalf("parse rewritten body: %v", err)
+	}
+	// Last message is the user turn we mutated.
+	userMsg := decoded.Messages[len(decoded.Messages)-1]
+	if userMsg.Role != "user" {
+		t.Fatalf("expected last message to be user; got %q", userMsg.Role)
+	}
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(userMsg.Content, &blocks); err != nil {
+		t.Fatalf("user content not block array: %v body=%s", err, userMsg.Content)
+	}
+	if len(blocks) == 0 {
+		t.Fatal("user content blocks empty")
+	}
+	var block struct {
+		Type         string         `json:"type"`
+		ToolUseID    string         `json:"tool_use_id"`
+		CacheControl map[string]any `json:"cache_control"`
+	}
+	if err := json.Unmarshal(blocks[0], &block); err != nil {
+		t.Fatalf("parse first block: %v", err)
+	}
+	if block.Type != "tool_result" {
+		t.Fatalf("type=%q want tool_result", block.Type)
+	}
+	if block.ToolUseID != originalToolUseID {
+		t.Fatalf("tool_use_id=%q want %q (reconstructed)", block.ToolUseID, originalToolUseID)
+	}
+	if block.CacheControl == nil {
+		t.Fatalf("cache_control dropped: %s", blocks[0])
+	}
+	if got, want := block.CacheControl["type"], "ephemeral"; got != want {
+		t.Errorf("cache_control.type=%v want %v", got, want)
+	}
+	if got, want := block.CacheControl["ttl"], "1h"; got != want {
+		t.Errorf("cache_control.ttl=%v want %v", got, want)
+	}
+}
+
 // TestApprovalBodyEditorReconstructionDenySkipped confirms the
 // rewrite path does NOT reconstruct on a deny — the model should
 // see the denial, not synthetic evidence of a successful call. The

@@ -309,6 +309,13 @@ func buildReconstructedAssistantContent(original *InlineApprovalOriginalCall) (j
 // notice as its content. Other blocks survive unchanged. The pairing
 // keeps the assistant→user tool_use/tool_result invariant Anthropic
 // validates at request time.
+//
+// Any non-(type|tool_use_id|content) fields on the original block —
+// notably cache_control — survive the swap. The harness's deepest
+// prompt-cache breakpoint typically lands on this tool_result;
+// dropping it forces Anthropic to fall back to a system-level cache
+// that has proven not to hit in practice, busting ~15k cached tokens
+// on the immediate post-approval turn.
 func swapAnthropicToolResultForReconstructedPair(raw json.RawMessage, askToolUseID, reconstructedToolUseID, replacement string) (json.RawMessage, bool) {
 	if len(raw) == 0 || reconstructedToolUseID == "" {
 		return nil, false
@@ -319,21 +326,27 @@ func swapAnthropicToolResultForReconstructedPair(raw json.RawMessage, askToolUse
 	}
 	rewritten := false
 	for i, blk := range blocks {
-		var probe struct {
-			Type      string `json:"type"`
-			ToolUseID string `json:"tool_use_id"`
-		}
-		if err := json.Unmarshal(blk, &probe); err != nil {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(blk, &fields); err != nil {
 			continue
 		}
-		if probe.Type != "tool_result" || probe.ToolUseID != askToolUseID {
+		var typeStr, toolUseID string
+		_ = json.Unmarshal(fields["type"], &typeStr)
+		_ = json.Unmarshal(fields["tool_use_id"], &toolUseID)
+		if typeStr != "tool_result" || toolUseID != askToolUseID {
 			continue
 		}
-		newBlock, err := jsonsurgery.MarshalNoEscape(map[string]any{
-			"type":        "tool_result",
-			"tool_use_id": reconstructedToolUseID,
-			"content":     replacement,
-		})
+		newToolUseID, err := jsonsurgery.MarshalNoEscape(reconstructedToolUseID)
+		if err != nil {
+			continue
+		}
+		newContent, err := jsonsurgery.MarshalNoEscape(replacement)
+		if err != nil {
+			continue
+		}
+		fields["tool_use_id"] = newToolUseID
+		fields["content"] = newContent
+		newBlock, err := jsonsurgery.MarshalNoEscape(fields)
 		if err != nil {
 			continue
 		}
@@ -358,6 +371,10 @@ func swapAnthropicToolResultForReconstructedPair(raw json.RawMessage, askToolUse
 // keeps the next request's history valid after historystrip drops
 // the parent AskUserQuestion call — see
 // rewriteAnthropicAskUserQuestionApprovalReply for the rationale.
+//
+// Any cache_control field on the original block transfers to the
+// replacement text block — the harness's deepest cache breakpoint
+// often lands on this content and dropping it busts the prompt cache.
 func swapAnthropicToolResultForTextBlock(raw json.RawMessage, targetToolUseID, replacement string) (json.RawMessage, bool) {
 	if len(raw) == 0 {
 		return nil, false
@@ -368,17 +385,30 @@ func swapAnthropicToolResultForTextBlock(raw json.RawMessage, targetToolUseID, r
 	}
 	rewritten := false
 	for i, blk := range blocks {
-		var probe struct {
-			Type      string `json:"type"`
-			ToolUseID string `json:"tool_use_id"`
-		}
-		if err := json.Unmarshal(blk, &probe); err != nil {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(blk, &fields); err != nil {
 			continue
 		}
-		if probe.Type != "tool_result" || probe.ToolUseID != targetToolUseID {
+		var typeStr, toolUseID string
+		_ = json.Unmarshal(fields["type"], &typeStr)
+		_ = json.Unmarshal(fields["tool_use_id"], &toolUseID)
+		if typeStr != "tool_result" || toolUseID != targetToolUseID {
 			continue
 		}
-		textBlock := map[string]string{"type": "text", "text": replacement}
+		textBlock := map[string]json.RawMessage{}
+		newType, err := jsonsurgery.MarshalNoEscape("text")
+		if err != nil {
+			continue
+		}
+		newText, err := jsonsurgery.MarshalNoEscape(replacement)
+		if err != nil {
+			continue
+		}
+		textBlock["type"] = newType
+		textBlock["text"] = newText
+		if cc, ok := fields["cache_control"]; ok && len(cc) > 0 {
+			textBlock["cache_control"] = cc
+		}
 		newBlock, err := jsonsurgery.MarshalNoEscape(textBlock)
 		if err != nil {
 			continue
