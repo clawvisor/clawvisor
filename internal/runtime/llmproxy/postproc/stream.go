@@ -99,6 +99,7 @@ func PostprocessStream(
 	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(toolUses))
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
+		v = transformRecoverableDenyToPlaceholder(req.Context(), v, tu, cfg)
 		verdictByTU[tu.ID] = v
 		return v
 	}

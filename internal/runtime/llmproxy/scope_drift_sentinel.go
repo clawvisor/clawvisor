@@ -33,16 +33,34 @@ const ScopeDriftPlaceholderMarker = "CLAWVISOR_BLOCKED"
 // harness shows the operator a human-readable line in the transcript
 // instead of an opaque encoded blob.
 func BuildScopeDriftPlaceholderCommand(originalName, driftID string) string {
-	name := strings.TrimSpace(originalName)
-	if name == "" {
-		name = "(unknown)"
-	}
-	name = strings.ReplaceAll(name, "\n", " ")
-	name = strings.ReplaceAll(name, "\r", " ")
-	name = strings.ReplaceAll(name, "`", "'")
+	name := sanitizePlaceholderField(originalName, "(unknown)")
 	drift := strings.TrimSpace(driftID)
 	if drift == "" {
 		drift = "(none)"
 	}
 	return fmt.Sprintf(": # %s drift=%s tool=%s — blocked; the upstream model received the recovery menu in this call's tool_result.", ScopeDriftPlaceholderMarker, drift, name)
+}
+
+// BuildRecoverableDenyPlaceholderCommand renders the harness-safe
+// placeholder for a recoverable-deny block — the proxy denied the call
+// for a construction error the agent can fix on its next attempt
+// (malformed control body, boundary check failure, inspector parse
+// error, etc.). Shape mirrors BuildScopeDriftPlaceholderCommand so the
+// harness's local execution is a no-op; the operator-facing comment
+// names the reason instead of a drift_id.
+func BuildRecoverableDenyPlaceholderCommand(originalName, reason string) string {
+	name := sanitizePlaceholderField(originalName, "(unknown)")
+	reasonLine := sanitizePlaceholderField(reason, "(no reason supplied)")
+	return fmt.Sprintf(": # %s tool=%s — recoverable deny; the upstream model received the reason in this call's tool_result. Reason: %s", ScopeDriftPlaceholderMarker, name, reasonLine)
+}
+
+func sanitizePlaceholderField(value, fallback string) string {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return fallback
+	}
+	v = strings.ReplaceAll(v, "\n", " ")
+	v = strings.ReplaceAll(v, "\r", " ")
+	v = strings.ReplaceAll(v, "`", "'")
+	return v
 }

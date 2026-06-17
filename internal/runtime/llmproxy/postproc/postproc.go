@@ -67,6 +67,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	verdictByTU = make(map[string]conversation.ToolUseVerdict, len(preExtracted))
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
+		v = transformRecoverableDenyToPlaceholder(req.Context(), v, tu, cfg)
 		verdictByTU[tu.ID] = v
 		return v
 	}
