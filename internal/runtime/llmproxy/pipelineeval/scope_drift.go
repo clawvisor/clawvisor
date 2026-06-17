@@ -55,15 +55,31 @@ func newScopeDriftCoordinator(
 }
 
 // AppliesToSource reports whether a decision's source is one a drift
-// mint covers: task scope missing or ambiguous. Layer 2 hardcoded
-// approval rules (SourceRuleReview etc.) and other sources are NOT
-// scope drift and keep their existing user-prompt path.
+// mint covers: a missing/ambiguous task scope OR an intent-verifier
+// refusal. All three options the menu offers — expand the task to
+// cover this action, create a new task that covers it, or one-off
+// — are reasonable recoveries from either flavor of denial: the
+// scope-drift cases ("no task covers this action") and the
+// intent-refusal cases ("the active task's purpose doesn't match
+// what this call is doing"). Layer 2 hardcoded approval rules
+// (SourceRuleReview etc.) keep their existing user-prompt path
+// because they're not recoverable via task adjustments.
 func (c *scopeDriftCoordinator) AppliesToSource(source runtimedecision.DecisionSource) bool {
 	switch source {
-	case runtimedecision.SourceTaskScopeMissing, runtimedecision.SourceTaskScopeAmbiguous:
+	case runtimedecision.SourceTaskScopeMissing, runtimedecision.SourceTaskScopeAmbiguous, runtimedecision.SourceIntentRefusal:
 		return true
 	}
 	return false
+}
+
+// driftSourceFor maps a runtimedecision source to the registry-level
+// ScopeDriftSource recorded on the drift. Telemetry can distinguish
+// task-scope misses from intent-verifier refusals via this field.
+func driftSourceFor(source runtimedecision.DecisionSource) llmproxy.ScopeDriftSource {
+	if source == runtimedecision.SourceIntentRefusal {
+		return llmproxy.ScopeDriftSourceIntentVerification
+	}
+	return llmproxy.ScopeDriftSourceTaskScope
 }
 
 // MintResult is the coordinator's signal to its caller. menuText is
@@ -107,7 +123,7 @@ func (c *scopeDriftCoordinator) MintForCredentialed(
 		Method:         v.Method,
 		Path:           v.Path,
 		TaskID:         taskID,
-		Source:         llmproxy.ScopeDriftSourceTaskScope,
+		Source:         driftSourceFor(dec.Source),
 		ReasonText:     dec.Reason,
 	}
 	menuText, driftID, mintErr := llmproxy.BuildScopeDriftContinuation(ctx, c.registry, template, c.controlBaseURL)
@@ -140,7 +156,7 @@ func (c *scopeDriftCoordinator) MintForTriggerMiss(
 		Host:           v.Host,
 		Method:         v.Method,
 		Path:           v.Path,
-		Source:         llmproxy.ScopeDriftSourceTaskScope,
+		Source:         driftSourceFor(dec.Source),
 		ReasonText:     dec.Reason,
 	}
 	menuText, driftID, mintErr := llmproxy.BuildScopeDriftContinuation(ctx, c.registry, template, c.controlBaseURL)
