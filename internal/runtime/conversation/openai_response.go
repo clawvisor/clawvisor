@@ -166,12 +166,16 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 				// id. Inbound rewriter on the next /v1/responses
 				// restores the original call and substitutes the
 				// function_call_output content.
+				substRendered := false
 				if call := verdict.SubstituteWithToolCall; call != nil && call.Name != "" {
 					if substItem, substArgs, ok := buildOpenAIResponsesSubstituteFunctionCall(tu.ID, call); ok {
 						newOutput = append(newOutput, substItem)
 						frags = append(frags, assistantFragment{IsTool: true, ToolName: call.Name, ToolArgs: substArgs})
-						continue
+						substRendered = true
 					}
+				}
+				if substRendered {
+					continue
 				}
 				txt := verdict.SubstituteWith
 				if txt == "" && !verdict.SuppressSubstituteText {
@@ -181,18 +185,32 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 					}
 					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", item.Name, reason)
 				}
-				if txt != "" {
-					newOutput = append(newOutput, openAIResponseOutputItem{
-						ID:     "msg_" + tu.ID,
-						Type:   "message",
-						Role:   "assistant",
-						Status: "completed",
-						Content: []openAIResponseContent{{
-							Type: "output_text",
-							Text: txt,
-						}},
-					})
+				// SuppressSubstituteText is set by callers that paired
+				// it with a SubstituteWithToolCall (scope-drift). If
+				// rendering that call failed above, the suppression must
+				// NOT also swallow the default fallback — otherwise the
+				// blocked decision drops off the wire entirely, leaving
+				// the assistant turn with neither the original
+				// function_call nor any replacement and breaking
+				// downstream tool/result pairing. Force a generic block
+				// notice in that escape path.
+				if txt == "" {
+					reason := verdict.Reason
+					if reason == "" {
+						reason = "blocked by policy"
+					}
+					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", item.Name, reason)
 				}
+				newOutput = append(newOutput, openAIResponseOutputItem{
+					ID:     "msg_" + tu.ID,
+					Type:   "message",
+					Role:   "assistant",
+					Status: "completed",
+					Content: []openAIResponseContent{{
+						Type: "output_text",
+						Text: txt,
+					}},
+				})
 			} else {
 				if len(verdict.RewriteInput) > 0 {
 					item.Arguments = string(verdict.RewriteInput)
@@ -431,6 +449,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 					// inbound rewriter restores the original on the
 					// next /v1/responses and substitutes the
 					// function_call_output content with the menu.
+					substRendered := false
 					if call := verdict.SubstituteWithToolCall; call != nil && call.Name != "" {
 						if substArgs, ok := marshalSyntheticToolCallInput(call); ok {
 							orderedItems = append(orderedItems, orderedResponsesItem{
@@ -442,8 +461,11 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 							})
 							frags = append(frags, assistantFragment{IsTool: true, ToolName: call.Name, ToolArgs: substArgs})
 							delete(pending, raw.Item.ID)
-							continue
+							substRendered = true
 						}
+					}
+					if substRendered {
+						continue
 					}
 					txt := verdict.SubstituteWith
 					if txt == "" && !verdict.SuppressSubstituteText {
@@ -453,13 +475,23 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 						}
 						txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", pc.name, reason)
 					}
-					if txt != "" {
-						orderedItems = append(orderedItems, orderedResponsesItem{
-							isText:      true,
-							outputIndex: pc.outputIndex,
-							text:        txt,
-						})
+					// Force a fallback text when the substitute call
+					// failed to render — see rewriteResponsesJSON for
+					// the rationale; SuppressSubstituteText alone must
+					// not silently drop the blocked decision off the
+					// wire.
+					if txt == "" {
+						reason := verdict.Reason
+						if reason == "" {
+							reason = "blocked by policy"
+						}
+						txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", pc.name, reason)
 					}
+					orderedItems = append(orderedItems, orderedResponsesItem{
+						isText:      true,
+						outputIndex: pc.outputIndex,
+						text:        txt,
+					})
 				} else {
 					if len(verdict.RewriteInput) > 0 {
 						finalArgs = string(verdict.RewriteInput)
@@ -835,6 +867,7 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 				// so the inbound rewriter can later restore the original
 				// (name, arguments) and substitute the matching `tool`
 				// message content with the menu.
+				substRendered := false
 				if scall := verdict.SubstituteWithToolCall; scall != nil && scall.Name != "" {
 					if substArgs, ok := marshalSyntheticToolCallInput(scall); ok {
 						call.Function.Name = scall.Name
@@ -845,8 +878,11 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 						anyRewritten = true
 						allowedToolCalls = append(allowedToolCalls, call)
 						frags = append(frags, assistantFragment{IsTool: true, ToolName: scall.Name, ToolArgs: substArgs})
-						continue
+						substRendered = true
 					}
+				}
+				if substRendered {
+					continue
 				}
 				txt := verdict.SubstituteWith
 				if txt == "" && !verdict.SuppressSubstituteText {
@@ -856,9 +892,17 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 					}
 					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", call.Function.Name, reason)
 				}
-				if txt != "" {
-					blockedPrompts = append(blockedPrompts, txt)
+				// SuppressSubstituteText must not silently swallow the
+				// blocked decision when the substitute call failed to
+				// render — see rewriteResponsesJSON for the rationale.
+				if txt == "" {
+					reason := verdict.Reason
+					if reason == "" {
+						reason = "blocked by policy"
+					}
+					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", call.Function.Name, reason)
 				}
+				blockedPrompts = append(blockedPrompts, txt)
 			} else {
 				if len(verdict.RewriteInput) > 0 {
 					call.Function.Arguments = string(verdict.RewriteInput)
