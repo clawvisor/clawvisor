@@ -64,6 +64,10 @@ func (c *holdCapturingApprovalCache) Peek(ctx context.Context, req llmproxy.Reso
 	return c.inner.Peek(ctx, req)
 }
 
+func (c *holdCapturingApprovalCache) PeekByID(ctx context.Context, id string) (*llmproxy.PendingLiteApproval, error) {
+	return c.inner.PeekByID(ctx, id)
+}
+
 func (c *holdCapturingApprovalCache) Resolve(ctx context.Context, req llmproxy.ResolveRequest) (*llmproxy.PendingLiteApproval, error) {
 	return c.inner.Resolve(ctx, req)
 }

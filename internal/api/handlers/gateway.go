@@ -1342,7 +1342,10 @@ func (h *GatewayHandler) lookupAuditByRequestID(ctx context.Context, requestID, 
 func (h *GatewayHandler) waitForRequestResolution(ctx context.Context, requestID, userID, taskID string, timeout time.Duration) *store.AuditEntry {
 	return events.WaitFor(ctx, h.eventHub, userID, timeout,
 		[]string{"audit"},
-		func(c context.Context) (*store.AuditEntry, bool) {
+		func(c context.Context, evt *events.Event) (*store.AuditEntry, bool) {
+			if evt != nil && evt.ID != "" && evt.ID != requestID && (taskID == "" || evt.ID != taskID) {
+				return nil, false
+			}
 			e, err := h.lookupAuditByRequestID(c, requestID, userID, taskID)
 			if err != nil {
 				return &store.AuditEntry{RequestID: requestID, Outcome: "pending"}, false
@@ -1497,7 +1500,10 @@ func (h *GatewayHandler) writeAmbiguousExecute(w http.ResponseWriter, ctx contex
 func (h *GatewayHandler) waitForApprovalDecision(ctx context.Context, requestID, userID, taskID string, timeout time.Duration) *store.PendingApproval {
 	return events.WaitFor(ctx, h.eventHub, userID, timeout,
 		[]string{"audit", "queue"},
-		func(c context.Context) (*store.PendingApproval, bool) {
+		func(c context.Context, evt *events.Event) (*store.PendingApproval, bool) {
+			if evt != nil && evt.ID != "" && evt.ID != requestID && (taskID == "" || evt.ID != taskID) {
+				return nil, false
+			}
 			pa, err := h.store.GetPendingApprovalByTask(c, requestID, userID, taskID)
 			if err != nil {
 				return nil, true // row deleted (denied/expired)

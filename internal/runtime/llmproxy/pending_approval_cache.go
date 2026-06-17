@@ -266,6 +266,7 @@ type HoldResult struct {
 type PendingApprovalCache interface {
 	Hold(ctx context.Context, pending PendingLiteApproval) (HoldResult, error)
 	Peek(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, error)
+	PeekByID(ctx context.Context, id string) (*PendingLiteApproval, error)
 	Resolve(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, error)
 	Drop(ctx context.Context, req ResolveRequest) error
 }
@@ -366,6 +367,27 @@ func (c *MemoryPendingApprovalCache) Peek(_ context.Context, req ResolveRequest)
 	defer c.mu.Unlock()
 	pending, _, _ := c.findLocked(req)
 	return pending, nil
+}
+
+func (c *MemoryPendingApprovalCache) PeekByID(_ context.Context, id string) (*PendingLiteApproval, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now().UTC()
+	for _, items := range c.pending {
+		for _, pending := range items {
+			if pending.ExpiresAt.IsZero() || pending.ExpiresAt.After(now) {
+				if pending.ID == id || pending.PendingTaskID == id {
+					// Return a copy so the caller doesn't mutate cache internals
+					copied := pending
+					return &copied, nil
+				}
+			}
+		}
+	}
+	return nil, nil
 }
 
 func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLiteApproval, int, []PendingLiteApproval) {

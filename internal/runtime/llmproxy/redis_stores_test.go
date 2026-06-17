@@ -415,3 +415,87 @@ func TestRedisInlineApprovalOutcomeStoreRecordAndLookup(t *testing.T) {
 		t.Fatal("lookup should be scoped by agent")
 	}
 }
+
+func TestRedisPendingApprovalCache_PeekByIDRoundTrip(t *testing.T) {
+	rdb := testRedisClient(t)
+	cache := NewRedisPendingApprovalCache(rdb, time.Minute)
+	ctx := context.Background()
+
+	held, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:            "cv-approval1",
+		UserID:        "user-1",
+		AgentID:       "agent-1",
+		Provider:      conversation.ProviderAnthropic,
+		PendingTaskID: "task-abc",
+	})
+	if err != nil {
+		t.Fatalf("Hold failed: %v", err)
+	}
+	_ = held
+
+	// 1. PeekByID using approval ID (starts with cv-)
+	peekedAppr, err := cache.PeekByID(ctx, "cv-approval1")
+	if err != nil {
+		t.Fatalf("PeekByID by approval ID failed: %v", err)
+	}
+	if peekedAppr == nil || peekedAppr.ID != "cv-approval1" {
+		t.Fatalf("PeekByID by approval ID returned %+v, want cv-approval1", peekedAppr)
+	}
+
+	// 2. PeekByID using task ID (does not start with cv-)
+	peekedTask, err := cache.PeekByID(ctx, "task-abc")
+	if err != nil {
+		t.Fatalf("PeekByID by task ID failed: %v", err)
+	}
+	if peekedTask == nil || peekedTask.ID != "cv-approval1" {
+		t.Fatalf("PeekByID by task ID returned %+v, want cv-approval1", peekedTask)
+	}
+
+	// 3. PeekByID using an unknown ID
+	peekedUnknown, err := cache.PeekByID(ctx, "unknown-id")
+	if err != nil {
+		t.Fatalf("PeekByID by unknown ID failed: %v", err)
+	}
+	if peekedUnknown != nil {
+		t.Fatalf("expected nil for unknown ID, got %+v", peekedUnknown)
+	}
+
+	// 4. Verify exact key namespaces in Redis
+	valAppr, err := rdb.Get(ctx, "clawvisor:lite_pending_approval_map:approval:cv-approval1").Result()
+	if err != nil {
+		t.Fatalf("Get approval map key failed: %v", err)
+	}
+	if valAppr == "" {
+		t.Fatalf("expected non-empty key for approval map key")
+	}
+
+	valTask, err := rdb.Get(ctx, "clawvisor:lite_pending_approval_map:task:task-abc").Result()
+	if err != nil {
+		t.Fatalf("Get task map key failed: %v", err)
+	}
+	if valTask == "" {
+		t.Fatalf("expected non-empty key for task map key")
+	}
+
+	// 5. Drop the hold and verify keys are deleted
+	err = cache.Drop(ctx, ResolveRequest{
+		UserID:     "user-1",
+		AgentID:    "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-approval1",
+	})
+	if err != nil {
+		t.Fatalf("Drop failed: %v", err)
+	}
+
+	// Verify keys are deleted from map
+	_, err = rdb.Get(ctx, "clawvisor:lite_pending_approval_map:approval:cv-approval1").Result()
+	if !errors.Is(err, redis.Nil) {
+		t.Fatalf("expected approval map key to be deleted, got err: %v", err)
+	}
+	_, err = rdb.Get(ctx, "clawvisor:lite_pending_approval_map:task:task-abc").Result()
+	if !errors.Is(err, redis.Nil) {
+		t.Fatalf("expected task map key to be deleted, got err: %v", err)
+	}
+}
+

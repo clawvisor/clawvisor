@@ -18,7 +18,7 @@ func WaitFor[T any](
 	userID string,
 	timeout time.Duration,
 	eventTypes []string,
-	fetch func(context.Context) (T, bool),
+	fetch func(context.Context, *Event) (T, bool),
 ) T {
 	ch, unsub := hub.Subscribe(userID)
 	defer unsub()
@@ -28,7 +28,7 @@ func WaitFor[T any](
 	// otherwise block until timeout for an event that never arrives. The
 	// subscribe-then-check-then-wait order ensures any post-subscribe event
 	// still wakes us via ch even if the pre-subscribe one is missed.
-	if v, done := fetch(ctx); done {
+	if v, done := fetch(ctx, nil); done {
 		return v
 	}
 
@@ -48,24 +48,24 @@ func WaitFor[T any](
 	for {
 		select {
 		case <-ctx.Done():
-			v, _ := fetch(context.Background())
+			v, _ := fetch(context.Background(), nil)
 			return v
 		case <-timer.C:
-			v, _ := fetch(context.Background())
+			v, _ := fetch(context.Background(), nil)
 			return v
 		case <-poll.C:
-			if v, done := fetch(ctx); done {
+			if v, done := fetch(ctx, nil); done {
 				return v
 			}
 		case evt, ok := <-ch:
 			if !ok {
-				v, _ := fetch(context.Background())
+				v, _ := fetch(context.Background(), nil)
 				return v
 			}
 			if len(eventTypes) > 0 && !slices.Contains(eventTypes, evt.Type) {
 				continue
 			}
-			v, done := fetch(ctx)
+			v, done := fetch(ctx, &evt)
 			if done {
 				return v
 			}

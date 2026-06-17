@@ -92,22 +92,42 @@ func MaybeInterceptInlineTaskDefinition(
 		return conversation.ToolUseVerdict{}, false
 	}
 
-	// Query signal: agent explicitly opted in via ?surface=inline. This
+	// Query signal: agent explicitly opted in via ?surface=inline or ?surface=auto. This
 	// is the only signal we honor in production — the older "state
 	// signal" branch (a prior StageAwaitingTaskDefinition hold from a
 	// "task" reply) is unreachable now that RewriteTaskApprovalReply
 	// fully Resolves the original tool hold rather than transitioning
 	// its stage. taskCreationPrompt teaches the model to include
-	// ?surface=inline, so compliant traffic flows through here; the
+	// ?surface=inline or ?surface=auto, so compliant traffic flows through here; the
 	// query-less path correctly falls through to the dashboard rewrite.
 	// Both key and value match case-SENSITIVELY: `url.Values.Get` is
 	// case-sensitive on the key, and harnesses emit the exact
-	// surface=inline string we teach them in taskCreationPrompt.
+	// surface=inline or surface=auto string we teach them.
 	// Mixed-case (Surface=INLINE) is not a shape we promise to honor;
 	// keeping symmetric strictness avoids future-reader surprise.
-	querySignal := call.URL.Query().Get(InlineSurfaceQueryParam) == InlineSurfaceQueryValue
-	if !querySignal {
+	surfaceVal := call.URL.Query().Get(InlineSurfaceQueryParam)
+	if surfaceVal != "inline" && surfaceVal != "auto" {
 		return conversation.ToolUseVerdict{}, false
+	}
+
+	if surfaceVal == "auto" {
+		isInactive := true
+		if cfg.Store != nil && cfg.ConversationID != "" {
+			activity, err := cfg.Store.GetConversationActivity(req.Context(), cfg.ConversationID)
+			if err == nil && activity != nil {
+				thresholdSecs := cfg.InactivityThresholdSeconds
+				if thresholdSecs <= 0 {
+					thresholdSecs = 300
+				}
+				threshold := time.Duration(thresholdSecs) * time.Second
+				if time.Since(activity.LastUserMessageAt) <= threshold {
+					isInactive = false
+				}
+			}
+		}
+		if isInactive {
+			return conversation.ToolUseVerdict{}, false
+		}
 	}
 
 	// On the failure paths below, we audit with decision="fallthrough"

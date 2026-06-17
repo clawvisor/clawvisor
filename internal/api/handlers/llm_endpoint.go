@@ -20,12 +20,12 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/bodytransform"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -162,6 +162,13 @@ type LLMEndpointHandler struct {
 	// would drift from the resolved scope in production.
 	DefaultTaskExpirySeconds int
 
+	// InactivityThresholdSeconds is the inactivity window in seconds
+	// for routing approvals to external notification channels.
+	InactivityThresholdSeconds int
+
+	activityDebounceMu sync.Mutex
+	activityDebounce   map[string]time.Time
+
 	// RawIOLogger, when non-nil, captures full raw HTTP bodies for
 	// inbound requests, upstream responses, and the bodies returned
 	// to the harness. Off by default; opted in via
@@ -209,10 +216,33 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		// Default in-process nonce cache; production wires the Redis-
 		// backed cache via WithCallerNonceCache. Cache instance is
 		// shared with the resolver-side middleware in production.
-		CallerNonces:         llmproxy.NewMemoryCallerNonceCache(5 * time.Minute),
-		MaxRequestBytes:      34 << 20,
-		defaultToolRulesSeen: map[string]map[string]struct{}{},
+		CallerNonces:               llmproxy.NewMemoryCallerNonceCache(5 * time.Minute),
+		MaxRequestBytes:            34 << 20,
+		InactivityThresholdSeconds: 300,
+		defaultToolRulesSeen:       map[string]map[string]struct{}{},
 	}
+}
+
+func (h *LLMEndpointHandler) shouldDebounceActivity(conversationID string) bool {
+	h.activityDebounceMu.Lock()
+	defer h.activityDebounceMu.Unlock()
+	if h.activityDebounce == nil {
+		h.activityDebounce = make(map[string]time.Time)
+	}
+	now := time.Now()
+	last, exists := h.activityDebounce[conversationID]
+	if exists && now.Sub(last) < 10*time.Second {
+		return true
+	}
+	h.activityDebounce[conversationID] = now
+	if len(h.activityDebounce) > 1000 {
+		for k, v := range h.activityDebounce {
+			if now.Sub(v) >= 10*time.Second {
+				delete(h.activityDebounce, k)
+			}
+		}
+	}
+	return false
 }
 
 // Messages handles `POST /api/v1/messages` (Anthropic) and `POST
@@ -532,6 +562,14 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	conversationID := conversation.ConversationID(r, provider, body)
 	if conversationID != "" {
 		auditParams["conversation_id"] = conversationID
+		if llmproxy.HasNewUserMessage(provider, body) && h.Store != nil {
+			if !h.shouldDebounceActivity(conversationID) {
+				if err := h.Store.UpdateConversationActivity(r.Context(), conversationID, time.Now()); err != nil {
+					h.Logger.WarnContext(r.Context(), "failed to update conversation activity",
+						"request_id", requestID, "conversation_id", conversationID, "err", err.Error())
+				}
+			}
+		}
 	}
 	// Sixth migrated call site through pipeline: task_approval_reply.
 	{
@@ -1198,6 +1236,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					Checkouts:                        h.TaskCheckouts,
 					DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
 					AvailableTools:                   reqSummary.AvailableTools,
+					InactivityThresholdSeconds:       h.InactivityThresholdSeconds,
 				},
 				RewriteContext: llmproxy.RewriteContext{
 					Inspector:    h.Inspector,
@@ -1608,6 +1647,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				Checkouts:                        h.TaskCheckouts,
 				DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
 				AvailableTools:                   reqSummary.AvailableTools,
+				InactivityThresholdSeconds:       h.InactivityThresholdSeconds,
 			},
 			RewriteContext: llmproxy.RewriteContext{
 				Inspector:    h.Inspector,
@@ -1679,6 +1719,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					Checkouts:                        h.TaskCheckouts,
 					DefaultTaskExpirySeconds:         h.DefaultTaskExpirySeconds,
 					AvailableTools:                   reqSummary.AvailableTools,
+					InactivityThresholdSeconds:       h.InactivityThresholdSeconds,
 				},
 				RewriteContext: llmproxy.RewriteContext{
 					Inspector:    h.Inspector,

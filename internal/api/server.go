@@ -1238,6 +1238,7 @@ func (s *Server) registerLiteProxyRoutes(
 	var callerNonces llmproxy.CallerNonceCache
 	if includeProxySurface {
 		llmHandler := handlers.NewLLMEndpointHandler(s.store, s.vault, s.logger)
+		llmHandler.InactivityThresholdSeconds = s.cfg.ProxyLite.InactivityThresholdSeconds
 		if v := s.cfg.ProxyLite.AnthropicBaseURL; v != "" {
 			llmHandler.Forwarder.Upstream.AnthropicBaseURL = v
 		}
@@ -1370,6 +1371,8 @@ func (s *Server) registerLiteProxyRoutes(
 		controlHandler.Audit = auditEmitter
 		controlHandler.ScriptSessions = scriptSessions
 		controlHandler.IntentVerifier = verifier
+		controlHandler.PendingApprovals = s.liteApprovals
+		controlHandler.EventHub = s.eventHub
 		requireAgentLLM := middleware.RequireAgentLLM(s.store)
 		requireAgentLLMRL := func(h http.HandlerFunc) http.Handler {
 			agentLimited := middleware.RateLimit(gatewayRL, llmAgentKeyFn, gatewayLimit)(http.HandlerFunc(h))
@@ -1395,6 +1398,7 @@ func (s *Server) registerLiteProxyRoutes(
 		mux.Handle("POST /api/control/task/checkout", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.CheckoutTask))))
 		mux.Handle("GET /api/control/tasks/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Get))))
 		mux.Handle("POST /api/control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
+		mux.Handle("GET /api/control/approvals/{id}/wait", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.WaitForApproval))))
 		mux.Handle("GET /api/control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
 		mux.Handle("GET /api/control/vault/items/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.GetForAgent))))
 		// AutovaultScriptDocs is intentionally unauthenticated, matching

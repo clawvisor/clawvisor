@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -24,7 +26,9 @@ type LLMControlHandler struct {
 	// that the derived capability (placeholder + host + methods +
 	// path prefixes) is checked against the active task scope. nil
 	// falls back to a deterministic check only.
-	IntentVerifier intent.Verifier
+	IntentVerifier   intent.Verifier
+	PendingApprovals llmproxy.PendingApprovalCache
+	EventHub         events.EventHub
 }
 
 func NewLLMControlHandler(baseURL string) *LLMControlHandler {
@@ -140,17 +144,17 @@ func (h *LLMControlHandler) Failure(w http.ResponseWriter, r *http.Request) {
 }
 
 type controlTaskSummary struct {
-	ID                string                     `json:"id"`
-	Purpose           string                     `json:"purpose"`
-	Status            string                     `json:"status"`
-	Lifetime          string                     `json:"lifetime,omitempty"`
-	ExpiresAt         *time.Time                 `json:"expires_at,omitempty"`
-	AuthorizedActions []store.TaskAction         `json:"authorized_actions,omitempty"`
-	PlannedCalls      []store.PlannedCall        `json:"planned_calls,omitempty"`
-	ExpectedTools     json.RawMessage            `json:"expected_tools,omitempty"`
-	ExpectedEgress    json.RawMessage            `json:"expected_egress,omitempty"`
-	Placeholders      []controlTaskPlaceholder   `json:"placeholders,omitempty"`
-	CheckedOut        bool                       `json:"checked_out"`
+	ID                string                   `json:"id"`
+	Purpose           string                   `json:"purpose"`
+	Status            string                   `json:"status"`
+	Lifetime          string                   `json:"lifetime,omitempty"`
+	ExpiresAt         *time.Time               `json:"expires_at,omitempty"`
+	AuthorizedActions []store.TaskAction       `json:"authorized_actions,omitempty"`
+	PlannedCalls      []store.PlannedCall      `json:"planned_calls,omitempty"`
+	ExpectedTools     json.RawMessage          `json:"expected_tools,omitempty"`
+	ExpectedEgress    json.RawMessage          `json:"expected_egress,omitempty"`
+	Placeholders      []controlTaskPlaceholder `json:"placeholders,omitempty"`
+	CheckedOut        bool                     `json:"checked_out"`
 }
 
 // controlTaskPlaceholder is the per-task autovault_* handle list returned
@@ -367,6 +371,187 @@ func (h *LLMControlHandler) CheckoutTask(w http.ResponseWriter, r *http.Request)
 		"expires_at": task.ExpiresAt,
 		"message":    "Task is checked out as the current focus. Clawvisor will prefer it only when it is a valid match for later tool calls.",
 		"next_step":  "Continue with the requested work using normal tool calls. Do not add task_id or extra fields to tool inputs.",
+	})
+}
+
+var errSentinelHold = &llmproxy.PendingLiteApproval{ID: "err-sentinel"}
+
+func (h *LLMControlHandler) WaitForApproval(w http.ResponseWriter, r *http.Request) {
+	agent := middleware.AgentFromContext(r.Context())
+	if agent == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error":   "unauthorized",
+			"message": "missing agent context",
+		})
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":   "id_required",
+			"message": "approval id or task id is required",
+		})
+		return
+	}
+
+	var pending *llmproxy.PendingLiteApproval
+	var err error
+	if h.PendingApprovals != nil {
+		pending, err = h.PendingApprovals.PeekByID(r.Context(), id)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error":   "internal_error",
+				"message": "failed to peek pending approval cache: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	if pending != nil {
+		if pending.UserID != agent.UserID || pending.AgentID != agent.ID {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error":   "forbidden",
+				"message": "approval hold belongs to a different agent/user",
+			})
+			return
+		}
+	}
+
+	taskID := id
+	if pending != nil && pending.PendingTaskID != "" {
+		taskID = pending.PendingTaskID
+	}
+
+	if h.Store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error":   "store_unavailable",
+			"message": "task store is not configured",
+		})
+		return
+	}
+
+	var task *store.Task
+	if pending == nil || pending.PendingTaskID != "" {
+		task, err = h.Store.GetTask(r.Context(), taskID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				if pending == nil {
+					writeJSON(w, http.StatusNotFound, map[string]any{
+						"error":   "not_found",
+						"message": "approval or task not found",
+					})
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+				return
+			} else {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":   "internal_error",
+					"message": "failed to lookup task: " + err.Error(),
+				})
+				return
+			}
+		}
+	}
+
+	if task != nil {
+		if task.UserID != agent.UserID || task.AgentID != agent.ID {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error":   "forbidden",
+				"message": "task belongs to a different agent/user",
+			})
+			return
+		}
+
+		if task.Status != "pending_approval" {
+			if task.Status == "active" {
+				writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+			return
+		}
+	}
+
+	timeout := longPollDeadline(r)
+
+	if h.EventHub != nil {
+		if task != nil {
+			resolvedTask := events.WaitFor(r.Context(), h.EventHub, agent.UserID, timeout, []string{"tasks"}, func(c context.Context, evt *events.Event) (*store.Task, bool) {
+				if evt != nil && evt.ID != "" && evt.ID != taskID {
+					return nil, false
+				}
+				t, err := h.Store.GetTask(c, taskID)
+				if err != nil {
+					if errors.Is(err, store.ErrNotFound) {
+						return &store.Task{ID: taskID, Status: "deleted"}, true
+					}
+					return &store.Task{ID: taskID}, false
+				}
+				return t, t.Status != "pending_approval"
+			})
+			if resolvedTask.Status == "active" {
+				writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
+				return
+			} else if resolvedTask.Status != "pending_approval" {
+				writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+				return
+			}
+		} else if pending != nil && h.PendingApprovals != nil {
+			resolvedHold := events.WaitFor(r.Context(), h.EventHub, agent.UserID, timeout, []string{"audit", "queue"}, func(c context.Context, evt *events.Event) (*llmproxy.PendingLiteApproval, bool) {
+				if evt != nil && evt.ID != "" && evt.ID != id && (pending.PendingTaskID == "" || evt.ID != pending.PendingTaskID) {
+					return nil, false
+				}
+				p, err := h.PendingApprovals.PeekByID(c, id)
+				if err != nil {
+					return errSentinelHold, false
+				}
+				return p, p == nil
+			})
+			if resolvedHold == nil {
+				writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
+				return
+			}
+		}
+	} else {
+		deadline := time.Now().Add(timeout)
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for time.Now().Before(deadline) {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				if task != nil {
+					t, err := h.Store.GetTask(r.Context(), taskID)
+					if err != nil {
+						if errors.Is(err, store.ErrNotFound) {
+							writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+							return
+						}
+					} else if t.Status != "pending_approval" {
+						if t.Status == "active" {
+							writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
+							return
+						}
+						writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+						return
+					}
+				} else if pending != nil && h.PendingApprovals != nil {
+					p, err := h.PendingApprovals.PeekByID(r.Context(), id)
+					if err == nil && p == nil {
+						writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
+						return
+					}
+				}
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":      "pending",
+		"retry_after": 1000,
 	})
 }
 

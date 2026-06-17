@@ -322,6 +322,10 @@ type ProxyLiteConfig struct {
 	// CLAWVISOR_PROXY_LITE_RAW_LOG_PATH overrides this when set.
 	// CLAWVISOR_PROXY_LITE_RAW_LOG remains accepted as a legacy alias.
 	RawLogPath string `yaml:"raw_log_path"`
+
+	// InactivityThresholdSeconds is the inactivity window in seconds
+	// for routing approvals to external notification channels.
+	InactivityThresholdSeconds int `yaml:"inactivity_threshold_seconds"`
 }
 
 // FeaturesConfig gates progressively enhanced UI and runtime surfaces.
@@ -460,6 +464,9 @@ func Default() *Config {
 		AutoUpdate: AutoUpdateConfig{
 			Enabled:       false,
 			CheckInterval: "6h",
+		},
+		ProxyLite: ProxyLiteConfig{
+			InactivityThresholdSeconds: 300,
 		},
 	}
 }
@@ -813,6 +820,11 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_PROXY_LITE_RAW_LOG_PATH"); v != "" {
 		cfg.ProxyLite.RawLogPath = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_INACTIVITY_THRESHOLD_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.ProxyLite.InactivityThresholdSeconds = n
+		}
 	}
 
 	if v := os.Getenv("CLAWVISOR_RELAY_URL"); v != "" {

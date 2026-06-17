@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -99,6 +101,16 @@ func (c *RedisPendingApprovalCache) Hold(ctx context.Context, pending PendingLit
 	).Result(); err != nil && !errors.Is(err, redis.Nil) {
 		return HoldResult{}, err
 	}
+	mapApprovalPrefix := "clawvisor:lite_pending_approval_map:approval:"
+	mapTaskPrefix := "clawvisor:lite_pending_approval_map:task:"
+	if err := c.rdb.Set(ctx, mapApprovalPrefix+pending.ID, key, keyTTL).Err(); err != nil {
+		return HoldResult{}, err
+	}
+	if pending.PendingTaskID != "" {
+		if err := c.rdb.Set(ctx, mapTaskPrefix+pending.PendingTaskID, key, keyTTL).Err(); err != nil {
+			return HoldResult{}, err
+		}
+	}
 	return HoldResult{Pending: pending, Evicted: evicted}, nil
 }
 
@@ -138,6 +150,12 @@ func (c *RedisPendingApprovalCache) Resolve(ctx context.Context, req ResolveRequ
 		if !found.ExpiresAt.IsZero() && !found.ExpiresAt.After(c.now().UTC()) {
 			continue
 		}
+		mapApprovalPrefix := "clawvisor:lite_pending_approval_map:approval:"
+		mapTaskPrefix := "clawvisor:lite_pending_approval_map:task:"
+		c.rdb.Del(ctx, mapApprovalPrefix+found.ID)
+		if found.PendingTaskID != "" {
+			c.rdb.Del(ctx, mapTaskPrefix+found.PendingTaskID)
+		}
 		return &found, nil
 	}
 }
@@ -154,6 +172,26 @@ func (c *RedisPendingApprovalCache) Drop(ctx context.Context, req ResolveRequest
 	_, raw, err := c.find(ctx, req)
 	if err != nil || raw == "" {
 		return err
+	}
+	mapApprovalPrefix := "clawvisor:lite_pending_approval_map:approval:"
+	mapTaskPrefix := "clawvisor:lite_pending_approval_map:task:"
+	var mapKey string
+	if strings.HasPrefix(req.ApprovalID, "cv-") {
+		mapKey = mapApprovalPrefix + req.ApprovalID
+	} else {
+		mapKey = mapTaskPrefix + req.ApprovalID
+	}
+	c.rdb.Del(ctx, mapKey)
+	var pending PendingLiteApproval
+	if err := json.Unmarshal([]byte(raw), &pending); err != nil {
+		slog.ErrorContext(ctx, "failed to unmarshal pending approval in Redis Drop", "err", err, "raw", raw)
+	} else {
+		if pending.ID != "" {
+			c.rdb.Del(ctx, mapApprovalPrefix+pending.ID)
+		}
+		if pending.PendingTaskID != "" {
+			c.rdb.Del(ctx, mapTaskPrefix+pending.PendingTaskID)
+		}
 	}
 	return c.rdb.LRem(ctx, key, 1, raw).Err()
 }
@@ -298,5 +336,47 @@ for i = 0, len - 1 do
 end
 return nil
 `)
+
+func (c *RedisPendingApprovalCache) PeekByID(ctx context.Context, id string) (*PendingLiteApproval, error) {
+	if c == nil || c.rdb == nil {
+		return nil, nil
+	}
+	now := c.now().UTC()
+	mapApprovalPrefix := "clawvisor:lite_pending_approval_map:approval:"
+	mapTaskPrefix := "clawvisor:lite_pending_approval_map:task:"
+	var mapKey string
+	if strings.HasPrefix(id, "cv-") {
+		mapKey = mapApprovalPrefix + id
+	} else {
+		mapKey = mapTaskPrefix + id
+	}
+	listKey, err := c.rdb.Get(ctx, mapKey).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	rawItems, err := c.rdb.LRange(ctx, listKey, 0, -1).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	for _, raw := range rawItems {
+		var pending PendingLiteApproval
+		if err := json.Unmarshal([]byte(raw), &pending); err != nil {
+			continue
+		}
+		if !pending.ExpiresAt.IsZero() && !pending.ExpiresAt.After(now) {
+			continue
+		}
+		if pending.ID == id || pending.PendingTaskID == id {
+			return &pending, nil
+		}
+	}
+	return nil, nil
+}
 
 var _ PendingApprovalCache = (*RedisPendingApprovalCache)(nil)

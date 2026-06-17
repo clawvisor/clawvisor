@@ -1274,3 +1274,170 @@ func TestPostprocess_InlineTaskMalformedBodyFallsThrough(t *testing.T) {
 		t.Fatalf("expected fallback to regular control rewrite on missing purpose; got %s", got.Body)
 	}
 }
+
+func TestMaybeInterceptInlineTaskDefinition_SurfaceAutoActivity(t *testing.T) {
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	cmd := `curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=auto' -H 'Content-Type: application/json' --data '` + inlineTaskBody + `'`
+	input, err := json.Marshal(map[string]string{"command": cmd})
+	if err != nil {
+		t.Fatalf("marshal tool input: %v", err)
+	}
+	tu := conversation.ToolUse{ID: "toolu_auto", Name: "Bash", Input: input}
+	call, ok := llmproxy.ParseControlToolUse(tu)
+	if !ok {
+		t.Fatalf("control call did not parse")
+	}
+
+	// 1. Missing ConversationID -> inactive -> falls through (not handled)
+	_, handled := llmproxy.MaybeInterceptInlineTaskDefinition(
+		httptest.NewRequest("POST", "/v1/messages", nil),
+		llmproxy.PostprocessConfig{
+			AgentContext: llmproxy.AgentContext{
+				AgentUserID: userID,
+				AgentID:     agentID,
+			},
+			ApprovalContext: llmproxy.ApprovalContext{
+				PendingApprovals:           cache,
+				InactivityThresholdSeconds: 5,
+			},
+			RewriteContext: llmproxy.RewriteContext{
+				Store: st,
+			},
+		},
+		func(_, _, _ string) {},
+		func(string, ...any) {},
+		conversation.ProviderAnthropic,
+		tu,
+		call,
+	)
+	if handled {
+		t.Errorf("expected surface=auto to fall through on missing conversation ID")
+	}
+
+	// 2. ConversationID set but no activity row in DB -> inactive -> falls through
+	_, handled = llmproxy.MaybeInterceptInlineTaskDefinition(
+		httptest.NewRequest("POST", "/v1/messages", nil),
+		llmproxy.PostprocessConfig{
+			AgentContext: llmproxy.AgentContext{
+				AgentUserID:    userID,
+				AgentID:        agentID,
+			},
+			AuditContext: llmproxy.AuditContext{
+				ConversationID: "conv-1",
+			},
+			ApprovalContext: llmproxy.ApprovalContext{
+				PendingApprovals:           cache,
+				InactivityThresholdSeconds: 5,
+			},
+			RewriteContext: llmproxy.RewriteContext{
+				Store: st,
+			},
+		},
+		func(_, _, _ string) {},
+		func(string, ...any) {},
+		conversation.ProviderAnthropic,
+		tu,
+		call,
+	)
+	if handled {
+		t.Errorf("expected surface=auto to fall through on missing activity row")
+	}
+
+	// 3. Conversation inactive (last message 10 seconds ago, threshold 5 seconds) -> falls through
+	if err := st.UpdateConversationActivity(context.Background(), "conv-1", time.Now().Add(-10*time.Second)); err != nil {
+		t.Fatalf("UpdateConversationActivity: %v", err)
+	}
+	_, handled = llmproxy.MaybeInterceptInlineTaskDefinition(
+		httptest.NewRequest("POST", "/v1/messages", nil),
+		llmproxy.PostprocessConfig{
+			AgentContext: llmproxy.AgentContext{
+				AgentUserID:    userID,
+				AgentID:        agentID,
+			},
+			AuditContext: llmproxy.AuditContext{
+				ConversationID: "conv-1",
+			},
+			ApprovalContext: llmproxy.ApprovalContext{
+				PendingApprovals:           cache,
+				InactivityThresholdSeconds: 5,
+			},
+			RewriteContext: llmproxy.RewriteContext{
+				Store: st,
+			},
+		},
+		func(_, _, _ string) {},
+		func(string, ...any) {},
+		conversation.ProviderAnthropic,
+		tu,
+		call,
+	)
+	if handled {
+		t.Errorf("expected surface=auto to fall through on inactive conversation")
+	}
+
+	// 4. InactivityThresholdSeconds <= 0 defaults to 300 seconds (last message 10s ago) -> active -> intercepted
+	creator := &capturingInlineCreator{pendingTaskID: "task-auto-active"}
+	_, handled = llmproxy.MaybeInterceptInlineTaskDefinition(
+		httptest.NewRequest("POST", "/v1/messages", nil),
+		llmproxy.PostprocessConfig{
+			AgentContext: llmproxy.AgentContext{
+				AgentUserID:    userID,
+				AgentID:        agentID,
+			},
+			AuditContext: llmproxy.AuditContext{
+				ConversationID: "conv-1",
+			},
+			ApprovalContext: llmproxy.ApprovalContext{
+				PendingApprovals:           cache,
+				InactivityThresholdSeconds: 0, // should default to 300
+				InlineTaskCreator:          creator,
+			},
+			RewriteContext: llmproxy.RewriteContext{
+				Store: st,
+			},
+		},
+		func(_, _, _ string) {},
+		func(string, ...any) {},
+		conversation.ProviderAnthropic,
+		tu,
+		call,
+	)
+	if !handled {
+		t.Errorf("expected surface=auto to intercept when threshold is 0 (defaults to 300s) and active")
+	}
+
+	// 5. Conversation active (last message 2 seconds ago, threshold 5 seconds) -> intercepted
+	if err := st.UpdateConversationActivity(context.Background(), "conv-1", time.Now()); err != nil {
+		t.Fatalf("UpdateConversationActivity: %v", err)
+	}
+	_, handled = llmproxy.MaybeInterceptInlineTaskDefinition(
+		httptest.NewRequest("POST", "/v1/messages", nil),
+		llmproxy.PostprocessConfig{
+			AgentContext: llmproxy.AgentContext{
+				AgentUserID:    userID,
+				AgentID:        agentID,
+			},
+			AuditContext: llmproxy.AuditContext{
+				ConversationID: "conv-1",
+			},
+			ApprovalContext: llmproxy.ApprovalContext{
+				PendingApprovals:           cache,
+				InactivityThresholdSeconds: 5,
+				InlineTaskCreator:          creator,
+			},
+			RewriteContext: llmproxy.RewriteContext{
+				Store: st,
+			},
+		},
+		func(_, _, _ string) {},
+		func(string, ...any) {},
+		conversation.ProviderAnthropic,
+		tu,
+		call,
+	)
+	if !handled {
+		t.Errorf("expected surface=auto to intercept on active conversation")
+	}
+}
