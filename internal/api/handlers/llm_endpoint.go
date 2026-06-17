@@ -23,6 +23,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
@@ -184,6 +185,19 @@ type LLMEndpointHandler struct {
 	// gesture at approval time. Optional — when nil, the inline approval
 	// prompt falls back to the deterministic envelope-shape policy only.
 	TaskRiskAssessor taskrisk.Assessor
+
+	// OrgGovCallbacks carries the cloud governance enforcement hooks
+	// (model policy / spend cap / content policy / violation recorder).
+	// All fields are optional — nil callbacks degrade to allow. The
+	// cloud package populates this; the open-source build leaves it
+	// empty.
+	OrgGovCallbacks orggov.Callbacks
+
+	// OrgIDForAgent resolves an agent_id to its org_id without forcing
+	// the policy layer to take a store dependency. Cloud-side: thin
+	// wrapper over store.GetAgent. nil means "no orgs" (open-source
+	// build); the model policy becomes a no-op.
+	OrgIDForAgent func(ctx context.Context, agentID string) string
 
 	// DefaultTaskExpirySeconds mirrors the daemon's resolved
 	// cfg.Task.DefaultExpirySeconds. Surfaced into the inline task
@@ -555,6 +569,30 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			for k, v := range result.AuditParams {
 				auditParams[k] = v
 			}
+		}
+	}
+	// Governance: per-org model allow/deny enforcement. No-ops in the
+	// open-source build (OrgGovCallbacks.CheckModelPolicy is nil) and
+	// for agents without an org_id. Runs BEFORE any upstream provider
+	// call so a denied model burns no quota. The org_policy_violation
+	// record is emitted by OrgModelPolicy itself via the RecordViolation
+	// callback — the cloud side owns the audit trail for org-policy
+	// denies, consistent with how other lite-proxy denials work.
+	if h.OrgGovCallbacks.CheckModelPolicy != nil {
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewOrgModelPolicy(h.OrgGovCallbacks, h.OrgIDForAgent))
+		if err == nil && result.DenyReason != "" {
+			for k, v := range result.AuditParams {
+				auditParams[k] = v
+			}
+			http.Error(w, result.DenyReason, http.StatusForbidden)
+			return
 		}
 	}
 	// Extract per-conversation identifier from the inbound body once. It
