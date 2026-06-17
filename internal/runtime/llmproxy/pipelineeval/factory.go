@@ -753,33 +753,37 @@ func buildCredentialedTaskScope(
 			}
 			dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, resolved.ServiceID, resolved.ActionID)
 			if !dec.Allowed {
-				// Route the legacy denial through the same scope-drift
-				// menu the modern path uses. The legacy decision shape
-				// doesn't carry runtimedecision.Source, but TaskScope.Check
-				// failure IS by construction a missing/ambiguous task
-				// scope — synthesize a runtimedecision.Decision so the
-				// coordinator's AppliesToSource gate fires. Without
-				// this, deployments still on the legacy fallback would
-				// silently bypass the menu and route every drift through
-				// the legacy user-approval prompt, breaking behavioral
-				// consistency across configurations.
-				syntheticDec := runtimedecision.AuthorizationDecision{
-					Kind:   runtimedecision.VerdictNeedsApproval,
-					Source: runtimedecision.SourceTaskScopeMissing,
-					Reason: dec.Reason,
-				}
-				if mint := drifts.MintForCredentialed(ctx, tu, v, resolved, dec.TaskID, syntheticDec); mint.OK {
-					audit("block", "scope_drift_minted", "drift_id="+mint.DriftID+"; "+dec.Reason+" (legacy)", dec.TaskID)
-					return policies.TaskScopeDecision{
-						Kind:                   policies.TaskScopeDecisionHold,
-						Allowed:                false,
-						Reason:                 "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
-						SubstituteText:         mint.MenuText,
-						ContinueWithToolResult: mint.MenuText,
-						TaskID:                 dec.TaskID,
+				// Route the legacy denial through the scope-drift menu
+				// ONLY when the reason is a genuine scope miss
+				// (needs_new_task / no_active_task). The other
+				// non-Allowed reasons reported by StoreTaskScopeChecker
+				// (task_store_unavailable, no_task_store_configured,
+				// no_agent_context, unresolved_action,
+				// unknown_classification) describe backend / config /
+				// programmer errors — minting a drift for those would
+				// let an agent ride out a degraded backend by picking
+				// an option, landing a pre-clear, and bypassing the
+				// (still broken) scope check on retry. Hard-block
+				// those instead so an operator sees them.
+				if isLegacyScopeDriftReason(dec.Reason) {
+					syntheticDec := runtimedecision.AuthorizationDecision{
+						Kind:   runtimedecision.VerdictNeedsApproval,
+						Source: runtimedecision.SourceTaskScopeMissing,
+						Reason: dec.Reason,
 					}
-				} else if mint.Err != nil {
-					audit("block", "scope_drift_mint_failed", mint.Err.Error()+" (legacy)", dec.TaskID)
+					if mint := drifts.MintForCredentialed(ctx, tu, v, resolved, dec.TaskID, syntheticDec); mint.OK {
+						audit("block", "scope_drift_minted", "drift_id="+mint.DriftID+"; "+dec.Reason+" (legacy)", dec.TaskID)
+						return policies.TaskScopeDecision{
+							Kind:                   policies.TaskScopeDecisionHold,
+							Allowed:                false,
+							Reason:                 "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
+							SubstituteText:         mint.MenuText,
+							ContinueWithToolResult: mint.MenuText,
+							TaskID:                 dec.TaskID,
+						}
+					} else if mint.Err != nil {
+						audit("block", "scope_drift_mint_failed", mint.Err.Error()+" (legacy)", dec.TaskID)
+					}
 				}
 				audit("block", "task_scope_denied", dec.Reason, "")
 				return policies.TaskScopeDecision{
@@ -1157,3 +1161,23 @@ func buildRewriteResolver(agent llmproxy.AgentContext, rewrite llmproxy.RewriteC
 	}
 }
 
+// isLegacyScopeDriftReason reports whether a TaskScope.Check denial
+// reason represents an actual missing-scope situation (vs. a
+// backend / config / programmer error). Only the actual-miss cases
+// route through the scope-drift menu; the others hard-block so an
+// operator sees them rather than letting an agent ride out a
+// degraded backend by collecting a pre-clear.
+//
+// The reason strings are the ones StoreTaskScopeChecker.Check
+// produces (see internal/runtime/llmproxy/taskscope.go) plus the
+// post-classification cases from classifyToDecision. Whitelist
+// the safe ones rather than blacklist the unsafe ones — new
+// failure modes added to the checker default to hard-block,
+// which is the right safety bias.
+func isLegacyScopeDriftReason(reason string) bool {
+	switch reason {
+	case "needs_new_task", "no_active_task":
+		return true
+	}
+	return false
+}
