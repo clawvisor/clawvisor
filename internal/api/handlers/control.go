@@ -47,6 +47,7 @@ func (h *LLMControlHandler) Capabilities(w http.ResponseWriter, r *http.Request)
 			{"method": "POST", "path": "/control/task/checkout", "purpose": "Set the current task focus for disambiguating later tool use."},
 			{"method": "GET", "path": "/control/tasks/{id}", "purpose": "Fetch task status."},
 			{"method": "POST", "path": "/control/tasks/{id}/expand", "purpose": "Request additional scope for an existing task."},
+			{"method": "POST", "path": "/control/tasks/{id}/complete", "purpose": "Mark a task complete. Closes its scope and clears its chain-fact context."},
 		},
 	})
 }
@@ -113,6 +114,12 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 			"body": map[string]any{
 				"task_id": "The active task id to prefer for later tool calls.",
 			},
+		},
+		"complete_task": map[string]any{
+			"method":  "POST",
+			"path":    "/control/tasks/{id}/complete",
+			"purpose": "Close out a task you've finished. Releases the task's scope and clears its chain-fact context. Re-completing a completed task returns 409 INVALID_STATE.",
+			"body":    nil,
 		},
 	})
 }

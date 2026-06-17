@@ -200,3 +200,72 @@ func TestControlListTasksReturnsAgentActiveTasksAndCheckout(t *testing.T) {
 		t.Fatalf("expected checkout guidance, got %q", payload.NextStep)
 	}
 }
+
+// TestControlCapabilitiesAdvertisesCompleteEndpoint locks in the new
+// /control/tasks/{id}/complete entry in Capabilities. Without it the
+// agent has no discoverable signal that the endpoint exists outside
+// the system-prompt notice.
+func TestControlCapabilitiesAdvertisesCompleteEndpoint(t *testing.T) {
+	h := NewLLMControlHandler("http://localhost:25297")
+	req := httptest.NewRequest(http.MethodGet, "/api/control/capabilities", nil)
+	res := httptest.NewRecorder()
+
+	h.Capabilities(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("Capabilities status=%d body=%s", res.Code, res.Body.String())
+	}
+	var payload struct {
+		Endpoints []map[string]string `json:"endpoints"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	var found map[string]string
+	for _, ep := range payload.Endpoints {
+		if ep["path"] == "/control/tasks/{id}/complete" {
+			found = ep
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected /control/tasks/{id}/complete in endpoints; got %+v", payload.Endpoints)
+	}
+	if found["method"] != "POST" {
+		t.Errorf("complete endpoint method = %q, want POST", found["method"])
+	}
+	if !strings.Contains(strings.ToLower(found["purpose"]), "complete") {
+		t.Errorf("complete endpoint purpose should mention 'complete'; got %q", found["purpose"])
+	}
+}
+
+// TestControlSkillExposesCompleteTaskBlock locks in the complete_task
+// block in the Skill payload. The Skill surface is the per-action
+// schema the agent reads when it wants to know "what's the exact
+// request shape?".
+func TestControlSkillExposesCompleteTaskBlock(t *testing.T) {
+	h := NewLLMControlHandler("http://localhost:25297")
+	req := httptest.NewRequest(http.MethodGet, "/api/control/skill", nil)
+	res := httptest.NewRecorder()
+
+	h.Skill(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("Skill status=%d body=%s", res.Code, res.Body.String())
+	}
+	var payload struct {
+		CompleteTask map[string]any `json:"complete_task"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode skill: %v", err)
+	}
+	if payload.CompleteTask == nil {
+		t.Fatalf("expected complete_task block in skill payload; got %s", res.Body.String())
+	}
+	if got, _ := payload.CompleteTask["method"].(string); got != "POST" {
+		t.Errorf("complete_task method = %q, want POST", got)
+	}
+	if got, _ := payload.CompleteTask["path"].(string); got != "/control/tasks/{id}/complete" {
+		t.Errorf("complete_task path = %q, want /control/tasks/{id}/complete", got)
+	}
+}
