@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/jsonpatch"
 )
 
 // Outcome aliases conversation.Outcome so pipeline code can keep using
@@ -157,7 +158,7 @@ type ContinueSignal = conversation.ContinueSignal
 // continuation" and fall back to SubstituteWith if they were
 // pairing the two).
 func NewTextContinuation(text string) *ContinueSignal {
-	payload, err := json.Marshal(text)
+	payload, err := jsonpatch.MarshalNoEscape(text)
 	if err != nil {
 		return nil
 	}

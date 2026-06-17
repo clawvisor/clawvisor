@@ -53,3 +53,11 @@ func LooksLikeString(data []byte) bool {
 func TrimWS(data []byte) []byte {
 	return jsonpatch.TrimWS(data)
 }
+
+// MarshalNoEscape is json.Marshal without HTML escaping of `<`, `>`, `&`.
+// Use this for any bytes that land in an outbound LLM request body so the
+// proxy's mutations don't flip literal angle brackets into `\uXXXX` and
+// bust Anthropic's prompt cache.
+func MarshalNoEscape(v any) ([]byte, error) {
+	return jsonpatch.MarshalNoEscape(v)
+}

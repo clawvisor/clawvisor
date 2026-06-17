@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/jsonpatch"
 )
 
 // RewriteOpts controls how Rewrite produces the redirected tool_use input.
@@ -135,7 +137,7 @@ func rewriteStructured(t ToolUse, _ Verdict, resolver *url.URL, opts RewriteOpts
 	}
 	raw["headers"] = headers
 
-	out, err := json.Marshal(raw)
+	out, err := jsonpatch.MarshalNoEscape(raw)
 	if err != nil {
 		return nil, true, err
 	}
@@ -249,7 +251,7 @@ func rewriteBash(t ToolUse, v Verdict, resolver *url.URL, opts RewriteOpts) ([]b
 	// preserving everything outside the credentialed sub-command
 	// (pipes, redirects, neighboring simple commands).
 	raw[cmdField] = cmdVal[:seg.start] + rewrittenSegment + cmdVal[seg.end:]
-	out, err := json.Marshal(raw)
+	out, err := jsonpatch.MarshalNoEscape(raw)
 	if err != nil {
 		return nil, true, err
 	}

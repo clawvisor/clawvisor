@@ -13,6 +13,30 @@ import (
 
 var errNotObject = errors.New("JSON value is not an object")
 
+// MarshalNoEscape is like json.Marshal but does NOT HTML-escape `<`, `>`,
+// or `&`. The proxy's body mutations target outbound LLM-API request
+// bodies whose prompt cache lookups are keyed on raw bytes; standard
+// json.Marshal flips literal `<system-reminder>` into `<system-
+// reminder>`, mismatching the harness's original bytes and busting
+// every cache_control breakpoint that includes the mutated region.
+//
+// json.Encoder always emits a trailing newline; this helper strips it so
+// the result is byte-equivalent to json.Marshal up to the escape
+// difference.
+func MarshalNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	out := buf.Bytes()
+	if n := len(out); n > 0 && out[n-1] == '\n' {
+		out = out[:n-1]
+	}
+	return out, nil
+}
+
 // FindTopLevelFieldValue locates the byte range of the value associated
 // with key in a top-level JSON object. The returned range indexes data.
 func FindTopLevelFieldValue(data []byte, key string) (int, int, bool) {

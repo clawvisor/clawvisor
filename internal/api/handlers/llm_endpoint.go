@@ -2906,13 +2906,24 @@ func (h *LLMEndpointHandler) renderActiveTasksSnapshot(ctx context.Context, user
 			continue
 		}
 		purpose := sanitizeTaskPurposeForSnapshot(t.Purpose)
-		expiry := "never"
-		if t.ExpiresAt != nil {
-			expiry = t.ExpiresAt.UTC().Format("2006-01-02T15:04Z")
-		}
 		lifetime := t.Lifetime
 		if lifetime == "" {
 			lifetime = "session"
+		}
+		// Sliding tasks' ExpiresAt is bumped on every authorized
+		// tool_use, so rendering the literal timestamp here would
+		// mutate the system-prompt bytes every turn and bust
+		// Anthropic's prompt cache (one cache rewrite per tool call,
+		// per active task). Surface lifetime semantics instead;
+		// agents can GET /control/tasks for live expiry.
+		expiry := "never"
+		switch {
+		case t.ExpiresAt == nil:
+			expiry = "never"
+		case lifetime == "sliding":
+			expiry = "auto-extends"
+		default:
+			expiry = t.ExpiresAt.UTC().Format("2006-01-02T15:04Z")
 		}
 		lines = append(lines, fmt.Sprintf("  - %s · purpose=%q · lifetime=%s · expires=%s", t.ID, purpose, lifetime, expiry))
 		if len(lines) >= maxTasks {

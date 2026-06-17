@@ -10,6 +10,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
@@ -281,7 +282,7 @@ func MaybeInterceptInlineTaskDefinition(
 					"reason", reason,
 				)
 				augmentation := inlineApprovedReplyAugmentationContext(created.ID, checkedOut, created.Credentials)
-				continuationPayload, _ := json.Marshal(augmentation)
+				continuationPayload, _ := jsonsurgery.MarshalNoEscape(augmentation)
 				return conversation.ToolUseVerdict{
 					Allowed: false,
 					Reason:  "Clawvisor: auto-approved from conversation context",

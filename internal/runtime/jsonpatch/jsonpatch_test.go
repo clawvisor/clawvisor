@@ -6,6 +6,56 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/jsonpatch"
 )
 
+// TestMarshalNoEscape_PreservesAngleBrackets pins the cache-stability
+// fix on the proxy's body-mutation path. encoding/json's default
+// HTML-escape flips literal `<system-reminder>` (which appears in the
+// harness's tool descriptions and prompts) into `<system-reminder>`.
+// Anthropic's prompt cache is keyed on raw bytes; when the proxy
+// re-marshals a body fragment, the escaped form mismatches the
+// harness's original bytes and busts every cache_control breakpoint
+// that includes the mutated region. MarshalNoEscape keeps `<`, `>`,
+// and `&` literal.
+func TestMarshalNoEscape_PreservesAngleBrackets(t *testing.T) {
+	out, err := jsonpatch.MarshalNoEscape(map[string]any{
+		"text": "<system-reminder>foo & bar</system-reminder>",
+	})
+	if err != nil {
+		t.Fatalf("MarshalNoEscape: %v", err)
+	}
+	got := string(out)
+	want := `{"text":"<system-reminder>foo & bar</system-reminder>"}`
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	for _, banned := range []string{"\\u003c", "\\u003e", "\\u0026"} {
+		if indexOf(got, banned) >= 0 {
+			t.Errorf("output contains banned HTML escape %q: %s", banned, got)
+		}
+	}
+}
+
+// TestMarshalNoEscape_NoTrailingNewline ensures the encoder's default
+// trailing newline is stripped — without that, splicing into a body via
+// jsonsurgery.SetField would leave whitespace inside the value range.
+func TestMarshalNoEscape_NoTrailingNewline(t *testing.T) {
+	out, err := jsonpatch.MarshalNoEscape("hello")
+	if err != nil {
+		t.Fatalf("MarshalNoEscape: %v", err)
+	}
+	if got := string(out); got != `"hello"` {
+		t.Errorf("got %q, want %q", got, `"hello"`)
+	}
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestSetTopLevelField_ReplacesExisting(t *testing.T) {
 	in := []byte(`{"index":0,"name":"foo"}`)
 	out, err := jsonpatch.SetTopLevelField(in, "index", []byte(`5`))

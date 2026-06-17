@@ -539,31 +539,31 @@ func injectAnthropicControlNotice(body []byte, notice string) ([]byte, bool, err
 	// blocks across turns).
 	sysStart, sysEnd, present := jsonsurgery.FindFieldValue(body, "system")
 	if !present {
-		encoded, _ := json.Marshal(notice)
+		encoded, _ := jsonsurgery.MarshalNoEscape(notice)
 		out, err := jsonsurgery.SetField(body, "system", encoded)
 		return out, err == nil, err
 	}
 	sys := body[sysStart:sysEnd]
 	if string(jsonsurgery.TrimWS(sys)) == "null" {
-		encoded, _ := json.Marshal(notice)
+		encoded, _ := jsonsurgery.MarshalNoEscape(notice)
 		out, err := jsonsurgery.SetField(body, "system", encoded)
 		return out, err == nil, err
 	}
 	var s string
 	if err := json.Unmarshal(sys, &s); err == nil {
-		encoded, _ := json.Marshal(appendNotice(s, notice))
+		encoded, _ := jsonsurgery.MarshalNoEscape(appendNotice(s, notice))
 		out, err := jsonsurgery.SetField(body, "system", encoded)
 		return out, err == nil, err
 	}
 	// System is a content-blocks array. Append a text block to it.
 	// Preserve existing blocks' bytes via []json.RawMessage round-trip.
 	if elems, ok := jsonsurgery.FlattenArray(sys); ok {
-		newBlock, err := json.Marshal(map[string]any{"type": "text", "text": notice})
+		newBlock, err := jsonsurgery.MarshalNoEscape(map[string]any{"type": "text", "text": notice})
 		if err != nil {
 			return nil, false, err
 		}
 		elems = append(elems, json.RawMessage(newBlock))
-		encoded, err := json.Marshal(elems)
+		encoded, err := jsonsurgery.MarshalNoEscape(elems)
 		if err != nil {
 			return nil, false, err
 		}
@@ -589,17 +589,17 @@ func injectOpenAIControlNotice(body []byte, notice string) ([]byte, bool, error)
 		if err := json.Unmarshal(instr, &s); err != nil {
 			return body, false, nil
 		}
-		encoded, _ := json.Marshal(appendNotice(s, notice))
+		encoded, _ := jsonsurgery.MarshalNoEscape(appendNotice(s, notice))
 		raw["instructions"] = encoded
 		return marshalInjected(raw)
 	}
-	encoded, _ := json.Marshal(notice)
+	encoded, _ := jsonsurgery.MarshalNoEscape(notice)
 	raw["instructions"] = encoded
 	return marshalInjected(raw)
 }
 
 func marshalInjected(v any) ([]byte, bool, error) {
-	out, err := json.Marshal(v)
+	out, err := jsonsurgery.MarshalNoEscape(v)
 	return out, err == nil, err
 }
 
@@ -616,13 +616,13 @@ func injectOpenAIMessages(raw json.RawMessage, notice string) (json.RawMessage, 
 		if role == "system" || role == "developer" {
 			if s, ok := messages[0]["content"].(string); ok {
 				messages[0]["content"] = appendNotice(s, notice)
-				out, err := json.Marshal(messages)
+				out, err := jsonsurgery.MarshalNoEscape(messages)
 				return out, true, err
 			}
 		}
 	}
 	messages = append([]map[string]any{{"role": "system", "content": notice}}, messages...)
-	out, err := json.Marshal(messages)
+	out, err := jsonsurgery.MarshalNoEscape(messages)
 	return out, true, err
 }
 
@@ -688,7 +688,7 @@ func rewriteControlCommandToolUse(t conversation.ToolUse, v inspector.Verdict, o
 	// model cargo-cult a small value back, so clamp here. Harmless on
 	// Bash (Claude Code has no such parameter).
 	clampControlToolUseTimeouts(raw, t.Name)
-	out, err := json.Marshal(raw)
+	out, err := jsonsurgery.MarshalNoEscape(raw)
 	return out, true, err
 }
 
@@ -732,7 +732,7 @@ func rewriteControlStructuredToolUse(t conversation.ToolUse, opts inspector.Rewr
 	}
 	raw["headers"] = headers
 
-	out, err := json.Marshal(raw)
+	out, err := jsonsurgery.MarshalNoEscape(raw)
 	return out, true, err
 }
 
@@ -763,7 +763,7 @@ func RewriteControlFailureToolUse(t conversation.ToolUse, controlBaseURL string,
 	}
 	q.Set("reason", reason)
 	u.RawQuery = q.Encode()
-	body, err := json.Marshal(map[string]string{
+	body, err := jsonsurgery.MarshalNoEscape(map[string]string{
 		"original_tool":    t.Name,
 		"original_command": sanitizeControlFailureCommand(original),
 	})
@@ -781,7 +781,7 @@ func RewriteControlFailureToolUse(t conversation.ToolUse, controlBaseURL string,
 		shellQuote(u.String()),
 	}, " ")
 	clampControlToolUseTimeouts(raw, t.Name)
-	out, err := json.Marshal(raw)
+	out, err := jsonsurgery.MarshalNoEscape(raw)
 	return out, true, err
 }
 

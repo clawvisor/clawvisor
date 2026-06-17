@@ -7,16 +7,16 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/jsonpatch"
 )
 
 // inlineTaskNoticeOpenPrefixJSON is the JSON-encoded form of
-// inlineTaskNoticeOpenPrefix. Go's json.Marshal has HTML-escape on by
-// default, so `<` becomes the six-byte sequence backslash-u-0-0-3-c
-// and `"` becomes backslash-quote. Tests that assert substrings on
-// the raw JSON-marshalled request body compare against this; tests
-// that operate on already-decoded content use the raw prefix.
+// inlineTaskNoticeOpenPrefix as it appears in an outbound proxy body.
+// The proxy uses jsonpatch.MarshalNoEscape (HTML escape off) so `<`
+// stays a literal byte; `"` still escapes to backslash-quote because
+// that's structural to JSON strings.
 var inlineTaskNoticeOpenPrefixJSON = func() string {
-	enc, err := json.Marshal(inlineTaskNoticeOpenPrefix)
+	enc, err := jsonpatch.MarshalNoEscape(inlineTaskNoticeOpenPrefix)
 	if err != nil {
 		panic(err)
 	}

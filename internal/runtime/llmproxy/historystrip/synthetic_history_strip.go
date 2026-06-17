@@ -282,7 +282,7 @@ func stripAnthropicSyntheticApprovalHistory(body []byte, lookup ReconstructionLo
 		merged = append(merged, msg)
 	}
 
-	newMsgsBytes, err := json.Marshal(merged)
+	newMsgsBytes, err := jsonsurgery.MarshalNoEscape(merged)
 	if err != nil {
 		return SyntheticApprovalHistoryStripResult{Body: body}, err
 	}
@@ -336,7 +336,7 @@ func mergeAnthropicContent(c1, c2 json.RawMessage) (json.RawMessage, error) {
 
 	if err1 == nil && err2 == nil {
 		merged := s1 + "\n\n" + s2
-		return json.Marshal(merged)
+		return jsonsurgery.MarshalNoEscape(merged)
 	}
 	if err1 != nil && err2 == nil {
 		var blocks1 []json.RawMessage
@@ -344,7 +344,7 @@ func mergeAnthropicContent(c1, c2 json.RawMessage) (json.RawMessage, error) {
 			return nil, err
 		}
 		blocks1 = append(blocks1, anthropicTextBlockRaw(s2))
-		return json.Marshal(blocks1)
+		return jsonsurgery.MarshalNoEscape(blocks1)
 	}
 	if err1 == nil && err2 != nil {
 		var blocks2 []json.RawMessage
@@ -354,7 +354,7 @@ func mergeAnthropicContent(c1, c2 json.RawMessage) (json.RawMessage, error) {
 		// Use append-from-literal to sidestep CodeQL's
 		// allocation-size-overflow warning on `len(blocks2)+1`.
 		out := append([]json.RawMessage{anthropicTextBlockRaw(s1)}, blocks2...)
-		return json.Marshal(out)
+		return jsonsurgery.MarshalNoEscape(out)
 	}
 
 	var blocks1 []json.RawMessage
@@ -368,11 +368,11 @@ func mergeAnthropicContent(c1, c2 json.RawMessage) (json.RawMessage, error) {
 	}
 
 	mergedBlocks := append(blocks1, blocks2...)
-	return json.Marshal(mergedBlocks)
+	return jsonsurgery.MarshalNoEscape(mergedBlocks)
 }
 
 func anthropicTextBlockRaw(text string) json.RawMessage {
-	block, _ := json.Marshal(map[string]string{
+	block, _ := jsonsurgery.MarshalNoEscape(map[string]string{
 		"type": "text",
 		"text": text,
 	})
@@ -406,7 +406,7 @@ func buildReconstructedAssistantBlock(rec *ReconstructedPair) (json.RawMessage, 
 		"name":  rec.ToolName,
 		"input": rec.Input,
 	}
-	raw, err := json.Marshal([]any{block})
+	raw, err := jsonsurgery.MarshalNoEscape([]any{block})
 	if err != nil {
 		return nil, false
 	}
@@ -444,7 +444,7 @@ func wrapUserContentAsToolResult(raw json.RawMessage, rec *ReconstructedPair) (j
 	// string as the tool_result's content.
 	var simple string
 	if err := json.Unmarshal(raw, &simple); err == nil {
-		block, err := json.Marshal(map[string]any{
+		block, err := jsonsurgery.MarshalNoEscape(map[string]any{
 			"type":        "tool_result",
 			"tool_use_id": rec.ToolUseID,
 			"content":     simple,
@@ -452,7 +452,7 @@ func wrapUserContentAsToolResult(raw json.RawMessage, rec *ReconstructedPair) (j
 		if err != nil {
 			return raw, false, err
 		}
-		out, err := json.Marshal([]json.RawMessage{block})
+		out, err := jsonsurgery.MarshalNoEscape([]json.RawMessage{block})
 		if err != nil {
 			return raw, false, err
 		}
@@ -498,7 +498,7 @@ func wrapUserContentAsToolResult(raw json.RawMessage, rec *ReconstructedPair) (j
 		// block belongs in the tool_result. Skip rather than guess.
 		return raw, false, nil
 	}
-	toolResultBlock, err := json.Marshal(map[string]any{
+	toolResultBlock, err := jsonsurgery.MarshalNoEscape(map[string]any{
 		"type":        "tool_result",
 		"tool_use_id": rec.ToolUseID,
 		"content":     noticeText,
@@ -516,7 +516,7 @@ func wrapUserContentAsToolResult(raw json.RawMessage, rec *ReconstructedPair) (j
 		}
 		newBlocks = append(newBlocks, blk)
 	}
-	out, err := json.Marshal(newBlocks)
+	out, err := jsonsurgery.MarshalNoEscape(newBlocks)
 	if err != nil {
 		return raw, false, err
 	}
@@ -551,7 +551,7 @@ func replaceToolResultsForReconstruction(raw json.RawMessage, orphans map[string
 		if _, ok := orphans[probe.ToolUseID]; !ok {
 			continue
 		}
-		newBlock, err := json.Marshal(map[string]any{
+		newBlock, err := jsonsurgery.MarshalNoEscape(map[string]any{
 			"type":        "tool_result",
 			"tool_use_id": rec.ToolUseID,
 			"content":     rec.ResultText,
@@ -565,7 +565,7 @@ func replaceToolResultsForReconstruction(raw json.RawMessage, orphans map[string
 	if !changed {
 		return raw, false, nil
 	}
-	out, err := json.Marshal(blocks)
+	out, err := jsonsurgery.MarshalNoEscape(blocks)
 	if err != nil {
 		return raw, false, err
 	}
@@ -671,7 +671,7 @@ func stripToolResultsByID(content json.RawMessage, orphans map[string]struct{}) 
 	if dropped {
 		return nil, true, true, nil
 	}
-	out, err := json.Marshal(kept)
+	out, err := jsonsurgery.MarshalNoEscape(kept)
 	if err != nil {
 		return nil, false, false, err
 	}

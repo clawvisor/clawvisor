@@ -17,6 +17,7 @@ import (
 
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 )
 
 type InboundSecretFinding struct {
@@ -255,7 +256,7 @@ func ScanInboundSecretsWithOptions(ctx context.Context, opts InboundSecretScanOp
 	}
 	encoded := body
 	if changed {
-		out, err := json.Marshal(rewritten)
+		out, err := jsonsurgery.MarshalNoEscape(rewritten)
 		if err != nil {
 			return InboundSecretScanResult{}, false, err
 		}

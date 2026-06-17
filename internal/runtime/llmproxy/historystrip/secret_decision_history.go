@@ -51,7 +51,7 @@ func stripAnthropicSecretDecisionHistory(body []byte) (SecretDecisionHistoryStri
 	if !modified {
 		return SecretDecisionHistoryStripResult{Body: body}, nil
 	}
-	encoded, err := json.Marshal(out)
+	encoded, err := jsonsurgery.MarshalNoEscape(out)
 	if err != nil {
 		return SecretDecisionHistoryStripResult{Body: body}, err
 	}
@@ -78,7 +78,7 @@ func stripOpenAISecretDecisionHistory(body []byte) (SecretDecisionHistoryStripRe
 				return role, flattenOpenAITaskReplyContent(rawContent)
 			})
 			if changed {
-				encoded, err := json.Marshal(out)
+				encoded, err := jsonsurgery.MarshalNoEscape(out)
 				if err != nil {
 					return SecretDecisionHistoryStripResult{Body: body}, err
 				}
@@ -97,7 +97,7 @@ func stripOpenAISecretDecisionHistory(body []byte) (SecretDecisionHistoryStripRe
 				return role, flattenOpenAITaskReplyContent(rawContent)
 			})
 			if changed {
-				encoded, err := json.Marshal(out)
+				encoded, err := jsonsurgery.MarshalNoEscape(out)
 				if err != nil {
 					return SecretDecisionHistoryStripResult{Body: body}, err
 				}
@@ -109,7 +109,7 @@ func stripOpenAISecretDecisionHistory(body []byte) (SecretDecisionHistoryStripRe
 	if !modified {
 		return SecretDecisionHistoryStripResult{Body: body}, nil
 	}
-	out, err := json.Marshal(raw)
+	out, err := jsonsurgery.MarshalNoEscape(raw)
 	if err != nil {
 		return SecretDecisionHistoryStripResult{Body: body}, err
 	}

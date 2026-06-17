@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 )
 
 // ContinuationToolResult is one synthetic tool_result the proxy is
@@ -220,7 +221,7 @@ func buildOpenAIChatContinuationBody(
 		}
 		asstTurn["tool_calls"] = calls
 	}
-	asstRaw, err := json.Marshal(asstTurn)
+	asstRaw, err := jsonsurgery.MarshalNoEscape(asstTurn)
 	if err != nil {
 		return nil, fmt.Errorf("continuation: marshal chat assistant turn: %w", err)
 	}
@@ -239,19 +240,19 @@ func buildOpenAIChatContinuationBody(
 			"tool_call_id": tr.ToolUseID,
 			"content":      tr.Content,
 		}
-		raw, err := json.Marshal(toolRow)
+		raw, err := jsonsurgery.MarshalNoEscape(toolRow)
 		if err != nil {
 			return nil, fmt.Errorf("continuation: marshal chat tool row: %w", err)
 		}
 		messages = append(messages, raw)
 	}
 
-	mergedMessages, err := json.Marshal(messages)
+	mergedMessages, err := jsonsurgery.MarshalNoEscape(messages)
 	if err != nil {
 		return nil, fmt.Errorf("continuation: marshal merged chat messages: %w", err)
 	}
 	top["messages"] = mergedMessages
-	out, err := json.Marshal(top)
+	out, err := jsonsurgery.MarshalNoEscape(top)
 	if err != nil {
 		return nil, fmt.Errorf("continuation: marshal chat continuation body: %w", err)
 	}
@@ -286,7 +287,7 @@ func buildOpenAIResponsesContinuationBody(
 				{"type": "input_text", "text": asString},
 			},
 		}
-		raw, err := json.Marshal(promoted)
+		raw, err := jsonsurgery.MarshalNoEscape(promoted)
 		if err != nil {
 			return nil, fmt.Errorf("continuation: promote string input: %w", err)
 		}
@@ -315,19 +316,19 @@ func buildOpenAIResponsesContinuationBody(
 			"call_id": tr.ToolUseID,
 			"output":  tr.Content,
 		}
-		raw, err := json.Marshal(fco)
+		raw, err := jsonsurgery.MarshalNoEscape(fco)
 		if err != nil {
 			return nil, fmt.Errorf("continuation: marshal function_call_output: %w", err)
 		}
 		inputItems = append(inputItems, raw)
 	}
 
-	mergedInput, err := json.Marshal(inputItems)
+	mergedInput, err := jsonsurgery.MarshalNoEscape(inputItems)
 	if err != nil {
 		return nil, fmt.Errorf("continuation: marshal merged input: %w", err)
 	}
 	top["input"] = mergedInput
-	out, err := json.Marshal(top)
+	out, err := jsonsurgery.MarshalNoEscape(top)
 	if err != nil {
 		return nil, fmt.Errorf("continuation: marshal responses continuation body: %w", err)
 	}
@@ -363,7 +364,7 @@ func buildAnthropicContinuationBody(
 		"role":    "assistant",
 		"content": assistantContent,
 	}
-	assistantRaw, err := json.Marshal(assistantTurn)
+	assistantRaw, err := jsonsurgery.MarshalNoEscape(assistantTurn)
 	if err != nil {
 		return nil, fmt.Errorf("continuation: marshal assistant turn: %w", err)
 	}
@@ -386,18 +387,18 @@ func buildAnthropicContinuationBody(
 		"role":    "user",
 		"content": userContent,
 	}
-	userRaw, err := json.Marshal(userTurn)
+	userRaw, err := jsonsurgery.MarshalNoEscape(userTurn)
 	if err != nil {
 		return nil, fmt.Errorf("continuation: marshal user turn: %w", err)
 	}
 
 	messages = append(messages, json.RawMessage(assistantRaw), json.RawMessage(userRaw))
-	mergedMessages, err := json.Marshal(messages)
+	mergedMessages, err := jsonsurgery.MarshalNoEscape(messages)
 	if err != nil {
 		return nil, fmt.Errorf("continuation: marshal merged messages: %w", err)
 	}
 	top["messages"] = mergedMessages
-	out, err := json.Marshal(top)
+	out, err := jsonsurgery.MarshalNoEscape(top)
 	if err != nil {
 		return nil, fmt.Errorf("continuation: marshal continuation body: %w", err)
 	}

@@ -162,10 +162,11 @@ func TestRewriteControlToolUse_RewritesMultiStmtCatHeredocPlusCurl(t *testing.T)
 		t.Fatalf("expected control rewrite for multi-stmt cat+curl; ok=%v rewritten=%s", ok, rewritten)
 	}
 	// The cat heredoc must still be present (we didn't strip the body),
-	// and the URL must be rewritten to the resolver host. The output
-	// is JSON-encoded so `<<` is escaped as `<<`.
+	// and the URL must be rewritten to the resolver host. Proxy
+	// marshalling has HTML escaping off so `<<` is the literal two
+	// bytes (busting the cache otherwise — see jsonpatch.MarshalNoEscape).
 	out := string(rewritten)
-	if !strings.Contains(out, "cat \\u003c\\u003c") {
+	if !strings.Contains(out, "cat <<") {
 		t.Errorf("rewrite dropped the cat heredoc: %s", out)
 	}
 	if !strings.Contains(out, `https://control.example/api/control/tasks`) {

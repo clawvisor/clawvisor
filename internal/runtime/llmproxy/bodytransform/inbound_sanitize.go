@@ -110,7 +110,7 @@ func sanitizeAnthropicInbound(req SanitizeInboundRequest) (SanitizeInboundResult
 	if !anyChanged {
 		return SanitizeInboundResult{Body: body}, nil
 	}
-	newMsgsBytes, err := json.Marshal(newMessages)
+	newMsgsBytes, err := jsonsurgery.MarshalNoEscape(newMessages)
 	if err != nil {
 		return SanitizeInboundResult{Body: body}, nil
 	}
@@ -170,7 +170,7 @@ func sanitizeAnthropicInboundMessage(msg json.RawMessage, req SanitizeInboundReq
 	if !anyChanged {
 		return msg, false
 	}
-	newContentBytes, err := json.Marshal(newBlocks)
+	newContentBytes, err := jsonsurgery.MarshalNoEscape(newBlocks)
 	if err != nil {
 		return msg, false
 	}
@@ -201,7 +201,7 @@ func sanitizeOpenAIInbound(req SanitizeInboundRequest) (SanitizeInboundResult, e
 	if !modified {
 		return SanitizeInboundResult{Body: req.Body}, nil
 	}
-	out, err := json.Marshal(raw)
+	out, err := jsonsurgery.MarshalNoEscape(raw)
 	if err != nil {
 		return SanitizeInboundResult{Body: req.Body}, nil
 	}
@@ -259,12 +259,12 @@ func sanitizeOpenAIChatMessages(messagesRaw json.RawMessage, req SanitizeInbound
 			if !mut {
 				continue
 			}
-			encoded, err := json.Marshal(sanitized)
+			encoded, err := jsonsurgery.MarshalNoEscape(sanitized)
 			if err != nil {
 				continue
 			}
 			fn["arguments"] = encoded
-			fnEncoded, err := json.Marshal(fn)
+			fnEncoded, err := jsonsurgery.MarshalNoEscape(fn)
 			if err != nil {
 				continue
 			}
@@ -272,7 +272,7 @@ func sanitizeOpenAIChatMessages(messagesRaw json.RawMessage, req SanitizeInbound
 			callsChanged = true
 		}
 		if callsChanged {
-			encoded, err := json.Marshal(calls)
+			encoded, err := jsonsurgery.MarshalNoEscape(calls)
 			if err == nil {
 				msg["tool_calls"] = encoded
 				changed = true
@@ -282,7 +282,7 @@ func sanitizeOpenAIChatMessages(messagesRaw json.RawMessage, req SanitizeInbound
 	if !changed {
 		return nil, false
 	}
-	out, err := json.Marshal(messages)
+	out, err := jsonsurgery.MarshalNoEscape(messages)
 	if err != nil {
 		return nil, false
 	}
@@ -323,7 +323,7 @@ func sanitizeOpenAIResponseInput(inputRaw json.RawMessage, req SanitizeInboundRe
 		if !mut {
 			continue
 		}
-		encoded, err := json.Marshal(sanitized)
+		encoded, err := jsonsurgery.MarshalNoEscape(sanitized)
 		if err != nil {
 			continue
 		}
@@ -337,7 +337,7 @@ func sanitizeOpenAIResponseInput(inputRaw json.RawMessage, req SanitizeInboundRe
 	if !changed {
 		return nil, false
 	}
-	out, err := json.Marshal(items)
+	out, err := jsonsurgery.MarshalNoEscape(items)
 	if err != nil {
 		return nil, false
 	}
@@ -388,7 +388,7 @@ func sanitizeToolUseInput(inputRaw json.RawMessage, req SanitizeInboundRequest) 
 	if !changed {
 		return inputRaw, false
 	}
-	out, err := json.Marshal(input)
+	out, err := jsonsurgery.MarshalNoEscape(input)
 	if err != nil {
 		return inputRaw, false
 	}
