@@ -1395,6 +1395,7 @@ func (s *Server) registerLiteProxyRoutes(
 		mux.Handle("POST /api/control/task/checkout", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.CheckoutTask))))
 		mux.Handle("GET /api/control/tasks/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Get))))
 		mux.Handle("POST /api/control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
+		mux.Handle("POST /api/control/tasks/{id}/complete", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Complete))))
 		mux.Handle("GET /api/control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
 		mux.Handle("GET /api/control/vault/items/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.GetForAgent))))
 		// AutovaultScriptDocs is intentionally unauthenticated, matching
