@@ -13,15 +13,17 @@ import (
 // ScopeDriftInboundRewriteRequest is the input to
 // RewriteScopeDriftPlaceholders. The caller supplies the inbound
 // /v1/messages body and identifying context; the rewriter consults the
-// ScopeDriftRegistry for pending substitutions and returns the rewritten
-// body when one or more applied.
+// SubstitutionRegistry for pending substitutions and returns the
+// rewritten body when one or more applied. The wider ScopeDriftRegistry
+// satisfies the narrower SubstitutionRegistry interface, so existing
+// handler wiring continues to work unchanged.
 type ScopeDriftInboundRewriteRequest struct {
 	HTTPRequest    *http.Request
 	Provider       conversation.Provider
 	Body           []byte
 	Agent          *store.Agent
 	ConversationID string
-	ScopeDrifts    ScopeDriftRegistry
+	ScopeDrifts    SubstitutionRegistry
 	Logger         *slog.Logger
 }
 

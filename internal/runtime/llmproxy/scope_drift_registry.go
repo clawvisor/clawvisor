@@ -157,35 +157,19 @@ type PendingSubstitutionKey struct {
 	ToolUseID      string
 }
 
-// ScopeDriftRegistry holds ScopeDrift records for the lifetime of one
-// drift (TTL ~10 min by default). Implementations must be safe for
-// concurrent use.
-type ScopeDriftRegistry interface {
-	// Register creates a new drift record, mints an ID, and stores it.
-	// The returned record is the freshly stored copy (ID and timestamps
-	// populated).
-	Register(ctx context.Context, drift ScopeDrift) (ScopeDrift, error)
-
-	// Get returns a copy of the named drift. Returns ErrDriftNotFound
-	// for unknown or expired IDs.
-	Get(ctx context.Context, driftID string) (ScopeDrift, error)
-
-	// ClaimOption atomically asserts that no option has been chosen yet,
-	// then sets ChosenOption + Outcome to the supplied values. Returns
-	// ErrDriftAlreadyResolved when the drift already has a chosen option.
-	ClaimOption(ctx context.Context, driftID string, option ScopeDriftOption, agentNote string) (ScopeDrift, error)
-
-	// SetOutcome updates the outcome field for an already-claimed drift.
-	// On Succeeded a one-shot pre-clear is minted for the drift's
-	// (agent, fingerprint).
-	SetOutcome(ctx context.Context, driftID string, outcome ScopeDriftOutcome) error
-
-	// LookupPreClear checks whether the given (agent, fingerprint) has a
-	// succeeded drift whose pre-clear is still usable. Returns
-	// (driftID, true) on hit; ("", false) otherwise. The hit is CONSUMED
-	// — a single succeeded option authorizes one re-attempt.
-	LookupPreClear(ctx context.Context, agentID, fingerprint string) (string, bool)
-
+// SubstitutionRegistry is the narrow interface code paths that ONLY
+// need to read/write pending tool_result substitutions depend on
+// (response-leg eval wrappers, inbound rewriter, postproc rollback).
+// It is deliberately scoped tighter than ScopeDriftRegistry so those
+// callers don't gain incidental access to the drift state machine,
+// the pre-clear lifecycle, or anything else that might grow on the
+// scope-drift side.
+//
+// The same in-memory store backs both interfaces today, but the split
+// lets a future deployment swap substitution storage independently
+// (e.g., Redis for cross-process persistence) without disturbing the
+// drift / approval state machine.
+type SubstitutionRegistry interface {
 	// RegisterPendingSubstitution stores everything the inbound rewriter
 	// needs to:
 	//   1. Restore the model's original tool_use byte-for-byte in every
@@ -213,6 +197,39 @@ type ScopeDriftRegistry interface {
 	// write that landed during a request whose response was later
 	// failClosed'd doesn't leave an orphan entry behind. No-op on miss.
 	DeletePendingSubstitution(ctx context.Context, key PendingSubstitutionKey)
+}
+
+// ScopeDriftRegistry holds ScopeDrift records for the lifetime of one
+// drift (TTL ~10 min by default) AND embeds SubstitutionRegistry for
+// the pending tool_result substitution shape the response→inbound
+// round-trip uses. Implementations must be safe for concurrent use.
+type ScopeDriftRegistry interface {
+	SubstitutionRegistry
+
+	// Register creates a new drift record, mints an ID, and stores it.
+	// The returned record is the freshly stored copy (ID and timestamps
+	// populated).
+	Register(ctx context.Context, drift ScopeDrift) (ScopeDrift, error)
+
+	// Get returns a copy of the named drift. Returns ErrDriftNotFound
+	// for unknown or expired IDs.
+	Get(ctx context.Context, driftID string) (ScopeDrift, error)
+
+	// ClaimOption atomically asserts that no option has been chosen yet,
+	// then sets ChosenOption + Outcome to the supplied values. Returns
+	// ErrDriftAlreadyResolved when the drift already has a chosen option.
+	ClaimOption(ctx context.Context, driftID string, option ScopeDriftOption, agentNote string) (ScopeDrift, error)
+
+	// SetOutcome updates the outcome field for an already-claimed drift.
+	// On Succeeded a one-shot pre-clear is minted for the drift's
+	// (agent, fingerprint).
+	SetOutcome(ctx context.Context, driftID string, outcome ScopeDriftOutcome) error
+
+	// LookupPreClear checks whether the given (agent, fingerprint) has a
+	// succeeded drift whose pre-clear is still usable. Returns
+	// (driftID, true) on hit; ("", false) otherwise. The hit is CONSUMED
+	// — a single succeeded option authorizes one re-attempt.
+	LookupPreClear(ctx context.Context, agentID, fingerprint string) (string, bool)
 }
 
 // substitutionTTL is the time-to-live for pending substitution

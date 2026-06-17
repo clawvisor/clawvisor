@@ -77,6 +77,36 @@ func transformRecoverableDenyToPlaceholder(ctx context.Context, v conversation.T
 	return v, &key
 }
 
+// detectScopeDriftSubstitution returns the registry key for a
+// substitution that an inner evaluator (today: scope-drift mint in
+// pipelineeval/scope_drift.go) wrote during this request, so the
+// session rollback path can revert it on failClosed alongside the
+// recoverable-deny migrations this file owns.
+//
+// The detection rule: a Deny verdict whose SubstituteWithToolCall is
+// set, where the registry actually carries a substitution for this
+// (agent, conversation, tool_use_id). Anything else (allowed siblings,
+// approval-prompt substitute, recoverable-deny verdicts whose
+// transformation step already returned a key) returns nil.
+func detectScopeDriftSubstitution(ctx context.Context, v conversation.ToolUseVerdict, tu conversation.ToolUse, cfg llmproxy.PostprocessConfig) *llmproxy.PendingSubstitutionKey {
+	if v.Outcome != conversation.OutcomeDeny || v.SubstituteWithToolCall == nil {
+		return nil
+	}
+	registry := cfg.AuthorizationContext.ScopeDrifts
+	if registry == nil || cfg.AgentContext.AgentID == "" {
+		return nil
+	}
+	key := llmproxy.PendingSubstitutionKey{
+		AgentID:        cfg.AgentContext.AgentID,
+		ConversationID: cfg.AuditContext.ConversationID,
+		ToolUseID:      tu.ID,
+	}
+	if _, ok := registry.LookupPendingSubstitution(ctx, key); !ok {
+		return nil
+	}
+	return &key
+}
+
 // extractRecoverableContinueReason pulls the reason string back out of
 // a ContinueSignal built by conversation.RecoverableContinue. The
 // signal carries the reason as a single JSON-marshaled string in

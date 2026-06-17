@@ -124,6 +124,44 @@ func TestTransformRecoverableDenyToPlaceholderLeavesAutoApproveAlone(t *testing.
 	}
 }
 
+// TestDetectScopeDriftSubstitutionTracksScopeDriftMint locks the
+// centralized rollback: when an inner evaluator (e.g., scope-drift
+// mint in pipelineeval/scope_drift.go) registers a substitution
+// during innerEval and returns a verdict with SubstituteWithToolCall,
+// the postproc eval wrapper's detector picks it up so session
+// rollback covers both recoverable-deny and scope-drift writes.
+func TestDetectScopeDriftSubstitutionTracksScopeDriftMint(t *testing.T) {
+	reg := llmproxy.NewMemoryScopeDriftRegistry(0)
+	tu := conversation.ToolUse{ID: "tu-scope-drift", Name: "Bash", Input: json.RawMessage(`{"command":":"}`)}
+	cfg := llmproxy.PostprocessConfig{
+		AgentContext:         llmproxy.AgentContext{AgentID: "agent-x", AgentUserID: "user-x"},
+		AuditContext:         llmproxy.AuditContext{ConversationID: "conv-x"},
+		AuthorizationContext: llmproxy.AuthorizationContext{ScopeDrifts: reg},
+	}
+
+	// Simulate the scope-drift mint write happening inside innerEval.
+	mintKey := llmproxy.PendingSubstitutionKey{
+		AgentID: cfg.AgentContext.AgentID, ConversationID: cfg.AuditContext.ConversationID, ToolUseID: tu.ID,
+	}
+	if err := reg.RegisterPendingSubstitution(context.Background(), mintKey, llmproxy.PendingSubstitution{
+		MenuText: "scope-drift menu", OriginalToolName: "Write", OriginalToolInput: []byte(`{}`),
+	}); err != nil {
+		t.Fatalf("RegisterPendingSubstitution: %v", err)
+	}
+	verdict := conversation.ToolUseVerdict{
+		Outcome:                conversation.OutcomeDeny,
+		SubstituteWithToolCall: &conversation.SyntheticToolCall{ID: tu.ID, Name: "Bash", Input: map[string]any{"command": ":"}},
+		SuppressSubstituteText: true,
+	}
+	key := detectScopeDriftSubstitution(context.Background(), verdict, tu, cfg)
+	if key == nil {
+		t.Fatal("expected detectScopeDriftSubstitution to return the mint's key")
+	}
+	if *key != mintKey {
+		t.Fatalf("detected key mismatch: got %+v want %+v", *key, mintKey)
+	}
+}
+
 // TestDeletePendingSubstitutionRollback locks the rollback path the
 // transformRecoverableDenyToPlaceholder callers rely on: a registry
 // write that happens during a request whose response is later
