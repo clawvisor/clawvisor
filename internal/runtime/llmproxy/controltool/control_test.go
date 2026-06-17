@@ -308,6 +308,35 @@ func TestSanitizeControlFailureCommandRedactsRawBearerButKeepsPlaceholder(t *tes
 	}
 }
 
+// TestControlNotice_TeachesAgentAboutCompletion covers the COMPLETING
+// guidance: the synthetic /complete URL appears in the EXPAND vs NEW
+// TASK vs COMPLETE decision tree, AND a canonical curl block exists
+// near the end so the agent has an explicit example. The "don't
+// complete a task you intend to resume" framing prevents the thrash
+// failure mode where the agent closes scope between sibling sub-steps.
+func TestControlNotice_TeachesAgentAboutCompletion(t *testing.T) {
+	notice := ControlNotice("http://localhost:25297", []string{"Bash", "Edit", "Read"})
+
+	if !strings.Contains(notice, "EXPAND vs NEW TASK vs COMPLETE") {
+		t.Fatalf("decision tree heading should integrate COMPLETE as a third branch; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "https://clawvisor.local/control/tasks/<id>/complete") {
+		t.Fatalf("notice should embed the synthetic complete URL so the agent has a deterministic shape to emit; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "Do NOT complete a task you intend to resume") {
+		t.Fatalf("notice should warn against premature completion to prevent task thrashing; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "Canonical completion curl") {
+		t.Fatalf("notice should include a canonical completion curl block; got:\n%s", notice)
+	}
+	// Sanity: the rule against `cv-nonce-...` must still be present
+	// — completion shares the rewrite path, and a future careless
+	// edit to the decision tree could drop the surrounding rules.
+	if !strings.Contains(notice, "NEVER write `cv-nonce-...`") {
+		t.Fatalf("notice should still embed the cv-nonce-... prohibition rule; got:\n%s", notice)
+	}
+}
+
 // TestControlMethodForCall_CompletePathDefaultsToPOST is the regression
 // bar for the nonce-target binding on POST /control/tasks/{id}/complete.
 // Without this rule, a bare `curl https://.../complete` (no -X POST, no

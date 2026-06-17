@@ -61,6 +61,7 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 	// active task's id — the URL is a template, not a fixed endpoint.
 	expandURL := tasksURL + "/<id>/expand"
 	expandURLInline := expandURL + "?surface=inline"
+	completeURL := tasksURL + "/<id>/complete"
 	toolExamples := controlToolExamples(availableTools)
 	shellTool := controlShellTool(availableTools)
 	shellToolExample := shellTool
@@ -87,9 +88,10 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"",
 		"SCOPE DRIFT — a control-plane action is needed when the user's follow-up, or what you've discovered while executing, SHIFTS the work outside the active task's scope: tools you didn't declare in `expected_tools`, files or services unrelated to the task's stated purpose, or a genuinely different goal. Adjacent edits that continue the same purpose stay under the existing task — that's iteration, not drift. (E.g., a \"rename Foo to Bar in src/foo.go\" task covers updating doc comments and fixing related typos in the same file with the same Edit tool. \"Now also delete src/helpers.go\" or \"now send a Slack message\" are scope shifts and need a control-plane action.) Don't quietly run drifted work under the old task's authorization, and don't wait for a tool call to be refused — pick the right control-plane action below.",
 		"",
-		"EXPAND vs NEW TASK — when SCOPE DRIFT says you need control-plane action, choose between expanding the active task and creating a new one:",
+		"EXPAND vs NEW TASK vs COMPLETE — when SCOPE DRIFT says you need control-plane action, choose between expanding the active task, completing it, and creating a new one:",
 		"  - Same body of work, just need MORE capability under the existing purpose → POST " + expandURLInline + " (interactive user) or POST " + expandURL + "?wait=true (headless). The active task stays alive; merged scope lands on approve. Session tasks get a refreshed deadline; standing tasks stay standing. (E.g., the active task is \"Refactor src/foo.go\" and now also needs Edit on src/bar.go: expand with the missing tool.)",
-		"  - Genuinely different goal (the active task's stated purpose no longer describes what you're doing) → POST a NEW task. (E.g., active task is \"Refactor src/foo.go\" and the user now says \"also send a Slack summary\": purpose has changed; new task.)",
+		"  - Genuinely different goal AND the prior work is finished → POST " + completeURL + " to close the prior task, THEN POST a NEW task for the new goal. (E.g., the rename task is done and the user now says \"also send a Slack summary\": complete the rename, create a fresh task for the Slack work.) Do NOT complete a task you intend to resume — completion is final and the scope cannot be reopened.",
+		"  - Genuinely different goal AND the prior work is still in flight → just POST a NEW task without completing. (E.g., mid-refactor the user adds a tangent that needs its own approval; the refactor task stays open.) Multiple active tasks are fine; checkout disambiguates them.",
 		"  - Expansion preserves the parent task's lifetime — a standing task stays standing after an approved expansion. The user sees the lifetime in the approval prompt; choose expand on a standing task only when the new scope genuinely belongs to the same recurring/permanent work.",
 		"",
 		"Expand body — mirrors task creation MINUS `purpose`, `lifetime`, `expires_in_seconds` (purpose and lifetime are preserved; the deadline refreshes on approve). `reason` is required and is surfaced verbatim in the approval prompt. The three envelope arrays are INDEPENDENTLY optional — a credentials-only expansion is valid:",
@@ -176,6 +178,10 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
 		"  JSON",
+		"",
+		"Canonical completion curl (no body required; completion is unilateral — the proxy does NOT ask the user):",
+		"  curl -sS -X POST '" + completeURL + "'",
+		"Re-completing an already-completed task returns 409 INVALID_STATE; expired tasks are still completable so chain-fact cleanup runs.",
 	}, "\n")
 }
 
