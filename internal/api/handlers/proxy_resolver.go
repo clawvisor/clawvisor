@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -527,7 +528,8 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for name, values := range resp.Header {
-		switch http.CanonicalHeaderKey(name) {
+		canonical := http.CanonicalHeaderKey(name)
+		switch canonical {
 		case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
 			"Te", "Trailer", "Transfer-Encoding", "Upgrade":
 			continue
@@ -543,6 +545,13 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 			if capped && upstreamContentLengthExceeds(values, streamCap) {
 				continue
 			}
+		}
+		// Strip X-Clawvisor-* from upstream responses for the same
+		// reason as the LLM endpoint: a third-party upstream service
+		// must not be able to smuggle Clawvisor-shaped metadata back
+		// to the harness through this proxy.
+		if strings.HasPrefix(canonical, "X-Clawvisor-") {
+			continue
 		}
 		for _, v := range values {
 			w.Header().Add(name, v)
@@ -804,9 +813,21 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 		dropAll := false
 		for _, v := range values {
 			containsShadow := autovault.HeaderMaybeContainsShadow(v)
-			// Caller-auth detection: cvis_… token without a placeholder.
-			// Strip the entire header in that case.
-			if !containsShadow && looksLikeCallerAuthValue(v) {
+			// Caller-auth detection: drop the entire header whenever any
+			// `cvis_…` substring is present, regardless of whether the
+			// value also carries an autovault placeholder. The earlier
+			// shape (only stripping when !containsShadow) was bypassable:
+			// `HeaderMaybeContainsShadow` is case-insensitive but the
+			// swap regex is case-sensitive, so a value like
+			// `Bearer cvis_REAL_TOKEN AutovaultPad` (mixed case) would
+			// be flagged as "has shadow", skip the strip, find no
+			// matches to swap, and forward the cvis_ verbatim upstream.
+			// Even the all-lowercase variant `Bearer cvis_X autovault_Y`
+			// would forward the cvis_ prefix with a real credential
+			// appended. Strip unconditionally so a leaked agent token
+			// can never reach a third-party upstream regardless of
+			// header shape.
+			if looksLikeCallerAuthValue(v) {
 				dropAll = true
 				break
 			}
@@ -989,16 +1010,19 @@ func upstreamContentLengthExceeds(values []string, cap int64) bool {
 // looksLikeCallerAuthValue reports whether a header value carries the
 // Clawvisor agent caller-auth token. We strip those before forwarding so
 // a third-party upstream never sees the cvis_ token.
+//
+// Pattern: anywhere in the value, a word-boundary `cvis_` followed by at
+// least one alphanumeric/underscore character. Matches the token in any
+// shape that could carry it — bare, after a scheme like `Bearer`, after
+// multiple words, embedded in a composed value, etc. We deliberately
+// don't require the token to look like a production-shaped sha256 hex
+// suffix: that would let mis-shapen tokens (test fixtures, partially
+// truncated values, future format changes) bypass the strip while
+// still being meaningful to a server that happens to honor them.
+var callerAuthValueRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])cvis_[A-Za-z0-9_]+`)
+
 func looksLikeCallerAuthValue(v string) bool {
-	v = strings.TrimSpace(v)
-	if strings.HasPrefix(v, "cvis_") {
-		return true
-	}
-	// Bearer cvis_ / Token cvis_ / etc.
-	if i := strings.IndexByte(v, ' '); i > 0 {
-		return strings.HasPrefix(strings.TrimSpace(v[i+1:]), "cvis_")
-	}
-	return false
+	return callerAuthValueRE.MatchString(v)
 }
 
 // isSelfHost reports whether host is one of this deployment's own
@@ -1057,8 +1081,42 @@ func (h *ProxyResolverHandler) checkSSRF(ctx context.Context, host string) error
 	return nil
 }
 
+// reservedIPv4Ranges enumerates IETF-reserved ranges that shouldn't be
+// reachable as legitimate "external" targets and that Go's `IsPrivate`,
+// `IsLoopback`, `IsLinkLocalUnicast`, `IsLinkLocalMulticast`,
+// `IsUnspecified`, and `IsInterfaceLocalMulticast` collectively don't
+// cover. Added so the SSRF preflight doesn't quietly allow dials to
+// test-net / benchmarking / IETF-protocol / class-E / broadcast space.
+//
+// Sources:
+//   - 100.64.0.0/10  RFC 6598 CGNAT (also explicit below)
+//   - 192.0.0.0/24   RFC 6890 IETF Protocol Assignments
+//   - 192.0.2.0/24   RFC 5737 TEST-NET-1
+//   - 198.18.0.0/15  RFC 2544 Benchmarking
+//   - 198.51.100.0/24 RFC 5737 TEST-NET-2
+//   - 203.0.113.0/24 RFC 5737 TEST-NET-3
+//   - 240.0.0.0/4    RFC 1112 Class E (reserved for future use)
+//   - 255.255.255.255/32 limited broadcast
+var reservedIPv4Ranges = []*net.IPNet{
+	{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)},
+	{IP: net.IPv4(192, 0, 0, 0), Mask: net.CIDRMask(24, 32)},
+	{IP: net.IPv4(192, 0, 2, 0), Mask: net.CIDRMask(24, 32)},
+	{IP: net.IPv4(198, 18, 0, 0), Mask: net.CIDRMask(15, 32)},
+	{IP: net.IPv4(198, 51, 100, 0), Mask: net.CIDRMask(24, 32)},
+	{IP: net.IPv4(203, 0, 113, 0), Mask: net.CIDRMask(24, 32)},
+	{IP: net.IPv4(240, 0, 0, 0), Mask: net.CIDRMask(4, 32)},
+	{IP: net.IPv4(255, 255, 255, 255), Mask: net.CIDRMask(32, 32)},
+}
+
 func isPrivateIP(ip net.IP) bool {
-	cgnat := &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
-	return ip.IsLoopback() || ip.IsPrivate() || cgnat.Contains(ip) || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast()
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast() {
+		return true
+	}
+	for _, r := range reservedIPv4Ranges {
+		if r.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

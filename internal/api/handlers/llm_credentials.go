@@ -52,10 +52,10 @@ func (h *LLMCredentialsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 	provider := normalizeLLMProvider(r.PathValue("provider"))
 	if provider == "" {
-		writeJSONError(w, http.StatusBadRequest, "UNKNOWN_PROVIDER", "provider must be anthropic or openai")
+		writeJSONError(w, http.StatusBadRequest, "UNKNOWN_PROVIDER", "provider must be anthropic, openai, or google")
 		return
 	}
-	serviceID, agentID, errResp := h.resolveServiceID(r, user.ID, provider)
+	serviceID, agentID, errResp := h.resolveServiceID(r, user.ID, provider, true)
 	if errResp != nil {
 		errResp(w)
 		return
@@ -159,10 +159,10 @@ func (h *LLMCredentialsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	provider := normalizeLLMProvider(r.PathValue("provider"))
 	if provider == "" {
-		writeJSONError(w, http.StatusBadRequest, "UNKNOWN_PROVIDER", "provider must be anthropic or openai")
+		writeJSONError(w, http.StatusBadRequest, "UNKNOWN_PROVIDER", "provider must be anthropic, openai, or google")
 		return
 	}
-	serviceID, _, errResp := h.resolveServiceID(r, user.ID, provider)
+	serviceID, _, errResp := h.resolveServiceID(r, user.ID, provider, true)
 	if errResp != nil {
 		errResp(w)
 		return
@@ -206,8 +206,8 @@ func (h *LLMCredentialsHandler) List(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out := make([]entry, 0, 2)
-	for _, p := range []string{"anthropic", "openai"} {
+	out := make([]entry, 0, 3)
+	for _, p := range []string{"anthropic", "openai", "google"} {
 		e := entry{Provider: p}
 		// Differentiate vault.ErrNotFound (legitimately not stored) from
 		// other errors (backend down, permissions, etc.). The latter should
@@ -252,8 +252,46 @@ func (h *LLMCredentialsHandler) List(w http.ResponseWriter, r *http.Request) {
 // vault service ID (after verifying the agent belongs to the calling user) or
 // the plain user-scoped provider service ID. Returns a non-nil error responder
 // when the agent_id is malformed or doesn't belong to the user.
-func (h *LLMCredentialsHandler) resolveServiceID(r *http.Request, userID, provider string) (serviceID, agentID string, errResp func(http.ResponseWriter)) {
+//
+// Mutating calls (Set / Delete) must additionally pass writeContext=true so
+// agent-token authentication is constrained to the caller's own agent_id and
+// cannot rotate the user-scoped or sibling-scoped credentials. The read path
+// (List) can pass writeContext=false to keep its existing scope-visibility
+// semantics.
+func (h *LLMCredentialsHandler) resolveServiceID(r *http.Request, userID, provider string, writeContext bool) (serviceID, agentID string, errResp func(http.ResponseWriter)) {
 	agentID = strings.TrimSpace(r.URL.Query().Get("agent_id"))
+
+	// Detect agent-token auth. When the caller authenticated with a
+	// `cvis_…` token (not a user JWT), the agent is attached to ctx.
+	// User-JWT callers have no agent in ctx and retain the full surface.
+	callerAgent := store.AgentFromContext(r.Context())
+
+	if writeContext && callerAgent != nil {
+		// Agent tokens may only write to their own agent-scoped slot.
+		// Allowing user-scoped writes (or sibling-agent-scoped writes)
+		// would let a single leaked `cvis_…` token rotate the user's
+		// default upstream LLM credential out from under every other
+		// agent on the account — and an attacker-supplied key would
+		// then route all subsequent LLM traffic through their own
+		// provider account, exfiltrating conversation content. The
+		// install skill carries an agent_id and writes agent-scoped
+		// (the forwarder's agent-scoped-first fallback uses it
+		// transparently), so this restriction is invisible to that
+		// flow once the skill passes ?agent_id=<self>.
+		if agentID == "" {
+			return "", "", func(w http.ResponseWriter) {
+				writeJSONError(w, http.StatusForbidden, "AGENT_SCOPE_REQUIRED",
+					"agent tokens may only write to their own agent-scoped credential; pass ?agent_id=<self> on the request (user-scoped writes require a user-JWT session)")
+			}
+		}
+		if agentID != callerAgent.ID {
+			return "", "", func(w http.ResponseWriter) {
+				writeJSONError(w, http.StatusForbidden, "AGENT_SCOPE_FOREIGN",
+					"agent tokens may only write to their own agent_id; cross-agent rotation requires a user-JWT session")
+			}
+		}
+	}
+
 	if agentID == "" {
 		return provider, "", nil
 	}
@@ -297,6 +335,8 @@ func normalizeLLMProvider(p string) string {
 		return "anthropic"
 	case "openai":
 		return "openai"
+	case "google":
+		return "google"
 	}
 	return ""
 }
@@ -329,6 +369,23 @@ func validateLLMAPIKey(provider, key string) (reason string, ok bool) {
 		}
 		if !(strings.HasPrefix(key, "sk-") || strings.HasPrefix(key, "sk-proj-")) {
 			return "openai api_key must start with sk-", false
+		}
+	case "google":
+		// Google AI Studio API keys begin with "AIza" and are typically
+		// 39 chars long. Vertex/service-account JSON is a wholly
+		// different shape (object), but those aren't valid in this
+		// header-injection slot — the forwarder writes the key value
+		// directly into `x-goog-api-key`. Reject obvious mis-pastes
+		// (Anthropic / OpenAI shapes) up-front so an operator can't
+		// silently route their Gemini traffic with the wrong key.
+		if strings.HasPrefix(key, "sk-ant-") {
+			return "this looks like an Anthropic api_key (sk-ant-…); did you mean to set the anthropic provider?", false
+		}
+		if strings.HasPrefix(key, "sk-") {
+			return "this looks like an OpenAI api_key (sk-…); did you mean to set the openai provider?", false
+		}
+		if !strings.HasPrefix(key, "AIza") {
+			return "google api_key must start with AIza (Google AI Studio key)", false
 		}
 	}
 	return "", true
