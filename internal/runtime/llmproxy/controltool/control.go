@@ -1263,6 +1263,14 @@ func controlMethodForCall(path string, body []byte) string {
 	if strings.HasSuffix(path, "/tasks") && len(body) > 0 {
 		return "POST"
 	}
+	// Body-less POSTs need an explicit method hint here, because the
+	// nonce minter consumes this verdict and binds the token to the
+	// (host, method, path) tuple. Bare `curl https://.../complete`
+	// without -X POST would otherwise mint a GET nonce and 403 with
+	// NONCE_TARGET_MISMATCH when the daemon dispatches POST.
+	if strings.HasSuffix(path, "/complete") {
+		return "POST"
+	}
 	return "GET"
 }
 

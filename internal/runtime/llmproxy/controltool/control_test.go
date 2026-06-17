@@ -307,3 +307,34 @@ func TestSanitizeControlFailureCommandRedactsRawBearerButKeepsPlaceholder(t *tes
 		t.Fatalf("autovault placeholder should remain visible to the model, got %q", got)
 	}
 }
+
+// TestControlMethodForCall_CompletePathDefaultsToPOST is the regression
+// bar for the nonce-target binding on POST /control/tasks/{id}/complete.
+// Without this rule, a bare `curl https://.../complete` (no -X POST, no
+// body) would mint a GET nonce, the daemon would dispatch POST, and the
+// middleware would 403 with NONCE_TARGET_MISMATCH. The canonical curl
+// in the control notice does include -X POST so the rule only catches
+// the half-baked-shell case, but it's load-bearing for that case.
+func TestControlMethodForCall_CompletePathDefaultsToPOST(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		body []byte
+		want string
+	}{
+		{"complete with no body defaults POST", "/api/control/tasks/abc/complete", nil, "POST"},
+		{"complete with body defaults POST", "/api/control/tasks/abc/complete", []byte("{}"), "POST"},
+		{"tasks POST is unchanged", "/api/control/tasks", []byte("{}"), "POST"},
+		{"tasks GET is unchanged when no body", "/api/control/tasks", nil, "GET"},
+		{"task get-by-id is GET", "/api/control/tasks/abc", nil, "GET"},
+		{"unrelated path falls back to GET", "/api/control/skill", nil, "GET"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := controlMethodForCall(tc.path, tc.body)
+			if got != tc.want {
+				t.Errorf("controlMethodForCall(%q, body=%v) = %q, want %q", tc.path, tc.body, got, tc.want)
+			}
+		})
+	}
+}
