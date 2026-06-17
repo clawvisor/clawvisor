@@ -2,7 +2,6 @@ package policies
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -248,20 +247,15 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 		// SubstituteText stays populated as the harness fallback if the
 		// continuation round-trip fails.
 		if held.ContinueWithToolResult != "" {
-			payload, marshalErr := json.Marshal(held.ContinueWithToolResult)
-			if marshalErr == nil {
+			if cont := pipeline.NewTextContinuation(held.ContinueWithToolResult); cont != nil {
 				return pipeline.ToolUseVerdict{
 					Outcome:        pipeline.OutcomeDeny,
 					Reason:         dec.Reason,
 					SubstituteWith: held.SubstituteText,
-					Continue: &conversation.ContinueSignal{
-						SyntheticToolResults: []json.RawMessage{payload},
-					},
-					Facts: []pipeline.EvaluationFact{authFact, taskScopeFact},
+					Continue:       cont,
+					Facts:          []pipeline.EvaluationFact{authFact, taskScopeFact},
 				}, nil
 			}
-			// json.Marshal of a string can't fail in practice; fall
-			// through to the standard hold path defensively.
 		}
 		return pipeline.ToolUseVerdict{
 			Outcome:        pipeline.OutcomeHold,

@@ -143,6 +143,29 @@ type SyntheticResponse struct {
 // ContinueSignal aliases conversation.ContinueSignal.
 type ContinueSignal = conversation.ContinueSignal
 
+// NewTextContinuation wraps a plain string as a single synthetic
+// tool_result on a ContinueSignal. The text is JSON-marshaled to the
+// shape ContinuationToolResultContent extracts on the consuming side
+// (a JSON string element in SyntheticToolResults).
+//
+// Lives in the pipeline package so policies can produce continuation
+// signals without inlining encoding/json — keeps the policy layer
+// semantic and contains the wire-format coupling to one place.
+//
+// Returns nil when json.Marshal of a string somehow fails (it can't
+// in practice; callers can treat a nil ContinueSignal as "no
+// continuation" and fall back to SubstituteWith if they were
+// pairing the two).
+func NewTextContinuation(text string) *ContinueSignal {
+	payload, err := json.Marshal(text)
+	if err != nil {
+		return nil
+	}
+	return &ContinueSignal{
+		SyntheticToolResults: []json.RawMessage{payload},
+	}
+}
+
 // ByteSpan is a [start, end) byte range used for span-based redaction.
 // Used by secret_detection to redact spans in the original body without
 // re-parsing.

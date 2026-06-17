@@ -753,6 +753,34 @@ func buildCredentialedTaskScope(
 			}
 			dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, resolved.ServiceID, resolved.ActionID)
 			if !dec.Allowed {
+				// Route the legacy denial through the same scope-drift
+				// menu the modern path uses. The legacy decision shape
+				// doesn't carry runtimedecision.Source, but TaskScope.Check
+				// failure IS by construction a missing/ambiguous task
+				// scope — synthesize a runtimedecision.Decision so the
+				// coordinator's AppliesToSource gate fires. Without
+				// this, deployments still on the legacy fallback would
+				// silently bypass the menu and route every drift through
+				// the legacy user-approval prompt, breaking behavioral
+				// consistency across configurations.
+				syntheticDec := runtimedecision.AuthorizationDecision{
+					Kind:   runtimedecision.VerdictNeedsApproval,
+					Source: runtimedecision.SourceTaskScopeMissing,
+					Reason: dec.Reason,
+				}
+				if mint := drifts.MintForCredentialed(ctx, tu, v, resolved, dec.TaskID, syntheticDec); mint.OK {
+					audit("block", "scope_drift_minted", "drift_id="+mint.DriftID+"; "+dec.Reason+" (legacy)", dec.TaskID)
+					return policies.TaskScopeDecision{
+						Kind:                   policies.TaskScopeDecisionHold,
+						Allowed:                false,
+						Reason:                 "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
+						SubstituteText:         mint.MenuText,
+						ContinueWithToolResult: mint.MenuText,
+						TaskID:                 dec.TaskID,
+					}
+				} else if mint.Err != nil {
+					audit("block", "scope_drift_mint_failed", mint.Err.Error()+" (legacy)", dec.TaskID)
+				}
 				audit("block", "task_scope_denied", dec.Reason, "")
 				return policies.TaskScopeDecision{
 					Kind:   policies.TaskScopeDecisionHold,
@@ -845,12 +873,16 @@ func buildAuthorizationResolver(
 		return authorizationResolverBundle{}
 	}
 	intentVerifier := intentverify.DecisionVerifierFor(auth.IntentVerifier)
+	// One coordinator shared between Hold (mint side) and resolve
+	// (pre-clear consume side) so an approved one-off and its retry
+	// land against the same registry view.
+	drifts := newScopeDriftCoordinator(agent, audit, auth, routing, provider)
 	holdHandler := &authorizationHoldHandler{
 		agent:    agent,
 		audit:    audit,
 		approval: approval,
 		provider: provider,
-		drifts:   newScopeDriftCoordinator(agent, audit, auth, routing, provider),
+		drifts:   drifts,
 	}
 	slideTask := func(ctx context.Context, task *store.Task) {
 		if rewrite.Store == nil || task == nil {
@@ -894,8 +926,26 @@ func buildAuthorizationResolver(
 	// before the orchestrator starts iterating.
 	cache := make(map[string]runtimedecision.AuthorizationOutcome)
 
-	resolve := func(_ context.Context, tu conversation.ToolUse, _ inspector.Verdict) *policies.AuthorizationInputs {
+	resolve := func(ctx context.Context, tu conversation.ToolUse, v inspector.Verdict) *policies.AuthorizationInputs {
 		inputs := planFor(tu)
+		// Scope-drift pre-clear (trigger-miss path): if the agent is
+		// retrying a tool_use after a user-approved one-off (or any
+		// approval that landed a pre-clear), let it through once
+		// without re-running EvaluateAuthorization. Without this the
+		// authorization engine sees the same task_scope_missing source
+		// and mints another drift, looping the agent through the menu.
+		// We precompute a VerdictAllow so AuthorizationPolicy emits its
+		// normal allow audit; the Reason carries the drift_id for
+		// operator correlation.
+		if driftID, hit := drifts.ConsumePreClearForTriggerMiss(ctx, tu, v); hit {
+			allow := runtimedecision.AuthorizationDecision{
+				Kind:   runtimedecision.VerdictAllow,
+				Source: runtimedecision.SourceTaskScope,
+				Reason: "scope-drift pre-clear consumed (drift_id=" + driftID + ")",
+			}
+			inputs.Precomputed = &allow
+			return inputs
+		}
 		if out, ok := cache[tu.ID]; ok {
 			if out.Err != nil {
 				inputs.PrecomputedErr = out.Err

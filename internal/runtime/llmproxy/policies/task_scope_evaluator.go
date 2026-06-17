@@ -2,7 +2,6 @@ package policies
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
@@ -155,23 +154,16 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 	// orchestrator's Continue signal short-circuits coalescing — the
 	// pipeline re-enters with the menu as the model's next user-role
 	// input. SubstituteText still populates as the harness fallback if
-	// the continuation round-trip fails.
+	// the continuation round-trip fails. The pipeline owns the wire
+	// format; we just hand it the text.
 	if dec.ContinueWithToolResult != "" {
-		payload, err := json.Marshal(dec.ContinueWithToolResult)
-		if err != nil {
-			// json.Marshal of a string cannot fail in practice; fall
-			// back to a plain hold rather than a malformed verdict.
-			payload = nil
-		}
-		if payload != nil {
+		if cont := pipeline.NewTextContinuation(dec.ContinueWithToolResult); cont != nil {
 			return pipeline.ToolUseVerdict{
 				Outcome:        pipeline.OutcomeDeny,
 				Reason:         dec.Reason,
 				SubstituteWith: dec.SubstituteText,
-				Continue: &conversation.ContinueSignal{
-					SyntheticToolResults: []json.RawMessage{payload},
-				},
-				Facts: []pipeline.EvaluationFact{fact},
+				Continue:       cont,
+				Facts:          []pipeline.EvaluationFact{fact},
 			}, nil
 		}
 	}

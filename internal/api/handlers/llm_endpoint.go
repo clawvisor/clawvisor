@@ -622,6 +622,32 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				if !ok || pending == nil {
 					return policies.InlineTaskApprovalResult{}, fmt.Errorf("inline task approval pending cache not configured")
 				}
+				// Try the scope-drift one-off rewriter first. It
+				// dispatches on StageAwaitingScopeDriftOneOff via
+				// resolveApprovalReplyAction; for other stages it
+				// returns Rewritten=false, falling through to the
+				// inline-task / expansion rewriter below. The two
+				// flows are mutually exclusive — a single hold is at
+				// exactly one Stage — so chaining them is safe.
+				if driftReply, driftErr := llmproxy.RewriteScopeDriftOneOffApprovalReply(ctx, llmproxy.ScopeDriftReplyRewriteRequest{
+					HTTPRequest:     req.HTTPRequest,
+					Provider:        req.Provider,
+					Body:            req.Body,
+					Agent:           req.Agent,
+					ConversationID:  req.ConversationID,
+					PendingApproval: pending,
+					ScopeDrifts:     h.ScopeDrifts,
+					Logger:          h.Logger,
+				}); driftErr != nil {
+					return policies.InlineTaskApprovalResult{}, driftErr
+				} else if driftReply.Rewritten {
+					return policies.InlineTaskApprovalResult{
+						Body:      driftReply.Body,
+						Rewritten: true,
+						Outcome:   driftReply.Outcome,
+						Reason:    driftReply.Reason,
+					}, nil
+				}
 				rewrite, err := llmproxy.RewriteInlineTaskApprovalReply(ctx, llmproxy.InlineApprovalRewriteRequest{
 					HTTPRequest:     req.HTTPRequest,
 					Provider:        req.Provider,

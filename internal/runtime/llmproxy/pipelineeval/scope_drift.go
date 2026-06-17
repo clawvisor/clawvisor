@@ -151,14 +151,17 @@ func (c *scopeDriftCoordinator) MintForTriggerMiss(
 }
 
 // ConsumePreClear looks up a one-shot pre-clear for the agent's retry
-// of an originally-blocked tool_use. The lookup is keyed on the
-// fingerprint of (agent, conversation, service, action, host, method,
-// path, input bytes) — see ScopeDrift.Fingerprint. A hit CONSUMES the
-// entry; a sibling call that doesn't match has to mint a fresh drift.
+// of a CREDENTIALED originally-blocked tool_use. The lookup is keyed
+// on the fingerprint of (agent, conversation, service, action, host,
+// method, path, input bytes) — see ScopeDrift.Fingerprint. A hit
+// CONSUMES the entry; a sibling call that doesn't match has to mint a
+// fresh drift.
 //
 // Returns (driftID, true) on hit; ("", false) when the registry is
 // unwired, the catalog can't resolve the call's (service, action), or
-// no pre-clear exists.
+// no pre-clear exists. Use ConsumePreClearForTriggerMiss for the
+// non-credentialed (Bash/Edit/Read) path — that path has no resolved
+// (service, action) at retry time and would always miss this lookup.
 func (c *scopeDriftCoordinator) ConsumePreClear(
 	ctx context.Context,
 	tu conversation.ToolUse,
@@ -177,6 +180,38 @@ func (c *scopeDriftCoordinator) ConsumePreClear(
 		ToolUse:        tu,
 		Service:        resolved.ServiceID,
 		Action:         resolved.ActionID,
+		Host:           v.Host,
+		Method:         v.Method,
+		Path:           v.Path,
+	}.Fingerprint()
+	return c.registry.LookupPreClear(ctx, c.agent.AgentID, fp)
+}
+
+// ConsumePreClearForTriggerMiss looks up a one-shot pre-clear for the
+// non-credentialed retry path (Bash/Edit/Read). The fingerprint shape
+// matches MintForTriggerMiss exactly: no Service/Action (the inspector
+// never assigned any), just (agent, conversation, host, method, path,
+// input bytes).
+//
+// Without this lookup the trigger-miss approval lifecycle leaks: an
+// approved one-off mints a Succeeded pre-clear under the trigger-miss
+// fingerprint, but the next call hits AuthorizationPolicy →
+// VerdictNeedsApproval → mints a FRESH drift, and the agent loops.
+// Expand and new_task approvals on this path also benefit when the
+// rebuilt task scope doesn't yet cover the call shape — though the
+// usual recovery is via EvaluateAuthorization seeing the new task.
+func (c *scopeDriftCoordinator) ConsumePreClearForTriggerMiss(
+	ctx context.Context,
+	tu conversation.ToolUse,
+	v inspector.Verdict,
+) (string, bool) {
+	if c == nil || c.registry == nil {
+		return "", false
+	}
+	fp := llmproxy.ScopeDrift{
+		AgentID:        c.agent.AgentID,
+		ConversationID: c.audit.ConversationID,
+		ToolUse:        tu,
 		Host:           v.Host,
 		Method:         v.Method,
 		Path:           v.Path,

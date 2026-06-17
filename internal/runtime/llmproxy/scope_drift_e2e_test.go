@@ -215,6 +215,88 @@ func TestScopeDriftE2E_OneOffApprove(t *testing.T) {
 	}
 }
 
+// ── Trigger-miss pre-clear consumption (cubic violation #2 regression) ─────────
+
+// TestScopeDriftE2E_TriggerMissPreClearConsumed pins the lifecycle for
+// non-credentialed (Bash/Edit/Read) drifts: an approved one-off mints
+// a pre-clear under the trigger-miss fingerprint (no service/action),
+// and the agent's retry must consume it via
+// ConsumePreClearForTriggerMiss. Without this hook the retry would
+// hit AuthorizationPolicy → VerdictNeedsApproval → mint another drift
+// → infinite menu loop.
+func TestScopeDriftE2E_TriggerMissPreClearConsumed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	reg := NewMemoryScopeDriftRegistry(0)
+
+	// Mint a trigger-miss-shaped drift directly: no Service / Action,
+	// just host/method/path/input. Mirrors what
+	// scopeDriftCoordinator.MintForTriggerMiss writes at block time.
+	tu := conversation.ToolUse{
+		ID:    "tu-bash",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command":"rm -rf /tmp/scratch"}`),
+	}
+	stored, err := reg.Register(ctx, ScopeDrift{
+		UserID:         driftTestUserID,
+		AgentID:        driftTestAgentID,
+		ConversationID: driftTestConvID,
+		Provider:       conversation.ProviderAnthropic,
+		ToolUse:        tu,
+		Host:           "",
+		Method:         "",
+		Path:           "",
+		Source:         ScopeDriftSourceTaskScope,
+		ReasonText:     "no covering task",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// User approves the one-off → SetOutcome(Succeeded) mints the
+	// pre-clear keyed by the SAME (no-service-no-action) fingerprint
+	// that ConsumePreClearForTriggerMiss will reconstruct.
+	if err := reg.SetOutcome(ctx, stored.ID, ScopeDriftOutcomeSucceeded); err != nil {
+		t.Fatalf("SetOutcome: %v", err)
+	}
+
+	// The trigger-miss fingerprint must match what
+	// ConsumePreClearForTriggerMiss reconstructs from the same tu +
+	// inspector verdict shape (no service, no action — the inspector
+	// classifies Bash as trigger_miss).
+	fp := ScopeDrift{
+		AgentID:        driftTestAgentID,
+		ConversationID: driftTestConvID,
+		ToolUse:        tu,
+	}.Fingerprint()
+	driftID, hit := reg.LookupPreClear(ctx, driftTestAgentID, fp)
+	if !hit {
+		t.Fatal("trigger-miss pre-clear lookup must hit after Succeeded outcome")
+	}
+	if driftID != stored.ID {
+		t.Fatalf("pre-clear driftID = %q, want %q", driftID, stored.ID)
+	}
+	// One-shot — second consume must miss.
+	if _, hit := reg.LookupPreClear(ctx, driftTestAgentID, fp); hit {
+		t.Fatal("trigger-miss pre-clear must be one-shot")
+	}
+
+	// Critical: the CREDENTIALED fingerprint MUST NOT collide with the
+	// trigger-miss one. A retry that the inspector reclassifies as
+	// credentialed shouldn't accidentally consume a trigger-miss
+	// pre-clear and vice versa.
+	credFp := ScopeDrift{
+		AgentID:        driftTestAgentID,
+		ConversationID: driftTestConvID,
+		ToolUse:        tu,
+		Service:        "shell",
+		Action:         "run_command",
+	}.Fingerprint()
+	if fp == credFp {
+		t.Fatal("trigger-miss and credentialed fingerprints must differ")
+	}
+}
+
 // ── (c) One-off: deny path ──────────────────────────────────────────────────────
 
 // TestScopeDriftE2E_OneOffDeny walks the same flow as Approve but with
