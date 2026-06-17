@@ -44,6 +44,9 @@ type TaskRiskAssessRequest struct {
 	Purpose                string
 	AgentName              string
 	UserID                 string
+	// OrgID identifies the org context. Forwarded to taskrisk.AssessRequest
+	// so the upstream assessor can resolve per-org prompt overrides.
+	OrgID                  string
 	ExpectedTools          []runtimetasks.ExpectedTool
 	ExpectedEgress         []runtimetasks.ExpectedEgress
 	RequiredCredentials    []runtimetasks.RequiredCredential

@@ -855,6 +855,7 @@ func assessInlineTaskRisk(
 		Purpose:                parsed.Purpose,
 		AgentName:              cfg.AgentName,
 		UserID:                 cfg.AgentUserID,
+		OrgID:                  cfg.AgentOrgID,
 		ExpectedTools:          env.ExpectedTools,
 		ExpectedEgress:         env.ExpectedEgress,
 		RequiredCredentials:    env.RequiredCredentials,

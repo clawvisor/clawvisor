@@ -4521,6 +4521,7 @@ func (b *liteProxyTaskRiskBridge) AssessEnvelope(ctx context.Context, req llmpro
 		Purpose:                req.Purpose,
 		AgentName:              req.AgentName,
 		UserID:                 req.UserID,
+		OrgID:                  req.OrgID,
 		ExpectedTools:          req.ExpectedTools,
 		ExpectedEgress:         req.ExpectedEgress,
 		RequiredCredentials:    req.RequiredCredentials,
