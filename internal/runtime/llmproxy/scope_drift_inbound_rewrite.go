@@ -169,32 +169,42 @@ func rewriteAnthropicScopeDriftPlaceholders(ctx context.Context, req ScopeDriftI
 	}
 	appliedDriftIDs := make([]string, 0, len(hits))
 	for _, hit := range hits {
-		newMessage, ok := substituteAnthropicToolResultContent(messages[hit.UserMsgIdx], hit.ToolUseID, hit.Substitution.MenuText)
-		if !ok {
-			logger.WarnContext(ctx, "scope-drift inbound rewrite: failed to substitute tool_result content",
-				"tool_use_id", hit.ToolUseID,
-				"drift_id", hit.Substitution.DriftID,
-			)
-			continue
-		}
-		messages[hit.UserMsgIdx] = newMessage
-
-		restored := false
+		// Restore the assistant turn FIRST so a failure here doesn't
+		// leave the user turn carrying the menu while the assistant
+		// turn still has the placeholder — that asymmetry leaves the
+		// transcript permanently inconsistent (the model sees a
+		// placeholder Bash followed by the menu, with nothing tying
+		// them to its actual call). Skip the whole hit on restore
+		// failure; the substitution stays in the registry for the
+		// next inbound retry.
+		restoredIdx := -1
+		var restoredMessage json.RawMessage
 		for ai := hit.UserMsgIdx - 1; ai >= 0; ai-- {
 			candidate, ok := restoreAnthropicAssistantToolUse(messages[ai], hit.ToolUseID, hit.Substitution.OriginalToolName, hit.Substitution.OriginalToolInput)
 			if !ok {
 				continue
 			}
-			messages[ai] = candidate
-			restored = true
+			restoredIdx = ai
+			restoredMessage = candidate
 			break
 		}
-		if !restored {
-			logger.WarnContext(ctx, "scope-drift inbound rewrite: could not locate placeholder assistant turn for restoration",
+		if restoredIdx < 0 {
+			logger.WarnContext(ctx, "scope-drift inbound rewrite: could not locate placeholder assistant turn for restoration; skipping substitution",
 				"tool_use_id", hit.ToolUseID,
 				"drift_id", hit.Substitution.DriftID,
 			)
+			continue
 		}
+		newUserMessage, ok := substituteAnthropicToolResultContent(messages[hit.UserMsgIdx], hit.ToolUseID, hit.Substitution.MenuText)
+		if !ok {
+			logger.WarnContext(ctx, "scope-drift inbound rewrite: failed to substitute tool_result content; skipping restoration",
+				"tool_use_id", hit.ToolUseID,
+				"drift_id", hit.Substitution.DriftID,
+			)
+			continue
+		}
+		messages[restoredIdx] = restoredMessage
+		messages[hit.UserMsgIdx] = newUserMessage
 		appliedDriftIDs = append(appliedDriftIDs, hit.Substitution.DriftID)
 	}
 
@@ -319,31 +329,38 @@ func rewriteOpenAIResponsesScopeDriftPlaceholders(ctx context.Context, req Scope
 		if !found {
 			continue
 		}
-		newItem, ok := substituteOpenAIResponsesFunctionCallOutput(item, subst.MenuText)
-		if !ok {
-			logger.WarnContext(ctx, "scope-drift inbound rewrite: failed to substitute function_call_output",
-				"call_id", probe.CallID,
-				"drift_id", subst.DriftID,
-			)
-			continue
-		}
-		items[i] = newItem
-		restored := false
+		// Restore the prior function_call FIRST so a failure here
+		// doesn't leave the function_call_output carrying the menu
+		// while the assistant call remains the placeholder — see
+		// rewriteAnthropicScopeDriftPlaceholders for the rationale.
+		restoredIdx := -1
+		var restoredItem json.RawMessage
 		for ai := i - 1; ai >= 0; ai-- {
 			candidate, ok := restoreOpenAIResponsesFunctionCall(items[ai], probe.CallID, subst.OriginalToolName, subst.OriginalToolInput)
 			if !ok {
 				continue
 			}
-			items[ai] = candidate
-			restored = true
+			restoredIdx = ai
+			restoredItem = candidate
 			break
 		}
-		if !restored {
-			logger.WarnContext(ctx, "scope-drift inbound rewrite: could not locate placeholder function_call for restoration",
+		if restoredIdx < 0 {
+			logger.WarnContext(ctx, "scope-drift inbound rewrite: could not locate placeholder function_call for restoration; skipping substitution",
 				"call_id", probe.CallID,
 				"drift_id", subst.DriftID,
 			)
+			continue
 		}
+		newItem, ok := substituteOpenAIResponsesFunctionCallOutput(item, subst.MenuText)
+		if !ok {
+			logger.WarnContext(ctx, "scope-drift inbound rewrite: failed to substitute function_call_output; skipping restoration",
+				"call_id", probe.CallID,
+				"drift_id", subst.DriftID,
+			)
+			continue
+		}
+		items[restoredIdx] = restoredItem
+		items[i] = newItem
 		appliedDriftIDs = append(appliedDriftIDs, subst.DriftID)
 		rewrittenAny = true
 	}
@@ -461,31 +478,36 @@ func rewriteOpenAIChatScopeDriftPlaceholders(ctx context.Context, req ScopeDrift
 		if !found {
 			continue
 		}
-		newMsg, ok := substituteOpenAIChatToolMessage(msg, subst.MenuText)
-		if !ok {
-			logger.WarnContext(ctx, "scope-drift inbound rewrite: failed to substitute chat tool message",
-				"tool_call_id", probe.ToolCallID,
-				"drift_id", subst.DriftID,
-			)
-			continue
-		}
-		messages[i] = newMsg
-		restored := false
+		// Restore the prior assistant tool_call FIRST — see
+		// rewriteAnthropicScopeDriftPlaceholders for the rationale.
+		restoredIdx := -1
+		var restoredMsg json.RawMessage
 		for ai := i - 1; ai >= 0; ai-- {
 			candidate, ok := restoreOpenAIChatAssistantToolCall(messages[ai], probe.ToolCallID, subst.OriginalToolName, subst.OriginalToolInput)
 			if !ok {
 				continue
 			}
-			messages[ai] = candidate
-			restored = true
+			restoredIdx = ai
+			restoredMsg = candidate
 			break
 		}
-		if !restored {
-			logger.WarnContext(ctx, "scope-drift inbound rewrite: could not locate placeholder assistant tool_call for restoration",
+		if restoredIdx < 0 {
+			logger.WarnContext(ctx, "scope-drift inbound rewrite: could not locate placeholder assistant tool_call for restoration; skipping substitution",
 				"tool_call_id", probe.ToolCallID,
 				"drift_id", subst.DriftID,
 			)
+			continue
 		}
+		newMsg, ok := substituteOpenAIChatToolMessage(msg, subst.MenuText)
+		if !ok {
+			logger.WarnContext(ctx, "scope-drift inbound rewrite: failed to substitute chat tool message; skipping restoration",
+				"tool_call_id", probe.ToolCallID,
+				"drift_id", subst.DriftID,
+			)
+			continue
+		}
+		messages[restoredIdx] = restoredMsg
+		messages[i] = newMsg
 		appliedDriftIDs = append(appliedDriftIDs, subst.DriftID)
 		rewrittenAny = true
 	}
