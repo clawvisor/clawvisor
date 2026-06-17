@@ -1046,6 +1046,34 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Scope-drift inbound rewrite: when the previous assistant turn
+	// substituted a blocked tool_use with the Bash placeholder, the
+	// inbound rewriter walks back the substitution: restore the
+	// original tool_use byte-for-byte in the assistant turn AND replace
+	// the harness-supplied tool_result content with the rendered menu.
+	// The model now sees its own original call answered by the helpful
+	// menu — faithful history, helpful result — while the harness only
+	// ever ran a no-op.
+	if h.ScopeDrifts != nil {
+		driftRewrite, driftErr := llmproxy.RewriteScopeDriftPlaceholders(r.Context(), llmproxy.ScopeDriftInboundRewriteRequest{
+			HTTPRequest:    r,
+			Provider:       provider,
+			Body:           body,
+			Agent:          agent,
+			ConversationID: conversationID,
+			ScopeDrifts:    h.ScopeDrifts,
+			Logger:         h.Logger,
+		})
+		if driftErr != nil {
+			h.Logger.WarnContext(r.Context(), "lite-proxy scope-drift inbound rewrite failed",
+				"request_id", requestID, "agent_id", agent.ID, "err", driftErr.Error())
+		} else if driftRewrite.Rewritten {
+			body = driftRewrite.Body
+			reqSummary = liteProxyRequestDebugSummary(provider, body)
+			auditParams["scope_drift_inbound_applied"] = driftRewrite.AppliedDriftIDs
+		}
+	}
+
 	upstreamURL := ""
 	if h.Forwarder != nil {
 		upstreamPath := llmproxy.ProviderPath(provider, r.URL.Path)

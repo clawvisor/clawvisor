@@ -640,12 +640,12 @@ func buildCredentialedTaskScope(
 			if mint := drifts.MintForCredentialed(ctx, tu, plan.Verdict, plan.Resolved, matchedTaskID, dec); mint.OK {
 				audit("block", "scope_drift_minted", "drift_id="+mint.DriftID+"; "+dec.Reason, matchedTaskID)
 				return policies.TaskScopeDecision{
-					Kind:                   policies.TaskScopeDecisionHold,
-					Allowed:                false,
-					Reason:                 "Clawvisor: no active task scope covers " + plan.Resolved.ServiceID + "." + plan.Resolved.ActionID + " — " + dec.Reason,
-					SubstituteText:         mint.MenuText,
-					ContinueWithToolResult: mint.MenuText,
-					TaskID:                 matchedTaskID,
+					Kind:               policies.TaskScopeDecisionHold,
+					Allowed:            false,
+					Reason:             "Clawvisor: no active task scope covers " + plan.Resolved.ServiceID + "." + plan.Resolved.ActionID + " — " + dec.Reason,
+					SubstituteText:     mint.MenuText,
+					SubstituteToolCall: mint.Sentinel,
+					TaskID:             matchedTaskID,
 				}
 			} else if mint.Err != nil {
 				// Registry write failed — fall through to the legacy
@@ -774,12 +774,12 @@ func buildCredentialedTaskScope(
 					if mint := drifts.MintForCredentialed(ctx, tu, v, resolved, dec.TaskID, syntheticDec); mint.OK {
 						audit("block", "scope_drift_minted", "drift_id="+mint.DriftID+"; "+dec.Reason+" (legacy)", dec.TaskID)
 						return policies.TaskScopeDecision{
-							Kind:                   policies.TaskScopeDecisionHold,
-							Allowed:                false,
-							Reason:                 "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
-							SubstituteText:         mint.MenuText,
-							ContinueWithToolResult: mint.MenuText,
-							TaskID:                 dec.TaskID,
+							Kind:               policies.TaskScopeDecisionHold,
+							Allowed:            false,
+							Reason:             "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
+							SubstituteText:     mint.MenuText,
+							SubstituteToolCall: mint.Sentinel,
+							TaskID:             dec.TaskID,
 						}
 					} else if mint.Err != nil {
 						audit("block", "scope_drift_mint_failed", mint.Err.Error()+" (legacy)", dec.TaskID)
@@ -1060,9 +1060,10 @@ func runIntentVerify(ctx context.Context, verifier llmproxy.IntentVerifier, dec 
 
 // authorizationHoldHandler implements policies.AuthorizationHoldHandler
 // for AuthorizationPolicy's approval flow. On a scope-drift source
-// the coordinator mints a drift and the handler returns
-// ContinueWithToolResult so the policy surfaces the agent-facing menu
-// instead of parking a user hold. Otherwise commits the hold via
+// the coordinator mints a drift + registers a pending substitution and
+// the handler returns SubstituteToolCall so the policy emits a Bash
+// placeholder (the inbound rewriter splices the menu into the next
+// /v1/messages tool_result). Otherwise commits the hold via
 // PendingApprovals.Hold, renders the approval prompt, and cleans up
 // any evicted inline task.
 type authorizationHoldHandler struct {
@@ -1083,8 +1084,8 @@ func (h *authorizationHoldHandler) Hold(ctx context.Context, req policies.Author
 	// than emit a menu with no usable drift_id.
 	if mint := h.drifts.MintForTriggerMiss(ctx, req.ToolUse, req.InspectorVerdict, req.Decision); mint.OK {
 		return policies.AuthorizationHoldResult{
-			ContinueWithToolResult: mint.MenuText,
-			SubstituteText:         mint.MenuText,
+			SubstituteToolCall: mint.Sentinel,
+			SubstituteText:     mint.MenuText,
 		}, nil
 	}
 	if h.approval.PendingApprovals == nil {

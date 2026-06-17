@@ -98,6 +98,28 @@ type openAIResponseContent struct {
 	Text string `json:"text,omitempty"`
 }
 
+// buildOpenAIResponsesSubstituteFunctionCall renders a function_call
+// output item carrying the SyntheticToolCall's name + JSON-marshaled
+// input, keyed by the ORIGINAL tool_use_id so the inbound rewriter on
+// the next /v1/responses can find the matching function_call_output
+// for restoration. Returns the item, the JSON-marshaled args (for the
+// audit fragment), and ok=false if the input fails to marshal.
+func buildOpenAIResponsesSubstituteFunctionCall(originalToolUseID string, call *SyntheticToolCall) (openAIResponseOutputItem, json.RawMessage, bool) {
+	args, ok := marshalSyntheticToolCallInput(call)
+	if !ok {
+		return openAIResponseOutputItem{}, nil, false
+	}
+	item := openAIResponseOutputItem{
+		ID:        "fc_" + originalToolUseID,
+		Type:      "function_call",
+		CallID:    originalToolUseID,
+		Name:      call.Name,
+		Arguments: string(args),
+		Status:    "completed",
+	}
+	return item, args, true
+}
+
 func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseEvaluator) (RewriteResult, error) {
 	var resp openAIResponsesJSON
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -138,6 +160,19 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 			finalArgs := tu.Input
 			if !verdict.Allowed {
 				anyBlocked = true
+				// SubstituteWithToolCall (Anthropic-parity scope-drift
+				// path): emit a function_call output item carrying the
+				// supplied tool name + input under the original tool
+				// id. Inbound rewriter on the next /v1/responses
+				// restores the original call and substitutes the
+				// function_call_output content.
+				if call := verdict.SubstituteWithToolCall; call != nil && call.Name != "" {
+					if substItem, substArgs, ok := buildOpenAIResponsesSubstituteFunctionCall(tu.ID, call); ok {
+						newOutput = append(newOutput, substItem)
+						frags = append(frags, assistantFragment{IsTool: true, ToolName: call.Name, ToolArgs: substArgs})
+						continue
+					}
+				}
 				txt := verdict.SubstituteWith
 				if txt == "" && !verdict.SuppressSubstituteText {
 					reason := verdict.Reason
@@ -390,6 +425,26 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 				fragArgs := tu.Input
 				if !verdict.Allowed {
 					anyBlocked = true
+					// SubstituteWithToolCall (scope-drift): emit a
+					// function_call item carrying the placeholder
+					// name + input under the original call_id. The
+					// inbound rewriter restores the original on the
+					// next /v1/responses and substitutes the
+					// function_call_output content with the menu.
+					if call := verdict.SubstituteWithToolCall; call != nil && call.Name != "" {
+						if substArgs, ok := marshalSyntheticToolCallInput(call); ok {
+							orderedItems = append(orderedItems, orderedResponsesItem{
+								outputIndex: pc.outputIndex,
+								itemID:      pc.itemID,
+								callID:      pc.callID,
+								name:        call.Name,
+								arguments:   string(substArgs),
+							})
+							frags = append(frags, assistantFragment{IsTool: true, ToolName: call.Name, ToolArgs: substArgs})
+							delete(pending, raw.Item.ID)
+							continue
+						}
+					}
 					txt := verdict.SubstituteWith
 					if txt == "" && !verdict.SuppressSubstituteText {
 						reason := verdict.Reason
@@ -775,6 +830,24 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 			if !verdict.Allowed {
 				anyBlocked = true
 				choiceBlocked = true
+				// SubstituteWithToolCall (scope-drift): emit the
+				// placeholder tool_call carrying the original call.ID
+				// so the inbound rewriter can later restore the original
+				// (name, arguments) and substitute the matching `tool`
+				// message content with the menu.
+				if scall := verdict.SubstituteWithToolCall; scall != nil && scall.Name != "" {
+					if substArgs, ok := marshalSyntheticToolCallInput(scall); ok {
+						call.Function.Name = scall.Name
+						call.Function.Arguments = string(substArgs)
+						choice.Message.ToolCalls[i] = call
+						finalArgs = substArgs
+						choiceRewritten = true
+						anyRewritten = true
+						allowedToolCalls = append(allowedToolCalls, call)
+						frags = append(frags, assistantFragment{IsTool: true, ToolName: scall.Name, ToolArgs: substArgs})
+						continue
+					}
+				}
 				txt := verdict.SubstituteWith
 				if txt == "" && !verdict.SuppressSubstituteText {
 					reason := verdict.Reason

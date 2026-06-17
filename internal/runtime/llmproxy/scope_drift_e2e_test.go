@@ -749,6 +749,276 @@ func TestScopeDriftE2E_NewTaskFullStateMachine(t *testing.T) {
 // fakeInlineTaskCreator and mustJSON are defined in sibling test files
 // (inline_task_release_test.go and secret_detection_test.go).
 
+// ── Inbound rewrite: placeholder → original tool_use + menu tool_result ─────
+
+// TestScopeDriftE2E_InboundRewritesPlaceholder drives the full
+// mutate→inbound-restore round-trip on a representative Anthropic
+// /v1/messages body:
+//
+//  1. Seed the registry with a pending substitution (mirroring what
+//     the mint path writes alongside the drift).
+//  2. Build an inbound /v1/messages body whose history reflects what
+//     the harness sends after running the placeholder: an assistant
+//     turn carrying the Bash placeholder tool_use with the original
+//     tool_use_id, paired with a user turn whose tool_result names
+//     the same tool_use_id.
+//  3. Run RewriteScopeDriftPlaceholders.
+//  4. Assert the assistant turn was restored byte-for-byte (the
+//     model's original Bash command + input survives) AND the
+//     user-turn tool_result content is the menu text.
+//
+// Also asserts the substitution is consumed one-shot — a second
+// RewriteScopeDriftPlaceholders is a no-op.
+func TestScopeDriftE2E_InboundRewritesPlaceholder(t *testing.T) {
+	t.Parallel()
+	reg := NewMemoryScopeDriftRegistry(time.Minute)
+	const (
+		toolUseID        = "tu-blocked-inbound"
+		originalToolName = "Bash"
+		menuText         = "Clawvisor: github.post_issue is outside your current task scope.\n  Drift ID: drift-fake-1\n(menu body…)"
+	)
+	originalInput := json.RawMessage(`{"command":"curl -X POST https://api.github.com/repos/o/r/issues -d '{\"title\":\"hi\"}'"}`)
+	if err := reg.RegisterPendingSubstitution(context.Background(),
+		PendingSubstitutionKey{
+			AgentID:        driftTestAgentID,
+			ConversationID: driftTestConvID,
+			ToolUseID:      toolUseID,
+		},
+		PendingSubstitution{
+			DriftID:           "drift-fake-1",
+			MenuText:          menuText,
+			OriginalToolName:  originalToolName,
+			OriginalToolInput: append([]byte(nil), originalInput...),
+		},
+	); err != nil {
+		t.Fatalf("RegisterPendingSubstitution: %v", err)
+	}
+
+	placeholderCmd := BuildScopeDriftPlaceholderCommand(originalToolName, "drift-fake-1")
+	body := []byte(`{"messages":[` +
+		`{"role":"user","content":"open an issue"},` +
+		`{"role":"assistant","content":[{"type":"tool_use","id":"` + toolUseID + `","name":"Bash","input":{"command":` + string(mustJSON(placeholderCmd)) + `}}]},` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + toolUseID + `","content":"command exited 0"}]}` +
+		`]}`)
+
+	agent := &store.Agent{ID: driftTestAgentID, UserID: driftTestUserID}
+	result, err := RewriteScopeDriftPlaceholders(context.Background(), ScopeDriftInboundRewriteRequest{
+		HTTPRequest:    httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:       conversation.ProviderAnthropic,
+		Body:           body,
+		Agent:          agent,
+		ConversationID: driftTestConvID,
+		ScopeDrifts:    reg,
+		Logger:         slog.Default(),
+	})
+	if err != nil {
+		t.Fatalf("RewriteScopeDriftPlaceholders: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected Rewritten=true")
+	}
+	if want := []string{"drift-fake-1"}; len(result.AppliedDriftIDs) != 1 || result.AppliedDriftIDs[0] != want[0] {
+		t.Fatalf("AppliedDriftIDs = %v, want %v", result.AppliedDriftIDs, want)
+	}
+
+	var rewritten struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(result.Body, &rewritten); err != nil {
+		t.Fatalf("rewritten body unmarshal: %v", err)
+	}
+	if len(rewritten.Messages) != 3 {
+		t.Fatalf("expected 3 messages after rewrite, got %d", len(rewritten.Messages))
+	}
+
+	// Assistant turn: tool_use restored byte-for-byte.
+	var assistantMsg struct {
+		Role    string `json:"role"`
+		Content []struct {
+			Type  string          `json:"type"`
+			ID    string          `json:"id"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(rewritten.Messages[1], &assistantMsg); err != nil {
+		t.Fatalf("assistant message unmarshal: %v", err)
+	}
+	if assistantMsg.Role != "assistant" {
+		t.Fatalf("assistant message role = %q, want assistant", assistantMsg.Role)
+	}
+	if len(assistantMsg.Content) != 1 || assistantMsg.Content[0].Type != "tool_use" {
+		t.Fatalf("assistant content shape unexpected: %+v", assistantMsg.Content)
+	}
+	if assistantMsg.Content[0].Name != originalToolName {
+		t.Fatalf("restored tool name = %q, want %q (Bash placeholder should have been replaced)", assistantMsg.Content[0].Name, originalToolName)
+	}
+	if assistantMsg.Content[0].ID != toolUseID {
+		t.Fatalf("restored tool_use_id = %q, want %q (id must round-trip)", assistantMsg.Content[0].ID, toolUseID)
+	}
+	if string(assistantMsg.Content[0].Input) != string(originalInput) {
+		t.Fatalf("restored tool input mismatch:\n  got:  %s\n  want: %s", string(assistantMsg.Content[0].Input), string(originalInput))
+	}
+
+	// User turn: tool_result content is the menu text.
+	var userMsg struct {
+		Role    string `json:"role"`
+		Content []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(rewritten.Messages[2], &userMsg); err != nil {
+		t.Fatalf("user message unmarshal: %v", err)
+	}
+	if userMsg.Role != "user" {
+		t.Fatalf("user message role = %q, want user", userMsg.Role)
+	}
+	if len(userMsg.Content) != 1 || userMsg.Content[0].Type != "tool_result" {
+		t.Fatalf("user content shape unexpected: %+v", userMsg.Content)
+	}
+	var resultBlocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(userMsg.Content[0].Content, &resultBlocks); err != nil {
+		t.Fatalf("tool_result content unmarshal: %v", err)
+	}
+	if len(resultBlocks) != 1 || resultBlocks[0].Type != "text" {
+		t.Fatalf("expected single text block in tool_result, got %+v", resultBlocks)
+	}
+	if !strings.Contains(resultBlocks[0].Text, "outside your current task scope") {
+		t.Fatalf("tool_result content does not carry menu text:\n%s", resultBlocks[0].Text)
+	}
+	if !strings.Contains(resultBlocks[0].Text, "Drift ID: drift-fake-1") {
+		t.Fatalf("tool_result content missing Drift ID:\n%s", resultBlocks[0].Text)
+	}
+
+	// Persistence: a second rewrite (next conversation turn) still
+	// finds the substitution and restores the placeholder. The harness
+	// keeps the Bash placeholder in its stored history for the rest of
+	// the conversation; without persistent restoration the model would
+	// see its own past as the placeholder from turn 3 onward.
+	second, err := RewriteScopeDriftPlaceholders(context.Background(), ScopeDriftInboundRewriteRequest{
+		HTTPRequest:    httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:       conversation.ProviderAnthropic,
+		Body:           body,
+		Agent:          agent,
+		ConversationID: driftTestConvID,
+		ScopeDrifts:    reg,
+		Logger:         slog.Default(),
+	})
+	if err != nil {
+		t.Fatalf("second RewriteScopeDriftPlaceholders: %v", err)
+	}
+	if !second.Rewritten {
+		t.Fatal("expected second rewrite to also restore the placeholder (substitutions persist across turns)")
+	}
+}
+
+// TestScopeDriftE2E_InboundRewritesOpenAIResponsesPlaceholder mirrors
+// TestScopeDriftE2E_InboundRewritesPlaceholder but on the OpenAI
+// Responses wire shape: the previous turn's function_call gets
+// restored byte-for-byte and the matching function_call_output's
+// content is the menu text.
+func TestScopeDriftE2E_InboundRewritesOpenAIResponsesPlaceholder(t *testing.T) {
+	t.Parallel()
+	reg := NewMemoryScopeDriftRegistry(time.Minute)
+	const (
+		callID           = "call_1"
+		originalToolName = "exec_command"
+		menuText         = "Clawvisor: github.post_issue is outside your current task scope.\n  Drift ID: drift-fake-openai-1\n(menu body…)"
+	)
+	originalInput := json.RawMessage(`{"cmd":"mkdir /tmp/needs-task"}`)
+	if err := reg.RegisterPendingSubstitution(context.Background(),
+		PendingSubstitutionKey{
+			AgentID:        driftTestAgentID,
+			ConversationID: driftTestConvID,
+			ToolUseID:      callID,
+		},
+		PendingSubstitution{
+			DriftID:           "drift-fake-openai-1",
+			MenuText:          menuText,
+			OriginalToolName:  originalToolName,
+			OriginalToolInput: append([]byte(nil), originalInput...),
+		},
+	); err != nil {
+		t.Fatalf("RegisterPendingSubstitution: %v", err)
+	}
+
+	placeholderCmd := BuildScopeDriftPlaceholderCommand(originalToolName, "drift-fake-openai-1")
+	placeholderArgs, _ := json.Marshal(map[string]string{"command": placeholderCmd})
+
+	body := []byte(`{"input":[` +
+		`{"type":"message","role":"user","content":"open an issue"},` +
+		`{"type":"function_call","call_id":"` + callID + `","name":"Bash","arguments":` + string(mustJSON(string(placeholderArgs))) + `},` +
+		`{"type":"function_call_output","call_id":"` + callID + `","output":"command exited 0"}` +
+		`]}`)
+
+	agent := &store.Agent{ID: driftTestAgentID, UserID: driftTestUserID}
+	httpReq := httptest.NewRequest("POST", "/v1/responses", nil)
+	result, err := RewriteScopeDriftPlaceholders(context.Background(), ScopeDriftInboundRewriteRequest{
+		HTTPRequest:    httpReq,
+		Provider:       conversation.ProviderOpenAI,
+		Body:           body,
+		Agent:          agent,
+		ConversationID: driftTestConvID,
+		ScopeDrifts:    reg,
+		Logger:         slog.Default(),
+	})
+	if err != nil {
+		t.Fatalf("RewriteScopeDriftPlaceholders: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatalf("expected Rewritten=true; AppliedDriftIDs=%v", result.AppliedDriftIDs)
+	}
+
+	var rewritten struct {
+		Input []json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(result.Body, &rewritten); err != nil {
+		t.Fatalf("rewritten body unmarshal: %v", err)
+	}
+	if len(rewritten.Input) != 3 {
+		t.Fatalf("expected 3 input items after rewrite, got %d", len(rewritten.Input))
+	}
+
+	var fc struct {
+		Type      string `json:"type"`
+		CallID    string `json:"call_id"`
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	}
+	if err := json.Unmarshal(rewritten.Input[1], &fc); err != nil {
+		t.Fatalf("function_call unmarshal: %v", err)
+	}
+	if fc.Type != "function_call" || fc.CallID != callID {
+		t.Fatalf("function_call shape mismatch: %+v", fc)
+	}
+	if fc.Name != originalToolName {
+		t.Fatalf("restored function_call name = %q, want %q", fc.Name, originalToolName)
+	}
+	if fc.Arguments != string(originalInput) {
+		t.Fatalf("restored function_call arguments = %q, want %q", fc.Arguments, string(originalInput))
+	}
+
+	var fco struct {
+		Type   string `json:"type"`
+		CallID string `json:"call_id"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(rewritten.Input[2], &fco); err != nil {
+		t.Fatalf("function_call_output unmarshal: %v", err)
+	}
+	if fco.Type != "function_call_output" || fco.CallID != callID {
+		t.Fatalf("function_call_output shape mismatch: %+v", fco)
+	}
+	if !strings.Contains(fco.Output, "outside your current task scope") {
+		t.Fatalf("function_call_output does not carry menu text: %s", fco.Output)
+	}
+}
+
 // peekAllHolds returns every hold for the test fixture's (user, agent,
 // conv) bucket. SnapshotHoldsForTest keys by a zero-conversation
 // bucket and would miss conversation-scoped holds; this helper reaches

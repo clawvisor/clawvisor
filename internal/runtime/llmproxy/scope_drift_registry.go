@@ -142,6 +142,21 @@ var ErrDriftAlreadyResolved = errors.New("scope drift already resolved")
 // expired out of the registry.
 var ErrDriftNotFound = errors.New("scope drift not found")
 
+// PendingSubstitutionKey identifies a pending tool_result substitution
+// — the next inbound /v1/messages request from this agent on this
+// conversation, when it carries a tool_result for this tool_use_id, has
+// the menu text spliced in as the result content.
+//
+// Keyed (agent, conversation, tool_use_id) rather than (drift_id) so the
+// inbound rewriter can locate the substitution from the tool_result
+// block alone (Anthropic tool_result blocks carry tool_use_id, not the
+// drift_id — the drift_id only lives in the rendered menu prose).
+type PendingSubstitutionKey struct {
+	AgentID        string
+	ConversationID string
+	ToolUseID      string
+}
+
 // ScopeDriftRegistry holds ScopeDrift records for the lifetime of one
 // drift (TTL ~10 min by default). Implementations must be safe for
 // concurrent use.
@@ -170,6 +185,51 @@ type ScopeDriftRegistry interface {
 	// (driftID, true) on hit; ("", false) otherwise. The hit is CONSUMED
 	// — a single succeeded option authorizes one re-attempt.
 	LookupPreClear(ctx context.Context, agentID, fingerprint string) (string, bool)
+
+	// RegisterPendingSubstitution stores everything the inbound rewriter
+	// needs to:
+	//   1. Restore the model's original tool_use byte-for-byte in every
+	//      future /v1/messages assistant turn that carries the
+	//      harness-side placeholder we substituted on the response leg.
+	//   2. Replace the harness-supplied tool_result content with the
+	//      menu text on the immediate follow-up turn.
+	//
+	// Conversation-scoped lifetime: substitutions persist much longer
+	// than the drift record itself (substitutionTTL, hours). The
+	// harness's stored assistant history contains the placeholder for
+	// the rest of the conversation; without a long-lived substitution
+	// record we'd restore it only once and then the model would see the
+	// placeholder forever after.
+	RegisterPendingSubstitution(ctx context.Context, key PendingSubstitutionKey, value PendingSubstitution) error
+
+	// LookupPendingSubstitution returns the substitution registered for
+	// the key, if any. Does NOT consume the entry — restoration of the
+	// assistant turn must work on every future inbound while the
+	// substitution is live. Returns (zero, false) on miss.
+	LookupPendingSubstitution(ctx context.Context, key PendingSubstitutionKey) (PendingSubstitution, bool)
+}
+
+// substitutionTTL is the time-to-live for pending substitution
+// records. Sized generously (24h) because the harness's stored history
+// keeps the Bash placeholder for the full conversation; the inbound
+// rewriter has to be able to restore on every follow-up turn until the
+// user closes the session. A bound is still enforced so the in-memory
+// registry doesn't grow unbounded across long-running deployments.
+const substitutionTTL = 24 * time.Hour
+
+// PendingSubstitution carries every field the inbound rewriter needs
+// to splice the model's original tool_use back into the assistant turn
+// and replace the harness-supplied tool_result content with the menu.
+type PendingSubstitution struct {
+	DriftID          string
+	MenuText         string
+	OriginalToolName string
+	OriginalToolInput []byte
+}
+
+type pendingSubstitutionEntry struct {
+	Substitution PendingSubstitution
+	ExpiresAt    time.Time
 }
 
 type memoryScopeDriftRegistry struct {
@@ -178,6 +238,7 @@ type memoryScopeDriftRegistry struct {
 	now     func() time.Time
 	drifts  map[string]*ScopeDrift
 	cleared map[string]string
+	pending map[string]pendingSubstitutionEntry
 }
 
 // NewMemoryScopeDriftRegistry returns an in-memory registry with the
@@ -195,6 +256,7 @@ func NewMemoryScopeDriftRegistry(ttl time.Duration) ScopeDriftRegistry {
 		now:     time.Now,
 		drifts:  map[string]*ScopeDrift{},
 		cleared: map[string]string{},
+		pending: map[string]pendingSubstitutionEntry{},
 	}
 }
 
@@ -292,6 +354,44 @@ func (r *memoryScopeDriftRegistry) LookupPreClear(_ context.Context, agentID, fi
 	return driftID, true
 }
 
+func (r *memoryScopeDriftRegistry) RegisterPendingSubstitution(_ context.Context, key PendingSubstitutionKey, value PendingSubstitution) error {
+	if r == nil {
+		return errors.New("scope drift registry not configured")
+	}
+	if key.AgentID == "" || key.ToolUseID == "" {
+		return errors.New("pending substitution requires agent_id and tool_use_id")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pruneLocked()
+	r.pending[pendingSubstitutionStorageKey(key)] = pendingSubstitutionEntry{
+		Substitution: value,
+		ExpiresAt:    r.now().UTC().Add(substitutionTTL),
+	}
+	return nil
+}
+
+// LookupPendingSubstitution returns the substitution for the key but
+// does NOT delete it. The harness's stored assistant history carries
+// the Bash placeholder for the rest of the conversation; every
+// subsequent inbound /v1/messages has to restore that placeholder back
+// to the model's original tool_use so the model never sees its own
+// past as a fabricated Bash. The entry expires via substitutionTTL.
+func (r *memoryScopeDriftRegistry) LookupPendingSubstitution(_ context.Context, key PendingSubstitutionKey) (PendingSubstitution, bool) {
+	if r == nil {
+		return PendingSubstitution{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pruneLocked()
+	storage := pendingSubstitutionStorageKey(key)
+	entry, ok := r.pending[storage]
+	if !ok {
+		return PendingSubstitution{}, false
+	}
+	return entry.Substitution, true
+}
+
 func (r *memoryScopeDriftRegistry) pruneLocked() {
 	now := r.now().UTC()
 	for id, d := range r.drifts {
@@ -301,10 +401,20 @@ func (r *memoryScopeDriftRegistry) pruneLocked() {
 		delete(r.drifts, id)
 		delete(r.cleared, preClearKey(d.AgentID, d.Fingerprint()))
 	}
+	for key, entry := range r.pending {
+		if entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(now) {
+			continue
+		}
+		delete(r.pending, key)
+	}
 }
 
 func preClearKey(agentID, fingerprint string) string {
 	return agentID + "|" + fingerprint
+}
+
+func pendingSubstitutionStorageKey(key PendingSubstitutionKey) string {
+	return key.AgentID + "|" + key.ConversationID + "|" + key.ToolUseID
 }
 
 func newDriftID() (string, error) {

@@ -193,7 +193,7 @@ func PostprocessStream(
 		// others don't) fall through to the legacy text path so we
 		// don't accidentally hide a separate refusal under an
 		// AskUserQuestion call the user couldn't act on.
-		if substBlocks, allHaveToolCall := substituteToolCallsForBlocked(decisions); allHaveToolCall && len(substBlocks) > 0 {
+		if substBlocks, allHaveToolCall := substituteToolCallsForBlocked(decisions, rewrittenInput); allHaveToolCall && len(substBlocks) > 0 {
 			if err := writeProviderSubstituteToolCalls(w, provider, streamResult, substBlocks); err != nil {
 				if dropErr := session.dropAllCommittedAndRollback(req.Context()); dropErr != nil {
 					return llmproxy.PostprocessResult{}, fmt.Errorf("substitute tool_call write failed: %w", errors.Join(err, fmt.Errorf("rollback failed: %w", dropErr)))
@@ -409,19 +409,47 @@ type substitutedBlock struct {
 	Call conversation.SyntheticToolCall
 }
 
-// substituteToolCallsForBlocked walks the blocked decisions and
-// pairs each SubstituteWithToolCall payload with its decision's
-// SubstituteWith preamble text. The allHaveToolCall return is true
-// only when EVERY blocked decision supplies a USABLE
-// SubstituteWithToolCall (non-empty Name and a Marshal-able Input)
-// — partial coverage, or a malformed call that can't be marshaled,
-// fall back to the text path so the transport-level behavior matches
-// the buffered Anthropic rewriter (which also falls back to text on
-// the same invariants — see anthropicSubstituteToolUseBlock).
-func substituteToolCallsForBlocked(decisions []conversation.ToolUseDecisionRecord) (blocks []substitutedBlock, allHaveToolCall bool) {
+// mixedTurnBlock represents one content block to emit when the
+// streaming rewriter rewrites an assistant turn that mixes allowed
+// tool_uses with at least one blocked-with-SubstituteWithToolCall
+// decision. Per-decision discrimination so the writer can choose the
+// right SSE shape for each entry in turn order.
+//
+// Exactly one of Allowed / Substitute is set:
+//   - Allowed=true: pass through the model's original tool_use (with
+//     RewriteInput applied when non-empty).
+//   - Substitute non-nil: emit the policy's SyntheticToolCall
+//     placeholder, optionally preceded by the SubstituteWith preamble
+//     text.
+type mixedTurnBlock struct {
+	Allowed      bool
+	ToolUse      conversation.ToolUse
+	RewriteInput json.RawMessage
+	Substitute   *substitutedBlock
+}
+
+// substituteToolCallsForBlocked walks every decision in order and
+// builds the mixedTurnBlock list the streaming writers consume. The
+// allHaveToolCall return is true only when EVERY blocked decision
+// supplies a USABLE SubstituteWithToolCall (non-empty Name and a
+// Marshal-able Input) AND at least one such block exists — partial
+// coverage, or a malformed call that can't be marshaled, falls back
+// to the text path so the transport-level behavior matches the
+// buffered Anthropic rewriter (which also falls back to text on the
+// same invariants — see anthropicSubstituteToolUseBlock). Allowed
+// siblings are emitted as pass-through entries so a mixed turn (some
+// allowed, some substituted) lands on the wire intact rather than
+// silently dropping the allowed siblings.
+func substituteToolCallsForBlocked(decisions []conversation.ToolUseDecisionRecord, rewrittenInput map[string]json.RawMessage) (blocks []mixedTurnBlock, allHaveToolCall bool) {
 	allHaveToolCall = true
+	anyBlockedWithCall := false
 	for _, dec := range decisions {
 		if dec.Verdict.Allowed {
+			blocks = append(blocks, mixedTurnBlock{
+				Allowed:      true,
+				ToolUse:      dec.ToolUse,
+				RewriteInput: rewrittenInput[dec.ToolUse.ID],
+			})
 			continue
 		}
 		call := dec.Verdict.SubstituteWithToolCall
@@ -429,10 +457,16 @@ func substituteToolCallsForBlocked(decisions []conversation.ToolUseDecisionRecor
 			allHaveToolCall = false
 			continue
 		}
-		blocks = append(blocks, substitutedBlock{
-			Text: dec.Verdict.SubstituteWith,
-			Call: *call,
+		anyBlockedWithCall = true
+		blocks = append(blocks, mixedTurnBlock{
+			Substitute: &substitutedBlock{
+				Text: dec.Verdict.SubstituteWith,
+				Call: *call,
+			},
 		})
+	}
+	if !anyBlockedWithCall {
+		allHaveToolCall = false
 	}
 	return blocks, allHaveToolCall
 }
@@ -466,15 +500,17 @@ func canRenderSyntheticToolCall(call *conversation.SyntheticToolCall) bool {
 
 // writeProviderSubstituteToolCalls emits, per blocked decision, an
 // optional preamble text content_block followed by the synthetic
-// tool_use content_block — using the same continuation shape as
-// writeProviderBlockedPrompt: just content_block_* events plus a
-// trailing message_delta/message_stop. The upstream message_start
-// was already forwarded by StreamRewrite, so we do NOT emit a new
-// message_start — that would double-up the message envelope.
+// tool_use content_block. The upstream message_start was already
+// forwarded by StreamRewrite, so we do NOT re-emit a fresh envelope —
+// just the content blocks and a trailing stop event.
 //
-// Only the Anthropic provider is wired today; OpenAI callers fall
-// back to the text path via the gate in PostprocessStream.
-func writeProviderSubstituteToolCalls(w io.Writer, provider conversation.Provider, result conversation.StreamingRewriteResult, blocks []substitutedBlock) error {
+// All three provider shapes are wired so the scope-drift Bash
+// placeholder lands on the wire regardless of how the upstream framed
+// its tool_use:
+//   - Anthropic: content_block_* + message_delta/message_stop
+//   - OpenAI Responses: output_item.added + function_call_arguments.delta/done + output_item.done
+//   - OpenAI Chat: choice.delta.tool_calls fragment + finish_reason=tool_calls
+func writeProviderSubstituteToolCalls(w io.Writer, provider conversation.Provider, result conversation.StreamingRewriteResult, blocks []mixedTurnBlock) error {
 	switch provider {
 	case conversation.ProviderAnthropic:
 		// Index starts after any pass-through text/thinking blocks
@@ -485,18 +521,250 @@ func writeProviderSubstituteToolCalls(w io.Writer, provider conversation.Provide
 			idx = 0
 		}
 		for _, blk := range blocks {
-			if strings.TrimSpace(blk.Text) != "" {
-				if err := writeAnthropicTextBlock(w, idx, blk.Text); err != nil {
+			if blk.Allowed {
+				call := conversation.SyntheticToolCall{
+					ID:   blk.ToolUse.ID,
+					Name: blk.ToolUse.Name,
+				}
+				inputBytes := blk.ToolUse.Input
+				if len(blk.RewriteInput) > 0 {
+					inputBytes = blk.RewriteInput
+				}
+				call.Input = mapFromRawJSON(inputBytes)
+				if err := writeAnthropicToolUseBlock(w, idx, call); err != nil {
+					return err
+				}
+				idx++
+				continue
+			}
+			sub := blk.Substitute
+			if sub == nil {
+				continue
+			}
+			if strings.TrimSpace(sub.Text) != "" {
+				if err := writeAnthropicTextBlock(w, idx, sub.Text); err != nil {
 					return err
 				}
 				idx++
 			}
-			if err := writeAnthropicToolUseBlock(w, idx, blk.Call); err != nil {
+			if err := writeAnthropicToolUseBlock(w, idx, sub.Call); err != nil {
 				return err
 			}
 			idx++
 		}
 		return writeAnthropicStopSSE(w, "tool_use")
+	case conversation.ProviderOpenAI:
+		// Responses vs Chat distinction is encoded in the stream's
+		// StreamFormat hint (set by the upstream parser at envelope
+		// time). Defaulting to Responses preserves the streaming
+		// shape used by Codex/Anthropic-via-OpenAI.
+		switch result.StreamFormat {
+		case "openai_chat":
+			return writeOpenAIChatSubstituteToolCalls(w, result, blocks)
+		default:
+			return writeOpenAIResponsesSubstituteToolCalls(w, result, blocks)
+		}
+	}
+	return nil
+}
+
+// mapFromRawJSON parses a json.RawMessage into the map[string]any
+// shape SyntheticToolCall.Input expects. Tool_use inputs are objects
+// on the wire; a non-object payload (or parse failure) falls back to
+// an empty object so the synthetic writer never emits malformed JSON.
+func mapFromRawJSON(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var v map[string]any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return map[string]any{}
+	}
+	return v
+}
+
+// writeOpenAIResponsesSubstituteToolCalls emits Responses-API SSE
+// blocks for each entry in `blocks`: one function_call output item per
+// allowed pass-through or substitute placeholder, preserving turn
+// order. No response.created / response.completed envelope (the
+// upstream already wrote those).
+func writeOpenAIResponsesSubstituteToolCalls(w io.Writer, result conversation.StreamingRewriteResult, blocks []mixedTurnBlock) error {
+	startIdx := result.NextOpenAIOutputIndex
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	for i, blk := range blocks {
+		outputIndex := startIdx + i
+		var (
+			callID string
+			name   string
+			args   []byte
+		)
+		if blk.Allowed {
+			callID = blk.ToolUse.ID
+			name = blk.ToolUse.Name
+			inputBytes := blk.ToolUse.Input
+			if len(blk.RewriteInput) > 0 {
+				inputBytes = blk.RewriteInput
+			}
+			if len(inputBytes) == 0 {
+				args = []byte("{}")
+			} else {
+				args = inputBytes
+			}
+		} else if blk.Substitute != nil {
+			callID = blk.Substitute.Call.ID
+			name = blk.Substitute.Call.Name
+			input := blk.Substitute.Call.Input
+			if input == nil {
+				input = map[string]any{}
+			}
+			marshalled, err := json.Marshal(input)
+			if err != nil {
+				return err
+			}
+			args = marshalled
+		} else {
+			continue
+		}
+		itemID := "fc_" + callID
+		if err := writeSSE(w, "response.output_item.added", map[string]any{
+			"type":         "response.output_item.added",
+			"output_index": outputIndex,
+			"item": map[string]any{
+				"id":      itemID,
+				"type":    "function_call",
+				"status":  "in_progress",
+				"call_id": callID,
+				"name":    name,
+			},
+		}); err != nil {
+			return err
+		}
+		if err := writeSSE(w, "response.function_call_arguments.delta", map[string]any{
+			"type":         "response.function_call_arguments.delta",
+			"item_id":      itemID,
+			"output_index": outputIndex,
+			"delta":        string(args),
+		}); err != nil {
+			return err
+		}
+		if err := writeSSE(w, "response.function_call_arguments.done", map[string]any{
+			"type":         "response.function_call_arguments.done",
+			"item_id":      itemID,
+			"output_index": outputIndex,
+			"name":         name,
+			"arguments":    string(args),
+		}); err != nil {
+			return err
+		}
+		if err := writeSSE(w, "response.output_item.done", map[string]any{
+			"type":         "response.output_item.done",
+			"output_index": outputIndex,
+			"item": map[string]any{
+				"id":        itemID,
+				"type":      "function_call",
+				"status":    "completed",
+				"call_id":   callID,
+				"name":      name,
+				"arguments": string(args),
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	return writeSSE(w, "response.completed", map[string]any{
+		"type":     "response.completed",
+		"response": map[string]any{"id": "resp_clawvisor_substitute", "status": "completed"},
+	})
+}
+
+// writeOpenAIChatSubstituteToolCalls emits a Chat Completions choice
+// fragment with a tool_calls delta covering every substitute block,
+// followed by a finish_reason=tool_calls chunk. The upstream
+// chat.completion.chunk envelope (id, model, …) is preserved by the
+// streaming rewriter's pass-through; we only need to emit the
+// tool_calls delta and a stop fragment.
+func writeOpenAIChatSubstituteToolCalls(w io.Writer, _ conversation.StreamingRewriteResult, blocks []mixedTurnBlock) error {
+	toolCalls := make([]map[string]any, 0, len(blocks))
+	for i, blk := range blocks {
+		var (
+			callID string
+			name   string
+			args   []byte
+		)
+		if blk.Allowed {
+			callID = blk.ToolUse.ID
+			name = blk.ToolUse.Name
+			inputBytes := blk.ToolUse.Input
+			if len(blk.RewriteInput) > 0 {
+				inputBytes = blk.RewriteInput
+			}
+			if len(inputBytes) == 0 {
+				args = []byte("{}")
+			} else {
+				args = inputBytes
+			}
+		} else if blk.Substitute != nil {
+			callID = blk.Substitute.Call.ID
+			name = blk.Substitute.Call.Name
+			input := blk.Substitute.Call.Input
+			if input == nil {
+				input = map[string]any{}
+			}
+			marshalled, err := json.Marshal(input)
+			if err != nil {
+				return err
+			}
+			args = marshalled
+		} else {
+			continue
+		}
+		toolCalls = append(toolCalls, map[string]any{
+			"index": i,
+			"id":    callID,
+			"type":  "function",
+			"function": map[string]any{
+				"name":      name,
+				"arguments": string(args),
+			},
+		})
+	}
+	deltaChunk := map[string]any{
+		"id":      "chatcmpl_clawvisor_substitute",
+		"object":  "chat.completion.chunk",
+		"choices": []map[string]any{{"index": 0, "delta": map[string]any{"tool_calls": toolCalls}}},
+	}
+	deltaBytes, err := json.Marshal(deltaChunk)
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("data: ")); err != nil {
+		return err
+	}
+	if _, err := w.Write(deltaBytes); err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("\n\n")); err != nil {
+		return err
+	}
+	finishChunk := map[string]any{
+		"id":      "chatcmpl_clawvisor_substitute",
+		"object":  "chat.completion.chunk",
+		"choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "tool_calls"}},
+	}
+	finishBytes, err := json.Marshal(finishChunk)
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("data: ")); err != nil {
+		return err
+	}
+	if _, err := w.Write(finishBytes); err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("\n\ndata: [DONE]\n\n")); err != nil {
+		return err
 	}
 	return nil
 }
