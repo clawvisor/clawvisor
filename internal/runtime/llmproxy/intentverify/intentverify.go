@@ -24,6 +24,10 @@ type Request struct {
 	Reason      string
 	TaskID      string
 	Lenient     bool
+	// OrgID scopes the verifier's per-org governance overrides (prompt
+	// override + task guidance). The lite-proxy pipeline plumbs the
+	// agent's orgID here; the intent.Verifier adapter forwards it.
+	OrgID string
 }
 
 type Verdict struct {
@@ -69,6 +73,7 @@ func (v decisionIntentVerifier) Verify(ctx context.Context, req runtimedecision.
 		Reason:      req.Reason,
 		TaskID:      req.TaskID,
 		Lenient:     req.Lenient,
+		OrgID:       req.OrgID,
 	})
 	if err != nil || verdict == nil {
 		return nil, err

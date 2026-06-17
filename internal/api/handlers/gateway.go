@@ -1952,6 +1952,16 @@ func (h *GatewayHandler) validateLocalAction(ctx context.Context, userID, servic
 	return nil // service not found — let execution handle it
 }
 
+// orgIDFromContext returns the orgID of the authenticated agent if
+// present, else "". Used to scope intent verification's per-org
+// governance overrides (cloud-side prompt overrides + task guidance).
+func orgIDFromContext(ctx context.Context) string {
+	if agent := store.AgentFromContext(ctx); agent != nil {
+		return agent.OrgID
+	}
+	return ""
+}
+
 // Returns nil if the verifier is a no-op or if verification fails.
 func (h *GatewayHandler) runVerification(
 	ctx context.Context,
@@ -1988,6 +1998,7 @@ func (h *GatewayHandler) runVerification(
 		ChainContextOptOut:  false, // standing tasks without session_id are now rejected earlier
 		ChainContextEnabled: h.cfg.LLM.ChainContext.Enabled,
 		Lenient:             lenient,
+		OrgID:               orgIDFromContext(ctx),
 	})
 	return verdict
 }

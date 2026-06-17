@@ -87,6 +87,10 @@ type IntentVerifyRequest struct {
 	Reason      string
 	TaskID      string
 	Lenient     bool
+	// OrgID scopes the verifier's per-org governance overrides. Forwarded
+	// through the intentverify and intent packages so per-org prompt
+	// overrides + task guidance can't cross-contaminate cached verdicts.
+	OrgID string
 }
 
 type IntentVerdict struct {
@@ -99,6 +103,10 @@ type AuthorizationInput struct {
 
 	UserID  string
 	AgentID string
+	// OrgID is the org that owns the calling agent. Forwarded into
+	// IntentVerifyRequest so the upstream verifier can resolve per-org
+	// governance overrides. Empty for non-org-scoped sessions.
+	OrgID string
 
 	Posture EvaluationPosture
 
@@ -468,6 +476,7 @@ func runIntentVerify(ctx context.Context, in AuthorizationInput, task *store.Tas
 		Reason:      resolveToolReason(in.ToolUse.Name, params),
 		TaskID:      taskID,
 		Lenient:     mode == "lenient",
+		OrgID:       in.OrgID,
 	})
 	if err != nil {
 		return "", false, err
@@ -521,6 +530,7 @@ func runToolIntentVerify(ctx context.Context, in AuthorizationInput, task *store
 		Reason:      resolveToolReason(in.ToolUse.Name, params),
 		TaskID:      taskID,
 		Lenient:     mode == "lenient",
+		OrgID:       in.OrgID,
 	})
 	if err != nil {
 		return "", false, err

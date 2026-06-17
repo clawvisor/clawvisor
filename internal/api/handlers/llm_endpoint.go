@@ -1302,6 +1302,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					AgentUserID: agent.UserID,
 					AgentID:     agent.ID,
 					AgentName:   agent.Name,
+					AgentOrgID:  agent.OrgID,
 				},
 				AuditContext: llmproxy.AuditContext{
 					ConversationID: conversationID,
@@ -1651,6 +1652,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				AgentUserID: agent.UserID,
 				AgentID:     agent.ID,
 				AgentName:   agent.Name,
+					AgentOrgID:  agent.OrgID,
 			},
 			AuditContext: llmproxy.AuditContext{
 				ConversationID: conversationID,

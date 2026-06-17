@@ -46,6 +46,26 @@ type VerifyRequest struct {
 	ChainContextEnabled bool // chain context tracking is enabled in config
 	Lenient             bool // use lenient verification prompt (give agent benefit of the doubt)
 	ProxyLite           bool // include proxy-lite-specific verifier guidance
+
+	// OrgID identifies the org context this verification runs under.
+	// Used to scope cached verdicts so per-org prompt overrides and
+	// task guidance can't cross-contaminate caches. Empty for non-
+	// org-scoped requests (the open-source build, admin sessions).
+	OrgID string
+
+	// PromptOverride, when non-empty, replaces the default system
+	// verification prompt for this request. Sourced from the cloud
+	// repo's org_prompt_override table by the caller (the cloud
+	// gateway resolves this via LoadPolicySnapshot before constructing
+	// the request). The cache key includes a hash of this string so
+	// orgs with different overrides do not share cached verdicts.
+	PromptOverride string
+
+	// TaskGuidance, when non-empty, is appended to the SYSTEM prompt
+	// (NOT the user message — mixing org policy with agent-controlled
+	// content opens prompt-injection). Sourced from org_task_policy
+	// in the cloud repo. Cache-keyed alongside PromptOverride.
+	TaskGuidance string
 }
 
 // Verifier checks whether a gateway request is consistent with the approved task.
@@ -61,11 +81,20 @@ func (NoopVerifier) Verify(_ context.Context, _ VerifyRequest) (*VerificationVer
 	return nil, nil
 }
 
+// PromptResolverFn returns the per-org system-prompt override (or "")
+// and task guidance (or "") for an org. Wired in by the cloud package
+// (cmd/cloud) so the verifier can resolve governance overrides without
+// the gateway handlers needing to thread the cloud store through.
+// When unset or returning both empty strings, the verifier uses the
+// system default prompt with no addendum (existing behavior).
+type PromptResolverFn func(ctx context.Context, orgID string) (override, guidance string)
+
 // LLMVerifier performs intent verification via an LLM provider.
 type LLMVerifier struct {
-	health *llm.Health
-	logger *slog.Logger
-	cache  VerdictCacher
+	health   *llm.Health
+	logger   *slog.Logger
+	cache    VerdictCacher
+	resolver PromptResolverFn
 
 	geminiMu sync.RWMutex
 	// geminiCaches holds one binding per prompt variant — the strict base
@@ -105,6 +134,15 @@ func NewLLMVerifier(health *llm.Health, logger *slog.Logger) *LLMVerifier {
 // SetVerdictCache overrides the default in-memory verdict cache.
 func (v *LLMVerifier) SetVerdictCache(c VerdictCacher) {
 	v.cache = c
+}
+
+// SetPromptResolver wires the per-org governance resolver. When set
+// and a VerifyRequest carries a non-empty OrgID, the verifier consults
+// the resolver for an override prompt and task guidance before
+// building the cache key and calling the LLM. Callbacks returning
+// (empty, empty) preserve the default behavior.
+func (v *LLMVerifier) SetPromptResolver(r PromptResolverFn) {
+	v.resolver = r
 }
 
 // RunCleanup periodically calls the verdict cache's Cleanup hook so expired
@@ -220,6 +258,19 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		return nil, nil
 	}
 
+	// Resolve per-org governance overrides before keying the cache.
+	// Callers may also pre-populate these fields; the resolver only
+	// fills empty fields, so a caller-provided override wins.
+	if v.resolver != nil && req.OrgID != "" {
+		override, guidance := v.resolver(ctx, req.OrgID)
+		if req.PromptOverride == "" {
+			req.PromptOverride = override
+		}
+		if req.TaskGuidance == "" {
+			req.TaskGuidance = guidance
+		}
+	}
+
 	key := buildCacheKey(req)
 	if cached, ok := v.cache.Get(key); ok {
 		cached.Cached = true
@@ -232,7 +283,15 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 	// Lenient mode appends a per-call addendum that isn't pre-cached, so it
 	// always inlines the system prompt. Proxy-lite has its own cached
 	// variant; pick the binding that matches the request.
-	if !req.Lenient {
+	//
+	// Per-org PromptOverride also bypasses Gemini cachedContents because
+	// the cache binding was prepared at startup for the strict + proxy-
+	// lite variants — an overridden prompt is a different binding the
+	// service hasn't registered. The verdict is still cached locally
+	// (the cache key includes the override hash), so the upstream LLM
+	// cost regression is bounded to orgs that opt into overrides.
+	usingOverride := req.PromptOverride != ""
+	if !req.Lenient && !usingOverride {
 		if binding, ok := v.geminiCacheBinding(req); ok && binding.nameFn != nil {
 			client.AttachGeminiCacheNameFn(binding.nameFn)
 			if binding.invalidator != nil {
@@ -244,9 +303,21 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		client = client.WithLogger(v.logger)
 	}
 	userMsg := buildVerificationUserMessage(req)
-	systemPrompt := verificationSystemPromptFor(req.ProxyLite)
+	var systemPrompt string
+	if usingOverride {
+		systemPrompt = req.PromptOverride
+	} else {
+		systemPrompt = verificationSystemPromptFor(req.ProxyLite)
+	}
 	if req.Lenient {
 		systemPrompt += lenientAddendum
+	}
+	// Org-specific natural-language task guidance is appended to the
+	// SYSTEM prompt (NOT the user message — see security note on
+	// VerifyRequest.TaskGuidance: the user role contains agent-supplied
+	// content and mixing org policy there enables prompt-injection).
+	if req.TaskGuidance != "" {
+		systemPrompt += "\n\n## Org-specific guidance\n" + req.TaskGuidance
 	}
 	messages := []llm.ChatMessage{
 		{Role: "system", Content: systemPrompt, CacheControl: true},

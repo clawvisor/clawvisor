@@ -278,6 +278,7 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 			ToolUse:   tu,
 			UserID:    st.Session.UserID,
 			AgentID:   st.Session.AgentID,
+			OrgID:     st.Session.OrgID,
 			Posture:   runtimeDecisionPosture(st.Session),
 			ToolRules: rules,
 		})

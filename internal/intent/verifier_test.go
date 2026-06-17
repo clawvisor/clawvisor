@@ -344,6 +344,55 @@ func TestBuildCacheKey(t *testing.T) {
 	}
 }
 
+// TestBuildCacheKey_OrgAndOverrideIsolation verifies that orgID,
+// PromptOverride, and TaskGuidance all participate in the cache key
+// so two orgs with different governance configurations cannot
+// silently share cached verdicts.
+func TestBuildCacheKey_OrgAndOverrideIsolation(t *testing.T) {
+	base := VerifyRequest{
+		TaskID:  "task-1",
+		Service: "google.gmail",
+		Action:  "send_email",
+		Params:  map[string]any{"to": "test@example.com"},
+		Reason:  "Sending update",
+	}
+
+	// Different orgID → different key.
+	a := base
+	a.OrgID = "org-a"
+	b := base
+	b.OrgID = "org-b"
+	if buildCacheKey(a) == buildCacheKey(b) {
+		t.Error("different orgID should produce different cache keys")
+	}
+
+	// Different PromptOverride → different key.
+	noOverride := base
+	noOverride.OrgID = "org-a"
+	withOverride := noOverride
+	withOverride.PromptOverride = "You are a custom verifier."
+	if buildCacheKey(noOverride) == buildCacheKey(withOverride) {
+		t.Error("PromptOverride should change the cache key")
+	}
+
+	// Different TaskGuidance → different key.
+	withGuidance := noOverride
+	withGuidance.TaskGuidance = "No HIPAA data."
+	if buildCacheKey(noOverride) == buildCacheKey(withGuidance) {
+		t.Error("TaskGuidance should change the cache key")
+	}
+
+	// Default empty fields collapse to the legacy short shape — same
+	// behavior as before the OrgID/override fields landed.
+	c := base
+	c.OrgID = ""
+	c.PromptOverride = ""
+	c.TaskGuidance = ""
+	if buildCacheKey(base) != buildCacheKey(c) {
+		t.Error("empty override fields should not perturb the cache key for legacy callers")
+	}
+}
+
 func TestMarshalVerdict(t *testing.T) {
 	v := &VerificationVerdict{
 		Allow:           true,

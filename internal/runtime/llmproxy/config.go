@@ -103,6 +103,11 @@ type AgentContext struct {
 	AgentUserID string
 	AgentID     string
 	AgentName   string
+	// AgentOrgID is the org that owns the agent. Forwarded into
+	// runtimedecision.AuthorizationInput → intent.VerifyRequest so
+	// the upstream LLM verifier can resolve per-org governance
+	// overrides. Empty when the agent isn't org-scoped.
+	AgentOrgID string
 }
 
 // AuditContext groups the audit emitter + request correlation + trace
