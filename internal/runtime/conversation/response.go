@@ -153,9 +153,17 @@ type PendingSubstitutionSpec struct {
 // by the auto-approve path. The expirer itself lives in the
 // PostprocessConfig (InlineTaskCreator); the spec only carries the
 // identity tuple needed to invoke it.
+//
+// AgentID + ConversationID let postprocess also clear the conversation
+// checkout the auto-approve flow set inline before returning the
+// verdict. Without that sweep, a commit failure leaves the checkout
+// pointing at the just-expired task and subsequent turns surface a
+// "task missing" experience.
 type PendingSubstitutionTaskRollback struct {
-	TaskID string
-	UserID string
+	TaskID         string
+	UserID         string
+	AgentID        string
+	ConversationID string
 }
 
 // DeferredDriftOutcomeSpec asks the postprocess layer to mark a

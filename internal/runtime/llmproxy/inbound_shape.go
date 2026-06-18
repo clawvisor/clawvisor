@@ -99,21 +99,30 @@ func (OpenAIInboundShape) LatestUserText(body []byte) string {
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return ""
 	}
-	// Responses `input` carries the latest turn first when present.
-	var input string
-	if len(parsed.Input) > 0 && json.Unmarshal(parsed.Input, &input) == nil {
-		return strings.TrimSpace(input)
-	}
-	var items []map[string]any
-	if len(parsed.Input) > 0 && json.Unmarshal(parsed.Input, &items) == nil {
-		for i := len(items) - 1; i >= 0; i-- {
-			role, _ := items[i]["role"].(string)
-			if role != "user" {
-				continue
-			}
-			raw, _ := json.Marshal(items[i]["content"])
-			return strings.TrimSpace(flattenOpenAITaskReplyContent(raw))
+	// Responses API (`input`) and Chat Completions (`messages`) are
+	// mutually exclusive on the wire: a real OpenAI body has one or
+	// the other. When Input is set it IS the conversation history;
+	// falling back to Messages would risk returning a stale entry
+	// from a malformed body where both arrays exist but only Input
+	// reflects current state. Pick whichever is populated and walk
+	// only that one.
+	if len(parsed.Input) > 0 {
+		var input string
+		if json.Unmarshal(parsed.Input, &input) == nil {
+			return strings.TrimSpace(input)
 		}
+		var items []map[string]any
+		if json.Unmarshal(parsed.Input, &items) == nil {
+			for i := len(items) - 1; i >= 0; i-- {
+				role, _ := items[i]["role"].(string)
+				if role != "user" {
+					continue
+				}
+				raw, _ := json.Marshal(items[i]["content"])
+				return strings.TrimSpace(flattenOpenAITaskReplyContent(raw))
+			}
+		}
+		return ""
 	}
 	for i := len(parsed.Messages) - 1; i >= 0; i-- {
 		role, _ := parsed.Messages[i]["role"].(string)
@@ -126,13 +135,12 @@ func (OpenAIInboundShape) LatestUserText(body []byte) string {
 	return ""
 }
 
-// AssistantTextTurns walks BOTH the Responses `input` array AND the
-// Chat `messages` array (in that order, matching the legacy
-// secret-decision walker) and returns flattened assistant text turns
-// most-recent first. Either array can be absent; both can coexist on
-// a malformed body, and the latest-first contract picks the
-// Responses entries first because that's where modern OpenAI
-// harnesses (codex) place their history.
+// AssistantTextTurns returns flattened assistant text turns most-
+// recent first. Responses (`input`) and Chat Completions (`messages`)
+// are mutually exclusive on the wire — walking BOTH and concatenating
+// would interleave stale `input` entries before fresh `messages`
+// entries (or vice-versa) and produce a sequence that contradicts
+// the latest-first contract. Pick whichever array is populated.
 func (OpenAIInboundShape) AssistantTextTurns(body []byte) []string {
 	var parsed struct {
 		Messages []map[string]any `json:"messages"`
@@ -141,9 +149,12 @@ func (OpenAIInboundShape) AssistantTextTurns(body []byte) []string {
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil
 	}
-	out := make([]string, 0, 8)
-	var items []map[string]any
-	if len(parsed.Input) > 0 && json.Unmarshal(parsed.Input, &items) == nil {
+	if len(parsed.Input) > 0 {
+		var items []map[string]any
+		if json.Unmarshal(parsed.Input, &items) != nil {
+			return nil
+		}
+		out := make([]string, 0, len(items))
 		for i := len(items) - 1; i >= 0; i-- {
 			role, _ := items[i]["role"].(string)
 			if role != "assistant" {
@@ -152,7 +163,9 @@ func (OpenAIInboundShape) AssistantTextTurns(body []byte) []string {
 			raw, _ := json.Marshal(items[i]["content"])
 			out = append(out, flattenOpenAITaskReplyContent(raw))
 		}
+		return out
 	}
+	out := make([]string, 0, len(parsed.Messages))
 	for i := len(parsed.Messages) - 1; i >= 0; i-- {
 		role, _ := parsed.Messages[i]["role"].(string)
 		if role != "assistant" {

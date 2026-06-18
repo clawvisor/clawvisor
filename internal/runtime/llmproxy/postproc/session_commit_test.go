@@ -7,6 +7,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/taskcheckout"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -326,6 +327,177 @@ func TestCommitVerdictSideEffectsRollsBackClaimOnSetOutcomeFailure(t *testing.T)
 	// And the claim is reusable.
 	if _, err := reg.ClaimOption(ctx, stored.ID, llmproxy.ScopeDriftOptionNewTask, "retry"); err != nil {
 		t.Fatalf("expected drift to be re-claimable after rollback, got: %v", err)
+	}
+}
+
+// TestCommitFailureClearsAutoApproveCheckout pins the auto-approve
+// checkout-rollback contract: when the deferred-outcome / substitution
+// commit fails, the conversation checkout the evaluator set inline
+// before returning the verdict gets cleared too. Without that sweep
+// the next turn surfaces a "task missing" experience — model fetches
+// the active task, sees the just-expired ID, asks the user to retry.
+//
+// Conditional clear: only when the stored value still names OUR task,
+// so a concurrent flow that re-pointed the checkout after we set it
+// isn't clobbered.
+func TestCommitFailureClearsAutoApproveCheckout(t *testing.T) {
+	reg := &commitFailingRegistry{inner: llmproxy.NewMemoryScopeDriftRegistry(0)}
+	checkouts := taskcheckout.NewMemoryStore(0)
+	expirer := &recordingExpirer{}
+	cfg := llmproxy.PostprocessConfig{
+		AgentContext:         llmproxy.AgentContext{AgentID: "agent-co", AgentUserID: "user-co"},
+		AuditContext:         llmproxy.AuditContext{ConversationID: "conv-co"},
+		AuthorizationContext: llmproxy.AuthorizationContext{ScopeDrifts: reg},
+		ApprovalContext:      llmproxy.ApprovalContext{InlineTaskCreator: expirer, Checkouts: checkouts},
+	}
+	s := newPostprocessSession(cfg)
+	ctx := context.Background()
+
+	// Simulate the auto-approve evaluator having set the checkout
+	// to its just-created task BEFORE returning the verdict.
+	key := taskcheckout.Key{UserID: "user-co", AgentID: "agent-co", ConversationID: "conv-co"}
+	if err := checkouts.Set(ctx, key, "task-orphan", 0); err != nil {
+		t.Fatalf("seed checkout: %v", err)
+	}
+
+	tu := conversation.ToolUse{ID: "tu-co", Name: "Bash", Input: []byte(`{"command":"x"}`)}
+	verdictByTU := map[string]conversation.ToolUseVerdict{
+		"tu-co": {
+			Outcome: conversation.OutcomeDeny,
+			PendingSubstitution: &conversation.PendingSubstitutionSpec{
+				MenuText:          "augmentation",
+				OriginalToolName:  tu.Name,
+				OriginalToolInput: tu.Input,
+				TaskRollback: &conversation.PendingSubstitutionTaskRollback{
+					TaskID:         "task-orphan",
+					UserID:         "user-co",
+					AgentID:        "agent-co",
+					ConversationID: "conv-co",
+				},
+			},
+		},
+	}
+
+	if err := s.commitVerdictSideEffects(ctx, verdictByTU, []conversation.ToolUse{tu}); err == nil {
+		t.Fatal("expected registry failure to propagate")
+	}
+	if !expirer.expireCalled {
+		t.Fatal("task expirer should fire on commit failure")
+	}
+	// Checkout still points at the orphan task without our fix; with
+	// the fix it's gone.
+	if _, ok, err := checkouts.Get(ctx, key); err != nil {
+		t.Fatalf("Get checkout: %v", err)
+	} else if ok {
+		t.Fatal("checkout pointing at orphan task should have been cleared")
+	}
+}
+
+// TestCommitFailureDoesNotClobberReassignedCheckout asserts the
+// conditional-clear contract: if a concurrent flow re-pointed the
+// checkout between Set and rollback, the rollback must leave the new
+// value alone.
+func TestCommitFailureDoesNotClobberReassignedCheckout(t *testing.T) {
+	reg := &commitFailingRegistry{inner: llmproxy.NewMemoryScopeDriftRegistry(0)}
+	checkouts := taskcheckout.NewMemoryStore(0)
+	expirer := &recordingExpirer{}
+	cfg := llmproxy.PostprocessConfig{
+		AgentContext:         llmproxy.AgentContext{AgentID: "agent-co2", AgentUserID: "user-co2"},
+		AuditContext:         llmproxy.AuditContext{ConversationID: "conv-co2"},
+		AuthorizationContext: llmproxy.AuthorizationContext{ScopeDrifts: reg},
+		ApprovalContext:      llmproxy.ApprovalContext{InlineTaskCreator: expirer, Checkouts: checkouts},
+	}
+	s := newPostprocessSession(cfg)
+	ctx := context.Background()
+
+	key := taskcheckout.Key{UserID: "user-co2", AgentID: "agent-co2", ConversationID: "conv-co2"}
+	// Concurrent flow pointed the checkout at a DIFFERENT task after
+	// our Set but before our rollback. The orphan-task expirer should
+	// still fire, but the checkout's new value must survive.
+	if err := checkouts.Set(ctx, key, "task-other-flow", 0); err != nil {
+		t.Fatalf("seed checkout: %v", err)
+	}
+
+	tu := conversation.ToolUse{ID: "tu-co2", Name: "Bash", Input: []byte(`{"command":"x"}`)}
+	verdictByTU := map[string]conversation.ToolUseVerdict{
+		"tu-co2": {
+			Outcome: conversation.OutcomeDeny,
+			PendingSubstitution: &conversation.PendingSubstitutionSpec{
+				MenuText:          "augmentation",
+				OriginalToolName:  tu.Name,
+				OriginalToolInput: tu.Input,
+				TaskRollback: &conversation.PendingSubstitutionTaskRollback{
+					TaskID:         "task-orphan",
+					UserID:         "user-co2",
+					AgentID:        "agent-co2",
+					ConversationID: "conv-co2",
+				},
+			},
+		},
+	}
+
+	_ = s.commitVerdictSideEffects(ctx, verdictByTU, []conversation.ToolUse{tu})
+
+	current, ok, err := checkouts.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("Get checkout: %v", err)
+	}
+	if !ok || current.TaskID != "task-other-flow" {
+		t.Fatalf("checkout reassigned by concurrent flow should survive rollback; got ok=%v task=%q", ok, current.TaskID)
+	}
+}
+
+// TestSessionDropAndRollbackSweepsVerdictSideEffects pins the
+// streaming-path rollback contract: the helpers that the streaming
+// write paths call on a write failure (dropCommittedAndRollback,
+// dropAllCommittedAndRollback) MUST also undo registry writes
+// commitVerdictSideEffects landed earlier. Without this, a streaming
+// commit-then-write-fail leaves stale substitutions / drift outcomes
+// the harness retry would hit.
+func TestSessionDropAndRollbackSweepsVerdictSideEffects(t *testing.T) {
+	reg := llmproxy.NewMemoryScopeDriftRegistry(0)
+	ctx := context.Background()
+	cfg := llmproxy.PostprocessConfig{
+		AgentContext:         llmproxy.AgentContext{AgentID: "agent-stream", AgentUserID: "user-stream"},
+		AuditContext:         llmproxy.AuditContext{ConversationID: "conv-stream"},
+		AuthorizationContext: llmproxy.AuthorizationContext{ScopeDrifts: reg},
+	}
+	s := newPostprocessSession(cfg)
+
+	// Pretend commit landed two substitutions and one drift outcome.
+	stored, err := reg.Register(ctx, llmproxy.ScopeDrift{
+		UserID: "user-stream", AgentID: "agent-stream", ConversationID: "conv-stream",
+		ToolUse: conversation.ToolUse{ID: "tu-1"}, Source: llmproxy.ScopeDriftSourceTaskScope,
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if _, err := reg.ClaimOption(ctx, stored.ID, llmproxy.ScopeDriftOptionNewTask, ""); err != nil {
+		t.Fatalf("ClaimOption: %v", err)
+	}
+	if err := reg.SetOutcome(ctx, stored.ID, llmproxy.ScopeDriftOutcomeSucceeded); err != nil {
+		t.Fatalf("SetOutcome: %v", err)
+	}
+	key := llmproxy.PendingSubstitutionKey{
+		AgentID: "agent-stream", ConversationID: "conv-stream", ToolUseID: "tu-1",
+	}
+	if err := reg.RegisterPendingSubstitution(ctx, key, llmproxy.PendingSubstitution{
+		MenuText: "menu", OriginalToolName: "Bash", OriginalToolInput: []byte(`{}`),
+	}); err != nil {
+		t.Fatalf("RegisterPendingSubstitution: %v", err)
+	}
+	s.substitutions = []llmproxy.PendingSubstitutionKey{key}
+	s.driftOutcomes = []string{stored.ID}
+
+	if err := s.dropAllCommittedAndRollback(ctx); err != nil {
+		t.Fatalf("dropAllCommittedAndRollback: %v", err)
+	}
+
+	if _, ok := reg.LookupPendingSubstitution(ctx, key); ok {
+		t.Fatal("dropAllCommittedAndRollback must sweep verdict side effects: substitution still present")
+	}
+	if _, hit := reg.LookupPreClear(ctx, "agent-stream", stored.Fingerprint()); hit {
+		t.Fatal("dropAllCommittedAndRollback must sweep drift outcomes: pre-clear still present")
 	}
 }
 

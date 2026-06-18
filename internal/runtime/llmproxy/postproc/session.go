@@ -220,6 +220,29 @@ func (s *postprocessSession) expireRollbackTask(ctx context.Context, handle *con
 			)
 		}
 	}
+	// The auto-approve evaluator also set the conversation's checkout
+	// to the just-expired task. Clear it conditionally — only when the
+	// stored value still names OUR task — so a concurrent flow that
+	// re-pointed the checkout after we set it isn't clobbered. Without
+	// this, subsequent turns surface a "task missing" experience: the
+	// model fetches the active task ID, gets the expired one, and asks
+	// the user to retry.
+	if checkouts := s.baseCfg.Checkouts; checkouts != nil && handle.AgentID != "" && handle.ConversationID != "" {
+		key := llmproxy.TaskCheckoutKey{
+			UserID:         handle.UserID,
+			AgentID:        handle.AgentID,
+			ConversationID: handle.ConversationID,
+		}
+		current, ok, getErr := checkouts.Get(rollbackCtx, key)
+		if getErr == nil && ok && current.TaskID == handle.TaskID {
+			if clearErr := checkouts.Clear(rollbackCtx, key); clearErr != nil && trace != nil {
+				trace("inline_task.auto_approve_rollback_checkout_clear_failed",
+					"task_id", handle.TaskID,
+					"err", clearErr.Error(),
+				)
+			}
+		}
+	}
 }
 
 // rollbackVerdictSideEffects undoes every registry write the session
@@ -263,21 +286,44 @@ func (s *postprocessSession) dropCommitted(ctx context.Context, capture *pipelin
 }
 
 func (s *postprocessSession) dropCommittedAndRollback(ctx context.Context, capture *pipeline.HoldCapture) error {
-	if s == nil || s.finalizer == nil || capture == nil {
+	if s == nil {
 		return nil
 	}
 	cleanupCtx, cancel := cleanupContext(ctx)
 	defer cancel()
-	return s.finalizer.DropCommittedAndRollback(cleanupCtx, *capture)
+	var err error
+	if s.finalizer != nil && capture != nil {
+		err = s.finalizer.DropCommittedAndRollback(cleanupCtx, *capture)
+	}
+	// The streaming write paths call this AFTER commitVerdictSideEffects
+	// has already landed substitutions / drift outcomes in the registry.
+	// Sweeping the verdict-side-effect writes here too means a partial
+	// streaming success (commit succeeded, write failed) doesn't strand
+	// the registry with substitutions for tool_uses the harness never
+	// actually saw on the wire. Runs unconditional on the session so a
+	// nil/no-capture finalizer doesn't short-circuit the verdict-side-
+	// effect sweep.
+	s.rollbackVerdictSideEffects(cleanupCtx)
+	return err
 }
 
 func (s *postprocessSession) dropAllCommittedAndRollback(ctx context.Context) error {
-	if s == nil || s.finalizer == nil {
+	if s == nil {
 		return nil
 	}
 	cleanupCtx, cancel := cleanupContext(ctx)
 	defer cancel()
-	return s.finalizer.DropAllCommittedAndRollback(cleanupCtx)
+	var err error
+	if s.finalizer != nil {
+		err = s.finalizer.DropAllCommittedAndRollback(cleanupCtx)
+	}
+	// Same rationale as dropCommittedAndRollback: any registry writes
+	// that landed during commitVerdictSideEffects must be undone when a
+	// downstream streaming write fails, or subsequent harness retries
+	// will hit stale substitution entries for tool_uses that never
+	// reached them.
+	s.rollbackVerdictSideEffects(cleanupCtx)
+	return err
 }
 
 func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {

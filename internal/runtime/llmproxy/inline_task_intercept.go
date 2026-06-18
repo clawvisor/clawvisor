@@ -403,8 +403,10 @@ func MaybeInterceptInlineTaskDefinition(
 						OriginalToolName:  tu.Name,
 						OriginalToolInput: append([]byte(nil), tu.Input...),
 						TaskRollback: &conversation.PendingSubstitutionTaskRollback{
-							TaskID: created.ID,
-							UserID: cfg.AgentUserID,
+							TaskID:         created.ID,
+							UserID:         cfg.AgentUserID,
+							AgentID:        cfg.AgentID,
+							ConversationID: cfg.ConversationID,
 						},
 					},
 					// Mark the scope drift Succeeded at commit time so
