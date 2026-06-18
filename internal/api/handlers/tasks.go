@@ -2021,15 +2021,39 @@ func (h *TasksHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not complete task")
 		return
 	}
+	liveStatus := ""
 	if !won {
-		// Lost the CAS — re-read the task to surface the live status to
-		// the caller so the agent can react (e.g. expand-then-complete
-		// flipped the row to pending_scope_expansion between read and
-		// write). A failed re-read falls back to the generic message.
-		liveStatus := ""
-		if live, livErr := h.st.GetTask(ctx, taskID); livErr == nil && live != nil {
+		// Lost the CAS — re-read the task. Two cases:
+		//
+		//   (a) The live status is still one we accept (active or
+		//       expired). The most common driver is the expiration
+		//       sweeper flipping active → expired between preflight
+		//       and the CAS write; that's a benign race we should
+		//       absorb, not surface as a 409 — the agent's call is
+		//       still valid and chain-fact cleanup still needs to
+		//       run. Retry the CAS once with the live fromStatus.
+		//   (b) The live status is non-completable (pending_scope_
+		//       expansion, revoked, denied, already completed). The
+		//       agent needs to react; 409 with the live status in
+		//       the message.
+		//
+		// The retry is bounded to a single attempt: if it also loses,
+		// fall through to the 409 branch with whatever status the
+		// re-read observed. This avoids an unbounded loop if multiple
+		// in-flight callers race.
+		live, livErr := h.st.GetTask(ctx, taskID)
+		if livErr == nil && live != nil {
 			liveStatus = live.Status
+			if live.Status == "active" || live.Status == "expired" {
+				won, err = h.st.UpdateTaskStatusFrom(ctx, taskID, live.Status, "completed")
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not complete task")
+					return
+				}
+			}
 		}
+	}
+	if !won {
 		msg := "task moved to a non-completable state"
 		if liveStatus != "" {
 			msg = "task moved to " + liveStatus + " before completion"

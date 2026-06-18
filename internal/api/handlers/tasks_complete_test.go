@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
@@ -240,6 +241,72 @@ func TestComplete_UnknownTask_Returns404(t *testing.T) {
 	h.Complete(rec, newCompleteRequest("does-not-exist", agent))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("Complete status = %d, want 404; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// flipActiveToExpiredOnFirstCASStore is a store wrapper that
+// deterministically reproduces the active → expired race between the
+// Complete handler's preflight read and its CAS write. On the first
+// "active → completed" CAS, it flips the underlying row to expired
+// and returns won=false; subsequent CAS calls pass through to the
+// real store unchanged.
+type flipActiveToExpiredOnFirstCASStore struct {
+	store.Store
+	mu      sync.Mutex
+	flipped bool
+}
+
+func (w *flipActiveToExpiredOnFirstCASStore) UpdateTaskStatusFrom(ctx context.Context, id, from, to string) (bool, error) {
+	w.mu.Lock()
+	intercept := !w.flipped && from == "active" && to == "completed"
+	if intercept {
+		w.flipped = true
+	}
+	w.mu.Unlock()
+	if intercept {
+		// Simulate the expiration sweeper flipping the row mid-flight.
+		// The underlying CAS still uses the real store so the row
+		// actually moves to expired — the handler's next GetTask will
+		// observe that on the retry path.
+		if _, err := w.Store.UpdateTaskStatusFrom(ctx, id, "active", "expired"); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	return w.Store.UpdateTaskStatusFrom(ctx, id, from, to)
+}
+
+// TestComplete_ActiveToExpiredRace_RetriesAndSucceeds locks in the
+// fix for the active→expired benign race. Before the retry, this
+// scenario would 409 — the preflight accepted active, the CAS pinned
+// fromStatus=active, the expiration sweeper raced in between, and the
+// CAS lost despite expired being an equally-valid pre-complete state.
+// Worse, chain-fact cleanup also got skipped.
+//
+// The fix: on CAS loss, re-read the live status; if it's still
+// completable (active or expired), retry the CAS once with the live
+// fromStatus.
+func TestComplete_ActiveToExpiredRace_RetriesAndSucceeds(t *testing.T) {
+	h, realStore, _, agent := newInlineTasksHandlerForTest(t)
+	task := seedActiveTask(t, h, agent, "race-active-to-expired")
+
+	// Swap in the wrapper for the Complete call only. Seeding through
+	// the real store first avoids interference with task creation,
+	// which also exercises UpdateTaskStatusFrom under the hood.
+	h.st = &flipActiveToExpiredOnFirstCASStore{Store: realStore}
+
+	rec := httptest.NewRecorder()
+	h.Complete(rec, newCompleteRequest(task.ID, agent))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Complete status = %d, want 200 (active→expired race must NOT surface as 409); body = %s", rec.Code, rec.Body.String())
+	}
+	persisted, err := realStore.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if persisted.Status != "completed" {
+		t.Errorf("persisted status = %q, want completed", persisted.Status)
 	}
 }
 
