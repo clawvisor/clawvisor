@@ -1321,8 +1321,17 @@ func TestScopeDriftE2E_NewTaskAutoApproveResolvesDriftSucceeded(t *testing.T) {
 	if !ok {
 		t.Fatal("expected task definition intercept to claim the request")
 	}
-	if verdict.Continue == nil {
-		t.Fatal("expected auto-approve continue signal to be present")
+	// Auto-approve verdict shape after continuation removal: Outcome=Deny
+	// (block the original control_tool POST from reaching the harness)
+	// + SubstituteWithToolCall set to the Bash placeholder + SubstituteWith
+	// carrying the [Clawvisor] user-facing notice. The inbound rewriter
+	// restores the original call and substitutes the augmentation on the
+	// next /v1/messages.
+	if verdict.SubstituteWithToolCall == nil {
+		t.Fatal("expected auto-approve verdict to set SubstituteWithToolCall (Bash placeholder)")
+	}
+	if verdict.SubstituteWith == "" {
+		t.Fatal("expected auto-approve verdict to set SubstituteWith with the [Clawvisor] notice")
 	}
 
 	// Verify that the drift outcome was marked as Succeeded.

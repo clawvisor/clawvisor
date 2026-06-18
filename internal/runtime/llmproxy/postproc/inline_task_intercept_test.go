@@ -258,6 +258,10 @@ func (f *failingRegistry) ClaimOption(ctx context.Context, driftID string, optio
 	return f.inner.ClaimOption(ctx, driftID, option, agentNote)
 }
 
+func (f *failingRegistry) RollbackClaim(ctx context.Context, driftID string) error {
+	return f.inner.RollbackClaim(ctx, driftID)
+}
+
 func (f *failingRegistry) SetOutcome(ctx context.Context, driftID string, outcome llmproxy.ScopeDriftOutcome) error {
 	return f.inner.SetOutcome(ctx, driftID, outcome)
 }
