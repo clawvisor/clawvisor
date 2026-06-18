@@ -266,6 +266,20 @@ func applyBlockSubstitutions(frags []assistantFragment, decisions []ToolUseDecis
 		decision := decisions[toolDecisionIdx]
 		toolDecisionIdx++
 		if !decision.Verdict.Allowed {
+			if decision.Verdict.SubstituteWithToolCall != nil {
+				// Placeholder substitution (scope-drift, recoverable-
+				// deny, auto-approve): the rewriter already replaced
+				// the original tool_use with the substitute call in
+				// the response body AND populated frag.ToolName with
+				// the substitute's name. Let the tool fragment
+				// through unchanged so the AssistantTurn audit
+				// reflects the actual wire shape (a tool_use, not
+				// text). Any preamble SubstituteWith text was
+				// emitted as its own preceding Text frag by the
+				// rewriter and passes through above.
+				out = append(out, frag)
+				continue
+			}
 			if substitute := strings.TrimSpace(decision.Verdict.SubstituteWith); substitute != "" {
 				out = append(out, assistantFragment{Text: substitute})
 				continue
