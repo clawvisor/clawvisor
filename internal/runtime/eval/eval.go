@@ -7,8 +7,6 @@
 // translation lives at the policy / inspector boundary.
 package eval
 
-import "encoding/json"
-
 // Outcome is the coarse verdict category an evaluator returns.
 type Outcome string
 
@@ -161,15 +159,6 @@ type AuthorizationFact struct {
 }
 
 func (AuthorizationFact) isEvaluationFact() {}
-
-// ContinueSignal is returned by an evaluator when the tool_use is being
-// served locally and the pipeline should re-enter with a synthetic
-// continuation turn.
-type ContinueSignal struct {
-	SyntheticAssistantBlocks []json.RawMessage
-	SyntheticToolResults     []json.RawMessage
-	PrependNotice            string
-}
 
 // CredentialLocation describes where a credential placeholder appears
 // in a tool_use input. Audit consumers store this on the audit row;

@@ -2,33 +2,24 @@ package postproc
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 )
 
-// transformRecoverableDenyToPlaceholder converts a Deny+Continue
-// verdict (RecoverableDenyVerdict / RecoverableContinue) into a
-// placeholder-tool_use + pending-substitution shape so the model sees
-// its own original tool_use answered by the reason on the next inbound
-// /v1/messages — instead of the proxy issuing an upstream continuation
-// call to deliver the reason as a synthetic tool_result.
-//
-// Allow+Continue is the inline-task auto-approve pattern and stays on
-// the legacy tryContinuation flow: that path advances the conversation
-// past the auto-approved call rather than asking the model to retry,
-// so a placeholder swap would be semantically wrong (the model would
-// see its own "create task" call answered by the result of a
-// post-creation step).
+// transformRecoverableDenyToPlaceholder converts a recoverable-deny
+// verdict (RecoverableDenyVerdict — Outcome=Deny with RecoverableReason
+// set) into a placeholder-tool_use + pending-substitution shape so the
+// model sees its own original tool_use answered by the reason on the
+// next inbound /v1/messages.
 //
 // Returns the (possibly unchanged) verdict and, when a substitution
 // was registered, the key the caller should hand to the rollback path
 // so a later failClosed / rewrite-error can revert the registry write.
-// Any failure to register leaves the verdict alone so the legacy
-// continuation path remains the fallback.
+// Any failure to register leaves the verdict alone so the SubstituteWith
+// terminal fallback still surfaces the reason.
 func transformRecoverableDenyToPlaceholder(ctx context.Context, v conversation.ToolUseVerdict, tu conversation.ToolUse, cfg llmproxy.PostprocessConfig) (conversation.ToolUseVerdict, *llmproxy.PendingSubstitutionKey) {
-	if v.Outcome != conversation.OutcomeDeny || v.Continue == nil {
+	if v.Outcome != conversation.OutcomeDeny || v.RecoverableReason == "" {
 		return v, nil
 	}
 	// Another policy already chose a placeholder shape (scope-drift
@@ -42,13 +33,11 @@ func transformRecoverableDenyToPlaceholder(ctx context.Context, v conversation.T
 	}
 	if cfg.AgentContext.AgentID == "" {
 		// Without an agent id the inbound rewriter can't key the
-		// substitution; better to leave the legacy path alone.
+		// substitution; better to leave SubstituteWith as the terminal
+		// fallback.
 		return v, nil
 	}
-	reason, ok := extractRecoverableContinueReason(v.Continue)
-	if !ok {
-		return v, nil
-	}
+	reason := v.RecoverableReason
 	sentinel := &conversation.SyntheticToolCall{
 		ID:   tu.ID,
 		Name: llmproxy.ScopeDriftPlaceholderToolName,
@@ -73,7 +62,7 @@ func transformRecoverableDenyToPlaceholder(ctx context.Context, v conversation.T
 	v.SubstituteWithToolCall = sentinel
 	v.SuppressSubstituteText = true
 	v.SubstituteWith = ""
-	v.Continue = nil
+	v.RecoverableReason = ""
 	return v, &key
 }
 
@@ -107,18 +96,3 @@ func detectScopeDriftSubstitution(ctx context.Context, v conversation.ToolUseVer
 	return &key
 }
 
-// extractRecoverableContinueReason pulls the reason string back out of
-// a ContinueSignal built by conversation.RecoverableContinue. The
-// signal carries the reason as a single JSON-marshaled string in
-// SyntheticToolResults[0]; anything else is treated as "not a
-// recoverable-deny we own."
-func extractRecoverableContinueReason(c *conversation.ContinueSignal) (string, bool) {
-	if c == nil || len(c.SyntheticToolResults) != 1 {
-		return "", false
-	}
-	var s string
-	if err := json.Unmarshal(c.SyntheticToolResults[0], &s); err != nil {
-		return "", false
-	}
-	return s, s != ""
-}

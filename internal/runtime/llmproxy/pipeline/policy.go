@@ -2,11 +2,9 @@ package pipeline
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/jsonpatch"
 )
 
 // Outcome aliases conversation.Outcome so pipeline code can keep using
@@ -141,32 +139,6 @@ type SyntheticResponse struct {
 	Streaming bool
 }
 
-// ContinueSignal aliases conversation.ContinueSignal.
-type ContinueSignal = conversation.ContinueSignal
-
-// NewTextContinuation wraps a plain string as a single synthetic
-// tool_result on a ContinueSignal. The text is JSON-marshaled to the
-// shape ContinuationToolResultContent extracts on the consuming side
-// (a JSON string element in SyntheticToolResults).
-//
-// Lives in the pipeline package so policies can produce continuation
-// signals without inlining encoding/json — keeps the policy layer
-// semantic and contains the wire-format coupling to one place.
-//
-// Returns nil when json.Marshal of a string somehow fails (it can't
-// in practice; callers can treat a nil ContinueSignal as "no
-// continuation" and fall back to SubstituteWith if they were
-// pairing the two).
-func NewTextContinuation(text string) *ContinueSignal {
-	payload, err := jsonpatch.MarshalNoEscape(text)
-	if err != nil {
-		return nil
-	}
-	return &ContinueSignal{
-		SyntheticToolResults: []json.RawMessage{payload},
-	}
-}
-
 // ByteSpan is a [start, end) byte range used for span-based redaction.
 // Used by secret_detection to redact spans in the original body without
 // re-parsing.
@@ -175,10 +147,3 @@ type ByteSpan struct {
 	End   int
 }
 
-// SyntheticContinuation is the typed shape policies can build via
-// RequestMutator.AppendContinuationTurn. Used by continuation re-entry
-// to construct the next-turn body.
-type SyntheticContinuation struct {
-	AssistantBlocks []json.RawMessage
-	ToolResults     []json.RawMessage
-}

@@ -10,7 +10,6 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/controltool"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
@@ -312,29 +311,59 @@ func MaybeInterceptInlineTaskDefinition(
 					"reason", reason,
 				)
 				augmentation := inlineApprovedReplyAugmentationContext(created.ID, checkedOut, created.Credentials)
-				continuationPayload, _ := jsonsurgery.MarshalNoEscape(augmentation)
+				sentinel := &conversation.SyntheticToolCall{
+					ID:   tu.ID,
+					Name: ScopeDriftPlaceholderToolName,
+					Input: map[string]any{
+						"command": BuildAutoApprovePlaceholderCommand(tu.Name, created.ID, created.Purpose),
+					},
+				}
+				// Register a pending substitution so the inbound
+				// rewriter on the next /v1/messages restores the
+				// model's original control_tool POST byte-for-byte and
+				// delivers the augmentation context as the
+				// tool_result. The harness sees the model emit a
+				// `Bash` no-op carrying the operator-facing
+				// auto-approve comment; the upstream model sees its
+				// own call answered by the augmentation. Same wire
+				// mechanism as scope-drift / recoverable-deny — see
+				// scope_drift_inbound_rewrite.go.
+				if registry := cfg.AuthorizationContext.ScopeDrifts; registry != nil && cfg.AgentID != "" {
+					if regErr := registry.RegisterPendingSubstitution(req.Context(),
+						PendingSubstitutionKey{
+							AgentID:        cfg.AgentID,
+							ConversationID: cfg.ConversationID,
+							ToolUseID:      tu.ID,
+						},
+						PendingSubstitution{
+							MenuText:          augmentation,
+							OriginalToolName:  tu.Name,
+							OriginalToolInput: append([]byte(nil), tu.Input...),
+						},
+					); regErr != nil {
+						audit("fallthrough", "auto_approve_substitution_register_failed", regErr.Error())
+						trace("inline_task.auto_approve_substitution_failed", "err", regErr.Error())
+						// Returning false here lets the deferred
+						// guard.Rollback fire — the drift claim from
+						// PR #569's machinery gets reverted alongside
+						// the failed substitution attempt.
+						return conversation.ToolUseVerdict{}, false
+					}
+				}
+				// Drift-claim success: the deferred Rollback is now a
+				// no-op. Mirrors the placement in PR #569's continuation
+				// path.
 				guard.Success()
 				return conversation.ToolUseVerdict{
+					Outcome: conversation.OutcomeDeny,
 					Allowed: false,
 					Reason:  "Clawvisor: auto-approved from conversation context",
 					// CreatedTaskID lets downstream audit emissions
-					// (LogContinuationSkippedSiblingTools etc.) link
-					// to the same task without parsing the
+					// link to the same task without parsing the
 					// augmentation text or threading a sidecar map.
-					CreatedTaskID: created.ID,
-					// SubstituteWith is the fallback rendered to the
-					// harness as an assistant text turn if the handler
-					// can't complete the recursive continuation call
-					// (unsupported provider, recursion bound reached,
-					// upstream error). Continue is the happy path: the
-					// handler feeds this same text back upstream as a
-					// synthetic user/tool_result turn so the model can
-					// proceed without bouncing to the user.
-					SubstituteWith: augmentation,
-					Continue: &conversation.ContinueSignal{
-						SyntheticToolResults: []json.RawMessage{continuationPayload},
-						PrependNotice:        AutoApproveUserNotice(created.Purpose),
-					},
+					CreatedTaskID:          created.ID,
+					SubstituteWithToolCall: sentinel,
+					SuppressSubstituteText: true,
 				}, true
 			}
 		}

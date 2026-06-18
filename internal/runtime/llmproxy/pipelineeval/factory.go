@@ -61,7 +61,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	authBundle := buildAuthorizationResolver(cfg.AgentContext, cfg.AuditContext, cfg.AuthorizationContext, cfg.ApprovalContext, cfg.RewriteContext, cfg.RoutingContext, provider)
 
 	chain := policies.ComposeToolUseEvaluatorChain(policies.ToolUseChainConfig{
-		Control:       buildControlResolver(req, cfg.AgentContext, cfg.AuditContext, cfg.ApprovalContext, cfg.RewriteContext, cfg.RoutingContext, provider, emit),
+		Control:       buildControlResolver(req, cfg.AgentContext, cfg.AuditContext, cfg.AuthorizationContext, cfg.ApprovalContext, cfg.RewriteContext, cfg.RoutingContext, provider, emit),
 		ScriptSession: buildScriptSessionResolver(cfg.RewriteContext, cfg.ScriptSessionContext),
 		Inspector:     cfg.Inspector,
 		Boundary:      buildBoundaryResolver(cfg.AgentContext, cfg.Store),
@@ -288,6 +288,7 @@ func buildControlResolver(
 	req *http.Request,
 	agent llmproxy.AgentContext,
 	audit llmproxy.AuditContext,
+	auth llmproxy.AuthorizationContext,
 	approval llmproxy.ApprovalContext,
 	rewrite llmproxy.RewriteContext,
 	routing llmproxy.RoutingContext,
@@ -301,11 +302,12 @@ func buildControlResolver(
 	agentID := agent.AgentID
 	cache := rewrite.CallerNonces
 	interceptCfg := llmproxy.PostprocessConfig{
-		AgentContext:    agent,
-		AuditContext:    audit,
-		ApprovalContext: approval,
-		RewriteContext:  rewrite,
-		RoutingContext:  routing,
+		AgentContext:         agent,
+		AuditContext:         audit,
+		AuthorizationContext: auth,
+		ApprovalContext:      approval,
+		RewriteContext:       rewrite,
+		RoutingContext:       routing,
 	}
 	return func(_ context.Context, _ conversation.ToolUse) *policies.ControlToolUseInputs {
 		return &policies.ControlToolUseInputs{
@@ -388,7 +390,7 @@ func conversationToPipelineVerdict(v conversation.ToolUseVerdict) pipeline.ToolU
 			v.Outcome = pipeline.OutcomeAllow
 		}
 	} else {
-		if v.Continue == nil && (v.HeldKindHint == pipeline.HeldKindHintApproval || v.HoldKey != "" || v.SubstituteWith != "") {
+		if v.HeldKindHint == pipeline.HeldKindHintApproval || v.HoldKey != "" || v.SubstituteWith != "" {
 			v.Outcome = pipeline.OutcomeHold
 		} else {
 			v.Outcome = pipeline.OutcomeDeny

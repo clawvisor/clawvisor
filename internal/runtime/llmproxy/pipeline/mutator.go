@@ -45,11 +45,6 @@ type RequestMutator interface {
 	// RedactSpans erases byte ranges in the raw request body. Used by
 	// secret_detection to redact found secrets without re-parsing.
 	RedactSpans(spans []ByteSpan) error
-
-	// AppendContinuationTurn appends the synthesized assistant+tool_result
-	// pair that closes a local interception. Used for continuation
-	// re-entry.
-	AppendContinuationTurn(synth SyntheticContinuation) error
 }
 
 // StripContext is the predicate input for RequestMutator.StripTurns. It

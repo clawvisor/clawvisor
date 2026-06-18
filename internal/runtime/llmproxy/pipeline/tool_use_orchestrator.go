@@ -21,12 +21,6 @@ type ToolUseResult struct {
 	// evaluator). Useful for telemetry / forensics; coalescing operates
 	// on PerToolUse, not the trail.
 	Evaluations []ToolUseEvaluation
-	// Continue is set if any evaluator returned a ContinueSignal.
-	// Continuation re-enters the pipeline with the synthetic body.
-	Continue *ContinueSignal
-	// ContinueFromToolUseID is the ID of the tool_use that triggered
-	// continuation. Useful for audit forensics.
-	ContinueFromToolUseID string
 }
 
 // ToolUseEvaluation captures one (evaluator, tool_use) pair's verdict.
@@ -42,11 +36,6 @@ type ToolUseEvaluation struct {
 // returning Outcome != Skip wins; later evaluators don't run for that
 // tool_use. Per-tool-use mutations queue on the supplied ToolUseMutator
 // (one mutator per tool_use, constructed by the caller).
-//
-// Continuation: a Continue signal on any verdict short-circuits the
-// whole pass — coalescing-of-Continues isn't a thing (continuation is
-// always single-tool-use by construction). The orchestrator records
-// the trigger ID and returns; the caller re-enters the pipeline.
 //
 // Hold coalescing is handled after this pass by Finalizer, which needs
 // the full sibling verdict set and the buffered hold captures.
@@ -70,7 +59,7 @@ func EvaluateToolUses(
 	}
 
 	seenToolUseIDs := make(map[string]struct{}, len(toolUses))
-	for i, tu := range toolUses {
+	for _, tu := range toolUses {
 		if _, ok := seenToolUseIDs[tu.ID]; ok {
 			return nil, fmt.Errorf("pipeline.EvaluateToolUses: duplicate tool_use id %q", tu.ID)
 		}
@@ -88,45 +77,6 @@ func EvaluateToolUses(
 				ToolUseID:     tu.ID,
 				Verdict:       verdict,
 			})
-			if verdict.Continue != nil {
-				if !continueOutcomeValid(verdict) {
-					return nil, fmt.Errorf("evaluator %q on tool_use %q returned Continue with outcome %q; Continue requires Allow, Rewrite, or a local substitute fallback", ev.Name(), tu.ID, verdict.Outcome)
-				}
-				result.Evaluations[len(result.Evaluations)-1].Winning = true
-				if verdict.Outcome == OutcomeAllow || verdict.Outcome == OutcomeRewrite {
-					// Allow/Rewrite + Continue (the auto-approve /
-					// inline-task pattern) short-circuits the whole
-					// pass. The evaluator has already replaced the
-					// assistant turn locally, so running sibling
-					// evaluators against the now-stale turn shape
-					// would be incoherent.
-					result.Continue = verdict.Continue
-					result.ContinueFromToolUseID = tu.ID
-					result.PerToolUse[tu.ID] = verdict
-					for _, sibling := range toolUses[i+1:] {
-						result.PerToolUse[sibling.ID] = ToolUseVerdict{
-							Outcome: OutcomeDeny,
-							Reason:  "Clawvisor: unprocessed sibling tool_use refused after continuation",
-						}
-					}
-					return result, nil
-				}
-				// Deny + Continue (recoverable deny): record the
-				// per-tool verdict and keep evaluating siblings.
-				// The handler's tryContinuation collects every
-				// per-tool Continue and gates the upstream retry on
-				// the 1:1 tool_use/tool_result invariant; until
-				// then, siblings deserve their own real verdicts so
-				// audit, finalizer hooks, and the terminal-substitute
-				// fallback surface the right reasons.
-				if result.Continue == nil {
-					result.Continue = verdict.Continue
-					result.ContinueFromToolUseID = tu.ID
-				}
-				v := verdict
-				winner = &v
-				break
-			}
 			if verdict.Outcome != OutcomeSkip {
 				result.Evaluations[len(result.Evaluations)-1].Winning = true
 				v := verdict
@@ -184,17 +134,3 @@ func defaultUnclaimedToolUseVerdict(evaluations []ToolUseEvaluation, toolUseID s
 	}
 }
 
-func continueOutcomeValid(verdict ToolUseVerdict) bool {
-	switch verdict.Outcome {
-	case OutcomeAllow, OutcomeRewrite:
-		return true
-	case OutcomeDeny:
-		// Local-answer continuations block the original tool_use from
-		// the harness, feed a synthetic result upstream on the happy
-		// path, and need SubstituteWith as the terminal fallback if the
-		// continuation request cannot run.
-		return verdict.SubstituteWith != ""
-	default:
-		return false
-	}
-}

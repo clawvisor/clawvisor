@@ -38,8 +38,8 @@ func TestTransformRecoverableDenyToPlaceholder(t *testing.T) {
 	if registered.AgentID != cfg.AgentContext.AgentID || registered.ToolUseID != tu.ID {
 		t.Fatalf("registered key mismatch: %+v", *registered)
 	}
-	if got.Continue != nil {
-		t.Fatalf("expected Continue signal cleared after migration, got %+v", got.Continue)
+	if got.RecoverableReason != "" {
+		t.Fatalf("expected RecoverableReason cleared after migration, got %q", got.RecoverableReason)
 	}
 	if got.SubstituteWith != "" {
 		t.Fatalf("expected SubstituteWith cleared (placeholder owns the wire shape), got %q", got.SubstituteWith)
@@ -83,44 +83,36 @@ func TestTransformRecoverableDenyToPlaceholder(t *testing.T) {
 	}
 }
 
-// TestTransformRecoverableDenyToPlaceholderLeavesAutoApproveAlone
-// guards the inline-task auto-approve flow: its verdict has
-// Outcome=Allow + Continue, NOT Outcome=Deny + Continue. That path
-// must stay on the upstream-continuation flow because it advances the
-// conversation past the auto-approved call rather than expecting the
-// model to retry.
-func TestTransformRecoverableDenyToPlaceholderLeavesAutoApproveAlone(t *testing.T) {
+// TestTransformRecoverableDenyToPlaceholderLeavesNonRecoverableAlone
+// guards the non-recoverable-deny gate: a verdict without
+// RecoverableReason must pass through untouched (no placeholder, no
+// substitution registered). Covers allow paths and terminal denies
+// that explicitly opt out of the recoverable migration.
+func TestTransformRecoverableDenyToPlaceholderLeavesNonRecoverableAlone(t *testing.T) {
 	reg := llmproxy.NewMemoryScopeDriftRegistry(0)
 	tu := conversation.ToolUse{ID: "tu-auto-1", Name: "Bash", Input: json.RawMessage(`{"command":"curl"}`)}
-	payload, _ := json.Marshal("task created, proceed")
 	verdict := conversation.ToolUseVerdict{
 		Outcome: conversation.OutcomeAllow,
 		Allowed: true,
-		Continue: &conversation.ContinueSignal{
-			SyntheticToolResults: []json.RawMessage{payload},
-		},
 	}
 	cfg := llmproxy.PostprocessConfig{
-		AgentContext: llmproxy.AgentContext{AgentID: "agent-auto-1", AgentUserID: "user-auto-1"},
-		AuditContext: llmproxy.AuditContext{ConversationID: "conv-auto-1"},
+		AgentContext:         llmproxy.AgentContext{AgentID: "agent-auto-1", AgentUserID: "user-auto-1"},
+		AuditContext:         llmproxy.AuditContext{ConversationID: "conv-auto-1"},
 		AuthorizationContext: llmproxy.AuthorizationContext{ScopeDrifts: reg},
 	}
 	got, registered := transformRecoverableDenyToPlaceholder(context.Background(), verdict, tu, cfg)
 	if registered != nil {
-		t.Fatalf("auto-approve must NOT register a substitution; got key %+v", *registered)
-	}
-	if got.Continue == nil {
-		t.Fatal("auto-approve Continue signal must be preserved")
+		t.Fatalf("non-recoverable verdict must NOT register a substitution; got key %+v", *registered)
 	}
 	if got.SubstituteWithToolCall != nil {
-		t.Fatal("auto-approve verdict must NOT get a placeholder")
+		t.Fatal("non-recoverable verdict must NOT get a placeholder")
 	}
 	if _, ok := reg.LookupPendingSubstitution(context.Background(), llmproxy.PendingSubstitutionKey{
 		AgentID:        cfg.AgentContext.AgentID,
 		ConversationID: cfg.AuditContext.ConversationID,
 		ToolUseID:      tu.ID,
 	}); ok {
-		t.Fatal("auto-approve must NOT register a pending substitution")
+		t.Fatal("non-recoverable verdict must NOT register a pending substitution")
 	}
 }
 

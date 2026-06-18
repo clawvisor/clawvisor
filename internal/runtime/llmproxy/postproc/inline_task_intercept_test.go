@@ -678,6 +678,7 @@ type autoApproveFixture struct {
 	assessor *stubInlineRiskAssessor
 	creator  *capturingInlineCreator
 	insp     *inspector.Inspector
+	drifts   llmproxy.ScopeDriftRegistry
 }
 
 func newAutoApproveFixture(t *testing.T, assessment *llmproxy.TaskRiskAssessment) autoApproveFixture {
@@ -701,7 +702,8 @@ func newAutoApproveFixture(t *testing.T, assessment *llmproxy.TaskRiskAssessment
 				ApprovalRecordID: "appr-auto",
 			},
 		},
-		insp: inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+		insp:   inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+		drifts: llmproxy.NewMemoryScopeDriftRegistry(0),
 	}
 }
 
@@ -714,6 +716,9 @@ func (f autoApproveFixture) run(threshold string, turns []string) llmproxy.Postp
 			AgentUserID: f.userID,
 			AgentID:     f.agentID,
 			AgentName:   "test-agent",
+		},
+		AuthorizationContext: llmproxy.AuthorizationContext{
+			ScopeDrifts: f.drifts,
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals:                 f.cache,
@@ -800,11 +805,31 @@ func TestAutoApprove_FiresOnLowRiskYesMatch(t *testing.T) {
 	if strings.Contains(out, "Clawvisor wants to create a task") {
 		t.Errorf("auto-approve must skip the human prompt; got %s", out)
 	}
-	if !strings.Contains(out, "was created and approved by the user") {
-		t.Errorf("auto-approve must substitute the success augmentation; got %s", out)
+	// New placeholder shape: the augmentation context lands as the
+	// tool_result content on the next inbound /v1/messages via the
+	// scope-drift inbound rewriter. The response leg carries a Bash
+	// placeholder tool_use with the CLAWVISOR_AUTO_APPROVED marker so
+	// the harness's local execution is a harmless `:` and the operator
+	// sees what happened in the transcript comment.
+	if !strings.Contains(out, llmproxy.AutoApprovePlaceholderMarker) {
+		t.Errorf("auto-approve must substitute a Bash placeholder carrying the AUTO_APPROVED marker; got %s", out)
 	}
 	if !strings.Contains(out, "task-auto-approved") {
-		t.Errorf("augmentation should carry the created task id; got %s", out)
+		t.Errorf("placeholder should name the created task id; got %s", out)
+	}
+	subst, ok := f.drifts.LookupPendingSubstitution(context.Background(), llmproxy.PendingSubstitutionKey{
+		AgentID:        f.agentID,
+		ConversationID: "",
+		ToolUseID:      "toolu_1",
+	})
+	if !ok {
+		t.Fatal("auto-approve must register a pending substitution under the model's original tool_use_id")
+	}
+	if !strings.Contains(subst.MenuText, "was created and approved by the user") {
+		t.Errorf("pending substitution must carry the success augmentation; got %q", subst.MenuText)
+	}
+	if !strings.Contains(subst.MenuText, "task-auto-approved") {
+		t.Errorf("pending substitution must carry the created task id; got %q", subst.MenuText)
 	}
 	// The assessor still ran and saw the recent turns — that's how it
 	// arrived at intent_match=yes in the first place.
@@ -816,12 +841,12 @@ func TestAutoApprove_FiresOnLowRiskYesMatch(t *testing.T) {
 	}
 }
 
-// TestAutoApprove_VerdictRequestsContinuation verifies that the
-// auto-approve gate sets a structured continuation signal on the
-// verdict — not just SubstituteWith. The presence of this signal is
-// what tells the handler to make a recursive LLM call instead of
-// terminating the turn with an assistant text reply.
-func TestAutoApprove_VerdictRequestsContinuation(t *testing.T) {
+// TestAutoApprove_VerdictUsesPlaceholder verifies that the auto-approve
+// gate sets a SubstituteWithToolCall on the verdict — the canonical
+// Bash placeholder mechanism shared with scope-drift and recoverable-
+// deny. The legacy Continue+SubstituteWith pair is gone (continuation
+// was removed alongside this migration).
+func TestAutoApprove_VerdictUsesPlaceholder(t *testing.T) {
 	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
 		RiskLevel:   "low",
 		IntentMatch: "yes",
@@ -831,19 +856,18 @@ func TestAutoApprove_VerdictRequestsContinuation(t *testing.T) {
 		t.Fatal("expected at least one tool_use decision")
 	}
 	v := got.Decisions[0].Verdict
-	if v.Continue == nil {
-		t.Fatal("auto-approve verdict must populate Continue so handler can recursive-call")
+	if v.SubstituteWithToolCall == nil {
+		t.Fatal("auto-approve verdict must set SubstituteWithToolCall (Bash placeholder)")
 	}
-	if v.SubstituteWith == "" {
-		t.Fatal("auto-approve verdict must keep SubstituteWith as fallback when continuation can't run")
+	if v.SubstituteWithToolCall.Name != "Bash" {
+		t.Errorf("placeholder should be a Bash no-op; got %q", v.SubstituteWithToolCall.Name)
 	}
-	content, ok := v.ContinuationToolResultContent()
-	if !ok {
-		t.Fatal("auto-approve verdict must expose continuation content at adapter boundary")
+	cmd, _ := v.SubstituteWithToolCall.Input["command"].(string)
+	if !strings.Contains(cmd, llmproxy.AutoApprovePlaceholderMarker) {
+		t.Errorf("placeholder command must carry the AUTO_APPROVED marker; got %q", cmd)
 	}
-	if v.SubstituteWith != content {
-		t.Errorf("fallback and continuation should carry the same augmentation body; sub=%q cont=%q",
-			v.SubstituteWith, content)
+	if !v.SuppressSubstituteText {
+		t.Error("auto-approve verdict must set SuppressSubstituteText so the rewriter doesn't double-emit")
 	}
 }
 
@@ -1001,6 +1025,9 @@ func TestAutoApprove_WritesTaskLinkedAuditRow(t *testing.T) {
 			Audit:     llmproxy.NewAuditEmitter(f.store, nil, nil),
 			RequestID: "req-auto-approve-audit",
 		},
+		AuthorizationContext: llmproxy.AuthorizationContext{
+			ScopeDrifts: f.drifts,
+		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			PendingApprovals:                 f.cache,
 			TaskRiskAssessor:                 f.assessor,
@@ -1022,8 +1049,22 @@ func TestAutoApprove_WritesTaskLinkedAuditRow(t *testing.T) {
 	if !f.creator.called {
 		t.Fatal("auto-approve gate should have fired")
 	}
-	if !strings.Contains(string(got.Body), "was created and approved by the user") {
-		t.Errorf("expected success augmentation; got %s", got.Body)
+	// Wire shape: response leg carries the Bash placeholder; the
+	// augmentation context lands in the pending substitution registry
+	// for delivery on the next inbound /v1/messages.
+	if !strings.Contains(string(got.Body), llmproxy.AutoApprovePlaceholderMarker) {
+		t.Errorf("expected AUTO_APPROVED placeholder marker in body; got %s", got.Body)
+	}
+	subst, ok := f.drifts.LookupPendingSubstitution(req.Context(), llmproxy.PendingSubstitutionKey{
+		AgentID:        f.agentID,
+		ConversationID: "",
+		ToolUseID:      "toolu_1",
+	})
+	if !ok {
+		t.Fatal("auto-approve must register a pending substitution carrying the success augmentation")
+	}
+	if !strings.Contains(subst.MenuText, "was created and approved by the user") {
+		t.Errorf("pending substitution must carry the success augmentation; got %q", subst.MenuText)
 	}
 
 	rows, _, err := f.store.ListAuditEntries(req.Context(), f.userID, store.AuditFilter{})

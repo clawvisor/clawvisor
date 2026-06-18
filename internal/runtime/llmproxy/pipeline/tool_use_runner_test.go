@@ -143,43 +143,6 @@ func TestBridgeToolUseEvaluator_MissingToolUseFailsClosed(t *testing.T) {
 	}
 }
 
-// TestBridgeToolUseEvaluator_ContinueStaysStructured pins that a
-// ContinueSignal remains structured on the triggering tool_use's
-// verdict; final adapters derive flat provider content only at the
-// boundary.
-func TestBridgeToolUseEvaluator_ContinueStaysStructured(t *testing.T) {
-	res := &orchTestResponse{provider: conversation.ProviderAnthropic}
-	tools := []conversation.ToolUse{{ID: "toolu_local", Name: "Bash"}}
-
-	cont := &continueWithResultEvaluator{
-		name:    "cont",
-		results: []json.RawMessage{json.RawMessage(`{"type":"tool_result","content":"ok"}`)},
-		notice:  "auto-approved",
-	}
-
-	eval, result, err := pipeline.RunToolUseEvaluators(context.Background(), res, tools, []pipeline.ToolUseEvaluator{cont})
-	if err != nil {
-		t.Fatalf("RunToolUseEvaluators: %v", err)
-	}
-	if result.Continue == nil {
-		t.Fatal("result.Continue is nil")
-	}
-
-	v := eval(tools[0])
-	if v.Continue == nil {
-		t.Fatal("verdict Continue is nil")
-	}
-	if v.ContinueWithToolResult != "" {
-		t.Errorf("ContinueWithToolResult = %q, want empty compatibility field", v.ContinueWithToolResult)
-	}
-	if content, ok := v.ContinuationToolResultContent(); !ok || content != "ok" {
-		t.Errorf("ContinuationToolResultContent = %q, %v; want ok, true", content, ok)
-	}
-	if got := v.ContinuationNotice(); got != "auto-approved" {
-		t.Errorf("ContinuationNotice = %q", got)
-	}
-}
-
 // perToolEvaluator dispatches to a per-tool-ID inner evaluator. Used by
 // the bridge tests to drive different verdicts per tool_use in one chain.
 type perToolEvaluator struct {
@@ -196,21 +159,3 @@ func (e *perToolEvaluator) Evaluate(ctx context.Context, res pipeline.ReadOnlyRe
 	return inner.Evaluate(ctx, res, tu, mut)
 }
 
-// continueWithResultEvaluator returns a ContinueSignal carrying both
-// a tool-result block and a prepend notice.
-type continueWithResultEvaluator struct {
-	name    string
-	results []json.RawMessage
-	notice  string
-}
-
-func (e *continueWithResultEvaluator) Name() string { return e.name }
-func (e *continueWithResultEvaluator) Evaluate(_ context.Context, _ pipeline.ReadOnlyResponse, _ conversation.ToolUse, _ pipeline.ToolUseMutator) (pipeline.ToolUseVerdict, error) {
-	return pipeline.ToolUseVerdict{
-		Outcome: pipeline.OutcomeAllow,
-		Continue: &pipeline.ContinueSignal{
-			SyntheticToolResults: e.results,
-			PrependNotice:        e.notice,
-		},
-	}, nil
-}

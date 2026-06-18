@@ -153,11 +153,8 @@ func TestInspectorChain_TypedBoundaryDenyReasons(t *testing.T) {
 			if v.SubstituteWith == "" || v.SubstituteWith != v.Reason {
 				t.Errorf("SubstituteWith = %q, want = Reason for the terminal-fallback path", v.SubstituteWith)
 			}
-			if v.Continue == nil || len(v.Continue.SyntheticToolResults) != 1 {
-				t.Fatalf("Continue.SyntheticToolResults missing — boundary deny should be recoverable so the agent can retry against an allowed host")
-			}
-			if content, ok := v.ContinuationToolResultContent(); !ok || content != v.Reason {
-				t.Errorf("ContinuationToolResultContent = %q, %v; want Reason verbatim", content, ok)
+			if v.RecoverableReason != v.Reason {
+				t.Errorf("RecoverableReason = %q, want = Reason — boundary deny should be recoverable so the agent can retry against an allowed host", v.RecoverableReason)
 			}
 		})
 	}
@@ -242,11 +239,8 @@ func TestInspectorChain_AmbiguousAgentRecoverableContinues(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeDeny {
 		t.Fatalf("agent-recoverable refusal → Outcome = %q, want Deny (facts: %+v)", v.Outcome, v.Facts)
 	}
-	if v.Continue == nil || len(v.Continue.SyntheticToolResults) != 1 {
-		t.Fatalf("Continue.SyntheticToolResults missing — agent-recoverable refusal must wire the one-shot continuation retry")
-	}
-	if content, ok := v.ContinuationToolResultContent(); !ok || !strings.Contains(content, "command substitution") {
-		t.Errorf("ContinuationToolResultContent = %q, %v; want the parser's refusal reason verbatim", content, ok)
+	if v.RecoverableReason == "" || !strings.Contains(v.RecoverableReason, "command substitution") {
+		t.Errorf("RecoverableReason = %q, want the parser's refusal reason verbatim", v.RecoverableReason)
 	}
 	if v.SubstituteWith == "" || v.SubstituteWith != v.Reason {
 		t.Errorf("SubstituteWith = %q, want = Reason for the terminal-fallback path", v.SubstituteWith)
@@ -329,11 +323,8 @@ func TestInspectorChain_StubPlaceholdersFailClosed(t *testing.T) {
 	if v.SubstituteWith == "" || v.SubstituteWith != v.Reason {
 		t.Errorf("SubstituteWith = %q, want = Reason for the terminal-fallback path", v.SubstituteWith)
 	}
-	if v.Continue == nil || len(v.Continue.SyntheticToolResults) != 1 {
-		t.Fatalf("Continue.SyntheticToolResults missing — stub-placeholder block should be recoverable so the agent can retry with the full placeholder")
-	}
-	if content, ok := v.ContinuationToolResultContent(); !ok || content != v.Reason {
-		t.Errorf("ContinuationToolResultContent = %q, %v; want Reason verbatim", content, ok)
+	if v.RecoverableReason != v.Reason {
+		t.Errorf("RecoverableReason = %q, want = Reason — stub-placeholder block should be recoverable so the agent can retry with the full placeholder", v.RecoverableReason)
 	}
 }
 

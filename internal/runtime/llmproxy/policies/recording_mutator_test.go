@@ -20,7 +20,6 @@ type recordingRequestMutator struct {
 	StripTurnsCalls         int
 	RewriteUserTextCalls    []string
 	RedactSpansCalls        [][]pipeline.ByteSpan
-	AppendContinuationCalls []pipeline.SyntheticContinuation
 }
 
 type rewriteHistoricalCall struct {
@@ -56,10 +55,6 @@ func (m *recordingRequestMutator) RedactSpans(spans []pipeline.ByteSpan) error {
 	cp := make([]pipeline.ByteSpan, len(spans))
 	copy(cp, spans)
 	m.RedactSpansCalls = append(m.RedactSpansCalls, cp)
-	return nil
-}
-func (m *recordingRequestMutator) AppendContinuationTurn(s pipeline.SyntheticContinuation) error {
-	m.AppendContinuationCalls = append(m.AppendContinuationCalls, s)
 	return nil
 }
 

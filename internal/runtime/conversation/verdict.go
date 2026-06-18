@@ -1,8 +1,6 @@
 package conversation
 
 import (
-	"encoding/json"
-
 	"github.com/clawvisor/clawvisor/internal/runtime/eval"
 )
 
@@ -58,42 +56,24 @@ type (
 	AuthorizationFact = eval.AuthorizationFact
 )
 
-// ContinueSignal is returned by an evaluator when the tool_use is being
-// served locally and the pipeline should re-enter with a synthetic
-// continuation turn.
-type ContinueSignal = eval.ContinueSignal
-
-// RecoverableContinue wraps a reason string as a Continue signal that
-// flows the reason back to the agent as a synthetic tool_result.
-// Callers building a recoverable Deny verdict use the higher-level
-// RecoverableDenyVerdict; this primitive is exported for evaluators
-// that need a customized verdict shape (e.g. richer Continue
-// payloads, additional notice text).
-func RecoverableContinue(reason string) *ContinueSignal {
-	payload, _ := json.Marshal(reason)
-	return &ContinueSignal{
-		SyntheticToolResults: []json.RawMessage{payload},
-	}
-}
-
 // RecoverableDenyVerdict builds the standard recoverable-deny verdict
 // used by evaluators that block on a construction error the agent can
-// fix on its next attempt. The reason flows back to the agent as a
-// continuation tool_result (consumed by tryContinuation for the one
-// allowed retry per inbound request) and is retained as
-// SubstituteWith so the second-pass / mixed-turn fallback still
-// renders a terminal assistant message.
+// fix on its next attempt (inspector parse error, boundary check
+// failure, credential rewrite error, malformed control body, etc.).
 //
-// The structural one-retry budget is enforced by tryContinuation's
-// non-recursion in the lite-proxy handler — no per-session state is
-// needed here.
+// The postproc eval wrapper reads RecoverableReason and transforms the
+// verdict into the canonical placeholder + pending-substitution shape:
+// the model's original tool_use is preserved (restored on the next
+// inbound /v1/messages) and the reason text lands as the tool_result
+// content. SubstituteWith stays populated as a terminal fallback for
+// non-placeholder transport paths (e.g. registry unavailable).
 func RecoverableDenyVerdict(reason string, facts ...EvaluationFact) ToolUseVerdict {
 	return ToolUseVerdict{
-		Outcome:        OutcomeDeny,
-		Reason:         reason,
-		SubstituteWith: reason,
-		Continue:       RecoverableContinue(reason),
-		Facts:          facts,
+		Outcome:           OutcomeDeny,
+		Reason:            reason,
+		SubstituteWith:    reason,
+		RecoverableReason: reason,
+		Facts:             facts,
 	}
 }
 

@@ -160,8 +160,8 @@ func TestInspectorChainIntegration_CredentialRewriteDivergenceFailsClosed(t *tes
 	// Terminal — not recoverable. This is a policy-misconfiguration
 	// fail-closed; the agent has no alternate shape to retry that
 	// would route around a missing claimant evaluator.
-	if v.Continue != nil {
-		t.Errorf("Continue should be nil — unclaimed-credentialed fail-closed is not agent-recoverable (got %+v)", v.Continue)
+	if v.RecoverableReason != "" {
+		t.Errorf("RecoverableReason should be empty — unclaimed-credentialed fail-closed is not agent-recoverable (got %q)", v.RecoverableReason)
 	}
 	if v.SubstituteWith != "" {
 		t.Errorf("SubstituteWith should be empty — terminal Deny falls back to the rewriter's default block prompt, not a custom continuation fallback (got %q)", v.SubstituteWith)

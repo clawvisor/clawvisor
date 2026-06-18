@@ -221,11 +221,6 @@ type PostprocessResult struct {
 	Decisions     []conversation.ToolUseDecisionRecord
 	SkippedReason string
 
-	// ContinuationToolResults carries the synthetic tool_result
-	// payloads the proxy wants to feed back upstream as a continuation
-	// turn.
-	ContinuationToolResults []conversation.ContinuationToolResult
-
 	// AssistantTurn is the upstream's assistant turn the streaming
 	// path captured.
 	AssistantTurn *conversation.Turn

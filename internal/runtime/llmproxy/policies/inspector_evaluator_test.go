@@ -134,11 +134,8 @@ func TestInspectorEvaluator_AmbiguousAgentRecoverableContinues(t *testing.T) {
 	if v.Outcome != pipeline.OutcomeDeny {
 		t.Fatalf("agent-recoverable refusal → Outcome = %q, want Deny (facts: %+v)", v.Outcome, v.Facts)
 	}
-	if v.Continue == nil || len(v.Continue.SyntheticToolResults) != 1 {
-		t.Fatalf("Continue.SyntheticToolResults missing — InspectorEvaluator must wire the one-shot continuation retry on agent-recoverable refusals (parity with InspectorChain)")
-	}
-	if content, ok := v.ContinuationToolResultContent(); !ok || !strings.Contains(content, "command substitution") {
-		t.Errorf("ContinuationToolResultContent = %q, %v; want the parser's refusal reason verbatim", content, ok)
+	if v.RecoverableReason == "" || !strings.Contains(v.RecoverableReason, "command substitution") {
+		t.Errorf("RecoverableReason = %q, want the parser's refusal reason verbatim", v.RecoverableReason)
 	}
 	if v.HoldKey != "" {
 		t.Errorf("HoldKey = %q, want empty — recoverable path must not request human approval", v.HoldKey)

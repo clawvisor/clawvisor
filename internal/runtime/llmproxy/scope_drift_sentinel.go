@@ -54,6 +54,28 @@ func BuildRecoverableDenyPlaceholderCommand(originalName, reason string) string 
 	return fmt.Sprintf(": # %s tool=%s — recoverable deny; the upstream model received the reason in this call's tool_result. Reason: %s", ScopeDriftPlaceholderMarker, name, reasonLine)
 }
 
+// AutoApprovePlaceholderMarker tags the auto-approve flavour of the
+// placeholder so operators grepping the transcript can distinguish
+// gate-bypassed task creations from blocked calls. Same Bash no-op
+// mechanics underneath.
+const AutoApprovePlaceholderMarker = "CLAWVISOR_AUTO_APPROVED"
+
+// BuildAutoApprovePlaceholderCommand renders the harness-safe
+// placeholder for an inline-task auto-approve interception — the
+// proxy created the task synchronously and the upstream model will
+// receive the task's augmentation context as the tool_result on the
+// next inbound. The operator-facing comment names the task ID and
+// purpose so the transcript still explains what just happened.
+func BuildAutoApprovePlaceholderCommand(originalName, taskID, purpose string) string {
+	name := sanitizePlaceholderField(originalName, "(unknown)")
+	id := strings.TrimSpace(taskID)
+	if id == "" {
+		id = "(unknown)"
+	}
+	purposeLine := sanitizePlaceholderField(purpose, "(no purpose recorded)")
+	return fmt.Sprintf(": # %s task=%s tool=%s — Clawvisor auto-approved this task creation (%s). The upstream model received the task augmentation context in this call's tool_result.", AutoApprovePlaceholderMarker, id, name, purposeLine)
+}
+
 func sanitizePlaceholderField(value, fallback string) string {
 	v := strings.TrimSpace(value)
 	if v == "" {

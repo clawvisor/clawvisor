@@ -55,16 +55,16 @@ type ToolUseVerdict struct {
 	// the original method/path/body.
 	RewriteInput json.RawMessage
 
-	// ContinueWithToolResult is the legacy flattened continuation
-	// payload. New evaluators should set Continue instead; final
-	// adapter code should read ContinuationToolResultContent(), which
-	// prefers Continue and falls back to this field for compatibility.
-	ContinueWithToolResult string
-
-	// PrependAssistantNotice is the legacy flattened continuation
-	// notice. New evaluators should set Continue.PrependNotice instead;
-	// final adapter code should read ContinuationNotice().
-	PrependAssistantNotice string
+	// RecoverableReason marks the verdict as a recoverable-deny that
+	// the postproc eval wrapper should transform into the canonical
+	// placeholder + pending-substitution pattern. The reason text is
+	// what lands as the tool_result content on the next inbound
+	// /v1/messages; the original tool_use is restored byte-for-byte so
+	// the model sees its own call answered with the failure reason and
+	// can retry with a corrected shape. Used by RecoverableDenyVerdict
+	// callers — inspector parse errors, boundary check failures,
+	// credential rewrite errors, etc.
+	RecoverableReason string
 
 	// CreatedTaskID names the inline task created by the
 	// conversation auto-approval gate. Carried so downstream audit
@@ -81,12 +81,6 @@ type ToolUseVerdict struct {
 	// HoldKey groups sibling tool_uses for coalescing. Empty means
 	// "do not coalesce" (each Hold gets its own approval row).
 	HoldKey string
-
-	// Continue lifts continuation out of "mutation" into a control-flow
-	// signal. When set, the tool_use is being served locally and the
-	// pipeline re-enters with the synthetic continuation as the next
-	// request.
-	Continue *ContinueSignal
 
 	// Facts carries typed observations the evaluator emitted. Audit
 	// emission branches via type switch on Facts. Populated for EVERY
@@ -119,64 +113,6 @@ func MakeToolInputPreview(in json.RawMessage) string {
 		return s
 	}
 	return s[:toolInputPreviewLimit] + "..."
-}
-
-type ContinuationToolResult struct {
-	ToolUseID string
-	Content   string
-}
-
-// ContinuationToolResultContent returns the text payload a final
-// provider adapter should wrap in the provider-specific tool_result
-// shape. Structured Continue is canonical; ContinueWithToolResult is a
-// compatibility fallback for older call sites that have not migrated.
-func (v ToolUseVerdict) ContinuationToolResultContent() (string, bool) {
-	if v.Continue != nil {
-		text := continuationToolResultContent(v.Continue.SyntheticToolResults)
-		return text, true
-	}
-	if v.ContinueWithToolResult != "" {
-		return v.ContinueWithToolResult, true
-	}
-	return "", false
-}
-
-// ContinuationNotice returns the user-facing notice to prepend after a
-// successful continuation. Structured Continue is canonical; the flat
-// field is a compatibility fallback.
-func (v ToolUseVerdict) ContinuationNotice() string {
-	if v.Continue != nil && strings.TrimSpace(v.Continue.PrependNotice) != "" {
-		return v.Continue.PrependNotice
-	}
-	return v.PrependAssistantNotice
-}
-
-func continuationToolResultContent(results []json.RawMessage) string {
-	parts := make([]string, 0, len(results))
-	for _, raw := range results {
-		if len(raw) == 0 {
-			continue
-		}
-		var s string
-		if err := json.Unmarshal(raw, &s); err == nil {
-			parts = append(parts, s)
-			continue
-		}
-		var obj map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &obj); err != nil {
-			continue
-		}
-		if content, ok := obj["content"]; ok {
-			if err := json.Unmarshal(content, &s); err == nil {
-				parts = append(parts, s)
-				continue
-			}
-			parts = append(parts, string(content))
-			continue
-		}
-		parts = append(parts, string(raw))
-	}
-	return strings.Join(parts, "\n")
 }
 
 type StreamingRewriteResult struct {

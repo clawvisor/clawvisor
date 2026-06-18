@@ -12,21 +12,6 @@ import (
 	"unicode/utf8"
 )
 
-func TestToolUseVerdictContinuationToolResultContentAllowsEmptyStructuredPayload(t *testing.T) {
-	v := ToolUseVerdict{
-		Continue: &ContinueSignal{
-			SyntheticToolResults: []json.RawMessage{json.RawMessage(`""`)},
-		},
-	}
-	content, ok := v.ContinuationToolResultContent()
-	if !ok {
-		t.Fatal("empty structured continuation payload should still be present")
-	}
-	if content != "" {
-		t.Fatalf("content = %q, want empty", content)
-	}
-}
-
 func TestSyntheticApprovalToolUseResponseOpenAIChatLiteProxyRoute(t *testing.T) {
 	t.Parallel()
 

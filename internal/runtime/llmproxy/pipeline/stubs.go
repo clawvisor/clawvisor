@@ -26,7 +26,6 @@ func (PanicMutator) RewriteHistoricalToolUseArgs(string, json.RawMessage) error 
 func (PanicMutator) StripTurns(func(StripContext) bool) error                   { panic(panicMessage) }
 func (PanicMutator) RewriteMostRecentUserText(string) error                     { panic(panicMessage) }
 func (PanicMutator) RedactSpans([]ByteSpan) error                               { panic(panicMessage) }
-func (PanicMutator) AppendContinuationTurn(SyntheticContinuation) error         { panic(panicMessage) }
 
 // --- ResponseMutator --------------------------------------------------
 
