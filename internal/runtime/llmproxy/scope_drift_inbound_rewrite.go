@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -282,9 +283,14 @@ func substituteAnthropicToolResultContent(message json.RawMessage, targetToolUse
 
 // rewriteOpenAIResponsesScopeDriftPlaceholders walks the OpenAI
 // Responses `input` array, finds function_call_output items whose
-// call_id matches a pending substitution, replaces the `output` with
-// the menu text, and restores the preceding function_call item's
-// (name, arguments) to the model's original.
+// call_id matches a pending substitution, and replaces the `output`
+// with the menu text. In full-input mode it also restores the
+// preceding function_call item's (name, arguments) to the model's
+// original; in chained mode (previous_response_id set) the function_call
+// lives in OpenAI's server-stored history rather than `input[]`, and
+// that stored history is already correct (OpenAI stored what its model
+// emitted, not what the proxy substituted on the wire to the harness),
+// so no restoration is needed — only the output substitution.
 func rewriteOpenAIResponsesScopeDriftPlaceholders(ctx context.Context, req ScopeDriftInboundRewriteRequest) ([]byte, []string, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(req.Body, &raw); err != nil {
@@ -303,6 +309,20 @@ func rewriteOpenAIResponsesScopeDriftPlaceholders(ctx context.Context, req Scope
 	var items []json.RawMessage
 	if err := json.Unmarshal(inputRaw, &items); err != nil {
 		return nil, nil, err
+	}
+	// Detect chained mode. When previous_response_id is set, the harness
+	// (e.g., codex) chains turns by reference; OpenAI's server-stored
+	// history holds the real function_call and the new request's input[]
+	// carries only the function_call_output for this turn. We can't
+	// restore a function_call that isn't in the body, but we also don't
+	// need to — the stored history is already the model's original
+	// call. Substitute the output and call it done.
+	chained := false
+	if prev, ok := raw["previous_response_id"]; ok {
+		var s string
+		if err := json.Unmarshal(prev, &s); err == nil && strings.TrimSpace(s) != "" {
+			chained = true
+		}
 	}
 	logger := req.Logger
 	if logger == nil {
@@ -329,10 +349,27 @@ func rewriteOpenAIResponsesScopeDriftPlaceholders(ctx context.Context, req Scope
 		if !found {
 			continue
 		}
-		// Restore the prior function_call FIRST so a failure here
-		// doesn't leave the function_call_output carrying the menu
-		// while the assistant call remains the placeholder — see
-		// rewriteAnthropicScopeDriftPlaceholders for the rationale.
+		if chained {
+			// Chained mode: skip restoration; OpenAI's stored history
+			// holds the real function_call. Substitute the output and
+			// the model sees its own call answered by the augmentation.
+			newItem, ok := substituteOpenAIResponsesFunctionCallOutput(item, subst.MenuText)
+			if !ok {
+				logger.WarnContext(ctx, "scope-drift inbound rewrite: failed to substitute function_call_output (chained mode)",
+					"call_id", probe.CallID,
+					"drift_id", subst.DriftID,
+				)
+				continue
+			}
+			items[i] = newItem
+			appliedDriftIDs = append(appliedDriftIDs, subst.DriftID)
+			rewrittenAny = true
+			continue
+		}
+		// Full-input mode: restore the prior function_call FIRST so a
+		// failure here doesn't leave the function_call_output carrying
+		// the menu while the assistant call remains the placeholder —
+		// see rewriteAnthropicScopeDriftPlaceholders for the rationale.
 		restoredIdx := -1
 		var restoredItem json.RawMessage
 		for ai := i - 1; ai >= 0; ai-- {

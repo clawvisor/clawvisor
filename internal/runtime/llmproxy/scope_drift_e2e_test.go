@@ -1024,6 +1024,100 @@ func TestScopeDriftE2E_InboundRewritesOpenAIResponsesPlaceholder(t *testing.T) {
 	}
 }
 
+// TestScopeDriftE2E_InboundRewritesOpenAIResponsesPlaceholderChained
+// exercises the OpenAI Responses chained-mode path (codex's pattern):
+// the harness sends `previous_response_id` referencing the prior turn,
+// and `input[]` carries ONLY the function_call_output (no function_call
+// to restore — OpenAI's server-stored history holds the model's real
+// call). The rewriter must substitute the function_call_output content
+// without requiring a restoration target.
+//
+// This regression locks the codex fix: pre-fix the atomicity gate
+// skipped the substitution because no function_call was in input[] to
+// restore, so codex saw an empty Bash stdout and fabricated results.
+func TestScopeDriftE2E_InboundRewritesOpenAIResponsesPlaceholderChained(t *testing.T) {
+	t.Parallel()
+	reg := NewMemoryScopeDriftRegistry(time.Minute)
+	const (
+		callID           = "call_chained_1"
+		originalToolName = "exec_command"
+		menuText         = "Clawvisor: github.post_issue is outside your current task scope.\n  Drift ID: drift-chained-1\n(menu body…)"
+	)
+	originalInput := json.RawMessage(`{"cmd":"mkdir /tmp/needs-task"}`)
+	if err := reg.RegisterPendingSubstitution(context.Background(),
+		PendingSubstitutionKey{
+			AgentID:        driftTestAgentID,
+			ConversationID: driftTestConvID,
+			ToolUseID:      callID,
+		},
+		PendingSubstitution{
+			DriftID:           "drift-chained-1",
+			MenuText:          menuText,
+			OriginalToolName:  originalToolName,
+			OriginalToolInput: append([]byte(nil), originalInput...),
+		},
+	); err != nil {
+		t.Fatalf("RegisterPendingSubstitution: %v", err)
+	}
+
+	// Chained body: previous_response_id references a prior turn (OpenAI
+	// retrieves the real function_call from its stored history). input[]
+	// carries only the function_call_output the harness produced after
+	// running the placeholder.
+	body := []byte(`{` +
+		`"previous_response_id":"resp_prev_abc123",` +
+		`"input":[` +
+		`{"type":"function_call_output","call_id":"` + callID + `","output":""}` +
+		`]}`)
+
+	agent := &store.Agent{ID: driftTestAgentID, UserID: driftTestUserID}
+	httpReq := httptest.NewRequest("POST", "/v1/responses", nil)
+	result, err := RewriteScopeDriftPlaceholders(context.Background(), ScopeDriftInboundRewriteRequest{
+		HTTPRequest:    httpReq,
+		Provider:       conversation.ProviderOpenAI,
+		Body:           body,
+		Agent:          agent,
+		ConversationID: driftTestConvID,
+		ScopeDrifts:    reg,
+		Logger:         slog.Default(),
+	})
+	if err != nil {
+		t.Fatalf("RewriteScopeDriftPlaceholders: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatalf("expected Rewritten=true in chained mode; AppliedDriftIDs=%v", result.AppliedDriftIDs)
+	}
+
+	var rewritten struct {
+		PreviousResponseID string            `json:"previous_response_id"`
+		Input              []json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(result.Body, &rewritten); err != nil {
+		t.Fatalf("rewritten body unmarshal: %v", err)
+	}
+	if rewritten.PreviousResponseID != "resp_prev_abc123" {
+		t.Fatalf("previous_response_id should round-trip unchanged; got %q", rewritten.PreviousResponseID)
+	}
+	if len(rewritten.Input) != 1 {
+		t.Fatalf("expected 1 input item in chained mode (no function_call to restore), got %d", len(rewritten.Input))
+	}
+
+	var fco struct {
+		Type   string `json:"type"`
+		CallID string `json:"call_id"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(rewritten.Input[0], &fco); err != nil {
+		t.Fatalf("function_call_output unmarshal: %v", err)
+	}
+	if fco.Type != "function_call_output" || fco.CallID != callID {
+		t.Fatalf("function_call_output shape mismatch: %+v", fco)
+	}
+	if !strings.Contains(fco.Output, "outside your current task scope") {
+		t.Fatalf("function_call_output does not carry menu text: %s", fco.Output)
+	}
+}
+
 // peekAllHolds returns every hold for the test fixture's (user, agent,
 // conv) bucket. SnapshotHoldsForTest keys by a zero-conversation
 // bucket and would miss conversation-scoped holds; this helper reaches
