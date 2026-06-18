@@ -22,53 +22,120 @@ func (OpenAIResponseRewriter) MatchesResponse(req *http.Request, resp *http.Resp
 }
 
 func (rw OpenAIResponseRewriter) Rewrite(body []byte, contentType string, eval ToolUseEvaluator) (RewriteResult, error) {
-	switch {
-	case isOpenAIChatCompletionsEndpointFromBody(contentType, body):
+	switch OpenAIResponseShape(contentType, body) {
+	case OpenAIResponseShapeChat:
 		return rw.rewriteChatCompletions(body, contentType, eval)
-	case isOpenAIResponsesBody(body):
+	case OpenAIResponseShapeResponses:
 		return rw.rewriteResponses(body, contentType, eval)
 	default:
-		if isSSE(contentType) || looksLikeSSE(body) {
-			// Sniff the first SSE event's prefix line. Responses
-			// streams always emit `event: response.X` on the first
-			// event (response.created); Chat streams have no event:
-			// lines, just anonymous data: lines. Substring-searching
-			// the whole body for narrow event names (output_item.added,
-			// function_call_arguments) misclassifies legitimate
-			// text-only Responses streams as Chat.
-			if sseFirstEventIsResponsesAPI(body) {
-				return rw.rewriteResponses(body, contentType, eval)
-			}
-			return rw.rewriteChatCompletions(body, contentType, eval)
-		}
 		return RewriteResult{Body: body}, nil
 	}
 }
 
-// sseFirstEventIsResponsesAPI inspects the SSE body's first event
-// block to decide whether the stream uses the OpenAI Responses API
-// shape. Responses always emits `event: response.<type>` for every
-// event; Chat Completions never sets the event: field. We only need
-// the first event because the discriminator is wire-envelope metadata
-// that's set on every event in the stream.
-func sseFirstEventIsResponsesAPI(body []byte) bool {
+// OpenAIResponseShapeKind discriminates Chat Completions from the
+// Responses API at the response-body level. Used by every layer that
+// needs to choose between the two providers' wire formats —
+// dispatching rewriters, prepending the [Clawvisor] notice,
+// classifying inbound streams, etc. Centralizing here keeps the
+// wire-format knowledge in one file rather than scattered across
+// callers.
+type OpenAIResponseShapeKind int
+
+const (
+	OpenAIResponseShapeUnknown OpenAIResponseShapeKind = iota
+	OpenAIResponseShapeChat
+	OpenAIResponseShapeResponses
+)
+
+// OpenAIResponseShape classifies a response body as Chat Completions
+// vs Responses API. For buffered JSON it parses the top-level
+// `choices` / `output` / `object` fields. For SSE it inspects the
+// first event's prefix line — Responses always emits `event: response.X`
+// on every event, Chat Completions never sets the event: field —
+// which is a stable wire-envelope discriminator that can't be
+// falsified by model-authored content.
+//
+// Unknown is returned when the body shape doesn't match either
+// provider (e.g., a non-OpenAI body routed through the dispatch by
+// mistake, or an unrecognized SSE stream).
+func OpenAIResponseShape(contentType string, body []byte) OpenAIResponseShapeKind {
+	if isSSE(contentType) || looksLikeSSE(body) {
+		return openAIStreamShape(body)
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return OpenAIResponseShapeUnknown
+	}
+	if _, ok := probe["choices"]; ok {
+		return OpenAIResponseShapeChat
+	}
+	if _, ok := probe["output"]; ok {
+		return OpenAIResponseShapeResponses
+	}
+	// `object` is the legacy disambiguator: object="chat.completion"
+	// for Chat, object="response" for Responses. Fall back to it when
+	// neither top-level array is present.
+	if rawObj, ok := probe["object"]; ok {
+		var obj string
+		if err := json.Unmarshal(rawObj, &obj); err == nil {
+			switch obj {
+			case "chat.completion", "chat.completion.chunk":
+				return OpenAIResponseShapeChat
+			case "response":
+				return OpenAIResponseShapeResponses
+			}
+		}
+	}
+	return OpenAIResponseShapeUnknown
+}
+
+// openAIStreamShape inspects the first SSE event block to classify
+// the stream. Responses always emits event: response.<type> on every
+// event; Chat Completions has no event: lines, just anonymous data:
+// lines. First-event discrimination is sufficient because the
+// envelope shape is consistent across the whole stream.
+func openAIStreamShape(body []byte) OpenAIResponseShapeKind {
 	normalized := strings.ReplaceAll(string(body), "\r\n", "\n")
 	for _, block := range strings.Split(normalized, "\n\n") {
 		block = strings.TrimSpace(block)
 		if block == "" {
 			continue
 		}
+		var eventName, dataLine string
 		for _, line := range strings.Split(block, "\n") {
-			if !strings.HasPrefix(line, "event:") {
-				continue
+			switch {
+			case strings.HasPrefix(line, "event:"):
+				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "data:"):
+				dataLine = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			}
-			name := strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			return strings.HasPrefix(name, "response.")
 		}
-		// First block had no event: line — definitively Chat shape.
-		return false
+		if strings.HasPrefix(eventName, "response.") {
+			return OpenAIResponseShapeResponses
+		}
+		if eventName != "" {
+			// Non-response.* event prefix — probably Anthropic or
+			// another shape. Walk to the next event.
+			continue
+		}
+		// Chat: data line carries the chat.completion.chunk envelope.
+		if dataLine == "" || dataLine == "[DONE]" {
+			continue
+		}
+		var probe struct {
+			Object string `json:"object"`
+		}
+		if err := json.Unmarshal([]byte(dataLine), &probe); err != nil {
+			continue
+		}
+		switch probe.Object {
+		case "chat.completion", "chat.completion.chunk":
+			return OpenAIResponseShapeChat
+		case "response":
+			return OpenAIResponseShapeResponses
+		}
 	}
-	return false
+	return OpenAIResponseShapeUnknown
 }
 
 // rewriteResponses picks the SSE vs JSON path. Content-Type is the primary
@@ -1912,17 +1979,6 @@ func sseEventBlock(event string, data any) string {
 func chatCompletionSSEBlock(data any) string {
 	raw, _ := json.Marshal(data)
 	return "data: " + string(raw) + "\n\n"
-}
-
-func isOpenAIResponsesBody(body []byte) bool {
-	return bytes.Contains(body, []byte(`"output"`)) || bytes.Contains(body, []byte(`response.output_item.added`))
-}
-
-func isOpenAIChatCompletionsEndpointFromBody(contentType string, body []byte) bool {
-	if isSSE(contentType) {
-		return !bytes.Contains(body, []byte(`response.output_item.added`))
-	}
-	return bytes.Contains(body, []byte(`"choices"`))
 }
 
 func stringifyOpenAIArguments(v any) string {

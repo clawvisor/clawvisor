@@ -31,10 +31,14 @@ func transformRecoverableDenyToPlaceholder(ctx context.Context, v conversation.T
 	if registry == nil {
 		return v, nil
 	}
-	if cfg.AgentContext.AgentID == "" {
-		// Without an agent id the inbound rewriter can't key the
-		// substitution; better to leave SubstituteWith as the terminal
-		// fallback.
+	if cfg.AgentContext.AgentID == "" || cfg.AuditContext.ConversationID == "" {
+		// Substitution keys are (AgentID, ConversationID, ToolUseID).
+		// Without all three the key shape collapses across concurrent
+		// conversations from the same agent (or refuses the write
+		// outright on the AgentID guard), so distinct denies could
+		// later restore the wrong reason into the wrong turn. Leave
+		// SubstituteWith as the terminal fallback when identity is
+		// incomplete — production wiring always populates both fields.
 		return v, nil
 	}
 	reason := v.RecoverableReason
