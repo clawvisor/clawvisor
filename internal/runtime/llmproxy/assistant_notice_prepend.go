@@ -81,23 +81,7 @@ const (
 
 func openAIResponseShape(contentType string, body []byte) openAIResponseShapeKind {
 	if conversation.IsSSEContentType(contentType) {
-		// Responses API streams emit `response.*` event names; Chat
-		// Completions streams use anonymous data lines wrapping
-		// `chat.completion.chunk` objects. Sniff a small prefix
-		// rather than parsing the whole stream — the first ~512 bytes
-		// always carry the discriminating event line.
-		prefix := body
-		if len(prefix) > 512 {
-			prefix = prefix[:512]
-		}
-		s := string(prefix)
-		if strings.Contains(s, "event: response.") || strings.Contains(s, "response.output_item") {
-			return openAIResponseShapeResponses
-		}
-		if strings.Contains(s, "chat.completion.chunk") {
-			return openAIResponseShapeChat
-		}
-		return openAIResponseShapeUnknown
+		return openAIStreamShape(body)
 	}
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(body, &probe); err != nil {
@@ -122,6 +106,64 @@ func openAIResponseShape(contentType string, body []byte) openAIResponseShapeKin
 			case "response":
 				return openAIResponseShapeResponses
 			}
+		}
+	}
+	return openAIResponseShapeUnknown
+}
+
+// openAIStreamShape inspects the FIRST SSE event in body and classifies
+// the stream by its event-name prefix line (Responses) or its data
+// payload's `object` field (Chat). Substring searches across the full
+// stream are unreliable because model-authored content can include
+// these tokens; the first event is always provider envelope metadata
+// (response.created / chat.completion.chunk with role="assistant") and
+// never carries free-form model text.
+func openAIStreamShape(body []byte) openAIResponseShapeKind {
+	normalized := strings.ReplaceAll(string(body), "\r\n", "\n")
+	for _, block := range strings.Split(normalized, "\n\n") {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+		var eventName, dataLine string
+		for _, line := range strings.Split(block, "\n") {
+			switch {
+			case strings.HasPrefix(line, "event:"):
+				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "data:"):
+				dataLine = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			}
+		}
+		// Responses API events always start with the `response.`
+		// prefix on the FIRST event of the stream. Chat Completions
+		// has no `event:` lines.
+		if strings.HasPrefix(eventName, "response.") {
+			return openAIResponseShapeResponses
+		}
+		if eventName != "" {
+			// Event name set to something that's NOT a response.*
+			// prefix — probably Anthropic or another shape. Skip to
+			// the next event in case the first one was a comment /
+			// keep-alive.
+			continue
+		}
+		// Chat Completions: parse the data line's top-level `object`
+		// field. Don't substring-search — model text in a later delta
+		// could legitimately contain "chat.completion.chunk".
+		if dataLine == "" || dataLine == "[DONE]" {
+			continue
+		}
+		var probe struct {
+			Object string `json:"object"`
+		}
+		if err := json.Unmarshal([]byte(dataLine), &probe); err != nil {
+			continue
+		}
+		switch probe.Object {
+		case "chat.completion", "chat.completion.chunk":
+			return openAIResponseShapeChat
+		case "response":
+			return openAIResponseShapeResponses
 		}
 	}
 	return openAIResponseShapeUnknown
