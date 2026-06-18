@@ -185,32 +185,31 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 					}
 					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", item.Name, reason)
 				}
-				// SuppressSubstituteText is set by callers that paired
-				// it with a SubstituteWithToolCall (scope-drift). If
-				// rendering that call failed above, the suppression must
-				// NOT also swallow the default fallback — otherwise the
-				// blocked decision drops off the wire entirely, leaving
-				// the assistant turn with neither the original
-				// function_call nor any replacement and breaking
-				// downstream tool/result pairing. Force a generic block
-				// notice in that escape path.
-				if txt == "" {
+				// Escape hatch: SuppressSubstituteText was paired with a
+				// SubstituteWithToolCall that failed to render above,
+				// so the suppression must NOT also swallow the default
+				// fallback. Gated on SubstituteWithToolCall != nil so
+				// legitimately-suppressed siblings (coalesced approval
+				// turns) stay silent.
+				if txt == "" && verdict.SubstituteWithToolCall != nil {
 					reason := verdict.Reason
 					if reason == "" {
 						reason = "blocked by policy"
 					}
 					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", item.Name, reason)
 				}
-				newOutput = append(newOutput, openAIResponseOutputItem{
-					ID:     "msg_" + tu.ID,
-					Type:   "message",
-					Role:   "assistant",
-					Status: "completed",
-					Content: []openAIResponseContent{{
-						Type: "output_text",
-						Text: txt,
-					}},
-				})
+				if txt != "" {
+					newOutput = append(newOutput, openAIResponseOutputItem{
+						ID:     "msg_" + tu.ID,
+						Type:   "message",
+						Role:   "assistant",
+						Status: "completed",
+						Content: []openAIResponseContent{{
+							Type: "output_text",
+							Text: txt,
+						}},
+					})
+				}
 			} else {
 				if len(verdict.RewriteInput) > 0 {
 					item.Arguments = string(verdict.RewriteInput)
@@ -475,23 +474,22 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 						}
 						txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", pc.name, reason)
 					}
-					// Force a fallback text when the substitute call
-					// failed to render — see rewriteResponsesJSON for
-					// the rationale; SuppressSubstituteText alone must
-					// not silently drop the blocked decision off the
-					// wire.
-					if txt == "" {
+					// Escape hatch: gated on SubstituteWithToolCall != nil
+					// so legitimately-suppressed siblings stay silent.
+					if txt == "" && verdict.SubstituteWithToolCall != nil {
 						reason := verdict.Reason
 						if reason == "" {
 							reason = "blocked by policy"
 						}
 						txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", pc.name, reason)
 					}
-					orderedItems = append(orderedItems, orderedResponsesItem{
-						isText:      true,
-						outputIndex: pc.outputIndex,
-						text:        txt,
-					})
+					if txt != "" {
+						orderedItems = append(orderedItems, orderedResponsesItem{
+							isText:      true,
+							outputIndex: pc.outputIndex,
+							text:        txt,
+						})
+					}
 				} else {
 					if len(verdict.RewriteInput) > 0 {
 						finalArgs = string(verdict.RewriteInput)
@@ -892,17 +890,18 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 					}
 					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", call.Function.Name, reason)
 				}
-				// SuppressSubstituteText must not silently swallow the
-				// blocked decision when the substitute call failed to
-				// render — see rewriteResponsesJSON for the rationale.
-				if txt == "" {
+				// Escape hatch: gated on SubstituteWithToolCall != nil
+				// so legitimately-suppressed siblings stay silent.
+				if txt == "" && verdict.SubstituteWithToolCall != nil {
 					reason := verdict.Reason
 					if reason == "" {
 						reason = "blocked by policy"
 					}
 					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", call.Function.Name, reason)
 				}
-				blockedPrompts = append(blockedPrompts, txt)
+				if txt != "" {
+					blockedPrompts = append(blockedPrompts, txt)
+				}
 			} else {
 				if len(verdict.RewriteInput) > 0 {
 					call.Function.Arguments = string(verdict.RewriteInput)
