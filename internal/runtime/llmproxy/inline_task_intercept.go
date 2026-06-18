@@ -328,6 +328,19 @@ func MaybeInterceptInlineTaskDefinition(
 				// own call answered by the augmentation. Same wire
 				// mechanism as scope-drift / recoverable-deny — see
 				// scope_drift_inbound_rewrite.go.
+				//
+				// Design tradeoff (vs. the pre-Jul-2026 upstream
+				// continuation path): the conversation now resumes on
+				// the harness's NEXT inbound request rather than via a
+				// proxy-issued synthetic upstream call. That costs one
+				// extra harness round-trip and surfaces the placeholder
+				// no-op in the user-visible transcript, but unifies
+				// every blocked-/auto-approved scenario onto a single
+				// mechanism and keeps model+harness history in lockstep
+				// (continuation hid the create_task call from the
+				// harness while keeping it in the model's working
+				// context — a subtle desync). Accepted explicitly in the
+				// PR that landed this migration.
 				if registry := cfg.AuthorizationContext.ScopeDrifts; registry != nil && cfg.AgentID != "" {
 					if regErr := registry.RegisterPendingSubstitution(req.Context(),
 						PendingSubstitutionKey{
