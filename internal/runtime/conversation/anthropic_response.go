@@ -165,6 +165,24 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 					}
 					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", block.Name, reason)
 				}
+				// Escape hatch: when SuppressSubstituteText is paired
+				// with a SubstituteWithToolCall (scope-drift,
+				// recoverable-deny) but the call rendering failed
+				// above (malformed Name/ID/Input —
+				// anthropicSubstituteToolUseBlock returning ok=false),
+				// SuppressSubstituteText must NOT also swallow the
+				// default fallback — otherwise the blocked decision
+				// drops off the wire entirely. Gated on
+				// SubstituteWithToolCall != nil so legitimately-
+				// suppressed siblings (coalesced approval turns) stay
+				// silent.
+				if txt == "" && verdict.SubstituteWithToolCall != nil {
+					reason := verdict.Reason
+					if reason == "" {
+						reason = "blocked by policy"
+					}
+					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", block.Name, reason)
+				}
 				if txt != "" {
 					newContent = append(newContent, anthropicJSONContent{
 						Type: "text",
@@ -422,6 +440,16 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 				}
 				txt := verdict.SubstituteWith
 				if txt == "" && !verdict.SuppressSubstituteText {
+					reason := verdict.Reason
+					if reason == "" {
+						reason = "blocked by policy"
+					}
+					txt = fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", pb.name, reason)
+				}
+				// Same escape as the buffered JSON path, gated on
+				// SubstituteWithToolCall != nil so legitimately-
+				// suppressed siblings stay silent.
+				if txt == "" && verdict.SubstituteWithToolCall != nil {
 					reason := verdict.Reason
 					if reason == "" {
 						reason = "blocked by policy"

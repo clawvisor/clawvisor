@@ -93,16 +93,17 @@ type AuthorizationHoldResult struct {
 	// footer so subsequent y/n replies disambiguate.
 	ApprovalID string
 	// SubstituteText is the rendered approval prompt the policy
-	// surfaces via the verdict's SubstituteWith field.
+	// surfaces via the verdict's SubstituteWith field. Used for the
+	// non-scope-drift approval-prompt path.
 	SubstituteText string
-	// ContinueWithToolResult, when non-empty, signals the handler took
-	// the scope-drift menu path instead of parking a user-facing
-	// approval hold. The policy returns a Continue verdict so the
-	// agent gets the menu as a synthetic tool_result and picks one of
-	// the labeled recovery options (expand / new_task / one_off /
-	// implicit fall-through). SubstituteText is still populated as the
-	// harness fallback if the continuation round-trip fails.
-	ContinueWithToolResult string
+	// SubstituteToolCall, when non-nil, signals the handler took the
+	// scope-drift menu path. The policy returns a Deny verdict carrying
+	// SubstituteWithToolCall so the response rewriter replaces the
+	// blocked tool_use with the supplied placeholder (Bash no-op). The
+	// inbound rewriter (running on the next /v1/messages) restores the
+	// original tool_use and replaces the tool_result content with the
+	// menu — see scope_drift_inbound_rewrite.go.
+	SubstituteToolCall *conversation.SyntheticToolCall
 	// Err, when non-empty, signals a hold storage failure. The policy
 	// returns Deny.
 	Err string
@@ -240,22 +241,25 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 				Facts:   []pipeline.EvaluationFact{authFact, taskScopeFact},
 			}, nil
 		}
-		// Scope-drift continuation: when the hold handler chose the
-		// menu path (drift mint + substitution), surface a Continue
-		// signal so the agent gets the menu as a synthetic tool_result
-		// and decides between expand / new_task / one_off / implicit.
-		// SubstituteText stays populated as the harness fallback if the
-		// continuation round-trip fails.
-		if held.ContinueWithToolResult != "" {
-			if cont := pipeline.NewTextContinuation(held.ContinueWithToolResult); cont != nil {
-				return pipeline.ToolUseVerdict{
-					Outcome:        pipeline.OutcomeDeny,
-					Reason:         dec.Reason,
-					SubstituteWith: held.SubstituteText,
-					Continue:       cont,
-					Facts:          []pipeline.EvaluationFact{authFact, taskScopeFact},
-				}, nil
-			}
+		// Scope-drift menu: when the hold handler chose the menu path
+		// (drift mint + pending substitution), surface the placeholder
+		// SyntheticToolCall as a Deny + SubstituteWithToolCall. The
+		// response rewriter substitutes the blocked tool_use with the
+		// placeholder; on the next inbound /v1/messages the
+		// scope-drift inbound rewriter restores the original tool_use
+		// and replaces the harness-supplied tool_result content with
+		// the rendered menu.
+		//
+		// SubstituteWith is deliberately NOT set — see
+		// task_scope_evaluator.go for the same rationale.
+		if held.SubstituteToolCall != nil {
+			return pipeline.ToolUseVerdict{
+				Outcome:                pipeline.OutcomeDeny,
+				Reason:                 dec.Reason,
+				SubstituteWithToolCall: held.SubstituteToolCall,
+				SuppressSubstituteText: true,
+				Facts:                  []pipeline.EvaluationFact{authFact, taskScopeFact},
+			}, nil
 		}
 		return pipeline.ToolUseVerdict{
 			Outcome:        pipeline.OutcomeHold,

@@ -45,18 +45,17 @@ type TaskScopeDecision struct {
 	TaskID         string
 	Reason         string
 	SubstituteText string
-	// ContinueWithToolResult, when non-empty, signals the evaluator to
-	// serve this tool_use locally and return the text as a synthetic
-	// tool_result on a continuation turn — the model sees its blocked
-	// tool_use answered with the supplied text and emits its next turn
-	// against it, instead of the proxy parking a user-facing approval
-	// hold. Used by the scope-drift menu path; SubstituteText still
-	// populates as the harness fallback if the continuation round-trip
-	// fails.
-	ContinueWithToolResult string
-	Ambiguous              bool
-	MatchedTask            *store.Task
-	MatchedAction          *store.TaskAction
+	// SubstituteToolCall, when non-nil, signals the evaluator to take
+	// the scope-drift menu path: the blocked tool_use is replaced with
+	// the supplied placeholder (Bash no-op) so the harness's local
+	// execution is harmless, and the inbound rewriter restores the
+	// original tool_use AND splices the menu into the tool_result on
+	// the next /v1/messages. SubstituteText still populates as a
+	// secondary signal (audit, debug).
+	SubstituteToolCall *conversation.SyntheticToolCall
+	Ambiguous          bool
+	MatchedTask        *store.Task
+	MatchedAction      *store.TaskAction
 }
 
 // TaskScopeDecisionKind disambiguates hard denials from approvable
@@ -149,23 +148,26 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 		}, nil
 	}
 
-	// Scope-drift continuation: serve the menu locally as a synthetic
-	// tool_result instead of parking a user-facing approval hold. The
-	// orchestrator's Continue signal short-circuits coalescing — the
-	// pipeline re-enters with the menu as the model's next user-role
-	// input. SubstituteText still populates as the harness fallback if
-	// the continuation round-trip fails. The pipeline owns the wire
-	// format; we just hand it the text.
-	if dec.ContinueWithToolResult != "" {
-		if cont := pipeline.NewTextContinuation(dec.ContinueWithToolResult); cont != nil {
-			return pipeline.ToolUseVerdict{
-				Outcome:        pipeline.OutcomeDeny,
-				Reason:         dec.Reason,
-				SubstituteWith: dec.SubstituteText,
-				Continue:       cont,
-				Facts:          []pipeline.EvaluationFact{fact},
-			}, nil
-		}
+	// Scope-drift menu: replace the blocked tool_use with the
+	// supplied harness-safe placeholder. The inbound rewriter restores
+	// the model's original tool_use on the next /v1/messages and
+	// substitutes the menu into the tool_result content — so the model
+	// sees its own call answered by a helpful menu while the harness
+	// only ever ran a no-op.
+	//
+	// SubstituteWith is deliberately NOT set: writeProviderSubstituteToolCalls
+	// would emit it as a preamble text block alongside the placeholder
+	// tool_use, surfacing the menu inside the assistant turn — exactly
+	// the behaviour the new design replaces. SuppressSubstituteText
+	// guards the default "Tool 'X' was blocked …" fallback.
+	if dec.SubstituteToolCall != nil {
+		return pipeline.ToolUseVerdict{
+			Outcome:                pipeline.OutcomeDeny,
+			Reason:                 dec.Reason,
+			SubstituteWithToolCall: dec.SubstituteToolCall,
+			SuppressSubstituteText: true,
+			Facts:                  []pipeline.EvaluationFact{fact},
+		}, nil
 	}
 
 	// Scope check failed — hold for approval. Per-tool HoldKey so

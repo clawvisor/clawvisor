@@ -1985,16 +1985,16 @@ func TestLLMEndpoint_RequiresApprovalForOpenAIToolUseWithoutScope(t *testing.T) 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	// Scope-drift menu is wired by default in NewLLMEndpointHandler, so
-	// a task_scope_missing block routes to the agent-facing menu (a
-	// synthetic tool_result) instead of parking a user-facing approval
-	// prompt. The body must surface the menu header text and a
-	// Drift ID.
-	if !strings.Contains(rec.Body.String(), "outside your current task scope") {
-		t.Fatalf("expected scope-drift menu, got %s", rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "Drift ID:") {
-		t.Fatalf("expected Drift ID in scope-drift menu, got %s", rec.Body.String())
+	// Scope-drift is wired by default in NewLLMEndpointHandler. New
+	// design: the blocked tool_use is replaced with a harness-safe
+	// Bash placeholder on the response leg (visible here as a
+	// function_call carrying `CLAWVISOR_BLOCKED` in its command), and
+	// the menu is spliced into the function_call_output content on the
+	// NEXT inbound /v1/responses by the scope-drift inbound rewriter
+	// (asserted separately in
+	// scope_drift_inbound_rewrite tests).
+	if !strings.Contains(rec.Body.String(), "CLAWVISOR_BLOCKED") {
+		t.Fatalf("expected Bash placeholder (CLAWVISOR_BLOCKED) in response, got %s", rec.Body.String())
 	}
 
 	user, _ := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")

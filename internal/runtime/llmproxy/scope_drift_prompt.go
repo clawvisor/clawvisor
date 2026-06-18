@@ -6,10 +6,14 @@ import (
 )
 
 // renderScopeDriftMenu builds the three-option menu the agent sees when
-// a tool call falls outside the active task's scope. The output is
-// plain text — the proxy substitutes it as the tool_result content of a
-// continuation, so the agent sees a continuation of the same
-// conversation rather than an opaque error.
+// a tool call falls outside the active task's scope.
+//
+// Delivery: the proxy substitutes the blocked tool_use with a
+// harness-safe Bash placeholder on the wire so local execution is a
+// no-op, then ON THE NEXT inbound /v1/messages restores the model's
+// original tool_use byte-for-byte AND replaces the harness-supplied
+// tool_result content with this menu. The model sees its own call
+// answered by the menu — faithful history, helpful result.
 //
 // All three options reuse the same control-plane POST shape:
 //   (a) expand:     POST /api/control/tasks/<task_id>/expand?surface=inline
@@ -18,11 +22,7 @@ import (
 //
 // The agent emits any of these as a normal POST tool call; the
 // respective intercept opens an inline approval hold and the user's
-// yes/no resolves it. There is no inline assistant-text markup
-// machinery — when option (c) was encoded that way, the rendered
-// menu's example markup self-matched server-side, consuming the
-// one-shot cap before the agent could pick. Routing all three through
-// the same intercept shape eliminates that whole class of bug.
+// yes/no resolves it.
 //
 // There is also an implicit fourth path: the agent picks none of the
 // above and just emits its next turn normally. The menu names this in
@@ -73,7 +73,7 @@ func renderScopeDriftMenu(menu MenuFields, controlBaseURL string) string {
 	}
 	fmt.Fprintf(&b, "  Drift ID: %s\n", menu.DriftID)
 
-	b.WriteString("\nChoose ONE response. Each drift_id resolves at most once — once you commit to an option below, the proxy will not let you try another against this same drift_id.\n")
+	b.WriteString("\nThis tool_result was injected by Clawvisor in place of what the upstream service would have returned. Your previous assistant turn shows your original call verbatim. Pick ONE response below. Each drift_id resolves at most once — once you commit, the proxy will not let you try another against this same drift_id.\n")
 
 	// (a) Expand the active task. Only meaningful when a task was matched
 	// at scope-check time. We still surface the option even when no task

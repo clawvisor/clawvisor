@@ -19,6 +19,8 @@ const (
 	SeriesScopeDriftOutcomeSucceed = "scope_drift.outcome.succeeded"
 	SeriesScopeDriftOutcomeDenied  = "scope_drift.outcome.denied"
 	SeriesScopeDriftPreClear       = "scope_drift.pre_clear_consumed"
+	SeriesScopeDriftPendingMint    = "scope_drift.pending_substitution.minted"
+	SeriesScopeDriftPendingConsume = "scope_drift.pending_substitution.consumed"
 )
 
 // countingScopeDriftRegistry wraps a real ScopeDriftRegistry and
@@ -77,4 +79,24 @@ func (c *countingScopeDriftRegistry) LookupPreClear(ctx context.Context, agentID
 		c.counters.Inc(SeriesScopeDriftPreClear)
 	}
 	return driftID, ok
+}
+
+func (c *countingScopeDriftRegistry) RegisterPendingSubstitution(ctx context.Context, key llmproxy.PendingSubstitutionKey, value llmproxy.PendingSubstitution) error {
+	if err := c.inner.RegisterPendingSubstitution(ctx, key, value); err != nil {
+		return err
+	}
+	c.counters.Inc(SeriesScopeDriftPendingMint)
+	return nil
+}
+
+func (c *countingScopeDriftRegistry) LookupPendingSubstitution(ctx context.Context, key llmproxy.PendingSubstitutionKey) (llmproxy.PendingSubstitution, bool) {
+	value, ok := c.inner.LookupPendingSubstitution(ctx, key)
+	if ok {
+		c.counters.Inc(SeriesScopeDriftPendingConsume)
+	}
+	return value, ok
+}
+
+func (c *countingScopeDriftRegistry) DeletePendingSubstitution(ctx context.Context, key llmproxy.PendingSubstitutionKey) {
+	c.inner.DeletePendingSubstitution(ctx, key)
 }

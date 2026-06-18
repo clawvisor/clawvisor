@@ -14,6 +14,13 @@ import (
 // evaluator side effects into pipeline.Finalizer. Buffered and
 // streaming postprocess both use this shape so capture/finalize
 // lifecycle details stay in one place.
+//
+// substitutions tracks pending-substitution registry writes that fired
+// during evaluation (scope-drift mints, recoverable-deny migrations).
+// rollback() iterates them so a request whose response is later
+// failClosed'd doesn't leak orphan entries. trackSubstitution is the
+// single entry point; postproc.go and stream.go call it after each
+// eval verdict commits.
 type postprocessSession struct {
 	baseCfg                  llmproxy.PostprocessConfig
 	evalCfg                  llmproxy.PostprocessConfig
@@ -22,6 +29,7 @@ type postprocessSession struct {
 	auditBuf                 *pendingAuditEventBuffer
 	finalizer                *pipeline.Finalizer
 	fed                      bool
+	substitutions            []llmproxy.PendingSubstitutionKey
 }
 
 func newPostprocessSession(cfg llmproxy.PostprocessConfig) *postprocessSession {
@@ -78,11 +86,42 @@ func (s *postprocessSession) finalize(ctx context.Context, toolUses []conversati
 }
 
 func (s *postprocessSession) rollback(ctx context.Context, toolUses []conversation.ToolUse, verdictByTU map[string]conversation.ToolUseVerdict) {
-	if s == nil || s.finalizer == nil {
+	if s == nil {
 		return
 	}
-	s.feed(toolUses, verdictByTU)
-	s.finalizer.Rollback(ctx)
+	if s.finalizer != nil {
+		s.feed(toolUses, verdictByTU)
+		s.finalizer.Rollback(ctx)
+	}
+	s.rollbackSubstitutions(ctx)
+}
+
+// trackSubstitution records a pending-substitution registry write so
+// rollback() can revert it if the response is later failClosed'd. Nil
+// keys are ignored so callers can pass through transform results
+// directly without branching.
+func (s *postprocessSession) trackSubstitution(key *llmproxy.PendingSubstitutionKey) {
+	if s == nil || key == nil {
+		return
+	}
+	s.substitutions = append(s.substitutions, *key)
+}
+
+// rollbackSubstitutions deletes every tracked registry write. Idempotent
+// — subsequent calls are no-ops because the slice is cleared.
+func (s *postprocessSession) rollbackSubstitutions(ctx context.Context) {
+	if s == nil || len(s.substitutions) == 0 {
+		return
+	}
+	registry := s.baseCfg.AuthorizationContext.ScopeDrifts
+	if registry == nil {
+		s.substitutions = nil
+		return
+	}
+	for _, key := range s.substitutions {
+		registry.DeletePendingSubstitution(ctx, key)
+	}
+	s.substitutions = nil
 }
 
 func (s *postprocessSession) dropCommitted(ctx context.Context, capture *pipeline.HoldCapture) error {

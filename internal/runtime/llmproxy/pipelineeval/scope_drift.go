@@ -82,16 +82,21 @@ func driftSourceFor(source runtimedecision.DecisionSource) llmproxy.ScopeDriftSo
 	return llmproxy.ScopeDriftSourceTaskScope
 }
 
-// MintResult is the coordinator's signal to its caller. menuText is
-// the rendered menu the caller should propagate via Continue +
-// SubstituteText (so the continuation round-trip carries the menu and
-// the harness fallback shows it on a continuation miss). driftID is
-// the registered drift's id, for audit linkage. OK reports whether
-// the mint actually landed — a false return tells the caller to fall
-// through to its legacy approval-prompt path.
+// MintResult is the coordinator's signal to its caller. MenuText is
+// the rendered menu; the caller surfaces it to the agent by:
+//   1. Rewriting the blocked tool_use into Sentinel (a canonical Bash
+//      no-op encoding the original call) so the harness's local
+//      execution is harmless.
+//   2. Registering a pending substitution under the tool_use_id so the
+//      inbound rewriter replaces the harness-supplied tool_result
+//      content with MenuText on the next /v1/messages.
+// driftID is the registered drift's id, for audit linkage. OK reports
+// whether the mint actually landed — a false return tells the caller
+// to fall through to its legacy approval-prompt path.
 type MintResult struct {
 	MenuText string
 	DriftID  string
+	Sentinel *conversation.SyntheticToolCall
 	Err      error
 	OK       bool
 }
@@ -130,7 +135,11 @@ func (c *scopeDriftCoordinator) MintForCredentialed(
 	if mintErr != nil {
 		return MintResult{Err: mintErr}
 	}
-	return MintResult{MenuText: menuText, DriftID: driftID, OK: true}
+	sentinel := buildScopeDriftSentinel(driftID, tu)
+	if regErr := c.registerPendingSubstitution(ctx, tu, driftID, menuText); regErr != nil {
+		return MintResult{Err: regErr}
+	}
+	return MintResult{MenuText: menuText, DriftID: driftID, Sentinel: sentinel, OK: true}
 }
 
 // MintForTriggerMiss registers a drift for the non-credentialed
@@ -163,7 +172,50 @@ func (c *scopeDriftCoordinator) MintForTriggerMiss(
 	if mintErr != nil {
 		return MintResult{Err: mintErr}
 	}
-	return MintResult{MenuText: menuText, DriftID: driftID, OK: true}
+	sentinel := buildScopeDriftSentinel(driftID, tu)
+	if regErr := c.registerPendingSubstitution(ctx, tu, driftID, menuText); regErr != nil {
+		return MintResult{Err: regErr}
+	}
+	return MintResult{MenuText: menuText, DriftID: driftID, Sentinel: sentinel, OK: true}
+}
+
+// buildScopeDriftSentinel constructs the SyntheticToolCall that
+// replaces the blocked tool_use in the response rewriter. The
+// tool_use_id is preserved so the inbound rewriter can later restore
+// the original call and substitute the matching tool_result's content.
+//
+// The placeholder is a harness-side artifact only — the LLM never sees
+// it. On the next /v1/messages the inbound rewriter walks back the
+// substitution: original tool_use restored byte-for-byte, tool_result
+// content replaced with the menu.
+func buildScopeDriftSentinel(driftID string, tu conversation.ToolUse) *conversation.SyntheticToolCall {
+	command := llmproxy.BuildScopeDriftPlaceholderCommand(tu.Name, driftID)
+	return &conversation.SyntheticToolCall{
+		ID:   tu.ID,
+		Name: llmproxy.ScopeDriftPlaceholderToolName,
+		Input: map[string]any{
+			"command": command,
+		},
+	}
+}
+
+// registerPendingSubstitution records everything the inbound rewriter
+// needs to restore the original tool_use and replace the tool_result
+// content on the next /v1/messages.
+func (c *scopeDriftCoordinator) registerPendingSubstitution(ctx context.Context, tu conversation.ToolUse, driftID, menuText string) error {
+	if c == nil || c.registry == nil {
+		return nil
+	}
+	return c.registry.RegisterPendingSubstitution(ctx, llmproxy.PendingSubstitutionKey{
+		AgentID:        c.agent.AgentID,
+		ConversationID: c.audit.ConversationID,
+		ToolUseID:      tu.ID,
+	}, llmproxy.PendingSubstitution{
+		DriftID:           driftID,
+		MenuText:          menuText,
+		OriginalToolName:  tu.Name,
+		OriginalToolInput: append([]byte(nil), tu.Input...),
+	})
 }
 
 // ConsumePreClear looks up a one-shot pre-clear for the agent's retry

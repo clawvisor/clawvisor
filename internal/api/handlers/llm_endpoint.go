@@ -1046,6 +1046,49 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Scope-drift inbound rewrite: when the previous assistant turn
+	// substituted a blocked tool_use with the Bash placeholder, the
+	// inbound rewriter walks back the substitution: restore the
+	// original tool_use byte-for-byte in the assistant turn AND replace
+	// the harness-supplied tool_result content with the rendered menu.
+	// The model now sees its own original call answered by the helpful
+	// menu — faithful history, helpful result — while the harness only
+	// ever ran a no-op.
+	if h.ScopeDrifts != nil {
+		driftRewrite, driftErr := llmproxy.RewriteScopeDriftPlaceholders(r.Context(), llmproxy.ScopeDriftInboundRewriteRequest{
+			HTTPRequest:    r,
+			Provider:       provider,
+			Body:           body,
+			Agent:          agent,
+			ConversationID: conversationID,
+			ScopeDrifts:    h.ScopeDrifts,
+			Logger:         h.Logger,
+		})
+		if driftErr != nil {
+			// Forwarding the unrewritten body would ship the Bash
+			// placeholder upstream, leaving the conversation
+			// permanently inconsistent (model sees the placeholder in
+			// its own history forever, the menu never lands as a
+			// tool_result). Fail closed instead so the harness can
+			// retry — the rewriter errors only on malformed inbound
+			// JSON, which the harness can produce again deterministically.
+			h.Logger.ErrorContext(r.Context(), "lite-proxy scope-drift inbound rewrite failed; failing request closed",
+				"request_id", requestID, "agent_id", agent.ID, "err", driftErr.Error())
+			auditStatus = http.StatusBadGateway
+			auditDecide = "deny"
+			auditOutcome = "scope_drift_inbound_rewrite_failed"
+			auditReason = driftErr.Error()
+			h.writeLiteProxyError(w, r, agent, provider, body, requestID, http.StatusBadGateway, "SCOPE_DRIFT_REWRITE_FAILED",
+				"couldn't rewrite the inbound request after a scope-drift block. Please retry; details are in the Clawvisor audit log.")
+			return
+		}
+		if driftRewrite.Rewritten {
+			body = driftRewrite.Body
+			reqSummary = liteProxyRequestDebugSummary(provider, body)
+			auditParams["scope_drift_inbound_applied"] = driftRewrite.AppliedDriftIDs
+		}
+	}
+
 	upstreamURL := ""
 	if h.Forwarder != nil {
 		upstreamPath := llmproxy.ProviderPath(provider, r.URL.Path)

@@ -67,6 +67,13 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	verdictByTU = make(map[string]conversation.ToolUseVerdict, len(preExtracted))
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
+		v, registered := transformRecoverableDenyToPlaceholder(req.Context(), v, tu, cfg)
+		session.trackSubstitution(registered)
+		// Also track substitutions that fired inside innerEval itself
+		// (scope-drift mint runs there) so the rollback path covers
+		// every registry write made during this request, not just the
+		// recoverable-deny migration.
+		session.trackSubstitution(detectScopeDriftSubstitution(req.Context(), v, tu, cfg))
 		verdictByTU[tu.ID] = v
 		return v
 	}

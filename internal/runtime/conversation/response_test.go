@@ -311,6 +311,91 @@ func TestAnthropicResponseRewriterFallsBackToTextWhenSubstituteToolCallInvalid(t
 	}
 }
 
+// TestAnthropicResponseRewriterEmitsFallbackWhenSubstituteToolCallInvalidAndTextSuppressed
+// locks the buffered JSON path's failure mode for the scope-drift /
+// recoverable-deny callers: SuppressSubstituteText is paired with
+// SubstituteWithToolCall, and if rendering the call fails (malformed
+// Name/ID/Input) we MUST NOT also swallow the default block notice —
+// otherwise the assistant turn drops both the original tool_use and
+// any replacement, leaving downstream tool_result pairing broken.
+func TestAnthropicResponseRewriterEmitsFallbackWhenSubstituteToolCallInvalidAndTextSuppressed(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+	  "id":"msg_supp","type":"message","role":"assistant","model":"claude-test",
+	  "content":[{"type":"tool_use","id":"toolu_supp","name":"Write","input":{"file_path":"/tmp/x","content":"y"}}],
+	  "stop_reason":"tool_use"
+	}`)
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "application/json", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:                false,
+			Reason:                 "scope-drift menu",
+			SuppressSubstituteText: true,
+			// Invalid: no ID. Falls through to the fallback path which
+			// must NOT honour SuppressSubstituteText.
+			SubstituteWithToolCall: &SyntheticToolCall{
+				Name:  "Bash",
+				Input: map[string]any{"command": ":"},
+			},
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(result.Body, &out)
+	content, ok := out["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("expected at least one content block, got %v", out["content"])
+	}
+	block := content[0].(map[string]any)
+	if block["type"] != "text" {
+		t.Fatalf("expected fallback text block when synthetic call invalid + text suppressed, got %v", block)
+	}
+	if !strings.Contains(block["text"].(string), "Write") || !strings.Contains(block["text"].(string), "scope-drift menu") {
+		t.Fatalf("expected generic block notice naming the tool + reason, got %q", block["text"])
+	}
+}
+
+// TestAnthropicResponseRewriterEmitsFallbackWhenSubstituteToolCallInvalidAndTextSuppressedSSE
+// is the SSE counterpart. Same invariant: a half-rendered substitution
+// must never drop the blocked decision off the wire.
+func TestAnthropicResponseRewriterEmitsFallbackWhenSubstituteToolCallInvalidAndTextSuppressedSSE(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_supp_sse","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_supp_sse","name":"Write","input":{}}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"/tmp/x\"}"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n")
+
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "text/event-stream", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:                false,
+			Reason:                 "scope-drift menu",
+			SuppressSubstituteText: true,
+			SubstituteWithToolCall: &SyntheticToolCall{Name: "", Input: map[string]any{"command": ":"}},
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	wire := string(result.Body)
+	if !strings.Contains(wire, `"type":"text"`) {
+		t.Fatalf("expected text content_block emitted on SSE wire when call invalid + suppress set, got:\n%s", wire)
+	}
+	if !strings.Contains(wire, "Write") || !strings.Contains(wire, "scope-drift menu") {
+		t.Fatalf("expected generic block notice naming the tool + reason on SSE wire, got:\n%s", wire)
+	}
+}
+
 func TestAnthropicResponseRewriterRejectsEmptyToolCallID(t *testing.T) {
 	// A synthetic tool_use with no ID would alias every other
 	// no-ID substitution on the same turn under the same fallback

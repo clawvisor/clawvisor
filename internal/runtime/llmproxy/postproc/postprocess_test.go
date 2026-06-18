@@ -2596,8 +2596,8 @@ func TestWriteProviderSubstituteToolCallsEmitsTextThenToolUse(t *testing.T) {
 			Model:                     "claude-test",
 			Role:                      "assistant",
 		},
-		[]substitutedBlock{
-			{
+		[]mixedTurnBlock{{
+			Substitute: &substitutedBlock{
 				Text: "Clawvisor wants to create a task...\n\n[clawvisor:approval=cv-substtest1]",
 				Call: conversation.SyntheticToolCall{
 					ID:   "toolu_clawvisor_ask_cv-substtest1",
@@ -2607,7 +2607,7 @@ func TestWriteProviderSubstituteToolCallsEmitsTextThenToolUse(t *testing.T) {
 					},
 				},
 			},
-		},
+		}},
 	)
 	if err != nil {
 		t.Fatalf("writeProviderSubstituteToolCalls error: %v", err)
@@ -2664,7 +2664,7 @@ func TestSubstituteToolCallsForBlockedRejectsMalformedCall(t *testing.T) {
 				SubstituteWithToolCall: &conversation.SyntheticToolCall{Name: "", Input: map[string]any{"x": 1}},
 			},
 		}}
-		blocks, allHaveToolCall := substituteToolCallsForBlocked(decisions)
+		blocks, allHaveToolCall := substituteToolCallsForBlocked(decisions, nil)
 		if allHaveToolCall {
 			t.Fatalf("expected allHaveToolCall=false when Name is empty (buffered path falls back to text here too); got blocks=%v", blocks)
 		}
@@ -2683,7 +2683,7 @@ func TestSubstituteToolCallsForBlockedRejectsMalformedCall(t *testing.T) {
 				},
 			},
 		}}
-		blocks, allHaveToolCall := substituteToolCallsForBlocked(decisions)
+		blocks, allHaveToolCall := substituteToolCallsForBlocked(decisions, nil)
 		if allHaveToolCall {
 			t.Fatalf("expected allHaveToolCall=false when Input fails json.Marshal; got blocks=%v", blocks)
 		}
@@ -2700,9 +2700,11 @@ func TestWriteProviderSubstituteToolCallsSkipsTextBlockWhenEmpty(t *testing.T) {
 		&buf,
 		conversation.ProviderAnthropic,
 		conversation.StreamingRewriteResult{NextAnthropicContentIndex: 0, StreamID: "msg_t", Model: "m", Role: "assistant"},
-		[]substitutedBlock{{
-			Text: "   ", // whitespace only — treated as empty by writer
-			Call: conversation.SyntheticToolCall{ID: "toolu_a", Name: "AskUserQuestion", Input: map[string]any{"questions": []map[string]any{{"question": "Approve?"}}}},
+		[]mixedTurnBlock{{
+			Substitute: &substitutedBlock{
+				Text: "   ", // whitespace only — treated as empty by writer
+				Call: conversation.SyntheticToolCall{ID: "toolu_a", Name: "AskUserQuestion", Input: map[string]any{"questions": []map[string]any{{"question": "Approve?"}}}},
+			},
 		}},
 	)
 	if err != nil {
@@ -2714,5 +2716,84 @@ func TestWriteProviderSubstituteToolCallsSkipsTextBlockWhenEmpty(t *testing.T) {
 	}
 	if !strings.Contains(got, `"type":"tool_use"`) {
 		t.Fatalf("tool_use block missing, got:\n%s", got)
+	}
+}
+
+// TestSubstituteToolCallsForBlockedPreservesAllowedSiblings guards the
+// mixed-turn case: when an assistant turn carries one blocked tool_use
+// (with SubstituteWithToolCall) alongside one or more ALLOWED siblings,
+// the substitute path must emit every allowed tool_use AND the
+// placeholder in turn order. Previously the writer received only the
+// blocked decisions' substitutes, silently dropping the allowed
+// siblings from the wire — so a parallel Bash/Write/Read turn would
+// land with only the placeholder, leaving the harness with no
+// tool_uses to execute for the allowed work.
+func TestSubstituteToolCallsForBlockedPreservesAllowedSiblings(t *testing.T) {
+	decisions := []conversation.ToolUseDecisionRecord{
+		{
+			ToolUse: conversation.ToolUse{ID: "toolu_a1", Name: "Write", Input: json.RawMessage(`{"file_path":"/tmp/a.txt","content":"first"}`)},
+			Verdict: conversation.ToolUseVerdict{Allowed: true},
+		},
+		{
+			ToolUse: conversation.ToolUse{ID: "toolu_b2", Name: "Bash", Input: json.RawMessage(`{"command":"./hello.sh"}`)},
+			Verdict: conversation.ToolUseVerdict{
+				Allowed: false,
+				SubstituteWithToolCall: &conversation.SyntheticToolCall{
+					ID:    "toolu_b2",
+					Name:  "Bash",
+					Input: map[string]any{"command": ": # CLAWVISOR_BLOCKED ..."},
+				},
+				SuppressSubstituteText: true,
+			},
+		},
+		{
+			ToolUse: conversation.ToolUse{ID: "toolu_c3", Name: "Write", Input: json.RawMessage(`{"file_path":"/tmp/c.txt","content":"third"}`)},
+			Verdict: conversation.ToolUseVerdict{Allowed: true},
+		},
+	}
+	blocks, allHaveToolCall := substituteToolCallsForBlocked(decisions, nil)
+	if !allHaveToolCall {
+		t.Fatalf("expected allHaveToolCall=true (one blocked-with-call slot is sufficient), got false; blocks=%+v", blocks)
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("expected 3 blocks (2 allowed pass-throughs + 1 substitute), got %d: %+v", len(blocks), blocks)
+	}
+	if !blocks[0].Allowed || blocks[0].ToolUse.ID != "toolu_a1" {
+		t.Fatalf("block[0] should be allowed pass-through toolu_a1, got %+v", blocks[0])
+	}
+	if blocks[1].Substitute == nil || blocks[1].Substitute.Call.ID != "toolu_b2" {
+		t.Fatalf("block[1] should be substitute toolu_b2, got %+v", blocks[1])
+	}
+	if !blocks[2].Allowed || blocks[2].ToolUse.ID != "toolu_c3" {
+		t.Fatalf("block[2] should be allowed pass-through toolu_c3, got %+v", blocks[2])
+	}
+
+	// Wire-shape: writeProviderSubstituteToolCalls must emit a tool_use
+	// content_block for the allowed siblings (with the original name
+	// + input) AND the placeholder.
+	var buf bytes.Buffer
+	if err := writeProviderSubstituteToolCalls(&buf, conversation.ProviderAnthropic,
+		conversation.StreamingRewriteResult{NextAnthropicContentIndex: 0, StreamID: "msg_mixed", Model: "claude-test", Role: "assistant"},
+		blocks); err != nil {
+		t.Fatalf("writeProviderSubstituteToolCalls error: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		`"id":"toolu_a1"`,
+		`"id":"toolu_b2"`,
+		`"id":"toolu_c3"`,
+		`"name":"Write"`,
+		`"name":"Bash"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected wire output to contain %q, got:\n%s", want, got)
+		}
+	}
+	// Order: a1 before b2 before c3.
+	aIdx := strings.Index(got, `"id":"toolu_a1"`)
+	bIdx := strings.Index(got, `"id":"toolu_b2"`)
+	cIdx := strings.Index(got, `"id":"toolu_c3"`)
+	if aIdx < 0 || bIdx < 0 || cIdx < 0 || aIdx >= bIdx || bIdx >= cIdx {
+		t.Fatalf("expected ordering a1@%d < b2@%d < c3@%d in output:\n%s", aIdx, bIdx, cIdx, got)
 	}
 }
