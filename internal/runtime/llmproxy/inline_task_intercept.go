@@ -401,7 +401,19 @@ func MaybeInterceptInlineTaskDefinition(
 					// augmentation text or threading a sidecar map.
 					CreatedTaskID:          created.ID,
 					SubstituteWithToolCall: sentinel,
-					SuppressSubstituteText: true,
+					// SubstituteWith carries the user-facing
+					// [Clawvisor] notice. The response rewriters emit
+					// it as a leading text/message block alongside the
+					// Bash placeholder so the harness's transcript
+					// shows what just happened ("auto-approved task
+					// X"). The model's view of subsequent turns
+					// includes the notice text in its prior assistant
+					// turn, which is accurate context — the placeholder
+					// tool_use itself is restored to the original
+					// control-tool POST by the inbound rewriter, so
+					// the model sees its own call + the notice + the
+					// augmentation as the tool_result.
+					SubstituteWith: AutoApproveUserNotice(created.Purpose),
 				}, true
 			}
 		}

@@ -866,8 +866,43 @@ func TestAutoApprove_VerdictUsesPlaceholder(t *testing.T) {
 	if !strings.Contains(cmd, llmproxy.AutoApprovePlaceholderMarker) {
 		t.Errorf("placeholder command must carry the AUTO_APPROVED marker; got %q", cmd)
 	}
-	if !v.SuppressSubstituteText {
-		t.Error("auto-approve verdict must set SuppressSubstituteText so the rewriter doesn't double-emit")
+	if v.SuppressSubstituteText {
+		t.Error("auto-approve verdict must NOT suppress the substitute text; the [Clawvisor] notice rides alongside the placeholder so the harness transcript explains what just happened")
+	}
+	if !strings.Contains(v.SubstituteWith, "Clawvisor") {
+		t.Errorf("auto-approve verdict must populate SubstituteWith with the [Clawvisor] notice; got %q", v.SubstituteWith)
+	}
+}
+
+// TestAutoApprove_NoticeLandsInTranscript walks the auto-approve
+// verdict through the Anthropic buffered rewriter and asserts the
+// [Clawvisor] notice lands as a leading text content_block AND the
+// placeholder tool_use lands in the same assistant turn. Locks the
+// SubstituteWith + SubstituteWithToolCall contract for the
+// auto-approve user-notice path.
+func TestAutoApprove_NoticeLandsInTranscript(t *testing.T) {
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
+		RiskLevel:   "low",
+		IntentMatch: "yes",
+	})
+	got := f.run("low", []string{"build me a landing page at /tmp/landing"})
+
+	out := string(got.Body)
+	if !strings.Contains(out, `"type":"text"`) {
+		t.Errorf("expected leading text content_block carrying the [Clawvisor] notice; got %s", out)
+	}
+	if !strings.Contains(out, "Clawvisor") {
+		t.Errorf("expected [Clawvisor] notice in the rewritten body; got %s", out)
+	}
+	if !strings.Contains(out, llmproxy.AutoApprovePlaceholderMarker) {
+		t.Errorf("expected Bash placeholder to coexist with the notice; got %s", out)
+	}
+	// Order matters: the notice text should precede the placeholder
+	// tool_use so the harness's transcript reads "notice, then call."
+	noticeIdx := strings.Index(out, "Clawvisor")
+	toolIdx := strings.Index(out, llmproxy.AutoApprovePlaceholderMarker)
+	if noticeIdx < 0 || toolIdx < 0 || noticeIdx >= toolIdx {
+		t.Errorf("notice should precede the placeholder marker (notice@%d, marker@%d); got %s", noticeIdx, toolIdx, out)
 	}
 }
 
