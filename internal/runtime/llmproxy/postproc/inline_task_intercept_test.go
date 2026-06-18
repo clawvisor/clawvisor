@@ -774,6 +774,13 @@ func (f autoApproveFixture) run(threshold string, turns []string) llmproxy.Postp
 			AgentID:     f.agentID,
 			AgentName:   "test-agent",
 		},
+		AuditContext: llmproxy.AuditContext{
+			// ConversationID is required by the auto-approve pre-flight
+			// gate; production wiring derives it from the inbound
+			// request's session metadata. Test fixtures set it
+			// explicitly so the gate exercises the happy path.
+			ConversationID: "conv-auto-approve-test",
+		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			ScopeDrifts: f.drifts,
 		},
@@ -797,7 +804,12 @@ func (f autoApproveFixture) run(threshold string, turns []string) llmproxy.Postp
 }
 
 func (f autoApproveFixture) holdCount() int {
-	return len(f.cache.SnapshotHoldsForTest(f.userID, f.agentID, conversation.ProviderAnthropic))
+	// Holds for the legacy human-approval path land in the zero-
+	// conversation bucket (SnapshotHoldsForTest's key shape). The
+	// auto-approve path doesn't register holds, so this count covers
+	// the fallthrough flows.
+	return len(f.cache.SnapshotHoldsForTest(f.userID, f.agentID, conversation.ProviderAnthropic)) +
+		len(f.cache.SnapshotConversationHoldsForTest(f.userID, f.agentID, conversation.ProviderAnthropic, "conv-auto-approve-test"))
 }
 
 // TestAutoApproveUserNotice_TruncatesByRune ensures the user-facing
@@ -876,7 +888,7 @@ func TestAutoApprove_FiresOnLowRiskYesMatch(t *testing.T) {
 	}
 	subst, ok := f.drifts.LookupPendingSubstitution(context.Background(), llmproxy.PendingSubstitutionKey{
 		AgentID:        f.agentID,
-		ConversationID: "",
+		ConversationID: "conv-auto-approve-test",
 		ToolUseID:      "toolu_1",
 	})
 	if !ok {
@@ -1147,8 +1159,9 @@ func TestAutoApprove_WritesTaskLinkedAuditRow(t *testing.T) {
 			AgentName:   "test-agent",
 		},
 		AuditContext: llmproxy.AuditContext{
-			Audit:     llmproxy.NewAuditEmitter(f.store, nil, nil),
-			RequestID: "req-auto-approve-audit",
+			Audit:          llmproxy.NewAuditEmitter(f.store, nil, nil),
+			RequestID:      "req-auto-approve-audit",
+			ConversationID: "conv-auto-approve-test",
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			ScopeDrifts: f.drifts,
@@ -1182,7 +1195,7 @@ func TestAutoApprove_WritesTaskLinkedAuditRow(t *testing.T) {
 	}
 	subst, ok := f.drifts.LookupPendingSubstitution(req.Context(), llmproxy.PendingSubstitutionKey{
 		AgentID:        f.agentID,
-		ConversationID: "",
+		ConversationID: "conv-auto-approve-test",
 		ToolUseID:      "toolu_1",
 	})
 	if !ok {

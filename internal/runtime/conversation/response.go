@@ -56,7 +56,7 @@ type ToolUseVerdict struct {
 	RewriteInput json.RawMessage
 
 	// RecoverableReason marks the verdict as a recoverable-deny that
-	// the postproc eval wrapper should transform into the canonical
+	// the postproc eval wrapper transforms into the canonical
 	// placeholder + pending-substitution pattern. The reason text is
 	// what lands as the tool_result content on the next inbound
 	// /v1/messages; the original tool_use is restored byte-for-byte so
@@ -64,6 +64,17 @@ type ToolUseVerdict struct {
 	// can retry with a corrected shape. Used by RecoverableDenyVerdict
 	// callers — inspector parse errors, boundary check failures,
 	// credential rewrite errors, etc.
+	//
+	// Contract: this field is a PRODUCER → POSTPROC signal. Policy
+	// evaluators populate it; postproc.transformRecoverableDenyToPlaceholder
+	// (in the eval wrapper) consumes it and rewrites the verdict in
+	// place — clearing RecoverableReason and setting
+	// SubstituteWithToolCall + SuppressSubstituteText before any
+	// renderer sees the verdict. Response rewriters MUST NOT branch on
+	// this field; they only see the post-transform shape.
+	// SubstituteWith stays populated as a terminal fallback for the
+	// case where the registry isn't wired (e.g., test fixtures without
+	// AuthorizationContext.ScopeDrifts).
 	RecoverableReason string
 
 	// CreatedTaskID names the inline task created by the

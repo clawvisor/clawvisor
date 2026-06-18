@@ -214,20 +214,37 @@ func MaybeInterceptInlineTaskDefinition(
 		)
 	}
 	if ok {
-		// Pre-flight registry check. The auto-approve verdict's
-		// placeholder relies on the inbound rewriter restoring the
-		// original control-tool POST on the next /v1/messages, which
-		// requires a pending substitution in the registry. If the
-		// registry isn't wired (test fixture, unconfigured
-		// deployment) the placeholder would land on the wire with no
-		// matching restoration record, leaving the harness's stored
-		// assistant history pointing at the Bash placeholder forever
-		// after. Fall through to the human-approval prompt path so
-		// the auto-approve flow only fires when we can actually
-		// complete the round-trip.
-		if cfg.AuthorizationContext.ScopeDrifts == nil || cfg.AgentID == "" {
+		// Pre-flight registry + identity check. The auto-approve
+		// verdict's placeholder relies on the inbound rewriter
+		// restoring the original control-tool POST on the next
+		// /v1/messages, which requires a pending substitution in the
+		// registry keyed by (AgentID, ConversationID, ToolUseID). If
+		// any of those identifiers is missing the substitution can't
+		// be keyed safely:
+		//
+		//   - Registry unwired: no restoration record possible at all.
+		//   - AgentID empty: registry refuses the write (required
+		//     field). Fall back rather than fail the request.
+		//   - ConversationID empty: keys collapse across concurrent
+		//     conversations from the same agent, so a second
+		//     conversation's placeholder could shadow the first
+		//     (model history corruption is worse than the cost of
+		//     the human-prompt round-trip).
+		//
+		// Production wiring populates all three; the gate only fires
+		// in test fixtures or partially-configured deployments.
+		switch {
+		case cfg.AuthorizationContext.ScopeDrifts == nil:
 			audit("fallthrough", "auto_approve_registry_unavailable", "scope-drift registry not wired; cannot register placeholder substitution")
 			trace("inline_task.auto_approve_registry_unavailable")
+			ok = false
+		case cfg.AgentID == "":
+			audit("fallthrough", "auto_approve_agent_id_missing", "agent id empty; substitution key would be unsound")
+			trace("inline_task.auto_approve_agent_id_missing")
+			ok = false
+		case cfg.ConversationID == "":
+			audit("fallthrough", "auto_approve_conversation_id_missing", "conversation id empty; substitution key would collide across concurrent conversations")
+			trace("inline_task.auto_approve_conversation_id_missing")
 			ok = false
 		}
 	}

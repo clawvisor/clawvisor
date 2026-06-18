@@ -494,6 +494,23 @@ func (c *MemoryPendingApprovalCache) SnapshotHoldsForTest(userID, agentID string
 	return c.snapshotHoldsForTest(userID, agentID, provider)
 }
 
+// SnapshotConversationHoldsForTest returns holds stored under a
+// specific conversation bucket. Used by tests that exercise paths
+// which register conversation-scoped holds (auto-approve fallthrough
+// after the pre-flight gate, scope-drift one-off, etc.).
+func (c *MemoryPendingApprovalCache) SnapshotConversationHoldsForTest(userID, agentID string, provider conversation.Provider, conversationID string) []PendingLiteApproval {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := pendingApprovalKey{userID: userID, agentID: agentID, provider: provider, conversationID: conversationID}
+	items := c.pending[key]
+	out := make([]PendingLiteApproval, len(items))
+	copy(out, items)
+	return out
+}
+
 func (c *MemoryPendingApprovalCache) snapshotHoldsForTest(userID, agentID string, provider conversation.Provider) []PendingLiteApproval {
 	if c == nil {
 		return nil

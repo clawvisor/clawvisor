@@ -1,6 +1,7 @@
 package llmproxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -28,15 +29,15 @@ func PrependAssistantNotice(
 	if len(out) == 0 {
 		return body, false, nil
 	}
-	// The per-provider helpers return the ORIGINAL body slice
-	// untouched when they decide not to mutate (shape unrecognized,
-	// content field absent, …). Compare slice headers — same
-	// backing array + same length means literally the same slice
-	// returned, which is the no-op signal from the helper. This is
-	// stricter than bytes.Equal (which would also flag a genuine
-	// change as no-op if the new bytes happened to match) AND
-	// independent of encoding/json's marshal stability.
-	if len(out) == len(body) && (len(body) == 0 || &out[0] == &body[0]) {
+	// Use bytes.Equal rather than slice-identity comparison. The
+	// per-provider helpers historically returned the ORIGINAL slice
+	// untouched on no-op, but that contract is implicit and brittle —
+	// a helper that ever returns a fresh slice (e.g., after a defensive
+	// copy) would silently re-render the body as "mutated" and force
+	// the Content-Length / Content-Encoding cleanup downstream to fire
+	// for nothing. Byte-equality reads the actual semantic. The cost
+	// is one O(n) scan over response bodies that are already small.
+	if bytes.Equal(out, body) {
 		return body, false, nil
 	}
 	return out, true, nil
