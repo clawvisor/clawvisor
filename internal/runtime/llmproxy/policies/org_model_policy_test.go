@@ -30,11 +30,8 @@ func (s *stubReq) UserID() string                                 { return s.use
 func (s *stubReq) AgentID() string                                { return s.agentID }
 func (s *stubReq) ValidateReplacementBody([]byte) error           { return nil }
 
-type stubMut struct{}
-
-func (stubMut) ReplaceBody([]byte) error                              { return nil }
-func (stubMut) SetHeader(string, string)                              {}
-func (stubMut) AppendContinuationTurn(pipeline.SyntheticContinuation) {}
+// OrgModelPolicy.Preprocess doesn't call any mutator methods, so all
+// tests pass nil directly — no stub mutator needed.
 
 func TestOrgModelPolicy_NoOpWhenNoCallbackOrNoOrg(t *testing.T) {
 	// No callback wired.
