@@ -1,8 +1,10 @@
 package intent
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -60,15 +62,22 @@ func TestParseExtractionResponse_LegacyArray(t *testing.T) {
 
 func TestParseExtractionResponse_EmptyNew(t *testing.T) {
 	raw := `{"facts": [], "patterns": []}`
-	facts, patterns := parseExtractionResponse(raw, slog.Default(), "test")
-	// Empty facts+patterns is valid new format, but since both are empty
-	// it falls through to legacy parse (which also produces empty). Either
-	// way, the result should be empty.
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	facts, patterns := parseExtractionResponse(raw, logger, "test")
 	if len(facts) != 0 {
 		t.Errorf("expected 0 facts, got %d", len(facts))
 	}
 	if len(patterns) != 0 {
 		t.Errorf("expected 0 patterns, got %d", len(patterns))
+	}
+	// Regression guard: a valid empty new-format response must NOT emit
+	// the "parse failed" warning. The metric the alert uses counts those
+	// warnings, and noisy zero-fact tasks were driving 5%+ false-positive
+	// rates before the empty-arrays guard was removed.
+	if strings.Contains(logBuf.String(), "chain context extraction parse failed") {
+		t.Errorf("empty new-format response logged a parse failure:\n%s", logBuf.String())
 	}
 }
 

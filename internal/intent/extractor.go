@@ -740,12 +740,14 @@ func extractFirstJSONValue(s string) string {
 // Every returned pattern has Source="llm_regex" so facts captured by these
 // patterns are distinguishable from builtin-pattern facts in chain_facts.
 func parseExtractionResponse(raw string, logger *slog.Logger, taskID string) ([]extractedFact, []extractionPattern) {
-	// Try new format first.
+	// The system prompt mandates the object form. Accept it whenever it
+	// parses — empty facts+patterns is a valid "nothing to extract"
+	// response and must not be reported as a parse failure.
 	var obj struct {
 		Facts    []extractedFact     `json:"facts"`
 		Patterns []extractionPattern `json:"patterns"`
 	}
-	if err := json.Unmarshal([]byte(raw), &obj); err == nil && (len(obj.Facts) > 0 || len(obj.Patterns) > 0) {
+	if err := json.Unmarshal([]byte(raw), &obj); err == nil {
 		for i := range obj.Patterns {
 			obj.Patterns[i].Source = "llm_regex"
 		}
