@@ -1,0 +1,23 @@
+internal/runtime/llmproxy/policies/inspector_chain_test.go
+  s_813cf813d8b1d0::t_dacd16b56c3771 134-198
+internal/runtime/llmproxy/policies/inspector_chain.go
+  s_813cf813d8b1d0::t_a762b4d80f6ee9 74
+  s_813cf813d8b1d0::t_75c879a2965564 36,39-48,60-66
+  s_813cf813d8b1d0::t_b3bb1faa46fcf0 85-99,102-105,107-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "64b34b8bd4661a75c770bc3a5352ba28ede3f8ea",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

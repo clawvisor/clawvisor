@@ -1,0 +1,19 @@
+internal/runtime/llmproxy/pricing/pricing.go
+  s_3e544732840cc4::t_6843768a82334f 74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4a78d30f855ba536f6f96cced4a57cfcd676a8a9",
+  "prompts": {},
+  "sessions": {
+    "s_3e544732840cc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "048af295-190f-4af0-80cd-9f0be60a1a56",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+internal/e2e/lite/lite_test.go
+  s_3649ca8c2b1d3e::t_5656b5dbba810c 63-65
+  s_3649ca8c2b1d3e::t_f2b7b852c95bb3 6,15-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1af472f6786321cf22a3930297484800ba313a45",
+  "prompts": {},
+  "sessions": {
+    "s_3649ca8c2b1d3e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da049424-2793-438b-b32b-4dc0462d4037",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

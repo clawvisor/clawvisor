@@ -1,0 +1,19 @@
+internal/api/handlers/installer_test.go
+  s_3c34af4b91b3c7::t_1987ab1241c4b9 691-692,694
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "12e15d1258428abb8525d42284275716efa5d71c",
+  "prompts": {},
+  "sessions": {
+    "s_3c34af4b91b3c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35c0e80e-2cf6-45cb-a34c-a6f0314c5f4b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+internal/runtime/llmproxy/inspector/readonly_bash.go
+  s_9b27ded532b379::t_c73f3a54a42139 4,14-16,45-48,64-72
+pkg/runtime/sensitivepaths/sensitivepaths_test.go
+  s_9b27ded532b379::t_d9b55ab3899515 89-98
+internal/runtime/llmproxy/postprocess.go
+  s_9b27ded532b379::t_3c3e446c4eb2d5 536-551,555-556
+internal/runtime/llmproxy/inspector/readonly_bash_test.go
+  s_9b27ded532b379::t_5d303f605ded5d 12-13,15
+pkg/runtime/sensitivepaths/sensitivepaths.go
+  s_9b27ded532b379::t_d2f58df16ccbad 193-197,207-210
+internal/runtime/llmproxy/postprocess_test.go
+  s_9b27ded532b379::t_b29ef91a61110b 256-281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8a27e2e418025016af78eb143fca9d2f57f92bc1",
+  "prompts": {},
+  "sessions": {
+    "s_9b27ded532b379": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e705b-60d9-7aa3-8ebb-ef9165ae0eb1",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

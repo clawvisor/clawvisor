@@ -1,0 +1,19 @@
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_813cf813d8b1d0::t_6bed66c3929c98 69-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "413d2dd631b37592e3efe2a588a7f22a2ee2e692",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
