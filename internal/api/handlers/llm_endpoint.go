@@ -1383,6 +1383,16 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Note: every blocked-/auto-approved scenario (scope-drift,
+			// recoverable-deny, inline-task auto-approve) now flows
+			// through the placeholder + pending-substitution path. The
+			// model's follow-up turn lands on the harness's NEXT
+			// /v1/messages request, where scope_drift_inbound_rewrite.go
+			// restores the original tool_use and substitutes the
+			// tool_result content. No mid-request upstream continuation
+			// call is needed — see inline_task_intercept.go and the
+			// postproc transform for the design tradeoff.
+
 			firstUpstreamCT := upstreamCT
 			streamStatus := resp.StatusCode
 
@@ -1669,6 +1679,14 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		// Auto-approved task attribution: scoop the created task id out
 		// of the decisions so audit can link to it even when the
 		// conversation didn't have a checkout yet.
+		//
+		// Note: every blocked-/auto-approved scenario (scope-drift,
+		// recoverable-deny, inline-task auto-approve) now flows through
+		// the placeholder + pending-substitution path. The model's
+		// follow-up turn lands on the harness's NEXT /v1/messages
+		// request — see inline_task_intercept.go for the migration
+		// rationale and tradeoff vs. the pre-migration in-request
+		// continuation.
 		if auditTaskID == "" {
 			for _, dec := range processed.Decisions {
 				if dec.Verdict.CreatedTaskID != "" {
