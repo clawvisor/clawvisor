@@ -225,8 +225,13 @@ type ScopeDriftRegistry interface {
 	// (agent, fingerprint).
 	SetOutcome(ctx context.Context, driftID string, outcome ScopeDriftOutcome) error
 
-	// RollbackClaim resets the ChosenOption, Outcome, and AgentNote fields of a drift back to empty.
-	// This should be called if an option was claimed but subsequent preflight setup/hold creation failed.
+	// RollbackClaim resets the ChosenOption, Outcome, and AgentNote
+	// fields of a drift back to empty, AND deletes any pre-clear
+	// entry minted by an earlier SetOutcome(Succeeded). Implementations
+	// must keep both states in lockstep so a partially-completed
+	// auto-approve flow (claimed → succeeded → downstream failure)
+	// cannot leave a stale pre-clear visible to LookupPreClear on a
+	// later turn.
 	RollbackClaim(ctx context.Context, driftID string) error
 
 	// LookupPreClear checks whether the given (agent, fingerprint) has a
@@ -379,6 +384,14 @@ func (r *memoryScopeDriftRegistry) RollbackClaim(_ context.Context, driftID stri
 	d.ChosenOption = ""
 	d.Outcome = ""
 	d.AgentNote = ""
+	// A prior SetOutcome(Succeeded) on this drift would have minted a
+	// pre-clear entry keyed by (AgentID, fingerprint). Without this
+	// delete, a registration-failure rollback in the auto-approve
+	// path leaves the pre-clear behind and LookupPreClear on the
+	// next turn treats the failed flow as already-succeeded —
+	// skipping intended drift handling. delete-on-missing is a no-op,
+	// so this is safe for rollbacks that never crossed SetOutcome.
+	delete(r.cleared, preClearKey(d.AgentID, d.Fingerprint()))
 	return nil
 }
 

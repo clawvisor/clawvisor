@@ -742,6 +742,96 @@ func TestApplyBlockSubstitutionsMatchesToolDecisionsByPosition(t *testing.T) {
 	}
 }
 
+// Regression: when the wire-side synthetic tool_use render fails
+// (anthropicSubstituteToolUseBlock / emitOpenAIResponsesSubstitute
+// returning ok=false), the per-provider rewriter falls back to a
+// text content block but leaves the trailing assistantFragment with
+// the ORIGINAL tool's name. applyBlockSubstitutions used to pass
+// that phantom tool frag through unchanged whenever the verdict had
+// SubstituteWithToolCall set, so the audit said tool_use while the
+// wire was text. Now the matcher gates pass-through on
+// frag.ToolName == substitute.Name and otherwise derives text from
+// SubstituteWith / SuppressSubstituteText / Reason — keeping audit
+// shape aligned with the wire.
+func TestApplyBlockSubstitutionsFallsBackToTextWhenSubstituteCallUnrendered(t *testing.T) {
+	t.Parallel()
+
+	// Mismatched ToolName mirrors the rewriter's trailing append
+	// after anthropicSubstituteToolUseBlock returns ok=false (empty
+	// Name disqualifies it). The wire emitted SubstituteWith text;
+	// the audit should follow.
+	frags := []assistantFragment{
+		{IsTool: true, ToolName: "Bash", ToolArgs: json.RawMessage(`{"command":"rm"}`)},
+	}
+	decisions := []ToolUseDecisionRecord{
+		{
+			ToolUse: ToolUse{Name: "Bash"},
+			Verdict: ToolUseVerdict{
+				Allowed: false,
+				// Invalid: empty Name. The wire renderer returns
+				// ok=false and falls back to text.
+				SubstituteWithToolCall: &SyntheticToolCall{ID: "id-1", Name: ""},
+				SubstituteWith:         "Clawvisor: rendered fallback notice",
+			},
+		},
+	}
+
+	got := applyBlockSubstitutions(frags, decisions)
+	if len(got) != 1 {
+		t.Fatalf("expected one fragment, got %d", len(got))
+	}
+	if got[0].IsTool {
+		t.Fatalf("expected text fragment when synthetic call unrenderable, got tool: %+v", got[0])
+	}
+	if got[0].Text != "Clawvisor: rendered fallback notice" {
+		t.Fatalf("expected SubstituteWith text, got %q", got[0].Text)
+	}
+
+	// SuppressSubstituteText must NOT silence the fallback when a
+	// SubstituteWithToolCall is paired with it — same escape-hatch
+	// behavior as the per-provider rewriters.
+	suppressed := []ToolUseDecisionRecord{
+		{
+			ToolUse: ToolUse{Name: "Bash"},
+			Verdict: ToolUseVerdict{
+				Allowed:                false,
+				SubstituteWithToolCall: &SyntheticToolCall{ID: "id-2", Name: ""},
+				SuppressSubstituteText: true,
+				Reason:                 "scope drift retry",
+			},
+		},
+	}
+	got = applyBlockSubstitutions(frags, suppressed)
+	if len(got) != 1 {
+		t.Fatalf("expected one fragment with escape-hatch text, got %d", len(got))
+	}
+	if got[0].IsTool {
+		t.Fatalf("expected text fragment for escape-hatch fallback, got tool: %+v", got[0])
+	}
+	if !strings.Contains(got[0].Text, "scope drift retry") {
+		t.Fatalf("expected reason in fallback text, got %q", got[0].Text)
+	}
+
+	// Sanity: a SubstituteWithToolCall whose Name matches the frag
+	// still passes through as tool_use (the wire-side success path).
+	successFrags := []assistantFragment{
+		{IsTool: true, ToolName: "AskUserQuestion", ToolArgs: json.RawMessage(`{}`)},
+	}
+	successDecisions := []ToolUseDecisionRecord{
+		{
+			ToolUse: ToolUse{Name: "Bash"},
+			Verdict: ToolUseVerdict{
+				Allowed:                false,
+				SubstituteWithToolCall: &SyntheticToolCall{ID: "id-3", Name: "AskUserQuestion"},
+			},
+		},
+	}
+	got = applyBlockSubstitutions(successFrags, successDecisions)
+	if len(got) != 1 || !got[0].IsTool || got[0].ToolName != "AskUserQuestion" {
+		t.Fatalf("expected tool_use pass-through for matched substitute, got %+v", got)
+	}
+}
+
 // OpenAI Chat streams can interleave assistant prose with tool_calls.
 // When the rewriter mutates the tool_call arguments, the synthesized
 // re-emit must preserve the leading text. Previously the text buffer

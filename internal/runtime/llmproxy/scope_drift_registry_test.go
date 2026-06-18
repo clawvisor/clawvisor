@@ -75,6 +75,50 @@ func TestScopeDriftRegistry_RegisterGetClaimSetOutcomePreClear(t *testing.T) {
 	}
 }
 
+func TestScopeDriftRegistry_RollbackClaimClearsPreClear(t *testing.T) {
+	// Regression: a SetOutcome(Succeeded) followed by a downstream
+	// failure must roll back the pre-clear, not just the claim
+	// fields. Otherwise LookupPreClear on the next turn treats the
+	// failed flow as already-succeeded and skips drift handling.
+	t.Parallel()
+	ctx := context.Background()
+	reg := NewMemoryScopeDriftRegistry(0)
+
+	tu := conversation.ToolUse{ID: "tu-rollback", Name: "Bash", Input: []byte(`{"command":"x"}`)}
+	stored, err := reg.Register(ctx, ScopeDrift{
+		UserID: "u", AgentID: "agent-rb", ConversationID: "conv-rb",
+		ToolUse: tu, Service: "svc", Action: "act", Host: "h",
+		Method: "POST", Path: "/p", Source: ScopeDriftSourceTaskScope,
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if _, err := reg.ClaimOption(ctx, stored.ID, ScopeDriftOptionNewTask, ""); err != nil {
+		t.Fatalf("ClaimOption: %v", err)
+	}
+	if err := reg.SetOutcome(ctx, stored.ID, ScopeDriftOutcomeSucceeded); err != nil {
+		t.Fatalf("SetOutcome: %v", err)
+	}
+
+	// Simulate downstream failure: roll back the claim. Pre-clear
+	// must go with it.
+	if err := reg.RollbackClaim(ctx, stored.ID); err != nil {
+		t.Fatalf("RollbackClaim: %v", err)
+	}
+	if _, ok := reg.LookupPreClear(ctx, "agent-rb", stored.Fingerprint()); ok {
+		t.Fatal("LookupPreClear after RollbackClaim: want miss, got hit (stale pre-clear leaked past rollback)")
+	}
+
+	// Sanity: the claim itself was also reset.
+	got, err := reg.Get(ctx, stored.ID)
+	if err != nil {
+		t.Fatalf("Get after rollback: %v", err)
+	}
+	if got.ChosenOption != "" || got.Outcome != "" || got.AgentNote != "" {
+		t.Fatalf("RollbackClaim left claim fields populated: %+v", got)
+	}
+}
+
 func TestScopeDriftRegistry_GetMissingIsNotFound(t *testing.T) {
 	t.Parallel()
 	reg := NewMemoryScopeDriftRegistry(0)

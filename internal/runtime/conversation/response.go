@@ -266,25 +266,41 @@ func applyBlockSubstitutions(frags []assistantFragment, decisions []ToolUseDecis
 		decision := decisions[toolDecisionIdx]
 		toolDecisionIdx++
 		if !decision.Verdict.Allowed {
-			if decision.Verdict.SubstituteWithToolCall != nil {
+			if decision.Verdict.SubstituteWithToolCall != nil &&
+				frag.ToolName == decision.Verdict.SubstituteWithToolCall.Name {
 				// Placeholder substitution (scope-drift, recoverable-
-				// deny, auto-approve): the rewriter already replaced
-				// the original tool_use with the substitute call in
-				// the response body AND populated frag.ToolName with
-				// the substitute's name. Let the tool fragment
-				// through unchanged so the AssistantTurn audit
-				// reflects the actual wire shape (a tool_use, not
-				// text). Any preamble SubstituteWith text was
+				// deny, auto-approve) rendered as a synthetic tool_use
+				// on the wire: the rewriter populated frag.ToolName
+				// with the substitute's Name, so the match confirms the
+				// wire actually carries the tool_use shape. Pass the
+				// fragment through unchanged so the AssistantTurn audit
+				// matches. Any preamble SubstituteWith text was
 				// emitted as its own preceding Text frag by the
 				// rewriter and passes through above.
 				out = append(out, frag)
 				continue
 			}
+			// Reaches here when either (a) no SubstituteWithToolCall
+			// was set, or (b) one was set but the wire-side renderer
+			// (anthropicSubstituteToolUseBlock / emitOpenAIResponsesSubstitute)
+			// returned ok=false and the rewriter fell back to a text
+			// content block — leaving the trailing frag with the
+			// ORIGINAL tool name. The wire-side fallback mirrors the
+			// text-derivation rules below (SubstituteWith → policy
+			// default → suppression unless paired with a
+			// SubstituteWithToolCall escape hatch), so re-apply the
+			// same precedence here to keep audit shape aligned with
+			// the wire.
 			if substitute := strings.TrimSpace(decision.Verdict.SubstituteWith); substitute != "" {
 				out = append(out, assistantFragment{Text: substitute})
 				continue
 			}
-			if decision.Verdict.SuppressSubstituteText {
+			// SuppressSubstituteText only silences when there's no
+			// SubstituteWithToolCall fallback in play. When a fallback
+			// IS in play, the wire emits a default policy notice
+			// (escape hatch in the per-provider rewriters); the audit
+			// follows suit.
+			if decision.Verdict.SuppressSubstituteText && decision.Verdict.SubstituteWithToolCall == nil {
 				continue
 			}
 			reason := decision.Verdict.Reason
