@@ -14,10 +14,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
@@ -27,6 +27,11 @@ import (
 const serviceID = "google.gmail"
 
 const gmailModifyScope = "https://www.googleapis.com/auth/gmail.modify"
+
+// listMessagesMetaConcurrency is the maximum concurrent metadata requests
+// when listing messages. Gmail's metadata-read quota is generous enough to
+// leave headroom at this level.
+const listMessagesMetaConcurrency = 15
 
 // gmailScopes is the full set of scopes Gmail can use. The YAML definition is
 // the source of truth for OAuth URL generation and action gating; this list
@@ -178,63 +183,39 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 	unread := 0
 
 	type fetchResult struct {
-		index int
-		meta  msgMeta
-		err   error
+		id   string
+		meta msgMeta
+		err  error
 	}
 
 	numMessages := len(listResp.Messages)
 	results := make([]fetchResult, numMessages)
 
-	concurrency := 15
-	if concurrency > numMessages {
-		concurrency = numMessages
-	}
-
-	if concurrency > 0 {
-		type task struct {
-			index int
-			id    string
-		}
-		tasksChan := make(chan task, numMessages)
-		resultsChan := make(chan fetchResult, numMessages)
-
-		var wg sync.WaitGroup
-		for i := 0; i < concurrency; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for t := range tasksChan {
-					if ctx.Err() != nil {
-						resultsChan <- fetchResult{index: t.index, err: ctx.Err()}
-						continue
-					}
-					meta, err := fetchMessageMeta(ctx, client, t.id)
-					resultsChan <- fetchResult{index: t.index, meta: meta, err: err}
-				}
-			}()
-		}
+	if numMessages > 0 {
+		var g errgroup.Group
+		g.SetLimit(listMessagesMetaConcurrency)
 
 		for i, m := range listResp.Messages {
-			tasksChan <- task{index: i, id: m.ID}
+			i, m := i, m
+			g.Go(func() error {
+				if ctx.Err() != nil {
+					results[i] = fetchResult{id: m.ID, err: ctx.Err()}
+					return nil
+				}
+				meta, err := fetchMessageMeta(ctx, client, m.ID)
+				results[i] = fetchResult{id: m.ID, meta: meta, err: err}
+				return nil
+			})
 		}
-		close(tasksChan)
-
-		wg.Wait()
-		close(resultsChan)
-
-		for res := range resultsChan {
-			results[res.index] = res
-		}
+		_ = g.Wait()
 	}
 
-	for i, m := range listResp.Messages {
-		res := results[i]
+	for _, res := range results {
 		if res.err != nil {
 			continue
 		}
 		item := msgListItem{
-			ID:       m.ID,
+			ID:       res.id,
 			From:     format.SanitizeHeader(res.meta.from, format.MaxFieldLen),
 			Subject:  format.SanitizeText(res.meta.subject, format.MaxFieldLen),
 			Snippet:  format.SanitizeText(res.meta.snippet, format.MaxSnippetLen),

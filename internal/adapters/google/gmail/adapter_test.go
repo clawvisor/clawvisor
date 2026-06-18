@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"golang.org/x/oauth2"
@@ -731,4 +732,183 @@ func TestListMessages_Concurrency(t *testing.T) {
 		}
 	}
 }
+
+func TestListMessages_Concurrency_ContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const totalMsgs = 20
+	cancelDone := make(chan struct{})
+	var fetchCount int
+	var mu sync.Mutex
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var body string
+			switch {
+			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages") && !strings.Contains(req.URL.Path, "/msg-"):
+				var msgsList []string
+				for i := 1; i <= totalMsgs; i++ {
+					msgsList = append(msgsList, fmt.Sprintf(`{"id": "msg-%d"}`, i))
+				}
+				body = fmt.Sprintf(`{
+					"messages": [%s],
+					"resultSizeEstimate": %d
+				}`, strings.Join(msgsList, ","), totalMsgs)
+			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages/msg-"):
+				parts := strings.Split(req.URL.Path, "/")
+				msgID := parts[len(parts)-1]
+
+				if msgID == "msg-2" {
+					cancel()
+					mu.Lock()
+					select {
+					case <-cancelDone:
+					default:
+						close(cancelDone)
+					}
+					mu.Unlock()
+				} else {
+					<-cancelDone
+				}
+
+				mu.Lock()
+				fetchCount++
+				mu.Unlock()
+
+				body = fmt.Sprintf(`{
+					"snippet": "Snippet for %s",
+					"labelIds": ["INBOX"],
+					"payload": {
+						"headers": [
+							{"name": "From", "value": "sender-%s@example.com"},
+							{"name": "Subject", "value": "Subject %s"},
+							{"name": "Date", "value": "Date-%s"}
+						]
+					}
+				}`, msgID, msgID, msgID, msgID)
+			default:
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(strings.NewReader("not found")),
+				}, nil
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}),
+	}
+
+	adapter := &GmailAdapter{}
+	res, err := adapter.listMessages(ctx, client, map[string]any{
+		"max_results": totalMsgs,
+	})
+	if err != nil {
+		t.Fatalf("listMessages error: %v", err)
+	}
+
+	data, ok := res.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", res.Data)
+	}
+	messagesRaw, ok := data["messages"]
+	if !ok {
+		t.Fatalf("missing messages field")
+	}
+	messages := messagesRaw.([]msgListItem)
+
+	if len(messages) != fetchCount {
+		t.Errorf("len(messages) = %d, want equal to fetchCount (%d)", len(messages), fetchCount)
+	}
+	if fetchCount == 0 {
+		t.Error("expected at least one message to be successfully fetched")
+	}
+	if fetchCount > 15 {
+		t.Errorf("expected at most 15 messages to be fetched, but got %d", fetchCount)
+	}
+}
+
+func TestListMessages_Concurrency_PartialErrors(t *testing.T) {
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var body string
+			var status = http.StatusOK
+			switch {
+			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages") && !strings.Contains(req.URL.Path, "/msg-"):
+				body = `{
+					"messages": [
+						{"id": "msg-1"},
+						{"id": "msg-2"},
+						{"id": "msg-3"},
+						{"id": "msg-4"}
+					],
+					"resultSizeEstimate": 4
+				}`
+			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages/msg-"):
+				parts := strings.Split(req.URL.Path, "/")
+				msgID := parts[len(parts)-1]
+				if msgID == "msg-2" || msgID == "msg-4" {
+					status = http.StatusInternalServerError
+					body = "internal server error"
+				} else {
+					body = fmt.Sprintf(`{
+						"snippet": "Snippet for %s",
+						"labelIds": ["INBOX"],
+						"payload": {
+							"headers": [
+								{"name": "From", "value": "sender-%s@example.com"},
+								{"name": "Subject", "value": "Subject %s"},
+								{"name": "Date", "value": "Date-%s"}
+							]
+						}
+					}`, msgID, msgID, msgID, msgID)
+				}
+			default:
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(strings.NewReader("not found")),
+				}, nil
+			}
+
+			return &http.Response{
+				StatusCode: status,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}),
+	}
+
+	adapter := &GmailAdapter{}
+	res, err := adapter.listMessages(context.Background(), client, map[string]any{
+		"max_results": 4,
+	})
+	if err != nil {
+		t.Fatalf("listMessages error: %v", err)
+	}
+
+	data, ok := res.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", res.Data)
+	}
+	messagesRaw, ok := data["messages"]
+	if !ok {
+		t.Fatalf("missing messages field")
+	}
+	messages := messagesRaw.([]msgListItem)
+
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(messages))
+	}
+
+	if messages[0].ID != "msg-1" {
+		t.Errorf("first message ID = %q, want msg-1", messages[0].ID)
+	}
+	if messages[1].ID != "msg-3" {
+		t.Errorf("second message ID = %q, want msg-3", messages[1].ID)
+	}
+}
+
 
