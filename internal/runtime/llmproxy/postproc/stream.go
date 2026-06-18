@@ -125,7 +125,7 @@ func PostprocessStream(
 		}
 	}
 
-	if commitErr := session.commitSubstitutions(req.Context(), verdictByTU, toolUses); commitErr != nil {
+	if commitErr := session.commitVerdictSideEffects(req.Context(), verdictByTU, toolUses); commitErr != nil {
 		session.rollback(req.Context(), toolUses, verdictByTU)
 		return llmproxy.PostprocessResult{
 			SkippedReason: commitErr.Error(),

@@ -92,6 +92,15 @@ type ToolUseVerdict struct {
 	// what should happen; postprocess realizes it.
 	PendingSubstitution *PendingSubstitutionSpec
 
+	// DeferredDriftOutcome, when non-nil, declares that the
+	// postprocess layer should mark a scope-drift record with the
+	// given outcome after the verdict is finalized. Same pattern as
+	// PendingSubstitution: evaluators populate intent, postprocess
+	// owns the write + rollback. Committed BEFORE PendingSubstitution
+	// in the same pass so the pre-clear is in place before the
+	// substitution registers.
+	DeferredDriftOutcome *DeferredDriftOutcomeSpec
+
 	// HeldKindHint is the policy-set classification of this verdict
 	// for postproc's coalescing pass. When empty, classification falls
 	// back to the Allowed / RewriteInput shape.
@@ -147,6 +156,22 @@ type PendingSubstitutionSpec struct {
 type PendingSubstitutionTaskRollback struct {
 	TaskID string
 	UserID string
+}
+
+// DeferredDriftOutcomeSpec asks the postprocess layer to mark a
+// scope-drift record with the given outcome after the verdict is
+// finalized. Like PendingSubstitution, this keeps the verdict pure
+// data: the evaluator declares intent, postprocess performs the
+// registry write. Used today by the inline-task auto-approve path,
+// which previously called SetOutcome(Succeeded) directly from the
+// evaluator.
+//
+// Outcome is carried as a string so the conversation package stays
+// free of llmproxy-package dependencies; the postprocess layer
+// converts it to the typed ScopeDriftOutcome on commit.
+type DeferredDriftOutcomeSpec struct {
+	DriftID string
+	Outcome string
 }
 
 type RewriteResult struct {
@@ -304,6 +329,67 @@ func (r *InboundRegistry) ForProvider(p Provider) InboundRewriter {
 	for _, rewriter := range r.rewriters {
 		if rewriter.Name() == p {
 			return rewriter
+		}
+	}
+	return nil
+}
+
+// InboundBodyShape exposes per-provider readers and writers for the
+// inbound request body's role-based turn structure. Anthropic's
+// {messages: [{role, content}]} and OpenAI's {input | messages} both
+// project onto these primitives. Centralizing the per-provider walks
+// behind one interface lets call sites stop hand-rolling switches —
+// agent notices, secret-decision parsing, human-turn extraction,
+// assistant-text injection all share the same dispatch shape as the
+// response and inbound rewriters.
+//
+// All methods are safe to call on nil/malformed bodies — they return
+// the zero value of their return type rather than erroring, mirroring
+// the existing helper contracts the call sites depended on.
+type InboundBodyShape interface {
+	Name() Provider
+	// HasAssistantTurn reports whether the body contains at least one
+	// turn with role "assistant".
+	HasAssistantTurn(body []byte) bool
+	// RecentHumanTurns returns the most recent genuine human-authored
+	// chat turns in chronological order (most recent last), with
+	// Clawvisor-internal artifacts filtered and tail-limited to a
+	// small bound. Auto-approve assessment consumes these.
+	RecentHumanTurns(body []byte) []string
+	// LatestUserText returns the raw text of the most recent user
+	// turn. Unlike RecentHumanTurns, it doesn't filter Clawvisor
+	// internal verbs — secret-detection / reply-routing consumers
+	// need the verbatim user message.
+	LatestUserText(body []byte) string
+	// AssistantTextTurns returns flattened text for every assistant-
+	// role turn, most-recent first. Tool_use blocks are skipped.
+	AssistantTextTurns(body []byte) []string
+	// PrependAssistantText splices text into the leading assistant
+	// turn. Returns body unchanged when no assistant turn exists or
+	// when the splice can't be performed cleanly.
+	PrependAssistantText(contentType string, body []byte, text string) ([]byte, error)
+}
+
+// InboundShapeRegistry routes a Provider to its InboundBodyShape.
+// Parallel to ResponseRegistry and InboundRegistry on their respective
+// legs, so dispatch stays consistent across all three abstractions.
+type InboundShapeRegistry struct {
+	shapes []InboundBodyShape
+}
+
+func NewInboundShapeRegistry(shapes ...InboundBodyShape) *InboundShapeRegistry {
+	return &InboundShapeRegistry{shapes: shapes}
+}
+
+// ForProvider returns the shape registered for p, or nil. Callers
+// that want a non-nil "do-nothing" default should wrap the result.
+func (r *InboundShapeRegistry) ForProvider(p Provider) InboundBodyShape {
+	if r == nil {
+		return nil
+	}
+	for _, shape := range r.shapes {
+		if shape.Name() == p {
+			return shape
 		}
 	}
 	return nil

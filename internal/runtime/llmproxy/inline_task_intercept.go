@@ -282,20 +282,15 @@ func MaybeInterceptInlineTaskDefinition(
 				audit("fallthrough", "auto_approve_create_failed", createErr.Error())
 				trace("inline_task.auto_approve_create_failed", "err", createErr.Error())
 			} else {
-				if parsed.DriftID != "" {
-					if setErr := cfg.ScopeDrifts.SetOutcome(req.Context(), parsed.DriftID, ScopeDriftOutcomeSucceeded); setErr != nil {
-						audit("fallthrough", "auto_approve_set_outcome_failed", setErr.Error())
-						trace("inline_task.auto_approve_set_outcome_failed", "err", setErr.Error())
-						if cfg.Store != nil && created != nil && created.ID != "" {
-							rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 5*time.Second)
-							defer cancel()
-							if err := cfg.Store.RevokeTask(rollbackCtx, created.ID, cfg.AgentUserID); err != nil {
-								trace("inline_task.auto_approve_outcome_rollback_failed", "task_id", created.ID, "err", err.Error())
-							}
-						}
-						return conversation.ToolUseVerdict{}, false
-					}
-				}
+				// SetOutcome(Succeeded) is NOT called here anymore.
+				// The verdict carries a DeferredDriftOutcome spec the
+				// postprocess layer realizes after eval completes;
+				// see postprocessSession.commitVerdictSideEffects.
+				// Deferring the write keeps the verdict pure data and
+				// concentrates registry rollback in one place — on
+				// commit failure postprocess expires the task via
+				// the spec's TaskRollback (same handle the substitution
+				// commit uses).
 				checkedOut := false
 				if cfg.Checkouts != nil && created.ID != "" {
 					// Include ConversationID for parity with the manual
@@ -412,6 +407,13 @@ func MaybeInterceptInlineTaskDefinition(
 							UserID: cfg.AgentUserID,
 						},
 					},
+					// Mark the scope drift Succeeded at commit time so
+					// the pre-clear is minted before the substitution
+					// write that depends on it. SetOutcome is the only
+					// write the auto-approve evaluator USED to perform
+					// itself; deferring it closes the last side-effect
+					// gap in the eval pipeline.
+					DeferredDriftOutcome: deferredDriftOutcomeSpec(parsed.DriftID, ScopeDriftOutcomeSucceeded),
 				}, true
 			}
 		}
@@ -549,6 +551,21 @@ func MaybeInterceptInlineTaskDefinition(
 	}
 	guard.Success()
 	return verdict, true
+}
+
+// deferredDriftOutcomeSpec builds the verdict-level signal the
+// postprocess layer realizes via SetOutcome. Returns nil when there's
+// no drift to mark (empty driftID is the "no scope drift was minted
+// for this auto-approve" case), so the auto-approve verdict can
+// always assign the result without a branch.
+func deferredDriftOutcomeSpec(driftID string, outcome ScopeDriftOutcome) *conversation.DeferredDriftOutcomeSpec {
+	if strings.TrimSpace(driftID) == "" {
+		return nil
+	}
+	return &conversation.DeferredDriftOutcomeSpec{
+		DriftID: driftID,
+		Outcome: string(outcome),
+	}
 }
 
 func inlineSubstitutionShape(useAskUserQuestion bool) string {

@@ -631,116 +631,28 @@ var secretDecisionIDRE = regexp.MustCompile(`\[clawvisor:secret=([^\]\s]+)\]`)
 // not whatever happened to be at the tail of the queue when a concurrent
 // request enqueued a second pending.
 func LatestAssistantSecretDecisionID(provider conversation.Provider, body []byte) string {
-	collect := func(text string) string {
+	shape := DefaultInboundShapeRegistry().ForProvider(provider)
+	if shape == nil {
+		return ""
+	}
+	for _, text := range shape.AssistantTextTurns(body) {
 		if !strings.Contains(text, SecretDecisionIDMarker) {
-			return ""
+			continue
 		}
 		m := secretDecisionIDRE.FindStringSubmatch(text)
-		if len(m) < 2 {
-			return ""
-		}
-		return m[1]
-	}
-	switch provider {
-	case conversation.ProviderAnthropic:
-		var parsed struct {
-			Messages []struct {
-				Role    string          `json:"role"`
-				Content json.RawMessage `json:"content"`
-			} `json:"messages"`
-		}
-		if err := json.Unmarshal(body, &parsed); err == nil {
-			for i := len(parsed.Messages) - 1; i >= 0; i-- {
-				if parsed.Messages[i].Role != "assistant" {
-					continue
-				}
-				if id := collect(flattenAnthropicTaskReplyText(parsed.Messages[i].Content)); id != "" {
-					return id
-				}
-			}
-		}
-	case conversation.ProviderOpenAI:
-		var parsed struct {
-			Messages []map[string]any `json:"messages"`
-			Input    json.RawMessage  `json:"input"`
-		}
-		if err := json.Unmarshal(body, &parsed); err == nil {
-			var items []map[string]any
-			if len(parsed.Input) > 0 && json.Unmarshal(parsed.Input, &items) == nil {
-				for i := len(items) - 1; i >= 0; i-- {
-					role, _ := items[i]["role"].(string)
-					if role != "assistant" {
-						continue
-					}
-					raw, _ := json.Marshal(items[i]["content"])
-					if id := collect(flattenOpenAITaskReplyContent(raw)); id != "" {
-						return id
-					}
-				}
-			}
-			for i := len(parsed.Messages) - 1; i >= 0; i-- {
-				role, _ := parsed.Messages[i]["role"].(string)
-				if role != "assistant" {
-					continue
-				}
-				raw, _ := json.Marshal(parsed.Messages[i]["content"])
-				if id := collect(flattenOpenAITaskReplyContent(raw)); id != "" {
-					return id
-				}
-			}
+		if len(m) >= 2 {
+			return m[1]
 		}
 	}
 	return ""
 }
 
 func LatestUserText(provider conversation.Provider, body []byte) string {
-	switch provider {
-	case conversation.ProviderAnthropic:
-		var parsed struct {
-			Messages []struct {
-				Role    string          `json:"role"`
-				Content json.RawMessage `json:"content"`
-			} `json:"messages"`
-		}
-		if err := json.Unmarshal(body, &parsed); err == nil {
-			for i := len(parsed.Messages) - 1; i >= 0; i-- {
-				if parsed.Messages[i].Role == "user" {
-					return strings.TrimSpace(flattenAnthropicTaskReplyText(parsed.Messages[i].Content))
-				}
-			}
-		}
-	case conversation.ProviderOpenAI:
-		var parsed struct {
-			Messages []map[string]any `json:"messages"`
-			Input    json.RawMessage  `json:"input"`
-		}
-		if err := json.Unmarshal(body, &parsed); err == nil {
-			var input string
-			if len(parsed.Input) > 0 && json.Unmarshal(parsed.Input, &input) == nil {
-				return strings.TrimSpace(input)
-			}
-			var items []map[string]any
-			if len(parsed.Input) > 0 && json.Unmarshal(parsed.Input, &items) == nil {
-				for i := len(items) - 1; i >= 0; i-- {
-					role, _ := items[i]["role"].(string)
-					if role != "user" {
-						continue
-					}
-					raw, _ := json.Marshal(items[i]["content"])
-					return strings.TrimSpace(flattenOpenAITaskReplyContent(raw))
-				}
-			}
-			for i := len(parsed.Messages) - 1; i >= 0; i-- {
-				role, _ := parsed.Messages[i]["role"].(string)
-				if role != "user" {
-					continue
-				}
-				raw, _ := json.Marshal(parsed.Messages[i]["content"])
-				return strings.TrimSpace(flattenOpenAITaskReplyContent(raw))
-			}
-		}
+	shape := DefaultInboundShapeRegistry().ForProvider(provider)
+	if shape == nil {
+		return ""
 	}
-	return ""
+	return shape.LatestUserText(body)
 }
 
 func stringFromMap(m map[string]any, key string) string {

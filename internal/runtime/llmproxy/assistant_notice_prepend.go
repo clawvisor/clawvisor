@@ -48,19 +48,9 @@ func dispatchPrependNotice(
 	body []byte,
 	text string,
 ) ([]byte, error) {
-	switch provider {
-	case conversation.ProviderAnthropic:
-		return conversation.PrependAnthropicAssistantText(contentType, body, text)
-	case conversation.ProviderOpenAI:
-		switch conversation.OpenAIResponseShape(contentType, body) {
-		case conversation.OpenAIResponseShapeChat:
-			return conversation.PrependOpenAIChatAssistantText(contentType, body, text)
-		case conversation.OpenAIResponseShapeResponses:
-			return conversation.PrependOpenAIResponsesAssistantText(contentType, body, text)
-		default:
-			return body, nil
-		}
-	default:
+	shape := DefaultInboundShapeRegistry().ForProvider(provider)
+	if shape == nil {
 		return body, nil
 	}
+	return shape.PrependAssistantText(contentType, body, text)
 }

@@ -68,14 +68,11 @@ func HasInboundAssistantTurn(provider conversation.Provider, body []byte) bool {
 	if len(body) == 0 {
 		return true
 	}
-	switch provider {
-	case conversation.ProviderAnthropic:
-		return anthropicInboundHasAssistant(body)
-	case conversation.ProviderOpenAI:
-		return openAIInboundHasAssistant(body)
-	default:
+	shape := DefaultInboundShapeRegistry().ForProvider(provider)
+	if shape == nil {
 		return true
 	}
+	return shape.HasAssistantTurn(body)
 }
 
 func anthropicInboundHasAssistant(body []byte) bool {

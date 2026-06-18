@@ -42,14 +42,11 @@ func ExtractRecentHumanTurns(req ExtractHumanTurnsRequest) []string {
 	if len(req.Body) == 0 {
 		return []string{}
 	}
-	switch req.Provider {
-	case conversation.ProviderAnthropic:
-		return extractAnthropicHumanTurns(req.Body)
-	case conversation.ProviderOpenAI:
-		return extractOpenAIHumanTurns(req.Body)
-	default:
+	shape := DefaultInboundShapeRegistry().ForProvider(req.Provider)
+	if shape == nil {
 		return []string{}
 	}
+	return shape.RecentHumanTurns(req.Body)
 }
 
 func extractAnthropicHumanTurns(body []byte) []string {

@@ -1333,9 +1333,12 @@ func TestScopeDriftE2E_NewTaskPendingCreatorFailureClosesDrift(t *testing.T) {
 	}
 }
 
-// TestScopeDriftE2E_NewTaskAutoApproveResolvesDriftSucceeded verifies that if a task is
-// auto-approved, the drift is successfully resolved immediately without human prompting.
-func TestScopeDriftE2E_NewTaskAutoApproveResolvesDriftSucceeded(t *testing.T) {
+// TestScopeDriftE2E_NewTaskAutoApproveDefersDriftOutcome verifies that
+// when a task is auto-approved the evaluator emits a verdict carrying
+// the DeferredDriftOutcome spec (postprocess realizes the SetOutcome
+// at commit time) and does NOT write the registry itself — that's the
+// verdict-purity invariant.
+func TestScopeDriftE2E_NewTaskAutoApproveDefersDriftOutcome(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	reg := NewMemoryScopeDriftRegistry(0)
@@ -1399,13 +1402,26 @@ func TestScopeDriftE2E_NewTaskAutoApproveResolvesDriftSucceeded(t *testing.T) {
 		t.Fatal("expected auto-approve verdict to set SubstituteWith with the [Clawvisor] notice")
 	}
 
-	// Verify that the drift outcome was marked as Succeeded.
+	// The verdict carries the DeferredDriftOutcome spec; the registry
+	// must NOT have been touched by the evaluator (verdict purity).
+	if verdict.DeferredDriftOutcome == nil {
+		t.Fatal("expected auto-approve verdict to carry DeferredDriftOutcome so postprocess commits SetOutcome")
+	}
+	if verdict.DeferredDriftOutcome.DriftID != drift.ID {
+		t.Fatalf("DeferredDriftOutcome.DriftID = %q, want %q", verdict.DeferredDriftOutcome.DriftID, drift.ID)
+	}
+	if verdict.DeferredDriftOutcome.Outcome != string(ScopeDriftOutcomeSucceeded) {
+		t.Fatalf("DeferredDriftOutcome.Outcome = %q, want %q", verdict.DeferredDriftOutcome.Outcome, ScopeDriftOutcomeSucceeded)
+	}
 	stored, err := reg.Get(ctx, drift.ID)
 	if err != nil {
 		t.Fatalf("get drift: %v", err)
 	}
-	if stored.Outcome != ScopeDriftOutcomeSucceeded {
-		t.Fatalf("drift Outcome = %q, want %q", stored.Outcome, ScopeDriftOutcomeSucceeded)
+	if stored.Outcome == ScopeDriftOutcomeSucceeded {
+		t.Fatalf("evaluator must NOT call SetOutcome — the verdict defers it. Outcome=%q", stored.Outcome)
+	}
+	if stored.Outcome != ScopeDriftOutcomePending {
+		t.Fatalf("drift Outcome = %q, want %q (claim was made by guard.Claim, outcome is deferred)", stored.Outcome, ScopeDriftOutcomePending)
 	}
 }
 
@@ -1566,90 +1582,14 @@ func (m *mockTaskRiskAssessor) AssessEnvelope(_ context.Context, _ TaskRiskAsses
 	return m.verdict
 }
 
-type failingOutcomeRegistry struct {
-	ScopeDriftRegistry
-	failSetOutcome bool
-}
-
-func (r *failingOutcomeRegistry) SetOutcome(ctx context.Context, driftID string, outcome ScopeDriftOutcome) error {
-	if r.failSetOutcome {
-		return errors.New("database connection lost during outcome write")
-	}
-	return r.ScopeDriftRegistry.SetOutcome(ctx, driftID, outcome)
-}
-
-// TestScopeDriftE2E_NewTaskAutoApproveSetOutcomeFailureRollsBackDrift verifies that if task auto-approval
-// triggers and task creation succeeds, but the registry write for SetOutcome(Succeeded) fails, the claim is
-// rolled back and the request falls through.
-func TestScopeDriftE2E_NewTaskAutoApproveSetOutcomeFailureRollsBackDrift(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	innerReg := NewMemoryScopeDriftRegistry(0)
-	reg := &failingOutcomeRegistry{ScopeDriftRegistry: innerReg, failSetOutcome: true}
-	cache := NewMemoryPendingApprovalCache(time.Minute)
-	drift, _ := mintDriftFixture(t, reg, ScopeDriftSourceTaskScope)
-
-	taskBody := &runtimetasks.TaskCreateRequest{
-		Purpose:                "File the issue",
-		IntentVerificationMode: "strict",
-		ExpiresInSeconds:       600,
-		ExpectedTools: []runtimetasks.ExpectedTool{
-			{ToolName: "Bash", Why: "curl to github"},
-		},
-		DriftID: drift.ID,
-	}
-	taskBodyJSON, _ := json.Marshal(taskBody)
-	tu := conversation.ToolUse{
-		ID:    "tu-create",
-		Name:  "Bash",
-		Input: json.RawMessage(`{"body":` + string(mustJSON(string(taskBodyJSON))) + `}`),
-	}
-
-	// Creator succeeds on task creation, but SetOutcome will fail.
-	fc := &fakeInlineTaskCreator{}
-	assessor := &mockTaskRiskAssessor{
-		verdict: &TaskRiskAssessment{
-			RiskLevel:   "low",
-			IntentMatch: "yes",
-		},
-	}
-	cfg := PostprocessConfig{
-		AgentContext:         AgentContext{AgentID: driftTestAgentID, AgentUserID: driftTestUserID, AgentName: "agent-drift"},
-		AuditContext:         AuditContext{ConversationID: driftTestConvID},
-		AuthorizationContext: AuthorizationContext{ScopeDrifts: reg},
-		ApprovalContext: ApprovalContext{
-			PendingApprovals:                 cache,
-			InlineTaskCreator:                fc,
-			TaskRiskAssessor:                 assessor,
-			ConversationAutoApproveThreshold: "low",
-			RecentUserTurns:                  []string{"please file the issue immediately"},
-		},
-	}
-	httpReq := httptest.NewRequest("POST", "http://daemon/api/control/tasks?surface=inline", nil)
-	call := ControlCall{Method: "POST", URL: httpReq.URL}
-
-	_, ok := MaybeInterceptInlineTaskDefinition(httpReq, cfg, func(string, string, string) {}, func(string, ...any) {}, conversation.ProviderAnthropic, tu, call)
-	if ok {
-		t.Fatal("expected task definition intercept to return false (fallthrough) due to SetOutcome failure")
-	}
-
-	// Verify that the drift outcome and chosen option were rolled back (cleared).
-	stored, err := reg.Get(ctx, drift.ID)
-	if err != nil {
-		t.Fatalf("get drift: %v", err)
-	}
-	if stored.Outcome != "" {
-		t.Fatalf("drift Outcome = %q, want empty", stored.Outcome)
-	}
-	if stored.ChosenOption != "" {
-		t.Fatalf("drift ChosenOption = %q, want empty", stored.ChosenOption)
-	}
-
-	// Verify we can claim the drift again (it was successfully rolled back).
-	if _, err := reg.ClaimOption(ctx, drift.ID, ScopeDriftOptionNewTask, "retry"); err != nil {
-		t.Fatalf("expected drift to be claimable again, but got err: %v", err)
-	}
-}
+// (The SetOutcome-failure rollback test that used to live here has
+// moved to postproc/session_commit_test.go's
+// TestCommitVerdictSideEffectsRollsBackClaimOnSetOutcomeFailure —
+// after Gap-1 the side-effect happens at commit time, not in the
+// evaluator, so the test belongs alongside the layer that owns the
+// behavior. The evaluator-level contract is now: "verdict carries
+// DeferredDriftOutcome spec; the registry is untouched", which
+// TestScopeDriftE2E_NewTaskAutoApproveDefersDriftOutcome above pins.)
 
 // runInboundRewrite dispatches through the InboundRegistry exactly
 // the way the production handler does, so e2e tests exercise the same

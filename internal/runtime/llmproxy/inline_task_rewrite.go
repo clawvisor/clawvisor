@@ -216,19 +216,33 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 
 	// Mirror the resolver's allow/deny verdict onto the scope-drift
 	// registry when the hold was linked to one. The pre-clear is
-	// minted via SetOutcome(Succeeded) here so the agent's next attempt
-	// at the originally-blocked tool_use passes scope check once;
-	// SetOutcome(Denied) closes the drift so a stale poll doesn't show
-	// it pending forever. Best-effort: a registry error degrades to
-	// "drift will TTL-expire" rather than blocking the rewrite. Only
-	// fires when the hold actually carried a ScopeDriftID — created /
-	// expanded tasks without a drift link are unaffected.
+	// minted via SetOutcome(Succeeded) here so the agent's next
+	// attempt at the originally-blocked tool_use passes scope check
+	// once; SetOutcome(Denied) closes the drift so a stale poll
+	// doesn't show it pending forever. Only fires when the hold
+	// actually carried a ScopeDriftID — created / expanded tasks
+	// without a drift link are unaffected.
+	//
+	// Best-effort: a registry error degrades to "drift will TTL-
+	// expire" rather than blocking the rewrite, but the error IS
+	// traced so operators chasing a drift stuck in Pending have a
+	// breadcrumb. (Unlike scope_drift_reply.go's one-off path, the
+	// body here is the inline-approval reply augmentation — it
+	// doesn't claim a specific drift state to the LLM, so a stale
+	// Pending registry entry can't desync against a "you were
+	// approved" message the model already accepted.)
 	if req.ScopeDrifts != nil && resolved.ScopeDriftID != "" {
 		driftOutcome := ScopeDriftOutcomeSucceeded
 		if out.Decision == "deny" || out.Decision == "" {
 			driftOutcome = ScopeDriftOutcomeDenied
 		}
-		_ = req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, driftOutcome)
+		if err := req.ScopeDrifts.SetOutcome(ctx, resolved.ScopeDriftID, driftOutcome); err != nil && req.Trace != nil {
+			req.Trace("inline_task_reply.drift_outcome_write_failed",
+				"drift_id", resolved.ScopeDriftID,
+				"intended_outcome", string(driftOutcome),
+				"err", err.Error(),
+			)
+		}
 	}
 
 	// Record the outcome before returning. The augmenter on later

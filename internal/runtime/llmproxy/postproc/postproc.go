@@ -92,8 +92,8 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	}
 
 	ctx := req.Context()
-	if commitErr := session.commitSubstitutions(ctx, verdictByTU, preExtracted); commitErr != nil {
-		return failClosed("substitution registry write failed: " + commitErr.Error())
+	if commitErr := session.commitVerdictSideEffects(ctx, verdictByTU, preExtracted); commitErr != nil {
+		return failClosed("verdict side-effect commit failed: " + commitErr.Error())
 	}
 	finalResult, finalErr := session.finalize(ctx, preExtracted, verdictByTU)
 	if finalErr != nil {
