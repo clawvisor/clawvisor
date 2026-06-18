@@ -162,61 +162,13 @@ func MaybeInterceptScopeDriftOneOff(
 	}, true
 }
 
-// validateAndClaimDrift checks if a drift belongs to the current session and claims it.
-// Returns the claimed ScopeDrift and a bool indicating if the validation and claim succeeded.
-func validateAndClaimDrift(
-	ctx context.Context,
-	registry ScopeDriftRegistry,
-	driftID string,
-	expectedAgentID string,
-	expectedConversationID string,
-	option ScopeDriftOption,
-	agentNote string,
-	audit func(decision, outcome, reason string),
-) (ScopeDrift, bool) {
-	if registry == nil {
-		audit("fallthrough", "inline_scope_drift_registry_missing", "registry not configured")
-		return ScopeDrift{}, false
-	}
-
-	existing, err := registry.Get(ctx, driftID)
-	if errors.Is(err, ErrDriftNotFound) {
-		audit("fallthrough", "inline_scope_drift_not_found", "drift "+driftID+" not found (it may have expired)")
-		return ScopeDrift{}, false
-	}
-	if err != nil {
-		audit("fallthrough", "inline_scope_drift_lookup_failed", err.Error())
-		return ScopeDrift{}, false
-	}
-
-	if existing.AgentID != expectedAgentID || existing.ConversationID != expectedConversationID {
-		audit("fallthrough", "inline_scope_drift_wrong_agent_or_conversation", "drift "+driftID+" was minted for a different agent or conversation")
-		return ScopeDrift{}, false
-	}
-
-	claimed, err := registry.ClaimOption(ctx, driftID, option, agentNote)
-	if errors.Is(err, ErrDriftNotFound) {
-		audit("fallthrough", "inline_scope_drift_not_found", "drift "+driftID+" not found (it may have expired)")
-		return ScopeDrift{}, false
-	}
-	if errors.Is(err, ErrDriftAlreadyResolved) {
-		audit("fallthrough", "inline_scope_drift_already_resolved", "drift "+driftID+" was already resolved with option "+string(claimed.ChosenOption))
-		return ScopeDrift{}, false
-	}
-	if err != nil {
-		audit("fallthrough", "inline_scope_drift_claim_failed", err.Error())
-		return ScopeDrift{}, false
-	}
-
-	return claimed, true
-}
-
 // DriftClaimGuard manages the lifecycle of claiming a scope drift and rolling it back if
 // the interceptor path fails downstream.
 type DriftClaimGuard struct {
 	ctx      context.Context
 	registry ScopeDriftRegistry
 	driftID  string
+	claimed  bool
 	success  bool
 }
 
@@ -240,17 +192,42 @@ func (g *DriftClaimGuard) Claim(
 	if g.driftID == "" {
 		return ScopeDrift{}, true
 	}
-	claimed, ok := validateAndClaimDrift(
-		g.ctx,
-		g.registry,
-		g.driftID,
-		expectedAgentID,
-		expectedConversationID,
-		option,
-		agentNote,
-		audit,
-	)
-	return claimed, ok
+	if g.registry == nil {
+		audit("fallthrough", "inline_scope_drift_registry_missing", "registry not configured")
+		return ScopeDrift{}, false
+	}
+
+	existing, err := g.registry.Get(g.ctx, g.driftID)
+	if errors.Is(err, ErrDriftNotFound) {
+		audit("fallthrough", "inline_scope_drift_not_found", "drift "+g.driftID+" not found (it may have expired)")
+		return ScopeDrift{}, false
+	}
+	if err != nil {
+		audit("fallthrough", "inline_scope_drift_lookup_failed", err.Error())
+		return ScopeDrift{}, false
+	}
+
+	if existing.AgentID != expectedAgentID || existing.ConversationID != expectedConversationID {
+		audit("fallthrough", "inline_scope_drift_wrong_agent_or_conversation", "drift "+g.driftID+" was minted for a different agent or conversation")
+		return ScopeDrift{}, false
+	}
+
+	claimed, err := g.registry.ClaimOption(g.ctx, g.driftID, option, agentNote)
+	if errors.Is(err, ErrDriftNotFound) {
+		audit("fallthrough", "inline_scope_drift_not_found", "drift "+g.driftID+" not found (it may have expired)")
+		return ScopeDrift{}, false
+	}
+	if errors.Is(err, ErrDriftAlreadyResolved) {
+		audit("fallthrough", "inline_scope_drift_already_resolved", "drift "+g.driftID+" was already resolved with option "+string(claimed.ChosenOption))
+		return ScopeDrift{}, false
+	}
+	if err != nil {
+		audit("fallthrough", "inline_scope_drift_claim_failed", err.Error())
+		return ScopeDrift{}, false
+	}
+
+	g.claimed = true
+	return claimed, true
 }
 
 // Success marks the claimed drift as successfully intercepted, preventing rollback.
@@ -261,7 +238,7 @@ func (g *DriftClaimGuard) Success() {
 // Rollback rolls back the claimed drift option if the claim succeeded but the interceptor
 // exited early without success. Should be deferred immediately after guard creation.
 func (g *DriftClaimGuard) Rollback() {
-	if g.driftID == "" || g.success || g.registry == nil {
+	if !g.claimed || g.success || g.registry == nil || g.driftID == "" {
 		return
 	}
 	// Use detached context so a canceled request context doesn't strand the rollback.

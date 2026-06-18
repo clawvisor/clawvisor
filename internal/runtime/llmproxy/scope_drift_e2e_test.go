@@ -871,6 +871,15 @@ func TestScopeDriftE2E_OneShotCapExpandAndOneOff(t *testing.T) {
 	if claimed {
 		t.Fatal("expected one-off intercept to reject already claimed drift")
 	}
+
+	// Verify that the drift ChosenOption remains "expand" (was not wiped by the one-off's deferred rollback).
+	stored, err = reg.Get(ctx, drift.ID)
+	if err != nil {
+		t.Fatalf("get drift: %v", err)
+	}
+	if stored.ChosenOption != ScopeDriftOptionExpand {
+		t.Fatalf("drift ChosenOption was wiped! got %q, want %q", stored.ChosenOption, ScopeDriftOptionExpand)
+	}
 }
 
 // TestScopeDriftE2E_ExpandCreatorFailureClosesDrift verifies that if CreatePendingInlineExpansion

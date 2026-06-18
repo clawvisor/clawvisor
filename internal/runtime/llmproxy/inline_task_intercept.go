@@ -252,6 +252,13 @@ func MaybeInterceptInlineTaskDefinition(
 					if setErr := cfg.ScopeDrifts.SetOutcome(req.Context(), parsed.DriftID, ScopeDriftOutcomeSucceeded); setErr != nil {
 						audit("fallthrough", "auto_approve_set_outcome_failed", setErr.Error())
 						trace("inline_task.auto_approve_set_outcome_failed", "err", setErr.Error())
+						if cfg.Store != nil && created != nil && created.ID != "" {
+							rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 5*time.Second)
+							defer cancel()
+							if err := cfg.Store.RevokeTask(rollbackCtx, created.ID, cfg.AgentUserID); err != nil {
+								trace("inline_task.auto_approve_outcome_rollback_failed", "task_id", created.ID, "err", err.Error())
+							}
+						}
 						return conversation.ToolUseVerdict{}, false
 					}
 				}
@@ -392,10 +399,10 @@ func MaybeInterceptInlineTaskDefinition(
 		if pendingCreator != nil && pendingTaskID != "" {
 			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 5*time.Second)
 			expireErr := pendingCreator.ExpireInlineTask(rollbackCtx, pendingTaskID, cfg.AgentUserID)
+			cancel()
 			if expireErr != nil {
 				trace("inline_task.pending_rollback_failed", "task_id", pendingTaskID, "err", expireErr.Error())
 			}
-			cancel()
 		}
 		// fallthrough — see the audit-decision rationale above.
 		audit("fallthrough", "inline_task_hold_failed", holdErr.Error()+"; deferring to dashboard rewrite")
