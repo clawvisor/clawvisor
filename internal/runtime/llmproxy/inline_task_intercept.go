@@ -214,6 +214,24 @@ func MaybeInterceptInlineTaskDefinition(
 		)
 	}
 	if ok {
+		// Pre-flight registry check. The auto-approve verdict's
+		// placeholder relies on the inbound rewriter restoring the
+		// original control-tool POST on the next /v1/messages, which
+		// requires a pending substitution in the registry. If the
+		// registry isn't wired (test fixture, unconfigured
+		// deployment) the placeholder would land on the wire with no
+		// matching restoration record, leaving the harness's stored
+		// assistant history pointing at the Bash placeholder forever
+		// after. Fall through to the human-approval prompt path so
+		// the auto-approve flow only fires when we can actually
+		// complete the round-trip.
+		if cfg.AuthorizationContext.ScopeDrifts == nil || cfg.AgentID == "" {
+			audit("fallthrough", "auto_approve_registry_unavailable", "scope-drift registry not wired; cannot register placeholder substitution")
+			trace("inline_task.auto_approve_registry_unavailable")
+			ok = false
+		}
+	}
+	if ok {
 		if cfg.InlineTaskCreator == nil {
 			// Threshold says "approve" but the runtime cannot create
 			// the task without prompting (no creator wired). Fall
@@ -341,27 +359,34 @@ func MaybeInterceptInlineTaskDefinition(
 				// harness while keeping it in the model's working
 				// context — a subtle desync). Accepted explicitly in the
 				// PR that landed this migration.
-				if registry := cfg.AuthorizationContext.ScopeDrifts; registry != nil && cfg.AgentID != "" {
-					if regErr := registry.RegisterPendingSubstitution(req.Context(),
-						PendingSubstitutionKey{
-							AgentID:        cfg.AgentID,
-							ConversationID: cfg.ConversationID,
-							ToolUseID:      tu.ID,
-						},
-						PendingSubstitution{
-							MenuText:          augmentation,
-							OriginalToolName:  tu.Name,
-							OriginalToolInput: append([]byte(nil), tu.Input...),
-						},
-					); regErr != nil {
-						audit("fallthrough", "auto_approve_substitution_register_failed", regErr.Error())
-						trace("inline_task.auto_approve_substitution_failed", "err", regErr.Error())
-						// Returning false here lets the deferred
-						// guard.Rollback fire — the drift claim from
-						// PR #569's machinery gets reverted alongside
-						// the failed substitution attempt.
-						return conversation.ToolUseVerdict{}, false
-					}
+				// Registry presence is enforced by the pre-flight gate
+				// at the top of the auto-approve branch, so this call
+				// site doesn't repeat the nil check.
+				registry := cfg.AuthorizationContext.ScopeDrifts
+				if regErr := registry.RegisterPendingSubstitution(req.Context(),
+					PendingSubstitutionKey{
+						AgentID:        cfg.AgentID,
+						ConversationID: cfg.ConversationID,
+						ToolUseID:      tu.ID,
+					},
+					PendingSubstitution{
+						MenuText:          augmentation,
+						OriginalToolName:  tu.Name,
+						OriginalToolInput: append([]byte(nil), tu.Input...),
+					},
+				); regErr != nil {
+					// Registration failure after the task was already
+					// created leaves an orphan: the task exists and the
+					// checkout (if any) is set, but the inbound rewriter
+					// has no record to restore the model's original
+					// tool_use on the next /v1/messages. Log loudly so
+					// operators can investigate; the deferred
+					// guard.Rollback (from PR #569's drift-claim machinery)
+					// reverts the drift claim alongside the failed
+					// substitution attempt.
+					audit("fallthrough", "auto_approve_substitution_register_failed", regErr.Error()+"; task "+created.ID+" was created but is now an orphan — registration failure path lacks a rollback hook")
+					trace("inline_task.auto_approve_substitution_failed", "err", regErr.Error(), "orphaned_task_id", created.ID)
+					return conversation.ToolUseVerdict{}, false
 				}
 				// Drift-claim success: the deferred Rollback is now a
 				// no-op. Mirrors the placement in PR #569's continuation
