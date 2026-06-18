@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -767,13 +768,15 @@ func TestScopeDriftE2E_NewTaskFullStateMachine(t *testing.T) {
 //     turn carrying the Bash placeholder tool_use with the original
 //     tool_use_id, paired with a user turn whose tool_result names
 //     the same tool_use_id.
-//  3. Run RewriteScopeDriftPlaceholders.
+//  3. Dispatch through DefaultInboundRegistry().ForProvider(provider)
+//     so the test exercises the same routing path the handler uses.
 //  4. Assert the assistant turn was restored byte-for-byte (the
 //     model's original Bash command + input survives) AND the
 //     user-turn tool_result content is the menu text.
 //
-// Also asserts the substitution is consumed one-shot — a second
-// RewriteScopeDriftPlaceholders is a no-op.
+// Also asserts the substitution survives across turns — a second
+// RewriteInbound call rewrites again so the harness's stored history
+// stays correct for the full conversation.
 func TestScopeDriftE2E_InboundRewritesPlaceholder(t *testing.T) {
 	t.Parallel()
 	reg := NewMemoryScopeDriftRegistry(time.Minute)
@@ -807,17 +810,9 @@ func TestScopeDriftE2E_InboundRewritesPlaceholder(t *testing.T) {
 		`]}`)
 
 	agent := &store.Agent{ID: driftTestAgentID, UserID: driftTestUserID}
-	result, err := RewriteScopeDriftPlaceholders(context.Background(), ScopeDriftInboundRewriteRequest{
-		HTTPRequest:    httptest.NewRequest("POST", "/v1/messages", nil),
-		Provider:       conversation.ProviderAnthropic,
-		Body:           body,
-		Agent:          agent,
-		ConversationID: driftTestConvID,
-		ScopeDrifts:    reg,
-		Logger:         slog.Default(),
-	})
+	result, err := runInboundRewrite(t, conversation.ProviderAnthropic, httptest.NewRequest("POST", "/v1/messages", nil), body, agent, reg)
 	if err != nil {
-		t.Fatalf("RewriteScopeDriftPlaceholders: %v", err)
+		t.Fatalf("RewriteInbound: %v", err)
 	}
 	if !result.Rewritten {
 		t.Fatal("expected Rewritten=true")
@@ -905,17 +900,9 @@ func TestScopeDriftE2E_InboundRewritesPlaceholder(t *testing.T) {
 	// keeps the Bash placeholder in its stored history for the rest of
 	// the conversation; without persistent restoration the model would
 	// see its own past as the placeholder from turn 3 onward.
-	second, err := RewriteScopeDriftPlaceholders(context.Background(), ScopeDriftInboundRewriteRequest{
-		HTTPRequest:    httptest.NewRequest("POST", "/v1/messages", nil),
-		Provider:       conversation.ProviderAnthropic,
-		Body:           body,
-		Agent:          agent,
-		ConversationID: driftTestConvID,
-		ScopeDrifts:    reg,
-		Logger:         slog.Default(),
-	})
+	second, err := runInboundRewrite(t, conversation.ProviderAnthropic, httptest.NewRequest("POST", "/v1/messages", nil), body, agent, reg)
 	if err != nil {
-		t.Fatalf("second RewriteScopeDriftPlaceholders: %v", err)
+		t.Fatalf("second RewriteInbound: %v", err)
 	}
 	if !second.Rewritten {
 		t.Fatal("expected second rewrite to also restore the placeholder (substitutions persist across turns)")
@@ -963,17 +950,9 @@ func TestScopeDriftE2E_InboundRewritesOpenAIResponsesPlaceholder(t *testing.T) {
 
 	agent := &store.Agent{ID: driftTestAgentID, UserID: driftTestUserID}
 	httpReq := httptest.NewRequest("POST", "/v1/responses", nil)
-	result, err := RewriteScopeDriftPlaceholders(context.Background(), ScopeDriftInboundRewriteRequest{
-		HTTPRequest:    httpReq,
-		Provider:       conversation.ProviderOpenAI,
-		Body:           body,
-		Agent:          agent,
-		ConversationID: driftTestConvID,
-		ScopeDrifts:    reg,
-		Logger:         slog.Default(),
-	})
+	result, err := runInboundRewrite(t, conversation.ProviderOpenAI, httpReq, body, agent, reg)
 	if err != nil {
-		t.Fatalf("RewriteScopeDriftPlaceholders: %v", err)
+		t.Fatalf("RewriteInbound: %v", err)
 	}
 	if !result.Rewritten {
 		t.Fatalf("expected Rewritten=true; AppliedDriftIDs=%v", result.AppliedDriftIDs)
@@ -1072,17 +1051,9 @@ func TestScopeDriftE2E_InboundRewritesOpenAIResponsesPlaceholderChained(t *testi
 
 	agent := &store.Agent{ID: driftTestAgentID, UserID: driftTestUserID}
 	httpReq := httptest.NewRequest("POST", "/v1/responses", nil)
-	result, err := RewriteScopeDriftPlaceholders(context.Background(), ScopeDriftInboundRewriteRequest{
-		HTTPRequest:    httpReq,
-		Provider:       conversation.ProviderOpenAI,
-		Body:           body,
-		Agent:          agent,
-		ConversationID: driftTestConvID,
-		ScopeDrifts:    reg,
-		Logger:         slog.Default(),
-	})
+	result, err := runInboundRewrite(t, conversation.ProviderOpenAI, httpReq, body, agent, reg)
 	if err != nil {
-		t.Fatalf("RewriteScopeDriftPlaceholders: %v", err)
+		t.Fatalf("RewriteInbound: %v", err)
 	}
 	if !result.Rewritten {
 		t.Fatalf("expected Rewritten=true in chained mode; AppliedDriftIDs=%v", result.AppliedDriftIDs)
@@ -1678,4 +1649,25 @@ func TestScopeDriftE2E_NewTaskAutoApproveSetOutcomeFailureRollsBackDrift(t *test
 	if _, err := reg.ClaimOption(ctx, drift.ID, ScopeDriftOptionNewTask, "retry"); err != nil {
 		t.Fatalf("expected drift to be claimable again, but got err: %v", err)
 	}
+}
+
+// runInboundRewrite dispatches through the InboundRegistry exactly
+// the way the production handler does, so e2e tests exercise the same
+// routing path the handler uses rather than an ad-hoc shortcut.
+func runInboundRewrite(t *testing.T, provider conversation.Provider, httpReq *http.Request, body []byte, agent *store.Agent, reg SubstitutionRegistry) (conversation.InboundRewriteResult, error) {
+	t.Helper()
+	rewriter := DefaultInboundRegistry().ForProvider(provider)
+	if rewriter == nil {
+		t.Fatalf("no inbound rewriter registered for provider %q", provider)
+	}
+	return rewriter.RewriteInbound(context.Background(), conversation.InboundRewriteRequest{
+		HTTPRequest:    httpReq,
+		Provider:       provider,
+		Body:           body,
+		AgentID:        agent.ID,
+		AgentUserID:    agent.UserID,
+		ConversationID: driftTestConvID,
+		Lookup:         NewSubstitutionLookup(reg),
+		Logger:         slog.Default(),
+	})
 }

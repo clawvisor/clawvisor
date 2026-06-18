@@ -1055,15 +1055,25 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// menu — faithful history, helpful result — while the harness only
 	// ever ran a no-op.
 	if h.ScopeDrifts != nil {
-		driftRewrite, driftErr := llmproxy.RewriteScopeDriftPlaceholders(r.Context(), llmproxy.ScopeDriftInboundRewriteRequest{
-			HTTPRequest:    r,
-			Provider:       provider,
-			Body:           body,
-			Agent:          agent,
-			ConversationID: conversationID,
-			ScopeDrifts:    h.ScopeDrifts,
-			Logger:         h.Logger,
-		})
+		// Route through the InboundRegistry so the dispatch shape
+		// parallels DefaultResponseRegistry on the outbound leg —
+		// per-provider InboundRewriter types live in llmproxy and
+		// register the conversation-package interface here.
+		inboundRewriter := llmproxy.DefaultInboundRegistry().ForProvider(provider)
+		var driftRewrite conversation.InboundRewriteResult
+		var driftErr error
+		if inboundRewriter != nil {
+			driftRewrite, driftErr = inboundRewriter.RewriteInbound(r.Context(), conversation.InboundRewriteRequest{
+				HTTPRequest:    r,
+				Provider:       provider,
+				Body:           body,
+				AgentID:        agent.ID,
+				AgentUserID:    agent.UserID,
+				ConversationID: conversationID,
+				Lookup:         llmproxy.NewSubstitutionLookup(h.ScopeDrifts),
+				Logger:         h.Logger,
+			})
+		}
 		if driftErr != nil {
 			// Forwarding the unrewritten body would ship the Bash
 			// placeholder upstream, leaving the conversation

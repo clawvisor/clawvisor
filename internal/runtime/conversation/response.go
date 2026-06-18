@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -204,6 +205,108 @@ type StreamingResponseRewriter interface {
 	// arrive; the returned result still carries the full ToolUses slice
 	// for callers that don't supply a callback.
 	StreamRewrite(ctx context.Context, r io.Reader, w io.Writer, onToolUse func(ToolUse)) (StreamingRewriteResult, error)
+}
+
+// InboundSubstitutionLookup is the read-only registry view the
+// InboundRewriter consults to find pending substitutions keyed by
+// (agent, conversation, tool_use_id). The lookup is non-consuming —
+// the harness's stored history carries the placeholder for the rest
+// of the conversation, so every subsequent inbound request has to
+// restore it. The lifetime is owned by the postprocess layer that
+// registered the entry; the rewriter is purely a reader.
+type InboundSubstitutionLookup interface {
+	LookupPendingSubstitution(ctx context.Context, agentID, conversationID, toolUseID string) (InboundPendingSubstitution, bool)
+}
+
+// InboundPendingSubstitution is the rewriter's view of a registry
+// entry. Mirrors the fields PendingSubstitutionSpec carried into the
+// registry on the response leg, lifted into the conversation package
+// so the rewriter doesn't depend on llmproxy.
+type InboundPendingSubstitution struct {
+	DriftID           string
+	MenuText          string
+	OriginalToolName  string
+	OriginalToolInput []byte
+}
+
+// InboundRewriteRequest is the input to InboundRewriter.RewriteInbound.
+// Identifying context (Agent + ConversationID) keys into the
+// substitution lookup; Body + Provider drive the JSON shape walk.
+type InboundRewriteRequest struct {
+	HTTPRequest    *http.Request
+	Provider       Provider
+	Body           []byte
+	AgentID        string
+	AgentUserID    string
+	ConversationID string
+	Lookup         InboundSubstitutionLookup
+	Logger         *slog.Logger
+}
+
+// InboundRewriteResult reports what RewriteInbound did. Rewritten=false
+// + nil error means no pending substitutions applied to the body.
+type InboundRewriteResult struct {
+	Body            []byte
+	Rewritten       bool
+	AppliedDriftIDs []string
+}
+
+// InboundRewriter is the per-provider abstraction for the inbound
+// /v1/messages (or /v1/responses, /v1/chat/completions) walker that
+// restores model-original tool_use blocks and splices menu text into
+// the matching tool_result on retry. Mirrors ResponseRewriter on the
+// outbound leg so dispatch, testing, and registry shape stay
+// symmetric.
+type InboundRewriter interface {
+	Name() Provider
+	// MatchesInbound returns true when this rewriter knows how to
+	// walk the request's body shape. Provider routing is the
+	// primary signal — Anthropic vs OpenAI — with sub-shape
+	// disambiguation (Chat Completions vs Responses) handled inside
+	// RewriteInbound where the body bytes are already in scope.
+	MatchesInbound(req *http.Request) bool
+	RewriteInbound(ctx context.Context, req InboundRewriteRequest) (InboundRewriteResult, error)
+}
+
+// InboundRegistry dispatches inbound bodies to the matching
+// InboundRewriter. Parallel to ResponseRegistry so callers can route
+// either leg through one canonical Match() lookup.
+type InboundRegistry struct {
+	rewriters []InboundRewriter
+}
+
+func NewInboundRegistry(rewriters ...InboundRewriter) *InboundRegistry {
+	return &InboundRegistry{rewriters: rewriters}
+}
+
+// Match returns the first registered rewriter that claims the
+// request, or nil. Provider routing happens via MatchesInbound; the
+// caller's only job is to feed the *http.Request.
+func (r *InboundRegistry) Match(req *http.Request) InboundRewriter {
+	if r == nil {
+		return nil
+	}
+	for _, rewriter := range r.rewriters {
+		if rewriter.MatchesInbound(req) {
+			return rewriter
+		}
+	}
+	return nil
+}
+
+// ForProvider returns the registered rewriter for the given provider,
+// or nil. Parallels ResponseRegistry.ForProvider for callers that
+// dispatch by provider name (lite-proxy route resolver, tests).
+func (r *InboundRegistry) ForProvider(p Provider) InboundRewriter {
+	if r == nil {
+		return nil
+	}
+	for _, rewriter := range r.rewriters {
+		if rewriter.Name() == p {
+			return rewriter
+		}
+	}
+	return nil
 }
 
 type ResponseRegistry struct {

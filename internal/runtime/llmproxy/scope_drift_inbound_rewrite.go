@@ -8,55 +8,84 @@ import (
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
-// ScopeDriftInboundRewriteRequest is the input to
-// RewriteScopeDriftPlaceholders. The caller supplies the inbound
-// /v1/messages body and identifying context; the rewriter consults the
-// SubstitutionRegistry for pending substitutions and returns the
-// rewritten body when one or more applied. The wider ScopeDriftRegistry
-// satisfies the narrower SubstitutionRegistry interface, so existing
-// handler wiring continues to work unchanged.
-type ScopeDriftInboundRewriteRequest struct {
-	HTTPRequest    *http.Request
-	Provider       conversation.Provider
-	Body           []byte
-	Agent          *store.Agent
-	ConversationID string
-	ScopeDrifts    SubstitutionRegistry
-	Logger         *slog.Logger
+// AnthropicInboundRewriter walks Anthropic /v1/messages bodies and
+// substitutes pending scope-drift / recoverable-deny / auto-approve
+// placeholders. Implements conversation.InboundRewriter so dispatch
+// runs through the InboundRegistry the same way response rewriters
+// dispatch through ResponseRegistry.
+type AnthropicInboundRewriter struct{}
+
+// Name reports the provider for registry lookup.
+func (AnthropicInboundRewriter) Name() conversation.Provider {
+	return conversation.ProviderAnthropic
 }
 
-// ScopeDriftInboundRewriteResult reports what the rewriter did.
-type ScopeDriftInboundRewriteResult struct {
-	Body            []byte
-	Rewritten       bool
-	AppliedDriftIDs []string
+// MatchesInbound returns true for Anthropic-bound requests. Host
+// matching is intentionally coarse (the user agent or path could
+// belong to either the lite proxy or the runtime proxy); the
+// downstream provider header carries the real signal in production
+// and tests synthesize requests with the right Provider already.
+func (AnthropicInboundRewriter) MatchesInbound(req *http.Request) bool {
+	if req == nil || req.URL == nil {
+		return false
+	}
+	host := strings.ToLower(req.URL.Host)
+	if host == "" {
+		host = strings.ToLower(req.Host)
+	}
+	return strings.Contains(host, "anthropic")
 }
 
-// RewriteScopeDriftPlaceholders walks the inbound /v1/messages body
-// looking for tool_result blocks whose tool_use_id matches a pending
-// scope-drift substitution. For each match:
-//
-//  1. The matching tool_result's content is replaced with the drift's
-//     menu text.
-//  2. The corresponding tool_use block in the prior assistant turn —
-//     a harness-side Bash placeholder we substituted on the response
-//     leg — is restored to the model's original tool_use (name +
-//     input bytes) byte-for-byte.
-//
-// The substitution is one-shot: LookupPendingSubstitution consumes the
-// registry entry. If the rewrite fails (malformed body, missing
-// assistant turn) the entry is NOT re-registered — the agent's next
-// retry mints a fresh drift on the normal path.
-//
-// Returns (body, Rewritten=false, nil) when no substitutions apply.
-// Errors only on body shape failures the caller should treat as fail-
-// closed — typical "no match" paths return Rewritten=false.
-func RewriteScopeDriftPlaceholders(ctx context.Context, req ScopeDriftInboundRewriteRequest) (ScopeDriftInboundRewriteResult, error) {
-	out := ScopeDriftInboundRewriteResult{Body: req.Body}
-	if req.ScopeDrifts == nil || req.Agent == nil {
+// RewriteInbound walks the body's messages[] and applies every
+// pending substitution the lookup serves. Two-pass: locate every
+// tool_result block whose tool_use_id has a pending substitution,
+// then for each apply the assistant-turn restoration BEFORE the
+// user-turn substitution so a partial failure can't leave the
+// transcript permanently inconsistent (placeholder Bash on top, menu
+// text below, with nothing tying them to the model's actual call).
+func (AnthropicInboundRewriter) RewriteInbound(ctx context.Context, req conversation.InboundRewriteRequest) (conversation.InboundRewriteResult, error) {
+	out := conversation.InboundRewriteResult{Body: req.Body}
+	if req.Lookup == nil || req.AgentID == "" {
+		return out, nil
+	}
+	rewritten, applied, err := rewriteAnthropicInbound(ctx, req)
+	if err != nil {
+		return out, err
+	}
+	if rewritten == nil {
+		return out, nil
+	}
+	out.Body = rewritten
+	out.Rewritten = true
+	out.AppliedDriftIDs = applied
+	return out, nil
+}
+
+// OpenAIInboundRewriter walks OpenAI Chat Completions and Responses
+// bodies. Sub-shape disambiguation happens inside RewriteInbound
+// where the body bytes (and the request's path) are already in scope.
+type OpenAIInboundRewriter struct{}
+
+func (OpenAIInboundRewriter) Name() conversation.Provider {
+	return conversation.ProviderOpenAI
+}
+
+func (OpenAIInboundRewriter) MatchesInbound(req *http.Request) bool {
+	if req == nil || req.URL == nil {
+		return false
+	}
+	host := strings.ToLower(req.URL.Host)
+	if host == "" {
+		host = strings.ToLower(req.Host)
+	}
+	return strings.Contains(host, "openai")
+}
+
+func (OpenAIInboundRewriter) RewriteInbound(ctx context.Context, req conversation.InboundRewriteRequest) (conversation.InboundRewriteResult, error) {
+	out := conversation.InboundRewriteResult{Body: req.Body}
+	if req.Lookup == nil || req.AgentID == "" {
 		return out, nil
 	}
 	var (
@@ -64,17 +93,10 @@ func RewriteScopeDriftPlaceholders(ctx context.Context, req ScopeDriftInboundRew
 		applied   []string
 		err       error
 	)
-	switch req.Provider {
-	case conversation.ProviderAnthropic:
-		rewritten, applied, err = rewriteAnthropicScopeDriftPlaceholders(ctx, req)
-	case conversation.ProviderOpenAI:
-		if conversation.IsOpenAIChatCompletionsEndpoint(req.HTTPRequest) {
-			rewritten, applied, err = rewriteOpenAIChatScopeDriftPlaceholders(ctx, req)
-		} else {
-			rewritten, applied, err = rewriteOpenAIResponsesScopeDriftPlaceholders(ctx, req)
-		}
-	default:
-		return out, nil
+	if conversation.IsOpenAIChatCompletionsEndpoint(req.HTTPRequest) {
+		rewritten, applied, err = rewriteOpenAIChatInbound(ctx, req)
+	} else {
+		rewritten, applied, err = rewriteOpenAIResponsesInbound(ctx, req)
 	}
 	if err != nil {
 		return out, err
@@ -88,7 +110,62 @@ func RewriteScopeDriftPlaceholders(ctx context.Context, req ScopeDriftInboundRew
 	return out, nil
 }
 
-func rewriteAnthropicScopeDriftPlaceholders(ctx context.Context, req ScopeDriftInboundRewriteRequest) ([]byte, []string, error) {
+// DefaultInboundRegistry returns the canonical inbound rewriter
+// dispatch table. Mirrors conversation.DefaultResponseRegistry on the
+// outbound leg so both directions route through one consistent
+// abstraction.
+func DefaultInboundRegistry() *conversation.InboundRegistry {
+	return conversation.NewInboundRegistry(
+		AnthropicInboundRewriter{},
+		OpenAIInboundRewriter{},
+	)
+}
+
+// substitutionLookupAdapter satisfies conversation.InboundSubstitutionLookup
+// for a SubstitutionRegistry. The conversation package can't depend
+// on llmproxy, so the registry's tuple-keyed signature is lifted
+// here into the conversation-package lookup shape.
+type substitutionLookupAdapter struct {
+	Registry SubstitutionRegistry
+}
+
+func (a substitutionLookupAdapter) LookupPendingSubstitution(ctx context.Context, agentID, conversationID, toolUseID string) (conversation.InboundPendingSubstitution, bool) {
+	if a.Registry == nil {
+		return conversation.InboundPendingSubstitution{}, false
+	}
+	subst, ok := a.Registry.LookupPendingSubstitution(ctx, PendingSubstitutionKey{
+		AgentID:        agentID,
+		ConversationID: conversationID,
+		ToolUseID:      toolUseID,
+	})
+	if !ok {
+		return conversation.InboundPendingSubstitution{}, false
+	}
+	return conversation.InboundPendingSubstitution{
+		DriftID:           subst.DriftID,
+		MenuText:          subst.MenuText,
+		OriginalToolName:  subst.OriginalToolName,
+		OriginalToolInput: subst.OriginalToolInput,
+	}, true
+}
+
+// NewSubstitutionLookup wraps a SubstitutionRegistry so it can be
+// passed to inbound rewriters as conversation.InboundSubstitutionLookup.
+// Returns nil when the registry is nil so callers can plug the result
+// straight into InboundRewriteRequest.Lookup without nil-guards.
+func NewSubstitutionLookup(reg SubstitutionRegistry) conversation.InboundSubstitutionLookup {
+	if reg == nil {
+		return nil
+	}
+	return substitutionLookupAdapter{Registry: reg}
+}
+
+// rewriteAnthropicInbound performs the messages[] walk for Anthropic
+// /v1/messages bodies. Two-pass: collect every tool_result block whose
+// tool_use_id has a pending substitution (PASS 1), then apply each
+// substitution with assistant-turn restoration first / user-turn
+// content substitution second (PASS 2).
+func rewriteAnthropicInbound(ctx context.Context, req conversation.InboundRewriteRequest) ([]byte, []string, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(req.Body, &raw); err != nil {
 		return nil, nil, err
@@ -101,13 +178,9 @@ func rewriteAnthropicScopeDriftPlaceholders(ctx context.Context, req ScopeDriftI
 	if err := json.Unmarshal(msgsRaw, &messages); err != nil {
 		return nil, nil, err
 	}
-	// Two-pass walk: identify every tool_use_id that has a pending
-	// substitution (by probing user-turn tool_result blocks), then
-	// apply the substitutions in a single body edit so partial failures
-	// don't leave half-applied state.
 	type pendingHit struct {
 		ToolUseID    string
-		Substitution PendingSubstitution
+		Substitution conversation.InboundPendingSubstitution
 		UserMsgIdx   int
 		BlockIdx     int
 	}
@@ -125,7 +198,6 @@ func rewriteAnthropicScopeDriftPlaceholders(ctx context.Context, req ScopeDriftI
 		}
 		var blocks []json.RawMessage
 		if err := json.Unmarshal(probe.Content, &blocks); err != nil {
-			// String-form user content carries no tool_results.
 			continue
 		}
 		for bi, blk := range blocks {
@@ -139,11 +211,7 @@ func rewriteAnthropicScopeDriftPlaceholders(ctx context.Context, req ScopeDriftI
 			if blkProbe.Type != "tool_result" || blkProbe.ToolUseID == "" {
 				continue
 			}
-			subst, found := req.ScopeDrifts.LookupPendingSubstitution(ctx, PendingSubstitutionKey{
-				AgentID:        req.Agent.ID,
-				ConversationID: req.ConversationID,
-				ToolUseID:      blkProbe.ToolUseID,
-			})
+			subst, found := req.Lookup.LookupPendingSubstitution(ctx, req.AgentID, req.ConversationID, blkProbe.ToolUseID)
 			if !found {
 				continue
 			}
@@ -159,25 +227,12 @@ func rewriteAnthropicScopeDriftPlaceholders(ctx context.Context, req ScopeDriftI
 		return nil, nil, nil
 	}
 
-	// Apply substitutions. For each hit:
-	//   - rewrite the matching user-turn tool_result block's content
-	//   - walk back through prior assistant turns to find the tool_use
-	//     block carrying the placeholder for this id, and restore the
-	//     original name + input.
 	logger := req.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	appliedDriftIDs := make([]string, 0, len(hits))
 	for _, hit := range hits {
-		// Restore the assistant turn FIRST so a failure here doesn't
-		// leave the user turn carrying the menu while the assistant
-		// turn still has the placeholder — that asymmetry leaves the
-		// transcript permanently inconsistent (the model sees a
-		// placeholder Bash followed by the menu, with nothing tying
-		// them to its actual call). Skip the whole hit on restore
-		// failure; the substitution stays in the registry for the
-		// next inbound retry.
 		restoredIdx := -1
 		var restoredMessage json.RawMessage
 		for ai := hit.UserMsgIdx - 1; ai >= 0; ai-- {
@@ -221,12 +276,6 @@ func rewriteAnthropicScopeDriftPlaceholders(ctx context.Context, req ScopeDriftI
 	return out, appliedDriftIDs, nil
 }
 
-// substituteAnthropicToolResultContent replaces the content field of
-// the tool_result block whose tool_use_id matches targetToolUseID. The
-// replacement is rendered as a single text block to match Anthropic's
-// preferred multi-block tool_result shape — string-form content works
-// too but blocks survive concatenation with other model-generated
-// content cleanly.
 func substituteAnthropicToolResultContent(message json.RawMessage, targetToolUseID, menuText string) (json.RawMessage, bool) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(message, &raw); err != nil {
@@ -281,17 +330,13 @@ func substituteAnthropicToolResultContent(message json.RawMessage, targetToolUse
 	return out, true
 }
 
-// rewriteOpenAIResponsesScopeDriftPlaceholders walks the OpenAI
-// Responses `input` array, finds function_call_output items whose
-// call_id matches a pending substitution, and replaces the `output`
-// with the menu text. In full-input mode it also restores the
-// preceding function_call item's (name, arguments) to the model's
-// original; in chained mode (previous_response_id set) the function_call
-// lives in OpenAI's server-stored history rather than `input[]`, and
-// that stored history is already correct (OpenAI stored what its model
-// emitted, not what the proxy substituted on the wire to the harness),
-// so no restoration is needed — only the output substitution.
-func rewriteOpenAIResponsesScopeDriftPlaceholders(ctx context.Context, req ScopeDriftInboundRewriteRequest) ([]byte, []string, error) {
+// rewriteOpenAIResponsesInbound walks the OpenAI Responses `input`
+// array. In full-input mode it restores the placeholder function_call
+// and substitutes the function_call_output. In chained mode
+// (previous_response_id set) only the output is substituted —
+// OpenAI's server-stored history already holds the model-original
+// function_call.
+func rewriteOpenAIResponsesInbound(ctx context.Context, req conversation.InboundRewriteRequest) ([]byte, []string, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(req.Body, &raw); err != nil {
 		return nil, nil, err
@@ -300,8 +345,6 @@ func rewriteOpenAIResponsesScopeDriftPlaceholders(ctx context.Context, req Scope
 	if !ok {
 		return nil, nil, nil
 	}
-	// `input` can be a plain string (single-turn). Plain-string inputs
-	// have no tool_call history, so there's nothing to substitute.
 	var asString string
 	if err := json.Unmarshal(inputRaw, &asString); err == nil {
 		return nil, nil, nil
@@ -310,13 +353,6 @@ func rewriteOpenAIResponsesScopeDriftPlaceholders(ctx context.Context, req Scope
 	if err := json.Unmarshal(inputRaw, &items); err != nil {
 		return nil, nil, err
 	}
-	// Detect chained mode. When previous_response_id is set, the harness
-	// (e.g., codex) chains turns by reference; OpenAI's server-stored
-	// history holds the real function_call and the new request's input[]
-	// carries only the function_call_output for this turn. We can't
-	// restore a function_call that isn't in the body, but we also don't
-	// need to — the stored history is already the model's original
-	// call. Substitute the output and call it done.
 	chained := false
 	if prev, ok := raw["previous_response_id"]; ok {
 		var s string
@@ -341,18 +377,11 @@ func rewriteOpenAIResponsesScopeDriftPlaceholders(ctx context.Context, req Scope
 		if probe.Type != "function_call_output" || probe.CallID == "" {
 			continue
 		}
-		subst, found := req.ScopeDrifts.LookupPendingSubstitution(ctx, PendingSubstitutionKey{
-			AgentID:        req.Agent.ID,
-			ConversationID: req.ConversationID,
-			ToolUseID:      probe.CallID,
-		})
+		subst, found := req.Lookup.LookupPendingSubstitution(ctx, req.AgentID, req.ConversationID, probe.CallID)
 		if !found {
 			continue
 		}
 		if chained {
-			// Chained mode: skip restoration; OpenAI's stored history
-			// holds the real function_call. Substitute the output and
-			// the model sees its own call answered by the augmentation.
 			newItem, ok := substituteOpenAIResponsesFunctionCallOutput(item, subst.MenuText)
 			if !ok {
 				logger.WarnContext(ctx, "scope-drift inbound rewrite: failed to substitute function_call_output (chained mode)",
@@ -366,10 +395,6 @@ func rewriteOpenAIResponsesScopeDriftPlaceholders(ctx context.Context, req Scope
 			rewrittenAny = true
 			continue
 		}
-		// Full-input mode: restore the prior function_call FIRST so a
-		// failure here doesn't leave the function_call_output carrying
-		// the menu while the assistant call remains the placeholder —
-		// see rewriteAnthropicScopeDriftPlaceholders for the rationale.
 		restoredIdx := -1
 		var restoredItem json.RawMessage
 		for ai := i - 1; ai >= 0; ai-- {
@@ -452,9 +477,6 @@ func restoreOpenAIResponsesFunctionCall(item json.RawMessage, targetCallID, orig
 		return nil, false
 	}
 	raw["name"] = nameRaw
-	// OpenAI `arguments` is a JSON-encoded string of the input. The
-	// inspector and rewriter use raw input bytes (parsed JSON
-	// document); convert to the string form the wire format expects.
 	if len(originalInput) == 0 {
 		argsRaw, _ := json.Marshal("{}")
 		raw["arguments"] = argsRaw
@@ -472,12 +494,10 @@ func restoreOpenAIResponsesFunctionCall(item json.RawMessage, targetCallID, orig
 	return out, true
 }
 
-// rewriteOpenAIChatScopeDriftPlaceholders walks the OpenAI Chat
-// Completions `messages` array, finds tool-role messages whose
-// tool_call_id matches a pending substitution, replaces their
-// content with the menu text, and restores the corresponding assistant
-// message's tool_call (name, arguments) to the model's original.
-func rewriteOpenAIChatScopeDriftPlaceholders(ctx context.Context, req ScopeDriftInboundRewriteRequest) ([]byte, []string, error) {
+// rewriteOpenAIChatInbound walks the OpenAI Chat Completions
+// `messages` array. Restores assistant tool_calls and substitutes the
+// matching role:"tool" message's content.
+func rewriteOpenAIChatInbound(ctx context.Context, req conversation.InboundRewriteRequest) ([]byte, []string, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(req.Body, &raw); err != nil {
 		return nil, nil, err
@@ -507,16 +527,10 @@ func rewriteOpenAIChatScopeDriftPlaceholders(ctx context.Context, req ScopeDrift
 		if probe.Role != "tool" || probe.ToolCallID == "" {
 			continue
 		}
-		subst, found := req.ScopeDrifts.LookupPendingSubstitution(ctx, PendingSubstitutionKey{
-			AgentID:        req.Agent.ID,
-			ConversationID: req.ConversationID,
-			ToolUseID:      probe.ToolCallID,
-		})
+		subst, found := req.Lookup.LookupPendingSubstitution(ctx, req.AgentID, req.ConversationID, probe.ToolCallID)
 		if !found {
 			continue
 		}
-		// Restore the prior assistant tool_call FIRST — see
-		// rewriteAnthropicScopeDriftPlaceholders for the rationale.
 		restoredIdx := -1
 		var restoredMsg json.RawMessage
 		for ai := i - 1; ai >= 0; ai-- {
@@ -621,7 +635,6 @@ func restoreOpenAIChatAssistantToolCall(message json.RawMessage, targetToolCallI
 			continue
 		}
 		fn["name"] = nameRaw
-		// Arguments is a JSON-encoded string of the input.
 		argsStr := "{}"
 		if len(originalInput) > 0 {
 			argsStr = string(originalInput)
@@ -696,9 +709,6 @@ func restoreAnthropicAssistantToolUse(message json.RawMessage, targetToolUseID, 
 		if probe.Type != "tool_use" || probe.ID != targetToolUseID {
 			continue
 		}
-		// Preserve all top-level keys on the block so the restored
-		// shape matches what the model emitted (cache_control,
-		// metadata, etc.). Only swap name + input.
 		var blockMap map[string]json.RawMessage
 		if err := json.Unmarshal(blk, &blockMap); err != nil {
 			continue
