@@ -775,6 +775,50 @@ func (h *TasksHandler) ExpireInlineTask(ctx context.Context, taskID, userID stri
 	return nil
 }
 
+// ExpireInlineApprovedTask rolls back an active task the auto-approve
+// gate landed via CreateInlineApprovedTask but whose post-creation
+// steps (pending-substitution registration) failed before the verdict
+// could ship. Without this rollback the task would sit "active" with
+// no model record of having created it — wasted scope and a misleading
+// audit row.
+//
+// Transitions active → expired only. Already-terminal rows (expired,
+// denied, revoked) are no-ops so the rollback can run idempotently
+// alongside the 24h TTL sweeper. Refuses to expire pending_approval
+// tasks — those have their own ExpireInlineTask path (the cache LRU
+// eviction flow).
+func (h *TasksHandler) ExpireInlineApprovedTask(ctx context.Context, taskID, userID string) error {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return errors.New("not your task")
+	}
+	switch task.Status {
+	case "expired", "denied", "revoked":
+		return nil
+	case "active":
+		// fall through to the CAS below.
+	default:
+		return fmt.Errorf("task is not an inline-approved active task (status=%q)", task.Status)
+	}
+	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, "active", "expired")
+	if err != nil {
+		return err
+	}
+	if !won {
+		// Lost CAS to a concurrent transition (revoke, sweeper). The
+		// task is no longer active, so the rollback's goal is met.
+		return nil
+	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_create", "deny", "expired")
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
+	}
+	return nil
+}
+
 // ── Inline-chat scope expansion ───────────────────────────────────────────────
 
 // CreatePendingInlineExpansion is the lite-proxy entry point for the

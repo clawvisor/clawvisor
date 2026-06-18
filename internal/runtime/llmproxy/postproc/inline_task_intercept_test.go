@@ -194,6 +194,10 @@ type capturingInlineCreator struct {
 	expireCalled  bool
 	expireFail    bool
 	expiredIDs    []string
+
+	expireApprovedCalled bool
+	expireApprovedFail   bool
+	expiredApprovedIDs   []string
 }
 
 func (c *capturingInlineCreator) CreateInlineApprovedTask(_ context.Context, _ *store.Agent, _ *runtimetasks.TaskCreateRequest, _ string) (*llmproxy.InlineApprovedTask, error) {
@@ -229,6 +233,59 @@ func (c *capturingInlineCreator) ExpireInlineTask(_ context.Context, taskID, _ s
 	c.expiredIDs = append(c.expiredIDs, taskID)
 	if c.expireFail {
 		return fmtErrorf("simulated inline expire failure")
+	}
+	return nil
+}
+
+// failingRegistry wraps a real ScopeDriftRegistry but forces
+// RegisterPendingSubstitution to error so tests can exercise the
+// post-create rollback path. All other methods pass through to the
+// inner registry.
+type failingRegistry struct {
+	inner        llmproxy.ScopeDriftRegistry
+	failRegister bool
+}
+
+func (f *failingRegistry) Register(ctx context.Context, drift llmproxy.ScopeDrift) (llmproxy.ScopeDrift, error) {
+	return f.inner.Register(ctx, drift)
+}
+
+func (f *failingRegistry) Get(ctx context.Context, driftID string) (llmproxy.ScopeDrift, error) {
+	return f.inner.Get(ctx, driftID)
+}
+
+func (f *failingRegistry) ClaimOption(ctx context.Context, driftID string, option llmproxy.ScopeDriftOption, agentNote string) (llmproxy.ScopeDrift, error) {
+	return f.inner.ClaimOption(ctx, driftID, option, agentNote)
+}
+
+func (f *failingRegistry) SetOutcome(ctx context.Context, driftID string, outcome llmproxy.ScopeDriftOutcome) error {
+	return f.inner.SetOutcome(ctx, driftID, outcome)
+}
+
+func (f *failingRegistry) LookupPreClear(ctx context.Context, agentID, fingerprint string) (string, bool) {
+	return f.inner.LookupPreClear(ctx, agentID, fingerprint)
+}
+
+func (f *failingRegistry) RegisterPendingSubstitution(ctx context.Context, key llmproxy.PendingSubstitutionKey, value llmproxy.PendingSubstitution) error {
+	if f.failRegister {
+		return fmtErrorf("simulated substitution register failure")
+	}
+	return f.inner.RegisterPendingSubstitution(ctx, key, value)
+}
+
+func (f *failingRegistry) LookupPendingSubstitution(ctx context.Context, key llmproxy.PendingSubstitutionKey) (llmproxy.PendingSubstitution, bool) {
+	return f.inner.LookupPendingSubstitution(ctx, key)
+}
+
+func (f *failingRegistry) DeletePendingSubstitution(ctx context.Context, key llmproxy.PendingSubstitutionKey) {
+	f.inner.DeletePendingSubstitution(ctx, key)
+}
+
+func (c *capturingInlineCreator) ExpireInlineApprovedTask(_ context.Context, taskID, _ string) error {
+	c.expireApprovedCalled = true
+	c.expiredApprovedIDs = append(c.expiredApprovedIDs, taskID)
+	if c.expireApprovedFail {
+		return fmtErrorf("simulated inline approved expire failure")
 	}
 	return nil
 }
@@ -871,6 +928,39 @@ func TestAutoApprove_VerdictUsesPlaceholder(t *testing.T) {
 	}
 	if !strings.Contains(v.SubstituteWith, "Clawvisor") {
 		t.Errorf("auto-approve verdict must populate SubstituteWith with the [Clawvisor] notice; got %q", v.SubstituteWith)
+	}
+}
+
+// TestAutoApprove_RollsBackTaskOnSubstitutionRegisterFailure locks the
+// orphan-task gap: when RegisterPendingSubstitution fails after the
+// task was already committed, the auto-approve path must call
+// ExpireInlineApprovedTask to roll the task back to "expired" rather
+// than leaving an orphan active row pointing at a model history that
+// never recorded the create call.
+func TestAutoApprove_RollsBackTaskOnSubstitutionRegisterFailure(t *testing.T) {
+	f := newAutoApproveFixture(t, &llmproxy.TaskRiskAssessment{
+		RiskLevel:   "low",
+		IntentMatch: "yes",
+	})
+	// Wire a registry stub that fails RegisterPendingSubstitution so
+	// the post-create rollback path fires.
+	f.drifts = &failingRegistry{inner: llmproxy.NewMemoryScopeDriftRegistry(0), failRegister: true}
+
+	got := f.run("low", []string{"build me a landing page at /tmp/landing"})
+
+	if !f.creator.called {
+		t.Fatal("auto-approve gate must have called the creator before registration fails")
+	}
+	if !f.creator.expireApprovedCalled {
+		t.Fatal("auto-approve must invoke ExpireInlineApprovedTask when substitution registration fails")
+	}
+	if len(f.creator.expiredApprovedIDs) != 1 || f.creator.expiredApprovedIDs[0] != "task-auto-approved" {
+		t.Fatalf("expected rollback of task-auto-approved; got %v", f.creator.expiredApprovedIDs)
+	}
+	// Fallthrough returns an empty verdict; the dashboard-rewrite path
+	// then surfaces the original control-tool POST.
+	if strings.Contains(string(got.Body), llmproxy.AutoApprovePlaceholderMarker) {
+		t.Errorf("expected fallthrough to dashboard-rewrite, not a placeholder; got %s", got.Body)
 	}
 }
 

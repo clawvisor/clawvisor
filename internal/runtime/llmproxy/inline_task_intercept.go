@@ -376,16 +376,34 @@ func MaybeInterceptInlineTaskDefinition(
 					},
 				); regErr != nil {
 					// Registration failure after the task was already
-					// created leaves an orphan: the task exists and the
-					// checkout (if any) is set, but the inbound rewriter
-					// has no record to restore the model's original
-					// tool_use on the next /v1/messages. Log loudly so
-					// operators can investigate; the deferred
-					// guard.Rollback (from PR #569's drift-claim machinery)
-					// reverts the drift claim alongside the failed
-					// substitution attempt.
-					audit("fallthrough", "auto_approve_substitution_register_failed", regErr.Error()+"; task "+created.ID+" was created but is now an orphan — registration failure path lacks a rollback hook")
-					trace("inline_task.auto_approve_substitution_failed", "err", regErr.Error(), "orphaned_task_id", created.ID)
+					// created would leave an orphan active task — the
+					// model never received a record of the create call
+					// (no inbound substitution to restore it), so the
+					// agent will keep retrying with no awareness that
+					// the task exists. Roll the task back via
+					// InlineApprovedTaskExpirer so the audit trail and
+					// the dashboard reflect what actually happened.
+					// Detached context with a short timeout because a
+					// mid-request client disconnect (a plausible cause
+					// of cache misbehavior) must not cancel the
+					// rollback and strand the orphan for the full TTL.
+					if expirer, ok := cfg.InlineTaskCreator.(InlineApprovedTaskExpirer); ok {
+						rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 5*time.Second)
+						if expireErr := expirer.ExpireInlineApprovedTask(rollbackCtx, created.ID, cfg.AgentUserID); expireErr != nil {
+							trace("inline_task.auto_approve_rollback_failed", "task_id", created.ID, "err", expireErr.Error())
+						}
+						cancel()
+					} else {
+						// The creator implementation predates the
+						// rollback interface; we can't undo. Log the
+						// orphan so operators can investigate.
+						trace("inline_task.auto_approve_rollback_unavailable", "task_id", created.ID, "reason", "InlineTaskCreator does not implement InlineApprovedTaskExpirer")
+					}
+					audit("fallthrough", "auto_approve_substitution_register_failed", regErr.Error()+"; task "+created.ID+" was rolled back via ExpireInlineApprovedTask")
+					trace("inline_task.auto_approve_substitution_failed", "err", regErr.Error(), "rolled_back_task_id", created.ID)
+					// Returning false also lets the deferred guard.Rollback
+					// (from PR #569's drift-claim machinery) revert the
+					// drift claim alongside the registration failure.
 					return conversation.ToolUseVerdict{}, false
 				}
 				// Drift-claim success: the deferred Rollback is now a

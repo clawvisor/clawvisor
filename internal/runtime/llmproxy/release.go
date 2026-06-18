@@ -53,6 +53,18 @@ type InlineTaskCreatorWithAssessment interface {
 	) (*InlineApprovedTask, error)
 }
 
+// InlineApprovedTaskExpirer is the rollback contract the auto-approve
+// path uses when post-creation steps (pending-substitution registration)
+// fail. Without this, a registration failure after
+// CreateInlineApprovedTask succeeded would leave an orphan active task
+// the user never saw the agent receive — wasted scope, confusing audit
+// trail. Implementations transition active → expired so the orphan is
+// visibly cleaned up in the dashboard. Idempotent on already-terminal
+// rows.
+type InlineApprovedTaskExpirer interface {
+	ExpireInlineApprovedTask(ctx context.Context, taskID, userID string) error
+}
+
 // InlineTaskPendingCreator is the contract the inline-task intercept
 // uses to land a pending Task row in the dashboard's Tasks surface BEFORE
 // the user has replied in chat. The auto-approve gate continues to use

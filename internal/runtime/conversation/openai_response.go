@@ -29,13 +29,46 @@ func (rw OpenAIResponseRewriter) Rewrite(body []byte, contentType string, eval T
 		return rw.rewriteResponses(body, contentType, eval)
 	default:
 		if isSSE(contentType) || looksLikeSSE(body) {
-			if bytes.Contains(body, []byte("response.output_item.added")) || bytes.Contains(body, []byte("response.function_call_arguments")) {
+			// Sniff the first SSE event's prefix line. Responses
+			// streams always emit `event: response.X` on the first
+			// event (response.created); Chat streams have no event:
+			// lines, just anonymous data: lines. Substring-searching
+			// the whole body for narrow event names (output_item.added,
+			// function_call_arguments) misclassifies legitimate
+			// text-only Responses streams as Chat.
+			if sseFirstEventIsResponsesAPI(body) {
 				return rw.rewriteResponses(body, contentType, eval)
 			}
 			return rw.rewriteChatCompletions(body, contentType, eval)
 		}
 		return RewriteResult{Body: body}, nil
 	}
+}
+
+// sseFirstEventIsResponsesAPI inspects the SSE body's first event
+// block to decide whether the stream uses the OpenAI Responses API
+// shape. Responses always emits `event: response.<type>` for every
+// event; Chat Completions never sets the event: field. We only need
+// the first event because the discriminator is wire-envelope metadata
+// that's set on every event in the stream.
+func sseFirstEventIsResponsesAPI(body []byte) bool {
+	normalized := strings.ReplaceAll(string(body), "\r\n", "\n")
+	for _, block := range strings.Split(normalized, "\n\n") {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+		for _, line := range strings.Split(block, "\n") {
+			if !strings.HasPrefix(line, "event:") {
+				continue
+			}
+			name := strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			return strings.HasPrefix(name, "response.")
+		}
+		// First block had no event: line — definitively Chat shape.
+		return false
+	}
+	return false
 }
 
 // rewriteResponses picks the SSE vs JSON path. Content-Type is the primary
