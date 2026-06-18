@@ -53,9 +53,15 @@ type TaskScopeDecision struct {
 	// the next /v1/messages. SubstituteText still populates as a
 	// secondary signal (audit, debug).
 	SubstituteToolCall *conversation.SyntheticToolCall
-	Ambiguous          bool
-	MatchedTask        *store.Task
-	MatchedAction      *store.TaskAction
+	// PendingSubstitution, when non-nil, asks the postprocess layer to
+	// register an inbound substitution after the verdict is finalized.
+	// Populated by the scope-drift menu mint (which used to write the
+	// registry from within the evaluator). Forwarded onto the resulting
+	// ToolUseVerdict by Evaluate.
+	PendingSubstitution *conversation.PendingSubstitutionSpec
+	Ambiguous           bool
+	MatchedTask         *store.Task
+	MatchedAction       *store.TaskAction
 }
 
 // TaskScopeDecisionKind disambiguates hard denials from approvable
@@ -166,6 +172,7 @@ func (e *TaskScopeEvaluator) Evaluate(ctx context.Context, _ pipeline.ReadOnlyRe
 			Reason:                 dec.Reason,
 			SubstituteWithToolCall: dec.SubstituteToolCall,
 			SuppressSubstituteText: true,
+			PendingSubstitution:    dec.PendingSubstitution,
 			Facts:                  []pipeline.EvaluationFact{fact},
 		}, nil
 	}

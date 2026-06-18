@@ -16,11 +16,14 @@ import (
 // lifecycle details stay in one place.
 //
 // substitutions tracks pending-substitution registry writes that fired
-// during evaluation (scope-drift mints, recoverable-deny migrations).
-// rollback() iterates them so a request whose response is later
-// failClosed'd doesn't leak orphan entries. trackSubstitution is the
-// single entry point; postproc.go and stream.go call it after each
-// eval verdict commits.
+// during evaluation (scope-drift mints, recoverable-deny migrations,
+// inline-task auto-approve). rollback() iterates them so a request
+// whose response is later failClosed'd doesn't leak orphan entries.
+// commitSubstitutions is the single entry point — it walks every
+// verdict's PendingSubstitution spec and registers it, recording the
+// key for rollback. Evaluators MUST NOT call into the registry
+// themselves; the spec-on-verdict pattern keeps the verdict pure data
+// and concentrates rollback in one place.
 type postprocessSession struct {
 	baseCfg                  llmproxy.PostprocessConfig
 	evalCfg                  llmproxy.PostprocessConfig
@@ -96,15 +99,108 @@ func (s *postprocessSession) rollback(ctx context.Context, toolUses []conversati
 	s.rollbackSubstitutions(ctx)
 }
 
-// trackSubstitution records a pending-substitution registry write so
-// rollback() can revert it if the response is later failClosed'd. Nil
-// keys are ignored so callers can pass through transform results
-// directly without branching.
-func (s *postprocessSession) trackSubstitution(key *llmproxy.PendingSubstitutionKey) {
-	if s == nil || key == nil {
+// commitSubstitutions registers every verdict.PendingSubstitution
+// spec against the registry, walking decisions in turn order. Called
+// AFTER all evaluators have produced verdicts so the verdict itself
+// stays free of registry side-effects.
+//
+// On registry write failure: any TaskRollback the spec carries (today
+// only the inline-task auto-approve path populates this) is honoured
+// via the configured InlineApprovedTaskExpirer — the orphan task is
+// expired with a detached context so a mid-request client disconnect
+// doesn't cancel the rollback. Already-registered substitutions
+// recorded earlier in the walk are rolled back via the standard
+// session.rollback path so the registry doesn't end up partially
+// populated for this request. The function returns the failing error
+// so the caller (postproc / stream) can fail-closed the response.
+//
+// Recorded keys feed rollback() — if a later step in the postprocess
+// pipeline fails, every registry write made on behalf of this request
+// is undone in one place.
+func (s *postprocessSession) commitSubstitutions(ctx context.Context, verdictByTU map[string]conversation.ToolUseVerdict, toolUses []conversation.ToolUse) error {
+	if s == nil {
+		return nil
+	}
+	registry := s.baseCfg.AuthorizationContext.ScopeDrifts
+	if registry == nil {
+		return nil
+	}
+	agentID := s.baseCfg.AgentContext.AgentID
+	conversationID := s.baseCfg.AuditContext.ConversationID
+	// Walk in tool_use order (not map order) so audit and tests see a
+	// deterministic registration sequence.
+	for _, tu := range toolUses {
+		v, ok := verdictByTU[tu.ID]
+		if !ok || v.PendingSubstitution == nil {
+			continue
+		}
+		spec := v.PendingSubstitution
+		if agentID == "" || conversationID == "" {
+			// Identity tuple incomplete — the same guard the evaluators
+			// applied before populating the spec. Skip rather than mint
+			// a key that would collide across concurrent conversations.
+			continue
+		}
+		key := llmproxy.PendingSubstitutionKey{
+			AgentID:        agentID,
+			ConversationID: conversationID,
+			ToolUseID:      tu.ID,
+		}
+		err := registry.RegisterPendingSubstitution(ctx, key, llmproxy.PendingSubstitution{
+			DriftID:           spec.DriftID,
+			MenuText:          spec.MenuText,
+			OriginalToolName:  spec.OriginalToolName,
+			OriginalToolInput: append([]byte(nil), spec.OriginalToolInput...),
+		})
+		if err != nil {
+			// Roll back the task this spec was guarding, if any. The
+			// expirer interface is opt-in; legacy creator stubs that
+			// don't implement it strand the orphan, audit-traced for
+			// operators below.
+			if spec.TaskRollback != nil {
+				s.expireRollbackTask(ctx, spec.TaskRollback, err)
+			}
+			return err
+		}
+		s.substitutions = append(s.substitutions, key)
+	}
+	return nil
+}
+
+// expireRollbackTask invokes the configured InlineApprovedTaskExpirer
+// to unwind an orphan task left behind when registration failed.
+// Detached context with a short timeout protects the rollback from a
+// canceled client connection (the same condition that may have caused
+// the registry write to fail in the first place).
+func (s *postprocessSession) expireRollbackTask(ctx context.Context, handle *conversation.PendingSubstitutionTaskRollback, regErr error) {
+	creator := s.baseCfg.InlineTaskCreator
+	if creator == nil || handle == nil {
 		return
 	}
-	s.substitutions = append(s.substitutions, *key)
+	trace := llmproxy.TraceLoggerEmit(s.baseCfg.AuditContext.Trace)
+	expirer, ok := creator.(llmproxy.InlineApprovedTaskExpirer)
+	if !ok {
+		// The creator implementation predates the rollback interface;
+		// can't undo. Trace so operators can see why an orphan exists.
+		if trace != nil {
+			trace("inline_task.auto_approve_rollback_unavailable",
+				"task_id", handle.TaskID,
+				"reason", "InlineTaskCreator does not implement InlineApprovedTaskExpirer",
+			)
+		}
+		return
+	}
+	rollbackCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	if err := expirer.ExpireInlineApprovedTask(rollbackCtx, handle.TaskID, handle.UserID); err != nil {
+		if trace != nil {
+			trace("inline_task.auto_approve_rollback_failed",
+				"task_id", handle.TaskID,
+				"err", err.Error(),
+				"register_err", regErr.Error(),
+			)
+		}
+	}
 }
 
 // rollbackSubstitutions deletes every tracked registry write. Idempotent

@@ -87,9 +87,11 @@ func driftSourceFor(source runtimedecision.DecisionSource) llmproxy.ScopeDriftSo
 //   1. Rewriting the blocked tool_use into Sentinel (a canonical Bash
 //      no-op encoding the original call) so the harness's local
 //      execution is harmless.
-//   2. Registering a pending substitution under the tool_use_id so the
-//      inbound rewriter replaces the harness-supplied tool_result
-//      content with MenuText on the next /v1/messages.
+//   2. Attaching Spec to the resulting verdict so the postprocess
+//      layer registers the inbound substitution after the verdict is
+//      finalized. The coordinator no longer writes to the registry
+//      itself — that side-effecting step is owned by postprocess,
+//      keeping the verdict pure data.
 // driftID is the registered drift's id, for audit linkage. OK reports
 // whether the mint actually landed — a false return tells the caller
 // to fall through to its legacy approval-prompt path.
@@ -97,6 +99,7 @@ type MintResult struct {
 	MenuText string
 	DriftID  string
 	Sentinel *conversation.SyntheticToolCall
+	Spec     *conversation.PendingSubstitutionSpec
 	Err      error
 	OK       bool
 }
@@ -136,10 +139,13 @@ func (c *scopeDriftCoordinator) MintForCredentialed(
 		return MintResult{Err: mintErr}
 	}
 	sentinel := buildScopeDriftSentinel(driftID, tu)
-	if regErr := c.registerPendingSubstitution(ctx, tu, driftID, menuText); regErr != nil {
-		return MintResult{Err: regErr}
+	return MintResult{
+		MenuText: menuText,
+		DriftID:  driftID,
+		Sentinel: sentinel,
+		Spec:     buildPendingSubstitutionSpec(tu, driftID, menuText),
+		OK:       true,
 	}
-	return MintResult{MenuText: menuText, DriftID: driftID, Sentinel: sentinel, OK: true}
 }
 
 // MintForTriggerMiss registers a drift for the non-credentialed
@@ -173,10 +179,13 @@ func (c *scopeDriftCoordinator) MintForTriggerMiss(
 		return MintResult{Err: mintErr}
 	}
 	sentinel := buildScopeDriftSentinel(driftID, tu)
-	if regErr := c.registerPendingSubstitution(ctx, tu, driftID, menuText); regErr != nil {
-		return MintResult{Err: regErr}
+	return MintResult{
+		MenuText: menuText,
+		DriftID:  driftID,
+		Sentinel: sentinel,
+		Spec:     buildPendingSubstitutionSpec(tu, driftID, menuText),
+		OK:       true,
 	}
-	return MintResult{MenuText: menuText, DriftID: driftID, Sentinel: sentinel, OK: true}
 }
 
 // buildScopeDriftSentinel constructs the SyntheticToolCall that
@@ -199,23 +208,19 @@ func buildScopeDriftSentinel(driftID string, tu conversation.ToolUse) *conversat
 	}
 }
 
-// registerPendingSubstitution records everything the inbound rewriter
-// needs to restore the original tool_use and replace the tool_result
-// content on the next /v1/messages.
-func (c *scopeDriftCoordinator) registerPendingSubstitution(ctx context.Context, tu conversation.ToolUse, driftID, menuText string) error {
-	if c == nil || c.registry == nil {
-		return nil
-	}
-	return c.registry.RegisterPendingSubstitution(ctx, llmproxy.PendingSubstitutionKey{
-		AgentID:        c.agent.AgentID,
-		ConversationID: c.audit.ConversationID,
-		ToolUseID:      tu.ID,
-	}, llmproxy.PendingSubstitution{
+// buildPendingSubstitutionSpec collects every field the inbound
+// rewriter needs to restore the original tool_use and replace the
+// tool_result content on the next /v1/messages. The spec is attached
+// to the verdict and registered later by postprocess — the coordinator
+// itself stays free of registry side-effects so the verdict remains
+// pure data.
+func buildPendingSubstitutionSpec(tu conversation.ToolUse, driftID, menuText string) *conversation.PendingSubstitutionSpec {
+	return &conversation.PendingSubstitutionSpec{
 		DriftID:           driftID,
 		MenuText:          menuText,
 		OriginalToolName:  tu.Name,
 		OriginalToolInput: append([]byte(nil), tu.Input...),
-	})
+	}
 }
 
 // ConsumePreClear looks up a one-shot pre-clear for the agent's retry

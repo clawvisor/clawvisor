@@ -9,13 +9,12 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 )
 
-// TestTransformRecoverableDenyToPlaceholder asserts the Continue+Deny
-// verdict shape produced by conversation.RecoverableDenyVerdict is
-// migrated to the placeholder + pending-substitution pattern: the
-// model's original tool_use is captured for restoration, the menu
-// (reason) text is stashed for the next inbound /v1/messages, and the
-// verdict's Continue signal is cleared so tryContinuation no longer
-// fires for these cases.
+// TestTransformRecoverableDenyToPlaceholder asserts the recoverable-
+// deny migration is now a PURE transform: the verdict gets a
+// placeholder SubstituteWithToolCall + a PendingSubstitution spec, but
+// the registry is NOT touched. Registration is deferred to
+// postprocessSession.commitSubstitutions so the verdict stays pure
+// data — see TestPostprocessSessionCommitSubstitutionsRegistersSpec.
 func TestTransformRecoverableDenyToPlaceholder(t *testing.T) {
 	reg := llmproxy.NewMemoryScopeDriftRegistry(0)
 	tu := conversation.ToolUse{
@@ -31,13 +30,7 @@ func TestTransformRecoverableDenyToPlaceholder(t *testing.T) {
 			ScopeDrifts: reg,
 		},
 	}
-	got, registered := transformRecoverableDenyToPlaceholder(context.Background(), original, tu, cfg)
-	if registered == nil {
-		t.Fatal("expected registered key from transform so rollback can revert on failure")
-	}
-	if registered.AgentID != cfg.AgentContext.AgentID || registered.ToolUseID != tu.ID {
-		t.Fatalf("registered key mismatch: %+v", *registered)
-	}
+	got := transformRecoverableDenyToPlaceholder(original, tu, cfg)
 	if got.RecoverableReason != "" {
 		t.Fatalf("expected RecoverableReason cleared after migration, got %q", got.RecoverableReason)
 	}
@@ -61,25 +54,27 @@ func TestTransformRecoverableDenyToPlaceholder(t *testing.T) {
 		t.Fatalf("placeholder input missing command: %+v", got.SubstituteWithToolCall.Input)
 	}
 
-	// Pending substitution is keyed on (agent, conversation, tool_use_id);
-	// carries the reason as MenuText and the original tool shape for
-	// later restoration.
-	subst, ok := reg.LookupPendingSubstitution(context.Background(), llmproxy.PendingSubstitutionKey{
+	// Spec is attached to the verdict; the transform is pure. The
+	// registry must NOT have been touched yet — that happens later in
+	// commitSubstitutions.
+	if got.PendingSubstitution == nil {
+		t.Fatal("expected verdict.PendingSubstitution populated as the postproc registration spec")
+	}
+	if got.PendingSubstitution.MenuText != "the inspector could not parse the request body" {
+		t.Fatalf("spec MenuText = %q; want the reason", got.PendingSubstitution.MenuText)
+	}
+	if got.PendingSubstitution.OriginalToolName != tu.Name {
+		t.Fatalf("spec OriginalToolName = %q; want %q", got.PendingSubstitution.OriginalToolName, tu.Name)
+	}
+	if string(got.PendingSubstitution.OriginalToolInput) != string(tu.Input) {
+		t.Fatalf("spec OriginalToolInput mismatch:\n got: %s\nwant: %s", string(got.PendingSubstitution.OriginalToolInput), string(tu.Input))
+	}
+	if _, ok := reg.LookupPendingSubstitution(context.Background(), llmproxy.PendingSubstitutionKey{
 		AgentID:        cfg.AgentContext.AgentID,
 		ConversationID: cfg.AuditContext.ConversationID,
 		ToolUseID:      tu.ID,
-	})
-	if !ok {
-		t.Fatal("expected pending substitution registered for recoverable-deny tool_use")
-	}
-	if subst.MenuText != "the inspector could not parse the request body" {
-		t.Fatalf("substitution menu text = %q; want the reason", subst.MenuText)
-	}
-	if subst.OriginalToolName != tu.Name {
-		t.Fatalf("substitution original tool name = %q; want %q", subst.OriginalToolName, tu.Name)
-	}
-	if string(subst.OriginalToolInput) != string(tu.Input) {
-		t.Fatalf("substitution original tool input mismatch:\n got: %s\nwant: %s", string(subst.OriginalToolInput), string(tu.Input))
+	}); ok {
+		t.Fatal("transform must NOT write the registry; commitSubstitutions owns that side-effect")
 	}
 }
 
@@ -100,9 +95,9 @@ func TestTransformRecoverableDenyToPlaceholderLeavesNonRecoverableAlone(t *testi
 		AuditContext:         llmproxy.AuditContext{ConversationID: "conv-auto-1"},
 		AuthorizationContext: llmproxy.AuthorizationContext{ScopeDrifts: reg},
 	}
-	got, registered := transformRecoverableDenyToPlaceholder(context.Background(), verdict, tu, cfg)
-	if registered != nil {
-		t.Fatalf("non-recoverable verdict must NOT register a substitution; got key %+v", *registered)
+	got := transformRecoverableDenyToPlaceholder(verdict, tu, cfg)
+	if got.PendingSubstitution != nil {
+		t.Fatalf("non-recoverable verdict must NOT attach a spec; got %+v", *got.PendingSubstitution)
 	}
 	if got.SubstituteWithToolCall != nil {
 		t.Fatal("non-recoverable verdict must NOT get a placeholder")
@@ -112,45 +107,7 @@ func TestTransformRecoverableDenyToPlaceholderLeavesNonRecoverableAlone(t *testi
 		ConversationID: cfg.AuditContext.ConversationID,
 		ToolUseID:      tu.ID,
 	}); ok {
-		t.Fatal("non-recoverable verdict must NOT register a pending substitution")
-	}
-}
-
-// TestDetectScopeDriftSubstitutionTracksScopeDriftMint locks the
-// centralized rollback: when an inner evaluator (e.g., scope-drift
-// mint in pipelineeval/scope_drift.go) registers a substitution
-// during innerEval and returns a verdict with SubstituteWithToolCall,
-// the postproc eval wrapper's detector picks it up so session
-// rollback covers both recoverable-deny and scope-drift writes.
-func TestDetectScopeDriftSubstitutionTracksScopeDriftMint(t *testing.T) {
-	reg := llmproxy.NewMemoryScopeDriftRegistry(0)
-	tu := conversation.ToolUse{ID: "tu-scope-drift", Name: "Bash", Input: json.RawMessage(`{"command":":"}`)}
-	cfg := llmproxy.PostprocessConfig{
-		AgentContext:         llmproxy.AgentContext{AgentID: "agent-x", AgentUserID: "user-x"},
-		AuditContext:         llmproxy.AuditContext{ConversationID: "conv-x"},
-		AuthorizationContext: llmproxy.AuthorizationContext{ScopeDrifts: reg},
-	}
-
-	// Simulate the scope-drift mint write happening inside innerEval.
-	mintKey := llmproxy.PendingSubstitutionKey{
-		AgentID: cfg.AgentContext.AgentID, ConversationID: cfg.AuditContext.ConversationID, ToolUseID: tu.ID,
-	}
-	if err := reg.RegisterPendingSubstitution(context.Background(), mintKey, llmproxy.PendingSubstitution{
-		MenuText: "scope-drift menu", OriginalToolName: "Write", OriginalToolInput: []byte(`{}`),
-	}); err != nil {
-		t.Fatalf("RegisterPendingSubstitution: %v", err)
-	}
-	verdict := conversation.ToolUseVerdict{
-		Outcome:                conversation.OutcomeDeny,
-		SubstituteWithToolCall: &conversation.SyntheticToolCall{ID: tu.ID, Name: "Bash", Input: map[string]any{"command": ":"}},
-		SuppressSubstituteText: true,
-	}
-	key := detectScopeDriftSubstitution(context.Background(), verdict, tu, cfg)
-	if key == nil {
-		t.Fatal("expected detectScopeDriftSubstitution to return the mint's key")
-	}
-	if *key != mintKey {
-		t.Fatalf("detected key mismatch: got %+v want %+v", *key, mintKey)
+		t.Fatal("non-recoverable verdict must NOT touch the registry")
 	}
 }
 

@@ -82,6 +82,15 @@ type ToolUseVerdict struct {
 	// rows can link to the same task_id.
 	CreatedTaskID string
 
+	// PendingSubstitution, when non-nil, declares that the postprocess
+	// layer should register an inbound substitution after the verdict
+	// is finalized. Evaluators MUST NOT write to the substitution
+	// registry directly — populate this field and let the postprocess
+	// layer own the registry write and its rollback. This restores
+	// the "verdict is pure data" invariant: the verdict describes
+	// what should happen; postprocess realizes it.
+	PendingSubstitution *PendingSubstitutionSpec
+
 	// HeldKindHint is the policy-set classification of this verdict
 	// for postproc's coalescing pass. When empty, classification falls
 	// back to the Allowed / RewriteInput shape.
@@ -98,6 +107,45 @@ type ToolUseVerdict struct {
 	// evaluator that runs, including those returning Skip —
 	// observation is a separate channel from verdict claiming.
 	Facts []EvaluationFact
+}
+
+// PendingSubstitutionSpec describes an inbound substitution the
+// postprocess layer should register after the verdict is finalized.
+// The spec is pure data: evaluators populate it; postprocess realizes
+// it. Provider-specific marshaling and registry keying happen in
+// postprocess, so this struct stays free of llmproxy-package
+// dependencies.
+//
+// Fields:
+//   - DriftID: scope-drift record this substitution is associated
+//     with (mint path), empty for paths that don't mint a drift
+//     (recoverable-deny).
+//   - MenuText: content the inbound rewriter splices into the
+//     tool_result on the next /v1/messages.
+//   - OriginalToolName / OriginalToolInput: the model's original
+//     tool_use fields, restored by the inbound rewriter into the
+//     prior assistant turn so the model never sees the harness-side
+//     placeholder.
+//   - TaskRollback: when non-nil, the inline task to expire if the
+//     registry write fails. Used by auto-approve so a failed
+//     registration unwinds the orphan task created earlier in the
+//     evaluator.
+type PendingSubstitutionSpec struct {
+	DriftID           string
+	MenuText          string
+	OriginalToolName  string
+	OriginalToolInput []byte
+	TaskRollback      *PendingSubstitutionTaskRollback
+}
+
+// PendingSubstitutionTaskRollback names an inline task the postprocess
+// layer must expire if the substitution registry write fails. Carried
+// by the auto-approve path. The expirer itself lives in the
+// PostprocessConfig (InlineTaskCreator); the spec only carries the
+// identity tuple needed to invoke it.
+type PendingSubstitutionTaskRollback struct {
+	TaskID string
+	UserID string
 }
 
 type RewriteResult struct {

@@ -99,9 +99,7 @@ func PostprocessStream(
 	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(toolUses))
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := innerEval(tu)
-		v, registered := transformRecoverableDenyToPlaceholder(req.Context(), v, tu, cfg)
-		session.trackSubstitution(registered)
-		session.trackSubstitution(detectScopeDriftSubstitution(req.Context(), v, tu, cfg))
+		v = transformRecoverableDenyToPlaceholder(v, tu, cfg)
 		verdictByTU[tu.ID] = v
 		return v
 	}
@@ -127,6 +125,12 @@ func PostprocessStream(
 		}
 	}
 
+	if commitErr := session.commitSubstitutions(req.Context(), verdictByTU, toolUses); commitErr != nil {
+		session.rollback(req.Context(), toolUses, verdictByTU)
+		return llmproxy.PostprocessResult{
+			SkippedReason: commitErr.Error(),
+		}, commitErr
+	}
 	finalResult, finalErr := session.finalize(req.Context(), toolUses, verdictByTU)
 	if finalErr != nil {
 		session.rollback(req.Context(), toolUses, verdictByTU)

@@ -104,6 +104,12 @@ type AuthorizationHoldResult struct {
 	// original tool_use and replaces the tool_result content with the
 	// menu — see scope_drift_inbound_rewrite.go.
 	SubstituteToolCall *conversation.SyntheticToolCall
+	// PendingSubstitution, when non-nil, asks the postprocess layer to
+	// register an inbound substitution after the verdict is finalized.
+	// Populated alongside SubstituteToolCall by the scope-drift menu
+	// path; the policy forwards it onto the resulting ToolUseVerdict
+	// so registration happens once, centrally, after eval completes.
+	PendingSubstitution *conversation.PendingSubstitutionSpec
 	// Err, when non-empty, signals a hold storage failure. The policy
 	// returns Deny.
 	Err string
@@ -258,6 +264,7 @@ func (p *AuthorizationPolicy) Evaluate(ctx context.Context, _ pipeline.ReadOnlyR
 				Reason:                 dec.Reason,
 				SubstituteWithToolCall: held.SubstituteToolCall,
 				SuppressSubstituteText: true,
+				PendingSubstitution:    held.PendingSubstitution,
 				Facts:                  []pipeline.EvaluationFact{authFact, taskScopeFact},
 			}, nil
 		}

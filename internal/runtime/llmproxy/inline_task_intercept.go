@@ -353,16 +353,14 @@ func MaybeInterceptInlineTaskDefinition(
 						"command": BuildAutoApprovePlaceholderCommand(tu.Name, created.ID, created.Purpose),
 					},
 				}
-				// Register a pending substitution so the inbound
-				// rewriter on the next /v1/messages restores the
-				// model's original control_tool POST byte-for-byte and
-				// delivers the augmentation context as the
-				// tool_result. The harness sees the model emit a
-				// `Bash` no-op carrying the operator-facing
-				// auto-approve comment; the upstream model sees its
-				// own call answered by the augmentation. Same wire
-				// mechanism as scope-drift / recoverable-deny — see
-				// scope_drift_inbound_rewrite.go.
+				// Drift-claim success: the deferred Rollback is now a
+				// no-op. Mirrors the placement in PR #569's continuation
+				// path. We mark success BEFORE returning the verdict
+				// because the verdict's PendingSubstitution spec carries
+				// a TaskRollback handle the postprocess layer will use
+				// if registry registration fails. Centralizing that
+				// rollback in postprocess keeps the verdict pure data
+				// (no in-eval registry side effects).
 				//
 				// Design tradeoff (vs. the pre-Jul-2026 upstream
 				// continuation path): the conversation now resumes on
@@ -376,56 +374,6 @@ func MaybeInterceptInlineTaskDefinition(
 				// harness while keeping it in the model's working
 				// context — a subtle desync). Accepted explicitly in the
 				// PR that landed this migration.
-				// Registry presence is enforced by the pre-flight gate
-				// at the top of the auto-approve branch, so this call
-				// site doesn't repeat the nil check.
-				registry := cfg.AuthorizationContext.ScopeDrifts
-				if regErr := registry.RegisterPendingSubstitution(req.Context(),
-					PendingSubstitutionKey{
-						AgentID:        cfg.AgentID,
-						ConversationID: cfg.ConversationID,
-						ToolUseID:      tu.ID,
-					},
-					PendingSubstitution{
-						MenuText:          augmentation,
-						OriginalToolName:  tu.Name,
-						OriginalToolInput: append([]byte(nil), tu.Input...),
-					},
-				); regErr != nil {
-					// Registration failure after the task was already
-					// created would leave an orphan active task — the
-					// model never received a record of the create call
-					// (no inbound substitution to restore it), so the
-					// agent will keep retrying with no awareness that
-					// the task exists. Roll the task back via
-					// InlineApprovedTaskExpirer so the audit trail and
-					// the dashboard reflect what actually happened.
-					// Detached context with a short timeout because a
-					// mid-request client disconnect (a plausible cause
-					// of cache misbehavior) must not cancel the
-					// rollback and strand the orphan for the full TTL.
-					if expirer, ok := cfg.InlineTaskCreator.(InlineApprovedTaskExpirer); ok {
-						rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 5*time.Second)
-						if expireErr := expirer.ExpireInlineApprovedTask(rollbackCtx, created.ID, cfg.AgentUserID); expireErr != nil {
-							trace("inline_task.auto_approve_rollback_failed", "task_id", created.ID, "err", expireErr.Error())
-						}
-						cancel()
-					} else {
-						// The creator implementation predates the
-						// rollback interface; we can't undo. Log the
-						// orphan so operators can investigate.
-						trace("inline_task.auto_approve_rollback_unavailable", "task_id", created.ID, "reason", "InlineTaskCreator does not implement InlineApprovedTaskExpirer")
-					}
-					audit("fallthrough", "auto_approve_substitution_register_failed", regErr.Error()+"; task "+created.ID+" was rolled back via ExpireInlineApprovedTask")
-					trace("inline_task.auto_approve_substitution_failed", "err", regErr.Error(), "rolled_back_task_id", created.ID)
-					// Returning false also lets the deferred guard.Rollback
-					// (from PR #569's drift-claim machinery) revert the
-					// drift claim alongside the registration failure.
-					return conversation.ToolUseVerdict{}, false
-				}
-				// Drift-claim success: the deferred Rollback is now a
-				// no-op. Mirrors the placement in PR #569's continuation
-				// path.
 				guard.Success()
 				return conversation.ToolUseVerdict{
 					Outcome: conversation.OutcomeDeny,
@@ -449,6 +397,21 @@ func MaybeInterceptInlineTaskDefinition(
 					// the model sees its own call + the notice + the
 					// augmentation as the tool_result.
 					SubstituteWith: AutoApproveUserNotice(created.Purpose),
+					// Postprocess will register this pending
+					// substitution after the verdict is finalized; if
+					// the registry write fails it expires the task via
+					// TaskRollback so the dashboard doesn't strand an
+					// orphan. The evaluator is intentionally free of
+					// the registry call — the verdict stays pure data.
+					PendingSubstitution: &conversation.PendingSubstitutionSpec{
+						MenuText:          augmentation,
+						OriginalToolName:  tu.Name,
+						OriginalToolInput: append([]byte(nil), tu.Input...),
+						TaskRollback: &conversation.PendingSubstitutionTaskRollback{
+							TaskID: created.ID,
+							UserID: cfg.AgentUserID,
+						},
+					},
 				}, true
 			}
 		}
