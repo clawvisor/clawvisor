@@ -1,7 +1,34 @@
 {{- template "preamble" . -}}
 {{- template "mint" . -}}
 {{- template "persist_token" . -}}
-{{- template "smoke_test" . -}}
+
+# --- End-to-end smoke test: make claude actually round-trip through Clawvisor.
+# This is the test that matters for the LLM-proxy flow — it proves the new
+# token works against the real proxy, not just the daemon's auth surface. We
+# set the env vars inline so this works whether or not the user already has
+# an ~/.claude/settings.json pointing elsewhere (inline env wins over
+# settings.json). If `claude` isn't on $PATH (the user pasted the install
+# line on a machine that doesn't have it yet), skip with a note rather than
+# failing — the token's already persisted, they can verify from another box.
+if command -v claude >/dev/null 2>&1; then
+    echo "→ Smoke-testing claude through Clawvisor…"
+    SMOKE_OUT=$(
+        CLAWVISOR_URL="$APP_URL" \
+        CLAWVISOR_AGENT_TOKEN="$TOKEN" \
+        ANTHROPIC_BASE_URL="$LLM_URL/api" \
+        ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $TOKEN" \
+        ANTHROPIC_AUTH_TOKEN= \
+        ANTHROPIC_API_KEY= \
+        claude -p "respond with the word OK" 2>&1
+    ) || {
+        echo "claude end-to-end smoke test failed:" >&2
+        printf '%s\n' "$SMOKE_OUT" >&2
+        exit 1
+    }
+    echo "✓ Claude round-tripped through Clawvisor"
+else
+    echo "(skipping end-to-end test — 'claude' CLI not on \$PATH)"
+fi
 
 # --- Ask: make Clawvisor the default for every Claude Code session? ---------
 # Default-everywhere writes env keys + curl auto-approve rules to

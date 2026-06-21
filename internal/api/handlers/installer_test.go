@@ -513,8 +513,14 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		// Token is persisted to ~/.clawvisor/agents/<name>.json with chmod 600.
 		"~/.clawvisor/agents",
 		"chmod 600",
-		// Smoke test — daemon must accept the freshly minted token.
-		"/api/skill/catalog",
+		// End-to-end smoke test — actually invokes `claude -p` with the
+		// new env so the proxy round-trip is exercised, not just daemon
+		// authn. Skips gracefully when claude isn't on $PATH.
+		"command -v claude",
+		"claude -p \"respond with the word OK\"",
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_CUSTOM_HEADERS",
+		"X-Clawvisor-Agent-Token: $TOKEN",
 		// Default-vs-alias prompt + skip-permissions prompt (TUI labels).
 		"prompt_choice",
 		"How should Clawvisor route your Claude Code calls?",
