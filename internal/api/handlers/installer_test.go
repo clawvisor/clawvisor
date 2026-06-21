@@ -735,6 +735,37 @@ func TestInstallerBareURLRedirectsByTarget(t *testing.T) {
 	}
 }
 
+// TestInstallerMarkdownGoneBodyHasRealHost — the 410 body for stale .md
+// URLs has to interpolate the real host so users can copy-paste the
+// recovery snippet directly. A literal `<host>` placeholder leaves them
+// guessing which daemon endpoint to point at.
+func TestInstallerMarkdownGoneBodyHasRealHost(t *testing.T) {
+	h := NewInstallerHandler("", "", false, "", "https://app.example.com")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /skill/install/{target}", h.Setup)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	for _, target := range []string{"claude-code", "codex"} {
+		resp, err := http.Get(srv.URL + "/skill/install/" + target + ".md")
+		if err != nil {
+			t.Fatalf("[%s] GET: %v", target, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusGone {
+			t.Errorf("[%s] expected 410, got %d", target, resp.StatusCode)
+		}
+		if strings.Contains(string(body), "<host>") {
+			t.Errorf("[%s] body still contains literal `<host>` placeholder; got: %s", target, body)
+		}
+		want := "https://app.example.com/skill/install/" + target + ".sh"
+		if !strings.Contains(string(body), want) {
+			t.Errorf("[%s] body should contain %q; got: %s", target, want, body)
+		}
+	}
+}
+
 // TestInstallerShellNotAvailableForMarkdownTargets — guard the inverse: the
 // .sh route is defined only for the two self-install targets, so hitting
 // /skill/install/hermes.sh (or openclaw.sh) must 404 rather than fall
