@@ -96,22 +96,34 @@ func PostprocessStream(
 
 	innerEval := session.evaluator(req, provider, toolUses)
 
+	// Eval pass: compute verdicts up-front and apply the
+	// recoverable→placeholder transform. Runs BEFORE commit so commit
+	// can promote transient-deny verdicts (it calls Try on the budget;
+	// on promote, sets RecoverableReason and re-runs placeholder).
 	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(toolUses))
-	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+	for _, tu := range toolUses {
 		v := innerEval(tu)
-		v = session.applyTransientTransform(req.Context(), v, cfg)
 		v = transformRecoverableDenyToPlaceholder(v, tu, cfg)
 		verdictByTU[tu.ID] = v
-		return v
 	}
 
+	if commitErr := session.commitVerdictSideEffects(req.Context(), verdictByTU, toolUses); commitErr != nil {
+		session.rollback(req.Context(), toolUses, verdictByTU)
+		return llmproxy.PostprocessResult{
+			SkippedReason: commitErr.Error(),
+		}, commitErr
+	}
+
+	// Collect decisions and rewrite intents from the POST-COMMIT
+	// verdicts so promoted-transient verdicts (whose RecoverableReason
+	// and SubstituteWithToolCall were filled in during commit) surface
+	// in the streaming output with the right shape.
 	var decisions []conversation.ToolUseDecisionRecord
 	anyBlocked := false
 	anyRewritten := false
 	rewrittenInput := map[string]json.RawMessage{}
-
 	for _, tu := range toolUses {
-		v := eval(tu)
+		v := verdictByTU[tu.ID]
 		decisions = append(decisions, conversation.ToolUseDecisionRecord{
 			ToolUse:          tu,
 			Verdict:          v,
@@ -126,12 +138,6 @@ func PostprocessStream(
 		}
 	}
 
-	if commitErr := session.commitVerdictSideEffects(req.Context(), verdictByTU, toolUses); commitErr != nil {
-		session.rollback(req.Context(), toolUses, verdictByTU)
-		return llmproxy.PostprocessResult{
-			SkippedReason: commitErr.Error(),
-		}, commitErr
-	}
 	finalResult, finalErr := session.finalize(req.Context(), toolUses, verdictByTU)
 	if finalErr != nil {
 		session.rollback(req.Context(), toolUses, verdictByTU)

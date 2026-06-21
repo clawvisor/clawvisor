@@ -46,30 +46,42 @@ type postprocessSession struct {
 	transientConsumed []llmproxy.TransientBudgetKey
 }
 
-// applyTransientTransform wraps the pure tryPromoteTransient function
-// with the session-owned bookkeeping needed for rollback. Eval closures
-// in postproc.go and stream.go call this instead of the pure function
-// so the consumed-key tracking stays inside the session — matching the
-// pattern where session methods (evaluator, finalize, rollback) own
-// session state, and free functions stay pure.
+// promoteTransientsLocked walks verdictByTU and promotes every Deny
+// verdict tagged with TransientFailureClass whose budget slot is
+// available. Promotion sets RecoverableReason and re-runs the
+// placeholder transform so the verdict ends up with the same wire
+// shape an evaluator-emitted RecoverableDeny would have produced. The
+// consumed budget keys are appended to s.transientConsumed so
+// rollbackVerdictSideEffects can refund them if the response later
+// fail-closes.
 //
-// Called per tool_use during eval, BEFORE
-// transformRecoverableDenyToPlaceholder so a promoted transient flows
-// into the placeholder machinery in the same pass.
-func (s *postprocessSession) applyTransientTransform(
-	ctx context.Context,
-	v conversation.ToolUseVerdict,
-	cfg llmproxy.PostprocessConfig,
-) conversation.ToolUseVerdict {
+// Called from commitVerdictSideEffects BEFORE the existing
+// DeferredDriftOutcome / PendingSubstitution processing, so any
+// substitution spec the promoted verdict gains is picked up by the
+// subsequent registration loop in the same commit pass.
+func (s *postprocessSession) promoteTransients(ctx context.Context, verdictByTU map[string]conversation.ToolUseVerdict, toolUses []conversation.ToolUse) {
 	if s == nil {
-		v, _ = tryPromoteTransient(ctx, v, cfg)
-		return v
+		return
 	}
-	promoted, key := tryPromoteTransient(ctx, v, cfg)
-	if key != nil {
+	cfg := s.baseCfg
+	for _, tu := range toolUses {
+		v, ok := verdictByTU[tu.ID]
+		if !ok {
+			continue
+		}
+		promoted, key := tryPromoteTransient(ctx, v, cfg)
+		if key == nil {
+			continue
+		}
+		// Re-run the placeholder transform so promoted-transient
+		// verdicts emit the same SubstituteWithToolCall +
+		// PendingSubstitution shape an evaluator-emitted recoverable
+		// would have produced. The subsequent substitution-
+		// registration loop in commit handles the new PendingSubstitution.
+		promoted = transformRecoverableDenyToPlaceholder(promoted, tu, cfg)
+		verdictByTU[tu.ID] = promoted
 		s.transientConsumed = append(s.transientConsumed, *key)
 	}
-	return promoted
 }
 
 func newPostprocessSession(cfg llmproxy.PostprocessConfig) *postprocessSession {
@@ -137,11 +149,12 @@ func (s *postprocessSession) rollback(ctx context.Context, toolUses []conversati
 }
 
 // commitVerdictSideEffects walks each verdict in tool_use order and
-// realizes the spec-on-verdict signals — DeferredDriftOutcome FIRST
-// (so the pre-clear mint lands before the substitution write that
-// depends on it), then PendingSubstitution. Called AFTER all
-// evaluators have produced verdicts so the verdict itself stays free
-// of registry side-effects.
+// realizes the spec-on-verdict signals — promote transients FIRST
+// (so any newly-promoted recoverable verdict has its PendingSubstitution
+// set before the substitution loop), then DeferredDriftOutcome (so
+// the pre-clear mint lands before the substitution write that depends
+// on it), then PendingSubstitution. Called BEFORE the real rewrite so
+// transient promotions land in the verdict map the rewriter reads.
 //
 // Ordering is intentional and per-verdict atomic-ish: if drift outcome
 // succeeds but substitution fails, the drift outcome is recorded in
@@ -153,11 +166,19 @@ func (s *postprocessSession) rollback(ctx context.Context, toolUses []conversati
 //
 // Returns the failing error so the caller (postproc / stream) can
 // fail-closed the response — rollback() then sweeps every write made
-// on behalf of this request in one place.
+// on behalf of this request in one place (including transient-budget
+// slots refunded via TransientBudget.Release).
 func (s *postprocessSession) commitVerdictSideEffects(ctx context.Context, verdictByTU map[string]conversation.ToolUseVerdict, toolUses []conversation.ToolUse) error {
 	if s == nil {
 		return nil
 	}
+	// Pass 1: promote transient-deny verdicts. Mutates verdictByTU
+	// in-place; tracked consumes go on s.transientConsumed for
+	// rollback. Runs regardless of whether ScopeDrifts is wired so
+	// the transient mechanism works in deployments that don't use
+	// the scope-drift continuation menu.
+	s.promoteTransients(ctx, verdictByTU, toolUses)
+
 	registry := s.baseCfg.AuthorizationContext.ScopeDrifts
 	if registry == nil {
 		return nil

@@ -25,6 +25,10 @@ func transientDenyTestSetup(failureClass string) (conversation.ToolUseVerdict, c
 		AuditContext: llmproxy.AuditContext{ConversationID: "conv-transient"},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			TransientBudget: llmproxy.NewMemoryTransientBudget(0),
+			// ScopeDrifts wired so the placeholder transform (which
+			// commit re-runs on promoted transients) can populate
+			// SubstituteWithToolCall + PendingSubstitution.
+			ScopeDrifts: llmproxy.NewMemoryScopeDriftRegistry(0),
 		},
 	}
 	return v, tu, cfg
@@ -175,18 +179,34 @@ func TestTryPromoteTransient_DistinctConversationsIndependent(t *testing.T) {
 	}
 }
 
-// applyTransientTransform wraps the pure function with session-owned
-// tracking. The wrapper IS the call site the eval closures use, so
-// it's worth pinning that:
-//   - it returns the same promoted verdict the pure function does
-//   - it accumulates the consumed key on the session for rollback
-//   - on a non-promote, it accumulates nothing (no spurious entries)
-func TestSession_ApplyTransientTransform_TracksConsumeForRollback(t *testing.T) {
-	v, _, cfg := transientDenyTestSetup("class-x")
+// commitVerdictSideEffects must promote transient-deny verdicts in
+// the verdictByTU map (set RecoverableReason, re-run placeholder
+// transform so PendingSubstitution gets set) AND track the consumed
+// key on the session for rollback. Pins the deferred-spec contract:
+// evaluators emit TransientDenyVerdict, commit decides.
+func TestSession_CommitPromotesTransientAndTracksConsume(t *testing.T) {
+	v, tu, cfg := transientDenyTestSetup("class-x")
 	session := newPostprocessSession(cfg)
-	got := session.applyTransientTransform(context.Background(), v, cfg)
-	if got.RecoverableReason == "" {
-		t.Fatal("first call should promote (precondition)")
+	verdictByTU := map[string]conversation.ToolUseVerdict{tu.ID: v}
+	if err := session.commitVerdictSideEffects(context.Background(), verdictByTU, []conversation.ToolUse{tu}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	got := verdictByTU[tu.ID]
+	// Promoted + placeholder-transformed: SubstituteWithToolCall holds
+	// the synthetic placeholder shape; PendingSubstitution carries the
+	// spec commit then registered; RecoverableReason was cleared by
+	// the placeholder migration (it owns the wire shape now).
+	if got.SubstituteWithToolCall == nil {
+		t.Fatalf("commit should have re-run placeholder transform on promoted verdict; got %+v", got)
+	}
+	if got.PendingSubstitution == nil {
+		t.Fatalf("commit should have populated PendingSubstitution from the placeholder migration; got %+v", got)
+	}
+	if !got.SuppressSubstituteText {
+		t.Fatalf("commit should have set SuppressSubstituteText=true on promoted verdict; got %+v", got)
+	}
+	if got.RecoverableReason != "" {
+		t.Fatalf("commit's re-run of placeholder transform should have cleared RecoverableReason; got %q", got.RecoverableReason)
 	}
 	if len(session.transientConsumed) != 1 {
 		t.Fatalf("expected 1 tracked consume; got %d (%+v)", len(session.transientConsumed), session.transientConsumed)
@@ -201,21 +221,32 @@ func TestSession_ApplyTransientTransform_TracksConsumeForRollback(t *testing.T) 
 	}
 }
 
-func TestSession_ApplyTransientTransform_DoesNotTrackNonPromotes(t *testing.T) {
-	v, _, cfg := transientDenyTestSetup("class-x")
+// Budget-exhausted commit must NOT mutate the verdict (still plain
+// Deny) and must NOT track a consume — only actual budget takes feed
+// the rollback list.
+func TestSession_CommitDoesNotTrackWhenBudgetExhausted(t *testing.T) {
+	v, tu, cfg := transientDenyTestSetup("class-x")
+	// Pre-consume the budget so the commit's Try returns false.
+	cfg.AuthorizationContext.TransientBudget.Try(context.Background(), llmproxy.TransientBudgetKey{
+		AgentID:        cfg.AgentContext.AgentID,
+		ConversationID: cfg.AuditContext.ConversationID,
+		FailureClass:   "class-x",
+	})
 	session := newPostprocessSession(cfg)
-	if got := session.applyTransientTransform(context.Background(), v, cfg); got.RecoverableReason == "" {
-		t.Fatal("precondition: first call should promote")
+	verdictByTU := map[string]conversation.ToolUseVerdict{tu.ID: v}
+	if err := session.commitVerdictSideEffects(context.Background(), verdictByTU, []conversation.ToolUse{tu}); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
-	// Second call same class — budget exhausted, must not track.
-	v2 := conversation.TransientDenyVerdict("class-x", "retry reason")
-	session.applyTransientTransform(context.Background(), v2, cfg)
-	if len(session.transientConsumed) != 1 {
-		t.Fatalf("expected 1 tracked consume (not the second non-promote); got %d", len(session.transientConsumed))
+	got := verdictByTU[tu.ID]
+	if got.RecoverableReason != "" {
+		t.Fatalf("budget-exhausted commit must NOT promote; got RecoverableReason=%q", got.RecoverableReason)
+	}
+	if len(session.transientConsumed) != 0 {
+		t.Fatalf("budget-exhausted commit must NOT track; got %+v", session.transientConsumed)
 	}
 }
 
-// End-to-end: session rollback refunds every tracked consume via
+// End-to-end: session rollback refunds every consume commit made via
 // TransientBudget.Release so a fail-closed response doesn't burn the
 // agent's one retry token for a recoverable verdict they never saw.
 func TestPostprocessSession_RollbackRefundsConsumedTransientSlots(t *testing.T) {
@@ -235,9 +266,12 @@ func TestPostprocessSession_RollbackRefundsConsumedTransientSlots(t *testing.T) 
 		Input: json.RawMessage(`{"command":"curl"}`),
 	}
 	v := conversation.TransientDenyVerdict("class-x", "transient")
-	got := session.applyTransientTransform(context.Background(), v, cfg)
-	if got.RecoverableReason == "" {
-		t.Fatal("precondition: first call should promote and consume budget")
+	verdictByTU := map[string]conversation.ToolUseVerdict{tu.ID: v}
+	if err := session.commitVerdictSideEffects(context.Background(), verdictByTU, []conversation.ToolUse{tu}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if verdictByTU[tu.ID].RecoverableReason == "" {
+		t.Fatal("precondition: commit should have promoted and consumed budget")
 	}
 	key := llmproxy.TransientBudgetKey{
 		AgentID:        cfg.AgentContext.AgentID,
@@ -245,8 +279,9 @@ func TestPostprocessSession_RollbackRefundsConsumedTransientSlots(t *testing.T) 
 		FailureClass:   "class-x",
 	}
 	if budget.Try(context.Background(), key) {
-		t.Fatal("precondition: budget should be consumed after promote")
+		t.Fatal("precondition: budget should be consumed after commit")
 	}
+	got := verdictByTU[tu.ID]
 
 	session.rollback(context.Background(), []conversation.ToolUse{tu}, map[string]conversation.ToolUseVerdict{tu.ID: got})
 
