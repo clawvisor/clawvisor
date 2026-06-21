@@ -1,0 +1,39 @@
+internal/runtime/llmproxy/policies/inline_task_augment.go
+  s_522af339bc956c::t_9d76458b7c1115 6,21,24-37,42-43,62,66-71,81,84
+internal/runtime/llmproxy/policies/inline_task_intercept_test.go
+  s_522af339bc956c::t_c69df9fc4315de 15-18,23,32,55
+internal/api/handlers/llm_endpoint.go
+  s_522af339bc956c::t_d08af042259320 516-530,580-606,658-667
+internal/runtime/llmproxy/policies/secret_decision.go
+  s_522af339bc956c::t_5eb854bf665edd 26,37
+internal/runtime/llmproxy/policies/task_approval_reply_test.go
+  s_522af339bc956c::t_6143015769b9d2 15-18,22,43,62
+internal/runtime/llmproxy/policies/full_pipeline_e2e_test.go
+  s_522af339bc956c::t_103dc26648c4b8 43-45
+internal/runtime/llmproxy/policies/inline_task_intercept.go
+  s_522af339bc956c::t_a7ac3de7f544fd 5,7,12,28-29,34-54,58,61,65,85,89
+internal/runtime/llmproxy/policies/integration_full_chain_test.go
+  s_522af339bc956c::t_c9bfd50d5161a2 46-48,121-122
+internal/runtime/llmproxy/policies/inline_task_augment_test.go
+  s_522af339bc956c::t_603c40463aca59 14-23,29,75
+internal/runtime/llmproxy/policies/secret_decision_test.go
+  s_522af339bc956c::t_3dc19c0fbe7483 56,92
+internal/runtime/llmproxy/policies/task_approval_reply.go
+  s_522af339bc956c::t_7b0513ea45b040 5,7,24-40,43,48-49,60,64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "2a2623b8da1faf0eea94376e14322471fb635c5d",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

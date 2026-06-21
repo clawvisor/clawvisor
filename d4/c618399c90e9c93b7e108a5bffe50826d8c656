@@ -1,0 +1,34 @@
+internal/runtime/llmproxy/inbound_sanitize.go
+  s_8de9dcae61d3e3::t_fb5113836a95b1 487-497,504-575
+internal/api/handlers/proxy_resolver.go
+  8de9dcae61d3e38a 491-492,539-555
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "d4c618399c90e9c93b7e108a5bffe50826d8c656",
+  "prompts": {
+    "8de9dcae61d3e38a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine",
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 494,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

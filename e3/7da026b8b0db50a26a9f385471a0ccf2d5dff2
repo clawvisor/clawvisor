@@ -1,0 +1,22 @@
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_b7635082fff64b::t_857ba6bf3500bc 210-211
+  s_b7635082fff64b::t_069bacf3122139 221-233
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_b7635082fff64b::t_55a66bce98c007 148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "e37da026b8b0db50a26a9f385471a0ccf2d5dff2",
+  "prompts": {},
+  "sessions": {
+    "s_b7635082fff64b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e32a6-368e-7c40-a4de-d67d7171c8f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

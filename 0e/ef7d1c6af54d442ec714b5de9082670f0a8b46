@@ -1,0 +1,90 @@
+internal/runtime/conversation/openai_response.go
+  s_bbe778adcf6f02::t_e01a6517b9e7a6 163-175
+  s_bbe778adcf6f02::t_7c9590a1ef182f 833-850
+  s_bbe778adcf6f02::t_fd9d499b5e8f7f 428-447
+  s_bbe778adcf6f02::t_3453a2960a15a5 101-122
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_bbe778adcf6f02::t_f9e2f4b6313bfe 1087-1088
+  s_bbe778adcf6f02::t_f3c42a7cde4595 1063-1066
+  s_bbe778adcf6f02::t_20d3e5f1ceda4d 643-648
+  s_bbe778adcf6f02::t_063df26f1b5cdf 777-782
+internal/e2e/lite/scope_drift_counters.go
+  s_bbe778adcf6f02::t_477697d80d2c7b 84-85,92-93,97
+  s_bbe778adcf6f02::t_0fd726aa9d7f75 22-23
+  s_bbe778adcf6f02::t_5964024371b6e2 83,86-91,94-96,98
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_bbe778adcf6f02::t_0fda548b373bfe 151-156,163-167,169-170
+  s_bbe778adcf6f02::t_b80ef34121a245 157
+  s_bbe778adcf6f02::t_94767dcd4b23a3 158-162,168
+  s_bbe778adcf6f02::t_78a80d46fb842e 48-58
+internal/runtime/llmproxy/policies/authorization_policy.go
+  s_bbe778adcf6f02::t_6292c9a2919ace 244-251,255-259,261-262
+  s_bbe778adcf6f02::t_682e0f0e0a4de3 252
+  s_bbe778adcf6f02::t_c9a874656e5872 96-97,99-106
+  s_bbe778adcf6f02::t_d1e102a78b26b2 253-254,260
+internal/api/handlers/llm_endpoint_test.go
+  s_bbe778adcf6f02::t_83e19495af66c5 1989
+  s_bbe778adcf6f02::t_4373a71ececef2 1988,1990-1997
+internal/runtime/llmproxy/postproc/stream.go
+  s_bbe778adcf6f02::t_843aeb9564cad3 688,691-721,725,728
+  s_bbe778adcf6f02::t_69763181526dcf 587-589,591,598-628,630,638-639,656,668-669
+  s_bbe778adcf6f02::t_0a98d96b00679d 503-505,507-512,556-568,584-586,590,592-597,629,631-637,640-655,657-667,670-687,689-690,722-724,726-727,729-767
+  s_bbe778adcf6f02::t_218db4d10c28b7 412-443,445,448-452,460-465,468-469
+  s_bbe778adcf6f02::t_ee4a98d9feb768 533
+  s_bbe778adcf6f02::t_916fd31c91d6ad 571-575,579
+  s_bbe778adcf6f02::t_3258bc37ba6a0e 196
+  s_bbe778adcf6f02::t_9dc6ef862aaa2e 513,524-532,534,538,540-550,569-570,576-578,580-583
+internal/api/handlers/llm_endpoint.go
+  s_bbe778adcf6f02::t_85301e726b1068 1021-1048
+internal/runtime/llmproxy/postproc/postprocess_test.go
+  s_bbe778adcf6f02::t_c09d9715673133 2721-2799
+  s_bbe778adcf6f02::t_6d6616e2eb60b8 2667,2686
+  s_bbe778adcf6f02::t_9c4f40365b64be 2599-2600,2610
+  s_bbe778adcf6f02::t_957780f6597f94 2703-2707
+internal/runtime/llmproxy/scope_drift_inbound_rewrite.go
+  s_bbe778adcf6f02::t_7ea94d30d1f6dc 59-73
+  s_bbe778adcf6f02::t_eebfa2aa9a0afd 79
+  s_bbe778adcf6f02::t_33b33aaa7f821a 1-58,74-78,80-270,601-676
+  s_bbe778adcf6f02::t_c122dba0659cc6 271-600
+internal/runtime/llmproxy/scope_drift_registry.go
+  s_bbe778adcf6f02::t_8c33f9df3b6164 231-232
+  s_bbe778adcf6f02::t_6f9ae5f6af9569 191-193,195,197-202,206-208,211-218
+  s_bbe778adcf6f02::t_ba178ae228296f 369,374-379
+  s_bbe778adcf6f02::t_e2948436f71360 145-159,188,196,204
+  s_bbe778adcf6f02::t_2f45cec62620cf 358-367,370-373,381,383-389,391,393-394,404-409,416-417
+  s_bbe778adcf6f02::t_788d2e349b8731 230,241,259
+  s_bbe778adcf6f02::t_704d3e0df6ba60 189-190,194,203,205,209-210,219-227
+  s_bbe778adcf6f02::t_72edfa30cc71fd 357,368,380,382,390,392
+internal/runtime/llmproxy/scope_drift_sentinel.go
+  s_bbe778adcf6f02::t_9c74f1e5389e81 1-7,18,25,28,30,37-42,44-46,48
+  s_bbe778adcf6f02::t_afe80357c03a52 8-17,19-24,26-27,29,31-36,43,47
+internal/runtime/llmproxy/scope_drift_prompt.go
+  s_bbe778adcf6f02::t_0f730998879453 11-16
+  s_bbe778adcf6f02::t_d64a573a722f81 9,25
+  s_bbe778adcf6f02::t_1dad561905d9d6 76
+internal/runtime/llmproxy/pipelineeval/scope_drift.go
+  s_bbe778adcf6f02::t_8d9e95fd42a710 138-142
+  s_bbe778adcf6f02::t_33e64164c2d22c 175-181,191,193-194,196-201,205-212
+  s_bbe778adcf6f02::t_897b0dd9af2a62 85-95,99
+  s_bbe778adcf6f02::t_ec6ce94ca3ab3d 182-190,192,195,202-204,213-218
+internal/runtime/llmproxy/scope_drift_e2e_test.go
+  s_bbe778adcf6f02::t_e80754f1abe587 920-1021
+  s_bbe778adcf6f02::t_52f545eb62e4b6 752-897,903-914,917-919
+  s_bbe778adcf6f02::t_090776aa658b25 898-902,915-916
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "0eef7d1c6af54d442ec714b5de9082670f0a8b46",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

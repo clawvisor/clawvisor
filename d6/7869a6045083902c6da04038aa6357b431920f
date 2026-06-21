@@ -1,0 +1,47 @@
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_openai_chat.json
+  s_813cf813d8b1d0::t_66390d43763811 1-2,4-33
+  s_813cf813d8b1d0::t_d56172fc39a366 3
+internal/api/handlers/testdata/llm_characterization/tool_use_credential_rewrite.json
+  s_813cf813d8b1d0::t_d38b55298a5609 1-78
+internal/api/handlers/testdata/llm_characterization/tool_use_held_for_approval.json
+  s_813cf813d8b1d0::t_d56172fc39a366 1-15,17-68
+  s_813cf813d8b1d0::t_b6e7f5c09c0329 16
+internal/api/handlers/llm_characterization_test.go
+  s_813cf813d8b1d0::t_99c64f441539f7 1-29,31-42,46-57,61-64,67-86,88-96,98-106,108-119,121-129,131-166,171-239
+  s_813cf813d8b1d0::t_2463c657263597 43-45
+  s_813cf813d8b1d0::t_b1ab1216a35fcd 58-60
+  s_813cf813d8b1d0::t_6f8eaefd0df89b 65-66
+  s_813cf813d8b1d0::t_ac380770ccece3 87
+  s_813cf813d8b1d0::t_a625328db78f8f 240-293,371-391,305,307,315,318-320,322-327,329,338,340,354,358-360,362-367,369
+  s_813cf813d8b1d0::t_939b99103f0ad2 294-295,308-310,312,314,316-317,330-337,339,341-353,355-357,361,368,370
+  s_813cf813d8b1d0::t_2b8ff0b13bcd80 30
+  s_813cf813d8b1d0::t_2b4231010dcc99 97,107
+  s_813cf813d8b1d0::t_aa10f3df4893ab 120,130
+  s_813cf813d8b1d0::t_da0ff7c473cd6c 167-170
+  s_813cf813d8b1d0::t_9732d570de6eec 296-304,306,311,313,321,328
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_anthropic.json
+  s_813cf813d8b1d0::t_e158cf3b856f37 1-2,4-31
+  s_813cf813d8b1d0::t_d56172fc39a366 3
+internal/api/handlers/testdata/llm_characterization/control_notice_injected.json
+  s_813cf813d8b1d0::t_66390d43763811 1-2,4-34
+  s_813cf813d8b1d0::t_d56172fc39a366 3
+internal/api/handlers/testdata/llm_characterization/malformed_request.json
+  s_813cf813d8b1d0::t_66390d43763811 1-2,4-24
+  s_813cf813d8b1d0::t_d56172fc39a366 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "d67869a6045083902c6da04038aa6357b431920f",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

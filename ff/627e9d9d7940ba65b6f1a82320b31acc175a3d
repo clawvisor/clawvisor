@@ -1,0 +1,33 @@
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_6d63144827afd9::t_5f9c7e79789852 876-879,885
+  s_6d63144827afd9::t_4f459ef4c0932c 929,931-948
+  s_6d63144827afd9::t_f3523a8b5a3efc 756-783
+internal/runtime/llmproxy/scope_drift_e2e_test.go
+  s_6d63144827afd9::t_7f53f204692b4e 218-299
+internal/runtime/llmproxy/pipelineeval/scope_drift.go
+  s_6d63144827afd9::t_b2a6070866bf82 154-158,162-164,189-214
+internal/runtime/llmproxy/pipeline/policy.go
+  s_6d63144827afd9::t_69472ba7506cbf 146-168
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_6d63144827afd9::t_6441564c821776 157-158,160,165-166
+internal/runtime/llmproxy/policies/authorization_policy.go
+  s_6d63144827afd9::t_989990d72c958f 250,255-256
+internal/api/handlers/llm_endpoint.go
+  s_6d63144827afd9::t_fd0de8246280df 625-650
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "ff627e9d9d7940ba65b6f1a82320b31acc175a3d",
+  "prompts": {},
+  "sessions": {
+    "s_6d63144827afd9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4e8ce690-16b9-468c-b3d5-633de4c62af4",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

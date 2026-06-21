@@ -1,0 +1,36 @@
+internal/runtime/llmproxy/postproc/recoverable_deny.go
+  s_bbe778adcf6f02::t_dce11ae8b4e502 1-24,29,31-34,36-38,40-43,45-47,49-56,63-68,70-74,78-92
+  s_bbe778adcf6f02::t_243fbb77723d97 76-77
+internal/runtime/llmproxy/postproc/stream.go
+  s_bbe778adcf6f02::t_3258bc37ba6a0e 197
+  s_bbe778adcf6f02::t_218db4d10c28b7 413-444,446,449-453,461-466,469-470
+  s_bbe778adcf6f02::t_0a98d96b00679d 504-506,508-513,557-569,585-587,591,593-598,630,632-638,641-656,658-668,671-688,690-691,723-725,727-728,730-768
+  s_bbe778adcf6f02::t_9dc6ef862aaa2e 514,525-533,535,539,541-551,570-571,577-579,581-584
+  s_bbe778adcf6f02::t_ee4a98d9feb768 534
+  s_bbe778adcf6f02::t_916fd31c91d6ad 572-576,580
+  s_bbe778adcf6f02::t_69763181526dcf 588-590,592,599-629,631,639-640,657,669-670
+  s_bbe778adcf6f02::t_843aeb9564cad3 689,692-722,726,729
+internal/runtime/llmproxy/scope_drift_sentinel.go
+  s_bbe778adcf6f02::t_9c74f1e5389e81 1-7,18,25,28,30,38-40
+  s_bbe778adcf6f02::t_afe80357c03a52 8-17,19-24,26-27,29,31-35,37,41
+  s_bbe778adcf6f02::t_45413f97700c1d 36,43-66
+internal/runtime/llmproxy/postproc/recoverable_deny_test.go
+  s_bbe778adcf6f02::t_950117d2423384 1-33,35-101,103-114
+  s_bbe778adcf6f02::t_6d623b1a5dd8fa 115-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "7b7b592807e4de111c5fdfd252d7ea5db4736764",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
