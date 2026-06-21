@@ -8,13 +8,18 @@ import (
 	"time"
 )
 
+func key(agent, conv, class string) TransientBudgetKey {
+	return TransientBudgetKey{AgentID: agent, ConversationID: conv, FailureClass: class}
+}
+
 func TestMemoryTransientBudget_FirstTryWinsSecondTryLoses(t *testing.T) {
 	b := NewMemoryTransientBudget(time.Minute)
 	ctx := context.Background()
-	if !b.Try(ctx, "agent-1", "conv-1", "class-x") {
+	k := key("agent-1", "conv-1", "class-x")
+	if !b.Try(ctx, k) {
 		t.Fatalf("first Try should return true (budget remaining)")
 	}
-	if b.Try(ctx, "agent-1", "conv-1", "class-x") {
+	if b.Try(ctx, k) {
 		t.Fatalf("second Try should return false (budget consumed)")
 	}
 }
@@ -22,28 +27,37 @@ func TestMemoryTransientBudget_FirstTryWinsSecondTryLoses(t *testing.T) {
 func TestMemoryTransientBudget_DistinctKeysHaveIndependentBudgets(t *testing.T) {
 	b := NewMemoryTransientBudget(time.Minute)
 	ctx := context.Background()
-	if !b.Try(ctx, "agent-1", "conv-1", "class-a") {
-		t.Fatalf("class-a first attempt should pass")
+	keys := []TransientBudgetKey{
+		key("agent-1", "conv-1", "class-a"),
+		key("agent-1", "conv-1", "class-b"),
+		key("agent-1", "conv-2", "class-a"),
+		key("agent-2", "conv-1", "class-a"),
 	}
-	if !b.Try(ctx, "agent-1", "conv-1", "class-b") {
-		t.Fatalf("class-b first attempt should pass independently of class-a")
-	}
-	if !b.Try(ctx, "agent-1", "conv-2", "class-a") {
-		t.Fatalf("different conversation should have its own budget for class-a")
-	}
-	if !b.Try(ctx, "agent-2", "conv-1", "class-a") {
-		t.Fatalf("different agent should have its own budget for class-a")
-	}
-	// Re-trying any of those should now fail.
-	for _, args := range [][3]string{
-		{"agent-1", "conv-1", "class-a"},
-		{"agent-1", "conv-1", "class-b"},
-		{"agent-1", "conv-2", "class-a"},
-		{"agent-2", "conv-1", "class-a"},
-	} {
-		if b.Try(ctx, args[0], args[1], args[2]) {
-			t.Fatalf("retry %v should be denied (budget consumed)", args)
+	for _, k := range keys {
+		if !b.Try(ctx, k) {
+			t.Fatalf("first attempt for %+v should pass", k)
 		}
+	}
+	for _, k := range keys {
+		if b.Try(ctx, k) {
+			t.Fatalf("retry %+v should be denied (budget consumed)", k)
+		}
+	}
+}
+
+// Components that contain a pipe ("agent|x" vs "agent" + "x|...")
+// MUST stay isolated. A struct key cannot collide; this guards against
+// regressing back to string concatenation.
+func TestMemoryTransientBudget_PipeInIDsDoesNotCollide(t *testing.T) {
+	b := NewMemoryTransientBudget(time.Minute)
+	ctx := context.Background()
+	k1 := key("agent|x", "conv", "class")
+	k2 := key("agent", "x|conv", "class")
+	if !b.Try(ctx, k1) {
+		t.Fatalf("k1 first attempt should pass")
+	}
+	if !b.Try(ctx, k2) {
+		t.Fatalf("k2 first attempt should pass independently — pipe in IDs must not alias keys")
 	}
 }
 
@@ -52,18 +66,55 @@ func TestMemoryTransientBudget_TTLExpiryRestoresBudget(t *testing.T) {
 	b := &memoryTransientBudget{
 		ttl:     time.Minute,
 		now:     func() time.Time { return now },
-		entries: map[string]time.Time{},
+		entries: map[TransientBudgetKey]time.Time{},
 	}
 	ctx := context.Background()
-	if !b.Try(ctx, "a", "c", "class") {
+	k := key("a", "c", "class")
+	if !b.Try(ctx, k) {
 		t.Fatalf("first attempt should pass")
 	}
-	if b.Try(ctx, "a", "c", "class") {
+	if b.Try(ctx, k) {
 		t.Fatalf("second attempt before TTL should fail")
 	}
 	now = now.Add(time.Minute + time.Second)
-	if !b.Try(ctx, "a", "c", "class") {
+	if !b.Try(ctx, k) {
 		t.Fatalf("after TTL expiry, budget should be restored")
+	}
+}
+
+// Release refunds a previously-consumed slot so a follow-up Try
+// succeeds again. Underpins the postproc rollback that refunds slots
+// when a response is fail-closed and the agent never saw the
+// recoverable verdict.
+func TestMemoryTransientBudget_ReleaseRefundsSlot(t *testing.T) {
+	b := NewMemoryTransientBudget(time.Minute)
+	ctx := context.Background()
+	k := key("a", "c", "class")
+	if !b.Try(ctx, k) {
+		t.Fatal("first attempt should pass")
+	}
+	if b.Try(ctx, k) {
+		t.Fatal("second attempt before release should fail")
+	}
+	b.Release(ctx, k)
+	if !b.Try(ctx, k) {
+		t.Fatalf("after Release the slot should be available again")
+	}
+}
+
+// Release of an unknown key is a no-op (doesn't crash, doesn't poison
+// other slots). Important because postproc may roll back release sets
+// that include keys the budget never saw if the verdict ordering shifted.
+func TestMemoryTransientBudget_ReleaseUnknownKeyIsNoOp(t *testing.T) {
+	b := NewMemoryTransientBudget(time.Minute)
+	ctx := context.Background()
+	b.Release(ctx, key("a", "c", "class")) // never tried
+	consumed := key("a", "c", "consumed")
+	if !b.Try(ctx, consumed) {
+		t.Fatal("unrelated key should still pass after spurious Release")
+	}
+	if b.Try(ctx, consumed) {
+		t.Fatal("budget for consumed key should be intact")
 	}
 }
 
@@ -76,12 +127,13 @@ func TestMemoryTransientBudget_ConcurrentTryHasExactlyOneWinner(t *testing.T) {
 		winners atomic.Int64
 	)
 	start := make(chan struct{})
+	k := key("agent", "conv", "class")
 	wg.Add(goroutines)
 	for i := 0; i < goroutines; i++ {
 		go func() {
 			defer wg.Done()
 			<-start
-			if b.Try(ctx, "agent", "conv", "class") {
+			if b.Try(ctx, k) {
 				winners.Add(1)
 			}
 		}()
@@ -93,9 +145,10 @@ func TestMemoryTransientBudget_ConcurrentTryHasExactlyOneWinner(t *testing.T) {
 	}
 }
 
-func TestMemoryTransientBudget_NilReceiverReturnsFalse(t *testing.T) {
+func TestMemoryTransientBudget_NilReceiverSafe(t *testing.T) {
 	var b *memoryTransientBudget
-	if b.Try(context.Background(), "a", "c", "class") {
+	if b.Try(context.Background(), key("a", "c", "class")) {
 		t.Fatalf("nil receiver should return false (no budget)")
 	}
+	b.Release(context.Background(), key("a", "c", "class")) // must not panic
 }

@@ -37,6 +37,22 @@ type postprocessSession struct {
 	fed                      bool
 	substitutions            []llmproxy.PendingSubstitutionKey
 	driftOutcomes            []string
+	// transientConsumed tracks TransientBudget Try() calls the
+	// transformTransientDenyToRecoverable transform made during eval.
+	// rollbackVerdictSideEffects calls TransientBudget.Release on each
+	// so a fail-closed response refunds the agent's one retry slot;
+	// otherwise the next real attempt would degrade to plain Deny.
+	transientConsumed []llmproxy.TransientBudgetKey
+}
+
+// trackTransientConsumed records a Try() the transient transform made
+// so the session's rollback path can refund it on fail-closed. Passed
+// into the transform as a closure from the eval call sites.
+func (s *postprocessSession) trackTransientConsumed(key llmproxy.TransientBudgetKey) {
+	if s == nil {
+		return
+	}
+	s.transientConsumed = append(s.transientConsumed, key)
 }
 
 func newPostprocessSession(cfg llmproxy.PostprocessConfig) *postprocessSession {
@@ -255,6 +271,16 @@ func (s *postprocessSession) rollbackVerdictSideEffects(ctx context.Context) {
 	if s == nil {
 		return
 	}
+	// Refund transient-budget slots regardless of whether the scope-
+	// drift registry is wired; the budget is an independent registry
+	// and the next real attempt deserves a fresh retry slot.
+	if budget := s.baseCfg.AuthorizationContext.TransientBudget; budget != nil {
+		for _, key := range s.transientConsumed {
+			budget.Release(ctx, key)
+		}
+	}
+	s.transientConsumed = nil
+
 	registry := s.baseCfg.AuthorizationContext.ScopeDrifts
 	if registry == nil {
 		s.substitutions = nil

@@ -20,6 +20,12 @@ import (
 // retry policy for transient failures (judge timeout, nonce-mint
 // hiccup, decision-engine RPC blip).
 //
+// trackConsumed, when non-nil, is called with the consumed key after a
+// successful Try. The postproc session uses it to remember keys that
+// must be refunded if the response is later fail-closed — otherwise
+// the agent's one retry slot would burn for a recoverable response
+// they never actually saw.
+//
 // Skipped (verdict returned unchanged) when:
 //   - not a Deny verdict, or TransientFailureClass is empty
 //   - RecoverableReason is already set — a prior layer already chose
@@ -34,6 +40,7 @@ func transformTransientDenyToRecoverable(
 	v conversation.ToolUseVerdict,
 	_ conversation.ToolUse,
 	cfg llmproxy.PostprocessConfig,
+	trackConsumed func(llmproxy.TransientBudgetKey),
 ) conversation.ToolUseVerdict {
 	if v.Outcome != conversation.OutcomeDeny || v.TransientFailureClass == "" {
 		return v
@@ -48,8 +55,16 @@ func transformTransientDenyToRecoverable(
 	if cfg.AgentContext.AgentID == "" || cfg.AuditContext.ConversationID == "" {
 		return v
 	}
-	if !budget.Try(ctx, cfg.AgentContext.AgentID, cfg.AuditContext.ConversationID, v.TransientFailureClass) {
+	key := llmproxy.TransientBudgetKey{
+		AgentID:        cfg.AgentContext.AgentID,
+		ConversationID: cfg.AuditContext.ConversationID,
+		FailureClass:   v.TransientFailureClass,
+	}
+	if !budget.Try(ctx, key) {
 		return v
+	}
+	if trackConsumed != nil {
+		trackConsumed(key)
 	}
 	v.RecoverableReason = v.Reason
 	v.SubstituteWith = v.Reason
