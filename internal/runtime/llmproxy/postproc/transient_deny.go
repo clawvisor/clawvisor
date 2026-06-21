@@ -1,3 +1,54 @@
+// Transient-deny promotion: design constraints and why this isn't a
+// deferred spec like PendingSubstitution / DeferredDriftOutcome.
+//
+// The other postproc transforms follow a "verdict is pure data"
+// invariant: evaluators populate a spec field on the verdict; the
+// transform translates it to wire shape; commitVerdictSideEffects
+// realizes the spec as a registry write; rollbackVerdictSideEffects
+// undoes the write. No registry mutation happens inside the transform.
+//
+// Transient-deny CAN'T fit that pattern because of an ordering
+// constraint baked into postproc.go:
+//
+//   1. eval — innerEval runs, then this transform, then
+//      transformRecoverableDenyToPlaceholder. The placeholder
+//      transform consumes RecoverableReason and emits the placeholder
+//      wire shape (SubstituteWithToolCall + PendingSubstitution).
+//   2. rewrite — the rewriter walks the verdict map and emits the
+//      response body using the placeholder shape.
+//   3. commitVerdictSideEffects — registry writes happen here, AFTER
+//      the response body has already shipped the placeholder.
+//
+// The budget Try() is the decision point for whether to promote the
+// verdict to recoverable. If we deferred Try to step (3), step (2)
+// would have already shipped the verdict as a plain Deny — too late
+// to convert it. So Try MUST happen during step (1).
+//
+// The constraint propagates: this transform performs a session-state
+// mutation (consumes a budget slot) during eval, breaking the strict
+// "transform is pure" rule. We mitigate by splitting the work:
+//
+//   - tryPromoteTransient — pure function (ctx, verdict, cfg) →
+//     (verdict, consumedKey). Encapsulates the decision; returns the
+//     mutation it caused as data the caller can act on. No session
+//     reference.
+//   - session.applyTransientTransform — session method that wraps
+//     the pure function and owns the consumed-key tracking on the
+//     session, matching how session.evaluator / .finalize / .rollback
+//     own their session state.
+//   - rollbackVerdictSideEffects — calls TransientBudget.Release on
+//     every tracked key so a fail-closed response refunds the agent's
+//     retry slot. Same shape as the substitution / drift-outcome
+//     rollback.
+//
+// If the rewrite step ever moves AFTER commitVerdictSideEffects (e.g.
+// a two-pass rewrite where pass-1 discovers tool_uses and pass-2
+// emits the body using post-commit verdicts), this transform could be
+// converted to a true deferred spec — that restructure was considered
+// and rejected as disproportionate to the single use site today
+// (script-session judge timeout). Revisit if more transient sites
+// land.
+
 package postproc
 
 import (
