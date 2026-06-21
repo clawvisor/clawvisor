@@ -68,10 +68,14 @@ fi
 
 # --- Ask: make Clawvisor the default for every codex run? --------------------
 if [ -z "$CV_DEFAULT_MODE" ]; then
-    if prompt_yn "Make Clawvisor the default for every codex session? (no = install a 'codex-cv' alias instead)" no; then
-        CV_DEFAULT_MODE=yes
-    else
+    if prompt_choice \
+        "How should Clawvisor route your codex calls?" \
+        "Install a 'codex-cv' shell alias (opt in per session)" \
+        "Make it the default for every codex session (~/.codex/config.toml)"
+    then
         CV_DEFAULT_MODE=no
+    else
+        CV_DEFAULT_MODE=yes
     fi
 fi
 
@@ -118,10 +122,14 @@ else
     # Alias-only: install codex-cv() that targets the Clawvisor provider on
     # demand. Leaves the bare `codex` command untouched.
     if [ -z "$CV_YOLO" ]; then
-        if prompt_yn "Should 'codex-cv' skip Codex's approval prompts and sandbox restrictions (--dangerously-bypass-approvals-and-sandbox)?" no; then
-            CV_YOLO=yes
-        else
+        if prompt_choice \
+            "How should 'codex-cv' handle Codex's approval prompts and sandbox?" \
+            "Keep them on (codex asks + sandboxes each call)" \
+            "Skip them (--dangerously-bypass-approvals-and-sandbox)"
+        then
             CV_YOLO=no
+        else
+            CV_YOLO=yes
         fi
     fi
 

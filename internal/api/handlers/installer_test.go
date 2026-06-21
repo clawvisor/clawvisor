@@ -515,9 +515,14 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		"chmod 600",
 		// Smoke test — daemon must accept the freshly minted token.
 		"/api/skill/catalog",
-		// Default-vs-alias prompt + skip-permissions prompt.
-		"Make Clawvisor the default for every Claude Code session?",
+		// Default-vs-alias prompt + skip-permissions prompt (TUI labels).
+		"prompt_choice",
+		"How should Clawvisor route your Claude Code calls?",
+		"How should 'claude-cv' handle Claude Code's permission prompts?",
 		"--dangerously-skip-permissions",
+		// Non-interactive escape hatch.
+		"--no-tui",
+		"CLAWVISOR_NO_TUI",
 		// Default-everywhere branch: env keys + permission rules into
 		// ~/.claude/settings.json.
 		"~/.claude/settings.json",
@@ -556,6 +561,12 @@ func TestInstallerCodexShell(t *testing.T) {
 		"--alias-only",
 		"--yolo",
 		"--no-yolo",
+		"--no-tui",
+		"CLAWVISOR_NO_TUI",
+		// Arrow-key TUI prompts (with prompt_yn fallback in common.sh.tmpl).
+		"prompt_choice",
+		"How should Clawvisor route your codex calls?",
+		"How should 'codex-cv' handle Codex's approval prompts and sandbox?",
 		// Mint + persist + smoke test.
 		"claim=CLAIMCODE0",
 		"/api/agents/connect",

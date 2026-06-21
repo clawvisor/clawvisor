@@ -11,10 +11,14 @@
 # invocation — useful when the user wants to opt in per-call rather than
 # globally.
 if [ -z "$CV_DEFAULT_MODE" ]; then
-    if prompt_yn "Make Clawvisor the default for every Claude Code session? (no = install a 'claude-cv' alias instead)" no; then
-        CV_DEFAULT_MODE=yes
-    else
+    if prompt_choice \
+        "How should Clawvisor route your Claude Code calls?" \
+        "Install a 'claude-cv' shell alias (opt in per session)" \
+        "Make it the default for every claude session (~/.claude/settings.json)"
+    then
         CV_DEFAULT_MODE=no
+    else
+        CV_DEFAULT_MODE=yes
     fi
 fi
 
@@ -75,10 +79,14 @@ else
     # passes --dangerously-skip-permissions so the user isn't double-prompted
     # by Claude Code for each Clawvisor-bound curl.
     if [ -z "$CV_YOLO" ]; then
-        if prompt_yn "Should 'claude-cv' skip Claude Code's permission prompts (--dangerously-skip-permissions)?" no; then
-            CV_YOLO=yes
-        else
+        if prompt_choice \
+            "How should 'claude-cv' handle Claude Code's permission prompts?" \
+            "Keep them on (Claude asks before each curl)" \
+            "Skip them (--dangerously-skip-permissions)"
+        then
             CV_YOLO=no
+        else
+            CV_YOLO=yes
         fi
     fi
 

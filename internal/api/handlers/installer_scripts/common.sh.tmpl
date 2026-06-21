@@ -39,6 +39,8 @@ Flags:
                          for codex; --dangerously-skip-permissions for
                          claude).
   --no-yolo              Don't pass that flag.
+  --no-tui               Use the plain [y/n] prompts instead of the
+                         arrow-key selector (also: CLAWVISOR_NO_TUI=1).
   -h, --help             Show this help and exit.
 
 Without --default-everywhere / --alias-only, the script reads /dev/tty.
@@ -48,12 +50,14 @@ USAGE
 
 CV_DEFAULT_MODE=""    # "yes" (default-everywhere) or "no" (alias-only)
 CV_YOLO=""            # "yes" or "no"
+CV_NO_TUI="${CLAWVISOR_NO_TUI:-0}"  # 1 disables the arrow-key selector
 for arg in "$@"; do
     case "$arg" in
         --default-everywhere) CV_DEFAULT_MODE=yes ;;
         --alias-only)         CV_DEFAULT_MODE=no  ;;
         --yolo)               CV_YOLO=yes ;;
         --no-yolo)            CV_YOLO=no  ;;
+        --no-tui)             CV_NO_TUI=1 ;;
         -h|--help)            usage ;;
         *) echo "unknown flag: $arg" >&2; usage ;;
     esac
@@ -91,6 +95,110 @@ prompt_yn() {
             *) printf 'please answer y or n.\n' >/dev/tty ;;
         esac
     done
+}
+
+# prompt_choice <question> <label0> <label1>
+# Renders a two-option arrow-key selector reading /dev/tty in raw mode.
+# Returns 0 if label0 is picked, 1 if label1 is picked. label0 is the
+# initial highlight (the recommended / safer choice).
+#
+# Falls back to prompt_yn when:
+#   - /dev/tty isn't readable/writable (curl|sh in CI, etc.)
+#   - $TERM is unset or "dumb" (terminal can't handle ANSI cursor moves)
+#   - --no-tui / CLAWVISOR_NO_TUI=1 was passed
+# In fallback mode, prompt_yn's "yes" maps to label1 (the second option),
+# matching how the callers map "yes" to default-everywhere / yolo.
+prompt_choice() {
+    msg=$1
+    label0=$2
+    label1=$3
+
+    if [ ! -r /dev/tty ] || [ ! -w /dev/tty ] \
+        || [ "${TERM:-dumb}" = dumb ] \
+        || [ "${CV_NO_TUI:-0}" = 1 ]; then
+        # Phrase the fallback yn so "yes" = label1 (the second option).
+        if prompt_yn "$msg" no; then
+            return 1
+        fi
+        return 0
+    fi
+
+    # Save tty state and install cleanup so a Ctrl-C / crash doesn't leave
+    # the terminal in raw mode without an echoed cursor.
+    _prompt_old_stty=$(stty -g </dev/tty 2>/dev/null) || _prompt_old_stty=""
+    _prompt_cleanup() {
+        [ -n "$_prompt_old_stty" ] && stty "$_prompt_old_stty" </dev/tty 2>/dev/null
+        printf '\033[?25h' >/dev/tty 2>/dev/null
+    }
+    trap '_prompt_cleanup; exit 130' INT TERM
+    trap '_prompt_cleanup' EXIT
+    stty -icanon -echo </dev/tty 2>/dev/null
+    printf '\033[?25l' >/dev/tty   # hide cursor
+
+    selected=0
+    printf '\033[36m?\033[0m \033[1m%s\033[0m\n' "$msg" >/dev/tty
+    # Print two placeholder lines so the cursor sits below them. The first
+    # _prompt_draw call moves up 2 and overwrites.
+    printf '\n\n' >/dev/tty
+
+    _prompt_draw() {
+        # Move cursor up 2 lines, clear from cursor to end-of-screen, redraw.
+        printf '\033[2A\033[J' >/dev/tty
+        if [ "$selected" = 0 ]; then
+            printf '  \033[36m\xe2\x9d\xaf\033[0m %s\n' "$label0" >/dev/tty
+            printf '    \033[2m%s\033[0m\n' "$label1" >/dev/tty
+        else
+            printf '    \033[2m%s\033[0m\n' "$label0" >/dev/tty
+            printf '  \033[36m\xe2\x9d\xaf\033[0m %s\n' "$label1" >/dev/tty
+        fi
+    }
+    _prompt_draw
+
+    # Read one byte at a time via dd. Escape sequences for arrow keys arrive
+    # as ESC [ A (up) / ESC [ B (down); other keys arrive as a single byte.
+    while :; do
+        ch=$(dd if=/dev/tty bs=1 count=1 2>/dev/null) || break
+        # Enter (\r or \n) → command substitution stripped the trailing
+        # newline, so ch is empty when the user hits return.
+        if [ -z "$ch" ]; then
+            break
+        fi
+        case "$ch" in
+            "$(printf '\033')")
+                # Possible CSI; read the next two bytes for [X.
+                _br=$(dd if=/dev/tty bs=1 count=1 2>/dev/null)
+                if [ "$_br" = '[' ]; then
+                    _key=$(dd if=/dev/tty bs=1 count=1 2>/dev/null)
+                    case "$_key" in
+                        A) selected=0 ;;       # arrow up
+                        B) selected=1 ;;       # arrow down
+                    esac
+                    _prompt_draw
+                fi
+                ;;
+            k|K) selected=0; _prompt_draw ;;  # vim-style
+            j|J) selected=1; _prompt_draw ;;
+            q|Q)
+                _prompt_cleanup
+                trap - INT TERM EXIT
+                echo "cancelled" >&2
+                exit 130
+                ;;
+        esac
+    done
+
+    _prompt_cleanup
+    trap - INT TERM EXIT
+
+    # Echo the resolved choice as a clean confirmation line, then drop the
+    # selector frame so the transcript reads naturally.
+    printf '\033[2A\033[J' >/dev/tty
+    if [ "$selected" = 0 ]; then
+        printf '\033[36m?\033[0m \033[1m%s\033[0m \033[2m· %s\033[0m\n' "$msg" "$label0" >/dev/tty
+    else
+        printf '\033[36m?\033[0m \033[1m%s\033[0m \033[2m· %s\033[0m\n' "$msg" "$label1" >/dev/tty
+    fi
+    return "$selected"
 }
 
 AGENT_NAME='{{.AgentName}}'
