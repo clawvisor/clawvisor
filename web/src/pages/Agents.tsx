@@ -2164,14 +2164,17 @@ function hasProviderUpstreamKey(creds: LLMCredentialsStatus | undefined, provide
   return creds.credentials.some(c => c.provider === provider && (c.stored || c.agent_stored))
 }
 
-// ── One-paste setup path (Claude Code / Codex) ───────────────────────────────
+// ── One-paste setup path (Claude Code / Codex / Hermes / OpenClaw) ───────────
 //
-// One curl, one slash-command invocation, chained with &&. The skill markdown
-// at /skill/install/<target>.md drives everything else: connect with claim
-// (auto-approves), install the agent-side Clawvisor skill, ask the user
-// whether to make Clawvisor the default for this harness, optionally vault
-// the upstream LLM API key (env-detect + dashboard-page fallback), subprocess
-// smoke-test the new config, commit settings, self-uninstall.
+// Two flavours of one-liner share the same component:
+//   - Self-install targets (claude-code, codex) get a deterministic shell
+//     script from /skill/install/<target>.sh that does the whole flow —
+//     mint with claim (auto-approves), persist token, edit the harness
+//     config, smoke-test, write an uninstall reference — without an LLM.
+//   - Cross-install targets (hermes, openclaw) still use the LLM-driven
+//     markdown skill at /skill/install/<target>.md plus a helper toggle
+//     (Claude Code or Codex) that runs the skill, because per-host probing
+//     benefits from an LLM-shaped adaptation loop there.
 //
 // The dashboard's only job here is: mint a claim, render the right one-liner
 // per target, and poll the agents list for the new agent appearing.
@@ -2241,12 +2244,11 @@ const ONE_PASTE_HELPERS: Record<OnePasteHelper, OnePasteHelperSpec> = {
   },
 }
 
-// OnePasteGuide renders a single bash one-liner (curl + harness invocation
-// chained with &&) and watches the agents list for the new agent to land.
-// The skill markdown at /skill/install/<target>.md does everything else —
-// connect with claim (auto-approves), install the agent-side skill, ask the
-// user about defaults, optionally vault the upstream key (via env-detect or
-// the /dashboard/keys/<provider> page), smoke-test, and self-uninstall.
+// OnePasteGuide renders a single bash one-liner and watches the agents list
+// for the new agent to land. For self-install targets it's `curl … .sh | sh`
+// — a deterministic shell installer. For cross-install targets it's the
+// older `curl … .md` skill download chained with a harness invocation that
+// drives the markdown skill through an LLM.
 function OnePasteGuide({
   target,
   installerBaseURL,
@@ -2295,20 +2297,27 @@ function OnePasteGuide({
   }, [agents, agentName, target])
   const connected = !!matchingAgent
 
-  // Build the one-paste command. URL-encode the query params to keep
-  // shell-safe characters; the curl URL is wrapped in double quotes so the
-  // shell doesn't interpret '&' as backgrounding.
+  // Self-install targets (claude-code, codex) use a deterministic shell
+  // one-liner. The .sh route at /skill/install/<target>.sh returns a
+  // pre-baked script that does the whole flow — mint with claim, persist
+  // token, configure the harness, write the uninstall doc — without an LLM
+  // in the loop. Cross-install targets (hermes, openclaw) still use the
+  // LLM-driven markdown skill because their per-host probing benefits from
+  // an LLM-shaped adaptation loop.
   const installURL = useMemo(() => {
     const qs = new URLSearchParams()
     if (claim) qs.set('claim', claim)
     qs.set('agent_name', agentName)
-    return `${installerBaseURL}/skill/install/${target}.md?${qs.toString()}`
-  }, [agentName, claim, installerBaseURL, target])
+    const ext = spec.selfInstall ? 'sh' : 'md'
+    return `${installerBaseURL}/skill/install/${target}.${ext}?${qs.toString()}`
+  }, [agentName, claim, installerBaseURL, target, spec.selfInstall])
 
-  const oneLiner = `${helperSpec.skillDirMkdir}curl -sf "${installURL}" --create-dirs -o ${helperSpec.skillFile} && ${helperSpec.invokeCmd}`
+  const oneLiner = spec.selfInstall
+    ? `curl -fsSL "${installURL}" | sh`
+    : `${helperSpec.skillDirMkdir}curl -sf "${installURL}" --create-dirs -o ${helperSpec.skillFile} && ${helperSpec.invokeCmd}`
 
   const intro = spec.selfInstall
-    ? `Paste this one line into your terminal. It downloads a setup skill, invokes ${spec.label}, and the agent does the rest — register, install the Clawvisor skill, optionally route every ${spec.label.toLowerCase()} session through Clawvisor, then remove the setup skill.`
+    ? `Paste this one line into your terminal. A short shell script registers the agent, writes the config ${spec.label} needs, smoke-tests connectivity, and saves an uninstall reference — no LLM in the loop.`
     : `Paste this one line into your terminal. ${helperSpec.label} downloads the setup skill, connects ${spec.label} to Clawvisor (auto-approved — no second click), detects or vaults an upstream LLM key, probes the deployment, configures ${spec.label}, then removes the setup skill.`
 
   return (
@@ -2348,7 +2357,9 @@ function OnePasteGuide({
               <p className="text-xs text-success">
                 ✓ <code className="font-mono">{matchingAgent!.name}</code> is connected.
                 {spec.selfInstall
-                  ? ` The skill is asking the user whether to make Clawvisor the default for ${spec.label} — finish that conversation in your terminal.`
+                  ? target === 'codex'
+                    ? ` The script may be asking in your terminal whether to make Clawvisor the default for codex — answer that prompt to finish.`
+                    : ` Restart ${spec.label} so the new env keys take effect.`
                   : ` ${helperSpec.label} is configuring ${spec.label} — finish that conversation in your terminal.`}
               </p>
             ) : (
@@ -2367,35 +2378,70 @@ function OnePasteGuide({
           What does this one line do?
         </summary>
         <div className="mt-3 text-xs text-text-secondary space-y-2 leading-relaxed">
-          <p>
-            <strong>1.</strong> <code className="font-mono">curl</code> downloads the
-            setup skill — a short markdown file telling{' '}
-            {helperSpec.label} exactly what to do — and writes it to{' '}
-            <code className="font-mono text-text-primary">{helperSpec.skillFile}</code>.
-            The URL has a single-use claim code baked in so the skill can register
-            this agent without a second dashboard click.
-          </p>
-          <p>
-            <strong>2.</strong>{' '}
-            <code className="font-mono">{helperSpec.invokeCmd}</code> opens{' '}
-            {helperSpec.label} and runs the setup skill as the first turn. The skill:
-            calls <code className="font-mono">/api/agents/connect</code> with the
-            claim (auto-approved), writes the agent token to{' '}
-            <code className="font-mono">~/.clawvisor/agents/{spec.baseName}.json</code>,
-            checks for an existing vaulted upstream key (vaults one if absent —{' '}
-            <em>without ever reading the value into the conversation</em>),{' '}
-            {spec.selfInstall
-              ? `asks whether to route every ${spec.label.toLowerCase()} session through Clawvisor, and then removes the setup skill file.`
-              : `probes how ${spec.label} runs (host / Docker / remote), configures it to point at Clawvisor, and then removes the setup skill file.`}
-          </p>
-          <p>
-            <strong>If you'd rather audit it first:</strong> the skill markdown is
-            served at{' '}
-            <a href={installURL} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
-              {`${target}.md`}
-            </a>
-            {' '}— open it in a new tab, read it, then paste the one-liner when ready.
-          </p>
+          {spec.selfInstall ? (
+            <>
+              <p>
+                <strong>1.</strong> <code className="font-mono">curl</code> fetches a
+                short shell script from Clawvisor. The URL has a single-use claim
+                code baked in so the script can register this agent without a
+                second dashboard click.
+              </p>
+              <p>
+                <strong>2.</strong> <code className="font-mono">sh</code> runs the
+                script. It calls{' '}
+                <code className="font-mono">/api/agents/connect</code> with the
+                claim (auto-approved), writes the agent token to{' '}
+                <code className="font-mono">~/.clawvisor/agents/{spec.baseName}.json</code>,
+                smoke-tests the token against the daemon, edits{' '}
+                <code className="font-mono">
+                  {target === 'codex' ? '~/.codex/config.toml' : '~/.claude/settings.json'}
+                </code>
+                {' '}so {spec.label} routes through Clawvisor, and writes a revert
+                recipe to{' '}
+                <code className="font-mono">~/.clawvisor/uninstall-{target}.md</code>.
+                {target === 'codex' && ' If your shell is interactive, the script asks once whether to route every codex session through Clawvisor or install a `codex-cv` alias instead.'}
+              </p>
+              <p>
+                <strong>If you'd rather audit it first:</strong> the script is
+                served at{' '}
+                <a href={installURL} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+                  {`${target}.sh`}
+                </a>
+                {' '}— open it in a new tab, read it, then paste the one-liner when ready.
+              </p>
+            </>
+          ) : (
+            <>
+              <p>
+                <strong>1.</strong> <code className="font-mono">curl</code> downloads
+                the setup skill — a short markdown file telling{' '}
+                {helperSpec.label} exactly what to do — and writes it to{' '}
+                <code className="font-mono text-text-primary">{helperSpec.skillFile}</code>.
+                The URL has a single-use claim code baked in so the skill can register
+                this agent without a second dashboard click.
+              </p>
+              <p>
+                <strong>2.</strong>{' '}
+                <code className="font-mono">{helperSpec.invokeCmd}</code> opens{' '}
+                {helperSpec.label} and runs the setup skill as the first turn. The skill:
+                calls <code className="font-mono">/api/agents/connect</code> with the
+                claim (auto-approved), writes the agent token to{' '}
+                <code className="font-mono">~/.clawvisor/agents/{spec.baseName}.json</code>,
+                checks for an existing vaulted upstream key (vaults one if absent —{' '}
+                <em>without ever reading the value into the conversation</em>),
+                probes how {spec.label} runs (host / Docker / remote), configures it
+                to point at Clawvisor, and then removes the setup skill file.
+              </p>
+              <p>
+                <strong>If you'd rather audit it first:</strong> the skill markdown is
+                served at{' '}
+                <a href={installURL} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+                  {`${target}.md`}
+                </a>
+                {' '}— open it in a new tab, read it, then paste the one-liner when ready.
+              </p>
+            </>
+          )}
         </div>
       </details>
     </div>

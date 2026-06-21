@@ -1,0 +1,66 @@
+{{- template "preamble" . -}}
+{{- template "mint" . -}}
+{{- template "persist_token" . -}}
+{{- template "smoke_test" . -}}
+
+# --- Merge ~/.claude/settings.json --------------------------------------------
+# Claude Code reads env from settings.json. Merge the Clawvisor env keys
+# alongside whatever the user already has. Existing unrelated env entries
+# are preserved.
+SETTINGS="$HOME/.claude/settings.json"
+mkdir -p "$HOME/.claude"
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+
+ANTHROPIC_BASE="$LLM_URL/api"
+CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $TOKEN"
+
+# Preserve the file's existing keys, then layer env + permission allow rules
+# on top. The allow list is deduplicated by exact-string match so re-running
+# the installer is idempotent.
+jq \
+    --arg url "$APP_URL" \
+    --arg token "$TOKEN" \
+    --arg base "$ANTHROPIC_BASE" \
+    --arg headers "$CUSTOM_HEADERS" \
+    --arg rule_url '{{.RelayPermissionRule}}' \
+    '
+    .env = ((.env // {}) + {
+        CLAWVISOR_URL: $url,
+        CLAWVISOR_AGENT_TOKEN: $token,
+        ANTHROPIC_BASE_URL: $base,
+        ANTHROPIC_CUSTOM_HEADERS: $headers,
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_API_KEY: ""
+    })
+    | .permissions = ((.permissions // {}))
+    | .permissions.allow = (
+        ((.permissions.allow // []) + [
+            "Bash(curl *http://localhost:25297/*)",
+            "Bash(curl *$CLAWVISOR_URL/*)",
+            $rule_url
+        ]) | unique
+    )
+    ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
+echo "✓ Updated $SETTINGS"
+
+# --- Write the uninstall reference -------------------------------------------
+UNINSTALL_DOC="$HOME/.clawvisor/uninstall-claude-code.md"
+cat > "$UNINSTALL_DOC" <<'EOF'
+# How to disconnect Claude Code from Clawvisor
+
+1. Edit `~/.claude/settings.json` and remove these keys from the top-level
+   `env` object (leave any unrelated env keys in place):
+       CLAWVISOR_URL, CLAWVISOR_AGENT_TOKEN,
+       ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS,
+       ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY
+   Also remove any `Bash(curl *…clawvisor…/*)` entries from
+   `.permissions.allow`.
+2. Delete the token file: `rm ~/.clawvisor/agents/AGENT_NAME.json`
+3. Revoke the agent in the Clawvisor dashboard under Agents → AGENT_NAME → Delete.
+4. Restart Claude Code so the cleared env takes effect.
+EOF
+sed -i.bak "s/AGENT_NAME/$AGENT_NAME/g" "$UNINSTALL_DOC" && rm -f "$UNINSTALL_DOC.bak"
+echo "✓ Wrote revert recipe to $UNINSTALL_DOC"
+
+echo
+echo "Done. Restart Claude Code so the new env keys take effect."

@@ -1,0 +1,182 @@
+{{- template "preamble" . -}}
+{{- template "mint" . -}}
+{{- template "persist_token" . -}}
+{{- template "smoke_test" . -}}
+
+SLUG='{{.Slug}}'
+DISPLAY='{{.DisplayLabel}}'
+
+# --- Append the [model_providers.SLUG] block to ~/.codex/config.toml ---------
+# Codex rejects duplicate [model_providers.<n>] tables on startup, so the
+# append is gated on a grep — re-runs are no-ops on the block itself.
+mkdir -p "$HOME/.codex" "$HOME/.clawvisor/diffs/$AGENT_NAME"
+touch "$HOME/.codex/config.toml"
+
+PROVIDER_BLOCK=$(cat <<EOF
+[model_providers.$SLUG]
+name = "$DISPLAY"
+base_url = "$LLM_URL/api/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.$SLUG.env_http_headers]
+X-Clawvisor-Agent-Token = "CLAWVISOR_AGENT_TOKEN"
+EOF
+)
+
+if ! grep -q "^\[model_providers\.$SLUG\]" "$HOME/.codex/config.toml"; then
+    printf '\n%s\n' "$PROVIDER_BLOCK" >> "$HOME/.codex/config.toml"
+    jq -n \
+        --arg file "$HOME/.codex/config.toml" \
+        --arg content "$PROVIDER_BLOCK" \
+        '{file:$file, type:"text_append", content:$content}' \
+        > "$HOME/.clawvisor/diffs/$AGENT_NAME/provider_block.json"
+    echo "✓ Added [model_providers.$SLUG] to ~/.codex/config.toml"
+else
+    echo "✓ [model_providers.$SLUG] already present in ~/.codex/config.toml"
+fi
+
+# --- Smoke test: drive a real codex call through the new provider ------------
+# We only run this when the user actually has codex installed; otherwise we
+# skip with a note. The check is intentionally cheap — if the user vaulted
+# nothing and has no OpenAI subscription, this will fail and we point them
+# at the LLM-driven fallback.
+if command -v codex >/dev/null 2>&1; then
+    echo "→ Smoke-testing codex through Clawvisor (passthrough mode)…"
+    if ! CLAWVISOR_AGENT_TOKEN="$TOKEN" codex \
+            -c "model_provider=$SLUG" \
+            -c "sandbox_workspace_write.network_access=true" \
+            exec --skip-git-repo-check "respond with the word OK" >/dev/null 2>&1; then
+        cat <<EOF >&2
+codex smoke test failed in passthrough mode. The most likely reasons:
+  - No working upstream auth (run \`codex login\`, or set OPENAI_API_KEY)
+  - Clawvisor cannot reach OpenAI from this host
+
+For the swap-mode fallback (vault an OpenAI key, route auth through the
+Clawvisor token), run the LLM-driven flow:
+  clawvisor-server connect-agent codex
+
+The provider block and token are already in place; the swap-mode fallback
+only rewrites the auth shape.
+EOF
+        exit 1
+    fi
+    echo "✓ codex round-tripped through Clawvisor"
+else
+    echo "(skipping codex smoke test — codex CLI not on \$PATH)"
+fi
+
+# --- Ask: make Clawvisor the default for every codex run? --------------------
+if [ -z "$CV_DEFAULT_MODE" ]; then
+    if prompt_yn "Make Clawvisor the default for every codex session? (no = install a 'codex-cv' alias instead)" no; then
+        CV_DEFAULT_MODE=yes
+    else
+        CV_DEFAULT_MODE=no
+    fi
+fi
+
+# Pick the shell rc file once — both branches need it.
+case "$SHELL" in
+    */zsh)  RC="$HOME/.zshrc" ;;
+    */bash) RC="$HOME/.bashrc" ;;
+    */fish) RC="$HOME/.config/fish/config.fish" ;;
+    *)      RC="" ;;
+esac
+
+if [ "$CV_DEFAULT_MODE" = yes ]; then
+    # Prepend `model_provider = "<slug>"` at the top of config.toml so every
+    # codex invocation routes through Clawvisor automatically.
+    DEFAULT_LINE="model_provider = \"$SLUG\""
+    if ! grep -q "^$DEFAULT_LINE$" "$HOME/.codex/config.toml"; then
+        { printf '%s\n\n' "$DEFAULT_LINE"; cat "$HOME/.codex/config.toml"; } \
+            > "$HOME/.codex/config.toml.new" \
+            && mv "$HOME/.codex/config.toml.new" "$HOME/.codex/config.toml"
+        jq -n \
+            --arg file "$HOME/.codex/config.toml" \
+            --arg content "$DEFAULT_LINE" \
+            '{file:$file, type:"text_prepend", content:$content}' \
+            > "$HOME/.clawvisor/diffs/$AGENT_NAME/default_provider.json"
+        echo "✓ Set model_provider = \"$SLUG\" as the default in ~/.codex/config.toml"
+    fi
+
+    # Append the rc-export so $CLAWVISOR_AGENT_TOKEN is set in every shell.
+    if [ -n "$RC" ]; then
+        RC_EXPORT="export CLAWVISOR_AGENT_TOKEN=\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_NAME.json)"
+        if ! grep -F -q "agents/$AGENT_NAME.json" "$RC" 2>/dev/null; then
+            printf '\n%s\n' "$RC_EXPORT" >> "$RC"
+            jq -n \
+                --arg file "$RC" \
+                --arg content "$RC_EXPORT" \
+                '{file:$file, type:"text_append", content:$content}' \
+                > "$HOME/.clawvisor/diffs/$AGENT_NAME/rc_export.json"
+            echo "✓ Appended CLAWVISOR_AGENT_TOKEN export to $RC"
+        fi
+    else
+        echo "  (unknown shell: $SHELL — export CLAWVISOR_AGENT_TOKEN manually)" >&2
+    fi
+else
+    # Alias-only: install codex-cv() that targets the Clawvisor provider on
+    # demand. Leaves the bare `codex` command untouched.
+    if [ -z "$CV_YOLO" ]; then
+        if prompt_yn "Should 'codex-cv' skip Codex's approval prompts and sandbox restrictions (--dangerously-bypass-approvals-and-sandbox)?" no; then
+            CV_YOLO=yes
+        else
+            CV_YOLO=no
+        fi
+    fi
+
+    if [ "$CV_YOLO" = yes ]; then
+        YOLO_FLAG=" --dangerously-bypass-approvals-and-sandbox"
+    else
+        YOLO_FLAG=""
+    fi
+
+    if [ -n "$RC" ]; then
+        # The function body inlines the slug + agent-token lookup. The user
+        # can re-install with a different alias-only flavour and we'll just
+        # append again — overwriting is intentional so a yolo→no-yolo flip
+        # takes effect on next shell. Diff record is the full appended block.
+        FUNC_BLOCK=$(cat <<EOF
+codex-cv() {
+    CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_NAME.json)" \\
+        codex$YOLO_FLAG \\
+        -c model_provider="$SLUG" \\
+        "\$@"
+}
+EOF
+)
+        if ! grep -F -q "agents/$AGENT_NAME.json" "$RC" 2>/dev/null; then
+            printf '\n%s\n' "$FUNC_BLOCK" >> "$RC"
+            jq -n \
+                --arg file "$RC" \
+                --arg content "$FUNC_BLOCK" \
+                '{file:$file, type:"text_append", content:$content}' \
+                > "$HOME/.clawvisor/diffs/$AGENT_NAME/codex_cv.json"
+            echo "✓ Appended codex-cv() to $RC"
+        else
+            echo "  (codex-cv() already references this agent; leaving $RC untouched)"
+        fi
+    else
+        echo "  (unknown shell: $SHELL — append the codex-cv function manually)" >&2
+    fi
+fi
+
+# --- Write the uninstall reference -------------------------------------------
+UNINSTALL_DOC="$HOME/.clawvisor/uninstall-codex.md"
+cat > "$UNINSTALL_DOC" <<EOF
+# How to disconnect Codex from Clawvisor
+
+1. Remove the [model_providers.$SLUG] block (and any leading
+   model_provider = "$SLUG" line) from ~/.codex/config.toml. The exact text
+   that was appended is recorded under ~/.clawvisor/diffs/$AGENT_NAME/
+   so you can match-and-remove it.
+2. Remove any rc lines this install added — look for the file named in
+   ~/.clawvisor/diffs/$AGENT_NAME/rc_export.json or codex_cv.json.
+3. Delete the token file: rm ~/.clawvisor/agents/$AGENT_NAME.json
+4. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
+5. Open a new shell to drop the CLAWVISOR_AGENT_TOKEN export / codex-cv function.
+EOF
+echo "✓ Wrote revert recipe to $UNINSTALL_DOC"
+
+echo
+echo "Done. Open a new shell or 'source $RC' to pick up the routing."

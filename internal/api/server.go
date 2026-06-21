@@ -1018,10 +1018,6 @@ func (s *Server) routes() http.Handler {
 		// user_id. The Other Agents fallback path still uses /skill/setup.
 		installerHandler := handlers.NewInstallerHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal(), s.cfg.ProxyLite.PublicURL, s.cfg.Server.PublicURL)
 		mux.HandleFunc("GET /skill/install/{target}", installerHandler.Setup)
-		// Companion uninstall route — the install skill writes the rendered
-		// markdown to ~/.claude/commands/clawvisor-uninstall.md so users have a
-		// one-command revert path (/clawvisor-uninstall).
-		mux.HandleFunc("GET /skill/uninstall/{target}", installerHandler.Uninstall)
 	}
 
 	// Claude Desktop configuration profile (.mobileconfig) — the user
