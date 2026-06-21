@@ -38,8 +38,10 @@ type installerScriptCtx struct {
 }
 
 // renderClaudeCodeShellInstaller renders the Claude Code shell installer
-// from claude_code.sh.tmpl using the supplied installerCtx.
-func renderClaudeCodeShellInstaller(ctx installerCtx) string {
+// from claude_code.sh.tmpl using the supplied installerCtx. Returns an error
+// if template execution fails so the caller can return HTTP 500 instead of
+// silently shipping a broken script to the user's shell.
+func renderClaudeCodeShellInstaller(ctx installerCtx) (string, error) {
 	return renderInstallerScript("claude_code.sh.tmpl", installerScriptCtx{
 		AppURL:              strings.TrimRight(ctx.AppURL, "/"),
 		LLMURL:              strings.TrimRight(ctx.LLMURL, "/"),
@@ -55,7 +57,8 @@ func renderClaudeCodeShellInstaller(ctx installerCtx) string {
 // renderCodexShellInstaller renders the Codex shell installer from
 // codex.sh.tmpl. The provider slug is env-derived from the LLM proxy host so
 // prod / staging / dev installs can coexist in one ~/.codex/config.toml.
-func renderCodexShellInstaller(ctx installerCtx) string {
+// Returns an error on template execution failure.
+func renderCodexShellInstaller(ctx installerCtx) (string, error) {
 	slug, display := codexProviderID(ctx.LLMURL)
 	return renderInstallerScript("codex.sh.tmpl", installerScriptCtx{
 		AppURL:       strings.TrimRight(ctx.AppURL, "/"),
@@ -70,16 +73,19 @@ func renderCodexShellInstaller(ctx installerCtx) string {
 	})
 }
 
-func renderInstallerScript(name string, data installerScriptCtx) string {
+// renderInstallerScript executes the named template against data and returns
+// the rendered body. Template parsing happens at package init via
+// template.Must, so the only failure mode here is a misnamed field or
+// invalid template execution — a server-side bug, not a per-request issue.
+// Surface it as an error so the caller can return HTTP 500; silently
+// shipping a fake script that fails on the user's machine made renderer
+// bugs look like client-side install failures.
+func renderInstallerScript(name string, data installerScriptCtx) (string, error) {
 	var b strings.Builder
 	if err := installerScriptTmpl.ExecuteTemplate(&b, name, data); err != nil {
-		// Template parsing happens at init; a runtime ExecuteTemplate failure
-		// here would mean a template field is mis-typed, not a per-request
-		// issue. Surface it as a comment in the script so the user sees the
-		// failure mode instead of a silent empty response.
-		return fmt.Sprintf("#!/bin/sh\necho 'clawvisor installer render failure: %s' >&2\nexit 1\n", err)
+		return "", fmt.Errorf("execute installer template %s: %w", name, err)
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // relayPermissionRule returns the Claude Code Bash() permission rule for
