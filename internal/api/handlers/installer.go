@@ -122,25 +122,58 @@ type installerCtx struct {
 	AgentName string
 }
 
-// installerFormat is the wire shape returned for a given (target, suffix)
-// pair. Each value tells Setup which renderer to dispatch and which
-// Content-Type to set; classifyInstallerRequest folds suffix parsing,
-// per-target gating, and the 410/404 policy into one place so Setup itself
-// stays declarative.
-type installerFormat int
+// installerRenderer renders an installer body of one format (shell or
+// markdown). Markdown renderers can't fail; shell renderers can if a
+// template is mis-typed at runtime — uniformly typed for one dispatch site.
+type installerRenderer func(installerCtx) (string, error)
 
-const (
-	installerFormatMarkdown installerFormat = iota
-	installerFormatShell
-	installerFormatGone   // self-install target requested as .md
-	installerFormatNoShell // markdown-only target requested as .sh
-	installerFormatUnknown // unknown target slug
-)
+func markdownRenderer(f func(installerCtx) string) installerRenderer {
+	return func(c installerCtx) (string, error) { return f(c), nil }
+}
+
+func shellRenderer(f func(installerCtx) (string, error)) installerRenderer {
+	return f
+}
+
+// installerSpec is the per-target wire shape: which extension the bare URL
+// redirects to, and which renderer + content type to serve.
+type installerSpec struct {
+	canonicalExt string
+	contentType  string
+	render       installerRenderer
+}
+
+// installerTargets is the single source of truth for the per-target install
+// surface. Adding a target = one map entry. Setup, redirectToCanonicalExt,
+// and writeInstaller all read from this map — no policy duplicated across
+// helpers.
+var installerTargets = map[InstallerTarget]installerSpec{
+	InstallerClaudeCode: {
+		canonicalExt: ".sh",
+		contentType:  "application/x-sh; charset=utf-8",
+		render:       shellRenderer(renderClaudeCodeShellInstaller),
+	},
+	InstallerCodex: {
+		canonicalExt: ".sh",
+		contentType:  "application/x-sh; charset=utf-8",
+		render:       shellRenderer(renderCodexShellInstaller),
+	},
+	InstallerHermes: {
+		canonicalExt: ".md",
+		contentType:  "text/markdown; charset=utf-8",
+		render:       markdownRenderer(renderHermesInstaller),
+	},
+	InstallerOpenClaw: {
+		canonicalExt: ".md",
+		contentType:  "text/markdown; charset=utf-8",
+		render:       markdownRenderer(renderOpenClawInstaller),
+	},
+}
 
 // parseInstallerTarget reads the {target} path segment and splits it into
 // the suffix + bare target. Returns ok=false when the segment has no
 // extension; the caller then issues a redirect to the canonical extension
-// for that target (see installerRedirectExt).
+// looked up via installerTargets.
 func parseInstallerTarget(raw string) (target InstallerTarget, suffix string, ok bool) {
 	switch {
 	case strings.HasSuffix(raw, ".sh"):
@@ -152,86 +185,72 @@ func parseInstallerTarget(raw string) (target InstallerTarget, suffix string, ok
 	}
 }
 
-// installerRedirectExt returns the canonical extension for a bare URL of
-// the given target. Self-install targets redirect to .sh (their .md path
-// returns 410); everything else keeps the historical .md default.
-func installerRedirectExt(t InstallerTarget) string {
-	if t == InstallerClaudeCode || t == InstallerCodex {
-		return ".sh"
-	}
-	return ".md"
-}
-
-// classifyInstallerRequest decides what to do with a (target, suffix)
-// pair. Centralizes the matrix:
-//
-//	          | claude-code | codex   | hermes   | openclaw | other |
-//	  .sh     | shell       | shell   | NoShell  | NoShell  | NoShell|
-//	  .md     | Gone        | Gone    | markdown | markdown | Unknown|
-func classifyInstallerRequest(target InstallerTarget, suffix string) installerFormat {
-	isSelfInstall := target == InstallerClaudeCode || target == InstallerCodex
-	isMarkdownTarget := target == InstallerHermes || target == InstallerOpenClaw
-
-	switch suffix {
-	case ".sh":
-		if isSelfInstall {
-			return installerFormatShell
-		}
-		return installerFormatNoShell
-	case ".md":
-		if isSelfInstall {
-			return installerFormatGone
-		}
-		if isMarkdownTarget {
-			return installerFormatMarkdown
-		}
-	}
-	return installerFormatUnknown
-}
-
-// Setup handles GET /skill/install/{target}. The route captures the whole
-// segment (Go's ServeMux doesn't allow `{target}.md`), so the suffix-parsing
-// + per-target gating happen in parseInstallerTarget /
-// classifyInstallerRequest. Two content formats live behind the same path:
+// Setup handles GET /skill/install/{target}. Two content formats live
+// behind the same path:
 //
 //   - `.sh` — the deterministic shell one-liner. Available for the self-
 //     install harnesses (claude-code, codex) where every step is fixed.
 //   - `.md` — the LLM-driven markdown skill. Used by the cross-target
 //     harnesses (hermes, openclaw) where probing the user's environment
-//     benefits from an LLM-shaped adaptation loop. For claude-code and
-//     codex the `.md` route returns 410 pointing at `.sh` — old paste
-//     blobs from stale dashboards land here.
+//     benefits from an LLM-shaped adaptation loop.
 //
-// Bare URLs (no extension) get a 301 to the per-target canonical extension
-// so the no-suffix form continues to work after the .sh cutover.
+// Per-target policy lives in installerTargets (one map entry per target).
+// Setup is just routing: parse the suffix, redirect bare URLs to the
+// canonical extension, then dispatch via the map. A request whose suffix
+// doesn't match the target's canonical extension gets 410 (when the
+// alternate extension was previously supported — i.e. claude-code/codex
+// requested as .md) or 404 (when the alternate was never supported).
 func (h *InstallerHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	rawTarget := r.PathValue("target")
 	target, suffix, hasSuffix := parseInstallerTarget(rawTarget)
-	if rawTarget != "" && !hasSuffix {
-		h.redirectToCanonicalExt(w, r, target)
+	spec, known := installerTargets[target]
+	if !known {
+		http.Error(w, "unknown installer target", http.StatusNotFound)
 		return
 	}
 
-	switch classifyInstallerRequest(target, suffix) {
-	case installerFormatShell:
-		h.writeShellInstaller(w, r, target)
-	case installerFormatMarkdown:
-		h.writeMarkdownInstaller(w, r, target)
-	case installerFormatGone:
-		h.writeGoneForMarkdown(w, target)
-	case installerFormatNoShell:
-		http.Error(w, "no shell installer available for this target", http.StatusNotFound)
-	default:
-		http.Error(w, "unknown installer target", http.StatusNotFound)
+	if !hasSuffix {
+		h.redirectToCanonicalExt(w, r, spec)
+		return
 	}
+	if suffix != spec.canonicalExt {
+		h.writeNonCanonicalSuffix(w, target, spec, suffix)
+		return
+	}
+
+	ctx := h.installerCtxFromRequest(r, target)
+	body, err := spec.render(ctx)
+	if err != nil {
+		// Template execution should be infallible at runtime (parsed once
+		// at init); a failure here is a server bug and the user can't act
+		// on it, so 500 rather than shipping a fake script to their shell.
+		http.Error(w, "installer render failure", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", spec.contentType)
+	_, _ = w.Write([]byte(body))
 }
 
-func (h *InstallerHandler) redirectToCanonicalExt(w http.ResponseWriter, r *http.Request, target InstallerTarget) {
-	redirectURL := r.URL.Path + installerRedirectExt(target)
+func (h *InstallerHandler) redirectToCanonicalExt(w http.ResponseWriter, r *http.Request, spec installerSpec) {
+	redirectURL := r.URL.Path + spec.canonicalExt
 	if raw := r.URL.RawQuery; raw != "" {
 		redirectURL += "?" + raw
 	}
 	http.Redirect(w, r, redirectURL, http.StatusMovedPermanently)
+}
+
+// writeNonCanonicalSuffix handles the off-extension cases:
+//   - .md for a shell-canonical target → 410 with a pointer at the .sh URL
+//     (claude-code/codex used to be markdown; dashboards may still link there).
+//   - .sh for a markdown-canonical target → 404 (never had a shell installer).
+func (h *InstallerHandler) writeNonCanonicalSuffix(w http.ResponseWriter, target InstallerTarget, spec installerSpec, suffix string) {
+	if suffix == ".md" && spec.canonicalExt == ".sh" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusGone)
+		fmt.Fprintf(w, "The markdown installer for %s has been replaced by a one-line shell\ninstaller. Update your dashboard paste blob to:\n\n  curl -fsSL \"<host>/skill/install/%s.sh?...\" | sh\n", target, target)
+		return
+	}
+	http.Error(w, "no shell installer available for this target", http.StatusNotFound)
 }
 
 // Uninstall handles GET /skill/uninstall/{target}. The deprecated markdown
@@ -256,57 +275,6 @@ func (h *InstallerHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fmt.Fprintf(w, "The remote uninstall skill has been retired. If the install left a\nrevert recipe, look under ~/.clawvisor/uninstall-*.md on your disk.\n")
-}
-
-// writeGoneForMarkdown returns 410 for self-install targets requested as
-// .md — old paste blobs from stale dashboards land here. The body points
-// at the live .sh URL so the operator/user knows where to look.
-func (h *InstallerHandler) writeGoneForMarkdown(w http.ResponseWriter, target InstallerTarget) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusGone)
-	fmt.Fprintf(w, "The markdown installer for %s has been replaced by a one-line shell\ninstaller. Update your dashboard paste blob to:\n\n  curl -fsSL \"<host>/skill/install/%s.sh?...\" | sh\n", target, target)
-}
-
-func (h *InstallerHandler) writeShellInstaller(w http.ResponseWriter, r *http.Request, target InstallerTarget) {
-	ctx := h.installerCtxFromRequest(r, target)
-	var (
-		body string
-		err  error
-	)
-	switch target {
-	case InstallerClaudeCode:
-		body, err = renderClaudeCodeShellInstaller(ctx)
-	case InstallerCodex:
-		body, err = renderCodexShellInstaller(ctx)
-	default:
-		http.Error(w, "unknown installer target", http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		// Template execution should be infallible at runtime (parsed once at
-		// init); a failure here is a server bug and the user can't act on it,
-		// so 500 rather than shipping a fake script to their shell.
-		http.Error(w, "installer render failure", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/x-sh; charset=utf-8")
-	_, _ = w.Write([]byte(body))
-}
-
-func (h *InstallerHandler) writeMarkdownInstaller(w http.ResponseWriter, r *http.Request, target InstallerTarget) {
-	ctx := h.installerCtxFromRequest(r, target)
-	var body string
-	switch target {
-	case InstallerHermes:
-		body = renderHermesInstaller(ctx)
-	case InstallerOpenClaw:
-		body = renderOpenClawInstaller(ctx)
-	default:
-		http.Error(w, "unknown installer target", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	_, _ = w.Write([]byte(body))
 }
 
 // installerCtxFromRequest reads + sanitizes all per-request fields off the
