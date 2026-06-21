@@ -7,26 +7,23 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 )
 
-// transformTransientDenyToRecoverable promotes a Deny verdict marked
-// with TransientFailureClass to a RecoverableDeny on its FIRST
-// occurrence per (agent, conversation, failure class) within the
-// TransientBudget's TTL. The downstream transformRecoverableDenyToPlaceholder
-// then converts the promoted verdict into the standard one-shot
-// continuation retry shape.
+// tryPromoteTransient is the pure-function half of the transient-deny
+// transform pipeline. It decides whether the Deny verdict should be
+// promoted to a RecoverableDeny based on the (agent, conversation,
+// failure class) budget, and returns:
 //
-// On subsequent occurrences (budget exhausted) the verdict passes
-// through as a plain Deny so chronic failures surface to the user
-// instead of looping. This realizes the "at most once per error class"
-// retry policy for transient failures (judge timeout, nonce-mint
-// hiccup, decision-engine RPC blip).
+//   - the resulting verdict (mutated only when promotion fires)
+//   - the consumed key, when promotion fired — otherwise nil
 //
-// trackConsumed, when non-nil, is called with the consumed key after a
-// successful Try. The postproc session uses it to remember keys that
-// must be refunded if the response is later fail-closed — otherwise
-// the agent's one retry slot would burn for a recoverable response
-// they never actually saw.
+// The session method that wraps this owns the consumed-key tracking
+// for rollback; this function stays free of session state so it
+// matches the pure-transform shape the other postproc transforms use
+// (transformRecoverableDenyToPlaceholder etc.). The Try call must
+// happen here (not in commitVerdictSideEffects) because the
+// downstream transformRecoverableDenyToPlaceholder needs the promoted
+// RecoverableReason BEFORE the rewriter consumes the verdict shape.
 //
-// Skipped (verdict returned unchanged) when:
+// Skipped (verdict returned unchanged, nil key) when:
 //   - not a Deny verdict, or TransientFailureClass is empty
 //   - RecoverableReason is already set — a prior layer already chose
 //     the recoverable shape and we must not double-process
@@ -35,25 +32,25 @@ import (
 //   - identity tuple (AgentID, ConversationID) is incomplete — the
 //     budget key would collapse across distinct conversations from the
 //     same agent, so degrade safely to plain Deny rather than misroute
-func transformTransientDenyToRecoverable(
+//   - Try returns false (budget exhausted for this class on this
+//     conversation within TTL)
+func tryPromoteTransient(
 	ctx context.Context,
 	v conversation.ToolUseVerdict,
-	_ conversation.ToolUse,
 	cfg llmproxy.PostprocessConfig,
-	trackConsumed func(llmproxy.TransientBudgetKey),
-) conversation.ToolUseVerdict {
+) (conversation.ToolUseVerdict, *llmproxy.TransientBudgetKey) {
 	if v.Outcome != conversation.OutcomeDeny || v.TransientFailureClass == "" {
-		return v
+		return v, nil
 	}
 	if v.RecoverableReason != "" {
-		return v
+		return v, nil
 	}
 	budget := cfg.AuthorizationContext.TransientBudget
 	if budget == nil {
-		return v
+		return v, nil
 	}
 	if cfg.AgentContext.AgentID == "" || cfg.AuditContext.ConversationID == "" {
-		return v
+		return v, nil
 	}
 	key := llmproxy.TransientBudgetKey{
 		AgentID:        cfg.AgentContext.AgentID,
@@ -61,12 +58,9 @@ func transformTransientDenyToRecoverable(
 		FailureClass:   v.TransientFailureClass,
 	}
 	if !budget.Try(ctx, key) {
-		return v
-	}
-	if trackConsumed != nil {
-		trackConsumed(key)
+		return v, nil
 	}
 	v.RecoverableReason = v.Reason
 	v.SubstituteWith = v.Reason
-	return v
+	return v, &key
 }

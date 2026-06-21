@@ -38,21 +38,38 @@ type postprocessSession struct {
 	substitutions            []llmproxy.PendingSubstitutionKey
 	driftOutcomes            []string
 	// transientConsumed tracks TransientBudget Try() calls the
-	// transformTransientDenyToRecoverable transform made during eval.
-	// rollbackVerdictSideEffects calls TransientBudget.Release on each
-	// so a fail-closed response refunds the agent's one retry slot;
-	// otherwise the next real attempt would degrade to plain Deny.
+	// applyTransientTransform wrapper made during eval (via the pure
+	// tryPromoteTransient function). rollbackVerdictSideEffects calls
+	// TransientBudget.Release on each so a fail-closed response
+	// refunds the agent's one retry slot; otherwise the next real
+	// attempt would degrade to plain Deny.
 	transientConsumed []llmproxy.TransientBudgetKey
 }
 
-// trackTransientConsumed records a Try() the transient transform made
-// so the session's rollback path can refund it on fail-closed. Passed
-// into the transform as a closure from the eval call sites.
-func (s *postprocessSession) trackTransientConsumed(key llmproxy.TransientBudgetKey) {
+// applyTransientTransform wraps the pure tryPromoteTransient function
+// with the session-owned bookkeeping needed for rollback. Eval closures
+// in postproc.go and stream.go call this instead of the pure function
+// so the consumed-key tracking stays inside the session — matching the
+// pattern where session methods (evaluator, finalize, rollback) own
+// session state, and free functions stay pure.
+//
+// Called per tool_use during eval, BEFORE
+// transformRecoverableDenyToPlaceholder so a promoted transient flows
+// into the placeholder machinery in the same pass.
+func (s *postprocessSession) applyTransientTransform(
+	ctx context.Context,
+	v conversation.ToolUseVerdict,
+	cfg llmproxy.PostprocessConfig,
+) conversation.ToolUseVerdict {
 	if s == nil {
-		return
+		v, _ = tryPromoteTransient(ctx, v, cfg)
+		return v
 	}
-	s.transientConsumed = append(s.transientConsumed, key)
+	promoted, key := tryPromoteTransient(ctx, v, cfg)
+	if key != nil {
+		s.transientConsumed = append(s.transientConsumed, *key)
+	}
+	return promoted
 }
 
 func newPostprocessSession(cfg llmproxy.PostprocessConfig) *postprocessSession {
