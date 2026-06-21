@@ -144,9 +144,10 @@ type installerSpec struct {
 }
 
 // installerTargets is the single source of truth for the per-target install
-// surface. Adding a target = one map entry. Setup, redirectToCanonicalExt,
-// and writeInstaller all read from this map — no policy duplicated across
-// helpers.
+// surface, *including for the dashboard*. The web UI deliberately emits the
+// bare URL (no extension) for the curl one-liner and lets the 301 redirect
+// here pick the canonical form — so adding a new target is one map entry
+// and the frontend automatically picks up the right extension.
 var installerTargets = map[InstallerTarget]installerSpec{
 	InstallerClaudeCode: {
 		canonicalExt: ".sh",

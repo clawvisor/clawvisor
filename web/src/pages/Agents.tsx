@@ -2298,23 +2298,29 @@ function OnePasteGuide({
   const connected = !!matchingAgent
 
   // Self-install targets (claude-code, codex) use a deterministic shell
-  // one-liner. The .sh route at /skill/install/<target>.sh returns a
-  // pre-baked script that does the whole flow — mint with claim, persist
-  // token, configure the harness, write the uninstall doc — without an LLM
-  // in the loop. Cross-install targets (hermes, openclaw) still use the
-  // LLM-driven markdown skill because their per-host probing benefits from
-  // an LLM-shaped adaptation loop.
+  // one-liner. The .sh route returns a pre-baked script that does the whole
+  // flow — mint with claim, persist token, configure the harness, write the
+  // uninstall doc — without an LLM in the loop. Cross-install targets
+  // (hermes, openclaw) still use the LLM-driven markdown skill because
+  // their per-host probing benefits from an LLM-shaped adaptation loop.
+  //
+  // We deliberately emit the bare (no-extension) URL here and let the
+  // backend's 301 redirect pick the canonical extension per-target. That
+  // keeps the "which target serves which extension" policy in exactly one
+  // place — the `installerTargets` map in internal/api/handlers/installer.go.
+  // The dashboard only needs to know the *shape* of the one-liner, which
+  // still depends on `spec.selfInstall` (curl-piped-to-sh vs
+  // skill-download-then-invoke-helper).
   const installURL = useMemo(() => {
     const qs = new URLSearchParams()
     if (claim) qs.set('claim', claim)
     qs.set('agent_name', agentName)
-    const ext = spec.selfInstall ? 'sh' : 'md'
-    return `${installerBaseURL}/skill/install/${target}.${ext}?${qs.toString()}`
-  }, [agentName, claim, installerBaseURL, target, spec.selfInstall])
+    return `${installerBaseURL}/skill/install/${target}?${qs.toString()}`
+  }, [agentName, claim, installerBaseURL, target])
 
   const oneLiner = spec.selfInstall
     ? `curl -fsSL "${installURL}" | sh`
-    : `${helperSpec.skillDirMkdir}curl -sf "${installURL}" --create-dirs -o ${helperSpec.skillFile} && ${helperSpec.invokeCmd}`
+    : `${helperSpec.skillDirMkdir}curl -sf -L "${installURL}" --create-dirs -o ${helperSpec.skillFile} && ${helperSpec.invokeCmd}`
 
   const intro = spec.selfInstall
     ? `Paste this one line into your terminal. A short shell script registers the agent, writes the config ${spec.label} needs, smoke-tests connectivity, and saves an uninstall reference — no LLM in the loop.`
@@ -2402,12 +2408,12 @@ function OnePasteGuide({
                 {target === 'codex' && ' If your shell is interactive, the script asks once whether to route every codex session through Clawvisor or install a `codex-cv` alias instead.'}
               </p>
               <p>
-                <strong>If you'd rather audit it first:</strong> the script is
-                served at{' '}
+                <strong>If you'd rather audit it first:</strong> open the URL in a new
+                tab to see the rendered shell script —{' '}
                 <a href={installURL} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
-                  {`${target}.sh`}
+                  /skill/install/{target}
                 </a>
-                {' '}— open it in a new tab, read it, then paste the one-liner when ready.
+                {' '}— read it, then paste the one-liner when ready.
               </p>
             </>
           ) : (
@@ -2436,7 +2442,7 @@ function OnePasteGuide({
                 <strong>If you'd rather audit it first:</strong> the skill markdown is
                 served at{' '}
                 <a href={installURL} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
-                  {`${target}.md`}
+                  /skill/install/{target}
                 </a>
                 {' '}— open it in a new tab, read it, then paste the one-liner when ready.
               </p>
