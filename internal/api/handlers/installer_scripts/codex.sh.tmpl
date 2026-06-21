@@ -43,10 +43,14 @@ fi
 # at the LLM-driven fallback.
 if command -v codex >/dev/null 2>&1; then
     echo "→ Smoke-testing codex through Clawvisor (passthrough mode)…"
+    # </dev/null is load-bearing: when this script is running via
+    # `curl | sh`, sh's stdin IS the curl pipe carrying the rest of
+    # the script. Without it, codex may consume the rest of the script
+    # and sh exits silently at EOF.
     if ! CLAWVISOR_AGENT_TOKEN="$TOKEN" codex \
             -c "model_provider=$SLUG" \
             -c "sandbox_workspace_write.network_access=true" \
-            exec --skip-git-repo-check "respond with the word OK" >/dev/null 2>&1; then
+            exec --skip-git-repo-check "respond with the word OK" </dev/null >/dev/null 2>&1; then
         cat <<EOF >&2
 codex smoke test failed in passthrough mode. The most likely reasons:
   - No working upstream auth (run \`codex login\`, or set OPENAI_API_KEY)

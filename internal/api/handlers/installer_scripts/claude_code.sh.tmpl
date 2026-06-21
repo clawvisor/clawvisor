@@ -12,6 +12,11 @@
 # failing — the token's already persisted, they can verify from another box.
 if command -v claude >/dev/null 2>&1; then
     echo "→ Smoke-testing claude through Clawvisor…"
+    # </dev/null is load-bearing: when this script is running via
+    # `curl | sh`, sh's stdin IS the curl pipe carrying the rest of
+    # the script. `claude -p` reads stdin (for the piped-prompt
+    # pattern), so without this redirect claude consumes the rest of
+    # the script and sh exits silently at EOF after claude returns.
     SMOKE_OUT=$(
         CLAWVISOR_URL="$APP_URL" \
         CLAWVISOR_AGENT_TOKEN="$TOKEN" \
@@ -19,7 +24,7 @@ if command -v claude >/dev/null 2>&1; then
         ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $TOKEN" \
         ANTHROPIC_AUTH_TOKEN= \
         ANTHROPIC_API_KEY= \
-        claude -p "respond with the word OK" 2>&1
+        claude -p "respond with the word OK" </dev/null 2>&1
     ) || {
         echo "claude end-to-end smoke test failed:" >&2
         printf '%s\n' "$SMOKE_OUT" >&2
