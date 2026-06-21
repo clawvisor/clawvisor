@@ -521,6 +521,9 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		"ANTHROPIC_BASE_URL",
 		"ANTHROPIC_CUSTOM_HEADERS",
 		"X-Clawvisor-Agent-Token: $TOKEN",
+		// On smoke-test failure, point the user at the credentials page
+		// so they know where to vault an upstream Anthropic key.
+		"/dashboard/keys/anthropic",
 		// Default-vs-alias prompt + skip-permissions prompt (TUI labels).
 		"prompt_choice",
 		"How should Clawvisor route your Claude Code calls?",

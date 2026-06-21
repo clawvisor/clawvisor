@@ -52,16 +52,17 @@ if command -v codex >/dev/null 2>&1; then
             -c "sandbox_workspace_write.network_access=true" \
             exec --skip-git-repo-check "respond with the word OK" </dev/null >/dev/null 2>&1; then
         cat <<EOF >&2
-codex smoke test failed in passthrough mode. The most likely reasons:
-  - No working upstream auth (run \`codex login\`, or set OPENAI_API_KEY)
-  - Clawvisor cannot reach OpenAI from this host
+codex smoke test failed in passthrough mode. Either:
 
-For the swap-mode fallback (vault an OpenAI key, route auth through the
-Clawvisor token), run the LLM-driven flow:
-  clawvisor-server connect-agent codex
+  - You don't have working local OpenAI auth — fix with \`codex login\`
+    or \`export OPENAI_API_KEY=...\`, then re-run this install.
+  - Or vault an OpenAI key in Clawvisor and let the proxy forward your
+    calls without local auth:
 
-The provider block and token are already in place; the swap-mode fallback
-only rewrites the auth shape.
+      $APP_URL/dashboard/keys/openai
+
+The provider block and Clawvisor agent token are already in place — re-run
+this install once either of those is set up.
 EOF
         exit 1
     fi

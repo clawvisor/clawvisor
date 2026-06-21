@@ -26,7 +26,15 @@ if command -v claude >/dev/null 2>&1; then
         ANTHROPIC_API_KEY= \
         claude -p "respond with the word OK" </dev/null 2>&1
     ) || {
-        echo "claude end-to-end smoke test failed:" >&2
+        cat >&2 <<EOF
+claude end-to-end smoke test failed. The most likely cause is that no
+upstream Anthropic key is vaulted yet — Clawvisor's proxy needs one to
+forward your calls. Vault one here, then re-run this install:
+
+  $APP_URL/dashboard/keys/anthropic
+
+Raw error from claude:
+EOF
         printf '%s\n' "$SMOKE_OUT" >&2
         exit 1
     }
