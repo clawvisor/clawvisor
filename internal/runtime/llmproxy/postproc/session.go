@@ -15,18 +15,25 @@ import (
 // streaming postprocess both use this shape so capture/finalize
 // lifecycle details stay in one place.
 //
-// substitutions tracks pending-substitution registry writes that
-// fired during evaluation (scope-drift mints, recoverable-deny
-// migrations, inline-task auto-approve). driftOutcomes tracks
-// SetOutcome writes deferred via the verdict's DeferredDriftOutcome.
-// rollback() iterates both so a request whose response is later
-// failClosed'd doesn't leak orphan entries or stale pre-clears.
-// commitVerdictSideEffects is the single entry point — it walks each
-// verdict, applies the drift outcome first (so the pre-clear lands
-// before the substitution mint that depends on it) and then registers
-// the substitution. Evaluators MUST NOT call into the registry
-// themselves; the spec-on-verdict pattern keeps the verdict pure data
-// and concentrates rollback in one place.
+// Three parallel per-registry rollback ledgers — substitutions,
+// driftOutcomes, transientConsumed — track writes commit made so
+// rollback can undo them in one place. Each follows the same shape:
+// commit appends a key after a successful registry write; rollback
+// iterates the slice and calls the matching undo op. The three
+// ledgers exist because they target three different registries
+// (ScopeDrifts pending-substitutions, ScopeDrifts drift outcomes,
+// TransientBudget retry slots) with different key types and undo
+// methods — they can't be unified, but their shape is intentionally
+// parallel so the rollback story stays uniform.
+//
+// commitVerdictSideEffects is the single entry point — it promotes
+// transient-deny verdicts first (so any newly-set PendingSubstitution
+// gets picked up by the substitution loop in the same pass), then
+// applies drift outcomes (so the pre-clear lands before the
+// substitution mint that depends on it), then registers
+// substitutions. Evaluators MUST NOT call into any of the three
+// registries themselves; the spec-on-verdict pattern keeps the
+// verdict pure data and concentrates rollback in one place.
 type postprocessSession struct {
 	baseCfg                  llmproxy.PostprocessConfig
 	evalCfg                  llmproxy.PostprocessConfig

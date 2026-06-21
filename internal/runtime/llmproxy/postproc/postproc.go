@@ -89,20 +89,16 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		return failClosed("verdict side-effect commit failed: " + commitErr.Error())
 	}
 
-	// Real rewrite: eval is now a memoized lookup. Defensive fallback
-	// computes a verdict on demand if the rewriter somehow surfaces a
-	// tool_use the collector didn't see (shouldn't happen — same body
-	// — but a zero verdict here would silently mis-emit).
-	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
-		if v, ok := verdictByTU[tu.ID]; ok {
-			return v
-		}
-		v := innerEval(tu)
-		v = transformRecoverableDenyToPlaceholder(v, tu, cfg)
-		verdictByTU[tu.ID] = v
-		return v
-	}
-	result, err := rewriter.Rewrite(body, contentType, eval)
+	// Real rewrite: eval is a direct lookup against the post-commit
+	// verdict map. A tool_use the collector didn't surface yields a
+	// zero-value verdict (Allowed=false) — safe denial rather than
+	// the bypass-commit path an on-demand fallback would create. The
+	// collector and real rewrite walk the same body, so a divergence
+	// here is a parser bug that should surface in tests, not get
+	// silently masked.
+	result, err := rewriter.Rewrite(body, contentType, func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		return verdictByTU[tu.ID]
+	})
 	if err != nil {
 		// Fail closed: the rewriter failed mid-body so we don't know
 		// whether a credentialed placeholder survived into the response.
