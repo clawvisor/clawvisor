@@ -1018,6 +1018,13 @@ func (s *Server) routes() http.Handler {
 		// user_id. The Other Agents fallback path still uses /skill/setup.
 		installerHandler := handlers.NewInstallerHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal(), s.cfg.ProxyLite.PublicURL, s.cfg.Server.PublicURL)
 		mux.HandleFunc("GET /skill/install/{target}", installerHandler.Setup)
+		// Legacy companion uninstall route — the deprecated markdown installer
+		// wrote a `/clawvisor-uninstall` slash command on the user's disk that
+		// fetched the uninstall skill from this URL. The new shell installer
+		// drops the revert recipe directly to ~/.clawvisor/uninstall-<target>.md,
+		// but stale slash commands still hit this path. Serve a 410 pointing
+		// at the local file so users see a clear next step instead of a 404.
+		mux.HandleFunc("GET /skill/uninstall/{target}", installerHandler.Uninstall)
 	}
 
 	// Claude Desktop configuration profile (.mobileconfig) — the user

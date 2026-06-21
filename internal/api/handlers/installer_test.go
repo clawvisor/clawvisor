@@ -664,6 +664,36 @@ func TestInstallerMarkdownReturns410(t *testing.T) {
 	}
 }
 
+// TestUninstallReturnsGoneWithLocalFilePointer — the deprecated markdown
+// installer dropped a `/clawvisor-uninstall` slash command on disk that
+// fetched the uninstall skill from /skill/uninstall/<target>.md. The route
+// no longer serves a real uninstaller (the shell installer writes the
+// revert recipe directly to ~/.clawvisor/uninstall-<target>.md), but stale
+// slash commands still hit this path. Returning 410 with a pointer at the
+// local file is friendlier than a bare 404.
+func TestUninstallReturnsGoneWithLocalFilePointer(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /skill/uninstall/{target}", h.Uninstall)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	for _, target := range []string{"claude-code", "codex", "claude-code.md"} {
+		resp, err := http.Get(srv.URL + "/skill/uninstall/" + target)
+		if err != nil {
+			t.Fatalf("[%s] GET: %v", target, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusGone {
+			t.Errorf("[%s] expected 410, got %d", target, resp.StatusCode)
+		}
+		if !strings.Contains(string(body), "~/.clawvisor/uninstall-") {
+			t.Errorf("[%s] body should point at the local uninstall doc; got: %s", target, body)
+		}
+	}
+}
+
 // TestInstallerBareURLRedirectsByTarget — the no-extension form historically
 // redirected to .md, but claude-code and codex now serve .sh (their .md
 // route returns 410). A bare URL for those targets must redirect to .sh so

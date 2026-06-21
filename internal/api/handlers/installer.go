@@ -234,6 +234,30 @@ func (h *InstallerHandler) redirectToCanonicalExt(w http.ResponseWriter, r *http
 	http.Redirect(w, r, redirectURL, http.StatusMovedPermanently)
 }
 
+// Uninstall handles GET /skill/uninstall/{target}. The deprecated markdown
+// installer used to write a `/clawvisor-uninstall` slash command on the
+// user's disk that fetched the uninstall skill from this URL. The shell
+// installer drops the revert recipe to ~/.clawvisor/uninstall-<target>.md
+// directly — no fetch needed — but stale slash commands still hit this
+// path. Return 410 with a one-line pointer at the local file so users see
+// a clear next step instead of a bare 404.
+func (h *InstallerHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
+	rawTarget := r.PathValue("target")
+	target, _, _ := parseInstallerTarget(rawTarget)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusGone)
+	// Only the two self-install targets ever had an uninstall renderer;
+	// hermes/openclaw shipped their revert recipe inline in the installer
+	// skill. For unknown / never-supported targets, return the same 410
+	// with a generic message — anything else is a fetch from a slash
+	// command that no longer makes sense.
+	if target == InstallerClaudeCode || target == InstallerCodex {
+		fmt.Fprintf(w, "The remote uninstall skill has been retired. The shell installer\nalready wrote your revert recipe to:\n\n  ~/.clawvisor/uninstall-%s.md\n\nOpen that file for the step-by-step undo.\n", target)
+		return
+	}
+	fmt.Fprintf(w, "The remote uninstall skill has been retired. If the install left a\nrevert recipe, look under ~/.clawvisor/uninstall-*.md on your disk.\n")
+}
+
 // writeGoneForMarkdown returns 410 for self-install targets requested as
 // .md — old paste blobs from stale dashboards land here. The body points
 // at the live .sh URL so the operator/user knows where to look.
