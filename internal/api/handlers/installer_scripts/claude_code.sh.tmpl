@@ -3,64 +3,164 @@
 {{- template "persist_token" . -}}
 {{- template "smoke_test" . -}}
 
-# --- Merge ~/.claude/settings.json --------------------------------------------
-# Claude Code reads env from settings.json. Merge the Clawvisor env keys
-# alongside whatever the user already has. Existing unrelated env entries
-# are preserved.
-SETTINGS="$HOME/.claude/settings.json"
-mkdir -p "$HOME/.claude"
-[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+# --- Ask: make Clawvisor the default for every Claude Code session? ---------
+# Default-everywhere writes env keys + curl auto-approve rules to
+# ~/.claude/settings.json, which Claude Code reads on every session in any
+# directory. Alias-only leaves settings.json untouched and instead installs
+# a `claude-cv` shell function that sets the env vars for just that
+# invocation — useful when the user wants to opt in per-call rather than
+# globally.
+if [ -z "$CV_DEFAULT_MODE" ]; then
+    if prompt_yn "Make Clawvisor the default for every Claude Code session? (no = install a 'claude-cv' alias instead)" no; then
+        CV_DEFAULT_MODE=yes
+    else
+        CV_DEFAULT_MODE=no
+    fi
+fi
 
-ANTHROPIC_BASE="$LLM_URL/api"
-CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $TOKEN"
+# Pick the shell rc file once — only the alias branch writes to it, but the
+# resolution lives here so both branches print a consistent message.
+case "$SHELL" in
+    */zsh)  RC="$HOME/.zshrc" ;;
+    */bash) RC="$HOME/.bashrc" ;;
+    */fish) RC="$HOME/.config/fish/config.fish" ;;
+    *)      RC="" ;;
+esac
 
-# Preserve the file's existing keys, then layer env + permission allow rules
-# on top. The allow list is deduplicated by exact-string match so re-running
-# the installer is idempotent.
-jq \
-    --arg url "$APP_URL" \
-    --arg token "$TOKEN" \
-    --arg base "$ANTHROPIC_BASE" \
-    --arg headers "$CUSTOM_HEADERS" \
-    --arg rule_url '{{.RelayPermissionRule}}' \
-    '
-    .env = ((.env // {}) + {
-        CLAWVISOR_URL: $url,
-        CLAWVISOR_AGENT_TOKEN: $token,
-        ANTHROPIC_BASE_URL: $base,
-        ANTHROPIC_CUSTOM_HEADERS: $headers,
-        ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_API_KEY: ""
-    })
-    | .permissions = ((.permissions // {}))
-    | .permissions.allow = (
-        ((.permissions.allow // []) + [
-            "Bash(curl *http://localhost:25297/*)",
-            "Bash(curl *$CLAWVISOR_URL/*)",
-            $rule_url
-        ]) | unique
-    )
-    ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
-echo "✓ Updated $SETTINGS"
+if [ "$CV_DEFAULT_MODE" = yes ]; then
+    # --- Default-everywhere: merge ~/.claude/settings.json ------------------
+    # Claude Code reads env from settings.json. Merge the Clawvisor env keys
+    # alongside whatever the user already has. Existing unrelated env
+    # entries are preserved.
+    SETTINGS="$HOME/.claude/settings.json"
+    mkdir -p "$HOME/.claude"
+    [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+
+    ANTHROPIC_BASE="$LLM_URL/api"
+    CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $TOKEN"
+
+    # Preserve the file's existing keys, then layer env + permission allow
+    # rules on top. The allow list is deduplicated by exact-string match so
+    # re-running the installer is idempotent.
+    jq \
+        --arg url "$APP_URL" \
+        --arg token "$TOKEN" \
+        --arg base "$ANTHROPIC_BASE" \
+        --arg headers "$CUSTOM_HEADERS" \
+        --arg rule_url '{{.RelayPermissionRule}}' \
+        '
+        .env = ((.env // {}) + {
+            CLAWVISOR_URL: $url,
+            CLAWVISOR_AGENT_TOKEN: $token,
+            ANTHROPIC_BASE_URL: $base,
+            ANTHROPIC_CUSTOM_HEADERS: $headers,
+            ANTHROPIC_AUTH_TOKEN: "",
+            ANTHROPIC_API_KEY: ""
+        })
+        | .permissions = ((.permissions // {}))
+        | .permissions.allow = (
+            ((.permissions.allow // []) + [
+                "Bash(curl *http://localhost:25297/*)",
+                "Bash(curl *$CLAWVISOR_URL/*)",
+                $rule_url
+            ]) | unique
+        )
+        ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
+    echo "✓ Updated $SETTINGS"
+    INSTALL_MODE_LABEL=default-everywhere
+else
+    # --- Alias-only: install a claude-cv() shell function -------------------
+    # Leaves bare `claude` untouched. The user opts in by typing `claude-cv`
+    # instead. The function sets the env vars per-invocation and (optionally)
+    # passes --dangerously-skip-permissions so the user isn't double-prompted
+    # by Claude Code for each Clawvisor-bound curl.
+    if [ -z "$CV_YOLO" ]; then
+        if prompt_yn "Should 'claude-cv' skip Claude Code's permission prompts (--dangerously-skip-permissions)?" no; then
+            CV_YOLO=yes
+        else
+            CV_YOLO=no
+        fi
+    fi
+
+    if [ "$CV_YOLO" = yes ]; then
+        SKIP_FLAG=" --dangerously-skip-permissions"
+    else
+        SKIP_FLAG=""
+    fi
+
+    mkdir -p "$HOME/.clawvisor/diffs/$AGENT_NAME"
+
+    if [ -n "$RC" ]; then
+        # The function body inlines the env-var setup and the optional skip
+        # flag. Idempotent on re-runs by exact-substring match against the
+        # agent-token lookup path — flipping yolo/no-yolo on a re-install
+        # requires deleting the existing block manually (the diff record
+        # under ~/.clawvisor/diffs/$AGENT_NAME/ shows exactly what to strip).
+        FUNC_BLOCK=$(cat <<EOF
+claude-cv() {
+    CLAWVISOR_URL="$APP_URL" \\
+    CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_NAME.json)" \\
+    ANTHROPIC_BASE_URL="$LLM_URL/api" \\
+    ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: \$CLAWVISOR_AGENT_TOKEN" \\
+    ANTHROPIC_AUTH_TOKEN= \\
+    ANTHROPIC_API_KEY= \\
+        claude$SKIP_FLAG "\$@"
+}
+EOF
+)
+        if ! grep -F -q "agents/$AGENT_NAME.json" "$RC" 2>/dev/null; then
+            printf '\n%s\n' "$FUNC_BLOCK" >> "$RC"
+            jq -n \
+                --arg file "$RC" \
+                --arg content "$FUNC_BLOCK" \
+                '{file:$file, type:"text_append", content:$content}' \
+                > "$HOME/.clawvisor/diffs/$AGENT_NAME/claude_cv.json"
+            echo "✓ Appended claude-cv() to $RC"
+        else
+            echo "  (claude-cv() already references this agent; leaving $RC untouched)"
+        fi
+    else
+        echo "  (unknown shell: $SHELL — append the claude-cv function manually)" >&2
+    fi
+    INSTALL_MODE_LABEL=alias-only
+fi
 
 # --- Write the uninstall reference -------------------------------------------
+# Mode-aware: tells the user which files were actually touched.
 UNINSTALL_DOC="$HOME/.clawvisor/uninstall-claude-code.md"
-cat > "$UNINSTALL_DOC" <<'EOF'
-# How to disconnect Claude Code from Clawvisor
+if [ "$INSTALL_MODE_LABEL" = default-everywhere ]; then
+    cat > "$UNINSTALL_DOC" <<EOF
+# How to disconnect Claude Code from Clawvisor (default-everywhere install)
 
-1. Edit `~/.claude/settings.json` and remove these keys from the top-level
-   `env` object (leave any unrelated env keys in place):
+1. Edit ~/.claude/settings.json and remove these keys from the top-level
+   \`env\` object (leave any unrelated env keys in place):
        CLAWVISOR_URL, CLAWVISOR_AGENT_TOKEN,
        ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS,
        ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY
-   Also remove any `Bash(curl *…clawvisor…/*)` entries from
-   `.permissions.allow`.
-2. Delete the token file: `rm ~/.clawvisor/agents/AGENT_NAME.json`
-3. Revoke the agent in the Clawvisor dashboard under Agents → AGENT_NAME → Delete.
+   Also remove any \`Bash(curl *…clawvisor…/*)\` entries from
+   \`.permissions.allow\`.
+2. Delete the token file: rm ~/.clawvisor/agents/$AGENT_NAME.json
+3. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
 4. Restart Claude Code so the cleared env takes effect.
 EOF
-sed -i.bak "s/AGENT_NAME/$AGENT_NAME/g" "$UNINSTALL_DOC" && rm -f "$UNINSTALL_DOC.bak"
+else
+    cat > "$UNINSTALL_DOC" <<EOF
+# How to disconnect Claude Code from Clawvisor (alias-only install)
+
+1. Remove the \`claude-cv()\` function from your shell rc. The exact text
+   that was appended is recorded under
+   ~/.clawvisor/diffs/$AGENT_NAME/claude_cv.json — match-and-remove it
+   from the file listed there.
+2. Delete the token file: rm ~/.clawvisor/agents/$AGENT_NAME.json
+3. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
+4. Open a new shell to drop the claude-cv function.
+EOF
+fi
 echo "✓ Wrote revert recipe to $UNINSTALL_DOC"
 
 echo
-echo "Done. Restart Claude Code so the new env keys take effect."
+if [ "$INSTALL_MODE_LABEL" = default-everywhere ]; then
+    echo "Done. Restart Claude Code so the new env keys take effect."
+else
+    echo "Done. Open a new shell or 'source $RC' to pick up claude-cv."
+fi

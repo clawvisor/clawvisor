@@ -29,11 +29,15 @@ usage() {
     cat >&2 <<'USAGE'
 Usage: curl -fsSL "<url>/skill/install/{{.Target}}.sh?..." | sh [-- FLAGS]
 
-Flags (applies only to codex; ignored elsewhere):
-  --default-everywhere   Set Clawvisor as the global Codex provider.
-  --alias-only           Install a `codex-cv` shell function instead.
-  --yolo                 Pass --dangerously-bypass-approvals-and-sandbox
-                         in the `codex-cv` alias.
+Flags:
+  --default-everywhere   Make Clawvisor the default for every session of
+                         this harness (writes to its settings file).
+  --alias-only           Skip the settings file and install a shell alias
+                         (`codex-cv` / `claude-cv`) instead.
+  --yolo                 In alias mode, pass the harness's "skip prompts"
+                         flag (--dangerously-bypass-approvals-and-sandbox
+                         for codex; --dangerously-skip-permissions for
+                         claude).
   --no-yolo              Don't pass that flag.
   -h, --help             Show this help and exit.
 

@@ -2363,9 +2363,7 @@ function OnePasteGuide({
               <p className="text-xs text-success">
                 ✓ <code className="font-mono">{matchingAgent!.name}</code> is connected.
                 {spec.selfInstall
-                  ? target === 'codex'
-                    ? ` The script may be asking in your terminal whether to make Clawvisor the default for codex — answer that prompt to finish.`
-                    : ` Restart ${spec.label} so the new env keys take effect.`
+                  ? ` The script may be asking in your terminal whether to make Clawvisor the default for ${spec.label.toLowerCase()} or install an alias — answer those prompts to finish.`
                   : ` ${helperSpec.label} is configuring ${spec.label} — finish that conversation in your terminal.`}
               </p>
             ) : (
@@ -2398,14 +2396,23 @@ function OnePasteGuide({
                 <code className="font-mono">/api/agents/connect</code> with the
                 claim (auto-approved), writes the agent token to{' '}
                 <code className="font-mono">~/.clawvisor/agents/{spec.baseName}.json</code>,
-                smoke-tests the token against the daemon, edits{' '}
+                smoke-tests the token against the daemon, and writes a revert
+                recipe to{' '}
+                <code className="font-mono">~/.clawvisor/uninstall-{target}.md</code>.
+                {' '}If your shell is interactive, the script asks once whether to
+                make Clawvisor the default for every {spec.label.toLowerCase()} session
+                {' '}(writes to{' '}
                 <code className="font-mono">
                   {target === 'codex' ? '~/.codex/config.toml' : '~/.claude/settings.json'}
                 </code>
-                {' '}so {spec.label} routes through Clawvisor, and writes a revert
-                recipe to{' '}
-                <code className="font-mono">~/.clawvisor/uninstall-{target}.md</code>.
-                {target === 'codex' && ' If your shell is interactive, the script asks once whether to route every codex session through Clawvisor or install a `codex-cv` alias instead.'}
+                ) or install a{' '}
+                <code className="font-mono">{target === 'codex' ? 'codex-cv' : 'claude-cv'}</code>
+                {' '}shell alias instead — and in alias mode, whether the alias
+                should pass{' '}
+                <code className="font-mono">
+                  {target === 'codex' ? '--dangerously-bypass-approvals-and-sandbox' : '--dangerously-skip-permissions'}
+                </code>
+                {' '}to skip the harness's per-call prompts.
               </p>
               <p>
                 <strong>If you'd rather audit it first:</strong> open the URL in a new

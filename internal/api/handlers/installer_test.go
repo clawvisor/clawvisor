@@ -490,8 +490,10 @@ func installerGetShell(t *testing.T, h *InstallerHandler, target, claim string) 
 
 // TestInstallerClaudeCodeShell — sanity check the deterministic shell one-
 // liner the dashboard now hands out. Asserts the script's structural anchors
-// (shebang, set -eu, jq+curl preflight, agent register call, settings.json
-// merge, uninstall doc) without trying to grep every line.
+// — shebang, preflight, mint, the make-default question, BOTH apply
+// branches (default-everywhere writes settings.json + permission rules;
+// alias-only writes a claude-cv() function with optional
+// --dangerously-skip-permissions), and a mode-aware uninstall doc.
 func TestInstallerClaudeCodeShell(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
 	body := installerGetShell(t, h, "claude-code", "ABCDEFGHIJ")
@@ -500,6 +502,11 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		"set -eu",
 		"need curl",
 		"need jq",
+		// Flag parsing — same flags as codex now.
+		"--default-everywhere",
+		"--alias-only",
+		"--yolo",
+		"--no-yolo",
 		// Mint with claim — claim auto-approves on the daemon, no second click.
 		"claim=ABCDEFGHIJ",
 		"/api/agents/connect",
@@ -508,16 +515,23 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		"chmod 600",
 		// Smoke test — daemon must accept the freshly minted token.
 		"/api/skill/catalog",
-		// Settings merge — env keys + permission rules into ~/.claude/settings.json.
+		// Default-vs-alias prompt + skip-permissions prompt.
+		"Make Clawvisor the default for every Claude Code session?",
+		"--dangerously-skip-permissions",
+		// Default-everywhere branch: env keys + permission rules into
+		// ~/.claude/settings.json.
 		"~/.claude/settings.json",
 		"ANTHROPIC_BASE_URL",
 		"ANTHROPIC_CUSTOM_HEADERS",
 		"X-Clawvisor-Agent-Token",
-		// Relay permission rule lands in the allow list.
 		"Bash(curl *https://relay.clawvisor.com/*)",
-		// Uninstall doc with name substitution.
+		// Alias-only branch: writes claude-cv() to the rc file with the
+		// optional skip flag.
+		"claude-cv()",
+		// Uninstall doc with name substitution + mode-specific copy.
 		"uninstall-claude-code.md",
-		"Done. Restart Claude Code",
+		"default-everywhere install",
+		"alias-only install",
 	)
 }
 
