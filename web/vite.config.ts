@@ -20,8 +20,11 @@ export default defineConfig({
     // it gated behind an explicit env var so the default localhost
     // dev experience is also strict against rebinding attacks. Vite
     // expects either `true` or `string[]`; `false` is not a documented
-    // value, so pass `[]` for the deny-all default instead.
-    allowedHosts: allowAllHosts ? true : [],
+    // value, so pass the dev hostnames explicitly for the strict default.
+    // dev.clawvisor.com resolves to 127.0.0.1 via /etc/hosts when running
+    // the local HTTPS terminator (scripts/dev.sh + Caddyfile), and the
+    // app's auth config requires that origin for WebAuthn/SAML/OAuth.
+    allowedHosts: allowAllHosts ? true : ['dev.clawvisor.com'],
     proxy: {
       '/api': backendURL,
       '/skill': backendURL,
