@@ -291,8 +291,12 @@ func TestScriptSessionEvaluator_URLUnrecognized_JudgeBlock_EmptyGuidance(t *test
 
 // TestScriptSessionEvaluator_URLUnrecognized_JudgeTimeout confirms that
 // when the LLM judge times out (deadline exceeded error), the evaluator
-// returns OutcomeDeny with the timeout message, rather than falling back
-// (Skip) to the inspector. The judge_timeout fact is emitted.
+// emits a TransientDenyVerdict tagged with the "script_session_judge_timeout"
+// class. The postproc transient transform promotes the first occurrence per
+// conversation to a RecoverableDeny (one-shot retry) and lets the second fall
+// through as a plain Deny. The evaluator itself MUST NOT set
+// RecoverableReason — that's the postproc layer's call once the budget is
+// consulted.
 func TestScriptSessionEvaluator_URLUnrecognized_JudgeTimeout(t *testing.T) {
 	judge := &stubJudge{
 		verdict: scriptjudge.Verdict{PromptSHA: "xyz789", LatencyMS: 8005},
@@ -307,6 +311,12 @@ func TestScriptSessionEvaluator_URLUnrecognized_JudgeTimeout(t *testing.T) {
 	}
 	if v.Outcome != pipeline.OutcomeDeny {
 		t.Errorf("Outcome = %q, want Deny (judge timed out)", v.Outcome)
+	}
+	if v.TransientFailureClass != "script_session_judge_timeout" {
+		t.Errorf("TransientFailureClass = %q, want %q", v.TransientFailureClass, "script_session_judge_timeout")
+	}
+	if v.RecoverableReason != "" {
+		t.Errorf("evaluator must leave RecoverableReason empty (postproc owns promotion); got %q", v.RecoverableReason)
 	}
 	if !strings.Contains(v.Reason, "LLM intent judge timed out (8s limit reached)") {
 		t.Errorf("Reason = %q, should contain timeout message with limit", v.Reason)

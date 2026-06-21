@@ -224,6 +224,140 @@ func TestParseBashCurl_AcceptsLineContinuationBeforeHeader(t *testing.T) {
 	}
 }
 
+// Tokenizer-rejected verdicts must surface as AgentRecoverable so the
+// chain emits RecoverableDenyVerdict (one-shot continuation retry) instead
+// of falling through to OutcomeHold and stalling on human approval. The
+// fix is always the same — re-emit the curl with a `--data @-` heredoc —
+// so the model can self-correct without a user round-trip.
+//
+// Repro: mvdan/sh parses `\'` as an escaped apostrophe, so the credentialed
+// segment extracts cleanly; the minimal in-process tokenizer doesn't model
+// backslash escapes and sees an unbalanced quote.
+func TestParseBashCurl_TokenizerRejectIsAgentRecoverable(t *testing.T) {
+	cmd := `curl -H 'Authorization: Bearer autovault_github_TESTAAAAAAAAAAAA' -d O\'Brien https://api.github.com/foo`
+	tu := ToolUse{
+		ID:    "toolu_tokenizer_reject",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"cmd":` + jsonString(cmd) + `}`),
+	}
+	got, ok := DefaultParser{}.Parse(tu)
+	if !ok {
+		t.Fatalf("parser fell through; want an Ambiguous verdict, got %+v", got)
+	}
+	if !got.Ambiguous || got.IsAPICall {
+		t.Fatalf("expected Ambiguous && !IsAPICall, got %+v", got)
+	}
+	if !got.AgentRecoverable {
+		t.Fatalf("expected AgentRecoverable=true so chain emits RecoverableDenyVerdict; got %+v", got)
+	}
+	if !strings.Contains(got.Reason, "tokenizer rejected input") {
+		t.Fatalf("reason=%q; want it to mention tokenizer rejection", got.Reason)
+	}
+}
+
+// Every Ambiguous parser refusal that names a deterministic shape
+// problem must surface as AgentRecoverable so InspectorChain emits
+// RecoverableDenyVerdict (one-shot continuation retry) instead of
+// falling through to OutcomeHold and stalling on human approval. This
+// pins the contract for the bash-curl branches and the structured-
+// fetch placeholder-location branch. A failure here means the model
+// gets a user-approval prompt for a problem it could have self-fixed.
+//
+// Note: the tokenizer-rejected and extractCredentialedCurlSegment
+// branches are pinned by their own dedicated tests above and in
+// inspector_test.go; they're not duplicated here.
+func TestParseBashCurl_AmbiguousSitesAreAgentRecoverable(t *testing.T) {
+	const cred = `autovault_github_AAAAAAAAAAAAAAAA`
+	authHeader := `'Authorization: Bearer ` + cred + `'`
+	bash := func(cmd string) ToolUse {
+		return ToolUse{
+			ID:    "toolu_ambig_recover",
+			Name:  "Bash",
+			Input: json.RawMessage(`{"cmd":` + jsonString(cmd) + `}`),
+		}
+	}
+	cases := []struct {
+		name        string
+		tu          ToolUse
+		wantReason  string
+	}{
+		{
+			name:       "bash_trailing_dash_X",
+			tu:         bash(`curl -H ` + authHeader + ` https://api.github.com/ -X`),
+			wantReason: "-X without value",
+		},
+		{
+			name:       "bash_trailing_dash_H",
+			tu:         bash(`curl -H ` + authHeader + ` https://api.github.com/ -H`),
+			wantReason: "-H without value",
+		},
+		{
+			name:       "bash_safe_value_flag_trailing",
+			tu:         bash(`curl -H ` + authHeader + ` https://api.github.com/ -A`),
+			wantReason: "-A without value",
+		},
+		{
+			name:       "bash_body_flag_trailing",
+			tu:         bash(`curl -H ` + authHeader + ` https://api.github.com/ -d`),
+			wantReason: "-d without value",
+		},
+		{
+			name:       "bash_placeholder_in_body",
+			tu:         bash(`curl -d 'token=` + cred + `' https://api.github.com/`),
+			wantReason: "placeholder not in -H header",
+		},
+		{
+			name:       "bash_unknown_flag",
+			tu:         bash(`curl -L -H ` + authHeader + ` https://api.github.com/`),
+			wantReason: "unknown curl flag -L",
+		},
+		{
+			name:       "bash_extra_positional",
+			tu:         bash(`curl -H ` + authHeader + ` https://api.github.com/ https://api.github.com/extra`),
+			wantReason: "expected exactly one positional URL",
+		},
+		{
+			name:       "bash_positional_not_a_url",
+			tu:         bash(`curl -H ` + authHeader + ` not_a_url`),
+			wantReason: "positional is not a URL",
+		},
+		{
+			name:       "bash_non_http_url",
+			tu:         bash(`curl -H ` + authHeader + ` ftp://example.com/file`),
+			wantReason: "non-http URL",
+		},
+		{
+			name: "structured_fetch_placeholder_in_body",
+			tu: ToolUse{
+				ID:    "toolu_ambig_fetch",
+				Name:  "WebFetch",
+				Input: json.RawMessage(`{"url":"https://api.github.com/","method":"POST","body":"token=` + cred + `"}`),
+			},
+			wantReason: "placeholder not in known header credential location",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := DefaultParser{}.Parse(tc.tu)
+			if !ok {
+				t.Fatalf("parser fell through; want Ambiguous verdict, got %+v", got)
+			}
+			if !got.Ambiguous {
+				t.Fatalf("expected Ambiguous=true; got %+v", got)
+			}
+			if !got.AgentRecoverable {
+				t.Fatalf("expected AgentRecoverable=true so the chain emits RecoverableDenyVerdict; got %+v", got)
+			}
+			if got.IsAPICall {
+				t.Fatalf("expected IsAPICall=false for refusal verdict; got %+v", got)
+			}
+			if !strings.Contains(got.Reason, tc.wantReason) {
+				t.Fatalf("reason = %q; want it to contain %q", got.Reason, tc.wantReason)
+			}
+		})
+	}
+}
+
 func TestOpenClawReadOnlyToolsAreLocalOnlyDefaults(t *testing.T) {
 	for _, name := range []string{
 		"memory_get",

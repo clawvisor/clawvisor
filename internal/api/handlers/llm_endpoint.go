@@ -111,6 +111,12 @@ type LLMEndpointHandler struct {
 	// constructor wires an in-memory registry by default.
 	ScopeDrifts llmproxy.ScopeDriftRegistry
 
+	// TransientBudget rations one-shot retries for Deny verdicts marked
+	// with a TransientFailureClass (judge timeout, nonce-mint hiccup,
+	// etc.). Optional — nil disables the promotion and transient
+	// failures surface as plain Deny. Default is an in-memory budget.
+	TransientBudget llmproxy.TransientBudget
+
 	// PendingSecrets buffers inbound requests that appear to contain raw
 	// secrets until the user decides whether to vault, discard, allow
 	// once, or mark them as non-secrets.
@@ -222,6 +228,7 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		Logger:                 logger,
 		PendingApprovals:       llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
 		ScopeDrifts:            llmproxy.NewMemoryScopeDriftRegistry(0),
+		TransientBudget:        llmproxy.NewMemoryTransientBudget(0),
 		PendingSecrets:         llmproxy.NewMemoryPendingSecretDecisionCache(10 * time.Minute),
 		InlineApprovalOutcomes: llmproxy.NewMemoryInlineApprovalOutcomeStore(24 * time.Hour),
 		ActiveTasksSnapshots:   llmproxy.NewMemoryActiveTasksSnapshotCache(24*time.Hour, 0),
@@ -1304,6 +1311,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					EgressRules:     egressRules,
 					PreferredTaskID: preferredTaskID,
 				ScopeDrifts:     h.ScopeDrifts,
+				TransientBudget: h.TransientBudget,
 				},
 				ApprovalContext: llmproxy.ApprovalContext{
 					PendingApprovals:                 h.PendingApprovals,
@@ -1652,6 +1660,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				EgressRules:     egressRules,
 				PreferredTaskID: preferredTaskID,
 				ScopeDrifts:     h.ScopeDrifts,
+				TransientBudget: h.TransientBudget,
 			},
 			ApprovalContext: llmproxy.ApprovalContext{
 				PendingApprovals:                 h.PendingApprovals,

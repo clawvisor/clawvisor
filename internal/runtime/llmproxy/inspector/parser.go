@@ -238,6 +238,27 @@ func IsDefaultAllowedTool(name string) bool {
 	}
 }
 
+// ambiguousRecoverable builds the standard parser refusal verdict for
+// deterministic, agent-fixable shape problems: trailing `-X`/`-H`, body
+// that carries the placeholder, unknown curl flag, malformed URL,
+// structured-fetch placeholder outside known header credentials, etc.
+// All such refusals route through InspectorChain's RecoverableDeny
+// path so the agent gets a one-shot continuation retry instead of
+// falling through to OutcomeHold and stalling on human approval.
+//
+// Use this for any `Ambiguous=true` refusal whose Reason names a
+// concrete shape problem the model can correct by re-emitting the
+// tool_use with different inputs. Do NOT use it for refusals whose
+// fix requires user intervention (scope expansion, credential vaulting).
+func ambiguousRecoverable(reason string) Verdict {
+	return Verdict{
+		IsAPICall:        false,
+		Ambiguous:        true,
+		AgentRecoverable: true,
+		Reason:           reason,
+	}
+}
+
 // parseStructuredFetch handles tools whose input is a JSON object with a
 // declared `url` field (and optional method/headers). Recognized tool names:
 //
@@ -278,11 +299,7 @@ func parseStructuredFetch(t ToolUse) (Verdict, bool) {
 	// fall through to ambiguous — v1 only handles header credentials at
 	// the resolver.
 	if len(creds) == 0 {
-		return Verdict{
-			IsAPICall: false,
-			Ambiguous: true,
-			Reason:    "structured fetch: placeholder not in known header credential location",
-		}, true
+		return ambiguousRecoverable("structured fetch: placeholder not in known header credential location"), true
 	}
 
 	return Verdict{
@@ -345,10 +362,18 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 
 	tokens, ok := simpleShellTokenize(normalizeShellLineContinuations(seg.text))
 	if !ok || len(tokens) == 0 {
+		// Unbalanced quotes (the tokenizer's only failure mode, see
+		// simpleShellTokenize) are a deterministic, agent-fixable shape
+		// problem — re-emitting the curl with a `--data @- <<'JSON' …`
+		// heredoc almost always clears it. Mark AgentRecoverable so the
+		// chain surfaces this as RecoverableDenyVerdict and the model
+		// gets a one-shot continuation retry, instead of falling through
+		// to OutcomeHold and stalling on human approval.
 		return Verdict{
-			IsAPICall: false,
-			Ambiguous: true,
-			Reason:    "bash: tokenizer rejected input",
+			IsAPICall:        false,
+			Ambiguous:        true,
+			AgentRecoverable: true,
+			Reason:           "bash: tokenizer rejected input",
 		}, true
 	}
 	if !isCurlInvocation(tokens[0]) {
@@ -367,14 +392,14 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 		switch {
 		case tok == "-X" || tok == "--request":
 			if i+1 >= len(tokens) {
-				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: -X without value"}, true
+				return ambiguousRecoverable("bash: -X without value"), true
 			}
 			method = canonicalMethod(tokens[i+1])
 			explicitMethod = true
 			i += 2
 		case tok == "-H" || tok == "--header":
 			if i+1 >= len(tokens) {
-				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: -H without value"}, true
+				return ambiguousRecoverable("bash: -H without value"), true
 			}
 			name, value, ok := splitHeader(tokens[i+1])
 			if ok {
@@ -396,19 +421,19 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 			// Value-taking flags that don't affect routing (`-A`, `-o`,
 			// `--max-time`, …). Consume the value too.
 			if i+1 >= len(tokens) {
-				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: " + tok + " without value"}, true
+				return ambiguousRecoverable("bash: " + tok + " without value"), true
 			}
 			i += 2
 		case isBodyCurlFlag(tok):
 			if i+1 >= len(tokens) {
-				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: " + tok + " without value"}, true
+				return ambiguousRecoverable("bash: " + tok + " without value"), true
 			}
 			// This only inspects the literal flag value. `@file` and
 			// `@-` bodies are accepted here because Clawvisor only
 			// rewrites header placeholders; if a body source contains a
 			// placeholder it will be sent upstream as an inert literal.
 			if headerMaybeContainsAutovaultPlaceholder(tokens[i+1]) {
-				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: placeholder not in -H header"}, true
+				return ambiguousRecoverable("bash: placeholder not in -H header"), true
 			}
 			if method == "GET" && !curlGet {
 				method = "POST"
@@ -418,31 +443,27 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 		case strings.HasPrefix(tok, "-"):
 			// Unknown flag — could be an upload/form flag or a flag we
 			// don't safely model. Fall through to validator.
-			return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: unknown curl flag " + tok}, true
+			return ambiguousRecoverable("bash: unknown curl flag " + tok), true
 		default:
 			positionals = append(positionals, tok)
 			i++
 		}
 	}
 	if len(positionals) != 1 {
-		return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: expected exactly one positional URL"}, true
+		return ambiguousRecoverable("bash: expected exactly one positional URL"), true
 	}
 
 	u, err := url.Parse(positionals[0])
 	if err != nil || u.Host == "" {
-		return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: positional is not a URL"}, true
+		return ambiguousRecoverable("bash: positional is not a URL"), true
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: non-http URL"}, true
+		return ambiguousRecoverable("bash: non-http URL"), true
 	}
 
 	creds, placeholders := scanHeadersForShadow(headersToInterface(headers))
 	if len(creds) == 0 {
-		return Verdict{
-			IsAPICall: false,
-			Ambiguous: true,
-			Reason:    "bash: placeholder not in -H header",
-		}, true
+		return ambiguousRecoverable("bash: placeholder not in -H header"), true
 	}
 
 	return Verdict{

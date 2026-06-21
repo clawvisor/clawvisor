@@ -78,6 +78,21 @@ type ToolUseVerdict struct {
 	// AuthorizationContext.ScopeDrifts).
 	RecoverableReason string
 
+	// TransientFailureClass, when non-empty, marks this Deny verdict as
+	// a one-shot retryable transient failure (LLM judge timeout, nonce-
+	// mint hiccup, decision-engine RPC blip). The postproc transient
+	// transform promotes the verdict to a RecoverableDeny on the first
+	// occurrence per (AgentID, ConversationID, class) and passes it
+	// through as a plain Deny on subsequent ones, so chronic failures
+	// still surface to the user.
+	//
+	// Contract: same PRODUCER → POSTPROC signal as RecoverableReason.
+	// Evaluators set this field via TransientDenyVerdict and leave
+	// RecoverableReason empty; postproc.transformTransientDenyToRecoverable
+	// decides whether to fill RecoverableReason based on the budget.
+	// Response rewriters MUST NOT branch on this field.
+	TransientFailureClass string
+
 	// CreatedTaskID names the inline task created by the
 	// conversation auto-approval gate. Carried so downstream audit
 	// rows can link to the same task_id.

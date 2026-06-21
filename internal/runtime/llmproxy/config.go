@@ -128,7 +128,12 @@ type AuthorizationContext struct {
 	// continuation menu. Nil disables the menu and falls back to the
 	// pre-existing inline approval prompt.
 	ScopeDrifts ScopeDriftRegistry
-	Catalog     interface {
+	// TransientBudget rations one-shot retries for Deny verdicts marked
+	// with a TransientFailureClass (judge timeout, nonce-mint hiccup,
+	// etc.). Nil disables the promotion and transient verdicts surface
+	// as plain Deny.
+	TransientBudget TransientBudget
+	Catalog         interface {
 		Resolve(host, method, path string) (ResolvedAction, bool)
 	}
 }

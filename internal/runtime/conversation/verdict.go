@@ -77,6 +77,30 @@ func RecoverableDenyVerdict(reason string, facts ...EvaluationFact) ToolUseVerdi
 	}
 }
 
+// TransientDenyVerdict builds a Deny verdict marked with a transient
+// failure class — a one-shot retryable failure the agent's correct
+// response is to re-emit the SAME tool_use unchanged (LLM judge
+// timeout, nonce-mint hiccup, decision-engine RPC error, etc.).
+//
+// The postproc transient transform decides at finalization time
+// whether to promote the verdict to a RecoverableDeny (first
+// occurrence per (agent, conversation, failureClass) within the budget
+// TTL) or leave it as a plain Deny (budget exhausted — chronic failure
+// should surface to the user).
+//
+// Distinct from RecoverableDenyVerdict: that path assumes the agent
+// must CHANGE the call shape (drop a flag, fix quotes). TransientDeny
+// assumes the call shape is fine and only retry is needed.
+func TransientDenyVerdict(failureClass, reason string, facts ...EvaluationFact) ToolUseVerdict {
+	return ToolUseVerdict{
+		Outcome:               OutcomeDeny,
+		Reason:                reason,
+		SubstituteWith:        reason,
+		TransientFailureClass: failureClass,
+		Facts:                 facts,
+	}
+}
+
 // InspectorVerdictSnapshot is the audit-row projection of the
 // inspector's verdict.
 type InspectorVerdictSnapshot = eval.InspectorVerdictSnapshot
