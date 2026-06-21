@@ -141,7 +141,16 @@ type installerCtx struct {
 func (h *InstallerHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	rawTarget := r.PathValue("target")
 	if rawTarget != "" && !strings.HasSuffix(rawTarget, ".md") && !strings.HasSuffix(rawTarget, ".sh") {
-		redirectURL := r.URL.Path + ".md"
+		// Self-install targets redirect to .sh; everything else keeps the
+		// historical .md default. Bare URLs for claude-code / codex used to
+		// land on .md, but that path now returns 410, so the no-extension
+		// form has to follow the live route.
+		bare := InstallerTarget(rawTarget)
+		ext := ".md"
+		if bare == InstallerClaudeCode || bare == InstallerCodex {
+			ext = ".sh"
+		}
+		redirectURL := r.URL.Path + ext
 		if raw := r.URL.RawQuery; raw != "" {
 			redirectURL += "?" + raw
 		}

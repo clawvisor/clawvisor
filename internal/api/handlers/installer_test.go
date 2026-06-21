@@ -664,6 +664,47 @@ func TestInstallerMarkdownReturns410(t *testing.T) {
 	}
 }
 
+// TestInstallerBareURLRedirectsByTarget — the no-extension form historically
+// redirected to .md, but claude-code and codex now serve .sh (their .md
+// route returns 410). A bare URL for those targets must redirect to .sh so
+// stale bookmarks / integrations that omit the extension don't land on the
+// 410 page. Hermes / OpenClaw still go to .md.
+func TestInstallerBareURLRedirectsByTarget(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /skill/install/{target}", h.Setup)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	client := &http.Client{
+		// Capture the redirect target without following it.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	cases := []struct{ target, wantExt string }{
+		{"claude-code", ".sh"},
+		{"codex", ".sh"},
+		{"hermes", ".md"},
+		{"openclaw", ".md"},
+	}
+	for _, tc := range cases {
+		resp, err := client.Get(srv.URL + "/skill/install/" + tc.target + "?claim=ABC")
+		if err != nil {
+			t.Fatalf("[%s] GET: %v", tc.target, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusMovedPermanently {
+			t.Errorf("[%s] expected 301, got %d", tc.target, resp.StatusCode)
+			continue
+		}
+		want := "/skill/install/" + tc.target + tc.wantExt + "?claim=ABC"
+		if got := resp.Header.Get("Location"); got != want {
+			t.Errorf("[%s] redirect Location = %q, want %q", tc.target, got, want)
+		}
+	}
+}
+
 // TestInstallerShellNotAvailableForMarkdownTargets — guard the inverse: the
 // .sh route is defined only for the two self-install targets, so hitting
 // /skill/install/hermes.sh (or openclaw.sh) must 404 rather than fall
