@@ -136,14 +136,11 @@ prompt_choice() {
     printf '\033[?25l' >/dev/tty   # hide cursor
 
     selected=0
-    printf '\033[36m?\033[0m \033[1m%s\033[0m\n' "$msg" >/dev/tty
-    # Print two placeholder lines so the cursor sits below them. The first
-    # _prompt_draw call moves up 2 and overwrites.
-    printf '\n\n' >/dev/tty
 
-    _prompt_draw() {
-        # Move cursor up 2 lines, clear from cursor to end-of-screen, redraw.
-        printf '\033[2A\033[J' >/dev/tty
+    # Initial draw: question (1 line) + two options (2 lines). Cursor ends
+    # up 3 lines below where the question started — every redraw / collapse
+    # moves up by exactly that count.
+    _prompt_render_options() {
         if [ "$selected" = 0 ]; then
             printf '  \033[36m\xe2\x9d\xaf\033[0m %s\n' "$label0" >/dev/tty
             printf '    \033[2m%s\033[0m\n' "$label1" >/dev/tty
@@ -152,7 +149,16 @@ prompt_choice() {
             printf '  \033[36m\xe2\x9d\xaf\033[0m %s\n' "$label1" >/dev/tty
         fi
     }
-    _prompt_draw
+    printf '\033[36m?\033[0m \033[1m%s\033[0m\n' "$msg" >/dev/tty
+    _prompt_render_options
+
+    _prompt_redraw_options() {
+        # Cursor is below the two options; move back up to the first option
+        # line, clear to end of screen, re-render. Net cursor displacement
+        # is zero.
+        printf '\033[2A\033[J' >/dev/tty
+        _prompt_render_options
+    }
 
     # Read one byte at a time via dd. Escape sequences for arrow keys arrive
     # as ESC [ A (up) / ESC [ B (down); other keys arrive as a single byte.
@@ -173,11 +179,11 @@ prompt_choice() {
                         A) selected=0 ;;       # arrow up
                         B) selected=1 ;;       # arrow down
                     esac
-                    _prompt_draw
+                    _prompt_redraw_options
                 fi
                 ;;
-            k|K) selected=0; _prompt_draw ;;  # vim-style
-            j|J) selected=1; _prompt_draw ;;
+            k|K) selected=0; _prompt_redraw_options ;;  # vim-style
+            j|J) selected=1; _prompt_redraw_options ;;
             q|Q)
                 _prompt_cleanup
                 trap - INT TERM EXIT
@@ -190,9 +196,11 @@ prompt_choice() {
     _prompt_cleanup
     trap - INT TERM EXIT
 
-    # Echo the resolved choice as a clean confirmation line, then drop the
-    # selector frame so the transcript reads naturally.
-    printf '\033[2A\033[J' >/dev/tty
+    # Collapse the 3-line selector frame (question + 2 options) into a
+    # single confirmation line that overwrites where the question was.
+    # Cursor is below the options after the loop, so up 3 lands on the
+    # question row; clear-to-end-of-screen wipes question + options.
+    printf '\033[3A\033[J' >/dev/tty
     if [ "$selected" = 0 ]; then
         printf '\033[36m?\033[0m \033[1m%s\033[0m \033[2m· %s\033[0m\n' "$msg" "$label0" >/dev/tty
     else

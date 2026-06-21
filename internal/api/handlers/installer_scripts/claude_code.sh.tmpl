@@ -13,12 +13,12 @@
 if [ -z "$CV_DEFAULT_MODE" ]; then
     if prompt_choice \
         "How should Clawvisor route your Claude Code calls?" \
-        "Install a 'claude-cv' shell alias (opt in per session)" \
-        "Make it the default for every claude session (~/.claude/settings.json)"
+        "Make it the default for every claude session (~/.claude/settings.json)" \
+        "Install a 'claude-cv' shell alias (opt in per session)"
     then
-        CV_DEFAULT_MODE=no
-    else
         CV_DEFAULT_MODE=yes
+    else
+        CV_DEFAULT_MODE=no
     fi
 fi
 
@@ -81,12 +81,12 @@ else
     if [ -z "$CV_YOLO" ]; then
         if prompt_choice \
             "How should 'claude-cv' handle Claude Code's permission prompts?" \
-            "Keep them on (Claude asks before each curl)" \
-            "Skip them (--dangerously-skip-permissions)"
+            "Skip them (--dangerously-skip-permissions)" \
+            "Keep them on (Claude asks before each curl)"
         then
-            CV_YOLO=no
-        else
             CV_YOLO=yes
+        else
+            CV_YOLO=no
         fi
     fi
 
