@@ -2,67 +2,31 @@
 {{- template "mint" . -}}
 {{- template "persist_token" . -}}
 
-# --- Ensure an upstream Anthropic key is vaulted in Clawvisor ---------------
-# Claude Code's calls flow through Clawvisor's proxy, which substitutes an
-# upstream Anthropic key on each call. If one isn't vaulted yet, point the
-# user at the agent-scoped dashboard page and poll the credentials endpoint
-# until the key shows up — same shape as the old LLM-driven installer's
-# sectionEnsureVaultedKeyDynamic, but without an LLM in the loop.
+# --- End-to-end smoke test: make claude actually round-trip through Clawvisor.
+# Try first — passthrough auth (`claude login`, env keys) flows through
+# Clawvisor untouched, so a working smoke test means we're done regardless
+# of whether a key is vaulted. Only fall back to the vault-and-wait dance
+# below if the round-trip actually fails AND no key is vaulted (the
+# diagnosable "user pasted the install line without setting up auth" case).
+# Skips when `claude` isn't on $PATH (e.g. seeding a token for another box).
 #
-# Accept either user-scope (stored==true) or agent-scope (agent_stored==true);
-# any prior install on this user's account is fine. curl/jq failure is
-# treated as "absent" so a network blip just defers detection to the next
-# 2s tick (idempotent retry).
+# Inline env wins over settings.json, so this works whether or not the
+# user already has an ~/.claude/settings.json pointing somewhere else.
 have_anthropic_key() {
+    # curl/jq failure is treated as "absent" so a network blip just defers
+    # detection to the next polling tick (idempotent retry).
     curl -sS -H "Authorization: Bearer $TOKEN" \
         "$APP_URL/api/runtime/llm-credentials?agent_id=$AGENT_ID" 2>/dev/null \
         | jq -e '.credentials[]? | select(.provider=="anthropic" and (.stored==true or .agent_stored==true))' \
         >/dev/null 2>&1
 }
 
-if ! have_anthropic_key; then
-    cat <<EOF
-
-  Clawvisor doesn't have an Anthropic API key vaulted yet — its proxy
-  needs one to forward Claude Code's calls. Open this page to add one:
-
-    $APP_URL/dashboard/keys/anthropic?for=$AGENT_ID
-
-  Waiting (up to ~3 minutes; Ctrl-C to abort)…
-EOF
-    printf '  '
-    waited=0
-    while [ "$waited" -lt 180 ]; do
-        if have_anthropic_key; then
-            printf '\n'
-            echo "✓ Anthropic key vaulted"
-            break
-        fi
-        sleep 2
-        waited=$((waited + 2))
-        printf '.'
-    done
-    if ! have_anthropic_key; then
-        printf '\n'
-        echo "Timed out waiting for the Anthropic key. Re-run this install when ready." >&2
-        exit 1
-    fi
-fi
-
-# --- End-to-end smoke test: make claude actually round-trip through Clawvisor.
-# Pre-flight above already confirmed a key is vaulted, so a failure here
-# almost always means the vaulted key itself is invalid (revoked, wrong
-# account) or the daemon can't reach Anthropic from this host. Inline env
-# wins over settings.json, so this works whether or not the user already
-# has an ~/.claude/settings.json. Skips gracefully when `claude` isn't on
-# $PATH (e.g. seeding a token for another machine).
-if command -v claude >/dev/null 2>&1; then
-    echo "→ Smoke-testing claude through Clawvisor…"
+run_claude_smoke() {
     # </dev/null is load-bearing: when this script is running via
     # `curl | sh`, sh's stdin IS the curl pipe carrying the rest of
-    # the script. `claude -p` reads stdin (for the piped-prompt
-    # pattern), so without this redirect claude consumes the rest of
-    # the script and sh exits silently at EOF after claude returns.
+    # the script. `claude -p` reads stdin (piped-prompt pattern), so
+    # without this redirect claude consumes the rest of the script and
+    # sh exits silently at EOF after claude returns.
     SMOKE_OUT=$(
         CLAWVISOR_URL="$APP_URL" \
         CLAWVISOR_AGENT_TOKEN="$TOKEN" \
@@ -71,11 +35,19 @@ if command -v claude >/dev/null 2>&1; then
         ANTHROPIC_AUTH_TOKEN= \
         ANTHROPIC_API_KEY= \
         claude -p "respond with the word OK" </dev/null 2>&1
-    ) || {
+    )
+}
+
+if command -v claude >/dev/null 2>&1; then
+    echo "→ Smoke-testing claude through Clawvisor…"
+    if run_claude_smoke; then
+        echo "✓ Claude round-tripped through Clawvisor"
+    elif have_anthropic_key; then
+        # Failed and a key is vaulted → the vaulted key is the suspect.
         cat >&2 <<EOF
 claude end-to-end smoke test failed. A key is vaulted but the round-trip
-failed — the most likely cause is the vaulted key was rejected by
-Anthropic (revoked, wrong account, exhausted quota). Re-vault here:
+was rejected — the most likely cause is the vaulted key itself (revoked,
+wrong account, exhausted quota). Re-vault here:
 
   $APP_URL/dashboard/keys/anthropic?for=$AGENT_ID
 
@@ -83,8 +55,52 @@ Raw error from claude:
 EOF
         printf '%s\n' "$SMOKE_OUT" >&2
         exit 1
-    }
-    echo "✓ Claude round-tripped through Clawvisor"
+    else
+        # Failed and no key vaulted → most likely no upstream auth at all.
+        # Offer the vault page and wait, then retry the smoke test once a
+        # key shows up. Users on passthrough auth (claude login) usually
+        # don't land here — if they do, Ctrl-C bails cleanly.
+        cat <<EOF
+
+  claude couldn't reach Anthropic through Clawvisor, and no Anthropic key is
+  vaulted yet. If you're using passthrough auth ($(printf '\033[1mclaude login\033[0m'),
+  env keys), fix that locally and re-run. Otherwise vault a key here and I'll
+  pick it up automatically:
+
+    $APP_URL/dashboard/keys/anthropic?for=$AGENT_ID
+
+  Waiting for a key (up to ~3 min; Ctrl-C to abort)…
+EOF
+        printf '  '
+        waited=0
+        while [ "$waited" -lt 180 ]; do
+            if have_anthropic_key; then
+                printf '\n'
+                echo "✓ Anthropic key vaulted — retrying smoke test…"
+                if run_claude_smoke; then
+                    echo "✓ Claude round-tripped through Clawvisor"
+                else
+                    cat >&2 <<EOF
+The vaulted key is in place but the round-trip still failed:
+EOF
+                    printf '%s\n' "$SMOKE_OUT" >&2
+                    exit 1
+                fi
+                break
+            fi
+            sleep 2
+            waited=$((waited + 2))
+            printf '.'
+        done
+        if ! have_anthropic_key; then
+            printf '\n'
+            cat >&2 <<EOF
+Timed out waiting for a key. Original error from claude:
+EOF
+            printf '%s\n' "$SMOKE_OUT" >&2
+            exit 1
+        fi
+    fi
 else
     echo "(skipping end-to-end test — 'claude' CLI not on \$PATH)"
 fi
