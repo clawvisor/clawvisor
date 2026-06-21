@@ -2,14 +2,60 @@
 {{- template "mint" . -}}
 {{- template "persist_token" . -}}
 
+# --- Ensure an upstream Anthropic key is vaulted in Clawvisor ---------------
+# Claude Code's calls flow through Clawvisor's proxy, which substitutes an
+# upstream Anthropic key on each call. If one isn't vaulted yet, point the
+# user at the agent-scoped dashboard page and poll the credentials endpoint
+# until the key shows up — same shape as the old LLM-driven installer's
+# sectionEnsureVaultedKeyDynamic, but without an LLM in the loop.
+#
+# Accept either user-scope (stored==true) or agent-scope (agent_stored==true);
+# any prior install on this user's account is fine. curl/jq failure is
+# treated as "absent" so a network blip just defers detection to the next
+# 2s tick (idempotent retry).
+have_anthropic_key() {
+    curl -sS -H "Authorization: Bearer $TOKEN" \
+        "$APP_URL/api/runtime/llm-credentials?agent_id=$AGENT_ID" 2>/dev/null \
+        | jq -e '.credentials[]? | select(.provider=="anthropic" and (.stored==true or .agent_stored==true))' \
+        >/dev/null 2>&1
+}
+
+if ! have_anthropic_key; then
+    cat <<EOF
+
+  Clawvisor doesn't have an Anthropic API key vaulted yet — its proxy
+  needs one to forward Claude Code's calls. Open this page to add one:
+
+    $APP_URL/dashboard/keys/anthropic?for=$AGENT_ID
+
+  Waiting (up to ~3 minutes; Ctrl-C to abort)…
+EOF
+    printf '  '
+    waited=0
+    while [ "$waited" -lt 180 ]; do
+        if have_anthropic_key; then
+            printf '\n'
+            echo "✓ Anthropic key vaulted"
+            break
+        fi
+        sleep 2
+        waited=$((waited + 2))
+        printf '.'
+    done
+    if ! have_anthropic_key; then
+        printf '\n'
+        echo "Timed out waiting for the Anthropic key. Re-run this install when ready." >&2
+        exit 1
+    fi
+fi
+
 # --- End-to-end smoke test: make claude actually round-trip through Clawvisor.
-# This is the test that matters for the LLM-proxy flow — it proves the new
-# token works against the real proxy, not just the daemon's auth surface. We
-# set the env vars inline so this works whether or not the user already has
-# an ~/.claude/settings.json pointing elsewhere (inline env wins over
-# settings.json). If `claude` isn't on $PATH (the user pasted the install
-# line on a machine that doesn't have it yet), skip with a note rather than
-# failing — the token's already persisted, they can verify from another box.
+# Pre-flight above already confirmed a key is vaulted, so a failure here
+# almost always means the vaulted key itself is invalid (revoked, wrong
+# account) or the daemon can't reach Anthropic from this host. Inline env
+# wins over settings.json, so this works whether or not the user already
+# has an ~/.claude/settings.json. Skips gracefully when `claude` isn't on
+# $PATH (e.g. seeding a token for another machine).
 if command -v claude >/dev/null 2>&1; then
     echo "→ Smoke-testing claude through Clawvisor…"
     # </dev/null is load-bearing: when this script is running via
@@ -27,11 +73,11 @@ if command -v claude >/dev/null 2>&1; then
         claude -p "respond with the word OK" </dev/null 2>&1
     ) || {
         cat >&2 <<EOF
-claude end-to-end smoke test failed. The most likely cause is that no
-upstream Anthropic key is vaulted yet — Clawvisor's proxy needs one to
-forward your calls. Vault one here, then re-run this install:
+claude end-to-end smoke test failed. A key is vaulted but the round-trip
+failed — the most likely cause is the vaulted key was rejected by
+Anthropic (revoked, wrong account, exhausted quota). Re-vault here:
 
-  $APP_URL/dashboard/keys/anthropic
+  $APP_URL/dashboard/keys/anthropic?for=$AGENT_ID
 
 Raw error from claude:
 EOF

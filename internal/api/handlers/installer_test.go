@@ -513,6 +513,14 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		// Token is persisted to ~/.clawvisor/agents/<name>.json with chmod 600.
 		"~/.clawvisor/agents",
 		"chmod 600",
+		// Credential pre-flight: check /api/runtime/llm-credentials for a
+		// vaulted Anthropic key (user or agent scope). When missing, point
+		// at the agent-scoped vault page and poll until the key appears.
+		"have_anthropic_key",
+		"/api/runtime/llm-credentials?agent_id=$AGENT_ID",
+		`provider=="anthropic"`,
+		"/dashboard/keys/anthropic?for=$AGENT_ID",
+		"Waiting (up to ~3 minutes",
 		// End-to-end smoke test — actually invokes `claude -p` with the
 		// new env so the proxy round-trip is exercised, not just daemon
 		// authn. Skips gracefully when claude isn't on $PATH.
@@ -521,9 +529,6 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		"ANTHROPIC_BASE_URL",
 		"ANTHROPIC_CUSTOM_HEADERS",
 		"X-Clawvisor-Agent-Token: $TOKEN",
-		// On smoke-test failure, point the user at the credentials page
-		// so they know where to vault an upstream Anthropic key.
-		"/dashboard/keys/anthropic",
 		// Default-vs-alias prompt + skip-permissions prompt (TUI labels).
 		"prompt_choice",
 		"How should Clawvisor route your Claude Code calls?",

@@ -254,6 +254,10 @@ if [ -z "$TOKEN" ]; then
     echo "agent registration failed (status: $STATUS): $RESPONSE" >&2
     exit 1
 fi
+# AGENT_ID is captured so per-target steps can scope dashboard URLs and
+# credential lookups to this specific agent — see the credential pre-flight
+# in claude_code.sh.tmpl.
+AGENT_ID=$(printf '%s' "$RESPONSE" | jq -r '.agent_id // empty')
 echo "✓ Agent registered"
 {{end -}}
 
@@ -262,10 +266,11 @@ mkdir -p "$HOME/.clawvisor/agents"
 AGENT_JSON="$HOME/.clawvisor/agents/$AGENT_NAME.json"
 jq -n \
     --arg name "$AGENT_NAME" \
+    --arg agent_id "$AGENT_ID" \
     --arg harness "$HARNESS" \
     --arg installed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg token "$TOKEN" \
-    '{name:$name, harness:$harness, installed_at:$installed_at, token:$token}' \
+    '{name:$name, agent_id:$agent_id, harness:$harness, installed_at:$installed_at, token:$token}' \
     > "$AGENT_JSON"
 chmod 600 "$AGENT_JSON"
 echo "✓ Token saved to $AGENT_JSON (chmod 600)"
