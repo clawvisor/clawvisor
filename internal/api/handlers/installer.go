@@ -165,14 +165,16 @@ var installerTargets = map[InstallerTarget]installerSpec{
 		localUninstallDoc: "~/.clawvisor/uninstall-codex.md",
 	},
 	InstallerHermes: {
-		canonicalExt: ".md",
-		contentType:  "text/markdown; charset=utf-8",
-		render:       markdownRenderer(renderHermesInstaller),
+		canonicalExt:      ".md",
+		contentType:       "text/markdown; charset=utf-8",
+		render:            markdownRenderer(renderHermesInstaller),
+		localUninstallDoc: "~/.clawvisor/uninstall-hermes.md",
 	},
 	InstallerOpenClaw: {
-		canonicalExt: ".md",
-		contentType:  "text/markdown; charset=utf-8",
-		render:       markdownRenderer(renderOpenClawInstaller),
+		canonicalExt:      ".md",
+		contentType:       "text/markdown; charset=utf-8",
+		render:            markdownRenderer(renderOpenClawInstaller),
+		localUninstallDoc: "~/.clawvisor/uninstall-openclaw.md",
 	},
 }
 
