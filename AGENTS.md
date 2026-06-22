@@ -12,9 +12,13 @@ Important areas:
 - `web/` contains the React + TypeScript + Vite dashboard.
 - `docs/` contains setup, integration, architecture, runtime proxy, and adapter guidance. Start with `docs/ARCHITECTURE.md` for deeper system context.
 - `skills/clawvisor/` contains the agent-facing Clawvisor skill and protocol documentation.
-- `e2e/`, `security/`, `deploy/`, `scripts/`, and `extensions/` contain integration tests, security tooling, deployment assets, release/build scripts, and extension packages.
+- `coworkplugin/` contains the CoWork plugin extension package.
+- `e2e/smoke/` contains integration smoke tests that run against a full server binary (`make test-e2e`). `internal/e2e/lite/` contains YAML-based lite scenario tests that do not require a full build.
+- `security/`, `deploy/`, `scripts/`, and `extensions/` contain security tooling, deployment assets, release/build scripts, and extension packages.
 
-The highest-risk areas are authorization, task scope evaluation, credential/vault handling, adapter execution, approval behavior, callback signing, audit logging, and anything that could expose tokens, secrets, or unsanitized downstream data. Treat behavior changes in these areas as security-sensitive.
+The scope drift system (`internal/runtime/llmproxy/scope_drift_*.go`) intercepts blocked tool calls and surfaces a continuation menu back to the agent before reaching the user. The agent can expand the active task, create a new task inline, or request a one-off approval with a rationale — only the one-off path reaches the user. Treat this system as security-sensitive: it controls which agents can bypass task scope restrictions and under what conditions.
+
+The highest-risk areas are authorization, task scope evaluation, scope drift enforcement, credential/vault handling, adapter execution, approval behavior, callback signing, audit logging, and anything that could expose tokens, secrets, or unsanitized downstream data. Treat behavior changes in these areas as security-sensitive.
 
 ## Development
 
@@ -23,6 +27,7 @@ The highest-risk areas are authorization, task scope evaluation, credential/vaul
   - `make test` runs `go test ./...`.
   - `make lint` runs `go vet ./...`.
   - `make build` builds the Go binary and dashboard assets.
+  - `make test-e2e` runs smoke integration tests against the full server binary.
   - `cd web && npm run lint && npm run build` type-checks and builds the dashboard.
   - `make eval-intent` is relevant for LLM-driven intent, chain-context, and task-risk changes and requires LLM configuration.
 - Follow existing package boundaries: keep public/shared interfaces in `pkg/` and implementations in `internal/`.
