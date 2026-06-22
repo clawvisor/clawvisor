@@ -1,5 +1,70 @@
 # Changelog
 
+## [0.9.10](https://github.com/clawvisor/clawvisor/compare/v0.9.9...v0.9.10) (2026-06-22)
+
+
+### Features
+
+* **autovault:** script sessions for credentialed fan-out workflows ([#506](https://github.com/clawvisor/clawvisor/issues/506)) ([04953fe](https://github.com/clawvisor/clawvisor/commit/04953feb00b2220de40de24f469b837c70e40e0d))
+* **installer:** collapse Hermes/OpenClaw to one-paste auto-approve flow ([#554](https://github.com/clawvisor/clawvisor/issues/554)) ([8c2bf4a](https://github.com/clawvisor/clawvisor/commit/8c2bf4a60ea748bac967cef6b2cb3484325d2b19))
+* **installer:** env-namespace agent token paths + fix rc-block idempotency ([#581](https://github.com/clawvisor/clawvisor/issues/581)) ([1c0981b](https://github.com/clawvisor/clawvisor/commit/1c0981b6b336cd63356531441afec4cc02efe034))
+* **installer:** replace LLM-driven markdown installer with shell one-liner for claude-code/codex ([#580](https://github.com/clawvisor/clawvisor/issues/580)) ([845877b](https://github.com/clawvisor/clawvisor/commit/845877b15748f0a657fd4b951b767037181d1d4d))
+* **lite-proxy:** one-paste install flow with passthrough-first smoke test ([#525](https://github.com/clawvisor/clawvisor/issues/525)) ([32db87d](https://github.com/clawvisor/clawvisor/commit/32db87d88d2d707d05ac1d95a483df3c20f694fe))
+* **llmproxy:** batch intent verification across parallel tool_uses ([#535](https://github.com/clawvisor/clawvisor/issues/535)) ([90ec7ff](https://github.com/clawvisor/clawvisor/commit/90ec7ffcbac829f5c27dc7cb582be89decd406dd))
+* **llmproxy:** discover existing tasks before creating new ones ([#538](https://github.com/clawvisor/clawvisor/issues/538)) ([efc63d5](https://github.com/clawvisor/clawvisor/commit/efc63d554353d00a19b22adeac7bd52644e5c33f))
+* **llmproxy:** handle script-session llm judge timeouts gracefully ([#543](https://github.com/clawvisor/clawvisor/issues/543)) ([b453907](https://github.com/clawvisor/clawvisor/commit/b453907be6766b05dfd55f41fba7f7117ba6de83))
+* **llmproxy:** inline approval via AskUserQuestion when available ([#545](https://github.com/clawvisor/clawvisor/issues/545)) ([9eb7f02](https://github.com/clawvisor/clawvisor/commit/9eb7f02d65bc7e10cfc642b5ccab7d3003806980))
+* **llmproxy:** LLM judge for variable-ized script-session calls ([#529](https://github.com/clawvisor/clawvisor/issues/529)) ([4251d81](https://github.com/clawvisor/clawvisor/commit/4251d8149e30685354ceef8e3692522d5a6a616b))
+* **llmproxy:** log upstream 4xx/5xx response bodies ([#519](https://github.com/clawvisor/clawvisor/issues/519)) ([ea83dfa](https://github.com/clawvisor/clawvisor/commit/ea83dfa55d2133d5aaee4824634ffda9d2ec4ee0))
+* **llmproxy:** per-call cvreason on tool_use for intent verification ([#541](https://github.com/clawvisor/clawvisor/issues/541)) ([d9d203a](https://github.com/clawvisor/clawvisor/commit/d9d203aebbd044ca80115ea28fe6a93e07891c27))
+* **llmproxy:** recoverable Deny verdicts give agents one retry per turn ([#544](https://github.com/clawvisor/clawvisor/issues/544)) ([e76f34e](https://github.com/clawvisor/clawvisor/commit/e76f34eb8e365f88cce60aab5b135faf10057797))
+* **llmproxy:** scope-drift continuation menu ([#564](https://github.com/clawvisor/clawvisor/issues/564)) ([11cb05f](https://github.com/clawvisor/clawvisor/commit/11cb05f839b7829911beeff74104657f4e747a5e))
+* **llmproxy:** slide session task expires_at on each authorized tool_use ([#505](https://github.com/clawvisor/clawvisor/issues/505)) ([ad5f307](https://github.com/clawvisor/clawvisor/commit/ad5f30791c962a7140b7240d0eece43a07fa7629))
+* **llmproxy:** split control-plane notices by role — backticked [Clawvisor] for humans, &lt;clawvisor-notice&gt; tag for the LLM ([#504](https://github.com/clawvisor/clawvisor/issues/504)) ([d70e1c8](https://github.com/clawvisor/clawvisor/commit/d70e1c8988a2868d321cd007075a04be98a14443))
+* **llmproxy:** transient-deny verdicts + recoverable parser shape refusals ([#579](https://github.com/clawvisor/clawvisor/issues/579)) ([0223b4d](https://github.com/clawvisor/clawvisor/commit/0223b4d139082c2af26a7b3e0278f84015301c51))
+* **pricing:** add claude-opus-4-8 row ([#498](https://github.com/clawvisor/clawvisor/issues/498)) ([c986aa6](https://github.com/clawvisor/clawvisor/commit/c986aa6f5fa8cb4f316dde868548f4b4d38b7b68))
+* **taskrisk:** envelope evals, strict-match mode, prompt anchors ([#546](https://github.com/clawvisor/clawvisor/issues/546)) ([132fe6b](https://github.com/clawvisor/clawvisor/commit/132fe6bf4ecf70900c4181bf23ac836438813eaa))
+* **tasks:** envelope-shape scope expansion (foundation) ([#540](https://github.com/clawvisor/clawvisor/issues/540)) ([ffaa642](https://github.com/clawvisor/clawvisor/commit/ffaa6427932248f9095fd4d3eb5feae4d37e004a))
+* **tasks:** expose POST /api/control/tasks/{id}/complete to LLM-proxy agents ([#575](https://github.com/clawvisor/clawvisor/issues/575)) ([a6317dd](https://github.com/clawvisor/clawvisor/commit/a6317ddf9bea2870b36cdec360344acc11d77a41))
+* **web:** tell user to approve connection request in bootstrap curl ([#518](https://github.com/clawvisor/clawvisor/issues/518)) ([bc111ac](https://github.com/clawvisor/clawvisor/commit/bc111ac95f664d7fcb8f828300bd627ff0b8d5b8))
+
+
+### Bug Fixes
+
+* **autovault:** surface concrete example curl in script-session mint response ([#514](https://github.com/clawvisor/clawvisor/issues/514)) ([34c0da4](https://github.com/clawvisor/clawvisor/commit/34c0da4d01481207dbb08d8a22aef0c21f1408d7))
+* **calendar:** accept location on create/update_event, q + larger pages + time_min/time_max aliases on list_events ([#547](https://github.com/clawvisor/clawvisor/issues/547)) ([485d56c](https://github.com/clawvisor/clawvisor/commit/485d56c6d0b4b1c13efcfadd86fbff33b702910a))
+* **dev:** honor pre-set PUBLIC_URL / SERVER_HOST in dev.sh ([#555](https://github.com/clawvisor/clawvisor/issues/555)) ([eed9568](https://github.com/clawvisor/clawvisor/commit/eed9568d1f4ed228b67a0eb5f64a4ee863077fb0))
+* **installer:** macOS-portable smoke tests + env-aware Codex provider slug ([#549](https://github.com/clawvisor/clawvisor/issues/549)) ([384445b](https://github.com/clawvisor/clawvisor/commit/384445b531097b5a94b8d1e288bac95fab6dbbae))
+* **installer:** route registration to app host, not LLM proxy ([#531](https://github.com/clawvisor/clawvisor/issues/531)) ([10159c4](https://github.com/clawvisor/clawvisor/commit/10159c4fc37a1c24936d16000381fc2890f3f106))
+* **intent:** stop logging parse failure on empty chain-context responses ([#571](https://github.com/clawvisor/clawvisor/issues/571)) ([e6bbca1](https://github.com/clawvisor/clawvisor/commit/e6bbca18fb987094834de3c463dbe83facdcd440))
+* **llmproxy:** byte-faithful Anthropic request and response rewriting ([#511](https://github.com/clawvisor/clawvisor/issues/511)) ([d6f7d7f](https://github.com/clawvisor/clawvisor/commit/d6f7d7f0b54b567284ce80015cdf31bf9afb802f))
+* **llmproxy:** consolidate drift claim rollback logic and handle auto-approve outcome failure ([#569](https://github.com/clawvisor/clawvisor/issues/569)) ([c21fee3](https://github.com/clawvisor/clawvisor/commit/c21fee3791e11064d0b9a74a8e7f6c149e8db919))
+* **llmproxy:** cvreason Rewritten contract + abstraction cleanup ([#542](https://github.com/clawvisor/clawvisor/issues/542)) ([8b9c591](https://github.com/clawvisor/clawvisor/commit/8b9c591659e483e96b00940d236b063ffeff0206))
+* **llmproxy:** don't hijack bare yes/no replies as approval_not_found ([#539](https://github.com/clawvisor/clawvisor/issues/539)) ([00e1486](https://github.com/clawvisor/clawvisor/commit/00e148600f0fc65cbe7397d433a9a0b784170bd1))
+* **llmproxy:** embed approval marker in coalesced per-turn prompt ([#517](https://github.com/clawvisor/clawvisor/issues/517)) ([e4d20b4](https://github.com/clawvisor/clawvisor/commit/e4d20b40bab7c7305a932d7424fdb08e3a59335c))
+* **llmproxy:** fire sliding task slide on EvaluateAuthorization VerdictAllow ([#520](https://github.com/clawvisor/clawvisor/issues/520)) ([fc2e3e6](https://github.com/clawvisor/clawvisor/commit/fc2e3e6b1988794091234c39d3dafd617972e623))
+* **llmproxy:** isolate choice rewrites and support inline blocked tool substitutions ([#522](https://github.com/clawvisor/clawvisor/issues/522)) ([a3ed02a](https://github.com/clawvisor/clawvisor/commit/a3ed02ad75253c69718d45a7592809db414b034f))
+* **llmproxy:** keep ?surface=inline when drift_id is unclaimable ([#582](https://github.com/clawvisor/clawvisor/issues/582)) ([0788caa](https://github.com/clawvisor/clawvisor/commit/0788caa9da6cee9d188be81ecdaa6e578cf47fd9))
+* **llmproxy:** open trace log at 0600 to match rawlog sibling ([#561](https://github.com/clawvisor/clawvisor/issues/561)) ([bd347cf](https://github.com/clawvisor/clawvisor/commit/bd347cf25fb0aee79303f02fd5ed1952bbc2b092))
+* **llmproxy:** pair text-shape inline-task notice with reconstructed tool_use + rewrite↔sanitize round-trip test ([#553](https://github.com/clawvisor/clawvisor/issues/553)) ([9ea0c81](https://github.com/clawvisor/clawvisor/commit/9ea0c81e43a75fc38c76083c1cf7905317586a2d))
+* **llmproxy:** parallelize metadata fetching in listMessages to prevent timeouts ([#516](https://github.com/clawvisor/clawvisor/issues/516)) ([5928407](https://github.com/clawvisor/clawvisor/commit/5928407c3a474897031400e715f8fec5d7a52814))
+* **llmproxy:** pass preferred task id during approval release ([#502](https://github.com/clawvisor/clawvisor/issues/502)) ([8319c2e](https://github.com/clawvisor/clawvisor/commit/8319c2e2a6945b6c2fde31accce27e4482ed65f4))
+* **llmproxy:** persist script sessions and log resolver IO ([#527](https://github.com/clawvisor/clawvisor/issues/527)) ([5cab897](https://github.com/clawvisor/clawvisor/commit/5cab897e8f28d7d83266b33f47f7695c3bb0f95c))
+* **llmproxy:** preserve empty `thinking` field on thinking_delta re-emit ([#510](https://github.com/clawvisor/clawvisor/issues/510)) ([2dde8f1](https://github.com/clawvisor/clawvisor/commit/2dde8f13551ffe3d3287e1d6cecc6a2eb4ce3817))
+* **llmproxy:** preserve index 0 for thinking blocks in Anthropic SSE stream ([#507](https://github.com/clawvisor/clawvisor/issues/507)) ([9cd0b10](https://github.com/clawvisor/clawvisor/commit/9cd0b10542e45694036c02f9fbb1ee778b809287))
+* **llmproxy:** preserve thinking block bytes in secret-rewrite path ([#534](https://github.com/clawvisor/clawvisor/issues/534)) ([352f33d](https://github.com/clawvisor/clawvisor/commit/352f33d539fc4df86d5366c46a5a33fec76c2344))
+* **llmproxy:** require vault-item check before harness auth tools ([#532](https://github.com/clawvisor/clawvisor/issues/532)) ([ca6d38e](https://github.com/clawvisor/clawvisor/commit/ca6d38e96d362f34ec0cc1f519dc3678f59f43f9))
+* **llmproxy:** treat deterministic parser refusals as agent-recoverable ([#557](https://github.com/clawvisor/clawvisor/issues/557)) ([4676735](https://github.com/clawvisor/clawvisor/commit/4676735e5d91e4d86dd1bb579155ee1dcf4269cb))
+* **llmproxy:** treat tool_search and reasoning items as approval-reply staleness signals ([#515](https://github.com/clawvisor/clawvisor/issues/515)) ([44ac826](https://github.com/clawvisor/clawvisor/commit/44ac826d0297a5f962f0fcfd4f6cf97acceeb580))
+* **raw-log-viewer:** align transcript diff via LCS instead of positional pairing ([#509](https://github.com/clawvisor/clawvisor/issues/509)) ([d5d1ced](https://github.com/clawvisor/clawvisor/commit/d5d1cedeed7293e19e7b05c7928a8be4b37d88e5))
+* **runtime:** handle stream write errors and sanitize fallback SSE comments ([#523](https://github.com/clawvisor/clawvisor/issues/523)) ([f02f6d5](https://github.com/clawvisor/clawvisor/commit/f02f6d51c5d4004c5af9d207ed809f4014001d32))
+* **tasks:** validate vault item handles at submission time ([#558](https://github.com/clawvisor/clawvisor/issues/558)) ([a8a1c11](https://github.com/clawvisor/clawvisor/commit/a8a1c1193eff3521ddd7cf5a3bbef136b608ce98))
+
+
+### Performance Improvements
+
+* **llmproxy:** kill prompt-cache busts around inline task creation ([#567](https://github.com/clawvisor/clawvisor/issues/567)) ([b80011a](https://github.com/clawvisor/clawvisor/commit/b80011ae76a1d5b458634714864e1f7f3f72daa7))
+
 ## [0.9.9](https://github.com/clawvisor/clawvisor/compare/v0.9.8...v0.9.9) (2026-06-02)
 
 
