@@ -124,11 +124,15 @@ if [ "$CV_DEFAULT_MODE" = yes ]; then
         echo "  (unknown shell: $SHELL — export CLAWVISOR_AGENT_TOKEN manually)" >&2
     fi
 else
-    # Alias-only: install codex-cv() that targets the Clawvisor provider on
-    # demand. Leaves the bare `codex` command untouched.
+    # Alias-only: install a shell function (default name: codex-cv) that
+    # targets the Clawvisor provider on demand. Leaves the bare `codex`
+    # command untouched.
+    if [ -z "$CV_ALIAS_NAME" ]; then
+        CV_ALIAS_NAME=$(prompt_text "What should the alias be called?" "codex-cv")
+    fi
     if [ -z "$CV_YOLO" ]; then
         if prompt_choice \
-            "How should 'codex-cv' handle Codex's approval prompts and sandbox?" \
+            "How should '$CV_ALIAS_NAME' handle Codex's approval prompts and sandbox?" \
             "Skip them (--dangerously-bypass-approvals-and-sandbox)" \
             "Keep them on (codex asks + sandboxes each call)"
         then
@@ -148,9 +152,10 @@ else
         # The function body inlines the slug + agent-token lookup. The user
         # can re-install with a different alias-only flavour and we'll just
         # append again — overwriting is intentional so a yolo→no-yolo flip
-        # takes effect on next shell. Diff record is the full appended block.
+        # or alias rename takes effect on next shell. Diff record is the
+        # full appended block.
         FUNC_BLOCK=$(cat <<EOF
-codex-cv() {
+$CV_ALIAS_NAME() {
     CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_NAME.json)" \\
         codex$YOLO_FLAG \\
         -c model_provider="$SLUG" \\
@@ -165,12 +170,12 @@ EOF
                 --arg content "$FUNC_BLOCK" \
                 '{file:$file, type:"text_append", content:$content}' \
                 > "$HOME/.clawvisor/diffs/$AGENT_NAME/codex_cv.json"
-            echo "✓ Appended codex-cv() to $RC"
+            echo "✓ Appended $CV_ALIAS_NAME() to $RC"
         else
-            echo "  (codex-cv() already references this agent; leaving $RC untouched)"
+            echo "  ($CV_ALIAS_NAME() already references this agent; leaving $RC untouched)"
         fi
     else
-        echo "  (unknown shell: $SHELL — append the codex-cv function manually)" >&2
+        echo "  (unknown shell: $SHELL — append the $CV_ALIAS_NAME function manually)" >&2
     fi
 fi
 
@@ -187,7 +192,7 @@ cat > "$UNINSTALL_DOC" <<EOF
    ~/.clawvisor/diffs/$AGENT_NAME/rc_export.json or codex_cv.json.
 3. Delete the token file: rm ~/.clawvisor/agents/$AGENT_NAME.json
 4. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
-5. Open a new shell to drop the CLAWVISOR_AGENT_TOKEN export / codex-cv function.
+5. Open a new shell to drop the CLAWVISOR_AGENT_TOKEN export / alias function.
 EOF
 echo "✓ Wrote revert recipe to $UNINSTALL_DOC"
 

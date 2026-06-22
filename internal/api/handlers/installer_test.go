@@ -530,14 +530,17 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		`provider=="anthropic"`,
 		"/dashboard/keys/anthropic?for=$AGENT_ID",
 		"Waiting for a key",
-		// Default-vs-alias prompt + skip-permissions prompt (TUI labels).
+		// Default-vs-alias prompt + alias-name prompt + skip-permissions prompt.
 		"prompt_choice",
 		"How should Clawvisor route your Claude Code calls?",
-		"How should 'claude-cv' handle Claude Code's permission prompts?",
+		"prompt_text",
+		"What should the alias be called?",
+		`"claude-cv"`,
 		"--dangerously-skip-permissions",
-		// Non-interactive escape hatch.
+		// Non-interactive escape hatches.
 		"--no-tui",
 		"CLAWVISOR_NO_TUI",
+		"--alias-name=",
 		// Default-everywhere branch: env keys + permission rules into
 		// ~/.claude/settings.json.
 		"~/.claude/settings.json",
@@ -547,7 +550,7 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		"Bash(curl *https://relay.clawvisor.com/*)",
 		// Alias-only branch: writes claude-cv() to the rc file with the
 		// optional skip flag.
-		"claude-cv()",
+		"$CV_ALIAS_NAME()",
 		// Uninstall doc with name substitution + mode-specific copy.
 		"uninstall-claude-code.md",
 		"default-everywhere install",
@@ -578,10 +581,12 @@ func TestInstallerCodexShell(t *testing.T) {
 		"--no-yolo",
 		"--no-tui",
 		"CLAWVISOR_NO_TUI",
-		// Arrow-key TUI prompts (with prompt_yn fallback in common.sh.tmpl).
+		"--alias-name=",
+		// Arrow-key TUI prompts + alias-name text prompt.
 		"prompt_choice",
+		"prompt_text",
 		"How should Clawvisor route your codex calls?",
-		"How should 'codex-cv' handle Codex's approval prompts and sandbox?",
+		`"codex-cv"`,
 		// Mint + persist + smoke test.
 		"claim=CLAIMCODE0",
 		"/api/agents/connect",
@@ -603,7 +608,7 @@ func TestInstallerCodexShell(t *testing.T) {
 		"export CLAWVISOR_AGENT_TOKEN",
 		// Alias-only branch: writes a codex-cv() function with the slug
 		// interpolated into the -c flag.
-		"codex-cv()",
+		"$CV_ALIAS_NAME()",
 		`-c model_provider="$SLUG"`,
 		"--dangerously-bypass-approvals-and-sandbox",
 		// Uninstall doc.

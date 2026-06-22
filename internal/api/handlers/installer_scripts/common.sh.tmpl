@@ -33,7 +33,9 @@ Flags:
   --default-everywhere   Make Clawvisor the default for every session of
                          this harness (writes to its settings file).
   --alias-only           Skip the settings file and install a shell alias
-                         (`codex-cv` / `claude-cv`) instead.
+                         (`codex-cv` / `claude-cv` by default) instead.
+  --alias-name=NAME      Name to use for the alias function (alias mode
+                         only; default `codex-cv` / `claude-cv`).
   --yolo                 In alias mode, pass the harness's "skip prompts"
                          flag (--dangerously-bypass-approvals-and-sandbox
                          for codex; --dangerously-skip-permissions for
@@ -50,11 +52,13 @@ USAGE
 
 CV_DEFAULT_MODE=""    # "yes" (default-everywhere) or "no" (alias-only)
 CV_YOLO=""            # "yes" or "no"
+CV_ALIAS_NAME=""      # function name for alias mode (default in per-target tmpl)
 CV_NO_TUI="${CLAWVISOR_NO_TUI:-0}"  # 1 disables the arrow-key selector
 for arg in "$@"; do
     case "$arg" in
         --default-everywhere) CV_DEFAULT_MODE=yes ;;
         --alias-only)         CV_DEFAULT_MODE=no  ;;
+        --alias-name=*)       CV_ALIAS_NAME=${arg#--alias-name=} ;;
         --yolo)               CV_YOLO=yes ;;
         --no-yolo)            CV_YOLO=no  ;;
         --no-tui)             CV_NO_TUI=1 ;;
@@ -207,6 +211,32 @@ prompt_choice() {
         printf '\033[36m?\033[0m \033[1m%s\033[0m \033[2m· %s\033[0m\n' "$msg" "$label1" >/dev/tty
     fi
     return "$selected"
+}
+
+# prompt_text <question> <default> [<validation-regex>]
+# Reads /dev/tty for a free-text response with a printed default. Writes
+# the chosen value to stdout. Empty input or no-tty / --no-tui falls back
+# to the default with no prompt. Loops until input matches the regex
+# (defaults to safe shell identifier: letters, digits, _, -).
+prompt_text() {
+    msg=$1
+    default=$2
+    regex=${3:-'^[A-Za-z_][A-Za-z0-9_-]*$'}
+
+    if [ ! -r /dev/tty ] || [ ! -w /dev/tty ] || [ "${CV_NO_TUI:-0}" = 1 ]; then
+        printf '%s\n' "$default"
+        return 0
+    fi
+    while :; do
+        printf '\033[36m?\033[0m \033[1m%s\033[0m \033[2m(%s)\033[0m: ' "$msg" "$default" >/dev/tty
+        IFS= read -r answer </dev/tty || answer=""
+        [ -z "$answer" ] && answer="$default"
+        if printf '%s' "$answer" | grep -Eq "$regex"; then
+            printf '%s\n' "$answer"
+            return 0
+        fi
+        printf '  \033[33minvalid — use letters, digits, _ or -\033[0m\n' >/dev/tty
+    done
 }
 
 AGENT_NAME='{{.AgentName}}'

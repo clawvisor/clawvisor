@@ -175,14 +175,17 @@ if [ "$CV_DEFAULT_MODE" = yes ]; then
     echo "✓ Updated $SETTINGS"
     INSTALL_MODE_LABEL=default-everywhere
 else
-    # --- Alias-only: install a claude-cv() shell function -------------------
-    # Leaves bare `claude` untouched. The user opts in by typing `claude-cv`
-    # instead. The function sets the env vars per-invocation and (optionally)
-    # passes --dangerously-skip-permissions so the user isn't double-prompted
-    # by Claude Code for each Clawvisor-bound curl.
+    # --- Alias-only: install a shell function (default name: claude-cv) -----
+    # Leaves bare `claude` untouched. The user opts in by typing the alias
+    # name instead. The function sets the env vars per-invocation and
+    # (optionally) passes --dangerously-skip-permissions so the user isn't
+    # double-prompted by Claude Code for each Clawvisor-bound curl.
+    if [ -z "$CV_ALIAS_NAME" ]; then
+        CV_ALIAS_NAME=$(prompt_text "What should the alias be called?" "claude-cv")
+    fi
     if [ -z "$CV_YOLO" ]; then
         if prompt_choice \
-            "How should 'claude-cv' handle Claude Code's permission prompts?" \
+            "How should '$CV_ALIAS_NAME' handle Claude Code's permission prompts?" \
             "Skip them (--dangerously-skip-permissions)" \
             "Keep them on (Claude asks before each curl)"
         then
@@ -203,11 +206,12 @@ else
     if [ -n "$RC" ]; then
         # The function body inlines the env-var setup and the optional skip
         # flag. Idempotent on re-runs by exact-substring match against the
-        # agent-token lookup path — flipping yolo/no-yolo on a re-install
-        # requires deleting the existing block manually (the diff record
-        # under ~/.clawvisor/diffs/$AGENT_NAME/ shows exactly what to strip).
+        # agent-token lookup path — flipping yolo/no-yolo or renaming the
+        # alias on a re-install requires deleting the existing block
+        # manually (the diff record under
+        # ~/.clawvisor/diffs/$AGENT_NAME/ shows exactly what to strip).
         FUNC_BLOCK=$(cat <<EOF
-claude-cv() {
+$CV_ALIAS_NAME() {
     CLAWVISOR_URL="$APP_URL" \\
     CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_NAME.json)" \\
     ANTHROPIC_BASE_URL="$LLM_URL/api" \\
@@ -225,12 +229,12 @@ EOF
                 --arg content "$FUNC_BLOCK" \
                 '{file:$file, type:"text_append", content:$content}' \
                 > "$HOME/.clawvisor/diffs/$AGENT_NAME/claude_cv.json"
-            echo "✓ Appended claude-cv() to $RC"
+            echo "✓ Appended $CV_ALIAS_NAME() to $RC"
         else
-            echo "  (claude-cv() already references this agent; leaving $RC untouched)"
+            echo "  ($CV_ALIAS_NAME() already references this agent; leaving $RC untouched)"
         fi
     else
-        echo "  (unknown shell: $SHELL — append the claude-cv function manually)" >&2
+        echo "  (unknown shell: $SHELL — append the $CV_ALIAS_NAME function manually)" >&2
     fi
     INSTALL_MODE_LABEL=alias-only
 fi
@@ -257,13 +261,13 @@ else
     cat > "$UNINSTALL_DOC" <<EOF
 # How to disconnect Claude Code from Clawvisor (alias-only install)
 
-1. Remove the \`claude-cv()\` function from your shell rc. The exact text
+1. Remove the \`$CV_ALIAS_NAME()\` function from your shell rc. The exact text
    that was appended is recorded under
    ~/.clawvisor/diffs/$AGENT_NAME/claude_cv.json — match-and-remove it
    from the file listed there.
 2. Delete the token file: rm ~/.clawvisor/agents/$AGENT_NAME.json
 3. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
-4. Open a new shell to drop the claude-cv function.
+4. Open a new shell to drop the $CV_ALIAS_NAME function.
 EOF
 fi
 echo "✓ Wrote revert recipe to $UNINSTALL_DOC"
@@ -272,5 +276,5 @@ echo
 if [ "$INSTALL_MODE_LABEL" = default-everywhere ]; then
     echo "Done. Restart Claude Code so the new env keys take effect."
 else
-    echo "Done. Open a new shell or 'source $RC' to pick up claude-cv."
+    echo "Done. Open a new shell or 'source $RC' to pick up $CV_ALIAS_NAME."
 fi
