@@ -213,20 +213,18 @@ else
     mkdir -p "$HOME/.clawvisor/diffs/$AGENT_SLOT"
 
     if [ -n "$RC" ]; then
-        # The function body inlines the env-var setup and the optional skip
-        # flag. Idempotency is keyed on the (alias, slot) pair: skip only
-        # when BOTH the alias definition and the env-namespaced token path
-        # are already present. That covers:
-        #   - same alias, same slot     → no-op (true repeat)
-        #   - same alias, different env → append a fresh block so a
-        #                                  prod→staging switch under the
-        #                                  same alias actually swaps the
-        #                                  token path (shell function
-        #                                  precedence picks the newer def)
-        #   - different alias           → append
-        # The diff record under ~/.clawvisor/diffs/$AGENT_SLOT/ shows
-        # exactly what to strip if the user wants to revert by hand.
+        # Each appended block carries a single-line sentinel that encodes
+        # every axis a re-install can vary along (alias name, env slot,
+        # yolo on/off). Idempotency is keyed on the exact sentinel: when
+        # the user re-runs with the same triple it's a true no-op; any
+        # change (env switch, yolo flip, alias rename) produces a new
+        # sentinel, appends a fresh block, and shell function precedence
+        # makes the newer definition win on next shell. The diff record
+        # under ~/.clawvisor/diffs/$AGENT_SLOT/ shows exactly what to
+        # strip if the user wants to revert by hand.
+        FUNC_MARKER="# clawvisor-managed: alias=$CV_ALIAS_NAME slot=$AGENT_SLOT yolo=$CV_YOLO"
         FUNC_BLOCK=$(cat <<EOF
+$FUNC_MARKER
 $CV_ALIAS_NAME() {
     CLAWVISOR_URL="$APP_URL" \\
     CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_SLOT.json)" \\
@@ -238,9 +236,8 @@ $CV_ALIAS_NAME() {
 }
 EOF
 )
-        if grep -F -q "${CV_ALIAS_NAME}() {" "$RC" 2>/dev/null \
-                && grep -F -q "agents/$AGENT_SLOT.json" "$RC" 2>/dev/null; then
-            echo "  ($CV_ALIAS_NAME() for $AGENT_SLOT already in $RC; leaving it untouched)"
+        if grep -F -q "$FUNC_MARKER" "$RC" 2>/dev/null; then
+            echo "  ($CV_ALIAS_NAME() for $AGENT_SLOT (yolo=$CV_YOLO) already in $RC; leaving it untouched)"
         else
             printf '\n%s\n' "$FUNC_BLOCK" >> "$RC"
             jq -n \

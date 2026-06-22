@@ -225,15 +225,17 @@ else
     fi
 
     if [ -n "$RC" ]; then
-        # The function body inlines the slug + agent-token lookup.
-        # Idempotency is keyed on the (alias, slot) pair: skip only when
-        # BOTH the alias definition and the env-namespaced token path are
-        # already present. Same alias under a different env appends a
-        # fresh block so a prod→staging switch actually swaps the token
-        # path (shell function precedence picks the newer def). Diff
-        # record is the full appended block under
-        # ~/.clawvisor/diffs/$AGENT_SLOT/.
+        # Each appended block carries a single-line sentinel that encodes
+        # every axis a re-install can vary along (alias name, env slot,
+        # yolo on/off). Idempotency is keyed on the exact sentinel: when
+        # the user re-runs with the same triple it's a true no-op; any
+        # change (env switch, yolo flip, alias rename) produces a new
+        # sentinel, appends a fresh block, and shell function precedence
+        # makes the newer definition win on next shell. Diff record is
+        # the full appended block under ~/.clawvisor/diffs/$AGENT_SLOT/.
+        FUNC_MARKER="# clawvisor-managed: alias=$CV_ALIAS_NAME slot=$AGENT_SLOT yolo=$CV_YOLO"
         FUNC_BLOCK=$(cat <<EOF
+$FUNC_MARKER
 $CV_ALIAS_NAME() {
     CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_SLOT.json)" \\
         codex$YOLO_FLAG \\
@@ -242,9 +244,8 @@ $CV_ALIAS_NAME() {
 }
 EOF
 )
-        if grep -F -q "${CV_ALIAS_NAME}() {" "$RC" 2>/dev/null \
-                && grep -F -q "agents/$AGENT_SLOT.json" "$RC" 2>/dev/null; then
-            echo "  ($CV_ALIAS_NAME() for $AGENT_SLOT already in $RC; leaving it untouched)"
+        if grep -F -q "$FUNC_MARKER" "$RC" 2>/dev/null; then
+            echo "  ($CV_ALIAS_NAME() for $AGENT_SLOT (yolo=$CV_YOLO) already in $RC; leaving it untouched)"
         else
             printf '\n%s\n' "$FUNC_BLOCK" >> "$RC"
             jq -n \
