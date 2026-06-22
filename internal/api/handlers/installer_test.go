@@ -745,12 +745,61 @@ func TestInstallerMarkdownGonePreservesQueryString(t *testing.T) {
 	if resp.StatusCode != http.StatusGone {
 		t.Fatalf("expected 410, got %d", resp.StatusCode)
 	}
-	want := "https://app.example.com/skill/install/codex.sh?claim=ABCDEFGHIJ&agent_name=codex-3"
+	// url.Values.Encode sorts params alphabetically — agent_name before claim.
+	want := "https://app.example.com/skill/install/codex.sh?agent_name=codex-3&claim=ABCDEFGHIJ"
 	if !strings.Contains(string(body), want) {
 		t.Errorf("410 body should preserve the original query string; want substring %q, got: %s", want, body)
 	}
 	if strings.Contains(string(body), "<your-query>") {
 		t.Errorf("410 body should not fall back to the placeholder when the request had a real query string; got: %s", body)
+	}
+}
+
+// TestInstallerMarkdownGoneDoesNotReflectMaliciousQuery — the 410 body is
+// a paste-template ending in `| sh`. Reflecting r.URL.RawQuery directly
+// would let an attacker craft a URL whose query string breaks out of the
+// quoted URL and injects arbitrary shell commands. Each query param must
+// be re-validated against the same regex Setup uses, and invalid ones
+// silently dropped.
+func TestInstallerMarkdownGoneDoesNotReflectMaliciousQuery(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /skill/install/{target}", h.Setup)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	bad := []string{
+		`foo"; rm -rf ~; echo "`,
+		"foo'$(touch /tmp/pwn)'",
+		"foo bar",
+		"foo;bar",
+		"foo\nbar",
+		"foo`id`",
+		"foo$bar",
+	}
+	for _, malicious := range bad {
+		path := "/skill/install/claude-code.md?claim=" + url.QueryEscape(malicious) + "&agent_name=" + url.QueryEscape(malicious)
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %q: %v", malicious, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusGone {
+			t.Errorf("[%q] expected 410, got %d", malicious, resp.StatusCode)
+			continue
+		}
+		// The malicious value should NOT appear in the body in any form —
+		// raw, partially-escaped, or otherwise. The whole point of the
+		// validation is to refuse to echo it back at all.
+		if strings.Contains(string(body), malicious) {
+			t.Errorf("[%q] body reflected the malicious value unescaped: %s", malicious, body)
+		}
+		// And the body should still suggest the .sh URL, with the safe-
+		// validated placeholder when no valid params survived.
+		if !strings.Contains(string(body), "/skill/install/claude-code.sh") {
+			t.Errorf("[%q] body should still point at the .sh replacement: %s", malicious, body)
+		}
 	}
 }
 

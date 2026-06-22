@@ -252,24 +252,46 @@ func (h *InstallerHandler) redirectToCanonicalExt(w http.ResponseWriter, r *http
 //     (claude-code/codex used to be markdown; dashboards may still link there).
 //   - .sh for a markdown-canonical target → 404 (never had a shell installer).
 //
-// The 410 body interpolates the real app URL AND carries the original query
-// string (claim, agent_name, etc.) forward so the suggested replacement is
-// directly pasteable — turning the recovery path into a copy-paste rather
-// than "construct the right URL yourself."
+// The 410 body interpolates the real app URL AND carries forward a *safe*
+// subset of the original query (claim, agent_name, user_id), each
+// re-validated against the same regex they pass through in Setup. We do
+// NOT reflect r.URL.RawQuery directly: that's user-controlled, and the
+// body is meant to be copy-pasted into a `curl … | sh` line — so a
+// crafted query like `claim=foo";rm -rf ~;echo "` would inject arbitrary
+// shell when pasted.
 func (h *InstallerHandler) writeNonCanonicalSuffix(w http.ResponseWriter, r *http.Request, target InstallerTarget, spec installerSpec, suffix string) {
 	if suffix == ".md" && spec.canonicalExt == ".sh" {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusGone)
 		appURL := strings.TrimRight(h.resolveAppURL(r), "/")
-		query := r.URL.RawQuery
-		queryPart := "?<your-query>"
-		if query != "" {
-			queryPart = "?" + query
-		}
+		queryPart := safeRecoveryQueryString(r)
 		fmt.Fprintf(w, "The markdown installer for %s has been replaced by a one-line shell\ninstaller. Update your dashboard paste blob to:\n\n  curl -fsSL \"%s/skill/install/%s.sh%s\" | sh\n", target, appURL, target, queryPart)
 		return
 	}
 	http.Error(w, "no shell installer available for this target", http.StatusNotFound)
+}
+
+// safeRecoveryQueryString rebuilds a query string for the 410 recovery
+// message containing only known-safe params, each re-validated against
+// the same regex Setup uses. Returns "" if no valid param survives, so
+// the caller can decide whether to append a placeholder.
+func safeRecoveryQueryString(r *http.Request) string {
+	in := r.URL.Query()
+	safe := url.Values{}
+	if v := in.Get("claim"); v != "" && validClaimCode.MatchString(v) {
+		safe.Set("claim", v)
+	}
+	if v := in.Get("agent_name"); v != "" && validAgentName.MatchString(v) {
+		safe.Set("agent_name", v)
+	}
+	const maxUserIDLen = 64
+	if v := in.Get("user_id"); v != "" && len(v) <= maxUserIDLen && validUserID.MatchString(v) {
+		safe.Set("user_id", v)
+	}
+	if encoded := safe.Encode(); encoded != "" {
+		return "?" + encoded
+	}
+	return "?<your-query>"
 }
 
 // Uninstall handles GET /skill/uninstall/{target}. The deprecated markdown
