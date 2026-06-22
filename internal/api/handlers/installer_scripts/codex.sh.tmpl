@@ -226,11 +226,13 @@ else
 
     if [ -n "$RC" ]; then
         # The function body inlines the slug + agent-token lookup.
-        # Idempotency is keyed on the alias name itself — a re-install
-        # under a NEW alias appends another block (and shell-function
-        # precedence makes the latest definition win on next shell), while
-        # re-running the exact same install is a no-op. Diff record is
-        # the full appended block under ~/.clawvisor/diffs/$AGENT_SLOT/.
+        # Idempotency is keyed on the (alias, slot) pair: skip only when
+        # BOTH the alias definition and the env-namespaced token path are
+        # already present. Same alias under a different env appends a
+        # fresh block so a prod→staging switch actually swaps the token
+        # path (shell function precedence picks the newer def). Diff
+        # record is the full appended block under
+        # ~/.clawvisor/diffs/$AGENT_SLOT/.
         FUNC_BLOCK=$(cat <<EOF
 $CV_ALIAS_NAME() {
     CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_SLOT.json)" \\
@@ -240,7 +242,10 @@ $CV_ALIAS_NAME() {
 }
 EOF
 )
-        if ! grep -F -q "${CV_ALIAS_NAME}() {" "$RC" 2>/dev/null; then
+        if grep -F -q "${CV_ALIAS_NAME}() {" "$RC" 2>/dev/null \
+                && grep -F -q "agents/$AGENT_SLOT.json" "$RC" 2>/dev/null; then
+            echo "  ($CV_ALIAS_NAME() for $AGENT_SLOT already in $RC; leaving it untouched)"
+        else
             printf '\n%s\n' "$FUNC_BLOCK" >> "$RC"
             jq -n \
                 --arg file "$RC" \
@@ -248,8 +253,6 @@ EOF
                 '{file:$file, type:"text_append", content:$content}' \
                 > "$HOME/.clawvisor/diffs/$AGENT_SLOT/codex_cv.json"
             echo "✓ Appended $CV_ALIAS_NAME() to $RC"
-        else
-            echo "  ($CV_ALIAS_NAME() already defined in $RC; leaving it untouched)"
         fi
     else
         echo "  (unknown shell: $SHELL — append the $CV_ALIAS_NAME function manually)" >&2

@@ -214,12 +214,18 @@ else
 
     if [ -n "$RC" ]; then
         # The function body inlines the env-var setup and the optional skip
-        # flag. Idempotency is keyed on the alias name itself — a re-install
-        # under a NEW alias appends another block (and shell-function
-        # precedence makes the latest definition win on next shell), while
-        # re-running the exact same install is a no-op. The diff record
-        # under ~/.clawvisor/diffs/$AGENT_SLOT/ shows exactly what to strip
-        # if the user wants to revert by hand.
+        # flag. Idempotency is keyed on the (alias, slot) pair: skip only
+        # when BOTH the alias definition and the env-namespaced token path
+        # are already present. That covers:
+        #   - same alias, same slot     → no-op (true repeat)
+        #   - same alias, different env → append a fresh block so a
+        #                                  prod→staging switch under the
+        #                                  same alias actually swaps the
+        #                                  token path (shell function
+        #                                  precedence picks the newer def)
+        #   - different alias           → append
+        # The diff record under ~/.clawvisor/diffs/$AGENT_SLOT/ shows
+        # exactly what to strip if the user wants to revert by hand.
         FUNC_BLOCK=$(cat <<EOF
 $CV_ALIAS_NAME() {
     CLAWVISOR_URL="$APP_URL" \\
@@ -232,7 +238,10 @@ $CV_ALIAS_NAME() {
 }
 EOF
 )
-        if ! grep -F -q "${CV_ALIAS_NAME}() {" "$RC" 2>/dev/null; then
+        if grep -F -q "${CV_ALIAS_NAME}() {" "$RC" 2>/dev/null \
+                && grep -F -q "agents/$AGENT_SLOT.json" "$RC" 2>/dev/null; then
+            echo "  ($CV_ALIAS_NAME() for $AGENT_SLOT already in $RC; leaving it untouched)"
+        else
             printf '\n%s\n' "$FUNC_BLOCK" >> "$RC"
             jq -n \
                 --arg file "$RC" \
@@ -240,8 +249,6 @@ EOF
                 '{file:$file, type:"text_append", content:$content}' \
                 > "$HOME/.clawvisor/diffs/$AGENT_SLOT/claude_cv.json"
             echo "✓ Appended $CV_ALIAS_NAME() to $RC"
-        else
-            echo "  ($CV_ALIAS_NAME() already defined in $RC; leaving it untouched)"
         fi
     else
         echo "  (unknown shell: $SHELL — append the $CV_ALIAS_NAME function manually)" >&2
