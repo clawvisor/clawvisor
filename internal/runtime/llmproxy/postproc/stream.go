@@ -100,10 +100,20 @@ func PostprocessStream(
 	// recoverable→placeholder transform. Runs BEFORE commit so commit
 	// can promote transient-deny verdicts (it calls Try on the budget;
 	// on promote, sets RecoverableReason and re-runs placeholder).
+	//
+	// verdicts is positional (parallel to toolUses) and is the source
+	// of truth for the post-commit decision loop. verdictByTU is a
+	// memoization for commit and finalize, which key by tool_use ID.
+	// The two diverge ONLY if duplicate tool_use IDs appear (the
+	// provider APIs guarantee uniqueness, but the rewriter shouldn't
+	// silently collapse audit fidelity if that assumption is ever
+	// violated upstream).
+	verdicts := make([]conversation.ToolUseVerdict, len(toolUses))
 	verdictByTU := make(map[string]conversation.ToolUseVerdict, len(toolUses))
-	for _, tu := range toolUses {
+	for i, tu := range toolUses {
 		v := innerEval(tu)
 		v = transformRecoverableDenyToPlaceholder(v, tu, cfg)
+		verdicts[i] = v
 		verdictByTU[tu.ID] = v
 	}
 
@@ -114,16 +124,23 @@ func PostprocessStream(
 		}, commitErr
 	}
 
-	// Collect decisions and rewrite intents from the POST-COMMIT
-	// verdicts so promoted-transient verdicts (whose RecoverableReason
-	// and SubstituteWithToolCall were filled in during commit) surface
-	// in the streaming output with the right shape.
+	// Collect decisions and rewrite intents positionally so duplicate
+	// tool_use IDs don't alias to a single shared verdict. Each
+	// position uses its own pre-commit verdict from `verdicts`, then
+	// adopts the post-commit shape from verdictByTU when commit
+	// promoted that id (transient-deny → recoverable: SubstituteWithToolCall
+	// becomes non-nil). Promoted-transient verdicts ship a uniform shape
+	// per id at the response layer, so all positions sharing the id
+	// reflect that uniform shape in their audit decision too.
 	var decisions []conversation.ToolUseDecisionRecord
 	anyBlocked := false
 	anyRewritten := false
 	rewrittenInput := map[string]json.RawMessage{}
-	for _, tu := range toolUses {
-		v := verdictByTU[tu.ID]
+	for i, tu := range toolUses {
+		v := verdicts[i]
+		if postCommit := verdictByTU[tu.ID]; postCommit.SubstituteWithToolCall != nil && v.SubstituteWithToolCall == nil {
+			v = postCommit
+		}
 		decisions = append(decisions, conversation.ToolUseDecisionRecord{
 			ToolUse:          tu,
 			Verdict:          v,

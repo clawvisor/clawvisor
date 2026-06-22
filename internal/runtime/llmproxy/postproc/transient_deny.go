@@ -7,18 +7,28 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 )
 
+// transientConsume identifies a successful Try call so a later
+// rollback can refund the EXACT slot it took (not a slot that has
+// since rotated to a different consumer). Token-checked Release is
+// what keeps a delayed rollback from clobbering an unrelated request's
+// budget.
+type transientConsume struct {
+	Key   llmproxy.TransientBudgetKey
+	Token llmproxy.TransientReleaseToken
+}
+
 // tryPromoteTransient is the pure-function decision for whether a
 // Deny verdict tagged with TransientFailureClass should be promoted
 // to a RecoverableDeny on this attempt. Returns the (possibly
-// promoted) verdict and the consumed budget key — nil when no
-// promotion fired.
+// promoted) verdict and the consume record — nil when no promotion
+// fired.
 //
 // Called from session.promoteTransients during commitVerdictSideEffects.
-// The wrapping session method owns the consumed-key tracking for
-// rollback so this function stays free of session state, matching the
-// pure shape transformRecoverableDenyToPlaceholder uses.
+// The wrapping session method owns the consume tracking for rollback
+// so this function stays free of session state, matching the pure
+// shape transformRecoverableDenyToPlaceholder uses.
 //
-// Skipped (verdict returned unchanged, nil key) when:
+// Skipped (verdict returned unchanged, nil consume) when:
 //   - not a Deny verdict, or TransientFailureClass is empty
 //   - RecoverableReason is already set — a prior layer already chose
 //     the recoverable shape and we must not double-process
@@ -33,7 +43,7 @@ func tryPromoteTransient(
 	ctx context.Context,
 	v conversation.ToolUseVerdict,
 	cfg llmproxy.PostprocessConfig,
-) (conversation.ToolUseVerdict, *llmproxy.TransientBudgetKey) {
+) (conversation.ToolUseVerdict, *transientConsume) {
 	if v.Outcome != conversation.OutcomeDeny || v.TransientFailureClass == "" {
 		return v, nil
 	}
@@ -52,10 +62,11 @@ func tryPromoteTransient(
 		ConversationID: cfg.AuditContext.ConversationID,
 		FailureClass:   v.TransientFailureClass,
 	}
-	if !budget.Try(ctx, key) {
+	token, ok := budget.Try(ctx, key)
+	if !ok {
 		return v, nil
 	}
 	v.RecoverableReason = v.Reason
 	v.SubstituteWith = v.Reason
-	return v, &key
+	return v, &transientConsume{Key: key, Token: token}
 }

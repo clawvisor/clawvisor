@@ -107,11 +107,12 @@ func TestTryPromoteTransient_RequiresBudget(t *testing.T) {
 }
 
 // First call: verdict is promoted (RecoverableReason + SubstituteWith
-// populated, TransientFailureClass preserved) AND the consumed key is
-// returned so the wrapping session method can track it for rollback.
-func TestTryPromoteTransient_FirstCallPromotesAndReturnsKey(t *testing.T) {
+// populated, TransientFailureClass preserved) AND a consume record is
+// returned so the wrapping session method can track it (key + token)
+// for token-checked rollback Release.
+func TestTryPromoteTransient_FirstCallPromotesAndReturnsConsume(t *testing.T) {
 	v, _, cfg := transientDenyTestSetup("class-x")
-	got, key := tryPromoteTransient(context.Background(), v, cfg)
+	got, consume := tryPromoteTransient(context.Background(), v, cfg)
 	if got.RecoverableReason != v.Reason {
 		t.Fatalf("first call should set RecoverableReason; got %q, want %q", got.RecoverableReason, v.Reason)
 	}
@@ -121,13 +122,19 @@ func TestTryPromoteTransient_FirstCallPromotesAndReturnsKey(t *testing.T) {
 	if got.TransientFailureClass != "class-x" {
 		t.Fatalf("TransientFailureClass should be preserved; got %q", got.TransientFailureClass)
 	}
-	want := llmproxy.TransientBudgetKey{
+	wantKey := llmproxy.TransientBudgetKey{
 		AgentID:        cfg.AgentContext.AgentID,
 		ConversationID: cfg.AuditContext.ConversationID,
 		FailureClass:   "class-x",
 	}
-	if key == nil || *key != want {
-		t.Fatalf("expected consumed key %+v; got %+v", want, key)
+	if consume == nil {
+		t.Fatalf("expected consume record for key %+v; got nil", wantKey)
+	}
+	if consume.Key != wantKey {
+		t.Fatalf("consume key = %+v; want %+v", consume.Key, wantKey)
+	}
+	if consume.Token == 0 {
+		t.Fatalf("consume token must be non-zero so a later Release can token-check the entry; got 0")
 	}
 }
 
@@ -211,13 +218,16 @@ func TestSession_CommitPromotesTransientAndTracksConsume(t *testing.T) {
 	if len(session.transientConsumed) != 1 {
 		t.Fatalf("expected 1 tracked consume; got %d (%+v)", len(session.transientConsumed), session.transientConsumed)
 	}
-	want := llmproxy.TransientBudgetKey{
+	wantKey := llmproxy.TransientBudgetKey{
 		AgentID:        cfg.AgentContext.AgentID,
 		ConversationID: cfg.AuditContext.ConversationID,
 		FailureClass:   "class-x",
 	}
-	if session.transientConsumed[0] != want {
-		t.Fatalf("tracked key = %+v; want %+v", session.transientConsumed[0], want)
+	if session.transientConsumed[0].Key != wantKey {
+		t.Fatalf("tracked key = %+v; want %+v", session.transientConsumed[0].Key, wantKey)
+	}
+	if session.transientConsumed[0].Token == 0 {
+		t.Fatalf("tracked consume must carry a non-zero token so rollback Release can token-check; got 0")
 	}
 }
 
@@ -227,11 +237,13 @@ func TestSession_CommitPromotesTransientAndTracksConsume(t *testing.T) {
 func TestSession_CommitDoesNotTrackWhenBudgetExhausted(t *testing.T) {
 	v, tu, cfg := transientDenyTestSetup("class-x")
 	// Pre-consume the budget so the commit's Try returns false.
-	cfg.AuthorizationContext.TransientBudget.Try(context.Background(), llmproxy.TransientBudgetKey{
+	if _, ok := cfg.AuthorizationContext.TransientBudget.Try(context.Background(), llmproxy.TransientBudgetKey{
 		AgentID:        cfg.AgentContext.AgentID,
 		ConversationID: cfg.AuditContext.ConversationID,
 		FailureClass:   "class-x",
-	})
+	}); !ok {
+		t.Fatal("precondition: pre-consume should succeed on a fresh budget")
+	}
 	session := newPostprocessSession(cfg)
 	verdictByTU := map[string]conversation.ToolUseVerdict{tu.ID: v}
 	if err := session.commitVerdictSideEffects(context.Background(), verdictByTU, []conversation.ToolUse{tu}); err != nil {
@@ -273,19 +285,19 @@ func TestPostprocessSession_RollbackRefundsConsumedTransientSlots(t *testing.T) 
 	if verdictByTU[tu.ID].RecoverableReason == "" {
 		t.Fatal("precondition: commit should have promoted and consumed budget")
 	}
-	key := llmproxy.TransientBudgetKey{
+	k := llmproxy.TransientBudgetKey{
 		AgentID:        cfg.AgentContext.AgentID,
 		ConversationID: cfg.AuditContext.ConversationID,
 		FailureClass:   "class-x",
 	}
-	if budget.Try(context.Background(), key) {
+	if _, ok := budget.Try(context.Background(), k); ok {
 		t.Fatal("precondition: budget should be consumed after commit")
 	}
 	got := verdictByTU[tu.ID]
 
 	session.rollback(context.Background(), []conversation.ToolUse{tu}, map[string]conversation.ToolUseVerdict{tu.ID: got})
 
-	if !budget.Try(context.Background(), key) {
+	if _, ok := budget.Try(context.Background(), k); !ok {
 		t.Fatal("after rollback, transient slot should be refunded so the next real attempt promotes")
 	}
 }

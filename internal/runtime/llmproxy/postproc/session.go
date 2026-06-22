@@ -44,13 +44,15 @@ type postprocessSession struct {
 	fed                      bool
 	substitutions            []llmproxy.PendingSubstitutionKey
 	driftOutcomes            []string
-	// transientConsumed tracks TransientBudget Try() calls the
-	// applyTransientTransform wrapper made during eval (via the pure
-	// tryPromoteTransient function). rollbackVerdictSideEffects calls
-	// TransientBudget.Release on each so a fail-closed response
-	// refunds the agent's one retry slot; otherwise the next real
-	// attempt would degrade to plain Deny.
-	transientConsumed []llmproxy.TransientBudgetKey
+	// transientConsumed tracks TransientBudget Try() calls
+	// session.promoteTransients made during commitVerdictSideEffects
+	// (via the pure tryPromoteTransient function). Each record
+	// carries the per-consume token returned by Try so
+	// rollbackVerdictSideEffects can call TransientBudget.Release
+	// with a token-checked delete — refunding ONLY the slot this
+	// request consumed, never an unrelated request's slot that
+	// happened to land on the same key after pruning.
+	transientConsumed []transientConsume
 }
 
 // promoteTransientsLocked walks verdictByTU and promotes every Deny
@@ -76,8 +78,8 @@ func (s *postprocessSession) promoteTransients(ctx context.Context, verdictByTU 
 		if !ok {
 			continue
 		}
-		promoted, key := tryPromoteTransient(ctx, v, cfg)
-		if key == nil {
+		promoted, consume := tryPromoteTransient(ctx, v, cfg)
+		if consume == nil {
 			continue
 		}
 		// Re-run the placeholder transform so promoted-transient
@@ -87,7 +89,7 @@ func (s *postprocessSession) promoteTransients(ctx context.Context, verdictByTU 
 		// registration loop in commit handles the new PendingSubstitution.
 		promoted = transformRecoverableDenyToPlaceholder(promoted, tu, cfg)
 		verdictByTU[tu.ID] = promoted
-		s.transientConsumed = append(s.transientConsumed, *key)
+		s.transientConsumed = append(s.transientConsumed, *consume)
 	}
 }
 
@@ -320,8 +322,8 @@ func (s *postprocessSession) rollbackVerdictSideEffects(ctx context.Context) {
 	// drift registry is wired; the budget is an independent registry
 	// and the next real attempt deserves a fresh retry slot.
 	if budget := s.baseCfg.AuthorizationContext.TransientBudget; budget != nil {
-		for _, key := range s.transientConsumed {
-			budget.Release(ctx, key)
+		for _, rec := range s.transientConsumed {
+			budget.Release(ctx, rec.Key, rec.Token)
 		}
 	}
 	s.transientConsumed = nil
