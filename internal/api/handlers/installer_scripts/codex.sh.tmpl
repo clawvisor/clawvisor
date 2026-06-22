@@ -48,18 +48,24 @@ if command -v codex >/dev/null 2>&1; then
     # the script. Without it, codex may consume the rest of the script
     # and sh exits silently at EOF.
     #
-    # Codex `exec` can exit 0 even when it couldn't actually round-trip
-    # (e.g. logged-out, prints a "please login" message and bails) — so
-    # we capture output and require both exit 0 AND the literal OK we
-    # asked the model to return. Treat either condition as failure.
-    SMOKE_OUT=$(
-        CLAWVISOR_AGENT_TOKEN="$TOKEN" codex \
-            -c "model_provider=$SLUG" \
-            -c "sandbox_workspace_write.network_access=true" \
-            exec --skip-git-repo-check "respond with the word OK" </dev/null 2>&1
-    )
+    # `--output-last-message <file>` captures ONLY the model's final
+    # response (no prompt echo, no codex header lines). Required for an
+    # unambiguous content check: codex echoes the prompt in its stdout
+    # stream, and our prompt contains "OK" — so grepping the combined
+    # stream for "OK" was false-passing every time. The last-message
+    # file gets the literal model reply (e.g. "OK" on success) or
+    # Clawvisor's error string (e.g. "Clawvisor: no OpenAI API key
+    # configured.") on failure — neither contains "OK" by accident.
+    LAST_MSG_FILE=$(mktemp)
+    CLAWVISOR_AGENT_TOKEN="$TOKEN" codex \
+        -c "model_provider=$SLUG" \
+        -c "sandbox_workspace_write.network_access=true" \
+        exec --skip-git-repo-check --output-last-message "$LAST_MSG_FILE" \
+        "respond with the word OK" </dev/null >/dev/null 2>&1
     SMOKE_EXIT=$?
-    if [ $SMOKE_EXIT -ne 0 ] || ! printf '%s' "$SMOKE_OUT" | grep -qi 'OK'; then
+    LAST_MSG=$(cat "$LAST_MSG_FILE" 2>/dev/null)
+    rm -f "$LAST_MSG_FILE"
+    if [ $SMOKE_EXIT -ne 0 ] || ! printf '%s' "$LAST_MSG" | grep -qi 'OK'; then
         cat <<EOF >&2
 codex smoke test failed in passthrough mode. Either:
 
@@ -73,9 +79,9 @@ codex smoke test failed in passthrough mode. Either:
 The provider block and Clawvisor agent token are already in place — re-run
 this install once either of those is set up.
 
-Raw output from codex (exit $SMOKE_EXIT):
+Model response (exit $SMOKE_EXIT):
 EOF
-        printf '%s\n' "$SMOKE_OUT" >&2
+        printf '%s\n' "$LAST_MSG" >&2
         exit 1
     fi
     echo "✓ codex round-tripped through Clawvisor"
