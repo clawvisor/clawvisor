@@ -245,15 +245,21 @@ func (h *InstallerHandler) redirectToCanonicalExt(w http.ResponseWriter, r *http
 //     (claude-code/codex used to be markdown; dashboards may still link there).
 //   - .sh for a markdown-canonical target → 404 (never had a shell installer).
 //
-// The 410 body interpolates the real app URL so the recovery message is
-// directly pasteable — a literal `<host>` placeholder would leave the user
-// guessing which host this daemon actually serves on.
+// The 410 body interpolates the real app URL AND carries the original query
+// string (claim, agent_name, etc.) forward so the suggested replacement is
+// directly pasteable — turning the recovery path into a copy-paste rather
+// than "construct the right URL yourself."
 func (h *InstallerHandler) writeNonCanonicalSuffix(w http.ResponseWriter, r *http.Request, target InstallerTarget, spec installerSpec, suffix string) {
 	if suffix == ".md" && spec.canonicalExt == ".sh" {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusGone)
 		appURL := strings.TrimRight(h.resolveAppURL(r), "/")
-		fmt.Fprintf(w, "The markdown installer for %s has been replaced by a one-line shell\ninstaller. Update your dashboard paste blob to:\n\n  curl -fsSL \"%s/skill/install/%s.sh?<your-query>\" | sh\n", target, appURL, target)
+		query := r.URL.RawQuery
+		queryPart := "?<your-query>"
+		if query != "" {
+			queryPart = "?" + query
+		}
+		fmt.Fprintf(w, "The markdown installer for %s has been replaced by a one-line shell\ninstaller. Update your dashboard paste blob to:\n\n  curl -fsSL \"%s/skill/install/%s.sh%s\" | sh\n", target, appURL, target, queryPart)
 		return
 	}
 	http.Error(w, "no shell installer available for this target", http.StatusNotFound)

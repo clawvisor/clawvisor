@@ -718,6 +718,37 @@ func TestInstallerMarkdownReturns410(t *testing.T) {
 	}
 }
 
+// TestInstallerMarkdownGonePreservesQueryString — when a stale dashboard
+// link hits /skill/install/<target>.md with a claim + agent_name in the
+// query, the 410 body must echo that query back in the suggested .sh
+// URL. Without this the user gets a paste-template that mints a
+// different agent than the one the dashboard pre-baked, breaking the
+// recovery path.
+func TestInstallerMarkdownGonePreservesQueryString(t *testing.T) {
+	h := NewInstallerHandler("", "", false, "", "https://app.example.com")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /skill/install/{target}", h.Setup)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/skill/install/codex.md?claim=ABCDEFGHIJ&agent_name=codex-3")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusGone {
+		t.Fatalf("expected 410, got %d", resp.StatusCode)
+	}
+	want := "https://app.example.com/skill/install/codex.sh?claim=ABCDEFGHIJ&agent_name=codex-3"
+	if !strings.Contains(string(body), want) {
+		t.Errorf("410 body should preserve the original query string; want substring %q, got: %s", want, body)
+	}
+	if strings.Contains(string(body), "<your-query>") {
+		t.Errorf("410 body should not fall back to the placeholder when the request had a real query string; got: %s", body)
+	}
+}
+
 // TestUninstallReturnsGoneWithLocalFilePointer — the deprecated markdown
 // installer dropped a `/clawvisor-uninstall` slash command on disk that
 // fetched the uninstall skill from /skill/uninstall/<target>.md. The route
