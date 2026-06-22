@@ -6,7 +6,9 @@ Templating fields (installerScriptCtx):
   .LLMURL          LLM-proxy URL (no trailing slash)
   .Claim           single-use claim code minted by the dashboard ("" if absent)
   .UserID          fallback user_id when no claim was minted ("" if absent)
-  .AgentName       short name used for the agent + token-file basename
+  .AgentName       short name used for the agent (registered with the daemon)
+  .AgentSlot       on-disk path slug under ~/.clawvisor/agents and /diffs;
+                   equals .AgentName for prod and "<env>/<name>" otherwise
   .Target          harness slug — "claude-code" or "codex"
   .HarnessLabel    display label — "Claude Code" or "Codex"
   .Slug            codex provider-id slug — populated only for the codex template
@@ -240,6 +242,7 @@ prompt_text() {
 }
 
 AGENT_NAME='{{.AgentName}}'
+AGENT_SLOT='{{.AgentSlot}}'
 HARNESS='{{.Target}}'
 HARNESS_LABEL='{{.HarnessLabel}}'
 APP_URL='{{.AppURL}}'
@@ -261,7 +264,7 @@ echo "→ Registering {{.HarnessLabel}} agent with Clawvisor at $APP_URL"
 # minting fresh. Makes the install re-pasteable after a stall — e.g. when
 # the user timed out waiting for a key vault and pastes the same URL
 # again (which still has the now-consumed claim code in it).
-EXISTING_JSON="$HOME/.clawvisor/agents/$AGENT_NAME.json"
+EXISTING_JSON="$HOME/.clawvisor/agents/$AGENT_SLOT.json"
 TOKEN=""
 AGENT_ID=""
 if [ -f "$EXISTING_JSON" ]; then
@@ -317,8 +320,8 @@ fi
 {{end -}}
 
 {{define "persist_token"}}# --- Persist the token --------------------------------------------------------
-mkdir -p "$HOME/.clawvisor/agents"
-AGENT_JSON="$HOME/.clawvisor/agents/$AGENT_NAME.json"
+AGENT_JSON="$HOME/.clawvisor/agents/$AGENT_SLOT.json"
+mkdir -p "$(dirname "$AGENT_JSON")"
 jq -n \
     --arg name "$AGENT_NAME" \
     --arg agent_id "$AGENT_ID" \

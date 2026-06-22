@@ -210,19 +210,20 @@ else
         SKIP_FLAG=""
     fi
 
-    mkdir -p "$HOME/.clawvisor/diffs/$AGENT_NAME"
+    mkdir -p "$HOME/.clawvisor/diffs/$AGENT_SLOT"
 
     if [ -n "$RC" ]; then
         # The function body inlines the env-var setup and the optional skip
-        # flag. Idempotent on re-runs by exact-substring match against the
-        # agent-token lookup path — flipping yolo/no-yolo or renaming the
-        # alias on a re-install requires deleting the existing block
-        # manually (the diff record under
-        # ~/.clawvisor/diffs/$AGENT_NAME/ shows exactly what to strip).
+        # flag. Idempotency is keyed on the alias name itself — a re-install
+        # under a NEW alias appends another block (and shell-function
+        # precedence makes the latest definition win on next shell), while
+        # re-running the exact same install is a no-op. The diff record
+        # under ~/.clawvisor/diffs/$AGENT_SLOT/ shows exactly what to strip
+        # if the user wants to revert by hand.
         FUNC_BLOCK=$(cat <<EOF
 $CV_ALIAS_NAME() {
     CLAWVISOR_URL="$APP_URL" \\
-    CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_NAME.json)" \\
+    CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_SLOT.json)" \\
     ANTHROPIC_BASE_URL="$LLM_URL/api" \\
     ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: \$CLAWVISOR_AGENT_TOKEN" \\
     ANTHROPIC_AUTH_TOKEN= \\
@@ -231,16 +232,16 @@ $CV_ALIAS_NAME() {
 }
 EOF
 )
-        if ! grep -F -q "agents/$AGENT_NAME.json" "$RC" 2>/dev/null; then
+        if ! grep -F -q "${CV_ALIAS_NAME}() {" "$RC" 2>/dev/null; then
             printf '\n%s\n' "$FUNC_BLOCK" >> "$RC"
             jq -n \
                 --arg file "$RC" \
                 --arg content "$FUNC_BLOCK" \
                 '{file:$file, type:"text_append", content:$content}' \
-                > "$HOME/.clawvisor/diffs/$AGENT_NAME/claude_cv.json"
+                > "$HOME/.clawvisor/diffs/$AGENT_SLOT/claude_cv.json"
             echo "✓ Appended $CV_ALIAS_NAME() to $RC"
         else
-            echo "  ($CV_ALIAS_NAME() already references this agent; leaving $RC untouched)"
+            echo "  ($CV_ALIAS_NAME() already defined in $RC; leaving it untouched)"
         fi
     else
         echo "  (unknown shell: $SHELL — append the $CV_ALIAS_NAME function manually)" >&2
@@ -262,7 +263,7 @@ if [ "$INSTALL_MODE_LABEL" = default-everywhere ]; then
        ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY
    Also remove any \`Bash(curl *…clawvisor…/*)\` entries from
    \`.permissions.allow\`.
-2. Delete the token file: rm ~/.clawvisor/agents/$AGENT_NAME.json
+2. Delete the token file: rm ~/.clawvisor/agents/$AGENT_SLOT.json
 3. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
 4. Restart Claude Code so the cleared env takes effect.
 EOF
@@ -272,9 +273,9 @@ else
 
 1. Remove the \`$CV_ALIAS_NAME()\` function from your shell rc. The exact text
    that was appended is recorded under
-   ~/.clawvisor/diffs/$AGENT_NAME/claude_cv.json — match-and-remove it
+   ~/.clawvisor/diffs/$AGENT_SLOT/claude_cv.json — match-and-remove it
    from the file listed there.
-2. Delete the token file: rm ~/.clawvisor/agents/$AGENT_NAME.json
+2. Delete the token file: rm ~/.clawvisor/agents/$AGENT_SLOT.json
 3. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
 4. Open a new shell to drop the $CV_ALIAS_NAME function.
 EOF

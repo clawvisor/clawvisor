@@ -9,7 +9,7 @@ DISPLAY='{{.DisplayLabel}}'
 # --- Append the [model_providers.SLUG] block to ~/.codex/config.toml ---------
 # Codex rejects duplicate [model_providers.<n>] tables on startup, so the
 # append is gated on a grep — re-runs are no-ops on the block itself.
-mkdir -p "$HOME/.codex" "$HOME/.clawvisor/diffs/$AGENT_NAME"
+mkdir -p "$HOME/.codex" "$HOME/.clawvisor/diffs/$AGENT_SLOT"
 touch "$HOME/.codex/config.toml"
 
 PROVIDER_BLOCK=$(cat <<EOF
@@ -30,7 +30,7 @@ if ! grep -q "^\[model_providers\.$SLUG\]" "$HOME/.codex/config.toml"; then
         --arg file "$HOME/.codex/config.toml" \
         --arg content "$PROVIDER_BLOCK" \
         '{file:$file, type:"text_append", content:$content}' \
-        > "$HOME/.clawvisor/diffs/$AGENT_NAME/provider_block.json"
+        > "$HOME/.clawvisor/diffs/$AGENT_SLOT/provider_block.json"
     echo "✓ Added [model_providers.$SLUG] to ~/.codex/config.toml"
 else
     echo "✓ [model_providers.$SLUG] already present in ~/.codex/config.toml"
@@ -180,20 +180,20 @@ if [ "$CV_DEFAULT_MODE" = yes ]; then
             --arg file "$HOME/.codex/config.toml" \
             --arg content "$DEFAULT_LINE" \
             '{file:$file, type:"text_prepend", content:$content}' \
-            > "$HOME/.clawvisor/diffs/$AGENT_NAME/default_provider.json"
+            > "$HOME/.clawvisor/diffs/$AGENT_SLOT/default_provider.json"
         echo "✓ Set model_provider = \"$SLUG\" as the default in ~/.codex/config.toml"
     fi
 
     # Append the rc-export so $CLAWVISOR_AGENT_TOKEN is set in every shell.
     if [ -n "$RC" ]; then
-        RC_EXPORT="export CLAWVISOR_AGENT_TOKEN=\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_NAME.json)"
-        if ! grep -F -q "agents/$AGENT_NAME.json" "$RC" 2>/dev/null; then
+        RC_EXPORT="export CLAWVISOR_AGENT_TOKEN=\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_SLOT.json)"
+        if ! grep -F -q "agents/$AGENT_SLOT.json" "$RC" 2>/dev/null; then
             printf '\n%s\n' "$RC_EXPORT" >> "$RC"
             jq -n \
                 --arg file "$RC" \
                 --arg content "$RC_EXPORT" \
                 '{file:$file, type:"text_append", content:$content}' \
-                > "$HOME/.clawvisor/diffs/$AGENT_NAME/rc_export.json"
+                > "$HOME/.clawvisor/diffs/$AGENT_SLOT/rc_export.json"
             echo "✓ Appended CLAWVISOR_AGENT_TOKEN export to $RC"
         fi
     else
@@ -225,30 +225,31 @@ else
     fi
 
     if [ -n "$RC" ]; then
-        # The function body inlines the slug + agent-token lookup. The user
-        # can re-install with a different alias-only flavour and we'll just
-        # append again — overwriting is intentional so a yolo→no-yolo flip
-        # or alias rename takes effect on next shell. Diff record is the
-        # full appended block.
+        # The function body inlines the slug + agent-token lookup.
+        # Idempotency is keyed on the alias name itself — a re-install
+        # under a NEW alias appends another block (and shell-function
+        # precedence makes the latest definition win on next shell), while
+        # re-running the exact same install is a no-op. Diff record is
+        # the full appended block under ~/.clawvisor/diffs/$AGENT_SLOT/.
         FUNC_BLOCK=$(cat <<EOF
 $CV_ALIAS_NAME() {
-    CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_NAME.json)" \\
+    CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_SLOT.json)" \\
         codex$YOLO_FLAG \\
         -c model_provider="$SLUG" \\
         "\$@"
 }
 EOF
 )
-        if ! grep -F -q "agents/$AGENT_NAME.json" "$RC" 2>/dev/null; then
+        if ! grep -F -q "${CV_ALIAS_NAME}() {" "$RC" 2>/dev/null; then
             printf '\n%s\n' "$FUNC_BLOCK" >> "$RC"
             jq -n \
                 --arg file "$RC" \
                 --arg content "$FUNC_BLOCK" \
                 '{file:$file, type:"text_append", content:$content}' \
-                > "$HOME/.clawvisor/diffs/$AGENT_NAME/codex_cv.json"
+                > "$HOME/.clawvisor/diffs/$AGENT_SLOT/codex_cv.json"
             echo "✓ Appended $CV_ALIAS_NAME() to $RC"
         else
-            echo "  ($CV_ALIAS_NAME() already references this agent; leaving $RC untouched)"
+            echo "  ($CV_ALIAS_NAME() already defined in $RC; leaving it untouched)"
         fi
     else
         echo "  (unknown shell: $SHELL — append the $CV_ALIAS_NAME function manually)" >&2
@@ -262,11 +263,11 @@ cat > "$UNINSTALL_DOC" <<EOF
 
 1. Remove the [model_providers.$SLUG] block (and any leading
    model_provider = "$SLUG" line) from ~/.codex/config.toml. The exact text
-   that was appended is recorded under ~/.clawvisor/diffs/$AGENT_NAME/
+   that was appended is recorded under ~/.clawvisor/diffs/$AGENT_SLOT/
    so you can match-and-remove it.
 2. Remove any rc lines this install added — look for the file named in
-   ~/.clawvisor/diffs/$AGENT_NAME/rc_export.json or codex_cv.json.
-3. Delete the token file: rm ~/.clawvisor/agents/$AGENT_NAME.json
+   ~/.clawvisor/diffs/$AGENT_SLOT/rc_export.json or codex_cv.json.
+3. Delete the token file: rm ~/.clawvisor/agents/$AGENT_SLOT.json
 4. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
 5. Open a new shell to drop the CLAWVISOR_AGENT_TOKEN export / alias function.
 EOF

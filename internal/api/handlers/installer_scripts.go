@@ -30,6 +30,7 @@ type installerScriptCtx struct {
 	Claim               string
 	UserID              string
 	AgentName           string
+	AgentSlot           string
 	Target              string
 	HarnessLabel        string
 	Slug                string
@@ -48,6 +49,7 @@ func renderClaudeCodeShellInstaller(ctx installerCtx) (string, error) {
 		Claim:               ctx.Claim,
 		UserID:              ctx.UserID,
 		AgentName:           ctx.AgentName,
+		AgentSlot:           ctx.AgentSlot,
 		Target:              string(InstallerClaudeCode),
 		HarnessLabel:        "Claude Code",
 		RelayPermissionRule: relayPermissionRule(),
@@ -66,6 +68,7 @@ func renderCodexShellInstaller(ctx installerCtx) (string, error) {
 		Claim:        ctx.Claim,
 		UserID:       ctx.UserID,
 		AgentName:    ctx.AgentName,
+		AgentSlot:    ctx.AgentSlot,
 		Target:       string(InstallerCodex),
 		HarnessLabel: "Codex",
 		Slug:         slug,

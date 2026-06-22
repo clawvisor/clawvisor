@@ -116,10 +116,17 @@ type installerCtx struct {
 	HermesConfig    string
 	HermesMode      string
 	OpenClawMode    string
-	// AgentName is the on-disk filename slug for ~/.clawvisor/agents/<name>.json.
-	// Defaults to the harness name; the dashboard overrides via ?agent_name=
-	// when it picks a non-colliding variant (openclaw-1, openclaw-2, …).
+	// AgentName is the human-visible agent name registered with the daemon
+	// and shown in the dashboard. Defaults to the harness name; the
+	// dashboard overrides via ?agent_name= when it picks a non-colliding
+	// variant (openclaw-1, openclaw-2, …).
 	AgentName string
+	// AgentSlot is the on-disk path slug under ~/.clawvisor/agents/ and
+	// ~/.clawvisor/diffs/. Identical to AgentName for production installs,
+	// prefixed with the env ("staging/<name>" or "dev/<name>") otherwise,
+	// so dev/staging/prod token files for the same logical name don't
+	// overwrite each other on a multi-env user's disk.
+	AgentSlot string
 }
 
 // installerRenderer renders an installer body of one format (shell or
@@ -355,6 +362,11 @@ func (h *InstallerHandler) installerCtxFromRequest(r *http.Request, target Insta
 	ctx.AgentName = string(target)
 	if n := r.URL.Query().Get("agent_name"); n != "" && validAgentName.MatchString(n) {
 		ctx.AgentName = n
+	}
+	if env := installerEnvSlug(ctx.LLMURL); env != "" {
+		ctx.AgentSlot = env + "/" + ctx.AgentName
+	} else {
+		ctx.AgentSlot = ctx.AgentName
 	}
 	return ctx
 }
@@ -965,6 +977,21 @@ func recordTextDiff(id, targetFile string) string {
 //	llm.clawvisor.com         → "clawvisor"         / "Clawvisor"
 //	localhost / anything else → "clawvisor-dev"     / "Clawvisor (dev)"
 func codexProviderID(llmURL string) (slug, display string) {
+	switch installerEnvSlug(llmURL) {
+	case "staging":
+		return "clawvisor-staging", "Clawvisor (staging)"
+	case "":
+		return "clawvisor", "Clawvisor"
+	default:
+		return "clawvisor-dev", "Clawvisor (dev)"
+	}
+}
+
+// installerEnvSlug classifies the install target environment from the LLM
+// proxy URL host. Production returns "" so the agent token file lives at the
+// bare ~/.clawvisor/agents/<name>.json path (the common case); staging and
+// dev get a prefix so their token files don't overwrite production's.
+func installerEnvSlug(llmURL string) string {
 	u, err := url.Parse(llmURL)
 	host := ""
 	if err == nil && u != nil {
@@ -972,11 +999,11 @@ func codexProviderID(llmURL string) (slug, display string) {
 	}
 	switch {
 	case strings.Contains(host, "staging"):
-		return "clawvisor-staging", "Clawvisor (staging)"
+		return "staging"
 	case strings.HasSuffix(host, "clawvisor.com") && !strings.Contains(host, "dev"):
-		return "clawvisor", "Clawvisor"
+		return ""
 	default:
-		return "clawvisor-dev", "Clawvisor (dev)"
+		return "dev"
 	}
 }
 
