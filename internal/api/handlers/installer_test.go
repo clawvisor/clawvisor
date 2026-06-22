@@ -587,12 +587,21 @@ func TestInstallerCodexShell(t *testing.T) {
 		"prompt_text",
 		"How should Clawvisor route your codex calls?",
 		`"codex-cv"`,
-		// Mint + persist + smoke test.
+		// Mint + persist + token-accepted smoke test.
 		"claim=CLAIMCODE0",
 		"/api/agents/connect",
 		"~/.clawvisor/agents",
 		"chmod 600",
 		"/api/skill/catalog",
+		// Codex round-trip smoke test mirrors claude's: try first, on
+		// failure check the vault state, on no-key offer the dashboard
+		// URL and poll until a key shows up, then retry.
+		"have_openai_key",
+		"run_codex_smoke",
+		`provider=="openai"`,
+		"--output-last-message",
+		"/dashboard/keys/openai?for=$AGENT_ID",
+		"Waiting for a key",
 		// Slug + display baked in (dev slug for the empty-LLMURL handler).
 		"SLUG='clawvisor-dev'",
 		"DISPLAY='Clawvisor (dev)'",

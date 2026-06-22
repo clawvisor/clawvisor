@@ -41,50 +41,108 @@ fi
 # skip with a note. The check is intentionally cheap — if the user vaulted
 # nothing and has no OpenAI subscription, this will fail and we point them
 # at the LLM-driven fallback.
-if command -v codex >/dev/null 2>&1; then
-    echo "→ Smoke-testing codex through Clawvisor (passthrough mode)…"
+have_openai_key() {
+    # Mirrors have_anthropic_key in claude_code.sh.tmpl: any
+    # OpenAI credential at user OR agent scope counts. curl/jq failure
+    # is treated as "absent" so a transient blip just defers detection.
+    curl -sS -H "Authorization: Bearer $TOKEN" \
+        "$APP_URL/api/runtime/llm-credentials?agent_id=$AGENT_ID" 2>/dev/null \
+        | jq -e '.credentials[]? | select(.provider=="openai" and (.stored==true or .agent_stored==true))' \
+        >/dev/null 2>&1
+}
+
+run_codex_smoke() {
     # </dev/null is load-bearing: when this script is running via
     # `curl | sh`, sh's stdin IS the curl pipe carrying the rest of
     # the script. Without it, codex may consume the rest of the script
     # and sh exits silently at EOF.
     #
     # `--output-last-message <file>` captures ONLY the model's final
-    # response (no prompt echo, no codex header lines). Required for an
-    # unambiguous content check: codex echoes the prompt in its stdout
-    # stream, and our prompt contains "OK" — so grepping the combined
-    # stream for "OK" was false-passing every time. The last-message
-    # file gets the literal model reply (e.g. "OK" on success) or
-    # Clawvisor's error string (e.g. "Clawvisor: no OpenAI API key
-    # configured.") on failure — neither contains "OK" by accident.
+    # response (no prompt echo, no codex header lines). codex echoes the
+    # prompt in its stdout stream and exits 0 even on upstream failure
+    # (Clawvisor's "no OpenAI API key configured" error gets rendered as
+    # the model output) — so a grep on the combined stream was false-
+    # passing every time. The last-message file gets the literal model
+    # reply on success, or the Clawvisor error on failure — neither
+    # contains "OK" by accident.
     LAST_MSG_FILE=$(mktemp)
     CLAWVISOR_AGENT_TOKEN="$TOKEN" codex \
         -c "model_provider=$SLUG" \
         -c "sandbox_workspace_write.network_access=true" \
         exec --skip-git-repo-check --output-last-message "$LAST_MSG_FILE" \
         "respond with the word OK" </dev/null >/dev/null 2>&1
-    SMOKE_EXIT=$?
+    smoke_exit=$?
     LAST_MSG=$(cat "$LAST_MSG_FILE" 2>/dev/null)
     rm -f "$LAST_MSG_FILE"
-    if [ $SMOKE_EXIT -ne 0 ] || ! printf '%s' "$LAST_MSG" | grep -qi 'OK'; then
-        cat <<EOF >&2
-codex smoke test failed in passthrough mode. Either:
+    if [ $smoke_exit -ne 0 ]; then
+        return $smoke_exit
+    fi
+    printf '%s' "$LAST_MSG" | grep -qi 'OK'
+}
 
-  - You don't have working local OpenAI auth — fix with \`codex login\`
-    or \`export OPENAI_API_KEY=...\`, then re-run this install.
-  - Or vault an OpenAI key in Clawvisor and let the proxy forward your
-    calls without local auth:
+if command -v codex >/dev/null 2>&1; then
+    echo "→ Smoke-testing codex through Clawvisor (passthrough mode)…"
+    if run_codex_smoke; then
+        echo "✓ codex round-tripped through Clawvisor"
+    elif have_openai_key; then
+        # Key is vaulted but the round-trip still failed — blame the key.
+        cat >&2 <<EOF
+codex smoke test failed. An OpenAI key is vaulted but the round-trip was
+rejected — the most likely cause is the vaulted key itself (revoked,
+wrong account, exhausted quota). Re-vault here:
 
-      $APP_URL/dashboard/keys/openai
+  $APP_URL/dashboard/keys/openai?for=$AGENT_ID
 
-The provider block and Clawvisor agent token are already in place — re-run
-this install once either of those is set up.
-
-Model response (exit $SMOKE_EXIT):
+Model response (exit $smoke_exit):
 EOF
         printf '%s\n' "$LAST_MSG" >&2
         exit 1
+    else
+        # No key vaulted and codex isn't authenticated locally — offer
+        # the vault page and wait, then retry the smoke once a key
+        # shows up. Users on local codex auth usually never land here;
+        # if they do, Ctrl-C or fixing `codex login` and rerunning is
+        # the escape hatch.
+        cat <<EOF
+
+  codex couldn't reach OpenAI through Clawvisor. Either fix local codex auth
+  ($(printf '\033[1mcodex login\033[0m') or $(printf '\033[1mexport OPENAI_API_KEY=...\033[0m')) and re-run,
+  or vault a key here and I'll pick it up automatically:
+
+    $APP_URL/dashboard/keys/openai?for=$AGENT_ID
+
+  Waiting for a key (up to ~3 min; Ctrl-C to abort)…
+EOF
+        printf '  '
+        waited=0
+        while [ "$waited" -lt 180 ]; do
+            if have_openai_key; then
+                printf '\n'
+                echo "✓ OpenAI key vaulted — retrying smoke test…"
+                if run_codex_smoke; then
+                    echo "✓ codex round-tripped through Clawvisor"
+                else
+                    cat >&2 <<EOF
+The vaulted key is in place but the round-trip still failed:
+EOF
+                    printf '%s\n' "$LAST_MSG" >&2
+                    exit 1
+                fi
+                break
+            fi
+            sleep 2
+            waited=$((waited + 2))
+            printf '.'
+        done
+        if ! have_openai_key; then
+            printf '\n'
+            cat >&2 <<EOF
+Timed out waiting for a key. Original model response:
+EOF
+            printf '%s\n' "$LAST_MSG" >&2
+            exit 1
+        fi
     fi
-    echo "✓ codex round-tripped through Clawvisor"
 else
     echo "(skipping codex smoke test — codex CLI not on \$PATH)"
 fi
