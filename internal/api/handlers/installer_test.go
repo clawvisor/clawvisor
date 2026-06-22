@@ -513,6 +513,11 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		// Token is persisted to ~/.clawvisor/agents/<name>.json with chmod 600.
 		"~/.clawvisor/agents",
 		"chmod 600",
+		// Idempotent re-run: if the local token file already works against
+		// the daemon, skip the mint step so a re-paste after a stall
+		// doesn't fail on a consumed claim.
+		"Reusing existing agent token",
+		"EXISTING_TOKEN",
 		// End-to-end smoke test fires FIRST — passthrough auth (claude
 		// login) flows through Clawvisor untouched, so a working round-
 		// trip means we're done regardless of vault state. Only fall

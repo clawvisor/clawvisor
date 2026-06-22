@@ -255,40 +255,65 @@ curl returns the token immediately without a wait=true long-poll.
 
 {{define "mint"}}# --- Mint an agent connection -------------------------------------------------
 echo "→ Registering {{.HarnessLabel}} agent with Clawvisor at $APP_URL"
+
+# Idempotent re-run: if this agent name already has a token file locally
+# and the token is still accepted by the daemon, reuse it instead of
+# minting fresh. Makes the install re-pasteable after a stall — e.g. when
+# the user timed out waiting for a key vault and pastes the same URL
+# again (which still has the now-consumed claim code in it).
+EXISTING_JSON="$HOME/.clawvisor/agents/$AGENT_NAME.json"
+TOKEN=""
+AGENT_ID=""
+if [ -f "$EXISTING_JSON" ]; then
+    EXISTING_TOKEN=$(jq -r '.token // empty' "$EXISTING_JSON" 2>/dev/null)
+    if [ -n "$EXISTING_TOKEN" ] && curl -sf \
+            -H "X-Clawvisor-Agent-Token: $EXISTING_TOKEN" \
+            "$APP_URL/api/skill/catalog" -o /dev/null 2>/dev/null; then
+        TOKEN="$EXISTING_TOKEN"
+        AGENT_ID=$(jq -r '.agent_id // empty' "$EXISTING_JSON" 2>/dev/null)
+        echo "✓ Reusing existing agent token from $EXISTING_JSON"
+    fi
+fi
+
+if [ -z "$TOKEN" ]; then
 {{if .Claim -}}
-CONNECT_URL="$APP_URL/api/agents/connect?claim={{.Claim}}"
+    CONNECT_URL="$APP_URL/api/agents/connect?claim={{.Claim}}"
 {{- else if .UserID -}}
-CONNECT_URL="$APP_URL/api/agents/connect?user_id={{.UserID}}&wait=true&timeout=120"
+    CONNECT_URL="$APP_URL/api/agents/connect?user_id={{.UserID}}&wait=true&timeout=120"
 {{- else -}}
-CONNECT_URL="$APP_URL/api/agents/connect?wait=true&timeout=120"
+    CONNECT_URL="$APP_URL/api/agents/connect?wait=true&timeout=120"
 {{- end}}
 
-CONNECT_BODY=$(jq -nc \
-    --arg name "$AGENT_NAME" \
-    --arg desc "$HARNESS_LABEL on $HOST_OS" \
-    --arg harness "$HARNESS" \
-    --arg host_os "$HOST_OS" \
-    '{name:$name, description:$desc, install_context:{harness:$harness, host_os:$host_os, mode:"sh-one-liner"}}')
+    CONNECT_BODY=$(jq -nc \
+        --arg name "$AGENT_NAME" \
+        --arg desc "$HARNESS_LABEL on $HOST_OS" \
+        --arg harness "$HARNESS" \
+        --arg host_os "$HOST_OS" \
+        '{name:$name, description:$desc, install_context:{harness:$harness, host_os:$host_os, mode:"sh-one-liner"}}')
 
-# The claim has 120s of validity from when the dashboard minted it; if it's
-# already expired (slow paste) the daemon returns 401 INVALID_CLAIM here.
-RESPONSE=$(curl -sS -X POST "$CONNECT_URL" \
-    -H 'Content-Type: application/json' \
-    --data "$CONNECT_BODY") || {
-    echo "could not reach Clawvisor at $APP_URL" >&2
-    exit 1
-}
-TOKEN=$(printf '%s' "$RESPONSE" | jq -r '.token // empty')
-if [ -z "$TOKEN" ]; then
-    STATUS=$(printf '%s' "$RESPONSE" | jq -r '.status // .error // "unknown"')
-    echo "agent registration failed (status: $STATUS): $RESPONSE" >&2
-    exit 1
+    # The claim has 120s of validity from when the dashboard minted it; if
+    # it's already expired or consumed (re-paste after a timeout), the
+    # daemon returns 401 INVALID_CLAIM here. The idempotent-reuse branch
+    # above handles the most common re-paste case — this fallback fires
+    # only when there's no local token file at all.
+    RESPONSE=$(curl -sS -X POST "$CONNECT_URL" \
+        -H 'Content-Type: application/json' \
+        --data "$CONNECT_BODY") || {
+        echo "could not reach Clawvisor at $APP_URL" >&2
+        exit 1
+    }
+    TOKEN=$(printf '%s' "$RESPONSE" | jq -r '.token // empty')
+    if [ -z "$TOKEN" ]; then
+        STATUS=$(printf '%s' "$RESPONSE" | jq -r '.status // .error // "unknown"')
+        echo "agent registration failed (status: $STATUS): $RESPONSE" >&2
+        exit 1
+    fi
+    # AGENT_ID is captured so per-target steps can scope dashboard URLs and
+    # credential lookups to this specific agent — see the credential
+    # pre-flight in claude_code.sh.tmpl.
+    AGENT_ID=$(printf '%s' "$RESPONSE" | jq -r '.agent_id // empty')
+    echo "✓ Agent registered"
 fi
-# AGENT_ID is captured so per-target steps can scope dashboard URLs and
-# credential lookups to this specific agent — see the credential pre-flight
-# in claude_code.sh.tmpl.
-AGENT_ID=$(printf '%s' "$RESPONSE" | jq -r '.agent_id // empty')
-echo "✓ Agent registered"
 {{end -}}
 
 {{define "persist_token"}}# --- Persist the token --------------------------------------------------------
