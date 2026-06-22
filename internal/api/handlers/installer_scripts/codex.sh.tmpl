@@ -76,7 +76,7 @@ if [ -z "$CV_DEFAULT_MODE" ]; then
     if prompt_choice \
         "How should Clawvisor route your codex calls?" \
         "Make it the default for every codex session (~/.codex/config.toml)" \
-        "Install a 'codex-cv' shell alias (opt in per session)"
+        "Install a shell alias (opt in per session)"
     then
         CV_DEFAULT_MODE=yes
     else

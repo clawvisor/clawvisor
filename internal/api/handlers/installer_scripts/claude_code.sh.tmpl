@@ -116,7 +116,7 @@ if [ -z "$CV_DEFAULT_MODE" ]; then
     if prompt_choice \
         "How should Clawvisor route your Claude Code calls?" \
         "Make it the default for every claude session (~/.claude/settings.json)" \
-        "Install a 'claude-cv' shell alias (opt in per session)"
+        "Install a shell alias (opt in per session)"
     then
         CV_DEFAULT_MODE=yes
     else
