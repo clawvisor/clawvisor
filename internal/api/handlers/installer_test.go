@@ -695,6 +695,41 @@ func TestInstallerCodexShellProviderSlugByEnv(t *testing.T) {
 	}
 }
 
+// TestInstallerShellAgentSlotByEnv locks the on-disk agent path namespacing:
+// production keeps the bare slot (so ~/.clawvisor/agents/<name>.json — the
+// common case — doesn't move) while staging and dev are env-prefixed so the
+// same logical name from a different environment doesn't overwrite the prod
+// token file. Mirrors the codex slug-by-env shape but covers both .sh
+// installers since the wiring is in the shared common.sh.tmpl.
+func TestInstallerShellAgentSlotByEnv(t *testing.T) {
+	cases := []struct {
+		name        string
+		llmProxyURL string
+		wantSlot    string
+	}{
+		{"production", "https://llm.clawvisor.com", "codex"},
+		{"staging", "https://llm.staging.clawvisor.com", "staging/codex"},
+		{"dev_localhost_default", "", "dev/codex"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewInstallerHandler("", "", true, tc.llmProxyURL, "")
+			body := installerGetShell(t, h, "codex", "CLAIMCODE0")
+			assertContainsAll(t, body,
+				"AGENT_SLOT='"+tc.wantSlot+"'",
+				// AGENT_NAME stays the bare logical name regardless of env —
+				// it's what the daemon registers and what shows up in the
+				// dashboard, so prefixing it would leak path layout into the
+				// human-visible name.
+				"AGENT_NAME='codex'",
+				// File paths reference the slot, not the name.
+				`agents/$AGENT_SLOT.json`,
+				`diffs/$AGENT_SLOT`,
+			)
+		})
+	}
+}
+
 // TestInstallerMarkdownReturns410 — old paste blobs that hit
 // /skill/install/<self-install-target>.md must return 410 Gone with a body
 // pointing at the new .sh URL, so dashboards that haven't updated their URL
