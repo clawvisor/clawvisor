@@ -27,6 +27,10 @@ run_claude_smoke() {
     # the script. `claude -p` reads stdin (piped-prompt pattern), so
     # without this redirect claude consumes the rest of the script and
     # sh exits silently at EOF after claude returns.
+    #
+    # Require both exit 0 AND the literal OK in the response — claude
+    # can exit 0 with a "please log in" message in some configurations
+    # (silent-failure pattern), so an exit-only check would false-pass.
     SMOKE_OUT=$(
         CLAWVISOR_URL="$APP_URL" \
         CLAWVISOR_AGENT_TOKEN="$TOKEN" \
@@ -36,6 +40,11 @@ run_claude_smoke() {
         ANTHROPIC_API_KEY= \
         claude -p "respond with the word OK" </dev/null 2>&1
     )
+    smoke_exit=$?
+    if [ $smoke_exit -ne 0 ]; then
+        return $smoke_exit
+    fi
+    printf '%s' "$SMOKE_OUT" | grep -qi 'OK'
 }
 
 if command -v claude >/dev/null 2>&1; then

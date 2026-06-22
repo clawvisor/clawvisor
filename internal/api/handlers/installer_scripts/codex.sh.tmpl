@@ -47,10 +47,19 @@ if command -v codex >/dev/null 2>&1; then
     # `curl | sh`, sh's stdin IS the curl pipe carrying the rest of
     # the script. Without it, codex may consume the rest of the script
     # and sh exits silently at EOF.
-    if ! CLAWVISOR_AGENT_TOKEN="$TOKEN" codex \
+    #
+    # Codex `exec` can exit 0 even when it couldn't actually round-trip
+    # (e.g. logged-out, prints a "please login" message and bails) — so
+    # we capture output and require both exit 0 AND the literal OK we
+    # asked the model to return. Treat either condition as failure.
+    SMOKE_OUT=$(
+        CLAWVISOR_AGENT_TOKEN="$TOKEN" codex \
             -c "model_provider=$SLUG" \
             -c "sandbox_workspace_write.network_access=true" \
-            exec --skip-git-repo-check "respond with the word OK" </dev/null >/dev/null 2>&1; then
+            exec --skip-git-repo-check "respond with the word OK" </dev/null 2>&1
+    )
+    SMOKE_EXIT=$?
+    if [ $SMOKE_EXIT -ne 0 ] || ! printf '%s' "$SMOKE_OUT" | grep -qi 'OK'; then
         cat <<EOF >&2
 codex smoke test failed in passthrough mode. Either:
 
@@ -63,7 +72,10 @@ codex smoke test failed in passthrough mode. Either:
 
 The provider block and Clawvisor agent token are already in place — re-run
 this install once either of those is set up.
+
+Raw output from codex (exit $SMOKE_EXIT):
 EOF
+        printf '%s\n' "$SMOKE_OUT" >&2
         exit 1
     fi
     echo "✓ codex round-tripped through Clawvisor"
