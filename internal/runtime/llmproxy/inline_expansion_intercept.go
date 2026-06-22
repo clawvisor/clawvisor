@@ -141,15 +141,26 @@ func MaybeInterceptInlineExpansion(
 	defer guard.Rollback()
 
 	if parsed.DriftID != "" {
-		_, claimedOk := guard.Claim(
+		// Mirror the task-creation intercept: an unclaimable drift_id
+		// must not demote the surface. Treat as no drift_id and continue
+		// inline. See MaybeInterceptInlineTaskDefinition for the full
+		// rationale.
+		guardAudit := func(decision, outcome, reason string) {
+			if decision == "fallthrough" {
+				decision = "continue"
+			}
+			audit(decision, outcome, reason)
+		}
+		if _, claimedOk := guard.Claim(
 			cfg.AgentID,
 			cfg.ConversationID,
 			ScopeDriftOptionExpand,
 			"",
-			audit,
-		)
-		if !claimedOk {
-			return conversation.ToolUseVerdict{}, false
+			guardAudit,
+		); !claimedOk {
+			// Wipe so the cache hold (line ~205 sets ScopeDriftID) and
+			// the downstream verdict don't carry an id we never claimed.
+			parsed.DriftID = ""
 		}
 	}
 

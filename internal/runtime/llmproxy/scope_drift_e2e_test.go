@@ -1109,10 +1109,19 @@ func peekAllHolds(ctx context.Context, cache *MemoryPendingApprovalCache) []Pend
 	return out
 }
 
-// TestScopeDriftE2E_ExpandCrossAgentGuard verifies that an expand request from a different
-// agent or conversation using a victim's drift_id is rejected.
-func TestScopeDriftE2E_ExpandCrossAgentGuard(t *testing.T) {
+// TestScopeDriftE2E_ExpandCrossAgentDoesNotConsumeVictimDrift covers the
+// security property surrounding cross-agent / cross-conversation drift_id
+// reuse. The intercept used to fall through (refuse to handle) when the
+// drift_id belonged to a different agent or conversation; with the
+// surface-preserving recovery in place, an unclaimable drift_id is now
+// silently dropped and the expand renders inline AS IF no drift_id had
+// been supplied. The property that still must hold is the one that
+// actually matters: the victim's drift in the registry is NOT consumed
+// by the unrelated agent's expand, so the legitimate owner can still
+// claim it later and its pre-clear potential is unaffected.
+func TestScopeDriftE2E_ExpandCrossAgentDoesNotConsumeVictimDrift(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 	reg := NewMemoryScopeDriftRegistry(0)
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	drift, _ := mintDriftFixture(t, reg, ScopeDriftSourceTaskScope)
@@ -1139,19 +1148,44 @@ func TestScopeDriftE2E_ExpandCrossAgentGuard(t *testing.T) {
 	httpReq := httptest.NewRequest("POST", "http://daemon/api/control/tasks/task-A/expand?surface=inline", nil)
 	call := ControlCall{Method: "POST", URL: httpReq.URL}
 
-	if _, claimed := MaybeInterceptInlineExpansion(httpReq, cfg, func(string, string, string) {}, func(string, ...any) {}, conversation.ProviderAnthropic, tu, call); claimed {
-		t.Fatal("expected expand from different agent to be rejected")
+	// The cross-agent expand now renders inline (no longer falls
+	// through), but it must NOT consume the victim's drift.
+	_, _ = MaybeInterceptInlineExpansion(httpReq, cfg, func(string, string, string) {}, func(string, ...any) {}, conversation.ProviderAnthropic, tu, call)
+	stored, err := reg.Get(ctx, drift.ID)
+	if err != nil {
+		t.Fatalf("get victim drift after cross-agent expand: %v", err)
+	}
+	if stored.ChosenOption != "" {
+		t.Fatalf("cross-agent expand consumed victim drift: ChosenOption=%q, want empty", stored.ChosenOption)
+	}
+	if stored.Outcome != "" {
+		t.Fatalf("cross-agent expand mutated victim drift outcome: Outcome=%q, want empty", stored.Outcome)
 	}
 
-	// Also check different conversation!
+	// Also check different conversation under the same agent — same
+	// property, same victim.
 	cfg2 := PostprocessConfig{
 		AgentContext:         AgentContext{AgentID: driftTestAgentID, AgentUserID: driftTestUserID},
-		AuditContext:         AuditContext{ConversationID: "conv-attacker"}, // Different conversation!
+		AuditContext:         AuditContext{ConversationID: "conv-attacker"},
 		AuthorizationContext: AuthorizationContext{ScopeDrifts: reg},
 		ApprovalContext:      ApprovalContext{PendingApprovals: cache, InlineTaskCreator: fc},
 	}
-	if _, claimed := MaybeInterceptInlineExpansion(httpReq, cfg2, func(string, string, string) {}, func(string, ...any) {}, conversation.ProviderAnthropic, tu, call); claimed {
-		t.Fatal("expected expand from different conversation to be rejected")
+	_, _ = MaybeInterceptInlineExpansion(httpReq, cfg2, func(string, string, string) {}, func(string, ...any) {}, conversation.ProviderAnthropic, tu, call)
+	stored, err = reg.Get(ctx, drift.ID)
+	if err != nil {
+		t.Fatalf("get victim drift after cross-conversation expand: %v", err)
+	}
+	if stored.ChosenOption != "" {
+		t.Fatalf("cross-conversation expand consumed victim drift: ChosenOption=%q, want empty", stored.ChosenOption)
+	}
+	if stored.Outcome != "" {
+		t.Fatalf("cross-conversation expand mutated victim drift outcome: Outcome=%q, want empty", stored.Outcome)
+	}
+
+	// The legitimate owner can still claim the drift — the cross-
+	// agent / cross-conversation attempts must not have stranded it.
+	if _, err := reg.ClaimOption(ctx, drift.ID, ScopeDriftOptionExpand, "owner retry"); err != nil {
+		t.Fatalf("victim should be able to claim drift after cross-agent attempts; got err: %v", err)
 	}
 }
 
@@ -1270,6 +1304,89 @@ func TestScopeDriftE2E_ExpandCreatorFailureClosesDrift(t *testing.T) {
 	// Verify we can claim the drift again (it is not stranded or permanently resolved).
 	if _, err := reg.ClaimOption(ctx, drift.ID, ScopeDriftOptionExpand, "retry"); err != nil {
 		t.Fatalf("expected drift to be claimable again, but got err: %v", err)
+	}
+}
+
+// TestScopeDriftE2E_NewTaskUnknownDriftIDRendersInline locks in the
+// surface-preserving recovery for an unclaimable drift_id. The user hit
+// a production case where a model hallucinated a drift_id in a POST
+// /api/control/tasks?surface=inline body; the prior behavior was to
+// fall through to the dashboard, silently demoting surface=inline. The
+// intercept now treats an unclaimable drift_id (not-found / wrong-agent
+// / already-resolved) as if no drift_id were supplied and renders inline.
+// The drift in the registry, if it exists, is untouched — its legitimate
+// owner can still claim it.
+//
+// Asserts:
+//   - intercept claims the request (ok=true) instead of falling through
+//   - a hold lands at StageAwaitingTaskApproval (inline approval flow)
+//   - the hold's ScopeDriftID is empty (the bogus id was wiped, so
+//     postprocess won't try to mark a drift it never owned)
+//   - audit row uses decision="continue" rather than "fallthrough" so
+//     operators see what the intercept actually did
+func TestScopeDriftE2E_NewTaskUnknownDriftIDRendersInline(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	reg := NewMemoryScopeDriftRegistry(0)
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+
+	// No mintDriftFixture — the registry is intentionally empty so the
+	// drift_id below resolves to ErrDriftNotFound. This is the
+	// "hallucinated drift_id" case.
+	taskBody := &runtimetasks.TaskCreateRequest{
+		Purpose:                "File the issue",
+		IntentVerificationMode: "strict",
+		ExpiresInSeconds:       600,
+		ExpectedTools: []runtimetasks.ExpectedTool{
+			{ToolName: "Bash", Why: "curl to github"},
+		},
+		DriftID: "drift-does-not-exist",
+	}
+	taskBodyJSON, _ := json.Marshal(taskBody)
+	tu := conversation.ToolUse{
+		ID:    "tu-create",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"body":` + string(mustJSON(string(taskBodyJSON))) + `}`),
+	}
+
+	fc := &fakeInlineTaskCreator{}
+	cfg := PostprocessConfig{
+		AgentContext:         AgentContext{AgentID: driftTestAgentID, AgentUserID: driftTestUserID, AgentName: "agent-drift"},
+		AuditContext:         AuditContext{ConversationID: driftTestConvID},
+		AuthorizationContext: AuthorizationContext{ScopeDrifts: reg},
+		ApprovalContext:      ApprovalContext{PendingApprovals: cache, InlineTaskCreator: fc},
+	}
+	httpReq := httptest.NewRequest("POST", "http://daemon/api/control/tasks?surface=inline", nil)
+	call := ControlCall{Method: "POST", URL: httpReq.URL}
+
+	type auditRow struct{ decision, outcome, reason string }
+	var rows []auditRow
+	auditFn := func(d, o, r string) { rows = append(rows, auditRow{d, o, r}) }
+
+	if _, ok := MaybeInterceptInlineTaskDefinition(httpReq, cfg, auditFn, func(string, ...any) {}, conversation.ProviderAnthropic, tu, call); !ok {
+		t.Fatal("expected intercept to claim the request (ok=true) and render inline when drift_id is unknown — dashboard demotion regressed")
+	}
+	holds := peekAllHolds(ctx, cache)
+	if len(holds) != 1 {
+		t.Fatalf("want 1 inline hold, got %d (intercept claimed but did not place a hold)", len(holds))
+	}
+	if holds[0].Stage != StageAwaitingTaskApproval {
+		t.Fatalf("hold stage = %q, want %q (inline approval flow)", holds[0].Stage, StageAwaitingTaskApproval)
+	}
+	if holds[0].ScopeDriftID != "" {
+		t.Fatalf("hold ScopeDriftID = %q, want empty (bogus drift_id must be wiped so postprocess doesn't mark a drift the intercept never claimed)", holds[0].ScopeDriftID)
+	}
+	var sawContinue bool
+	for _, r := range rows {
+		if r.decision == "continue" && r.outcome == "inline_scope_drift_not_found" {
+			sawContinue = true
+		}
+		if r.decision == "fallthrough" && r.outcome == "inline_scope_drift_not_found" {
+			t.Fatalf("audit emitted decision=%q outcome=%q — intercept no longer falls through on unclaimable drift_id; the guard's emission must be retagged to %q", r.decision, r.outcome, "continue")
+		}
+	}
+	if !sawContinue {
+		t.Fatalf("expected audit row decision=\"continue\" outcome=\"inline_scope_drift_not_found\"; got rows=%+v", rows)
 	}
 }
 

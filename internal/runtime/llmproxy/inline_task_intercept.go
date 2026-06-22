@@ -168,15 +168,40 @@ func MaybeInterceptInlineTaskDefinition(
 	defer guard.Rollback()
 
 	if parsed.DriftID != "" {
-		_, claimedOk := guard.Claim(
+		// An unclaimable drift_id (hallucinated by the model, expired,
+		// minted for a different agent/conversation, or already-resolved)
+		// must NOT demote the surface: the agent opted in with
+		// ?surface=inline and the user is sitting in the chat — silently
+		// routing the approval to the dashboard would surprise both.
+		// Treat the body as if no drift_id were supplied and continue
+		// with the normal inline rendering path. The drift in the
+		// registry (if it exists) is untouched, so its legitimate owner
+		// can still claim it.
+		//
+		// guard.Claim's audit emission uses decision="fallthrough" from
+		// its own perspective ("the claim didn't take"), which would
+		// misrepresent the intercept's actual behavior at the
+		// surrounding row's resolution. Wrap to retag as "continue" so
+		// operators see one row that matches what the intercept does.
+		guardAudit := func(decision, outcome, reason string) {
+			if decision == "fallthrough" {
+				decision = "continue"
+			}
+			audit(decision, outcome, reason)
+		}
+		if _, claimedOk := guard.Claim(
 			cfg.AgentID,
 			cfg.ConversationID,
 			ScopeDriftOptionNewTask,
 			"",
-			audit,
-		)
-		if !claimedOk {
-			return conversation.ToolUseVerdict{}, false
+			guardAudit,
+		); !claimedOk {
+			// Downstream verdict construction reads parsed.DriftID for
+			// DeferredDriftOutcome (line ~418) and the cache hold's
+			// ScopeDriftID (line ~466). With no successful claim, both
+			// must be empty so postprocess doesn't try to mark a drift
+			// that was never ours to resolve.
+			parsed.DriftID = ""
 		}
 	}
 
