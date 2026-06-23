@@ -353,6 +353,8 @@ func TestControlMethodForCall_CompletePathDefaultsToPOST(t *testing.T) {
 	}{
 		{"complete with no body defaults POST", "/api/control/tasks/abc/complete", nil, "POST"},
 		{"complete with body defaults POST", "/api/control/tasks/abc/complete", []byte("{}"), "POST"},
+		{"expand with no body defaults POST", "/api/control/tasks/abc/expand", nil, "POST"},
+		{"expand with body defaults POST", "/api/control/tasks/abc/expand", []byte("{}"), "POST"},
 		{"tasks POST is unchanged", "/api/control/tasks", []byte("{}"), "POST"},
 		{"tasks GET is unchanged when no body", "/api/control/tasks", nil, "GET"},
 		{"task get-by-id is GET", "/api/control/tasks/abc", nil, "GET"},

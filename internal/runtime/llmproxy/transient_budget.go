@@ -77,11 +77,12 @@ type transientBudgetEntry struct {
 }
 
 type memoryTransientBudget struct {
-	mu       sync.Mutex
-	ttl      time.Duration
-	now      func() time.Time
-	nextTok  uint64 // monotonic source for TransientReleaseToken
-	entries  map[TransientBudgetKey]transientBudgetEntry
+	mu          sync.Mutex
+	ttl         time.Duration
+	now         func() time.Time
+	nextTok     uint64 // monotonic source for TransientReleaseToken
+	entries     map[TransientBudgetKey]transientBudgetEntry
+	lastPruneAt time.Time
 }
 
 func (b *memoryTransientBudget) Try(_ context.Context, key TransientBudgetKey) (TransientReleaseToken, bool) {
@@ -91,8 +92,11 @@ func (b *memoryTransientBudget) Try(_ context.Context, key TransientBudgetKey) (
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.pruneLocked()
-	if _, exists := b.entries[key]; exists {
-		return 0, false
+	if entry, exists := b.entries[key]; exists {
+		if entry.expiresAt.After(b.now().UTC()) {
+			return 0, false
+		}
+		delete(b.entries, key)
 	}
 	b.nextTok++
 	token := TransientReleaseToken(b.nextTok)
@@ -118,6 +122,10 @@ func (b *memoryTransientBudget) Release(_ context.Context, key TransientBudgetKe
 
 func (b *memoryTransientBudget) pruneLocked() {
 	now := b.now().UTC()
+	if now.Sub(b.lastPruneAt) < 30*time.Second {
+		return
+	}
+	b.lastPruneAt = now
 	for key, entry := range b.entries {
 		if entry.expiresAt.After(now) {
 			continue

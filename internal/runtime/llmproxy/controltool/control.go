@@ -1277,6 +1277,9 @@ func controlMethodForCall(path string, body []byte) string {
 	if strings.HasSuffix(path, "/complete") {
 		return "POST"
 	}
+	if strings.HasSuffix(path, "/expand") {
+		return "POST"
+	}
 	return "GET"
 }
 

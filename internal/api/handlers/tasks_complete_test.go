@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -320,5 +321,37 @@ func TestComplete_Unauthenticated_Returns401(t *testing.T) {
 	h.Complete(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("Complete status = %d, want 401; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestComplete_HappyPath_UserSession(t *testing.T) {
+	h, st, _, agent := newInlineTasksHandlerForTest(t)
+	task := seedActiveTask(t, h, agent, "rename foo to bar")
+
+	user := &store.User{ID: agent.UserID}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+task.ID+"/complete", nil)
+	req.SetPathValue("id", task.ID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+
+	rec := httptest.NewRecorder()
+	h.Complete(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Complete status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v; body = %s", err, rec.Body.String())
+	}
+	if resp["task_id"] != task.ID || resp["status"] != "completed" {
+		t.Errorf("response = %v, want {task_id:%q, status:completed}", resp, task.ID)
+	}
+	persisted, err := st.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if persisted.Status != "completed" {
+		t.Errorf("persisted status = %q, want completed", persisted.Status)
 	}
 }

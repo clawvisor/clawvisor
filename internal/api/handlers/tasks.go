@@ -1992,7 +1992,8 @@ func (h *TasksHandler) denyTaskInState(ctx context.Context, taskID, fromStatus s
 func (h *TasksHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	agent := middleware.AgentFromContext(ctx)
-	if agent == nil {
+	user := middleware.UserFromContext(ctx)
+	if agent == nil && user == nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 		return
 	}
@@ -2007,10 +2008,22 @@ func (h *TasksHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get task")
 		return
 	}
-	if task.UserID != agent.UserID || task.AgentID != agent.ID {
-		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
-		return
+
+	var userID string
+	if agent != nil {
+		if task.UserID != agent.UserID || task.AgentID != agent.ID {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
+			return
+		}
+		userID = agent.UserID
+	} else {
+		if task.UserID != user.ID {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
+			return
+		}
+		userID = user.ID
 	}
+
 	if task.Status != "active" && task.Status != "expired" {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task is not active or expired (status: "+task.Status+")")
 		return
@@ -2042,7 +2055,9 @@ func (h *TasksHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		// re-read observed. This avoids an unbounded loop if multiple
 		// in-flight callers race.
 		live, livErr := h.st.GetTask(ctx, taskID)
-		if livErr == nil && live != nil {
+		if livErr != nil {
+			h.logger.WarnContext(ctx, "GetTask failed in CAS retry", "err", livErr, "task_id", taskID)
+		} else if live != nil {
 			liveStatus = live.Status
 			if live.Status == "active" || live.Status == "expired" {
 				won, err = h.st.UpdateTaskStatusFrom(ctx, taskID, live.Status, "completed")
@@ -2065,7 +2080,7 @@ func (h *TasksHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		h.logger.WarnContext(ctx, "chain facts cleanup failed", "err", err, "task_id", taskID)
 	}
 
-	h.publishTasksAndQueue(agent.UserID)
+	h.publishTasksAndQueue(userID)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"task_id": taskID,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -803,31 +804,58 @@ func TestListMessages_Concurrency_ContextCancel(t *testing.T) {
 	}
 
 	adapter := &GmailAdapter{}
-	res, err := adapter.listMessages(ctx, client, map[string]any{
+	_, err := adapter.listMessages(ctx, client, map[string]any{
 		"max_results": totalMsgs,
 	})
-	if err != nil {
-		t.Fatalf("listMessages error: %v", err)
+	if err == nil {
+		t.Fatalf("expected context cancellation error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected error to wrap context.Canceled, got %v", err)
+	}
+}
+
+func TestListMessages_Concurrency_AllMetadataFetchesFailed(t *testing.T) {
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var body string
+			var status = http.StatusOK
+			switch {
+			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages") && !strings.Contains(req.URL.Path, "/msg-"):
+				body = `{
+					"messages": [
+						{"id": "msg-1"},
+						{"id": "msg-2"}
+					],
+					"resultSizeEstimate": 2
+				}`
+			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages/msg-"):
+				status = http.StatusInternalServerError
+				body = "internal server error"
+			default:
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(strings.NewReader("not found")),
+				}, nil
+			}
+
+			return &http.Response{
+				StatusCode: status,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}),
 	}
 
-	data, ok := res.Data.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map[string]any, got %T", res.Data)
+	adapter := &GmailAdapter{}
+	_, err := adapter.listMessages(context.Background(), client, map[string]any{
+		"max_results": 2,
+	})
+	if err == nil {
+		t.Fatalf("expected error when all metadata fetches fail, got nil")
 	}
-	messagesRaw, ok := data["messages"]
-	if !ok {
-		t.Fatalf("missing messages field")
-	}
-	messages := messagesRaw.([]msgListItem)
-
-	if len(messages) != fetchCount {
-		t.Errorf("len(messages) = %d, want equal to fetchCount (%d)", len(messages), fetchCount)
-	}
-	if fetchCount == 0 {
-		t.Error("expected at least one message to be successfully fetched")
-	}
-	if fetchCount > 15 {
-		t.Errorf("expected at most 15 messages to be fetched, but got %d", fetchCount)
+	if !strings.Contains(err.Error(), "all metadata fetches failed") {
+		t.Errorf("expected error to mention 'all metadata fetches failed', got: %v", err)
 	}
 }
 

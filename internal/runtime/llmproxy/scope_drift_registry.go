@@ -265,12 +265,13 @@ type pendingSubstitutionEntry struct {
 }
 
 type memoryScopeDriftRegistry struct {
-	mu      sync.Mutex
-	ttl     time.Duration
-	now     func() time.Time
-	drifts  map[string]*ScopeDrift
-	cleared map[string]string
-	pending map[string]pendingSubstitutionEntry
+	mu          sync.Mutex
+	ttl         time.Duration
+	now         func() time.Time
+	drifts      map[string]*ScopeDrift
+	cleared     map[string]string
+	pending     map[string]pendingSubstitutionEntry
+	lastPruneAt time.Time
 }
 
 // NewMemoryScopeDriftRegistry returns an in-memory registry with the
@@ -326,7 +327,7 @@ func (r *memoryScopeDriftRegistry) Get(_ context.Context, driftID string) (Scope
 	defer r.mu.Unlock()
 	r.pruneLocked()
 	d, ok := r.drifts[driftID]
-	if !ok {
+	if !ok || (!d.ExpiresAt.IsZero() && r.now().UTC().After(d.ExpiresAt)) {
 		return ScopeDrift{}, ErrDriftNotFound
 	}
 	return *d, nil
@@ -340,7 +341,7 @@ func (r *memoryScopeDriftRegistry) ClaimOption(_ context.Context, driftID string
 	defer r.mu.Unlock()
 	r.pruneLocked()
 	d, ok := r.drifts[driftID]
-	if !ok {
+	if !ok || (!d.ExpiresAt.IsZero() && r.now().UTC().After(d.ExpiresAt)) {
 		return ScopeDrift{}, ErrDriftNotFound
 	}
 	if d.ChosenOption != "" {
@@ -360,7 +361,7 @@ func (r *memoryScopeDriftRegistry) SetOutcome(_ context.Context, driftID string,
 	defer r.mu.Unlock()
 	r.pruneLocked()
 	d, ok := r.drifts[driftID]
-	if !ok {
+	if !ok || (!d.ExpiresAt.IsZero() && r.now().UTC().After(d.ExpiresAt)) {
 		return ErrDriftNotFound
 	}
 	d.Outcome = outcome
@@ -378,7 +379,7 @@ func (r *memoryScopeDriftRegistry) RollbackClaim(_ context.Context, driftID stri
 	defer r.mu.Unlock()
 	r.pruneLocked()
 	d, ok := r.drifts[driftID]
-	if !ok {
+	if !ok || (!d.ExpiresAt.IsZero() && r.now().UTC().After(d.ExpiresAt)) {
 		return ErrDriftNotFound
 	}
 	d.ChosenOption = ""
@@ -405,6 +406,11 @@ func (r *memoryScopeDriftRegistry) LookupPreClear(_ context.Context, agentID, fi
 	key := preClearKey(agentID, fingerprint)
 	driftID, ok := r.cleared[key]
 	if !ok {
+		return "", false
+	}
+	d, okDrift := r.drifts[driftID]
+	if !okDrift || (!d.ExpiresAt.IsZero() && r.now().UTC().After(d.ExpiresAt)) {
+		delete(r.cleared, key)
 		return "", false
 	}
 	delete(r.cleared, key)
@@ -443,7 +449,7 @@ func (r *memoryScopeDriftRegistry) LookupPendingSubstitution(_ context.Context, 
 	r.pruneLocked()
 	storage := pendingSubstitutionStorageKey(key)
 	entry, ok := r.pending[storage]
-	if !ok {
+	if !ok || (!entry.ExpiresAt.IsZero() && r.now().UTC().After(entry.ExpiresAt)) {
 		return PendingSubstitution{}, false
 	}
 	return entry.Substitution, true
@@ -460,6 +466,10 @@ func (r *memoryScopeDriftRegistry) DeletePendingSubstitution(_ context.Context, 
 
 func (r *memoryScopeDriftRegistry) pruneLocked() {
 	now := r.now().UTC()
+	if now.Sub(r.lastPruneAt) < 30*time.Second {
+		return
+	}
+	r.lastPruneAt = now
 	for id, d := range r.drifts {
 		if d.ExpiresAt.IsZero() || d.ExpiresAt.After(now) {
 			continue

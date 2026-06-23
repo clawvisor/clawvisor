@@ -614,6 +614,7 @@ func (s *Server) routes() http.Handler {
 	requireUser := middleware.RequireUser(s.jwtSvc, s.store)
 	optionalUser := middleware.OptionalUser(s.jwtSvc, s.store)
 	requireAgent := middleware.RequireAgent(s.store)
+	requireUserOrAgent := middleware.RequireUserOrAgent(s.jwtSvc, s.store)
 	logMiddleware := middleware.Logging(s.logger)
 	recoverMiddleware := middleware.Recover(s.logger)
 	securityMiddleware := middleware.Security(s.cfg.Server.IsLocal() && s.cfg.Server.PublicURL == "")
@@ -960,7 +961,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/tasks/{id}", requireAgent(e2e(http.HandlerFunc(tasksHandler.Get))))
 	mux.Handle("POST /api/tasks/{id}/start", requireAgent(e2e(http.HandlerFunc(tasksHandler.Start))))
 	mux.Handle("POST /api/tasks/{id}/end", requireAgent(e2e(http.HandlerFunc(tasksHandler.End))))
-	mux.Handle("POST /api/tasks/{id}/complete", requireAgent(e2e(http.HandlerFunc(tasksHandler.Complete))))
+	mux.Handle("POST /api/tasks/{id}/complete", requireUserOrAgent(e2e(http.HandlerFunc(tasksHandler.Complete))))
 	mux.Handle("POST /api/tasks/{id}/expand", requireAgent(e2e(http.HandlerFunc(tasksHandler.Expand))))
 
 	// Tasks (user JWT)

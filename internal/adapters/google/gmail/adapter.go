@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -196,24 +197,40 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 		g.SetLimit(listMessagesMetaConcurrency)
 
 		for i, m := range listResp.Messages {
+			if ctx.Err() != nil {
+				break
+			}
 			i, m := i, m
 			g.Go(func() error {
 				if ctx.Err() != nil {
-					results[i] = fetchResult{id: m.ID, err: ctx.Err()}
-					return nil
+					return ctx.Err()
 				}
 				meta, err := fetchMessageMeta(ctx, client, m.ID)
-				results[i] = fetchResult{id: m.ID, meta: meta, err: err}
+				if err != nil {
+					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						return err
+					}
+					results[i] = fetchResult{id: m.ID, err: err}
+					return nil
+				}
+				results[i] = fetchResult{id: m.ID, meta: meta}
 				return nil
 			})
 		}
 		if err := g.Wait(); err != nil {
 			return nil, fmt.Errorf("gmail list_messages: %w", err)
 		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 	}
 
+	var firstFetchErr error
 	for _, res := range results {
 		if res.err != nil {
+			if firstFetchErr == nil {
+				firstFetchErr = res.err
+			}
 			continue
 		}
 		item := msgListItem{
@@ -229,6 +246,10 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 		if res.meta.isUnread {
 			unread++
 		}
+	}
+
+	if numMessages > 0 && len(items) == 0 && firstFetchErr != nil {
+		return nil, fmt.Errorf("gmail list_messages: all metadata fetches failed: %w", firstFetchErr)
 	}
 
 	total := listResp.ResultSizeEstimate
