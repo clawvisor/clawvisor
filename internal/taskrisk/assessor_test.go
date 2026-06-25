@@ -349,22 +349,33 @@ func TestHighestRiskLevel_Ordering(t *testing.T) {
 	}
 }
 
-// TestHighestRiskLevel_NormalizesCaseAndWhitespace pins the casing /
-// whitespace robustness: an LLM verdict that arrives as "High" or
-// " critical " must still rank above a deterministic "low" floor.
-// Without normalization, sloppy assessor output would rank as
-// unknown and silently lose — exactly the regression the merge rule
-// exists to prevent. The output preserves the caller's original
-// casing so downstream renderers see what was passed in.
+// TestHighestRiskLevel_NormalizesCaseAndWhitespace pins both
+// normalization legs:
+//
+//  1. INPUT-side: an LLM verdict that arrives as "High" or
+//     " critical " must still rank above a deterministic "low" floor
+//     — without this, sloppy assessor casing would rank as unknown
+//     and silently lose.
+//
+//  2. OUTPUT-side: the return value is the canonical lowercase /
+//     trimmed form so downstream exact-string checks
+//     (RiskLevel == "high" auto-approval gating, badge rendering)
+//     don't underreport severity for a non-canonical input.
 func TestHighestRiskLevel_NormalizesCaseAndWhitespace(t *testing.T) {
-	if got := HighestRiskLevel("low", "High"); got != "High" {
-		t.Errorf("HighestRiskLevel(low, High) = %q, want High (case-insensitive rank, preserved casing)", got)
+	if got := HighestRiskLevel("low", "High"); got != "high" {
+		t.Errorf("HighestRiskLevel(low, High) = %q, want canonical high", got)
 	}
-	if got := HighestRiskLevel("low", " critical "); got != " critical " {
-		t.Errorf("HighestRiskLevel(low, ' critical ') = %q, want ' critical ' (whitespace-tolerant rank)", got)
+	if got := HighestRiskLevel("low", " critical "); got != "critical" {
+		t.Errorf("HighestRiskLevel(low, ' critical ') = %q, want canonical critical", got)
 	}
-	if got := HighestRiskLevel(" CRITICAL ", "low"); got != " CRITICAL " {
-		t.Errorf("HighestRiskLevel(' CRITICAL ', low) = %q, want ' CRITICAL '", got)
+	if got := HighestRiskLevel(" CRITICAL ", "low"); got != "critical" {
+		t.Errorf("HighestRiskLevel(' CRITICAL ', low) = %q, want canonical critical", got)
+	}
+	// Same-rank tie keeps `a` for symmetry with the original handlers
+	// behavior, but the returned form is still canonicalized so the
+	// caller can rely on equality checks against "high"/"critical".
+	if got := HighestRiskLevel("HIGH", "high"); got != "high" {
+		t.Errorf("HighestRiskLevel(HIGH, high) = %q, want canonical high", got)
 	}
 }
 

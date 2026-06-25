@@ -260,16 +260,30 @@ func MergeAssessments(primary, secondary *RiskAssessment) *RiskAssessment {
 }
 
 // HighestRiskLevel ranks two risk-level strings and returns the
-// higher one (the original input, not the normalized form, so the
-// caller's casing is preserved on the way out). Ordering after
-// case-fold + trim: "" < "unknown" < "low" < "medium" < "high" <
-// "critical". The empty / unknown sentinels rank below any named
-// level so an unconfigured assessor never wins against a real
-// deterministic floor. Input is trimmed and lowercased before the
-// rank lookup so a sloppy assessor output like " High " or
-// "CRITICAL" still ranks correctly — without that normalization, an
-// LLM verdict with non-canonical casing would rank as unknown and
-// silently lose to a lower deterministic floor.
+// higher one in CANONICAL form (lowercase, trimmed). Ordering:
+// "" < "unknown" < "low" < "medium" < "high" < "critical". The
+// empty / unknown sentinels rank below any named level so an
+// unconfigured assessor never wins against a real deterministic
+// floor.
+//
+// Two normalization decisions, both load-bearing:
+//
+//  1. INPUT is trimmed and lowercased before the rank lookup so a
+//     sloppy assessor output like " High " or "CRITICAL" still ranks
+//     correctly. Without this, a non-canonical LLM verdict would
+//     rank as unknown and silently lose to a lower deterministic
+//     floor — exactly the regression the merge rule exists to
+//     prevent.
+//
+//  2. OUTPUT is the normalized form, not the caller's original
+//     casing. Downstream code does exact-string comparisons against
+//     "high" / "critical" (auto-approval gating in handlers/tasks.go,
+//     badge rendering in tui/screens/helpers.go); returning the
+//     caller's "High" or " critical " would route past those
+//     comparisons and underreport severity. Both legs of the
+//     comparison get canonicalized for symmetry: an empty input
+//     stays empty, but every named level is returned lowercased and
+//     trimmed.
 func HighestRiskLevel(a, b string) string {
 	order := map[string]int{
 		"":         -1,
@@ -279,13 +293,12 @@ func HighestRiskLevel(a, b string) string {
 		"high":     3,
 		"critical": 4,
 	}
-	rank := func(level string) int {
-		return order[strings.ToLower(strings.TrimSpace(level))]
+	normA := strings.ToLower(strings.TrimSpace(a))
+	normB := strings.ToLower(strings.TrimSpace(b))
+	if order[normB] > order[normA] {
+		return normB
 	}
-	if rank(b) > rank(a) {
-		return b
-	}
-	return a
+	return normA
 }
 
 // UnmarshalAssessment is the inverse of MarshalAssessment. Returns nil
