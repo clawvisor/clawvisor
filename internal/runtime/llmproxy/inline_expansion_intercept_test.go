@@ -38,9 +38,10 @@ type fakeExpansionCreator struct {
 	ExpireCalls        int
 
 	// Inputs captured for assertion.
-	LastPendingTaskID   string
-	LastPendingReason   string
-	LastPendingAddTools int
+	LastPendingTaskID      string
+	LastPendingReason      string
+	LastPendingAddTools    int
+	LastPendingPrecomputed *taskrisk.RiskAssessment
 }
 
 func (f *fakeExpansionCreator) CreatePendingInlineExpansion(
@@ -49,12 +50,14 @@ func (f *fakeExpansionCreator) CreatePendingInlineExpansion(
 	taskID string,
 	additions *runtimetasks.Envelope,
 	reason string,
+	precomputed *taskrisk.RiskAssessment,
 ) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.CreatePendingCalls++
 	f.LastPendingTaskID = taskID
 	f.LastPendingReason = reason
+	f.LastPendingPrecomputed = precomputed
 	if additions != nil {
 		f.LastPendingAddTools = len(additions.ExpectedTools)
 	}
@@ -235,6 +238,151 @@ func TestRenderExpansionApprovalPrompt_NoRiskSilent(t *testing.T) {
 	prompt := renderExpansionApprovalPrompt(additions, "land it", "purpose", "task-abc", "session", nil, "cv-aaa")
 	if strings.Contains(prompt, "\nRisk\n") || strings.Contains(prompt, "\n\nRisk\n") {
 		t.Errorf("prompt rendered empty Risk section:\n%s", prompt)
+	}
+}
+
+// TestAssessInlineExpansionRisk_LLMOverridesFloor pins the core
+// promise of the LLM expansion-risk wiring: when the assessor returns
+// a level higher than the deterministic floor, the assessor's verdict
+// wins. Without this regression test, a future refactor that
+// shortcircuited the merge to "floor only" would silently drop the
+// LLM read and leave inline expansion prompts looking like they did
+// before the LLM was wired in.
+func TestAssessInlineExpansionRisk_LLMOverridesFloor(t *testing.T) {
+	cfg := PostprocessConfig{
+		ApprovalContext: ApprovalContext{
+			TaskRiskAssessor: &mockTaskRiskAssessor{verdict: &TaskRiskAssessment{
+				RiskLevel:   "high",
+				Explanation: "Mutating egress to a previously read-only host.",
+			}},
+		},
+	}
+	// A trivially "low"-shaped envelope so the deterministic floor
+	// won't reach for medium/high on its own — that way any non-low
+	// verdict in the result must have come from the LLM.
+	merged := runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{{ToolName: "edit", Why: "Update README.md to fix typo"}},
+	}
+	httpReq := httptest.NewRequest("POST", "http://daemon/x", nil)
+	got := assessInlineExpansionRisk(httpReq, cfg, "doc tweak", merged, func(string, ...any) {})
+	if got == nil {
+		t.Fatal("expected non-nil assessment")
+	}
+	if got.RiskLevel != "high" {
+		t.Errorf("RiskLevel = %q, want high (LLM verdict must win over a lower floor)", got.RiskLevel)
+	}
+	if !strings.Contains(got.Explanation, "Mutating egress") {
+		t.Errorf("Explanation lost the LLM text: %q", got.Explanation)
+	}
+}
+
+// TestAssessInlineExpansionRisk_UnknownFallsBackToFloor pins the
+// "LLM unavailable / spend cap exhausted" path: the assessor returns
+// the sentinel "unknown" level and we must fall back to the
+// deterministic floor rather than persisting "unknown" — that would
+// strip the risk badge from the inline prompt entirely.
+func TestAssessInlineExpansionRisk_UnknownFallsBackToFloor(t *testing.T) {
+	cfg := PostprocessConfig{
+		ApprovalContext: ApprovalContext{
+			TaskRiskAssessor: &mockTaskRiskAssessor{verdict: &TaskRiskAssessment{RiskLevel: "unknown"}},
+		},
+	}
+	merged := runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{{ToolName: "bash", Why: ""}},
+	}
+	httpReq := httptest.NewRequest("POST", "http://daemon/x", nil)
+	got := assessInlineExpansionRisk(httpReq, cfg, "p", merged, func(string, ...any) {})
+	if got == nil {
+		t.Fatal("expected the deterministic floor when LLM returns unknown")
+	}
+	if strings.EqualFold(got.RiskLevel, "unknown") || got.RiskLevel == "" {
+		t.Errorf("RiskLevel = %q, want a real level from the floor", got.RiskLevel)
+	}
+}
+
+// TestAssessInlineExpansionRisk_AssessorNilFallsBackToFloor pins the
+// boot-time path where TaskRiskAssessor was never wired — common on
+// daemons where the LLM creds aren't configured yet. The floor must
+// still score the envelope so the prompt has a level.
+func TestAssessInlineExpansionRisk_AssessorNilFallsBackToFloor(t *testing.T) {
+	cfg := PostprocessConfig{}
+	merged := runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{{ToolName: "bash", Why: ""}},
+	}
+	httpReq := httptest.NewRequest("POST", "http://daemon/x", nil)
+	got := assessInlineExpansionRisk(httpReq, cfg, "p", merged, func(string, ...any) {})
+	if got == nil {
+		t.Fatal("expected the deterministic floor when assessor is unconfigured")
+	}
+	if got.RiskLevel == "" {
+		t.Errorf("RiskLevel must be non-empty when the floor produced an assessment")
+	}
+}
+
+// TestMergeExpansionRiskAssessments_HigherWins guards the
+// "deterministic floor is a floor, not a ceiling" invariant: when the
+// floor flags a higher level than the LLM (e.g. wildcard host the LLM
+// didn't weigh heavily), the floor's level wins AND its explanation
+// surfaces. Mirror of the production handlers.mergeRiskAssessments
+// rule so the two implementations don't drift in silence.
+func TestMergeExpansionRiskAssessments_HigherWins(t *testing.T) {
+	llm := &taskrisk.RiskAssessment{
+		RiskLevel:   "medium",
+		Explanation: "Reads a few files",
+	}
+	floor := &taskrisk.RiskAssessment{
+		RiskLevel:   "high",
+		Explanation: "Wildcard host detected",
+	}
+	got := mergeExpansionRiskAssessments(llm, floor)
+	if got == nil {
+		t.Fatal("expected non-nil merge")
+	}
+	if got.RiskLevel != "high" {
+		t.Errorf("RiskLevel = %q, want high (floor outranks LLM)", got.RiskLevel)
+	}
+	if !strings.Contains(got.Explanation, "Wildcard") {
+		t.Errorf("Explanation should pick the dominant side, got %q", got.Explanation)
+	}
+}
+
+// TestMergeExpansionRiskAssessments_NilOperands guards the
+// zero-operand paths: nil + X collapses to X without panicking. The
+// inline intercept relies on this for the "floor only" and "LLM only"
+// branches; a regression here would surface as a nil-deref on the
+// inline approval path.
+func TestMergeExpansionRiskAssessments_NilOperands(t *testing.T) {
+	only := &taskrisk.RiskAssessment{RiskLevel: "medium"}
+	if got := mergeExpansionRiskAssessments(nil, only); got != only {
+		t.Errorf("nil + X != X (got %v)", got)
+	}
+	if got := mergeExpansionRiskAssessments(only, nil); got != only {
+		t.Errorf("X + nil != X (got %v)", got)
+	}
+	if got := mergeExpansionRiskAssessments(nil, nil); got != nil {
+		t.Errorf("nil + nil != nil (got %v)", got)
+	}
+}
+
+// TestHighestExpansionRiskLevel_Ordering pins the level-comparison
+// table. Critical sits above high above medium above low; unknown /
+// empty rank as zero so any named level wins against them.
+func TestHighestExpansionRiskLevel_Ordering(t *testing.T) {
+	cases := []struct {
+		a, b, want string
+	}{
+		{"low", "medium", "medium"},
+		{"medium", "high", "high"},
+		{"high", "critical", "critical"},
+		{"critical", "low", "critical"},
+		{"unknown", "low", "low"},
+		{"", "medium", "medium"},
+		{"high", "", "high"},
+	}
+	for _, c := range cases {
+		if got := highestExpansionRiskLevel(c.a, c.b); got != c.want {
+			t.Errorf("highestExpansionRiskLevel(%q, %q) = %q, want %q", c.a, c.b, got, c.want)
+		}
 	}
 }
 

@@ -223,6 +223,26 @@ func MarshalAssessment(a *RiskAssessment) json.RawMessage {
 	return b
 }
 
+// UnmarshalAssessment is the inverse of MarshalAssessment. Returns nil
+// on empty input or parse failure — callers treat both as "no cached
+// assessment" and fall back to a fresh deterministic-only read rather
+// than failing the approve. The expand cache stores nothing on legacy
+// rows or when the assessor was unconfigured at expand time, so an
+// empty input here is the expected steady state for that path.
+func UnmarshalAssessment(raw json.RawMessage) *RiskAssessment {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out RiskAssessment
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	if strings.TrimSpace(out.RiskLevel) == "" {
+		return nil
+	}
+	return &out
+}
+
 // parseRiskResponse parses the LLM response into a RiskAssessment.
 func parseRiskResponse(raw string) (*RiskAssessment, error) {
 	raw = strings.TrimSpace(raw)

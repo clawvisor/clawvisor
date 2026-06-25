@@ -164,27 +164,14 @@ func MaybeInterceptInlineExpansion(
 		}
 	}
 
-	// Land the pending state in the DB before holding so the dashboard
-	// sees the in-flight expansion as a pending row even while the
-	// chat anchor owns the decide window. The creator runs the same
-	// derived-action + credential gates the public Expand handler
-	// uses, so any failure path here is identical in shape to the
-	// headless deny — same error text the agent would have gotten.
-	agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, Name: cfg.AgentName}
-	if _, err := expansionCreator.CreatePendingInlineExpansion(req.Context(), agentForCreate, taskID, &additions, parsed.Reason); err != nil {
-		audit("fallthrough", "inline_expansion_pending_create_failed", err.Error()+"; deferring to dashboard rewrite")
-		trace("inline_expansion.pending_create_failed", "err", err.Error(), "task_id", taskID)
-		return conversation.ToolUseVerdict{}, false
-	}
-
-	// Fetch the parent task's purpose + lifetime AND derive the
-	// merged-envelope risk for the prompt. Best-effort lookup — on
-	// failure the prompt renders with what we have. Lifetime is what
-	// triggers the "standing (no expiry)" callout for the higher-
-	// blast-radius case; risk is the merged-envelope reassessment
-	// (same shape ExpandApprove writes to the row on approve) so the
-	// reviewer sees the same level they'll get post-approve, not
-	// just the parent's pre-expansion level.
+	// Fetch the parent task FIRST so we can derive the merged envelope
+	// and compute the LLM+floor risk BEFORE landing the pending row.
+	// We want the assessment to flow into both: (a) the pending row's
+	// cached RiskAssessment, so a dashboard-side approve also reuses
+	// it; and (b) the in-memory hold (below), so the chat-side approve
+	// can short-circuit reassessExpansionRisk's LLM call. Best-effort
+	// store lookup — on failure the prompt renders with what we have
+	// and the approve path falls back to deterministic-only.
 	parentPurpose := ""
 	parentLifetime := ""
 	var expansionRisk *taskrisk.RiskAssessment
@@ -194,28 +181,44 @@ func MaybeInterceptInlineExpansion(
 			parentLifetime = parent.Lifetime
 			if parentEnv, envErr := runtimetasks.EnvelopeFromTask(parent); envErr == nil {
 				merge := runtimetasks.MergeEnvelopes(parentEnv, additions)
-				if assessment := runtimepolicy.AssessTaskEnvelope(parent.Purpose, merge.Merged); assessment != nil && strings.TrimSpace(assessment.RiskLevel) != "" {
-					expansionRisk = assessment
-				}
+				expansionRisk = assessInlineExpansionRisk(req, cfg, parent.Purpose, merge.Merged, trace)
 			}
 		}
 	}
 
+	// Land the pending state in the DB before holding so the dashboard
+	// sees the in-flight expansion as a pending row even while the
+	// chat anchor owns the decide window. The creator runs the same
+	// derived-action + credential gates the public Expand handler
+	// uses, so any failure path here is identical in shape to the
+	// headless deny — same error text the agent would have gotten.
+	// The precomputed assessment is passed through so the pending row
+	// carries the same cached RiskAssessment the headless Expand
+	// handler stamps — that way a dashboard-side approve (race) also
+	// reuses the LLM verdict.
+	agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, Name: cfg.AgentName}
+	if _, err := expansionCreator.CreatePendingInlineExpansion(req.Context(), agentForCreate, taskID, &additions, parsed.Reason, expansionRisk); err != nil {
+		audit("fallthrough", "inline_expansion_pending_create_failed", err.Error()+"; deferring to dashboard rewrite")
+		trace("inline_expansion.pending_create_failed", "err", err.Error(), "task_id", taskID)
+		return conversation.ToolUseVerdict{}, false
+	}
+
 	now := time.Now().UTC()
 	innerHold, holdErr := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
-		UserID:             cfg.AgentUserID,
-		AgentID:            cfg.AgentID,
-		Provider:           provider,
-		ConversationID:     cfg.ConversationID,
-		ToolUse:            tu,
-		Reason:             "inline expansion awaiting user approval",
-		Stage:              StageAwaitingExpansionApproval,
-		ExpansionTaskID:    taskID,
-		ExpansionAdditions: &additions,
-		ExpansionReason:    parsed.Reason,
-		ScopeDriftID:       parsed.DriftID,
-		CreatedAt:          now,
-		ExpiresAt:          now.Add(inlineTaskApprovalHoldTTL),
+		UserID:                   cfg.AgentUserID,
+		AgentID:                  cfg.AgentID,
+		Provider:                 provider,
+		ConversationID:           cfg.ConversationID,
+		ToolUse:                  tu,
+		Reason:                   "inline expansion awaiting user approval",
+		Stage:                    StageAwaitingExpansionApproval,
+		ExpansionTaskID:          taskID,
+		ExpansionAdditions:       &additions,
+		ExpansionReason:          parsed.Reason,
+		ExpansionPrecomputedRisk: expansionRisk,
+		ScopeDriftID:             parsed.DriftID,
+		CreatedAt:                now,
+		ExpiresAt:                now.Add(inlineTaskApprovalHoldTTL),
 	})
 	if holdErr != nil {
 		// Cache hold failed — roll the pending expansion back so the
@@ -292,6 +295,111 @@ func MaybeInterceptInlineExpansion(
 	}
 	guard.Success()
 	return verdict, true
+}
+
+// assessInlineExpansionRisk is the expansion mirror of
+// assessInlineTaskRisk: it asks cfg.TaskRiskAssessor for an
+// LLM-derived risk read on the MERGED envelope, merges it with the
+// deterministic envelope-shape floor via mergeRiskAssessments, and
+// returns the result. When the assessor is unconfigured, errors, or
+// returns "unknown", falls back to the floor alone (so the prompt
+// still carries a level). The merge mirrors task creation: the
+// deterministic floor can only ever RAISE the LLM read, never lower
+// it, so structural amplifiers (wildcard hosts, regex matchers,
+// intent verification off) remain a hard backstop.
+//
+// Lives next to the intercept so the dependency on TaskRiskAssessor
+// stays inside the llmproxy package (the mergeRiskAssessments helper
+// lives in the handlers package, which is why this function builds
+// the merge inline rather than calling that helper directly).
+func assessInlineExpansionRisk(req *http.Request, cfg PostprocessConfig, parentPurpose string, merged runtimetasks.Envelope, trace func(event string, kv ...any)) *taskrisk.RiskAssessment {
+	floor := runtimepolicy.AssessTaskEnvelope(parentPurpose, merged)
+	if cfg.TaskRiskAssessor == nil {
+		return floor
+	}
+	llmVerdict := cfg.TaskRiskAssessor.AssessEnvelope(req.Context(), TaskRiskAssessRequest{
+		Purpose:                parentPurpose,
+		AgentName:              cfg.AgentName,
+		UserID:                 cfg.AgentUserID,
+		ExpectedTools:          merged.ExpectedTools,
+		ExpectedEgress:         merged.ExpectedEgress,
+		RequiredCredentials:    merged.RequiredCredentials,
+		IntentVerificationMode: merged.IntentVerificationMode,
+		ExpectedUse:            merged.ExpectedUse,
+	})
+	if llmVerdict == nil || strings.EqualFold(strings.TrimSpace(llmVerdict.RiskLevel), "unknown") {
+		trace("inline_expansion.risk_llm_unavailable")
+		return floor
+	}
+	conflicts := make([]taskrisk.ConflictDetail, 0, len(llmVerdict.Conflicts))
+	for _, c := range llmVerdict.Conflicts {
+		conflicts = append(conflicts, taskrisk.ConflictDetail{
+			Field:       c.Field,
+			Description: c.Description,
+			Severity:    c.Severity,
+		})
+	}
+	llmAssessment := &taskrisk.RiskAssessment{
+		RiskLevel:              llmVerdict.RiskLevel,
+		Explanation:            llmVerdict.Explanation,
+		Factors:                llmVerdict.Factors,
+		Conflicts:              conflicts,
+		IntentMatch:            llmVerdict.IntentMatch,
+		IntentMatchExplanation: llmVerdict.IntentMatchExplanation,
+	}
+	return mergeExpansionRiskAssessments(llmAssessment, floor)
+}
+
+// mergeExpansionRiskAssessments is the llmproxy-side copy of the
+// handlers.mergeRiskAssessments rule (highest of two levels wins,
+// dominant explanation when the secondary outweighs). Duplicated here
+// rather than imported because handlers→llmproxy is the import
+// direction, not the reverse. The two implementations MUST agree;
+// taskrisk could host the canonical helper in a future cleanup.
+func mergeExpansionRiskAssessments(primary, secondary *taskrisk.RiskAssessment) *taskrisk.RiskAssessment {
+	if primary == nil {
+		return secondary
+	}
+	if secondary == nil {
+		return primary
+	}
+	out := *primary
+	out.RiskLevel = highestExpansionRiskLevel(primary.RiskLevel, secondary.RiskLevel)
+	out.Factors = append(append([]string{}, primary.Factors...), secondary.Factors...)
+	out.Conflicts = append(append([]taskrisk.ConflictDetail{}, primary.Conflicts...), secondary.Conflicts...)
+	if secondary.Explanation != "" && out.RiskLevel == secondary.RiskLevel && out.RiskLevel != primary.RiskLevel {
+		out.Explanation = secondary.Explanation
+	}
+	if out.Model == "" {
+		out.Model = secondary.Model
+	}
+	if out.LatencyMS == 0 {
+		out.LatencyMS = secondary.LatencyMS
+	}
+	return &out
+}
+
+// highestExpansionRiskLevel is the llmproxy-side copy of
+// handlers.highestRiskLevel. Ordering: low < medium < high < critical;
+// unknown / empty collapses to the other side.
+func highestExpansionRiskLevel(a, b string) string {
+	rank := func(level string) int {
+		switch strings.ToLower(strings.TrimSpace(level)) {
+		case "low":
+			return 1
+		case "medium":
+			return 2
+		case "high":
+			return 3
+		case "critical":
+			return 4
+		}
+		return 0
+	}
+	if rank(a) >= rank(b) {
+		return a
+	}
+	return b
 }
 
 // cleanupEvictedInlineExpansion mirrors CleanupEvictedInlineTask for

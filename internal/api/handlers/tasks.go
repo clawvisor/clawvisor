@@ -2371,6 +2371,22 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Compute the merged-envelope risk ONCE here at request time and
+	// stash it on the pending row so the approve path can persist the
+	// same level without paying the multi-second LLM latency on the
+	// user's button click. Mirrors the request-time assessment Create
+	// runs at tasks.go:575-605: LLM verdict (when assessor configured)
+	// merged with the deterministic envelope-shape floor so structural
+	// amplifiers (wildcard hosts, regex matchers, intent verification
+	// off) can never under-grade a soft LLM read. Cached value also
+	// drives the notification's risk badge below so the approver sees
+	// the level the approve path will persist, not just the deterministic
+	// floor.
+	expansionRisk := h.assessExpansionRisk(ctx, task, merge.Merged)
+	if expansionRisk != nil {
+		pending.RiskAssessment = taskrisk.MarshalAssessment(expansionRisk)
+	}
+
 	won, err := h.st.SetTaskPendingExpansion(ctx, taskID, pending)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not request scope expansion")
@@ -2396,14 +2412,15 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		denyURL := fmt.Sprintf("%s/dashboard/tasks?action=expand_deny&task_id=%s", h.baseURL, taskID)
 
 		derivedByKey := indexDerivedActionsByKey(task.AuthorizedActions, task.IntentVerificationMode, additions.ExpectedTools)
-		// Pre-stamp the notification with the deterministic
-		// envelope-risk score for the MERGED envelope. The approver
-		// sees the level the expanded scope would land at — not the
-		// stale parent-creation level. Empty when the assessor
-		// rejects the request shape (handled lazily by the renderers).
+		// Pre-stamp the notification with the merged LLM+floor risk
+		// score for the MERGED envelope (computed above). The
+		// approver sees the level the expanded scope would land at —
+		// not the stale parent-creation level. Empty when the
+		// assessor rejects the request shape (handled lazily by the
+		// renderers).
 		notifyRiskLevel := ""
-		if assessment := runtimepolicy.AssessTaskEnvelope(task.Purpose, merge.Merged); assessment != nil {
-			notifyRiskLevel = assessment.RiskLevel
+		if expansionRisk != nil {
+			notifyRiskLevel = expansionRisk.RiskLevel
 		}
 		if msgID, err := h.notifier.SendScopeExpansionRequest(ctx, notify.ScopeExpansionRequest{
 			TaskID:              taskID,
@@ -2654,7 +2671,7 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	reassessExpansionRisk(task, merged, &envUpdate)
+	reassessExpansionRisk(task, merged, &envUpdate, decodePendingRiskAssessment(task.PendingExpansion))
 	// Snapshot the pending row we read so the CAS rejects writes
 	// computed from a stale pending — protects against a deny that
 	// clears pending_expansion_json AND a subsequent expand that
@@ -2763,27 +2780,92 @@ func buildExpansionApprovalUpdate(task *store.Task) (store.TaskEnvelopeUpdate, r
 	}, merge.Merged, nil
 }
 
-// reassessExpansionRisk runs the deterministic envelope-shape risk
-// policy on the merged envelope and stamps the result into envUpdate.
-// Cheap, synchronous, no LLM call — every approve gets the structural
+// reassessExpansionRisk computes the persisted risk for the merged
+// envelope and stamps it onto envUpdate. Every approve gets the
+// deterministic envelope-shape policy as a floor so structural
 // amplifiers (wildcard hosts, regex matchers, intent verification off)
-// re-scored, so a low-risk task can't quietly accumulate destructive
-// scope across expansions without the risk badge moving.
+// re-score on the merged envelope — a low-risk task can't quietly
+// accumulate destructive scope across expansions without the risk
+// badge moving.
 //
-// The deeper LLM assessor is intentionally NOT invoked here: it would
-// add multi-second latency to a button click. The follow-up
-// risk-baseline PR can layer that on once it has a story for the
-// latency budget.
-func reassessExpansionRisk(task *store.Task, merged runtimetasks.Envelope, envUpdate *store.TaskEnvelopeUpdate) {
+// When precomputed is non-nil (the Expand request stashed an LLM read
+// on PendingTaskExpansion.RiskAssessment, or an inline intercept
+// passed one through), it is merged with the deterministic floor via
+// the same higher-of-two rule task creation uses. The approve path
+// stays sub-second because the LLM call happened back at request time.
+// When precomputed is nil (legacy rows, or assessor unconfigured at
+// expand), the deterministic-only behavior preserves backwards
+// compatibility — no regression for in-flight pending rows that
+// straddle the rollout.
+func reassessExpansionRisk(task *store.Task, merged runtimetasks.Envelope, envUpdate *store.TaskEnvelopeUpdate, precomputed *taskrisk.RiskAssessment) {
 	if task == nil || envUpdate == nil {
 		return
 	}
-	assessment := runtimepolicy.AssessTaskEnvelope(task.Purpose, merged)
+	floor := runtimepolicy.AssessTaskEnvelope(task.Purpose, merged)
+	var assessment *taskrisk.RiskAssessment
+	if precomputed != nil && precomputed.RiskLevel != "" {
+		assessment = mergeRiskAssessments(precomputed, floor)
+	} else {
+		assessment = floor
+	}
 	if assessment == nil || assessment.RiskLevel == "" {
 		return
 	}
 	envUpdate.RiskLevel = assessment.RiskLevel
 	envUpdate.RiskDetails = taskrisk.MarshalAssessment(assessment)
+}
+
+// assessExpansionRisk runs the request-time risk assessment for an
+// expansion's MERGED envelope. Mirrors the create-time pattern at
+// tasks.go:575-605: LLM verdict (when assessor configured) merged
+// with the deterministic envelope-shape floor via mergeRiskAssessments.
+// The LLM half can take seconds; this call runs synchronously inside
+// the Expand request handler (which is either long-polled by the
+// agent or returns 202 immediately) — never on the user's button
+// click. Result is meant to be cached on PendingTaskExpansion.RiskAssessment
+// so the approve path stays sub-second.
+//
+// Returns nil when neither half produced a usable read (assessor
+// unconfigured AND floor returned empty — vanishingly rare). Falls
+// back to the floor alone on LLM error.
+func (h *TasksHandler) assessExpansionRisk(ctx context.Context, parent *store.Task, merged runtimetasks.Envelope) *taskrisk.RiskAssessment {
+	if parent == nil {
+		return nil
+	}
+	floor := runtimepolicy.AssessTaskEnvelope(parent.Purpose, merged)
+	if h.assessor == nil {
+		return floor
+	}
+	llmAssessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
+		Purpose:                parent.Purpose,
+		AgentName:              "",
+		UserID:                 parent.UserID,
+		ExpectedTools:          merged.ExpectedTools,
+		ExpectedEgress:         merged.ExpectedEgress,
+		RequiredCredentials:    merged.RequiredCredentials,
+		IntentVerificationMode: parent.IntentVerificationMode,
+		ExpectedUse:            parent.ExpectedUse,
+	})
+	if err != nil {
+		h.logger.WarnContext(ctx, "expansion risk assessment failed", "task_id", parent.ID, "error", err)
+		return floor
+	}
+	if llmAssessment == nil || strings.EqualFold(strings.TrimSpace(llmAssessment.RiskLevel), "unknown") {
+		return floor
+	}
+	return mergeRiskAssessments(llmAssessment, floor)
+}
+
+// decodePendingRiskAssessment reads the cached merged-envelope
+// assessment off a PendingTaskExpansion. Returns nil for the legacy
+// shape (field empty) or parse failure — both collapse to "fall back
+// to deterministic-only" at the approve site rather than failing the
+// approve outright.
+func decodePendingRiskAssessment(pending *store.PendingTaskExpansion) *taskrisk.RiskAssessment {
+	if pending == nil {
+		return nil
+	}
+	return taskrisk.UnmarshalAssessment(pending.RiskAssessment)
 }
 
 // validateDerivedAuthorizedAction mirrors Create's per-action gates
@@ -3252,7 +3334,7 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	if err != nil {
 		return err
 	}
-	reassessExpansionRisk(task, merged, &envUpdate)
+	reassessExpansionRisk(task, merged, &envUpdate, decodePendingRiskAssessment(task.PendingExpansion))
 	// See the ExpandApprove handler — same pending-snapshot CAS
 	// guard, same fail-closed marshal handling.
 	pendingJSON, mErr := json.Marshal(task.PendingExpansion)

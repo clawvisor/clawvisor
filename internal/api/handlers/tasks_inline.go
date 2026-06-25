@@ -846,6 +846,7 @@ func (h *TasksHandler) CreatePendingInlineExpansion(
 	taskID string,
 	additions *runtimetasks.Envelope,
 	reason string,
+	precomputedRisk *taskrisk.RiskAssessment,
 ) (string, error) {
 	if agent == nil {
 		return "", errors.New("agent is required")
@@ -941,6 +942,13 @@ func (h *TasksHandler) CreatePendingInlineExpansion(
 	if err != nil {
 		return "", fmt.Errorf("encode expansion envelope: %w", err)
 	}
+	// Stash the intercept-side merged LLM+floor risk on the pending row
+	// so a dashboard-side approve (race against the chat anchor) also
+	// reuses the LLM verdict — without this only the chat-side approve
+	// would benefit from the cached read.
+	if precomputedRisk != nil && precomputedRisk.RiskLevel != "" {
+		pending.RiskAssessment = taskrisk.MarshalAssessment(precomputedRisk)
+	}
 
 	won, err := h.st.SetTaskPendingExpansion(ctx, taskID, pending)
 	if err != nil {
@@ -1005,7 +1013,25 @@ func (h *TasksHandler) CreatePendingInlineExpansion(
 // any new credential placeholders, and resolves the canonical
 // approval record. Returns the InlineApprovedExpansion shape the
 // rewrite path renders to the LLM.
+//
+// Thin wrapper that delegates to ApproveInlineExpansionWithAssessment
+// with no precomputed assessment. Kept for backwards compatibility
+// with the InlineExpansionCreator interface; callers that have a
+// precomputed assessment from the inline intercept should prefer the
+// WithAssessment variant so the LLM read is reused without
+// re-running.
 func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userID string) (*llmproxy.InlineApprovedExpansion, error) {
+	return h.ApproveInlineExpansionWithAssessment(ctx, taskID, userID, nil)
+}
+
+// ApproveInlineExpansionWithAssessment mirrors
+// CreateInlineApprovedTaskWithAssessment on the creation side: it
+// accepts the precomputed merged-envelope risk assessment from the
+// inline-expansion intercept and threads it into reassessExpansionRisk
+// so the persisted risk reflects the same LLM read the user saw in
+// the chat prompt — without paying the LLM latency on the user's
+// approve click.
+func (h *TasksHandler) ApproveInlineExpansionWithAssessment(ctx context.Context, taskID, userID string, precomputed *taskrisk.RiskAssessment) (*llmproxy.InlineApprovedExpansion, error) {
 	task, err := h.st.GetTask(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -1024,7 +1050,17 @@ func (h *TasksHandler) ApproveInlineExpansion(ctx context.Context, taskID, userI
 	if err != nil {
 		return nil, fmt.Errorf("build expansion update: %w", err)
 	}
-	reassessExpansionRisk(task, merged, &envUpdate)
+	// Prefer the assessment the inline intercept passed through the
+	// pending hold — it was computed against the freshest envelope at
+	// chat-prompt-render time. Fall back to whatever the request-side
+	// Expand stashed on PendingTaskExpansion so dashboard-side approves
+	// of inline-pending rows still get the LLM verdict; finally fall
+	// back to deterministic-only for legacy rows.
+	risk := precomputed
+	if risk == nil {
+		risk = decodePendingRiskAssessment(task.PendingExpansion)
+	}
+	reassessExpansionRisk(task, merged, &envUpdate, risk)
 	// See ExpandApprove for the snapshot CAS rationale. Marshal
 	// failure fails closed — silently skipping the guard would
 	// disable stale-approve protection on the same approval that
