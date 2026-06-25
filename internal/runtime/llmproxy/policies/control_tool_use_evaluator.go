@@ -158,11 +158,9 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 	}, nil
 }
 
-func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator, in *ControlToolUseInputs) (pipeline.ToolUseVerdict, error) {
-	const failureReason = "malformed_control_command"
-	const malformedShapeReason = "Clawvisor: control endpoint rewrite refused — use a single foreground curl to the control endpoint, with no pipes, subshells, redirects to output files, or extra shell commands"
+func (e *ControlToolUseEvaluator) rewriteControlCallToFailure(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator, in *ControlToolUseInputs, failureReason string, denyReason string) (pipeline.ToolUseVerdict, error) {
 	if in.CallerNonces == nil {
-		return conversation.RecoverableDenyVerdict(malformedShapeReason, pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}), nil
+		return conversation.RecoverableDenyVerdict(denyReason, pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}), nil
 	}
 	target := callernonce.NonceTarget{
 		Host:   controltool.ControlSyntheticHost,
@@ -180,7 +178,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 	rewritten, ok, rewriteErr := controltool.RewriteControlFailureToolUse(tu, in.ControlBaseURL, nonce, failureReason)
 	if !ok {
 		_, _ = in.CallerNonces.Consume(ctx, nonce, target)
-		return conversation.RecoverableDenyVerdict(malformedShapeReason, pipeline.ControlFact{Outcome: "control_rewriter_error"}), nil
+		return conversation.RecoverableDenyVerdict(denyReason, pipeline.ControlFact{Outcome: "control_rewriter_error"}), nil
 	}
 	if rewriteErr != nil {
 		_, _ = in.CallerNonces.Consume(ctx, nonce, target)
@@ -198,7 +196,7 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 	}
 	return pipeline.ToolUseVerdict{
 		Outcome: pipeline.OutcomeRewrite,
-		Reason:  "malformed control endpoint command",
+		Reason:  denyReason,
 		Facts: []pipeline.EvaluationFact{pipeline.ControlFact{
 			Outcome:       "clawvisor_control_failure",
 			Method:        "POST",
@@ -208,54 +206,14 @@ func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Contex
 	}, nil
 }
 
+func (e *ControlToolUseEvaluator) rewriteMalformedControlCall(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator, in *ControlToolUseInputs) (pipeline.ToolUseVerdict, error) {
+	const malformedShapeReason = "Clawvisor: control endpoint rewrite refused — use a single foreground curl to the control endpoint, with no pipes, subshells, redirects to output files, or extra shell commands"
+	return e.rewriteControlCallToFailure(ctx, tu, mut, in, "malformed_control_command", malformedShapeReason)
+}
+
 func (e *ControlToolUseEvaluator) rewriteMethodMismatchControlCall(ctx context.Context, tu conversation.ToolUse, mut pipeline.ToolUseMutator, in *ControlToolUseInputs) (pipeline.ToolUseVerdict, error) {
-	const failureReason = "method_mismatch"
 	const mismatchReason = "Clawvisor: control endpoint rewrite refused — method mismatch"
-	if in.CallerNonces == nil {
-		return conversation.RecoverableDenyVerdict(mismatchReason, pipeline.ControlFact{Outcome: "caller_nonce_unavailable"}), nil
-	}
-	target := callernonce.NonceTarget{
-		Host:   controltool.ControlSyntheticHost,
-		Method: "POST",
-		Path:   "/api/control/failure",
-	}
-	nonce, err := in.CallerNonces.Mint(ctx, in.AgentID, target)
-	if err != nil {
-		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeDeny,
-			Reason:  ModelSafeUnavailableReason("caller nonce minting"),
-			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
-		}, nil
-	}
-	rewritten, ok, rewriteErr := controltool.RewriteControlFailureToolUse(tu, in.ControlBaseURL, nonce, failureReason)
-	if !ok {
-		_, _ = in.CallerNonces.Consume(ctx, nonce, target)
-		return conversation.RecoverableDenyVerdict(mismatchReason, pipeline.ControlFact{Outcome: "control_rewriter_error"}), nil
-	}
-	if rewriteErr != nil {
-		_, _ = in.CallerNonces.Consume(ctx, nonce, target)
-		return pipeline.ToolUseVerdict{
-			Outcome: pipeline.OutcomeDeny,
-			Reason:  ModelSafeInternalReason("control endpoint failure rewrite"),
-			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "control_rewriter_error"}},
-		}, nil
-	}
-	if mut != nil {
-		if err := mut.RewriteArgs(rewritten); err != nil {
-			_, _ = in.CallerNonces.Consume(ctx, nonce, target)
-			return pipeline.ToolUseVerdict{}, err
-		}
-	}
-	return pipeline.ToolUseVerdict{
-		Outcome: pipeline.OutcomeRewrite,
-		Reason:  mismatchReason,
-		Facts: []pipeline.EvaluationFact{pipeline.ControlFact{
-			Outcome:       "clawvisor_control_failure",
-			Method:        "POST",
-			Path:          "/api/control/failure",
-			SyntheticHost: controltool.ControlSyntheticHost,
-		}},
-	}, nil
+	return e.rewriteControlCallToFailure(ctx, tu, mut, in, "method_mismatch", mismatchReason)
 }
 
 var _ pipeline.ToolUseEvaluator = (*ControlToolUseEvaluator)(nil)
