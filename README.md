@@ -64,7 +64,7 @@ clawvisor-server connect-agent claude-code      # install skill + env vars for C
 clawvisor-server connect-agent claude-desktop   # configure MCP for Claude Desktop
 ```
 
-For manual setup or other agents, see the integration guides: [Claude Code](docs/INTEGRATE_CLAUDE_CODE.md) · [Claude Desktop (MCP)](docs/INTEGRATE_CLAUDE_COWORK.md) · [OpenClaw](docs/INTEGRATE_OPENCLAW.md) · [Any HTTP agent](docs/INTEGRATE_GENERIC.md)
+For manual setup or other agents, see the integration guides: [Claude Code](docs/INTEGRATE_CLAUDE_CODE.md) · [Claude Desktop (MCP)](docs/INTEGRATE_CLAUDE_COWORK.md) · [Hermes (MCP)](docs/INTEGRATE_HERMES.md) · [OpenClaw](docs/INTEGRATE_OPENCLAW.md) · [Any HTTP agent](docs/INTEGRATE_GENERIC.md)
 
 ### Other self-host options
 
@@ -458,7 +458,7 @@ When paired with a mobile device, the daemon connects to `relay.clawvisor.com` v
 
 ### MCP integration
 
-Clawvisor exposes an MCP (Model Context Protocol) server at `/mcp` with OAuth 2.1 for integration with Claude Desktop and other MCP clients. Tools available via MCP: `fetch_catalog`, `create_task`, `get_task`, `complete_task`, `expand_task`, `gateway_request`. See [docs/INTEGRATE_CLAUDE_COWORK.md](docs/INTEGRATE_CLAUDE_COWORK.md) for setup.
+Clawvisor exposes an MCP (Model Context Protocol) server at `/mcp` with OAuth 2.1 for integration with Claude Desktop, Hermes, and other MCP clients. Tools available via MCP: `fetch_catalog`, `create_task`, `get_task`, `complete_task`, `expand_task`, `gateway_request`. See [docs/INTEGRATE_CLAUDE_COWORK.md](docs/INTEGRATE_CLAUDE_COWORK.md) and [docs/INTEGRATE_HERMES.md](docs/INTEGRATE_HERMES.md) for setup.
 
 ## Proxy-Lite Runtime (preview)
 
