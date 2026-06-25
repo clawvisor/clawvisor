@@ -349,6 +349,25 @@ func TestHighestRiskLevel_Ordering(t *testing.T) {
 	}
 }
 
+// TestHighestRiskLevel_NormalizesCaseAndWhitespace pins the casing /
+// whitespace robustness: an LLM verdict that arrives as "High" or
+// " critical " must still rank above a deterministic "low" floor.
+// Without normalization, sloppy assessor output would rank as
+// unknown and silently lose — exactly the regression the merge rule
+// exists to prevent. The output preserves the caller's original
+// casing so downstream renderers see what was passed in.
+func TestHighestRiskLevel_NormalizesCaseAndWhitespace(t *testing.T) {
+	if got := HighestRiskLevel("low", "High"); got != "High" {
+		t.Errorf("HighestRiskLevel(low, High) = %q, want High (case-insensitive rank, preserved casing)", got)
+	}
+	if got := HighestRiskLevel("low", " critical "); got != " critical " {
+		t.Errorf("HighestRiskLevel(low, ' critical ') = %q, want ' critical ' (whitespace-tolerant rank)", got)
+	}
+	if got := HighestRiskLevel(" CRITICAL ", "low"); got != " CRITICAL " {
+		t.Errorf("HighestRiskLevel(' CRITICAL ', low) = %q, want ' CRITICAL '", got)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

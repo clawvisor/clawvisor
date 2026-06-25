@@ -260,10 +260,16 @@ func MergeAssessments(primary, secondary *RiskAssessment) *RiskAssessment {
 }
 
 // HighestRiskLevel ranks two risk-level strings and returns the
-// higher one. Ordering: "" < "unknown" < "low" < "medium" < "high" <
+// higher one (the original input, not the normalized form, so the
+// caller's casing is preserved on the way out). Ordering after
+// case-fold + trim: "" < "unknown" < "low" < "medium" < "high" <
 // "critical". The empty / unknown sentinels rank below any named
 // level so an unconfigured assessor never wins against a real
-// deterministic floor.
+// deterministic floor. Input is trimmed and lowercased before the
+// rank lookup so a sloppy assessor output like " High " or
+// "CRITICAL" still ranks correctly — without that normalization, an
+// LLM verdict with non-canonical casing would rank as unknown and
+// silently lose to a lower deterministic floor.
 func HighestRiskLevel(a, b string) string {
 	order := map[string]int{
 		"":         -1,
@@ -273,7 +279,10 @@ func HighestRiskLevel(a, b string) string {
 		"high":     3,
 		"critical": 4,
 	}
-	if order[b] > order[a] {
+	rank := func(level string) int {
+		return order[strings.ToLower(strings.TrimSpace(level))]
+	}
+	if rank(b) > rank(a) {
 		return b
 	}
 	return a
