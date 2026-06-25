@@ -19,8 +19,14 @@ type PollingLock interface {
 	// Returns true if this instance now holds the lock.
 	Acquire(ctx context.Context, userID string) bool
 
-	// Renew extends the lock TTL. Call periodically while polling.
-	Renew(ctx context.Context, userID string)
+	// Renew extends the lock TTL. Call periodically while polling. Returns
+	// true if this instance still owns the lock after the renew attempt.
+	// A false return means the lock has been taken by another instance (or
+	// the renew script unambiguously reported non-ownership) and the caller
+	// must stop polling before issuing another getUpdates — otherwise
+	// Telegram will terminate the older consumer with a "Conflict:
+	// terminated by other getUpdates request" error.
+	Renew(ctx context.Context, userID string) bool
 
 	// Release gives up the lock.
 	Release(ctx context.Context, userID string)
@@ -30,7 +36,7 @@ type PollingLock interface {
 type noopPollingLock struct{}
 
 func (noopPollingLock) Acquire(context.Context, string) bool { return true }
-func (noopPollingLock) Renew(context.Context, string)        {}
+func (noopPollingLock) Renew(context.Context, string) bool   { return true }
 func (noopPollingLock) Release(context.Context, string)      {}
 
 // redisPollingLock uses SET NX with TTL for distributed mutual exclusion.
@@ -52,16 +58,26 @@ func (l *redisPollingLock) Acquire(ctx context.Context, userID string) bool {
 	return ok
 }
 
-func (l *redisPollingLock) Renew(ctx context.Context, userID string) {
-	// Only renew if we still own the lock.
+func (l *redisPollingLock) Renew(ctx context.Context, userID string) bool {
+	// Only renew if we still own the lock. The script returns the PEXPIRE
+	// result (1 on success) if we still own the lock, or 0 if a different
+	// instance has taken it.
 	script := redis.NewScript(`
 		if redis.call('GET', KEYS[1]) == ARGV[1] then
 			return redis.call('PEXPIRE', KEYS[1], ARGV[2])
 		end
 		return 0
 	`)
-	_, _ = script.Run(ctx, l.rdb, []string{redisPollingLockPrefix + userID},
+	result, err := script.Run(ctx, l.rdb, []string{redisPollingLockPrefix + userID},
 		l.instanceID, int(pollingLockTTL.Milliseconds())).Result()
+	if err != nil {
+		// Transient Redis error — we can't confirm ownership was lost, so
+		// assume we still own it. A genuine ownership change will be
+		// reported as a clean script-result of 0 on a subsequent call.
+		return true
+	}
+	n, ok := result.(int64)
+	return ok && n > 0
 }
 
 func (l *redisPollingLock) Release(ctx context.Context, userID string) {

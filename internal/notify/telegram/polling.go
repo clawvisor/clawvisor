@@ -195,8 +195,15 @@ func (n *Notifier) pollForCallbacks(ctx context.Context, ps *pollingSession) {
 		default:
 		}
 
-		// Renew the distributed lock before each long-poll.
-		n.pollingLock.Renew(ctx, ps.userID)
+		// Renew the distributed lock before each long-poll. If a different
+		// instance has taken over (our TTL expired and the other side
+		// acquired it), exit cleanly here. If we call getUpdates anyway,
+		// Telegram will terminate the newer consumer with a "Conflict"
+		// error and the user's polling will flap between instances.
+		if !n.pollingLock.Renew(ctx, ps.userID) {
+			logger.WarnContext(ctx, "callback polling: lock lost, another instance is polling", "user_id", ps.userID)
+			return
+		}
 
 		updates, err := n.getUpdates(ctx, ps.botToken, offset, 10)
 		if err != nil {

@@ -941,6 +941,11 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 	if e.WouldPromptInline {
 		wouldPromptInline = 1
 	}
+	// Detach from the request ctx so a client disconnect or request deadline
+	// doesn't drop the audit row mid-INSERT. Keep a hard timeout so a hung
+	// DB still bounds the call.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO audit_log (
 			id, user_id, agent_id, request_id, dedup_key, task_id, session_id, approval_id, lease_id,
