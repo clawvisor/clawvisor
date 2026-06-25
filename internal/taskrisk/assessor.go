@@ -244,10 +244,17 @@ func MergeAssessments(primary, secondary *RiskAssessment) *RiskAssessment {
 		return primary
 	}
 	out := *primary
-	out.RiskLevel = HighestRiskLevel(primary.RiskLevel, secondary.RiskLevel)
+	winner := HighestRiskLevel(primary.RiskLevel, secondary.RiskLevel)
+	out.RiskLevel = winner
 	out.Factors = append(append([]string{}, primary.Factors...), secondary.Factors...)
 	out.Conflicts = append(append([]ConflictDetail{}, primary.Conflicts...), secondary.Conflicts...)
-	if secondary.Explanation != "" && HighestRiskLevel(primary.RiskLevel, secondary.RiskLevel) == secondary.RiskLevel {
+	// Surface the secondary's Explanation only when secondary outranks
+	// primary. Compare canonical forms on both sides: HighestRiskLevel
+	// returns the lowercased/trimmed winner, so a raw `secondary.RiskLevel`
+	// of "High" or " critical " would fail an exact-equality check even
+	// when secondary actually won — and the binding reason would
+	// silently drop.
+	if secondary.Explanation != "" && winner == strings.ToLower(strings.TrimSpace(secondary.RiskLevel)) {
 		out.Explanation = secondary.Explanation
 	}
 	if out.Model == "" {

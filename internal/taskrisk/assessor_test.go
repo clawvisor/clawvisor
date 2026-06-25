@@ -307,6 +307,34 @@ func TestMergeAssessments_HigherWins(t *testing.T) {
 	}
 }
 
+// TestMergeAssessments_NonCanonicalSecondaryStillSurfacesExplanation
+// pins the canonical-comparison contract: when secondary outranks
+// primary BUT secondary.RiskLevel arrived as a non-canonical "High"
+// or " critical ", its Explanation must still surface. The bug this
+// guards against — comparing the canonical HighestRiskLevel result
+// against the raw RiskLevel field — silently dropped the binding
+// reason for any non-canonical input.
+func TestMergeAssessments_NonCanonicalSecondaryStillSurfacesExplanation(t *testing.T) {
+	primary := &RiskAssessment{
+		RiskLevel:   "low",
+		Explanation: "Reads only",
+	}
+	secondary := &RiskAssessment{
+		RiskLevel:   " High ", // non-canonical: extra whitespace + capital H
+		Explanation: "Adds shell access",
+	}
+	got := MergeAssessments(primary, secondary)
+	if got == nil {
+		t.Fatal("expected non-nil merge")
+	}
+	if got.RiskLevel != "high" {
+		t.Errorf("RiskLevel = %q, want canonical high", got.RiskLevel)
+	}
+	if got.Explanation != "Adds shell access" {
+		t.Errorf("Explanation = %q, want secondary's reason since it outranked primary", got.Explanation)
+	}
+}
+
 // TestMergeAssessments_NilOperands pins the zero-operand paths:
 // nil + X collapses to X without panicking. Both expansion and
 // creation flows rely on this for the "floor only" and "LLM only"
