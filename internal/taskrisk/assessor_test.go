@@ -282,6 +282,73 @@ func TestNoopAssessor(t *testing.T) {
 	}
 }
 
+// TestMergeAssessments_HigherWins guards the "deterministic floor is
+// a floor, not a ceiling" invariant: when the secondary outranks the
+// primary, the secondary's level wins AND its Explanation surfaces
+// so the reviewer sees the binding reason.
+func TestMergeAssessments_HigherWins(t *testing.T) {
+	llm := &RiskAssessment{
+		RiskLevel:   "medium",
+		Explanation: "Reads a few files",
+	}
+	floor := &RiskAssessment{
+		RiskLevel:   "high",
+		Explanation: "Wildcard host detected",
+	}
+	got := MergeAssessments(llm, floor)
+	if got == nil {
+		t.Fatal("expected non-nil merge")
+	}
+	if got.RiskLevel != "high" {
+		t.Errorf("RiskLevel = %q, want high (floor outranks LLM)", got.RiskLevel)
+	}
+	if !contains(got.Explanation, "Wildcard") {
+		t.Errorf("Explanation should pick the dominant side, got %q", got.Explanation)
+	}
+}
+
+// TestMergeAssessments_NilOperands pins the zero-operand paths:
+// nil + X collapses to X without panicking. Both expansion and
+// creation flows rely on this for the "floor only" and "LLM only"
+// branches.
+func TestMergeAssessments_NilOperands(t *testing.T) {
+	only := &RiskAssessment{RiskLevel: "medium"}
+	if got := MergeAssessments(nil, only); got != only {
+		t.Errorf("nil + X != X (got %v)", got)
+	}
+	if got := MergeAssessments(only, nil); got != only {
+		t.Errorf("X + nil != X (got %v)", got)
+	}
+	if got := MergeAssessments(nil, nil); got != nil {
+		t.Errorf("nil + nil != nil (got %v)", got)
+	}
+}
+
+// TestHighestRiskLevel_Ordering pins the level-comparison table.
+// Critical sits above high above medium above low; unknown and the
+// empty string rank below any named level so an unconfigured
+// assessor never wins against a real floor.
+func TestHighestRiskLevel_Ordering(t *testing.T) {
+	cases := []struct {
+		a, b, want string
+	}{
+		{"low", "medium", "medium"},
+		{"medium", "high", "high"},
+		{"high", "critical", "critical"},
+		{"critical", "low", "critical"},
+		{"unknown", "low", "low"},
+		{"", "medium", "medium"},
+		{"high", "", "high"},
+		{"unknown", "critical", "critical"},
+		{"high", "unknown", "high"},
+	}
+	for _, c := range cases {
+		if got := HighestRiskLevel(c.a, c.b); got != c.want {
+			t.Errorf("HighestRiskLevel(%q, %q) = %q, want %q", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

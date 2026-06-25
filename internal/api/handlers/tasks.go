@@ -597,7 +597,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		if hasV2Fields {
 			envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
-			assessment = mergeRiskAssessments(assessment, envelopeAssessment)
+			assessment = taskrisk.MergeAssessments(assessment, envelopeAssessment)
 		}
 		if assessment != nil {
 			task.RiskLevel = assessment.RiskLevel
@@ -1469,29 +1469,6 @@ func applyScopeOverrides(actions []store.TaskAction, overrides []scopeOverride) 
 	return out
 }
 
-func mergeRiskAssessments(primary, secondary *taskrisk.RiskAssessment) *taskrisk.RiskAssessment {
-	if primary == nil {
-		return secondary
-	}
-	if secondary == nil {
-		return primary
-	}
-	out := *primary
-	out.RiskLevel = highestRiskLevel(primary.RiskLevel, secondary.RiskLevel)
-	out.Factors = append(append([]string{}, primary.Factors...), secondary.Factors...)
-	out.Conflicts = append(append([]taskrisk.ConflictDetail{}, primary.Conflicts...), secondary.Conflicts...)
-	if secondary.Explanation != "" && highestRiskLevel(primary.RiskLevel, secondary.RiskLevel) == secondary.RiskLevel {
-		out.Explanation = secondary.Explanation
-	}
-	if out.Model == "" {
-		out.Model = secondary.Model
-	}
-	if out.LatencyMS == 0 {
-		out.LatencyMS = secondary.LatencyMS
-	}
-	return &out
-}
-
 func taskRequiredCredentials(task *store.Task) ([]runtimetasks.RequiredCredential, error) {
 	if task == nil || len(task.RequiredCredentials) == 0 {
 		return nil, nil
@@ -1793,21 +1770,6 @@ func credentialVaultItemID(cred runtimetasks.RequiredCredential) string {
 
 func (h *TasksHandler) vaultStorageKeyForTaskItem(ctx context.Context, userID, vaultItemID string) string {
 	return vaultStorageKeyForItemIDForUser(ctx, h.adapterReg, userID, vaultItemID)
-}
-
-func highestRiskLevel(a, b string) string {
-	order := map[string]int{
-		"":         -1,
-		"unknown":  0,
-		"low":      1,
-		"medium":   2,
-		"high":     3,
-		"critical": 4,
-	}
-	if order[b] > order[a] {
-		return b
-	}
-	return a
 }
 
 // ── UpdateScope ───────────────────────────────────────────────────────────────
@@ -2804,7 +2766,7 @@ func reassessExpansionRisk(task *store.Task, merged runtimetasks.Envelope, envUp
 	floor := runtimepolicy.AssessTaskEnvelope(task.Purpose, merged)
 	var assessment *taskrisk.RiskAssessment
 	if precomputed != nil && precomputed.RiskLevel != "" {
-		assessment = mergeRiskAssessments(precomputed, floor)
+		assessment = taskrisk.MergeAssessments(precomputed, floor)
 	} else {
 		assessment = floor
 	}
@@ -2853,7 +2815,7 @@ func (h *TasksHandler) assessExpansionRisk(ctx context.Context, parent *store.Ta
 	if llmAssessment == nil || strings.EqualFold(strings.TrimSpace(llmAssessment.RiskLevel), "unknown") {
 		return floor
 	}
-	return mergeRiskAssessments(llmAssessment, floor)
+	return taskrisk.MergeAssessments(llmAssessment, floor)
 }
 
 // decodePendingRiskAssessment reads the cached merged-envelope

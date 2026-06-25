@@ -223,6 +223,62 @@ func MarshalAssessment(a *RiskAssessment) json.RawMessage {
 	return b
 }
 
+// MergeAssessments returns the higher-of-two combination of two risk
+// assessments. The level is the higher rank (see HighestRiskLevel);
+// when the secondary's level outranks the primary's, the secondary's
+// Explanation surfaces so the reviewer sees the binding reason.
+// Factors and Conflicts always accumulate. Model and LatencyMS fall
+// back to the secondary when the primary is unset so a deterministic
+// floor doesn't leave the metadata empty.
+//
+// Canonical home for the "higher wins" merge rule both the task
+// creation flow (handlers) and the expansion flow (handlers +
+// llmproxy intercept) need. Lives in taskrisk because both callers
+// already import this package; keeping it here is what prevents
+// silent drift between the create-time and expand-time scoring.
+func MergeAssessments(primary, secondary *RiskAssessment) *RiskAssessment {
+	if primary == nil {
+		return secondary
+	}
+	if secondary == nil {
+		return primary
+	}
+	out := *primary
+	out.RiskLevel = HighestRiskLevel(primary.RiskLevel, secondary.RiskLevel)
+	out.Factors = append(append([]string{}, primary.Factors...), secondary.Factors...)
+	out.Conflicts = append(append([]ConflictDetail{}, primary.Conflicts...), secondary.Conflicts...)
+	if secondary.Explanation != "" && HighestRiskLevel(primary.RiskLevel, secondary.RiskLevel) == secondary.RiskLevel {
+		out.Explanation = secondary.Explanation
+	}
+	if out.Model == "" {
+		out.Model = secondary.Model
+	}
+	if out.LatencyMS == 0 {
+		out.LatencyMS = secondary.LatencyMS
+	}
+	return &out
+}
+
+// HighestRiskLevel ranks two risk-level strings and returns the
+// higher one. Ordering: "" < "unknown" < "low" < "medium" < "high" <
+// "critical". The empty / unknown sentinels rank below any named
+// level so an unconfigured assessor never wins against a real
+// deterministic floor.
+func HighestRiskLevel(a, b string) string {
+	order := map[string]int{
+		"":         -1,
+		"unknown":  0,
+		"low":      1,
+		"medium":   2,
+		"high":     3,
+		"critical": 4,
+	}
+	if order[b] > order[a] {
+		return b
+	}
+	return a
+}
+
 // UnmarshalAssessment is the inverse of MarshalAssessment. Returns nil
 // on empty input or parse failure — callers treat both as "no cached
 // assessment" and fall back to a fresh deterministic-only read rather

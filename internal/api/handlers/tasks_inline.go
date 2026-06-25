@@ -224,7 +224,7 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 			h.logger.WarnContext(ctx, "inline task risk assessment failed", "error", err)
 		}
 		if llmAssessment != nil && !strings.EqualFold(llmAssessment.RiskLevel, "unknown") {
-			finalAssessment = mergeRiskAssessments(llmAssessment, envelopeAssessment)
+			finalAssessment = taskrisk.MergeAssessments(llmAssessment, envelopeAssessment)
 		}
 	}
 	if finalAssessment != nil {
@@ -497,7 +497,7 @@ func (h *TasksHandler) CreatePendingInlineTask(ctx context.Context, agent *store
 			h.logger.WarnContext(ctx, "inline pending task risk assessment failed", "error", err)
 		}
 		if llmAssessment != nil && !strings.EqualFold(llmAssessment.RiskLevel, "unknown") {
-			finalAssessment = mergeRiskAssessments(llmAssessment, envelopeAssessment)
+			finalAssessment = taskrisk.MergeAssessments(llmAssessment, envelopeAssessment)
 		}
 	}
 	if finalAssessment != nil {
