@@ -1304,6 +1304,19 @@ func (s *Server) registerLiteProxyRoutes(
 		} else {
 			llmHandler.DashboardBaseURL = strings.TrimRight(baseURL, "/")
 		}
+		// First-turn routing-notice brand label. Staging wins over local
+		// because a staging build pointed at a localhost bind is still
+		// the staging environment from the user's perspective (it's
+		// talking to staging upstreams, not production). Plain production
+		// (deployed, not loopback) keeps the unqualified "Clawvisor"
+		// label; the renderer defaults to "Clawvisor" on empty, so we
+		// only set the qualifier variants explicitly.
+		switch {
+		case version.IsStaging():
+			llmHandler.BrandLabel = "Clawvisor Staging"
+		case s.cfg.Server.IsLocal():
+			llmHandler.BrandLabel = "Clawvisor Local"
+		}
 
 		auditEmitter := llmproxy.NewAuditEmitter(s.store, s.logger, nil)
 		llmHandler.AuditEmitter = auditEmitter

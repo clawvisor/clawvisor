@@ -16,6 +16,15 @@ import (
 // defensive cap on [AutoApproveUserNotice].
 const agentNoticeMaxNameRunes = 80
 
+// agentNoticeMaxBrandRunes caps the brand label embedded in the
+// first-turn notice prose. Operator-controlled like the agent name;
+// the cap is purely defensive against a misconfigured deployment.
+const agentNoticeMaxBrandRunes = 40
+
+// defaultAgentNoticeBrand is the fallback brand label used when the
+// caller passes an empty / whitespace-only brandLabel.
+const defaultAgentNoticeBrand = "Clawvisor"
+
 // RenderAgentRoutingNotice returns the human-facing one-liner the
 // handler prepends to the first assistant turn of a conversation so the
 // user can see at a glance that the conversation is being routed
@@ -23,13 +32,19 @@ const agentNoticeMaxNameRunes = 80
 // agent names render a name-less fallback rather than an awkward empty
 // quote.
 //
+// brandLabel is the environment-qualified product name surfaced in the
+// prose ("Clawvisor Local", "Clawvisor Staging", "Clawvisor"). Empty /
+// whitespace falls back to plain "Clawvisor". The leading `[Clawvisor]`
+// tag is intentionally not parameterized — it is a stable subsystem
+// identifier, not a brand surface.
+//
 // mintedConversationID, when non-empty, is appended as a parseable
 // [clawvisor:conversation=cv-conv-…] footer so the harness round-trips
 // the ID back to us in assistant history on turn 2+. Only set on
 // harnesses without a native session identifier (today: OpenAI Chat
 // Completions); empty for Anthropic / OpenAI Responses where the
 // native session ID is the conclusive scope key.
-func RenderAgentRoutingNotice(agentName, mintedConversationID string) string {
+func RenderAgentRoutingNotice(agentName, mintedConversationID, brandLabel string) string {
 	cleaned := strings.TrimSpace(agentName)
 	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
 	cleaned = strings.ReplaceAll(cleaned, "\n", " ")
@@ -39,6 +54,7 @@ func RenderAgentRoutingNotice(agentName, mintedConversationID string) string {
 	// dropping a stray backtick is nil.
 	cleaned = strings.ReplaceAll(cleaned, "`", "")
 	cleaned = truncateRunes(cleaned, agentNoticeMaxNameRunes)
+	brand := sanitizeBrandLabel(brandLabel)
 	// Backticks wrap the proxy status line so it renders as inline
 	// code in markdown UIs — visually distinct from the assistant's
 	// own prose. This notice lands in the assistant turn (human-facing),
@@ -47,14 +63,30 @@ func RenderAgentRoutingNotice(agentName, mintedConversationID string) string {
 	// injections the LLM reads.
 	var notice string
 	if cleaned == "" {
-		notice = "`[Clawvisor] Routing this conversation through Clawvisor.`"
+		notice = fmt.Sprintf("`[Clawvisor] Routing this conversation through %s.`", brand)
 	} else {
-		notice = fmt.Sprintf("`[Clawvisor] Routing this conversation through Clawvisor as agent %q.`", cleaned)
+		notice = fmt.Sprintf("`[Clawvisor] Routing this conversation through %s as agent %q.`", brand, cleaned)
 	}
 	if id := strings.TrimSpace(mintedConversationID); id != "" {
 		notice += " " + conversation.RenderConversationIDMarker(id)
 	}
 	return notice
+}
+
+// sanitizeBrandLabel normalizes the brand label the way the agent name
+// is normalized — strip CR/LF and backticks so neither breaks the
+// markdown inline-code span, cap the rune length, and fall back to
+// "Clawvisor" when the result is empty.
+func sanitizeBrandLabel(raw string) string {
+	cleaned := strings.TrimSpace(raw)
+	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
+	cleaned = strings.ReplaceAll(cleaned, "\n", " ")
+	cleaned = strings.ReplaceAll(cleaned, "`", "")
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned == "" {
+		return defaultAgentNoticeBrand
+	}
+	return truncateRunes(cleaned, agentNoticeMaxBrandRunes)
 }
 
 // HasInboundAssistantTurn reports whether the inbound LLM request body
