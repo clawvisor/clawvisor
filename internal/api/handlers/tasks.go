@@ -1114,11 +1114,64 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 			_ = h.st.UpdateTaskStatus(ctx, t.ID, "expired")
 		}
 	}
+	// Backfill PendingExpansion.Surface for any pending_scope_expansion
+	// tasks whose JSON-side field is empty. These rows landed before
+	// the Surface marker existed (or via a future code path that
+	// forgets to set it); the canonical approval_records row is the
+	// source of truth. Without this the dashboard would render an
+	// Approve button that the backend gate (isInlineChatExpansionPending)
+	// would then reject with 409 INLINE_CHAT_BOUND. One list query per
+	// List call covers the whole page.
+	h.backfillChatBoundExpansionSurface(ctx, user.ID, tasks)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total": total,
 		"tasks": tasks,
 	})
+}
+
+// backfillChatBoundExpansionSurface synthesizes PendingExpansion.Surface
+// for tasks in pending_scope_expansion whose JSON-side field is empty,
+// using the canonical approval_records as the source of truth. Mutates
+// the tasks in-place. Best-effort: a store error is logged and the
+// frontend renders whatever Surface (possibly empty) it has — the
+// backend ExpandApprove gate is the authoritative guard and runs its
+// own fallback lookup.
+func (h *TasksHandler) backfillChatBoundExpansionSurface(ctx context.Context, userID string, tasks []*store.Task) {
+	var needs []*store.Task
+	for _, t := range tasks {
+		if t == nil || t.PendingExpansion == nil {
+			continue
+		}
+		if t.Status != "pending_scope_expansion" {
+			continue
+		}
+		if t.PendingExpansion.Surface != "" {
+			continue
+		}
+		needs = append(needs, t)
+	}
+	if len(needs) == 0 {
+		return
+	}
+	records, err := h.st.ListPendingApprovalRecords(ctx, userID)
+	if err != nil {
+		h.logger.WarnContext(ctx, "could not backfill pending expansion surface; UI may render stale chat-bound state",
+			"user_id", userID, "candidates", len(needs), "err", err)
+		return
+	}
+	chatBoundByTaskID := make(map[string]struct{})
+	for _, r := range records {
+		if r.Kind != "task_expand" || r.Surface != "inline_chat" || r.TaskID == nil {
+			continue
+		}
+		chatBoundByTaskID[*r.TaskID] = struct{}{}
+	}
+	for _, t := range needs {
+		if _, ok := chatBoundByTaskID[t.ID]; ok {
+			t.PendingExpansion.Surface = "inline_chat"
+		}
+	}
 }
 
 // sanitizeTaskForResponse cleans up task fields before serialization:
@@ -2627,7 +2680,15 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task has no pending scope expansion")
 		return
 	}
-	if h.isInlineChatExpansionPending(ctx, task) {
+	chatBound, err := h.isInlineChatExpansionPending(ctx, task)
+	if err != nil {
+		// Fail closed: refusing to make an approve/deny decision under
+		// an unknown chat-bound state is safer than silently allowing
+		// the dashboard to race the chat hold.
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not verify chat-bound state for scope expansion")
+		return
+	}
+	if chatBound {
 		// Chat-bound pending expansion. The llmproxy cache hold owns
 		// resolution; approving here would flip the DB row without
 		// telling the model. Mirrors isInlineChatPending in the task-
@@ -3299,7 +3360,11 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	if task.Status != "pending_scope_expansion" || task.PendingExpansion == nil {
 		return fmt.Errorf("task has no pending scope expansion")
 	}
-	if h.isInlineChatExpansionPending(ctx, task) {
+	chatBound, err := h.isInlineChatExpansionPending(ctx, task)
+	if err != nil {
+		return fmt.Errorf("verify chat-bound state for scope expansion: %w", err)
+	}
+	if chatBound {
 		// Chat-bound; the cache hold owns resolution. Mirror
 		// ApproveByTaskID's errInlineChatBound so notifier callbacks
 		// (Telegram button) see the same error shape they already
@@ -3435,26 +3500,33 @@ func isInlineChatPending(task *store.Task) bool {
 // been carrying Surface="inline_chat" since the inline expansion
 // intercept shipped. The lookup runs only when the JSON-side flag is
 // empty, so the hot path (post-upgrade rows) stays a struct-field read.
-func (h *TasksHandler) isInlineChatExpansionPending(ctx context.Context, task *store.Task) bool {
+//
+// Returns (bool, error). On store error the caller must NOT proceed
+// with the approve — fail-open here would let a chat-bound expansion
+// be approved from the dashboard during a transient DB hiccup, racing
+// the chat hold. Callers translate the error to a 500 / wrapped
+// notifier error so the request is retryable instead of silently
+// allowed.
+func (h *TasksHandler) isInlineChatExpansionPending(ctx context.Context, task *store.Task) (bool, error) {
 	if task == nil || task.PendingExpansion == nil {
-		return false
+		return false, nil
 	}
 	if task.Status != "pending_scope_expansion" {
-		return false
+		return false, nil
 	}
 	if task.PendingExpansion.Surface == "inline_chat" {
-		return true
+		return true, nil
 	}
 	records, err := h.st.ListPendingApprovalRecords(ctx, task.UserID)
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, r := range records {
 		if r.Kind == "task_expand" && r.Surface == "inline_chat" && r.TaskID != nil && *r.TaskID == task.ID {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func canonicalTaskApprovalKind(task *store.Task) string {
