@@ -2627,7 +2627,7 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task has no pending scope expansion")
 		return
 	}
-	if isInlineChatExpansionPending(task) {
+	if h.isInlineChatExpansionPending(ctx, task) {
 		// Chat-bound pending expansion. The llmproxy cache hold owns
 		// resolution; approving here would flip the DB row without
 		// telling the model. Mirrors isInlineChatPending in the task-
@@ -3299,7 +3299,7 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	if task.Status != "pending_scope_expansion" || task.PendingExpansion == nil {
 		return fmt.Errorf("task has no pending scope expansion")
 	}
-	if isInlineChatExpansionPending(task) {
+	if h.isInlineChatExpansionPending(ctx, task) {
 		// Chat-bound; the cache hold owns resolution. Mirror
 		// ApproveByTaskID's errInlineChatBound so notifier callbacks
 		// (Telegram button) see the same error shape they already
@@ -3428,11 +3428,33 @@ func isInlineChatPending(task *store.Task) bool {
 // (set by CreatePendingInlineExpansion) rather than task.ApprovalSource
 // because a chat-bound expansion can attach to a task that was
 // originally created via dashboard / Telegram. Deny does not consult it.
-func isInlineChatExpansionPending(task *store.Task) bool {
+//
+// Backwards-compat: pending_expansion_json rows landed before the
+// Surface field existed (or by any future code path that forgets to
+// set it) fall back to the canonical approval_records row, which has
+// been carrying Surface="inline_chat" since the inline expansion
+// intercept shipped. The lookup runs only when the JSON-side flag is
+// empty, so the hot path (post-upgrade rows) stays a struct-field read.
+func (h *TasksHandler) isInlineChatExpansionPending(ctx context.Context, task *store.Task) bool {
 	if task == nil || task.PendingExpansion == nil {
 		return false
 	}
-	return task.Status == "pending_scope_expansion" && task.PendingExpansion.Surface == "inline_chat"
+	if task.Status != "pending_scope_expansion" {
+		return false
+	}
+	if task.PendingExpansion.Surface == "inline_chat" {
+		return true
+	}
+	records, err := h.st.ListPendingApprovalRecords(ctx, task.UserID)
+	if err != nil {
+		return false
+	}
+	for _, r := range records {
+		if r.Kind == "task_expand" && r.Surface == "inline_chat" && r.TaskID != nil && *r.TaskID == task.ID {
+			return true
+		}
+	}
+	return false
 }
 
 func canonicalTaskApprovalKind(task *store.Task) string {
