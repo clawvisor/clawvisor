@@ -54,6 +54,7 @@ For manual setup or other agents, ask the user: **"Which agent are you connectin
 |---|---|---|
 | **Claude Code** | [INTEGRATE_CLAUDE_CODE.md](INTEGRATE_CLAUDE_CODE.md) | Manual setup for Claude Code (skill install + env vars) |
 | **Claude Desktop** | [INTEGRATE_CLAUDE_COWORK.md](INTEGRATE_CLAUDE_COWORK.md) | Manual MCP integration for Claude Desktop |
+| **Hermes** | [INTEGRATE_HERMES.md](INTEGRATE_HERMES.md) | Manual HTTP MCP integration for Hermes |
 | **OpenClaw** | [INTEGRATE_OPENCLAW.md](INTEGRATE_OPENCLAW.md) | They're running OpenClaw and want webhook callbacks |
 | **Other / generic** | [INTEGRATE_GENERIC.md](INTEGRATE_GENERIC.md) | Any HTTP-capable agent — covers token creation and points to the API protocol |
 
