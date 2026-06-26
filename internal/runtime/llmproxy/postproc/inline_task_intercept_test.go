@@ -1457,3 +1457,114 @@ func TestPostprocess_InlineTaskMalformedBodyFallsThrough(t *testing.T) {
 		t.Fatalf("expected fallback to regular control rewrite on missing purpose; got %s", got.Body)
 	}
 }
+
+// When AskUserQuestion is in the request's available tools, the intercept
+// must emit both a text block (approval prompt + marker) and a synthetic
+// AskUserQuestion tool_use (the yes/no picker) — the substitution shape
+// introduced by #545.
+func TestPostprocess_InlineTaskInterceptEmitsAskUserQuestionPickerWhenAvailable(t *testing.T) {
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
+		AgentContext: llmproxy.AgentContext{
+			AgentUserID: userID,
+			AgentID:     agentID,
+		},
+		ApprovalContext: llmproxy.ApprovalContext{
+			PendingApprovals: cache,
+			AvailableTools:   []string{llmproxy.AskUserQuestionToolName},
+		},
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
+			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
+			Store:        st,
+		},
+		RoutingContext: llmproxy.RoutingContext{
+			ControlBaseURL: "http://localhost:25297",
+		},
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("expected inline-task intercept rewrite; got skipped: %s", got.SkippedReason)
+	}
+	out := string(got.Body)
+	if !strings.Contains(out, "Clawvisor wants to create a task") {
+		t.Fatalf("expected approval prompt text; got %s", out)
+	}
+	if !strings.Contains(out, "[clawvisor:approval=") {
+		t.Fatalf("expected approval marker in text block; got %s", out)
+	}
+	if !strings.Contains(out, `"name":"AskUserQuestion"`) {
+		t.Fatalf("expected AskUserQuestion tool_use when tool is available; got %s", out)
+	}
+	// Text block must precede the picker so the harness shows the prompt before the UI.
+	textIdx := strings.Index(out, `"type":"text"`)
+	toolIdx := strings.Index(out, `"type":"tool_use"`)
+	if textIdx < 0 || toolIdx < 0 || textIdx >= toolIdx {
+		t.Fatalf("text block must precede tool_use block: text@%d tool_use@%d\n%s", textIdx, toolIdx, out)
+	}
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	if len(holds) != 1 || holds[0].Stage != llmproxy.StageAwaitingTaskApproval {
+		t.Fatalf("expected 1 awaiting_task_approval hold; got %d holds stage=%q", len(holds), func() string {
+			if len(holds) > 0 {
+				return string(holds[0].Stage)
+			}
+			return ""
+		}())
+	}
+}
+
+// When AskUserQuestion is absent from available tools the intercept falls
+// back to text-only substitution — no picker emitted. Regression anchor
+// for agents / model versions that don't declare the tool.
+func TestPostprocess_InlineTaskInterceptEmitsTextOnlyWithoutAskUserQuestion(t *testing.T) {
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
+		AgentContext: llmproxy.AgentContext{
+			AgentUserID: userID,
+			AgentID:     agentID,
+		},
+		ApprovalContext: llmproxy.ApprovalContext{
+			PendingApprovals: cache,
+			// AvailableTools empty — AskUserQuestion not declared.
+		},
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("http://localhost:25297"),
+			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
+			Store:        st,
+		},
+		RoutingContext: llmproxy.RoutingContext{
+			ControlBaseURL: "http://localhost:25297",
+		},
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("expected inline-task intercept rewrite; got skipped: %s", got.SkippedReason)
+	}
+	out := string(got.Body)
+	if !strings.Contains(out, "Clawvisor wants to create a task") {
+		t.Fatalf("expected approval prompt text; got %s", out)
+	}
+	if strings.Contains(out, `"name":"AskUserQuestion"`) {
+		t.Fatalf("AskUserQuestion must not be emitted when tool is not available; got %s", out)
+	}
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	if len(holds) != 1 {
+		t.Fatalf("expected 1 hold regardless of substitution shape; got %d", len(holds))
+	}
+}
