@@ -72,6 +72,14 @@ type LLMEndpointHandler struct {
 	// from pkg/version (correct for hosted builds, wrong for local).
 	DashboardBaseURL string
 
+	// BrandLabel is the environment-qualified product name surfaced in
+	// the first-turn routing notice prose ("Clawvisor Local",
+	// "Clawvisor Staging", "Clawvisor"). Empty falls back to plain
+	// "Clawvisor" in the renderer. Set at wiring time from the server
+	// bind (loopback → Local) and build environment (staging build →
+	// Staging); plain production has no qualifier.
+	BrandLabel string
+
 	// AuditEmitter writes one audit_log row per /api/v1/* request and per
 	// inspected tool_use. nil disables audit logging.
 	AuditEmitter *llmproxy.AuditEmitter
@@ -1344,7 +1352,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// +1. Skip on non-200 — error bodies aren't shaped to take
 			// the prepend and would be soft no-ops anyway.
 			if resp.StatusCode == http.StatusOK && firstTurn {
-				cfg.FirstTurnNotice = llmproxy.RenderAgentRoutingNotice(agent.Name, mintedConversationID)
+				cfg.FirstTurnNotice = llmproxy.RenderAgentRoutingNotice(agent.Name, mintedConversationID, h.BrandLabel)
 			}
 
 			w.Header().Del("Content-Length")
@@ -1744,7 +1752,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// turn 1 (where no native session ID exists). For Anthropic
 			// and OpenAI Responses the renderer drops the marker
 			// argument and emits the existing notice unchanged.
-			notice := llmproxy.RenderAgentRoutingNotice(agent.Name, mintedConversationID)
+			notice := llmproxy.RenderAgentRoutingNotice(agent.Name, mintedConversationID, h.BrandLabel)
 			pre, changed, prependErr := llmproxy.PrependAssistantNotice(provider, processed.ContentType, processed.Body, notice)
 			switch {
 			case prependErr != nil:

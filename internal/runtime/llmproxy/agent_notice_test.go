@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenderAgentRoutingNotice_NamedAgent(t *testing.T) {
-	got := RenderAgentRoutingNotice("My Laptop", "")
+	got := RenderAgentRoutingNotice("My Laptop", "", "")
 	want := "`[Clawvisor] Routing this conversation through Clawvisor as agent \"My Laptop\".`"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -18,7 +18,7 @@ func TestRenderAgentRoutingNotice_NamedAgent(t *testing.T) {
 }
 
 func TestRenderAgentRoutingNotice_EmptyName(t *testing.T) {
-	got := RenderAgentRoutingNotice("", "")
+	got := RenderAgentRoutingNotice("", "", "")
 	want := "`[Clawvisor] Routing this conversation through Clawvisor.`"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -26,7 +26,7 @@ func TestRenderAgentRoutingNotice_EmptyName(t *testing.T) {
 }
 
 func TestRenderAgentRoutingNotice_WhitespaceName(t *testing.T) {
-	got := RenderAgentRoutingNotice("   \t  ", "")
+	got := RenderAgentRoutingNotice("   \t  ", "", "")
 	want := "`[Clawvisor] Routing this conversation through Clawvisor.`"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -34,7 +34,7 @@ func TestRenderAgentRoutingNotice_WhitespaceName(t *testing.T) {
 }
 
 func TestRenderAgentRoutingNotice_StripsControlChars(t *testing.T) {
-	got := RenderAgentRoutingNotice("Line1\nLine2\rEnd", "")
+	got := RenderAgentRoutingNotice("Line1\nLine2\rEnd", "", "")
 	want := "`[Clawvisor] Routing this conversation through Clawvisor as agent \"Line1 Line2 End\".`"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -43,7 +43,7 @@ func TestRenderAgentRoutingNotice_StripsControlChars(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_TruncatesLongName(t *testing.T) {
 	long := strings.Repeat("z", agentNoticeMaxNameRunes+50)
-	got := RenderAgentRoutingNotice(long, "")
+	got := RenderAgentRoutingNotice(long, "", "")
 	if !strings.Contains(got, "…") {
 		t.Errorf("expected truncation ellipsis, got %q", got)
 	}
@@ -61,7 +61,7 @@ func TestRenderAgentRoutingNotice_TruncatesLongName(t *testing.T) {
 // this is defense-in-depth, but a stray backtick would still leak
 // the trailing guidance as prose.
 func TestRenderAgentRoutingNotice_StripsBackticks(t *testing.T) {
-	got := RenderAgentRoutingNotice("agent`name`with`ticks", "")
+	got := RenderAgentRoutingNotice("agent`name`with`ticks", "", "")
 	if strings.Count(got, "`") != 2 {
 		t.Errorf("expected exactly the two wrapping backticks; got %q", got)
 	}
@@ -75,7 +75,7 @@ func TestRenderAgentRoutingNotice_TruncatesMultibyteRunes(t *testing.T) {
 	// mid-rune and produce U+FFFD on JSON marshal. Rune-aware truncation
 	// keeps the output well-formed.
 	long := strings.Repeat("日", agentNoticeMaxNameRunes+10)
-	got := RenderAgentRoutingNotice(long, "")
+	got := RenderAgentRoutingNotice(long, "", "")
 	if !strings.Contains(got, "…") {
 		t.Errorf("expected truncation ellipsis, got %q", got)
 	}
@@ -86,7 +86,7 @@ func TestRenderAgentRoutingNotice_TruncatesMultibyteRunes(t *testing.T) {
 
 func TestRenderAgentRoutingNotice_AppendsConversationIDMarker(t *testing.T) {
 	id := "cv-conv-abcdefghijklmnopqrstuvwxyz"
-	got := RenderAgentRoutingNotice("My Laptop", id)
+	got := RenderAgentRoutingNotice("My Laptop", id, "")
 	want := "`[Clawvisor] Routing this conversation through Clawvisor as agent \"My Laptop\".` [clawvisor:conversation=cv-conv-abcdefghijklmnopqrstuvwxyz]"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -94,7 +94,7 @@ func TestRenderAgentRoutingNotice_AppendsConversationIDMarker(t *testing.T) {
 }
 
 func TestRenderAgentRoutingNotice_AppendsMarkerToNameLessFallback(t *testing.T) {
-	got := RenderAgentRoutingNotice("", "cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	got := RenderAgentRoutingNotice("", "cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa", "")
 	want := "`[Clawvisor] Routing this conversation through Clawvisor.` [clawvisor:conversation=cv-conv-aaaaaaaaaaaaaaaaaaaaaaaaaa]"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -104,10 +104,60 @@ func TestRenderAgentRoutingNotice_AppendsMarkerToNameLessFallback(t *testing.T) 
 func TestRenderAgentRoutingNotice_WhitespaceMintedIDOmitsMarker(t *testing.T) {
 	// Empty/whitespace mintedConversationID must not produce an empty
 	// "[clawvisor:conversation=]" footer.
-	got := RenderAgentRoutingNotice("agent", "   ")
+	got := RenderAgentRoutingNotice("agent", "   ", "")
 	want := "`[Clawvisor] Routing this conversation through Clawvisor as agent \"agent\".`"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestRenderAgentRoutingNotice_LocalBrandLabel pins the local-bind
+// variant: a Clawvisor running on loopback shows "Clawvisor Local" in
+// the prose so the user can tell at a glance the conversation is
+// routed through the local proxy, not a hosted one.
+func TestRenderAgentRoutingNotice_LocalBrandLabel(t *testing.T) {
+	got := RenderAgentRoutingNotice("My Laptop", "", "Clawvisor Local")
+	want := "`[Clawvisor] Routing this conversation through Clawvisor Local as agent \"My Laptop\".`"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderAgentRoutingNotice_StagingBrandLabel(t *testing.T) {
+	got := RenderAgentRoutingNotice("My Laptop", "", "Clawvisor Staging")
+	want := "`[Clawvisor] Routing this conversation through Clawvisor Staging as agent \"My Laptop\".`"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderAgentRoutingNotice_BrandLabelNameLessFallback(t *testing.T) {
+	got := RenderAgentRoutingNotice("", "", "Clawvisor Local")
+	want := "`[Clawvisor] Routing this conversation through Clawvisor Local.`"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderAgentRoutingNotice_WhitespaceBrandLabelDefaultsToClawvisor(t *testing.T) {
+	got := RenderAgentRoutingNotice("agent", "", "   \t  ")
+	want := "`[Clawvisor] Routing this conversation through Clawvisor as agent \"agent\".`"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestRenderAgentRoutingNotice_BrandLabelStripsBackticks mirrors the
+// defense applied to the agent name: a brand label with a backtick
+// would otherwise terminate the markdown inline-code span the notice
+// is wrapped in and leak the trailing guidance as prose.
+func TestRenderAgentRoutingNotice_BrandLabelStripsBackticks(t *testing.T) {
+	got := RenderAgentRoutingNotice("agent", "", "Claw`visor` Local")
+	if strings.Count(got, "`") != 2 {
+		t.Errorf("expected exactly the two wrapping backticks; got %q", got)
+	}
+	if !strings.Contains(got, "Clawvisor Local") {
+		t.Errorf("expected backticks stripped from brand label; got %q", got)
 	}
 }
 
@@ -116,7 +166,7 @@ func TestRenderAgentRoutingNotice_MintedIDRoundTripsThroughScanner(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	notice := RenderAgentRoutingNotice("agent", id)
+	notice := RenderAgentRoutingNotice("agent", id, "")
 	// Build a Chat Completions inbound body where the assistant turn
 	// is exactly the rendered notice — simulating turn-2 echo.
 	body := []byte(`{"messages":[{"role":"assistant","content":` + mustJSONString(t, notice) + `}]}`)
