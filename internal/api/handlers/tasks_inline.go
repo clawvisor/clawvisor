@@ -949,6 +949,11 @@ func (h *TasksHandler) CreatePendingInlineExpansion(
 	if precomputedRisk != nil && precomputedRisk.RiskLevel != "" {
 		pending.RiskAssessment = taskrisk.MarshalAssessment(precomputedRisk)
 	}
+	// Mark chat-bound so the dashboard ExpandApprove handler rejects with
+	// INLINE_CHAT_BOUND (the cache hold owns resolution) and the dashboard
+	// TaskCard hides its Approve button. Mirrors ApprovalSource="inline_chat"
+	// on inline task creation.
+	pending.Surface = "inline_chat"
 
 	won, err := h.st.SetTaskPendingExpansion(ctx, taskID, pending)
 	if err != nil {

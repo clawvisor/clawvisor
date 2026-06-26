@@ -229,6 +229,9 @@ type PendingTaskExpansion struct {
 	ExpectedEgress      json.RawMessage `json:"expected_egress,omitempty"`
 	RequiredCredentials json.RawMessage `json:"required_credentials,omitempty"`
 	Reason              string          `json:"reason,omitempty"`
+	// Surface mirrors store.PendingTaskExpansion.Surface — "inline_chat"
+	// means the expansion is chat-bound and the dashboard/TUI cannot approve it.
+	Surface string `json:"surface,omitempty"`
 }
 
 type TaskAction struct {

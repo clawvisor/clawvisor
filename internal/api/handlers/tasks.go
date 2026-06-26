@@ -2627,6 +2627,14 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task has no pending scope expansion")
 		return
 	}
+	if isInlineChatExpansionPending(task) {
+		// Chat-bound pending expansion. The llmproxy cache hold owns
+		// resolution; approving here would flip the DB row without
+		// telling the model. Mirrors isInlineChatPending in the task-
+		// creation Approve handler.
+		writeError(w, http.StatusConflict, "INLINE_CHAT_BOUND", "approve in the agent chat surface — reply 'approve' or 'deny' to the running session")
+		return
+	}
 
 	envUpdate, merged, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
@@ -3291,6 +3299,13 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	if task.Status != "pending_scope_expansion" || task.PendingExpansion == nil {
 		return fmt.Errorf("task has no pending scope expansion")
 	}
+	if isInlineChatExpansionPending(task) {
+		// Chat-bound; the cache hold owns resolution. Mirror
+		// ApproveByTaskID's errInlineChatBound so notifier callbacks
+		// (Telegram button) see the same error shape they already
+		// handle for task creation.
+		return errInlineChatBound
+	}
 
 	envUpdate, merged, err := buildExpansionApprovalUpdate(task)
 	if err != nil {
@@ -3406,6 +3421,18 @@ func isInlineChatPending(task *store.Task) bool {
 		return false
 	}
 	return task.Status == "pending_approval" && task.ApprovalSource == "inline_chat"
+}
+
+// isInlineChatExpansionPending mirrors isInlineChatPending for the
+// scope-expansion path. The signal lives on PendingExpansion.Surface
+// (set by CreatePendingInlineExpansion) rather than task.ApprovalSource
+// because a chat-bound expansion can attach to a task that was
+// originally created via dashboard / Telegram. Deny does not consult it.
+func isInlineChatExpansionPending(task *store.Task) bool {
+	if task == nil || task.PendingExpansion == nil {
+		return false
+	}
+	return task.Status == "pending_scope_expansion" && task.PendingExpansion.Surface == "inline_chat"
 }
 
 func canonicalTaskApprovalKind(task *store.Task) string {

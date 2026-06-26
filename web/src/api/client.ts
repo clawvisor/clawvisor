@@ -649,6 +649,11 @@ export interface PendingTaskExpansion {
   expected_egress?: ExpectedEgress[]
   required_credentials?: RequiredCredential[]
   reason?: string
+  // "inline_chat" when the expansion was requested via the chat-bound
+  // surface (?surface=inline). Dashboard cannot approve it — the
+  // llmproxy cache hold owns resolution. Mirrors task.approval_source
+  // for the task-creation case.
+  surface?: string
 }
 
 export interface Task {

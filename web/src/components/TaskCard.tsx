@@ -455,16 +455,35 @@ export default function TaskCard({
               </div>
             </div>
           )}
-          <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
-            <button onClick={() => expandDenyMut.mutate()} disabled={isPending}
-              className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50">
-              Deny
-            </button>
-            <button onClick={() => expandApproveMut.mutate()} disabled={isPending}
-              className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50">
-              {expandApproveMut.isPending ? 'Approving...' : 'Approve Scope'}
-            </button>
-          </div>
+          {task.pending_expansion?.surface === 'inline_chat' ? (
+            // Chat-bound pending expansion: dashboard Approve would 409
+            // with INLINE_CHAT_BOUND because the llmproxy cache hold
+            // owns resolution. Deny is permitted from here so the user
+            // can dismiss a zombie expansion the agent has lost track
+            // of. Mirrors the inline_chat task-creation branch above.
+            <div className="border-t border-border-subtle">
+              <div className="px-4 py-3 text-sm text-text-secondary bg-surface-2">
+                Reply <span className="font-mono text-text-primary">approve</span> in the agent chat to grant scope, or dismiss it here.
+              </div>
+              <div className="px-4 py-3 flex items-center justify-end gap-2">
+                <button onClick={() => expandDenyMut.mutate()} disabled={isPending}
+                  className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50">
+                  Deny
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
+              <button onClick={() => expandDenyMut.mutate()} disabled={isPending}
+                className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50">
+                Deny
+              </button>
+              <button onClick={() => expandApproveMut.mutate()} disabled={isPending}
+                className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50">
+                {expandApproveMut.isPending ? 'Approving...' : 'Approve Scope'}
+              </button>
+            </div>
+          )}
         </>
       )}
 

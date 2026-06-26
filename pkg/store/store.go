@@ -906,6 +906,13 @@ type PendingTaskExpansion struct {
 	// configured at expand time; callers fall back to a fresh
 	// deterministic-only assessment in that case.
 	RiskAssessment json.RawMessage `json:"risk_assessment,omitempty"`
+	// Surface records where the expansion request originated. "inline_chat"
+	// means the agent submitted it via the chat-bound surface (?surface=inline
+	// on POST .../expand, or the lite-proxy intercept) and the approval is
+	// owned by the chat hold; dashboard ExpandApprove must reject with a 409
+	// just like isInlineChatPending does for task creation. Empty for the
+	// default dashboard/headless path.
+	Surface string `json:"surface,omitempty"`
 }
 
 // TaskEnvelopeUpdate is the payload for UpdateTaskEnvelopeFrom. AuthorizedActions
