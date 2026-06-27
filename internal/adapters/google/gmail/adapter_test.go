@@ -1,20 +1,26 @@
 package gmail
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 
 	"golang.org/x/oauth2"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
 
 func b64(s string) string    { return base64.URLEncoding.EncodeToString([]byte(s)) }
@@ -634,308 +640,439 @@ func TestSendMessage_WithInReplyTo_ResolvesThreadAndQuotesPreviousMessage(t *tes
 	}
 }
 
-func TestListMessages_Concurrency(t *testing.T) {
-	const totalMsgs = 200
+// batchTestServer mocks Gmail's list + batch endpoints for the list_messages
+// tests. It replies to GET .../messages with a list of synthetic ids and to
+// POST /batch/gmail/v1 with a multipart/mixed response that produces a stock
+// meta payload for each requested id, unless perItemStatus overrides that id
+// to a non-200 status. batchStatus, if set, replaces the outer batch POST
+// status (used for whole-batch failure tests).
+type batchTestServer struct {
+	t              *testing.T
+	listIDs        []string
+	perItemStatus  map[string]int
+	batchStatus    int // 0 means 200
+	batchPostCount atomic.Int32
+	lastBatchSizes []int
+}
 
-	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			var body string
-			switch {
-			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages") && !strings.Contains(req.URL.Path, "/msg-"):
-				var msgsList []string
-				for i := 1; i <= totalMsgs; i++ {
-					msgsList = append(msgsList, fmt.Sprintf(`{"id": "msg-%d"}`, i))
-				}
-				body = fmt.Sprintf(`{
-					"messages": [%s],
-					"resultSizeEstimate": %d
-				}`, strings.Join(msgsList, ","), totalMsgs)
-			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages/msg-"):
-				// Extract msg ID from URL path (e.g. "/messages/msg-1")
-				parts := strings.Split(req.URL.Path, "/")
-				msgID := parts[len(parts)-1]
-				body = fmt.Sprintf(`{
-					"snippet": "Snippet for %s",
-					"labelIds": ["INBOX", "UNREAD"],
-					"payload": {
-						"headers": [
-							{"name": "From", "value": "sender-%s@example.com"},
-							{"name": "Subject", "value": "Subject %s"},
-							{"name": "Date", "value": "Date-%s"}
-						]
-					}
-				}`, msgID, msgID, msgID, msgID)
-			default:
-				t.Logf("Unexpected request in mock: %s %s", req.Method, req.URL.String())
-				return &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(strings.NewReader("not found")),
-				}, nil
-			}
-
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(body)),
-			}, nil
-		}),
+func (s *batchTestServer) handle(req *http.Request) (*http.Response, error) {
+	switch {
+	case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/messages"):
+		entries := make([]string, len(s.listIDs))
+		for i, id := range s.listIDs {
+			entries[i] = fmt.Sprintf(`{"id":%q}`, id)
+		}
+		body := fmt.Sprintf(`{"messages":[%s],"resultSizeEstimate":%d}`,
+			strings.Join(entries, ","), len(s.listIDs))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/batch/gmail/v1"):
+		s.batchPostCount.Add(1)
+		return s.serveBatch(req)
+	default:
+		s.t.Logf("unexpected request: %s %s", req.Method, req.URL.String())
+		return &http.Response{
+			StatusCode: http.StatusNotFound,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("not found")),
+		}, nil
 	}
+}
 
-	adapter := &GmailAdapter{}
-	res, err := adapter.listMessages(context.Background(), client, map[string]any{
-		"max_results": totalMsgs,
-	})
+func (s *batchTestServer) serveBatch(req *http.Request) (*http.Response, error) {
+	_, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 	if err != nil {
-		t.Fatalf("listMessages error: %v", err)
+		s.t.Fatalf("batch request bad Content-Type: %v", err)
 	}
-	if res == nil {
-		t.Fatal("listMessages returned nil result")
+	reqBody, _ := io.ReadAll(req.Body)
+	mr := multipart.NewReader(bytes.NewReader(reqBody), params["boundary"])
+
+	type subReq struct {
+		contentID string
+		msgID     string
+	}
+	var subs []subReq
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			s.t.Fatalf("batch request parse part: %v", err)
+		}
+		cid := part.Header.Get("Content-ID")
+		body, _ := io.ReadAll(part)
+		part.Close()
+		// Sub-request body is a textual HTTP request — parse the request line.
+		line, _, _ := bufio.NewReader(bytes.NewReader(body)).ReadLine()
+		// e.g. "GET /gmail/v1/users/me/messages/msg-3?format=metadata&... HTTP/1.1"
+		fields := strings.Fields(string(line))
+		if len(fields) < 2 {
+			s.t.Fatalf("batch sub-request bad request line: %q", line)
+		}
+		path := fields[1]
+		if q := strings.Index(path, "?"); q >= 0 {
+			path = path[:q]
+		}
+		msgID := path[strings.LastIndex(path, "/")+1:]
+		subs = append(subs, subReq{contentID: cid, msgID: msgID})
+	}
+	s.lastBatchSizes = append(s.lastBatchSizes, len(subs))
+
+	if s.batchStatus != 0 && s.batchStatus != http.StatusOK {
+		return &http.Response{
+			StatusCode: s.batchStatus,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("mock batch failure")),
+		}, nil
 	}
 
+	var resp bytes.Buffer
+	mw := multipart.NewWriter(&resp)
+	for _, sub := range subs {
+		hdr := textproto.MIMEHeader{}
+		hdr.Set("Content-Type", "application/http")
+		// Gmail echoes the client-supplied id with a "response-" prefix.
+		hdr.Set("Content-ID", "<response-"+strings.Trim(sub.contentID, "<>")+">")
+		w, err := mw.CreatePart(hdr)
+		if err != nil {
+			s.t.Fatalf("batch response build part: %v", err)
+		}
+		status := http.StatusOK
+		if override, ok := s.perItemStatus[sub.msgID]; ok {
+			status = override
+		}
+		var subBody string
+		if status >= 400 {
+			subBody = fmt.Sprintf(`{"error":{"code":%d,"message":"mock failure"}}`, status)
+		} else {
+			subBody = fmt.Sprintf(`{"snippet":"Snippet for %s","labelIds":["INBOX","UNREAD"],"payload":{"headers":[{"name":"From","value":"sender-%s@example.com"},{"name":"Subject","value":"Subject %s"},{"name":"Date","value":"Date-%s"}]}}`,
+				sub.msgID, sub.msgID, sub.msgID, sub.msgID)
+		}
+		fmt.Fprintf(w, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+			status, http.StatusText(status), len(subBody), subBody)
+	}
+	if err := mw.Close(); err != nil {
+		s.t.Fatalf("batch response close: %v", err)
+	}
+
+	header := make(http.Header)
+	header.Set("Content-Type", "multipart/mixed; boundary="+mw.Boundary())
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     header,
+		Body:       io.NopCloser(&resp),
+	}, nil
+}
+
+func newBatchTestClient(s *batchTestServer) *http.Client {
+	return &http.Client{Transport: roundTripFunc(s.handle)}
+}
+
+func extractMessageItems(t *testing.T, res *adapters.Result) []msgListItem {
+	t.Helper()
 	data, ok := res.Data.(map[string]any)
 	if !ok {
 		t.Fatalf("expected map[string]any for Data, got %T", res.Data)
 	}
-	messagesRaw, ok := data["messages"]
+	raw, ok := data["messages"]
 	if !ok {
 		t.Fatalf("result data missing messages field: %v", res.Data)
 	}
-	messages, ok := messagesRaw.([]msgListItem)
+	items, ok := raw.([]msgListItem)
 	if !ok {
-		t.Fatalf("expected []msgListItem, got %T", messagesRaw)
+		t.Fatalf("expected []msgListItem, got %T", raw)
 	}
+	return items
+}
 
-	t.Logf("Fetched messages count: %d", len(messages))
-	if len(messages) != totalMsgs {
-		t.Errorf("len(messages) = %d, want %d", len(messages), totalMsgs)
+func TestListMessages_BatchSuccess(t *testing.T) {
+	ids := []string{"msg-1", "msg-2", "msg-3", "msg-4", "msg-5"}
+	srv := &batchTestServer{t: t, listIDs: ids}
+	adapter := &GmailAdapter{}
+
+	res, err := adapter.listMessages(context.Background(), newBatchTestClient(srv), map[string]any{
+		"max_results": len(ids),
+	})
+	if err != nil {
+		t.Fatalf("listMessages error: %v", err)
 	}
+	items := extractMessageItems(t, res)
 
-	// Verify exact order and metadata extraction
-	for i, msg := range messages {
-		expectedID := fmt.Sprintf("msg-%d", i+1)
-		if msg.ID != expectedID {
-			t.Errorf("messages[%d].ID = %q, want %q", i, msg.ID, expectedID)
+	if got := srv.batchPostCount.Load(); got != 1 {
+		t.Errorf("batch POST count = %d, want 1", got)
+	}
+	if got := srv.lastBatchSizes; len(got) != 1 || got[0] != len(ids) {
+		t.Errorf("batch sub-request sizes = %v, want [%d]", got, len(ids))
+	}
+	if len(items) != len(ids) {
+		t.Fatalf("len(items) = %d, want %d", len(items), len(ids))
+	}
+	for i, item := range items {
+		if item.ID != ids[i] {
+			t.Errorf("items[%d].ID = %q, want %q", i, item.ID, ids[i])
 		}
-		expectedFrom := fmt.Sprintf("sender-msg-%d@example.com", i+1)
-		if msg.From != expectedFrom {
-			t.Errorf("messages[%d].From = %q, want %q", i, msg.From, expectedFrom)
+		if want := fmt.Sprintf("sender-%s@example.com", ids[i]); item.From != want {
+			t.Errorf("items[%d].From = %q, want %q", i, item.From, want)
 		}
-		expectedSubject := fmt.Sprintf("Subject msg-%d", i+1)
-		if msg.Subject != expectedSubject {
-			t.Errorf("messages[%d].Subject = %q, want %q", i, msg.Subject, expectedSubject)
+		if want := fmt.Sprintf("Subject %s", ids[i]); item.Subject != want {
+			t.Errorf("items[%d].Subject = %q, want %q", i, item.Subject, want)
 		}
-		expectedSnippet := fmt.Sprintf("Snippet for msg-%d", i+1)
-		if msg.Snippet != expectedSnippet {
-			t.Errorf("messages[%d].Snippet = %q, want %q", i, msg.Snippet, expectedSnippet)
-		}
-		if !msg.IsUnread {
-			t.Errorf("messages[%d].IsUnread = false, want true", i)
+		if !item.IsUnread {
+			t.Errorf("items[%d].IsUnread = false, want true", i)
 		}
 	}
 }
 
-func TestListMessages_Concurrency_ContextCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func TestListMessages_BatchPartialFailure(t *testing.T) {
+	ids := []string{"msg-1", "msg-2", "msg-3"}
+	srv := &batchTestServer{
+		t:             t,
+		listIDs:       ids,
+		perItemStatus: map[string]int{"msg-2": http.StatusNotFound},
+	}
+	adapter := &GmailAdapter{}
 
-	const totalMsgs = 20
-	cancelDone := make(chan struct{})
-	var fetchCount int
-	var mu sync.Mutex
+	res, err := adapter.listMessages(context.Background(), newBatchTestClient(srv), map[string]any{
+		"max_results": len(ids),
+	})
+	if err != nil {
+		t.Fatalf("listMessages error: %v", err)
+	}
+	items := extractMessageItems(t, res)
 
-	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			var body string
-			switch {
-			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages") && !strings.Contains(req.URL.Path, "/msg-"):
-				var msgsList []string
-				for i := 1; i <= totalMsgs; i++ {
-					msgsList = append(msgsList, fmt.Sprintf(`{"id": "msg-%d"}`, i))
-				}
-				body = fmt.Sprintf(`{
-					"messages": [%s],
-					"resultSizeEstimate": %d
-				}`, strings.Join(msgsList, ","), totalMsgs)
-			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages/msg-"):
-				parts := strings.Split(req.URL.Path, "/")
-				msgID := parts[len(parts)-1]
+	if len(items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(items))
+	}
+	if items[0].ID != "msg-1" {
+		t.Errorf("items[0].ID = %q, want msg-1", items[0].ID)
+	}
+	if items[1].ID != "msg-3" {
+		t.Errorf("items[1].ID = %q, want msg-3", items[1].ID)
+	}
+}
 
-				if msgID == "msg-2" {
-					cancel()
-					mu.Lock()
-					select {
-					case <-cancelDone:
-					default:
-						close(cancelDone)
-					}
-					mu.Unlock()
-				} else {
-					<-cancelDone
-				}
+func TestListMessages_BatchPaging(t *testing.T) {
+	const total = 150
+	ids := make([]string, total)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("msg-%03d", i+1)
+	}
+	srv := &batchTestServer{t: t, listIDs: ids}
+	adapter := &GmailAdapter{}
 
-				mu.Lock()
-				fetchCount++
-				mu.Unlock()
+	res, err := adapter.listMessages(context.Background(), newBatchTestClient(srv), map[string]any{
+		"max_results": total,
+	})
+	if err != nil {
+		t.Fatalf("listMessages error: %v", err)
+	}
+	items := extractMessageItems(t, res)
 
-				body = fmt.Sprintf(`{
-					"snippet": "Snippet for %s",
-					"labelIds": ["INBOX"],
-					"payload": {
-						"headers": [
-							{"name": "From", "value": "sender-%s@example.com"},
-							{"name": "Subject", "value": "Subject %s"},
-							{"name": "Date", "value": "Date-%s"}
-						]
-					}
-				}`, msgID, msgID, msgID, msgID)
-			default:
-				return &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(strings.NewReader("not found")),
-				}, nil
-			}
+	if got := srv.batchPostCount.Load(); got != 2 {
+		t.Errorf("batch POST count = %d, want 2", got)
+	}
+	if got, want := srv.lastBatchSizes, []int{100, 50}; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("batch sub-request sizes = %v, want %v", got, want)
+	}
+	if len(items) != total {
+		t.Fatalf("len(items) = %d, want %d", len(items), total)
+	}
+	for i, item := range items {
+		if item.ID != ids[i] {
+			t.Fatalf("items[%d].ID = %q, want %q (ordering broken across batches?)", i, item.ID, ids[i])
+		}
+	}
+}
 
+func TestListMessages_BatchEmptyResult(t *testing.T) {
+	srv := &batchTestServer{t: t, listIDs: nil}
+	adapter := &GmailAdapter{}
+
+	res, err := adapter.listMessages(context.Background(), newBatchTestClient(srv), map[string]any{
+		"max_results": 10,
+	})
+	if err != nil {
+		t.Fatalf("listMessages error: %v", err)
+	}
+	items := extractMessageItems(t, res)
+
+	if got := srv.batchPostCount.Load(); got != 0 {
+		t.Errorf("batch POST count = %d, want 0", got)
+	}
+	if len(items) != 0 {
+		t.Errorf("len(items) = %d, want 0", len(items))
+	}
+}
+
+// TestListMessages_BatchMissingPart simulates Gmail returning fewer
+// sub-responses than we asked for: only msg-1 echoes back; msg-2 is silently
+// dropped from the multipart body. The dropped slot must surface as an
+// error rather than degrade to an empty msgListItem with no headers.
+// errReadCloser returns a chunk of bytes once, then a non-EOF error on the
+// next Read. Used to simulate a truncated multipart response from Gmail.
+type errReadCloser struct {
+	data []byte
+	pos  int
+	err  error
+}
+
+func (r *errReadCloser) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, r.err
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+func (r *errReadCloser) Close() error { return nil }
+
+// TestListMessages_BatchBodyReadError simulates a wire-level truncation
+// of the batch response body. listMessages must surface a wrapped read
+// error (and therefore return "all metadata fetches failed") rather than
+// silently parsing whatever prefix arrived and treating short reads as
+// successes.
+func TestListMessages_BatchBodyReadError(t *testing.T) {
+	ids := []string{"msg-1", "msg-2"}
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/messages") {
+			body := fmt.Sprintf(`{"messages":[%s],"resultSizeEstimate":%d}`,
+				`{"id":"msg-1"},{"id":"msg-2"}`, len(ids))
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     make(http.Header),
 				Body:       io.NopCloser(strings.NewReader(body)),
 			}, nil
-		}),
-	}
-
+		}
+		if req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/batch/gmail/v1") {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("nf"))}, nil
+		}
+		// Return a truncated multipart prefix: a couple of bytes then
+		// a non-EOF error. The Content-Type advertises multipart so the
+		// status-error branch is skipped and the read-error branch must fire.
+		header := make(http.Header)
+		header.Set("Content-Type", "multipart/mixed; boundary=boundary42")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       &errReadCloser{data: []byte("--boundary42\r\n"), err: fmt.Errorf("connection reset")},
+		}, nil
+	})
 	adapter := &GmailAdapter{}
-	_, err := adapter.listMessages(ctx, client, map[string]any{
-		"max_results": totalMsgs,
+
+	_, err := adapter.listMessages(context.Background(), &http.Client{Transport: transport}, map[string]any{
+		"max_results": len(ids),
+	})
+	if err == nil {
+		t.Fatalf("expected error when batch body read fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "all metadata fetches failed") {
+		t.Errorf("expected 'all metadata fetches failed' wrap, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "gmail batch read body") {
+		t.Errorf("expected inner error to mention 'gmail batch read body', got: %v", err)
+	}
+}
+
+func TestListMessages_BatchMissingPart(t *testing.T) {
+	ids := []string{"msg-1", "msg-2"}
+	// Custom transport: respond to /messages normally; respond to
+	// /batch/gmail/v1 with a multipart that only contains the first part.
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/messages") {
+			body := fmt.Sprintf(`{"messages":[%s],"resultSizeEstimate":%d}`,
+				`{"id":"msg-1"},{"id":"msg-2"}`, len(ids))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}
+		if req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/batch/gmail/v1") {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("nf"))}, nil
+		}
+		var resp bytes.Buffer
+		mw := multipart.NewWriter(&resp)
+		// Only echo back the FIRST sub-response — drop the second entirely.
+		hdr := textproto.MIMEHeader{}
+		hdr.Set("Content-Type", "application/http")
+		hdr.Set("Content-ID", "<response-item-0>")
+		w, _ := mw.CreatePart(hdr)
+		subBody := `{"snippet":"Snippet for msg-1","labelIds":["INBOX"],"payload":{"headers":[{"name":"From","value":"a@b.com"},{"name":"Subject","value":"S"},{"name":"Date","value":"D"}]}}`
+		fmt.Fprintf(w, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(subBody), subBody)
+		mw.Close()
+		header := make(http.Header)
+		header.Set("Content-Type", "multipart/mixed; boundary="+mw.Boundary())
+		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(&resp)}, nil
+	})
+	adapter := &GmailAdapter{}
+
+	res, err := adapter.listMessages(context.Background(), &http.Client{Transport: transport}, map[string]any{
+		"max_results": len(ids),
+	})
+	if err != nil {
+		t.Fatalf("listMessages error: %v", err)
+	}
+	items := extractMessageItems(t, res)
+
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1 (msg-2's missing response slot must not emit a ghost item)", len(items))
+	}
+	if items[0].ID != "msg-1" {
+		t.Errorf("items[0].ID = %q, want msg-1", items[0].ID)
+	}
+}
+
+// TestListMessages_BatchAllFailed mirrors the AllMetadataFetchesFailed
+// semantic for the batch path: when every sub-response is an error, the
+// caller sees a wrapped error rather than an empty success.
+func TestListMessages_BatchAllFailed(t *testing.T) {
+	ids := []string{"msg-1", "msg-2"}
+	srv := &batchTestServer{
+		t:       t,
+		listIDs: ids,
+		perItemStatus: map[string]int{
+			"msg-1": http.StatusInternalServerError,
+			"msg-2": http.StatusInternalServerError,
+		},
+	}
+	adapter := &GmailAdapter{}
+
+	_, err := adapter.listMessages(context.Background(), newBatchTestClient(srv), map[string]any{
+		"max_results": len(ids),
+	})
+	if err == nil {
+		t.Fatalf("expected error when all metadata fetches fail, got nil")
+	}
+	if !strings.Contains(err.Error(), "all metadata fetches failed") {
+		t.Errorf("error = %v, want it to mention 'all metadata fetches failed'", err)
+	}
+}
+
+// TestListMessages_BatchContextCancel pre-cancels the context and asserts
+// listMessages returns an error wrapping context.Canceled. This replaces
+// the prior per-message-fetch ContextCancel test: with batched metadata
+// the cancellation surface is one outer POST, so the test exercises the
+// post-batch ctx.Err() guard in listMessages.
+func TestListMessages_BatchContextCancel(t *testing.T) {
+	srv := &batchTestServer{t: t, listIDs: []string{"msg-1", "msg-2"}}
+	adapter := &GmailAdapter{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := adapter.listMessages(ctx, newBatchTestClient(srv), map[string]any{
+		"max_results": 2,
 	})
 	if err == nil {
 		t.Fatalf("expected context cancellation error, got nil")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected error to wrap context.Canceled, got %v", err)
-	}
-}
-
-func TestListMessages_Concurrency_AllMetadataFetchesFailed(t *testing.T) {
-	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			var body string
-			var status = http.StatusOK
-			switch {
-			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages") && !strings.Contains(req.URL.Path, "/msg-"):
-				body = `{
-					"messages": [
-						{"id": "msg-1"},
-						{"id": "msg-2"}
-					],
-					"resultSizeEstimate": 2
-				}`
-			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages/msg-"):
-				status = http.StatusInternalServerError
-				body = "internal server error"
-			default:
-				return &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(strings.NewReader("not found")),
-				}, nil
-			}
-
-			return &http.Response{
-				StatusCode: status,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(body)),
-			}, nil
-		}),
-	}
-
-	adapter := &GmailAdapter{}
-	_, err := adapter.listMessages(context.Background(), client, map[string]any{
-		"max_results": 2,
-	})
-	if err == nil {
-		t.Fatalf("expected error when all metadata fetches fail, got nil")
-	}
-	if !strings.Contains(err.Error(), "all metadata fetches failed") {
-		t.Errorf("expected error to mention 'all metadata fetches failed', got: %v", err)
-	}
-}
-
-func TestListMessages_Concurrency_PartialErrors(t *testing.T) {
-	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			var body string
-			var status = http.StatusOK
-			switch {
-			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages") && !strings.Contains(req.URL.Path, "/msg-"):
-				body = `{
-					"messages": [
-						{"id": "msg-1"},
-						{"id": "msg-2"},
-						{"id": "msg-3"},
-						{"id": "msg-4"}
-					],
-					"resultSizeEstimate": 4
-				}`
-			case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/messages/msg-"):
-				parts := strings.Split(req.URL.Path, "/")
-				msgID := parts[len(parts)-1]
-				if msgID == "msg-2" || msgID == "msg-4" {
-					status = http.StatusInternalServerError
-					body = "internal server error"
-				} else {
-					body = fmt.Sprintf(`{
-						"snippet": "Snippet for %s",
-						"labelIds": ["INBOX"],
-						"payload": {
-							"headers": [
-								{"name": "From", "value": "sender-%s@example.com"},
-								{"name": "Subject", "value": "Subject %s"},
-								{"name": "Date", "value": "Date-%s"}
-							]
-						}
-					}`, msgID, msgID, msgID, msgID)
-				}
-			default:
-				return &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(strings.NewReader("not found")),
-				}, nil
-			}
-
-			return &http.Response{
-				StatusCode: status,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(body)),
-			}, nil
-		}),
-	}
-
-	adapter := &GmailAdapter{}
-	res, err := adapter.listMessages(context.Background(), client, map[string]any{
-		"max_results": 4,
-	})
-	if err != nil {
-		t.Fatalf("listMessages error: %v", err)
-	}
-
-	data, ok := res.Data.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map[string]any, got %T", res.Data)
-	}
-	messagesRaw, ok := data["messages"]
-	if !ok {
-		t.Fatalf("missing messages field")
-	}
-	messages := messagesRaw.([]msgListItem)
-
-	if len(messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(messages))
-	}
-
-	if messages[0].ID != "msg-1" {
-		t.Errorf("first message ID = %q, want msg-1", messages[0].ID)
-	}
-	if messages[1].ID != "msg-3" {
-		t.Errorf("second message ID = %q, want msg-3", messages[1].ID)
 	}
 }
 

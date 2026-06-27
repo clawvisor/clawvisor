@@ -2,23 +2,25 @@
 package gmail
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html"
 	"io"
 	"mime"
+	"mime/multipart"
 	"mime/quotedprintable"
 	"net/http"
+	"net/textproto"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
@@ -28,11 +30,6 @@ import (
 const serviceID = "google.gmail"
 
 const gmailModifyScope = "https://www.googleapis.com/auth/gmail.modify"
-
-// listMessagesMetaConcurrency is the maximum concurrent metadata requests
-// when listing messages. Gmail's metadata-read quota is generous enough to
-// leave headroom at this level.
-const listMessagesMetaConcurrency = 15
 
 // gmailScopes is the full set of scopes Gmail can use. The YAML definition is
 // the source of truth for OAuth URL generation and action gating; this list
@@ -183,72 +180,39 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 	items := make([]msgListItem, 0, len(listResp.Messages))
 	unread := 0
 
-	type fetchResult struct {
-		id   string
-		meta msgMeta
-		err  error
+	ids := make([]string, len(listResp.Messages))
+	for i, m := range listResp.Messages {
+		ids[i] = m.ID
 	}
-
-	numMessages := len(listResp.Messages)
-	results := make([]fetchResult, numMessages)
-
-	if numMessages > 0 {
-		var g errgroup.Group
-		g.SetLimit(listMessagesMetaConcurrency)
-
-		for i, m := range listResp.Messages {
-			if ctx.Err() != nil {
-				break
-			}
-			i, m := i, m
-			g.Go(func() error {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				meta, err := fetchMessageMeta(ctx, client, m.ID)
-				if err != nil {
-					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						return err
-					}
-					results[i] = fetchResult{id: m.ID, err: err}
-					return nil
-				}
-				results[i] = fetchResult{id: m.ID, meta: meta}
-				return nil
-			})
-		}
-		if err := g.Wait(); err != nil {
-			return nil, fmt.Errorf("gmail list_messages: %w", err)
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
+	metas, metaErrs := fetchMessageMetasBatch(ctx, client, ids)
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	var firstFetchErr error
-	for _, res := range results {
-		if res.err != nil {
+	for i, meta := range metas {
+		if metaErrs[i] != nil {
 			if firstFetchErr == nil {
-				firstFetchErr = res.err
+				firstFetchErr = metaErrs[i]
 			}
 			continue
 		}
 		item := msgListItem{
-			ID:       res.id,
-			From:     format.SanitizeHeader(res.meta.from, format.MaxFieldLen),
-			Subject:  format.SanitizeText(res.meta.subject, format.MaxFieldLen),
-			Snippet:  format.SanitizeText(res.meta.snippet, format.MaxSnippetLen),
-			Date:     res.meta.date,
-			IsUnread: res.meta.isUnread,
-			Labels:   labels.resolve(res.meta.labelIDs),
+			ID:       ids[i],
+			From:     format.SanitizeHeader(meta.from, format.MaxFieldLen),
+			Subject:  format.SanitizeText(meta.subject, format.MaxFieldLen),
+			Snippet:  format.SanitizeText(meta.snippet, format.MaxSnippetLen),
+			Date:     meta.date,
+			IsUnread: meta.isUnread,
+			Labels:   labels.resolve(meta.labelIDs),
 		}
 		items = append(items, item)
-		if res.meta.isUnread {
+		if meta.isUnread {
 			unread++
 		}
 	}
 
-	if numMessages > 0 && len(items) == 0 && firstFetchErr != nil {
+	if len(ids) > 0 && len(items) == 0 && firstFetchErr != nil {
 		return nil, fmt.Errorf("gmail list_messages: all metadata fetches failed: %w", firstFetchErr)
 	}
 
@@ -983,8 +947,170 @@ type msgMeta struct {
 	labelIDs                     []string
 }
 
-func fetchMessageMeta(ctx context.Context, client *http.Client, id string) (msgMeta, error) {
-	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date", id)
+// gmailBatchMaxRequests is Gmail's documented per-batch cap.
+const gmailBatchMaxRequests = 100
+
+// fetchMessageMetasBatch fetches per-message metadata for the given ids using
+// Gmail's multipart/mixed batch endpoint, returning aligned slices of metas
+// and errors. A non-nil errs[i] means the i'th id could not be resolved;
+// callers tolerate this the same way they did the old per-call fan-out.
+//
+// Batches are sized to gmailBatchMaxRequests and processed sequentially.
+// A request-level failure (network / 5xx on the outer POST) fills the same
+// error across every slot in that batch.
+func fetchMessageMetasBatch(ctx context.Context, client *http.Client, ids []string) ([]msgMeta, []error) {
+	metas := make([]msgMeta, len(ids))
+	errs := make([]error, len(ids))
+	for start := 0; start < len(ids); start += gmailBatchMaxRequests {
+		end := start + gmailBatchMaxRequests
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunkMetas, chunkErrs := fetchMessageMetasBatchOne(ctx, client, ids[start:end])
+		copy(metas[start:end], chunkMetas)
+		copy(errs[start:end], chunkErrs)
+	}
+	return metas, errs
+}
+
+// fetchMessageMetasBatchOne issues a single multipart/mixed POST to
+// /batch/gmail/v1 for up to gmailBatchMaxRequests ids and parses the response.
+func fetchMessageMetasBatchOne(ctx context.Context, client *http.Client, ids []string) ([]msgMeta, []error) {
+	metas := make([]msgMeta, len(ids))
+	errs := make([]error, len(ids))
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	for i, id := range ids {
+		subHeader := textproto.MIMEHeader{}
+		subHeader.Set("Content-Type", "application/http")
+		subHeader.Set("Content-ID", fmt.Sprintf("<item-%d>", i))
+		part, err := mw.CreatePart(subHeader)
+		if err != nil {
+			fillErrs(errs, fmt.Errorf("gmail batch build: %w", err))
+			return metas, errs
+		}
+		sub := fmt.Sprintf(
+			"GET /gmail/v1/users/me/messages/%s?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date HTTP/1.1\r\n\r\n",
+			id,
+		)
+		if _, err := io.WriteString(part, sub); err != nil {
+			fillErrs(errs, fmt.Errorf("gmail batch build: %w", err))
+			return metas, errs
+		}
+	}
+	if err := mw.Close(); err != nil {
+		fillErrs(errs, fmt.Errorf("gmail batch build: %w", err))
+		return metas, errs
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://www.googleapis.com/batch/gmail/v1", &body)
+	if err != nil {
+		fillErrs(errs, err)
+		return metas, errs
+	}
+	req.Header.Set("Content-Type", "multipart/mixed; boundary="+mw.Boundary())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fillErrs(errs, err)
+		return metas, errs
+	}
+	defer resp.Body.Close()
+
+	respBody, readErr := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		fillErrs(errs, fmt.Errorf("gmail batch: %d: %s", resp.StatusCode, format.Truncate(string(respBody), 200)))
+		return metas, errs
+	}
+	// A read failure on the response body means we have a truncated multipart
+	// payload. Fail the whole chunk: continuing would parse the prefix and
+	// quietly emit successful sub-responses for the parts we did manage to
+	// read, hiding the wire-level error.
+	if readErr != nil {
+		fillErrs(errs, fmt.Errorf("gmail batch read body: %w", readErr))
+		return metas, errs
+	}
+
+	_, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		fillErrs(errs, fmt.Errorf("gmail batch parse content-type: %w", err))
+		return metas, errs
+	}
+	boundary, ok := params["boundary"]
+	if !ok {
+		fillErrs(errs, fmt.Errorf("gmail batch: missing boundary in response"))
+		return metas, errs
+	}
+
+	// Pre-fill errs so any id whose response is missing or has an
+	// unparseable Content-ID surfaces as an explicit error rather than
+	// silently degrading to a zero-valued msgMeta that listMessages would
+	// then emit as an empty/incorrect message. Successful sub-responses
+	// clear their slot below.
+	for i := range errs {
+		errs[i] = fmt.Errorf("gmail batch: no sub-response received for id %q", ids[i])
+	}
+
+	mr := multipart.NewReader(bytes.NewReader(respBody), boundary)
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fillErrs(errs, fmt.Errorf("gmail batch read part: %w", err))
+			return metas, errs
+		}
+		idx, idxOK := parseBatchContentIndex(part.Header.Get("Content-ID"))
+		partBody, readErr := io.ReadAll(part)
+		part.Close()
+		if !idxOK || idx < 0 || idx >= len(ids) {
+			continue
+		}
+		if readErr != nil {
+			errs[idx] = fmt.Errorf("gmail batch read part body: %w", readErr)
+			continue
+		}
+		meta, err := parseBatchSubResponse(partBody)
+		if err != nil {
+			errs[idx] = err
+			continue
+		}
+		metas[idx] = meta
+		errs[idx] = nil
+	}
+	return metas, errs
+}
+
+// parseBatchContentIndex recovers the request index from a batch part's
+// Content-ID header. Gmail echoes the client-supplied id prefixed with
+// "response-", so both "<item-3>" and "<response-item-3>" parse to 3.
+func parseBatchContentIndex(contentID string) (int, bool) {
+	s := strings.TrimPrefix(strings.TrimSuffix(strings.TrimPrefix(contentID, "<"), ">"), "response-")
+	s = strings.TrimPrefix(s, "item-")
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// parseBatchSubResponse decodes one application/http sub-response body into
+// an msgMeta, mirroring the prior per-id fetch's status check and JSON shape.
+func parseBatchSubResponse(body []byte) (msgMeta, error) {
+	sub, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(body)), nil)
+	if err != nil {
+		return msgMeta{}, fmt.Errorf("gmail batch parse sub-response: %w", err)
+	}
+	defer sub.Body.Close()
+	subBody, _ := io.ReadAll(sub.Body)
+	if sub.StatusCode >= 400 {
+		return msgMeta{}, fmt.Errorf("gmail batch sub: %d: %s", sub.StatusCode, format.Truncate(string(subBody), 200))
+	}
 	var raw struct {
 		Snippet  string   `json:"snippet"`
 		LabelIds []string `json:"labelIds"`
@@ -992,10 +1118,9 @@ func fetchMessageMeta(ctx context.Context, client *http.Client, id string) (msgM
 			Headers []gmailHeader `json:"headers"`
 		} `json:"payload"`
 	}
-	if err := gmailGET(ctx, client, url, &raw); err != nil {
-		return msgMeta{}, err
+	if err := json.Unmarshal(subBody, &raw); err != nil {
+		return msgMeta{}, fmt.Errorf("gmail batch sub decode: %w", err)
 	}
-
 	meta := msgMeta{snippet: raw.Snippet, labelIDs: raw.LabelIds}
 	for _, h := range raw.Payload.Headers {
 		switch strings.ToLower(h.Name) {
@@ -1013,6 +1138,12 @@ func fetchMessageMeta(ctx context.Context, client *http.Client, id string) (msgM
 		}
 	}
 	return meta, nil
+}
+
+func fillErrs(errs []error, err error) {
+	for i := range errs {
+		errs[i] = err
+	}
 }
 
 // extractBodyFromParts walks a message payload to find the best text content.
