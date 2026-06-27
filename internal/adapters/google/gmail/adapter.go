@@ -1018,9 +1018,17 @@ func fetchMessageMetasBatchOne(ctx context.Context, client *http.Client, ids []s
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, readErr := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
 		fillErrs(errs, fmt.Errorf("gmail batch: %d: %s", resp.StatusCode, format.Truncate(string(respBody), 200)))
+		return metas, errs
+	}
+	// A read failure on the response body means we have a truncated multipart
+	// payload. Fail the whole chunk: continuing would parse the prefix and
+	// quietly emit successful sub-responses for the parts we did manage to
+	// read, hiding the wire-level error.
+	if readErr != nil {
+		fillErrs(errs, fmt.Errorf("gmail batch read body: %w", readErr))
 		return metas, errs
 	}
 

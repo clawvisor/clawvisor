@@ -912,6 +912,72 @@ func TestListMessages_BatchEmptyResult(t *testing.T) {
 // sub-responses than we asked for: only msg-1 echoes back; msg-2 is silently
 // dropped from the multipart body. The dropped slot must surface as an
 // error rather than degrade to an empty msgListItem with no headers.
+// errReadCloser returns a chunk of bytes once, then a non-EOF error on the
+// next Read. Used to simulate a truncated multipart response from Gmail.
+type errReadCloser struct {
+	data []byte
+	pos  int
+	err  error
+}
+
+func (r *errReadCloser) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, r.err
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+func (r *errReadCloser) Close() error { return nil }
+
+// TestListMessages_BatchBodyReadError simulates a wire-level truncation
+// of the batch response body. listMessages must surface a wrapped read
+// error (and therefore return "all metadata fetches failed") rather than
+// silently parsing whatever prefix arrived and treating short reads as
+// successes.
+func TestListMessages_BatchBodyReadError(t *testing.T) {
+	ids := []string{"msg-1", "msg-2"}
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/messages") {
+			body := fmt.Sprintf(`{"messages":[%s],"resultSizeEstimate":%d}`,
+				`{"id":"msg-1"},{"id":"msg-2"}`, len(ids))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}
+		if req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/batch/gmail/v1") {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("nf"))}, nil
+		}
+		// Return a truncated multipart prefix: a couple of bytes then
+		// a non-EOF error. The Content-Type advertises multipart so the
+		// status-error branch is skipped and the read-error branch must fire.
+		header := make(http.Header)
+		header.Set("Content-Type", "multipart/mixed; boundary=boundary42")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       &errReadCloser{data: []byte("--boundary42\r\n"), err: fmt.Errorf("connection reset")},
+		}, nil
+	})
+	adapter := &GmailAdapter{}
+
+	_, err := adapter.listMessages(context.Background(), &http.Client{Transport: transport}, map[string]any{
+		"max_results": len(ids),
+	})
+	if err == nil {
+		t.Fatalf("expected error when batch body read fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "all metadata fetches failed") {
+		t.Errorf("expected 'all metadata fetches failed' wrap, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "gmail batch read body") {
+		t.Errorf("expected inner error to mention 'gmail batch read body', got: %v", err)
+	}
+}
+
 func TestListMessages_BatchMissingPart(t *testing.T) {
 	ids := []string{"msg-1", "msg-2"}
 	// Custom transport: respond to /messages normally; respond to
