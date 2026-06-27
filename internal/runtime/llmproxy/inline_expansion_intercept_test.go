@@ -241,14 +241,13 @@ func TestRenderExpansionApprovalPrompt_NoRiskSilent(t *testing.T) {
 	}
 }
 
-// TestAssessInlineExpansionRisk_LLMOverridesFloor pins the core
-// promise of the LLM expansion-risk wiring: when the assessor returns
-// a level higher than the deterministic floor, the assessor's verdict
-// wins. Without this regression test, a future refactor that
-// shortcircuited the merge to "floor only" would silently drop the
-// LLM read and leave inline expansion prompts looking like they did
-// before the LLM was wired in.
-func TestAssessInlineExpansionRisk_LLMOverridesFloor(t *testing.T) {
+// TestAssessInlineExpansionRisk_LLMVerdictReturnedAsIs pins the
+// happy path: when the assessor is configured and returns a usable
+// verdict, that verdict is returned with its RiskLevel + Explanation
+// intact. The helper does NOT merge with the deterministic floor —
+// inline expansion deliberately mirrors assessInlineTaskRisk so both
+// inline surfaces (creation + expansion) trust the LLM read directly.
+func TestAssessInlineExpansionRisk_LLMVerdictReturnedAsIs(t *testing.T) {
 	cfg := PostprocessConfig{
 		ApprovalContext: ApprovalContext{
 			TaskRiskAssessor: &mockTaskRiskAssessor{verdict: &TaskRiskAssessment{
@@ -257,9 +256,6 @@ func TestAssessInlineExpansionRisk_LLMOverridesFloor(t *testing.T) {
 			}},
 		},
 	}
-	// A trivially "low"-shaped envelope so the deterministic floor
-	// won't reach for medium/high on its own — that way any non-low
-	// verdict in the result must have come from the LLM.
 	merged := runtimetasks.Envelope{
 		ExpectedTools: []runtimetasks.ExpectedTool{{ToolName: "edit", Why: "Update README.md to fix typo"}},
 	}
@@ -269,10 +265,47 @@ func TestAssessInlineExpansionRisk_LLMOverridesFloor(t *testing.T) {
 		t.Fatal("expected non-nil assessment")
 	}
 	if got.RiskLevel != "high" {
-		t.Errorf("RiskLevel = %q, want high (LLM verdict must win over a lower floor)", got.RiskLevel)
+		t.Errorf("RiskLevel = %q, want the LLM's high verdict returned as-is", got.RiskLevel)
 	}
 	if !strings.Contains(got.Explanation, "Mutating egress") {
 		t.Errorf("Explanation lost the LLM text: %q", got.Explanation)
+	}
+}
+
+// TestAssessInlineExpansionRisk_FloorDoesNotRaiseLLMVerdict pins the
+// no-merge contract that aligns inline expansion with inline
+// creation: when the LLM returns a usable low verdict on an envelope
+// whose deterministic floor would have flagged high, the LLM verdict
+// wins outright — the floor is NOT a backstop on this path.
+//
+// IntentVerificationMode="off" drives the deterministic floor to
+// high (see internal/runtime/policy/envelope_risk.go). Before the
+// alignment with assessInlineTaskRisk, the merge rule would have
+// raised the LLM's "low" to "high"; now the LLM verdict is
+// authoritative.
+func TestAssessInlineExpansionRisk_FloorDoesNotRaiseLLMVerdict(t *testing.T) {
+	cfg := PostprocessConfig{
+		ApprovalContext: ApprovalContext{
+			TaskRiskAssessor: &mockTaskRiskAssessor{verdict: &TaskRiskAssessment{
+				RiskLevel:   "low",
+				Explanation: "LLM judged this addition trivial.",
+			}},
+		},
+	}
+	merged := runtimetasks.Envelope{
+		ExpectedTools:          []runtimetasks.ExpectedTool{{ToolName: "edit", Why: "Update README.md to fix typo"}},
+		IntentVerificationMode: "off", // drives the deterministic floor to high
+	}
+	httpReq := httptest.NewRequest("POST", "http://daemon/x", nil)
+	got := assessInlineExpansionRisk(httpReq, cfg, "doc tweak", merged, func(string, ...any) {})
+	if got == nil {
+		t.Fatal("expected non-nil assessment")
+	}
+	if got.RiskLevel != "low" {
+		t.Errorf("RiskLevel = %q, want low (LLM verdict wins; floor must not raise)", got.RiskLevel)
+	}
+	if !strings.Contains(got.Explanation, "LLM judged") {
+		t.Errorf("Explanation lost the LLM text: %q (floor must not displace LLM)", got.Explanation)
 	}
 }
 

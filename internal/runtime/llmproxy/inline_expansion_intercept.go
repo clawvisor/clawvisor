@@ -298,19 +298,22 @@ func MaybeInterceptInlineExpansion(
 }
 
 // assessInlineExpansionRisk is the expansion mirror of
-// assessInlineTaskRisk: it asks cfg.TaskRiskAssessor for an
-// LLM-derived risk read on the MERGED envelope, merges it with the
-// deterministic envelope-shape floor via taskrisk.MergeAssessments,
-// and returns the result. When the assessor is unconfigured, errors,
-// or returns "unknown", falls back to the floor alone (so the prompt
-// still carries a level). The deterministic floor can only ever
-// RAISE the LLM read, never lower it, so structural amplifiers
-// (wildcard hosts, regex matchers, intent verification off) remain a
-// hard backstop.
+// assessInlineTaskRisk: when cfg.TaskRiskAssessor is configured and
+// returns a usable verdict, the LLM read is the truth and is
+// returned as-is. The deterministic envelope-shape policy is the
+// FALLBACK ONLY — used when the assessor is unconfigured, errors,
+// or returns "unknown" — so the prompt still carries a level. The
+// floor does NOT act as a backstop that can raise the LLM read.
+//
+// This deliberately mirrors assessInlineTaskRisk so the two inline
+// surfaces (creation + expansion) behave identically. The headless
+// paths (Create and Expand handlers) still merge LLM + floor for an
+// audit-grade safety net — the asymmetry is intentional: inline has
+// the user in the loop seeing the prompt, so the LLM verdict
+// directly drives what they consent to.
 func assessInlineExpansionRisk(req *http.Request, cfg PostprocessConfig, parentPurpose string, merged runtimetasks.Envelope, trace func(event string, kv ...any)) *taskrisk.RiskAssessment {
-	floor := runtimepolicy.AssessTaskEnvelope(parentPurpose, merged)
 	if cfg.TaskRiskAssessor == nil {
-		return floor
+		return runtimepolicy.AssessTaskEnvelope(parentPurpose, merged)
 	}
 	llmVerdict := cfg.TaskRiskAssessor.AssessEnvelope(req.Context(), TaskRiskAssessRequest{
 		Purpose:                parentPurpose,
@@ -324,7 +327,7 @@ func assessInlineExpansionRisk(req *http.Request, cfg PostprocessConfig, parentP
 	})
 	if llmVerdict == nil || strings.EqualFold(strings.TrimSpace(llmVerdict.RiskLevel), "unknown") {
 		trace("inline_expansion.risk_llm_unavailable")
-		return floor
+		return runtimepolicy.AssessTaskEnvelope(parentPurpose, merged)
 	}
 	conflicts := make([]taskrisk.ConflictDetail, 0, len(llmVerdict.Conflicts))
 	for _, c := range llmVerdict.Conflicts {
@@ -334,7 +337,7 @@ func assessInlineExpansionRisk(req *http.Request, cfg PostprocessConfig, parentP
 			Severity:    c.Severity,
 		})
 	}
-	llmAssessment := &taskrisk.RiskAssessment{
+	return &taskrisk.RiskAssessment{
 		RiskLevel:              llmVerdict.RiskLevel,
 		Explanation:            llmVerdict.Explanation,
 		Factors:                llmVerdict.Factors,
@@ -342,7 +345,6 @@ func assessInlineExpansionRisk(req *http.Request, cfg PostprocessConfig, parentP
 		IntentMatch:            llmVerdict.IntentMatch,
 		IntentMatchExplanation: llmVerdict.IntentMatchExplanation,
 	}
-	return taskrisk.MergeAssessments(llmAssessment, floor)
 }
 
 // cleanupEvictedInlineExpansion mirrors CleanupEvictedInlineTask for
