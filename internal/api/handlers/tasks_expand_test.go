@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -468,5 +469,112 @@ func TestDerivedActionsFromPending_WildcardCoverageSurfaces(t *testing.T) {
 	}
 	if got.ExpansionRationale != "File the user-reported bug." {
 		t.Errorf("ExpansionRationale = %q, want the addition's why", got.ExpansionRationale)
+	}
+}
+
+// TestReassessExpansionRisk_PrecomputedHighOverridesLowerFloor pins
+// the LLM-cached path: when the Expand request stashed a "high" verdict
+// on PendingTaskExpansion.RiskAssessment and the merged envelope's
+// deterministic floor only reaches "medium", the approve write
+// persists "high". Mirror of the create-side merge: the LLM read is
+// the primary, the floor only raises.
+func TestReassessExpansionRisk_PrecomputedHighOverridesLowerFloor(t *testing.T) {
+	task := &store.Task{
+		Purpose: "Refactor src/foo.go",
+	}
+	// Merged envelope shaped so the deterministic floor lands at most
+	// at "medium" — purely a generic Bash addition with a why, no
+	// wildcard hosts or regex matchers that would trip the floor higher.
+	merged := runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{
+			{ToolName: "Bash", Why: "Run go test ./..."},
+		},
+	}
+	precomputed := &taskrisk.RiskAssessment{
+		RiskLevel:   "high",
+		Explanation: "Adds shell execution to a previously read-only task.",
+	}
+	var envUpdate store.TaskEnvelopeUpdate
+	reassessExpansionRisk(task, merged, &envUpdate, precomputed)
+	if envUpdate.RiskLevel != "high" {
+		t.Errorf("RiskLevel = %q, want high (precomputed must dominate when higher than floor)", envUpdate.RiskLevel)
+	}
+	if len(envUpdate.RiskDetails) == 0 {
+		t.Errorf("RiskDetails empty — assessment should have been marshaled onto the update")
+	}
+}
+
+// TestReassessExpansionRisk_NilPrecomputedFallsBackToFloor pins the
+// legacy / unconfigured path: when the cached assessment slot is empty
+// (old row written before the cache field existed, or assessor was
+// unconfigured at expand-time), the deterministic floor still stamps a
+// level so the approved task isn't missing risk metadata.
+func TestReassessExpansionRisk_NilPrecomputedFallsBackToFloor(t *testing.T) {
+	task := &store.Task{Purpose: "do work"}
+	merged := runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{
+			{ToolName: "Bash", Why: "Run a one-shot script"},
+		},
+	}
+	var envUpdate store.TaskEnvelopeUpdate
+	reassessExpansionRisk(task, merged, &envUpdate, nil)
+	if envUpdate.RiskLevel == "" {
+		t.Errorf("RiskLevel empty — floor should still produce a level even with no precomputed")
+	}
+}
+
+// TestDecodePendingRiskAssessment_RoundTrip confirms the cache
+// round-trip: an assessment marshaled at Expand-time and stored on
+// PendingTaskExpansion.RiskAssessment decodes back through
+// decodePendingRiskAssessment with the same level. Without this the
+// approve path would silently fall back to deterministic-only and the
+// persisted risk would drift from what the user saw in the prompt.
+func TestDecodePendingRiskAssessment_RoundTrip(t *testing.T) {
+	original := &taskrisk.RiskAssessment{
+		RiskLevel:   "high",
+		Explanation: "Test round trip",
+		Factors:     []string{"f1", "f2"},
+	}
+	pending := &store.PendingTaskExpansion{
+		RiskAssessment: taskrisk.MarshalAssessment(original),
+	}
+	got := decodePendingRiskAssessment(pending)
+	if got == nil {
+		t.Fatal("expected non-nil decoded assessment")
+	}
+	if got.RiskLevel != "high" {
+		t.Errorf("RiskLevel = %q, want high", got.RiskLevel)
+	}
+	if got.Explanation != "Test round trip" {
+		t.Errorf("Explanation = %q, want round-tripped value", got.Explanation)
+	}
+	if !reflect.DeepEqual(got.Factors, []string{"f1", "f2"}) {
+		t.Errorf("Factors = %v, want round-tripped slice", got.Factors)
+	}
+}
+
+// TestDecodePendingRiskAssessment_EmptyAndMalformedReturnNil pins
+// the fail-soft contract: empty input (legacy rows) and corrupt JSON
+// both collapse to nil rather than panicking — the approve path then
+// falls through to deterministic-only.
+func TestDecodePendingRiskAssessment_EmptyAndMalformedReturnNil(t *testing.T) {
+	if got := decodePendingRiskAssessment(nil); got != nil {
+		t.Errorf("nil pending should decode as nil, got %+v", got)
+	}
+	if got := decodePendingRiskAssessment(&store.PendingTaskExpansion{}); got != nil {
+		t.Errorf("empty RiskAssessment should decode as nil, got %+v", got)
+	}
+	if got := decodePendingRiskAssessment(&store.PendingTaskExpansion{
+		RiskAssessment: json.RawMessage(`{not valid json`),
+	}); got != nil {
+		t.Errorf("malformed RiskAssessment should decode as nil, got %+v", got)
+	}
+	// Empty risk_level after parse must also collapse — a row with a
+	// shell of an assessment shouldn't fool the approve path into
+	// believing it has a cached LLM read.
+	if got := decodePendingRiskAssessment(&store.PendingTaskExpansion{
+		RiskAssessment: json.RawMessage(`{"risk_level":""}`),
+	}); got != nil {
+		t.Errorf("empty risk_level should decode as nil, got %+v", got)
 	}
 }

@@ -291,7 +291,20 @@ func resolveInlineExpansionApproval(ctx context.Context, req InlineApprovalRewri
 		return renderInlineExpansionCreatorErrorReply("missing agent on approval"), out
 	}
 
-	expanded, createErr := expansionCreator.ApproveInlineExpansion(ctx, resolved.ExpansionTaskID, req.Agent.UserID)
+	// Mirror the inline-task creation flow: prefer the
+	// WithAssessment extension when the creator implements it so the
+	// approve path reuses the intercept's precomputed LLM+floor risk
+	// instead of falling back to deterministic-only. The hint flows
+	// off the hold's ExpansionPrecomputedRisk field, set by the
+	// expansion intercept when assessInlineExpansionRisk returned a
+	// usable verdict.
+	var expanded *InlineApprovedExpansion
+	var createErr error
+	if withAssessment, ok := expansionCreator.(InlineExpansionApproverWithAssessment); ok {
+		expanded, createErr = withAssessment.ApproveInlineExpansionWithAssessment(ctx, resolved.ExpansionTaskID, req.Agent.UserID, resolved.ExpansionPrecomputedRisk)
+	} else {
+		expanded, createErr = expansionCreator.ApproveInlineExpansion(ctx, resolved.ExpansionTaskID, req.Agent.UserID)
+	}
 	if createErr != nil {
 		var terminal *ErrInlineExpansionAlreadyTerminal
 		if errors.As(createErr, &terminal) {

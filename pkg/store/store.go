@@ -898,6 +898,14 @@ type PendingTaskExpansion struct {
 	ExpectedEgress      json.RawMessage `json:"expected_egress,omitempty"`
 	RequiredCredentials json.RawMessage `json:"required_credentials,omitempty"`
 	Reason              string          `json:"reason,omitempty"`
+	// RiskAssessment is the LLM+deterministic-floor risk read computed
+	// at Expand request time over the MERGED envelope (parent +
+	// additions). Cached here so the approve path can persist the same
+	// level without paying the multi-second LLM latency on a user
+	// button click. nil on legacy rows or when the assessor was not
+	// configured at expand time; callers fall back to a fresh
+	// deterministic-only assessment in that case.
+	RiskAssessment json.RawMessage `json:"risk_assessment,omitempty"`
 }
 
 // TaskEnvelopeUpdate is the payload for UpdateTaskEnvelopeFrom. AuthorizedActions

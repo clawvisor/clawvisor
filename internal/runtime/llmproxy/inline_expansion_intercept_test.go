@@ -38,9 +38,10 @@ type fakeExpansionCreator struct {
 	ExpireCalls        int
 
 	// Inputs captured for assertion.
-	LastPendingTaskID   string
-	LastPendingReason   string
-	LastPendingAddTools int
+	LastPendingTaskID      string
+	LastPendingReason      string
+	LastPendingAddTools    int
+	LastPendingPrecomputed *taskrisk.RiskAssessment
 }
 
 func (f *fakeExpansionCreator) CreatePendingInlineExpansion(
@@ -49,12 +50,14 @@ func (f *fakeExpansionCreator) CreatePendingInlineExpansion(
 	taskID string,
 	additions *runtimetasks.Envelope,
 	reason string,
+	precomputed *taskrisk.RiskAssessment,
 ) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.CreatePendingCalls++
 	f.LastPendingTaskID = taskID
 	f.LastPendingReason = reason
+	f.LastPendingPrecomputed = precomputed
 	if additions != nil {
 		f.LastPendingAddTools = len(additions.ExpectedTools)
 	}
@@ -235,6 +238,117 @@ func TestRenderExpansionApprovalPrompt_NoRiskSilent(t *testing.T) {
 	prompt := renderExpansionApprovalPrompt(additions, "land it", "purpose", "task-abc", "session", nil, "cv-aaa")
 	if strings.Contains(prompt, "\nRisk\n") || strings.Contains(prompt, "\n\nRisk\n") {
 		t.Errorf("prompt rendered empty Risk section:\n%s", prompt)
+	}
+}
+
+// TestAssessInlineExpansionRisk_LLMVerdictReturnedAsIs pins the
+// happy path: when the assessor is configured and returns a usable
+// verdict, that verdict is returned with its RiskLevel + Explanation
+// intact. The helper does NOT merge with the deterministic floor —
+// inline expansion deliberately mirrors assessInlineTaskRisk so both
+// inline surfaces (creation + expansion) trust the LLM read directly.
+func TestAssessInlineExpansionRisk_LLMVerdictReturnedAsIs(t *testing.T) {
+	cfg := PostprocessConfig{
+		ApprovalContext: ApprovalContext{
+			TaskRiskAssessor: &mockTaskRiskAssessor{verdict: &TaskRiskAssessment{
+				RiskLevel:   "high",
+				Explanation: "Mutating egress to a previously read-only host.",
+			}},
+		},
+	}
+	merged := runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{{ToolName: "edit", Why: "Update README.md to fix typo"}},
+	}
+	httpReq := httptest.NewRequest("POST", "http://daemon/x", nil)
+	got := assessInlineExpansionRisk(httpReq, cfg, "doc tweak", merged, func(string, ...any) {})
+	if got == nil {
+		t.Fatal("expected non-nil assessment")
+	}
+	if got.RiskLevel != "high" {
+		t.Errorf("RiskLevel = %q, want the LLM's high verdict returned as-is", got.RiskLevel)
+	}
+	if !strings.Contains(got.Explanation, "Mutating egress") {
+		t.Errorf("Explanation lost the LLM text: %q", got.Explanation)
+	}
+}
+
+// TestAssessInlineExpansionRisk_FloorDoesNotRaiseLLMVerdict pins the
+// no-merge contract that aligns inline expansion with inline
+// creation: when the LLM returns a usable low verdict on an envelope
+// whose deterministic floor would have flagged high, the LLM verdict
+// wins outright — the floor is NOT a backstop on this path.
+//
+// IntentVerificationMode="off" drives the deterministic floor to
+// high (see internal/runtime/policy/envelope_risk.go). Before the
+// alignment with assessInlineTaskRisk, the merge rule would have
+// raised the LLM's "low" to "high"; now the LLM verdict is
+// authoritative.
+func TestAssessInlineExpansionRisk_FloorDoesNotRaiseLLMVerdict(t *testing.T) {
+	cfg := PostprocessConfig{
+		ApprovalContext: ApprovalContext{
+			TaskRiskAssessor: &mockTaskRiskAssessor{verdict: &TaskRiskAssessment{
+				RiskLevel:   "low",
+				Explanation: "LLM judged this addition trivial.",
+			}},
+		},
+	}
+	merged := runtimetasks.Envelope{
+		ExpectedTools:          []runtimetasks.ExpectedTool{{ToolName: "edit", Why: "Update README.md to fix typo"}},
+		IntentVerificationMode: "off", // drives the deterministic floor to high
+	}
+	httpReq := httptest.NewRequest("POST", "http://daemon/x", nil)
+	got := assessInlineExpansionRisk(httpReq, cfg, "doc tweak", merged, func(string, ...any) {})
+	if got == nil {
+		t.Fatal("expected non-nil assessment")
+	}
+	if got.RiskLevel != "low" {
+		t.Errorf("RiskLevel = %q, want low (LLM verdict wins; floor must not raise)", got.RiskLevel)
+	}
+	if !strings.Contains(got.Explanation, "LLM judged") {
+		t.Errorf("Explanation lost the LLM text: %q (floor must not displace LLM)", got.Explanation)
+	}
+}
+
+// TestAssessInlineExpansionRisk_UnknownFallsBackToFloor pins the
+// "LLM unavailable / spend cap exhausted" path: the assessor returns
+// the sentinel "unknown" level and we must fall back to the
+// deterministic floor rather than persisting "unknown" — that would
+// strip the risk badge from the inline prompt entirely.
+func TestAssessInlineExpansionRisk_UnknownFallsBackToFloor(t *testing.T) {
+	cfg := PostprocessConfig{
+		ApprovalContext: ApprovalContext{
+			TaskRiskAssessor: &mockTaskRiskAssessor{verdict: &TaskRiskAssessment{RiskLevel: "unknown"}},
+		},
+	}
+	merged := runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{{ToolName: "bash", Why: ""}},
+	}
+	httpReq := httptest.NewRequest("POST", "http://daemon/x", nil)
+	got := assessInlineExpansionRisk(httpReq, cfg, "p", merged, func(string, ...any) {})
+	if got == nil {
+		t.Fatal("expected the deterministic floor when LLM returns unknown")
+	}
+	if strings.EqualFold(got.RiskLevel, "unknown") || got.RiskLevel == "" {
+		t.Errorf("RiskLevel = %q, want a real level from the floor", got.RiskLevel)
+	}
+}
+
+// TestAssessInlineExpansionRisk_AssessorNilFallsBackToFloor pins the
+// boot-time path where TaskRiskAssessor was never wired — common on
+// daemons where the LLM creds aren't configured yet. The floor must
+// still score the envelope so the prompt has a level.
+func TestAssessInlineExpansionRisk_AssessorNilFallsBackToFloor(t *testing.T) {
+	cfg := PostprocessConfig{}
+	merged := runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{{ToolName: "bash", Why: ""}},
+	}
+	httpReq := httptest.NewRequest("POST", "http://daemon/x", nil)
+	got := assessInlineExpansionRisk(httpReq, cfg, "p", merged, func(string, ...any) {})
+	if got == nil {
+		t.Fatal("expected the deterministic floor when assessor is unconfigured")
+	}
+	if got.RiskLevel == "" {
+		t.Errorf("RiskLevel must be non-empty when the floor produced an assessment")
 	}
 }
 

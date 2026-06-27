@@ -282,6 +282,131 @@ func TestNoopAssessor(t *testing.T) {
 	}
 }
 
+// TestMergeAssessments_HigherWins guards the "deterministic floor is
+// a floor, not a ceiling" invariant: when the secondary outranks the
+// primary, the secondary's level wins AND its Explanation surfaces
+// so the reviewer sees the binding reason.
+func TestMergeAssessments_HigherWins(t *testing.T) {
+	llm := &RiskAssessment{
+		RiskLevel:   "medium",
+		Explanation: "Reads a few files",
+	}
+	floor := &RiskAssessment{
+		RiskLevel:   "high",
+		Explanation: "Wildcard host detected",
+	}
+	got := MergeAssessments(llm, floor)
+	if got == nil {
+		t.Fatal("expected non-nil merge")
+	}
+	if got.RiskLevel != "high" {
+		t.Errorf("RiskLevel = %q, want high (floor outranks LLM)", got.RiskLevel)
+	}
+	if !contains(got.Explanation, "Wildcard") {
+		t.Errorf("Explanation should pick the dominant side, got %q", got.Explanation)
+	}
+}
+
+// TestMergeAssessments_NonCanonicalSecondaryStillSurfacesExplanation
+// pins the canonical-comparison contract: when secondary outranks
+// primary BUT secondary.RiskLevel arrived as a non-canonical "High"
+// or " critical ", its Explanation must still surface. The bug this
+// guards against — comparing the canonical HighestRiskLevel result
+// against the raw RiskLevel field — silently dropped the binding
+// reason for any non-canonical input.
+func TestMergeAssessments_NonCanonicalSecondaryStillSurfacesExplanation(t *testing.T) {
+	primary := &RiskAssessment{
+		RiskLevel:   "low",
+		Explanation: "Reads only",
+	}
+	secondary := &RiskAssessment{
+		RiskLevel:   " High ", // non-canonical: extra whitespace + capital H
+		Explanation: "Adds shell access",
+	}
+	got := MergeAssessments(primary, secondary)
+	if got == nil {
+		t.Fatal("expected non-nil merge")
+	}
+	if got.RiskLevel != "high" {
+		t.Errorf("RiskLevel = %q, want canonical high", got.RiskLevel)
+	}
+	if got.Explanation != "Adds shell access" {
+		t.Errorf("Explanation = %q, want secondary's reason since it outranked primary", got.Explanation)
+	}
+}
+
+// TestMergeAssessments_NilOperands pins the zero-operand paths:
+// nil + X collapses to X without panicking. Both expansion and
+// creation flows rely on this for the "floor only" and "LLM only"
+// branches.
+func TestMergeAssessments_NilOperands(t *testing.T) {
+	only := &RiskAssessment{RiskLevel: "medium"}
+	if got := MergeAssessments(nil, only); got != only {
+		t.Errorf("nil + X != X (got %v)", got)
+	}
+	if got := MergeAssessments(only, nil); got != only {
+		t.Errorf("X + nil != X (got %v)", got)
+	}
+	if got := MergeAssessments(nil, nil); got != nil {
+		t.Errorf("nil + nil != nil (got %v)", got)
+	}
+}
+
+// TestHighestRiskLevel_Ordering pins the level-comparison table.
+// Critical sits above high above medium above low; unknown and the
+// empty string rank below any named level so an unconfigured
+// assessor never wins against a real floor.
+func TestHighestRiskLevel_Ordering(t *testing.T) {
+	cases := []struct {
+		a, b, want string
+	}{
+		{"low", "medium", "medium"},
+		{"medium", "high", "high"},
+		{"high", "critical", "critical"},
+		{"critical", "low", "critical"},
+		{"unknown", "low", "low"},
+		{"", "medium", "medium"},
+		{"high", "", "high"},
+		{"unknown", "critical", "critical"},
+		{"high", "unknown", "high"},
+	}
+	for _, c := range cases {
+		if got := HighestRiskLevel(c.a, c.b); got != c.want {
+			t.Errorf("HighestRiskLevel(%q, %q) = %q, want %q", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestHighestRiskLevel_NormalizesCaseAndWhitespace pins both
+// normalization legs:
+//
+//  1. INPUT-side: an LLM verdict that arrives as "High" or
+//     " critical " must still rank above a deterministic "low" floor
+//     — without this, sloppy assessor casing would rank as unknown
+//     and silently lose.
+//
+//  2. OUTPUT-side: the return value is the canonical lowercase /
+//     trimmed form so downstream exact-string checks
+//     (RiskLevel == "high" auto-approval gating, badge rendering)
+//     don't underreport severity for a non-canonical input.
+func TestHighestRiskLevel_NormalizesCaseAndWhitespace(t *testing.T) {
+	if got := HighestRiskLevel("low", "High"); got != "high" {
+		t.Errorf("HighestRiskLevel(low, High) = %q, want canonical high", got)
+	}
+	if got := HighestRiskLevel("low", " critical "); got != "critical" {
+		t.Errorf("HighestRiskLevel(low, ' critical ') = %q, want canonical critical", got)
+	}
+	if got := HighestRiskLevel(" CRITICAL ", "low"); got != "critical" {
+		t.Errorf("HighestRiskLevel(' CRITICAL ', low) = %q, want canonical critical", got)
+	}
+	// Same-rank tie keeps `a` for symmetry with the original handlers
+	// behavior, but the returned form is still canonicalized so the
+	// caller can rely on equality checks against "high"/"critical".
+	if got := HighestRiskLevel("HIGH", "high"); got != "high" {
+		t.Errorf("HighestRiskLevel(HIGH, high) = %q, want canonical high", got)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

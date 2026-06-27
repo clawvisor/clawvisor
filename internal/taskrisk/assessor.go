@@ -223,6 +223,111 @@ func MarshalAssessment(a *RiskAssessment) json.RawMessage {
 	return b
 }
 
+// MergeAssessments returns the higher-of-two combination of two risk
+// assessments. The level is the higher rank (see HighestRiskLevel);
+// when the secondary's level outranks the primary's, the secondary's
+// Explanation surfaces so the reviewer sees the binding reason.
+// Factors and Conflicts always accumulate. Model and LatencyMS fall
+// back to the secondary when the primary is unset so a deterministic
+// floor doesn't leave the metadata empty.
+//
+// Canonical home for the "higher wins" merge rule both the task
+// creation flow (handlers) and the expansion flow (handlers +
+// llmproxy intercept) need. Lives in taskrisk because both callers
+// already import this package; keeping it here is what prevents
+// silent drift between the create-time and expand-time scoring.
+func MergeAssessments(primary, secondary *RiskAssessment) *RiskAssessment {
+	if primary == nil {
+		return secondary
+	}
+	if secondary == nil {
+		return primary
+	}
+	out := *primary
+	winner := HighestRiskLevel(primary.RiskLevel, secondary.RiskLevel)
+	out.RiskLevel = winner
+	out.Factors = append(append([]string{}, primary.Factors...), secondary.Factors...)
+	out.Conflicts = append(append([]ConflictDetail{}, primary.Conflicts...), secondary.Conflicts...)
+	// Surface the secondary's Explanation only when secondary outranks
+	// primary. Compare canonical forms on both sides: HighestRiskLevel
+	// returns the lowercased/trimmed winner, so a raw `secondary.RiskLevel`
+	// of "High" or " critical " would fail an exact-equality check even
+	// when secondary actually won — and the binding reason would
+	// silently drop.
+	if secondary.Explanation != "" && winner == strings.ToLower(strings.TrimSpace(secondary.RiskLevel)) {
+		out.Explanation = secondary.Explanation
+	}
+	if out.Model == "" {
+		out.Model = secondary.Model
+	}
+	if out.LatencyMS == 0 {
+		out.LatencyMS = secondary.LatencyMS
+	}
+	return &out
+}
+
+// HighestRiskLevel ranks two risk-level strings and returns the
+// higher one in CANONICAL form (lowercase, trimmed). Ordering:
+// "" < "unknown" < "low" < "medium" < "high" < "critical". The
+// empty / unknown sentinels rank below any named level so an
+// unconfigured assessor never wins against a real deterministic
+// floor.
+//
+// Two normalization decisions, both load-bearing:
+//
+//  1. INPUT is trimmed and lowercased before the rank lookup so a
+//     sloppy assessor output like " High " or "CRITICAL" still ranks
+//     correctly. Without this, a non-canonical LLM verdict would
+//     rank as unknown and silently lose to a lower deterministic
+//     floor — exactly the regression the merge rule exists to
+//     prevent.
+//
+//  2. OUTPUT is the normalized form, not the caller's original
+//     casing. Downstream code does exact-string comparisons against
+//     "high" / "critical" (auto-approval gating in handlers/tasks.go,
+//     badge rendering in tui/screens/helpers.go); returning the
+//     caller's "High" or " critical " would route past those
+//     comparisons and underreport severity. Both legs of the
+//     comparison get canonicalized for symmetry: an empty input
+//     stays empty, but every named level is returned lowercased and
+//     trimmed.
+func HighestRiskLevel(a, b string) string {
+	order := map[string]int{
+		"":         -1,
+		"unknown":  0,
+		"low":      1,
+		"medium":   2,
+		"high":     3,
+		"critical": 4,
+	}
+	normA := strings.ToLower(strings.TrimSpace(a))
+	normB := strings.ToLower(strings.TrimSpace(b))
+	if order[normB] > order[normA] {
+		return normB
+	}
+	return normA
+}
+
+// UnmarshalAssessment is the inverse of MarshalAssessment. Returns nil
+// on empty input or parse failure — callers treat both as "no cached
+// assessment" and fall back to a fresh deterministic-only read rather
+// than failing the approve. The expand cache stores nothing on legacy
+// rows or when the assessor was unconfigured at expand time, so an
+// empty input here is the expected steady state for that path.
+func UnmarshalAssessment(raw json.RawMessage) *RiskAssessment {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out RiskAssessment
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	if strings.TrimSpace(out.RiskLevel) == "" {
+		return nil
+	}
+	return &out
+}
+
 // parseRiskResponse parses the LLM response into a RiskAssessment.
 func parseRiskResponse(raw string) (*RiskAssessment, error) {
 	raw = strings.TrimSpace(raw)

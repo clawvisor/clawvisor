@@ -10,8 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
 func TestTasksHandlerStartBindsRuntimeSessionToTask(t *testing.T) {
@@ -164,10 +165,10 @@ func TestTasksHandlerEndClearsRuntimeSessionBindingWithoutCompletingTask(t *test
 }
 
 func TestHighestRiskLevelPrefersConcreteSeverityOverUnknown(t *testing.T) {
-	if got := highestRiskLevel("unknown", "critical"); got != "critical" {
-		t.Fatalf("highestRiskLevel(unknown, critical) = %q, want critical", got)
+	if got := taskrisk.HighestRiskLevel("unknown", "critical"); got != "critical" {
+		t.Fatalf("HighestRiskLevel(unknown, critical) = %q, want critical", got)
 	}
-	if got := highestRiskLevel("high", "unknown"); got != "high" {
-		t.Fatalf("highestRiskLevel(high, unknown) = %q, want high", got)
+	if got := taskrisk.HighestRiskLevel("high", "unknown"); got != "high" {
+		t.Fatalf("HighestRiskLevel(high, unknown) = %q, want high", got)
 	}
 }

@@ -122,12 +122,20 @@ type InlineExpansionCreator interface {
 	// active/expired), and stamps the canonical approval record's
 	// Surface as "inline_chat". Returns the parent task id on success
 	// so the caller can pin the cache hold to it.
+	//
+	// precomputedRisk, when non-nil, is the merged LLM+floor
+	// assessment the intercept computed over the MERGED envelope. The
+	// implementation persists it onto PendingTaskExpansion.RiskAssessment
+	// so a dashboard-side approve (race against the chat anchor) also
+	// reuses the LLM read instead of re-deriving deterministic-only.
+	// nil is allowed; the cached field stays empty.
 	CreatePendingInlineExpansion(
 		ctx context.Context,
 		agent *store.Agent,
 		taskID string,
 		additions *runtimetasks.Envelope,
 		reason string,
+		precomputedRisk *taskrisk.RiskAssessment,
 	) (string, error)
 	// ApproveInlineExpansion flips a pending_scope_expansion task to
 	// active via UpdateTaskEnvelopeFrom (atomic merge + risk
@@ -135,6 +143,14 @@ type InlineExpansionCreator interface {
 	// chat-surface guard; the chat IS the surface. Returns the same
 	// shape ApproveInlineTask does so the rewrite path can share the
 	// approved-augmentation renderer.
+	//
+	// Approve callers that have a precomputed risk assessment from
+	// the inline-expansion intercept should prefer
+	// ApproveInlineExpansionWithAssessment (optional capability,
+	// detected via type assertion) so the LLM read is reused on the
+	// user's button click instead of falling back to the cached
+	// PendingTaskExpansion value (which may be stale if the inline
+	// intercept saw a fresher envelope than the headless Expand did).
 	ApproveInlineExpansion(ctx context.Context, taskID, userID string) (*InlineApprovedExpansion, error)
 	// DenyInlineExpansion routes a chat-side deny through
 	// ResolveTaskPendingExpansion. Mirrors DenyInlineTask: the task
@@ -152,6 +168,25 @@ type InlineExpansionCreator interface {
 	// be preserved on revert so a transient cache failure can't kill
 	// a previously-healthy task. Idempotent on already-resolved rows.
 	ExpireInlineExpansion(ctx context.Context, taskID, userID string) error
+}
+
+// InlineExpansionApproverWithAssessment is an optional extension of
+// InlineExpansionCreator. Mirror of InlineTaskCreatorWithAssessment
+// for the expansion flow: callers that have a precomputed merged
+// LLM+floor risk assessment (from the inline expansion intercept's
+// assessInlineExpansionRisk) can type-assert to this interface and
+// pass the verdict through, so the approve path persists the same
+// risk level the user saw in the chat prompt without re-running the
+// assessor. Implementations that ignore the precomputed value may
+// simply call through to ApproveInlineExpansion — the precomputed
+// value is a hint, not a contract.
+type InlineExpansionApproverWithAssessment interface {
+	InlineExpansionCreator
+	ApproveInlineExpansionWithAssessment(
+		ctx context.Context,
+		taskID, userID string,
+		precomputed *taskrisk.RiskAssessment,
+	) (*InlineApprovedExpansion, error)
 }
 
 // InlineApprovedExpansion is the slice of the expanded task surfaced

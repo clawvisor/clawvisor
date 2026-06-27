@@ -137,6 +137,19 @@ type PendingLiteApproval struct {
 	// verbatim in the inline approval prompt and on dashboards.
 	ExpansionReason string
 
+	// ExpansionPrecomputedRisk is the merged LLM+envelope risk
+	// assessment computed at intercept time over the MERGED envelope
+	// (parent + additions). Mirror of PrecomputedRisk for the creation
+	// flow: the resolve path forwards this to
+	// ApproveInlineExpansionWithAssessment so the persisted
+	// task.RiskDetails matches what the user saw in the inline expand
+	// prompt — without it the approve path re-runs the deterministic
+	// floor alone and the persisted level would drift from what was
+	// shown. nil at stages other than StageAwaitingExpansionApproval,
+	// and may be nil at that stage when the assessor was unconfigured
+	// or returned unknown (the floor still drives the prompt).
+	ExpansionPrecomputedRisk *taskrisk.RiskAssessment
+
 	// ScopeDriftID names the drift in the ScopeDriftRegistry. Set ONLY
 	// on StageAwaitingScopeDriftOneOff holds; empty otherwise. The
 	// scope-drift reply rewriter uses this to call SetOutcome on
