@@ -354,8 +354,12 @@ func (r *RedisScopeDriftRegistry) RegisterPendingSubstitution(ctx context.Contex
 	if r == nil || r.rdb == nil {
 		return errors.New("scope drift registry not configured")
 	}
-	if key.AgentID == "" || key.ToolUseID == "" {
-		return errors.New("pending substitution requires agent_id and tool_use_id")
+	if key.AgentID == "" || key.ConversationID == "" || key.ToolUseID == "" {
+		// All three fields compose the storage key; an empty
+		// ConversationID would collapse distinct conversations onto
+		// the same key and let one conversation restore or delete
+		// another's pending substitution.
+		return errors.New("pending substitution requires agent_id, conversation_id, and tool_use_id")
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
