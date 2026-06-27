@@ -1,0 +1,27 @@
+web/src/hooks/useSetupProgress.ts
+  s_9f49afcf471aa6::t_4ea3e7d9f60664 19
+  s_9f49afcf471aa6::t_7128b70562609c 1-18,20-93,97-115,117-136
+  s_9f49afcf471aa6::t_d5f66b544ec4e6 94-96
+  s_9f49afcf471aa6::t_48f77557687f2d 116
+web/src/pages/Overview.tsx
+  s_9f49afcf471aa6::t_d877ceb2e45bc6 11
+  s_9f49afcf471aa6::t_8f47dac995844a 198-199
+web/src/components/SetupChecklist.tsx
+  s_9f49afcf471aa6::t_3c4504dbad0f44 1-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "719573581ec9c75c571d5c6a31bf4739dda37b27",
+  "prompts": {},
+  "sessions": {
+    "s_9f49afcf471aa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d96073c8-3eed-4ff9-bf1e-71697a8dbed3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

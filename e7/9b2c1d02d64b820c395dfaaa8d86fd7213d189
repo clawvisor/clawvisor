@@ -1,0 +1,19 @@
+internal/daemon/setup.go
+  s_e551df824f3b44::t_47f17a6f53bbf0 634-636
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e79b2c1d02d64b820c395dfaaa8d86fd7213d189",
+  "prompts": {},
+  "sessions": {
+    "s_e551df824f3b44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15603b3a-e70b-4c83-bf97-039a9a27e83b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+internal/runtime/llmproxy/thinking_retry.go
+  s_4c4a32022426f9::t_be97b048b1ebdc 17-31
+  s_4c4a32022426f9::t_8345e5ab2f7227 97-105,107,111,114-115
+internal/runtime/llmproxy/thinking_retry_test.go
+  s_4c4a32022426f9::t_e05f0d8c2f151b 202-206,217-221,226-234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "18c5886f97a887d7041cb11583baa3c746772d0c",
+  "prompts": {},
+  "sessions": {
+    "s_4c4a32022426f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "064ca6c4-1275-4b5f-ac62-2f39b7e5f939",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

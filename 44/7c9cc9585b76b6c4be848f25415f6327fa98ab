@@ -1,0 +1,56 @@
+internal/runtime/llmproxy/policies/control_notice.go
+  s_392c378a08ddad::t_bf5bc3e0cdf1ce 47-54,56-58,60-67,69-72
+  s_392c378a08ddad::t_65bf8b710d9f27 31-34
+  s_392c378a08ddad::t_58cf6929870ee6 98-103
+internal/api/handlers/llm_endpoint.go
+  s_392c378a08ddad::t_f0fc347df8a228 733-741,749
+  s_392c378a08ddad::t_84c072f9e5a5d8 2803-2854
+internal/e2e/lite/scenario_loader_test.go
+  s_392c378a08ddad::t_a0979ce609aaa5 33
+  s_392c378a08ddad::t_773d02a2c13e25 34
+internal/e2e/lite/library/credentialed_standing_task_reuse/scenario.yaml
+  s_392c378a08ddad::t_52385d3ab261a5 1-88
+internal/e2e/lite/lite_test.go
+  s_392c378a08ddad::t_6ef7fcfd9b07f2 51
+  s_392c378a08ddad::t_54c26926067c48 52
+internal/e2e/lite/library/existing_task_referenced_by_user/scenario.yaml
+  s_392c378a08ddad::t_59b11cd0b3dc2c 70-73
+internal/e2e/lite/library/existing_standing_task_reuse/scenario.yaml
+  s_392c378a08ddad::t_dcb76fe9fbc971 71-77
+internal/runtime/llmproxy/controltool/control.go
+  s_392c378a08ddad::t_42ea8640c4e19e 153-166
+  s_392c378a08ddad::t_f985d3cc8e0bdd 26,30,33-47
+  s_392c378a08ddad::t_24641908df8357 86-88
+  s_392c378a08ddad::t_995bae2731dbb8 403-409,413
+internal/e2e/lite/library/start_of_conversation_zero_tasks/scenario.yaml
+  s_392c378a08ddad::t_0acfa4320b242c 1-58
+internal/api/handlers/control.go
+  s_392c378a08ddad::t_320266b498c07b 259
+  s_392c378a08ddad::t_1756ddcc0e5cff 140-164
+  s_392c378a08ddad::t_6ecbcfcdf1c399 273
+  s_392c378a08ddad::t_6a4df077e45e5b 193-222
+internal/e2e/lite/harness.go
+  s_392c378a08ddad::t_21f2cc1e3095d8 161-162,165
+  s_392c378a08ddad::t_2a8820f6d10fa9 450-455,457,460,463,495,499,517-534,537
+internal/e2e/lite/scenario.go
+  s_392c378a08ddad::t_6312f2f18b17a5 63-77
+  s_392c378a08ddad::t_115bca965339bf 95-103
+internal/runtime/llmproxy/control.go
+  s_392c378a08ddad::t_857c2717254e73 35-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "447c9cc9585b76b6c4be848f25415f6327fa98ab",
+  "prompts": {},
+  "sessions": {
+    "s_392c378a08ddad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e042dbd7-88e2-4c8d-b7d9-a5f55befb2e5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

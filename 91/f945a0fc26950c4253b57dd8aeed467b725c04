@@ -1,0 +1,32 @@
+pkg/store/sqlite/migrations/052_connection_request_install_context.sql
+  s_5586d0270aa1bf::t_de747fa687cf66 1-7
+pkg/store/postgres/store.go
+  s_5586d0270aa1bf::t_8326032ec1e81a 2976-2983,2990,2992,2995,3005-3007,3013,3025,3027,3033-3037,3043-3068
+pkg/store/store.go
+  s_5586d0270aa1bf::t_504e1d5cc5d395 1040-1066
+internal/api/handlers/connections_test.go
+  s_5586d0270aa1bf::t_a5e8765ea4cbca 155-236
+internal/api/handlers/connections.go
+  s_5586d0270aa1bf::t_cac4d07ac4dc16 100-104
+  s_5586d0270aa1bf::t_e491d37f50966e 222-229
+pkg/store/sqlite/store.go
+  s_5586d0270aa1bf::t_df1aac81c413a9 3322-3328,3330,3336,3339,3342,3354-3356,3362,3373,3376,3384-3388,3394-3419
+pkg/store/postgres/migrations/052_connection_request_install_context.sql
+  s_5586d0270aa1bf::t_1b88e42deeadaa 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "91f945a0fc26950c4253b57dd8aeed467b725c04",
+  "prompts": {},
+  "sessions": {
+    "s_5586d0270aa1bf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7eb20790-6cf6-416b-878c-fa2cd86186f9",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

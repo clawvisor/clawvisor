@@ -1,0 +1,46 @@
+internal/e2e/lite/recorder.go
+  s_392c378a08ddad::t_4ef7db5d96e904 228
+internal/e2e/lite/library/existing_task_scope_mismatch_creates_new/scenario.yaml
+  s_392c378a08ddad::t_5b1fd9553500c6 83-90,103
+  s_392c378a08ddad::t_6a57aeee2f8843 49-53,55-58
+  s_392c378a08ddad::t_443902d5678bdb 1-48,54,59-82,91-102
+internal/e2e/lite/library/existing_standing_task_reuse/scenario.yaml
+  s_392c378a08ddad::t_93f92eff9453f8 1-95
+internal/e2e/lite/lite_test.go
+  s_392c378a08ddad::t_24fb2e10f24288 48-50
+internal/e2e/lite/harness.go
+  s_392c378a08ddad::t_4a4009d8b14bad 444-465,487-489,491-515
+  s_392c378a08ddad::t_7260f159395c8f 466-486,490
+  s_392c378a08ddad::t_9e9e2c4067f6d2 26
+  s_392c378a08ddad::t_3b0e8708014b59 17
+  s_392c378a08ddad::t_0f3dbd917fae79 261-270
+  s_392c378a08ddad::t_c7a46597da7f19 161-164
+internal/runtime/llmproxy/controltool/control.go
+  s_392c378a08ddad::t_1db20da529726e 72-73
+internal/api/handlers/control.go
+  s_392c378a08ddad::t_80075e501dce9a 227
+internal/e2e/lite/scenario.go
+  s_392c378a08ddad::t_3e6d5aa70a0dd3 58-86
+  s_392c378a08ddad::t_2a468641a34007 29-39
+  s_392c378a08ddad::t_6f387f19747e47 191-194
+internal/e2e/lite/library/existing_task_referenced_by_user/scenario.yaml
+  s_392c378a08ddad::t_9161be905fa093 1-90
+internal/e2e/lite/scenario_loader_test.go
+  s_392c378a08ddad::t_e94a77355ed0cf 30-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "77fb56d026b3d45a3ba83590ac5ecf2ee93df569",
+  "prompts": {},
+  "sessions": {
+    "s_392c378a08ddad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e042dbd7-88e2-4c8d-b7d9-a5f55befb2e5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+internal/api/task_v2_test.go
+  s_df222519e65208::t_1c6c5f475e3f32 207-212
+  s_df222519e65208::t_fe6a7eee3d1c40 281-285
+  s_df222519e65208::t_2c4a2b487b497e 166-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "cdf5a432908a32aab5ef88cb2de0fb4094cd3739",
+  "prompts": {},
+  "sessions": {
+    "s_df222519e65208": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bfc5d445-351d-4aba-ae1b-cf968b600912",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

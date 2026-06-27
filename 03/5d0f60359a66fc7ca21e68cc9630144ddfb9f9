@@ -1,0 +1,30 @@
+internal/runtime/conversation/anthropic_response.go
+  s_9d2636c1f87777::t_c1b27f8b82580e 1195-1200
+  s_9d2636c1f87777::t_e903724406c4f1 56-74,95-97
+  s_9d2636c1f87777::t_edbd691dc538f1 1437
+  s_9d2636c1f87777::t_25b87a6ae399a0 279-289,306-308
+  s_9d2636c1f87777::t_773c2d519bc9cc 1131
+internal/runtime/conversation/response.go
+  s_9d2636c1f87777::t_2163f069088e28 70-107
+  s_9d2636c1f87777::t_66684e575c00c0 135-146
+internal/runtime/conversation/response_test.go
+  s_9d2636c1f87777::t_e67c8e0467ff64 124-242
+internal/runtime/llmproxy/postprocess.go
+  s_9d2636c1f87777::t_f37ae8b3e56832 1812-1824
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "035d0f60359a66fc7ca21e68cc9630144ddfb9f9",
+  "prompts": {},
+  "sessions": {
+    "s_9d2636c1f87777": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "faef0cc8-ea1a-4b2c-a659-bbe6a39635b1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

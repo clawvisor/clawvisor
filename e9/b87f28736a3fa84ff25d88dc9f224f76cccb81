@@ -1,0 +1,126 @@
+internal/runtime/llmproxy/policies/phase6_stub_provider_test.go
+  s_522af339bc956c::t_f3102519a14c8c 6,130
+internal/runtime/conversation/stream/anthropic_roundtrip_test.go
+  s_522af339bc956c::t_e6c1116b5917e3 99-106
+  s_522af339bc956c::t_86620c50105016 119-153
+internal/runtime/conversation/stream/openai_chat_roundtrip_test.go
+  s_522af339bc956c::t_48bc00a28f4b3a 58-74
+internal/runtime/conversation/stream/anthropic_substitute.go
+  s_522af339bc956c::t_434a5dbd03b955 22-24
+  s_522af339bc956c::t_10709f84bc7273 11-12,21,25
+internal/runtime/llmproxy/policies/inspector_chain_integration_test.go
+  s_522af339bc956c::t_c067808bf808cc 34-35,38,59-66,91-92,95-99,101-102
+internal/runtime/llmproxy/policies/pending_approval_hold_policy.go
+  s_522af339bc956c::t_5d9411b4dba787 5,67-72
+internal/runtime/conversation/stream/openai_responses_decoder.go
+  s_522af339bc956c::t_37390311cf6866 35
+  s_522af339bc956c::t_d6dd67a11f820b 36,61,84
+internal/runtime/conversation/stream/openai_responses_roundtrip_test.go
+  s_522af339bc956c::t_cd0562aa94d839 74-91
+internal/runtime/llmproxy/pipeline/post_orchestrator.go
+  s_522af339bc956c::t_deb25d4ce816a9 40-41,46
+internal/runtime/conversation/stream/google_roundtrip_test.go
+  s_522af339bc956c::t_e88b71c578293f 65-81
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator_test.go
+  s_522af339bc956c::t_49e4c108326b8a 51-63,269-295
+internal/runtime/conversation/stream/sse.go
+  s_522af339bc956c::t_618af42b03103d 7-16
+  s_522af339bc956c::t_d2f3a188e3ade5 1-4,6,17-23
+  s_522af339bc956c::t_ae3fff6766f706 5
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator.go
+  s_522af339bc956c::t_a1773d2af38e01 101,109,111-115,127-129,131-133,135-141
+  s_522af339bc956c::t_fa5222bec49f9f 110,130,134,142
+  s_522af339bc956c::t_dfc07e3d7899b7 116-117,119-122,124-126
+  s_522af339bc956c::t_67d829252f43e6 118,123
+internal/runtime/llmproxy/policies/intent_verify_evaluator_test.go
+  s_522af339bc956c::t_81faaefe1d9897 24-25,34-35,68-69,78-79
+internal/runtime/llmproxy/policies/task_scope_evaluator_test.go
+  s_522af339bc956c::t_25caf4cc8d608d 26-27,41-42
+internal/api/handlers/llm_endpoint_stream_error_test.go
+  s_522af339bc956c::t_0f99d9cf1030a4 37
+  s_522af339bc956c::t_aa957eded0483b 1-36,38-39,55
+  s_522af339bc956c::t_2b766cd5b11221 40-54
+internal/runtime/llmproxy/finalizer_adapter.go
+  s_522af339bc956c::t_e6b03ea12d4428 5,76,79,81,87-98,243-246,249,252,259,268
+internal/api/handlers/llm_endpoint.go
+  s_522af339bc956c::t_f2a9285bd500a0 4661-4667
+  s_522af339bc956c::t_dc129e640d1a33 1196
+  s_522af339bc956c::t_8e0a0481b56b58 1199,1201
+  s_522af339bc956c::t_5e60ee571992ff 4638,4650
+  s_522af339bc956c::t_29f883171becc3 4651-4659
+  s_522af339bc956c::t_a8068dd5429993 4621-4637,4639-4649,4660,4668-4670
+  s_522af339bc956c::t_5d4d9f90e58fa7 2271-2285
+internal/runtime/conversation/stream/openai_chat_decoder.go
+  s_522af339bc956c::t_ff0e48552258c8 164-170
+  s_522af339bc956c::t_ae16252beef7a0 32
+  s_522af339bc956c::t_0e1480c2807b68 33,60,87
+internal/runtime/llmproxy/policies/phase6_e2e_test.go
+  s_522af339bc956c::t_a44fa63fc3b4d9 6,129
+internal/runtime/llmproxy/pipeline/response_mutator_impl.go
+  s_522af339bc956c::t_5e062bc841721b 21
+  s_522af339bc956c::t_68b4939a1677c0 86
+  s_522af339bc956c::t_ff0e48552258c8 33-34,39
+internal/runtime/llmproxy/pipeline/finalizer.go
+  s_522af339bc956c::t_857a095aea5473 330
+  s_522af339bc956c::t_20653d486d492c 213,322
+  s_522af339bc956c::t_f52e8f07adec9f 211,216-217,271,275,301
+  s_522af339bc956c::t_323808d5fb5414 5,132,315,317-320
+  s_522af339bc956c::t_c125cde22cb508 279-283
+  s_522af339bc956c::t_2f9a54909f5ad1 360-362
+internal/runtime/llmproxy/pipeline/response_mutator_impl_test.go
+  s_522af339bc956c::t_3f57feb1a22042 38,82,121,139,167
+  s_522af339bc956c::t_ce0ec161ca4767 5,99
+internal/runtime/conversation/stream/google_decoder.go
+  s_522af339bc956c::t_dd51cef3097370 34
+  s_522af339bc956c::t_adf73ab49c95f5 35,60,78-81
+  s_522af339bc956c::t_d9db3793b82e72 13-18
+internal/runtime/llmproxy/pipeline/post_orchestrator_test.go
+  s_522af339bc956c::t_0a9f1335f519ff 7,99,147
+  s_522af339bc956c::t_469800ff75b78e 172,194
+internal/runtime/llmproxy/policies/boundary_check_evaluator.go
+  s_522af339bc956c::t_baa29a57554ca1 5,96-100
+internal/runtime/llmproxy/pipeline/finalizer_test.go
+  s_522af339bc956c::t_295c209910fd08 198-199,205
+  s_522af339bc956c::t_0736af859d0904 201-204
+  s_522af339bc956c::t_86f73df1f1294e 174,180
+  s_522af339bc956c::t_d40295191f07e5 183,200
+  s_522af339bc956c::t_4f67b722ff586a 26,30-33,130-164,170-173,175-179,181-182
+  s_522af339bc956c::t_ee4fd300378f06 14-19,23-25,165-169,184-196
+internal/runtime/llmproxy/policies/inspector_chain_test.go
+  s_522af339bc956c::t_da233580b51c71 150,154-156,166-167
+internal/runtime/conversation/stream/anthropic_substitute_test.go
+  s_522af339bc956c::t_bbcfeaee94750d 5,30
+internal/runtime/conversation/stream/anthropic_decoder.go
+  s_522af339bc956c::t_6a1bf3a406310c 37
+  s_522af339bc956c::t_da7b3bce4c9bec 39-40,71,95
+  s_522af339bc956c::t_0ded0a5f91af47 56,59,69,84-85,88-89
+internal/runtime/conversation/stream/openai_chat_prepend.go
+  s_522af339bc956c::t_262a0e048881c5 64-65
+  s_522af339bc956c::t_ff0e48552258c8 66-67
+  s_522af339bc956c::t_1c6a1e66164094 68
+internal/runtime/llmproxy/policies/inspector_chain.go
+  s_522af339bc956c::t_76042ec1fb387c 151-152
+  s_522af339bc956c::t_90652f9693681b 94-97,99-104
+internal/runtime/llmproxy/policies/intent_verify_evaluator.go
+  s_522af339bc956c::t_136cc35015b8b1 20-21,56-57,59,72
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_522af339bc956c::t_0d31992535b392 21-22,132
+internal/runtime/llmproxy/policies/authorization_policy.go
+  s_522af339bc956c::t_fefef6064c49f2 109-111,113-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "e9b87f28736a3fa84ff25d88dc9f224f76cccb81",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

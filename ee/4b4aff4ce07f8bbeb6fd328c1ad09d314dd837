@@ -1,0 +1,22 @@
+internal/runtime/llmproxy/policies/boundary_check_evaluator.go
+  s_813cf813d8b1d0::t_f9e1c7e34d8b80 1-12,14-34,36-44,59,71-81,88-89,92-94,98-101
+  s_813cf813d8b1d0::t_559fa6dfbc5e79 84,87
+internal/runtime/llmproxy/policies/boundary_check_evaluator_test.go
+  s_813cf813d8b1d0::t_cd6eb28228aff1 1-28,31-51,54-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "ee4b4aff4ce07f8bbeb6fd328c1ad09d314dd837",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
