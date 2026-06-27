@@ -39,7 +39,7 @@ The fastest way to try Clawvisor is hosted: sign up at [clawvisor.com](https://c
 Prefer to run Clawvisor yourself? Install the daemon:
 
 ```bash
-curl -fsSL https://clawvisor.com/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/clawvisor/clawvisor/main/scripts/install.sh | sh
 ```
 
 > [!WARNING]
