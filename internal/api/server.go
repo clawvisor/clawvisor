@@ -112,6 +112,7 @@ type Server struct {
 	liteApprovals      llmproxy.PendingApprovalCache
 	liteOutcomes       llmproxy.InlineApprovalOutcomeStore
 	taskCheckouts      llmproxy.TaskCheckoutStore
+	scopeDrifts        llmproxy.ScopeDriftRegistry
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 
@@ -387,6 +388,17 @@ func WithLiteApprovalOutcomeStore(c llmproxy.InlineApprovalOutcomeStore) ServerO
 // state follows the agent across replicas.
 func WithTaskCheckoutStore(c llmproxy.TaskCheckoutStore) ServerOption {
 	return func(s *Server) { s.taskCheckouts = c }
+}
+
+// WithScopeDriftRegistry overrides the default in-memory lite-proxy scope-drift
+// registry, which also stores pending tool_result substitutions. Use a shared
+// implementation in multi-instance deployments so a drift minted (or a
+// substitution registered) on one replica is resolvable on another — without
+// this, an agent's reply that lands on a different replica cannot consume the
+// pre-clear and the inbound rewriter cannot restore the model's original
+// tool_use.
+func WithScopeDriftRegistry(r llmproxy.ScopeDriftRegistry) ServerOption {
+	return func(s *Server) { s.scopeDrifts = r }
 }
 
 // New creates a Server and registers all routes.
@@ -1376,6 +1388,11 @@ func (s *Server) registerLiteProxyRoutes(
 			llmHandler.TaskCheckouts = s.taskCheckouts
 		} else if s.logger != nil && strings.EqualFold(strings.TrimSpace(s.cfg.Server.RouteSet), "proxy_lite") {
 			s.logger.Warn("lite-proxy: TaskCheckoutStore not configured — task focus is process-local; use Redis for multi-instance proxy deployments")
+		}
+		if s.scopeDrifts != nil {
+			llmHandler.ScopeDrifts = s.scopeDrifts
+		} else if s.logger != nil && strings.EqualFold(strings.TrimSpace(s.cfg.Server.RouteSet), "proxy_lite") {
+			s.logger.Warn("lite-proxy: ScopeDriftRegistry not configured — drifts and pending substitutions are process-local; use Redis for multi-instance proxy deployments")
 		}
 		llmHandler.InlineTaskCreator = tasksHandler
 		llmHandler.TaskRiskAssessor = s.taskRiskAssessor

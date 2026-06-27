@@ -153,6 +153,7 @@ type ServerOptions struct {
 	LiteApprovalCache  llmproxy.PendingApprovalCache
 	LiteOutcomeStore   llmproxy.InlineApprovalOutcomeStore
 	TaskCheckoutStore  llmproxy.TaskCheckoutStore
+	ScopeDriftRegistry llmproxy.ScopeDriftRegistry
 	RedisClient        *redis.Client
 }
 

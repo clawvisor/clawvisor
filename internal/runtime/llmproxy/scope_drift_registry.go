@@ -421,8 +421,11 @@ func (r *memoryScopeDriftRegistry) RegisterPendingSubstitution(_ context.Context
 	if r == nil {
 		return errors.New("scope drift registry not configured")
 	}
-	if key.AgentID == "" || key.ToolUseID == "" {
-		return errors.New("pending substitution requires agent_id and tool_use_id")
+	if key.AgentID == "" || key.ConversationID == "" || key.ToolUseID == "" {
+		// All three fields compose the storage key; an empty
+		// ConversationID would collapse distinct conversations onto
+		// the same key.
+		return errors.New("pending substitution requires agent_id, conversation_id, and tool_use_id")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
