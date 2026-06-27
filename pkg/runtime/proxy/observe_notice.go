@@ -36,6 +36,48 @@ var observeNoticeInterval = 24 * time.Hour
 //     wording continue to scrub.
 var observeNoticePrefixRE = regexp.MustCompile(`^(?:` + "`" + `\[Clawvisor\] Observe mode: Clawvisor is logging but not blocking\.(?: Change this in Clawvisor: [^` + "`" + `]+)?` + "`" + `|\(\[Clawvisor system message\]: Clawvisor is currently running in observe mode\. Actions are being analyzed and logged, but not blocked\.(?: Change this in Clawvisor: [^)]+)?\)|\(Clawvisor is in observe mode\. Actions are being analyzed and logged, but not blocked\.\)|Clawvisor is in observe mode\. Actions are being analyzed and logged, but not blocked\.)(?:(?:\s*\n\s*\n|\s+)|$)`)
 
+// autoApprovedNoticePrefixRE matches the auto-approval banner emitted
+// by llmproxy.AutoApproveUserNotice. Two producer shapes, both
+// backtick-wrapped and known to contain no internal backticks (the
+// producer strips them defensively, and CR/LF are replaced with
+// spaces so the body is single-line):
+//
+//  1. `[Clawvisor] Task auto-approved: <purpose>`
+//  2. `[Clawvisor] Task auto-approved based on your recent request.`
+//     (empty-purpose fallback)
+//
+// Without this strip the banner accumulates one row per auto-approval
+// for the rest of the conversation, both costing context-window tokens
+// AND giving the model an ever-growing supply of `[Clawvisor] ...`
+// exemplars to pattern-complete from.
+var autoApprovedNoticePrefixRE = regexp.MustCompile(`^` + "`" + `\[Clawvisor\] Task auto-approved(?: based on your recent request\.|: [^` + "`" + `]*)` + "`" + `(?:(?:\s*\n\s*\n|\s+)|$)`)
+
+// agentRoutingNoticePrefixRE matches the first-turn routing notice
+// emitted by llmproxy.RenderAgentRoutingNotice. Producer shapes:
+//
+//  1. `[Clawvisor] Routing this conversation through <brand>.`
+//  2. `[Clawvisor] Routing this conversation through <brand> as agent "<name>".`
+//
+// Either form may be followed by a parseable
+// `[clawvisor:conversation=<id>]` footer (RenderConversationIDMarker).
+// The brand + name are both backtick-stripped by their sanitizers, so
+// matching everything up to the first `.` followed by a closing
+// backtick safely covers both shapes. Same accumulation concern as
+// the observe-mode and auto-approve notices.
+var agentRoutingNoticePrefixRE = regexp.MustCompile(`^` + "`" + `\[Clawvisor\] Routing this conversation through [^` + "`" + `]+?\.` + "`" + `(?: \[clawvisor:conversation=[^\]]+\])?(?:(?:\s*\n\s*\n|\s+)|$)`)
+
+// historicalNoticePrefixREs is the ordered set of regexes
+// scrubHistoricalResponseNoticeText tries on each iteration. Ordering
+// is by frequency (observe mode hits most conversations; routing fires
+// once per fresh harness session; auto-approve fires per auto-approval
+// task), but the loop's behavior is identical regardless because each
+// regex is mutually exclusive at the start-of-string anchor.
+var historicalNoticePrefixREs = []*regexp.Regexp{
+	observeNoticePrefixRE,
+	autoApprovedNoticePrefixRE,
+	agentRoutingNoticePrefixRE,
+}
+
 type responseNotice struct {
 	Kind string
 	Text string
@@ -266,8 +308,8 @@ func scrubHistoricalResponseNoticeText(text string) (string, bool) {
 	trimmedLeading := strings.TrimLeft(text, " \t\r\n")
 	changedAny := false
 	for {
-		loc := observeNoticePrefixRE.FindStringIndex(trimmedLeading)
-		if loc == nil || loc[0] != 0 {
+		loc := matchLeadingNoticePrefix(trimmedLeading)
+		if loc == nil {
 			break
 		}
 		changedAny = true
@@ -277,6 +319,21 @@ func scrubHistoricalResponseNoticeText(text string) (string, bool) {
 		return original, false
 	}
 	return trimmedLeading, true
+}
+
+// matchLeadingNoticePrefix returns the byte span of the first matching
+// Clawvisor-notice regex anchored at offset 0, or nil if none of the
+// known shapes lead the string. Because each regex carries `^` and a
+// fixed prefix, at most one ever matches at offset 0 — the order in
+// historicalNoticePrefixREs is for clarity, not correctness.
+func matchLeadingNoticePrefix(s string) []int {
+	for _, re := range historicalNoticePrefixREs {
+		loc := re.FindStringIndex(s)
+		if loc != nil && loc[0] == 0 {
+			return loc
+		}
+	}
+	return nil
 }
 
 func anyString(v any) string {

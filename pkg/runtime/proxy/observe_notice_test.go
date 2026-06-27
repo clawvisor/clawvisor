@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
@@ -370,3 +371,293 @@ func TestShouldEmitObserveNoticeSuppressesConcurrentPendingEmit(t *testing.T) {
 		t.Fatal("expected second pending emit attempt to be suppressed until first notice is marked")
 	}
 }
+
+// TestScrubHistoricalResponseNoticesFromAnthropicRequest_AutoApproveBanner
+// pins the auto-approve banner shape emitted by
+// llmproxy.AutoApproveUserNotice. Production accumulates one banner row
+// per auto-approval; without the strip, every subsequent /v1/messages
+// re-sends them all to the model.
+func TestScrubHistoricalResponseNoticesFromAnthropicRequest_AutoApproveBanner(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	bannerWithPurpose := llmproxy.AutoApproveUserNotice("triage Gmail inbox, label and reply to threads")
+	bannerWithSuffix := bannerWithPurpose + "\n\nOn it."
+	bannerFallback := llmproxy.AutoApproveUserNotice("")
+	userQuoted := "Can you explain what `[Clawvisor] Task auto-approved: ...` means?"
+
+	bodyMap := map[string]any{
+		"messages": []map[string]any{
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": bannerFallback},
+			}},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": bannerWithSuffix},
+			}},
+			{"role": "user", "content": []map[string]any{
+				{"type": "text", "text": userQuoted},
+			}},
+		},
+	}
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rewritten, changed := scrubHistoricalResponseNoticesFromRequest(req, body)
+	if !changed {
+		t.Fatal("expected auto-approve banner to be scrubbed")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rewritten, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	messages, _ := payload["messages"].([]any)
+	first, _ := messages[0].(map[string]any)
+	firstContent, _ := first["content"].([]any)
+	if len(firstContent) != 0 {
+		t.Fatalf("expected standalone auto-approve banner block to be removed, got %d blocks", len(firstContent))
+	}
+	second, _ := messages[1].(map[string]any)
+	secondContent, _ := second["content"].([]any)
+	block, _ := secondContent[0].(map[string]any)
+	if got, _ := block["text"].(string); got != "On it." {
+		t.Fatalf("expected auto-approve banner prefix to be removed, got %q", got)
+	}
+	third, _ := messages[2].(map[string]any)
+	thirdContent, _ := third["content"].([]any)
+	userBlock, _ := thirdContent[0].(map[string]any)
+	if got, _ := userBlock["text"].(string); got != userQuoted {
+		t.Fatalf("expected user-authored quoted text mentioning the banner to be preserved, got %q", got)
+	}
+}
+
+// TestScrubHistoricalResponseNoticesFromAnthropicRequest_RoutingNotice
+// pins the first-turn routing notice shape emitted by
+// llmproxy.RenderAgentRoutingNotice, including the optional trailing
+// [clawvisor:conversation=...] marker. Routing fires once per fresh
+// harness session but rides every subsequent turn's echoed history.
+func TestScrubHistoricalResponseNoticesFromAnthropicRequest_RoutingNotice(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	routingWithName := llmproxy.RenderAgentRoutingNotice("claude-code-7", "cv-conv-abc123", "Clawvisor Local")
+	routingWithSuffix := routingWithName + "\n\nWhat are you working on?"
+	routingBrandOnly := llmproxy.RenderAgentRoutingNotice("", "", "")
+
+	bodyMap := map[string]any{
+		"messages": []map[string]any{
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": routingBrandOnly},
+			}},
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": routingWithSuffix},
+			}},
+		},
+	}
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rewritten, changed := scrubHistoricalResponseNoticesFromRequest(req, body)
+	if !changed {
+		t.Fatal("expected routing notice to be scrubbed")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rewritten, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	messages, _ := payload["messages"].([]any)
+	first, _ := messages[0].(map[string]any)
+	firstContent, _ := first["content"].([]any)
+	if len(firstContent) != 0 {
+		t.Fatalf("expected standalone routing notice block to be removed, got %d blocks", len(firstContent))
+	}
+	second, _ := messages[1].(map[string]any)
+	secondContent, _ := second["content"].([]any)
+	block, _ := secondContent[0].(map[string]any)
+	if got, _ := block["text"].(string); got != "What are you working on?" {
+		t.Fatalf("expected routing notice + conversation marker prefix to be removed, got %q", got)
+	}
+}
+
+// TestScrubHistoricalResponseNoticesStripsConsecutiveMixedNotices
+// covers the case where a single assistant text block leads with
+// multiple Clawvisor notices stacked back-to-back — e.g., the routing
+// notice on turn 1 followed immediately by an auto-approve banner from
+// the same response. The loop in scrubHistoricalResponseNoticeText must
+// drain ALL of them, not just the first.
+func TestScrubHistoricalResponseNoticesStripsConsecutiveMixedNotices(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	routing := llmproxy.RenderAgentRoutingNotice("claude-code-7", "cv-conv-abc123", "Clawvisor")
+	observe := observeModeInjectedUserNotice("agent_123", "http://127.0.0.1:25297")
+	banner := llmproxy.AutoApproveUserNotice("fix the failing build")
+	stacked := routing + "\n\n" + observe + "\n\n" + banner + "\n\nReal model output follows."
+
+	bodyMap := map[string]any{
+		"messages": []map[string]any{
+			{"role": "assistant", "content": []map[string]any{
+				{"type": "text", "text": stacked},
+			}},
+		},
+	}
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rewritten, changed := scrubHistoricalResponseNoticesFromRequest(req, body)
+	if !changed {
+		t.Fatal("expected stacked notices to be scrubbed")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rewritten, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	messages, _ := payload["messages"].([]any)
+	first, _ := messages[0].(map[string]any)
+	content, _ := first["content"].([]any)
+	block, _ := content[0].(map[string]any)
+	if got, _ := block["text"].(string); got != "Real model output follows." {
+		t.Fatalf("expected all stacked notices to be drained, got %q", got)
+	}
+}
+
+// TestScrubHistoricalResponseNoticesFromOpenAIRequest_AutoApproveBanner
+// mirrors the Anthropic auto-approve test for the OpenAI Chat
+// Completions provider shape (assistant.content as string).
+func TestScrubHistoricalResponseNoticesFromOpenAIRequest_AutoApproveBanner(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	banner := llmproxy.AutoApproveUserNotice("send the weekly status email")
+
+	bodyMap := map[string]any{
+		"messages": []map[string]any{
+			{"role": "assistant", "content": banner + "\n\nDone."},
+			{"role": "assistant", "content": llmproxy.AutoApproveUserNotice("")},
+		},
+	}
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rewritten, changed := scrubHistoricalResponseNoticesFromRequest(req, body)
+	if !changed {
+		t.Fatal("expected openai chat auto-approve banners to be scrubbed")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rewritten, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	messages, _ := payload["messages"].([]any)
+	first, _ := messages[0].(map[string]any)
+	if got, _ := first["content"].(string); got != "Done." {
+		t.Fatalf("expected auto-approve banner prefix to be removed from string content, got %q", got)
+	}
+	second, _ := messages[1].(map[string]any)
+	if got, _ := second["content"].(string); got != "" {
+		t.Fatalf("expected banner-only content to scrub to empty string, got %q", got)
+	}
+}
+
+// TestScrubHistoricalResponseNoticesFromOpenAIResponsesRequest_RoutingNotice
+// covers the OpenAI Responses (`input` array, `output_text` blocks)
+// shape for the routing notice. The Responses scrubber walks `input`
+// items with role=assistant and treats text/input_text/output_text
+// block types as scrubbable.
+func TestScrubHistoricalResponseNoticesFromOpenAIResponsesRequest_RoutingNotice(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
+	routing := llmproxy.RenderAgentRoutingNotice("claude-code-7", "cv-conv-abc123", "Clawvisor Staging")
+	prefixed := routing + "\n\nKicking off."
+
+	bodyMap := map[string]any{
+		"input": []map[string]any{
+			{"type": "message", "role": "assistant", "content": []map[string]any{
+				{"type": "output_text", "text": prefixed},
+			}},
+		},
+	}
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rewritten, changed := scrubHistoricalResponseNoticesFromRequest(req, body)
+	if !changed {
+		t.Fatal("expected openai responses routing notice to be scrubbed")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rewritten, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	input, _ := payload["input"].([]any)
+	first, _ := input[0].(map[string]any)
+	content, _ := first["content"].([]any)
+	block, _ := content[0].(map[string]any)
+	if got, _ := block["text"].(string); got != "Kicking off." {
+		t.Fatalf("expected routing notice prefix to be removed from output_text block, got %q", got)
+	}
+}
+
+// TestScrubHistoricalResponseNoticeTextPreservesMidBlockBanner pins the
+// anchor invariant: a banner-shaped substring in the MIDDLE of an
+// assistant turn (e.g., the model quoting a banner back at the user)
+// must not be stripped — only true leading notices belong to the proxy.
+func TestScrubHistoricalResponseNoticeTextPreservesMidBlockBanner(t *testing.T) {
+	t.Parallel()
+
+	banner := llmproxy.AutoApproveUserNotice("explain the routing flow")
+	mixed := "I see a notice like " + banner + " — what does it mean?"
+	got, changed := scrubHistoricalResponseNoticeText(mixed)
+	if changed {
+		t.Fatalf("expected mid-block banner to be preserved, got change to %q", got)
+	}
+	if got != mixed {
+		t.Fatalf("unexpected scrubbed text %q", got)
+	}
+
+	routing := llmproxy.RenderAgentRoutingNotice("claude-code-7", "cv-conv-abc123", "Clawvisor")
+	mixedRouting := "Quoting back: " + routing
+	gotRouting, changedRouting := scrubHistoricalResponseNoticeText(mixedRouting)
+	if changedRouting {
+		t.Fatalf("expected mid-block routing notice to be preserved, got change to %q", gotRouting)
+	}
+	if gotRouting != mixedRouting {
+		t.Fatalf("unexpected scrubbed text %q", gotRouting)
+	}
+}
+
+// TestScrubHistoricalResponseNoticesAcceptsUnicodePurpose covers the
+// rune-truncation case in AutoApproveUserNotice: a purpose long enough
+// to hit the 200-rune cap gets a `…` appended. The regex's purpose
+// body `[^`+"`"+`]*` must accept the trailing `…` (a multi-byte UTF-8
+// rune) without breaking. Without this row, an emoji or accented
+// purpose that gets truncated could regress the regex match.
+func TestScrubHistoricalResponseNoticesAcceptsUnicodePurpose(t *testing.T) {
+	t.Parallel()
+
+	// Build a purpose long enough to trigger rune-cap truncation in
+	// AutoApproveUserNotice (>200 runes). Mixing ASCII + Unicode so the
+	// truncation lands on a non-trivial byte position.
+	long := strings.Repeat("作業 Task ", 60)
+	banner := llmproxy.AutoApproveUserNotice(long)
+	if !strings.HasSuffix(strings.TrimSuffix(banner, "`"), "…") {
+		t.Fatalf("test precondition failed: expected truncated banner to end with …, got %q", banner)
+	}
+
+	got, changed := scrubHistoricalResponseNoticeText(banner + "\n\nReady.")
+	if !changed {
+		t.Fatalf("expected truncated unicode banner to be scrubbed, got %q", got)
+	}
+	if got != "Ready." {
+		t.Fatalf("expected scrubbed remainder %q, got %q", "Ready.", got)
+	}
+}
+
