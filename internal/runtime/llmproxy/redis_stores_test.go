@@ -579,6 +579,43 @@ func TestRedisScopeDriftRegistry_PendingSubstitutionCrossInstanceRoundTrip(t *te
 	}
 }
 
+// A caller-supplied ExpiresAt that's longer than the registry's
+// default ttl must be honored. The memory impl stores ExpiresAt
+// verbatim and Get checks against it; the Redis impl had been
+// defaulting the key PEXPIRE to r.ttl, which evicted long-lived
+// drifts and surfaced premature ErrDriftNotFound.
+func TestRedisScopeDriftRegistry_RegisterHonorsCallerExpiresAt(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	// Registry default ttl is short; caller asks for much longer.
+	reg := NewRedisScopeDriftRegistry(rdb, 5*time.Second)
+	ctx := context.Background()
+
+	tmpl := sampleDrift("agent-exp", "conv-exp", "tu-exp")
+	tmpl.ExpiresAt = time.Now().UTC().Add(60 * time.Second)
+	stored, err := reg.Register(ctx, tmpl)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// 10 s past the registry default ttl, well before the caller's
+	// 60 s ExpiresAt. The drift must still be retrievable.
+	mr.FastForward(10 * time.Second)
+	got, err := reg.Get(ctx, stored.ID)
+	if err != nil {
+		t.Fatalf("Get with long ExpiresAt after 10s: want hit, got %v", err)
+	}
+	if got.ID != stored.ID {
+		t.Fatalf("Get returned wrong drift: %+v", got)
+	}
+}
+
 func TestRedisScopeDriftRegistry_TTLExpiry(t *testing.T) {
 	// Use a real miniredis so we can FastForward time deterministically.
 	mr, err := miniredis.Run()

@@ -172,6 +172,11 @@ func (r *RedisScopeDriftRegistry) Register(ctx context.Context, drift ScopeDrift
 	if err != nil {
 		return ScopeDrift{}, fmt.Errorf("marshal drift: %w", err)
 	}
+	// Honor a caller-supplied ExpiresAt — the memory impl stores it
+	// verbatim and Get checks against it. Defaulting unconditionally
+	// to r.ttl here would evict a 24h drift after 10 min and surface
+	// premature ErrDriftNotFound on the next instance.
+	expiry := drift.ExpiresAt.Sub(now)
 	key := redisScopeDriftKey(drift.ID)
 	pipe := r.rdb.TxPipeline()
 	pipe.HSet(ctx, key,
@@ -180,7 +185,7 @@ func (r *RedisScopeDriftRegistry) Register(ctx context.Context, drift ScopeDrift
 		redisScopeDriftFieldOutcome, string(drift.Outcome),
 		redisScopeDriftFieldNote, drift.AgentNote,
 	)
-	pipe.PExpire(ctx, key, r.ttl)
+	pipe.PExpire(ctx, key, expiry)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return ScopeDrift{}, err
 	}
