@@ -1,0 +1,27 @@
+web/src/pages/Library.tsx
+  s_9f49afcf471aa6::t_c45d20668e0e20 1-485
+web/src/hooks/useBodyScrollLock.ts
+  s_9f49afcf471aa6::t_db9824afae860a 1-37
+web/src/pages/Dashboard.tsx
+  s_9f49afcf471aa6::t_2f4ddceba01abc 36
+  s_9f49afcf471aa6::t_314a559e82e304 346
+  s_9f49afcf471aa6::t_84e73decb44063 18
+web/src/components/LibraryTaskDrawer.tsx
+  s_9f49afcf471aa6::t_aeab0f3dca2049 1-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "64d3b655a5240f850a6383dd365b3fdd6ff07165",
+  "prompts": {},
+  "sessions": {
+    "s_9f49afcf471aa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d96073c8-3eed-4ff9-bf1e-71697a8dbed3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

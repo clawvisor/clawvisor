@@ -1,0 +1,33 @@
+internal/runtime/llmproxy/inspector/parser_flags_test.go
+  s_5690062ed6cda8::t_211a008d036cf5 52,61-62,79-85,88-90,93-95,98-139
+  s_5690062ed6cda8::t_370968b9c16e71 97
+  s_5690062ed6cda8::t_085f3047e4fd04 86-87,91-92,96
+internal/runtime/llmproxy/inspector/inspector_test.go
+  s_5690062ed6cda8::t_8e498f9a7fcb3f 283,307,700
+  s_5690062ed6cda8::t_7e20511580afd3 184-189
+  s_5690062ed6cda8::t_daea7d344391f1 282,284-306,308-311
+internal/api/handlers/proxy_resolver_test.go
+  s_5690062ed6cda8::t_6eab20a2ef279a 330
+internal/runtime/llmproxy/inspector/parser.go
+  s_5690062ed6cda8::t_ed981174f29b9e 273-283,486-488,514-522,580
+  s_5690062ed6cda8::t_b1774dec7c139c 285,581-587
+internal/runtime/llmproxy/inspector/rewriter.go
+  s_5690062ed6cda8::t_85789a52558ce1 171
+  s_5690062ed6cda8::t_a0e7a682e349e8 269,289-290
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "a70886c830447252167ce9a94e5378f93b1b61e0",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+internal/api/server.go
+  s_48544d04b3a3f6::t_74f8e56071bfe7 113
+  s_48544d04b3a3f6::t_4e58c308d3b180 1318-1327
+  s_48544d04b3a3f6::t_daef465ba455b5 1378,1387,378
+  s_48544d04b3a3f6::t_824bd2d2685352 1379-1386
+  s_48544d04b3a3f6::t_b06bdfb46e5c5a 368-377
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1f8b484c003b86050c0e97e5f2188204a4d0c27e",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+pkg/store/postgres/store.go
+  s_a5f33eee989c6d::t_e41791397818b9 316-319
+pkg/store/sqlite/store_agent_threshold_test.go
+  s_a5f33eee989c6d::t_1cfeb015dc15a9 36-40,55-57
+internal/runtime/llmproxy/human_turns_test.go
+  s_a5f33eee989c6d::t_13c2bf8cd557fb 105-130
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_a5f33eee989c6d::t_7e4694f969c549 348-354
+  s_a5f33eee989c6d::t_9ad0184d84726c 361-365
+  s_a5f33eee989c6d::t_bc41308074336c 281-294
+internal/api/handlers/llm_endpoint.go
+  s_a5f33eee989c6d::t_1c3c9d6a57aa59 1100-1123
+  s_a5f33eee989c6d::t_da776a08e51db0 1222,1224-1225,1231-1250
+pkg/store/sqlite/store.go
+  s_a5f33eee989c6d::t_bfc354a604acb3 394-398
+pkg/store/store.go
+  s_a5f33eee989c6d::t_fb4099e416da1f 430-448
+internal/runtime/llmproxy/human_turns.go
+  s_a5f33eee989c6d::t_c5e1de72bf82e7 236-246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "784f19e9bd62fe1df41c73710c1fe751ce0bf6a3",
+  "prompts": {},
+  "sessions": {
+    "s_a5f33eee989c6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37aa2c5f-2455-40a0-84dc-0b1a4ce1fdcd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+internal/api/handlers/proxy_resolver.go
+  s_31296448371e28::t_e2696f0073a571 6,21,24,36-40,470,472,544-607
+internal/api/server.go
+  s_31296448371e28::t_03848537ab1404 1289
+internal/api/handlers/proxy_resolver_test.go
+  s_31296448371e28::t_f6601527d606a1 5,20,23,102-123,126,175-269
+  s_31296448371e28::t_0b3db8db91063c 124-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3abef846dc3c1e941e8f3b06c9ad6132106ccc43",
+  "prompts": {},
+  "sessions": {
+    "s_31296448371e28": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e83f6-ad91-7043-8023-21a198ba419e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

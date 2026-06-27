@@ -1,0 +1,22 @@
+internal/runtime/llmproxy/inspector_snapshot.go
+  s_df222519e65208::t_c1206d07ce7ebc 15-23
+  s_df222519e65208::t_ee38141ad7e490 44-52
+internal/runtime/eval/eval.go
+  s_df222519e65208::t_17e0cd8dffbf45 197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "cfe8990f76817005940ddf50e135cf5f7d2e1e83",
+  "prompts": {},
+  "sessions": {
+    "s_df222519e65208": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bfc5d445-351d-4aba-ae1b-cf968b600912",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

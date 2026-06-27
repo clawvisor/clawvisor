@@ -1,0 +1,24 @@
+internal/runtime/llmproxy/stop_holding_writer_test.go
+  s_48544d04b3a3f6::t_dec8a2c23c7032 138-185
+  s_48544d04b3a3f6::t_593bb9e39256a2 5,12-28
+internal/runtime/llmproxy/postprocess.go
+  s_48544d04b3a3f6::t_5915e58f741619 1810-1816,1824,1828-1836,1840-1843,1854-1864
+  s_48544d04b3a3f6::t_bc21f314bcdeb6 2324-2347
+  s_48544d04b3a3f6::t_0524931f296978 2210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "54808c19863ed915b9d45b06d54604a590de46cf",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

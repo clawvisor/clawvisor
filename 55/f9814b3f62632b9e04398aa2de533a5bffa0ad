@@ -1,0 +1,58 @@
+internal/runtime/llmproxy/postproc/postproc.go
+  s_bbe778adcf6f02::t_dddbaa48dbf55c 95-97
+  s_bbe778adcf6f02::t_24b5cd9ad4b0ed 70
+internal/runtime/llmproxy/postproc/session.go
+  s_bbe778adcf6f02::t_f722742e26fca8 180,185-186,193,196-197
+  s_bbe778adcf6f02::t_a9bb846f0d4e1c 102-177,181-184,187-192,194-195,198-202
+  s_bbe778adcf6f02::t_7bdc7f45beb933 19-26
+internal/runtime/llmproxy/policies/authorization_policy.go
+  s_bbe778adcf6f02::t_9539bfb27710ad 267
+  s_bbe778adcf6f02::t_dbeb31fbba0694 107-112
+internal/runtime/conversation/response.go
+  s_bbe778adcf6f02::t_c3fb0ef9214dfd 112-150
+  s_bbe778adcf6f02::t_6e04e97bfb9281 85-93
+internal/runtime/llmproxy/postproc/session_commit_test.go
+  s_bbe778adcf6f02::t_24621a916b4ddd 10
+  s_bbe778adcf6f02::t_d71291d40cd8e0 110
+  s_bbe778adcf6f02::t_ea2b92bf294cfd 197
+  s_bbe778adcf6f02::t_459ca3d30fb904 1-9,11-109,111-196,198-206
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_bbe778adcf6f02::t_2723a32e1d084f 1091-1093
+  s_bbe778adcf6f02::t_bb5fed9fe5ed50 645-651
+  s_bbe778adcf6f02::t_58eafc2ec2c689 780-786
+internal/runtime/llmproxy/postproc/stream.go
+  s_bbe778adcf6f02::t_734252667b7395 102
+  s_bbe778adcf6f02::t_8b8792cd58ccf5 128-133
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_bbe778adcf6f02::t_b05a729417a0ca 400-414
+  s_bbe778adcf6f02::t_3fac8ba9dcf70a 356-363
+internal/runtime/llmproxy/postproc/recoverable_deny.go
+  s_bbe778adcf6f02::t_4917cfc1f156cc 10-18,20-28,30,33,35-36,46,49,59-62,64
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_bbe778adcf6f02::t_d2f438e5fdf997 56-64
+  s_bbe778adcf6f02::t_fb74d61ae42d93 175
+internal/runtime/llmproxy/postproc/recoverable_deny_test.go
+  s_bbe778adcf6f02::t_9b2da810cfe1d7 98-100,110
+  s_bbe778adcf6f02::t_fa2b597c186d08 12-17,33,57-64,66-67,69-70,72-77
+internal/runtime/llmproxy/pipelineeval/scope_drift.go
+  s_bbe778adcf6f02::t_f5d2b0f34c3437 182-187
+  s_bbe778adcf6f02::t_18e8a2057f1994 142-147
+  s_bbe778adcf6f02::t_a0ab4f73334fdf 90-94,102
+  s_bbe778adcf6f02::t_782d484126f6f8 211-218,223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "55f9814b3f62632b9e04398aa2de533a5bffa0ad",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,59 @@
+pkg/store/postgres/store.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 278,296-297,304,318-320,328,331-332,3190,3196,3225-3226
+pkg/store/store_test.go
+  s_9a0aa4d466d78e::t_3a5e2e17a50b0f 1-88
+pkg/store/sqlite/store.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 296,322,327-328,339,363-364,374-375,396-398,406,409-410,3592,3617-3618
+pkg/store/postgres/migrations/051_agent_conversation_auto_approve_threshold.sql
+  s_9a0aa4d466d78e::t_3a5e2e17a50b0f 1-14
+pkg/store/sqlite/store_agent_threshold_test.go
+  s_9a0aa4d466d78e::t_3a5e2e17a50b0f 1-136
+internal/taskrisk/prompts.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 44-45,56-62,75-77,80,261-271,274-284
+internal/taskrisk/assessor.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 52-61,77-85,197-202,224-236,238-243
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 168-169,172,178-180,184-191,425-790
+internal/api/user_settings_test.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 147-293
+pkg/store/store.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 7-8,389-460,491-507
+internal/api/handlers/llm_endpoint.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 819-830,853-860,1479-1493,2727,2732-2739,2741-2746
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 13,133-209,241-290,324,331-341,343-348
+internal/api/handlers/agents.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 175-181,201-214,347
+internal/taskrisk/assessor_test.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 79-188
+web/src/pages/Agents.tsx
+  s_9a0aa4d466d78e::t_5a7b64204d83af 698-724
+internal/runtime/llmproxy/human_turns_test.go
+  s_9a0aa4d466d78e::t_3a5e2e17a50b0f 1-352
+web/src/api/client.ts
+  s_9a0aa4d466d78e::t_5a7b64204d83af 166-172,270-275
+internal/runtime/llmproxy/postprocess.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 49-56,67-87,207-239
+internal/runtime/llmproxy/human_turns.go
+  s_9a0aa4d466d78e::t_3a5e2e17a50b0f 1-255
+internal/runtime/llmproxy/audit.go
+  s_9a0aa4d466d78e::t_5a7b64204d83af 276-324
+pkg/store/sqlite/migrations/051_agent_conversation_auto_approve_threshold.sql
+  s_9a0aa4d466d78e::t_3a5e2e17a50b0f 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "438bf69898798a678333db48a26ea437e37c31ea",
+  "prompts": {},
+  "sessions": {
+    "s_9a0aa4d466d78e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c440bd80-3777-4757-aac1-06e9c87701cb",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

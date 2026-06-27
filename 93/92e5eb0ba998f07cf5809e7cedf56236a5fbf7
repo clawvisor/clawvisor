@@ -1,0 +1,64 @@
+internal/runtime/conversation/stream/google_decoder.go
+  s_522af339bc956c::t_aec0f9937a4ce9 56-58
+internal/runtime/conversation/stream/anthropic_decoder.go
+  s_522af339bc956c::t_eb2b3b39429806 158-160
+internal/runtime/eval/eval.go
+  s_522af339bc956c::t_aec0f9937a4ce9 190
+internal/runtime/llmproxy/policies/inline_task_intercept.go
+  s_522af339bc956c::t_2eb49d65edff79 85
+internal/api/handlers/llm_endpoint.go
+  s_522af339bc956c::t_64bdfd6b819293 377,539,619,720,805
+  s_522af339bc956c::t_c285951ed91bae 844-845,1199-1201
+internal/runtime/llmproxy/policies/compose_tool_use_chain.go
+  s_522af339bc956c::t_aec0f9937a4ce9 67-70,72-74
+internal/runtime/conversation/openai_response.go
+  s_522af339bc956c::t_10c381f1a4fbf5 1604-1610,1692,1841,1846,1864,1867
+  s_522af339bc956c::t_3a4ef4de99178d 1451,1453,1487,1498,1501,1504-1506,1525,1535-1537,1603,1611-1622,1668,1673,1691,1838-1840,1842-1845,1847,1863,1865-1866,1868,1891-1893
+internal/runtime/llmproxy/pipeline/orchestrator.go
+  s_522af339bc956c::t_edaac935695015 86-98
+internal/runtime/llmproxy/policies/nil_helpers.go
+  s_522af339bc956c::t_2eb49d65edff79 1-16
+internal/runtime/llmproxy/policies/task_approval_reply.go
+  s_522af339bc956c::t_2eb49d65edff79 60
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_522af339bc956c::t_aec0f9937a4ce9 7-10
+internal/runtime/conversation/stream/openai_chat_roundtrip_test.go
+  s_522af339bc956c::t_17a6ac314756a6 32
+internal/runtime/jsonpatch/jsonpatch.go
+  s_522af339bc956c::t_aec0f9937a4ce9 32-34
+internal/runtime/llmproxy/policies/authorization_policy.go
+  s_522af339bc956c::t_721297d263810a 192,205,212
+internal/runtime/conversation/stream/openai_responses_prepend.go
+  s_522af339bc956c::t_97f11b4486fff8 229-230,233-234,237,263-304
+internal/runtime/llmproxy/pipeline/finalizer.go
+  s_522af339bc956c::t_1ea5d74d6a9ff3 277,280-284
+internal/runtime/conversation/stream/openai_chat_decoder.go
+  s_522af339bc956c::t_2af6ee8574bd9b 116,152,157-165
+internal/runtime/llmproxy/postproc/coalesce_test.go
+  s_522af339bc956c::t_0ac65f1c9b8d97 346-347,349
+  s_522af339bc956c::t_f21636a397bbdd 304-305,307,338
+  s_522af339bc956c::t_0f03a162b050cc 447-449
+  s_522af339bc956c::t_17a6ac314756a6 498-499,501-506
+  s_522af339bc956c::t_e470ccc5b04fac 296,433-434,436-437,439,471
+  s_522af339bc956c::t_48e8d582582928 422
+internal/runtime/conversation/stream/openai_responses_decoder.go
+  s_522af339bc956c::t_eb2b3b39429806 138-140
+internal/runtime/llmproxy/intentverify/intentverify.go
+  s_522af339bc956c::t_19b3974b8f5bc9 111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "9392e5eb0ba998f07cf5809e7cedf56236a5fbf7",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

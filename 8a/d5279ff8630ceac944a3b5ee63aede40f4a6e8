@@ -1,0 +1,22 @@
+internal/api/handlers/tasks_inline_test.go
+  s_df222519e65208::t_c3f3117ff095b1 137-141,143,149,152-153,173,176
+  s_df222519e65208::t_854906cca89de1 121-136,142,144-148,150-151,154-172,174-175,177-227
+internal/api/handlers/tasks.go
+  s_df222519e65208::t_3c281321355961 303-319
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "8ad5279ff8630ceac944a3b5ee63aede40f4a6e8",
+  "prompts": {},
+  "sessions": {
+    "s_df222519e65208": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bfc5d445-351d-4aba-ae1b-cf968b600912",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
