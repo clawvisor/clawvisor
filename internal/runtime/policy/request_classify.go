@@ -55,6 +55,17 @@ func ClassifyGatewayRequestPreferred(tasks []*store.Task, agentID, serviceType, 
 	}
 
 	if preferredTaskID != "" {
+		// Strict mode: every code path here MUST either match the
+		// preferred task or return NeedsNewTask. Falling through to
+		// the candidate-pool match below would let a sibling task
+		// silently authorize the call — the exact cross-conversation
+		// leak this isolation fix exists to prevent. That includes the
+		// stale-checkout case (preferred id supplied but no active task
+		// with that id), which used to fall through under the
+		// rationale "it's just a dangling pointer." Cubic flagged that
+		// rationale as a leak window: a checked-out task that expired
+		// mid-conversation should not implicitly switch the
+		// authorization target.
 		for _, task := range candidates {
 			if task.ID != preferredTaskID {
 				continue
@@ -65,22 +76,15 @@ func ClassifyGatewayRequestPreferred(tasks []*store.Task, agentID, serviceType, 
 					MatchedTask: task,
 				}
 			}
-			// Preferred task is active for this agent but doesn't
-			// cover the action. Surface the full candidate set so the
-			// caller can render a "switch task" menu, but DO NOT silently
-			// match a different task.
-			if len(candidates) > 0 {
-				return GatewayRequestClassification{
-					Kind:           ClassificationNeedsNewTask,
-					CandidateTasks: candidates,
-				}
-			}
-			return GatewayRequestClassification{Kind: ClassificationOneOff}
+			break
 		}
-		// Preferred task id was supplied but no active task with that id
-		// exists for this agent (stale checkout, expired task, etc.).
-		// Fall through to the normal candidate-pool path: this isn't a
-		// scope leak — the preferred id is simply not a valid pointer.
+		if len(candidates) > 0 {
+			return GatewayRequestClassification{
+				Kind:           ClassificationNeedsNewTask,
+				CandidateTasks: candidates,
+			}
+		}
+		return GatewayRequestClassification{Kind: ClassificationOneOff}
 	}
 
 	inScope := make([]*store.Task, 0, len(candidates))

@@ -75,17 +75,23 @@ func TestClassifyGatewayRequestPreferredIsStrict(t *testing.T) {
 		}
 	})
 
-	t.Run("stale preferred id (no active task with that id) -> normal full-pool path", func(t *testing.T) {
+	t.Run("stale preferred id (no active task with that id) -> needs_new_task, NOT silent sibling match", func(t *testing.T) {
 		// Preferred id doesn't point at any active task — e.g. the
-		// task expired but the checkout pointer is stale. This is not
-		// a leak; fall through to the standard candidate-pool match.
+		// checked-out task expired mid-conversation. The pre-fix
+		// behavior here was to fall through to the full-pool match,
+		// which would silently authorize the call against an unrelated
+		// sibling task and is exactly the cross-conversation leak the
+		// per-conversation isolation invariant exists to prevent.
+		// Strict mode: return NeedsNewTask so the agent must explicitly
+		// re-checkout (or have the proxy mint a fresh task) rather
+		// than implicitly switching authorization target.
 		oneSibling := []*store.Task{sibling1}
 		got := ClassifyGatewayRequestPreferred(oneSibling, "agent-1", "gmail", "", "fetch_messages", "task-vanished")
-		if got.Kind != ClassificationBelongsToExistingTask {
-			t.Fatalf("kind=%q, want %q (stale preferred should fall through)", got.Kind, ClassificationBelongsToExistingTask)
+		if got.Kind != ClassificationNeedsNewTask {
+			t.Fatalf("kind=%q, want %q (stale preferred must not silently match a sibling)", got.Kind, ClassificationNeedsNewTask)
 		}
-		if got.MatchedTask == nil || got.MatchedTask.ID != "task-sibling-1" {
-			t.Fatalf("matched task=%+v, want task-sibling-1", got.MatchedTask)
+		if got.MatchedTask != nil {
+			t.Fatalf("matched task should be nil under stale-preferred strict mode, got %+v", got.MatchedTask)
 		}
 	})
 }
