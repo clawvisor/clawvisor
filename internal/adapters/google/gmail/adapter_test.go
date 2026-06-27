@@ -908,6 +908,59 @@ func TestListMessages_BatchEmptyResult(t *testing.T) {
 	}
 }
 
+// TestListMessages_BatchMissingPart simulates Gmail returning fewer
+// sub-responses than we asked for: only msg-1 echoes back; msg-2 is silently
+// dropped from the multipart body. The dropped slot must surface as an
+// error rather than degrade to an empty msgListItem with no headers.
+func TestListMessages_BatchMissingPart(t *testing.T) {
+	ids := []string{"msg-1", "msg-2"}
+	// Custom transport: respond to /messages normally; respond to
+	// /batch/gmail/v1 with a multipart that only contains the first part.
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/messages") {
+			body := fmt.Sprintf(`{"messages":[%s],"resultSizeEstimate":%d}`,
+				`{"id":"msg-1"},{"id":"msg-2"}`, len(ids))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}
+		if req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/batch/gmail/v1") {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("nf"))}, nil
+		}
+		var resp bytes.Buffer
+		mw := multipart.NewWriter(&resp)
+		// Only echo back the FIRST sub-response — drop the second entirely.
+		hdr := textproto.MIMEHeader{}
+		hdr.Set("Content-Type", "application/http")
+		hdr.Set("Content-ID", "<response-item-0>")
+		w, _ := mw.CreatePart(hdr)
+		subBody := `{"snippet":"Snippet for msg-1","labelIds":["INBOX"],"payload":{"headers":[{"name":"From","value":"a@b.com"},{"name":"Subject","value":"S"},{"name":"Date","value":"D"}]}}`
+		fmt.Fprintf(w, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(subBody), subBody)
+		mw.Close()
+		header := make(http.Header)
+		header.Set("Content-Type", "multipart/mixed; boundary="+mw.Boundary())
+		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(&resp)}, nil
+	})
+	adapter := &GmailAdapter{}
+
+	res, err := adapter.listMessages(context.Background(), &http.Client{Transport: transport}, map[string]any{
+		"max_results": len(ids),
+	})
+	if err != nil {
+		t.Fatalf("listMessages error: %v", err)
+	}
+	items := extractMessageItems(t, res)
+
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1 (msg-2's missing response slot must not emit a ghost item)", len(items))
+	}
+	if items[0].ID != "msg-1" {
+		t.Errorf("items[0].ID = %q, want msg-1", items[0].ID)
+	}
+}
+
 // TestListMessages_BatchAllFailed mirrors the AllMetadataFetchesFailed
 // semantic for the batch path: when every sub-response is an error, the
 // caller sees a wrapped error rather than an empty success.

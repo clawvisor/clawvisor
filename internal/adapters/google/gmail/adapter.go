@@ -1035,6 +1035,15 @@ func fetchMessageMetasBatchOne(ctx context.Context, client *http.Client, ids []s
 		return metas, errs
 	}
 
+	// Pre-fill errs so any id whose response is missing or has an
+	// unparseable Content-ID surfaces as an explicit error rather than
+	// silently degrading to a zero-valued msgMeta that listMessages would
+	// then emit as an empty/incorrect message. Successful sub-responses
+	// clear their slot below.
+	for i := range errs {
+		errs[i] = fmt.Errorf("gmail batch: no sub-response received for id %q", ids[i])
+	}
+
 	mr := multipart.NewReader(bytes.NewReader(respBody), boundary)
 	for {
 		part, err := mr.NextPart()
@@ -1061,6 +1070,7 @@ func fetchMessageMetasBatchOne(ctx context.Context, client *http.Client, ids []s
 			continue
 		}
 		metas[idx] = meta
+		errs[idx] = nil
 	}
 	return metas, errs
 }
