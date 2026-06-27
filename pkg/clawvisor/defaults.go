@@ -461,6 +461,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	var liteApprovalCache llmproxy.PendingApprovalCache
 	var liteOutcomeStore llmproxy.InlineApprovalOutcomeStore
 	var taskCheckoutStore llmproxy.TaskCheckoutStore
+	var scopeDriftRegistry llmproxy.ScopeDriftRegistry
 	var extractionTracker handlers.ExtractionTracker
 	var rdb *redis.Client
 	if cfg.Redis.URL != "" {
@@ -504,6 +505,10 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		liteApprovalCache = llmproxy.NewRedisPendingApprovalCache(client, 10*time.Minute)
 		liteOutcomeStore = llmproxy.NewRedisInlineApprovalOutcomeStore(client, 24*time.Hour)
 		taskCheckoutStore = llmproxy.NewRedisTaskCheckoutStore(client, 24*time.Hour)
+		// Scope-drift records (drifts, pre-clears) live 10 min by
+		// default; pending tool_result substitutions ignore this ttl
+		// and use the package's 24h substitutionTTL.
+		scopeDriftRegistry = llmproxy.NewRedisScopeDriftRegistry(client, 10*time.Minute)
 
 		// Safety TTL exceeds the 30s extraction timeout + 10s save timeout
 		// so a crashed instance doesn't orphan entries.
@@ -557,6 +562,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		LiteApprovalCache:  liteApprovalCache,
 		LiteOutcomeStore:   liteOutcomeStore,
 		TaskCheckoutStore:  taskCheckoutStore,
+		ScopeDriftRegistry: scopeDriftRegistry,
 		RedisClient:        rdb,
 	}
 

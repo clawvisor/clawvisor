@@ -389,6 +389,218 @@ func TestRedisPendingApprovalCacheHoldKeyTTLHonorsPerHoldExpiresAt(t *testing.T)
 	}
 }
 
+func sampleDrift(agentID, convID, toolUseID string) ScopeDrift {
+	return ScopeDrift{
+		UserID:         "user-1",
+		AgentID:        agentID,
+		ConversationID: convID,
+		Provider:       conversation.ProviderAnthropic,
+		ToolUse: conversation.ToolUse{
+			ID:    toolUseID,
+			Name:  "Bash",
+			Input: []byte(`{"command":"ls"}`),
+		},
+		Service:    "svc",
+		Action:     "act",
+		Host:       "h",
+		Method:     "POST",
+		Path:       "/p",
+		Source:     ScopeDriftSourceTaskScope,
+		ReasonText: "no covering task",
+	}
+}
+
+func TestRedisScopeDriftRegistry_CrossInstanceRegisterGet(t *testing.T) {
+	rdb := testRedisClient(t)
+	minting := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	resolver := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	ctx := context.Background()
+
+	stored, err := minting.Register(ctx, sampleDrift("agent-1", "conv-1", "tu-1"))
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if stored.ID == "" {
+		t.Fatal("Register: empty ID")
+	}
+
+	got, err := resolver.Get(ctx, stored.ID)
+	if err != nil {
+		t.Fatalf("Get on resolver: %v", err)
+	}
+	if got.AgentID != "agent-1" || got.Service != "svc" || got.Provider != conversation.ProviderAnthropic {
+		t.Fatalf("Get returned wrong record: %+v", got)
+	}
+	if string(got.ToolUse.Input) != `{"command":"ls"}` {
+		t.Fatalf("ToolUse.Input not preserved: %q", string(got.ToolUse.Input))
+	}
+	if got.Fingerprint() != stored.Fingerprint() {
+		t.Fatalf("Fingerprint mismatch across instances: %q vs %q", got.Fingerprint(), stored.Fingerprint())
+	}
+}
+
+func TestRedisScopeDriftRegistry_ClaimOptionIsOneShot(t *testing.T) {
+	rdb := testRedisClient(t)
+	a := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	b := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	ctx := context.Background()
+
+	stored, err := a.Register(ctx, sampleDrift("agent-claim", "conv-claim", "tu-claim"))
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	claimed, err := a.ClaimOption(ctx, stored.ID, ScopeDriftOptionOneOff, "note-a")
+	if err != nil {
+		t.Fatalf("ClaimOption on a: %v", err)
+	}
+	if claimed.ChosenOption != ScopeDriftOptionOneOff || claimed.Outcome != ScopeDriftOutcomePending || claimed.AgentNote != "note-a" {
+		t.Fatalf("ClaimOption result: %+v", claimed)
+	}
+	// Second claim on a different instance must surface ErrDriftAlreadyResolved.
+	if _, err := b.ClaimOption(ctx, stored.ID, ScopeDriftOptionExpand, "note-b"); !errors.Is(err, ErrDriftAlreadyResolved) {
+		t.Fatalf("second ClaimOption: want ErrDriftAlreadyResolved, got %v", err)
+	}
+}
+
+func TestRedisScopeDriftRegistry_SetOutcomeSucceededMintsPreClearAcrossInstances(t *testing.T) {
+	rdb := testRedisClient(t)
+	a := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	b := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	ctx := context.Background()
+
+	stored, err := a.Register(ctx, sampleDrift("agent-set", "conv-set", "tu-set"))
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if _, err := a.ClaimOption(ctx, stored.ID, ScopeDriftOptionExpand, ""); err != nil {
+		t.Fatalf("ClaimOption: %v", err)
+	}
+	if err := a.SetOutcome(ctx, stored.ID, ScopeDriftOutcomeSucceeded); err != nil {
+		t.Fatalf("SetOutcome on a: %v", err)
+	}
+	driftID, ok := b.LookupPreClear(ctx, "agent-set", stored.Fingerprint())
+	if !ok || driftID != stored.ID {
+		t.Fatalf("LookupPreClear on b: ok=%v id=%q want id=%q", ok, driftID, stored.ID)
+	}
+}
+
+func TestRedisScopeDriftRegistry_RollbackClaimDeletesPreClearAcrossInstances(t *testing.T) {
+	rdb := testRedisClient(t)
+	a := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	b := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	ctx := context.Background()
+
+	stored, err := a.Register(ctx, sampleDrift("agent-rb", "conv-rb", "tu-rb"))
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if _, err := a.ClaimOption(ctx, stored.ID, ScopeDriftOptionNewTask, ""); err != nil {
+		t.Fatalf("ClaimOption: %v", err)
+	}
+	if err := a.SetOutcome(ctx, stored.ID, ScopeDriftOutcomeSucceeded); err != nil {
+		t.Fatalf("SetOutcome: %v", err)
+	}
+	// Downstream failure on a triggers a rollback. b must NOT see a
+	// surviving pre-clear afterward — the lockstep invariant.
+	if err := a.RollbackClaim(ctx, stored.ID); err != nil {
+		t.Fatalf("RollbackClaim: %v", err)
+	}
+	if _, ok := b.LookupPreClear(ctx, "agent-rb", stored.Fingerprint()); ok {
+		t.Fatal("LookupPreClear on b after RollbackClaim: want miss, got hit (stale pre-clear leaked past rollback)")
+	}
+	got, err := b.Get(ctx, stored.ID)
+	if err != nil {
+		t.Fatalf("Get on b after rollback: %v", err)
+	}
+	if got.ChosenOption != "" || got.Outcome != "" || got.AgentNote != "" {
+		t.Fatalf("RollbackClaim left claim fields populated: %+v", got)
+	}
+}
+
+func TestRedisScopeDriftRegistry_LookupPreClearConsumesOnce(t *testing.T) {
+	rdb := testRedisClient(t)
+	a := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	b := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	ctx := context.Background()
+
+	stored, err := a.Register(ctx, sampleDrift("agent-cons", "conv-cons", "tu-cons"))
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if _, err := a.ClaimOption(ctx, stored.ID, ScopeDriftOptionOneOff, ""); err != nil {
+		t.Fatalf("ClaimOption: %v", err)
+	}
+	if err := a.SetOutcome(ctx, stored.ID, ScopeDriftOutcomeSucceeded); err != nil {
+		t.Fatalf("SetOutcome: %v", err)
+	}
+	if _, ok := b.LookupPreClear(ctx, "agent-cons", stored.Fingerprint()); !ok {
+		t.Fatal("first LookupPreClear on b: want hit, got miss")
+	}
+	if _, ok := a.LookupPreClear(ctx, "agent-cons", stored.Fingerprint()); ok {
+		t.Fatal("second LookupPreClear on a: want miss (consumed), got hit")
+	}
+}
+
+func TestRedisScopeDriftRegistry_PendingSubstitutionCrossInstanceRoundTrip(t *testing.T) {
+	rdb := testRedisClient(t)
+	a := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	b := NewRedisScopeDriftRegistry(rdb, time.Minute)
+	ctx := context.Background()
+
+	key := PendingSubstitutionKey{AgentID: "agent-sub", ConversationID: "conv-sub", ToolUseID: "tu-sub"}
+	value := PendingSubstitution{
+		DriftID:           "drift-sub",
+		MenuText:          "<scope_drift_notice>blocked: foo</scope_drift_notice>",
+		OriginalToolName:  "Bash",
+		OriginalToolInput: []byte(`{"command":"curl evil"}`),
+	}
+	if err := a.RegisterPendingSubstitution(ctx, key, value); err != nil {
+		t.Fatalf("Register on a: %v", err)
+	}
+	// Lookup on b must see the same substitution byte-for-byte.
+	got, ok := b.LookupPendingSubstitution(ctx, key)
+	if !ok {
+		t.Fatal("Lookup on b: want hit, got miss")
+	}
+	if got.DriftID != value.DriftID || got.MenuText != value.MenuText || got.OriginalToolName != value.OriginalToolName {
+		t.Fatalf("Lookup on b returned wrong substitution: %+v", got)
+	}
+	if string(got.OriginalToolInput) != string(value.OriginalToolInput) {
+		t.Fatalf("OriginalToolInput corrupted: got %q, want %q", got.OriginalToolInput, value.OriginalToolInput)
+	}
+	// Lookup must NOT consume — repeat reads on a must still see it.
+	if _, ok := a.LookupPendingSubstitution(ctx, key); !ok {
+		t.Fatal("second Lookup on a: want hit (Lookup is not consuming), got miss")
+	}
+	// Delete on a is observable from b.
+	a.DeletePendingSubstitution(ctx, key)
+	if _, ok := b.LookupPendingSubstitution(ctx, key); ok {
+		t.Fatal("Lookup on b after Delete on a: want miss, got hit")
+	}
+}
+
+func TestRedisScopeDriftRegistry_TTLExpiry(t *testing.T) {
+	// Use a real miniredis so we can FastForward time deterministically.
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	reg := NewRedisScopeDriftRegistry(rdb, 30*time.Second)
+	ctx := context.Background()
+	stored, err := reg.Register(ctx, sampleDrift("agent-ttl", "conv-ttl", "tu-ttl"))
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	mr.FastForward(31 * time.Second)
+	if _, err := reg.Get(ctx, stored.ID); !errors.Is(err, ErrDriftNotFound) {
+		t.Fatalf("Get after TTL: want ErrDriftNotFound, got %v", err)
+	}
+}
+
 func TestRedisInlineApprovalOutcomeStoreRecordAndLookup(t *testing.T) {
 	store := NewRedisInlineApprovalOutcomeStore(testRedisClient(t), time.Minute)
 	key := InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-1"}
