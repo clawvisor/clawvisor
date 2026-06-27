@@ -117,10 +117,11 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 		// investigable row.
 		for _, tu := range toolUses {
 			emit(conversation.AuditEvent{
-				ToolUse:     tu,
-				Decision:    conversation.DecisionBlock,
-				OutcomeName: "pipeline_error",
-				Reason:      err.Error(),
+				ToolUse:         tu,
+				Decision:        conversation.DecisionBlock,
+				OutcomeName:     "pipeline_error",
+				Reason:          err.Error(),
+				PreferredTaskID: cfg.AuthorizationContext.PreferredTaskID,
 			})
 		}
 		errMsg := policies.ModelSafeInternalReason("authorization pipeline")
@@ -135,7 +136,7 @@ var Factory llmproxy.ToolUseEvaluatorFactory = func(
 	for _, tu := range toolUses {
 		matchedTaskIDs[tu.ID] = lookupMatchedTaskID(ctx, cfg.AgentContext, cfg.AuthorizationContext, cfg.RewriteContext, tu)
 	}
-	emitAuditEvents(ctx, result, toolUses, cfg.Inspector, matchedTaskIDs, emit)
+	emitAuditEvents(ctx, result, toolUses, cfg.Inspector, matchedTaskIDs, cfg.AuthorizationContext.PreferredTaskID, emit)
 	return evalFn
 }
 
@@ -154,6 +155,7 @@ func emitAuditEvents(
 	toolUses []conversation.ToolUse,
 	insp *inspector.Inspector,
 	matchedTaskIDs map[string]string,
+	preferredTaskID string,
 	emit func(conversation.AuditEvent),
 ) {
 	if result == nil || emit == nil {
@@ -211,8 +213,50 @@ func emitAuditEvents(
 				out.TaskID = id
 			}
 		}
+		out.PreferredTaskID = preferredTaskID
+		out.TaskScopePath = classifyTaskScopePath(factsByTU[ev.ToolUse.ID], preferredTaskID)
 		emit(out)
 	}
+}
+
+// classifyTaskScopePath maps the chain's AuthorizationFact (which
+// carries the decision-engine Source string) onto the audit row's
+// `task_scope_path` enum. Returns "" when the row never reached
+// task-scope evaluation (e.g. ruled by a runtime policy rule), so the
+// audit row stays sparse for non-scope-relevant calls.
+//
+// The enum lets operators query per-conversation isolation directly:
+// every `preferred_strict` is a checked-out task that covered the
+// call; every `preferred_mismatch_blocked` is the new block class that
+// would have been a cross-conversation leak before this fix.
+func classifyTaskScopePath(facts []conversation.EvaluationFact, preferredTaskID string) string {
+	for _, fact := range facts {
+		af, ok := fact.(conversation.AuthorizationFact)
+		if !ok {
+			continue
+		}
+		if path := classifyTaskScopePathFromSource(af.Outcome, preferredTaskID); path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+// classifyTaskScopePathFromSource is the inline-string variant used by
+// the credentialed legacy resolver, where the decision-engine Source
+// is already a flat string in the audit callback's `outcome` parameter
+// instead of an AuthorizationFact inside the typed fact slice.
+func classifyTaskScopePathFromSource(source string, preferredTaskID string) string {
+	switch source {
+	case string(runtimedecision.SourceTaskScopeMismatchPreferred):
+		return "preferred_mismatch_blocked"
+	case string(runtimedecision.SourceTaskScope):
+		if preferredTaskID != "" {
+			return "preferred_strict"
+		}
+		return "no_preferred_fallback"
+	}
+	return ""
 }
 
 // multiToolUseResponse is the pipeline ReadOnlyResponse the
@@ -254,7 +298,7 @@ func lookupMatchedTaskID(ctx context.Context, agent llmproxy.AgentContext, auth 
 		if auth.TaskScope == nil || serviceID == "" || actionID == "" {
 			return ""
 		}
-		dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, serviceID, actionID)
+		dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, serviceID, actionID, auth.PreferredTaskID)
 		return dec.TaskID
 	}
 	decisionInput := runtimedecision.AuthorizationInput{
@@ -300,6 +344,7 @@ func buildControlResolver(
 	}
 	controlBaseURL := routing.ControlBaseURL
 	agentID := agent.AgentID
+	conversationID := audit.ConversationID
 	cache := rewrite.CallerNonces
 	interceptCfg := llmproxy.PostprocessConfig{
 		AgentContext:         agent,
@@ -313,6 +358,7 @@ func buildControlResolver(
 		return &policies.ControlToolUseInputs{
 			ControlBaseURL: controlBaseURL,
 			AgentID:        agentID,
+			ConversationID: conversationID,
 			CallerNonces:   cache,
 			InterceptInline: func(_ context.Context, tu conversation.ToolUse, call controltool.ControlCall) (pipeline.ToolUseVerdict, bool) {
 				auditFn := func(decision, outcome, reason string) {
@@ -715,6 +761,8 @@ func buildCredentialedTaskScope(
 				OutcomeName:      outcome,
 				Reason:           reason,
 				TaskID:           taskID,
+				PreferredTaskID:  auth.PreferredTaskID,
+				TaskScopePath:    classifyTaskScopePathFromSource(outcome, auth.PreferredTaskID),
 			})
 		}
 		// Scope-drift pre-clear: if the agent is retrying a tool_use the
@@ -754,7 +802,7 @@ func buildCredentialedTaskScope(
 				audit("block", "unresolved_action", "credentialed target not found in catalog", "")
 				return policies.TaskScopeDecision{Kind: policies.TaskScopeDecisionDeny, Reason: "Clawvisor: credentialed target could not be resolved"}
 			}
-			dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, resolved.ServiceID, resolved.ActionID)
+			dec := auth.TaskScope.Check(ctx, agent.AgentUserID, agent.AgentID, resolved.ServiceID, resolved.ActionID, auth.PreferredTaskID)
 			if !dec.Allowed {
 				// Route the legacy denial through the scope-drift menu
 				// ONLY when the reason is a genuine scope miss

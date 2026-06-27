@@ -10,6 +10,14 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/jsonpatch"
 )
 
+// ConversationIDHeader is the fixed header name the rewriter writes
+// the per-turn conversation id into when RewriteOpts.ConversationID is
+// non-empty. The control plane's /control/task/checkout handler reads
+// this header so a manually-issued task checkout lands in the correct
+// per-conversation bucket without the agent needing to put the
+// conversation id in the request body itself.
+const ConversationIDHeader = "X-Clawvisor-Conversation-ID"
+
 // RewriteOpts controls how Rewrite produces the redirected tool_use input.
 type RewriteOpts struct {
 	// ResolverBaseURL is the URL the harness's eventual HTTP call should
@@ -37,6 +45,14 @@ type RewriteOpts struct {
 	// conversation history). Documented limitation; future work canonicalizes
 	// the conversation history to strip it.
 	CallerToken string
+
+	// ConversationID is the per-turn conversation id resolved from the
+	// inbound /v1/messages request. When non-empty the rewriter writes
+	// it into ConversationIDHeader on the rewritten tool_use so the
+	// control plane handlers can scope side effects (e.g. task
+	// checkouts) to the correct conversation. Empty disables the
+	// injection.
+	ConversationID string
 }
 
 // DefaultRewriteOpts returns sensible defaults for production.
@@ -134,6 +150,9 @@ func rewriteStructured(t ToolUse, _ Verdict, resolver *url.URL, opts RewriteOpts
 	headers[opts.TargetHostHeader] = parsed.Host
 	if opts.CallerToken != "" && opts.CallerHeader != "" {
 		headers[opts.CallerHeader] = "Bearer " + opts.CallerToken
+	}
+	if opts.ConversationID != "" {
+		headers[ConversationIDHeader] = opts.ConversationID
 	}
 	raw["headers"] = headers
 
@@ -242,6 +261,10 @@ func rewriteBash(t ToolUse, v Verdict, resolver *url.URL, opts RewriteOpts) ([]b
 	if opts.CallerToken != "" && opts.CallerHeader != "" {
 		callerHeader := fmt.Sprintf("%s: Bearer %s", opts.CallerHeader, opts.CallerToken)
 		injected = append(injected, "-H", callerHeader)
+	}
+	if opts.ConversationID != "" {
+		convHeader := fmt.Sprintf("%s: %s", ConversationIDHeader, opts.ConversationID)
+		injected = append(injected, "-H", convHeader)
 	}
 	tokens = append(tokens[:urlIdx],
 		append(injected, tokens[urlIdx:]...)...)

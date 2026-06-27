@@ -22,6 +22,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/taskcheckout"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -2067,92 +2068,63 @@ func TestLLMEndpoint_RewritesTaskApprovalReplyBeforeForwarding(t *testing.T) {
 	}
 }
 
-// TestCheckedOutTaskID_FallsBackToLegacyKeyForControlPlaneCheckout
-// guards the per-conversation/legacy-bucket fallback rule:
-// POST /control/task/checkout writes under (UserID, AgentID) with empty
-// ConversationID because the control endpoint has no per-turn
-// conversation context. Without the fallback, a scoped lookup with a
-// non-empty ConversationID would miss every time and the
-// manually-selected task would never be preferred.
-func TestCheckedOutTaskID_FallsBackToLegacyKeyForControlPlaneCheckout(t *testing.T) {
+// TestCheckedOutTaskID_StrictPerConversation pins the new strict
+// contract for the checkout lookup: only the (UserID, AgentID,
+// ConversationID) bucket is consulted. The previous legacy-bucket
+// fallback (POST /control/task/checkout writing under empty CID, every
+// conversation reading it back) was the cross-conversation scope leak
+// this isolation fix targets.
+func TestCheckedOutTaskID_StrictPerConversation(t *testing.T) {
 	ctx := context.Background()
 	checkouts := llmproxy.NewMemoryTaskCheckoutStore(time.Hour)
-	// Simulate POST /control/task/checkout: stored under the legacy
-	// (user, agent) key, no conversation ID.
+	// Attempting to write under an empty ConversationID is now refused
+	// at the store layer — the leak source is closed off here.
 	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{
 		UserID:  "user-1",
 		AgentID: "agent-1",
-	}, "task-active", time.Hour); err != nil {
-		t.Fatal(err)
+	}, "task-active", time.Hour); !errors.Is(err, taskcheckout.ErrConversationIDRequired) {
+		t.Fatalf("expected ErrConversationIDRequired writing without ConversationID; got %v", err)
 	}
-	h := &LLMEndpointHandler{TaskCheckouts: checkouts}
-	agent := &store.Agent{ID: "agent-1", UserID: "user-1"}
-	candidates := []*store.Task{
-		{ID: "task-active", AgentID: "agent-1", Status: "active"},
-	}
-
-	// Conversation-scoped lookup: scoped bucket is empty, falls back to
-	// legacy, finds task-active.
-	id, err := h.checkedOutTaskID(ctx, agent, "conv-A", candidates)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id != "task-active" {
-		t.Fatalf("scoped lookup with fallback returned %q, want task-active", id)
-	}
-
-	// Unscoped (empty ConversationID) still works.
-	id, err = h.checkedOutTaskID(ctx, agent, "", candidates)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id != "task-active" {
-		t.Fatalf("legacy-bucket lookup returned %q, want task-active", id)
-	}
-}
-
-// TestCheckedOutTaskID_ScopedWinsOverLegacyFallback confirms an
-// inline-task approval that wrote to the scoped bucket takes
-// precedence over any control-plane checkout in the legacy bucket: the
-// fallback only fires when the scoped bucket is empty.
-func TestCheckedOutTaskID_ScopedWinsOverLegacyFallback(t *testing.T) {
-	ctx := context.Background()
-	checkouts := llmproxy.NewMemoryTaskCheckoutStore(time.Hour)
-	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{
-		UserID:  "user-1",
-		AgentID: "agent-1",
-	}, "task-legacy", time.Hour); err != nil {
-		t.Fatal(err)
-	}
+	// Scoped write succeeds.
 	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{
 		UserID:         "user-1",
 		AgentID:        "agent-1",
 		ConversationID: "conv-A",
 	}, "task-scoped", time.Hour); err != nil {
-		t.Fatal(err)
+		t.Fatalf("scoped Set: %v", err)
 	}
 	h := &LLMEndpointHandler{TaskCheckouts: checkouts}
 	agent := &store.Agent{ID: "agent-1", UserID: "user-1"}
 	candidates := []*store.Task{
-		{ID: "task-legacy", AgentID: "agent-1", Status: "active"},
 		{ID: "task-scoped", AgentID: "agent-1", Status: "active"},
 	}
 
+	// Owning conversation sees its checkout.
 	id, err := h.checkedOutTaskID(ctx, agent, "conv-A", candidates)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if id != "task-scoped" {
-		t.Fatalf("scoped bucket should win; got %q, want task-scoped", id)
+		t.Fatalf("scoped lookup returned %q, want task-scoped", id)
 	}
 
-	// A sibling conversation with no scoped entry falls back to legacy.
+	// Sibling conversation gets NOTHING — no leak, no fallback bucket.
 	id, err = h.checkedOutTaskID(ctx, agent, "conv-B", candidates)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "task-legacy" {
-		t.Fatalf("sibling conversation should fall back; got %q, want task-legacy", id)
+	if id != "" {
+		t.Fatalf("sibling conversation must not see other conversation's checkout; got %q (leak)", id)
+	}
+
+	// Empty ConversationID (brand-new conversation) is treated as
+	// "no preferred task" — fall through to full-pool match upstream.
+	id, err = h.checkedOutTaskID(ctx, agent, "", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "" {
+		t.Fatalf("empty CID must return no preferred task; got %q", id)
 	}
 }
 

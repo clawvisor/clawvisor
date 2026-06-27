@@ -69,6 +69,14 @@ func (c *scopeDriftCoordinator) AppliesToSource(source runtimedecision.DecisionS
 	case runtimedecision.SourceTaskScopeMissing, runtimedecision.SourceTaskScopeAmbiguous, runtimedecision.SourceIntentRefusal:
 		return true
 	}
+	// SourceTaskScopeMismatchPreferred deliberately does NOT route through
+	// the drift menu. The brief calls for a hard block; the agent must
+	// recover via the existing re-checkout / task_expand paths rather than
+	// be offered a fresh one-off/expand/new_task substitution. Routing
+	// mismatch-preferred through here caused a runaway loop in
+	// script_session fanouts where every call minted a drift, the agent
+	// picked an option, pre-cleared, retried, mismatched again, and
+	// minted another drift.
 	return false
 }
 

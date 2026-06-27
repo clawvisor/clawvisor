@@ -65,10 +65,11 @@ func seedInlineTaskHolds(t *testing.T, cache *MemoryPendingApprovalCache) (outer
 	t.Helper()
 	ctx := context.Background()
 	outer, err := cache.Hold(ctx, PendingLiteApproval{
-		ID:       "cv-origtoolxxxxxxxxxxxxxxxxxx",
-		UserID:   "user-1",
-		AgentID:  "agent-1",
-		Provider: conversation.ProviderAnthropic,
+		ID:             "cv-origtoolxxxxxxxxxxxxxxxxxx",
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-1",
 		ToolUse: conversation.ToolUse{
 			ID:    "toolu_orig",
 			Name:  "Bash",
@@ -80,10 +81,11 @@ func seedInlineTaskHolds(t *testing.T, cache *MemoryPendingApprovalCache) (outer
 		t.Fatal(err)
 	}
 	inner, err := cache.Hold(ctx, PendingLiteApproval{
-		ID:       "cv-innerholdxxxxxxxxxxxxxxxxx",
-		UserID:   "user-1",
-		AgentID:  "agent-1",
-		Provider: conversation.ProviderAnthropic,
+		ID:             "cv-innerholdxxxxxxxxxxxxxxxxx",
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-1",
 		ToolUse: conversation.ToolUse{
 			ID:   "toolu_post",
 			Name: "Bash",
@@ -130,6 +132,7 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		ConversationID:  "conv-1",
 		PendingApproval: cache,
 		Creator:         creator,
 		Checkouts:       checkouts,
@@ -152,7 +155,7 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 	if !out.CheckedOut {
 		t.Fatal("expected inline-approved task to be checked out")
 	}
-	checkout, ok, err := checkouts.Get(context.Background(), TaskCheckoutKey{UserID: "user-1", AgentID: "agent-1"})
+	checkout, ok, err := checkouts.Get(context.Background(), TaskCheckoutKey{UserID: "user-1", AgentID: "agent-1", ConversationID: "conv-1"})
 	if err != nil || !ok || checkout.TaskID != "task-uuid-123" {
 		t.Fatalf("checkout = %+v ok=%v err=%v, want task-uuid-123", checkout, ok, err)
 	}
@@ -179,7 +182,7 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 	// Both holds gone.
 	for _, id := range []string{outerID, innerID} {
 		peeked, _ := cache.Peek(context.Background(), ResolveRequest{
-			UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic, ApprovalID: id,
+			UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic, ConversationID: "conv-1", ApprovalID: id,
 		})
 		if peeked != nil {
 			t.Errorf("hold %s should be dropped on approve; got %+v", id, peeked)
@@ -198,6 +201,7 @@ func TestRewriteInlineTaskApproval_DenyDropsBothHoldsNoCreator(t *testing.T) {
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		ConversationID:  "conv-1",
 		PendingApproval: cache,
 		Creator:         creator,
 	})
@@ -217,7 +221,7 @@ func TestRewriteInlineTaskApproval_DenyDropsBothHoldsNoCreator(t *testing.T) {
 	}
 	for _, id := range []string{outerID, innerID} {
 		peeked, _ := cache.Peek(context.Background(), ResolveRequest{
-			UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic, ApprovalID: id,
+			UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic, ConversationID: "conv-1", ApprovalID: id,
 		})
 		if peeked != nil {
 			t.Errorf("hold %s should be dropped on deny; got %+v", id, peeked)
@@ -236,6 +240,7 @@ func TestRewriteInlineTaskApproval_CreatorFailureRewritesAsDeny(t *testing.T) {
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		ConversationID:  "conv-1",
 		PendingApproval: cache,
 		Creator:         creator,
 	})
@@ -260,6 +265,7 @@ func TestRewriteInlineTaskApproval_MissingCreatorRewritesAsDeny(t *testing.T) {
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		ConversationID:  "conv-1",
 		PendingApproval: cache,
 		// Creator nil
 	})
@@ -289,23 +295,25 @@ func TestRewriteInlineTaskApproval_FindsInlineHoldBehindStaleToolHold(t *testing
 	// Older tool-stage hold (e.g. from a prior intent_refusal the
 	// user never replied to). This goes into items[0].
 	if _, err := cache.Hold(ctx, PendingLiteApproval{
-		ID:       "cv-staletoolholdxxxxxxxxxxxxx",
-		UserID:   "user-1",
-		AgentID:  "agent-1",
-		Provider: conversation.ProviderAnthropic,
-		Stage:    StageTool,
-		ToolUse:  conversation.ToolUse{ID: "toolu_stale", Name: "Read"},
+		ID:             "cv-staletoolholdxxxxxxxxxxxxx",
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-1",
+		Stage:          StageTool,
+		ToolUse:        conversation.ToolUse{ID: "toolu_stale", Name: "Read"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// Inline-task hold added AFTER → goes into items[1].
 	inner, err := cache.Hold(ctx, PendingLiteApproval{
-		ID:       "cv-innerholdxxxxxxxxxxxxxxxxx",
-		UserID:   "user-1",
-		AgentID:  "agent-1",
-		Provider: conversation.ProviderAnthropic,
-		Stage:    StageAwaitingTaskApproval,
-		ToolUse:  conversation.ToolUse{ID: "toolu_post", Name: "Bash"},
+		ID:             "cv-innerholdxxxxxxxxxxxxxxxxx",
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-1",
+		Stage:          StageAwaitingTaskApproval,
+		ToolUse:        conversation.ToolUse{ID: "toolu_post", Name: "Bash"},
 		TaskDefinition: &runtimetasks.TaskCreateRequest{
 			Purpose: "Test inline task",
 			ExpectedTools: []runtimetasks.ExpectedTool{
@@ -332,6 +340,7 @@ func TestRewriteInlineTaskApproval_FindsInlineHoldBehindStaleToolHold(t *testing
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		ConversationID:  "conv-1",
 		PendingApproval: cache,
 		Creator:         creator,
 	})
@@ -354,7 +363,7 @@ func TestRewriteInlineTaskApproval_FindsInlineHoldBehindStaleToolHold(t *testing
 	// path to handle separately — we should not have collateral-
 	// damaged it.
 	stale, _ := cache.Peek(ctx, ResolveRequest{
-		UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic,
+		UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic, ConversationID: "conv-1",
 		ApprovalID: "cv-staletoolholdxxxxxxxxxxxxx",
 	})
 	if stale == nil {
@@ -362,7 +371,7 @@ func TestRewriteInlineTaskApproval_FindsInlineHoldBehindStaleToolHold(t *testing
 	}
 	// Inline-task hold must be consumed.
 	gone, _ := cache.Peek(ctx, ResolveRequest{
-		UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic,
+		UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic, ConversationID: "conv-1",
 		ApprovalID: inner.Pending.ID,
 	})
 	if gone != nil {
@@ -381,11 +390,12 @@ func TestRewriteInlineTaskApproval_BareApproveDoesNotStealNewerToolHold(t *testi
 
 	// Older inline-task hold that should NOT consume a later bare approve.
 	inlineHeld, err := cache.Hold(ctx, PendingLiteApproval{
-		ID:       "cv-inlineolderxxxxxxxxxxxxxxx",
-		UserID:   "user-1",
-		AgentID:  "agent-1",
-		Provider: conversation.ProviderAnthropic,
-		Stage:    StageAwaitingTaskApproval,
+		ID:             "cv-inlineolderxxxxxxxxxxxxxxx",
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-1",
+		Stage:          StageAwaitingTaskApproval,
 		TaskDefinition: &runtimetasks.TaskCreateRequest{
 			Purpose: "Older inline task",
 		},
@@ -395,12 +405,13 @@ func TestRewriteInlineTaskApproval_BareApproveDoesNotStealNewerToolHold(t *testi
 	}
 	// Newer regular tool hold: this is the prompt the user just saw.
 	toolHeld, err := cache.Hold(ctx, PendingLiteApproval{
-		ID:       "cv-toolnewerxxxxxxxxxxxxxxxxx",
-		UserID:   "user-1",
-		AgentID:  "agent-1",
-		Provider: conversation.ProviderAnthropic,
-		Stage:    StageTool,
-		ToolUse:  conversation.ToolUse{ID: "toolu_newer", Name: "Bash"},
+		ID:             "cv-toolnewerxxxxxxxxxxxxxxxxx",
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-1",
+		Stage:          StageTool,
+		ToolUse:        conversation.ToolUse{ID: "toolu_newer", Name: "Bash"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -415,6 +426,7 @@ func TestRewriteInlineTaskApproval_BareApproveDoesNotStealNewerToolHold(t *testi
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		ConversationID:  "conv-1",
 		PendingApproval: cache,
 		Creator:         creator,
 	})
@@ -429,7 +441,7 @@ func TestRewriteInlineTaskApproval_BareApproveDoesNotStealNewerToolHold(t *testi
 	}
 	for _, id := range []string{inlineHeld.Pending.ID, toolHeld.Pending.ID} {
 		peeked, err := cache.Peek(ctx, ResolveRequest{
-			UserID: "user-1", AgentID: "agent-1",
+			UserID: "user-1", AgentID: "agent-1", ConversationID: "conv-1",
 			Provider: conversation.ProviderAnthropic, ApprovalID: id,
 		})
 		if err != nil {
@@ -448,12 +460,13 @@ func TestRewriteInlineTaskApproval_NoToolHoldIsNoop(t *testing.T) {
 	// handle it.
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	if _, err := cache.Hold(context.Background(), PendingLiteApproval{
-		ID:       "cv-toolstageholdxxxxxxxxxxxxx",
-		UserID:   "user-1",
-		AgentID:  "agent-1",
-		Provider: conversation.ProviderAnthropic,
-		Stage:    StageTool, // not the awaiting_task_approval stage
-		ToolUse:  conversation.ToolUse{ID: "toolu_x", Name: "Bash"},
+		ID:             "cv-toolstageholdxxxxxxxxxxxxx",
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-1",
+		Stage:          StageTool, // not the awaiting_task_approval stage
+		ToolUse:        conversation.ToolUse{ID: "toolu_x", Name: "Bash"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -464,6 +477,7 @@ func TestRewriteInlineTaskApproval_NoToolHoldIsNoop(t *testing.T) {
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		ConversationID:  "conv-1",
 		PendingApproval: cache,
 	})
 	if err != nil {
@@ -490,6 +504,7 @@ func TestTryReleasePendingApproval_FailsClosedOnAwaitingTaskApproval(t *testing.
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		ConversationID:  "conv-1",
 		PendingApproval: cache,
 	})
 	if result.Decision != "deny" || result.Outcome != "inline_task_preprocess_missing" {

@@ -2504,30 +2504,22 @@ func (h *LLMEndpointHandler) checkedOutTaskID(ctx context.Context, agent *store.
 	if h == nil || h.TaskCheckouts == nil || agent == nil {
 		return "", nil
 	}
-	// Scoped lookup first: a checkout written by inline-task approval
-	// in this conversation should win. If the scoped bucket misses,
-	// fall back to the legacy (user, agent)-only bucket — that's where
-	// `POST /control/task/checkout` writes, since the control endpoint
-	// has no per-turn conversation context. Without this fallback, a
-	// manually-selected task would never be preferred for any
-	// conversation that surfaces a non-empty ConversationID.
+	// Per-conversation isolation: the taskcheckout store rejects writes
+	// without a ConversationID (taskcheckout.ErrConversationIDRequired)
+	// and returns not-found for empty-ConversationID reads. An empty
+	// conversationID here means brand-new conversation / no preferred
+	// task — fall through to the normal full-pool match. The previous
+	// fallback to a legacy (user, agent)-only bucket was the
+	// cross-conversation leak this isolation fix targets.
+	if conversationID == "" {
+		return "", nil
+	}
 	scopedKey := llmproxy.TaskCheckoutKey{
 		UserID:         agent.UserID,
 		AgentID:        agent.ID,
 		ConversationID: conversationID,
 	}
-	if id, err := h.resolveCheckedOutTaskID(ctx, scopedKey, agent, candidateTasks); err != nil || id != "" {
-		return id, err
-	}
-	if conversationID == "" {
-		// Already checked the legacy bucket above.
-		return "", nil
-	}
-	legacyKey := llmproxy.TaskCheckoutKey{
-		UserID:  agent.UserID,
-		AgentID: agent.ID,
-	}
-	return h.resolveCheckedOutTaskID(ctx, legacyKey, agent, candidateTasks)
+	return h.resolveCheckedOutTaskID(ctx, scopedKey, agent, candidateTasks)
 }
 
 // resolveCheckedOutTaskID looks up a single TaskCheckoutKey, returns

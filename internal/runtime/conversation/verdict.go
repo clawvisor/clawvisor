@@ -130,6 +130,22 @@ type AuditEvent struct {
 	InspectorVerdict eval.InspectorVerdictSnapshot
 	TaskID           string
 
+	// PreferredTaskID is the conversation's checked-out task focus at
+	// the time of the authorization decision. Empty when the request
+	// came from a conversation with no checkout. Surfaced on the audit
+	// row so per-conversation isolation can be verified across rows.
+	PreferredTaskID string
+
+	// TaskScopePath classifies how task-scope authorization landed,
+	// making the per-conversation isolation invariant queryable:
+	//   - "preferred_strict":           preferred task covered the call.
+	//   - "no_preferred_fallback":      no preferred task, full-pool match.
+	//   - "preferred_mismatch_blocked": preferred set but did not cover;
+	//                                   blocked instead of falling back.
+	// Empty when the row didn't reach task-scope evaluation (e.g. ruled
+	// by a runtime policy rule earlier in the chain).
+	TaskScopePath string
+
 	// AnnotationFacts carries facts from non-winning evaluators for the
 	// same tool_use, surfaced so the audit row can record forensic
 	// signals (judge invocation cost, scope detail) that the chain's

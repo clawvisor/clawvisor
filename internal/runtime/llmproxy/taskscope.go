@@ -42,8 +42,16 @@ type TaskScopeDecision struct {
 // the inspector classifies a tool_use as an API call and BoundaryCheck
 // confirms the host. A denied scope check is a hard refusal — the response
 // is rewritten to a Clawvisor refusal rather than passing through.
+//
+// preferredTaskID is the conversation's checked-out task focus. When
+// non-empty, the check is strictly scoped to that task: if the preferred
+// task doesn't cover (serviceID, actionID), the result is a deny with
+// Reason "needs_new_task" rather than a silent match against a sibling
+// task the same agent happens to own. Pass "" when no checkout has been
+// resolved (brand-new conversation) to retain the original full-pool
+// match path.
 type TaskScopeChecker interface {
-	Check(ctx context.Context, userID, agentID, serviceID, actionID string) TaskScopeDecision
+	Check(ctx context.Context, userID, agentID, serviceID, actionID, preferredTaskID string) TaskScopeDecision
 }
 
 // StoreTaskScopeChecker reads tasks from the store and runs the same
@@ -64,7 +72,7 @@ func NewStoreTaskScopeChecker(s store.Store) *StoreTaskScopeChecker {
 //   - active task(s) cover the action: Allowed=true with TaskID.
 //   - active task(s) exist but none cover the action: Allowed=false,
 //     Reason="needs_new_task" — caller can route to approval flow.
-func (c *StoreTaskScopeChecker) Check(ctx context.Context, userID, agentID, serviceID, actionID string) TaskScopeDecision {
+func (c *StoreTaskScopeChecker) Check(ctx context.Context, userID, agentID, serviceID, actionID, preferredTaskID string) TaskScopeDecision {
 	if c == nil || c.store == nil {
 		return TaskScopeDecision{Reason: "no_task_store_configured"}
 	}
@@ -83,7 +91,7 @@ func (c *StoreTaskScopeChecker) Check(ctx context.Context, userID, agentID, serv
 		// daemon's slog output for the underlying error text.
 		return TaskScopeDecision{Reason: "task_store_unavailable"}
 	}
-	classification := policy.ClassifyGatewayRequest(tasks, agentID, serviceID, "", actionID)
+	classification := policy.ClassifyGatewayRequestPreferred(tasks, agentID, serviceID, "", actionID, preferredTaskID)
 	return classifyToDecision(classification, serviceID, actionID)
 }
 

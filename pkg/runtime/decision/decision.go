@@ -55,13 +55,14 @@ const (
 type DecisionSource string
 
 const (
-	SourceRuleAllow          DecisionSource = "rule_allow"
-	SourceRuleDeny           DecisionSource = "rule_deny"
-	SourceRuleReview         DecisionSource = "rule_review"
-	SourceTaskScope          DecisionSource = "task_scope"
-	SourceTaskScopeMissing   DecisionSource = "task_scope_missing"
-	SourceTaskScopeAmbiguous DecisionSource = "task_scope_ambiguous"
-	SourceIntentRefusal      DecisionSource = "intent_refusal"
+	SourceRuleAllow                  DecisionSource = "rule_allow"
+	SourceRuleDeny                   DecisionSource = "rule_deny"
+	SourceRuleReview                 DecisionSource = "rule_review"
+	SourceTaskScope                  DecisionSource = "task_scope"
+	SourceTaskScopeMissing           DecisionSource = "task_scope_missing"
+	SourceTaskScopeAmbiguous         DecisionSource = "task_scope_ambiguous"
+	SourceTaskScopeMismatchPreferred DecisionSource = "task_scope_mismatch_preferred"
+	SourceIntentRefusal              DecisionSource = "intent_refusal"
 )
 
 type TargetRequest struct {
@@ -277,7 +278,22 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 			Source: SourceTaskScopeMissing,
 		}, nil
 	}
-	return reviewDecision(posture, SourceTaskScopeMissing, "no matching task scope"), nil
+	source, reason := missingScopeOutcome(in)
+	return reviewDecision(posture, source, reason), nil
+}
+
+// missingScopeOutcome returns the (source, reason) pair to record
+// when no rule or task scope matched a tool call. When PreferredTaskID
+// is set the request came from a conversation that had checked out a
+// task, so a non-match means the checked-out task did not cover the
+// call — distinct from a brand-new conversation that simply has no
+// scope yet. The two are queryable separately via task_scope_path
+// (preferred_mismatch_blocked vs no_preferred_fallback).
+func missingScopeOutcome(in AuthorizationInput) (DecisionSource, string) {
+	if in.PreferredTaskID != "" {
+		return SourceTaskScopeMismatchPreferred, "checked-out task does not cover this tool call"
+	}
+	return SourceTaskScopeMissing, "no matching task scope"
 }
 
 func selectPolicyRules(in AuthorizationInput, toolInput map[string]any) (*store.RuntimePolicyRule, *store.RuntimePolicyRule, error) {
@@ -421,7 +437,8 @@ func evaluateServiceActionScope(ctx context.Context, in AuthorizationInput, post
 	case runtimepolicy.ClassificationAmbiguous:
 		return reviewDecision(posture, SourceTaskScopeAmbiguous, "ambiguous: multiple active tasks cover this action"), nil
 	default:
-		return reviewDecision(posture, SourceTaskScopeMissing, "no matching task scope"), nil
+		source, reason := missingScopeOutcome(in)
+		return reviewDecision(posture, source, reason), nil
 	}
 }
 

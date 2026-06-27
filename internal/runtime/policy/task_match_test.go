@@ -119,6 +119,124 @@ func TestMatchEgressRequestPrefersMoreSpecificCandidate(t *testing.T) {
 	}
 }
 
+// TestMatchToolCallPreferredIsStrict guards the per-conversation
+// isolation invariant: when a checked-out task is supplied via
+// preferredTaskID, the matcher must NOT fall back to a sibling task
+// that would otherwise cover the call. The pre-fix behavior was that
+// a tool call from conversation A whose preferred task didn't cover
+// the call would silently authorize against conversation B's task.
+func TestMatchToolCallPreferredIsStrict(t *testing.T) {
+	t.Parallel()
+
+	preferred := &store.Task{
+		ID:            "task-preferred",
+		SchemaVersion: 2,
+		ExpectedTools: []byte(`[
+			{"tool_name":"send_message","why":"draft replies"}
+		]`),
+	}
+	sibling1 := &store.Task{
+		ID:            "task-sibling-1",
+		SchemaVersion: 2,
+		ExpectedTools: []byte(`[
+			{"tool_name":"fetch_messages","why":"triage inbox"}
+		]`),
+	}
+	sibling2 := &store.Task{
+		ID:            "task-sibling-2",
+		SchemaVersion: 2,
+		ExpectedTools: []byte(`[
+			{"tool_name":"fetch_messages","why":"audit inbox"}
+		]`),
+	}
+	tasks := []*store.Task{preferred, sibling1, sibling2}
+
+	t.Run("preferred covers tool -> allow matched=preferred", func(t *testing.T) {
+		match, err := MatchToolCallPreferred(tasks, "send_message", map[string]any{}, "task-preferred")
+		if err != nil {
+			t.Fatalf("MatchToolCallPreferred: %v", err)
+		}
+		if match == nil || match.TaskID != "task-preferred" {
+			t.Fatalf("expected preferred task match, got %+v", match)
+		}
+	})
+
+	t.Run("preferred does NOT cover, siblings WOULD -> nil (no leak)", func(t *testing.T) {
+		match, err := MatchToolCallPreferred(tasks, "fetch_messages", map[string]any{}, "task-preferred")
+		if err != nil {
+			t.Fatalf("MatchToolCallPreferred: %v", err)
+		}
+		if match != nil {
+			t.Fatalf("expected no match (preferred-strict), got %+v — this is the leak regression", match)
+		}
+	})
+
+	t.Run("no preferred id -> full pool match unchanged", func(t *testing.T) {
+		match, err := MatchToolCallPreferred(tasks, "fetch_messages", map[string]any{}, "")
+		if err != nil {
+			t.Fatalf("MatchToolCallPreferred: %v", err)
+		}
+		if match == nil || (match.TaskID != "task-sibling-1" && match.TaskID != "task-sibling-2") {
+			t.Fatalf("expected a sibling match in no-preferred mode, got %+v", match)
+		}
+	})
+}
+
+// TestMatchEgressRequestPreferredIsStrict mirrors the tool-call
+// invariant for egress requests.
+func TestMatchEgressRequestPreferredIsStrict(t *testing.T) {
+	t.Parallel()
+
+	preferred := &store.Task{
+		ID:            "task-preferred",
+		SchemaVersion: 2,
+		ExpectedEgress: []byte(`[
+			{"host":"api.example.com","why":"send messages","method":"POST","path":"/v1/send"}
+		]`),
+	}
+	sibling := &store.Task{
+		ID:            "task-sibling",
+		SchemaVersion: 2,
+		ExpectedEgress: []byte(`[
+			{"host":"api.example.com","why":"read messages","method":"GET","path":"/v1/messages"}
+		]`),
+	}
+	tasks := []*store.Task{preferred, sibling}
+	readReq := EgressRequest{Host: "api.example.com", Method: "GET", Path: "/v1/messages"}
+
+	t.Run("preferred covers request -> allow", func(t *testing.T) {
+		match, err := MatchEgressRequestPreferred(tasks, EgressRequest{
+			Host: "api.example.com", Method: "POST", Path: "/v1/send",
+		}, "task-preferred")
+		if err != nil {
+			t.Fatalf("MatchEgressRequestPreferred: %v", err)
+		}
+		if match == nil || match.TaskID != "task-preferred" {
+			t.Fatalf("expected preferred task match, got %+v", match)
+		}
+	})
+
+	t.Run("preferred does NOT cover, sibling WOULD -> nil", func(t *testing.T) {
+		match, err := MatchEgressRequestPreferred(tasks, readReq, "task-preferred")
+		if err != nil {
+			t.Fatalf("MatchEgressRequestPreferred: %v", err)
+		}
+		if match != nil {
+			t.Fatalf("expected no match (preferred-strict), got %+v", match)
+		}
+	})
+
+	t.Run("no preferred id -> full pool match unchanged", func(t *testing.T) {
+		match, err := MatchEgressRequestPreferred(tasks, readReq, "")
+		if err != nil {
+			t.Fatalf("MatchEgressRequestPreferred: %v", err)
+		}
+		if match == nil || match.TaskID != "task-sibling" {
+			t.Fatalf("expected sibling match in no-preferred mode, got %+v", match)
+		}
+	})
+}
+
 func TestMatchRegexMapUsesFlattenedStructuredRepresentation(t *testing.T) {
 	t.Parallel()
 

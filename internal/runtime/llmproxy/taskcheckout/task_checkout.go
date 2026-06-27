@@ -2,20 +2,31 @@ package taskcheckout
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
 
-// Key scopes the agent's current task focus. This is deliberately
-// an authorization hint only: decision logic must still verify the checked-out
-// task is a valid candidate for the concrete tool/API call.
+// ErrConversationIDRequired is returned by Set when the key has an
+// empty ConversationID. The store refuses to write a checkout under a
+// user+agent shape that isn't pinned to a specific conversation,
+// because such a checkout would be visible to every concurrent
+// conversation belonging to the same agent — exactly the cross-task
+// leak this package's per-conversation key shape exists to prevent.
+var ErrConversationIDRequired = errors.New("task checkout requires a conversation id")
+
+// Key scopes the agent's current task focus. This is deliberately an
+// authorization hint only: decision logic must still verify the
+// checked-out task is a valid candidate for the concrete tool/API call.
 //
-// ConversationID partitions focus across conversations sharing a Clawvisor
-// token (Conductor workspaces, sub-agents, multiple Claude Code sessions in
-// the same installation). Approving a task in conversation B no longer
-// overwrites conversation A's focus. Empty ConversationID falls back to the
-// pre-conversation-scoping key shape (user+agent only), matching old clients
-// that never surfaced a session identifier on the wire.
+// ConversationID partitions focus across conversations sharing a
+// Clawvisor token (Conductor workspaces, sub-agents, multiple Claude
+// Code sessions in the same installation). It is REQUIRED: a Set with
+// an empty ConversationID returns ErrConversationIDRequired, and a Get
+// with an empty ConversationID returns not-found. The earlier
+// pre-conversation-scoping fallback (writing/reading a shared
+// (user, agent) bucket) was removed because it let approvals from one
+// conversation silently authorize tool calls from another.
 type Key struct {
 	UserID         string
 	AgentID        string
@@ -57,6 +68,9 @@ func (s *MemoryStore) Set(_ context.Context, key Key, taskID string, ttl time.Du
 	if key.UserID == "" || key.AgentID == "" || taskID == "" {
 		return nil
 	}
+	if key.ConversationID == "" {
+		return ErrConversationIDRequired
+	}
 	if ttl <= 0 {
 		ttl = s.defaultTTL
 	}
@@ -73,7 +87,7 @@ func (s *MemoryStore) Set(_ context.Context, key Key, taskID string, ttl time.Du
 }
 
 func (s *MemoryStore) Get(_ context.Context, key Key) (Checkout, bool, error) {
-	if key.UserID == "" || key.AgentID == "" {
+	if key.UserID == "" || key.AgentID == "" || key.ConversationID == "" {
 		return Checkout{}, false, nil
 	}
 	now := time.Now().UTC()

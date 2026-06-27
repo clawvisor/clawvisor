@@ -57,7 +57,7 @@ func TestStoreTaskScopeChecker_AllowsMatchingAction(t *testing.T) {
 		{Service: "github", Action: "create_issue"},
 	})
 	c := llmproxy.NewStoreTaskScopeChecker(st)
-	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "create_issue")
+	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "create_issue", "")
 	if !dec.Allowed {
 		t.Errorf("expected allow, got %+v", dec)
 	}
@@ -72,7 +72,7 @@ func TestStoreTaskScopeChecker_DeniesUnauthorizedAction(t *testing.T) {
 		{Service: "github", Action: "list_issues"},
 	})
 	c := llmproxy.NewStoreTaskScopeChecker(st)
-	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "create_issue")
+	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "create_issue", "")
 	if dec.Allowed {
 		t.Errorf("expected deny — task only authorizes list_issues, got %+v", dec)
 	}
@@ -84,7 +84,7 @@ func TestStoreTaskScopeChecker_DeniesUnauthorizedAction(t *testing.T) {
 func TestStoreTaskScopeChecker_NoActiveTask(t *testing.T) {
 	st, user, agent := newTaskscopeStore(t)
 	c := llmproxy.NewStoreTaskScopeChecker(st)
-	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "create_issue")
+	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "create_issue", "")
 	if dec.Allowed {
 		t.Errorf("expected deny when no active task, got %+v", dec)
 	}
@@ -99,7 +99,7 @@ func TestStoreTaskScopeChecker_WildcardActionMatches(t *testing.T) {
 		{Service: "github", Action: "*"},
 	})
 	c := llmproxy.NewStoreTaskScopeChecker(st)
-	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "delete_repo")
+	dec := c.Check(context.Background(), user.ID, agent.ID, "github", "delete_repo", "")
 	if !dec.Allowed {
 		t.Errorf("expected wildcard match, got %+v", dec)
 	}
@@ -108,7 +108,7 @@ func TestStoreTaskScopeChecker_WildcardActionMatches(t *testing.T) {
 func TestStoreTaskScopeChecker_RejectsUnresolvedAction(t *testing.T) {
 	st, user, agent := newTaskscopeStore(t)
 	c := llmproxy.NewStoreTaskScopeChecker(st)
-	dec := c.Check(context.Background(), user.ID, agent.ID, "", "")
+	dec := c.Check(context.Background(), user.ID, agent.ID, "", "", "")
 	if dec.Allowed {
 		t.Errorf("expected deny on empty service/action")
 	}
@@ -130,7 +130,7 @@ func (s stubCatalog) Resolve(host, method, path string) (llmproxy.ResolvedAction
 // stubTaskScope returns a fixed decision for every Check call.
 type stubTaskScope struct{ decision llmproxy.TaskScopeDecision }
 
-func (s stubTaskScope) Check(ctx context.Context, userID, agentID, serviceID, actionID string) llmproxy.TaskScopeDecision {
+func (s stubTaskScope) Check(ctx context.Context, userID, agentID, serviceID, actionID, preferredTaskID string) llmproxy.TaskScopeDecision {
 	return s.decision
 }
 

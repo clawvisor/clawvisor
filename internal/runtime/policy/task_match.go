@@ -35,12 +35,16 @@ func MatchToolCall(tasks []*store.Task, toolName string, input map[string]any) (
 	return MatchToolCallPreferred(tasks, toolName, input, "")
 }
 
+// MatchToolCallPreferred picks the task whose expected_tools entry
+// covers the call. When preferredTaskID is non-empty the search is
+// strictly scoped to that task: if the preferred task doesn't cover
+// the call, the function returns (nil, nil) — it does NOT fall back
+// to other candidates. This is the per-conversation isolation
+// invariant the lite-proxy depends on. A bare MatchToolCall (no
+// preferred id) keeps the original full-pool best-scoring behavior.
 func MatchToolCallPreferred(tasks []*store.Task, toolName string, input map[string]any, preferredTaskID string) (*ToolMatch, error) {
 	if preferredTaskID != "" {
-		match, err := matchToolCallInTask(tasks, toolName, input, preferredTaskID)
-		if err != nil || match != nil {
-			return match, err
-		}
+		return matchToolCallInTask(tasks, toolName, input, preferredTaskID)
 	}
 	var best *ToolMatch
 	bestScore := -1
@@ -142,14 +146,15 @@ func MatchEgressRequest(tasks []*store.Task, req EgressRequest) (*EgressMatch, e
 	return MatchEgressRequestPreferred(tasks, req, "")
 }
 
+// MatchEgressRequestPreferred mirrors MatchToolCallPreferred for
+// egress requests: when preferredTaskID is non-empty the search is
+// strictly scoped to that task and there is no fallback to other
+// candidates on a miss.
 func MatchEgressRequestPreferred(tasks []*store.Task, req EgressRequest, preferredTaskID string) (*EgressMatch, error) {
 	host := strings.ToLower(req.Host)
 	method := strings.ToUpper(req.Method)
 	if preferredTaskID != "" {
-		match, err := matchEgressRequestInTask(tasks, req, host, method, preferredTaskID)
-		if err != nil || match != nil {
-			return match, err
-		}
+		return matchEgressRequestInTask(tasks, req, host, method, preferredTaskID)
 	}
 	var best *EgressMatch
 	bestScore := -1

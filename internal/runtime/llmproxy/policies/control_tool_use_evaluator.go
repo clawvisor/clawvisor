@@ -38,6 +38,15 @@ type ControlToolUseInputs struct {
 	// CallerNonces mints + consumes the per-call nonces the rewritten
 	// URL embeds in X-Clawvisor-Caller.
 	CallerNonces callernonce.CallerNonceCache
+	// ConversationID is the per-turn conversation id resolved from the
+	// inbound /v1/messages request. When non-empty it is injected into
+	// the rewritten tool_use as an X-Clawvisor-Conversation-ID header so
+	// the control plane handlers can scope side effects (e.g. task
+	// checkouts) to the correct conversation. Empty disables the
+	// injection — the control handler will fall back to refusing
+	// scope-bearing operations rather than landing them in a shared
+	// bucket.
+	ConversationID string
 	// InterceptInline, when non-nil, handles inline task-definition
 	// interception (model emits POST /api/control/tasks while the user
 	// is mid-flight on a "task" gesture). Returns a verdict + true when
@@ -120,7 +129,7 @@ func (e *ControlToolUseEvaluator) rewriteControlCall(ctx context.Context, tu con
 			Facts:   []pipeline.EvaluationFact{pipeline.ControlFact{Outcome: "caller_nonce_mint_failed"}},
 		}, nil
 	}
-	rewritten, _, rewriteOK, rewriteErr := controltool.RewriteControlToolUse(tu, in.ControlBaseURL, nonce)
+	rewritten, _, rewriteOK, rewriteErr := controltool.RewriteControlToolUse(tu, in.ControlBaseURL, nonce, in.ConversationID)
 	if !rewriteOK {
 		_, _ = in.CallerNonces.Consume(ctx, nonce, target)
 		return pipeline.ToolUseVerdict{

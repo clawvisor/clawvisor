@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
@@ -154,7 +155,7 @@ func TestControlListTasksReturnsAgentActiveTasksAndCheckout(t *testing.T) {
 	}
 
 	checkouts := llmproxy.NewMemoryTaskCheckoutStore(time.Hour)
-	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{UserID: user.ID, AgentID: agent.ID}, "task-active", time.Hour); err != nil {
+	if err := checkouts.Set(ctx, llmproxy.TaskCheckoutKey{UserID: user.ID, AgentID: agent.ID, ConversationID: "conv-1"}, "task-active", time.Hour); err != nil {
 		t.Fatalf("checkout.Set: %v", err)
 	}
 	h := &LLMControlHandler{
@@ -163,6 +164,7 @@ func TestControlListTasksReturnsAgentActiveTasksAndCheckout(t *testing.T) {
 		TaskCheckouts: checkouts,
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/control/tasks", nil)
+	req.Header.Set(inspector.ConversationIDHeader, "conv-1")
 	req = req.WithContext(store.WithAgent(req.Context(), agent))
 	res := httptest.NewRecorder()
 

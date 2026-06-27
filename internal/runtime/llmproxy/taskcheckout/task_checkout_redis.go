@@ -30,6 +30,9 @@ func (s *RedisStore) Set(ctx context.Context, key Key, taskID string, ttl time.D
 	if s == nil || s.rdb == nil || key.UserID == "" || key.AgentID == "" || taskID == "" {
 		return nil
 	}
+	if key.ConversationID == "" {
+		return ErrConversationIDRequired
+	}
 	if ttl <= 0 {
 		ttl = s.defaultTTL
 	}
@@ -47,7 +50,7 @@ func (s *RedisStore) Set(ctx context.Context, key Key, taskID string, ttl time.D
 }
 
 func (s *RedisStore) Get(ctx context.Context, key Key) (Checkout, bool, error) {
-	if s == nil || s.rdb == nil || key.UserID == "" || key.AgentID == "" {
+	if s == nil || s.rdb == nil || key.UserID == "" || key.AgentID == "" || key.ConversationID == "" {
 		return Checkout{}, false, nil
 	}
 	raw, err := s.rdb.Get(ctx, redisKey(key)).Bytes()
@@ -69,21 +72,20 @@ func (s *RedisStore) Get(ctx context.Context, key Key) (Checkout, bool, error) {
 }
 
 func (s *RedisStore) Clear(ctx context.Context, key Key) error {
-	if s == nil || s.rdb == nil || key.UserID == "" || key.AgentID == "" {
+	if s == nil || s.rdb == nil || key.UserID == "" || key.AgentID == "" || key.ConversationID == "" {
 		return nil
 	}
 	return s.rdb.Del(ctx, redisKey(key)).Err()
 }
 
 func redisKey(key Key) string {
-	// ConversationID partitions focus per-conversation. When empty, we
-	// hash the legacy (user, agent) shape unchanged so existing redis
-	// entries from pre-conversation-scoping clients remain readable —
-	// no migration required, no silent loss of focus on upgrade.
-	if key.ConversationID == "" {
-		sum := sha256.Sum256([]byte(key.UserID + "\x00" + key.AgentID))
-		return redisTaskCheckoutPrefix + hex.EncodeToString(sum[:])
-	}
+	// ConversationID is required at the Store layer (Set returns
+	// ErrConversationIDRequired and Get returns not-found when it's
+	// empty), so we only ever reach this function with a non-empty
+	// ConversationID. Hashing it into the key partitions focus
+	// per-conversation, which is the invariant that prevents one
+	// conversation's checkout from authorizing another conversation's
+	// tool calls.
 	sum := sha256.Sum256([]byte(key.UserID + "\x00" + key.AgentID + "\x00" + key.ConversationID))
 	return redisTaskCheckoutPrefix + hex.EncodeToString(sum[:])
 }

@@ -603,6 +603,56 @@ func TestEvaluateAuthorization_GenuineNoRationaleHarnessUsesSentinel(t *testing.
 	}
 }
 
+// TestEvaluateAuthorization_PreferredTaskMismatchBlocks pins the
+// per-conversation isolation invariant at the decision-engine layer:
+// when PreferredTaskID is set and the preferred task does not cover
+// the call, the verdict's Source must be SourceTaskScopeMismatchPreferred
+// rather than falling through to a sibling task. This is the
+// regression that was the original leak.
+func TestEvaluateAuthorization_PreferredTaskMismatchBlocks(t *testing.T) {
+	agentID := "agent-1"
+	preferred := taskWithExpectedTool("task-preferred", agentID, "exec_command", "preferred work")
+	sibling := taskWithExpectedTool("task-sibling", agentID, "read_file", "sibling work")
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:         toolUse("read_file", map[string]any{"path": "/etc/hosts"}),
+		AgentID:         agentID,
+		CandidateTasks:  []*store.Task{preferred, sibling},
+		PreferredTaskID: "task-preferred",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Source != SourceTaskScopeMismatchPreferred {
+		t.Fatalf("source = %q, want %q (sibling should NOT have authorized the call)", got.Source, SourceTaskScopeMismatchPreferred)
+	}
+	if got.Kind != VerdictNeedsApproval {
+		t.Fatalf("kind = %v, want VerdictNeedsApproval (preferred-mismatch should block, not allow via sibling)", got.Kind)
+	}
+	if got.Task != nil {
+		t.Fatalf("task should be nil (no sibling match); got %+v", got.Task)
+	}
+}
+
+// TestEvaluateAuthorization_NoPreferredFallsThroughToMissing confirms
+// the no-checkout path is unchanged: with no PreferredTaskID, a
+// no-match still produces SourceTaskScopeMissing (not the new
+// mismatch source). This pins that brand-new conversations get the
+// existing approval-required path rather than the new block class.
+func TestEvaluateAuthorization_NoPreferredFallsThroughToMissing(t *testing.T) {
+	agentID := "agent-1"
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("read_file", map[string]any{"path": "/etc/hosts"}),
+		AgentID:        agentID,
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", agentID, "exec_command", "other work")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Source != SourceTaskScopeMissing {
+		t.Fatalf("source = %q, want %q", got.Source, SourceTaskScopeMissing)
+	}
+}
+
 func toolUse(name string, input map[string]any) conversation.ToolUse {
 	raw, _ := json.Marshal(input)
 	return conversation.ToolUse{ID: "toolu_1", Name: name, Input: raw}

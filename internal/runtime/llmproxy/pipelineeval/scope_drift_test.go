@@ -24,6 +24,12 @@ func TestAppliesToSource_CoversScopeDriftAndIntentRefusal(t *testing.T) {
 	}{
 		{runtimedecision.SourceTaskScopeMissing, true},
 		{runtimedecision.SourceTaskScopeAmbiguous, true},
+		// Preferred-task mismatch deliberately does NOT route through
+		// the drift menu. It's a per-conversation isolation block; the
+		// agent recovers via the existing re-checkout / task_expand
+		// paths, not via a fresh drift substitution. Routing it through
+		// here caused script_session fanouts to loop on every call.
+		{runtimedecision.SourceTaskScopeMismatchPreferred, false},
 		{runtimedecision.SourceIntentRefusal, true},
 		// Layer 2 rule-based — not scope drift.
 		{runtimedecision.SourceRuleAllow, false},

@@ -36,8 +36,8 @@ func InjectControlNoticeWithSnapshot(provider conversation.Provider, body []byte
 	return controltool.InjectControlNoticeWithSnapshot(provider, body, controlBaseURL, availableTools, toolRules, activeTasksSnapshot)
 }
 
-func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, callerToken string) ([]byte, inspector.Verdict, bool, error) {
-	return controltool.RewriteControlToolUse(t, controlBaseURL, callerToken)
+func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, callerToken string, conversationID string) ([]byte, inspector.Verdict, bool, error) {
+	return controltool.RewriteControlToolUse(t, controlBaseURL, callerToken, conversationID)
 }
 
 func RewriteControlFailureToolUse(t conversation.ToolUse, controlBaseURL string, callerToken string, reason string) ([]byte, bool, error) {

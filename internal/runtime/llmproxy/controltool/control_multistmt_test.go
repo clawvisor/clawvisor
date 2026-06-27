@@ -151,7 +151,7 @@ func TestRewriteControlToolUse_CompleteCurlInjectsCallerAuth(t *testing.T) {
 		}`),
 	}
 	const minted = "cv-nonce-complete-xyz"
-	rewritten, verdict, ok, err := RewriteControlToolUse(tu, "https://clawvisor.example", minted)
+	rewritten, verdict, ok, err := RewriteControlToolUse(tu, "https://clawvisor.example", minted, "")
 	if err != nil || !ok {
 		t.Fatalf("expected rewrite to succeed, got ok=%v err=%v", ok, err)
 	}
@@ -222,7 +222,7 @@ func TestRewriteControlToolUse_RewritesMultiStmtCatHeredocPlusCurl(t *testing.T)
 		Name:  "Bash",
 		Input: json.RawMessage(`{"command":` + jsonQuote(multiStmtCatCurlCmd) + `}`),
 	}
-	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test", "")
 	if err != nil {
 		t.Fatalf("rewrite err: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestRewriteControlToolUse_ClampsExecCommandYieldTimeMs(t *testing.T) {
 			"max_output_tokens": 2000
 		}`),
 	}
-	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test", "")
 	if err != nil || !ok {
 		t.Fatalf("expected control rewrite; ok=%v err=%v", ok, err)
 	}
@@ -460,7 +460,7 @@ func TestRewriteControlToolUse_AddsYieldTimeMsWhenAbsent(t *testing.T) {
 			"workdir": "/tmp"
 		}`),
 	}
-	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test", "")
 	if err != nil || !ok {
 		t.Fatalf("expected control rewrite; ok=%v err=%v", ok, err)
 	}
@@ -487,7 +487,7 @@ func TestRewriteControlToolUse_DoesNotInjectYieldOntoNonCodexCmdShape(t *testing
 			"workdir": "/tmp"
 		}`),
 	}
-	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test", "")
 	if err != nil || !ok {
 		t.Fatalf("expected control rewrite; ok=%v err=%v", ok, err)
 	}
@@ -508,7 +508,7 @@ func TestRewriteControlToolUse_BashShapeUnchangedByYieldClamp(t *testing.T) {
 		Name:  "Bash",
 		Input: json.RawMessage(`{"command": "curl -sS -X POST 'https://clawvisor.local/control/tasks' --data '{}'"}`),
 	}
-	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test", "")
 	if err != nil || !ok {
 		t.Fatalf("expected control rewrite; ok=%v err=%v", ok, err)
 	}
@@ -533,7 +533,7 @@ func TestRewriteControlToolUse_PreservesLargeYieldTimeMs(t *testing.T) {
 			"yield_time_ms": 300000
 		}`),
 	}
-	rewritten, _, ok, _ := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	rewritten, _, ok, _ := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test", "")
 	if !ok {
 		t.Fatal("expected rewrite")
 	}

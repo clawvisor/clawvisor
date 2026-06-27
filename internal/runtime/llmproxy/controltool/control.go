@@ -643,7 +643,14 @@ func appendNotice(existing, notice string) string {
 // RewriteControlToolUse redirects a model-emitted synthetic control URL to the
 // daemon and injects caller auth. This path intentionally bypasses policy rules:
 // agents must be able to ask Clawvisor for permission before permission exists.
-func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, callerToken string) ([]byte, inspector.Verdict, bool, error) {
+//
+// conversationID is the per-turn conversation id resolved from the
+// inbound /v1/messages request. When non-empty it is written into the
+// rewritten tool_use as a `X-Clawvisor-Conversation-ID` header so the
+// control plane handlers can scope side effects (e.g. /control/task/checkout
+// writes) to the correct conversation without the agent having to know
+// or include the id itself.
+func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, callerToken string, conversationID string) ([]byte, inspector.Verdict, bool, error) {
 	if strings.TrimSpace(controlBaseURL) == "" {
 		return nil, inspector.Verdict{}, false, nil
 	}
@@ -653,6 +660,7 @@ func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, caller
 	}
 	opts := inspector.DefaultRewriteOpts(controlBaseURL)
 	opts.CallerToken = callerToken
+	opts.ConversationID = conversationID
 	if rewritten, ok, err := rewriteControlCommandToolUse(t, v, opts); ok {
 		return rewritten, v, true, err
 	}
@@ -735,6 +743,9 @@ func rewriteControlStructuredToolUse(t conversation.ToolUse, opts inspector.Rewr
 	headers[firstNonEmptyControl(opts.TargetHostHeader, "X-Clawvisor-Target-Host")] = parsed.Host
 	if opts.CallerToken != "" && opts.CallerHeader != "" {
 		headers[opts.CallerHeader] = "Bearer " + opts.CallerToken
+	}
+	if opts.ConversationID != "" {
+		headers[inspector.ConversationIDHeader] = opts.ConversationID
 	}
 	raw["headers"] = headers
 
@@ -898,6 +909,9 @@ func rewriteControlCommandString(cmd string, v inspector.Verdict, opts inspector
 		headers := " -H " + shellSingleQuote(firstNonEmptyControl(opts.TargetHostHeader, "X-Clawvisor-Target-Host")+": "+parsed.Host)
 		if opts.CallerToken != "" && opts.CallerHeader != "" {
 			headers += " -H " + shellSingleQuote(opts.CallerHeader+": Bearer "+opts.CallerToken)
+		}
+		if opts.ConversationID != "" {
+			headers += " -H " + shellSingleQuote(inspector.ConversationIDHeader+": "+opts.ConversationID)
 		}
 		return cmd[:arg.start] + headers + " " + shellSingleQuote(rewritten.String()) + cmd[arg.end:], true
 	}

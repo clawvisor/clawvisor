@@ -275,6 +275,19 @@ func (e *AuditEmitter) WriteAuditEvent(ctx context.Context, agent *store.Agent, 
 	if cv := strings.TrimSpace(ev.ToolUse.CvReason); cv != "" {
 		params["tool_cvreason"] = cv
 	}
+	// Per-conversation isolation telemetry. Sparse: only emit when
+	// non-empty so queries can filter and rows stay compact. The
+	// matched task id is on the AuditEntry.TaskID column already; what
+	// we add here is the *preferred* (checked-out) task id and the path
+	// the decision took (preferred_strict / no_preferred_fallback /
+	// preferred_mismatch_blocked). Operators can join these with TaskID
+	// to confirm zero cross-conversation matches.
+	if ev.PreferredTaskID != "" {
+		params["preferred_task_id"] = ev.PreferredTaskID
+	}
+	if ev.TaskScopePath != "" {
+		params["task_scope_path"] = ev.TaskScopePath
+	}
 	if len(ev.InspectorVerdict.CredentialLocations) > 0 {
 		creds := make([]map[string]string, 0, len(ev.InspectorVerdict.CredentialLocations))
 		for _, c := range ev.InspectorVerdict.CredentialLocations {

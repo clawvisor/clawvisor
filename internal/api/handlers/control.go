@@ -10,6 +10,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/google/uuid"
 )
@@ -232,8 +233,15 @@ func (h *LLMControlHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 	checkoutID := ""
 	checkoutUnavailable := false
-	key := llmproxy.TaskCheckoutKey{UserID: agent.UserID, AgentID: agent.ID}
-	if h.TaskCheckouts != nil {
+	// The lite-proxy rewriter injects X-Clawvisor-Conversation-ID on
+	// rewritten control calls so the per-conversation checkout bucket
+	// can be reached. A missing header means the request didn't
+	// originate from an inference turn — there's no scoped bucket to
+	// consult, so we report "no checkout" rather than fall back to the
+	// shared legacy bucket that was the cross-conversation leak source.
+	conversationID := strings.TrimSpace(r.Header.Get(inspector.ConversationIDHeader))
+	key := llmproxy.TaskCheckoutKey{UserID: agent.UserID, AgentID: agent.ID, ConversationID: conversationID}
+	if h.TaskCheckouts != nil && conversationID != "" {
 		if checkout, ok, err := h.TaskCheckouts.Get(r.Context(), key); err != nil {
 			checkoutUnavailable = true
 		} else if ok {
@@ -351,9 +359,28 @@ func (h *LLMControlHandler) CheckoutTask(w http.ResponseWriter, r *http.Request)
 		}
 		ttl = untilExpiry
 	}
+	// Per-conversation isolation: the checkout MUST be scoped to the
+	// conversation the agent is currently in. The lite-proxy rewriter
+	// injects X-Clawvisor-Conversation-ID on every rewritten control
+	// call (see internal/runtime/llmproxy/inspector/rewriter.go), so a
+	// missing header means either (a) the call did not pass through the
+	// proxy rewriter or (b) the inbound request had no conversation_id
+	// to forward. Either way, refusing to write here is the safe
+	// failure mode: a pre-strict-isolation legacy bucket would have let
+	// this checkout become every concurrent conversation's preferred
+	// task.
+	conversationID := strings.TrimSpace(r.Header.Get(inspector.ConversationIDHeader))
+	if conversationID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":   "conversation_id_required",
+			"message": "task checkout is per-conversation; the lite-proxy rewriter must inject X-Clawvisor-Conversation-ID. If you reached this endpoint directly outside an active /v1/messages turn, use the inline task approval flow instead.",
+		})
+		return
+	}
 	if err := h.TaskCheckouts.Set(r.Context(), llmproxy.TaskCheckoutKey{
-		UserID:  agent.UserID,
-		AgentID: agent.ID,
+		UserID:         agent.UserID,
+		AgentID:        agent.ID,
+		ConversationID: conversationID,
 	}, task.ID, ttl); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"error":   "task_checkout_failed",

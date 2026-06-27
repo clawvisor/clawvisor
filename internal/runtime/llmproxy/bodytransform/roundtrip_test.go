@@ -97,7 +97,7 @@ func TestRewriteSanitizeRoundTrip(t *testing.T) {
 				Name:  "Bash",
 				Input: mustMarshal(t, map[string]any{"command": tc.command}),
 			}
-			rewrittenInput, _, ok, err := controltool.RewriteControlToolUse(toolUse, controlBase, callerToken)
+			rewrittenInput, _, ok, err := controltool.RewriteControlToolUse(toolUse, controlBase, callerToken, "")
 			if err != nil {
 				t.Fatalf("rewrite returned error: %v", err)
 			}
@@ -186,7 +186,7 @@ func TestRewriteSanitizeRoundTrip_PreservesUnrelatedHeaders(t *testing.T) {
 		Name:  "Bash",
 		Input: mustMarshal(t, map[string]any{"command": command}),
 	}
-	rewrittenInput, _, ok, err := controltool.RewriteControlToolUse(toolUse, controlBase, callerToken)
+	rewrittenInput, _, ok, err := controltool.RewriteControlToolUse(toolUse, controlBase, callerToken, "")
 	if err != nil || !ok {
 		t.Fatalf("rewrite ok=%v err=%v", ok, err)
 	}

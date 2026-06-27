@@ -36,6 +36,15 @@ func ClassifyGatewayRequest(tasks []*store.Task, agentID, serviceType, alias, ac
 	return ClassifyGatewayRequestPreferred(tasks, agentID, serviceType, alias, action, "")
 }
 
+// ClassifyGatewayRequestPreferred picks the active task whose
+// authorized_actions covers (serviceType/alias, action). When
+// preferredTaskID is non-empty, classification is strictly scoped to
+// that task: if the preferred task doesn't cover the action, the
+// result is ClassificationNeedsNewTask (with the agent's other active
+// tasks reported as candidates so the menu UI can still offer them
+// for explicit re-checkout / expand) — NOT a silent match against a
+// sibling task. This enforces per-conversation isolation when the
+// caller has resolved a checked-out task.
 func ClassifyGatewayRequestPreferred(tasks []*store.Task, agentID, serviceType, alias, action, preferredTaskID string) GatewayRequestClassification {
 	candidates := make([]*store.Task, 0, len(tasks))
 	for _, task := range tasks {
@@ -43,6 +52,35 @@ func ClassifyGatewayRequestPreferred(tasks []*store.Task, agentID, serviceType, 
 			continue
 		}
 		candidates = append(candidates, task)
+	}
+
+	if preferredTaskID != "" {
+		for _, task := range candidates {
+			if task.ID != preferredTaskID {
+				continue
+			}
+			if matchTaskScope(task, serviceType, alias, action) {
+				return GatewayRequestClassification{
+					Kind:        ClassificationBelongsToExistingTask,
+					MatchedTask: task,
+				}
+			}
+			// Preferred task is active for this agent but doesn't
+			// cover the action. Surface the full candidate set so the
+			// caller can render a "switch task" menu, but DO NOT silently
+			// match a different task.
+			if len(candidates) > 0 {
+				return GatewayRequestClassification{
+					Kind:           ClassificationNeedsNewTask,
+					CandidateTasks: candidates,
+				}
+			}
+			return GatewayRequestClassification{Kind: ClassificationOneOff}
+		}
+		// Preferred task id was supplied but no active task with that id
+		// exists for this agent (stale checkout, expired task, etc.).
+		// Fall through to the normal candidate-pool path: this isn't a
+		// scope leak — the preferred id is simply not a valid pointer.
 	}
 
 	inScope := make([]*store.Task, 0, len(candidates))
@@ -67,14 +105,6 @@ func ClassifyGatewayRequestPreferred(tasks []*store.Task, agentID, serviceType, 
 			MatchedTask: inScope[0],
 		}
 	default:
-		for _, task := range inScope {
-			if preferredTaskID != "" && task.ID == preferredTaskID {
-				return GatewayRequestClassification{
-					Kind:        ClassificationBelongsToExistingTask,
-					MatchedTask: task,
-				}
-			}
-		}
 		return GatewayRequestClassification{
 			Kind:           ClassificationAmbiguous,
 			CandidateTasks: inScope,
