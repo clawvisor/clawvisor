@@ -1,6 +1,6 @@
 #!/bin/sh
 # Clawvisor daemon installer
-# Usage: curl -fsSL https://clawvisor.com/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/clawvisor/clawvisor/main/scripts/install.sh | sh
 set -eu
 
 REPO="${CLAWVISOR_REPO:-clawvisor/clawvisor}"
