@@ -239,7 +239,7 @@ func (h *LLMControlHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	// originate from an inference turn — there's no scoped bucket to
 	// consult, so we report "no checkout" rather than fall back to the
 	// shared legacy bucket that was the cross-conversation leak source.
-	conversationID := strings.TrimSpace(r.Header.Get(inspector.ConversationIDHeader))
+	conversationID := trustedConversationID(r)
 	key := llmproxy.TaskCheckoutKey{UserID: agent.UserID, AgentID: agent.ID, ConversationID: conversationID}
 	if h.TaskCheckouts != nil && conversationID != "" {
 		if checkout, ok, err := h.TaskCheckouts.Get(r.Context(), key); err != nil {
@@ -369,7 +369,7 @@ func (h *LLMControlHandler) CheckoutTask(w http.ResponseWriter, r *http.Request)
 	// failure mode: a pre-strict-isolation legacy bucket would have let
 	// this checkout become every concurrent conversation's preferred
 	// task.
-	conversationID := strings.TrimSpace(r.Header.Get(inspector.ConversationIDHeader))
+	conversationID := trustedConversationID(r)
 	if conversationID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "conversation_id_required",
@@ -402,6 +402,25 @@ func (h *LLMControlHandler) CheckoutTask(w http.ResponseWriter, r *http.Request)
 		"message":    "Task is checked out as the current focus. Clawvisor will prefer it only when it is a valid match for later tool calls.",
 		"next_step":  "Continue with the requested work using normal tool calls. Do not add task_id or extra fields to tool inputs.",
 	})
+}
+
+// trustedConversationID resolves the per-conversation id from the
+// inbound request, trusting ONLY the value the lite-proxy rewriter
+// appended. The rewriter places its `-H 'X-Clawvisor-Conversation-ID:
+// <id>'` flag after the agent's curl tokens, so the LAST instance of
+// the header in the request is the one we wrote. Using r.Header.Get
+// returned the FIRST value, which let an agent that emitted its own
+// `-H 'X-Clawvisor-Conversation-ID: <forged>'` token impersonate any
+// conversation it could guess the id of (bypassing the strict
+// per-conversation checkout isolation this PR enforces). Defense in
+// depth: an attacker can still cause a header to be present, but they
+// can no longer make Get return it.
+func trustedConversationID(r *http.Request) string {
+	values := r.Header.Values(inspector.ConversationIDHeader)
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[len(values)-1])
 }
 
 func (h *LLMControlHandler) NotFound(w http.ResponseWriter, r *http.Request) {

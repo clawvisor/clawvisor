@@ -75,6 +75,23 @@ func TestClassifyGatewayRequestPreferredIsStrict(t *testing.T) {
 		}
 	})
 
+	t.Run("stale preferred id, no other active tasks -> needs_new_task (not one_off)", func(t *testing.T) {
+		// Conversation HAD a checkout (preferredTaskID is non-empty)
+		// but no active task with that id exists AND no siblings
+		// exist either. OneOff would semantically claim "brand-new
+		// agent with no checkout history" — wrong, and would break
+		// per-conversation isolation telemetry. Must be
+		// NeedsNewTask so the audit row records that scope was
+		// expected but missing.
+		got := ClassifyGatewayRequestPreferred(nil, "agent-1", "gmail", "", "fetch_messages", "task-vanished")
+		if got.Kind != ClassificationNeedsNewTask {
+			t.Fatalf("kind=%q, want %q (stale preferred + empty candidates must NOT be OneOff)", got.Kind, ClassificationNeedsNewTask)
+		}
+		if got.MatchedTask != nil {
+			t.Fatalf("matched task must be nil under stale-preferred strict mode, got %+v", got.MatchedTask)
+		}
+	})
+
 	t.Run("stale preferred id (no active task with that id) -> needs_new_task, NOT silent sibling match", func(t *testing.T) {
 		// Preferred id doesn't point at any active task — e.g. the
 		// checked-out task expired mid-conversation. The pre-fix

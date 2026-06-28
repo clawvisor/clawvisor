@@ -78,13 +78,18 @@ func ClassifyGatewayRequestPreferred(tasks []*store.Task, agentID, serviceType, 
 			}
 			break
 		}
-		if len(candidates) > 0 {
-			return GatewayRequestClassification{
-				Kind:           ClassificationNeedsNewTask,
-				CandidateTasks: candidates,
-			}
+		// Any non-empty preferredTaskID that doesn't resolve to a
+		// covering active task → NeedsNewTask. CandidateTasks may be
+		// empty when the agent's other active tasks have all expired,
+		// but the kind must still be NeedsNewTask (not OneOff): the
+		// conversation HAD a checkout, so this isn't a brand-new
+		// agent. OneOff would be semantically wrong and would
+		// indicate to the audit row that no checkout had ever been
+		// recorded, defeating per-conversation isolation telemetry.
+		return GatewayRequestClassification{
+			Kind:           ClassificationNeedsNewTask,
+			CandidateTasks: candidates,
 		}
-		return GatewayRequestClassification{Kind: ClassificationOneOff}
 	}
 
 	inScope := make([]*store.Task, 0, len(candidates))

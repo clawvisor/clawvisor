@@ -330,7 +330,16 @@ func TestEvaluateAuthorization_PreferredTaskDisambiguatesServiceAction(t *testin
 	}
 }
 
-func TestEvaluateAuthorization_IgnoresPreferredTaskOutsideCandidateSet(t *testing.T) {
+// TestEvaluateAuthorization_StalePreferredBlocksInsteadOfSiblingMatch
+// pins per-conversation isolation against the stale-checkout case:
+// when PreferredTaskID points at a task that's no longer in the
+// active candidate set (expired, completed, never existed), the
+// pre-fix behavior fell through to the full-pool match and could
+// silently authorize the call via a SIBLING task that happened to
+// cover the action. Strict mode: blocks with
+// SourceTaskScopeMismatchPreferred so the agent must re-checkout
+// explicitly rather than implicitly switch authorization target.
+func TestEvaluateAuthorization_StalePreferredBlocksInsteadOfSiblingMatch(t *testing.T) {
 	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
 		ToolUse:         toolUse("WebFetch", map[string]any{"url": "https://api.github.com/repos/acme/app/issues"}),
 		AgentID:         "agent-1",
@@ -342,8 +351,11 @@ func TestEvaluateAuthorization_IgnoresPreferredTaskOutsideCandidateSet(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Kind != VerdictNeedsApproval || got.Source != SourceTaskScopeAmbiguous {
-		t.Fatalf("decision = %+v, want ambiguity when preferred task is not a valid candidate", got)
+	if got.Kind != VerdictNeedsApproval || got.Source != SourceTaskScopeMismatchPreferred {
+		t.Fatalf("decision = %+v, want SourceTaskScopeMismatchPreferred (no silent sibling match)", got)
+	}
+	if got.Task != nil {
+		t.Fatalf("task = %+v, want nil (sibling MUST NOT authorize the call)", got.Task)
 	}
 }
 
