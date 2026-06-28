@@ -33,6 +33,7 @@ func TestLoadEmbeddedDefinitions(t *testing.T) {
 		"dropbox":          false,
 		"granola":          false,
 		"perplexity":       false,
+		"pagerduty":        false,
 		"microsoft.onedrive": false,
 		"microsoft.outlook":  false,
 	}
