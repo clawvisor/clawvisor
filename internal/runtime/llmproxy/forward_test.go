@@ -563,6 +563,56 @@ func TestOpenAIPassthroughRoute_ChatGPTOAuth(t *testing.T) {
 	}
 }
 
+// TestOpenAIPassthroughRoute_ChatGPTUpstreamOverride covers the env-var
+// override paths for CLAWVISOR_LLM_UPSTREAM_CHATGPT. The protocol-
+// relative case is a regression test: url.Parse("//host:port") returns
+// scheme="" host="host:port" — without a fallback, that empty scheme
+// would leak into the request and trip http.Client.Do at runtime.
+func TestOpenAIPassthroughRoute_ChatGPTUpstreamOverride(t *testing.T) {
+	jwt := makeJWT(map[string]any{"scp": "openid"})
+
+	tests := []struct {
+		name       string
+		override   string
+		wantScheme string
+		wantHost   string
+	}{
+		{name: "unset", override: "", wantScheme: "https", wantHost: "chatgpt.com"},
+		{name: "explicit_http", override: "http://localhost:8080", wantScheme: "http", wantHost: "localhost:8080"},
+		{name: "explicit_https", override: "https://staging.chatgpt.example.com", wantScheme: "https", wantHost: "staging.chatgpt.example.com"},
+		// Regression: protocol-relative URL has populated Host but
+		// empty Scheme. Without the fallback we'd build a URL with no
+		// scheme and http.Client.Do would reject it.
+		{name: "protocol_relative_defaults_to_https", override: "//localhost:8080", wantScheme: "https", wantHost: "localhost:8080"},
+		// Bare hostnames with ports look like a scheme + opaque to
+		// url.Parse, so they get rejected by the host!="" guard and
+		// fall back to the default. Documenting current behavior.
+		{name: "bare_host_port_falls_back", override: "localhost:9000", wantScheme: "https", wantHost: "chatgpt.com"},
+		// Garbage URL also falls back.
+		{name: "garbage_falls_back", override: ":::not a url", wantScheme: "https", wantHost: "chatgpt.com"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CLAWVISOR_LLM_UPSTREAM_CHATGPT", tc.override)
+			got := openaiPassthroughRoute("Bearer "+jwt, "/v1/responses")
+			if got == nil {
+				t.Fatal("ChatGPT-OAuth bearer must route to chatgpt.com (or override)")
+			}
+			if got.Scheme != tc.wantScheme {
+				t.Errorf("scheme=%q, want %q", got.Scheme, tc.wantScheme)
+			}
+			if got.Host != tc.wantHost {
+				t.Errorf("host=%q, want %q", got.Host, tc.wantHost)
+			}
+			// Whatever scheme/host, the path mapping must still apply.
+			if got.Path != "/backend-api/codex/responses" {
+				t.Errorf("path=%q, want /backend-api/codex/responses", got.Path)
+			}
+		})
+	}
+}
+
 func TestOpenAIPassthroughRoute_MalformedTokenFallsBack(t *testing.T) {
 	if got := openaiPassthroughRoute("Bearer not.a.jwt.too.many.dots", "/v1/responses"); got != nil {
 		t.Errorf("malformed token must fall back to default routing, got %s", got)
