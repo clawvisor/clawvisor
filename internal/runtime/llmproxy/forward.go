@@ -368,7 +368,16 @@ func openaiPassthroughRoute(authorization, inboundPath string) *url.URL {
 	scheme, host := "https", "chatgpt.com"
 	if u := os.Getenv("CLAWVISOR_LLM_UPSTREAM_CHATGPT"); u != "" {
 		if parsed, err := url.Parse(u); err == nil && parsed.Host != "" {
-			scheme, host = parsed.Scheme, parsed.Host
+			host = parsed.Host
+			// Protocol-relative inputs like "//host:port" parse with a
+			// populated Host but an empty Scheme. Without this fallback we
+			// would build a URL like "//localhost:8080/backend-api/codex/…"
+			// and http.Client.Do would reject it. Keep the default scheme
+			// in that case; explicit http:// or https:// overrides are
+			// still respected.
+			if parsed.Scheme != "" {
+				scheme = parsed.Scheme
+			}
 		}
 	}
 	return &url.URL{
