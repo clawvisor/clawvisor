@@ -1865,7 +1865,16 @@ func TestLLMEndpoint_InlineApprovalReleasesHeldToolUse(t *testing.T) {
 	mw := middleware.RequireAgentLLM(st)
 	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
 
-	first := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"create issue"}]}`))
+	// Both requests need to land in the SAME conversation bucket so the
+	// approve request can find the hold the first request created. In
+	// production this happens automatically because Claude Code sets
+	// metadata.user_id.session_id constantly across turns. Without
+	// metadata, the per-conversation isolation fingerprint fallback
+	// would hash the first user message — and "create issue" vs
+	// "approve" would partition into separate conversations, leaving
+	// the hold unfindable.
+	const sessionMetadata = `,"metadata":{"user_id":"{\"session_id\":\"sess-inline-approve\"}"}`
+	first := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"create issue"}]`+sessionMetadata+`}`))
 	first.Header.Set("Authorization", "Bearer "+rawToken)
 	firstRec := httptest.NewRecorder()
 	mux.ServeHTTP(firstRec, first)
@@ -1879,7 +1888,7 @@ func TestLLMEndpoint_InlineApprovalReleasesHeldToolUse(t *testing.T) {
 		t.Fatalf("upstream hits after first request = %d, want 1", upstreamHits)
 	}
 
-	approve := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"approve"}]}`))
+	approve := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"approve"}]`+sessionMetadata+`}`))
 	approve.Header.Set("Authorization", "Bearer "+rawToken)
 	approveRec := httptest.NewRecorder()
 	mux.ServeHTTP(approveRec, approve)
@@ -2034,10 +2043,17 @@ func TestLLMEndpoint_RewritesTaskApprovalReplyBeforeForwarding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentByToken: %v", err)
 	}
+	// Hold + lookup must share a ConversationID. Mirror what production
+	// would do: the request body carries metadata.user_id.session_id, the
+	// proxy resolves that to a CID, and the hold is stored under the same
+	// CID. Empty-CID collision was the cross-conversation leak this PR
+	// closes.
+	const sessionID = "sess-rewrites-task-approval-reply"
 	if _, err := cache.Hold(context.Background(), llmproxy.PendingLiteApproval{
-		UserID:   agent.UserID,
-		AgentID:  agent.ID,
-		Provider: conversation.ProviderAnthropic,
+		UserID:         agent.UserID,
+		AgentID:        agent.ID,
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: sessionID,
 		ToolUse: conversation.ToolUse{
 			ID:    "toolu_1",
 			Name:  "Read",
@@ -2051,7 +2067,7 @@ func TestLLMEndpoint_RewritesTaskApprovalReplyBeforeForwarding(t *testing.T) {
 	mw := middleware.RequireAgentLLM(st)
 	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
 
-	body := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"task"}]}`)
+	body := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"task"}],"metadata":{"user_id":"{\"session_id\":\"` + sessionID + `\"}"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
 	req.Header.Set("Authorization", "Bearer "+rawToken)
 	rec := httptest.NewRecorder()
