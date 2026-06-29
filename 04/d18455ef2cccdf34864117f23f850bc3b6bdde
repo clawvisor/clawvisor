@@ -1,0 +1,93 @@
+internal/api/handlers/control.go
+  s_aecb10c54ef7c6::t_648619ac081f91 132-220
+  s_aecb10c54ef7c6::t_f4bf9a2efb628a 302
+  s_aecb10c54ef7c6::t_d2ab2fb4a3859a 38,40,67-71,326,328
+  s_aecb10c54ef7c6::t_7ac81e31d2c1e6 5,262
+  s_aecb10c54ef7c6::t_49f1d960089d4b 60,100-104,106,308-316
+  s_aecb10c54ef7c6::t_fb8bd7ddd48472 13,20,300-301,303-305
+  s_aecb10c54ef7c6::t_4cd8011185a316 8-12,17-19,105,224-261,263-299,306-307
+internal/runtime/llmproxy/task_checkout_redis.go
+  s_aecb10c54ef7c6::t_4c6b10dc0f6155 1-83
+internal/runtime/llmproxy/inline_task_release_test.go
+  s_aecb10c54ef7c6::t_49f1d960089d4b 114,131-137
+  s_aecb10c54ef7c6::t_aa8d511b600581 86
+  s_aecb10c54ef7c6::t_d2ab2fb4a3859a 145,154-156
+internal/runtime/llmproxy/task_checkout.go
+  s_aecb10c54ef7c6::t_4c6b10dc0f6155 1-100
+internal/runtime/llmproxy/inline_task_augment_test.go
+  s_aecb10c54ef7c6::t_fce56d1c761905 437
+internal/api/server.go
+  s_aecb10c54ef7c6::t_d2ab2fb4a3859a 1299,1301
+  s_aecb10c54ef7c6::t_378fa531688105 1276-1278
+  s_aecb10c54ef7c6::t_49f1d960089d4b 1268-1272
+  s_aecb10c54ef7c6::t_7ac81e31d2c1e6 112,361-367
+internal/api/handlers/inline_task_e2e_test.go
+  s_aecb10c54ef7c6::t_d2ab2fb4a3859a 163-164,166
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_aecb10c54ef7c6::t_8bd7c19b7ee6a3 149
+internal/runtime/llmproxy/synthetic_history_strip.go
+  s_aecb10c54ef7c6::t_d321abbd96d4de 102
+pkg/runtime/decision/decision_test.go
+  s_aecb10c54ef7c6::t_5d11e8f38faf18 291-349
+internal/runtime/llmproxy/control_multistmt_test.go
+  s_aecb10c54ef7c6::t_b2d72514b46c6e 72-109
+internal/api/handlers/llm_endpoint.go
+  s_aecb10c54ef7c6::t_e9014157e85215 107-110
+  s_aecb10c54ef7c6::t_49f1d960089d4b 163,434,458-460,795,812
+  s_aecb10c54ef7c6::t_992835125e89ff 1081-1102
+  s_aecb10c54ef7c6::t_8a70c0005978ab 780-786
+pkg/runtime/decision/decision.go
+  s_aecb10c54ef7c6::t_494e411a6c5e38 243
+  s_aecb10c54ef7c6::t_89202c6aaab8a5 112-115,396
+  s_aecb10c54ef7c6::t_49f1d960089d4b 192,222,229
+internal/runtime/llmproxy/control.go
+  s_aecb10c54ef7c6::t_6fc53728e29c7e 822,827,1099,1114-1118
+  s_aecb10c54ef7c6::t_8a70c0005978ab 65
+  s_aecb10c54ef7c6::t_2667cb409a2c79 43
+internal/runtime/policy/task_match.go
+  s_aecb10c54ef7c6::t_89202c6aaab8a5 35-44,48,52-102,106-113,116,142-145,148-153,157,161-203,205,208-218,221
+internal/runtime/llmproxy/secret_detection.go
+  s_aecb10c54ef7c6::t_1ed828fcecfd80 477
+pkg/clawvisor/defaults.go
+  s_aecb10c54ef7c6::t_230b816ababbd8 430,472,524
+internal/runtime/llmproxy/inline_task_transitions.go
+  s_aecb10c54ef7c6::t_57edfc9e6f03f3 97-104,112
+internal/runtime/policy/request_classify.go
+  s_aecb10c54ef7c6::t_89202c6aaab8a5 36-39,70-77
+internal/runtime/llmproxy/inline_approval_outcome.go
+  s_aecb10c54ef7c6::t_027459b7438499 34-36
+internal/runtime/llmproxy/approval_body_editor.go
+  s_aecb10c54ef7c6::t_d2ab2fb4a3859a 273
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_aecb10c54ef7c6::t_d2ab2fb4a3859a 355
+  s_aecb10c54ef7c6::t_027459b7438499 37-39,66-67
+  s_aecb10c54ef7c6::t_8f3d9c9a979d22 298,358,363,367,369,371,376
+  s_aecb10c54ef7c6::t_fe064b8685d7e3 228-232,236,239-242,366,372-375
+  s_aecb10c54ef7c6::t_6b8794631ec3a6 368,370
+  s_aecb10c54ef7c6::t_49f1d960089d4b 210
+internal/runtime/llmproxy/postprocess.go
+  s_aecb10c54ef7c6::t_49f1d960089d4b 117-120,378,485-496
+  s_aecb10c54ef7c6::t_fa70c4ddf64234 121
+internal/api/handlers/control_test.go
+  s_aecb10c54ef7c6::t_4c46c8b04a0c03 5,9,12-16,99-200
+pkg/clawvisor/run.go
+  s_aecb10c54ef7c6::t_49f1d960089d4b 349-351
+pkg/clawvisor/options.go
+  s_aecb10c54ef7c6::t_230b816ababbd8 154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "04d18455ef2cccdf34864117f23f850bc3b6bdde",
+  "prompts": {},
+  "sessions": {
+    "s_aecb10c54ef7c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e4b18-3198-7a31-9219-d7566e0c3660",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    }
+  }
+}

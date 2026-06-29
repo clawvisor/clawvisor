@@ -1,0 +1,23 @@
+internal/runtime/llmproxy/scope_drift_e2e_test.go
+  s_bbe778adcf6f02::t_0bd2f3088d5741 1324-1334
+internal/runtime/llmproxy/postproc/inline_task_intercept_test.go
+  s_bbe778adcf6f02::t_ca4ce001c4cc61 261-264
+internal/runtime/conversation/response.go
+  s_bbe778adcf6f02::t_1ba50df034c51e 269-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "f86b035b50310467678d2b138f181580d1d22e49",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": null
+    }
+  }
+}

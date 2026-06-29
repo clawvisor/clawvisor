@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/agent_notice_test.go
+  s_7afedb560012eb::t_4679c5d644435e 318-324,335,337-338,344-372
+internal/runtime/llmproxy/agent_notice.go
+  ai_agent 100-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "1390a6e57b7589e88c537551ec4b92a345c4ca48",
+  "prompts": {},
+  "sessions": {
+    "s_7afedb560012eb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dc77baa2-f791-4b45-9533-97c5ea51a358",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

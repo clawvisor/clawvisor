@@ -1,0 +1,42 @@
+internal/runtime/llmproxy/upstreamflavor/vertex_test.go
+  s_df2366460d04fe::t_aad6538dfac301 1-131
+internal/runtime/llmproxy/upstreamflavor/flavor.go
+  s_df2366460d04fe::t_ac64157ab293e9 1-93
+internal/runtime/llmproxy/forward_flavor_test.go
+  s_df2366460d04fe::t_d7c6b8f19114d3 1-8,10-15,22-24,27-28,30,39,41-44,46-49,51-60,63-64,66,70-73,75-87,90,92,94-105,107,111-134,137-138,141-164,166-178,181-190,204,208,212,216-217
+  s_df2366460d04fe::t_d2ec2cf29be234 9,16-21,25-26,29,31-38,40,45,50,61-62,65,67-69,74,88-89,91,93,106,108-110,135-136,139-140,165,179-180,191-203,205-207,209-211,213-215
+internal/runtime/llmproxy/upstreamflavor/azure.go
+  s_df2366460d04fe::t_f8a0fe7eb016e3 1-109
+internal/runtime/llmproxy/upstreamflavor/doc.go
+  s_df2366460d04fe::t_ddf2df017afa13 1-23
+internal/runtime/llmproxy/upstreamflavor/azure_test.go
+  s_df2366460d04fe::t_c2ebe0d0332dfd 1-93
+internal/runtime/llmproxy/upstreamflavor/bedrock.go
+  s_df2366460d04fe::t_efd0a8082c301b 1-135
+internal/runtime/llmproxy/upstreamflavor/bedrock_test.go
+  s_df2366460d04fe::t_458f464d37045b 1-97
+internal/runtime/llmproxy/forward.go
+  s_df2366460d04fe::t_21dd849f76609f 346-373
+  s_df2366460d04fe::t_2489c052a7ea99 22
+  s_df2366460d04fe::t_01ca06b541ec2f 233-314
+  s_df2366460d04fe::t_de12fb8f8cb65d 163-169
+  s_df2366460d04fe::t_c8c6bcbcc390df 34-39,44-48
+internal/runtime/llmproxy/upstreamflavor/vertex.go
+  s_df2366460d04fe::t_9c6a1ed4ac60da 1-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "7723f8d748b9915070ee6c5c20da47e3db3d2989",
+  "prompts": {},
+  "sessions": {
+    "s_df2366460d04fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "38458651-ef95-497a-a902-3fdc8b1eb15e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

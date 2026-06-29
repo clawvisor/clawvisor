@@ -1,0 +1,37 @@
+internal/runtime/llmproxy/inspector/readonly_bash.go
+  s_8de9dcae61d3e3::t_00e8ab23665d50 105-109,114-123
+  s_8de9dcae61d3e3::t_4b779545d108d0 1-104,110-113,124-247
+internal/runtime/llmproxy/inspector/readonly_bash_test.go
+  s_8de9dcae61d3e3::t_c3449aac952dc4 1-31,34-37,40-77,80-157
+  s_8de9dcae61d3e3::t_0841f257249f62 32-33,38-39
+  s_8de9dcae61d3e3::t_bedb22b23cdb33 78-79
+internal/runtime/llmproxy/postprocess.go
+  s_8de9dcae61d3e3::t_88595a6ca71d4d 343-355
+  s_8de9dcae61d3e3::t_991ad7cc8552ed 765-796
+internal/runtime/llmproxy/inspector/parser.go
+  s_8de9dcae61d3e3::t_00f50e0d93dc5e 51-53,55-75,77-94
+internal/api/handlers/llm_endpoint_test.go
+  s_8de9dcae61d3e3::t_f897397f9c7a23 600-602,604
+internal/runtime/llmproxy/postprocess_test.go
+  s_8de9dcae61d3e3::t_22ead2c7eabdcd 345-349
+  s_8de9dcae61d3e3::t_05857d4cb846b9 177-283
+  s_8de9dcae61d3e3::t_b7f66ee9981f31 376-379
+internal/runtime/llmproxy/inspector/parser_flags_test.go
+  s_8de9dcae61d3e3::t_4d28f2479efb5c 139-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "78822395e7ada7c8547c8007678dc4383770526f",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

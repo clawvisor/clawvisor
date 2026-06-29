@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/policies/inspector_evaluator_test.go
+  s_813cf813d8b1d0::t_737351f8a6c3ee 1-50,53-85,87-106,108,111,114,117-118
+internal/runtime/llmproxy/policies/inspector_evaluator.go
+  s_813cf813d8b1d0::t_b27475e88977f5 1-11,14-22,24,29-32,35-41,45-55,76-81,86-91,94-96,98,101-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "c54e518a78e3d9bf4131301c34389d394b2a780d",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

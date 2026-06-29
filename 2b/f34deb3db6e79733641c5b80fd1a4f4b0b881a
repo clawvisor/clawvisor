@@ -1,0 +1,97 @@
+internal/api/handlers/runtime.go
+  s_8de9dcae61d3e3::t_d0d574c1ec0f76 458-466
+internal/runtime/llmproxy/release.go
+  8de9dcae61d3e38a 206,244
+internal/api/handlers/proxy_resolver.go
+  8de9dcae61d3e38a 126-130,132-142,408,465,473-478,508-542,403,417,432
+  s_8de9dcae61d3e3::t_b29ae19f2ffacc 199
+  s_8de9dcae61d3e3::t_4bbee3e25413ed 585-588,602
+internal/runtime/conversation/openai_response.go
+  8de9dcae61d3e38a 289-296,365-368,385-397,468-478,480-483,485-488,540-542,575,588-590
+  s_8de9dcae61d3e3::t_fa151eeef756e0 372-376
+  s_8de9dcae61d3e3::t_4fd113a54c4dc4 383
+  s_8de9dcae61d3e3::t_6146e91dd14c11 582-587
+  s_8de9dcae61d3e3::t_cbe6e4f82a2fbd 1221-1223
+  s_8de9dcae61d3e3::t_ee3cea1b041350 1224-1242,1245-1248,1251
+internal/runtime/llmproxy/postprocess_test.go
+  s_8de9dcae61d3e3::t_80ee145f5b151e 179,248-314,799,185,195,199,202,470,526,807-808,810,812-814,816,824,826,828,832,835,838,841,844,867
+  s_8de9dcae61d3e3::t_22ead2c7eabdcd 180-181,359-363,800-801,186,196,203-204,815,825,845-846
+  s_8de9dcae61d3e3::t_05857d4cb846b9 206-240,243-247
+internal/runtime/conversation/openai_response_custom_input_test.go
+  s_8de9dcae61d3e3::t_be838614fc4b29 1-21,23-36,60,62-70,58
+  s_8de9dcae61d3e3::t_2dcca3f1520ba2 22
+  s_8de9dcae61d3e3::t_c9286a1e8142a5 61,71-84,59
+internal/api/server.go
+  s_8de9dcae61d3e3::t_7b0b6fdc8887af 912,915,928,930-943,966,1011,952,958,1015,614,1035
+  s_8f3d790934e389::t_fa390b916ed2db 916,969,975,983,995,1000,1027,1036,1042,1047,1062,1067,1074,1024,296
+  s_8de9dcae61d3e3::t_8b31f83b147ad9 919-926,929
+internal/runtime/llmproxy/inspector/boundservices.go
+  8de9dcae61d3e38a 18,78,93-99
+  s_8de9dcae61d3e3::t_0b3667f2f7f4d5 79-92,102-104,119-123
+pkg/runtime/decision/decision_test.go
+  s_8de9dcae61d3e3::t_8621afa44c64a4 325-327,329-354,393-395
+  s_8de9dcae61d3e3::t_fff3c05eeeba26 355,357-369,411-413,427,430-433,436,439-441,457,460-463,466,469-471,484,487-490,493,496-498,507,510-513,516,519-521,530,533-536,539-541
+internal/api/handlers/proxy_resolver_test.go
+  8de9dcae61d3e38a 511-515,517,524-525
+internal/runtime/llmproxy/postprocess.go
+  s_8de9dcae61d3e3::t_c8d6539b844837 9
+  s_8de9dcae61d3e3::t_f1d142e52587c0 126-131
+  8de9dcae61d3e38a 191-194,513-518,520,310
+  s_8de9dcae61d3e3::t_141061136151e3 195-222
+  s_8de9dcae61d3e3::t_e7238dd54483c3 280-282,341-344
+  s_8de9dcae61d3e3::t_b72689bd49ecad 283-289
+  s_8de9dcae61d3e3::t_0aa74380bb70b6 293,592-599,240,333,335-336,338
+  s_8de9dcae61d3e3::t_b2df66568f746d 346-355
+  s_8de9dcae61d3e3::t_8e54f4dcd74d91 377-383
+  s_8de9dcae61d3e3::t_a5dc36ba6dd641 392-398
+  s_8de9dcae61d3e3::t_88595a6ca71d4d 399
+  s_8de9dcae61d3e3::t_6d234370246075 424-432,435
+  s_8de9dcae61d3e3::t_0203d2b31709b7 466-474
+  s_8de9dcae61d3e3::t_0eeb94982ea0a9 545-582,304-305,307-308,316,326,329-330
+  s_8de9dcae61d3e3::t_ff203cd1b5c8c7 704-706,708-716
+  s_8de9dcae61d3e3::t_2fc17b589bb78c 756,761
+  s_8de9dcae61d3e3::t_3b11dba8e97c1c 807-815
+  s_8de9dcae61d3e3::t_991ad7cc8552ed 820-842
+  s_8de9dcae61d3e3::t_01249af48a3637 843-866
+web/src/pages/Agents.tsx
+  8de9dcae61d3e38a 2687-2699
+internal/runtime/autovault/swap.go
+  s_8de9dcae61d3e3::t_5ae3241bdfba81 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "2bf34deb3db6e79733641c5b80fd1a4f4b0b881a",
+  "prompts": {
+    "8de9dcae61d3e38a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine",
+      "total_additions": 342,
+      "total_deletions": 72,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,77 @@
+internal/tui/screens/dashboard.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 643,645
+internal/api/handlers/tasks_expand_test.go
+  s_f24d8a6cdaa62a::t_4ba65e22ab75d6 115-166
+  s_f24d8a6cdaa62a::t_656cd13a16e094 110-111
+internal/notify/push/notifier.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 229,262-298
+internal/runtime/policy/request_shape.go
+  s_f24d8a6cdaa62a::t_99708039da96d9 91-97,100
+pkg/store/postgres/migrations/055_task_pending_expansion_envelope.sql
+  s_f24d8a6cdaa62a::t_7fe2754c1eb212 34-49
+pkg/store/postgres/store.go
+  s_f24d8a6cdaa62a::t_556bf7d21dfc8a 1396-1402,1410
+internal/api/longpoll_test.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 260-263
+internal/api/task_approval_records_test.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 83-86
+internal/mcp/tools.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 137,142-179,183
+pkg/store/store.go
+  s_f24d8a6cdaa62a::t_923bac8e796625 186-192
+internal/tui/screens/helpers.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 70,72,78-236
+docs/ARCHITECTURE.md
+  s_f24d8a6cdaa62a::t_e2611c4651d704 389
+web/src/components/TaskCard.tsx
+  s_f24d8a6cdaa62a::t_64bb0097541e00 856-864
+internal/e2e/harness/smoke_test.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 623-626
+internal/notify/telegram/telegram.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 779-836,846-861
+web/tsconfig.tsbuildinfo
+  s_f24d8a6cdaa62a::t_1f1cb42bb49bb1 1
+internal/api/gateway_test.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 722-725,782-789,798-801,810-813,815-816,820,822-823,828-1095
+pkg/store/sqlite/migrations/055_task_pending_expansion_envelope.sql
+  s_f24d8a6cdaa62a::t_e2611c4651d704 1-23
+internal/api/handlers/tasks.go
+  s_f24d8a6cdaa62a::t_111f56d56d91cb 2332
+  s_f24d8a6cdaa62a::t_deccc2e923ba35 2671-2678
+  s_f24d8a6cdaa62a::t_283a0168e77eff 2660-2669,2682-2713
+  s_f24d8a6cdaa62a::t_4b4ab054676513 2544-2556
+  s_f24d8a6cdaa62a::t_d1175b1be8fc57 1206-1214
+  s_f24d8a6cdaa62a::t_4e388d984f9bf4 2343-2349
+  s_f24d8a6cdaa62a::t_5010b85718fb8a 1151-1154
+internal/notify/telegram/scope_expansion_format_test.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 1-120
+web/src/api/client.ts
+  s_f24d8a6cdaa62a::t_e2611c4651d704 594,630-648,669-670
+internal/runtime/tasks/envelope_test.go
+  s_f24d8a6cdaa62a::t_a3fe1974a4b984 93-181
+pkg/store/sqlite/store.go
+  s_f24d8a6cdaa62a::t_264c6d598f2fad 1664-1667,1676
+internal/runtime/tasks/envelope.go
+  s_f24d8a6cdaa62a::t_90830265042781 183-201
+  s_f24d8a6cdaa62a::t_c2a73a101ae9cd 230-253
+internal/tui/client/types.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 205-219,223-227
+pkg/notify/notify.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 11-58,130-136,138-150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "10d3b0e7381c98c83bb62313a884312332a6a3dc",
+  "prompts": {},
+  "sessions": {
+    "s_f24d8a6cdaa62a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3ceed6ee-edc3-4484-bea4-8d25bf23cdfe",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
