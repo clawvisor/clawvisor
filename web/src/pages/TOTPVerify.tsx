@@ -2,6 +2,12 @@ import { useState, FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
+import { peekPendingInviteToken } from '../lib/pendingInvite'
+
+function nextAfterAuth(): string {
+  const token = peekPendingInviteToken()
+  return token ? `/accept-invite?token=${encodeURIComponent(token)}` : '/dashboard'
+}
 
 export default function TOTPVerify() {
   const { setSession } = useAuth()
@@ -20,7 +26,7 @@ export default function TOTPVerify() {
     try {
       const resp = await api.auth.totp.verify(pendingToken, code)
       setSession(resp.access_token, resp.refresh_token, resp.user)
-      navigate('/dashboard')
+      navigate(nextAfterAuth())
     } catch (err: any) {
       setError(err.message ?? 'Invalid code')
     } finally {

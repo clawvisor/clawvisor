@@ -1,11 +1,21 @@
 import { useState, FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, APIError } from '../api/client'
 
 export default function Register() {
 
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [params] = useSearchParams()
+
+  // Invite passthrough: when the user arrived here from /accept-invite,
+  // we get the invited email + org name in the URL. Prefill (and lock)
+  // the email so the user can't accidentally register a mismatched
+  // address that would fail the backend's invite email-match check.
+  const fromInvite = params.get('invite') === '1'
+  const invitedEmail = params.get('email') ?? ''
+  const invitedOrg = params.get('org') ?? ''
+
+  const [email, setEmail] = useState(invitedEmail)
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -56,7 +66,17 @@ export default function Register() {
       <div className="max-w-md w-full space-y-8 p-8 bg-surface-1 border border-border-default rounded-md">
         <div>
           <h1 className="text-3xl font-bold text-text-primary">Clawvisor</h1>
-          <h2 className="mt-2 text-lg text-text-secondary">Create your account</h2>
+          {fromInvite && invitedOrg ? (
+            <>
+              <p className="mt-3 text-xs font-medium text-brand uppercase tracking-wide">You're invited</p>
+              <h2 className="mt-1 text-lg text-text-primary font-medium">Join {invitedOrg}</h2>
+              <p className="mt-1 text-sm text-text-secondary">
+                Create an account to accept the invitation. We'll add you to the org as soon as you verify your email.
+              </p>
+            </>
+          ) : (
+            <h2 className="mt-2 text-lg text-text-secondary">Create your account</h2>
+          )}
         </div>
 
         {error && (
@@ -93,8 +113,16 @@ export default function Register() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full rounded border border-border-default bg-surface-0 text-text-primary px-3 py-2 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
+              readOnly={fromInvite && !!invitedEmail}
+              className={`mt-1 block w-full rounded border border-border-default text-text-primary px-3 py-2 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand ${
+                fromInvite && invitedEmail ? 'bg-surface-2 cursor-not-allowed' : 'bg-surface-0'
+              }`}
             />
+            {fromInvite && invitedEmail && (
+              <p className="mt-1 text-xs text-text-tertiary">
+                Using the invited email. To use a different address, ask the inviter to send a new invite.
+              </p>
+            )}
           </div>
 
           <div>
@@ -118,7 +146,11 @@ export default function Register() {
             disabled={isSubmitting}
             className="w-full py-2 px-4 bg-brand text-surface-0 rounded font-medium hover:bg-brand-strong disabled:opacity-50"
           >
-            {isSubmitting ? 'Creating account...' : 'Create account'}
+            {isSubmitting
+              ? 'Creating account…'
+              : fromInvite && invitedOrg
+                ? `Create account and join ${invitedOrg}`
+                : 'Create account'}
           </button>
         </form>
 

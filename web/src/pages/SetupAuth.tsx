@@ -3,6 +3,12 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { api, setAccessToken, type AuthResponse } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { isWebAuthnAvailable, startRegistration } from '../lib/webauthn'
+import { peekPendingInviteToken } from '../lib/pendingInvite'
+
+function nextAfterAuth(): string {
+  const token = peekPendingInviteToken()
+  return token ? `/accept-invite?token=${encodeURIComponent(token)}` : '/dashboard'
+}
 
 type Step = 'choose' | 'passkey' | 'password' | 'totp'
 
@@ -25,7 +31,7 @@ export default function SetupAuth() {
 
   function completeAuth(resp: AuthResponse) {
     setSession(resp.access_token, resp.refresh_token, resp.user)
-    navigate('/dashboard', { replace: true })
+    navigate(nextAfterAuth(), { replace: true })
   }
 
   async function handlePasskey() {
@@ -70,7 +76,7 @@ export default function SetupAuth() {
     try {
       await api.auth.totp.confirm(totpCode)
       // TOTP confirmed — we already have session tokens from password setup
-      navigate('/dashboard', { replace: true })
+      navigate(nextAfterAuth(), { replace: true })
     } catch (err: any) {
       setError(err.message ?? 'Invalid TOTP code')
     } finally {

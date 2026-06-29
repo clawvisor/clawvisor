@@ -42,10 +42,19 @@ type OrgGovOptions struct {
 	// CheckSpendCap returns (false, reason) when the org has crossed
 	// its hard-mode spend cap. Soft-mode crossings return (true,
 	// reason) — the reason is logged but the request proceeds.
-	CheckSpendCap func(ctx context.Context, orgID string) (allow bool, reason string)
-	// ScanContentPolicy returns (false, reason) when the canonical-
-	// extracted user text matches a block-mode content policy.
-	ScanContentPolicy func(ctx context.Context, orgID, content string) (allow bool, reason string, flagged []string)
+	//
+	// warningLevel is "" (no warning), "80", or "100" — the host
+	// emits spend.cap_warning_{level} notifications when non-empty
+	// even on allowed requests.
+	//
+	// agentID is the request's agent_id; cloud uses it to resolve
+	// agent → team to check team caps before org caps.
+	CheckSpendCap func(ctx context.Context, orgID, agentID string) (allow bool, warningLevel string, reason string)
+	// ScanContentPolicy returns (false, blockMessage, reason) when the
+	// canonical-extracted user text matches a block-mode content
+	// policy. flag-mode matches return (true, "", reason) plus the
+	// matched pattern names in flagged.
+	ScanContentPolicy func(ctx context.Context, orgID, content string) (allow bool, blockMessage string, reason string, flagged []string)
 	// RecordViolation persists a policy violation event. Failures are
 	// best-effort.
 	RecordViolation func(ctx context.Context, evt OrgGovViolation)

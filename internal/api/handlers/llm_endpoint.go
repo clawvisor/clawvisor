@@ -595,6 +595,53 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// Governance: per-org spend-cap enforcement. Same shape as
+	// OrgModelPolicy. Blocks on hard-cap. Soft-cap warnings + 80/100
+	// crossings flow to the host as audit params; the cloud emitter
+	// picks them up via the RecordViolation callback.
+	if h.OrgGovCallbacks.CheckSpendCap != nil {
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewOrgSpendCapPolicy(h.OrgGovCallbacks, h.OrgIDForAgent))
+		if err == nil {
+			for k, v := range result.AuditParams {
+				auditParams[k] = v
+			}
+			if result.DenyReason != "" {
+				http.Error(w, result.DenyReason, http.StatusForbidden)
+				return
+			}
+		}
+	}
+
+	// Governance: per-org content policy. The block_message returned
+	// by the cloud callback (admin-authored) is used as the 403 body
+	// so end users see actionable guidance.
+	if h.OrgGovCallbacks.ScanContentPolicy != nil {
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewOrgContentPolicy(h.OrgGovCallbacks, h.OrgIDForAgent))
+		if err == nil {
+			for k, v := range result.AuditParams {
+				auditParams[k] = v
+			}
+			if result.DenyReason != "" {
+				http.Error(w, result.DenyReason, http.StatusForbidden)
+				return
+			}
+		}
+	}
 	// Extract per-conversation identifier from the inbound body once. It
 	// scopes pending approvals + task checkout to a single conversation
 	// when multiple sessions share a Clawvisor token (Conductor workspaces,

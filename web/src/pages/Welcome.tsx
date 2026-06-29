@@ -12,9 +12,14 @@ export default function Welcome() {
     queryFn: () => api.billing.status(),
   })
 
-  if (!isLoading && billingStatus && billingStatus.status !== 'none') {
-    return <Navigate to="/dashboard" replace />
-  }
+  // Org members shouldn't see the personal plan-picker — they're already
+  // on the org's billing, so bounce them back to the dashboard.
+  const { data: memberships, isLoading: membershipsLoading } = useQuery({
+    queryKey: ['orgs'],
+    queryFn: () => api.orgs.list(),
+    staleTime: 60_000,
+  })
+  const hasOrg = (memberships?.length ?? 0) > 0
 
   const activateMut = useMutation({
     mutationFn: () => api.billing.activateFreeTier(),
@@ -23,6 +28,13 @@ export default function Welcome() {
       navigate('/dashboard')
     },
   })
+
+  if (!isLoading && billingStatus && billingStatus.status !== 'none') {
+    return <Navigate to="/dashboard" replace />
+  }
+  if (!membershipsLoading && hasOrg) {
+    return <Navigate to="/dashboard" replace />
+  }
 
   return (
     <div className="min-h-screen bg-surface-0 flex items-center justify-center">

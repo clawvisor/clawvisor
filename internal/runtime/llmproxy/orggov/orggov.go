@@ -28,14 +28,25 @@ type Callbacks struct {
 	// CheckSpendCap returns (false, reason) when the org has crossed
 	// its hard-mode spend cap. Soft-mode crossings return (true, reason)
 	// — the reason is logged but the request proceeds.
-	CheckSpendCap func(ctx context.Context, orgID string) (allow bool, reason string)
+	//
+	// warningLevel is "" (no warning), "80", or "100" — used by the
+	// cloud side to fire spend.cap_warning_80 / _100 notifications
+	// even when the request is allowed. The lite-proxy ignores it.
+	//
+	// agentID is the request's agent; the cloud-side impl uses it to
+	// resolve the agent's team_id and check team caps before org caps.
+	CheckSpendCap func(ctx context.Context, orgID, agentID string) (allow bool, warningLevel string, reason string)
 
 	// ScanContentPolicy returns (false, reason) when the extracted
 	// user-visible request text matches a block-mode content policy.
 	// flag-mode matches return (true, reason). Content is the
 	// canonical-extracted text from bodytransform; opaque blobs (base64
 	// images, tool definition JSON) are NOT scanned.
-	ScanContentPolicy func(ctx context.Context, orgID, content string) (allow bool, reason string, flagged []string)
+	//
+	// When a block fires, blockMessage carries the admin-authored
+	// custom rejection message (may be empty — caller falls back to a
+	// generic string).
+	ScanContentPolicy func(ctx context.Context, orgID, content string) (allow bool, blockMessage string, reason string, flagged []string)
 
 	// RecordViolation persists a policy violation event. Called by
 	// the lite-proxy policies whenever a check returns (allow=false)
