@@ -256,12 +256,17 @@ func TestLLMEndpoint_Anthropic_NoConversationIDMarker(t *testing.T) {
 		if _, minted := params["conversation_id_minted"]; minted {
 			t.Errorf("Anthropic turn unexpectedly minted a conversation ID: params=%v", params)
 		}
-		// Anthropic body has no metadata.user_id → conversation_id_source
-		// is "empty" rather than "native_anthropic" for this minimal
-		// fixture. Both are legitimate — the assertion is just that
-		// it's NOT a Chat-Completions-only label.
+		// Anthropic body has no metadata.user_id → the
+		// first-user-message fingerprint fallback fires, so
+		// conversation_id_source is "fingerprint". That's a
+		// cross-provider label (Anthropic, OpenAI Responses, and OpenAI
+		// Chat all share the same fp- prefix and source name); the
+		// assertion is just that no Chat-Completions-only marker label
+		// fired ("minted" or "echoed_marker"), since those signal the
+		// proxy minted/echoed a Clawvisor marker that's only used on
+		// Chat Completions where no native id exists.
 		src, _ := params["conversation_id_source"].(string)
-		if src == "minted" || src == "echoed_marker" || src == "fingerprint" {
+		if src == "minted" || src == "echoed_marker" {
 			t.Errorf("Anthropic row got Chat-Completions-only source label %q", src)
 		}
 		return

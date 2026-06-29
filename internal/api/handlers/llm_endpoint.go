@@ -4248,6 +4248,17 @@ func liteProxyConversationIDSource(provider conversation.Provider, req *http.Req
 	if mintedConversationID != "" && conversationID == mintedConversationID {
 		return "minted"
 	}
+	// The `fp-` prefix is the universal fingerprint marker — it's set by
+	// every provider's fallback path (anthropicChatFingerprint,
+	// openAIResponsesFingerprint, openAIChatFingerprint) and lets operators
+	// distinguish "client gave us a native session id" from "we derived
+	// one from the first user message because the client didn't carry
+	// one." Without this branch, fingerprint ids on Anthropic and OpenAI
+	// Responses would be mislabeled as `native_*` and the audit would
+	// imply the client surfaced an id it actually didn't.
+	if strings.HasPrefix(conversationID, "fp-") {
+		return "fingerprint"
+	}
 	switch provider {
 	case conversation.ProviderAnthropic:
 		return "native_anthropic"
@@ -4255,9 +4266,6 @@ func liteProxyConversationIDSource(provider conversation.Provider, req *http.Req
 		if req != nil && conversation.IsOpenAIChatCompletionsEndpoint(req) {
 			if strings.HasPrefix(conversationID, conversation.ConversationIDPrefix) {
 				return "echoed_marker"
-			}
-			if strings.HasPrefix(conversationID, "fp-") {
-				return "fingerprint"
 			}
 			return "unknown"
 		}
