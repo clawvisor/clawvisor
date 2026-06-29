@@ -1,0 +1,55 @@
+internal/runtime/llmproxy/controltool/control_test.go
+  s_fd6d9b102e043d::t_ca7fafbaf223c0 59-67,69-70,73-82
+  s_fd6d9b102e043d::t_34b369a7285390 68
+internal/runtime/llmproxy/controltool/control.go
+  s_fd6d9b102e043d::t_22156cc2d2bac6 60-62
+  s_fd6d9b102e043d::t_e904ded4f18b2f 88-90,92,94-102,105-109
+  s_fd6d9b102e043d::t_5c0d517b7bca28 63
+  s_fd6d9b102e043d::t_72a5e486846482 103-104
+internal/runtime/llmproxy/release.go
+  s_fd6d9b102e043d::t_7bd373c10bc9cd 97-175
+  s_fd6d9b102e043d::t_1e743dd468b6b1 306-308
+internal/runtime/llmproxy/pending_approval_cache.go
+  s_fd6d9b102e043d::t_946c4ce2b9341d 47-53
+  s_fd6d9b102e043d::t_e999c288a13a5a 115-131
+internal/runtime/llmproxy/approval_reply_resolver_test.go
+  s_fd6d9b102e043d::t_d6254901343dd4 99-117
+internal/runtime/llmproxy/inline_expansion_intercept.go
+  s_fd6d9b102e043d::t_6829bc01fb26db 1-146,151-200,202-235
+internal/runtime/llmproxy/inline_expansion_intercept_test.go
+  s_fd6d9b102e043d::t_2d71cf849dfe53 1-224
+internal/api/handlers/tasks_inline.go
+  s_fd6d9b102e043d::t_273cbe2a86d11e 159-165,167-169
+  s_fd6d9b102e043d::t_fbaf4f1cb168ce 443-449,451-453
+  s_fd6d9b102e043d::t_44a347234bcd68 783-792,794-799,801-849,852-910,913,915,917-947,950-959,961-980,988-1019,1021-1046,1050,1052-1068,1075-1085,1087-1092,1094-1151
+  s_fd6d9b102e043d::t_3527610d7c688e 793,800,1047-1049,1051
+internal/runtime/llmproxy/approval_reply_resolver.go
+  s_fd6d9b102e043d::t_4784eced476d40 17-18
+  s_fd6d9b102e043d::t_d1c0011b2872ae 84-85,87-89,93-94,96-98
+internal/runtime/llmproxy/inline_expansion_prompt.go
+  s_fd6d9b102e043d::t_73c59657f947f1 1-25,27-158,161-178
+  s_fd6d9b102e043d::t_cd5b7af43f2053 159-160
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_fd6d9b102e043d::t_e3f5eca510921b 350-358
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_fd6d9b102e043d::t_5c874a51fcf13e 114-123
+  s_fd6d9b102e043d::t_535a1f8304c0d6 178-184
+internal/runtime/llmproxy/inline_task_transitions.go
+  s_fd6d9b102e043d::t_1e2aa58bbb6ebb 184-217,219-222,224-227,229-232,234-247,249-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "080e86e946b85174804a5475f06e14748a2fe6bf",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

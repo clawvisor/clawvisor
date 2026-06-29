@@ -1,0 +1,45 @@
+internal/runtime/llmproxy/catalog.go
+  8de9dcae61d3e38a 57,76,82-83,92,178-183,186,193-235
+internal/runtime/llmproxy/inspector/boundservices.go
+  8de9dcae61d3e38a 18,53-74
+internal/runtime/llmproxy/postprocess.go
+  8de9dcae61d3e38a 479-484,486
+internal/runtime/llmproxy/anthropic_sanitize.go
+  8de9dcae61d3e38a 101-104,106-110
+internal/api/handlers/runtime_tool_controls.go
+  8de9dcae61d3e38a 111,121-137,141
+web/vite.config.ts
+  8de9dcae61d3e38a 21-24
+web/src/pages/Restrictions.tsx
+  8de9dcae61d3e38a 748-752
+internal/runtime/llmproxy/catalog_test.go
+  8de9dcae61d3e38a 181-222
+internal/runtime/llmproxy/inspector/boundservices_test.go
+  8de9dcae61d3e38a 1-36
+internal/runtime/llmproxy/inspector/rewriter.go
+  8de9dcae61d3e38a 146-148,151-156
+internal/api/handlers/llm_endpoint.go
+  8de9dcae61d3e38a 387-390,461-477,797-818
+internal/runtime/conversation/openai_response.go
+  8de9dcae61d3e38a 268-275,364-376,446-466,553,564-568
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "23067d58beb49bca7b13ac3ca50a7814dda88e39",
+  "prompts": {
+    "8de9dcae61d3e38a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine",
+      "messages": [],
+      "total_additions": 342,
+      "total_deletions": 72,
+      "accepted_lines": 301,
+      "overriden_lines": 0
+    }
+  }
+}

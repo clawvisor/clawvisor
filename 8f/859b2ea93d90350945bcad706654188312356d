@@ -1,0 +1,24 @@
+web/src/pages/Agents.tsx
+  s_6d95d507d56682::t_24bd382dc3cedc 2411
+  s_6d95d507d56682::t_da0fd63fb3a6d2 2412,2414,2416
+  s_6d95d507d56682::t_cc7912bf2181b6 2445
+  s_6d95d507d56682::t_f2c89517b86696 2301-2313,2318-2319,2323
+internal/api/handlers/installer.go
+  s_6d95d507d56682::t_667c90b8f11001 147-150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "8f859b2ea93d90350945bcad706654188312356d",
+  "prompts": {},
+  "sessions": {
+    "s_6d95d507d56682": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e5ca272-33dd-461c-beff-3878d45c0d32",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

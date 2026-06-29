@@ -1,0 +1,34 @@
+internal/api/handlers/vault.go
+  s_5690062ed6cda8::t_5e37c7d5a3283f 269-271,472-474
+internal/api/handlers/tasks.go
+  s_5690062ed6cda8::t_6d3898612f5e50 1161-1166,2049-2050
+  s_5690062ed6cda8::t_6b7a4c82988571 1213-1216,2021-2023
+  s_5690062ed6cda8::t_8a6daf7d55fa4c 1338,1342-1373,1381-1429
+  s_5690062ed6cda8::t_1fc15606aa9d67 1205-1212,1217-1238
+  s_5690062ed6cda8::t_7f6778ac502a8b 1109-1111,2015-2020,2024-2032
+internal/api/vault_items_test.go
+  s_5690062ed6cda8::t_02537f10872433 224-235
+internal/api/handlers/tasks_inline_test.go
+  s_5690062ed6cda8::t_71df8f08b7101a 224-230
+  s_5690062ed6cda8::t_529e9704d19d7f 5,7-8,12,212-223,231-267
+internal/runtime/llmproxy/inspector/parser.go
+  s_5690062ed6cda8::t_2a2a4773d6db12 240-242,254,265-270,290,292
+internal/runtime/llmproxy/inspector/parser_flags_test.go
+  s_5690062ed6cda8::t_ff443019a5d81b 100-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "3906ef2ffa41f7073180e17880050dc3c3ce0120",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

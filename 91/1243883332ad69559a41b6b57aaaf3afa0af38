@@ -1,0 +1,31 @@
+internal/api/handlers/claim_cache.go
+  s_c55c88f9f7074a::t_0b1e0054c31114 16-21
+  s_c55c88f9f7074a::t_ba4302f80df96b 49-62
+internal/api/handlers/claim_cache_redis.go
+  s_c55c88f9f7074a::t_e5d14aa0b39b56 33-46
+internal/api/handlers/connections.go
+  s_c55c88f9f7074a::t_4f31c71da56ee4 210-219
+  s_c55c88f9f7074a::t_bc57eeace35e26 273-284,286
+  s_c55c88f9f7074a::t_715ccf428bb40d 26
+  s_c55c88f9f7074a::t_425a5017b46790 533-548
+  s_c55c88f9f7074a::t_eac01b6454c3c8 122-136,138,148
+  s_c55c88f9f7074a::t_a9319379ed6af2 500-502
+internal/api/connections_test.go
+  s_c55c88f9f7074a::t_3608a695e09cac 492-574
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "911243883332ad69559a41b6b57aaaf3afa0af38",
+  "prompts": {},
+  "sessions": {
+    "s_c55c88f9f7074a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e8958da-493e-4cef-9029-07eb2d87ba12",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

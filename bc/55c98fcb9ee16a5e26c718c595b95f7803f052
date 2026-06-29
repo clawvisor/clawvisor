@@ -1,0 +1,87 @@
+internal/runtime/llmproxy/audit.go
+  s_273708382f1863::t_1ca6b3eadc0d92 276-283,295-332
+  ai_agent 333-355,363,372-403,362
+  s_a5f33eee989c6d::t_3c5e1f51d626b7 285-294
+  s_a5f33eee989c6d::t_2abd0806b37f65 356-361,364-371
+internal/api/handlers/tasks_inline.go
+  s_a5f33eee989c6d::t_5a885e1b81337c 44-59
+  s_a5f33eee989c6d::t_e99d0db5c8ab57 176-184,197-199
+  s_a5f33eee989c6d::t_dbea7cb24a94a1 187-196
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_273708382f1863::t_1ca6b3eadc0d92 14,134-144,168-175,195-202,210,214-249,251,277-281,367-389,405,407-410,421-422,424-425,427-428,430,432-433,467,474-484,486-491,166,417,360,363,365-366,323,325-326,192
+  s_a5f33eee989c6d::t_416fe647026f84 311-312,327-335,337-339,361-362,364
+  s_a5f33eee989c6d::t_c64c202504a007 250,252-253,259-269
+  s_a5f33eee989c6d::t_13f9f3bbc87284 145-157,159-165,167
+  s_64d006930de2e2::t_83f0fdd07f9413 158,322,194,336,340-359
+  s_a5f33eee989c6d::t_cf7ee1d6921580 390-397,406,416,418-420,423,426,429,431
+  s_a5f33eee989c6d::t_d730b35b70a37f 270-276
+  s_a5f33eee989c6d::t_bc41308074336c 313-321,324
+  s_a5f33eee989c6d::t_7e4694f969c549 398-404
+  s_a5f33eee989c6d::t_9ad0184d84726c 411-415
+  s_a5f33eee989c6d::t_d7806ddd98c3e8 178-191,193
+  s_a5f33eee989c6d::t_fbc25ea0eb3b51 203-209,211-213
+  s_a5f33eee989c6d::t_af965f4bc822ce 254-258
+  s_a5f33eee989c6d::t_dce8bfbacecbf7 8
+internal/runtime/llmproxy/control.go
+  s_a5f33eee989c6d::t_cbd69255ae3c6f 96
+  s_a5f33eee989c6d::t_f12dfa16a5005b 95
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_273708382f1863::t_1ca6b3eadc0d92 168-169,172,178-180,184-191,425-491,512-547,578-837,557-560,564,568,571,575-577,506,509-511
+  s_a5f33eee989c6d::t_383b1535014890 548-550,551-556,561-563,565-567,569-570,572-574
+  s_a5f33eee989c6d::t_cf314305146ef5 492-505,507-508
+internal/api/handlers/llm_endpoint.go
+  s_273708382f1863::t_1ca6b3eadc0d92 819-830,853-860,1815-1829,3063,3068-3075,3077-3082,950,1104,1113-1114,1117,1170,1181,1186,1189,1193,1323-1324,1223,1251,1284,1320-1321,1166
+  s_a5f33eee989c6d::t_d8dc605c8115e9 1067-1068,1069-1102,1105-1108,1110-1112,1115,1167-1169,1171-1177,1179-1180,1182-1185,1187-1188,1190-1192,1322
+  s_a5f33eee989c6d::t_a6933d3ffeac49 872-878,887-913,915-919,939-943,945-946
+  s_a5f33eee989c6d::t_7cdc3d1bd4671d 944,947,1143,1147-1149,1157,1163,938
+  s_a5f33eee989c6d::t_72cc854f24876d 948,1150-1151,1256-1269,1271-1281,1285-1286
+  s_a5f33eee989c6d::t_279c6fbc432f4a 949,1109,1214,1252-1255,1270,1282-1283,1287-1288,1293-1297,1318-1319,1153,1164
+  s_a5f33eee989c6d::t_1c3c9d6a57aa59 1103,1116,1118-1133,1154-1156,1158-1159,1161,1165
+  s_a5f33eee989c6d::t_e7b0f6cf8a5bfb 1194-1207,1209-1213,1215-1222
+  s_a5f33eee989c6d::t_2ce18d7ddc3b8a 1208
+  s_a5f33eee989c6d::t_3f6119ad972774 1234-1250
+  s_a5f33eee989c6d::t_da776a08e51db0 1291-1292,1309-1314,1316-1317
+  s_a5f33eee989c6d::t_80ed473ea3d503 1134-1142,1144-1146,1152,1160,1162
+  s_a5f33eee989c6d::t_baf78aa07e164b 914
+  s_a5f33eee989c6d::t_d1dc1150a9fef5 1178
+  s_a5f33eee989c6d::t_a3fe9cab8b12e5 1224-1233
+  s_a5f33eee989c6d::t_50b4302d1f72d3 920-937
+internal/runtime/conversation/openai_continuation.go
+  s_a5f33eee989c6d::t_abab46954de096 1-89,97,101-174,176-187,190-213,215-249,275,280-282,100
+  s_a5f33eee989c6d::t_b5061d90290fa6 175
+  s_a5f33eee989c6d::t_4443a404b79d24 214
+  s_a5f33eee989c6d::t_5fcb75712c8ea1 253-258,269-274
+  s_a5f33eee989c6d::t_d80013ce2b1777 90-96,98-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "bc55c98fcb9ee16a5e26c718c595b95f7803f052",
+  "prompts": {},
+  "sessions": {
+    "s_273708382f1863": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65ad44a3-10d2-499a-9b48-97e867b288d0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_64d006930de2e2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e588d-2478-7461-b7c2-2c65009f3c84",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_a5f33eee989c6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37aa2c5f-2455-40a0-84dc-0b1a4ce1fdcd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

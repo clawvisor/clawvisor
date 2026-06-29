@@ -1,0 +1,53 @@
+internal/runtime/llmproxy/postproc/recoverable_deny_test.go
+  s_bbe778adcf6f02::t_950117d2423384 1-33,41-107,112-123
+  s_bbe778adcf6f02::t_6d623b1a5dd8fa 124-125,37,40,111,127-152
+  s_bbe778adcf6f02::t_e7ba03a9f6291f 34-36,38-39
+  s_bbe778adcf6f02::t_efdbc5f379f291 108-110
+  s_bbe778adcf6f02::t_3dbc699b99502e 126
+internal/runtime/llmproxy/postproc/stream.go
+  s_bbe778adcf6f02::t_3258bc37ba6a0e 213
+  s_bbe778adcf6f02::t_218db4d10c28b7 429-460,462,465-469,477-482,485-486
+  s_bbe778adcf6f02::t_0a98d96b00679d 520-522,524-529,573-585,601-603,607,609-614,646,648-654,657-672,674-684,687-704,706-707,739-741,743-744,746-784
+  s_bbe778adcf6f02::t_9dc6ef862aaa2e 530,541-549,551,555,557-567,586-587,593-595,597-600
+  s_bbe778adcf6f02::t_ee4a98d9feb768 550
+  s_bbe778adcf6f02::t_916fd31c91d6ad 588-592,596
+  s_bbe778adcf6f02::t_69763181526dcf 604-606,608,615-645,647,655-656,673,685-686
+  s_bbe778adcf6f02::t_843aeb9564cad3 705,708-738,742,745
+internal/e2e/lite/scope_drift_counters.go
+  s_bbe778adcf6f02::t_0fd726aa9d7f75 22-23
+  s_bbe778adcf6f02::t_5964024371b6e2 83,86-91,94-96,98
+  s_bbe778adcf6f02::t_477697d80d2c7b 84-85,92-93,97
+  s_bbe778adcf6f02::t_bb9701f7ee8839 99-102
+internal/runtime/llmproxy/postproc/recoverable_deny.go
+  s_bbe778adcf6f02::t_dce11ae8b4e502 1-24,31,33-36,38-40,42-45,47-49,51-58,65-70,72-76,80-94,63
+  s_bbe778adcf6f02::t_243fbb77723d97 78-79,59-62
+  s_bbe778adcf6f02::t_3611e847264f35 25-30,32,37,41,46,50,64,71,77
+internal/runtime/llmproxy/scope_drift_registry.go
+  s_bbe778adcf6f02::t_e2948436f71360 145-159
+  s_bbe778adcf6f02::t_a01438dd0a5116 160,163-187
+  s_bbe778adcf6f02::t_6f9ae5f6af9569 218-224
+  s_bbe778adcf6f02::t_704d3e0df6ba60 225-233
+  s_bbe778adcf6f02::t_788d2e349b8731 236,247,265
+  s_bbe778adcf6f02::t_8c33f9df3b6164 237-238
+  s_bbe778adcf6f02::t_72edfa30cc71fd 363,374,386,388,396,398
+  s_bbe778adcf6f02::t_2f45cec62620cf 364-373,376-379,387,389-395,397,419-424,431-432,404
+  s_bbe778adcf6f02::t_ba178ae228296f 375,380-385
+  s_bbe778adcf6f02::t_3a477a2ef5e098 399-400,210,401-403,405-409
+  s_bbe778adcf6f02::t_83522bc0b1b1c7 211-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "0c955b90d0d254e653e0b1c3e083274ed071984c",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

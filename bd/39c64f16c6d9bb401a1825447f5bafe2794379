@@ -1,0 +1,39 @@
+internal/api/handlers/installer.go
+  s_6d95d507d56682::t_a1b8d3a76d9feb 210-218,220-221,223,229
+  s_6d95d507d56682::t_79ffadc4967d24 127-140,143,151-169
+internal/api/handlers/installer_scripts/common.sh.tmpl
+  s_6d95d507d56682::t_98c29a96cfa3fb 1-162
+internal/api/handlers/installer_scripts/claude_code.sh.tmpl
+  s_6d95d507d56682::t_70e7b49ae5bbe9 1-66
+internal/api/handlers/installer_scripts.go
+  s_6d95d507d56682::t_4f0cbdd3f22ae8 1-95
+internal/api/handlers/installer_test.go
+  s_6d95d507d56682::t_3e3cc7cea27e95 340,342-344,356,365-366,368,374-380,382,384,405-406,408,432,450,460-526,534-550,557-561,563,566,568,570-617,620,623-624,627-628,633-688
+  s_6d95d507d56682::t_035c3cdd5cbb76 527-533,551-556,562,564-565,567,569
+  s_6d95d507d56682::t_a883f0846c4813 618-619,621-622,625-626,629-632
+internal/api/handlers/installer_scripts/codex.sh.tmpl
+  s_6d95d507d56682::t_5b8ef03647938d 1-182
+web/src/pages/Agents.tsx
+  s_6d95d507d56682::t_87e5d860b8d792 2320
+  s_6d95d507d56682::t_832c8a7156e530 2381-2444
+  s_6d95d507d56682::t_704c7e44ab71be 2360-2362
+  s_6d95d507d56682::t_db99a0b31c6a77 2167,2169-2177
+  s_6d95d507d56682::t_a3321f253c315e 2247-2251
+  s_6d95d507d56682::t_d30f7e0b657558 2300-2306,2311-2313,2315-2317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "bd39c64f16c6d9bb401a1825447f5bafe2794379",
+  "prompts": {},
+  "sessions": {
+    "s_6d95d507d56682": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e5ca272-33dd-461c-beff-3878d45c0d32",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
