@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -117,13 +118,32 @@ type Forwarder struct {
 // http.Client has no overall timeout (SSE streams can be long-lived) but
 // the transport caps the time waiting for the response headers — a slow
 // or unresponsive upstream can't hold a goroutine forever.
+//
+// Env-var overrides (all optional; production leaves all unset):
+//   CLAWVISOR_LLM_UPSTREAM_ANTHROPIC — replace https://api.anthropic.com
+//   CLAWVISOR_LLM_UPSTREAM_OPENAI    — replace https://api.openai.com
+//   CLAWVISOR_LLM_UPSTREAM_GOOGLE    — replace generativelanguage URL
+//   CLAWVISOR_LLM_UPSTREAM_CHATGPT   — replace chatgpt.com (passthrough OAuth)
+//
+// E2E tests point these at a cassette-backed mock to deterministically
+// replay LLM responses without touching the network.
 func NewForwarder(v vault.Vault) *Forwarder {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 60 * time.Second
+	upstream := DefaultUpstream
+	if u := os.Getenv("CLAWVISOR_LLM_UPSTREAM_ANTHROPIC"); u != "" {
+		upstream.AnthropicBaseURL = u
+	}
+	if u := os.Getenv("CLAWVISOR_LLM_UPSTREAM_OPENAI"); u != "" {
+		upstream.OpenAIBaseURL = u
+	}
+	if u := os.Getenv("CLAWVISOR_LLM_UPSTREAM_GOOGLE"); u != "" {
+		upstream.GoogleBaseURL = u
+	}
 	return &Forwarder{
 		Vault:    v,
 		Client:   &http.Client{Timeout: 0, Transport: transport},
-		Upstream: DefaultUpstream,
+		Upstream: upstream,
 	}
 }
 
@@ -345,9 +365,15 @@ func openaiPassthroughRoute(authorization, inboundPath string) *url.URL {
 	if !strings.HasPrefix(suffix, "/") {
 		suffix = "/" + suffix
 	}
+	scheme, host := "https", "chatgpt.com"
+	if u := os.Getenv("CLAWVISOR_LLM_UPSTREAM_CHATGPT"); u != "" {
+		if parsed, err := url.Parse(u); err == nil && parsed.Host != "" {
+			scheme, host = parsed.Scheme, parsed.Host
+		}
+	}
 	return &url.URL{
-		Scheme: "https",
-		Host:   "chatgpt.com",
+		Scheme: scheme,
+		Host:   host,
 		Path:   "/backend-api/codex" + suffix,
 	}
 }
