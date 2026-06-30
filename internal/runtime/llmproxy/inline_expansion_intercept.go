@@ -196,7 +196,7 @@ func MaybeInterceptInlineExpansion(
 	// carries the same cached RiskAssessment the headless Expand
 	// handler stamps — that way a dashboard-side approve (race) also
 	// reuses the LLM verdict.
-	agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, Name: cfg.AgentName}
+	agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, OrgID: cfg.AgentOrgID, Name: cfg.AgentName}
 	if _, err := expansionCreator.CreatePendingInlineExpansion(req.Context(), agentForCreate, taskID, &additions, parsed.Reason, expansionRisk); err != nil {
 		audit("fallthrough", "inline_expansion_pending_create_failed", err.Error()+"; deferring to dashboard rewrite")
 		trace("inline_expansion.pending_create_failed", "err", err.Error(), "task_id", taskID)
@@ -319,6 +319,7 @@ func assessInlineExpansionRisk(req *http.Request, cfg PostprocessConfig, parentP
 		Purpose:                parentPurpose,
 		AgentName:              cfg.AgentName,
 		UserID:                 cfg.AgentUserID,
+		OrgID:                  cfg.AgentOrgID,
 		ExpectedTools:          merged.ExpectedTools,
 		ExpectedEgress:         merged.ExpectedEgress,
 		RequiredCredentials:    merged.RequiredCredentials,

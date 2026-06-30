@@ -122,6 +122,7 @@ func runIntentVerify(ctx context.Context, cfg PostprocessConfig, dec TaskScopeDe
 		ExpectedUse:  expectedUse,
 		Verification: verification,
 		HasAction:    hasAction,
+		OrgID:        cfg.AgentOrgID,
 	}, intentverify.ResolvedAction{
 		ServiceID: resolved.ServiceID,
 		ActionID:  resolved.ActionID,

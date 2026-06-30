@@ -19,6 +19,9 @@ import OrgSettings from './OrgSettings'
 import OrgMembers from './OrgMembers'
 import OrgAdapters from './OrgAdapters'
 import OrgMCPServers from './OrgMCPServers'
+import Governance from './Governance'
+import OrgNotifications from './OrgNotifications'
+import OrgTeams from './OrgTeams'
 import Billing from './Billing'
 import KeyVault from './KeyVault'
 import OrgSelector from '../components/OrgSelector'
@@ -38,11 +41,22 @@ const navItems = [
 
 const billingNavItem = { to: '/dashboard/billing', label: 'Billing', end: undefined as boolean | undefined, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><path d="M1 10h22"/></svg> }
 
+// Org sidebar — pared down while we figure out which surfaces customers
+// will actually self-serve. Governance, notifications, custom adapters,
+// and MCP servers are temporarily admin-managed via the cmd/admin tool,
+// so they're hidden from the sidebar. Their /dashboard/org/{governance,
+// notifications,adapters,mcp-servers} routes remain wired in case of
+// bookmarked links.
+//
+// SSO is the exception: both its sidebar entry AND its route are gone.
+// Bookmarked /dashboard/org/sso falls through the wildcard <Route> at
+// the bottom of <Routes> and redirects to /dashboard. SSO config moved
+// fully to the cmd/admin tool — re-enabling self-serve is restoring the
+// route below + adding a features?.sso gate.
 const orgNavItems = [
   { to: '/dashboard/org', label: 'Organization', end: true, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> },
   { to: '/dashboard/org/members', label: 'Members', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg> },
-  { to: '/dashboard/org/adapters', label: 'Custom Adapters', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg> },
-  { to: '/dashboard/org/mcp-servers', label: 'MCP Servers', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><path d="M6 6h.01M6 18h.01"/></svg> },
+  { to: '/dashboard/org/teams', label: 'Teams', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><circle cx="17" cy="11" r="3"/></svg> },
 ]
 
 export default function Dashboard() {
@@ -115,8 +129,42 @@ export default function Dashboard() {
     staleTime: 60_000,
   })
 
-  // Redirect to welcome page if user has no billing setup yet.
-  if (billingEnabled && !billingLoading && billingStatus?.status === 'none' && billingStatus?.plan === 'none') {
+  // Org membership — if the user is a member of any org, skip the
+  // /welcome plan-picker. Invitees joining via the org-invite flow
+  // shouldn't have to pick a personal plan; they're already part of
+  // an org and the accept handler seeds a free-tier sub anyway. This
+  // also avoids a dead-end if the free-tier seed transiently fails.
+  // Note: enabled even when the teams feature flag is off — the
+  // /api/orgs endpoint works regardless of the gate (it just returns
+  // an empty list for users with no memberships), and we always want
+  // to know "is this user in any org?" before bouncing them.
+  const {
+    data: memberships,
+    isLoading: membershipsLoading,
+    isError: membershipsErrored,
+  } = useQuery({
+    queryKey: ['orgs'],
+    queryFn: () => api.orgs.list(),
+    staleTime: 60_000,
+  })
+  const hasOrg = (memberships?.length ?? 0) > 0
+
+  // Redirect to welcome page only if the user has no billing setup AND
+  // isn't already an org member. Wait for both queries before deciding
+  // — without the loading guard, the redirect can fire on first paint
+  // before memberships have loaded, sending an invited user to the
+  // plan picker by mistake. Also bail if the /api/orgs lookup errored:
+  // treating a failure as "zero memberships" would route org-only users
+  // (who have no personal billing) to the plan picker by mistake.
+  if (
+    billingEnabled &&
+    !billingLoading &&
+    !membershipsLoading &&
+    !membershipsErrored &&
+    billingStatus?.status === 'none' &&
+    billingStatus?.plan === 'none' &&
+    !hasOrg
+  ) {
     return <Navigate to="/welcome" replace />
   }
 
@@ -305,7 +353,9 @@ export default function Dashboard() {
             </span>
           </div>
         )}
-        <OnboardingBanner />
+        {/* The connect-accounts pitch is noise on org settings pages —
+            people there are managing members/teams/SSO, not onboarding. */}
+        {!location.pathname.startsWith('/dashboard/org') && <OnboardingBanner />}
         {llmStatus?.spend_cap_exhausted && (
           <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">
@@ -375,6 +425,14 @@ export default function Dashboard() {
             <>
               <Route path="org" element={<OrgSettings />} />
               <Route path="org/members" element={<OrgMembers />} />
+              <Route path="org/teams" element={<OrgTeams />} />
+              <Route path="org/governance" element={<Governance />} />
+              <Route path="org/notifications" element={<OrgNotifications />} />
+              {/* org/sso temporarily admin-managed — see cmd/admin/org_sso.go
+                  in the cloud repo. Customers configure SSO through Clawvisor
+                  staff during onboarding. The OrgSSO.tsx file is retained so
+                  we can re-enable self-serve in a future release without
+                  re-implementing the form. */}
               <Route path="org/adapters" element={<OrgAdapters />} />
               <Route path="org/mcp-servers" element={<OrgMCPServers />} />
             </>

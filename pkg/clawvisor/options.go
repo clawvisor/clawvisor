@@ -27,6 +27,57 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// OrgGovOptions bundles every per-org governance integration hook
+// the cloud package wires into the LLM proxy at startup. Fields use
+// bare function signatures (not the internal orggov.* / intent.* /
+// taskrisk.* types) so callers in non-clawvisor modules can construct
+// this struct directly.
+type OrgGovOptions struct {
+	// CheckModelPolicy returns (false, reason) when the canonical
+	// provider-qualified model identifier is blocked by the org's
+	// allow/deny policy.
+	CheckModelPolicy func(ctx context.Context, orgID, model string) (allow bool, reason string)
+	// CheckSpendCap returns (false, reason) when the org has crossed
+	// its hard-mode spend cap. Soft-mode crossings return (true,
+	// reason) — the reason is logged but the request proceeds.
+	//
+	// warningLevel is "" (no warning), "80", or "100" — the host
+	// emits spend.cap_warning_{level} notifications when non-empty
+	// even on allowed requests.
+	//
+	// agentID is the request's agent_id; cloud uses it to resolve
+	// agent → team to check team caps before org caps.
+	CheckSpendCap func(ctx context.Context, orgID, agentID string) (allow bool, warningLevel string, reason string)
+	// ScanContentPolicy returns (false, blockMessage, reason) when the
+	// canonical-extracted user text matches a block-mode content
+	// policy. flag-mode matches return (true, "", reason) plus the
+	// matched pattern names in flagged.
+	ScanContentPolicy func(ctx context.Context, orgID, content string) (allow bool, blockMessage string, reason string, flagged []string)
+	// RecordViolation persists a policy violation event. Failures are
+	// best-effort.
+	RecordViolation func(ctx context.Context, evt OrgGovViolation)
+	// OrgIDForAgent resolves agent_id → org_id at request time.
+	OrgIDForAgent func(ctx context.Context, agentID string) string
+	// IntentPromptResolver returns the per-org system-prompt override
+	// AND task-guidance for the intent verifier. Either or both may
+	// be "".
+	IntentPromptResolver func(ctx context.Context, orgID string) (override, guidance string)
+	// TaskRiskPromptResolver returns the per-org system-prompt override
+	// for the task risk assessor. "" preserves the default.
+	TaskRiskPromptResolver func(ctx context.Context, orgID string) (override string)
+}
+
+// OrgGovViolation is the public shape of orggov.ViolationEvent.
+type OrgGovViolation struct {
+	OrgID       string
+	UserID      string
+	AgentID     string
+	TaskID      string
+	PolicyKind  string
+	ActionTaken string
+	Detail      string
+}
+
 // GatewayHooks allows cloud/enterprise layers to inject additional
 // authorization logic into the gateway request flow.
 type GatewayHooks struct {
@@ -114,6 +165,13 @@ type ServerOptions struct {
 	// GatewayHooks injects additional authorization logic into the gateway flow.
 	// Used by cloud for org-level restrictions, policies, etc.
 	GatewayHooks *GatewayHooks
+
+	// OrgGov carries the cloud governance enforcement integration for
+	// the LLM proxy path: per-org model policy / spend cap / content
+	// policy callbacks and per-org safety-prompt resolvers. All fields
+	// are optional; nil callbacks degrade to "no enforcement" so the
+	// open-source build never pays the cost.
+	OrgGov *OrgGovOptions
 
 	// FeedbackHooks allows cloud/enterprise layers to react to feedback events
 	// (e.g. sending Slack alerts on bug reports).

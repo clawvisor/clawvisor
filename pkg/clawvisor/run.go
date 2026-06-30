@@ -14,7 +14,10 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/llm"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	runtimeleases "github.com/clawvisor/clawvisor/pkg/runtime/leases"
@@ -258,6 +261,38 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		apiOpts = append(apiOpts, api.WithGatewayHooks(&api.GatewayHooks{
 			BeforeAuthorize: opts.GatewayHooks.BeforeAuthorize,
 		}))
+	}
+
+	if opts.OrgGov != nil {
+		// Translate the public OrgGovOptions (bare function signatures)
+		// to the internal orggov.Callbacks / intent.PromptResolverFn /
+		// taskrisk.PromptResolverFn shapes the api layer expects.
+		recordViolation := opts.OrgGov.RecordViolation
+		callbacks := orggov.Callbacks{
+			CheckModelPolicy:  opts.OrgGov.CheckModelPolicy,
+			CheckSpendCap:     opts.OrgGov.CheckSpendCap,
+			ScanContentPolicy: opts.OrgGov.ScanContentPolicy,
+		}
+		if recordViolation != nil {
+			callbacks.RecordViolation = func(ctx context.Context, evt orggov.ViolationEvent) {
+				recordViolation(ctx, OrgGovViolation{
+					OrgID:       evt.OrgID,
+					UserID:      evt.UserID,
+					AgentID:     evt.AgentID,
+					TaskID:      evt.TaskID,
+					PolicyKind:  evt.PolicyKind,
+					ActionTaken: evt.ActionTaken,
+					Detail:      evt.Detail,
+				})
+			}
+		}
+		apiOpts = append(apiOpts, api.WithOrgGov(callbacks, opts.OrgGov.OrgIDForAgent))
+		if opts.OrgGov.IntentPromptResolver != nil {
+			apiOpts = append(apiOpts, api.WithIntentPromptResolver(intent.PromptResolverFn(opts.OrgGov.IntentPromptResolver)))
+		}
+		if opts.OrgGov.TaskRiskPromptResolver != nil {
+			apiOpts = append(apiOpts, api.WithTaskRiskPromptResolver(taskrisk.PromptResolverFn(opts.OrgGov.TaskRiskPromptResolver)))
+		}
 	}
 
 	if opts.FeedbackHooks != nil {

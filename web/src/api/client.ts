@@ -1194,6 +1194,169 @@ export interface OrgService {
   credential_type: 'shared' | 'per_user' | 'none'
 }
 
+// ── Governance types ─────────────────────────────────────────────────
+
+export interface GovSpendCap {
+  id: string
+  org_id: string
+  window_kind: 'daily' | 'monthly'
+  cap_micros: number
+  enforcement: 'soft' | 'hard'
+  created_at: string
+  updated_at: string
+}
+
+export interface GovContentPolicy {
+  id: string
+  org_id: string
+  name: string
+  pattern: string
+  pattern_kind: 'regex' | 'keyword'
+  action: 'block' | 'flag'
+  block_message?: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface GovPromptOverride {
+  id: string
+  org_id: string
+  kind: 'intent_verify' | 'risk_assess'
+  prompt: string
+  active: boolean
+  created_at: string
+}
+
+export interface GovAuditSettings {
+  org_id: string
+  retention_days: number
+  immutable: boolean
+  updated_at: string
+}
+
+export interface GovUsageSummary {
+  requests: number
+  input_tokens: number
+  output_tokens: number
+  cost_micros: number
+}
+
+export interface GovByModelEntry {
+  model: string
+  requests: number
+  cost_micros: number
+}
+
+export interface GovLeaderboardEntry {
+  id: string
+  label: string
+  requests: number
+  cost_micros: number
+}
+
+export interface GovViolation {
+  id: string
+  org_id: string
+  user_id?: string
+  agent_id?: string
+  task_id?: string
+  policy_kind: string
+  policy_id?: string
+  action_taken: 'blocked' | 'flagged' | 'warned'
+  detail: string
+  created_at: string
+}
+
+// ── Notification types ──────────────────────────────────────────────
+
+export interface NotifyChannel {
+  id: string
+  org_id: string
+  kind: 'slack_webhook' | 'email' | 'generic_webhook'
+  name: string
+  target_url: string
+  target_extra: string
+  min_interval_seconds: number
+  digest_window_seconds: number
+  sample_rate: number
+  created_by: string
+  created_at: string
+  deleted_at?: string
+}
+
+export interface NotifySubscription {
+  channel_id: string
+  event_type: string
+  enabled: boolean
+  created_at: string
+}
+
+export interface NotifyDelivery {
+  id: string
+  org_id: string
+  channel_id: string
+  event_type: string
+  dedup_key?: string
+  payload: string
+  status: 'pending' | 'sent' | 'failed' | 'dead' | 'sampled_out'
+  attempt_count: number
+  next_attempt_at: string
+  last_error?: string
+  created_at: string
+  updated_at: string
+  sent_at?: string
+}
+
+// ── Teams types ─────────────────────────────────────────────────────
+
+export interface Team {
+  id: string
+  org_id: string
+  name: string
+  created_by: string
+  created_at: string
+  deleted_at?: string
+}
+
+export interface TeamMember {
+  team_id: string
+  user_id: string
+  role: 'lead' | 'member'
+  created_at: string
+}
+
+export interface TeamSpendCap {
+  id: string
+  org_id: string
+  team_id: string
+  window_kind: 'daily' | 'monthly'
+  cap_micros: number
+  enforcement: 'soft' | 'hard'
+  created_at: string
+  updated_at: string
+}
+
+// ── SSO types ──────────────────────────────────────────────────────
+
+export interface OrgSSOConfig {
+  org_id: string
+  kind: 'saml' | 'oidc'
+  saml_entity_id?: string
+  saml_sso_url?: string
+  saml_certificate_pem?: string
+  saml_cert_fingerprint?: string
+  oidc_issuer?: string
+  oidc_client_id?: string
+  oidc_client_secret?: string
+  jit_provision: boolean
+  default_role: 'owner' | 'admin' | 'member'
+  email_domain?: string
+  enabled: boolean
+  created_at?: string
+  updated_at?: string
+}
+
 export interface CustomAdapter {
   id: string
   service_id: string
@@ -1626,7 +1789,11 @@ export const api = {
       delete: (orgId: string, inviteId: string) =>
         del<void>(`/api/orgs/${orgId}/invites/${inviteId}`),
       accept: (token: string) =>
-        post<{ org_id: string; role: string }>('/api/orgs/invites/accept', { token }),
+        post<{ status: string; org_id: string }>('/api/orgs/invites/accept', { token }),
+      inspect: (token: string) =>
+        get<{ org_name: string; org_slug: string; email: string; role: string; expires_at: string }>(
+          `/api/orgs/invites/inspect?token=${encodeURIComponent(token)}`,
+        ),
     },
     restrictions: {
       list: (orgId: string) => get<OrgRestriction[]>(`/api/orgs/${orgId}/restrictions`),
@@ -1655,6 +1822,156 @@ export const api = {
     services: (orgId: string) => get<{ services: OrgService[] }>(`/api/orgs/${orgId}/services`),
     adapters: (orgId: string) => get<CustomAdapter[]>(`/api/orgs/${orgId}/adapters`),
     mcpServers: (orgId: string) => get<CustomMCPServer[]>(`/api/orgs/${orgId}/mcp-servers`),
+    governance: {
+      modelPolicy: {
+        get: (orgId: string) =>
+          get<{ mode: string; models: string[] } | null>(`/api/orgs/${orgId}/governance/model_policy`),
+        put: (orgId: string, mode: 'allow' | 'deny', models: string[]) =>
+          put<{ status: string }>(`/api/orgs/${orgId}/governance/model_policy`, { mode, models }),
+        delete: (orgId: string) => del<{ status: string }>(`/api/orgs/${orgId}/governance/model_policy`),
+      },
+      spendCaps: {
+        list: (orgId: string) => get<GovSpendCap[]>(`/api/orgs/${orgId}/governance/spend_caps`),
+        put: (orgId: string, window: 'daily' | 'monthly', capMicros: number, enforcement: 'soft' | 'hard') =>
+          put<GovSpendCap>(`/api/orgs/${orgId}/governance/spend_caps/${window}`, { cap_micros: capMicros, enforcement }),
+        delete: (orgId: string, window: string) => del<{ status: string }>(`/api/orgs/${orgId}/governance/spend_caps/${window}`),
+      },
+      contentPolicies: {
+        list: (orgId: string) => get<GovContentPolicy[]>(`/api/orgs/${orgId}/governance/content_policies`),
+        create: (orgId: string, body: Partial<GovContentPolicy>) =>
+          post<GovContentPolicy>(`/api/orgs/${orgId}/governance/content_policies`, body),
+        update: (orgId: string, id: string, body: Partial<GovContentPolicy>) =>
+          put<GovContentPolicy>(`/api/orgs/${orgId}/governance/content_policies/${id}`, body),
+        delete: (orgId: string, id: string) => del<{ status: string }>(`/api/orgs/${orgId}/governance/content_policies/${id}`),
+      },
+      taskPolicy: {
+        get: (orgId: string) => get<{ guidance: string } | null>(`/api/orgs/${orgId}/governance/task_policy`),
+        put: (orgId: string, guidance: string) =>
+          put<{ status: string }>(`/api/orgs/${orgId}/governance/task_policy`, { guidance }),
+        delete: (orgId: string) => del<{ status: string }>(`/api/orgs/${orgId}/governance/task_policy`),
+      },
+      prompts: {
+        list: (orgId: string) => get<GovPromptOverride[]>(`/api/orgs/${orgId}/governance/prompts`),
+        put: (orgId: string, kind: 'intent_verify' | 'risk_assess', prompt: string) =>
+          put<GovPromptOverride>(`/api/orgs/${orgId}/governance/prompts/${kind}`, { prompt }),
+        delete: (orgId: string, kind: string) => del<{ status: string }>(`/api/orgs/${orgId}/governance/prompts/${kind}`),
+      },
+      auditSettings: {
+        get: (orgId: string) => get<GovAuditSettings>(`/api/orgs/${orgId}/governance/audit_settings`),
+        put: (orgId: string, body: Partial<GovAuditSettings>) =>
+          put<GovAuditSettings>(`/api/orgs/${orgId}/governance/audit_settings`, body),
+      },
+      usage: {
+        summary: (orgId: string, since?: string, until?: string) => {
+          const q = new URLSearchParams()
+          if (since) q.set('since', since)
+          if (until) q.set('until', until)
+          const qs = q.toString()
+          return get<GovUsageSummary>(`/api/orgs/${orgId}/governance/usage/summary${qs ? `?${qs}` : ''}`)
+        },
+        byModel: (orgId: string, since?: string, until?: string) => {
+          const q = new URLSearchParams()
+          if (since) q.set('since', since)
+          if (until) q.set('until', until)
+          const qs = q.toString()
+          return get<{ entries: GovByModelEntry[] }>(`/api/orgs/${orgId}/governance/usage/by_model${qs ? `?${qs}` : ''}`)
+        },
+        leaderboard: (orgId: string, kind: 'tasks' | 'agents' | 'users', since?: string, until?: string) => {
+          const q = new URLSearchParams()
+          if (since) q.set('since', since)
+          if (until) q.set('until', until)
+          const qs = q.toString()
+          return get<{ entries: GovLeaderboardEntry[] }>(`/api/orgs/${orgId}/governance/leaderboard/${kind}${qs ? `?${qs}` : ''}`)
+        },
+      },
+      violations: {
+        list: (orgId: string, filter?: { policy_kind?: string; action_taken?: string; since?: string; until?: string; limit?: number }) => {
+          const q = new URLSearchParams()
+          if (filter?.policy_kind) q.set('policy_kind', filter.policy_kind)
+          if (filter?.action_taken) q.set('action_taken', filter.action_taken)
+          if (filter?.since) q.set('since', filter.since)
+          if (filter?.until) q.set('until', filter.until)
+          if (filter?.limit) q.set('limit', String(filter.limit))
+          const qs = q.toString()
+          return get<GovViolation[]>(`/api/orgs/${orgId}/governance/violations${qs ? `?${qs}` : ''}`)
+        },
+        exportUrl: (orgId: string, format: 'csv' | 'json' = 'csv') =>
+          `/api/orgs/${orgId}/governance/violations/export?format=${format}`,
+        // Bare hrefs to /api/... don't carry the in-memory bearer token,
+        // so users whose session token isn't in a cookie get a 401 on
+        // the download. Use the authenticated download helper and let
+        // the caller turn the blob into an object URL.
+        download: (orgId: string, format: 'csv' | 'json' = 'csv') =>
+          download(`/api/orgs/${orgId}/governance/violations/export?format=${format}`),
+      },
+      auditExportUrl: (orgId: string, format: 'csv' | 'json' = 'csv', since?: string, until?: string) => {
+        const q = new URLSearchParams({ format })
+        if (since) q.set('since', since)
+        if (until) q.set('until', until)
+        return `/api/orgs/${orgId}/audit/export?${q.toString()}`
+      },
+    },
+    notify: {
+      channels: {
+        list: (orgId: string) => get<NotifyChannel[]>(`/api/orgs/${orgId}/notify/channels`),
+        create: (orgId: string, body: Partial<NotifyChannel> & { subscriptions?: string[] }) =>
+          post<NotifyChannel>(`/api/orgs/${orgId}/notify/channels`, body),
+        update: (orgId: string, channelId: string, body: Partial<NotifyChannel>) =>
+          put<NotifyChannel>(`/api/orgs/${orgId}/notify/channels/${channelId}`, body),
+        delete: (orgId: string, channelId: string) => del<{ status: string }>(`/api/orgs/${orgId}/notify/channels/${channelId}`),
+        test: (orgId: string, channelId: string) =>
+          post<{ status: string }>(`/api/orgs/${orgId}/notify/channels/${channelId}/test`, {}),
+      },
+      subscriptions: {
+        list: (orgId: string, channelId: string) =>
+          get<NotifySubscription[]>(`/api/orgs/${orgId}/notify/channels/${channelId}/subscriptions`),
+        update: (orgId: string, channelId: string, subscriptions: NotifySubscription[]) =>
+          put<{ status: string }>(`/api/orgs/${orgId}/notify/channels/${channelId}/subscriptions`, { subscriptions }),
+      },
+      deliveries: (orgId: string, status?: string) => {
+        const q = new URLSearchParams()
+        if (status) q.set('status', status)
+        const qs = q.toString()
+        return get<NotifyDelivery[]>(`/api/orgs/${orgId}/notify/deliveries${qs ? `?${qs}` : ''}`)
+      },
+      eventTypes: () => get<string[]>(`/api/notify/event_types`),
+      subscriptionSummary: (orgId: string, eventType: string) =>
+        get<{ event_type: string; subscribed: boolean; channel_count: number }>(
+          `/api/orgs/${orgId}/notify/subscription_summary?event_type=${encodeURIComponent(eventType)}`,
+        ),
+    },
+    teams: {
+      list: (orgId: string) => get<Team[]>(`/api/orgs/${orgId}/teams`),
+      create: (orgId: string, name: string) => post<Team>(`/api/orgs/${orgId}/teams`, { name }),
+      get: (orgId: string, teamId: string) => get<Team>(`/api/orgs/${orgId}/teams/${teamId}`),
+      update: (orgId: string, teamId: string, name: string) =>
+        put<{ status: string }>(`/api/orgs/${orgId}/teams/${teamId}`, { name }),
+      delete: (orgId: string, teamId: string) => del<{ status: string }>(`/api/orgs/${orgId}/teams/${teamId}`),
+      members: {
+        list: (orgId: string, teamId: string) => get<TeamMember[]>(`/api/orgs/${orgId}/teams/${teamId}/members`),
+        listAll: (orgId: string) => get<TeamMember[]>(`/api/orgs/${orgId}/team-members`),
+        add: (orgId: string, teamId: string, userId: string, role: 'lead' | 'member' = 'member') =>
+          post<{ status: string }>(`/api/orgs/${orgId}/teams/${teamId}/members`, { user_id: userId, role }),
+        remove: (orgId: string, teamId: string, userId: string) =>
+          del<{ status: string }>(`/api/orgs/${orgId}/teams/${teamId}/members/${userId}`),
+      },
+      spendCaps: {
+        list: (orgId: string, teamId: string) =>
+          get<TeamSpendCap[]>(`/api/orgs/${orgId}/teams/${teamId}/spend_caps`),
+        put: (orgId: string, teamId: string, window: 'daily' | 'monthly', capMicros: number, enforcement: 'soft' | 'hard') =>
+          put<TeamSpendCap>(`/api/orgs/${orgId}/teams/${teamId}/spend_caps/${window}`, { cap_micros: capMicros, enforcement }),
+        delete: (orgId: string, teamId: string, window: string) =>
+          del<{ status: string }>(`/api/orgs/${orgId}/teams/${teamId}/spend_caps/${window}`),
+      },
+      assignAgent: (orgId: string, agentId: string, teamId: string | null) =>
+        put<{ status: string }>(`/api/orgs/${orgId}/agents/${agentId}/team`, { team_id: teamId ?? '' }),
+    },
+    sso: {
+      get: (orgId: string) => get<OrgSSOConfig | null>(`/api/orgs/${orgId}/sso`),
+      put: (orgId: string, body: Partial<OrgSSOConfig>) =>
+        put<OrgSSOConfig>(`/api/orgs/${orgId}/sso`, body),
+      delete: (orgId: string) => del<{ status: string }>(`/api/orgs/${orgId}/sso`),
+    },
   },
   billing: {
     status: () => get<BillingStatus>('/api/billing/status'),

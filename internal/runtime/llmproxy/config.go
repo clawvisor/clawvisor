@@ -44,6 +44,9 @@ type TaskRiskAssessRequest struct {
 	Purpose                string
 	AgentName              string
 	UserID                 string
+	// OrgID identifies the org context. Forwarded to taskrisk.AssessRequest
+	// so the upstream assessor can resolve per-org prompt overrides.
+	OrgID                  string
 	ExpectedTools          []runtimetasks.ExpectedTool
 	ExpectedEgress         []runtimetasks.ExpectedEgress
 	RequiredCredentials    []runtimetasks.RequiredCredential
@@ -103,6 +106,11 @@ type AgentContext struct {
 	AgentUserID string
 	AgentID     string
 	AgentName   string
+	// AgentOrgID is the org that owns the agent. Forwarded into
+	// runtimedecision.AuthorizationInput → intent.VerifyRequest so
+	// the upstream LLM verifier can resolve per-org governance
+	// overrides. Empty when the agent isn't org-scoped.
+	AgentOrgID string
 }
 
 // AuditContext groups the audit emitter + request correlation + trace

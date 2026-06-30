@@ -581,6 +581,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 				PlannedCalls:      req.PlannedCalls,
 				AgentName:         agent.Name,
 				UserID:            agent.UserID,
+				OrgID:             agent.OrgID,
 			}
 			if hasV2Fields {
 				llmReq.ExpectedTools = env.ExpectedTools

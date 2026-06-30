@@ -150,6 +150,7 @@ func (h *GuardHandler) Check(w http.ResponseWriter, r *http.Request) {
 			ServiceHints:       serviceHints,
 			ChainFacts:         chainFacts,
 			ChainContextOptOut: false, // standing tasks without session_id are now rejected earlier
+			OrgID:              orgIDFromContext(ctx),
 		})
 
 		// Chain context fallback: same as gateway handler.

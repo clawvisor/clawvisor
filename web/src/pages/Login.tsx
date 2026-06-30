@@ -1,13 +1,22 @@
 import { useState, FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { api, APIError } from '../api/client'
 import { isWebAuthnAvailable, startAuthentication } from '../lib/webauthn'
+import { nextAfterAuth } from '../lib/nextAfterAuth'
 
 export default function Login() {
   const { login, setSession, features } = useAuth()
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [params] = useSearchParams()
+
+  // Invite passthrough — prefill the email and surface "Sign in to join
+  // {Org}" so the user understands why we're asking them to sign in.
+  const fromInvite = params.get('invite') === '1'
+  const invitedEmail = params.get('email') ?? ''
+  const invitedOrg = params.get('org') ?? ''
+
+  const [email, setEmail] = useState(invitedEmail)
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -42,7 +51,7 @@ export default function Login() {
       const credential = await startAuthentication(beginResp.options)
       const finishResp = await api.auth.passkey.loginFinish(beginResp.challenge_id, credential)
       setSession(finishResp.access_token, finishResp.refresh_token, finishResp.user)
-      navigate('/dashboard')
+      navigate(nextAfterAuth())
     } catch (err: any) {
       if (err instanceof APIError) {
         setError(err.message)
@@ -51,6 +60,39 @@ export default function Login() {
       } else {
         setError(err?.message ?? 'Passkey authentication failed')
       }
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function handleSSO() {
+    if (!email) {
+      setError('Enter your email above to sign in via SSO.')
+      return
+    }
+    setError(null)
+    setIsSubmitting(true)
+    try {
+      const res = await fetch(`/api/auth/sso/discover?email=${encodeURIComponent(email)}`)
+      // Discovery returns 200 with sso_available=false for the
+      // anti-enumeration "not configured" path. Anything other than 2xx is
+      // an actual transport/server failure and must not be conflated with
+      // "no SSO for this domain".
+      if (!res.ok) {
+        setError('SSO discovery is temporarily unavailable. Please try again.')
+        return
+      }
+      const data = await res.json()
+      if (data.sso_available && data.kickoff_url) {
+        // Note: any pending invite token is already persisted in
+        // localStorage by AcceptInvite, so it survives the IdP round-trip
+        // and SSOComplete picks it up via nextAfterAuth().
+        window.location.href = data.kickoff_url
+        return
+      }
+      setError('SSO is not configured for that email domain.')
+    } catch (err: any) {
+      setError(err?.message ?? 'SSO discovery failed.')
     } finally {
       setIsSubmitting(false)
     }
@@ -71,7 +113,7 @@ export default function Login() {
           replace: true,
         })
       } else {
-        navigate('/dashboard')
+        navigate(nextAfterAuth())
       }
     } catch (err) {
       if (err instanceof APIError) {
@@ -89,7 +131,17 @@ export default function Login() {
       <div className="max-w-md w-full space-y-8 p-8 bg-surface-1 border border-border-default rounded-md">
         <div>
           <h1 className="text-3xl font-bold text-text-primary">Clawvisor</h1>
-          <h2 className="mt-2 text-lg text-text-secondary">Sign in to your account</h2>
+          {fromInvite && invitedOrg ? (
+            <>
+              <p className="mt-3 text-xs font-medium text-brand uppercase tracking-wide">You're invited</p>
+              <h2 className="mt-1 text-lg text-text-primary font-medium">Sign in to join {invitedOrg}</h2>
+              <p className="mt-1 text-sm text-text-secondary">
+                After signing in we'll add you to the organization automatically.
+              </p>
+            </>
+          ) : (
+            <h2 className="mt-2 text-lg text-text-secondary">Sign in to your account</h2>
+          )}
         </div>
 
         {error && (
@@ -137,6 +189,11 @@ export default function Login() {
               onChange={(e) => setEmail(e.target.value)}
               className="mt-1 block w-full rounded border border-border-default bg-surface-0 text-text-primary px-3 py-2 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
             />
+            {fromInvite && invitedEmail && (
+              <p className="mt-1 text-xs text-text-tertiary">
+                The invite was sent to <span className="font-medium text-text-primary">{invitedEmail}</span>. Sign in with that email to accept.
+              </p>
+            )}
           </div>
 
           <div>
@@ -162,6 +219,20 @@ export default function Login() {
           </button>
         </form>
 
+        {features?.sso && (
+          <p className="text-center text-xs text-text-tertiary">
+            Have SSO?{' '}
+            <button
+              type="button"
+              onClick={handleSSO}
+              disabled={isSubmitting}
+              className="text-brand hover:underline disabled:opacity-50"
+            >
+              Sign in with SSO
+            </button>
+          </p>
+        )}
+
         <div className="text-center text-sm text-text-secondary space-y-2">
           <p>
             <Link to="/forgot-password" className="text-brand hover:underline">
@@ -170,8 +241,15 @@ export default function Login() {
           </p>
           <p>
             Don't have an account?{' '}
-            <Link to="/register" className="text-brand hover:underline">
-              Register
+            <Link
+              to={
+                fromInvite
+                  ? `/register?invite=1&email=${encodeURIComponent(invitedEmail)}&org=${encodeURIComponent(invitedOrg)}`
+                  : '/register'
+              }
+              className="text-brand hover:underline"
+            >
+              {fromInvite && invitedOrg ? `Create one and join ${invitedOrg}` : 'Register'}
             </Link>
           </p>
         </div>

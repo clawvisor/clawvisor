@@ -12,9 +12,14 @@ export default function Welcome() {
     queryFn: () => api.billing.status(),
   })
 
-  if (!isLoading && billingStatus && billingStatus.status !== 'none') {
-    return <Navigate to="/dashboard" replace />
-  }
+  // Org members shouldn't see the personal plan-picker — they're already
+  // on the org's billing, so bounce them back to the dashboard.
+  const { data: memberships, isLoading: membershipsLoading } = useQuery({
+    queryKey: ['orgs'],
+    queryFn: () => api.orgs.list(),
+    staleTime: 60_000,
+  })
+  const hasOrg = (memberships?.length ?? 0) > 0
 
   const activateMut = useMutation({
     mutationFn: () => api.billing.activateFreeTier(),
@@ -23,6 +28,28 @@ export default function Welcome() {
       navigate('/dashboard')
     },
   })
+
+  // Hold the entire page until both queries resolve. Otherwise an org
+  // member could briefly see (and click) the personal "Activate free
+  // tier" button while their memberships query was still in flight,
+  // which mints a personal plan they shouldn't have.
+  if (isLoading || membershipsLoading) {
+    return (
+      <div className="min-h-screen bg-surface-0 flex items-center justify-center">
+        <div
+          role="status"
+          aria-label="Loading"
+          className="w-6 h-6 border-2 border-border-default border-t-brand rounded-full animate-spin"
+        />
+      </div>
+    )
+  }
+  if (billingStatus && billingStatus.status !== 'none') {
+    return <Navigate to="/dashboard" replace />
+  }
+  if (hasOrg) {
+    return <Navigate to="/dashboard" replace />
+  }
 
   return (
     <div className="min-h-screen bg-surface-0 flex items-center justify-center">

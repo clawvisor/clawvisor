@@ -263,6 +263,7 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 			},
 			Reason: body.Why,
 			TaskID: task.ID,
+			OrgID:  orgIDFromContext(r.Context()),
 			// ProxyLite flag selects the lite-proxy verifier variant
 			// which is calibrated for per-call rationale shapes that
 			// aren't a full natural-language reason (e.g. structured

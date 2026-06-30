@@ -59,6 +59,19 @@ type AssessRequest struct {
 	// human approval prompt. Treated as UNTRUSTED text (may contain
 	// injection); the assessor evaluates it only as data.
 	RecentUserTurns []string
+
+	// OrgID identifies the org context. The cloud package's
+	// PromptResolverFn (registered via SetPromptResolver) uses this to
+	// look up an org-specific risk-assessment system prompt override.
+	// Empty for non-org-scoped requests.
+	OrgID string
+
+	// PromptOverride, when non-empty, replaces the default
+	// risk-assessment system prompt. Sourced from the cloud
+	// org_prompt_override table. Bypasses the Gemini cachedContents
+	// path (the binding was prepared at startup for the default prompt
+	// only).
+	PromptOverride string
 }
 
 // HasEnvelope reports whether the request carries v2 envelope fields.
@@ -99,11 +112,18 @@ func (NoopAssessor) Assess(_ context.Context, _ AssessRequest) (*RiskAssessment,
 	return nil, nil
 }
 
+// PromptResolverFn returns the per-org risk-assessment prompt
+// override (or "") for an org. Wired by the cloud package so the
+// assessor can resolve governance overrides without the task-creation
+// handlers having to thread the cloud store through.
+type PromptResolverFn func(ctx context.Context, orgID string) string
+
 // LLMAssessor performs task risk assessment via an LLM provider.
 type LLMAssessor struct {
 	health   *llm.Health
 	registry *adapters.Registry
 	logger   *slog.Logger
+	resolver PromptResolverFn
 
 	// geminiCacheNameFn returns the current Gemini cachedContents resource
 	// name, or "" when no cache is registered. Set via StartGeminiCache.
@@ -123,6 +143,14 @@ type LLMAssessor struct {
 // The registry is used to read action metadata from adapters that implement MetadataProvider.
 func NewLLMAssessor(health *llm.Health, registry *adapters.Registry, logger *slog.Logger) *LLMAssessor {
 	return &LLMAssessor{health: health, registry: registry, logger: logger}
+}
+
+// SetPromptResolver wires the per-org governance resolver. When set
+// and an AssessRequest carries a non-empty OrgID, the assessor
+// consults the resolver for an override prompt before calling the
+// LLM. Empty result preserves default behavior.
+func (a *LLMAssessor) SetPromptResolver(r PromptResolverFn) {
+	a.resolver = r
 }
 
 // StartGeminiCache initializes the Gemini explicit context cache for the
@@ -152,9 +180,27 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 
 	start := time.Now()
 
+	// Resolve per-org override (callers may pre-populate; resolver only
+	// fills empty fields).
+	if a.resolver != nil && req.OrgID != "" && req.PromptOverride == "" {
+		if override := a.resolver(ctx, req.OrgID); override != "" {
+			req.PromptOverride = override
+		}
+	}
+
 	actionContext := buildActionContextFromRegistry(ctx, a.registry, req.UserID)
 	client := llm.NewClient(cfg.LLMProviderConfig)
-	if a.geminiCacheNameFn != nil {
+	// Gemini cachedContents is registered against the DEFAULT system
+	// prompt. When an override is active the cache binding doesn't
+	// match — bypass it. Per-org overrides also force Anthropic prompt
+	// cache misses on the system block (the prefix bytes differ).
+	//
+	// Treat whitespace-only overrides as empty: a blank override would
+	// otherwise replace the default system prompt with whitespace,
+	// silently disabling the required JSON/risk-rubric instructions
+	// and leaving the LLM with no useful guidance.
+	usingOverride := strings.TrimSpace(req.PromptOverride) != ""
+	if !usingOverride && a.geminiCacheNameFn != nil {
 		client.AttachGeminiCacheNameFn(a.geminiCacheNameFn)
 		if a.geminiCacheInvalidator != nil {
 			client.AttachGeminiCacheInvalidator(a.geminiCacheInvalidator)
@@ -162,13 +208,17 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 	}
 	verificationEnabled := a.health.VerificationConfig().Enabled
 	userMsg := buildAssessUserMessage(req, verificationEnabled, actionContext)
+	systemPrompt := riskAssessmentSystemPrompt
+	if usingOverride {
+		systemPrompt = req.PromptOverride
+	}
 	// The system prompt is fully static — the per-user action context lives
 	// in the user message. That means the Anthropic prompt-cache prefix is
 	// shared across all users (and all assessments), and the Gemini
 	// explicit-content cache (when configured) covers it in a single
-	// cachedContents resource.
+	// cachedContents resource. Per-org overrides bypass both caches.
 	messages := []llm.ChatMessage{
-		{Role: "system", Content: riskAssessmentSystemPrompt, CacheControl: true},
+		{Role: "system", Content: systemPrompt, CacheControl: true},
 		{Role: "user", Content: userMsg},
 	}
 

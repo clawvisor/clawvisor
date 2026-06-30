@@ -1,28 +1,18 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 
 export default function OrgSettings() {
   const { currentOrg, setCurrentOrg } = useAuth()
-  const queryClient = useQueryClient()
-  const [name, setName] = useState('')
-  const [slug, setSlug] = useState('')
   const [editName, setEditName] = useState('')
 
+  // Org creation is intentionally not exposed in the user dashboard;
+  // it's a Clawvisor-admin operation handled in cmd/admin. End users
+  // join orgs via invite links instead.
   const { data: memberships, refetch: refetchOrgs } = useQuery({
     queryKey: ['orgs'],
     queryFn: () => api.orgs.list(),
-  })
-
-  const createOrg = useMutation({
-    mutationFn: () => api.orgs.create(name, slug),
-    onSuccess: () => {
-      setName('')
-      setSlug('')
-      refetchOrgs()
-      queryClient.invalidateQueries({ queryKey: ['orgs'] })
-    },
   })
 
   const updateOrg = useMutation({
@@ -42,35 +32,10 @@ export default function OrgSettings() {
   })
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h2 className="text-lg font-semibold text-text-primary mb-4">Organizations</h2>
-
-        {/* Create new org */}
-        <div className="bg-surface-1 rounded-lg border border-border-default p-4 mb-6">
-          <h3 className="text-sm font-medium text-text-primary mb-3">Create Organization</h3>
-          <div className="flex gap-3">
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Organization name"
-              className="flex-1 px-3 py-2 text-sm rounded-md border border-border-default bg-surface-0 text-text-primary"
-            />
-            <input
-              value={slug}
-              onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-              placeholder="slug"
-              className="w-40 px-3 py-2 text-sm rounded-md border border-border-default bg-surface-0 text-text-primary"
-            />
-            <button
-              onClick={() => createOrg.mutate()}
-              disabled={!name || !slug || createOrg.isPending}
-              className="px-4 py-2 text-sm font-medium rounded-md bg-accent-primary text-white hover:opacity-90 disabled:opacity-50"
-            >
-              Create
-            </button>
-          </div>
-        </div>
+    <div className="p-4 sm:p-8 space-y-10">
+      <h1 className="text-2xl font-bold text-text-primary">Organizations</h1>
+      <div className="space-y-8">
+        <div>
 
         {/* Org list */}
         <div className="space-y-3">
@@ -104,7 +69,7 @@ export default function OrgSettings() {
                         deleteOrg.mutate(m.org.id)
                       }
                     }}
-                    className="px-3 py-1.5 text-xs rounded-md border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
+                    className="px-3 py-1.5 text-xs rounded-md border border-danger/40 text-danger hover:bg-danger/10"
                   >
                     Delete
                   </button>
@@ -113,9 +78,12 @@ export default function OrgSettings() {
             </div>
           ))}
           {(!memberships || memberships.length === 0) && (
-            <p className="text-sm text-text-secondary">No organizations yet. Create one to get started.</p>
+            <p className="text-sm text-text-secondary">
+              You're not a member of any organization yet. Ask your administrator to invite you.
+            </p>
           )}
         </div>
+      </div>
       </div>
     </div>
   )

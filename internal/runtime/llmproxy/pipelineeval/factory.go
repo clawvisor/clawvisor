@@ -305,6 +305,7 @@ func lookupMatchedTaskID(ctx context.Context, agent llmproxy.AgentContext, auth 
 		ToolUse:         tu,
 		UserID:          agent.AgentUserID,
 		AgentID:         agent.AgentID,
+		OrgID:           agent.AgentOrgID,
 		Posture:         auth.Posture,
 		Target:          runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
 		Service:         serviceID,
@@ -630,6 +631,7 @@ func buildCredentialedTaskScope(
 				ToolUse:         tu,
 				UserID:          agent.AgentUserID,
 				AgentID:         agent.AgentID,
+				OrgID:           agent.AgentOrgID,
 				Posture:         auth.Posture,
 				Target:          runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
 				Service:         resolved.ServiceID,
@@ -843,7 +845,7 @@ func buildCredentialedTaskScope(
 					Reason: "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
 				}
 			}
-			if reason, ok := runIntentVerify(ctx, auth.IntentVerifier, dec, resolved, tu); !ok {
+			if reason, ok := runIntentVerify(ctx, auth.IntentVerifier, agent.AgentOrgID, dec, resolved, tu); !ok {
 				audit("block", "intent_verification_failed", reason, dec.TaskID)
 				return policies.TaskScopeDecision{
 					Kind:   policies.TaskScopeDecisionDeny,
@@ -960,6 +962,7 @@ func buildAuthorizationResolver(
 				ToolUse:         tu,
 				UserID:          agent.AgentUserID,
 				AgentID:         agent.AgentID,
+				OrgID:           agent.AgentOrgID,
 				Posture:         auth.Posture,
 				CandidateTasks:  auth.CandidateTasks,
 				ToolRules:       auth.ToolRules,
@@ -1084,7 +1087,7 @@ func detectShellSpecials(tu conversation.ToolUse, agent llmproxy.AgentContext, a
 	return readOnly, false
 }
 
-func runIntentVerify(ctx context.Context, verifier llmproxy.IntentVerifier, dec llmproxy.TaskScopeDecision, resolved llmproxy.ResolvedAction, tu conversation.ToolUse) (string, bool) {
+func runIntentVerify(ctx context.Context, verifier llmproxy.IntentVerifier, orgID string, dec llmproxy.TaskScopeDecision, resolved llmproxy.ResolvedAction, tu conversation.ToolUse) (string, bool) {
 	purpose := ""
 	if dec.MatchedTask != nil {
 		purpose = dec.MatchedTask.Purpose
@@ -1102,6 +1105,7 @@ func runIntentVerify(ctx context.Context, verifier llmproxy.IntentVerifier, dec 
 		ExpectedUse:  expectedUse,
 		Verification: verification,
 		HasAction:    hasAction,
+		OrgID:        orgID,
 	}, intentverify.ResolvedAction{
 		ServiceID: resolved.ServiceID,
 		ActionID:  resolved.ActionID,

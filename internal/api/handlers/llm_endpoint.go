@@ -23,6 +23,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
@@ -184,6 +185,19 @@ type LLMEndpointHandler struct {
 	// gesture at approval time. Optional — when nil, the inline approval
 	// prompt falls back to the deterministic envelope-shape policy only.
 	TaskRiskAssessor taskrisk.Assessor
+
+	// OrgGovCallbacks carries the cloud governance enforcement hooks
+	// (model policy / spend cap / content policy / violation recorder).
+	// All fields are optional — nil callbacks degrade to allow. The
+	// cloud package populates this; the open-source build leaves it
+	// empty.
+	OrgGovCallbacks orggov.Callbacks
+
+	// OrgIDForAgent resolves an agent_id to its org_id without forcing
+	// the policy layer to take a store dependency. Cloud-side: thin
+	// wrapper over store.GetAgent. nil means "no orgs" (open-source
+	// build); the model policy becomes a no-op.
+	OrgIDForAgent func(ctx context.Context, agentID string) string
 
 	// DefaultTaskExpirySeconds mirrors the daemon's resolved
 	// cfg.Task.DefaultExpirySeconds. Surfaced into the inline task
@@ -554,6 +568,89 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			body = result.FinalBody
 			for k, v := range result.AuditParams {
 				auditParams[k] = v
+			}
+		}
+	}
+	// Governance: per-org model allow/deny enforcement. No-ops in the
+	// open-source build (OrgGovCallbacks.CheckModelPolicy is nil) and
+	// for agents without an org_id. Runs BEFORE any upstream provider
+	// call so a denied model burns no quota. The org_policy_violation
+	// record is emitted by OrgModelPolicy itself via the RecordViolation
+	// callback — the cloud side owns the audit trail for org-policy
+	// denies, consistent with how other lite-proxy denials work.
+	if h.OrgGovCallbacks.CheckModelPolicy != nil {
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewOrgModelPolicy(h.OrgGovCallbacks, h.OrgIDForAgent))
+		if err == nil && result.DenyReason != "" {
+			for k, v := range result.AuditParams {
+				auditParams[k] = v
+			}
+			auditStatus = http.StatusForbidden
+			auditDecide = "deny"
+			auditOutcome = "org_model_policy_denied"
+			auditReason = result.DenyReason
+			http.Error(w, result.DenyReason, http.StatusForbidden)
+			return
+		}
+	}
+
+	// Governance: per-org spend-cap enforcement. Same shape as
+	// OrgModelPolicy. Blocks on hard-cap. Soft-cap warnings + 80/100
+	// crossings flow to the host as audit params; the cloud emitter
+	// picks them up via the RecordViolation callback.
+	if h.OrgGovCallbacks.CheckSpendCap != nil {
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewOrgSpendCapPolicy(h.OrgGovCallbacks, h.OrgIDForAgent))
+		if err == nil {
+			for k, v := range result.AuditParams {
+				auditParams[k] = v
+			}
+			if result.DenyReason != "" {
+				auditStatus = http.StatusForbidden
+				auditDecide = "deny"
+				auditOutcome = "org_spend_cap_denied"
+				auditReason = result.DenyReason
+				http.Error(w, result.DenyReason, http.StatusForbidden)
+				return
+			}
+		}
+	}
+
+	// Governance: per-org content policy. The block_message returned
+	// by the cloud callback (admin-authored) is used as the 403 body
+	// so end users see actionable guidance.
+	if h.OrgGovCallbacks.ScanContentPolicy != nil {
+		pipeReq := &pipelineReadOnlyRequest{
+			provider: provider,
+			httpReq:  r,
+			body:     body,
+			userID:   agent.UserID,
+			agentID:  agent.ID,
+		}
+		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewOrgContentPolicy(h.OrgGovCallbacks, h.OrgIDForAgent))
+		if err == nil {
+			for k, v := range result.AuditParams {
+				auditParams[k] = v
+			}
+			if result.DenyReason != "" {
+				auditStatus = http.StatusForbidden
+				auditDecide = "deny"
+				auditOutcome = "org_content_policy_denied"
+				auditReason = result.DenyReason
+				http.Error(w, result.DenyReason, http.StatusForbidden)
+				return
 			}
 		}
 	}
@@ -1321,6 +1418,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					AgentUserID: agent.UserID,
 					AgentID:     agent.ID,
 					AgentName:   agent.Name,
+					AgentOrgID:  agent.OrgID,
 				},
 				AuditContext: llmproxy.AuditContext{
 					ConversationID: conversationID,
@@ -1670,6 +1768,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				AgentUserID: agent.UserID,
 				AgentID:     agent.ID,
 				AgentName:   agent.Name,
+					AgentOrgID:  agent.OrgID,
 			},
 			AuditContext: llmproxy.AuditContext{
 				ConversationID: conversationID,
@@ -4544,6 +4643,7 @@ func (b *liteProxyTaskRiskBridge) AssessEnvelope(ctx context.Context, req llmpro
 		Purpose:                req.Purpose,
 		AgentName:              req.AgentName,
 		UserID:                 req.UserID,
+		OrgID:                  req.OrgID,
 		ExpectedTools:          req.ExpectedTools,
 		ExpectedEgress:         req.ExpectedEgress,
 		RequiredCredentials:    req.RequiredCredentials,

@@ -1,8 +1,9 @@
-import { useState, useEffect, FormEvent } from 'react'
+import { useState, useEffect, useRef, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, APIError, type OnboardingStatus } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { isWebAuthnAvailable, startRegistration } from '../lib/webauthn'
+import { nextAfterAuth } from '../lib/nextAfterAuth'
 
 type Step = 'loading' | 'tos' | 'security' | 'passkey' | 'totp' | 'totp-confirm' | 'backup-codes' | 'done'
 
@@ -26,7 +27,15 @@ export default function SecuritySetup() {
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null)
   const [codesDownloaded, setCodesDownloaded] = useState(false)
 
+  // StrictMode's effect-double-invoke would otherwise fire two concurrent
+  // loadStatus requests, both calling navigate(nextAfterAuth()) — racing
+  // with AcceptInvite's clearPendingInviteToken cleanup and bouncing the
+  // user to /dashboard (and then /welcome).
+  const didLoad = useRef(false)
+
   useEffect(() => {
+    if (didLoad.current) return
+    didLoad.current = true
     loadStatus()
   }, [])
 
@@ -35,7 +44,7 @@ export default function SecuritySetup() {
       const s = await api.auth.onboarding.status()
       setStatus(s)
       if (s.onboarding_completed) {
-        navigate('/dashboard', { replace: true })
+        navigate(nextAfterAuth(), { replace: true })
       } else if (!s.tos_accepted) {
         setStep('tos')
       } else if (s.has_security_method && s.has_backup_codes) {
@@ -168,7 +177,7 @@ export default function SecuritySetup() {
     try {
       await api.auth.onboarding.complete()
       await refreshOnboarding()
-      navigate('/dashboard', { replace: true })
+      navigate(nextAfterAuth(), { replace: true })
     } catch (err: any) {
       setError(err instanceof APIError ? err.message : 'Failed to complete onboarding')
     } finally {

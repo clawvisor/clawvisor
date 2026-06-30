@@ -913,6 +913,7 @@ func (h *ApprovalsHandler) promotePendingApprovalToTask(ctx context.Context, pa 
 			}},
 			AgentName: blob.AgentName,
 			UserID:    task.UserID,
+			OrgID:     orgIDFromContext(ctx),
 		})
 		if err != nil {
 			h.logger.WarnContext(ctx, "task risk assessment failed for promoted request task", "request_id", pa.RequestID, "err", err)

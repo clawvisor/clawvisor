@@ -31,6 +31,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/relay"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge/llmjudge"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
@@ -121,6 +122,20 @@ type Server struct {
 	// lite-proxy inline-approval intercept so both surfaces see the
 	// same LLM-judged risk read.
 	taskRiskAssessor taskrisk.Assessor
+
+	// orgGovCallbacks carries the cloud governance enforcement hooks.
+	// All fields nil-default to "no enforcement"; the cloud build wires
+	// real implementations.
+	orgGovCallbacks orggov.Callbacks
+	// orgIDForAgent resolves an agent_id to its org_id without forcing
+	// the policy layer to take a store dependency.
+	orgIDForAgent func(ctx context.Context, agentID string) string
+	// intentPromptResolver is the per-org override resolver for the
+	// intent verifier. nil → defaults apply.
+	intentPromptResolver intent.PromptResolverFn
+	// taskRiskPromptResolver is the per-org override resolver for the
+	// task risk assessor.
+	taskRiskPromptResolver taskrisk.PromptResolverFn
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.
@@ -267,6 +282,31 @@ func WithAdapterGenFactory(f handlers.GeneratorFactory) ServerOption {
 // WithGatewayHooks injects additional authorization logic into the gateway.
 func WithGatewayHooks(hooks *GatewayHooks) ServerOption {
 	return func(s *Server) { s.gatewayHooks = hooks }
+}
+
+// WithOrgGov wires the cloud governance enforcement integration.
+// callbacks carries the per-org policy checks invoked by the lite-proxy
+// pipeline (model/spend/content/violations). orgIDForAgent resolves an
+// agent_id to its org_id at request time. Nil fields degrade to "no
+// enforcement" — the open-source build never calls this option.
+func WithOrgGov(callbacks orggov.Callbacks, orgIDForAgent func(ctx context.Context, agentID string) string) ServerOption {
+	return func(s *Server) {
+		s.orgGovCallbacks = callbacks
+		s.orgIDForAgent = orgIDForAgent
+	}
+}
+
+// WithIntentPromptResolver registers the per-org override resolver for
+// the intent verifier. Called by the verifier when a VerifyRequest
+// carries a non-empty OrgID. nil → defaults apply.
+func WithIntentPromptResolver(r intent.PromptResolverFn) ServerOption {
+	return func(s *Server) { s.intentPromptResolver = r }
+}
+
+// WithTaskRiskPromptResolver registers the per-org override resolver
+// for the task risk assessor.
+func WithTaskRiskPromptResolver(r taskrisk.PromptResolverFn) ServerOption {
+	return func(s *Server) { s.taskRiskPromptResolver = r }
 }
 
 // WithFeedbackHooks injects callbacks for feedback events (e.g. bug reports).
@@ -533,6 +573,9 @@ func (s *Server) routes() http.Handler {
 		if s.verdictCache != nil {
 			v.SetVerdictCache(s.verdictCache)
 		}
+		if s.intentPromptResolver != nil {
+			v.SetPromptResolver(s.intentPromptResolver)
+		}
 		startGeminiCacheIfConfigured(s.llmCfg.Verification.LLMProviderConfig, s.logger, "verifier", v.StartGeminiCache)
 		s.llmVerifier = v
 		verifier = v
@@ -596,6 +639,9 @@ func (s *Server) routes() http.Handler {
 	var assessor taskrisk.Assessor = taskrisk.NoopAssessor{}
 	if s.llmCfg.TaskRisk.Enabled {
 		a := taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
+		if s.taskRiskPromptResolver != nil {
+			a.SetPromptResolver(s.taskRiskPromptResolver)
+		}
 		startGeminiCacheIfConfigured(s.llmCfg.TaskRisk.LLMProviderConfig, s.logger, "assessor", a.StartGeminiCache)
 		assessor = a
 	}
@@ -1254,6 +1300,8 @@ func (s *Server) registerLiteProxyRoutes(
 	var callerNonces llmproxy.CallerNonceCache
 	if includeProxySurface {
 		llmHandler := handlers.NewLLMEndpointHandler(s.store, s.vault, s.logger)
+		llmHandler.OrgGovCallbacks = s.orgGovCallbacks
+		llmHandler.OrgIDForAgent = s.orgIDForAgent
 		if v := s.cfg.ProxyLite.AnthropicBaseURL; v != "" {
 			llmHandler.Forwarder.Upstream.AnthropicBaseURL = v
 		}

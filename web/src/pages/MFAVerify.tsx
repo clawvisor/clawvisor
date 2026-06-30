@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { api, APIError } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { startAuthentication } from '../lib/webauthn'
+import { nextAfterAuth } from '../lib/nextAfterAuth'
 
 interface MFAState {
   pending_token: string
@@ -38,7 +39,7 @@ export default function MFAVerify() {
       const credential = await startAuthentication(beginResp.options)
       const finishResp = await api.auth.passkey.verifyFinish(pendingToken, beginResp.challenge_id, credential)
       setSession(finishResp.access_token, finishResp.refresh_token, finishResp.user)
-      navigate('/dashboard', { replace: true })
+      navigate(nextAfterAuth(), { replace: true })
     } catch (err: any) {
       if (err?.name === 'NotAllowedError') {
         setError('Passkey verification was cancelled')
@@ -59,7 +60,7 @@ export default function MFAVerify() {
     try {
       const resp = await api.auth.totp.verify(pendingToken, totpCode)
       setSession(resp.access_token, resp.refresh_token, resp.user)
-      navigate('/dashboard', { replace: true })
+      navigate(nextAfterAuth(), { replace: true })
     } catch (err: any) {
       setError(err instanceof APIError ? err.message : 'Invalid code')
     } finally {
@@ -74,7 +75,7 @@ export default function MFAVerify() {
     try {
       const resp = await api.auth.backupCode.verify(pendingToken, backupCode)
       setSession(resp.access_token, resp.refresh_token, resp.user)
-      navigate('/dashboard', { replace: true })
+      navigate(nextAfterAuth(), { replace: true })
     } catch (err: any) {
       setError(err instanceof APIError ? err.message : 'Invalid backup code')
     } finally {

@@ -71,7 +71,16 @@ func (c *verdictCache) Cleanup() {
 	}
 }
 
-// buildCacheKey builds a cache key from (taskID, service, action, sha256(params), sha256(reason), sha256(chainFacts)?, prompt mode).
+// buildCacheKey builds a cache key from (orgID, taskID, service, action,
+// sha256(params), sha256(reason), sha256(chainFacts)?,
+// sha256(promptOverride)?, sha256(taskGuidance)?, prompt mode).
+//
+// The orgID prefix and the override/guidance hashes are critical: per-
+// org prompt overrides and natural-language task policies change the
+// effective verifier behavior, so verdicts produced under one prompt
+// configuration must not be reused under another. Without this, two
+// orgs configured to deny vs allow the same task could see swapped
+// verdicts.
 func buildCacheKey(req VerifyRequest) cacheKey {
 	paramsBytes, _ := json.Marshal(req.Params)
 	paramsHash := sha256.Sum256(paramsBytes)
@@ -89,13 +98,39 @@ func buildCacheKey(req VerifyRequest) cacheKey {
 		mode += "p"
 	}
 
+	// Promote prompt/guidance into the mode suffix when non-empty so
+	// the common case (no overrides) keeps the short key shape.
+	var overrideTag string
+	if req.PromptOverride != "" {
+		h := sha256.Sum256([]byte(req.PromptOverride))
+		overrideTag = fmt.Sprintf("|po:%x", h[:8])
+	}
+	if req.TaskGuidance != "" {
+		h := sha256.Sum256([]byte(req.TaskGuidance))
+		overrideTag += fmt.Sprintf("|tg:%x", h[:8])
+	}
+
+	// OrgID is always prefixed (empty for non-org-scoped requests).
+	// Hash before joining: a raw OrgID containing the field separator
+	// "|" or the empty-org sentinel "_" could otherwise collide with
+	// another orgID or with the empty-org bucket, letting an org-scoped
+	// verdict be reused under a different scope. The same defensive
+	// hashing pattern is used for PromptOverride/TaskGuidance below.
+	var orgPrefix string
+	if req.OrgID == "" {
+		orgPrefix = "_"
+	} else {
+		h := sha256.Sum256([]byte(req.OrgID))
+		orgPrefix = fmt.Sprintf("%x", h[:8])
+	}
+
 	if len(req.ChainFacts) > 0 {
 		factsBytes, _ := json.Marshal(req.ChainFacts)
 		factsHash := sha256.Sum256(factsBytes)
-		return cacheKey(fmt.Sprintf("%s|%s|%s|%x|%x|%x|%s|%s",
-			req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], factsHash[:8], optOut, mode))
+		return cacheKey(fmt.Sprintf("%s|%s|%s|%s|%x|%x|%x|%s|%s%s",
+			orgPrefix, req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], factsHash[:8], optOut, mode, overrideTag))
 	}
 
-	return cacheKey(fmt.Sprintf("%s|%s|%s|%x|%x|%s|%s",
-		req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], optOut, mode))
+	return cacheKey(fmt.Sprintf("%s|%s|%s|%s|%x|%x|%s|%s%s",
+		orgPrefix, req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], optOut, mode, overrideTag))
 }
