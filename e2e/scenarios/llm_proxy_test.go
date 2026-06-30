@@ -40,9 +40,11 @@ func TestLLMProxyVaultInjectedAnthropic(t *testing.T) {
 	}
 	cvPost(t, cv, user.AccessToken, "/api/agents", map[string]any{"name": "proxy-test-agent"}, &agent)
 
-	// Agent sends a /api/v1/messages request. Pass the agent token in
-	// X-Clawvisor-Agent-Token so the proxy uses Mode A (vault lookup) —
-	// the inbound Authorization header is intentionally left empty.
+	// Agent sends a /api/v1/messages request. Mode A is selected by
+	// presenting the agent's cvis_* token in Authorization (no separate
+	// upstream bearer, no x-api-key) — the proxy recognizes the cvis_
+	// prefix, looks up the vault key for "anthropic", and injects it
+	// as x-api-key upstream while stripping the original Authorization.
 	req, _ := http.NewRequest("POST", cv.URL+"/api/v1/messages",
 		bytes.NewReader([]byte(`{"model":"claude-haiku-4-5-20251001","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)))
 	req.Header.Set("Authorization", "Bearer "+agent.Token)

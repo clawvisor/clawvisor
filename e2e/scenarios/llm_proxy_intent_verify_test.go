@@ -102,13 +102,16 @@ func TestLLMProxyInterceptsOutOfScopeToolUse(t *testing.T) {
 	}
 }
 
-// TestLLMProxyIntentVerifierConsultedOnInScopeToolUse — when the
-// upstream tool_use IS in scope (matched by expected_tools), the proxy
-// runs intent verification before passing the response through. This
-// test counts verifier hits to prove the LLM-proxy verifier was
-// consulted (the same verifier that gateway tests exercise, but at a
-// different call site).
-func TestLLMProxyIntentVerifierConsultedOnInScopeToolUse(t *testing.T) {
+// TestLLMProxyDoesNotBlockInScopeLocalToolUse — an upstream tool_use
+// for a local (non-credentialed) tool that's listed in expected_tools
+// must pass through unmodified, not be drift-blocked. The verifier
+// stub is wired up so the proxy CAN consult it, but local tools may
+// or may not actually trigger a verifier call (the pipeline skips
+// intent-verify for non-credentialed actions) — so this test only
+// asserts the non-block outcome and logs the verifier-hit count for
+// diagnostic purposes. Real "verifier WAS consulted" coverage lives
+// in tests that use credentialed actions.
+func TestLLMProxyDoesNotBlockInScopeLocalToolUse(t *testing.T) {
 	h := testharness.New(t)
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
