@@ -45,6 +45,17 @@ func TestConversationIDAnthropicMalformed(t *testing.T) {
 		[]byte(`{"metadata": {"user_id": "not-json"}}`),
 		// Has messages but only assistant role — no user turn to hash.
 		[]byte(`{"messages":[{"role":"assistant","content":"hi"}]}`),
+		// User-role messages that contain ONLY tool_result blocks must
+		// not be fingerprinted: Anthropic wraps tool returns in
+		// role:"user" because there's no "tool" role, and a
+		// fingerprint computed from tool output would drift the
+		// conversation id every time the tool's response changed.
+		// Skip them; with no other user-authored turn this body has
+		// nothing valid to hash, so the result is empty.
+		[]byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_x","content":"ok"}]}]}`),
+		// Mixed: assistant tool_use turn followed by user tool_result
+		// wrapper. Still no user-authored text. Empty.
+		[]byte(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_x","name":"Read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_x","content":"file contents"}]}]}`),
 	}
 	for _, body := range cases {
 		if got := ConversationID(nil, ProviderAnthropic, body); got != "" {
@@ -86,6 +97,54 @@ func TestConversationIDAnthropicFingerprintFallback(t *testing.T) {
 	bodyBlocks := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"build a landing page in /tmp/projA"}]}]}`)
 	if got := ConversationID(nil, ProviderAnthropic, bodyBlocks); got != idA {
 		t.Fatalf("string content and equivalent block content must produce same fingerprint: string=%q blocks=%q", idA, got)
+	}
+
+	// Tool-result skip: Anthropic uses role:"user" for tool returns
+	// (no separate "tool" role), so a fingerprint that hashed
+	// flattenAnthropicContent's tool_result text would be scoped by
+	// tool output instead of the user's actual prompt. After a
+	// harness replay that truncated the original user turn, the
+	// fingerprint must SKIP the tool_result wrapper and find the
+	// next user-authored text — here, the second user turn.
+	bodyToolReplay := []byte(`{"messages":[
+		{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"path":"/etc/hosts"}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"127.0.0.1 localhost"}]},
+		{"role":"user","content":"build a landing page in /tmp/projA"}
+	]}`)
+	if got := ConversationID(nil, ProviderAnthropic, bodyToolReplay); got != idA {
+		t.Fatalf("tool_result-only user message must be skipped; got %q, want %q (hash of next user-authored text)", got, idA)
+	}
+
+	// Two tool_result-only user wrappers ahead of the real user turn
+	// — must still skip both and arrive at the third user message.
+	bodyDoubleToolReplay := []byte(`{"messages":[
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":"first tool output"}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"b","content":"second tool output"}]},
+		{"role":"user","content":"build a landing page in /tmp/projA"}
+	]}`)
+	if got := ConversationID(nil, ProviderAnthropic, bodyDoubleToolReplay); got != idA {
+		t.Fatalf("consecutive tool_result wrappers must all be skipped; got %q, want %q", got, idA)
+	}
+
+	// Mixed-block user message (text + tool_result in the same
+	// content array) keeps the text-only extraction: only the "text"
+	// block contributes to the fingerprint, so swapping the
+	// tool_result payload doesn't drift the id.
+	bodyMixedA := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"tool_result","tool_use_id":"x","content":"OUTPUT_A"},
+		{"type":"text","text":"build a landing page in /tmp/projA"}
+	]}]}`)
+	bodyMixedB := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"tool_result","tool_use_id":"x","content":"OUTPUT_DIFFERENT"},
+		{"type":"text","text":"build a landing page in /tmp/projA"}
+	]}]}`)
+	idMixedA := ConversationID(nil, ProviderAnthropic, bodyMixedA)
+	idMixedB := ConversationID(nil, ProviderAnthropic, bodyMixedB)
+	if idMixedA != idA {
+		t.Fatalf("mixed user content must fingerprint on text only; got %q, want %q", idMixedA, idA)
+	}
+	if idMixedA != idMixedB {
+		t.Fatalf("changing tool_result payload alongside identical text must not drift fingerprint; got %q vs %q", idMixedA, idMixedB)
 	}
 }
 

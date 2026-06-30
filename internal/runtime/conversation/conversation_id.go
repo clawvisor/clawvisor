@@ -122,12 +122,24 @@ func openAIResponsesNativeConversationID(body []byte) string {
 	return strings.TrimSpace(probe.PromptCacheKey)
 }
 
-// anthropicChatFingerprint hashes the first user message text from a
-// /v1/messages body. Returns "" only when no user-role message with
-// non-empty text content is present (parse error, empty messages
-// array, assistant-only history). The "fp-" prefix matches
-// openAIChatFingerprint's shape so audit consumers can recognize the
-// id as a fingerprint regardless of provider.
+// anthropicChatFingerprint hashes the first user-authored message
+// text from a /v1/messages body. Returns "" only when no user-role
+// message with non-empty user-authored text content is present
+// (parse error, empty messages array, assistant-only history, or
+// every user-role entry is a tool_result wrapper). The "fp-" prefix
+// matches openAIChatFingerprint's shape so audit consumers can
+// recognize the id as a fingerprint regardless of provider.
+//
+// Skips Anthropic tool_result-only messages explicitly. Anthropic's
+// /v1/messages API uses role:"user" for BOTH user-authored turns AND
+// tool_result returns (there is no separate "tool" role like
+// /v1/chat/completions has). flattenAnthropicContent emits tool_result
+// block text alongside real user text, so without the user-authored
+// guard a fingerprint conversation whose history starts at a
+// tool_result wrapper — e.g. a harness replay that truncated the
+// original prompt — would be scoped by tool output instead of the
+// user's actual turn, drifting the per-conversation id every time the
+// upstream tool result changed.
 func anthropicChatFingerprint(body []byte) string {
 	var probe struct {
 		Messages []anthropicMessage `json:"messages"`
@@ -139,7 +151,7 @@ func anthropicChatFingerprint(body []byte) string {
 		if msg.Role != "user" {
 			continue
 		}
-		text := strings.TrimSpace(flattenAnthropicContent(msg.Content, 0))
+		text := strings.TrimSpace(anthropicUserAuthoredText(msg.Content))
 		if text == "" {
 			continue
 		}
@@ -147,6 +159,43 @@ func anthropicChatFingerprint(body []byte) string {
 		return "fp-" + hex.EncodeToString(sum[:8])
 	}
 	return ""
+}
+
+// anthropicUserAuthoredText returns text content the user actually
+// typed, ignoring tool_use and tool_result blocks. Used by the
+// fingerprint to avoid hashing tool output as if it were a user turn.
+// Mirrors flattenAnthropicContent's tolerance for both wire shapes
+// (bare string content, array of typed blocks) but extracts only
+// "text"-typed blocks so the result is always user-authored prose.
+func anthropicUserAuthoredText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// Bare-string content is always user-authored — the API doesn't
+	// allow tool_use/tool_result as a bare string, only inside the
+	// typed-blocks shape.
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, blk := range blocks {
+		if blk.Type != "text" || blk.Text == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(blk.Text)
+	}
+	return b.String()
 }
 
 // openAIResponsesFingerprint hashes the first user input item from a
