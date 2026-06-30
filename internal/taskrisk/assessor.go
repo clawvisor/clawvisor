@@ -194,7 +194,12 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 	// prompt. When an override is active the cache binding doesn't
 	// match — bypass it. Per-org overrides also force Anthropic prompt
 	// cache misses on the system block (the prefix bytes differ).
-	usingOverride := req.PromptOverride != ""
+	//
+	// Treat whitespace-only overrides as empty: a blank override would
+	// otherwise replace the default system prompt with whitespace,
+	// silently disabling the required JSON/risk-rubric instructions
+	// and leaving the LLM with no useful guidance.
+	usingOverride := strings.TrimSpace(req.PromptOverride) != ""
 	if !usingOverride && a.geminiCacheNameFn != nil {
 		client.AttachGeminiCacheNameFn(a.geminiCacheNameFn)
 		if a.geminiCacheInvalidator != nil {

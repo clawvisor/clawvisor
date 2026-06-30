@@ -41,6 +41,13 @@ type Decision struct {
 	ExpectedUse  string
 	Verification string
 	HasAction    bool
+	// OrgID forwards the agent's org context into the verifier so the
+	// upstream LLMVerifier can resolve per-org governance overrides
+	// (prompt override + task guidance). Empty when the agent isn't
+	// org-scoped. The lite-proxy + postprocess paths pull this from
+	// PostprocessConfig.AgentOrgID; the pipelineeval factory pulls it
+	// from llmproxy.AgentContext.AgentOrgID.
+	OrgID string
 }
 
 type ResolvedAction struct {
@@ -122,6 +129,7 @@ func Run(ctx context.Context, verifier Verifier, dec Decision, resolved Resolved
 		Reason:      reason,
 		TaskID:      dec.TaskID,
 		Lenient:     mode == "lenient",
+		OrgID:       dec.OrgID,
 	})
 	if err != nil {
 		if isCircuitOpen != nil && isCircuitOpen(err) {

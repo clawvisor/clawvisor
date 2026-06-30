@@ -111,9 +111,17 @@ func buildCacheKey(req VerifyRequest) cacheKey {
 	}
 
 	// OrgID is always prefixed (empty for non-org-scoped requests).
-	orgPrefix := req.OrgID
-	if orgPrefix == "" {
+	// Hash before joining: a raw OrgID containing the field separator
+	// "|" or the empty-org sentinel "_" could otherwise collide with
+	// another orgID or with the empty-org bucket, letting an org-scoped
+	// verdict be reused under a different scope. The same defensive
+	// hashing pattern is used for PromptOverride/TaskGuidance below.
+	var orgPrefix string
+	if req.OrgID == "" {
 		orgPrefix = "_"
+	} else {
+		h := sha256.Sum256([]byte(req.OrgID))
+		orgPrefix = fmt.Sprintf("%x", h[:8])
 	}
 
 	if len(req.ChainFacts) > 0 {

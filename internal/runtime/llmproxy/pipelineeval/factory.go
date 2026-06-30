@@ -845,7 +845,7 @@ func buildCredentialedTaskScope(
 					Reason: "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
 				}
 			}
-			if reason, ok := runIntentVerify(ctx, auth.IntentVerifier, dec, resolved, tu); !ok {
+			if reason, ok := runIntentVerify(ctx, auth.IntentVerifier, agent.AgentOrgID, dec, resolved, tu); !ok {
 				audit("block", "intent_verification_failed", reason, dec.TaskID)
 				return policies.TaskScopeDecision{
 					Kind:   policies.TaskScopeDecisionDeny,
@@ -1087,7 +1087,7 @@ func detectShellSpecials(tu conversation.ToolUse, agent llmproxy.AgentContext, a
 	return readOnly, false
 }
 
-func runIntentVerify(ctx context.Context, verifier llmproxy.IntentVerifier, dec llmproxy.TaskScopeDecision, resolved llmproxy.ResolvedAction, tu conversation.ToolUse) (string, bool) {
+func runIntentVerify(ctx context.Context, verifier llmproxy.IntentVerifier, orgID string, dec llmproxy.TaskScopeDecision, resolved llmproxy.ResolvedAction, tu conversation.ToolUse) (string, bool) {
 	purpose := ""
 	if dec.MatchedTask != nil {
 		purpose = dec.MatchedTask.Purpose
@@ -1105,6 +1105,7 @@ func runIntentVerify(ctx context.Context, verifier llmproxy.IntentVerifier, dec 
 		ExpectedUse:  expectedUse,
 		Verification: verification,
 		HasAction:    hasAction,
+		OrgID:        orgID,
 	}, intentverify.ResolvedAction{
 		ServiceID: resolved.ServiceID,
 		ActionID:  resolved.ActionID,

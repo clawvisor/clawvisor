@@ -290,8 +290,16 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 	// service hasn't registered. The verdict is still cached locally
 	// (the cache key includes the override hash), so the upstream LLM
 	// cost regression is bounded to orgs that opt into overrides.
+	//
+	// TaskGuidance ALSO bypasses cachedContents: Gemini drops
+	// systemInstruction when cachedContent is set, so an appended
+	// guidance addendum on the system prompt would be silently dropped
+	// at request time — the per-org policy would never reach the
+	// model. Bypass the cache path so the inline system prompt (with
+	// guidance) is what Gemini actually sees.
 	usingOverride := req.PromptOverride != ""
-	if !req.Lenient && !usingOverride {
+	usingGuidance := req.TaskGuidance != ""
+	if !req.Lenient && !usingOverride && !usingGuidance {
 		if binding, ok := v.geminiCacheBinding(req); ok && binding.nameFn != nil {
 			client.AttachGeminiCacheNameFn(binding.nameFn)
 			if binding.invalidator != nil {

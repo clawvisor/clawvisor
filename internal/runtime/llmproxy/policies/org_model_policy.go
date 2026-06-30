@@ -3,7 +3,9 @@ package policies
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
@@ -52,6 +54,13 @@ func (p *OrgModelPolicy) Preprocess(ctx context.Context, req pipeline.ReadOnlyRe
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeAllow}, nil
 	}
 	model := extractModelFromRequest(req)
+	if model == "" && req.Provider() == conversation.ProviderGoogle {
+		// Google Gemini puts the model in the URL path, not the body
+		// (e.g. /v1/models/gemini-1.5-pro:generateContent). Without this
+		// fallback every Google request would bypass the org model
+		// policy because body extraction yields "".
+		model = extractGeminiModelFromPath(req)
+	}
 	if model == "" {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeAllow}, nil
 	}
@@ -84,7 +93,8 @@ func (p *OrgModelPolicy) Preprocess(ctx context.Context, req pipeline.ReadOnlyRe
 // extractModelFromRequest returns the top-level "model" field from the
 // raw request body. Both Anthropic Messages and OpenAI Chat/Completions
 // shapes use a top-level "model" string; we don't need a provider-aware
-// parse for this field.
+// parse for this field. Google Gemini does NOT carry the model in the
+// body — see extractGeminiModelFromPath for that fallback.
 func extractModelFromRequest(req pipeline.ReadOnlyRequest) string {
 	body := req.RawBody()
 	if len(body) == 0 {
@@ -97,5 +107,36 @@ func extractModelFromRequest(req pipeline.ReadOnlyRequest) string {
 		return ""
 	}
 	return probe.Model
+}
+
+// extractGeminiModelFromPath parses the model identifier out of a
+// Google Gemini request URL. Gemini's REST API encodes the model as
+// a path segment ending in ":<method>" — for example:
+//
+//	/v1/models/gemini-1.5-pro:generateContent
+//	/v1/projects/p/locations/l/publishers/google/models/gemini-2.0-flash:streamGenerateContent
+//
+// We grab the segment after the last "/models/" and strip the
+// ":generateContent" / ":streamGenerateContent" suffix. Returns ""
+// when the path doesn't match the pattern (best-effort; the policy
+// degrades to "allow" so an unrecognized shape doesn't hard-block).
+func extractGeminiModelFromPath(req pipeline.ReadOnlyRequest) string {
+	httpReq := req.HTTPRequest()
+	if httpReq == nil || httpReq.URL == nil {
+		return ""
+	}
+	path := httpReq.URL.Path
+	const marker = "/models/"
+	idx := strings.LastIndex(path, marker)
+	if idx < 0 {
+		return ""
+	}
+	tail := path[idx+len(marker):]
+	if colon := strings.IndexByte(tail, ':'); colon >= 0 {
+		tail = tail[:colon]
+	}
+	// Drop any trailing slash defensively.
+	tail = strings.TrimRight(tail, "/")
+	return tail
 }
 
