@@ -82,7 +82,9 @@ func (h *TasksHandler) dispatchCallback(url string, payload *callback.Payload, s
 		return
 	}
 	safeGo(h.logger, "callback delivery (inline)", func() {
-		_ = callback.DeliverResult(context.Background(), url, payload, signingKey)
+		cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = callback.DeliverResult(cbCtx, url, payload, signingKey)
 	})
 }
 
@@ -1112,7 +1114,14 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		if sanitizeTaskForResponse(t) {
 			// Opportunistically mark expired tasks in the DB so the
 			// background sweep doesn't have to catch them later.
-			_ = h.st.UpdateTaskStatus(ctx, t.ID, "expired")
+			won, statusErr := h.st.UpdateTaskStatusFrom(ctx, t.ID, "active", "expired")
+			if statusErr != nil {
+				h.logger.DebugContext(ctx, "opportunistic task expiration update failed (List)", "err", statusErr, "task_id", t.ID)
+			} else if won {
+				if err := h.st.DeleteChainFactsByTask(ctx, t.ID); err != nil {
+					h.logger.WarnContext(ctx, "chain facts cleanup failed on task expiration (List)", "err", err, "task_id", t.ID)
+				}
+			}
 		}
 	}
 	// Backfill PendingExpansion.Surface for any pending_scope_expansion
@@ -2072,15 +2081,23 @@ func (h *TasksHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		// in-flight callers race.
 		live, livErr := h.st.GetTask(ctx, taskID)
 		if livErr != nil {
-			h.logger.WarnContext(ctx, "GetTask failed in CAS retry", "err", livErr, "task_id", taskID)
-		} else if live != nil {
-			liveStatus = live.Status
-			if live.Status == "active" || live.Status == "expired" {
-				won, err = h.st.UpdateTaskStatusFrom(ctx, taskID, live.Status, "completed")
-				if err != nil {
-					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not complete task")
-					return
-				}
+			if errors.Is(livErr, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "NOT_FOUND", "task not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not check live task status")
+			return
+		}
+		if live == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "task not found")
+			return
+		}
+		liveStatus = live.Status
+		if live.Status == "active" || live.Status == "expired" {
+			won, err = h.st.UpdateTaskStatusFrom(ctx, taskID, live.Status, "completed")
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not complete task")
+				return
 			}
 		}
 	}
@@ -2097,6 +2114,16 @@ func (h *TasksHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.publishTasksAndQueue(userID)
+
+	// Deliver callback if set.
+	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "completed",
+		}, cbKey)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"task_id": taskID,
