@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -34,6 +35,7 @@ type Server struct {
 	stdoutMu sync.Mutex
 	stdout   []byte
 	stderr   []byte
+	drains   sync.WaitGroup // drain goroutines; Wait() returns once pipes hit EOF
 }
 
 // Start builds + boots clawvisor-server on a free port, wires it to the
@@ -86,10 +88,27 @@ const maxStartAttempts = 4
 // before /ready returned 200 — the symptom shape of a port collision
 // (EADDRINUSE on bind kills the server immediately) or other startup
 // failure. StartWith uses errors.As to decide whether to retry.
-type earlyExitError struct{ err error }
+//
+// stdout/stderr capture the subprocess's startup output, attached by
+// tryStart after the drain goroutines have flushed. Without this,
+// retries discard the actual "bind: address already in use" line and
+// the final t.Fatalf only surfaces "exit status 1".
+type earlyExitError struct {
+	err    error
+	stdout string
+	stderr string
+}
 
 func (e *earlyExitError) Error() string {
-	return fmt.Sprintf("clawvisor exited before /ready: %v", e.err)
+	var b strings.Builder
+	fmt.Fprintf(&b, "clawvisor exited before /ready: %v", e.err)
+	if e.stdout != "" {
+		fmt.Fprintf(&b, "\n--- subprocess stdout ---\n%s", e.stdout)
+	}
+	if e.stderr != "" {
+		fmt.Fprintf(&b, "\n--- subprocess stderr ---\n%s", e.stderr)
+	}
+	return b.String()
 }
 
 func (e *earlyExitError) Unwrap() error { return e.err }
@@ -193,8 +212,9 @@ proxy_lite:
 		cmd:     cmd,
 		cancel:  cancel,
 	}
-	go drain(stdout, &s.stdoutMu, &s.stdout)
-	go drain(stderr, &s.stdoutMu, &s.stderr)
+	s.drains.Add(2)
+	go func() { defer s.drains.Done(); drain(stdout, &s.stdoutMu, &s.stdout) }()
+	go func() { defer s.drains.Done(); drain(stderr, &s.stdoutMu, &s.stderr) }()
 
 	// cmd.Wait can only be called once. Run it here so both the readiness
 	// loop (early-exit detection) and t.Cleanup (orderly teardown) can
@@ -214,6 +234,20 @@ proxy_lite:
 		case <-exited:
 		case <-time.After(5 * time.Second):
 		}
+		// Wait for drain goroutines to flush so the captured buffers
+		// include the final stderr lines (the actual EADDRINUSE / config
+		// error / panic). Bounded — pipes should EOF immediately after
+		// the process exits; the timeout is a backstop, not the path.
+		s.waitDrains(500 * time.Millisecond)
+		// Attach the captured output to the error so retries don't lose
+		// it. StartWith's final t.Fatalf prints the last attempt's error,
+		// which now carries the diagnostics.
+		if eee, ok := err.(*earlyExitError); ok {
+			s.stdoutMu.Lock()
+			eee.stdout = string(s.stdout)
+			eee.stderr = string(s.stderr)
+			s.stdoutMu.Unlock()
+		}
 		return nil, err
 	}
 
@@ -226,6 +260,7 @@ proxy_lite:
 		case <-exited:
 		case <-time.After(5 * time.Second):
 		}
+		s.waitDrains(500 * time.Millisecond)
 		if t.Failed() {
 			s.stdoutMu.Lock()
 			defer s.stdoutMu.Unlock()
@@ -267,6 +302,23 @@ func (s *Server) waitReady(timeout time.Duration, exited <-chan struct{}, exitEr
 		time.Sleep(150 * time.Millisecond)
 	}
 	return fmt.Errorf("clawvisor did not become ready within %s", timeout)
+}
+
+// waitDrains blocks until both drain goroutines have returned (pipes
+// reached EOF), or the timeout elapses. Used on the error path so the
+// captured stdout/stderr are flushed before being read into the
+// returned earlyExitError. Bounded because a hung drain shouldn't stall
+// the retry loop — partial output beats no output.
+func (s *Server) waitDrains(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		s.drains.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }
 
 func freePort(t *testing.T) int {

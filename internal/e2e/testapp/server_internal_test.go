@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +59,41 @@ func TestWaitReadyReportsEarlyExitFast(t *testing.T) {
 	// If the channel-based detection regressed to polling-only we'd see ~20s.
 	if elapsed > 2*time.Second {
 		t.Fatalf("tryStart took %v before reporting early exit; the early-exit channel detection regressed", elapsed)
+	}
+}
+
+// TestEarlyExitErrorCarriesSubprocessDiagnostics — the symptom this
+// fix targets: when retries discard the failed *Server, the buffered
+// stderr (where the real "bind: address already in use" would be)
+// must NOT be lost. The earlyExitError returned by tryStart must
+// carry those bytes so the final t.Fatalf surfaces them.
+func TestEarlyExitErrorCarriesSubprocessDiagnostics(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub uses /bin/sh")
+	}
+	// Stub emits a distinct sentinel on both streams, then exits 1.
+	// Matching the real bind-failure shape: stderr message + nonzero exit.
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "failing-server")
+	const script = "#!/bin/sh\n" +
+		"echo 'stdout-sentinel-line'\n" +
+		"echo 'bind: address already in use' 1>&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(stub, []byte(script), 0755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	h := testharness.New(t)
+
+	_, err := tryStart(t, h, nil, stub)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "bind: address already in use") {
+		t.Fatalf("error did not include stderr diagnostics; would lose root-cause info on retry exhaustion.\nGot: %q", msg)
+	}
+	if !strings.Contains(msg, "stdout-sentinel-line") {
+		t.Fatalf("error did not include stdout diagnostics.\nGot: %q", msg)
 	}
 }
 
