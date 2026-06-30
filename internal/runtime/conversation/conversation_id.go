@@ -250,19 +250,30 @@ var harnessInjectedTags = []string{
 
 // harnessInjectedTextBlockRE matches a text block whose ENTIRE
 // trimmed content is a single wrapping in one of the
-// harnessInjectedTags names. Go's regexp is RE2 (no backreferences),
-// so open and close tag names are not cross-checked — but the
-// allowlist constrains BOTH sides to the same closed set, making a
-// real-world mismatch ( `<system-reminder>...</command-name>` ) so
-// improbable in practice that the false-skip risk on user content is
-// negligible.
+// harnessInjectedTags names — with the open and close tag names
+// REQUIRED to match.
+//
+// Go's regexp is RE2 (no backreferences), so we can't reuse a capture
+// group across the alternation. Instead, the regex is built as a
+// per-tag alternation where each branch hardcodes the same tag name
+// on both sides: `<system-reminder ...>...</system-reminder>` is one
+// branch, `<command-name ...>...</command-name>` is another, etc.
+// That structurally rules out cross-tag mismatches like
+// `<system-reminder>...</command-name>` from ever matching — no
+// single branch covers both — without relying on the false-positive
+// improbability argument the earlier any-allowlist-on-both-sides
+// pattern leaned on.
 var harnessInjectedTextBlockRE = func() *regexp.Regexp {
-	quoted := make([]string, len(harnessInjectedTags))
+	alts := make([]string, len(harnessInjectedTags))
 	for i, tag := range harnessInjectedTags {
-		quoted[i] = regexp.QuoteMeta(tag)
+		q := regexp.QuoteMeta(tag)
+		// Each branch pins both endpoints to the SAME tag name.
+		// (?:\s[^>]*)? allows attributes on the open tag like
+		// `<command-name foo="bar">` without permitting whitespace
+		// or attribute content to leak into the tag-name match.
+		alts[i] = `<` + q + `(?:\s[^>]*)?>[\s\S]*</` + q + `>`
 	}
-	alt := "(?:" + strings.Join(quoted, "|") + ")"
-	return regexp.MustCompile(`(?s)^\s*<` + alt + `(?:\s[^>]*)?>[\s\S]*</` + alt + `>\s*$`)
+	return regexp.MustCompile(`(?s)^\s*(?:` + strings.Join(alts, "|") + `)\s*$`)
 }()
 
 func isHarnessInjectedTextBlock(text string) bool {

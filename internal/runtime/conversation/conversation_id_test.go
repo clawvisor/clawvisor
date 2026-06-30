@@ -220,6 +220,27 @@ func TestConversationIDAnthropicFingerprintFallback(t *testing.T) {
 		})
 	}
 
+	// Cross-tag mismatch rejection: the prior allowlist-on-both-sides
+	// regex (any allowlisted tag on open, any allowlisted tag on
+	// close) could theoretically match a block that opens with one
+	// harness tag and closes with another. The per-tag alternative
+	// regex structurally rules this out — each branch pins both ends
+	// to the same name. A mismatched block like
+	// `<system-reminder>...</command-name>` is therefore NOT a
+	// harness-injection wrapper and MUST be hashed as user-authored
+	// content. Without this guarantee, a malicious user could
+	// suppress their own fingerprint by emitting cross-tag-mismatched
+	// content; with it, they cannot.
+	bodyCrossMismatch := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"text","text":"<system-reminder>build a landing page in /tmp/projA</command-name>"}
+	]}]}`)
+	if got := ConversationID(nil, ProviderAnthropic, bodyCrossMismatch); got == "" {
+		t.Fatalf("cross-tag-mismatched content must NOT be treated as a harness wrapper; got empty")
+	}
+	if !strings.HasPrefix(ConversationID(nil, ProviderAnthropic, bodyCrossMismatch), "fp-") {
+		t.Fatalf("cross-mismatch content must fingerprint normally; got %q", ConversationID(nil, ProviderAnthropic, bodyCrossMismatch))
+	}
+
 	// Other Claude Code harness tags (command-message, command-name,
 	// local-command-stdout) get skipped via the same allowlist —
 	// exercising one to confirm the allowlist branches cover them.
