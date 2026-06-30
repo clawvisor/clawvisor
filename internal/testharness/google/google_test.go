@@ -89,7 +89,10 @@ func TestNextLoginConsumed(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	loc, _ := resp.Location()
+	loc, err := resp.Location()
+	if err != nil {
+		t.Fatalf("authorize did not redirect: %v (status=%d)", err, resp.StatusCode)
+	}
 	code := loc.Query().Get("code")
 
 	// Use it once — should succeed.
