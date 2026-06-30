@@ -42,8 +42,11 @@ func TestAnthropicLiveRecordReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record live call: %v", err)
 	}
-	recBody, _ := io.ReadAll(resp.Body)
+	recBody, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read record body: %v", err)
+	}
 	if resp.StatusCode != 200 {
 		t.Fatalf("anthropic status=%d body=%s", resp.StatusCode, recBody)
 	}
@@ -74,8 +77,11 @@ func TestAnthropicLiveRecordReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
-	repBody, _ := io.ReadAll(resp2.Body)
+	repBody, err := io.ReadAll(resp2.Body)
 	resp2.Body.Close()
+	if err != nil {
+		t.Fatalf("read replay body: %v", err)
+	}
 	if !bytes.Equal(recBody, repBody) {
 		t.Fatalf("replay body mismatch")
 	}

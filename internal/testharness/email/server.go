@@ -72,6 +72,9 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		Token:   token,
 		BaseURL: baseURL,
 		At:      time.Now(),
+		Subject: req.Subject,
+		Html:    req.Html,
+		Text:    req.Text,
 	})
 	s.mock.mu.Unlock()
 

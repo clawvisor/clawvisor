@@ -159,9 +159,17 @@ func (s *Server) handle(key string) http.HandlerFunc {
 		if resp.Status == 0 {
 			resp.Status = http.StatusOK
 		}
-		// Default content-type for JSON-ish responses.
-		if w.Header().Get("Content-Type") == "" && resp.Body != nil {
-			w.Header().Set("Content-Type", "application/json")
+		// Default Content-Type ONLY when we're about to JSON-marshal the
+		// body. Raw []byte / string bodies could be anything (text/html,
+		// image/png, RFC822 mail) and the caller should set Content-Type
+		// explicitly via Response.Header.
+		switch resp.Body.(type) {
+		case nil, []byte, string:
+			// no default
+		default:
+			if w.Header().Get("Content-Type") == "" {
+				w.Header().Set("Content-Type", "application/json")
+			}
 		}
 		w.WriteHeader(resp.Status)
 

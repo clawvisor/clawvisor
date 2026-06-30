@@ -67,6 +67,14 @@ type Cassette struct {
 	seq       atomic.Int64
 	mu        sync.Mutex
 	turnIndex map[string]int // request-key → index of next take
+
+	// loaded is the in-memory cache of cassette entries on disk. Populated
+	// on first replay; subsequent replays consult this rather than
+	// re-reading and re-parsing every JSON file (which was O(n²) total
+	// I/O for n requests).
+	loaded     []cassetteEntry
+	loadedOnce sync.Once
+	loadedErr  error
 }
 
 // NewCassette creates a cassette for testName, rooted at dir (typically
@@ -133,11 +141,21 @@ func (c *Cassette) RoundTrip(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, fmt.Errorf("cassette: %w (set LLM_MODE=record to recreate)", err)
 		}
+		// Build a response that matches the shape http.DefaultTransport
+		// would have returned for a real call. Some clients (and middleware
+		// layers like net/http itself) read Status/Proto/ContentLength —
+		// leaving them zero diverges from production behavior.
+		bodyBytes := []byte(entry.Response.Body)
 		resp := &http.Response{
-			StatusCode: entry.Response.Status,
-			Header:     unflattenHeaders(entry.Response.Headers),
-			Body:       io.NopCloser(strings.NewReader(entry.Response.Body)),
-			Request:    req,
+			Status:        fmt.Sprintf("%d %s", entry.Response.Status, http.StatusText(entry.Response.Status)),
+			StatusCode:    entry.Response.Status,
+			Proto:         "HTTP/1.1",
+			ProtoMajor:    1,
+			ProtoMinor:    1,
+			Header:        unflattenHeaders(entry.Response.Headers),
+			Body:          io.NopCloser(bytes.NewReader(bodyBytes)),
+			ContentLength: int64(len(bodyBytes)),
+			Request:       req,
 		}
 		return resp, nil
 	}
@@ -166,9 +184,9 @@ type cassetteRequest struct {
 }
 
 type cassetteResponse struct {
-	Status  int               `json:"status"`
-	Headers map[string]string `json:"headers"`
-	Body    string            `json:"body"`
+	Status  int                 `json:"status"`
+	Headers map[string][]string `json:"headers"`
+	Body    string              `json:"body"`
 }
 
 // requestKey is a stable hash of (method, path, normalized-body) used to
@@ -236,20 +254,29 @@ func readAndRestore(req *http.Request) ([]byte, error) {
 	return body, nil
 }
 
-func flattenHeaders(h http.Header) map[string]string {
-	out := map[string]string{}
+// flattenHeaders converts http.Header to the on-disk shape. Preserves
+// per-value cardinality so multi-valued headers (Set-Cookie, Via, Link…)
+// round-trip correctly. Earlier versions joined values with ',' which
+// silently fused distinct Set-Cookie entries into one corrupted header.
+func flattenHeaders(h http.Header) map[string][]string {
+	out := make(map[string][]string, len(h))
 	for k, v := range h {
-		if len(v) > 0 {
-			out[k] = strings.Join(v, ",")
+		if len(v) == 0 {
+			continue
 		}
+		dup := make([]string, len(v))
+		copy(dup, v)
+		out[k] = dup
 	}
 	return out
 }
 
-func unflattenHeaders(m map[string]string) http.Header {
+func unflattenHeaders(m map[string][]string) http.Header {
 	h := http.Header{}
-	for k, v := range m {
-		h.Set(k, v)
+	for k, vs := range m {
+		for _, v := range vs {
+			h.Add(k, v)
+		}
 	}
 	return h
 }
@@ -276,17 +303,24 @@ func (c *Cassette) writeNext(entry cassetteEntry) error {
 // readNext returns the next entry matching key. Entries are read in
 // directory order and matched per-key — so a test that fires (A, B, A) sees
 // the first A, then B, then the second A.
+//
+// The cassette dir is read + parsed once per Cassette instance (cached on
+// the receiver). Earlier implementations re-walked the directory on every
+// replay request — O(n²) total I/O for n requests.
 func (c *Cassette) readNext(key string) (cassetteEntry, error) {
+	c.loadedOnce.Do(func() {
+		c.loaded, c.loadedErr = loadAllEntries(c.dir)
+	})
+	if c.loadedErr != nil {
+		return cassetteEntry{}, c.loadedErr
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	entries, err := loadAllEntries(c.dir)
-	if err != nil {
-		return cassetteEntry{}, err
-	}
 	matching := 0
 	want := c.turnIndex[key]
-	for _, e := range entries {
+	for _, e := range c.loaded {
 		if e.Request.Key == key {
 			if matching == want {
 				c.turnIndex[key] = want + 1

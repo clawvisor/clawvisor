@@ -42,9 +42,14 @@ type Mock struct {
 	kid    string
 
 	// Scripted state, one-shot.
-	nextLogin   *loginScript
-	nextSends   []SentEmail
-	failuresAct string // "" | "rate_limit" | "service_unavailable"
+	nextLogin *loginScript
+	// currentLogin remembers the last login scripted via NextLoginReturnsUser
+	// (or synthesized by /authorize) even after /token has consumed nextLogin.
+	// /userinfo reads from this so a real OAuth client that calls /userinfo
+	// AFTER /token still sees the authenticated user, not the default fixture.
+	currentLogin *loginScript
+	nextSends    []SentEmail
+	failuresAct  string // "" | "rate_limit" | "service_unavailable"
 }
 
 // loginScript holds the user claims returned for the next OAuth callback.
@@ -131,13 +136,15 @@ func (m *Mock) OAuthAuthorizeURL() string {
 func (m *Mock) NextLoginReturnsUser(email string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.nextLogin = &loginScript{
+	login := &loginScript{
 		Email:    email,
 		Sub:      "mock-sub-" + base64URL(8),
 		Name:     "Mock User",
 		Picture:  "https://example.com/mock.png",
 		authCode: "mock-code-" + base64URL(8),
 	}
+	m.nextLogin = login
+	m.currentLogin = login
 }
 
 // SentEmails returns a copy of every Gmail.send capture.
@@ -161,9 +168,14 @@ func (m *Mock) AssertSentEmailTo(t *testing.T, to string) SentEmail {
 	return SentEmail{}
 }
 
-// FailNextCallsWith scripts the next N API calls to fail with the named mode.
-// Modes: "rate_limit" (429), "service_unavailable" (503), "" (clear).
-func (m *Mock) FailNextCallsWith(mode string) {
+// FailNextGmailSendWith scripts the NEXT single Gmail.messages.send call
+// to fail with the named status. Modes: "rate_limit" (429),
+// "service_unavailable" (503), "" (clear).
+//
+// Scope: only Gmail.send currently consumes this — other action handlers
+// always succeed. Expand to additional surfaces by calling injectFailure
+// from those handlers as needed.
+func (m *Mock) FailNextGmailSendWith(mode string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.failuresAct = mode
@@ -189,6 +201,7 @@ func (m *Mock) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		}
 		m.nextLogin = login
 	}
+	m.currentLogin = login
 	code := login.authCode
 	m.mu.Unlock()
 
@@ -312,12 +325,18 @@ func (m *Mock) handleToken(w http.ResponseWriter, r *http.Request) {
 
 // /userinfo returns claims for the current access token. We don't validate
 // the token; the test sets up the login script before calling /authorize.
+// Reads currentLogin (preserved across /token consumption) so a real
+// OAuth client that calls /userinfo AFTER /token still sees the
+// authenticated user rather than the default fixture.
 func (m *Mock) handleUserinfo(w http.ResponseWriter, r *http.Request) {
 	m.mu.Lock()
-	login := m.nextLogin
+	login := m.currentLogin
+	if login == nil {
+		login = m.nextLogin
+	}
 	m.mu.Unlock()
 	if login == nil {
-		// Default fixture.
+		// Default fixture (no prior /authorize call in this session).
 		login = &loginScript{Email: "default@mock.test", Sub: "mock-sub-default", Name: "Mock"}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -445,15 +464,18 @@ func (m *Mock) injectFailure() int {
 
 func parseRFC822(raw string) SentEmail {
 	var s SentEmail
-	headersEnd := strings.Index(raw, "\r\n\r\n")
-	if headersEnd < 0 {
-		headersEnd = strings.Index(raw, "\n\n")
-	}
+	// Skip the actual separator length, not a fixed 2: "\r\n\r\n" is 4
+	// bytes and "\n\n" is 2. The previous version always advanced 2,
+	// leaving the body prefixed with the trailing "\r\n" of the CRLF
+	// pair on standards-compliant RFC822 messages.
 	hdr := raw
 	body := ""
-	if headersEnd >= 0 {
-		hdr = raw[:headersEnd]
-		body = raw[headersEnd+2:]
+	if i := strings.Index(raw, "\r\n\r\n"); i >= 0 {
+		hdr = raw[:i]
+		body = raw[i+4:]
+	} else if i := strings.Index(raw, "\n\n"); i >= 0 {
+		hdr = raw[:i]
+		body = raw[i+2:]
 	}
 	for _, line := range strings.Split(hdr, "\n") {
 		line = strings.TrimRight(line, "\r")

@@ -26,6 +26,14 @@ type Sent struct {
 	Token   string // verification + reset only; "" for welcome
 	BaseURL string
 	At      time.Time
+	// Subject/Html/Text are populated by the HTTP-impersonating Server
+	// (server.go). The in-process Mock methods (SendVerification/etc.)
+	// leave them empty because the templated bodies live in the
+	// production package — only the canonical link parts (Token,
+	// BaseURL) are observable from the Mailer interface.
+	Subject string
+	Html    string
+	Text    string
 }
 
 // Link returns the link the user would click. Reconstructed from BaseURL + Token

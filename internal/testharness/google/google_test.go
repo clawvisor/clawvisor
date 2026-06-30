@@ -94,13 +94,19 @@ func TestNextLoginConsumed(t *testing.T) {
 
 	// Use it once — should succeed.
 	form := url.Values{"code": {code}, "grant_type": {"authorization_code"}, "client_id": {"test"}}
-	r1, _ := http.PostForm(m.Env()["GOOGLE_TOKEN_URL"], form)
+	r1, err := http.PostForm(m.Env()["GOOGLE_TOKEN_URL"], form)
+	if err != nil {
+		t.Fatalf("first PostForm: %v", err)
+	}
 	r1.Body.Close()
 	if r1.StatusCode != http.StatusOK {
 		t.Fatalf("first exchange status=%d", r1.StatusCode)
 	}
 	// Use it again — should 400.
-	r2, _ := http.PostForm(m.Env()["GOOGLE_TOKEN_URL"], form)
+	r2, err := http.PostForm(m.Env()["GOOGLE_TOKEN_URL"], form)
+	if err != nil {
+		t.Fatalf("second PostForm: %v", err)
+	}
 	r2.Body.Close()
 	if r2.StatusCode == http.StatusOK {
 		t.Fatalf("replayed exchange accepted; want 400")

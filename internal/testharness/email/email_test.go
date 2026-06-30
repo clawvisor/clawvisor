@@ -54,16 +54,15 @@ func TestResetClearsCapturedSends(t *testing.T) {
 	}
 }
 
-func TestWaitForSendToTimeoutsCleanly(t *testing.T) {
+// TestWaitForSendToResolvesWhenSendArrives — happy path: a send
+// arrives within the timeout and WaitForSendTo returns it.
+//
+// The fatal-on-timeout path isn't exercised in-process because
+// t.Fatalf is goroutine-local; covering it from outside the test
+// would require subprocessing the test binary. The risk of
+// regression is low — that branch is a single conditional fatal.
+func TestWaitForSendToResolvesWhenSendArrives(t *testing.T) {
 	m := hemail.NewMock(t)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		// Should fail inside the goroutine since t.Fatalf is goroutine-local.
-		// We use a sub-test to verify the timeout path triggers.
-	}()
-	<-done
-	// Positive case: a send arrives shortly.
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		_ = m.SendPasswordReset("b@x", "tok", "u")
