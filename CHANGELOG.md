@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.9.11](https://github.com/clawvisor/clawvisor/compare/v0.9.10...v0.9.11) (2026-06-30)
+
+
+### Features
+
+* **conversation:** cross-provider marker + summarizer preservation directive ([#601](https://github.com/clawvisor/clawvisor/issues/601)) ([3723013](https://github.com/clawvisor/clawvisor/commit/37230136f8496aad622e7033510de0a27c6c05e3))
+* **llmproxy:** brand first-turn notice Local / Staging / production ([#589](https://github.com/clawvisor/clawvisor/issues/589)) ([fac1aa2](https://github.com/clawvisor/clawvisor/commit/fac1aa248e34db8978e6c8cb6219ab19abcd447e))
+* **llmproxy:** env-var overrides for upstream provider URLs ([#597](https://github.com/clawvisor/clawvisor/issues/597)) ([5bb58b2](https://github.com/clawvisor/clawvisor/commit/5bb58b2b5cbe7c7984c357d8c33b308b5376c7ec))
+* **llmproxy:** Redis-backed ScopeDriftRegistry for multi-replica deployments ([#593](https://github.com/clawvisor/clawvisor/issues/593)) ([89548a1](https://github.com/clawvisor/clawvisor/commit/89548a1fef30751f80470b39fa73eaeb2b49e2a0))
+* **tasks:** plumb surface=inline through scope expansions ([#590](https://github.com/clawvisor/clawvisor/issues/590)) ([f5b25bc](https://github.com/clawvisor/clawvisor/commit/f5b25bc0d7257fa30ae9f2cc855ed789e78c11da))
+* **tasks:** wire LLM risk assessment into task expansion ([#588](https://github.com/clawvisor/clawvisor/issues/588)) ([5014445](https://github.com/clawvisor/clawvisor/commit/5014445a7b0ec48034f260dff81a33b69387ba83))
+
+
+### Bug Fixes
+
+* **llmproxy:** enforce strict per-conversation task-scope isolation ([#595](https://github.com/clawvisor/clawvisor/issues/595)) ([123ec37](https://github.com/clawvisor/clawvisor/commit/123ec37439a7a2a47937ba3e40495cdfa281b080))
+* **llmproxy:** resolve concurrency, routing, and registry lock bugs from PR 579 ([#583](https://github.com/clawvisor/clawvisor/issues/583)) ([da4f7f3](https://github.com/clawvisor/clawvisor/commit/da4f7f397fee7194cda999688a9cca2b7060aacf))
+* **proxy:** strip auto-approve + routing notices from echoed history ([#592](https://github.com/clawvisor/clawvisor/issues/592)) ([aa7c58d](https://github.com/clawvisor/clawvisor/commit/aa7c58d67f5e4d2c542ab5836ec665a97b43d684))
+* **reliability:** keep audit writes alive on client cancel; stop polling on lost telegram lock ([#585](https://github.com/clawvisor/clawvisor/issues/585)) ([c6ebe08](https://github.com/clawvisor/clawvisor/commit/c6ebe0899b15aa90eaddfdd93a9ea24664945ac1))
+
+
+### Performance Improvements
+
+* **gmail:** batch list_messages metadata via /batch/gmail/v1 ([#591](https://github.com/clawvisor/clawvisor/issues/591)) ([f4f9588](https://github.com/clawvisor/clawvisor/commit/f4f9588d58b15829f3e3efc398a6b4fe4c430f71))
+
 ## [0.9.10](https://github.com/clawvisor/clawvisor/compare/v0.9.9...v0.9.10) (2026-06-22)
 
 
