@@ -328,6 +328,8 @@ func (n *Notifier) RunCleanup(ctx context.Context) {
 
 // ── notify.Notifier implementation ───────────────────────────────────────────
 
+func (n *Notifier) NotificationChannel() string { return "telegram" }
+
 func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalRequest) (string, error) {
 	botToken, chatID, err := n.userConfig(ctx, req.UserID)
 	if err != nil {

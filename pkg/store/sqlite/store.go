@@ -3635,6 +3635,147 @@ func (s *Store) GetNotificationMessage(ctx context.Context, targetType, targetID
 
 // ── OAuth ────────────────────────────────────────────────────────────────────
 
+func (s *Store) ListNotificationMessages(ctx context.Context, targetType, targetID string) ([]*store.NotificationMessage, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT target_type, target_id, channel, message_id, created_at
+		FROM notification_messages
+		WHERE target_type = ? AND target_id = ?
+		ORDER BY created_at ASC
+	`, targetType, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.NotificationMessage
+	for rows.Next() {
+		m := &store.NotificationMessage{}
+		var createdAt string
+		if err := rows.Scan(&m.TargetType, &m.TargetID, &m.Channel, &m.MessageID, &createdAt); err != nil {
+			return nil, err
+		}
+		m.CreatedAt = parseTime(createdAt)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateApprovalEscalation(ctx context.Context, e *store.ApprovalEscalation) error {
+	if e.ID == "" {
+		e.ID = uuid.New().String()
+	}
+	if e.Status == "" {
+		e.Status = "active"
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO approval_escalations (
+			id, approval_record_id, user_id, target_type, target_id, approval_request,
+			escalation_chain, current_step, next_escalate_at, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (target_type, target_id) DO UPDATE SET
+			approval_record_id = excluded.approval_record_id,
+			user_id = excluded.user_id,
+			approval_request = excluded.approval_request,
+			escalation_chain = excluded.escalation_chain,
+			current_step = excluded.current_step,
+			next_escalate_at = excluded.next_escalate_at,
+			status = excluded.status,
+			updated_at = CURRENT_TIMESTAMP
+	`, e.ID, e.ApprovalRecordID, e.UserID, e.TargetType, e.TargetID, string(e.ApprovalRequest),
+		string(e.EscalationChain), e.CurrentStep, e.NextEscalateAt.UTC().Format(time.RFC3339), e.Status)
+	return err
+}
+
+func (s *Store) ListDueApprovalEscalations(ctx context.Context, now time.Time, limit int) ([]*store.ApprovalEscalation, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, approval_record_id, user_id, target_type, target_id, approval_request,
+		       escalation_chain, current_step, next_escalate_at, status, created_at, updated_at
+		FROM approval_escalations
+		WHERE status = 'active' AND next_escalate_at <= ?
+		ORDER BY next_escalate_at ASC
+		LIMIT ?
+	`, now.UTC().Format(time.RFC3339), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSQLiteApprovalEscalations(rows)
+}
+
+func (s *Store) ClaimApprovalEscalationStep(ctx context.Context, id string, currentStep int, now time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE approval_escalations
+		SET status = 'dispatching', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = 'active' AND current_step = ? AND next_escalate_at <= ?
+	`, id, currentStep, now.UTC().Format(time.RFC3339))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (s *Store) CompleteApprovalEscalationStep(ctx context.Context, id string, claimedStep, nextStep int, nextAt time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE approval_escalations
+		SET status = 'active', current_step = ?, next_escalate_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = 'dispatching' AND current_step = ?
+	`, nextStep, nextAt.UTC().Format(time.RFC3339), id, claimedStep)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (s *Store) ReleaseApprovalEscalationStep(ctx context.Context, id string, claimedStep int, retryAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE approval_escalations
+		SET status = 'active', next_escalate_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = 'dispatching' AND current_step = ?
+	`, retryAt.UTC().Format(time.RFC3339), id, claimedStep)
+	return err
+}
+
+func (s *Store) ResolveApprovalEscalation(ctx context.Context, targetType, targetID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE approval_escalations
+		SET status = 'resolved', updated_at = CURRENT_TIMESTAMP
+		WHERE target_type = ? AND target_id = ? AND status IN ('active', 'dispatching', 'timed_out')
+	`, targetType, targetID)
+	return err
+}
+
+func (s *Store) TimeoutApprovalEscalation(ctx context.Context, id string, claimedStep int) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE approval_escalations
+		SET status = 'timed_out', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = 'dispatching' AND current_step = ?
+	`, id, claimedStep)
+	return err
+}
+
+func scanSQLiteApprovalEscalations(rows *sql.Rows) ([]*store.ApprovalEscalation, error) {
+	var out []*store.ApprovalEscalation
+	for rows.Next() {
+		e := &store.ApprovalEscalation{}
+		var approvalRequest, chain, nextAt, createdAt, updatedAt string
+		if err := rows.Scan(&e.ID, &e.ApprovalRecordID, &e.UserID, &e.TargetType, &e.TargetID,
+			&approvalRequest, &chain, &e.CurrentStep, &nextAt, &e.Status, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		e.ApprovalRequest = json.RawMessage(approvalRequest)
+		e.EscalationChain = json.RawMessage(chain)
+		e.NextEscalateAt = parseTime(nextAt)
+		e.CreatedAt = parseTime(createdAt)
+		e.UpdatedAt = parseTime(updatedAt)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) CreateOAuthClient(ctx context.Context, client *store.OAuthClient) error {
 	urisJSON, _ := json.Marshal(client.RedirectURIs)
 	_, err := s.db.ExecContext(ctx,

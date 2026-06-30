@@ -26,6 +26,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/internal/mcp"
 	mcpoauth "github.com/clawvisor/clawvisor/internal/mcp/oauth"
+	"github.com/clawvisor/clawvisor/internal/notify/escalation"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/relay"
@@ -80,6 +81,7 @@ type Server struct {
 	approvalsHandler   *handlers.ApprovalsHandler
 	tasksHandler       *handlers.TasksHandler
 	connectionsHandler *handlers.ConnectionsHandler
+	approvalEscalator  *escalation.Manager
 	devicesHandler     *handlers.DevicesHandler
 	llmVerifier        *intent.LLMVerifier          // verdict cache cleanup target; nil when verification disabled
 	cbDispatcher       *handlers.CallbackDispatcher // bounded callback delivery pool
@@ -597,11 +599,15 @@ func (s *Server) routes() http.Handler {
 		s.cbDispatcher.Start(16)
 	}
 
+	s.approvalEscalator = escalation.New(s.store, s.notifier, s.cfg.Notifications.Escalation, s.logger)
 	gatewayHandler := handlers.NewGatewayHandler(
 		s.store, s.vault, s.adapterReg,
 		s.notifier, verifier, extractor, *s.cfg, s.logger, baseURL, s.eventHub,
 	)
 	gatewayHandler.SetCallbackDispatcher(s.cbDispatcher)
+	if s.approvalEscalator != nil {
+		gatewayHandler.SetApprovalEscalator(s.approvalEscalator)
+	}
 	if s.llmCfg.Verification.Enabled {
 		gatewayHandler.SetGatewayRequestResolver(runtimepolicy.NewLLMGatewayRequestResolver(s.llmHealth, s.logger))
 	}
@@ -648,6 +654,9 @@ func (s *Server) routes() http.Handler {
 	s.taskRiskAssessor = assessor
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, *s.cfg, assessor, s.logger, s.eventHub)
 	approvalsHandler.SetCallbackDispatcher(s.cbDispatcher)
+	if s.approvalEscalator != nil {
+		approvalsHandler.SetApprovalNotificationResolver(s.approvalEscalator)
+	}
 	s.approvalsHandler = approvalsHandler
 
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
@@ -1603,6 +1612,9 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Start background expiry cleanup.
 	go s.approvalsHandler.RunExpiryCleanup(ctx)
+	if s.approvalEscalator != nil {
+		go s.approvalEscalator.Run(ctx)
+	}
 
 	// Start verdict-cache cleanup so the in-memory cache evicts expired
 	// entries on a schedule rather than only on-access.

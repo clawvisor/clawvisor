@@ -106,6 +106,70 @@ func TestValidateRequiresBodyTraceDirWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestValidateNotificationEscalationDefaultsDisabled(t *testing.T) {
+	cfg := Default()
+	if cfg.Notifications.Escalation.Enabled {
+		t.Fatal("expected notification escalation disabled by default")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidateNotificationEscalationAcceptsPushTelegramChain(t *testing.T) {
+	cfg := Default()
+	cfg.Notifications.Escalation.Enabled = true
+	cfg.Notifications.Escalation.DefaultChain = []NotificationEscalationStep{
+		{Channel: "push", DelaySeconds: 0},
+		{Channel: "telegram", DelaySeconds: 60},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidateNotificationEscalationRejectsInvalidConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		mut  func(*Config)
+		want string
+	}{
+		{
+			name: "enabled empty chain",
+			mut: func(cfg *Config) {
+				cfg.Notifications.Escalation.Enabled = true
+			},
+			want: "default_chain",
+		},
+		{
+			name: "invalid channel",
+			mut: func(cfg *Config) {
+				cfg.Notifications.Escalation.Enabled = true
+				cfg.Notifications.Escalation.DefaultChain = []NotificationEscalationStep{{Channel: "sms"}}
+			},
+			want: "push, telegram",
+		},
+		{
+			name: "negative delay",
+			mut: func(cfg *Config) {
+				cfg.Notifications.Escalation.Enabled = true
+				cfg.Notifications.Escalation.DefaultChain = []NotificationEscalationStep{{Channel: "push", DelaySeconds: -1}}
+			},
+			want: "non-negative",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Default()
+			tt.mut(cfg)
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected validation error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
 // TestInheritLLMDefaults_DoesNotInheritAnthropicEndpointIntoNonAnthropicSubBlock
 // covers two cases where the Anthropic-default endpoint must NOT propagate
 // into a sub-block that runs on a different provider:

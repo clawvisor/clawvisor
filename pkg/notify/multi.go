@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 )
 
@@ -11,6 +12,7 @@ import (
 // Errors are logged but do not short-circuit delivery to remaining notifiers.
 type MultiNotifier struct {
 	notifiers  []Notifier
+	byChannel  map[string]Notifier
 	logger     *slog.Logger
 	decisionCh chan CallbackDecision
 
@@ -29,11 +31,18 @@ type MultiNotifier struct {
 func NewMultiNotifier(ctx context.Context, logger *slog.Logger, notifiers ...Notifier) *MultiNotifier {
 	m := &MultiNotifier{
 		notifiers:  notifiers,
+		byChannel:  make(map[string]Notifier),
 		logger:     logger,
 		decisionCh: make(chan CallbackDecision, 64),
 	}
 
 	for _, n := range notifiers {
+		if cp, ok := n.(ChannelProvider); ok {
+			channel := strings.ToLower(strings.TrimSpace(cp.NotificationChannel()))
+			if channel != "" {
+				m.byChannel[channel] = n
+			}
+		}
 		if p, ok := n.(TelegramPairer); ok && m.pairer == nil {
 			m.pairer = p
 		}
@@ -91,12 +100,14 @@ func NewMultiNotifier(ctx context.Context, logger *slog.Logger, notifiers ...Not
 
 // Compile-time interface checks.
 var (
-	_ Notifier           = (*MultiNotifier)(nil)
-	_ TelegramPairer     = (*MultiNotifier)(nil)
-	_ PollingDecrementer = (*MultiNotifier)(nil)
-	_ GroupObserver      = (*MultiNotifier)(nil)
-	_ GroupDetector      = (*MultiNotifier)(nil)
-	_ AgentGroupPairer        = (*MultiNotifier)(nil)
+	_ Notifier                 = (*MultiNotifier)(nil)
+	_ ChannelApprovalSender    = (*MultiNotifier)(nil)
+	_ ChannelMessageUpdater    = (*MultiNotifier)(nil)
+	_ TelegramPairer           = (*MultiNotifier)(nil)
+	_ PollingDecrementer       = (*MultiNotifier)(nil)
+	_ GroupObserver            = (*MultiNotifier)(nil)
+	_ GroupDetector            = (*MultiNotifier)(nil)
+	_ AgentGroupPairer         = (*MultiNotifier)(nil)
 	_ GroupMembershipValidator = (*MultiNotifier)(nil)
 )
 
@@ -115,6 +126,14 @@ func (m *MultiNotifier) SendApprovalRequest(ctx context.Context, req ApprovalReq
 		}
 	}
 	return messageID, errors.Join(errs...)
+}
+
+func (m *MultiNotifier) SendApprovalRequestToChannel(ctx context.Context, channel string, req ApprovalRequest) (string, error) {
+	n, ok := m.byChannel[strings.ToLower(strings.TrimSpace(channel))]
+	if !ok {
+		return "", errors.New("notification channel unavailable: " + channel)
+	}
+	return n.SendApprovalRequest(ctx, req)
 }
 
 func (m *MultiNotifier) SendActivationRequest(ctx context.Context, req ActivationRequest) error {
@@ -182,6 +201,14 @@ func (m *MultiNotifier) UpdateMessage(ctx context.Context, userID, messageID, te
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (m *MultiNotifier) UpdateMessageForChannel(ctx context.Context, channel, userID, messageID, text string) error {
+	n, ok := m.byChannel[strings.ToLower(strings.TrimSpace(channel))]
+	if !ok {
+		return errors.New("notification channel unavailable: " + channel)
+	}
+	return n.UpdateMessage(ctx, userID, messageID, text)
 }
 
 func (m *MultiNotifier) SendTestMessage(ctx context.Context, userID string) error {
