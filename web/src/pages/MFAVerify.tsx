@@ -3,12 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { api, APIError } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { startAuthentication } from '../lib/webauthn'
-import { peekPendingInviteToken } from '../lib/pendingInvite'
-
-function nextAfterAuth(): string {
-  const token = peekPendingInviteToken()
-  return token ? `/accept-invite?token=${encodeURIComponent(token)}` : '/dashboard'
-}
+import { nextAfterAuth } from '../lib/nextAfterAuth'
 
 interface MFAState {
   pending_token: string

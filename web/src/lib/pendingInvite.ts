@@ -26,28 +26,14 @@ export function setPendingInviteToken(token: string) {
   }
 }
 
-export function takePendingInviteToken(): string | null {
-  try {
-    const raw = localStorage.getItem(KEY)
-    if (!raw) return null
-    localStorage.removeItem(KEY)
-    const parsed = JSON.parse(raw) as Stored
-    if (!parsed || typeof parsed.token !== 'string') return null
-    if (Date.now() - parsed.ts > TTL_MS) return null
-    return parsed.token
-  } catch {
-    return null
-  }
-}
-
 // Read the pending invite token without consuming it. Used by auth-chain
-// redirect logic (Login, SecuritySetup, MFAVerify, SetupAuth) to compute
-// where to send the user without burning the token: StrictMode fires effects
-// twice in dev, and a consume-on-redirect would pop the token on the first
-// run and return /dashboard on the second, racing the navigate calls.
-// AcceptInvite reads its token from the URL search param, so the stored
-// copy is cleared by clearPendingInviteToken() once we're committed to
-// the /accept-invite redirect.
+// redirect logic (Login, SecuritySetup, MFAVerify, SetupAuth, SSOComplete,
+// TOTPVerify) to compute where to send the user without burning the token:
+// StrictMode fires effects twice in dev, and a consume-on-redirect would
+// pop the token on the first run and return /dashboard on the second,
+// racing the navigate calls. AcceptInvite reads its token from the URL
+// search param, so the stored copy is cleared by clearPendingInviteToken()
+// once we're committed to the /accept-invite redirect.
 export function peekPendingInviteToken(): string | null {
   try {
     const raw = localStorage.getItem(KEY)

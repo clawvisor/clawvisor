@@ -3,12 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, APIError, type OnboardingStatus } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { isWebAuthnAvailable, startRegistration } from '../lib/webauthn'
-import { peekPendingInviteToken } from '../lib/pendingInvite'
-
-function nextAfterAuth(): string {
-  const token = peekPendingInviteToken()
-  return token ? `/accept-invite?token=${encodeURIComponent(token)}` : '/dashboard'
-}
+import { nextAfterAuth } from '../lib/nextAfterAuth'
 
 type Step = 'loading' | 'tos' | 'security' | 'passkey' | 'totp' | 'totp-confirm' | 'backup-codes' | 'done'
 

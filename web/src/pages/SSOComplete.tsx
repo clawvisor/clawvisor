@@ -1,22 +1,31 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { setAccessToken, api } from '../api/client'
-// SSO complete reads tokens from the URL fragment set by the ACS handler.
-// We can't use the typed api.auth.* since /api/me lives on the top-level
-// api object (api.me).
+// SSO complete reads tokens from the URL fragment set by the ACS handler,
+// then fetches the current user via api.auth.me() (the typed wrapper for
+// GET /api/me) so we can hydrate the session with the user record.
 import { useAuth } from '../hooks/useAuth'
+import { nextAfterAuth } from '../lib/nextAfterAuth'
 
 // SSOComplete is the landing page the ACS endpoint redirects to after
 // a successful SAML assertion. The backend appends tokens to the URL
 // fragment so they don't appear in server logs / browser history.
 // We parse, persist via the existing setSession flow, and route to
-// /dashboard.
+// /dashboard (or back to /accept-invite if there's a pending invite).
 export default function SSOComplete() {
   const navigate = useNavigate()
   const { setSession } = useAuth()
   const [error, setError] = useState<string | null>(null)
+  // StrictMode double-invokes the effect in dev. The first pass parses + wipes
+  // the fragment; the second pass would then see no hash and surface a
+  // bogus "No session tokens received" error. Guard the one-shot exchange
+  // with a ref like OAuthCallback does.
+  const didExchange = useRef(false)
 
   useEffect(() => {
+    if (didExchange.current) return
+    didExchange.current = true
+
     const hash = window.location.hash.replace(/^#/, '')
     if (!hash) {
       setError('No session tokens received from SSO redirect.')
@@ -35,7 +44,10 @@ export default function SSOComplete() {
     api.auth.me()
       .then((u) => {
         setSession(accessToken, refreshToken ?? undefined, u)
-        navigate('/dashboard', { replace: true })
+        // Honor any pending invite token so SSO sign-ins consume the
+        // invite and join the org, instead of landing on /dashboard with
+        // the user still outside the inviting org.
+        navigate(nextAfterAuth(), { replace: true })
       })
       .catch((err) => {
         setError(err?.message ?? 'Failed to complete SSO sign-in.')

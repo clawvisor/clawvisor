@@ -2,12 +2,7 @@ import { useState, FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
-import { peekPendingInviteToken } from '../lib/pendingInvite'
-
-function nextAfterAuth(): string {
-  const token = peekPendingInviteToken()
-  return token ? `/accept-invite?token=${encodeURIComponent(token)}` : '/dashboard'
-}
+import { nextAfterAuth } from '../lib/nextAfterAuth'
 
 export default function TOTPVerify() {
   const { setSession } = useAuth()

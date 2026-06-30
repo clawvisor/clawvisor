@@ -76,18 +76,16 @@ export default function AcceptInvite() {
         await qc.invalidateQueries({ queryKey: ['orgs'] })
         navigate('/dashboard', { replace: true })
       })
-      .catch(async (err) => {
-        // Inspect succeeded a moment ago, so a 404 here means the
-        // invite was consumed between then and now — almost certainly
-        // by us (StrictMode's effect-double-invoke fires accept twice
-        // in dev; the second call sees a single-use token that's
-        // already gone). Treat as success either way and land the
-        // user in the dashboard.
-        if (err instanceof APIError && err.status === 404) {
-          await qc.invalidateQueries({ queryKey: ['orgs'] })
-          navigate('/dashboard', { replace: true })
-          return
-        }
+      .catch((err) => {
+        // A 404 here means the invite is no longer usable — it could
+        // have been revoked, it expired between inspect and accept, or
+        // it was already consumed by another tab/device. We can't
+        // distinguish those cases from the response, so we have to
+        // surface the failure rather than silently landing the user on
+        // /dashboard claiming success: an "already_member" win is a
+        // 200, not a 404. (StrictMode's double-effect-invoke is already
+        // blocked by acceptingRef.current; we don't need the 404
+        // fallback to absorb it.)
         setAcceptError(err instanceof APIError ? err.message : 'Failed to accept invite. Please try again.')
         acceptingRef.current = false
         setAccepting(false)
