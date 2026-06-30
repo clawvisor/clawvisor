@@ -108,6 +108,7 @@ func (m *Mock) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.nextLogin = nil
+	m.currentLogin = nil
 	m.nextSends = nil
 	m.failuresAct = ""
 }

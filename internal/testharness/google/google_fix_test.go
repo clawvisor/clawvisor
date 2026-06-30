@@ -59,6 +59,67 @@ func TestUserinfoReadsAfterTokenConsumed(t *testing.T) {
 	}
 }
 
+// TestResetClearsCurrentLogin — Reset must zero currentLogin or
+// /userinfo bleeds the previous test's authenticated user into the
+// next one (cross-test contamination when Mocks are reused).
+func TestResetClearsCurrentLogin(t *testing.T) {
+	m := hg.NewMock(t)
+	m.NextLoginReturnsUser("first-tenant@test.local")
+	env := m.Env()
+
+	// Drive the OAuth flow once so currentLogin gets populated.
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Get(env["GOOGLE_OAUTH_BASE_URL"] + "?redirect_uri=http%3A%2F%2Flocalhost%2Fcb&state=s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	loc, _ := resp.Location()
+	code := loc.Query().Get("code")
+	form := url.Values{"code": {code}, "grant_type": {"authorization_code"}, "client_id": {"test"}}
+	tokResp, err := http.PostForm(env["GOOGLE_TOKEN_URL"], form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokResp.Body.Close()
+
+	// Sanity: /userinfo sees the first tenant.
+	r1, err := http.Get(env["GOOGLE_USERINFO_URL"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var u1 struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r1.Body).Decode(&u1); err != nil {
+		t.Fatal(err)
+	}
+	r1.Body.Close()
+	if u1.Email != "first-tenant@test.local" {
+		t.Fatalf("pre-reset: email=%q", u1.Email)
+	}
+
+	// Reset.
+	m.Reset()
+
+	// /userinfo MUST NOT return the first tenant after Reset. With no
+	// new login scripted, it falls back to the default fixture.
+	r2, err := http.Get(env["GOOGLE_USERINFO_URL"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var u2 struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r2.Body).Decode(&u2); err != nil {
+		t.Fatal(err)
+	}
+	r2.Body.Close()
+	if u2.Email == "first-tenant@test.local" {
+		t.Fatalf("cross-test contamination: Reset did NOT clear currentLogin, /userinfo still returned %q", u2.Email)
+	}
+}
+
 // TestParseRFC822CRLFBodyOffset — the parser must skip the actual
 // separator length, not a fixed 2. For "\r\n\r\n" (4 bytes) the
 // previous version left the body prefixed with a stray "\r\n".
