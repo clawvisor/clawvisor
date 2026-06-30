@@ -17,6 +17,8 @@ func TestCanonicalizeModel(t *testing.T) {
 		{"openai prefix", conversation.ProviderOpenAI, "gpt-4o", "openai/gpt-4o"},
 		{"google prefix", conversation.ProviderGoogle, "gemini-1.5-pro", "google/gemini-1.5-pro"},
 		{"already qualified passes through", conversation.ProviderOpenAI, "azure/gpt-4o-2024-08", "azure/gpt-4o-2024-08"},
+		{"google tuned model gets provider prefix", conversation.ProviderGoogle, "tunedModels/sales-v2-abc123", "google/tunedModels/sales-v2-abc123"},
+		{"already-prefixed google tuned model passes through", conversation.ProviderGoogle, "google/tunedModels/sales-v2-abc123", "google/tunedModels/sales-v2-abc123"},
 		{"empty model stays empty", conversation.ProviderOpenAI, "", ""},
 		{"unknown provider preserves bare name", conversation.Provider("unknown"), "gpt-4o", "gpt-4o"},
 	}

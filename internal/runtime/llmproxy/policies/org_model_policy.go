@@ -130,20 +130,37 @@ func extractModelFromPath(req pipeline.ReadOnlyRequest) string {
 	}
 	path := httpReq.URL.Path
 	// Try /tunedModels/ first so it isn't shadowed by /models/ matching
-	// within the longer "tunedModels" substring.
-	for _, marker := range []string{"/tunedModels/", "/models/"} {
-		idx := strings.LastIndex(path, marker)
+	// within the longer "tunedModels" substring. Tuned-model resource
+	// IDs keep the "tunedModels/" prefix so the policy table can
+	// distinguish a tuned model from a base model with the same trailing
+	// name — admins configure entries like "google/tunedModels/<id>",
+	// distinct from "google/<base-model>". Base model paths return the
+	// bare model name.
+	type pathShape struct {
+		marker     string
+		keepPrefix bool
+	}
+	for _, shape := range []pathShape{
+		{marker: "/tunedModels/", keepPrefix: true},
+		{marker: "/models/", keepPrefix: false},
+	} {
+		idx := strings.LastIndex(path, shape.marker)
 		if idx < 0 {
 			continue
 		}
-		tail := path[idx+len(marker):]
+		tail := path[idx+len(shape.marker):]
 		if colon := strings.IndexByte(tail, ':'); colon >= 0 {
 			tail = tail[:colon]
 		}
 		tail = strings.TrimRight(tail, "/")
-		if tail != "" {
-			return tail
+		if tail == "" {
+			continue
 		}
+		if shape.keepPrefix {
+			// Drop the leading "/" but keep the "tunedModels/" segment.
+			return strings.TrimPrefix(shape.marker, "/") + tail
+		}
+		return tail
 	}
 	return ""
 }
