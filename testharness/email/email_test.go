@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	hemail "github.com/clawvisor/clawvisor/internal/testharness/email"
+	hemail "github.com/clawvisor/clawvisor/testharness/email"
 )
 
 // mailerLike is the cloud-side Mailer interface re-declared locally so

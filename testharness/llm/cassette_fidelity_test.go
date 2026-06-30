@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	hllm "github.com/clawvisor/clawvisor/internal/testharness/llm"
+	hllm "github.com/clawvisor/clawvisor/testharness/llm"
 )
 
 // TestReplayedResponsePreservesProtoStatusAndContentLength — the

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/clawvisor/clawvisor/internal/testharness/httpmock"
+	"github.com/clawvisor/clawvisor/testharness/httpmock"
 )
 
 func TestDefaultAndScriptedResponses(t *testing.T) {

@@ -12,20 +12,26 @@
 //
 // Each sub-mock is independent (its own httptest.Server) so tests can
 // run in parallel. State is reset between tests via Reset().
+//
+// This package is exported (not under internal/) so the cloud
+// repository can import it via the submodule path replacement — Go's
+// internal-visibility rule prevents cross-module access otherwise.
+// Despite being importable, it is intended for use ONLY by clawvisor's
+// and clawvisor/cloud's test suites; no API-stability guarantees apply.
 package testharness
 
 import (
 	"testing"
 
-	"github.com/clawvisor/clawvisor/internal/testharness/email"
-	"github.com/clawvisor/clawvisor/internal/testharness/github"
-	"github.com/clawvisor/clawvisor/internal/testharness/google"
-	"github.com/clawvisor/clawvisor/internal/testharness/linear"
-	"github.com/clawvisor/clawvisor/internal/testharness/microsoft"
-	"github.com/clawvisor/clawvisor/internal/testharness/notion"
-	"github.com/clawvisor/clawvisor/internal/testharness/slack"
-	"github.com/clawvisor/clawvisor/internal/testharness/telegram"
-	"github.com/clawvisor/clawvisor/internal/testharness/twilio"
+	"github.com/clawvisor/clawvisor/testharness/email"
+	"github.com/clawvisor/clawvisor/testharness/github"
+	"github.com/clawvisor/clawvisor/testharness/google"
+	"github.com/clawvisor/clawvisor/testharness/linear"
+	"github.com/clawvisor/clawvisor/testharness/microsoft"
+	"github.com/clawvisor/clawvisor/testharness/notion"
+	"github.com/clawvisor/clawvisor/testharness/slack"
+	"github.com/clawvisor/clawvisor/testharness/telegram"
+	"github.com/clawvisor/clawvisor/testharness/twilio"
 )
 
 // Harness owns the lifecycle of every mock external service. Tests

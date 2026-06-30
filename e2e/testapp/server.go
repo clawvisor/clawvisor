@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clawvisor/clawvisor/internal/testharness"
+	"github.com/clawvisor/clawvisor/testharness"
 )
 
 // Server is a running clawvisor-server subprocess. Get URL+Client from

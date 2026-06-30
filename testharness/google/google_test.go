@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	hg "github.com/clawvisor/clawvisor/internal/testharness/google"
+	hg "github.com/clawvisor/clawvisor/testharness/google"
 )
 
 // TestOAuthRoundTrip drives the /authorize → /token → /userinfo flow as the

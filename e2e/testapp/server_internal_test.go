@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clawvisor/clawvisor/internal/testharness"
+	"github.com/clawvisor/clawvisor/testharness"
 )
 
 // TestTryStartReturnsEarlyExitErrorOnBindFailure exercises the symptom

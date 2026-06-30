@@ -4,7 +4,7 @@ package notion
 import (
 	"testing"
 
-	"github.com/clawvisor/clawvisor/internal/testharness/httpmock"
+	"github.com/clawvisor/clawvisor/testharness/httpmock"
 )
 
 type Mock struct{ *httpmock.Server }

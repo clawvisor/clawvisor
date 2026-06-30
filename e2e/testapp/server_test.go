@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/clawvisor/clawvisor/internal/e2e/testapp"
-	"github.com/clawvisor/clawvisor/internal/testharness"
+	"github.com/clawvisor/clawvisor/e2e/testapp"
+	"github.com/clawvisor/clawvisor/testharness"
 )
 
 // TestServerBoots is the smoke test for the subprocess boot pattern:
