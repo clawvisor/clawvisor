@@ -223,23 +223,47 @@ func anthropicUserAuthoredText(raw json.RawMessage) string {
 	return b.String()
 }
 
-// harnessInjectedTextBlockRE matches a text block whose entire
-// (trimmed) content is a single lowercase-hyphen-tag wrapping —
-// Claude Code's convention for harness-injected metadata blocks
-// (`<system-reminder>`, `<command-name>`, `<command-message>`,
-// `<command-args>`, `<local-command-stdout>`, etc.). Lowercase-hyphen
-// is the distinguishing convention vs. user-pasted XML which is
-// typically PascalCase, camelCase, or upper-case; this lets us catch
-// future harness tag additions without an enumerated allowlist while
-// keeping false positives on user prose negligible.
+// harnessInjectedTags is the closed set of tag names whose
+// fully-wrapping text blocks we treat as non-user-authored for
+// fingerprint purposes. Closed-set rather than open-pattern because
+// many legitimate user prompts are entirely a single lowercase-tag
+// wrapping — `<p>...</p>`, `<div>...</div>`, `<html>...</html>`,
+// `<query>SELECT ...</query>`, `<question>...</question>` — and
+// matching by tag shape alone would silently drop a user's actual
+// prompt into the empty bucket.
 //
-// Go's regexp is RE2 — no backreferences, so we accept ANY
-// lowercase-hyphen tag on the close. A mismatched pair like
-// `<foo>bar</baz>` would technically match, but well-formed
-// harness-injected blocks always balance, and a user-pasted snippet
-// with unmatched tags is itself an edge case where losing the
-// fingerprint and falling through to the next user message is fine.
-var harnessInjectedTextBlockRE = regexp.MustCompile(`(?s)^\s*<[a-z][a-z0-9-]*\s*(?:/>|>[\s\S]*?</[a-z][a-z0-9-]*>)\s*$`)
+// Keep this list in sync with autovault/inbound_shared.go's
+// harnessMetadataTags (the strip-anywhere counterpart used during
+// credential sanitization). If a new harness-injected tag is added
+// there, mirror it here so the fingerprint doesn't collide on shared
+// boilerplate that appears as a standalone text block.
+var harnessInjectedTags = []string{
+	"system-reminder",
+	"available-deferred-tools",
+	"command-name",
+	"command-message",
+	"local-command-caveat",
+	"local-command-stdout",
+	"local-command-stderr",
+	"command-args",
+}
+
+// harnessInjectedTextBlockRE matches a text block whose ENTIRE
+// trimmed content is a single wrapping in one of the
+// harnessInjectedTags names. Go's regexp is RE2 (no backreferences),
+// so open and close tag names are not cross-checked — but the
+// allowlist constrains BOTH sides to the same closed set, making a
+// real-world mismatch ( `<system-reminder>...</command-name>` ) so
+// improbable in practice that the false-skip risk on user content is
+// negligible.
+var harnessInjectedTextBlockRE = func() *regexp.Regexp {
+	quoted := make([]string, len(harnessInjectedTags))
+	for i, tag := range harnessInjectedTags {
+		quoted[i] = regexp.QuoteMeta(tag)
+	}
+	alt := "(?:" + strings.Join(quoted, "|") + ")"
+	return regexp.MustCompile(`(?s)^\s*<` + alt + `(?:\s[^>]*)?>[\s\S]*</` + alt + `>\s*$`)
+}()
 
 func isHarnessInjectedTextBlock(text string) bool {
 	return harnessInjectedTextBlockRE.MatchString(text)

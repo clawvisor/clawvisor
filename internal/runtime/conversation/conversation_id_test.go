@@ -188,10 +188,41 @@ func TestConversationIDAnthropicFingerprintFallback(t *testing.T) {
 		t.Fatalf("user prose mentioning a tag mid-text must still fingerprint; got empty")
 	}
 
+	// Allowlist-not-pattern guard: legitimate user prompts entirely
+	// wrapped in a common lowercase tag MUST still fingerprint. The
+	// prior `[a-z][a-z0-9-]*` open pattern would have silently
+	// skipped these and dropped the user's actual prompt into the
+	// empty bucket — defeating per-conversation isolation by
+	// collapsing every "wrap your prompt in an XML tag" user onto
+	// the same shared id. The closed allowlist of harnessInjectedTags
+	// is what makes the skip safe.
+	for _, body := range []struct {
+		name string
+		body []byte
+	}{
+		{"<p>", []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"<p>build a landing page in /tmp/projA</p>"}]}]}`)},
+		{"<div>", []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"<div>build a landing page in /tmp/projA</div>"}]}]}`)},
+		{"<html>", []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"<html><body>build me a landing page</body></html>"}]}]}`)},
+		{"<query>", []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"<query>SELECT * FROM users WHERE active = 1</query>"}]}]}`)},
+		{"<question>", []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"<question>what is the time complexity of quicksort?</question>"}]}]}`)},
+		// User-invented hyphenated tag that's NOT in the harness
+		// allowlist — must still fingerprint, not be skipped.
+		{"<my-component>", []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"<my-component>render this for me</my-component>"}]}]}`)},
+	} {
+		t.Run("legitimate_user_wrapping_"+body.name+"_still_fingerprints", func(t *testing.T) {
+			got := ConversationID(nil, ProviderAnthropic, body.body)
+			if got == "" {
+				t.Fatalf("user prompt entirely wrapped in %s must still fingerprint (allowlist-bound skip); got empty", body.name)
+			}
+			if !strings.HasPrefix(got, "fp-") {
+				t.Fatalf("expected fp- fingerprint, got %q", got)
+			}
+		})
+	}
+
 	// Other Claude Code harness tags (command-message, command-name,
-	// local-command-stdout) also get skipped via the same
-	// lowercase-hyphen pattern — exercising one to confirm the
-	// pattern generalizes.
+	// local-command-stdout) get skipped via the same allowlist —
+	// exercising one to confirm the allowlist branches cover them.
 	bodyCommandEcho := []byte(`{"messages":[{"role":"user","content":[
 		{"type":"text","text":"<command-name>/foo</command-name>"},
 		{"type":"text","text":"build a landing page in /tmp/projA"}
