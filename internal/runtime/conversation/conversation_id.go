@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -162,18 +163,39 @@ func anthropicChatFingerprint(body []byte) string {
 }
 
 // anthropicUserAuthoredText returns text content the user actually
-// typed, ignoring tool_use and tool_result blocks. Used by the
-// fingerprint to avoid hashing tool output as if it were a user turn.
-// Mirrors flattenAnthropicContent's tolerance for both wire shapes
-// (bare string content, array of typed blocks) but extracts only
-// "text"-typed blocks so the result is always user-authored prose.
+// typed, ignoring tool_use, tool_result, and harness-injected text
+// blocks. Used by the fingerprint to avoid hashing non-user-authored
+// content as if it were a user turn. Mirrors flattenAnthropicContent's
+// tolerance for both wire shapes (bare string content, array of typed
+// blocks) but filters down to text the user actually authored.
+//
+// Three categories of non-user-authored content this skips:
+//   - tool_use / tool_result blocks (Anthropic wraps tool returns in
+//     role:"user" because there's no "tool" role; without this guard
+//     the fingerprint would be scoped by tool output).
+//   - Harness-injected text blocks whose ENTIRE trimmed content is a
+//     single XML-style wrapping in a lowercase-hyphen tag — Claude
+//     Code's convention for system reminders, slash-command echoes,
+//     file-touch notices, etc. (`<system-reminder>...</system-reminder>`
+//     and friends). These blocks are shared boilerplate across
+//     conversations on the same harness; hashing them would cause
+//     cross-conversation fingerprint collisions whenever the FIRST
+//     surviving user-role message is one of these wrappers (post-
+//     truncation replay, tool_result+reminder pair, etc.).
+//
+// "Mid-text" mentions of `<system-reminder>` or similar tags in user
+// prose are NOT affected — only blocks whose whole content is the
+// wrapper match the skip rule. A block of mixed content (prose +
+// harness wrapper concatenated by the harness into one text block)
+// still gets hashed in full; this is rare and degrades gracefully to
+// the marker mechanism on turn 2+.
 func anthropicUserAuthoredText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
 	// Bare-string content is always user-authored — the API doesn't
-	// allow tool_use/tool_result as a bare string, only inside the
-	// typed-blocks shape.
+	// allow tool_use/tool_result/harness-injection as a bare string,
+	// only inside the typed-blocks shape.
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		return s
@@ -190,12 +212,37 @@ func anthropicUserAuthoredText(raw json.RawMessage) string {
 		if blk.Type != "text" || blk.Text == "" {
 			continue
 		}
+		if isHarnessInjectedTextBlock(blk.Text) {
+			continue
+		}
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
 		b.WriteString(blk.Text)
 	}
 	return b.String()
+}
+
+// harnessInjectedTextBlockRE matches a text block whose entire
+// (trimmed) content is a single lowercase-hyphen-tag wrapping —
+// Claude Code's convention for harness-injected metadata blocks
+// (`<system-reminder>`, `<command-name>`, `<command-message>`,
+// `<command-args>`, `<local-command-stdout>`, etc.). Lowercase-hyphen
+// is the distinguishing convention vs. user-pasted XML which is
+// typically PascalCase, camelCase, or upper-case; this lets us catch
+// future harness tag additions without an enumerated allowlist while
+// keeping false positives on user prose negligible.
+//
+// Go's regexp is RE2 — no backreferences, so we accept ANY
+// lowercase-hyphen tag on the close. A mismatched pair like
+// `<foo>bar</baz>` would technically match, but well-formed
+// harness-injected blocks always balance, and a user-pasted snippet
+// with unmatched tags is itself an edge case where losing the
+// fingerprint and falling through to the next user message is fine.
+var harnessInjectedTextBlockRE = regexp.MustCompile(`(?s)^\s*<[a-z][a-z0-9-]*\s*(?:/>|>[\s\S]*?</[a-z][a-z0-9-]*>)\s*$`)
+
+func isHarnessInjectedTextBlock(text string) bool {
+	return harnessInjectedTextBlockRE.MatchString(text)
 }
 
 // openAIResponsesFingerprint hashes the first user input item from a

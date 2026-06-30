@@ -56,6 +56,11 @@ func TestConversationIDAnthropicMalformed(t *testing.T) {
 		// Mixed: assistant tool_use turn followed by user tool_result
 		// wrapper. Still no user-authored text. Empty.
 		[]byte(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_x","name":"Read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_x","content":"file contents"}]}]}`),
+		// Harness-injected text block (system-reminder) as the only
+		// user-role content. Shared boilerplate across conversations;
+		// must NOT fingerprint to a non-empty value or every fresh
+		// conversation on this harness would collide.
+		[]byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"<system-reminder>boilerplate</system-reminder>"}]}]}`),
 	}
 	for _, body := range cases {
 		if got := ConversationID(nil, ProviderAnthropic, body); got != "" {
@@ -124,6 +129,75 @@ func TestConversationIDAnthropicFingerprintFallback(t *testing.T) {
 	]}`)
 	if got := ConversationID(nil, ProviderAnthropic, bodyDoubleToolReplay); got != idA {
 		t.Fatalf("consecutive tool_result wrappers must all be skipped; got %q, want %q", got, idA)
+	}
+
+	// Harness-injection skip: Claude Code wraps system reminders,
+	// slash-command echoes, and other harness metadata into text
+	// blocks like "<system-reminder>...</system-reminder>". Those are
+	// shared boilerplate across conversations on the same harness —
+	// hashing them collides every fresh conversation onto the same
+	// fingerprint. Skip blocks whose ENTIRE trimmed content is a
+	// single lowercase-hyphen tag wrapping; the next real user block
+	// wins.
+	bodySysReminder := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"text","text":"<system-reminder>\nThe task tools haven't been used recently...\n</system-reminder>"},
+		{"type":"text","text":"build a landing page in /tmp/projA"}
+	]}]}`)
+	if got := ConversationID(nil, ProviderAnthropic, bodySysReminder); got != idA {
+		t.Fatalf("system-reminder block must be skipped, leaving user prose to hash; got %q, want %q", got, idA)
+	}
+
+	// Different system-reminder content alongside same user prose must
+	// produce same fingerprint — the reminder shouldn't drift the id.
+	bodySysReminderAlt := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"text","text":"<system-reminder>completely different reminder text here</system-reminder>"},
+		{"type":"text","text":"build a landing page in /tmp/projA"}
+	]}]}`)
+	if got := ConversationID(nil, ProviderAnthropic, bodySysReminderAlt); got != idA {
+		t.Fatalf("changing system-reminder content must not drift fingerprint; got %q, want %q", got, idA)
+	}
+
+	// Cross-conversation collision regression: two different
+	// conversations whose ONLY surviving user-role content is a
+	// system-reminder block (post-truncation replay edge case) must
+	// not collide on a shared id. Both should fingerprint to empty
+	// (no user-authored text) and fall through to the next message
+	// or — when there isn't one — return empty rather than a shared
+	// reminder hash.
+	bodyOnlyReminderA := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"text","text":"<system-reminder>shared harness boilerplate</system-reminder>"}
+	]}]}`)
+	bodyOnlyReminderB := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"text","text":"<system-reminder>shared harness boilerplate</system-reminder>"}
+	]}]}`)
+	if got := ConversationID(nil, ProviderAnthropic, bodyOnlyReminderA); got != "" {
+		t.Fatalf("user message containing ONLY a system-reminder must not yield a fingerprint; got %q", got)
+	}
+	if got := ConversationID(nil, ProviderAnthropic, bodyOnlyReminderB); got != "" {
+		t.Fatalf("second conversation with only a system-reminder must also yield empty (no shared-boilerplate collision); got %q", got)
+	}
+
+	// User prose that MENTIONS the system-reminder tag mid-text must
+	// still be included — only blocks that ARE entirely the wrapper
+	// get skipped, so a user asking about the mechanism doesn't
+	// silently lose their fingerprint.
+	bodyUserMentionsTag := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"text","text":"can you explain what <system-reminder> tags do?"}
+	]}]}`)
+	if got := ConversationID(nil, ProviderAnthropic, bodyUserMentionsTag); got == "" {
+		t.Fatalf("user prose mentioning a tag mid-text must still fingerprint; got empty")
+	}
+
+	// Other Claude Code harness tags (command-message, command-name,
+	// local-command-stdout) also get skipped via the same
+	// lowercase-hyphen pattern — exercising one to confirm the
+	// pattern generalizes.
+	bodyCommandEcho := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"text","text":"<command-name>/foo</command-name>"},
+		{"type":"text","text":"build a landing page in /tmp/projA"}
+	]}]}`)
+	if got := ConversationID(nil, ProviderAnthropic, bodyCommandEcho); got != idA {
+		t.Fatalf("command-name harness block must be skipped; got %q, want %q", got, idA)
 	}
 
 	// Mixed-block user message (text + tool_result in the same
