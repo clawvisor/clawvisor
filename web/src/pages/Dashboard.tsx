@@ -22,7 +22,6 @@ import OrgMCPServers from './OrgMCPServers'
 import Governance from './Governance'
 import OrgNotifications from './OrgNotifications'
 import OrgTeams from './OrgTeams'
-import OrgSSO from './OrgSSO'
 import Billing from './Billing'
 import KeyVault from './KeyVault'
 import OrgSelector from '../components/OrgSelector'
@@ -422,7 +421,11 @@ export default function Dashboard() {
               <Route path="org/teams" element={<OrgTeams />} />
               <Route path="org/governance" element={<Governance />} />
               <Route path="org/notifications" element={<OrgNotifications />} />
-              <Route path="org/sso" element={<OrgSSO />} />
+              {/* org/sso temporarily admin-managed — see cmd/admin/org_sso.go
+                  in the cloud repo. Customers configure SSO through Clawvisor
+                  staff during onboarding. The OrgSSO.tsx file is retained so
+                  we can re-enable self-serve in a future release without
+                  re-implementing the form. */}
               <Route path="org/adapters" element={<OrgAdapters />} />
               <Route path="org/mcp-servers" element={<OrgMCPServers />} />
             </>
