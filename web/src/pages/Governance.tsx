@@ -65,6 +65,16 @@ function isoSinceHoursAgo(hours: number): string {
   return new Date(Date.now() - hours * 3600 * 1000).toISOString()
 }
 
+// Date-only filter inputs (yyyy-mm-dd) parse to UTC midnight when fed
+// to new Date(...). For "since" that's fine; for "until" we want the
+// full day included, so pin to 23:59:59.999 in the user's local zone.
+function endOfDayIso(dateOnly: string): string {
+  const [y, m, d] = dateOnly.split('-').map(Number)
+  if (!y || !m || !d) return new Date(dateOnly).toISOString()
+  const dt = new Date(y, m - 1, d, 23, 59, 59, 999)
+  return dt.toISOString()
+}
+
 function isErrorMessage(err: unknown): string {
   if (err && typeof err === 'object' && 'message' in err && typeof (err as { message: unknown }).message === 'string') {
     return (err as { message: string }).message
@@ -174,9 +184,25 @@ function ProgressBar({ pct }: { pct: number }) {
 // ── Overview ────────────────────────────────────────────────────────
 
 function OverviewSection({ orgId }: { orgId: string }) {
+  const startOfMonthIso = useMemo(() => {
+    const d = new Date()
+    d.setDate(1)
+    d.setHours(0, 0, 0, 0)
+    return d.toISOString()
+  }, [])
+
   const summary = useQuery({
     queryKey: ['gov', orgId, 'usage', 'summary', 'today'],
     queryFn: () => api.orgs.governance.usage.summary(orgId),
+    enabled: !!orgId,
+  })
+
+  // Separate MTD query so the monthly spend-cap progress reflects
+  // month-to-date spend, not just today's. Without this the monthly cap
+  // can look safely under-cap when MTD has already blown past the limit.
+  const summaryMtd = useQuery({
+    queryKey: ['gov', orgId, 'usage', 'summary', 'mtd', startOfMonthIso],
+    queryFn: () => api.orgs.governance.usage.summary(orgId, startOfMonthIso),
     enabled: !!orgId,
   })
 
@@ -256,6 +282,7 @@ function OverviewSection({ orgId }: { orgId: string }) {
 
   const usage: GovUsageSummary | undefined = summary.data
   const todayCostMicros = usage?.cost_micros ?? 0
+  const mtdCostMicros = summaryMtd.data?.cost_micros ?? 0
 
   // Hierarchy banner counts
   const enforcingPolicies = useMemo(() => {
@@ -270,7 +297,7 @@ function OverviewSection({ orgId }: { orgId: string }) {
   const monthlyCap = spendCaps.data?.find((c) => c.window_kind === 'monthly')
   const monthlyPct =
     monthlyCap && monthlyCap.cap_micros > 0
-      ? Math.round((todayCostMicros / monthlyCap.cap_micros) * 100)
+      ? Math.round((mtdCostMicros / monthlyCap.cap_micros) * 100)
       : null
   const immutableOn = auditSettings.data?.immutable ?? false
 
@@ -324,12 +351,17 @@ function OverviewSection({ orgId }: { orgId: string }) {
               <div className="mt-4 space-y-3">
                 {spendCaps.data?.length ? (
                   spendCaps.data.map((cap) => {
-                    const pct = cap.cap_micros > 0 ? (todayCostMicros / cap.cap_micros) * 100 : 0
+                    // Daily cap is measured against today's spend, monthly
+                    // cap against month-to-date — using one value for both
+                    // would silently mask MTD overruns.
+                    const spent =
+                      cap.window_kind === 'monthly' ? mtdCostMicros : todayCostMicros
+                    const pct = cap.cap_micros > 0 ? (spent / cap.cap_micros) * 100 : 0
                     return (
                       <div key={cap.id}>
                         <div className="flex items-center justify-between text-xs text-text-secondary mb-1">
                           <span className="capitalize">{cap.window_kind} cap ({cap.enforcement})</span>
-                          <span>{microsToUsd(todayCostMicros)} / {microsToUsd(cap.cap_micros)}</span>
+                          <span>{microsToUsd(spent)} / {microsToUsd(cap.cap_micros)}</span>
                         </div>
                         <ProgressBar pct={pct} />
                       </div>
@@ -522,6 +554,12 @@ function SpendCapRow({
     if (current) {
       setUsd((current.cap_micros / 1_000_000).toFixed(2))
       setEnforcement(current.enforcement)
+    } else {
+      // When the cap is removed (or the parent re-mounts on org switch
+      // without a current cap), clear the edit state so a fresh "Set
+      // cap" doesn't silently prefill the previously-saved values.
+      setUsd('')
+      setEnforcement('soft')
     }
   }, [current])
 
@@ -1279,7 +1317,10 @@ function ViolationsSection({ orgId }: { orgId: string }) {
       policy_kind: policyKind || undefined,
       action_taken: actionTaken || undefined,
       since: since ? new Date(since).toISOString() : undefined,
-      until: until ? new Date(until).toISOString() : undefined,
+      // Until is a date-only input — pin it to end-of-day so a user
+      // selecting "until 2026-06-29" actually includes that day's
+      // violations instead of cutting off at 00:00:00.
+      until: until ? endOfDayIso(until) : undefined,
       limit,
     }),
     [policyKind, actionTaken, since, until, limit],
@@ -1291,27 +1332,61 @@ function ViolationsSection({ orgId }: { orgId: string }) {
     enabled: !!orgId,
   })
 
+  const [exportError, setExportError] = useState<string | null>(null)
+  const [exporting, setExporting] = useState<'csv' | 'json' | null>(null)
+
+  // Authenticated download: a bare <a href> would hit /api/... without
+  // the in-memory bearer token, 401-ing for users without a session
+  // cookie. Use the API client's download() helper to attach the token
+  // and stream the response as a blob.
+  const onExport = async (format: 'csv' | 'json') => {
+    setExporting(format)
+    setExportError(null)
+    try {
+      const { blob, filename } = await api.orgs.governance.violations.download(orgId, format)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename ?? `violations.${format}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Failed to download export.')
+    } finally {
+      setExporting(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-lg font-semibold text-text-primary">Violations</h2>
         <div className="flex gap-2">
-          <a
-            href={api.orgs.governance.violations.exportUrl(orgId, 'csv')}
-            download
-            className="px-3 py-1.5 text-sm rounded-md border border-border-default bg-surface-0 text-text-primary hover:bg-surface-1"
+          <button
+            type="button"
+            onClick={() => onExport('csv')}
+            disabled={exporting !== null}
+            className="px-3 py-1.5 text-sm rounded-md border border-border-default bg-surface-0 text-text-primary hover:bg-surface-1 disabled:opacity-50"
           >
-            Download CSV
-          </a>
-          <a
-            href={api.orgs.governance.violations.exportUrl(orgId, 'json')}
-            download
-            className="px-3 py-1.5 text-sm rounded-md border border-border-default bg-surface-0 text-text-primary hover:bg-surface-1"
+            {exporting === 'csv' ? 'Downloading…' : 'Download CSV'}
+          </button>
+          <button
+            type="button"
+            onClick={() => onExport('json')}
+            disabled={exporting !== null}
+            className="px-3 py-1.5 text-sm rounded-md border border-border-default bg-surface-0 text-text-primary hover:bg-surface-1 disabled:opacity-50"
           >
-            Download JSON
-          </a>
+            {exporting === 'json' ? 'Downloading…' : 'Download JSON'}
+          </button>
         </div>
       </div>
+      {exportError && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+          {exportError}
+        </div>
+      )}
 
       <div className="rounded-md border border-border-default bg-surface-1 p-3 grid grid-cols-2 md:grid-cols-5 gap-3">
         <div>
@@ -1694,14 +1769,22 @@ export default function Governance() {
         </nav>
 
         <div className="min-w-0">
-          {section === 'overview' && <OverviewSection orgId={orgId} />}
-          {section === 'models' && <ModelsSection orgId={orgId} />}
-          {section === 'spending' && <SpendingSection orgId={orgId} />}
-          {section === 'content' && <ContentSection orgId={orgId} />}
-          {section === 'tasks' && <TasksSection orgId={orgId} />}
-          {section === 'prompts' && <PromptsSection orgId={orgId} />}
-          {section === 'violations' && <ViolationsSection orgId={orgId} />}
-          {section === 'audit' && <AuditSettingsSection orgId={orgId} />}
+          {/*
+            key={orgId} on each section forces a remount when the
+            selected org changes. Several sections seed their form
+            state from the loaded policy via a one-shot useState +
+            useEffect pattern — without remounting, switching orgs
+            keeps the previous org's form values in state and a Save
+            click would write them into the wrong org.
+          */}
+          {section === 'overview' && <OverviewSection key={orgId} orgId={orgId} />}
+          {section === 'models' && <ModelsSection key={orgId} orgId={orgId} />}
+          {section === 'spending' && <SpendingSection key={orgId} orgId={orgId} />}
+          {section === 'content' && <ContentSection key={orgId} orgId={orgId} />}
+          {section === 'tasks' && <TasksSection key={orgId} orgId={orgId} />}
+          {section === 'prompts' && <PromptsSection key={orgId} orgId={orgId} />}
+          {section === 'violations' && <ViolationsSection key={orgId} orgId={orgId} />}
+          {section === 'audit' && <AuditSettingsSection key={orgId} orgId={orgId} />}
         </div>
       </div>
     </div>

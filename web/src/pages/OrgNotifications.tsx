@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   api,
@@ -146,6 +146,16 @@ export default function OrgNotifications() {
     enabled: !!orgId,
   })
 
+  // Channel "Last delivery" must reflect the truly latest delivery
+  // regardless of the user-selected status filter. Using the filtered
+  // list above would, for example, hide a fresh success behind a
+  // "failed" filter and make the channel look unhealthier than it is.
+  const allDeliveriesQ = useQuery({
+    queryKey: ['notify', orgId, 'deliveries', 'all'],
+    queryFn: () => api.orgs.notify.deliveries(orgId),
+    enabled: !!orgId,
+  })
+
   const eventTypesQ = useQuery({
     queryKey: ['notify', 'event_types'],
     queryFn: () => api.orgs.notify.eventTypes(),
@@ -189,14 +199,14 @@ export default function OrgNotifications() {
 
   const lastDeliveryByChannel = useMemo(() => {
     const map = new Map<string, NotifyDelivery>()
-    for (const d of deliveriesQ.data ?? []) {
+    for (const d of allDeliveriesQ.data ?? []) {
       const existing = map.get(d.channel_id)
       if (!existing || new Date(d.created_at) > new Date(existing.created_at)) {
         map.set(d.channel_id, d)
       }
     }
     return map
-  }, [deliveriesQ.data])
+  }, [allDeliveriesQ.data])
 
   const channelNameById = useMemo(() => {
     const map = new Map<string, string>()
@@ -603,11 +613,19 @@ function EditChannelModal({ orgId, channel, eventTypes, onClose, onSaved }: Edit
     queryFn: () => api.orgs.notify.subscriptions.list(orgId, channel.id),
   })
 
-  if (subs === null && subsQ.data) {
+  // Sync the local "subs" set from the server response in an effect
+  // rather than during render. Calling setState during render locked in
+  // whatever cached payload happened to be present the first time the
+  // modal mounted — if a save happened in another tab and the cached
+  // subscriptions were stale, the user could re-save the stale set and
+  // clobber the latest server state. The effect re-runs when fresh
+  // data arrives.
+  useEffect(() => {
+    if (subs !== null || !subsQ.data) return
     const initial = new Set<string>()
     for (const s of subsQ.data) if (s.enabled) initial.add(s.event_type)
     setSubs(initial)
-  }
+  }, [subs, subsQ.data])
 
   const update = useMutation({
     mutationFn: async () => {

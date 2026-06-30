@@ -132,7 +132,11 @@ export default function Dashboard() {
   // /api/orgs endpoint works regardless of the gate (it just returns
   // an empty list for users with no memberships), and we always want
   // to know "is this user in any org?" before bouncing them.
-  const { data: memberships, isLoading: membershipsLoading } = useQuery({
+  const {
+    data: memberships,
+    isLoading: membershipsLoading,
+    isError: membershipsErrored,
+  } = useQuery({
     queryKey: ['orgs'],
     queryFn: () => api.orgs.list(),
     staleTime: 60_000,
@@ -143,11 +147,14 @@ export default function Dashboard() {
   // isn't already an org member. Wait for both queries before deciding
   // — without the loading guard, the redirect can fire on first paint
   // before memberships have loaded, sending an invited user to the
-  // plan picker by mistake.
+  // plan picker by mistake. Also bail if the /api/orgs lookup errored:
+  // treating a failure as "zero memberships" would route org-only users
+  // (who have no personal billing) to the plan picker by mistake.
   if (
     billingEnabled &&
     !billingLoading &&
     !membershipsLoading &&
+    !membershipsErrored &&
     billingStatus?.status === 'none' &&
     billingStatus?.plan === 'none' &&
     !hasOrg

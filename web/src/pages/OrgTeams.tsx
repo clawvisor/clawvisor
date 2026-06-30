@@ -221,6 +221,10 @@ function TeamDetail({ orgId, team, activeTab, onTabChange, onDeleted, canManage 
     mutationFn: () => api.orgs.teams.delete(orgId, team.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['teams', orgId] })
+      // team-members-all powers the org-wide assignment grid; without
+      // invalidating it the grid will keep showing the deleted team's
+      // memberships until a hard reload.
+      queryClient.invalidateQueries({ queryKey: ['team-members-all', orgId] })
       onDeleted()
     },
   })
@@ -536,8 +540,10 @@ function SpendCapRow({ orgId, teamId, windowKind, cap, onChange, canManage }: Sp
       setEditing(false)
       setUsdValue('')
       setEnforcement('soft')
+      setError(null)
       onChange()
     },
+    onError: (e: Error) => setError(e.message ?? 'Failed to delete spend cap.'),
   })
 
   const startEdit = () => {
@@ -551,37 +557,40 @@ function SpendCapRow({ orgId, teamId, windowKind, cap, onChange, canManage }: Sp
 
   if (!editing) {
     return (
-      <div className="bg-surface-0 rounded-md border border-border-default p-3 flex items-center justify-between">
-        <div>
-          <span className="text-sm font-medium text-text-primary">{label}</span>
-          {cap ? (
-            <>
-              <span className="ml-3 text-sm text-text-primary">${microsToUsdString(cap.cap_micros)}</span>
-              <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-surface-1 text-text-secondary">{cap.enforcement}</span>
-            </>
-          ) : (
-            <span className="ml-3 text-sm text-text-secondary">no cap</span>
-          )}
-        </div>
-        {canManage && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={startEdit}
-              className="text-xs px-2 py-1 rounded border border-border-default text-text-secondary hover:bg-surface-1"
-            >
-              {cap ? 'Edit' : 'Set cap'}
-            </button>
-            {cap && (
-              <button
-                onClick={() => remove.mutate()}
-                disabled={remove.isPending}
-                className="text-xs px-2 py-1 rounded border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-50"
-              >
-                Delete
-              </button>
+      <div className="bg-surface-0 rounded-md border border-border-default p-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-sm font-medium text-text-primary">{label}</span>
+            {cap ? (
+              <>
+                <span className="ml-3 text-sm text-text-primary">${microsToUsdString(cap.cap_micros)}</span>
+                <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-surface-1 text-text-secondary">{cap.enforcement}</span>
+              </>
+            ) : (
+              <span className="ml-3 text-sm text-text-secondary">no cap</span>
             )}
           </div>
-        )}
+          {canManage && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={startEdit}
+                className="text-xs px-2 py-1 rounded border border-border-default text-text-secondary hover:bg-surface-1"
+              >
+                {cap ? 'Edit' : 'Set cap'}
+              </button>
+              {cap && (
+                <button
+                  onClick={() => remove.mutate()}
+                  disabled={remove.isPending}
+                  className="text-xs px-2 py-1 rounded border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
       </div>
     )
   }
@@ -658,8 +667,10 @@ function OrgMembersTeamAssignment({ orgId, teams, allTeamMembers, canManage }: O
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['team-members-all', orgId] })
     // The drilled-in team views read from a different key set; invalidate
-    // them too so the right pane stays in sync if a team is open.
-    queryClient.invalidateQueries({ queryKey: ['team'] })
+    // them too so the right pane stays in sync if a team is open. Scope
+    // the invalidation to the current org so we don't churn unrelated
+    // org caches if the user has switched between orgs.
+    queryClient.invalidateQueries({ queryKey: ['team', orgId] })
   }
 
   const setRowError = (userId: string, msg: string | null) => {

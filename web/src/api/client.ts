@@ -1897,6 +1897,12 @@ export const api = {
         },
         exportUrl: (orgId: string, format: 'csv' | 'json' = 'csv') =>
           `/api/orgs/${orgId}/governance/violations/export?format=${format}`,
+        // Bare hrefs to /api/... don't carry the in-memory bearer token,
+        // so users whose session token isn't in a cookie get a 401 on
+        // the download. Use the authenticated download helper and let
+        // the caller turn the blob into an object URL.
+        download: (orgId: string, format: 'csv' | 'json' = 'csv') =>
+          download(`/api/orgs/${orgId}/governance/violations/export?format=${format}`),
       },
       auditExportUrl: (orgId: string, format: 'csv' | 'json' = 'csv', since?: string, until?: string) => {
         const q = new URLSearchParams({ format })
