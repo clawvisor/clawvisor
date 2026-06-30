@@ -1,0 +1,23 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:62566/v1/messages",
+    "body": "{\"model\":\"claude-haiku-4-5-20251001\",\"max_tokens\":16,\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly the word OK.\"}]}",
+    "key": "f5dfd401c1693e0f"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Length": [
+        "234"
+      ],
+      "Content-Type": [
+        "application/json"
+      ],
+      "Date": [
+        "Tue, 30 Jun 2026 04:56:10 GMT"
+      ]
+    },
+    "body": "{\n  \"id\": \"msg_test\",\n  \"type\": \"message\",\n  \"role\": \"assistant\",\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"content\": [{\"type\": \"text\", \"text\": \"OK\"}],\n  \"stop_reason\": \"end_turn\",\n  \"usage\": {\"input_tokens\": 5, \"output_tokens\": 1}\n}"
+  }
+}
