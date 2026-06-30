@@ -66,27 +66,55 @@ func RenderConversationIDMarker(id string) string {
 
 // FindInjectedConversationID returns the conversation ID from the
 // rightmost [clawvisor:conversation=cv-conv-...] marker found in an
-// assistant-role message of the inbound request body. Scoped to:
+// assistant-role turn of the inbound request body. Scoped to:
 //
 //  1. ASSISTANT-ROLE turns only, walked structurally — a user typing
 //     the marker text into their own prompt MUST NOT hijack a
 //     conversation under an attacker-controlled ID.
-//  2. OpenAI Chat Completions inbound shape only, since that is the
-//     only provider+endpoint where the proxy injects the marker.
-//     Other providers / endpoints return "" without parsing.
+//  2. Wire shapes the proxy actually injects into. Today: Anthropic
+//     /v1/messages assistant turns, OpenAI /v1/responses output items,
+//     and OpenAI /v1/chat/completions assistant messages. Other
+//     provider+endpoint combinations return "" without parsing.
 //
 // Returns "" when no marker is found, the body fails to parse, or the
-// provider/endpoint isn't a Chat Completions request. Most-recent-wins
-// when multiple assistant turns each carry a marker (compaction may
-// keep a marker from an earlier turn, but the freshest is the one
+// provider/endpoint isn't a recognized injection target. Most-recent-
+// wins when multiple assistant turns each carry a marker (compaction
+// may keep a marker from an earlier turn, but the freshest is the one
 // produced by the latest mint).
 func FindInjectedConversationID(req *http.Request, provider Provider, body []byte) string {
-	if len(body) == 0 || provider != ProviderOpenAI {
+	if len(body) == 0 {
 		return ""
 	}
-	if req == nil || !isOpenAIChatCompletionsEndpoint(req) {
+	switch provider {
+	case ProviderAnthropic:
+		return findInjectedConversationIDAnthropic(body)
+	case ProviderOpenAI:
+		if req == nil {
+			return ""
+		}
+		if isOpenAIChatCompletionsEndpoint(req) {
+			return findInjectedConversationIDOpenAIChat(body)
+		}
+		return findInjectedConversationIDOpenAIResponses(body)
+	}
+	return ""
+}
+
+// scanConversationIDMarkers returns the rightmost marker id in `text`
+// (lowercased) or "" if none. Centralizes the matching/normalization
+// so every provider parser uses the same regex and the same wins-rule.
+func scanConversationIDMarkers(text string) string {
+	if text == "" {
 		return ""
 	}
+	matches := conversationIDMarkerRE.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	return strings.ToLower(matches[len(matches)-1][1])
+}
+
+func findInjectedConversationIDOpenAIChat(body []byte) string {
 	var probe struct {
 		Messages []openAIMessage `json:"messages"`
 	}
@@ -98,18 +126,62 @@ func FindInjectedConversationID(req *http.Request, provider Provider, body []byt
 		if msg.Role != "assistant" {
 			continue
 		}
-		text := flattenOpenAIContent(msg.Content)
-		if text == "" {
+		if found := scanConversationIDMarkers(flattenOpenAIContent(msg.Content)); found != "" {
+			latest = found
+		}
+	}
+	return latest
+}
+
+func findInjectedConversationIDAnthropic(body []byte) string {
+	var probe struct {
+		Messages []anthropicMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return ""
+	}
+	latest := ""
+	for _, msg := range probe.Messages {
+		if msg.Role != "assistant" {
 			continue
 		}
-		matches := conversationIDMarkerRE.FindAllStringSubmatch(text, -1)
-		if len(matches) == 0 {
+		if found := scanConversationIDMarkers(flattenAnthropicContent(msg.Content, 0)); found != "" {
+			latest = found
+		}
+	}
+	return latest
+}
+
+func findInjectedConversationIDOpenAIResponses(body []byte) string {
+	// /v1/responses requests carry prior turns under the `input` array
+	// as role-tagged items. The output of a prior turn is included
+	// verbatim by Codex/SDK reset under a typed item the harness echoes
+	// back. Walk the input items and pick the rightmost marker that
+	// appears in any assistant-role item.
+	var probe struct {
+		Input json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil || len(probe.Input) == 0 {
+		return ""
+	}
+	// Bare-string input carries the first user turn only — no prior
+	// assistant context to scan.
+	var asString string
+	if err := json.Unmarshal(probe.Input, &asString); err == nil {
+		return ""
+	}
+	var items []openAIInputItem
+	if err := json.Unmarshal(probe.Input, &items); err != nil {
+		return ""
+	}
+	latest := ""
+	for _, item := range items {
+		if item.Role != "assistant" {
 			continue
 		}
-		// Most-recent-wins within an assistant turn AND across turns:
-		// overwrite latest as we walk forward, so the final value is
-		// the last marker in the last assistant turn that carried one.
-		latest = strings.ToLower(matches[len(matches)-1][1])
+		if found := scanConversationIDMarkers(flattenOpenAIContent(item.Content)); found != "" {
+			latest = found
+		}
 	}
 	return latest
 }

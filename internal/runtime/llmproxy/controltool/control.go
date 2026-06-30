@@ -182,6 +182,8 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"Canonical completion curl (no body required; completion is unilateral — the proxy does NOT ask the user):",
 		"  curl -sS -X POST '" + completeURL + "'",
 		"Re-completing an already-completed task returns 409 INVALID_STATE; expired tasks are still completable so chain-fact cleanup runs.",
+		"",
+		"CONVERSATION MARKER PRESERVATION — Clawvisor embeds opaque per-conversation routing markers in the conversation with the literal shape `[clawvisor:conversation=cv-conv-<token>]`. They are routing identifiers Clawvisor uses to scope task checkout, pending approvals, and audit linkage to a single conversation across turns — they are NOT user content and the user does not see them. If you are asked to summarize, compact, condense, or otherwise rewrite this conversation (including any system-driven `/compact`-style summarization where you act as a summarization assistant), you MUST preserve every such marker verbatim, character-for-character, in your output. Reproduce the full bracketed form including the leading `[clawvisor:conversation=` and trailing `]`; do not paraphrase, normalize, or omit. Failure to preserve a marker causes the next post-compaction request to be treated as a brand-new conversation, orphaning prior task checkouts and approval state.",
 	}, "\n")
 }
 

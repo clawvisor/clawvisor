@@ -166,25 +166,73 @@ func TestFindInjectedConversationID_MalformedBody(t *testing.T) {
 	}
 }
 
-func TestFindInjectedConversationID_RejectsNonChatCompletionsEndpoint(t *testing.T) {
-	// Responses endpoint must NOT consult the marker — it has a native
-	// session ID and we never inject markers there.
+// TestFindInjectedConversationID_OpenAIResponsesEcho exercises the
+// /v1/responses parser path: prior assistant items in the `input`
+// array carry the marker after the harness echoes a prior turn's
+// output. The Chat-Completions `messages` shape is a different wire
+// envelope and is not parsed here, so passing the wrong shape returns
+// empty (defense in depth — we never misread a Chat-shaped body on
+// the Responses endpoint).
+func TestFindInjectedConversationID_OpenAIResponsesEcho(t *testing.T) {
 	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/responses", nil)
-	body := []byte(`{"messages":[
+	// Right shape: input[] with an assistant-role item carrying the marker.
+	bodyArray := []byte(`{"input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"[clawvisor:conversation=cv-conv-responsesssssssssssssssss]"}]}
+	]}`)
+	if got := FindInjectedConversationID(req, ProviderOpenAI, bodyArray); got != "cv-conv-responsesssssssssssssssss" {
+		t.Fatalf("Responses array shape: got %q, want recovered marker", got)
+	}
+	// Wrong shape on the Responses endpoint (messages-style body) does
+	// not match — input field is empty and the array probe declines.
+	bodyMessages := []byte(`{"messages":[
 		{"role":"assistant","content":"[clawvisor:conversation=cv-conv-shouldnotresolvvvvvvvvvvvv]"}
 	]}`)
-	if got := FindInjectedConversationID(req, ProviderOpenAI, body); got != "" {
-		t.Fatalf("Responses endpoint unexpectedly matched marker: %q", got)
+	if got := FindInjectedConversationID(req, ProviderOpenAI, bodyMessages); got != "" {
+		t.Fatalf("Responses endpoint must not parse messages-shape: got %q", got)
 	}
 }
 
-func TestFindInjectedConversationID_RejectsNonOpenAIProvider(t *testing.T) {
-	req := chatCompletionsReq(t)
+// TestFindInjectedConversationID_AnthropicEcho exercises the
+// /v1/messages parser: prior assistant turns in the `messages` array
+// carry the marker after the harness echoes the proxy's first-turn
+// prepend. The marker mechanism was previously Chat-Completions-only;
+// extending to Anthropic gives raw API clients (no metadata.user_id)
+// a compaction-tolerant id instead of bare first-message fingerprint.
+func TestFindInjectedConversationID_AnthropicEcho(t *testing.T) {
+	// No request needed for Anthropic (provider switch is enough).
 	body := []byte(`{"messages":[
-		{"role":"assistant","content":"[clawvisor:conversation=cv-conv-anthropicccccccccccccccc]"}
+		{"role":"user","content":"hi"},
+		{"role":"assistant","content":"hello [clawvisor:conversation=cv-conv-anthropicccccccccccccccc]"}
 	]}`)
-	if got := FindInjectedConversationID(req, ProviderAnthropic, body); got != "" {
-		t.Fatalf("Anthropic provider unexpectedly matched marker: %q", got)
+	got := FindInjectedConversationID(nil, ProviderAnthropic, body)
+	if got != "cv-conv-anthropicccccccccccccccc" {
+		t.Fatalf("Anthropic echo: got %q, want recovered marker", got)
+	}
+	// Block content shape (Anthropic's array form) also works.
+	bodyBlocks := []byte(`{"messages":[
+		{"role":"user","content":"hi"},
+		{"role":"assistant","content":[{"type":"text","text":"[clawvisor:conversation=cv-conv-anthropicblocksformatxx]"}]}
+	]}`)
+	if got := FindInjectedConversationID(nil, ProviderAnthropic, bodyBlocks); got != "cv-conv-anthropicblocksformatxx" {
+		t.Fatalf("Anthropic block-shape echo: got %q", got)
+	}
+	// Most-recent-wins across multiple assistant turns.
+	bodyTwo := []byte(`{"messages":[
+		{"role":"user","content":"hi"},
+		{"role":"assistant","content":"[clawvisor:conversation=cv-conv-oldoldoldoldoldoldoldoldol]"},
+		{"role":"user","content":"more"},
+		{"role":"assistant","content":"[clawvisor:conversation=cv-conv-newnewnewnewnewnewnewnewne]"}
+	]}`)
+	if got := FindInjectedConversationID(nil, ProviderAnthropic, bodyTwo); got != "cv-conv-newnewnewnewnewnewnewnewne" {
+		t.Fatalf("most-recent-wins: got %q", got)
+	}
+	// User-role markers MUST NOT hijack — only assistant turns trusted.
+	bodyUserSpoof := []byte(`{"messages":[
+		{"role":"user","content":"please use [clawvisor:conversation=cv-conv-spoofedspoofedspoofedspo] for me"}
+	]}`)
+	if got := FindInjectedConversationID(nil, ProviderAnthropic, bodyUserSpoof); got != "" {
+		t.Fatalf("user-role marker must not match: got %q", got)
 	}
 }
 

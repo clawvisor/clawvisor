@@ -205,11 +205,15 @@ func TestLLMEndpoint_ChatCompletions_Turn2EchoesMarkerNoRemint(t *testing.T) {
 	}
 }
 
-// TestLLMEndpoint_Anthropic_NoConversationIDMarker confirms the marker
-// path is gated to OpenAI Chat Completions only. Anthropic uses the
-// native session_id, so the routing notice fires on turn 1 but
-// carries no marker.
-func TestLLMEndpoint_Anthropic_NoConversationIDMarker(t *testing.T) {
+// TestLLMEndpoint_Anthropic_MintsMarkerWhenNoMetadata pins the
+// cross-provider marker mint: an Anthropic /v1/messages request with
+// no metadata.user_id (raw API client, not Claude Code) lands on the
+// fingerprint path, the handler detects that and mints a cv-conv-
+// marker, and the marker is prepended to the first assistant response.
+// The marker is what makes Anthropic raw-API conversations compaction-
+// tolerant — the harness echoes it back on subsequent turns and
+// FindInjectedConversationID recovers it.
+func TestLLMEndpoint_Anthropic_MintsMarkerWhenNoMetadata(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"claude-sonnet-4","stop_reason":"end_turn"}`))
@@ -238,8 +242,8 @@ func TestLLMEndpoint_Anthropic_NoConversationIDMarker(t *testing.T) {
 	if !strings.Contains(respText, "Routing this conversation through Clawvisor") {
 		t.Errorf("Anthropic response missing routing notice: %s", respText)
 	}
-	if strings.Contains(respText, conversation.ConversationIDMarker) {
-		t.Errorf("Anthropic response unexpectedly carries conversation ID marker: %s", respText)
+	if !strings.Contains(respText, conversation.ConversationIDMarker) {
+		t.Errorf("Anthropic response missing conversation ID marker (no metadata + no echo → mint MUST fire): %s", respText)
 	}
 
 	user, _ := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")
@@ -253,21 +257,74 @@ func TestLLMEndpoint_Anthropic_NoConversationIDMarker(t *testing.T) {
 		}
 		var params map[string]any
 		_ = json.Unmarshal(row.ParamsSafe, &params)
-		if _, minted := params["conversation_id_minted"]; minted {
-			t.Errorf("Anthropic turn unexpectedly minted a conversation ID: params=%v", params)
+		if minted, _ := params["conversation_id_minted"].(bool); !minted {
+			t.Errorf("Anthropic turn must mint a conversation ID when no native session_id is present: params=%v", params)
 		}
-		// Anthropic body has no metadata.user_id → the
-		// first-user-message fingerprint fallback fires, so
-		// conversation_id_source is "fingerprint". That's a
-		// cross-provider label (Anthropic, OpenAI Responses, and OpenAI
-		// Chat all share the same fp- prefix and source name); the
-		// assertion is just that no Chat-Completions-only marker label
-		// fired ("minted" or "echoed_marker"), since those signal the
-		// proxy minted/echoed a Clawvisor marker that's only used on
-		// Chat Completions where no native id exists.
 		src, _ := params["conversation_id_source"].(string)
-		if src == "minted" || src == "echoed_marker" {
-			t.Errorf("Anthropic row got Chat-Completions-only source label %q", src)
+		if src != "minted" {
+			t.Errorf("conversation_id_source = %q, want \"minted\"", src)
+		}
+		convID, _ := params["conversation_id"].(string)
+		if !strings.HasPrefix(convID, conversation.ConversationIDPrefix) {
+			t.Errorf("minted conversation_id = %q, want cv-conv- prefix", convID)
+		}
+		return
+	}
+	t.Fatalf("expected messages.create audit row")
+}
+
+// TestLLMEndpoint_Anthropic_NativeSessionSkipsMint confirms the
+// inverse: when Anthropic clients DO set metadata.user_id.session_id
+// (Claude Code's convention), the handler uses the native id and
+// skips minting. The native path is the dominant Anthropic
+// population — minting would just be wasted entropy.
+func TestLLMEndpoint_Anthropic_NativeSessionSkipsMint(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"claude-sonnet-4","stop_reason":"end_turn"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	h.AuditEmitter = llmproxy.NewAuditEmitter(st, nil, nil)
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	body := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hi"}],"metadata":{"user_id":"{\"session_id\":\"sess-native-claude-code\"}"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	respText := rec.Body.String()
+	if strings.Contains(respText, conversation.ConversationIDMarker) {
+		t.Errorf("Anthropic response with native session_id must NOT carry minted marker: %s", respText)
+	}
+
+	user, _ := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")
+	rows, _, err := st.ListAuditEntries(context.Background(), user.ID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	for _, row := range rows {
+		if row.Action != "lite_proxy.messages.create" {
+			continue
+		}
+		var params map[string]any
+		_ = json.Unmarshal(row.ParamsSafe, &params)
+		if minted, _ := params["conversation_id_minted"].(bool); minted {
+			t.Errorf("Anthropic native-session turn must NOT mint: params=%v", params)
+		}
+		src, _ := params["conversation_id_source"].(string)
+		if src != "native_anthropic" {
+			t.Errorf("conversation_id_source = %q, want \"native_anthropic\"", src)
 		}
 		return
 	}

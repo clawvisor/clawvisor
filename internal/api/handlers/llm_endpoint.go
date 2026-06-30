@@ -1016,13 +1016,32 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	//     which response gets the human-visible Clawvisor notice.
 	firstTurn := !llmproxy.HasInboundAssistantTurn(provider, bodyForFirstTurnDetect)
 	mintedConversationID := ""
-	if firstTurn && provider == conversation.ProviderOpenAI && conversation.IsOpenAIChatCompletionsEndpoint(r) {
+	// Mint a per-conversation marker whenever the request reaches us on
+	// turn 1 without a native session identifier the proxy can re-derive
+	// from the wire on subsequent turns. The marker rides in the first
+	// assistant response (RenderAgentRoutingNotice), the harness echoes
+	// it back as part of message history on later turns, and
+	// FindInjectedConversationID recovers it. Originally OpenAI Chat
+	// Completions only — extended to Anthropic /v1/messages and OpenAI
+	// /v1/responses because raw-API clients on those providers (no
+	// Anthropic metadata.user_id, no Codex prompt_cache_key) used to
+	// land on the first-user-message fingerprint, which doesn't survive
+	// summarizer-based compaction. The marker round-trips through the
+	// compactor when paired with the system-prompt preservation
+	// directive — see InjectControlNoticeWithSnapshot.
+	//
+	// Detection: ConversationID() returns a `fp-`-prefixed id when no
+	// native source was found (it always returns one when there's a
+	// user message). On turn 1 of a fingerprint-only conversation we
+	// mint a marker; native paths skip mint entirely.
+	if firstTurn && strings.HasPrefix(conversationID, "fp-") {
 		minted, mintErr := conversation.NewConversationID()
 		if mintErr != nil {
 			// Mint failure is rare (crypto/rand outage) and recoverable:
 			// fall through to the fingerprint that ConversationID()
 			// already produced. The cost is just a degraded scope key
-			// for this conversation, not a request failure.
+			// for this conversation (no marker echo, so post-compaction
+			// state will be orphaned), not a request failure.
 			h.Logger.WarnContext(r.Context(), "lite-proxy conversation id mint failed; falling through to fingerprint",
 				"request_id", requestID, "agent_id", agent.ID, "err", mintErr.Error())
 		} else {
@@ -4248,25 +4267,23 @@ func liteProxyConversationIDSource(provider conversation.Provider, req *http.Req
 	if mintedConversationID != "" && conversationID == mintedConversationID {
 		return "minted"
 	}
-	// The `fp-` prefix is the universal fingerprint marker — it's set by
-	// every provider's fallback path (anthropicChatFingerprint,
-	// openAIResponsesFingerprint, openAIChatFingerprint) and lets operators
-	// distinguish "client gave us a native session id" from "we derived
-	// one from the first user message because the client didn't carry
-	// one." Without this branch, fingerprint ids on Anthropic and OpenAI
-	// Responses would be mislabeled as `native_*` and the audit would
-	// imply the client surfaced an id it actually didn't.
+	// Universal prefix checks first — both `fp-` (fingerprint fallback)
+	// and `cv-conv-` (echoed marker) are emitted by every provider
+	// path, so collapsing them here avoids per-provider mislabeling.
+	// Without this, an Anthropic conversation with a recovered marker
+	// would be labeled `native_anthropic`, falsely implying the client
+	// surfaced a session id when it actually came from our echo.
 	if strings.HasPrefix(conversationID, "fp-") {
 		return "fingerprint"
+	}
+	if strings.HasPrefix(conversationID, conversation.ConversationIDPrefix) {
+		return "echoed_marker"
 	}
 	switch provider {
 	case conversation.ProviderAnthropic:
 		return "native_anthropic"
 	case conversation.ProviderOpenAI:
 		if req != nil && conversation.IsOpenAIChatCompletionsEndpoint(req) {
-			if strings.HasPrefix(conversationID, conversation.ConversationIDPrefix) {
-				return "echoed_marker"
-			}
 			return "unknown"
 		}
 		return "native_openai_responses"

@@ -16,40 +16,36 @@ import (
 //
 // Returns "" only when the body has no user-authored turn at all (parse error,
 // empty messages array, no user-role entry). For any request that carries a
-// user message, ConversationID returns a non-empty id — either the provider's
-// native session identifier or, when that's absent, a fingerprint of the
-// FIRST user message. Per-conversation isolation depends on this: a "" return
-// used to mean "fall back to a shared (user, agent) bucket," which was the
-// cross-conversation leak source. The fingerprint fallback gives every legacy
-// client a stable per-conversation id without requiring a wire-protocol
-// upgrade, so callers can treat "" as a hard signal that no conversation
-// exists rather than as a routing hint.
+// user message, ConversationID returns a non-empty id. Per-conversation
+// isolation depends on this: a "" return used to mean "fall back to a shared
+// (user, agent) bucket," which was the cross-conversation leak source.
 //
-// Identifier source per provider (first non-empty wins):
+// Decision order per provider (first non-empty wins):
 //
-//   - Anthropic (/v1/messages):
-//       1. body.metadata.user_id is a JSON-encoded blob of the shape
-//          {device_id, account_uuid, session_id}. Returns session_id.
-//          Stable per Claude Code session.
-//       2. Fingerprint of the first user message — for raw Anthropic API
-//          clients that don't set the Claude-Code-specific metadata.
+//  1. Native session identifier on the wire (provider-specific).
+//  2. Clawvisor-minted marker (`cv-conv-...`) echoed back in assistant
+//     history. Minted by the handler on turn 1 when (1) is absent and
+//     prepended to the first assistant response via
+//     RenderAgentRoutingNotice; recovered here via FindInjectedConversationID.
+//     The marker is the compaction-tolerant id: when paired with the
+//     summarizer preservation directive in InjectControlNoticeWithSnapshot,
+//     it survives summarizer-based compaction at >>fingerprint rate.
+//  3. Fingerprint of the first user message — last-resort fallback for
+//     pre-mint turns (rare race), mint failures (crypto/rand outage), or
+//     harnesses that strip the marker before echoing.
 //
-//   - OpenAI Responses (/v1/responses):
-//       1. body.prompt_cache_key, a UUID-shaped value Codex sets so OpenAI's
-//          prompt cache matches across turns. Stable per Codex session.
-//       2. Fingerprint of the first user input item — for generic OpenAI
-//          Responses clients that don't set prompt_cache_key.
+// Native sources per provider:
+//
+//   - Anthropic (/v1/messages): body.metadata.user_id is a JSON-encoded
+//     blob of the shape {device_id, account_uuid, session_id}. Returns
+//     session_id. Stable per Claude Code session.
+//
+//   - OpenAI Responses (/v1/responses): body.prompt_cache_key, a UUID-
+//     shaped value Codex sets so OpenAI's prompt cache matches across
+//     turns. Stable per Codex session.
 //
 //   - OpenAI Chat Completions (/v1/chat/completions): no native session
-//     identifier exists on the wire. First consult FindInjectedConversationID
-//     for a Clawvisor-minted marker echoed back in assistant history. Fall
-//     back to a fingerprint of the FIRST user message text when no marker
-//     has been minted yet (or the harness stripped it). The first user
-//     message is the most stable thing harnesses leave alone — system
-//     prompts can be rewritten on policy changes, and compaction replaces
-//     middle messages, but the first user-typed turn survives. Two
-//     conversations starting with literally identical text will collide
-//     under the fingerprint; the marker, when echoed, partitions cleanly.
+//     identifier exists on the wire — marker / fingerprint only.
 //
 // The request shape is inspected without disturbing it — body is read-only.
 func ConversationID(req *http.Request, provider Provider, body []byte) string {
@@ -58,26 +54,36 @@ func ConversationID(req *http.Request, provider Provider, body []byte) string {
 	}
 	switch provider {
 	case ProviderAnthropic:
-		return anthropicConversationID(body)
+		if id := anthropicNativeConversationID(body); id != "" {
+			return id
+		}
+		if id := FindInjectedConversationID(req, ProviderAnthropic, body); id != "" {
+			return id
+		}
+		return anthropicChatFingerprint(body)
 	case ProviderOpenAI:
 		if req != nil && isOpenAIChatCompletionsEndpoint(req) {
-			// Echoed Clawvisor marker is conclusive when present — it
-			// was minted on turn 1 specifically because no native ID
-			// exists, and the harness has now round-tripped it.
 			if id := FindInjectedConversationID(req, ProviderOpenAI, body); id != "" {
 				return id
 			}
-			// Pre-mint or marker-stripped fallback. Will be removed in
-			// a follow-up once telemetry confirms the marker round-trips
-			// reliably across the active OpenClaw harness population.
 			return openAIChatFingerprint(body)
 		}
-		return openAIResponsesConversationID(body)
+		if id := openAIResponsesNativeConversationID(body); id != "" {
+			return id
+		}
+		if id := FindInjectedConversationID(req, ProviderOpenAI, body); id != "" {
+			return id
+		}
+		return openAIResponsesFingerprint(body)
 	}
 	return ""
 }
 
-func anthropicConversationID(body []byte) string {
+// anthropicNativeConversationID returns the session id from
+// metadata.user_id (Claude Code's convention) or "" when no native id
+// is on the wire. Native-only — callers compose with marker echo and
+// fingerprint via ConversationID().
+func anthropicNativeConversationID(body []byte) string {
 	var probe struct {
 		Metadata struct {
 			UserID string `json:"user_id"`
@@ -87,32 +93,33 @@ func anthropicConversationID(body []byte) string {
 		return ""
 	}
 	raw := strings.TrimSpace(probe.Metadata.UserID)
-	if raw != "" {
-		// Claude Code encodes metadata.user_id as a JSON string that itself
-		// contains a JSON object. Tolerate either shape: nested object, or a
-		// flat opaque string.
-		var nested struct {
-			SessionID string `json:"session_id"`
-		}
-		if err := json.Unmarshal([]byte(raw), &nested); err == nil {
-			if id := strings.TrimSpace(nested.SessionID); id != "" {
-				return id
-			}
+	if raw == "" {
+		return ""
+	}
+	// Claude Code encodes metadata.user_id as a JSON string that itself
+	// contains a JSON object. Tolerate either shape: nested object, or
+	// a flat opaque string.
+	var nested struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(raw), &nested); err == nil {
+		if id := strings.TrimSpace(nested.SessionID); id != "" {
+			return id
 		}
 	}
-	return anthropicChatFingerprint(body)
+	return ""
 }
 
-func openAIResponsesConversationID(body []byte) string {
+// openAIResponsesNativeConversationID returns prompt_cache_key (Codex's
+// convention) or "" when no native id is on the wire.
+func openAIResponsesNativeConversationID(body []byte) string {
 	var probe struct {
 		PromptCacheKey string `json:"prompt_cache_key"`
 	}
-	if err := json.Unmarshal(body, &probe); err == nil {
-		if key := strings.TrimSpace(probe.PromptCacheKey); key != "" {
-			return key
-		}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return ""
 	}
-	return openAIResponsesFingerprint(body)
+	return strings.TrimSpace(probe.PromptCacheKey)
 }
 
 // anthropicChatFingerprint hashes the first user message text from a
