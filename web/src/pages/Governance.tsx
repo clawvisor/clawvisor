@@ -66,8 +66,17 @@ function isoSinceHoursAgo(hours: number): string {
 }
 
 // Date-only filter inputs (yyyy-mm-dd) parse to UTC midnight when fed
-// to new Date(...). For "since" that's fine; for "until" we want the
-// full day included, so pin to 23:59:59.999 in the user's local zone.
+// to new Date(...). That's the wrong boundary for a user in a non-UTC
+// zone: a user in PT picking "since 2026-06-29" would actually start
+// at 2026-06-28 17:00 PT (UTC midnight). For both since and until we
+// pin to the user's local-zone day boundary so the inputs behave
+// consistently regardless of timezone.
+function startOfDayIso(dateOnly: string): string {
+  const [y, m, d] = dateOnly.split('-').map(Number)
+  if (!y || !m || !d) return new Date(dateOnly).toISOString()
+  const dt = new Date(y, m - 1, d, 0, 0, 0, 0)
+  return dt.toISOString()
+}
 function endOfDayIso(dateOnly: string): string {
   const [y, m, d] = dateOnly.split('-').map(Number)
   if (!y || !m || !d) return new Date(dateOnly).toISOString()
@@ -1316,10 +1325,11 @@ function ViolationsSection({ orgId }: { orgId: string }) {
     () => ({
       policy_kind: policyKind || undefined,
       action_taken: actionTaken || undefined,
-      since: since ? new Date(since).toISOString() : undefined,
-      // Until is a date-only input — pin it to end-of-day so a user
-      // selecting "until 2026-06-29" actually includes that day's
-      // violations instead of cutting off at 00:00:00.
+      // Both since + until use the user's local zone as the day
+      // boundary. Mixing UTC midnight (from new Date('yyyy-mm-dd')) with
+      // local end-of-day produces strange windows in non-UTC zones —
+      // see startOfDayIso/endOfDayIso for rationale.
+      since: since ? startOfDayIso(since) : undefined,
       until: until ? endOfDayIso(until) : undefined,
       limit,
     }),

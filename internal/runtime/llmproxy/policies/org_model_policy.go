@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 )
@@ -54,13 +53,6 @@ func (p *OrgModelPolicy) Preprocess(ctx context.Context, req pipeline.ReadOnlyRe
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeAllow}, nil
 	}
 	model := extractModelFromRequest(req)
-	if model == "" && req.Provider() == conversation.ProviderGoogle {
-		// Google Gemini puts the model in the URL path, not the body
-		// (e.g. /v1/models/gemini-1.5-pro:generateContent). Without this
-		// fallback every Google request would bypass the org model
-		// policy because body extraction yields "".
-		model = extractGeminiModelFromPath(req)
-	}
 	if model == "" {
 		return pipeline.RequestVerdict{Outcome: pipeline.OutcomeAllow}, nil
 	}
@@ -90,12 +82,22 @@ func (p *OrgModelPolicy) Preprocess(ctx context.Context, req pipeline.ReadOnlyRe
 	}, nil
 }
 
-// extractModelFromRequest returns the top-level "model" field from the
-// raw request body. Both Anthropic Messages and OpenAI Chat/Completions
-// shapes use a top-level "model" string; we don't need a provider-aware
-// parse for this field. Google Gemini does NOT carry the model in the
-// body — see extractGeminiModelFromPath for that fallback.
+// extractModelFromRequest returns the model identifier for a request.
+// Tries the body first (Anthropic Messages, OpenAI Chat/Completions
+// and Responses, and Vertex non-Gemini all use a top-level "model"
+// string), then falls back to URL-path extraction for shapes that
+// don't carry the model in the body (Gemini /models/{name} and
+// /tunedModels/{name}). Returns "" when neither source yields a
+// model — the caller treats empty as "allow", which is the safe
+// default for unrecognized shapes.
 func extractModelFromRequest(req pipeline.ReadOnlyRequest) string {
+	if m := extractModelFromBody(req); m != "" {
+		return m
+	}
+	return extractModelFromPath(req)
+}
+
+func extractModelFromBody(req pipeline.ReadOnlyRequest) string {
 	body := req.RawBody()
 	if len(body) == 0 {
 		return ""
@@ -109,34 +111,40 @@ func extractModelFromRequest(req pipeline.ReadOnlyRequest) string {
 	return probe.Model
 }
 
-// extractGeminiModelFromPath parses the model identifier out of a
-// Google Gemini request URL. Gemini's REST API encodes the model as
-// a path segment ending in ":<method>" — for example:
+// extractModelFromPath parses the model identifier out of the request
+// URL for providers that encode the model in the path. Covers both
+// Gemini-style markers we know about:
 //
 //	/v1/models/gemini-1.5-pro:generateContent
 //	/v1/projects/p/locations/l/publishers/google/models/gemini-2.0-flash:streamGenerateContent
+//	/v1/tunedModels/MODEL_ID:generateContent
 //
-// We grab the segment after the last "/models/" and strip the
-// ":generateContent" / ":streamGenerateContent" suffix. Returns ""
-// when the path doesn't match the pattern (best-effort; the policy
-// degrades to "allow" so an unrecognized shape doesn't hard-block).
-func extractGeminiModelFromPath(req pipeline.ReadOnlyRequest) string {
+// We grab the segment after the marker, strip the ":<method>" suffix,
+// and trim trailing slashes. Returns "" when no marker matches — the
+// caller treats empty as "allow" so an unrecognized URL shape doesn't
+// hard-block legitimate traffic.
+func extractModelFromPath(req pipeline.ReadOnlyRequest) string {
 	httpReq := req.HTTPRequest()
 	if httpReq == nil || httpReq.URL == nil {
 		return ""
 	}
 	path := httpReq.URL.Path
-	const marker = "/models/"
-	idx := strings.LastIndex(path, marker)
-	if idx < 0 {
-		return ""
+	// Try /tunedModels/ first so it isn't shadowed by /models/ matching
+	// within the longer "tunedModels" substring.
+	for _, marker := range []string{"/tunedModels/", "/models/"} {
+		idx := strings.LastIndex(path, marker)
+		if idx < 0 {
+			continue
+		}
+		tail := path[idx+len(marker):]
+		if colon := strings.IndexByte(tail, ':'); colon >= 0 {
+			tail = tail[:colon]
+		}
+		tail = strings.TrimRight(tail, "/")
+		if tail != "" {
+			return tail
+		}
 	}
-	tail := path[idx+len(marker):]
-	if colon := strings.IndexByte(tail, ':'); colon >= 0 {
-		tail = tail[:colon]
-	}
-	// Drop any trailing slash defensively.
-	tail = strings.TrimRight(tail, "/")
-	return tail
+	return ""
 }
 

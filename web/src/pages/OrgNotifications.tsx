@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   api,
@@ -608,24 +608,35 @@ function EditChannelModal({ orgId, channel, eventTypes, onClose, onSaved }: Edit
   const [error, setError] = useState<string | null>(null)
   const [subs, setSubs] = useState<Set<string> | null>(null)
 
+  // Track whether the user has touched the subscription checkboxes
+  // locally. Once they have, we keep their edits intact; until then,
+  // we always mirror the latest server data — including the post-mount
+  // background refetch that React Query does on cached payloads. The
+  // earlier "initialize once when subs is null" pattern silently locked
+  // in stale cached subscriptions if React Query served from cache and
+  // the in-flight refetch arrived after the initialization fired.
+  const dirtyRef = useRef(false)
+  const setSubsLocal = (next: Set<string>) => {
+    dirtyRef.current = true
+    setSubs(next)
+  }
+
   const subsQ = useQuery({
     queryKey: ['notify', orgId, 'subscriptions', channel.id],
     queryFn: () => api.orgs.notify.subscriptions.list(orgId, channel.id),
+    // Make sure reopening the modal triggers a background refetch even
+    // if cached data is present — pairs with the dirtyRef gate so fresh
+    // server state replaces stale-from-cache on initial render.
+    staleTime: 0,
+    refetchOnMount: 'always',
   })
 
-  // Sync the local "subs" set from the server response in an effect
-  // rather than during render. Calling setState during render locked in
-  // whatever cached payload happened to be present the first time the
-  // modal mounted — if a save happened in another tab and the cached
-  // subscriptions were stale, the user could re-save the stale set and
-  // clobber the latest server state. The effect re-runs when fresh
-  // data arrives.
   useEffect(() => {
-    if (subs !== null || !subsQ.data) return
-    const initial = new Set<string>()
-    for (const s of subsQ.data) if (s.enabled) initial.add(s.event_type)
-    setSubs(initial)
-  }, [subs, subsQ.data])
+    if (dirtyRef.current || !subsQ.data) return
+    const next = new Set<string>()
+    for (const s of subsQ.data) if (s.enabled) next.add(s.event_type)
+    setSubs(next)
+  }, [subsQ.data])
 
   const update = useMutation({
     mutationFn: async () => {
@@ -703,7 +714,7 @@ function EditChannelModal({ orgId, channel, eventTypes, onClose, onSaved }: Edit
           <EventCheckList
             eventTypes={eventTypes}
             subs={subs ?? new Set()}
-            setSubs={setSubs}
+            setSubs={setSubsLocal}
           />
         </div>
         {error && <p className="text-xs text-danger">{error}</p>}

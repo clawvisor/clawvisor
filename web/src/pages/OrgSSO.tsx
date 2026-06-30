@@ -110,19 +110,28 @@ function validate(form: FormState, existing: OrgSSOConfig | null): Record<string
     //   2. Client ID changed — keeping the prior secret silently pairs
     //      it with a different client, which means the secret is wrong
     //      and SSO will quietly break at login time.
+    //   3. Issuer changed — same shape as (2): the stored secret was
+    //      issued by the previous IdP, so it won't authenticate against
+    //      the new one. Quietly breaks at login.
     // An unchanged placeholder is OK only when the existing config is
-    // OIDC and the client ID is unchanged.
+    // OIDC AND client ID AND issuer are unchanged.
     const secretIsPlaceholderOrEmpty =
       form.oidc_client_secret === '' || form.oidc_client_secret === SECRET_PLACEHOLDER
     const isNewOIDC = !existing || existing.kind !== 'oidc'
     const clientIDChanged =
       existing?.kind === 'oidc' &&
       form.oidc_client_id.trim() !== (existing.oidc_client_id ?? '').trim()
+    const issuerChanged =
+      existing?.kind === 'oidc' &&
+      form.oidc_issuer.trim() !== (existing.oidc_issuer ?? '').trim()
     if (secretIsPlaceholderOrEmpty && isNewOIDC) {
       errs.oidc_client_secret = 'OIDC client secret is required for a new configuration.'
     } else if (secretIsPlaceholderOrEmpty && clientIDChanged) {
       errs.oidc_client_secret =
         'Enter the matching client secret — the client ID changed, so the stored secret no longer applies.'
+    } else if (secretIsPlaceholderOrEmpty && issuerChanged) {
+      errs.oidc_client_secret =
+        'Enter the matching client secret — the issuer changed, so the stored secret no longer applies.'
     }
   }
   return errs
