@@ -29,10 +29,25 @@ export default function Welcome() {
     },
   })
 
-  if (!isLoading && billingStatus && billingStatus.status !== 'none') {
+  // Hold the entire page until both queries resolve. Otherwise an org
+  // member could briefly see (and click) the personal "Activate free
+  // tier" button while their memberships query was still in flight,
+  // which mints a personal plan they shouldn't have.
+  if (isLoading || membershipsLoading) {
+    return (
+      <div className="min-h-screen bg-surface-0 flex items-center justify-center">
+        <div
+          role="status"
+          aria-label="Loading"
+          className="w-6 h-6 border-2 border-border-default border-t-brand rounded-full animate-spin"
+        />
+      </div>
+    )
+  }
+  if (billingStatus && billingStatus.status !== 'none') {
     return <Navigate to="/dashboard" replace />
   }
-  if (!membershipsLoading && hasOrg) {
+  if (hasOrg) {
     return <Navigate to="/dashboard" replace />
   }
 

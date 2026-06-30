@@ -37,6 +37,20 @@ export default function OrgSelector() {
     }
   }, [memberships, currentOrg?.id, setCurrentOrg, queryClient])
 
+  // No-org users: if a user is removed from every org they belonged to,
+  // the prior currentOrg lives on in localStorage and the client keeps
+  // sending X-Org-Id to the API — which the backend will either reject
+  // (403) or, worse, scope new requests under an org the user no longer
+  // belongs to (depending on middleware ordering). The selector also
+  // never renders for empty memberships, so without this there's no UI
+  // path to clear the stale value. Clear it explicitly.
+  useEffect(() => {
+    if (memberships && memberships.length === 0 && currentOrg) {
+      setCurrentOrg(null)
+      queryClient.invalidateQueries()
+    }
+  }, [memberships, currentOrg, setCurrentOrg, queryClient])
+
   if (!features?.teams || !memberships?.length) return null
   if (singleOrg) return null
 

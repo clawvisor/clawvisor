@@ -4,7 +4,11 @@ import { api, type OrgSSOConfig } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 
 type SSOKind = 'saml' | 'oidc'
-type DefaultRole = 'owner' | 'admin' | 'member'
+// "owner" is intentionally excluded — JIT-provisioning every new user
+// in the configured email domain as an org owner would let anyone with
+// a matching mailbox take over the org. The server enforces this too
+// (see PutConfig in internal/handlers/sso.go).
+type DefaultRole = 'admin' | 'member'
 
 // Placeholder displayed for the OIDC client secret when a value already
 // exists server-side. The API never returns the actual secret; if the
@@ -56,13 +60,18 @@ function configToForm(cfg: OrgSSOConfig): FormState {
     oidc_client_secret:
       cfg.kind === 'oidc' && (cfg.oidc_client_id ?? '') !== '' ? SECRET_PLACEHOLDER : '',
     jit_provision: cfg.jit_provision,
-    default_role: cfg.default_role,
+    // Defensive: if the stored config has a legacy "owner" value (or
+    // anything unexpected), fall back to the safe default. Showing
+    // "owner" in the dropdown is no longer permitted, and we don't want
+    // a save to silently re-persist it.
+    default_role:
+      cfg.default_role === 'admin' || cfg.default_role === 'member' ? cfg.default_role : 'member',
     email_domain: cfg.email_domain ?? '',
     enabled: cfg.enabled,
   }
 }
 
-function validate(form: FormState): Record<string, string> {
+function validate(form: FormState, existing: OrgSSOConfig | null): Record<string, string> {
   const errs: Record<string, string> = {}
   const domain = form.email_domain.trim()
   if (!domain) {
@@ -93,6 +102,28 @@ function validate(form: FormState): Record<string, string> {
   } else {
     if (!form.oidc_issuer.trim()) errs.oidc_issuer = 'OIDC issuer is required.'
     if (!form.oidc_client_id.trim()) errs.oidc_client_id = 'OIDC client ID is required.'
+
+    // Secret-required cases:
+    //   1. New OIDC config (no existing record, or existing record is SAML
+    //      being switched to OIDC) — an empty secret would persist as
+    //      empty ciphertext server-side.
+    //   2. Client ID changed — keeping the prior secret silently pairs
+    //      it with a different client, which means the secret is wrong
+    //      and SSO will quietly break at login time.
+    // An unchanged placeholder is OK only when the existing config is
+    // OIDC and the client ID is unchanged.
+    const secretIsPlaceholderOrEmpty =
+      form.oidc_client_secret === '' || form.oidc_client_secret === SECRET_PLACEHOLDER
+    const isNewOIDC = !existing || existing.kind !== 'oidc'
+    const clientIDChanged =
+      existing?.kind === 'oidc' &&
+      form.oidc_client_id.trim() !== (existing.oidc_client_id ?? '').trim()
+    if (secretIsPlaceholderOrEmpty && isNewOIDC) {
+      errs.oidc_client_secret = 'OIDC client secret is required for a new configuration.'
+    } else if (secretIsPlaceholderOrEmpty && clientIDChanged) {
+      errs.oidc_client_secret =
+        'Enter the matching client secret — the client ID changed, so the stored secret no longer applies.'
+    }
   }
   return errs
 }
@@ -131,10 +162,15 @@ export default function OrgSSO() {
   const orgId = currentOrg?.id ?? ''
   const queryClient = useQueryClient()
 
-  const { data: config, isLoading } = useQuery({
+  const { data: config, isLoading, isError, error: loadError } = useQuery({
     queryKey: ['sso', orgId],
     queryFn: () => api.orgs.sso.get(orgId),
     enabled: !!orgId,
+    // A real load failure (5xx, network) must not be confused with "no
+    // config exists" — the GET endpoint returns 200 + null body for the
+    // latter. Don't auto-retry network errors silently into the create
+    // flow; surface them so the user sees what happened.
+    retry: false,
   })
 
   const [editing, setEditing] = useState(false)
@@ -180,7 +216,7 @@ export default function OrgSSO() {
   }
 
   function onSave() {
-    const errs = validate(form)
+    const errs = validate(form, config ?? null)
     setErrors(errs)
     if (Object.keys(errs).length > 0) return
 
@@ -218,7 +254,22 @@ export default function OrgSSO() {
 
         {isLoading && <p className="text-sm text-text-secondary">Loading…</p>}
 
-        {!isLoading && !config && !editing && (
+        {/* Real load failure — never collapse this into the "No SSO
+            configured" empty state, or an admin who can't fetch the
+            existing config (e.g. 5xx) would be invited to overwrite it. */}
+        {!isLoading && isError && (
+          <div className="bg-surface-1 rounded-lg border border-danger/40 p-6">
+            <h3 className="text-sm font-medium text-danger mb-2">Couldn't load SSO configuration</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              {(loadError as Error)?.message ?? 'An unexpected error occurred.'} Reload
+              the page to try again. If the problem persists, contact support before
+              creating a new configuration — overwriting an existing config can lock
+              users out.
+            </p>
+          </div>
+        )}
+
+        {!isLoading && !isError && !config && !editing && (
           <div className="bg-surface-1 rounded-lg border border-border-default p-6">
             <h3 className="text-sm font-medium text-text-primary mb-2">No SSO configured</h3>
             <p className="text-sm text-text-secondary mb-4">
@@ -234,7 +285,7 @@ export default function OrgSSO() {
           </div>
         )}
 
-        {!isLoading && config && !editing && (
+        {!isLoading && !isError && config && !editing && (
           <div className="space-y-4">
             <div className="bg-surface-1 rounded-lg border border-border-default p-4">
               <div className="flex items-center justify-between mb-3">
@@ -453,6 +504,7 @@ export default function OrgSSO() {
                   <p className="mt-1 text-xs text-text-secondary">
                     Leave unchanged to keep the existing secret. Enter a new value to rotate.
                   </p>
+                  <FieldError msg={errors.oidc_client_secret} />
                 </div>
               </>
             )}
@@ -504,8 +556,11 @@ export default function OrgSSO() {
               >
                 <option value="member">Member</option>
                 <option value="admin">Admin</option>
-                <option value="owner">Owner</option>
               </select>
+              <p className="mt-1 text-xs text-text-secondary">
+                JIT-provisioned users can be members or admins. Owner is reserved and
+                must be assigned manually after the user signs in.
+              </p>
             </div>
 
             <div className="flex items-start gap-2">

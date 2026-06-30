@@ -22,6 +22,11 @@ export default function OrgMembers() {
   })
   const myRole = memberships?.find((m) => m.org.id === orgId)?.role
   const canManageInvites = myRole === 'owner' || myRole === 'admin'
+  // Role changes are owner-only on the server (the role-update endpoint
+  // requires owner). Admins can still remove members. Splitting these
+  // capabilities locally keeps admins from hitting a guaranteed 403
+  // every time they touch the role select.
+  const canChangeRoles = myRole === 'owner'
 
   const { data: members, refetch: refetchMembers } = useQuery({
     queryKey: ['org-members', orgId],
@@ -122,13 +127,13 @@ export default function OrgMembers() {
                 <span className="text-sm text-text-primary">{m.email ?? m.user_id}</span>
                 <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-surface-0 text-text-secondary">{m.role}</span>
               </div>
-              {/* Role change + remove — admin/owner only; the
-                  backend's role-change endpoint is owner-only and the
-                  remove endpoint is admin+. Showing these to plain
-                  members would surface 403s. */}
+              {/* Role change is owner-only (the role-change endpoint
+                  is gated on owner); remove is admin+. Splitting the
+                  two prevents admins from seeing and triggering a
+                  control that would always 403. */}
               {canManageInvites && (
                 <div className="flex items-center gap-2">
-                  {m.role !== 'owner' && (
+                  {m.role !== 'owner' && canChangeRoles && (
                     <select
                       value={m.role}
                       onChange={(e) => updateRole.mutate({ userId: m.user_id, role: e.target.value })}
