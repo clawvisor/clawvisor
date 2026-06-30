@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -46,10 +47,59 @@ func Start(t *testing.T, h *testharness.Harness) *Server {
 // StartWith is like Start with additional env overrides. Use this for
 // tests that need CLAWVISOR_LLM_UPSTREAM_* pointed at cassette servers
 // or other per-test environment tweaks.
+//
+// freePort hands out a port by listening on :0 then closing — there's a
+// small window where another process can grab it before clawvisor binds
+// (classic TOCTOU; the common flaky-test source under CI parallelism).
+// We detect the symptom (subprocess exits before /ready returns 200)
+// and retry up to maxStartAttempts times with a fresh port. Slow-start
+// timeouts (no early exit) are NOT retried — they'd just timeout again.
 func StartWith(t *testing.T, h *testharness.Harness, extraEnv map[string]string) *Server {
 	t.Helper()
-
 	binPath := buildServerBinary(t)
+	var lastErr error
+	for attempt := 0; attempt < maxStartAttempts; attempt++ {
+		s, err := tryStart(t, h, extraEnv, binPath)
+		if err == nil {
+			return s
+		}
+		lastErr = err
+		var earlyExit *earlyExitError
+		if !errors.As(err, &earlyExit) {
+			// Not a retryable shape (e.g. /ready timeout, config write
+			// failure). Surfacing immediately avoids a 4×20s test stall.
+			t.Fatalf("clawvisor-server start: %v", err)
+		}
+		// Brief backoff so the colliding process can settle / be torn down.
+		time.Sleep(time.Duration(50*(attempt+1)) * time.Millisecond)
+	}
+	t.Fatalf("clawvisor-server failed after %d attempts (port-collision retries exhausted): %v", maxStartAttempts, lastErr)
+	return nil
+}
+
+// maxStartAttempts caps retry on early-exit. Set above the realistic
+// collision rate so a transient port grab clears, but low enough that a
+// genuinely broken binary fails fast.
+const maxStartAttempts = 4
+
+// earlyExitError is returned by tryStart when the subprocess exited
+// before /ready returned 200 — the symptom shape of a port collision
+// (EADDRINUSE on bind kills the server immediately) or other startup
+// failure. StartWith uses errors.As to decide whether to retry.
+type earlyExitError struct{ err error }
+
+func (e *earlyExitError) Error() string {
+	return fmt.Sprintf("clawvisor exited before /ready: %v", e.err)
+}
+
+func (e *earlyExitError) Unwrap() error { return e.err }
+
+// tryStart performs one boot attempt. On success: registers t.Cleanup
+// and returns the *Server. On failure: tears down its own subprocess
+// inline and returns the error (no cleanup registered, so retries
+// don't accumulate cleanup callbacks).
+func tryStart(t *testing.T, h *testharness.Harness, extraEnv map[string]string, binPath string) (*Server, error) {
+	t.Helper()
 	port := freePort(t)
 	publicURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 
@@ -57,10 +107,10 @@ func StartWith(t *testing.T, h *testharness.Harness, extraEnv map[string]string)
 	vaultKeyFile := filepath.Join(dataDir, "vault.key")
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
-		t.Fatalf("rand: %v", err)
+		return nil, fmt.Errorf("rand: %w", err)
 	}
 	if err := os.WriteFile(vaultKeyFile, []byte(base64.StdEncoding.EncodeToString(keyBytes)), 0600); err != nil {
-		t.Fatalf("write vault key: %v", err)
+		return nil, fmt.Errorf("write vault key: %w", err)
 	}
 
 	cfgPath := filepath.Join(dataDir, "config.yaml")
@@ -108,7 +158,7 @@ proxy_lite:
   enabled: true
 `, port, publicURL, dataDir, vaultKeyFile)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0600); err != nil {
-		t.Fatalf("write config: %v", err)
+		return nil, fmt.Errorf("write config: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -132,7 +182,7 @@ proxy_lite:
 
 	if err := cmd.Start(); err != nil {
 		cancel()
-		t.Fatalf("start clawvisor-server: %v", err)
+		return nil, fmt.Errorf("start clawvisor-server: %w", err)
 	}
 
 	s := &Server{
@@ -146,9 +196,36 @@ proxy_lite:
 	go drain(stdout, &s.stdoutMu, &s.stdout)
 	go drain(stderr, &s.stdoutMu, &s.stderr)
 
+	// cmd.Wait can only be called once. Run it here so both the readiness
+	// loop (early-exit detection) and t.Cleanup (orderly teardown) can
+	// observe completion. Closed-channel signal so multiple receivers
+	// can wait on it without one of them consuming the value.
+	exited := make(chan struct{})
+	var exitErr error
+	go func() {
+		exitErr = cmd.Wait()
+		close(exited)
+	}()
+
+	if err := s.waitReady(20*time.Second, exited, &exitErr); err != nil {
+		cancel()
+		// Bound the post-cancel wait so SIGKILL latency doesn't stall.
+		select {
+		case <-exited:
+		case <-time.After(5 * time.Second):
+		}
+		return nil, err
+	}
+
+	// Register cleanup ONLY on success. On retry, the failed attempt's
+	// cleanup must NOT fire after the eventual successful attempt — the
+	// inline drain above already tore it down.
 	t.Cleanup(func() {
 		cancel()
-		_ = cmd.Wait()
+		select {
+		case <-exited:
+		case <-time.After(5 * time.Second):
+		}
 		if t.Failed() {
 			s.stdoutMu.Lock()
 			defer s.stdoutMu.Unlock()
@@ -161,15 +238,25 @@ proxy_lite:
 		}
 	})
 
-	if err := s.waitReady(20 * time.Second); err != nil {
-		t.Fatalf("clawvisor not ready: %v", err)
-	}
-	return s
+	return s, nil
 }
 
-func (s *Server) waitReady(timeout time.Duration) error {
+// waitReady polls /ready until 200, or returns an earlyExitError if the
+// subprocess died first (which is what a port collision looks like:
+// EADDRINUSE on bind → fatal log → exit), or a plain error on timeout.
+// StartWith retries on earlyExitError but not on timeout.
+//
+// exited is a signal channel (closed when cmd.Wait returns); exitErrPtr
+// points to the captured Wait error written by the same goroutine. Both
+// are safe to read after exited closes due to the happens-before chain.
+func (s *Server) waitReady(timeout time.Duration, exited <-chan struct{}, exitErrPtr *error) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		select {
+		case <-exited:
+			return &earlyExitError{err: *exitErrPtr}
+		default:
+		}
 		resp, err := s.Client.Get(s.URL + "/ready")
 		if err == nil {
 			resp.Body.Close()
