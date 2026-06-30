@@ -293,7 +293,7 @@ func MaybeInterceptInlineTaskDefinition(
 			// justified bypassing the prompt — otherwise the assessor
 			// can return a different verdict on the second call and
 			// dashboards show a level the gate didn't actually accept.
-			agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, Name: cfg.AgentName}
+			agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, OrgID: cfg.AgentOrgID, Name: cfg.AgentName}
 			var created *InlineApprovedTask
 			var createErr error
 			if withAssessment, ok := cfg.InlineTaskCreator.(InlineTaskCreatorWithAssessment); ok {
@@ -463,7 +463,7 @@ func MaybeInterceptInlineTaskDefinition(
 	pendingCreator, _ := cfg.InlineTaskCreator.(InlineTaskPendingCreator)
 	var pendingTaskID string
 	if pendingCreator != nil {
-		agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, Name: cfg.AgentName}
+		agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, OrgID: cfg.AgentOrgID, Name: cfg.AgentName}
 		created, pendingErr := pendingCreator.CreatePendingInlineTask(req.Context(), agentForCreate, parsed, tu.ID, assessment)
 		if pendingErr != nil {
 			// fallthrough (not block) — we return false, so the

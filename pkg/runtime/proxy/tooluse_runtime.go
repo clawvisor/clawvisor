@@ -274,11 +274,17 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 	evaluator := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		input := decodeToolInput(tu.Input)
 		key := toolDecisionKey(tu)
+		// TODO(governance): this call site does not pass IntentVerifier
+		// or CandidateTasks, so the IntentVerifier branch in
+		// runtimedecision.EvaluateAuthorization is never reached. Adding
+		// OrgID here is a no-op for per-org intent prompt overrides
+		// until the verifier + candidate tasks are wired through
+		// ToolUseHooks. Leave the field unset rather than imply
+		// propagation that does not happen.
 		ruleDecision, err := runtimedecision.EvaluateAuthorization(ctx.Req.Context(), runtimedecision.AuthorizationInput{
 			ToolUse:   tu,
 			UserID:    st.Session.UserID,
 			AgentID:   st.Session.AgentID,
-			OrgID:     st.Session.OrgID,
 			Posture:   runtimeDecisionPosture(st.Session),
 			ToolRules: rules,
 		})

@@ -27,8 +27,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// GatewayHooks allows cloud/enterprise layers to inject additional
-// authorization logic into the gateway request flow.
 // OrgGovOptions bundles every per-org governance integration hook
 // the cloud package wires into the LLM proxy at startup. Fields use
 // bare function signatures (not the internal orggov.* / intent.* /
@@ -80,6 +78,8 @@ type OrgGovViolation struct {
 	Detail      string
 }
 
+// GatewayHooks allows cloud/enterprise layers to inject additional
+// authorization logic into the gateway request flow.
 type GatewayHooks struct {
 	// BeforeAuthorize is called after request parsing, before restriction checks.
 	// The agent (including OrgID) is available via middleware.AgentFromContext(ctx).

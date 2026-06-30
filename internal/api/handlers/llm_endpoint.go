@@ -591,6 +591,10 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			for k, v := range result.AuditParams {
 				auditParams[k] = v
 			}
+			auditStatus = http.StatusForbidden
+			auditDecide = "deny"
+			auditOutcome = "org_model_policy_denied"
+			auditReason = result.DenyReason
 			http.Error(w, result.DenyReason, http.StatusForbidden)
 			return
 		}
@@ -614,6 +618,10 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				auditParams[k] = v
 			}
 			if result.DenyReason != "" {
+				auditStatus = http.StatusForbidden
+				auditDecide = "deny"
+				auditOutcome = "org_spend_cap_denied"
+				auditReason = result.DenyReason
 				http.Error(w, result.DenyReason, http.StatusForbidden)
 				return
 			}
@@ -637,6 +645,10 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				auditParams[k] = v
 			}
 			if result.DenyReason != "" {
+				auditStatus = http.StatusForbidden
+				auditDecide = "deny"
+				auditOutcome = "org_content_policy_denied"
+				auditReason = result.DenyReason
 				http.Error(w, result.DenyReason, http.StatusForbidden)
 				return
 			}
