@@ -10,6 +10,7 @@ import { isLocalHost } from '../lib/env'
 import CountdownTimer from '../components/CountdownTimer'
 import TaskCard from '../components/TaskCard'
 import VerificationIcon from '../components/VerificationIcon'
+import { RuntimeExplanationPanel } from '../components/RuntimeExplanationPanel'
 
 type AttentionItem =
   | { kind: 'queue'; createdAt: string; item: QueueItem }
@@ -625,6 +626,7 @@ function RuntimeApprovalCard({ approval }: { approval: ApprovalRecord }) {
       <div className="px-5 pt-5 pb-4">
         <span className="font-mono text-lg font-semibold text-text-primary break-all">{primary}</span>
         {reason && <p className="text-sm text-text-secondary mt-1.5">{reason}</p>}
+        <RuntimeExplanationPanel data={approval} defaultExpanded className="mt-3" />
         <div className="flex flex-wrap items-center gap-2 mt-2">
           <span className="inline-flex items-center gap-1.5 text-xs font-mono font-medium px-2 py-0.5 rounded bg-brand/15 text-brand">
             <span className="w-1.5 h-1.5 rounded-full bg-brand" />
