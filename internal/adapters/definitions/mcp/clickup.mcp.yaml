@@ -1,0 +1,21 @@
+# ClickUp via ClickUp's hosted MCP server. Replaces the legacy REST
+# adapter (formerly internal/adapters/definitions/clickup.yaml). ClickUp
+# MCP is OAuth-only in public beta — no PAT/API-token path exists, so
+# this is the canonical adapter going forward.
+service:
+  id: clickup
+  display_name: ClickUp
+  description: "Manage workspaces, spaces, folders, lists, tasks, and comments in ClickUp."
+  icon_url: "/logos/clickup.png"
+
+mcp:
+  transport: http
+  endpoint: https://mcp.clickup.com/mcp
+  oauth: {}
+  whoami:
+    # list_workspaces is the only no-param identity signal ClickUp
+    # exposes. The response shape mirrors ClickUp v2 (`teams[]`); we
+    # use the first workspace's name as the alias, matching the
+    # supabase.mcp pattern (list_organizations → organizations[0].name).
+    tool: list_workspaces
+    field: teams[0].name
