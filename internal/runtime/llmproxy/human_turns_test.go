@@ -148,6 +148,60 @@ func TestExtractRecentHumanTurns_AnthropicSkipsAugmentedReply(t *testing.T) {
 	}
 }
 
+// TestExtractRecentHumanTurns_AnthropicStripsProxyNoticeBlock pins the
+// per-block notice filter: when PrependExpiredTaskNoticeToLastUserMessage
+// turns a user turn into [notice_block, user_text_block], the extracted
+// human turn must be JUST the user_text — without this, the notice
+// envelope would flatten into the recent-human-turns string and bleed
+// into auto-approval / intent-verification policies.
+func TestExtractRecentHumanTurns_AnthropicStripsProxyNoticeBlock(t *testing.T) {
+	notice := Render(NoticeKindTaskExpired, "The previously active task has expired (expired_task_id=task-1).")
+	body := mustMarshal(t, map[string]any{
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "text", "text": notice},
+					{"type": "text", "text": "please update the README"},
+				},
+			},
+		},
+	})
+	turns := ExtractRecentHumanTurns(ExtractHumanTurnsRequest{
+		Provider: conversation.ProviderAnthropic,
+		Body:     body,
+	})
+	if len(turns) != 1 || turns[0] != "please update the README" {
+		t.Errorf("turns = %v, want [please update the README]", turns)
+	}
+}
+
+// TestExtractRecentHumanTurns_AnthropicSkipsNoticeOnlyTurn keeps the
+// "no genuine content" branch correct: a user message that's nothing
+// but a proxy notice must NOT surface as a human turn.
+func TestExtractRecentHumanTurns_AnthropicSkipsNoticeOnlyTurn(t *testing.T) {
+	notice := Render(NoticeKindTaskExpired, "lapsed")
+	body := mustMarshal(t, map[string]any{
+		"messages": []map[string]any{
+			{"role": "user", "content": "real ask"},
+			{"role": "assistant", "content": "ok"},
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "text", "text": notice},
+				},
+			},
+		},
+	})
+	turns := ExtractRecentHumanTurns(ExtractHumanTurnsRequest{
+		Provider: conversation.ProviderAnthropic,
+		Body:     body,
+	})
+	if len(turns) != 1 || turns[0] != "real ask" {
+		t.Errorf("turns = %v, want [real ask]", turns)
+	}
+}
+
 func TestExtractRecentHumanTurns_AnthropicMultipleTurnsOrdered(t *testing.T) {
 	// Most recent last, capped at maxRecentHumanTurns. Four turns
 	// should collapse to the last three.
