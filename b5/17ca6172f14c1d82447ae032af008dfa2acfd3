@@ -40,6 +40,7 @@ internal/taskrisk/assessor.go
   s_8dd60ead3cc936::t_cb9e9b5ab2a811 192-206
   s_8dd60ead3cc936::t_c31bcdee9fd222 479-500
   s_8dd60ead3cc936::t_26d32481f22bfa 333-338
+  s_8dd60ead3cc936::t_569a0d651976b2 76
 internal/runtime/llmproxy/inline_task_intercept.go
   s_8dd60ead3cc936::t_f87a370dd1c0a0 884-885
   s_8dd60ead3cc936::t_52ab09f84bb17d 19-37
@@ -85,6 +86,7 @@ internal/api/server.go
   s_8dd60ead3cc936::t_a3dabc10ffd47c 645,653
   s_8dd60ead3cc936::t_448cd8811ee3d9 126,141-144
   s_8dd60ead3cc936::t_61ed037dc5f8af 27
+  s_8dd60ead3cc936::t_1aa8b68d514e4f 140
 internal/runtime/llmproxy/config.go
   s_8dd60ead3cc936::t_307ed077e404e7 63-70
   s_8dd60ead3cc936::t_1a79920505b184 71-76
