@@ -64,6 +64,12 @@ type LocalServiceExecutor interface {
 	Execute(ctx context.Context, userID, service, action string, params map[string]any) (*adapters.Result, error)
 }
 
+// ApprovalEscalator starts sequential notification escalation for request
+// approvals. Nil preserves legacy notifier fan-out behavior.
+type ApprovalEscalator interface {
+	StartApproval(ctx context.Context, approvalRecordID, targetType, targetID string, req notify.ApprovalRequest) error
+}
+
 // isLocalService returns true for services provided by local daemons.
 func isLocalService(serviceType string) bool {
 	return strings.HasPrefix(serviceType, "local.")
@@ -89,6 +95,7 @@ type GatewayHandler struct {
 	cbDispatch       *CallbackDispatcher  // bounded callback delivery; may be nil
 	gatewayRL        ratelimit.Limiter    // gateway-bucket limiter for per-sub-request charging in HandleBatch; may be nil
 	gatewayRLKey     func(*http.Request) string
+	escalator        ApprovalEscalator // request-approval notification escalation; may be nil
 }
 
 func NewGatewayHandler(
@@ -156,6 +163,11 @@ func (h *GatewayHandler) SetCallbackDispatcher(d *CallbackDispatcher) {
 func (h *GatewayHandler) SetGatewayRateLimiter(limiter ratelimit.Limiter, agentKey func(*http.Request) string) {
 	h.gatewayRL = limiter
 	h.gatewayRLKey = agentKey
+}
+
+// SetApprovalEscalator enables request-approval notification escalation.
+func (h *GatewayHandler) SetApprovalEscalator(escalator ApprovalEscalator) {
+	h.escalator = escalator
 }
 
 // dispatchCallback enqueues a payload for delivery via the bounded
@@ -2425,13 +2437,20 @@ func (h *GatewayHandler) routeToApproval(
 		approvalReq.VerifyReasonCoherence = verdict.ReasonCoherence
 		approvalReq.VerifyExplanation = verdict.Explanation
 	}
+	targetID := approvalNotifyTargetID(blob.RequestID, blob.TaskID)
+	if h.escalator != nil {
+		if err := h.escalator.StartApproval(ctx, approvalRecord.ID, "approval", targetID, approvalReq); err != nil {
+			h.logger.Warn("approval notification escalation failed", "err", err)
+		}
+		return nil
+	}
 	msgID, err := h.notifier.SendApprovalRequest(ctx, approvalReq)
 	if err != nil {
 		h.logger.WarnContext(ctx, "telegram approval notification failed", "err", err)
 		return nil
 	}
 
-	_ = h.store.SaveNotificationMessage(ctx, "approval", approvalNotifyTargetID(blob.RequestID, blob.TaskID), "telegram", msgID)
+	_ = h.store.SaveNotificationMessage(ctx, "approval", targetID, "telegram", msgID)
 	return nil
 }
 

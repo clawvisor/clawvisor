@@ -397,6 +397,16 @@ type Store interface {
 	// Notification messages (cross-channel message tracking)
 	SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error
 	GetNotificationMessage(ctx context.Context, targetType, targetID, channel string) (string, error)
+	ListNotificationMessages(ctx context.Context, targetType, targetID string) ([]*NotificationMessage, error)
+
+	// Approval notification escalations
+	CreateApprovalEscalation(ctx context.Context, e *ApprovalEscalation) error
+	ListDueApprovalEscalations(ctx context.Context, now time.Time, limit int) ([]*ApprovalEscalation, error)
+	ClaimApprovalEscalationStep(ctx context.Context, id string, currentStep int, now time.Time) (bool, error)
+	CompleteApprovalEscalationStep(ctx context.Context, id string, claimedStep, nextStep int, nextAt time.Time) (bool, error)
+	ReleaseApprovalEscalationStep(ctx context.Context, id string, claimedStep int, retryAt time.Time) error
+	ResolveApprovalEscalation(ctx context.Context, targetType, targetID string) error
+	TimeoutApprovalEscalation(ctx context.Context, id string, claimedStep int) error
 
 	// Chain facts (intent verification context chaining)
 	SaveChainFacts(ctx context.Context, facts []*ChainFact) error
@@ -1531,6 +1541,33 @@ type GeneratedAdapter struct {
 	YAMLContent string    `json:"yaml_content"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// NotificationMessage stores a per-channel message coordinate for later
+// cleanup/update when an approval resolves on another channel.
+type NotificationMessage struct {
+	TargetType string    `json:"target_type"`
+	TargetID   string    `json:"target_id"`
+	Channel    string    `json:"channel"`
+	MessageID  string    `json:"message_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// ApprovalEscalation tracks one sequential notification fallback flow for a
+// pending approval.
+type ApprovalEscalation struct {
+	ID               string          `json:"id"`
+	ApprovalRecordID string          `json:"approval_record_id"`
+	UserID           string          `json:"user_id"`
+	TargetType       string          `json:"target_type"`
+	TargetID         string          `json:"target_id"`
+	ApprovalRequest  json.RawMessage `json:"approval_request"`
+	EscalationChain  json.RawMessage `json:"escalation_chain"`
+	CurrentStep      int             `json:"current_step"`
+	NextEscalateAt   time.Time       `json:"next_escalate_at"`
+	Status           string          `json:"status"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
 // TelegramGroup represents a Telegram group configured for observation.

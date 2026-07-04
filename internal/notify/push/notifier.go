@@ -141,6 +141,8 @@ func (n *Notifier) DeregisterDevice(ctx context.Context, deviceToken string) err
 
 // ── notify.Notifier implementation ────────────────────────────────────────────
 
+func (n *Notifier) NotificationChannel() string { return "push" }
+
 func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalRequest) (string, error) {
 	summary := req.Service + "/" + req.Action
 	body := fmt.Sprintf("%s wants to use %s.%s", req.AgentName, req.Service, req.Action)
@@ -149,7 +151,8 @@ func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalR
 		Title:    "Approval Request",
 		Body:     body,
 		Data: map[string]string{
-			"target_id":      req.PendingID,
+			"target_id":      req.RequestID,
+			"task_id":        req.TaskID,
 			"type":           "approval",
 			"daemon_url":     n.daemonURL,
 			"action_summary": summary,
@@ -157,7 +160,8 @@ func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalR
 		LiveActivity: &liveActivityPayload{
 			AttributesType: "ApprovalActivityAttributes",
 			Attributes: map[string]string{
-				"targetID":      req.PendingID,
+				"targetID":      req.RequestID,
+				"taskID":        req.TaskID,
 				"daemonURL":     n.daemonURL,
 				"requestType":   "approval",
 				"category":      "GATEWAY_APPROVAL",

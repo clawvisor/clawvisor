@@ -131,3 +131,12 @@ rate_limit:
   review_run:                # per user — manual review triggers
     limit: 5
     window: 3600
+
+notifications:
+  escalation:
+    enabled: false
+    default_chain:
+      - channel: push
+        delay_seconds: 0
+      - channel: telegram
+        delay_seconds: 60

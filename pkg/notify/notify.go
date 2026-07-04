@@ -78,6 +78,23 @@ type Notifier interface {
 	SendAlert(ctx context.Context, userID, text string) error
 }
 
+// ChannelProvider identifies which configured notification channel a notifier
+// handles. Concrete notifiers that participate in escalation implement this.
+type ChannelProvider interface {
+	NotificationChannel() string
+}
+
+// ChannelApprovalSender can dispatch an approval prompt to one specific
+// notification channel without fanning out to every configured notifier.
+type ChannelApprovalSender interface {
+	SendApprovalRequestToChannel(ctx context.Context, channel string, req ApprovalRequest) (messageID string, err error)
+}
+
+// ChannelMessageUpdater can update or recall a message on one specific channel.
+type ChannelMessageUpdater interface {
+	UpdateMessageForChannel(ctx context.Context, channel, userID, messageID, text string) error
+}
+
 // ApprovalRequest carries the data needed to ask the user to approve or deny a gateway request.
 type ApprovalRequest struct {
 	PendingID string

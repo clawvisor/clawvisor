@@ -39,6 +39,7 @@ type Config struct {
 	Telemetry     TelemetryConfig     `yaml:"telemetry"`
 	Daemon        DaemonConfig        `yaml:"daemon"`
 	Push          PushConfig          `yaml:"push"`
+	Notifications NotificationsConfig `yaml:"notifications"`
 	AutoUpdate    AutoUpdateConfig    `yaml:"auto_update"`
 	Redis         RedisConfig         `yaml:"redis"`
 
@@ -72,6 +73,24 @@ type DaemonConfig struct {
 type PushConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	URL     string `yaml:"url"`
+}
+
+// NotificationsConfig holds cross-channel notification behavior.
+type NotificationsConfig struct {
+	Escalation NotificationEscalationConfig `yaml:"escalation"`
+}
+
+// NotificationEscalationConfig controls sequential approval notification
+// fallback. It is opt-in; when disabled the legacy notifier fan-out remains.
+type NotificationEscalationConfig struct {
+	Enabled      bool                         `yaml:"enabled"`
+	DefaultChain []NotificationEscalationStep `yaml:"default_chain"`
+}
+
+// NotificationEscalationStep is one channel in the approval fallback chain.
+type NotificationEscalationStep struct {
+	Channel      string `yaml:"channel"`
+	DelaySeconds int    `yaml:"delay_seconds"`
 }
 
 // AutoUpdateConfig holds settings for automatic binary updates.
@@ -952,6 +971,22 @@ func (c *Config) Validate() error {
 	}
 	if c.Approval.Timeout <= 0 {
 		return fmt.Errorf("approval.timeout must be positive (got %d)", c.Approval.Timeout)
+	}
+	if c.Notifications.Escalation.Enabled {
+		if len(c.Notifications.Escalation.DefaultChain) == 0 {
+			return fmt.Errorf("notifications.escalation.default_chain must not be empty when escalation is enabled")
+		}
+		for i, step := range c.Notifications.Escalation.DefaultChain {
+			channel := strings.ToLower(strings.TrimSpace(step.Channel))
+			switch channel {
+			case "push", "telegram":
+			default:
+				return fmt.Errorf("notifications.escalation.default_chain[%d].channel must be one of push, telegram (got %q)", i, step.Channel)
+			}
+			if step.DelaySeconds < 0 {
+				return fmt.Errorf("notifications.escalation.default_chain[%d].delay_seconds must be non-negative (got %d)", i, step.DelaySeconds)
+			}
+		}
 	}
 	if c.Task.DefaultExpirySeconds <= 0 {
 		return fmt.Errorf("task.default_expiry_seconds must be positive (got %d)", c.Task.DefaultExpirySeconds)

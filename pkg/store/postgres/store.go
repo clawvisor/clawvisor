@@ -1835,6 +1835,136 @@ func (s *Store) GetNotificationMessage(ctx context.Context, targetType, targetID
 
 // ── Chain Facts ───────────────────────────────────────────────────────────────
 
+func (s *Store) ListNotificationMessages(ctx context.Context, targetType, targetID string) ([]*store.NotificationMessage, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT target_type, target_id, channel, message_id, created_at
+		FROM notification_messages
+		WHERE target_type = $1 AND target_id = $2
+		ORDER BY created_at ASC
+	`, targetType, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.NotificationMessage
+	for rows.Next() {
+		m := &store.NotificationMessage{}
+		if err := rows.Scan(&m.TargetType, &m.TargetID, &m.Channel, &m.MessageID, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateApprovalEscalation(ctx context.Context, e *store.ApprovalEscalation) error {
+	if e.ID == "" {
+		e.ID = uuid.New().String()
+	}
+	if e.Status == "" {
+		e.Status = "active"
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO approval_escalations (
+			id, approval_record_id, user_id, target_type, target_id, approval_request,
+			escalation_chain, current_step, next_escalate_at, status
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (target_type, target_id) DO UPDATE SET
+			approval_record_id = EXCLUDED.approval_record_id,
+			user_id = EXCLUDED.user_id,
+			approval_request = EXCLUDED.approval_request,
+			escalation_chain = EXCLUDED.escalation_chain,
+			current_step = EXCLUDED.current_step,
+			next_escalate_at = EXCLUDED.next_escalate_at,
+			status = EXCLUDED.status,
+			updated_at = NOW()
+	`, e.ID, e.ApprovalRecordID, e.UserID, e.TargetType, e.TargetID, e.ApprovalRequest,
+		e.EscalationChain, e.CurrentStep, e.NextEscalateAt.UTC(), e.Status)
+	return err
+}
+
+func (s *Store) ListDueApprovalEscalations(ctx context.Context, now time.Time, limit int) ([]*store.ApprovalEscalation, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, approval_record_id, user_id, target_type, target_id, approval_request,
+		       escalation_chain, current_step, next_escalate_at, status, created_at, updated_at
+		FROM approval_escalations
+		WHERE status = 'active' AND next_escalate_at <= $1
+		ORDER BY next_escalate_at ASC
+		LIMIT $2
+	`, now.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.ApprovalEscalation
+	for rows.Next() {
+		e := &store.ApprovalEscalation{}
+		var approvalRequest, chain []byte
+		if err := rows.Scan(&e.ID, &e.ApprovalRecordID, &e.UserID, &e.TargetType, &e.TargetID,
+			&approvalRequest, &chain, &e.CurrentStep, &e.NextEscalateAt, &e.Status, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, err
+		}
+		e.ApprovalRequest = json.RawMessage(approvalRequest)
+		e.EscalationChain = json.RawMessage(chain)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ClaimApprovalEscalationStep(ctx context.Context, id string, currentStep int, now time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE approval_escalations
+		SET status = 'dispatching', updated_at = NOW()
+		WHERE id = $1 AND status = 'active' AND current_step = $2 AND next_escalate_at <= $3
+	`, id, currentStep, now.UTC())
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (s *Store) CompleteApprovalEscalationStep(ctx context.Context, id string, claimedStep, nextStep int, nextAt time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE approval_escalations
+		SET status = 'active', current_step = $1, next_escalate_at = $2, updated_at = NOW()
+		WHERE id = $3 AND status = 'dispatching' AND current_step = $4
+	`, nextStep, nextAt.UTC(), id, claimedStep)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (s *Store) ReleaseApprovalEscalationStep(ctx context.Context, id string, claimedStep int, retryAt time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE approval_escalations
+		SET status = 'active', next_escalate_at = $1, updated_at = NOW()
+		WHERE id = $2 AND status = 'dispatching' AND current_step = $3
+	`, retryAt.UTC(), id, claimedStep)
+	return err
+}
+
+func (s *Store) ResolveApprovalEscalation(ctx context.Context, targetType, targetID string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE approval_escalations
+		SET status = 'resolved', updated_at = NOW()
+		WHERE target_type = $1 AND target_id = $2 AND status IN ('active', 'dispatching', 'timed_out')
+	`, targetType, targetID)
+	return err
+}
+
+func (s *Store) TimeoutApprovalEscalation(ctx context.Context, id string, claimedStep int) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE approval_escalations
+		SET status = 'timed_out', updated_at = NOW()
+		WHERE id = $1 AND status = 'dispatching' AND current_step = $2
+	`, id, claimedStep)
+	return err
+}
+
 func (s *Store) SaveChainFacts(ctx context.Context, facts []*store.ChainFact) error {
 	for _, f := range facts {
 		if f.ID == "" {

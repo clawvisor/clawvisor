@@ -307,6 +307,7 @@ func (h *DevicesHandler) Action(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Action      string `json:"action"`       // "approve" or "deny"
 		TargetID    string `json:"target_id"`    // request/task/connection ID
+		TaskID      string `json:"task_id"`      // disambiguates sibling request approvals
 		RequestType string `json:"request_type"` // "approval", "task", "scope_expansion", "connection"
 	}
 	if !decodeJSON(w, r, &body) {
@@ -333,6 +334,7 @@ func (h *DevicesHandler) Action(w http.ResponseWriter, r *http.Request) {
 		Type:     body.RequestType,
 		Action:   body.Action,
 		TargetID: body.TargetID,
+		TaskID:   body.TaskID,
 		UserID:   device.UserID,
 	})
 

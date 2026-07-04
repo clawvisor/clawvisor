@@ -87,8 +87,8 @@ func TestSendApprovalRequest(t *testing.T) {
 	if !strings.Contains(received.Body, "TestAgent") {
 		t.Errorf("body should contain agent name, got %q", received.Body)
 	}
-	if received.Data["target_id"] != "pend-456" {
-		t.Errorf("expected target_id 'pend-456', got %v", received.Data["target_id"])
+	if received.Data["target_id"] != "req-123" {
+		t.Errorf("expected target_id 'req-123', got %v", received.Data["target_id"])
 	}
 	if received.Data["type"] != "approval" {
 		t.Errorf("expected type 'approval', got %v", received.Data["type"])
