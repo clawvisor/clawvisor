@@ -10,6 +10,10 @@ WHERE id = (
     LIMIT 1
 );
 
+-- The magic-local operator is the instance admin (single-user local mode).
+-- No-op on non-local installs. Matches run.go's fresh-install seed.
+UPDATE users SET role = 'admin' WHERE email = 'admin@local';
+
 -- Email-possession state (invite security rule 2). NULL = unverified.
 -- Existing accounts are backfilled verified so upgrades never lock anyone
 -- out; invite-claimed accounts start NULL and flip on magic-link confirm.

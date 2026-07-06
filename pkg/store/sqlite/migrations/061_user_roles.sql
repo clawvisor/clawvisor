@@ -19,6 +19,12 @@ WHERE id = (
     LIMIT 1
 );
 
+-- The magic-local operator is the instance admin (single-user local mode).
+-- No-op on non-local installs where no such row exists. Matches the role
+-- run.go seeds for admin@local on fresh installs, so upgrades don't strand
+-- an existing local operator as a member.
+UPDATE users SET role = 'admin' WHERE email = 'admin@local';
+
 -- Email-possession state (invite security rule 2). NULL = unverified; an
 -- account cannot log in or mint an agent token while unverified. There is
 -- no pre-existing verification flag in OSS, so we add one. Every EXISTING
