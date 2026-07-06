@@ -21,6 +21,10 @@ func TestLLMProxyOpenAIAPIKeyRoute(t *testing.T) {
 	cv := testapp.StartWith(t, h, map[string]string{
 		"CLAWVISOR_LLM_UPSTREAM_OPENAI":  openaiCapture.URL(),
 		"CLAWVISOR_LLM_UPSTREAM_CHATGPT": chatgptCapture.URL(),
+		// Spec 02 §4b: header placement no longer selects passthrough; the
+		// default posture is vault. These Mode B route tests opt into
+		// passthrough explicitly to keep their client-key routing coverage.
+		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH": "passthrough",
 	})
 	user := cv.LoginAsLocalUser(t)
 
@@ -61,6 +65,10 @@ func TestLLMProxyChatGPTOAuthRoute(t *testing.T) {
 	cv := testapp.StartWith(t, h, map[string]string{
 		"CLAWVISOR_LLM_UPSTREAM_OPENAI":  openaiCapture.URL(),
 		"CLAWVISOR_LLM_UPSTREAM_CHATGPT": chatgptCapture.URL(),
+		// Spec 02 §4b: header placement no longer selects passthrough; the
+		// default posture is vault. These Mode B route tests opt into
+		// passthrough explicitly to keep their client-key routing coverage.
+		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH": "passthrough",
 	})
 	user := cv.LoginAsLocalUser(t)
 
@@ -115,6 +123,10 @@ func TestLLMProxyOpenAIScopedJWTRoute(t *testing.T) {
 	cv := testapp.StartWith(t, h, map[string]string{
 		"CLAWVISOR_LLM_UPSTREAM_OPENAI":  openaiCapture.URL(),
 		"CLAWVISOR_LLM_UPSTREAM_CHATGPT": chatgptCapture.URL(),
+		// Spec 02 §4b: header placement no longer selects passthrough; the
+		// default posture is vault. These Mode B route tests opt into
+		// passthrough explicitly to keep their client-key routing coverage.
+		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH": "passthrough",
 	})
 	user := cv.LoginAsLocalUser(t)
 

@@ -43,6 +43,13 @@ type PreResult struct {
 
 	// DeniedBy names which policy triggered the Deny (audit forensics).
 	DeniedBy string
+
+	// Observed lists every enforcing verdict that the Observe posture
+	// downgraded to an observation on this chain (spec 02 §3). Empty
+	// unless the request context carried WithObserveMode. When non-empty
+	// the enforcement was NOT applied: DenyReason / ShortCircuit stay
+	// clear and any non-mechanical body rewrite was rolled back.
+	Observed []ObservedVerdict
 }
 
 // PolicyVerdict pairs a policy name with the verdict it returned.
@@ -82,19 +89,20 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 	// mutations land.
 	wrapper := &mutatingRequestWrapper{base: req, body: mut.Body()}
 
+	// Observe posture (spec 02 §3): downgrade enforcing verdicts from
+	// non-mechanical policies to recorded observations. observeBody holds
+	// the body as it stood before each policy ran, so a downgraded policy
+	// body rewrite can be rolled back (byte-fidelity).
+	observeMode := ObserveModeFromContext(ctx)
+
 	for _, policy := range policies {
+		bodyBefore := mut.Body()
 		verdict, err := policy.Preprocess(ctx, wrapper, mut)
 		if err != nil {
 			result.FinalBody = mut.Body()
 			return result, fmt.Errorf("policy %q: %w", policy.Name(), err)
 		}
 		result.Verdicts = append(result.Verdicts, PolicyVerdict{Name: policy.Name(), Verdict: verdict})
-
-		// Emit the pipeline.verdicts metric + a policy.verdict span event.
-		// outcome is mapped through DecisionFromOutcome so all six Outcome
-		// values collapse to the coarse audit decision (allow/block/rewrite).
-		observability.RecordPolicyVerdict(ctx, policy.Name(),
-			string(DecisionFromOutcome(verdict.Outcome)), "pre", verdict.Reason)
 
 		switch verdict.Outcome {
 		case OutcomeDeny, OutcomeAllow, OutcomeSkip:
@@ -109,9 +117,35 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 			return nil, fmt.Errorf("policy %q returned unsupported outcome %q for RunPre", policy.Name(), verdict.Outcome)
 		}
 
+		// Decide whether Observe mode neutralizes this verdict: only
+		// enforcing verdicts (deny / short-circuit / a body rewrite) from
+		// NON-mechanical policies are downgraded. Mechanical policies keep
+		// acting so byte-fidelity and prompt-cache warmth are preserved.
+		downgrade := observeMode && !observeExempt(policy.Name())
+		enforcingRewrite := downgrade && mut.BodyReplaced() && !bytesEqual(mut.Body(), bodyBefore)
+		enforcingVerdict := downgrade && (verdict.Outcome == OutcomeDeny || verdict.Outcome == OutcomeShortCircuit)
+
+		// Emit the pipeline.verdicts metric + a policy.verdict span event.
+		// outcome is mapped through DecisionFromOutcome so all six Outcome
+		// values collapse to the coarse audit decision (allow/block/rewrite).
+		// A downgraded verdict is tagged observed="true".
+		observability.RecordPolicyVerdictObserved(ctx, policy.Name(),
+			string(DecisionFromOutcome(verdict.Outcome)), "pre", verdict.Reason,
+			enforcingVerdict || enforcingRewrite)
+
 		// Merge audit fields regardless of outcome.
 		for k, v := range verdict.AuditParams {
 			result.AuditParams[k] = v
+		}
+
+		if enforcingRewrite {
+			// Roll the body back to before this policy's rewrite so the
+			// intended redaction is recorded but NOT applied.
+			_ = mut.ReplaceBody(bodyBefore)
+			result.Observed = append(result.Observed, ObservedVerdict{
+				Policy: policy.Name(), Outcome: string(DecisionFromOutcome(verdict.Outcome)), Reason: verdict.Reason,
+			})
+			result.AuditParams["observed"] = true
 		}
 
 		// Refresh the wrapper's body view in case the policy queued a
@@ -121,11 +155,27 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 
 		switch verdict.Outcome {
 		case OutcomeDeny:
+			if enforcingVerdict {
+				// Record the would-be deny and continue the chain as allow.
+				result.Observed = append(result.Observed, ObservedVerdict{
+					Policy: policy.Name(), Outcome: string(DecisionFromOutcome(verdict.Outcome)), Reason: verdict.Reason,
+				})
+				result.AuditParams["observed"] = true
+				continue
+			}
 			result.DenyReason = verdict.Reason
 			result.DeniedBy = policy.Name()
 			result.FinalBody = mut.Body()
 			return result, nil
 		case OutcomeShortCircuit:
+			if enforcingVerdict {
+				// Record the would-be hold/short-circuit; no held state is
+				// created and no synthetic response is returned.
+				result.Observed = append(result.Observed, ObservedVerdict{
+					Policy: policy.Name(), Outcome: string(DecisionFromOutcome(verdict.Outcome)), Reason: verdict.Reason,
+				})
+				continue
+			}
 			result.ShortCircuit = verdict.ShortCircuit
 			result.FinalBody = mut.Body()
 			return result, nil
@@ -136,6 +186,19 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 
 	result.FinalBody = mut.Body()
 	return result, nil
+}
+
+// bytesEqual reports byte equality without importing bytes for one call.
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // mutatingRequestWrapper presents a ReadOnlyRequest whose RawBody()

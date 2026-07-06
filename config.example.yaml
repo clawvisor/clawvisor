@@ -114,6 +114,59 @@ telemetry:
                            # sends: OS, arch, db driver, agent count (bucketed), requests per service (bucketed)
                            # no instance ID, IP, credentials, or personal data is collected
 
+# ── Posture & proxy-lite (agent LLM proxy) ──────────────────────────────────
+# `posture` is a coarse preset over the proxy-lite knobs below. It is read
+# from THIS FILE ONLY (there is no CLAWVISOR_POSTURE env override) because the
+# preset is applied by detecting which knobs the YAML sets explicitly. An
+# explicit knob ALWAYS wins over the preset.
+#
+#   observe — visibility, zero behavior change: proxy-lite enabled, upstream
+#             auth = passthrough (forward the agent's own provider credential,
+#             no vault injection), enforcement = observe (the pipeline
+#             inspects/attributes/audits/meters cost but records every
+#             hold/deny verdict as an observation instead of enforcing it).
+#   govern  — observe + control: proxy-lite enabled, upstream auth = vault
+#             (inject the stored key; client-presented API keys are stripped),
+#             enforcement = enforce.
+#   contain — not yet available; startup fails with a clear error until the
+#             runtime-proxy superset lands.
+#
+# posture: observe
+
+# config_schema marks the config convention version. The setup wizard writes
+# `config_schema: 2` + an explicit `proxy_lite.enabled:` on every fresh
+# install. The marker is advisory (Load() only logs a notice when it is older
+# than the current version); the compiled default of proxy_lite.enabled is
+# false permanently, so an existing file without the key is never silently
+# enabled at upgrade.
+# config_schema: 2
+
+# proxy_lite:
+#   enabled: false             # Env: CLAWVISOR_PROXY_LITE_ENABLED
+#   public_url: "http://localhost:8080"
+#   # Two independent axes (usually set via `posture` above, but overridable):
+#   upstream_auth: "vault"     # "vault" (default) | "passthrough".
+#                              # Env: CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH.
+#                              # vault: inject the stored provider key and
+#                              #   strip any client-presented API key.
+#                              # passthrough: forward the client's own
+#                              #   OAuth/API credential unchanged (Observe).
+#   enforcement_mode: "enforce" # "enforce" (default) | "observe".
+#                              # Env: CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE.
+#                              # observe: record hold/deny verdicts as
+#                              #   observations; never blocks or holds.
+#   allow_subscription_billing_migration: false
+#                              # Env: CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION.
+#                              # When false (default), a govern/vault request
+#                              # carrying a Claude subscription (OAuth) bearer
+#                              # is REFUSED with SUBSCRIPTION_SEAT_NOT_GOVERNABLE
+#                              # rather than silently rebilled to the org API
+#                              # key. Set true ONLY to consent to migrating
+#                              # subscription seats to vaulted-API-key billing.
+#                              # WARNING: this flag is INSTANCE-WIDE — enabling
+#                              # it migrates EVERY subscription seat on the
+#                              # instance at once, not one.
+
 # ── Observability (OpenTelemetry export) ────────────────────────────────────
 # Operational traces + metrics from the proxy-lite pipeline, the skill
 # gateway, and the runtime proxy, exported over OTLP to whatever you already

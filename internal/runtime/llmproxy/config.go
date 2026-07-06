@@ -223,6 +223,14 @@ type PostprocessConfig struct {
 	RewriteContext
 	ScriptSessionContext
 	RoutingContext
+
+	// ObserveMode downgrades enforcing tool_use verdicts (block/hold) to
+	// recorded observations under the Observe posture (spec 02 §3): the
+	// verdict is evaluated and audited, but the tool_use passes through
+	// unmodified — no CLAWVISOR_BLOCKED rewrite, no approval hold created.
+	// Mechanical rewrites (resolver redirect, credential placeholder
+	// resolution) still apply. Defaults false (enforce).
+	ObserveMode bool
 }
 
 // PostprocessResult is what postproc.Postprocess +
@@ -233,6 +241,12 @@ type PostprocessResult struct {
 	Rewritten     bool
 	Decisions     []conversation.ToolUseDecisionRecord
 	SkippedReason string
+
+	// ObservedVerdicts lists tool_use verdicts that Observe mode
+	// downgraded to observations (spec 02 §3): the enforcement was NOT
+	// applied. Empty unless ObserveMode was set. The handler records
+	// these on the endpoint_call audit row (observed: true).
+	ObservedVerdicts []ObservedToolUseVerdict
 
 	// AssistantTurn is the upstream's assistant turn the streaming
 	// path captured.
@@ -245,4 +259,13 @@ type PostprocessResult struct {
 	// StreamingResult carries the streaming rewrite metadata (next
 	// content-index, stream IDs, etc.).
 	StreamingResult conversation.StreamingRewriteResult
+}
+
+// ObservedToolUseVerdict is one tool_use verdict Observe mode recorded
+// but did not enforce (spec 02 §3).
+type ObservedToolUseVerdict struct {
+	ToolUseID string
+	ToolName  string
+	Decision  string // "block" | "hold"
+	Reason    string
 }

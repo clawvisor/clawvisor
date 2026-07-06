@@ -13,8 +13,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	tuiconfig "github.com/clawvisor/clawvisor/internal/tui/config"
+	cfgpkg "github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/haikuproxy"
 )
+
+// configWriterSchema is the schema marker every wizard-written config carries.
+const configWriterSchema = cfgpkg.CurrentConfigSchema
 
 var (
 	bold    = lipgloss.NewStyle().Bold(true)
@@ -53,6 +57,14 @@ type config struct {
 
 	taskRiskEnabled     bool
 	chainContextEnabled bool
+
+	// posture, when set (currently only "observe"), selects the posture
+	// preset written to config. Empty means "skill gateway only" — the
+	// current default. proxyLiteEnabled + proxyLitePublicURL are the
+	// explicit proxy_lite knobs writeConfig always emits (schema 2).
+	posture            string
+	proxyLiteEnabled   bool
+	proxyLitePublicURL string
 
 	telemetryEnabled bool
 
@@ -161,6 +173,9 @@ func runSetup() (*config, error) {
 		return nil, err
 	}
 	if err := stepLLM(cfg); err != nil {
+		return nil, err
+	}
+	if err := stepPosture(cfg); err != nil {
 		return nil, err
 	}
 	if err := stepTelemetry(cfg); err != nil {
@@ -495,6 +510,63 @@ func stepLLM(cfg *config) error {
 	).Run()
 }
 
+// stepPosture asks how agents connect. Today the default remains the skill
+// gateway (option 2); the flip item (§13 item 8) later changes only the
+// recommended default here. Choosing Observe writes posture: observe plus an
+// explicit proxy_lite block. Either way writeConfig stamps config_schema: 2
+// and an explicit proxy_lite.enabled — the writer-side flip mechanism (PRD
+// §11): the default is never carried by Default(), always by the writer.
+func stepPosture(cfg *config) error {
+	fmt.Println(section.Render("── Agent Connection ───────────────────────"))
+	fmt.Println()
+
+	var choice string
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("How should agents connect?").
+				Options(
+					huh.NewOption("Observe (recommended soon): route agent LLM traffic through Clawvisor for visibility; agents keep their own API keys", "observe"),
+					huh.NewOption("Skill gateway only (current default)", "gateway"),
+				).
+				// Default remains the skill gateway until the flip item.
+				Value(&choice),
+		),
+	).Run()
+	if err != nil {
+		return err
+	}
+
+	if choice != "observe" {
+		// Skill gateway only: proxy-lite stays disabled, but writeConfig
+		// still emits the explicit key + schema marker.
+		cfg.posture = ""
+		cfg.proxyLiteEnabled = false
+		return nil
+	}
+
+	cfg.posture = "observe"
+	cfg.proxyLiteEnabled = true
+
+	host := cfg.host
+	if host == "0.0.0.0" || host == "" {
+		host = "127.0.0.1"
+	}
+	cfg.proxyLitePublicURL = fmt.Sprintf("http://%s:%s", host, cfg.port)
+	err = huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Proxy-lite public URL").
+				Description("The externally reachable URL agents point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at.").
+				Value(&cfg.proxyLitePublicURL),
+		),
+	).Run()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func stepTelemetry(cfg *config) error {
 	fmt.Println(section.Render("── Telemetry ──────────────────────────────"))
 	fmt.Println()
@@ -629,6 +701,15 @@ func writeConfig(cfg *config, path string) error {
 		frontendDir = "" // daemon mode — no frontend served
 	}
 
+	// Advisory schema marker (first line). Schema 2 = "the writer emits
+	// proxy_lite.enabled explicitly" so the flip is writer-side only and
+	// existing installs are never silently enabled (PRD §11, spec 02 §5).
+	fmt.Fprintf(&b, "config_schema: %d\n", configWriterSchema)
+	if cfg.posture != "" {
+		fmt.Fprintf(&b, "posture: %s\n", cfg.posture)
+	}
+	fmt.Fprintf(&b, "\n")
+
 	fmt.Fprintf(&b, "server:\n")
 	fmt.Fprintf(&b, "  port: %s\n", cfg.port)
 	fmt.Fprintf(&b, "  host: \"%s\"\n", cfg.host)
@@ -679,6 +760,15 @@ func writeConfig(cfg *config, path string) error {
 	fmt.Fprintf(&b, "    enabled: %t\n", cfg.taskRiskEnabled)
 	fmt.Fprintf(&b, "  chain_context:\n")
 	fmt.Fprintf(&b, "    enabled: %t\n", cfg.chainContextEnabled)
+
+	// Explicit proxy_lite block. enabled is ALWAYS emitted (schema 2) so the
+	// compiled Default() never carries the flip. public_url is written only
+	// when the Observe path collected one.
+	fmt.Fprintf(&b, "\nproxy_lite:\n")
+	fmt.Fprintf(&b, "  enabled: %t\n", cfg.proxyLiteEnabled)
+	if cfg.proxyLitePublicURL != "" {
+		fmt.Fprintf(&b, "  public_url: \"%s\"\n", cfg.proxyLitePublicURL)
+	}
 
 	fmt.Fprintf(&b, "\ntelemetry:\n")
 	fmt.Fprintf(&b, "  enabled: %t\n", cfg.telemetryEnabled)

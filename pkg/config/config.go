@@ -19,7 +19,29 @@ type AutoConfigured struct {
 	JWTSecret      bool
 }
 
+// CurrentConfigSchema is the config-file schema version that config writers
+// (wizard, daemon setup) stamp into every fresh config. Schema 2 = "the
+// writer emits proxy_lite.enabled explicitly" (PRD §11). The marker is
+// advisory: Load() may log a one-line notice when it reads a file with an
+// older/absent marker, but never changes behavior based on it. The flip
+// (spec 08) is writer-side only, so Load() gains no branching on this value.
+const CurrentConfigSchema = 2
+
 type Config struct {
+	// Posture selects a coarse-grained config preset applied in Load()
+	// after the YAML file is unmarshalled but before env overrides. Values:
+	// "" (no preset — raw knobs only, today's behavior), "observe",
+	// "govern", "contain". A preset only sets knobs the YAML did not set
+	// explicitly; an explicit knob always wins (PRD §4). Posture is a
+	// config-FILE concern only — there is deliberately no CLAWVISOR_POSTURE
+	// env override, because preset application depends on YAML key-presence
+	// detection that env vars cannot express (spec 02, finding S2).
+	Posture string `yaml:"posture"`
+
+	// ConfigSchema is the advisory writer-side schema marker (see
+	// CurrentConfigSchema). Absent/0 on hand-written or pre-flip configs.
+	ConfigSchema int `yaml:"config_schema"`
+
 	Server        ServerConfig        `yaml:"server"`
 	Database      DatabaseConfig      `yaml:"database"`
 	Vault         VaultConfig         `yaml:"vault"`
@@ -343,6 +365,54 @@ type ProxyLiteConfig struct {
 	// CLAWVISOR_PROXY_LITE_RAW_LOG_PATH overrides this when set.
 	// CLAWVISOR_PROXY_LITE_RAW_LOG remains accepted as a legacy alias.
 	RawLogPath string `yaml:"raw_log_path"`
+
+	// EnforcementMode selects whether pipeline verdicts are enforced or
+	// merely observed: "enforce" (default) | "observe". In observe mode the
+	// pipeline still runs fully — inspection, attribution, audit, cost
+	// metering — but every hold/deny/rewrite verdict is downgraded to a
+	// recorded observation: the request/response proceeds as if allowed and
+	// the original verdict is written to audit (observed: true) + the
+	// clawvisor.pipeline.verdicts metric (observed="true"). Empty is treated
+	// as "enforce". The env var CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE
+	// overrides this. This is the net-new observe-posture switch (spec 02);
+	// it does NOT weaken Clawvisor's own agent-token auth.
+	EnforcementMode string `yaml:"enforcement_mode"`
+
+	// UpstreamAuth selects how the upstream provider credential is chosen:
+	// "vault" (default) | "passthrough". "vault" injects the stored key and
+	// strips any client-presented provider API key (a server-side posture
+	// decision, not a per-request client choice). "passthrough" preserves
+	// the client's own provider credential (existing auth_context.go
+	// semantics) for every request. Empty is treated as "vault". The env
+	// var CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH overrides this.
+	UpstreamAuth string `yaml:"upstream_auth"`
+
+	// AllowSubscriptionBillingMigration, when true, permits govern/contain
+	// (vault upstream_auth) to strip a Claude subscription (OAuth) bearer and
+	// inject the vaulted API key — consenting to the resulting billing shift
+	// from the user's subscription to org-metered API billing (spec 02 §4c).
+	// Default false: a subscription seat is REFUSED with
+	// SUBSCRIPTION_SEAT_NOT_GOVERNABLE rather than silently rebilled. The
+	// flag is instance-wide — enabling it migrates EVERY subscription seat on
+	// the instance at once (blast radius F4). The preset system never sets
+	// it; it is always an explicit operator choice. Env override:
+	// CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION.
+	AllowSubscriptionBillingMigration bool `yaml:"allow_subscription_billing_migration"`
+}
+
+// ObserveMode reports whether enforcement is downgraded to observation: the
+// pipeline runs fully but hold/deny/rewrite verdicts become recorded
+// observations rather than blocking actions. Empty enforcement_mode is
+// treated as "enforce" (fail toward enforcement, never silently observe).
+func (p ProxyLiteConfig) ObserveMode() bool {
+	return strings.EqualFold(strings.TrimSpace(p.EnforcementMode), "observe")
+}
+
+// PassthroughUpstreamAuth reports whether upstream auth forwards the client's
+// own provider credential (passthrough) instead of injecting the vault key.
+// Empty upstream_auth is treated as "vault".
+func (p ProxyLiteConfig) PassthroughUpstreamAuth() bool {
+	return strings.EqualFold(strings.TrimSpace(p.UpstreamAuth), "passthrough")
 }
 
 // FeaturesConfig gates progressively enhanced UI and runtime surfaces.
@@ -452,6 +522,18 @@ func Default() *Config {
 			AutovaultMode:           "observe",
 			InjectStoredBearer:      false,
 		},
+		ProxyLite: ProxyLiteConfig{
+			// Enabled stays false PERMANENTLY (writer-side flip; the flip
+			// item changes only what writers emit, never this default —
+			// locked by TestFlipDefaultStaysFalse). EnforcementMode/
+			// UpstreamAuth carry today's behavior: enforce + vault
+			// injection. AllowSubscriptionBillingMigration stays false so a
+			// subscription seat is refused rather than silently rebilled.
+			Enabled:                           false,
+			EnforcementMode:                   "enforce",
+			UpstreamAuth:                      "vault",
+			AllowSubscriptionBillingMigration: false,
+		},
 		Features: FeaturesConfig{
 			SecretVault:    false,
 			ServicePresets: false,
@@ -498,6 +580,8 @@ func Default() *Config {
 func Load(path string) (*Config, error) {
 	cfg := Default()
 
+	var raw []byte
+	fileLoaded := false
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil && !os.IsNotExist(err) {
@@ -507,7 +591,26 @@ func Load(path string) (*Config, error) {
 			if err := yaml.Unmarshal(data, cfg); err != nil {
 				return nil, fmt.Errorf("parsing config file: %w", err)
 			}
+			raw = data
+			fileLoaded = true
 		}
+	}
+
+	// Apply the posture preset immediately after YAML unmarshal and BEFORE
+	// env overrides — an explicit operator env must still beat a posture
+	// default, which is why the preset runs first. Presets only set knobs
+	// the YAML file did not set explicitly (detected against raw bytes).
+	applyPosturePreset(cfg, raw)
+
+	// Advisory config_schema notice (spec 02 §5 / PRD §11). The marker is
+	// informational only: Load() never changes behavior based on it, but a
+	// stale/absent marker on a loaded file is worth a one-line heads-up so
+	// operators know the writer that produced it predates the explicit
+	// proxy_lite.enabled convention. Only fires for files actually read
+	// (env-only deployments carry no YAML and would log spuriously).
+	if fileLoaded && cfg.ConfigSchema < CurrentConfigSchema {
+		slog.Default().Info("config: config_schema marker is older than current; regenerate via the setup wizard to adopt the explicit proxy_lite.enabled convention",
+			"config_schema", cfg.ConfigSchema, "current", CurrentConfigSchema)
 	}
 
 	// Env overrides (12-factor friendly)
@@ -844,6 +947,19 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("CLAWVISOR_PROXY_LITE_RAW_LOG_PATH"); v != "" {
 		cfg.ProxyLite.RawLogPath = strings.TrimSpace(v)
 	}
+	// Knob overrides bypass postures for operators who set the raw config.
+	// There is deliberately NO CLAWVISOR_POSTURE override (posture is
+	// file-only; see the Posture field doc). These env values win over a
+	// posture default because they are applied after applyPosturePreset.
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE"); v != "" {
+		cfg.ProxyLite.EnforcementMode = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH"); v != "" {
+		cfg.ProxyLite.UpstreamAuth = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION"); v != "" {
+		cfg.ProxyLite.AllowSubscriptionBillingMigration = v == "true" || v == "1"
+	}
 
 	if v := os.Getenv("CLAWVISOR_RELAY_URL"); v != "" {
 		cfg.Relay.URL = v
@@ -944,6 +1060,80 @@ func ensureGeminiCache(p **GeminiCacheConfig) *GeminiCacheConfig {
 	return *p
 }
 
+// applyPosturePreset applies the coarse-grained posture preset selected by
+// cfg.Posture to the proxy-lite knobs, but only for knobs the raw YAML did
+// not set explicitly. An explicit knob always wins (PRD §4). raw is the
+// unmodified config-file bytes (nil for env-only deployments, in which case
+// cfg.Posture is empty and this is a no-op).
+//
+// Presets:
+//   - "observe": proxy_lite.enabled=true, enforcement_mode="observe",
+//     upstream_auth="passthrough".
+//   - "govern":  proxy_lite.enabled=true, enforcement_mode="enforce",
+//     upstream_auth="vault".
+//   - "contain": not applied here — Validate() rejects it until the superset
+//     gate lands (PRD §13 item 9).
+//   - "" / unknown: no-op (unknown is rejected by Validate()).
+//
+// AllowSubscriptionBillingMigration is intentionally never set by a preset —
+// it is always an explicit operator choice (spec 02 §4c).
+func applyPosturePreset(cfg *Config, raw []byte) {
+	setEnabled := func(v bool) {
+		if !yamlHasKey(raw, "proxy_lite", "enabled") {
+			cfg.ProxyLite.Enabled = v
+		}
+	}
+	setEnforcement := func(v string) {
+		if !yamlHasKey(raw, "proxy_lite", "enforcement_mode") {
+			cfg.ProxyLite.EnforcementMode = v
+		}
+	}
+	setUpstreamAuth := func(v string) {
+		if !yamlHasKey(raw, "proxy_lite", "upstream_auth") {
+			cfg.ProxyLite.UpstreamAuth = v
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.Posture)) {
+	case "observe":
+		setEnabled(true)
+		setEnforcement("observe")
+		setUpstreamAuth("passthrough")
+	case "govern":
+		setEnabled(true)
+		setEnforcement("enforce")
+		setUpstreamAuth("vault")
+	}
+}
+
+// yamlHasKey reports whether the given nested key path is explicitly present
+// in the raw YAML document. It re-parses raw into a generic map so it can
+// distinguish "key absent" from "key present but false" — a distinction the
+// struct unmarshal destroys (Load() overlays Default(), so a false and an
+// absent bool look identical afterward). Returns false when raw is empty or
+// unparseable, or when any path segment is missing / not a mapping.
+func yamlHasKey(raw []byte, path ...string) bool {
+	if len(raw) == 0 || len(path) == 0 {
+		return false
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return false
+	}
+	var cur any = doc
+	for _, seg := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return false
+		}
+		v, present := m[seg]
+		if !present {
+			return false
+		}
+		cur = v
+	}
+	return true
+}
+
 func splitCSV(v string) []string {
 	var out []string
 	for _, part := range strings.Split(v, ",") {
@@ -1035,6 +1225,23 @@ func (c *Config) Validate() error {
 	}
 	if strings.EqualFold(strings.TrimSpace(c.Server.RouteSet), "proxy_lite") && !c.ProxyLite.Enabled {
 		return fmt.Errorf("server.route_set=proxy_lite requires proxy_lite.enabled=true")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Posture)) {
+	case "", "observe", "govern":
+	case "contain":
+		return fmt.Errorf("posture contain is not yet available; it ships once the runtime-proxy composition makes it a strict superset of govern")
+	default:
+		return fmt.Errorf("posture must be one of observe, govern, contain (got %q)", c.Posture)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.ProxyLite.EnforcementMode)) {
+	case "", "enforce", "observe":
+	default:
+		return fmt.Errorf("proxy_lite.enforcement_mode must be one of enforce, observe (got %q)", c.ProxyLite.EnforcementMode)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.ProxyLite.UpstreamAuth)) {
+	case "", "vault", "passthrough":
+	default:
+		return fmt.Errorf("proxy_lite.upstream_auth must be one of vault, passthrough (got %q)", c.ProxyLite.UpstreamAuth)
 	}
 	switch strings.ToLower(strings.TrimSpace(c.RuntimePolicy.AutovaultMode)) {
 	case "", "observe", "auto", "strict":

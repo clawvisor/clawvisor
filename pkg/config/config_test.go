@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -237,4 +239,171 @@ func TestValidateObservabilityOTelRules(t *testing.T) {
 			t.Fatalf("expected sample ratio validation error, got %v", err)
 		}
 	})
+}
+
+// --- spec 02: posture presets, config schema marker, knob precedence ---
+
+func writePostureConfig(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return p
+}
+
+// TestFlipDefaultStaysFalse locks the writer-side flip invariant (PRD §11,
+// spec 08): the compiled default for proxy_lite.enabled is false and must
+// stay false permanently, so an existing install lacking the key is never
+// silently enabled at a binary upgrade. Enforcement/upstream defaults carry
+// today's behavior (enforce + vault) but the enablement bit does not move.
+func TestFlipDefaultStaysFalse(t *testing.T) {
+	d := Default()
+	if d.ProxyLite.Enabled {
+		t.Fatal("Default().ProxyLite.Enabled must stay false permanently (writer-side flip)")
+	}
+	if d.ProxyLite.EnforcementMode != "enforce" {
+		t.Fatalf("Default enforcement_mode=%q, want enforce", d.ProxyLite.EnforcementMode)
+	}
+	if d.ProxyLite.UpstreamAuth != "vault" {
+		t.Fatalf("Default upstream_auth=%q, want vault", d.ProxyLite.UpstreamAuth)
+	}
+	if d.ProxyLite.AllowSubscriptionBillingMigration {
+		t.Fatal("Default allow_subscription_billing_migration must be false")
+	}
+}
+
+// TestProxyLiteEnableMatrix asserts exactly which (key present/absent) ×
+// (config_schema) × (posture) × (env override) combinations enable
+// proxy-lite. Absent key with no posture/env is always disabled regardless
+// of the advisory marker — the marker never drives behavior.
+func TestProxyLiteEnableMatrix(t *testing.T) {
+	cases := []struct {
+		name        string
+		yaml        string
+		envEnabled  string // "" = unset
+		wantEnabled bool
+	}{
+		{"absent key, schema 0, no posture", "config_schema: 0\n", "", false},
+		{"absent key, schema 2, no posture", "config_schema: 2\n", "", false},
+		{"explicit false, schema 2", "config_schema: 2\nproxy_lite:\n  enabled: false\n", "", false},
+		{"explicit true, schema 2", "config_schema: 2\nproxy_lite:\n  enabled: true\n", "", true},
+		{"explicit true, schema 0", "config_schema: 0\nproxy_lite:\n  enabled: true\n", "", true},
+		{"posture observe, absent key", "posture: observe\n", "", true},
+		{"posture observe, explicit false beats preset", "posture: observe\nproxy_lite:\n  enabled: false\n", "", false},
+		{"posture govern, absent key", "posture: govern\n", "", true},
+		{"no posture, env true", "config_schema: 2\n", "true", true},
+		{"posture observe, env false beats preset", "posture: observe\n", "false", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.envEnabled != "" {
+				t.Setenv("CLAWVISOR_PROXY_LITE_ENABLED", tc.envEnabled)
+			}
+			cfg, err := Load(writePostureConfig(t, tc.yaml))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.ProxyLite.Enabled != tc.wantEnabled {
+				t.Fatalf("ProxyLite.Enabled=%v, want %v", cfg.ProxyLite.Enabled, tc.wantEnabled)
+			}
+		})
+	}
+}
+
+// TestPosturePresetKnobPrecedence covers the knob-beats-preset matrix for
+// enforcement_mode and upstream_auth: a preset sets a knob only when the YAML
+// did not set it explicitly, and an explicit env override always wins.
+func TestPosturePresetKnobPrecedence(t *testing.T) {
+	t.Run("observe preset sets both knobs", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: observe\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.ProxyLite.Enabled || !cfg.ProxyLite.ObserveMode() || !cfg.ProxyLite.PassthroughUpstreamAuth() {
+			t.Fatalf("observe preset: enabled=%v observe=%v passthrough=%v",
+				cfg.ProxyLite.Enabled, cfg.ProxyLite.ObserveMode(), cfg.ProxyLite.PassthroughUpstreamAuth())
+		}
+	})
+	t.Run("govern preset sets enforce+vault", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: govern\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.ProxyLite.Enabled || cfg.ProxyLite.ObserveMode() || cfg.ProxyLite.PassthroughUpstreamAuth() {
+			t.Fatalf("govern preset: enabled=%v observe=%v passthrough=%v",
+				cfg.ProxyLite.Enabled, cfg.ProxyLite.ObserveMode(), cfg.ProxyLite.PassthroughUpstreamAuth())
+		}
+	})
+	t.Run("explicit enforcement_mode beats observe preset", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: observe\nproxy_lite:\n  enforcement_mode: enforce\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.ProxyLite.ObserveMode() {
+			t.Fatal("explicit enforcement_mode: enforce should override observe preset")
+		}
+		// upstream_auth was NOT set explicitly, so the preset still applies.
+		if !cfg.ProxyLite.PassthroughUpstreamAuth() {
+			t.Fatal("upstream_auth should still be passthrough from the observe preset")
+		}
+	})
+	t.Run("env enforcement_mode beats preset", func(t *testing.T) {
+		t.Setenv("CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE", "enforce")
+		cfg, err := Load(writePostureConfig(t, "posture: observe\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.ProxyLite.ObserveMode() {
+			t.Fatal("env CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE=enforce should beat observe preset")
+		}
+	})
+}
+
+func TestValidatePostureContainRejected(t *testing.T) {
+	cfg := Default()
+	cfg.Posture = "contain"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "posture contain is not yet available") {
+		t.Fatalf("expected contain rejection, got %v", err)
+	}
+}
+
+func TestValidatePostureUnknownRejected(t *testing.T) {
+	cfg := Default()
+	cfg.Posture = "lockdown"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "posture must be one of") {
+		t.Fatalf("expected unknown-posture rejection, got %v", err)
+	}
+}
+
+func TestValidateEnforcementModeEnum(t *testing.T) {
+	cfg := Default()
+	cfg.ProxyLite.EnforcementMode = "audit"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "proxy_lite.enforcement_mode") {
+		t.Fatalf("expected enforcement_mode enum error, got %v", err)
+	}
+}
+
+func TestValidateUpstreamAuthEnum(t *testing.T) {
+	cfg := Default()
+	cfg.ProxyLite.UpstreamAuth = "byo"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "proxy_lite.upstream_auth") {
+		t.Fatalf("expected upstream_auth enum error, got %v", err)
+	}
+}
+
+func TestLoadAppliesSubMigrationEnv(t *testing.T) {
+	t.Setenv("CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION", "true")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.ProxyLite.AllowSubscriptionBillingMigration {
+		t.Fatal("expected allow_subscription_billing_migration env override to apply")
+	}
 }

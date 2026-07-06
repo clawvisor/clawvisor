@@ -283,6 +283,11 @@ func TestLooksSecretKeyTokenBoundary(t *testing.T) {
 		{"authentication_method", false}, // method name, not secret
 		{"keypath", false},
 		{"keyboard", false},
+
+		// Spec 02: non-secret governance enums explicitly allowlisted despite
+		// carrying an "auth" token — the audit view must surface them.
+		{"auth_mode", false},
+		{"caller_auth_source", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.key, func(t *testing.T) {

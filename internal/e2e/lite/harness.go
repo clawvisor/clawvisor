@@ -181,6 +181,11 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 
 	h := handlers.NewLLMEndpointHandler(st, v, logger)
 	h.Forwarder = llmproxy.NewForwarder(v)
+	// Spec 02: mirror the server-side upstream_auth / enforcement posture so
+	// lite scenarios can exercise vault/passthrough + observe/enforce.
+	h.UpstreamAuth = cfg.ProxyLite.UpstreamAuth
+	h.EnforcementMode = cfg.ProxyLite.EnforcementMode
+	h.AllowSubscriptionBillingMigration = cfg.ProxyLite.AllowSubscriptionBillingMigration
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	h.InlineTaskCreator = recorder
 	h.TaskScope = llmproxy.NewStoreTaskScopeChecker(st)
