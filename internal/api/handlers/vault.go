@@ -92,8 +92,9 @@ func (h *VaultHandler) CreateForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID    string `json:"id"`
-		Value string `json:"value"`
+		ID        string          `json:"id"`
+		Value     string          `json:"value"`
+		Reference *referenceInput `json:"reference,omitempty"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -107,12 +108,33 @@ func (h *VaultHandler) CreateForUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item id may only contain letters, numbers, dots, underscores, dashes, and colons")
 		return
 	}
-	if strings.TrimSpace(body.Value) == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item value is required")
+	// Reference variant (spec 10): store an external-secret reference instead
+	// of a pushed value. Admin-gated and allowlist-constrained. Because a
+	// reference is the sanctioned way to point the vault at a provider/LLM key
+	// held in the customer's secret manager, references may target the storage
+	// keys the manual value path treats as reserved — they resolve to the same
+	// (user, provider) coordinate the proxy injects from.
+	if body.Reference != nil {
+		storageKey := vaultStorageKeyForItemIDForUser(r.Context(), h.adapterReg, user.ID, itemID)
+		if apiErr := storeReference(r.Context(), h.vault, callerIsInstanceAdmin(r.Context()), user.ID, storageKey, *body.Reference, wantsVerify(r)); apiErr != nil {
+			apiErr.write(w)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]string{"status": "created", "id": itemID, "kind": vault.KindRef})
 		return
 	}
 	if h.isReservedVaultItemID(r.Context(), user.ID, itemID) {
 		writeError(w, http.StatusConflict, "RESERVED_VAULT_ITEM", "vault item id is reserved for a connected account or provider credential")
+		return
+	}
+	if strings.TrimSpace(body.Value) == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item value is required")
+		return
+	}
+	// Reject a pushed value masquerading as a reference envelope — a member
+	// must not smuggle a reference in through the value channel (gotcha #4).
+	if vault.LooksLikeRefEnvelope([]byte(body.Value)) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "value may not contain a reference marker; use the reference field to create a reference")
 		return
 	}
 	// SetIfAbsent is atomic: two concurrent creators see exactly one
@@ -173,13 +195,29 @@ func (h *VaultHandler) UpdateForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Value string `json:"value"`
+		Value     string          `json:"value"`
+		Reference *referenceInput `json:"reference,omitempty"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	// Reference variant (spec 10): overwrite the entry with an external-secret
+	// reference. Admin-gated and allowlist-constrained.
+	if body.Reference != nil {
+		storageKey := vaultStorageKeyForItemIDForUser(r.Context(), h.adapterReg, user.ID, itemID)
+		if apiErr := storeReference(r.Context(), h.vault, callerIsInstanceAdmin(r.Context()), user.ID, storageKey, *body.Reference, wantsVerify(r)); apiErr != nil {
+			apiErr.write(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "id": itemID, "kind": vault.KindRef})
+		return
+	}
 	if strings.TrimSpace(body.Value) == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item value is required")
+		return
+	}
+	if vault.LooksLikeRefEnvelope([]byte(body.Value)) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "value may not contain a reference marker; use the reference field to create a reference")
 		return
 	}
 	item, ok, err := h.findItem(r, user.ID, itemID)
@@ -391,6 +429,21 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 		activePlaceholders = append(activePlaceholders, placeholder)
 	}
 
+	// Ref entries (spec 10) carry an external-secret reference rather than a
+	// pushed value; tag them so the UI/provider can distinguish without
+	// decrypting. Best-effort — a backend without reference support returns
+	// an empty set.
+	refKeys := map[string]struct{}{}
+	if rl, ok := h.vault.(interface {
+		ListReferenceServiceIDs(context.Context, string) ([]string, error)
+	}); ok {
+		if svcs, err := rl.ListReferenceServiceIDs(r.Context(), userID); err == nil {
+			for _, s := range svcs {
+				refKeys[s] = struct{}{}
+			}
+		}
+	}
+
 	items := make([]VaultItem, 0, len(keys))
 	for _, key := range keys {
 		if _, _, ok := parseAgentScopedLLMKey(key); ok {
@@ -421,11 +474,15 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 			continue
 		}
 		activeCount, lastUsed := vaultItemPlaceholderStats(activePlaceholders, key, key, nil)
+		kind := vaultItemKind(bindings)
+		if _, isRef := refKeys[key]; isRef && kind == "secret" {
+			kind = "reference"
+		}
 		items = append(items, VaultItem{
 			ID:                     key,
 			StorageKey:             key,
 			Name:                   vaultItemName(key, bindings),
-			Kind:                   vaultItemKind(bindings),
+			Kind:                   kind,
 			Provider:               providerFromVaultKey(key, bindings),
 			Status:                 "active",
 			ServiceBindings:        bindings,
