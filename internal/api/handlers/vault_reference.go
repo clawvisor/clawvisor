@@ -27,6 +27,23 @@ type referenceVaultAPI interface {
 	Verify(ctx context.Context, env vault.RefEnvelope) error
 }
 
+// asReferenceVault probes v for the reference API, walking Unwrap() through
+// wrapper vaults (InstanceAwareVault today; cloud's OrgAwareVault at bump
+// time) so wrapping never hides the capability.
+func asReferenceVault(v vault.Vault) (referenceVaultAPI, bool) {
+	for v != nil {
+		if rv, ok := v.(referenceVaultAPI); ok {
+			return rv, true
+		}
+		u, ok := v.(interface{ Unwrap() vault.Vault })
+		if !ok {
+			return nil, false
+		}
+		v = u.Unwrap()
+	}
+	return nil, false
+}
+
 // refAPIError carries a mapped HTTP status + stable code + actionable,
 // content-free message for a reference failure.
 type refAPIError struct {
@@ -60,7 +77,7 @@ func storeReference(ctx context.Context, v vault.Vault, isAdmin bool, userID, se
 		return &refAPIError{http.StatusForbidden, "REFERENCE_ADMIN_REQUIRED",
 			"creating a vault reference requires an instance-admin API token"}
 	}
-	rv, ok := v.(referenceVaultAPI)
+	rv, ok := asReferenceVault(v)
 	if !ok {
 		return &refAPIError{http.StatusConflict, "REFERENCE_UNSUPPORTED",
 			"this vault backend does not support external-secret references"}

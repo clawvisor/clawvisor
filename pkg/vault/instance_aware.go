@@ -98,5 +98,11 @@ func (v *InstanceAwareVault) SharedList(ctx context.Context) ([]string, error) {
 	return v.inner.List(ctx, InstanceUserID)
 }
 
+// Unwrap returns the wrapped Vault so capability probes (e.g. the handlers'
+// reference-API assertion) can reach through the instance-sharing layer.
+// Wrappers stacked above this one (cloud's OrgAwareVault) should expose the
+// same method.
+func (v *InstanceAwareVault) Unwrap() Vault { return v.inner }
+
 // compile-time assertion.
 var _ Vault = (*InstanceAwareVault)(nil)
