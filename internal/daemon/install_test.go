@@ -176,6 +176,11 @@ func TestWriteDaemonConfig(t *testing.T) {
 		substr string
 		desc   string
 	}{
+		// Flip (spec 08): the daemon writer stamps the schema-2 marker so
+		// Load() never flags it as a pre-flip config, and keeps writing the
+		// explicit proxy_lite.enabled: true it already emitted.
+		{"config_schema: 2", "schema marker"},
+		{"proxy_lite:", "proxy_lite block"},
 		{"port: 25297", "server port"},
 		{"host: \"127.0.0.1\"", "server host"},
 		{"driver: \"sqlite\"", "database driver"},
