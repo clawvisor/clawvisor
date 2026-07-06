@@ -1,0 +1,91 @@
+e2e/realclient/codex_test.go
+  s_55f7a841d7c10e::t_66e3b35c1aa3fe 17-29
+  s_55f7a841d7c10e::t_8d28fb356e1519 1-16,30-77
+e2e/realclient/tmux.go
+  s_55f7a841d7c10e::t_d3aa707a1e62f9 45,48,51-52,56,60,62,66,69-70,78,82,90,96,103,111,113,127,130,133,137-138,150,157,169-170,175,181,183,190,202,207,214,219,225,229,231,245,249,251,262,264,268,274,280,285,287,291,296,303,306,320,322,324-382
+  s_55f7a841d7c10e::t_27976da109f543 42-44
+  s_55f7a841d7c10e::t_0e1a9dd44b85b0 46-47
+  s_55f7a841d7c10e::t_4064ac75e7c2e0 49-50
+  s_55f7a841d7c10e::t_1f8cfff4f1d54e 53-55
+  s_55f7a841d7c10e::t_4baeda1378b3d3 57-59
+  s_55f7a841d7c10e::t_f2e6100dce9e08 61
+  s_55f7a841d7c10e::t_aebda592c53b5d 63-65
+  s_55f7a841d7c10e::t_ea7137893037d7 67-68
+  s_55f7a841d7c10e::t_df2f6c510244a6 71-73,75-77
+  s_55f7a841d7c10e::t_031c149ab1cbef 79-81
+  s_55f7a841d7c10e::t_a1badd143cb90c 83-85,87-89
+  s_55f7a841d7c10e::t_21bdda67552ef9 91-95
+  s_55f7a841d7c10e::t_c3d2bd8a00edc0 97-102
+  s_55f7a841d7c10e::t_7344bf6d20b89c 104-106,108-110
+  s_55f7a841d7c10e::t_d9f27f4299d2ac 112
+  s_55f7a841d7c10e::t_2f2f8881222fc3 114-116,124-126
+  s_55f7a841d7c10e::t_9d341e6b9c011b 128-129
+  s_55f7a841d7c10e::t_c0f8476235ecdd 131-132
+  s_55f7a841d7c10e::t_03ca663f109a71 134-136
+  s_55f7a841d7c10e::t_1a8ba119f668bc 139-141,147-149
+  s_55f7a841d7c10e::t_8d0ff3c688db3b 151-156
+  s_55f7a841d7c10e::t_e3eaf65189296a 158-160,166-168
+  s_55f7a841d7c10e::t_282fbcc829514e 171-174
+  s_55f7a841d7c10e::t_7d656826f6885d 176-180
+  s_55f7a841d7c10e::t_762138dbae9990 182
+  s_55f7a841d7c10e::t_dc45821b96fd68 184-189
+  s_55f7a841d7c10e::t_256ae5f14aa213 191-193,199-201
+  s_55f7a841d7c10e::t_5b5b5649652e3e 203-206
+  s_55f7a841d7c10e::t_3f060a10cfcc72 208-213
+  s_55f7a841d7c10e::t_f30f73c8fca312 215-218
+  s_55f7a841d7c10e::t_27d787eaf674a1 220-224
+  s_55f7a841d7c10e::t_700dd56d62b312 226-228
+  s_55f7a841d7c10e::t_51af78a8f59c4d 230
+  s_55f7a841d7c10e::t_ad25dd464c097b 232-234,242-244
+  s_55f7a841d7c10e::t_d9a352a52c30b2 246-248
+  s_55f7a841d7c10e::t_ef0e1aac77d385 250
+  s_55f7a841d7c10e::t_ca4ec7f0139689 252-254,259-261
+  s_55f7a841d7c10e::t_5e5efae508e99d 263
+  s_55f7a841d7c10e::t_62e2752d29f29e 265-267
+  s_55f7a841d7c10e::t_395d19c4a67131 269-273
+  s_55f7a841d7c10e::t_9f6eff0d624113 275-279
+  s_55f7a841d7c10e::t_eae02e39f5068c 281-284
+  s_55f7a841d7c10e::t_bff77a40cca066 286
+  s_55f7a841d7c10e::t_35f8b5c1e3d4a7 288-290
+  s_55f7a841d7c10e::t_829e2a039d8410 292-295
+  s_55f7a841d7c10e::t_3bc8714997f7c2 297-302
+  s_55f7a841d7c10e::t_21d39ed6d4240b 304-305
+  s_55f7a841d7c10e::t_a8d6b52db8d4b3 307-309,317-319
+  s_55f7a841d7c10e::t_558b0d2a69e88d 321
+  s_55f7a841d7c10e::t_a807886a7672be 323
+  s_c6b116c0210d36::t_4a16d0d93e2ee1 1-41,74,86,107,117-123,142-146,161-165,194-198,235-241,255-258,310-316
+e2e/realclient/claude_code_test.go
+  s_55f7a841d7c10e::t_7deb38872b1102 21-28
+  s_55f7a841d7c10e::t_6e4de10737231f 53-54
+  s_55f7a841d7c10e::t_c7ea53c5a53d93 75
+  s_55f7a841d7c10e::t_5baf12bc6ecdac 29-35
+  s_55f7a841d7c10e::t_35e523e43a04e2 135-139
+  s_55f7a841d7c10e::t_cb7e4d95d0b326 102-113
+  s_55f7a841d7c10e::t_372a75be4f29c2 1-20,36-52,55-74,76-101,114-134,140-145
+.github/workflows/realclient.yml
+  s_55f7a841d7c10e::t_a30d7c8504f64a 1-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "68d4ccd82169349b2d0faa494291f84506ed4215",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_c6b116c0210d36": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a0caafa6c313d9b62",
+        "model": "unknown"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
