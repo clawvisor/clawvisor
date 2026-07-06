@@ -75,6 +75,39 @@ type Store interface {
 	RevokeAPIToken(ctx context.Context, id string) error
 	TouchAPITokenLastUsed(ctx context.Context, id string) error
 
+	// Instance governance (spec 06a — local orggov). Instance-scoped, one
+	// flat policy set (no org/team dimension). The OSS build implements the
+	// four governance callbacks against these tables; cloud keeps its own
+	// org_* tables and leaves these dormant. Model/task policies are
+	// append-only (Put inserts a new active row and demotes the prior one)
+	// for point-in-time history; spend caps and content policies mutate in
+	// place. All methods here are a coordinated public-seam addition —
+	// cloud's CloudStore embeds store.Store, so these promote automatically.
+	GetActiveInstanceModelPolicy(ctx context.Context) (*InstanceModelPolicy, error)
+	PutInstanceModelPolicy(ctx context.Context, p *InstanceModelPolicy) error
+	ClearInstanceModelPolicy(ctx context.Context) error
+
+	ListInstanceSpendCaps(ctx context.Context) ([]*InstanceSpendCap, error)
+	GetInstanceSpendCap(ctx context.Context, windowKind string) (*InstanceSpendCap, error)
+	PutInstanceSpendCap(ctx context.Context, c *InstanceSpendCap) error
+	DeleteInstanceSpendCap(ctx context.Context, windowKind string) error
+	// SumInstanceCostMicros sums llm_request_cost.cost_micros for every
+	// agent/user over [since, until). Backs the local spend-cap check.
+	SumInstanceCostMicros(ctx context.Context, since, until time.Time) (int64, error)
+
+	ListInstanceContentPolicies(ctx context.Context) ([]*InstanceContentPolicy, error)
+	GetInstanceContentPolicy(ctx context.Context, id string) (*InstanceContentPolicy, error)
+	CreateInstanceContentPolicy(ctx context.Context, p *InstanceContentPolicy) error
+	UpdateInstanceContentPolicy(ctx context.Context, p *InstanceContentPolicy) error
+	DeleteInstanceContentPolicy(ctx context.Context, id string) error
+
+	GetActiveInstanceTaskPolicy(ctx context.Context) (*InstanceTaskPolicy, error)
+	PutInstanceTaskPolicy(ctx context.Context, p *InstanceTaskPolicy) error
+	ClearInstanceTaskPolicy(ctx context.Context) error
+
+	RecordInstancePolicyViolation(ctx context.Context, v *InstancePolicyViolation) error
+	ListInstancePolicyViolations(ctx context.Context, limit int) ([]*InstancePolicyViolation, error)
+
 	// Restrictions
 	CreateRestriction(ctx context.Context, r *Restriction) (*Restriction, error)
 	DeleteRestriction(ctx context.Context, id, userID string) error
@@ -569,6 +602,73 @@ type APIToken struct {
 	LastUsedAt  *time.Time `json:"last_used_at"`
 	RevokedAt   *time.Time `json:"revoked_at"`
 	IsBootstrap bool       `json:"-"`
+}
+
+// InstanceModelPolicy is the singleton allow/deny model policy for a
+// self-hosted instance (spec 06a). Mode is "allow" or "deny"; Models is
+// the list of provider-qualified canonical ids (e.g.
+// "anthropic/claude-3-5-sonnet"). Append-only: the active row is the
+// current policy, older rows are point-in-time history.
+type InstanceModelPolicy struct {
+	ID        string    `json:"-"`
+	Mode      string    `json:"mode"`
+	Models    []string  `json:"models"`
+	CreatedBy string    `json:"-"`
+	CreatedAt time.Time `json:"-"`
+}
+
+// InstanceSpendCap is a per-window spend cap. WindowKind is "daily" or
+// "monthly"; Enforcement is "soft" (warn) or "hard" (block at 100%).
+// CapMicros is int64 micro-USD matching llm_request_cost.cost_micros.
+type InstanceSpendCap struct {
+	ID          string    `json:"-"`
+	WindowKind  string    `json:"window"`
+	CapMicros   int64     `json:"cap_micros"`
+	Enforcement string    `json:"enforcement"`
+	CreatedBy   string    `json:"-"`
+	CreatedAt   time.Time `json:"-"`
+	UpdatedAt   time.Time `json:"-"`
+}
+
+// InstanceContentPolicy is one content-scanning rule. Action "block"
+// rejects the request with BlockMessage; "flag" allows it but records a
+// violation. PatternKind is "regex" or "keyword".
+type InstanceContentPolicy struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Pattern      string    `json:"pattern"`
+	PatternKind  string    `json:"pattern_kind"`
+	Action       string    `json:"action"`
+	BlockMessage string    `json:"block_message"`
+	Enabled      bool      `json:"enabled"`
+	CreatedBy    string    `json:"-"`
+	CreatedAt    time.Time `json:"-"`
+	UpdatedAt    time.Time `json:"-"`
+}
+
+// InstanceTaskPolicy is the singleton task-guidance policy. Append-only
+// like InstanceModelPolicy.
+type InstanceTaskPolicy struct {
+	ID        string    `json:"-"`
+	Guidance  string    `json:"guidance"`
+	CreatedBy string    `json:"-"`
+	CreatedAt time.Time `json:"-"`
+}
+
+// InstancePolicyViolation is an append-only record of a blocked, flagged,
+// or warned request. No org_id — the "local" OrgID sentinel the pipeline
+// carries is never persisted. PolicyKind ∈ model_policy | spend_cap |
+// content_policy | task_policy; ActionTaken ∈ blocked | flagged | warned.
+type InstancePolicyViolation struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id,omitempty"`
+	AgentID     string    `json:"agent_id,omitempty"`
+	TaskID      string    `json:"task_id,omitempty"`
+	PolicyKind  string    `json:"policy_kind"`
+	PolicyID    string    `json:"policy_id,omitempty"`
+	ActionTaken string    `json:"action_taken"`
+	Detail      string    `json:"detail,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Risk-level constants for ConversationAutoApproveThreshold and the
