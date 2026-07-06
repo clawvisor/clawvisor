@@ -63,7 +63,7 @@ func (f *fakeResolver) Resolve(_ context.Context, ref RefEnvelope) ([]byte, erro
 // to prove references still work under it.
 type memVault struct{ m map[string][]byte }
 
-func newMemVault() *memVault { return &memVault{m: map[string][]byte{}} }
+func newMemVault() *memVault    { return &memVault{m: map[string][]byte{}} }
 func memKey(u, s string) string { return u + "\x00" + s }
 
 func (v *memVault) Set(_ context.Context, u, s string, c []byte) error {
