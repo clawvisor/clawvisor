@@ -20,6 +20,7 @@ import OrgMembers from './OrgMembers'
 import OrgAdapters from './OrgAdapters'
 import OrgMCPServers from './OrgMCPServers'
 import Governance from './Governance'
+import Admin from './Admin'
 import OrgNotifications from './OrgNotifications'
 import OrgTeams from './OrgTeams'
 import Billing from './Billing'
@@ -40,6 +41,12 @@ const navItems = [
 ]
 
 const billingNavItem = { to: '/dashboard/billing', label: 'Billing', end: undefined as boolean | undefined, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><path d="M1 10h22"/></svg> }
+
+// Admin-only fleet view (04b). Shown only when the current user's role is
+// admin and we're in the single-instance (non-org) context — cloud orgs get
+// their own org-scoped surfaces and the OSS /api/admin/* routes are absent
+// there anyway.
+const fleetNavItem = { to: '/dashboard/fleet', label: 'Fleet', end: undefined as boolean | undefined, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> }
 
 // Org sidebar — pared down while we figure out which surfaces customers
 // will actually self-serve. Governance, notifications, custom adapters,
@@ -216,6 +223,7 @@ export default function Dashboard() {
               if (i.to === '/dashboard/get-started') return !features?.proxy_lite
               return true
             }),
+            ...(user?.role === 'admin' && !currentOrg ? [fleetNavItem] : []),
             ...(features?.billing ? [billingNavItem] : []),
           ].map(({ to, label, end, icon }) => (
             <li key={to}>
@@ -420,6 +428,10 @@ export default function Dashboard() {
           <Route path="keys/:provider" element={<KeyVault />} />
           <Route path="runtime" element={<Navigate to="/dashboard/policy" replace />} />
           <Route path="settings" element={<Settings />} />
+          {/* Admin fleet view (04b) — the page itself re-checks role and the
+              backing routes are 403 for members, so the route can always be
+              mounted; the nav item is what's role-gated. */}
+          <Route path="fleet" element={<Admin />} />
           {features?.billing && <Route path="billing" element={<Billing />} />}
           {features?.teams && (
             <>

@@ -210,8 +210,61 @@ export class APIError extends Error {
 export interface User {
   id: string
   email: string
+  role?: 'admin' | 'member'
   created_at: string
   updated_at: string
+}
+
+// ── Admin visibility (04b) — instance-admin fleet view + approval queue ──────
+export interface AdminAgent extends Agent {
+  user_id: string
+  owner_email?: string
+  owner_label: string
+}
+
+export interface AdminPendingApproval {
+  id: string
+  user_id: string
+  request_id: string
+  task_id?: string
+  owner_email?: string
+  owner_label: string
+  request_blob: unknown
+  status: string
+  expires_at: string
+  created_at: string
+}
+
+export interface AdminAuditEntry extends AuditEntry {
+  actor_email?: string
+  owner_label: string
+}
+
+export interface InstanceCostByUser {
+  user_id: string
+  actor_email: string
+  owner_label: string
+  request_count: number
+  cost_micros: number
+}
+
+export interface InstanceCostByAgent {
+  agent_id: string
+  user_id: string
+  actor_email: string
+  owner_label: string
+  request_count: number
+  cost_micros: number
+}
+
+export interface InstanceCostSummary {
+  window: string
+  since: string
+  request_count: number
+  cost_micros: number
+  unknown_models: string[]
+  by_user: InstanceCostByUser[]
+  by_agent: InstanceCostByAgent[]
 }
 
 // ConversationAutoApproveThreshold caps the risk level at which the
@@ -1469,6 +1522,24 @@ export const api = {
     getRuntimeSettings: (id: string) => get<AgentRuntimeSettings>(`/api/agents/${id}/runtime-settings`),
     updateRuntimeSettings: (id: string, settings: AgentRuntimeSettings) =>
       put<AgentRuntimeSettings>(`/api/agents/${id}/runtime-settings`, settings),
+  },
+  // Admin visibility (04b): instance-admin-only fleet reads + approval queue.
+  // Every route is 403 for members and absent in the cloud (multi-org) build.
+  admin: {
+    agents: () => get<{ total: number; agents: AdminAgent[] }>('/api/admin/agents'),
+    approvals: () => get<{ total: number; entries: AdminPendingApproval[] }>('/api/admin/approvals'),
+    resolveApproval: (id: string, decision: 'approve' | 'deny', reason?: string) =>
+      post<{ status: string; request_id: string; decision: string }>(
+        `/api/admin/approvals/${id}/resolve`,
+        { decision, ...(reason ? { reason } : {}) },
+      ),
+    audit: (filter?: AuditFilter & { user_id?: string }) =>
+      get<{ entries: AdminAuditEntry[]; total: number }>(
+        '/api/admin/audit',
+        filter as Record<string, string | number | boolean | undefined>,
+      ),
+    costs: (window: 'daily' | 'monthly' = 'daily') =>
+      get<InstanceCostSummary>('/api/admin/costs', { window }),
   },
   connections: {
     list: () => get<ConnectionRequest[]>('/api/agents/connections'),
