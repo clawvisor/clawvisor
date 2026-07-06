@@ -1017,6 +1017,13 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/services/{serviceID}/activate-key", userOrToken(servicesHandler.ActivateWithKey))
 	mux.Handle("POST /api/services/{serviceID}/deactivate", userOrToken(servicesHandler.Deactivate))
 	mux.Handle("POST /api/services/{serviceID}/rename-alias", userOrToken(servicesHandler.RenameAlias))
+	// Per-service config document CRUD (spec 06b clawvisor_service_config).
+	// A dedicated surface so the Terraform provider can manage config without
+	// driving the activate flows; upserts mirror the config writes those
+	// flows do internally (services.go UpsertServiceConfig).
+	mux.Handle("GET /api/services/{serviceID}/config", userOrToken(servicesHandler.GetConfig))
+	mux.Handle("PUT /api/services/{serviceID}/config", userOrToken(servicesHandler.PutConfig))
+	mux.Handle("DELETE /api/services/{serviceID}/config", userOrToken(servicesHandler.DeleteConfig))
 	mux.Handle("POST /api/services/{serviceID}/device-flow/start", user(servicesHandler.DeviceFlowStart))
 	mux.Handle("POST /api/services/{serviceID}/device-flow/poll", user(servicesHandler.DeviceFlowPoll))
 	mux.Handle("POST /api/services/{serviceID}/pkce-flow/start", user(servicesHandler.PKCEFlowStart))
