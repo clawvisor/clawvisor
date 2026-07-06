@@ -103,6 +103,83 @@ func TestBuildRuntimeBootstrapEnv(t *testing.T) {
 	}
 }
 
+// TestBuildRuntimeBootstrapEnvContainSuperset asserts the spec 09 env
+// composition: under llm_route=proxy_lite the bootstrap env gains both LLM
+// base URLs (pointed at proxy-lite) and merges the daemon host into NO_PROXY
+// so LLM traffic bypasses the runtime proxy entirely.
+func TestBuildRuntimeBootstrapEnvContainSuperset(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("NO_PROXY", "metadata.internal")
+
+	session := &client.CreateRuntimeSessionResponse{
+		Session:     client.RuntimeSession{ID: "session-contain", ExpiresAt: time.Unix(1_700_000_000, 0).UTC()},
+		ProxyBearer: "secret-token",
+		ProxyURL:    "http://127.0.0.1:4318",
+		CACertPEM:   "-----BEGIN CERTIFICATE-----\nunit-test\n-----END CERTIFICATE-----\n",
+		LLMRoute:    "proxy_lite",
+	}
+
+	env, err := buildRuntimeBootstrapEnv("https://clawvisor.example.com", "agent-token", session)
+	if err != nil {
+		t.Fatalf("buildRuntimeBootstrapEnv: %v", err)
+	}
+	values := envMap(env)
+
+	if got := values["ANTHROPIC_BASE_URL"]; got != "https://clawvisor.example.com/api" {
+		t.Fatalf("unexpected ANTHROPIC_BASE_URL %q", got)
+	}
+	if got := values["OPENAI_BASE_URL"]; got != "https://clawvisor.example.com/api/v1" {
+		t.Fatalf("unexpected OPENAI_BASE_URL %q", got)
+	}
+	noProxy := values["NO_PROXY"]
+	if !strings.Contains(noProxy, "clawvisor.example.com") {
+		t.Fatalf("expected NO_PROXY to include the daemon host, got %q", noProxy)
+	}
+	for _, want := range []string{"metadata.internal", "127.0.0.1", "localhost", "::1"} {
+		if !strings.Contains(noProxy, want) {
+			t.Fatalf("expected NO_PROXY %q to include %q", noProxy, want)
+		}
+	}
+	if values["no_proxy"] != noProxy {
+		t.Fatalf("expected lowercase no_proxy to match NO_PROXY")
+	}
+	// The HTTP(S)_PROXY vars are still present — only LLM traffic bypasses.
+	if values["HTTPS_PROXY"] == "" {
+		t.Fatal("expected HTTPS_PROXY to remain set under contain")
+	}
+}
+
+// TestBuildRuntimeBootstrapEnvDirectHasNoLLMBaseURLs locks the legacy default:
+// with llm_route empty/"direct" the env carries NO LLM base URLs and does not
+// merge any daemon host beyond the loopback defaults (byte-identical to before
+// spec 09).
+func TestBuildRuntimeBootstrapEnvDirectHasNoLLMBaseURLs(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("NO_PROXY", "")
+
+	session := &client.CreateRuntimeSessionResponse{
+		Session:     client.RuntimeSession{ID: "session-direct", ExpiresAt: time.Unix(1_700_000_000, 0).UTC()},
+		ProxyBearer: "secret-token",
+		ProxyURL:    "http://127.0.0.1:4318",
+		CACertPEM:   "-----BEGIN CERTIFICATE-----\nunit-test\n-----END CERTIFICATE-----\n",
+		// LLMRoute unset == "direct"
+	}
+	env, err := buildRuntimeBootstrapEnv("https://clawvisor.example.com", "agent-token", session)
+	if err != nil {
+		t.Fatalf("buildRuntimeBootstrapEnv: %v", err)
+	}
+	values := envMap(env)
+	if _, ok := values["ANTHROPIC_BASE_URL"]; ok {
+		t.Fatal("direct route must not set ANTHROPIC_BASE_URL")
+	}
+	if _, ok := values["OPENAI_BASE_URL"]; ok {
+		t.Fatal("direct route must not set OPENAI_BASE_URL")
+	}
+	if got := values["NO_PROXY"]; got != "127.0.0.1,localhost,::1" {
+		t.Fatalf("direct route NO_PROXY should carry only loopback defaults, got %q", got)
+	}
+}
+
 func TestRuntimeBootstrapMetadataIncludesWorkingDirAndToolRoots(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	wd := t.TempDir()

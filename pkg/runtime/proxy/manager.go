@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,6 +37,12 @@ type CreateSessionResult struct {
 	ProxyURL        string                `json:"proxy_url"`
 	CACertPEM       string                `json:"ca_cert_pem,omitempty"`
 	ObservationMode bool                  `json:"observation_mode"`
+	// LLMRoute tells the launcher how to wire the contained process's LLM
+	// traffic: "proxy_lite" (Contain superset — set ANTHROPIC_BASE_URL/
+	// OPENAI_BASE_URL at proxy-lite and bypass the runtime proxy for the
+	// daemon host) or "direct"/"" (legacy — LLM hosts MITM'd by the runtime
+	// proxy). Sourced from cfg.RuntimeProxy.LLMRoute.
+	LLMRoute string `json:"llm_route,omitempty"`
 }
 
 func (m *Manager) CreateRuntimeSession(ctx context.Context, agent *store.Agent, req CreateSessionRequest) (*CreateSessionResult, error) {
@@ -87,6 +94,7 @@ func (m *Manager) CreateRuntimeSession(ctx context.Context, agent *store.Agent, 
 		ProxyURL:        m.ProxyURL(),
 		CACertPEM:       m.CACertPEM(),
 		ObservationMode: observation,
+		LLMRoute:        strings.ToLower(strings.TrimSpace(m.Config.RuntimeProxy.LLMRoute)),
 	}, nil
 }
 

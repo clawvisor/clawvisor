@@ -26,6 +26,7 @@ import (
 var (
 	dockerContainerURL string
 	dockerProxyHost    string
+	dockerLLMRoute     string
 	dockerProxyPort    int
 	dockerCAInside     string
 	dockerCAHost       string
@@ -50,6 +51,12 @@ type dockerProxyOptions struct {
 	ProxyPort    int
 	CAInside     string
 	CAHost       string
+	// LLMRouteProxyLite mirrors the Contain superset (spec 09) for durable
+	// container launches: when true, the container's LLM traffic is pointed at
+	// proxy-lite (ANTHROPIC_BASE_URL/OPENAI_BASE_URL on the container URL) and
+	// the container URL host bypasses the runtime proxy via NO_PROXY. Set via
+	// --llm-route=proxy_lite; must match the server's runtime_proxy.llm_route.
+	LLMRouteProxyLite bool
 }
 
 type dockerEnvVar struct {
@@ -216,14 +223,15 @@ func dockerProxyOptionsFromFlags() (*dockerProxyOptions, error) {
 		caHost = defaultRuntimeProxyCAHostPath()
 	}
 	return &dockerProxyOptions{
-		Credentials:  creds,
-		BaseURL:      creds.BaseURL,
-		ContainerURL: containerURL,
-		AgentToken:   creds.AgentToken,
-		ProxyHost:    strings.TrimSpace(dockerProxyHost),
-		ProxyPort:    proxyPort,
-		CAInside:     strings.TrimSpace(dockerCAInside),
-		CAHost:       caHost,
+		Credentials:       creds,
+		BaseURL:           creds.BaseURL,
+		ContainerURL:      containerURL,
+		AgentToken:        creds.AgentToken,
+		ProxyHost:         strings.TrimSpace(dockerProxyHost),
+		ProxyPort:         proxyPort,
+		CAInside:          strings.TrimSpace(dockerCAInside),
+		CAHost:            caHost,
+		LLMRouteProxyLite: strings.EqualFold(strings.TrimSpace(dockerLLMRoute), "proxy_lite"),
 	}, nil
 }
 
@@ -234,9 +242,18 @@ func buildDockerAgentEnvVars(opts *dockerProxyOptions, templated bool) []dockerE
 	}
 	launchUser := "launch-" + uuid.NewString()
 	authenticatedProxyURL := fmt.Sprintf("http://%s:%s@%s:%d", launchUser, token, opts.ProxyHost, opts.ProxyPort)
-	noProxy := mergeNoProxy("", "localhost", "127.0.0.1", "::1", opts.ProxyHost)
+	noProxyHosts := []string{"localhost", "127.0.0.1", "::1", opts.ProxyHost}
+	if opts.LLMRouteProxyLite {
+		// Contain superset (spec 09): the container's LLM calls must reach
+		// proxy-lite (on the container URL host), not the runtime proxy, so
+		// bypass the runtime proxy for that host too.
+		if containerHost := runtimeDaemonHost(opts.ContainerURL); containerHost != "" {
+			noProxyHosts = append(noProxyHosts, containerHost)
+		}
+	}
+	noProxy := mergeNoProxy("", noProxyHosts...)
 	proxyURL := fmt.Sprintf("http://%s:%d", opts.ProxyHost, opts.ProxyPort)
-	return []dockerEnvVar{
+	vars := []dockerEnvVar{
 		{Key: "CLAWVISOR_URL", Value: opts.ContainerURL, Comment: "Clawvisor API URL the container should use"},
 		{Key: "CLAWVISOR_AGENT_TOKEN", Value: token, Comment: "Long-lived agent token for gateway/task APIs and proxy auth"},
 		{Key: "CLAWVISOR_RUNTIME_PROXY_URL", Value: proxyURL, Comment: "Runtime proxy base URL without embedded credentials"},
@@ -257,6 +274,16 @@ func buildDockerAgentEnvVars(opts *dockerProxyOptions, templated bool) []dockerE
 		{Key: "NODE_EXTRA_CA_CERTS", Value: opts.CAInside, Comment: "CA trust for Node.js TLS"},
 		{Key: "GIT_SSL_CAINFO", Value: opts.CAInside, Comment: "CA trust for git over HTTPS"},
 	}
+	if opts.LLMRouteProxyLite {
+		// Both providers, unconditionally — the contained process may run any
+		// harness. Pointed at proxy-lite on the container URL so LLM traffic
+		// flows through the govern pipeline unchanged (Contain superset).
+		vars = append(vars,
+			dockerEnvVar{Key: "ANTHROPIC_BASE_URL", Value: liteProxyAPIBaseURL(opts.ContainerURL), Comment: "Route Anthropic traffic through Clawvisor proxy-lite (contain superset)"},
+			dockerEnvVar{Key: "OPENAI_BASE_URL", Value: liteProxyOpenAIBaseURL(opts.ContainerURL), Comment: "Route OpenAI traffic through Clawvisor proxy-lite (contain superset)"},
+		)
+	}
+	return vars
 }
 
 func deriveContainerURL(baseURL, proxyHost string) (string, error) {
@@ -764,6 +791,7 @@ func init() {
 		subcmd.Flags().StringVar(&dockerCAInside, "ca-path", "/clawvisor/ca.pem", "Path the runtime proxy CA will be mounted at inside the container")
 		subcmd.Flags().StringVar(&dockerCAHost, "ca-host-path", "", "Path to the runtime proxy CA on the host (default: ~/.clawvisor/runtime-proxy/ca.pem)")
 		subcmd.Flags().StringVar(&runtimeProfileOverride, "runtime-profile", "", "Explicit starter profile hint for this launch (e.g. claude_code or codex)")
+		subcmd.Flags().StringVar(&dockerLLMRoute, "llm-route", "direct", "LLM routing for the container: direct (runtime-proxy MITM) or proxy_lite (contain superset — route LLM traffic through proxy-lite). Must match the server's runtime_proxy.llm_route.")
 		subcmd.MarkFlagsMutuallyExclusive("agent", "agent-token")
 	}
 	agentDockerEnvCmd.Flags().StringVar(&dockerEnvFormat, "format", "env", "Output format: env, export, or docker-args")

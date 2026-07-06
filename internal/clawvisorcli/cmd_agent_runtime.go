@@ -3,6 +3,7 @@ package clawvisorcli
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -204,7 +205,20 @@ func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.Create
 	if err != nil {
 		return nil, err
 	}
-	noProxy := mergeNoProxy(os.Getenv("NO_PROXY"), "127.0.0.1", "localhost", "::1")
+	// Contain superset (spec 09): when the session routes LLM traffic through
+	// proxy-lite, LLM calls must never enter the runtime proxy. Composition
+	// happens at the env layer — point ANTHROPIC_BASE_URL/OPENAI_BASE_URL at
+	// proxy-lite and bypass the runtime proxy for the daemon host (NO_PROXY is
+	// the primary bypass). proxy-lite then sees the same request it sees in
+	// Govern: no double MITM, no CA complications, agent-token auth intact.
+	routeLLMToProxyLite := strings.EqualFold(strings.TrimSpace(session.LLMRoute), "proxy_lite")
+	noProxyDefaults := []string{"127.0.0.1", "localhost", "::1"}
+	if routeLLMToProxyLite {
+		if daemonHost := runtimeDaemonHost(baseURL); daemonHost != "" {
+			noProxyDefaults = append(noProxyDefaults, daemonHost)
+		}
+	}
+	noProxy := mergeNoProxy(os.Getenv("NO_PROXY"), noProxyDefaults...)
 	envPairs := []string{
 		"CLAWVISOR_URL=" + baseURL,
 		"CLAWVISOR_AGENT_TOKEN=" + agentToken,
@@ -220,6 +234,16 @@ func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.Create
 		"all_proxy=" + authenticatedProxyURL,
 		"NO_PROXY=" + noProxy,
 		"no_proxy=" + noProxy,
+	}
+	if routeLLMToProxyLite {
+		// Both providers, unconditionally: unlike lite mode we don't know
+		// which harness runs inside the contained process. These env-only vars
+		// carry through both the CA and no-CA (Node shim) branches below, so no
+		// special-casing is needed (spec 09 gotcha 3).
+		envPairs = append(envPairs,
+			"ANTHROPIC_BASE_URL="+liteProxyAPIBaseURL(baseURL),
+			"OPENAI_BASE_URL="+liteProxyOpenAIBaseURL(baseURL),
+		)
 	}
 	if strings.TrimSpace(session.CACertPEM) == "" {
 		shimPath, err := materializeNodeProxyShimFunc(filepath.Join(os.TempDir(), "clawvisor-runtime-shim"))
@@ -289,6 +313,27 @@ func cleanupRuntimeCACertFiles(dir string, maxAge time.Duration) {
 		}
 		_ = os.Remove(filepath.Join(dir, entry.Name()))
 	}
+}
+
+// runtimeDaemonHost extracts the hostname from the Clawvisor server base URL
+// so it can be merged into NO_PROXY for the Contain superset (spec 09). LLM
+// traffic addressed to the daemon host must bypass the runtime proxy entirely.
+// Returns "" when baseURL is empty or unparseable. A URL without a scheme
+// (e.g. "127.0.0.1:8088") still yields a host via a lenient reparse.
+func runtimeDaemonHost(baseURL string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(baseURL)
+	if err == nil && parsed.Hostname() != "" {
+		return parsed.Hostname()
+	}
+	// Fall back to a scheme-prefixed parse for bare host:port values.
+	if parsed, err := url.Parse("http://" + baseURL); err == nil {
+		return parsed.Hostname()
+	}
+	return ""
 }
 
 func mergeNoProxy(existing string, defaults ...string) string {

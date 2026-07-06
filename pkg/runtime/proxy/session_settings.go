@@ -31,6 +31,14 @@ type sessionRuntimeSettings struct {
 	InlineApprovalEnabled   *bool     `json:"inline_approval_enabled,omitempty"`
 	ToolLeaseTimeoutSeconds int       `json:"tool_lease_timeout_seconds,omitempty"`
 	HarnessAllowlist        *[]string `json:"harness_allowlist,omitempty"`
+
+	// LLMRoute selects whether a contained agent's LLM traffic is routed
+	// through proxy-lite ("proxy_lite") — the Contain superset — or handled
+	// by the runtime proxy directly ("direct"). Empty means "use cfg"
+	// (cfg.RuntimeProxy.LLMRoute). Sourced from cfg at session create; cloud
+	// may override per-org via session metadata (same pattern as the
+	// Phase-0.6 override fields above).
+	LLMRoute string `json:"llm_route,omitempty"`
 }
 
 func mergedAgentRuntimeSettings(agent *store.Agent, cfg *config.Config) sessionRuntimeSettings {
@@ -43,6 +51,9 @@ func mergedAgentRuntimeSettings(agent *store.Agent, cfg *config.Config) sessionR
 	}
 	if cfg != nil && !cfg.RuntimePolicy.ObservationModeDefault {
 		settings.RuntimeMode = "enforce"
+	}
+	if cfg != nil {
+		settings.LLMRoute = strings.ToLower(strings.TrimSpace(cfg.RuntimeProxy.LLMRoute))
 	}
 	if agent != nil && agent.RuntimeSettings != nil {
 		settings.RuntimeEnabled = agent.RuntimeSettings.RuntimeEnabled
@@ -88,7 +99,23 @@ func sessionRuntimeSettingsFromMetadata(session *store.RuntimeSession, cfg *conf
 	if parsed.HarnessAllowlist != nil {
 		settings.HarnessAllowlist = parsed.HarnessAllowlist
 	}
+	if strings.TrimSpace(parsed.LLMRoute) != "" {
+		settings.LLMRoute = strings.ToLower(strings.TrimSpace(parsed.LLMRoute))
+	}
 	return settings
+}
+
+// sessionLLMRoute reports whether this session's LLM traffic is routed through
+// proxy-lite (the Contain superset). A non-empty per-session override wins;
+// otherwise it falls back to cfg.RuntimeProxy.LLMRoute. "Posture is contain"
+// throughout the runtime proxy means this returns true.
+func sessionLLMRouteProxyLite(session *store.RuntimeSession, cfg *config.Config) bool {
+	settings := sessionRuntimeSettingsFromMetadata(session, cfg)
+	route := strings.TrimSpace(settings.LLMRoute)
+	if route == "" && cfg != nil {
+		route = strings.TrimSpace(cfg.RuntimeProxy.LLMRoute)
+	}
+	return strings.EqualFold(route, "proxy_lite")
 }
 
 func sessionAutovaultMode(session *store.RuntimeSession, cfg *config.Config) string {
