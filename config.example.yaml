@@ -200,6 +200,16 @@ telemetry:
 #                              # it migrates EVERY subscription seat on the
 #                              # instance at once, not one.
 
+# ── Governance (instance-scoped / local orggov) ─────────────────────────────
+# Local model allow/deny, spend caps, content policy, and violation logging
+# enforced on the proxy-lite path, configured via /api/governance/* (the
+# Terraform provider's governance resources). Enabled by default: the tables
+# are empty on a fresh install, so it is a no-op until an admin writes a
+# policy. Set false to disable the local callbacks and drop the
+# `local_governance` capability from /api/features.
+# governance:
+#   enabled: true                # Env: CLAWVISOR_GOVERNANCE_ENABLED
+
 # ── Observability (OpenTelemetry export) ────────────────────────────────────
 # Operational traces + metrics from the proxy-lite pipeline, the skill
 # gateway, and the runtime proxy, exported over OTLP to whatever you already
