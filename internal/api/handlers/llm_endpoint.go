@@ -25,6 +25,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
@@ -272,6 +273,26 @@ func (h *LLMEndpointHandler) upstreamAuthPassthrough() bool {
 // observations rather than enforced (spec 02 §3).
 func (h *LLMEndpointHandler) observeMode() bool {
 	return strings.EqualFold(strings.TrimSpace(h.EnforcementMode), "observe")
+}
+
+// recordObservedToolUseVerdicts stamps the endpoint_call audit row with
+// the tool_use verdicts Observe mode downgraded to observations (spec 02
+// §3), so the audit view can render an "observed" badge. No-op when the
+// postprocess pass enforced normally.
+func recordObservedToolUseVerdicts(auditParams map[string]any, observed []llmproxy.ObservedToolUseVerdict) {
+	if len(observed) == 0 {
+		return
+	}
+	auditParams["observed"] = true
+	records := make([]map[string]any, 0, len(observed))
+	for _, o := range observed {
+		records = append(records, map[string]any{
+			"tool_name": o.ToolName,
+			"decision":  o.Decision,
+			"reason":    o.Reason,
+		})
+	}
+	auditParams["observed_tool_use_verdicts"] = records
 }
 
 const defaultToolRulesSeenMaxAgents = 10000
@@ -545,6 +566,17 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			auditParams["subscription_billing_migration"] = true
 		}
+	}
+
+	// Observe posture (spec 02 §3): thread the enforcement-off flag through
+	// the request context so every pipeline call site (RunPre pre-phase +
+	// the tool_use postprocess) downgrades enforcing verdicts to recorded
+	// observations. Clawvisor's own auth is unaffected — only policy
+	// verdicts are downgraded, and only after the request is authenticated.
+	if h.observeMode() {
+		rootCtx = pipeline.WithObserveMode(rootCtx)
+		r = r.WithContext(rootCtx)
+		auditParams["enforcement_mode"] = "observe"
 	}
 
 	if h.Inspector != nil && !liteProxyResponsePolicyAvailable(provider, conversation.DefaultResponseRegistry()) {
@@ -1600,6 +1632,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 			cfg := llmproxy.PostprocessConfig{
 				ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
+				ObserveMode:             h.observeMode(),
 				AgentContext: llmproxy.AgentContext{
 					AgentUserID: agent.UserID,
 					AgentID:     agent.ID,
@@ -1702,6 +1735,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"decisions", len(processed.Decisions),
 				"skipped_reason", processed.SkippedReason,
 			)
+
+			recordObservedToolUseVerdicts(auditParams, processed.ObservedVerdicts)
 
 			if auditTaskID == "" {
 				for _, dec := range processed.Decisions {
@@ -1950,6 +1985,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		autoApproveThreshold := agentConversationAutoApproveThreshold(agent)
 		processed := postproc.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
 			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
+			ObserveMode:             h.observeMode(),
 			AgentContext: llmproxy.AgentContext{
 				AgentUserID: agent.UserID,
 				AgentID:     agent.ID,
@@ -2006,6 +2042,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"decisions", len(processed.Decisions),
 			"skipped_reason", processed.SkippedReason,
 		)
+
+		recordObservedToolUseVerdicts(auditParams, processed.ObservedVerdicts)
 
 		// Auto-approved task attribution: scoop the created task id out
 		// of the decisions so audit can link to it even when the

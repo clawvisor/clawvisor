@@ -57,11 +57,21 @@ func Start(t *testing.T, h *testharness.Harness) *Server {
 // and retry up to maxStartAttempts times with a fresh port. Slow-start
 // timeouts (no early exit) are NOT retried — they'd just timeout again.
 func StartWith(t *testing.T, h *testharness.Harness, extraEnv map[string]string) *Server {
+	return StartWithConfig(t, h, extraEnv, "")
+}
+
+// StartWithConfig is like StartWith but appends configOverlay (raw YAML,
+// top-level keys) to the generated config file before boot. Use it for
+// file-only config surfaces that have no env override — e.g. the
+// `posture:` preset key (spec 02), which is read from the config file
+// only. The overlay is appended after the base blocks, so it may set new
+// top-level keys or rely on preset semantics for absent sub-knobs.
+func StartWithConfig(t *testing.T, h *testharness.Harness, extraEnv map[string]string, configOverlay string) *Server {
 	t.Helper()
 	binPath := buildServerBinary(t)
 	var lastErr error
 	for attempt := 0; attempt < maxStartAttempts; attempt++ {
-		s, err := tryStart(t, h, extraEnv, binPath)
+		s, err := tryStart(t, h, extraEnv, binPath, configOverlay)
 		if err == nil {
 			return s
 		}
@@ -117,7 +127,7 @@ func (e *earlyExitError) Unwrap() error { return e.err }
 // and returns the *Server. On failure: tears down its own subprocess
 // inline and returns the error (no cleanup registered, so retries
 // don't accumulate cleanup callbacks).
-func tryStart(t *testing.T, h *testharness.Harness, extraEnv map[string]string, binPath string) (*Server, error) {
+func tryStart(t *testing.T, h *testharness.Harness, extraEnv map[string]string, binPath, configOverlay string) (*Server, error) {
 	t.Helper()
 	port := freePort(t)
 	publicURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -176,6 +186,9 @@ runtime_proxy:
 proxy_lite:
   enabled: true
 `, port, publicURL, dataDir, vaultKeyFile)
+	if configOverlay != "" {
+		cfg += "\n" + configOverlay + "\n"
+	}
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0600); err != nil {
 		return nil, fmt.Errorf("write config: %w", err)
 	}

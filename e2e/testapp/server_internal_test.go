@@ -27,7 +27,7 @@ func TestTryStartReturnsEarlyExitErrorOnBindFailure(t *testing.T) {
 	stub := writeFailingStub(t)
 	h := testharness.New(t)
 
-	_, err := tryStart(t, h, nil, stub)
+	_, err := tryStart(t, h, nil, stub, "")
 	if err == nil {
 		t.Fatal("tryStart returned nil; expected earlyExitError")
 	}
@@ -49,7 +49,7 @@ func TestWaitReadyReportsEarlyExitFast(t *testing.T) {
 	h := testharness.New(t)
 
 	start := time.Now()
-	_, err := tryStart(t, h, nil, stub)
+	_, err := tryStart(t, h, nil, stub, "")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -84,7 +84,7 @@ func TestEarlyExitErrorCarriesSubprocessDiagnostics(t *testing.T) {
 	}
 	h := testharness.New(t)
 
-	_, err := tryStart(t, h, nil, stub)
+	_, err := tryStart(t, h, nil, stub, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

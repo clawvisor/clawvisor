@@ -24,6 +24,11 @@ const (
 	AttrStatus       = "status"
 	AttrDecision     = "decision"
 	AttrHostCategory = "host_category"
+	// AttrObserved marks a verdict that WOULD have enforced but was
+	// downgraded to a recorded observation under the Observe posture
+	// (spec 02 §3). "true" on the pipeline.verdicts counter means the
+	// request/response proceeded despite the enforcing verdict.
+	AttrObserved = "observed"
 )
 
 // Span attribute keys (contractual — see spec 01 §"Span model"). Content-
@@ -128,6 +133,13 @@ func (i *Instruments) RecordCost(ctx context.Context, provider, model string, mi
 // RecordVerdict increments clawvisor.pipeline.verdicts. outcome must already
 // be mapped through DecisionFromOutcome by the caller. Nil-safe.
 func (i *Instruments) RecordVerdict(ctx context.Context, policy, outcome, phase string) {
+	i.RecordVerdictObserved(ctx, policy, outcome, phase, false)
+}
+
+// RecordVerdictObserved is RecordVerdict with the Observe-posture
+// downgrade attribute (spec 02 §3). observed=true means the verdict
+// would have enforced but was recorded and passed through. Nil-safe.
+func (i *Instruments) RecordVerdictObserved(ctx context.Context, policy, outcome, phase string, observed bool) {
 	if i == nil || i.PipelineVerdicts == nil {
 		return
 	}
@@ -135,7 +147,30 @@ func (i *Instruments) RecordVerdict(ctx context.Context, policy, outcome, phase 
 		attribute.String(AttrPolicy, policy),
 		attribute.String(AttrOutcome, outcome),
 		attribute.String(AttrPhase, phase),
+		attribute.Bool(AttrObserved, observed),
 	))
+}
+
+// RecordToolUseVerdictObserved records a tool_use-phase verdict on the
+// clawvisor.pipeline.verdicts counter (policy="tooluse") and a
+// tooluse.verdict span event. observed marks an Observe-posture
+// downgrade (spec 02 §3): the verdict was recorded but not enforced.
+// Safe to call when neither instruments nor a recording span are present.
+func RecordToolUseVerdictObserved(ctx context.Context, toolName, decision, reason string, observed bool) {
+	InstrumentsFromContext(ctx).RecordVerdictObserved(ctx, "tooluse", decision, "post", observed)
+	if span := trace.SpanFromContext(ctx); span.IsRecording() {
+		attrs := []attribute.KeyValue{
+			attribute.String(AttrPolicy, "tooluse"),
+			attribute.String(SpanAttrToolName, toolName),
+			attribute.String(SpanAttrVerdict, decision),
+			attribute.String(AttrPhase, "post"),
+			attribute.Bool(AttrObserved, observed),
+		}
+		if decision != "allow" && reason != "" {
+			attrs = append(attrs, attribute.String(SpanAttrReason, reason))
+		}
+		span.AddEvent(EventToolUseVerdict, trace.WithAttributes(attrs...))
+	}
 }
 
 // RecordHold increments clawvisor.approvals.holds. resolution ∈
@@ -215,12 +250,22 @@ func InstrumentsFromContext(ctx context.Context) *Instruments {
 // policy-generated string, never model content). Safe to call when neither
 // instruments nor a recording span are present.
 func RecordPolicyVerdict(ctx context.Context, policy, outcome, phase, reason string) {
-	InstrumentsFromContext(ctx).RecordVerdict(ctx, policy, outcome, phase)
+	RecordPolicyVerdictObserved(ctx, policy, outcome, phase, reason, false)
+}
+
+// RecordPolicyVerdictObserved is RecordPolicyVerdict with the
+// Observe-posture downgrade attribute (spec 02 §3). When observed=true
+// the metric and span event carry observed="true", recording that an
+// enforcing verdict was downgraded to an observation and the
+// request/response proceeded unmodified.
+func RecordPolicyVerdictObserved(ctx context.Context, policy, outcome, phase, reason string, observed bool) {
+	InstrumentsFromContext(ctx).RecordVerdictObserved(ctx, policy, outcome, phase, observed)
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		attrs := []attribute.KeyValue{
 			attribute.String(AttrPolicy, policy),
 			attribute.String(AttrOutcome, outcome),
 			attribute.String(AttrPhase, phase),
+			attribute.Bool(AttrObserved, observed),
 		}
 		if outcome != "allow" && reason != "" {
 			attrs = append(attrs, attribute.String(SpanAttrReason, reason))

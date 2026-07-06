@@ -5,9 +5,54 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/clawvisor/clawvisor/internal/observability"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 )
+
+// applyObserveDowngrade neutralizes enforcing tool_use verdicts under
+// the Observe posture (spec 02 §3). It runs AFTER the eval pass (so the
+// evaluators' own audit rows are already buffered) and BEFORE commit /
+// rewrite (so no hold is stored and no CLAWVISOR_BLOCKED rewrite lands).
+//
+// Every non-allowed verdict (a block or an approval hold) is recorded on
+// the verdict metric + a tooluse.verdict span event with observed=true,
+// then replaced with a plain allow so the original tool_use passes
+// through byte-for-byte. Verdicts that are already Allowed (pass-through
+// and mechanical resolver/credential rewrites) are left untouched.
+func applyObserveDowngrade(ctx context.Context, cfg llmproxy.PostprocessConfig, verdictByTU map[string]conversation.ToolUseVerdict, toolUses []conversation.ToolUse) []llmproxy.ObservedToolUseVerdict {
+	if !cfg.ObserveMode {
+		return nil
+	}
+	nameByID := make(map[string]string, len(toolUses))
+	for _, tu := range toolUses {
+		nameByID[tu.ID] = tu.Name
+	}
+	seen := make(map[string]bool, len(toolUses))
+	var observed []llmproxy.ObservedToolUseVerdict
+	for _, tu := range toolUses {
+		if seen[tu.ID] {
+			continue
+		}
+		seen[tu.ID] = true
+		v, ok := verdictByTU[tu.ID]
+		if !ok || v.Allowed {
+			continue
+		}
+		decision := "block"
+		if v.HeldKindHint == conversation.HeldKindHintApproval ||
+			v.Outcome == conversation.OutcomeHold ||
+			v.Outcome == conversation.OutcomeShortCircuit {
+			decision = "hold"
+		}
+		observed = append(observed, llmproxy.ObservedToolUseVerdict{
+			ToolUseID: tu.ID, ToolName: nameByID[tu.ID], Decision: decision, Reason: v.Reason,
+		})
+		observability.RecordToolUseVerdictObserved(ctx, tu.Name, decision, v.Reason, true)
+		verdictByTU[tu.ID] = conversation.ToolUseVerdict{Allowed: true, Outcome: conversation.OutcomeAllow}
+	}
+	return observed
+}
 
 // Postprocess inspects, rewrites, and audits the upstream response.
 // The pipeline factory (registered via pipelineeval) drives per-tool
@@ -85,6 +130,10 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		return failClosed("rewriter error during tool_use extraction: " + collectorErr.Error())
 	}
 
+	// Observe posture: downgrade enforcing verdicts to observations
+	// before commit so no hold is stored and no block is rewritten.
+	observedVerdicts := applyObserveDowngrade(ctx, cfg, verdictByTU, preExtracted)
+
 	if commitErr := session.commitVerdictSideEffects(ctx, verdictByTU, preExtracted); commitErr != nil {
 		return failClosed("verdict side-effect commit failed: " + commitErr.Error())
 	}
@@ -129,10 +178,11 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 		coalescedResult, coalescedErr := rewriter.Rewrite(body, contentType, coalescedEval)
 		if coalescedErr == nil {
 			return llmproxy.PostprocessResult{
-				Body:        coalescedResult.Body,
-				ContentType: contentType,
-				Rewritten:   true,
-				Decisions:   coalescedResult.Decisions,
+				Body:             coalescedResult.Body,
+				ContentType:      contentType,
+				Rewritten:        true,
+				Decisions:        coalescedResult.Decisions,
+				ObservedVerdicts: observedVerdicts,
 			}
 		}
 		dropErr := session.dropCommittedAndRollback(ctx, finalResult.CoalescedCapture)
@@ -144,10 +194,11 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 	}
 
 	return llmproxy.PostprocessResult{
-		Body:        result.Body,
-		ContentType: contentType,
-		Rewritten:   result.Rewritten,
-		Decisions:   result.Decisions,
+		Body:             result.Body,
+		ContentType:      contentType,
+		Rewritten:        result.Rewritten,
+		Decisions:        result.Decisions,
+		ObservedVerdicts: observedVerdicts,
 	}
 }
 
