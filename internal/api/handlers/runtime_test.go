@@ -34,7 +34,7 @@ func TestRuntimeHandlerCreatePlaceholder(t *testing.T) {
 		t.Fatalf("NewLocalVault: %v", err)
 	}
 
-	user, err := st.CreateUser(ctx, "runtime-placeholder@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-placeholder@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRuntimeHandlerCreateUserPlaceholderFromVaultItem(t *testing.T) {
 		t.Fatalf("NewLocalVault: %v", err)
 	}
 
-	user, err := st.CreateUser(ctx, "runtime-user-placeholder@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-user-placeholder@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestRuntimeHandlerStatusAndSessionsWithoutRuntimeManager(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-lite@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-lite@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestRuntimeHandlerListEvents(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-events@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-events@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestRuntimeHandlerListApprovalsExcludesRevokedAndExpiredSessions(t *testing
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-approvals-list@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-approvals-list@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestRuntimeHandlerListApprovalsExcludesTaskApprovals(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "task-approvals-filter@test.example", "hash")
+	user, err := st.CreateUser(ctx, "task-approvals-filter@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestRuntimeHandlerResolveApprovalCreatesOneOffEvent(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-approval@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-approval@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -622,7 +622,7 @@ func TestRuntimeHandlerResolveApprovalAllowSessionPromotesRuntimeEgressToTask(t 
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-allow-session@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-allow-session@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -728,7 +728,7 @@ func TestRuntimeHandlerResolveApprovalAllowAlwaysPromotesHeldToolReviewAndRebind
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-held-promote@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-held-promote@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -817,7 +817,7 @@ func TestRuntimeHandlerResolveApprovalAllowOnceCreatesCredentialAuthorization(t 
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-credential-once@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-credential-once@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -891,7 +891,7 @@ func TestRuntimeHandlerResolveApprovalAllowAlwaysCreatesStandingCredentialAuthor
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-credential-standing@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-credential-standing@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -979,7 +979,7 @@ func TestRuntimeHandlerResolveApprovalRejectsIllegalTransition(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-illegal-transition@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-illegal-transition@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -1059,7 +1059,7 @@ func TestRuntimeHandlerResolveApprovalReturnsErrorWhenCredentialAuthorizationWri
 	t.Cleanup(func() { _ = db.Close() })
 	baseStore := sqlite.NewStore(db)
 
-	user, err := baseStore.CreateUser(ctx, "runtime-credential-write-fail@test.example", "hash")
+	user, err := baseStore.CreateUser(ctx, "runtime-credential-write-fail@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

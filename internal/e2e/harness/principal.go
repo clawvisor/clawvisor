@@ -32,7 +32,7 @@ func (s *Server) SeedPrincipal(ctx context.Context, agentName string) (*Principa
 	if agentName == "" {
 		agentName = "harness-agent"
 	}
-	user, err := s.Store.CreateUser(ctx, fmt.Sprintf("%s@harness.example", agentName), "harness-hash")
+	user, err := s.Store.CreateUser(ctx, fmt.Sprintf("%s@harness.example", agentName), "harness-hash", "")
 	if err != nil {
 		return nil, fmt.Errorf("harness: create user: %w", err)
 	}

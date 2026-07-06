@@ -24,7 +24,7 @@ func TestAgentConversationAutoApproveThreshold_DefaultAndUpdate(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
 
-	user, err := st.CreateUser(ctx, "threshold@example.com", "hash")
+	user, err := st.CreateUser(ctx, "threshold@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestAgentConversationAutoApproveThreshold_FreshInsertDefault(t *testing.T) 
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
 
-	user, err := st.CreateUser(ctx, "raw@example.com", "hash")
+	user, err := st.CreateUser(ctx, "raw@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

@@ -39,11 +39,26 @@ func (s *Store) DB() *sql.DB {
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
-func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (*store.User, error) {
+func (s *Store) CreateUser(ctx context.Context, email, passwordHash, role string) (*store.User, error) {
+	return s.createUser(ctx, email, passwordHash, role, true /* verified */)
+}
+
+func (s *Store) CreateInvitedUser(ctx context.Context, email, passwordHash, role string) (*store.User, error) {
+	return s.createUser(ctx, email, passwordHash, role, false /* pending_verification */)
+}
+
+func (s *Store) createUser(ctx context.Context, email, passwordHash, role string, verified bool) (*store.User, error) {
+	if role != store.RoleAdmin && role != store.RoleMember {
+		role = store.RoleMember
+	}
 	id := uuid.New().String()
+	var verifiedAt any
+	if verified {
+		verifiedAt = time.Now().UTC().Format(time.RFC3339)
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)`,
-		id, email, passwordHash,
+		`INSERT INTO users (id, email, password_hash, role, verified_at) VALUES (?, ?, ?, ?, ?)`,
+		id, email, passwordHash, role, verifiedAt,
 	)
 	if err != nil {
 		if isDuplicate(err) {
@@ -54,40 +69,101 @@ func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (*st
 	return s.GetUserByID(ctx, id)
 }
 
-func (s *Store) GetUserByEmail(ctx context.Context, email string) (*store.User, error) {
+func scanUserRow(scan func(...any) error) (*store.User, error) {
 	u := &store.User{}
 	var createdAt, updatedAt string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, email, password_hash, created_at, updated_at FROM users WHERE email = ?`,
-		email,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &createdAt, &updatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, store.ErrNotFound
-	}
+	var verifiedAt *string
+	err := scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &createdAt, &updatedAt, &verifiedAt)
 	if err != nil {
 		return nil, err
 	}
 	u.CreatedAt = parseTime(createdAt)
 	u.UpdatedAt = parseTime(updatedAt)
+	if verifiedAt != nil && *verifiedAt != "" {
+		t := parseTime(*verifiedAt)
+		u.VerifiedAt = &t
+	}
 	return u, nil
 }
 
-func (s *Store) GetUserByID(ctx context.Context, id string) (*store.User, error) {
-	u := &store.User{}
-	var createdAt, updatedAt string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, email, password_hash, created_at, updated_at FROM users WHERE id = ?`,
-		id,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &createdAt, &updatedAt)
+const userColumns = `id, email, password_hash, role, created_at, updated_at, verified_at`
+
+func (s *Store) GetUserByEmail(ctx context.Context, email string) (*store.User, error) {
+	u, err := scanUserRow(s.db.QueryRowContext(ctx,
+		`SELECT `+userColumns+` FROM users WHERE email = ?`, email).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
+	return u, err
+}
+
+func (s *Store) GetUserByID(ctx context.Context, id string) (*store.User, error) {
+	u, err := scanUserRow(s.db.QueryRowContext(ctx,
+		`SELECT `+userColumns+` FROM users WHERE id = ?`, id).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return u, err
+}
+
+func (s *Store) UpdateUserRole(ctx context.Context, userID, role string) error {
+	if role != store.RoleAdmin && role != store.RoleMember {
+		return errors.New("invalid role")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		role, userID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) MarkUserVerified(ctx context.Context, userID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE users SET verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		userID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// systemUserFilter excludes system rows from user counts/lists, matching
+// the CountUsers exclusion 05-lite established.
+const systemUserFilter = `id NOT IN ('__system__', '_instance') AND email != 'admin@local'`
+
+func (s *Store) CountAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE role = 'admin' AND `+systemUserFilter).Scan(&n)
+	return n, err
+}
+
+func (s *Store) ListUsers(ctx context.Context) ([]*store.User, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+userColumns+` FROM users WHERE `+systemUserFilter+` ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, err
 	}
-	u.CreatedAt = parseTime(createdAt)
-	u.UpdatedAt = parseTime(updatedAt)
-	return u, nil
+	defer rows.Close()
+	var out []*store.User
+	for rows.Next() {
+		u, err := scanUserRow(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) UpdateUserPassword(ctx context.Context, userID, newPasswordHash string) error {
@@ -119,6 +195,113 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return store.ErrNotFound
+	}
+	return nil
+}
+
+// actorEmailFor resolves the email-at-the-time for an audit/cost row's
+// principal. Server-derived (looked up by user_id), never caller-supplied,
+// and never empty — so a later user delete can't turn the row anonymous
+// (F6). A missing user yields a loud sentinel rather than "".
+func (s *Store) actorEmailFor(ctx context.Context, userID string) string {
+	if userID == "" {
+		return "(unknown)"
+	}
+	var email string
+	err := s.db.QueryRowContext(ctx, `SELECT email FROM users WHERE id = ?`, userID).Scan(&email)
+	if err != nil || email == "" {
+		return "(deleted-user)"
+	}
+	return email
+}
+
+// ── User invites ──────────────────────────────────────────────────────────────
+
+func (s *Store) CreateUserInvite(ctx context.Context, inv *store.UserInvite) error {
+	if inv.ID == "" {
+		inv.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO user_invites (id, token_hash, email, role, created_by, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, inv.ID, inv.TokenHash, inv.Email, inv.Role, inv.CreatedBy, inv.ExpiresAt.UTC().Format(time.RFC3339))
+	if err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	return nil
+}
+
+func scanUserInvite(scan func(...any) error) (*store.UserInvite, error) {
+	inv := &store.UserInvite{}
+	var expiresAt, createdAt string
+	var usedAt *string
+	err := scan(&inv.ID, &inv.TokenHash, &inv.Email, &inv.Role, &inv.CreatedBy, &expiresAt, &inv.UsedBy, &usedAt, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	inv.ExpiresAt = parseTime(expiresAt)
+	inv.CreatedAt = parseTime(createdAt)
+	if usedAt != nil && *usedAt != "" {
+		t := parseTime(*usedAt)
+		inv.UsedAt = &t
+	}
+	return inv, nil
+}
+
+const userInviteColumns = `id, token_hash, email, role, created_by, expires_at, used_by, used_at, created_at`
+
+func (s *Store) GetUserInviteByHash(ctx context.Context, tokenHash string) (*store.UserInvite, error) {
+	inv, err := scanUserInvite(s.db.QueryRowContext(ctx,
+		`SELECT `+userInviteColumns+` FROM user_invites WHERE token_hash = ?`, tokenHash).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return inv, err
+}
+
+func (s *Store) ListPendingUserInvites(ctx context.Context) ([]*store.UserInvite, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+userInviteColumns+` FROM user_invites WHERE used_at IS NULL ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.UserInvite
+	for rows.Next() {
+		inv, err := scanUserInvite(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, inv)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteUserInvite(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM user_invites WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) MarkUserInviteUsed(ctx context.Context, id, usedBy string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE user_invites SET used_by = ?, used_at = CURRENT_TIMESTAMP WHERE id = ? AND used_at IS NULL`,
+		usedBy, id,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Either the invite doesn't exist or it was already claimed.
+		return store.ErrConflict
 	}
 	return nil
 }
@@ -1062,6 +1245,10 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 	// DB still bounds the call.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	// actor_email is SERVER-DERIVED from the row's principal (user_id) —
+	// never accepted from a caller — so a deleted user's history stays
+	// attributable and no handler can forge/repudiate the actor (F6).
+	actorEmail := s.actorEmailFor(ctx, e.UserID)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO audit_log (
 			id, user_id, agent_id, request_id, dedup_key, task_id, session_id, approval_id, lease_id,
@@ -1070,8 +1257,8 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 			intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
 			would_block, would_review, would_prompt_inline,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
-			duration_ms, filters_applied, verification, error_msg, deduped_of
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			duration_ms, filters_applied, verification, error_msg, deduped_of, actor_email
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.DedupKey, e.TaskID, e.SessionID, e.ApprovalID, e.LeaseID,
 		e.ToolUseID, e.MatchedTaskID, e.LeaseTaskID, e.Timestamp.UTC().Format(time.RFC3339),
 		e.Service, e.Action, paramsSafe, e.Decision, e.Outcome,
@@ -1079,7 +1266,7 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 		usedActiveTaskContext, usedLeaseBias, usedConvJudgeResolution,
 		wouldBlock, wouldReview, wouldPromptInline,
 		safetyFlagged, e.SafetyReason, e.Reason,
-		e.DataOrigin, e.ContextSrc, e.DurationMS, filtersApplied, verification, e.ErrorMsg, e.DedupedOf)
+		e.DataOrigin, e.ContextSrc, e.DurationMS, filtersApplied, verification, e.ErrorMsg, e.DedupedOf, actorEmail)
 	if err != nil && isDuplicate(err) {
 		return store.ErrConflict
 	}
@@ -1094,16 +1281,17 @@ func (s *Store) RecordLLMRequestCost(ctx context.Context, c *store.LLMRequestCos
 	if c == nil || c.AuditID == "" {
 		return errors.New("RecordLLMRequestCost: audit_id required")
 	}
+	actorEmail := s.actorEmailFor(ctx, c.UserID)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO llm_request_cost (
 			audit_id, user_id, agent_id, task_id, request_id, timestamp,
 			provider, model, input_tokens, output_tokens, cache_read_tokens,
-			cache_write_tokens, cost_micros
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+			cache_write_tokens, cost_micros, actor_email
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`, c.AuditID, c.UserID, c.AgentID, c.TaskID, c.RequestID,
 		c.Timestamp.UTC().Format(time.RFC3339Nano),
 		c.Provider, c.Model, c.InputTokens, c.OutputTokens,
-		c.CacheReadTokens, c.CacheWriteTokens, c.CostMicros)
+		c.CacheReadTokens, c.CacheWriteTokens, c.CostMicros, actorEmail)
 	if err != nil && isDuplicate(err) {
 		return store.ErrConflict
 	}

@@ -25,7 +25,7 @@ func newAuditTestStore(t *testing.T) (store.Store, *store.Agent) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "audit@example.com", "x")
+	user, err := st.CreateUser(ctx, "audit@example.com", "x", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestAuditEmitter_WriteAuditEvent_ScriptSessionJudgeError(t *testing.T) {
 	em := NewAuditEmitter(st, nil, nil)
 
 	em.WriteAuditEvent(context.Background(), agent, "req-1", conversation.AuditEvent{
-		ToolUse: conversation.ToolUse{ID: "toolu_err", Name: "Bash"},
+		ToolUse:     conversation.ToolUse{ID: "toolu_err", Name: "Bash"},
 		Decision:    conversation.DecisionAllow, // Skip = chain continues; decision recorded by later stage
 		OutcomeName: "script_session_judge_error",
 		Facts: []conversation.EvaluationFact{

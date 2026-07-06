@@ -88,7 +88,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.st.CreateUser(r.Context(), body.Email, hash)
+	user, err := h.st.CreateUser(r.Context(), body.Email, hash, "")
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			writeError(w, http.StatusConflict, "EMAIL_TAKEN", "an account with that email already exists")

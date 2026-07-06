@@ -107,7 +107,7 @@ func TestControlListTasksReturnsAgentActiveTasksAndCheckout(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "control-list@test.example", "hash")
+	user, err := st.CreateUser(ctx, "control-list@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
