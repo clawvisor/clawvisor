@@ -1,0 +1,14 @@
+{
+  "name": "clawvisor-e2e-browser",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Playwright browser E2E lane for Clawvisor. Boots a real clawvisor-server + built frontend and drives human-session flows. NOT wired to the browser-harness CDP tool — Playwright only.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.52.0"
+  }
+}

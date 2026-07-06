@@ -20,6 +20,14 @@ web/dist/*
 !web/dist/.gitkeep
 !web/dist/placeholder.html
 
+# Browser lane (Playwright) — build/runtime artifacts, never committed
+e2e/browser/node_modules/
+e2e/browser/test-results/
+e2e/browser/playwright-report/
+e2e/browser/.env-browser
+# Stray root-level build output from `go build ./e2e/browser/serve`
+/serve
+
 # IDE
 .idea/
 .vscode/
