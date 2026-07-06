@@ -65,6 +65,7 @@ type Config struct {
 	RuntimeProxy  RuntimeProxyConfig  `yaml:"runtime_proxy"`
 	RuntimePolicy RuntimePolicyConfig `yaml:"runtime_policy"`
 	ProxyLite     ProxyLiteConfig     `yaml:"proxy_lite"`
+	Governance    GovernanceConfig    `yaml:"governance"`
 	Features      FeaturesConfig      `yaml:"features"`
 	RateLimit     RateLimitConfig     `yaml:"rate_limit"`
 	Relay         RelayConfig         `yaml:"relay"`
@@ -76,6 +77,20 @@ type Config struct {
 	Redis         RedisConfig         `yaml:"redis"`
 
 	AutoConfig AutoConfigured `yaml:"-"`
+}
+
+// GovernanceConfig gates the instance-scoped (local) governance layer
+// (spec 06a): local model policy / spend cap / content policy / task
+// policy enforcement on the proxy-lite path, plus the /api/governance/*
+// REST surface the Terraform provider drives.
+//
+// Enabled defaults to TRUE. This is safe because the governance tables are
+// empty on a fresh install, so enabled-with-no-policies is a pure no-op
+// (every callback returns "allow"). Setting it false disables the local
+// callbacks and drops the `local_governance` capability from
+// /api/features (the provider then fails fast on governance resources).
+type GovernanceConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // GatewayConfig holds settings for the gateway request handler.
@@ -583,6 +598,13 @@ func Default() *Config {
 			UpstreamAuth:                      "vault",
 			AllowSubscriptionBillingMigration: false,
 		},
+		Governance: GovernanceConfig{
+			// Enabled by default: the governance tables are empty on a fresh
+			// install, so local enforcement is a no-op until an admin writes a
+			// policy. This is NOT a behavior-affecting flip of an existing key
+			// (spec 06a is additive; no existing install carries policies).
+			Enabled: true,
+		},
 		Features: FeaturesConfig{
 			SecretVault:    false,
 			ServicePresets: false,
@@ -989,6 +1011,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_PROXY_LITE_ENABLED"); v != "" {
 		cfg.ProxyLite.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_GOVERNANCE_ENABLED"); v != "" {
+		cfg.Governance.Enabled = v == "true" || v == "1"
 	}
 	if v := os.Getenv("CLAWVISOR_PROXY_LITE_PUBLIC_URL"); v != "" {
 		cfg.ProxyLite.PublicURL = strings.TrimRight(strings.TrimSpace(v), "/")

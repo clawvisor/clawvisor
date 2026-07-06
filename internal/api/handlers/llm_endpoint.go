@@ -788,16 +788,21 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			agentID:  agent.ID,
 		}
 		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewOrgModelPolicy(h.OrgGovCallbacks, h.OrgIDForAgent))
-		if err == nil && result.DenyReason != "" {
+		if err == nil {
+			// Merge audit params unconditionally (matching the spend-cap and
+			// content-policy blocks below) so an Observe-mode downgrade stamps
+			// observed=true on the audit row even though DenyReason is cleared.
 			for k, v := range result.AuditParams {
 				auditParams[k] = v
 			}
-			auditStatus = http.StatusForbidden
-			auditDecide = "deny"
-			auditOutcome = "org_model_policy_denied"
-			auditReason = result.DenyReason
-			http.Error(w, result.DenyReason, http.StatusForbidden)
-			return
+			if result.DenyReason != "" {
+				auditStatus = http.StatusForbidden
+				auditDecide = "deny"
+				auditOutcome = "org_model_policy_denied"
+				auditReason = result.DenyReason
+				http.Error(w, result.DenyReason, http.StatusForbidden)
+				return
+			}
 		}
 	}
 

@@ -16,7 +16,6 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/llm"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -264,35 +263,31 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		}))
 	}
 
-	if opts.OrgGov != nil {
-		// Translate the public OrgGovOptions (bare function signatures)
-		// to the internal orggov.Callbacks / intent.PromptResolverFn /
-		// taskrisk.PromptResolverFn shapes the api layer expects.
-		recordViolation := opts.OrgGov.RecordViolation
-		callbacks := orggov.Callbacks{
-			CheckModelPolicy:  opts.OrgGov.CheckModelPolicy,
-			CheckSpendCap:     opts.OrgGov.CheckSpendCap,
-			ScanContentPolicy: opts.OrgGov.ScanContentPolicy,
+	// Governance callback composition (spec 06a). Cloud (opts.OrgGov) wins
+	// per-hook; local govlocal fills any nil hook; nil only if governance is
+	// disabled entirely. Precedence is cloud > local > allow, evaluated hook
+	// by hook — the pipeline sees a single orggov.Callbacks either way.
+	//
+	// Start from cloud's hooks (if any), then fill gaps from govlocal when
+	// Governance.Enabled (default true). In a pure-OSS build opts.OrgGov is
+	// nil, so every hook comes from govlocal and the "local" OrgID shim is
+	// installed so the instance-scoped callbacks actually fire (the pipeline
+	// policies no-op on orgID=="").
+	{
+		govEnabled := opts.Config == nil || opts.Config.Governance.Enabled
+		callbacks, orgIDForAgent, wire := composeGovernanceCallbacks(opts.OrgGov, opts.Store, govEnabled)
+		if wire {
+			apiOpts = append(apiOpts, api.WithOrgGov(callbacks, orgIDForAgent))
 		}
-		if recordViolation != nil {
-			callbacks.RecordViolation = func(ctx context.Context, evt orggov.ViolationEvent) {
-				recordViolation(ctx, OrgGovViolation{
-					OrgID:       evt.OrgID,
-					UserID:      evt.UserID,
-					AgentID:     evt.AgentID,
-					TaskID:      evt.TaskID,
-					PolicyKind:  evt.PolicyKind,
-					ActionTaken: evt.ActionTaken,
-					Detail:      evt.Detail,
-				})
+
+		// Prompt resolvers stay cloud-only (spec 06a out-of-scope for local).
+		if opts.OrgGov != nil {
+			if opts.OrgGov.IntentPromptResolver != nil {
+				apiOpts = append(apiOpts, api.WithIntentPromptResolver(intent.PromptResolverFn(opts.OrgGov.IntentPromptResolver)))
 			}
-		}
-		apiOpts = append(apiOpts, api.WithOrgGov(callbacks, opts.OrgGov.OrgIDForAgent))
-		if opts.OrgGov.IntentPromptResolver != nil {
-			apiOpts = append(apiOpts, api.WithIntentPromptResolver(intent.PromptResolverFn(opts.OrgGov.IntentPromptResolver)))
-		}
-		if opts.OrgGov.TaskRiskPromptResolver != nil {
-			apiOpts = append(apiOpts, api.WithTaskRiskPromptResolver(taskrisk.PromptResolverFn(opts.OrgGov.TaskRiskPromptResolver)))
+			if opts.OrgGov.TaskRiskPromptResolver != nil {
+				apiOpts = append(apiOpts, api.WithTaskRiskPromptResolver(taskrisk.PromptResolverFn(opts.OrgGov.TaskRiskPromptResolver)))
+			}
 		}
 	}
 
