@@ -1,0 +1,27 @@
+e2e/testapp/server.go
+  s_55f7a841d7c10e::t_c055027f18ec46 41-50
+  s_55f7a841d7c10e::t_7319c4cd4ffba2 161
+  s_55f7a841d7c10e::t_35ebb9043b93f2 217-223
+  s_55f7a841d7c10e::t_b259a934e93681 240
+  s_55f7a841d7c10e::t_627c9b7ae1b229 80-100,105
+e2e/scenarios/flip_test.go
+  s_55f7a841d7c10e::t_cc498fcab2d8a2 1-83
+e2e/testapp/server_internal_test.go
+  s_55f7a841d7c10e::t_94cd4c3cb2d3bc 30,52,87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a7eb58c08f2b4e2005d8a58ae9065a21689217a6",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
