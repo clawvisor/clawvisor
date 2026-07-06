@@ -361,6 +361,64 @@ func TestPosturePresetKnobPrecedence(t *testing.T) {
 	})
 }
 
+// TestPostureFlipsSelfApprove (04b step 5) asserts the govern/contain presets
+// turn allow_self_approve off (so the governed party is not the sole
+// approver), that observe leaves it on, and that an explicit knob or env
+// override still wins over the preset.
+func TestPostureFlipsSelfApprove(t *testing.T) {
+	t.Run("default keeps self-approve on", func(t *testing.T) {
+		if !Default().Approval.AllowSelfApprove {
+			t.Fatal("default allow_self_approve should be true (backward-compat)")
+		}
+	})
+	t.Run("govern preset disables self-approve", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: govern\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Approval.AllowSelfApprove {
+			t.Fatal("govern preset must set allow_self_approve=false")
+		}
+	})
+	t.Run("contain preset disables self-approve", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: contain\nexperimental_contain: true\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Approval.AllowSelfApprove {
+			t.Fatal("contain preset must set allow_self_approve=false")
+		}
+	})
+	t.Run("observe leaves self-approve on", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: observe\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Approval.AllowSelfApprove {
+			t.Fatal("observe preset must not touch allow_self_approve")
+		}
+	})
+	t.Run("explicit allow_self_approve beats govern preset", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: govern\napproval:\n  allow_self_approve: true\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Approval.AllowSelfApprove {
+			t.Fatal("explicit allow_self_approve: true must win over the govern preset")
+		}
+	})
+	t.Run("env allow_self_approve beats govern preset", func(t *testing.T) {
+		t.Setenv("CLAWVISOR_APPROVAL_ALLOW_SELF_APPROVE", "true")
+		cfg, err := Load(writePostureConfig(t, "posture: govern\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Approval.AllowSelfApprove {
+			t.Fatal("env CLAWVISOR_APPROVAL_ALLOW_SELF_APPROVE=true must beat the govern preset")
+		}
+	})
+}
+
 // TestValidatePostureContainRejected asserts the spec 09 gate semantics that
 // replaced spec 02's unconditional rejection: contain is refused UNLESS
 // experimental_contain=true, and accepted (with the superset preset applied)

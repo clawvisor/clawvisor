@@ -225,6 +225,20 @@ type AuthConfig struct {
 type ApprovalConfig struct {
 	Timeout   int    `yaml:"timeout"`
 	OnTimeout string `yaml:"on_timeout"` // Reserved for Phase 9: behavior when approval times out ("fail" or "allow")
+	// AdminNotify controls whether admins are notified (in addition to the
+	// hold's owner) when a hold is created (04b). Default true. Keeps a single
+	// flat "all admins" audience — no per-team routing (that is paid
+	// hierarchy).
+	AdminNotify bool `yaml:"admin_notify"`
+	// AllowSelfApprove controls whether a user may resolve a hold raised by
+	// their OWN agent (04b). Default true for backward-compat; the govern /
+	// contain posture presets set it false (unless set explicitly) so the
+	// governed party is not the sole approver. When false, the check applies
+	// on BOTH the member resolve path and the admin resolve path — an admin
+	// cannot self-approve their own agent's hold either (F7). The one
+	// unavoidable exception is a solo-admin instance, permitted but logged to
+	// the audit trail as a self-approval.
+	AllowSelfApprove bool `yaml:"allow_self_approve"`
 }
 
 // LLMProviderConfig holds settings for one LLM provider endpoint.
@@ -503,6 +517,13 @@ func Default() *Config {
 		Approval: ApprovalConfig{
 			Timeout:   300,
 			OnTimeout: "fail",
+			// 04b: notify admins on hold creation by default; allow
+			// self-approval by default (the govern/contain presets flip it
+			// off — see applyPosturePreset). These are NEW keys, so setting a
+			// non-zero default here does not affect the writer-side flip
+			// invariant (gotcha #1 concerns proxy_lite.enabled only).
+			AdminNotify:      true,
+			AllowSelfApprove: true,
 		},
 		Task: TaskConfig{
 			DefaultExpirySeconds: 1800,
@@ -971,6 +992,15 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_INLINE_APPROVAL_ENABLED"); v != "" {
 		cfg.RuntimePolicy.InlineApprovalEnabled = v == "true" || v == "1"
 	}
+	// 04b: admin-visibility approval knobs. Applied after applyPosturePreset so
+	// an env override wins over the posture default (e.g. re-enabling
+	// self-approval on a Govern instance for a controlled rollout).
+	if v := os.Getenv("CLAWVISOR_APPROVAL_ADMIN_NOTIFY"); v != "" {
+		cfg.Approval.AdminNotify = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_APPROVAL_ALLOW_SELF_APPROVE"); v != "" {
+		cfg.Approval.AllowSelfApprove = v == "true" || v == "1"
+	}
 	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_TOOL_LEASE_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.RuntimePolicy.ToolLeaseTimeoutSeconds = n
@@ -1172,6 +1202,17 @@ func applyPosturePreset(cfg *Config, raw []byte) {
 			cfg.RuntimeProxy.LLMRoute = v
 		}
 	}
+	// 04b owns the approval.allow_self_approve knob. Spec 02 knows nothing
+	// about it (it landed on Track F before this spec), so the govern/contain
+	// extension is wired here. An explicit approval.allow_self_approve in the
+	// YAML still wins — under Govern, real governance requires the governed
+	// party not be the sole approver, so the preset flips the backward-compat
+	// default (true) off unless the operator opts back in.
+	setAllowSelfApprove := func(v bool) {
+		if !yamlHasKey(raw, "approval", "allow_self_approve") {
+			cfg.Approval.AllowSelfApprove = v
+		}
+	}
 	switch strings.ToLower(strings.TrimSpace(cfg.Posture)) {
 	case "observe":
 		setEnabled(true)
@@ -1181,12 +1222,14 @@ func applyPosturePreset(cfg *Config, raw []byte) {
 		setEnabled(true)
 		setEnforcement("enforce")
 		setUpstreamAuth("vault")
+		setAllowSelfApprove(false)
 	case "contain":
 		setEnabled(true)
 		setEnforcement("enforce")
 		setUpstreamAuth("vault")
 		setRuntimeEnabled(true)
 		setLLMRoute("proxy_lite")
+		setAllowSelfApprove(false)
 	}
 }
 
