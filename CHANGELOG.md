@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* **api-tokens:** long-lived, scoped, revocable API tokens (`cvat_` prefix) at `POST/GET/DELETE /api/tokens`, plus a first-boot bootstrap path via the new `CLAWVISOR_BOOTSTRAP_TOKEN` env var (single-use, 24h expiry, burned on first mint). `GET /api/features` now advertises `api_tokens: true`. **Cloud submodule-bump note:** a `cvat_` bearer passes through `proxy_lite_gate.go` untouched (it sniffs only `cvis_`/`cv-nonce-`) and falls through the per-user `proxy_lite_users` gate on `/api/vault/items`; instance-admin tokens are intended to bypass per-user proxy-lite gating, so this is acceptable but must be an explicit, reviewed decision at the bump.
+
 ## [0.9.10](https://github.com/clawvisor/clawvisor/compare/v0.9.9...v0.9.10) (2026-06-22)
 
 
