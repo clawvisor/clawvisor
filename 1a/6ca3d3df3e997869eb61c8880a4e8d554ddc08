@@ -1,0 +1,30 @@
+provider/internal/provider/resource_vault_reference.go
+  s_55f7a841d7c10e::t_291aa6ba66373d 1-171
+provider/internal/provider/provider.go
+  s_55f7a841d7c10e::t_807f213a5dceda 155
+provider/internal/provider/testacc/provider_test.go
+  s_55f7a841d7c10e::t_56bc9b73e47e3c 118-120
+provider/internal/provider/testacc/vault_reference_test.go
+  s_55f7a841d7c10e::t_39b08a513033e5 1-4,6-127,130-132,134-135,137-140
+  s_55f7a841d7c10e::t_d6cd7052e74f25 5
+  s_55f7a841d7c10e::t_a06afdba42221b 128-129,133
+  s_55f7a841d7c10e::t_ce062273e13e2e 136
+provider/internal/client/vault.go
+  s_55f7a841d7c10e::t_86f3b10f63f84e 42-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1a6ca3d3df3e997869eb61c8880a4e8d554ddc08",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
