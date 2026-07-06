@@ -70,6 +70,22 @@ func RequireUser(jwtSvc auth.TokenService, st store.Store) func(http.Handler) ht
 	}
 }
 
+// RequireAdmin composes RequireUser and then rejects any principal whose
+// role is not admin with 403 FORBIDDEN. JWT-only: use RequireAdminOrToken
+// when an instance-admin API token should also satisfy the gate.
+func RequireAdmin(jwtSvc auth.TokenService, st store.Store) func(http.Handler) http.Handler {
+	requireUser := RequireUser(jwtSvc, st)
+	return func(next http.Handler) http.Handler {
+		return requireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if u := UserFromContext(r.Context()); u == nil || u.Role != store.RoleAdmin {
+				writeAuthError(w, http.StatusForbidden, "FORBIDDEN", "admin role required")
+				return
+			}
+			next.ServeHTTP(w, r)
+		}))
+	}
+}
+
 // OptionalUser is middleware that validates a user JWT if present and injects
 // the user into the request context. Unlike RequireUser it never rejects the
 // request: missing, invalid, or purpose-restricted tokens cause the handler

@@ -200,7 +200,7 @@ func newMagicLinkTestEnv(t *testing.T) *magicLinkTestEnv {
 func (e *magicLinkTestEnv) createUser(t *testing.T) (userID, email string) {
 	t.Helper()
 	email = fmt.Sprintf("magic-%s@test.example", randSuffix())
-	user, err := e.Store.CreateUser(context.Background(), email, "unused-hash")
+	user, err := e.Store.CreateUser(context.Background(), email, "unused-hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

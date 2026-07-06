@@ -119,7 +119,7 @@ func TestAPITokenStore_InstanceSeededAndExcludedFromCount(t *testing.T) {
 		t.Fatalf("CountUsers = %d, want 0 (only _instance/__system__ seeded)", n)
 	}
 
-	if _, err := st.CreateUser(ctx, "real@example.com", "hash"); err != nil {
+	if _, err := st.CreateUser(ctx, "real@example.com", "hash", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	n, _ = st.CountUsers(ctx)

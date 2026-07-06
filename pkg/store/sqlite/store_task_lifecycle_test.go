@@ -28,7 +28,7 @@ func TestTaskLifecycleEvents_RoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
 
-	user, err := st.CreateUser(ctx, "lifecycle@example.com", "hash")
+	user, err := st.CreateUser(ctx, "lifecycle@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

@@ -24,7 +24,7 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 
 	st := NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime@example.com", "hash")
+	user, err := st.CreateUser(ctx, "runtime@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestPendingApproval_StalledExecutingRecovery(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	st := NewStore(db)
-	user, err := st.CreateUser(ctx, "stall@example.com", "hash")
+	user, err := st.CreateUser(ctx, "stall@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -534,7 +534,7 @@ func TestPendingApproval_StatusCASBlocksConcurrentResolution(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
-	user, err := st.CreateUser(ctx, "cas@example.com", "hash")
+	user, err := st.CreateUser(ctx, "cas@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -586,7 +586,7 @@ func TestPendingApproval_ConcurrentResolution_ExactlyOneWinner(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
-	user, err := st.CreateUser(ctx, "race@example.com", "hash")
+	user, err := st.CreateUser(ctx, "race@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -651,7 +651,7 @@ func TestClaimPendingApprovalForExecution_ConcurrentClaim_ExactlyOneWinner(t *te
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
-	user, err := st.CreateUser(ctx, "exec-race@example.com", "hash")
+	user, err := st.CreateUser(ctx, "exec-race@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -718,7 +718,7 @@ func TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner(t *testing.T)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
-	user, err := st.CreateUser(ctx, "stalled@example.com", "hash")
+	user, err := st.CreateUser(ctx, "stalled@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -789,7 +789,7 @@ func TestRotateAgentToken_RejectsExpiringAgents(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
-	user, err := st.CreateUser(ctx, "rotate@example.com", "hash")
+	user, err := st.CreateUser(ctx, "rotate@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -833,7 +833,7 @@ func TestAgentTokenExpiry_RoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
-	user, err := st.CreateUser(ctx, "exp@example.com", "hash")
+	user, err := st.CreateUser(ctx, "exp@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -901,7 +901,7 @@ func TestConsumeSession_AtomicSingleWinner(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
-	user, err := st.CreateUser(ctx, "consume@example.com", "hash")
+	user, err := st.CreateUser(ctx, "consume@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -965,7 +965,7 @@ func TestTask_StatusCASBlocksConcurrentResolution(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
-	user, err := st.CreateUser(ctx, "task-cas@example.com", "hash")
+	user, err := st.CreateUser(ctx, "task-cas@example.com", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

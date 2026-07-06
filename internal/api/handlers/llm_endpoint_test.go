@@ -165,7 +165,7 @@ func newSeededHandlerWithLiteProxySecretDetection(t *testing.T, upstreamURL stri
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "lite-proxy@example.com", "x")
+	user, err := st.CreateUser(ctx, "lite-proxy@example.com", "x", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

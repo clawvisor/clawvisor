@@ -33,7 +33,7 @@ func TestExpireTimedOut_StrandedExecutorPreservesApprovedCanonical(t *testing.T)
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "stranded-canonical@test.example", "hash")
+	user, err := st.CreateUser(ctx, "stranded-canonical@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

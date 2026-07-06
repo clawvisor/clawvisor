@@ -118,7 +118,7 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "lite-e2e@example.com", "x")
+	user, err := st.CreateUser(ctx, "lite-e2e@example.com", "x", "")
 	if err != nil {
 		return nil, err
 	}

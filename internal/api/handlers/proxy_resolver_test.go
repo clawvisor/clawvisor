@@ -35,7 +35,7 @@ func newSeededResolver(t *testing.T) (*ProxyResolverHandler, store.Store, *store
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "resolver@example.com", "x")
+	user, err := st.CreateUser(ctx, "resolver@example.com", "x", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestResolver_RejectsForeignPlaceholder(t *testing.T) {
 
 	// Mint a different placeholder owned by a different agent. The resolver
 	// must refuse.
-	other, err := st.CreateUser(context.Background(), "other@example.com", "x")
+	other, err := st.CreateUser(context.Background(), "other@example.com", "x", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

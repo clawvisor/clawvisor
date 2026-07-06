@@ -34,12 +34,37 @@ var ErrAmbiguous = errors.New("store: multiple records match without task scope"
 // through this interface; no direct queries are made outside the store package.
 type Store interface {
 	// Users
-	CreateUser(ctx context.Context, email, passwordHash string) (*User, error)
+	//
+	// CreateUser creates a VERIFIED account with the given role (invite
+	// security: the enrollment path uses CreateInvitedUser instead, which
+	// starts unverified). The role parameter is a coordinated public-seam
+	// break (spec 04) — cloud updates its call site at submodule-bump time.
+	CreateUser(ctx context.Context, email, passwordHash, role string) (*User, error)
+	// CreateInvitedUser creates a pending_verification account (verified_at
+	// NULL) for the invite-claim path — it cannot authenticate or mint an
+	// agent token until a magic-link confirm sets verified_at.
+	CreateInvitedUser(ctx context.Context, email, passwordHash, role string) (*User, error)
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	GetUserByID(ctx context.Context, id string) (*User, error)
 	UpdateUserPassword(ctx context.Context, userID, newPasswordHash string) error
+	UpdateUserRole(ctx context.Context, userID, role string) error
+	// MarkUserVerified sets verified_at (email-possession proof). Idempotent.
+	MarkUserVerified(ctx context.Context, userID string) error
 	DeleteUser(ctx context.Context, userID string) error
 	CountUsers(ctx context.Context) (int, error)
+	CountAdmins(ctx context.Context) (int, error)
+	// ListUsers returns real users (system rows `_instance`/`__system__` and
+	// the `admin@local` magic seed excluded), newest first.
+	ListUsers(ctx context.Context) ([]*User, error)
+
+	// User invites (single-use, short-lived enrollment credentials, spec 04).
+	CreateUserInvite(ctx context.Context, inv *UserInvite) error
+	GetUserInviteByHash(ctx context.Context, tokenHash string) (*UserInvite, error)
+	ListPendingUserInvites(ctx context.Context) ([]*UserInvite, error)
+	DeleteUserInvite(ctx context.Context, id string) error
+	// MarkUserInviteUsed atomically claims an invite: sets used_by/used_at
+	// only if still unused. ErrConflict means another claim already won.
+	MarkUserInviteUsed(ctx context.Context, id, usedBy string) error
 
 	// API tokens (long-lived, scoped, revocable — the Terraform provider /
 	// CI credential). See the api_tokens migration (05-lite). Plaintext is
@@ -485,13 +510,46 @@ type TelemetryCounts struct {
 	RequestsByService map[string]int // gateway requests per service (e.g. "gmail": 120)
 }
 
+// Role constants for User.Role. Strictly two roles — flat team, no orgs
+// (PRD §5). Admin gates user management, shared-vault writes, and
+// governance-disabling changes; member is everything else.
+const (
+	RoleAdmin  = "admin"
+	RoleMember = "member"
+)
+
 // User represents a registered Clawvisor account.
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string     `json:"id"`
+	Email        string     `json:"email"`
+	PasswordHash string     `json:"-"`
+	Role         string     `json:"role"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	// VerifiedAt is the email-possession proof timestamp (invite security
+	// rule 2). NULL/zero means the account is pending_verification and
+	// cannot authenticate or mint an agent token. Existing and normally
+	// registered accounts are verified; only invite-claimed accounts start
+	// unverified until a magic-link confirm.
+	VerifiedAt *time.Time `json:"verified_at,omitempty"`
+}
+
+// Verified reports whether the account has proven email possession.
+func (u *User) Verified() bool { return u != nil && u.VerifiedAt != nil }
+
+// UserInvite is a single-use, short-lived enrollment credential. Only the
+// SHA-256 hash of the `cvinv_...` token lives at rest; the plaintext is
+// returned exactly once on mint. Email == "" means any email may claim it.
+type UserInvite struct {
+	ID        string     `json:"id"`
+	TokenHash string     `json:"-"`
+	Email     string     `json:"email"`
+	Role      string     `json:"role"`
+	CreatedBy *string    `json:"created_by"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	UsedBy    *string    `json:"used_by,omitempty"`
+	UsedAt    *time.Time `json:"used_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // APIToken is a long-lived, scoped, revocable bearer credential. The

@@ -739,16 +739,26 @@ func (s *Server) routes() http.Handler {
 	gatewayHandler.SetGatewayRateLimiter(gatewayRL, agentKeyFn)
 
 	user := func(h http.HandlerFunc) http.Handler { return requireUser(h) }
-	// userOrToken accepts a user JWT OR a `cvat_…` API token (spec 05). In
-	// 05-lite the only issuable scope is instance-admin, so one wrapper
-	// covers the whole token-reachable surface; full-05 splits it into
-	// read/write/admin variants keyed on scope. A non-`cvat_` bearer falls
-	// through to the JWT path byte-identically to `user`.
-	requireUserOrToken := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeInstanceAdmin)
+	// Spec 04 trust split. `cvat_` API-token scopes are hierarchical
+	// (instance-admin > config-write > config-read), so a higher scope
+	// always satisfies a lower gate:
+	//   - userOrTokenRead: config-read+ — read-only config surface.
+	//   - userOrToken:      config-write+ — the config CRUD the Terraform
+	//     provider drives (agents, service configs, vault items, policies).
+	//   - adminOrToken:     instance-admin token OR a JWT admin — the
+	//     instance-administrative surface (user management, shared-vault
+	//     writes, token management). A config-write token is 403
+	//     INSUFFICIENT_SCOPE here; a member JWT is 403 FORBIDDEN.
+	// A non-`cvat_` bearer falls through to the JWT path exactly like `user`.
+	requireUserOrTokenRead := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigRead)
+	userOrTokenRead := func(h http.HandlerFunc) http.Handler { return requireUserOrTokenRead(h) }
+	requireUserOrToken := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigWrite)
 	userOrToken := func(h http.HandlerFunc) http.Handler { return requireUserOrToken(h) }
 	userOrTokenPolicyRL := func(h http.HandlerFunc) http.Handler {
 		return requireUserOrToken(middleware.RateLimit(policyRL, userKeyFn, rlCfg.PolicyAPI.Limit)(h))
 	}
+	requireAdminOrToken := middleware.RequireAdminOrToken(s.jwtSvc, s.store)
+	adminOrToken := func(h http.HandlerFunc) http.Handler { return requireAdminOrToken(h) }
 	// E2E encryption middleware — wraps agent-facing routes so relay traffic is encrypted.
 	// Local requests pass through unencrypted; relay requests without E2E get 403.
 	e2e := func(h http.Handler) http.Handler { return h }
@@ -839,22 +849,37 @@ func (s *Server) routes() http.Handler {
 	// API tokens (spec 05) — admin-gated management surface. In 05-lite
 	// "admin" means a valid JWT user (single-tenant, they are the admin)
 	// OR an instance-admin API token; spec 04 adds the JWT role gate.
+	// Token management is instance-administrative: minting a token (and
+	// especially an instance-admin token) is privilege escalation, so a
+	// config-write token must not reach these routes.
 	apiTokensHandler := handlers.NewAPITokensHandler(s.store, s.logger)
-	mux.Handle("POST /api/tokens", userOrToken(apiTokensHandler.Create))
-	mux.Handle("GET /api/tokens", userOrToken(apiTokensHandler.List))
-	mux.Handle("DELETE /api/tokens/{id}", userOrToken(apiTokensHandler.Delete))
+	mux.Handle("POST /api/tokens", adminOrToken(apiTokensHandler.Create))
+	mux.Handle("GET /api/tokens", adminOrToken(apiTokensHandler.List))
+	mux.Handle("DELETE /api/tokens/{id}", adminOrToken(apiTokensHandler.Delete))
+
+	// User management + invites (spec 04). Admin-gated: a JWT admin OR an
+	// instance-admin API token (so Terraform employee-onboarding runs
+	// headlessly). Invites are the enrollment channel; role changes and
+	// deletes carry last-admin protection.
+	usersHandler := handlers.NewUsersHandler(s.store, baseURL, s.logger)
+	mux.Handle("POST /api/users/invites", adminOrToken(usersHandler.CreateInvite))
+	mux.Handle("GET /api/users/invites", adminOrToken(usersHandler.ListInvites))
+	mux.Handle("DELETE /api/users/invites/{id}", adminOrToken(usersHandler.DeleteInvite))
+	mux.Handle("GET /api/users", adminOrToken(usersHandler.ListUsers))
+	mux.Handle("PUT /api/users/{id}/role", adminOrToken(usersHandler.UpdateRole))
+	mux.Handle("DELETE /api/users/{id}", adminOrToken(usersHandler.DeleteUser))
 
 	// Restrictions (rate-limited writes) — part of the declarative-config
 	// surface an API token drives headlessly.
-	mux.Handle("GET /api/restrictions", userOrToken(restrictionsHandler.List))
+	mux.Handle("GET /api/restrictions", userOrTokenRead(restrictionsHandler.List))
 	mux.Handle("POST /api/restrictions", userOrTokenPolicyRL(restrictionsHandler.Create))
 	mux.Handle("DELETE /api/restrictions/{id}", userOrTokenPolicyRL(restrictionsHandler.Delete))
 
 	// Agents (user JWT or API token)
-	mux.Handle("GET /api/agents", userOrToken(agentsHandler.List))
+	mux.Handle("GET /api/agents", userOrTokenRead(agentsHandler.List))
 	mux.Handle("POST /api/agents", userOrToken(agentsHandler.Create))
 	mux.Handle("POST /api/agents/{id}/rotate", userOrToken(agentsHandler.RotateToken))
-	mux.Handle("GET /api/agents/{id}/runtime-settings", userOrToken(agentsHandler.GetRuntimeSettings))
+	mux.Handle("GET /api/agents/{id}/runtime-settings", userOrTokenRead(agentsHandler.GetRuntimeSettings))
 	mux.Handle("PUT /api/agents/{id}/runtime-settings", userOrToken(agentsHandler.UpdateRuntimeSettings))
 	mux.Handle("DELETE /api/agents/{id}", userOrToken(agentsHandler.Delete))
 
@@ -997,18 +1022,26 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/callbacks/register", requireAgent(e2e(http.HandlerFunc(gatewayHandler.RegisterCallback))))
 
 	// Services / OAuth (user JWT or API token)
-	mux.Handle("GET /api/services", userOrToken(servicesHandler.List))
+	mux.Handle("GET /api/services", userOrTokenRead(servicesHandler.List))
 	if s.cfg.ProxyLite.Enabled {
 		// Personal vault items — token auth lives under the same ProxyLite
 		// gate as the JWT routes (gotcha #5). In 05-lite an instance-admin
 		// token writes the caller's (`_instance`) personal vault entries;
 		// shared/`_instance` vault routes are a spec-04 addition.
-		mux.Handle("GET /api/vault/items", userOrToken(vaultHandler.ListForUser))
+		mux.Handle("GET /api/vault/items", userOrTokenRead(vaultHandler.ListForUser))
 		mux.Handle("POST /api/vault/items", userOrToken(vaultHandler.CreateForUser))
-		mux.Handle("GET /api/vault/items/{id}", userOrToken(vaultHandler.GetForUser))
+		mux.Handle("GET /api/vault/items/{id}", userOrTokenRead(vaultHandler.GetForUser))
 		mux.Handle("PUT /api/vault/items/{id}", userOrToken(vaultHandler.UpdateForUser))
 		mux.Handle("DELETE /api/vault/items/{id}", userOrToken(vaultHandler.DeleteForUser))
 		mux.Handle("GET /api/agent/vault/items", requireAgent(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
+
+		// Instance-shared vault entries (spec 04 §C) — writing one injects a
+		// credential into every member's govern-mode calls, so this is an
+		// instance-admin security boundary: JWT admin OR an instance-admin
+		// API token; a config-write token is 403 INSUFFICIENT_SCOPE.
+		mux.Handle("GET /api/vault/shared", adminOrToken(vaultHandler.SharedList))
+		mux.Handle("PUT /api/vault/shared/{serviceID}", adminOrToken(vaultHandler.SharedPut))
+		mux.Handle("DELETE /api/vault/shared/{serviceID}", adminOrToken(vaultHandler.SharedDelete))
 	}
 	mux.Handle("GET /api/oauth/url", userOAuthRL(servicesHandler.OAuthGetURL))  // fetch → returns {"url":"..."}
 	mux.Handle("GET /api/oauth/start", userOAuthRL(servicesHandler.OAuthStart)) // kept for compat
@@ -1021,7 +1054,7 @@ func (s *Server) routes() http.Handler {
 	// A dedicated surface so the Terraform provider can manage config without
 	// driving the activate flows; upserts mirror the config writes those
 	// flows do internally (services.go UpsertServiceConfig).
-	mux.Handle("GET /api/services/{serviceID}/config", userOrToken(servicesHandler.GetConfig))
+	mux.Handle("GET /api/services/{serviceID}/config", userOrTokenRead(servicesHandler.GetConfig))
 	mux.Handle("PUT /api/services/{serviceID}/config", userOrToken(servicesHandler.PutConfig))
 	mux.Handle("DELETE /api/services/{serviceID}/config", userOrToken(servicesHandler.DeleteConfig))
 	mux.Handle("POST /api/services/{serviceID}/device-flow/start", user(servicesHandler.DeviceFlowStart))

@@ -298,7 +298,7 @@ func TestMCPPersistenceRoundtrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "mcp-roundtrip@test.example", "hash")
+	user, err := st.CreateUser(ctx, "mcp-roundtrip@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestMCPPersistenceRoundtrip_AliasFromServiceMeta(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "alias-roundtrip@test.example", "hash")
+	user, err := st.CreateUser(ctx, "alias-roundtrip@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

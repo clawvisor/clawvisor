@@ -37,31 +37,50 @@ func (s *Store) Close() error {
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
-func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (*store.User, error) {
-	u := &store.User{
-		ID:           uuid.New().String(),
-		Email:        email,
-		PasswordHash: passwordHash,
+func (s *Store) CreateUser(ctx context.Context, email, passwordHash, role string) (*store.User, error) {
+	return s.createUser(ctx, email, passwordHash, role, true /* verified */)
+}
+
+func (s *Store) CreateInvitedUser(ctx context.Context, email, passwordHash, role string) (*store.User, error) {
+	return s.createUser(ctx, email, passwordHash, role, false /* pending_verification */)
+}
+
+func (s *Store) createUser(ctx context.Context, email, passwordHash, role string, verified bool) (*store.User, error) {
+	if role != store.RoleAdmin && role != store.RoleMember {
+		role = store.RoleMember
+	}
+	id := uuid.New().String()
+	var verifiedAt *time.Time
+	if verified {
+		now := time.Now().UTC()
+		verifiedAt = &now
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO users (id, email, password_hash)
-		VALUES ($1, $2, $3)
-	`, u.ID, u.Email, u.PasswordHash)
+		INSERT INTO users (id, email, password_hash, role, verified_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, id, email, passwordHash, role, verifiedAt)
 	if err != nil {
 		if isDuplicate(err) {
 			return nil, store.ErrConflict
 		}
 		return nil, err
 	}
-	return s.GetUserByID(ctx, u.ID)
+	return s.GetUserByID(ctx, id)
+}
+
+const pgUserColumns = `id, email, password_hash, role, created_at, updated_at, verified_at`
+
+func scanPGUser(scan func(...any) error) (*store.User, error) {
+	u := &store.User{}
+	if err := scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt, &u.UpdatedAt, &u.VerifiedAt); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*store.User, error) {
-	u := &store.User{}
-	err := s.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, created_at, updated_at FROM users WHERE email = $1`,
-		email,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	u, err := scanPGUser(s.pool.QueryRow(ctx,
+		`SELECT `+pgUserColumns+` FROM users WHERE email = $1`, email).Scan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -69,11 +88,8 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*store.User, 
 }
 
 func (s *Store) GetUserByID(ctx context.Context, id string) (*store.User, error) {
-	u := &store.User{}
-	err := s.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, created_at, updated_at FROM users WHERE id = $1`,
-		id,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	u, err := scanPGUser(s.pool.QueryRow(ctx,
+		`SELECT `+pgUserColumns+` FROM users WHERE id = $1`, id).Scan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -94,10 +110,155 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID, newPasswordHash 
 	return nil
 }
 
+func (s *Store) UpdateUserRole(ctx context.Context, userID, role string) error {
+	if role != store.RoleAdmin && role != store.RoleMember {
+		return errors.New("invalid role")
+	}
+	res, err := s.pool.Exec(ctx,
+		`UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2`, role, userID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) MarkUserVerified(ctx context.Context, userID string) error {
+	res, err := s.pool.Exec(ctx,
+		`UPDATE users SET verified_at = COALESCE(verified_at, NOW()), updated_at = NOW() WHERE id = $1`, userID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+const pgSystemUserFilter = `id NOT IN ('__system__', '_instance') AND email != 'admin@local'`
+
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE id NOT IN ('__system__', '_instance') AND email != 'admin@local'`).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE `+pgSystemUserFilter).Scan(&n)
 	return n, err
+}
+
+func (s *Store) CountAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE role = 'admin' AND `+pgSystemUserFilter).Scan(&n)
+	return n, err
+}
+
+func (s *Store) ListUsers(ctx context.Context) ([]*store.User, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+pgUserColumns+` FROM users WHERE `+pgSystemUserFilter+` ORDER BY created_at DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.User
+	for rows.Next() {
+		u, err := scanPGUser(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// ── User invites ──────────────────────────────────────────────────────────────
+
+func (s *Store) CreateUserInvite(ctx context.Context, inv *store.UserInvite) error {
+	if inv.ID == "" {
+		inv.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO user_invites (id, token_hash, email, role, created_by, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, inv.ID, inv.TokenHash, inv.Email, inv.Role, inv.CreatedBy, inv.ExpiresAt.UTC())
+	if err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	return nil
+}
+
+const pgUserInviteColumns = `id, token_hash, email, role, created_by, expires_at, used_by, used_at, created_at`
+
+func scanPGUserInvite(scan func(...any) error) (*store.UserInvite, error) {
+	inv := &store.UserInvite{}
+	if err := scan(&inv.ID, &inv.TokenHash, &inv.Email, &inv.Role, &inv.CreatedBy, &inv.ExpiresAt, &inv.UsedBy, &inv.UsedAt, &inv.CreatedAt); err != nil {
+		return nil, err
+	}
+	return inv, nil
+}
+
+func (s *Store) GetUserInviteByHash(ctx context.Context, tokenHash string) (*store.UserInvite, error) {
+	inv, err := scanPGUserInvite(s.pool.QueryRow(ctx,
+		`SELECT `+pgUserInviteColumns+` FROM user_invites WHERE token_hash = $1`, tokenHash).Scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return inv, err
+}
+
+func (s *Store) ListPendingUserInvites(ctx context.Context) ([]*store.UserInvite, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+pgUserInviteColumns+` FROM user_invites WHERE used_at IS NULL ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.UserInvite
+	for rows.Next() {
+		inv, err := scanPGUserInvite(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, inv)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteUserInvite(ctx context.Context, id string) error {
+	res, err := s.pool.Exec(ctx, `DELETE FROM user_invites WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) MarkUserInviteUsed(ctx context.Context, id, usedBy string) error {
+	res, err := s.pool.Exec(ctx,
+		`UPDATE user_invites SET used_by = $1, used_at = NOW() WHERE id = $2 AND used_at IS NULL`,
+		usedBy, id)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return store.ErrConflict
+	}
+	return nil
+}
+
+func (s *Store) actorEmailFor(ctx context.Context, userID string) string {
+	if userID == "" {
+		return "(unknown)"
+	}
+	var email string
+	err := s.pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&email)
+	if err != nil || email == "" {
+		return "(deleted-user)"
+	}
+	return email
 }
 
 func (s *Store) DeleteUser(ctx context.Context, userID string) error {
@@ -881,6 +1042,9 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 	// DB still bounds the call.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	// actor_email is server-derived from the row's principal — never
+	// caller-supplied — so history stays attributable after user delete (F6).
+	actorEmail := s.actorEmailFor(ctx, e.UserID)
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO audit_log (
 			id, user_id, agent_id, request_id, dedup_key, task_id, session_id, approval_id, lease_id,
@@ -889,8 +1053,8 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 			intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
 			would_block, would_review, would_prompt_inline,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
-			duration_ms, filters_applied, verification, error_msg, deduped_of
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38)
+			duration_ms, filters_applied, verification, error_msg, deduped_of, actor_email
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)
 	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.DedupKey, e.TaskID, e.SessionID, e.ApprovalID, e.LeaseID,
 		e.ToolUseID, e.MatchedTaskID, e.LeaseTaskID, e.Timestamp,
 		e.Service, e.Action, []byte(paramsSafe), e.Decision, e.Outcome,
@@ -899,7 +1063,7 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 		e.WouldBlock, e.WouldReview, e.WouldPromptInline,
 		e.SafetyFlagged, e.SafetyReason, e.Reason,
 		e.DataOrigin, e.ContextSrc, e.DurationMS, nilIfEmpty(e.FiltersApplied),
-		nilIfEmpty(e.Verification), e.ErrorMsg, e.DedupedOf)
+		nilIfEmpty(e.Verification), e.ErrorMsg, e.DedupedOf, actorEmail)
 	if err != nil && isDuplicate(err) {
 		return store.ErrConflict
 	}
@@ -912,15 +1076,16 @@ func (s *Store) RecordLLMRequestCost(ctx context.Context, c *store.LLMRequestCos
 	if c == nil || c.AuditID == "" {
 		return errors.New("RecordLLMRequestCost: audit_id required")
 	}
+	actorEmail := s.actorEmailFor(ctx, c.UserID)
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO llm_request_cost (
 			audit_id, user_id, agent_id, task_id, request_id, timestamp,
 			provider, model, input_tokens, output_tokens, cache_read_tokens,
-			cache_write_tokens, cost_micros
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			cache_write_tokens, cost_micros, actor_email
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 	`, c.AuditID, c.UserID, c.AgentID, c.TaskID, c.RequestID, c.Timestamp,
 		c.Provider, c.Model, c.InputTokens, c.OutputTokens,
-		c.CacheReadTokens, c.CacheWriteTokens, c.CostMicros)
+		c.CacheReadTokens, c.CacheWriteTokens, c.CostMicros, actorEmail)
 	if err != nil && isDuplicate(err) {
 		return store.ErrConflict
 	}

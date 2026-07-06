@@ -23,7 +23,7 @@ func TestAuditHandlerListExcludesMutedRuntimeEgressRows(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "audit-mutes@test.example", "hash")
+	user, err := st.CreateUser(ctx, "audit-mutes@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestAuditHandlerNormalizesRuntimeToolUseURLSummary(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "audit-tool@test.example", "hash")
+	user, err := st.CreateUser(ctx, "audit-tool@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestAuditHandlerNormalizesLiteProxyEndpointSummary(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "audit-lite@test.example", "hash")
+	user, err := st.CreateUser(ctx, "audit-lite@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestAuditHandlerStripsSecretsFromLegacyParamsSafeAtReadTime(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "audit-redaction@test.example", "hash")
+	user, err := st.CreateUser(ctx, "audit-redaction@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	intauth "github.com/clawvisor/clawvisor/internal/auth"
-	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
 type authStoreWrapper struct {
@@ -128,7 +128,7 @@ func TestAuthenticatorAcceptsAgentTokenAndCreatesReusableRuntimeSession(t *testi
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "proxy-auth@test.example", "hash")
+	user, err := st.CreateUser(ctx, "proxy-auth@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestAuthenticatorDoesNotReuseBootstrapRuntimeSessionsForAgentTokenAuth(t *t
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "proxy-bootstrap@test.example", "hash")
+	user, err := st.CreateUser(ctx, "proxy-bootstrap@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestAuthenticatorMintsDistinctSessionsPerLaunchID(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "proxy-auth-launch@test.example", "hash")
+	user, err := st.CreateUser(ctx, "proxy-auth-launch@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestAuthenticatorExtendsExpiryWhenSessionIsActivelyUsed(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "proxy-auth-extend@test.example", "hash")
+	user, err := st.CreateUser(ctx, "proxy-auth-extend@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestAuthenticatorReturnsUnavailableOnStoreErrors(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	baseStore := sqlite.NewStore(db)
 
-	user, err := baseStore.CreateUser(ctx, "proxy-auth-unavailable@test.example", "hash")
+	user, err := baseStore.CreateUser(ctx, "proxy-auth-unavailable@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

@@ -26,7 +26,7 @@ func newServiceConfigTestHandler(t *testing.T) (*ServicesHandler, *store.User) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlitestore.NewStore(db)
-	user, err := st.CreateUser(ctx, "config@test.example", "hash")
+	user, err := st.CreateUser(ctx, "config@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

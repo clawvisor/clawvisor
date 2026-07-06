@@ -24,7 +24,7 @@ func newSeededAgent(t *testing.T) (store.Store, *store.Agent, string) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "agent-llm@example.com", "x")
+	user, err := st.CreateUser(ctx, "agent-llm@example.com", "x", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -49,7 +49,7 @@ func newExpiredSeededAgent(t *testing.T) (store.Store, *store.Agent, string) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "expired-agent-llm@example.com", "x")
+	user, err := st.CreateUser(ctx, "expired-agent-llm@example.com", "x", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

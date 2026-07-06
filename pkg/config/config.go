@@ -191,6 +191,11 @@ type AuthConfig struct {
 	RefreshTokenTTL string   `yaml:"refresh_token_ttl"`
 	AllowedEmails   []string `yaml:"allowed_emails"`
 	MaxUsers        int      `yaml:"max_users"` // 0 = unlimited
+	// RequireInvite, when true, rejects registration without a valid invite
+	// token (403 INVITE_REQUIRED) — except the very first user, who always
+	// registers and becomes admin. Default false: open-registration behavior
+	// is unchanged (full backward compatibility). Env: AUTH_REQUIRE_INVITE.
+	RequireInvite bool `yaml:"require_invite"`
 }
 
 type ApprovalConfig struct {
@@ -661,6 +666,9 @@ func Load(path string) (*Config, error) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Auth.MaxUsers = n
 		}
+	}
+	if v := os.Getenv("AUTH_REQUIRE_INVITE"); v != "" {
+		cfg.Auth.RequireInvite = v == "1" || strings.EqualFold(v, "true")
 	}
 
 	if v := os.Getenv("CALLBACK_ALLOW_PRIVATE_CIDRS"); v != "" {
