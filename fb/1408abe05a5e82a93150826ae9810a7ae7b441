@@ -1,0 +1,28 @@
+internal/govlocal/store.go
+  s_55f7a841d7c10e::t_645d6fc269b1c7 1-77
+internal/govlocal/scan_test.go
+  s_55f7a841d7c10e::t_c14e66546f14de 1-68
+internal/govlocal/govlocal.go
+  s_55f7a841d7c10e::t_0b6ca8b9137f28 1-210
+internal/govlocal/scan.go
+  s_55f7a841d7c10e::t_0726011bc4686a 1-45
+internal/govlocal/govlocal_test.go
+  s_55f7a841d7c10e::t_429bb2715b57eb 1-4,7-8,10-23,48-194
+  s_55f7a841d7c10e::t_d9c5769b88b069 5-6,9,24-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "fb1408abe05a5e82a93150826ae9810a7ae7b441",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
