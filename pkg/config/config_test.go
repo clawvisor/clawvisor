@@ -361,12 +361,84 @@ func TestPosturePresetKnobPrecedence(t *testing.T) {
 	})
 }
 
+// TestValidatePostureContainRejected asserts the spec 09 gate semantics that
+// replaced spec 02's unconditional rejection: contain is refused UNLESS
+// experimental_contain=true, and accepted (with the superset preset applied)
+// once the flag is present.
 func TestValidatePostureContainRejected(t *testing.T) {
-	cfg := Default()
-	cfg.Posture = "contain"
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "posture contain is not yet available") {
-		t.Fatalf("expected contain rejection, got %v", err)
+	t.Run("rejected without experimental_contain", func(t *testing.T) {
+		cfg := Default()
+		cfg.Posture = "contain"
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "posture contain requires experimental_contain=true") {
+			t.Fatalf("expected contain gate rejection, got %v", err)
+		}
+	})
+	t.Run("accepted with experimental_contain and superset preset", func(t *testing.T) {
+		cfg := Default()
+		cfg.Posture = "contain"
+		cfg.ExperimentalContain = true
+		// Mimic the applied contain preset (Validate runs post-preset).
+		cfg.ProxyLite.Enabled = true
+		cfg.RuntimeProxy.Enabled = true
+		cfg.RuntimeProxy.LLMRoute = "proxy_lite"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("expected contain to validate with the gate flag, got %v", err)
+		}
+	})
+	t.Run("contain preset without proxy_lite.enabled fails llm_route gate", func(t *testing.T) {
+		cfg := Default()
+		cfg.Posture = "contain"
+		cfg.ExperimentalContain = true
+		cfg.ProxyLite.Enabled = false
+		cfg.RuntimeProxy.Enabled = true
+		cfg.RuntimeProxy.LLMRoute = "proxy_lite"
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "llm_route=proxy_lite requires proxy_lite.enabled=true") {
+			t.Fatalf("expected llm_route gate error, got %v", err)
+		}
+	})
+}
+
+// TestContainPresetAppliesSuperset asserts that loading a contain-postured
+// config (with the experimental gate) applies the Govern preset PLUS the
+// runtime-proxy superset knobs (enabled + llm_route=proxy_lite), per spec 09.
+func TestContainPresetAppliesSuperset(t *testing.T) {
+	cfg, err := Load(writePostureConfig(t, "posture: contain\nexperimental_contain: true\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.ProxyLite.Enabled || cfg.ProxyLite.ObserveMode() || cfg.ProxyLite.PassthroughUpstreamAuth() {
+		t.Fatalf("contain preset should apply govern proxy_lite knobs: enabled=%v observe=%v passthrough=%v",
+			cfg.ProxyLite.Enabled, cfg.ProxyLite.ObserveMode(), cfg.ProxyLite.PassthroughUpstreamAuth())
+	}
+	if !cfg.RuntimeProxy.Enabled {
+		t.Fatal("contain preset should enable the runtime proxy")
+	}
+	if !cfg.RuntimeProxy.LLMRouteProxyLite() {
+		t.Fatalf("contain preset should set llm_route=proxy_lite, got %q", cfg.RuntimeProxy.LLMRoute)
+	}
+}
+
+// TestContainPresetWithoutGateFailsLoad asserts that contain without the
+// experimental gate fails startup validation (Load applies the preset; the
+// server rejects it at Validate()).
+func TestContainPresetWithoutGateFailsLoad(t *testing.T) {
+	cfg, err := Load(writePostureConfig(t, "posture: contain\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "posture contain requires experimental_contain=true") {
+		t.Fatalf("expected contain Validate to fail on the gate, got %v", err)
+	}
+}
+
+// TestDefaultLLMRouteIsDirect locks the legacy-safe default: llm_route is
+// "direct" so an install that never opts into contain keeps today's behavior.
+func TestDefaultLLMRouteIsDirect(t *testing.T) {
+	if d := Default(); d.RuntimeProxy.LLMRoute != "direct" {
+		t.Fatalf("Default().RuntimeProxy.LLMRoute=%q, want direct", d.RuntimeProxy.LLMRoute)
 	}
 }
 
