@@ -51,9 +51,10 @@ locals {
   })
 
   config = templatefile("${local.module_dir}/templates/config.yaml.tftpl", {
-    public_fqdn   = var.public_fqdn
-    otel_endpoint = ""
-    posture       = "observe"
+    public_fqdn          = var.public_fqdn
+    otel_endpoint        = ""
+    posture              = "observe"
+    experimental_contain = false
   })
 }
 
