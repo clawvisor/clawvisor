@@ -115,6 +115,9 @@ database:
 vault:
   backend: "local"
   local_key_file: "%s"
+  reference_allowlist:
+    - "arn:aws:secretsmanager:"
+    - "projects/"
 auth:
   jwt_secret: "test-jwt-secret-must-be-long-enough-32"
   access_token_ttl: "1h"

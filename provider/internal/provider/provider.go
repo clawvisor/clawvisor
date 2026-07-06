@@ -152,6 +152,7 @@ func (p *clawvisorProvider) Resources(_ context.Context) []func() resource.Resou
 		NewAgentResource,
 		NewServiceConfigResource,
 		NewVaultEntryResource,
+		NewVaultReferenceResource,
 		NewAPITokenResource,
 		NewModelPolicyResource,
 		NewSpendCapResource,
