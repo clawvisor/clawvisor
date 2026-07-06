@@ -193,6 +193,20 @@ type VaultConfig struct {
 	LocalKeyFile string `yaml:"local_key_file"`
 	GCPProject   string `yaml:"gcp_project"`
 	MasterKey    string `yaml:"-"` // base64-encoded 32-byte key; env-only (VAULT_KEY)
+
+	// ReferenceAllowlist is the operator-configured set of permitted
+	// reference-id prefixes (ARN / resource-name / path). A reference whose
+	// id does not begin with a listed prefix is rejected at create time. An
+	// EMPTY allowlist disables reference creation entirely (fail closed) —
+	// the confused-deputy control for the ambient-identity resolvers (spec
+	// 10). Env override VAULT_REFERENCE_ALLOWLIST is comma-separated.
+	ReferenceAllowlist []string `yaml:"reference_allowlist"`
+
+	// AWSSMEndpoint / GCPSMEndpoint override the Secrets Manager endpoint
+	// for deterministic testing against a local mock (localstack / httptest
+	// / gRPC mock). They are env-only and MUST stay empty in production.
+	AWSSMEndpoint string `yaml:"-"` // env CLAWVISOR_VAULT_AWS_SM_ENDPOINT
+	GCPSMEndpoint string `yaml:"-"` // env CLAWVISOR_VAULT_GCP_SM_ENDPOINT
 }
 
 type AuthConfig struct {
@@ -672,6 +686,15 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("VAULT_KEY"); v != "" {
 		cfg.Vault.MasterKey = v
+	}
+	if v := os.Getenv("VAULT_REFERENCE_ALLOWLIST"); v != "" {
+		cfg.Vault.ReferenceAllowlist = splitCSV(v)
+	}
+	if v := os.Getenv("CLAWVISOR_VAULT_AWS_SM_ENDPOINT"); v != "" {
+		cfg.Vault.AWSSMEndpoint = v
+	}
+	if v := os.Getenv("CLAWVISOR_VAULT_GCP_SM_ENDPOINT"); v != "" {
+		cfg.Vault.GCPSMEndpoint = v
 	}
 	if v := os.Getenv("PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {

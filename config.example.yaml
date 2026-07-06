@@ -11,9 +11,24 @@ database:
   sqlite_path: "./clawvisor.db"
 
 vault:
-  backend: "local"         # "local" | "gcp"
+  backend: "local"         # "local" | "gcp" — the PUSH backend (stores values)
   local_key_file: "./vault.key"
   gcp_project: ""          # from env: GCP_PROJECT
+
+  # Reference-mode secrets (spec 10). A vault entry may hold a REFERENCE to a
+  # secret in your own store (AWS Secrets Manager / GCP Secret Manager),
+  # resolved to plaintext at injection time and never persisted by Clawvisor.
+  # References are per-entry and coexist with pushed values under any backend.
+  #
+  # Resolution uses AMBIENT cloud identity only (instance role / workload
+  # identity) — never credentials stored in this config. To prevent a
+  # confused-deputy (a member referencing an instance-readable secret they
+  # shouldn't), reference targets are constrained to this prefix allowlist.
+  # An EMPTY allowlist disables reference creation entirely (fail closed).
+  # env override: VAULT_REFERENCE_ALLOWLIST (comma-separated).
+  reference_allowlist: []
+  # - "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/"
+  # - "projects/my-project/secrets/"
 
 auth:
   jwt_secret: ""           # from env: JWT_SECRET  (auto-generated locally; required in prod)
