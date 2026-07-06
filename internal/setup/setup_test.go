@@ -1,12 +1,15 @@
 package setup
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	cfgpkg "github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 // TestFlipWizardDefaultsToObserve locks the writer-side flip (spec 08 / PRD
@@ -106,4 +109,60 @@ func TestWizardWritesMarkerAndExplicitKey(t *testing.T) {
 				loaded.ProxyLite.Enabled, loaded.ProxyLite.ObserveMode(), loaded.ProxyLite.PassthroughUpstreamAuth())
 		}
 	})
+}
+
+// TestWizardReferenceModeVerifyAndWrite covers the spec-10 wizard choice step:
+// reference mode captures a target, verifies it resolves via an injected
+// resolver, and writeConfig emits vault.reference_allowlist so references are
+// enabled (which then round-trips through Load).
+func TestWizardReferenceModeVerifyAndWrite(t *testing.T) {
+	// verifyWizardReference dispatches to the chosen backend and surfaces the
+	// resolver's typed error verbatim.
+	env := vault.RefEnvelope{Backend: vault.BackendAWSSM, ID: "arn:aws:secretsmanager:us-east-1:1:secret:prod/x"}
+	ok := map[string]vault.Resolver{vault.BackendAWSSM: stubResolver{val: []byte("resolved")}}
+	if err := verifyWizardReference(context.Background(), ok, env); err != nil {
+		t.Fatalf("verify (ok): %v", err)
+	}
+	deny := map[string]vault.Resolver{vault.BackendAWSSM: stubResolver{err: vault.ErrRefAccessDenied}}
+	if err := verifyWizardReference(context.Background(), deny, env); !errors.Is(err, vault.ErrRefAccessDenied) {
+		t.Fatalf("verify (denied) = %v, want ErrRefAccessDenied", err)
+	}
+	if err := verifyWizardReference(context.Background(), ok, vault.RefEnvelope{Backend: "nope", ID: "x"}); err == nil {
+		t.Fatalf("verify with unknown backend should error")
+	}
+
+	// writeConfig emits the allowlist when reference mode set one.
+	cfg := &config{
+		envMode:            "local",
+		host:               "127.0.0.1",
+		port:               "25297",
+		vault:              "local",
+		llmProvider:        "anthropic",
+		llmEndpoint:        "https://api.anthropic.com/v1",
+		llmModel:           "claude-haiku-4-5",
+		secretsMode:        "reference",
+		refBackend:         vault.BackendAWSSM,
+		refID:              env.ID,
+		referenceAllowlist: []string{env.ID},
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := writeConfig(cfg, path); err != nil {
+		t.Fatalf("writeConfig: %v", err)
+	}
+	loaded, err := cfgpkg.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded.Vault.ReferenceAllowlist) != 1 || loaded.Vault.ReferenceAllowlist[0] != env.ID {
+		t.Fatalf("ReferenceAllowlist=%v, want [%s]", loaded.Vault.ReferenceAllowlist, env.ID)
+	}
+}
+
+type stubResolver struct {
+	val []byte
+	err error
+}
+
+func (s stubResolver) Resolve(context.Context, vault.RefEnvelope) ([]byte, error) {
+	return s.val, s.err
 }

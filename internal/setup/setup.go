@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
@@ -15,6 +17,9 @@ import (
 	tuiconfig "github.com/clawvisor/clawvisor/internal/tui/config"
 	cfgpkg "github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/haikuproxy"
+	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/clawvisor/clawvisor/pkg/vault/refaws"
+	"github.com/clawvisor/clawvisor/pkg/vault/refgcp"
 )
 
 // configWriterSchema is the schema marker every wizard-written config carries.
@@ -67,6 +72,18 @@ type config struct {
 	proxyLitePublicURL string
 
 	telemetryEnabled bool
+
+	// Secrets mode (spec 10, PRD §7). "push" (default) stores credentials
+	// encrypted in Clawvisor's vault; "reference" points the vault at a secret
+	// in the operator's own cloud secret manager, resolved at injection time.
+	// When reference mode is chosen the wizard captures one reference, verifies
+	// it resolves, and writes vault.reference_allowlist so references are
+	// enabled (empty allowlist = references disabled, fail closed).
+	secretsMode        string // "push" | "reference"
+	refBackend         string // aws-sm | gcp-sm
+	refID              string
+	refJSONKey         string
+	referenceAllowlist []string
 
 	outputDir string // set by RunWithOptions; empty = CWD
 }
@@ -173,6 +190,9 @@ func runSetup() (*config, error) {
 		return nil, err
 	}
 	if err := stepLLM(cfg); err != nil {
+		return nil, err
+	}
+	if err := stepSecretsMode(cfg); err != nil {
 		return nil, err
 	}
 	if err := stepPosture(cfg); err != nil {
@@ -510,6 +530,109 @@ func stepLLM(cfg *config) error {
 	).Run()
 }
 
+// newWizardResolvers builds the reference resolvers the wizard uses to verify
+// a chosen reference. It is a package var so tests can inject fakes without
+// cloud credentials.
+var newWizardResolvers = func() map[string]vault.Resolver {
+	return map[string]vault.Resolver{
+		vault.BackendAWSSM: refaws.New(""),
+		vault.BackendGCPSM: refgcp.New(""),
+	}
+}
+
+// verifyWizardReference resolves a candidate reference once and discards the
+// plaintext, returning an actionable error on failure. The plaintext is never
+// printed or stored.
+func verifyWizardReference(ctx context.Context, resolvers map[string]vault.Resolver, env vault.RefEnvelope) error {
+	r, ok := resolvers[env.Backend]
+	if !ok {
+		return fmt.Errorf("unknown backend %q", env.Backend)
+	}
+	if _, err := r.Resolve(ctx, env); err != nil {
+		return err
+	}
+	return nil
+}
+
+// stepSecretsMode offers the two vaulting modes (PRD §7). Push is
+// pre-selected; reference mode is offered for operators who already keep
+// secrets in a cloud secret manager. Choosing reference captures one target,
+// verifies it resolves via the instance's ambient identity, and enables
+// references by allowlisting the target prefix.
+func stepSecretsMode(cfg *config) error {
+	fmt.Println(section.Render("── Secrets ────────────────────────────────"))
+	fmt.Println()
+	fmt.Println(dim.Padding(0, 2).Render("How should Clawvisor obtain provider/service secrets?"))
+	fmt.Println()
+
+	mode := "push"
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Secrets mode").
+				Options(
+					huh.NewOption("Paste keys (stored encrypted in Clawvisor's vault)", "push"),
+					huh.NewOption("Reference an existing secret manager entry (AWS/GCP)", "reference"),
+				).
+				Value(&mode),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	cfg.secretsMode = mode
+	if mode != "reference" {
+		return nil
+	}
+
+	backend := vault.BackendAWSSM
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Reference backend").
+				Options(
+					huh.NewOption("AWS Secrets Manager", vault.BackendAWSSM),
+					huh.NewOption("GCP Secret Manager", vault.BackendGCPSM),
+				).
+				Value(&backend),
+			huh.NewInput().
+				Title("Secret reference (ARN / projects/{p}/secrets/{s})").
+				Value(&cfg.refID).
+				Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" {
+						return fmt.Errorf("required")
+					}
+					return nil
+				}),
+			huh.NewInput().
+				Title("JSON key (optional — leave blank to use the raw secret)").
+				Value(&cfg.refJSONKey),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	cfg.refBackend = backend
+	cfg.refID = strings.TrimSpace(cfg.refID)
+
+	// Enable references by allowlisting exactly this target (a full id is a
+	// valid prefix). The Terraform module widens this to a shared prefix.
+	cfg.referenceAllowlist = []string{cfg.refID}
+
+	// Verify the reference resolves now, so a bad ARN/permission is caught at
+	// setup rather than at first agent request.
+	env := vault.RefEnvelope{Backend: cfg.refBackend, ID: cfg.refID, JSONKey: strings.TrimSpace(cfg.refJSONKey)}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := verifyWizardReference(ctx, newWizardResolvers(), env); err != nil {
+		fmt.Println(yellow.Padding(0, 2).Render("  Could not resolve the reference: " + err.Error()))
+		fmt.Println(dim.Padding(0, 2).Render("  Setup will continue; grant the instance identity read access and retry via the dashboard/Terraform."))
+		fmt.Println()
+	} else {
+		fmt.Println(green.Padding(0, 2).Render("  ✓ Reference resolved"))
+		fmt.Println()
+	}
+	return nil
+}
+
 // recommendedPosture is the fresh-install posture the wizard pre-selects and
 // recommends. Spec 08 (the default flip) makes this "observe" — proxy-lite in
 // the Observe posture — so a fresh wizard install lands on visibility-by-
@@ -742,6 +865,15 @@ func writeConfig(cfg *config, path string) error {
 		fmt.Fprintf(&b, "  gcp_project: \"%s\"\n", cfg.gcpProject)
 	} else {
 		fmt.Fprintf(&b, "  local_key_file: \"%s\"\n", vaultKeyPath)
+	}
+	// Reference mode (spec 10): the allowlist enables reference resolution and
+	// constrains it to the operator's chosen targets. Absent/empty = references
+	// disabled (fail closed).
+	if len(cfg.referenceAllowlist) > 0 {
+		fmt.Fprintf(&b, "  reference_allowlist:\n")
+		for _, prefix := range cfg.referenceAllowlist {
+			fmt.Fprintf(&b, "    - \"%s\"\n", prefix)
+		}
 	}
 
 	if cfg.envMode == "production" {
