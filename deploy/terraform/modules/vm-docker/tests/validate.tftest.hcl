@@ -90,6 +90,27 @@ run "rejects_invalid_posture" {
   expect_failures = [var.posture]
 }
 
+run "rejects_contain_without_experimental_flag" {
+  command = plan
+
+  variables {
+    image   = "ghcr.io/clawvisor/clawvisor:v1.4.2"
+    posture = "contain"
+  }
+
+  expect_failures = [var.experimental_contain]
+}
+
+run "accepts_contain_with_experimental_flag" {
+  command = plan
+
+  variables {
+    image                = "ghcr.io/clawvisor/clawvisor:v1.4.2"
+    posture              = "contain"
+    experimental_contain = true
+  }
+}
+
 run "rejects_public_agent_cidr_without_ack" {
   command = plan
 

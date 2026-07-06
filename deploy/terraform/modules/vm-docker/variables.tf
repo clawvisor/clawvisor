@@ -47,6 +47,18 @@ variable "posture" {
   }
 }
 
+variable "experimental_contain" {
+  type        = bool
+  default     = false
+  description = "Gate for the experimental Contain posture (spec 09). posture = \"contain\" is refused at plan time unless this is true; when set the module writes experimental_contain: true into the rendered server config. Remove this variable (and the server-side config gate) in the release where CI runs the capability-parity lane required-blocking."
+
+  # Cross-variable refusal (Terraform >= 1.9): contain requires the flag.
+  validation {
+    condition     = var.posture != "contain" || var.experimental_contain
+    error_message = "posture = \"contain\" is experimental and must be opted into with experimental_contain = true until the capability-parity lane is required-blocking (spec 09)."
+  }
+}
+
 variable "db" {
   type        = string
   default     = "managed"

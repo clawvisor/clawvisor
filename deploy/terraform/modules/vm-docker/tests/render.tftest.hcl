@@ -59,6 +59,38 @@ run "config_carries_posture_and_proxy_lite" {
   }
 }
 
+run "config_carries_contain_gate_when_enabled" {
+  command = apply
+
+  variables {
+    posture              = "contain"
+    experimental_contain = true
+  }
+
+  assert {
+    condition     = can(regex("posture: \"contain\"", local.config_rendered))
+    error_message = "rendered config must carry the active posture key for contain"
+  }
+
+  assert {
+    condition     = can(regex("experimental_contain: true", local.config_rendered))
+    error_message = "rendered config must set experimental_contain: true so the server accepts posture: contain"
+  }
+}
+
+run "config_omits_contain_gate_by_default" {
+  command = apply
+
+  variables {
+    posture = "observe"
+  }
+
+  assert {
+    condition     = !can(regex("experimental_contain: true", local.config_rendered))
+    error_message = "non-contain deploys must not emit the experimental_contain gate"
+  }
+}
+
 run "config_wires_otel_when_endpoint_set" {
   command = apply
 

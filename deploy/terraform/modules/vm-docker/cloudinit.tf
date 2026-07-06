@@ -19,9 +19,10 @@ locals {
   })
 
   config_rendered = templatefile("${path.module}/templates/config.yaml.tftpl", {
-    public_fqdn   = var.public_fqdn
-    otel_endpoint = var.otel_endpoint
-    posture       = var.posture
+    public_fqdn          = var.public_fqdn
+    otel_endpoint        = var.otel_endpoint
+    posture              = var.posture
+    experimental_contain = var.experimental_contain
   })
 
   deploy_rendered = templatefile("${path.module}/templates/deploy.sh.tftpl", {
