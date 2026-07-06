@@ -41,11 +41,26 @@ const refreshTokenCookieName = "clawvisor_refresh_token"
 // Register creates a new user account.
 //
 // POST /api/auth/register
-// Body: {"email": "...", "password": "..."}
+// Body: {"email": "...", "password": "...", "invite_token"?: "cvinv_..."}
+//
+// Roles & invites (spec 04):
+//   - The very first user (CountUsers == 0) always becomes admin; every
+//     subsequent user is a member.
+//   - A valid invite_token bypasses AllowedEmails (still respects MaxUsers)
+//     and, when auth.require_invite is set, is what makes registration
+//     possible at all. An invite claimed over this enrollment channel can
+//     only ever produce a member (invite security rule 1: the token rides
+//     through argv/env, so it must not grant admin — promotion is a
+//     deliberate admin act via PUT /api/users/{id}/role).
+//   - An invite-claimed account is created pending_verification and cannot
+//     authenticate or mint an agent token until the invitee proves email
+//     possession via the magic-link confirm (rule 2). No auth tokens are
+//     issued on claim.
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email       string `json:"email"`
+		Password    string `json:"password"`
+		InviteToken string `json:"invite_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
@@ -56,19 +71,36 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.cfg.MaxUsers > 0 {
-		count, err := h.st.CountUsers(r.Context())
+	count, err := h.st.CountUsers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not check user count")
+		return
+	}
+	isFirstUser := count == 0
+
+	// Resolve the invite (if one was supplied) before any gate: it both
+	// unlocks require_invite installs and bypasses AllowedEmails.
+	var invite *store.UserInvite
+	if strings.TrimSpace(body.InviteToken) != "" {
+		invite, err = h.resolveInvite(r, body.InviteToken, body.Email)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not check user count")
-			return
-		}
-		if count >= h.cfg.MaxUsers {
-			writeError(w, http.StatusForbidden, "REGISTRATION_DISABLED", "maximum number of users reached")
+			writeInviteError(w, err)
 			return
 		}
 	}
 
-	if len(h.cfg.AllowedEmails) > 0 {
+	if h.cfg.RequireInvite && invite == nil && !isFirstUser {
+		writeError(w, http.StatusForbidden, "INVITE_REQUIRED", "registration requires a valid invite")
+		return
+	}
+
+	if h.cfg.MaxUsers > 0 && count >= h.cfg.MaxUsers {
+		writeError(w, http.StatusForbidden, "REGISTRATION_DISABLED", "maximum number of users reached")
+		return
+	}
+
+	// AllowedEmails is bypassed by a valid invite; otherwise enforced.
+	if invite == nil && len(h.cfg.AllowedEmails) > 0 {
 		allowed := false
 		for _, e := range h.cfg.AllowedEmails {
 			if strings.EqualFold(e, body.Email) {
@@ -88,7 +120,41 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.st.CreateUser(r.Context(), body.Email, hash, "")
+	// Invite-claim path: create a pending_verification member and burn the
+	// invite. No tokens are issued — the invitee confirms email possession
+	// via the magic-link flow first.
+	if invite != nil {
+		user, err := h.st.CreateInvitedUser(r.Context(), body.Email, hash, store.RoleMember)
+		if err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				writeError(w, http.StatusConflict, "EMAIL_TAKEN", "an account with that email already exists")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create user")
+			return
+		}
+		if err := h.st.MarkUserInviteUsed(r.Context(), invite.ID, user.ID); err != nil {
+			// Lost a single-use race: another claim already burned it.
+			_ = h.st.DeleteUser(r.Context(), user.ID)
+			writeError(w, http.StatusConflict, "INVITE_ALREADY_USED", "invite has already been claimed")
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"status":  "pending_verification",
+			"user_id": user.ID,
+			"email":   user.Email,
+		})
+		return
+	}
+
+	// Non-invite path: first user is admin, everyone else a member; the
+	// account is verified immediately and receives a token pair (unchanged
+	// open-registration behavior).
+	role := store.RoleMember
+	if isFirstUser {
+		role = store.RoleAdmin
+	}
+	user, err := h.st.CreateUser(r.Context(), body.Email, hash, role)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			writeError(w, http.StatusConflict, "EMAIL_TAKEN", "an account with that email already exists")
@@ -105,6 +171,48 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// errInvite* are resolveInvite failure sentinels mapped to HTTP by
+// writeInviteError so the plaintext token is never echoed.
+var (
+	errInviteNotFound = errors.New("invite not found")
+	errInviteExpired  = errors.New("invite expired")
+	errInviteUsed     = errors.New("invite already used")
+	errInviteEmail    = errors.New("invite email mismatch")
+)
+
+// resolveInvite validates a plaintext cvinv_ token against the store: it
+// must exist, be unused, be unexpired, and (when the invite pinned an
+// email) match the registrant's email case-insensitively.
+func (h *AuthHandler) resolveInvite(r *http.Request, token, email string) (*store.UserInvite, error) {
+	inv, err := h.st.GetUserInviteByHash(r.Context(), auth.HashToken(strings.TrimSpace(token)))
+	if err != nil {
+		return nil, errInviteNotFound
+	}
+	if inv.UsedAt != nil {
+		return nil, errInviteUsed
+	}
+	if time.Now().After(inv.ExpiresAt) {
+		return nil, errInviteExpired
+	}
+	if inv.Email != "" && !strings.EqualFold(inv.Email, email) {
+		return nil, errInviteEmail
+	}
+	return inv, nil
+}
+
+func writeInviteError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errInviteExpired):
+		writeError(w, http.StatusForbidden, "INVITE_EXPIRED", "invite has expired")
+	case errors.Is(err, errInviteUsed):
+		writeError(w, http.StatusConflict, "INVITE_ALREADY_USED", "invite has already been claimed")
+	case errors.Is(err, errInviteEmail):
+		writeError(w, http.StatusForbidden, "INVITE_EMAIL_MISMATCH", "invite is bound to a different email")
+	default:
+		writeError(w, http.StatusForbidden, "INVITE_INVALID", "invite is not valid")
+	}
 }
 
 // Login authenticates a user and returns a token pair.
@@ -135,6 +243,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	if err := auth.CheckPassword(body.Password, user.PasswordHash); err != nil {
 		writeError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid email or password")
+		return
+	}
+
+	// Email-possession proof (invite security rule 2): a pending_verification
+	// account cannot authenticate until it confirms the email via magic link.
+	if !user.Verified() {
+		writeError(w, http.StatusForbidden, "EMAIL_NOT_VERIFIED", "confirm your email via the magic link before signing in")
 		return
 	}
 
@@ -361,6 +476,16 @@ func (h *AuthHandler) ExchangeMagic(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "USER_NOT_FOUND", "user not found")
 		return
+	}
+
+	// Exchanging a magic link proves control of the account's email — this
+	// is the email-possession confirm that flips a pending_verification
+	// invite-claimed account to usable (invite security rule 2). Idempotent.
+	if !user.Verified() {
+		if err := h.st.MarkUserVerified(r.Context(), user.ID); err == nil {
+			now := time.Now().UTC()
+			user.VerifiedAt = &now
+		}
 	}
 
 	resp, err := h.issueTokens(w, r, user)

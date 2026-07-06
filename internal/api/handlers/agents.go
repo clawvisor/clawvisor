@@ -35,6 +35,14 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 		return
 	}
+	// A pending_verification account cannot mint an agent token until it has
+	// proven email possession (invite security rule 2). Token-authenticated
+	// callers act as the verified `_instance` user, so headless Terraform /
+	// CI enrollment is unaffected.
+	if !user.Verified() {
+		writeError(w, http.StatusForbidden, "EMAIL_NOT_VERIFIED", "confirm your email before registering an agent")
+		return
+	}
 
 	var body struct {
 		Description string `json:"description"`

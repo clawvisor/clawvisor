@@ -673,6 +673,18 @@ func ConnectStore(logger *slog.Logger) (*config.Config, store.Store, error) {
 }
 
 func buildVault(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, error) {
+	inner, err := buildVaultBackend(cfg, db, driver)
+	if err != nil {
+		return nil, err
+	}
+	// Wrap unconditionally so instance-shared entries (owned by the
+	// `_instance` sentinel) resolve specific-first-then-shared. With no
+	// shared entries it is a transparent passthrough. Cloud wraps this
+	// again with OrgAwareVault → org → user → instance order.
+	return vault.NewInstanceAware(inner), nil
+}
+
+func buildVaultBackend(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, error) {
 	switch cfg.Vault.Backend {
 	case "local":
 		key, err := intvault.ResolveKey(cfg.Vault.MasterKey, cfg.Vault.LocalKeyFile)
