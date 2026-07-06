@@ -506,7 +506,12 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	if h.upstreamAuthPassthrough() {
 		// Passthrough posture: forward the client's own provider credential
 		// for EVERY request, and require one to be present.
-		r = r.WithContext(llmproxy.WithPassthroughUpstreamAuth(r.Context()))
+		// Mutate rootCtx (not just r) so the setPhase closure — which
+		// re-derives r's context from rootCtx before the upstream forward —
+		// carries the posture override rather than reverting to the
+		// middleware's header-derived flag.
+		rootCtx = llmproxy.WithPassthroughUpstreamAuth(rootCtx)
+		r = r.WithContext(rootCtx)
 		auditParams["auth_mode"] = "passthrough"
 		authModeMetric = "passthrough"
 		if !llmproxy.HasClientProviderCredential(r) {
@@ -521,7 +526,11 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Vault posture (default): force passthrough OFF and apply the
 		// subscription/OAuth carve-out before any silent strip-and-inject.
-		r = r.WithContext(llmproxy.WithVaultUpstreamAuth(r.Context()))
+		// Mutate rootCtx (see the passthrough branch): setPhase re-derives
+		// r's context from rootCtx before the forward, so the F1 override
+		// must live on rootCtx to survive.
+		rootCtx = llmproxy.WithVaultUpstreamAuth(rootCtx)
+		r = r.WithContext(rootCtx)
 		auditParams["auth_mode"] = "vault"
 		switch llmproxy.ClassifyUpstreamCredential(r) {
 		case llmproxy.CredentialSubscription, llmproxy.CredentialUnrecognized:
