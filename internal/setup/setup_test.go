@@ -9,6 +9,19 @@ import (
 	cfgpkg "github.com/clawvisor/clawvisor/pkg/config"
 )
 
+// TestFlipWizardDefaultsToObserve locks the writer-side flip (spec 08 / PRD
+// §11): the wizard's recommended, pre-selected posture is Observe, so a fresh
+// install that accepts the defaults lands in the Observe posture with an
+// explicit proxy_lite.enabled: true. Skill-gateway-only is the opt-out. This
+// is the wizard half of TestFlipFreshWizardLandsObserve (the boot half lives
+// in e2e/scenarios); together they prove the fresh default flipped without
+// touching Default() (see TestFlipDefaultStaysFalse in pkg/config).
+func TestFlipWizardDefaultsToObserve(t *testing.T) {
+	if got := recommendedPosture(); got != "observe" {
+		t.Fatalf("recommendedPosture()=%q, want observe (fresh-install flip default)", got)
+	}
+}
+
 // TestWizardWritesMarkerAndExplicitKey asserts writeConfig always stamps the
 // config_schema marker and an explicit proxy_lite.enabled key, and that a
 // wizard config round-trips through Load without silently enabling proxy-lite.

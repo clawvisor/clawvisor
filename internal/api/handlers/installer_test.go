@@ -963,6 +963,113 @@ func TestInstallerShellNotAvailableForMarkdownTargets(t *testing.T) {
 	}
 }
 
+// installerGetShellQuery hits the .sh installer endpoint with an arbitrary
+// query string and returns the rendered body. Mirrors installerGetShell but
+// lets the caller pass route=... etc.
+func installerGetShellQuery(t *testing.T, h *InstallerHandler, target, query string) string {
+	t.Helper()
+	path := "/skill/install/" + target + ".sh"
+	if query != "" {
+		path += "?" + query
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /skill/install/{target}", h.Setup)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + path)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET %s: status %d, body: %s", path, resp.StatusCode, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/x-sh") {
+		t.Fatalf("expected application/x-sh, got %q", ct)
+	}
+	return string(body)
+}
+
+// TestInstallerDefaultRoutesLLM — the flip (spec 08 / PRD §11): the DEFAULT
+// generated script for each self-install target bakes the provider base-URL
+// export so LLM traffic routes through Clawvisor (Observe). This is the
+// fresh-install default; no query param is required.
+func TestInstallerDefaultRoutesLLM(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	// claude-code default bakes ANTHROPIC_BASE_URL.
+	claude := installerGetShell(t, h, "claude-code", "ABCDEFGHIJ")
+	if !strings.Contains(claude, "ANTHROPIC_BASE_URL") {
+		t.Error("default claude-code script must bake ANTHROPIC_BASE_URL routing")
+	}
+	// codex default bakes the [model_providers.*] block pointed at the proxy.
+	codex := installerGetShell(t, h, "codex", "CLAIMCODE0")
+	if !strings.Contains(codex, "base_url = \"$LLM_URL/api/v1\"") {
+		t.Error("default codex script must bake the proxy base_url routing")
+	}
+}
+
+// TestFlipSkillOnlyOptOut — the explicit opt-out (spec 08). route=skill-only
+// registers the agent WITHOUT routing: the generated claude-code and codex
+// scripts must contain no provider base-URL export, so the seat keeps talking
+// to its provider directly. The wizard "no" half of this opt-out is covered by
+// TestWizardWritesMarkerAndExplicitKey in internal/setup (enabled: false).
+func TestFlipSkillOnlyOptOut(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+
+	claude := installerGetShellQuery(t, h, "claude-code", "claim=ABCDEFGHIJ&route=skill-only")
+	if strings.Contains(claude, "ANTHROPIC_BASE_URL=") {
+		t.Errorf("skill-only claude-code script must NOT export ANTHROPIC_BASE_URL; body:\n%s", claude)
+	}
+	assertContainsAll(t, claude,
+		"skill-only",
+		"/api/agents/connect",
+		"chmod 600",
+		"LLM traffic is NOT routed",
+	)
+
+	codex := installerGetShellQuery(t, h, "codex", "claim=CLAIMCODE0&route=skill-only")
+	if strings.Contains(codex, "OPENAI_BASE_URL=") || strings.Contains(codex, "base_url = \"$LLM_URL") {
+		t.Errorf("skill-only codex script must NOT bake a provider base URL; body:\n%s", codex)
+	}
+	assertContainsAll(t, codex,
+		"skill-only",
+		"/api/agents/connect",
+		"LLM traffic is NOT routed",
+	)
+}
+
+// TestInstallerSubscriptionModeNoApiKey — a Claude-subscription/OAuth seat
+// (route=subscription) must be routed for Observe passthrough WITHOUT assuming
+// an API key: the script sets ANTHROPIC_BASE_URL + the X-Clawvisor-Agent-Token
+// header but never references ANTHROPIC_API_KEY / sk-ant-, and never clobbers
+// the OAuth session in Authorization (no ANTHROPIC_AUTH_TOKEN override). Pairs
+// with spec 02's TestObserveCarriesSubscriptionSession (the proxy side).
+func TestInstallerSubscriptionModeNoApiKey(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	body := installerGetShellQuery(t, h, "claude-code", "claim=ABCDEFGHIJ&route=subscription")
+
+	// Routes for Observe.
+	assertContainsAll(t, body,
+		"ANTHROPIC_BASE_URL",
+		"X-Clawvisor-Agent-Token: $TOKEN",
+		"subscription",
+	)
+	// Never references an API key — no injection, no clearing, no sk-ant-.
+	for _, forbidden := range []string{
+		"ANTHROPIC_API_KEY",
+		"sk-ant-",
+		// Clearing ANTHROPIC_AUTH_TOKEN would drop the OAuth session; the
+		// subscription bearer in Authorization must be left untouched.
+		"ANTHROPIC_AUTH_TOKEN=",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("subscription-mode claude-code script must not contain %q (would touch the API key / OAuth session)", forbidden)
+		}
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

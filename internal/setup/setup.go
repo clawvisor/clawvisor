@@ -510,26 +510,36 @@ func stepLLM(cfg *config) error {
 	).Run()
 }
 
-// stepPosture asks how agents connect. Today the default remains the skill
-// gateway (option 2); the flip item (§13 item 8) later changes only the
-// recommended default here. Choosing Observe writes posture: observe plus an
-// explicit proxy_lite block. Either way writeConfig stamps config_schema: 2
-// and an explicit proxy_lite.enabled — the writer-side flip mechanism (PRD
-// §11): the default is never carried by Default(), always by the writer.
+// recommendedPosture is the fresh-install posture the wizard pre-selects and
+// recommends. Spec 08 (the default flip) makes this "observe" — proxy-lite in
+// the Observe posture — so a fresh wizard install lands on visibility-by-
+// default. Skill-gateway-only is the explicit opt-out. This is the writer-side
+// flip: Default() is untouched (proxy_lite.enabled stays false permanently,
+// TestFlipDefaultStaysFalse); the new default is carried only by what the
+// wizard recommends here and what writeConfig emits.
+func recommendedPosture() string { return "observe" }
+
+// stepPosture asks how agents connect. The flip (spec 08 / PRD §11) makes
+// Observe the recommended, pre-selected default; skill-gateway-only is the
+// explicit opt-out. Choosing Observe writes posture: observe plus an explicit
+// proxy_lite block. Either way writeConfig stamps config_schema: 2 and an
+// explicit proxy_lite.enabled — the default is never carried by Default(),
+// always by the writer.
 func stepPosture(cfg *config) error {
 	fmt.Println(section.Render("── Agent Connection ───────────────────────"))
 	fmt.Println()
 
-	var choice string
+	// Pre-select the recommended default so hitting Enter lands on Observe.
+	choice := recommendedPosture()
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("How should agents connect?").
 				Options(
-					huh.NewOption("Observe (recommended soon): route agent LLM traffic through Clawvisor for visibility; agents keep their own API keys", "observe"),
-					huh.NewOption("Skill gateway only (current default)", "gateway"),
+					huh.NewOption("Observe (recommended): route agent LLM traffic through Clawvisor for visibility; agents keep their own API keys", "observe"),
+					huh.NewOption("Skill gateway only: keep agents pointed at their provider; opt out of routing", "gateway"),
 				).
-				// Default remains the skill gateway until the flip item.
+				// Observe is the pre-selected recommended default (the flip).
 				Value(&choice),
 		),
 	).Run()

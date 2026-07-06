@@ -6,6 +6,16 @@ through bash/curl — with task-scoped authorization and human approval. Follow
 these instructions step by step. Ask the user for clarification when the
 environment is ambiguous — do not guess silently.
 
+> **Routing vs. skill-gateway.** This guide sets up the **skill gateway**: Claude
+> Code keeps talking to its provider directly and uses the Clawvisor skill for
+> gated tool/API calls. The recommended fresh-install default now also **routes
+> Claude Code's LLM traffic** through Clawvisor for visibility (the **Observe**
+> posture) — the one-paste installer at `/skill/install/claude-code.sh` bakes
+> `ANTHROPIC_BASE_URL` by default. To keep the skill-gateway-only setup below
+> (no LLM routing), pass `route=skill-only` to that installer, or just follow
+> this guide. Subscription/OAuth seats use `route=subscription`, which routes
+> for Observe without touching the OAuth session.
+
 ---
 
 ## Goal State
