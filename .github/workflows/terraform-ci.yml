@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "deploy/terraform/**"
+      - "provider/**"
       - ".github/workflows/terraform-ci.yml"
       - "scripts/mirror-terraform.sh"
     tags: ["v*"]
@@ -12,6 +13,7 @@ on:
     branches: [main]
     paths:
       - "deploy/terraform/**"
+      - "provider/**"
       - ".github/workflows/terraform-ci.yml"
   workflow_dispatch:
     inputs:
@@ -104,7 +106,44 @@ jobs:
           TF_VAR_office_cidrs: ${{ vars.CLAWVISOR_CI_CIDRS }}
         run: bash scripts/terraform-real-aws-lane.sh
 
-  # Job 4 — publish-only registry mirror on release tags (DEFERRED to v1.1).
+  # Job 4 — Terraform provider (spec 06b): build the separate provider module,
+  # verify committed tfplugindocs output is up to date, and run the hermetic
+  # acceptance lane. testapp boots a real clawvisor-server subprocess and mints
+  # an instance-admin token via the 05-lite bootstrap flow — no cloud creds.
+  provider:
+    name: provider build + docs + acceptance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: provider/go.mod
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.9"
+          terraform_wrapper: false
+
+      - name: build (separate module)
+        run: cd provider && go build ./...
+
+      - name: unit tests
+        run: cd provider && go test ./internal/client/... ./internal/provider/...
+
+      - name: docs are up to date
+        run: |
+          cd provider
+          go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest generate --provider-name clawvisor
+          git diff --exit-code docs/ || {
+            echo "::error::provider docs are stale — run tfplugindocs generate and commit docs/"; exit 1; }
+
+      - name: acceptance tests (TF_ACC, hermetic testapp)
+        env:
+          TF_ACC: "1"
+        run: cd provider && go test ./internal/provider/testacc/... -run TestAcc -v
+
+  # Job 5 — publish-only registry mirror on release tags (DEFERRED to v1.1).
   # Present but disabled: PRD §6/§13 keep the monorepo path as the v1
   # distribution. Flip `if: false` to `if: startsWith(github.ref, 'refs/tags/v')`
   # when the mirror repo exists.
