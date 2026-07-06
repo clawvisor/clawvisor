@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -154,6 +155,24 @@ func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 func (s *Store) ListUsers(ctx context.Context) ([]*store.User, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+pgUserColumns+` FROM users WHERE `+pgSystemUserFilter+` ORDER BY created_at DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.User
+	for rows.Next() {
+		u, err := scanPGUser(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListAdmins(ctx context.Context) ([]*store.User, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+pgUserColumns+` FROM users WHERE role = 'admin' AND `+pgSystemUserFilter+` ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -555,6 +574,36 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 	}
 	defer rows.Close()
 	return scanAgents(rows)
+}
+
+// ListAllAgents returns every agent across all owners (04b admin fleet view),
+// including `_instance` (Terraform/CI) rows, with owner_email joined for
+// attribution. Mirrors ListAgents but drops the user_id predicate and
+// LEFT JOINs users so a row whose owner was deleted still returns.
+func (s *Store) ListAllAgents(ctx context.Context) ([]*store.Agent, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT a.id, a.user_id, a.name, a.token_hash, a.created_at, a.org_id,
+		       a.description, a.install_context,
+		       COALESCE((SELECT COUNT(*) FROM tasks t
+		                 WHERE t.agent_id = a.id
+		                   AND t.status IN ('active','pending_approval','pending_scope_expansion')), 0),
+		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id),
+		       ars.agent_id, ars.runtime_enabled, ars.runtime_mode, ars.starter_profile,
+		       ars.outbound_credential_mode, ars.inject_stored_bearer, ars.lite_proxy_secret_detection_disabled,
+		       ars.conversation_auto_approve_threshold,
+		       ars.created_at, ars.updated_at,
+		       COALESCE(u.email, '')
+		FROM agents a
+		LEFT JOIN agent_runtime_settings ars ON ars.agent_id = a.id
+		LEFT JOIN users u ON u.id = a.user_id
+		WHERE a.deleted_at IS NULL
+		ORDER BY a.created_at DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAgentsWithOwner(rows)
 }
 
 func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*store.AgentRuntimeSettings, error) {
@@ -1158,6 +1207,109 @@ func (s *Store) GetTaskCost(ctx context.Context, userID, taskID string) (*store.
 	return out, nil
 }
 
+// InstanceCostSummary rolls up llm_request_cost across ALL users over a time
+// window (04b admin view). Departed users and `_instance` (Terraform/CI) spend
+// stay in the totals — grouped by (user_id, actor_email) / (agent_id) without
+// joining users, so rows that no longer match a live user are never dropped.
+// SUM widens to NUMERIC in Postgres; cast back to bigint so pgx can scan int64.
+func (s *Store) InstanceCostSummary(ctx context.Context, window store.InstanceCostWindow) (*store.InstanceCostSummary, error) {
+	if window != store.InstanceCostWindowMonthly {
+		window = store.InstanceCostWindowDaily
+	}
+	var since time.Time
+	if window == store.InstanceCostWindowMonthly {
+		since = time.Now().UTC().Add(-30 * 24 * time.Hour)
+	} else {
+		since = time.Now().UTC().Add(-24 * time.Hour)
+	}
+	out := &store.InstanceCostSummary{
+		Window:        window,
+		Since:         since,
+		UnknownModels: []string{},
+		ByUser:        []store.InstanceCostByUserEntry{},
+		ByAgent:       []store.InstanceCostByAgentEntry{},
+	}
+
+	userRows, err := s.pool.Query(ctx, `
+		SELECT user_id, actor_email,
+		       COUNT(*),
+		       COALESCE(SUM(input_tokens), 0)::bigint,
+		       COALESCE(SUM(output_tokens), 0)::bigint,
+		       COALESCE(SUM(cache_read_tokens), 0)::bigint,
+		       COALESCE(SUM(cache_write_tokens), 0)::bigint,
+		       COALESCE(SUM(cost_micros), 0)::bigint
+		FROM llm_request_cost
+		WHERE timestamp >= $1
+		GROUP BY user_id, actor_email
+		ORDER BY COALESCE(SUM(cost_micros), 0)::bigint DESC, user_id`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer userRows.Close()
+	for userRows.Next() {
+		var e store.InstanceCostByUserEntry
+		if err := userRows.Scan(&e.UserID, &e.ActorEmail, &e.RequestCount, &e.InputTokens,
+			&e.OutputTokens, &e.CacheReadTokens, &e.CacheWriteTokens, &e.CostMicros); err != nil {
+			return nil, err
+		}
+		out.ByUser = append(out.ByUser, e)
+		out.RequestCount += e.RequestCount
+		out.InputTokens += e.InputTokens
+		out.OutputTokens += e.OutputTokens
+		out.CacheReadTokens += e.CacheReadTokens
+		out.CacheWriteTokens += e.CacheWriteTokens
+		out.CostMicros += e.CostMicros
+	}
+	if err := userRows.Err(); err != nil {
+		return nil, err
+	}
+
+	agentRows, err := s.pool.Query(ctx, `
+		SELECT COALESCE(agent_id, ''), user_id, actor_email,
+		       COUNT(*),
+		       COALESCE(SUM(input_tokens), 0)::bigint,
+		       COALESCE(SUM(output_tokens), 0)::bigint,
+		       COALESCE(SUM(cache_read_tokens), 0)::bigint,
+		       COALESCE(SUM(cache_write_tokens), 0)::bigint,
+		       COALESCE(SUM(cost_micros), 0)::bigint
+		FROM llm_request_cost
+		WHERE timestamp >= $1
+		GROUP BY COALESCE(agent_id, ''), user_id, actor_email
+		ORDER BY COALESCE(SUM(cost_micros), 0)::bigint DESC, COALESCE(agent_id, '')`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer agentRows.Close()
+	for agentRows.Next() {
+		var e store.InstanceCostByAgentEntry
+		if err := agentRows.Scan(&e.AgentID, &e.UserID, &e.ActorEmail, &e.RequestCount, &e.InputTokens,
+			&e.OutputTokens, &e.CacheReadTokens, &e.CacheWriteTokens, &e.CostMicros); err != nil {
+			return nil, err
+		}
+		out.ByAgent = append(out.ByAgent, e)
+	}
+	if err := agentRows.Err(); err != nil {
+		return nil, err
+	}
+
+	unkRows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT model FROM llm_request_cost
+		WHERE cost_micros IS NULL AND timestamp >= $1
+		ORDER BY model`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer unkRows.Close()
+	for unkRows.Next() {
+		var m string
+		if err := unkRows.Scan(&m); err != nil {
+			return nil, err
+		}
+		out.UnknownModels = append(out.UnknownModels, m)
+	}
+	return out, unkRows.Err()
+}
+
 func (s *Store) UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg string, durationMS int) error {
 	var errMsgPtr *string
 	if errMsg != "" {
@@ -1354,6 +1506,115 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 	defer rows.Close()
 	entries, err := scanAuditEntries(rows)
 	return entries, total, err
+}
+
+// scanAdminAuditRow scans an audit_log row plus the trailing actor_email
+// column so the admin cross-user view can attribute rows whose user_id was
+// nulled on delete. Mirrors scanAuditRow, then reads the extra column.
+func scanAdminAuditRow(scan func(...any) error) (*store.AuditEntry, error) {
+	e := &store.AuditEntry{}
+	var paramsSafe, filtersApplied, verification []byte
+	// user_id is nullable in the cross-user view: a departed actor's row has
+	// user_id SET NULL (spec 04 Q4). Scan it as nullable and attribute via
+	// actor_email instead.
+	var userID *string
+	err := scan(
+		&e.ID, &userID, &e.AgentID, &e.RequestID, &e.DedupKey, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
+		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
+		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+		&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
+		&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
+		&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
+		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg, &e.DedupedOf,
+		&e.ActorEmail,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if userID != nil {
+		e.UserID = *userID
+	}
+	e.ParamsSafe = json.RawMessage(paramsSafe)
+	if filtersApplied != nil {
+		e.FiltersApplied = json.RawMessage(filtersApplied)
+	}
+	if verification != nil {
+		e.Verification = json.RawMessage(verification)
+	}
+	return e, nil
+}
+
+// ListAllAuditEvents is the admin cross-user audit read (04b). Same shape as
+// ListAuditEntries minus the per-user WHERE and mute join, plus the
+// denormalized actor_email so deleted actors (user_id nulled) stay
+// attributable. An optional filter.UserID facet narrows to one user.
+func (s *Store) ListAllAuditEvents(ctx context.Context, filter store.AuditFilter) ([]*store.AuditEntry, int, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	where := `WHERE 1=1`
+	var args []any
+	i := 1
+	if filter.UserID != "" {
+		where += fmt.Sprintf(" AND user_id = $%d", i)
+		args = append(args, filter.UserID)
+		i++
+	}
+	if filter.Service != "" {
+		where += fmt.Sprintf(" AND service = $%d", i)
+		args = append(args, filter.Service)
+		i++
+	}
+	if filter.Outcome != "" {
+		where += fmt.Sprintf(" AND outcome = $%d", i)
+		args = append(args, filter.Outcome)
+		i++
+	}
+	if filter.DataOrigin != "" {
+		where += fmt.Sprintf(" AND data_origin = $%d", i)
+		args = append(args, filter.DataOrigin)
+		i++
+	}
+	if filter.TaskID != "" {
+		where += fmt.Sprintf(" AND task_id = $%d", i)
+		args = append(args, filter.TaskID)
+		i++
+	}
+	if filter.AgentID != "" {
+		where += fmt.Sprintf(" AND agent_id = $%d", i)
+		args = append(args, filter.AgentID)
+		i++
+	}
+	if filter.IncludeRuntime != nil && !*filter.IncludeRuntime {
+		where += " AND service NOT LIKE 'runtime.%'"
+	}
+
+	var total int
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_log "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	dataQuery := `SELECT ` + auditColumns + `, actor_email FROM audit_log ` + where +
+		fmt.Sprintf(" ORDER BY timestamp DESC LIMIT $%d OFFSET $%d", i, i+1)
+	args = append(args, limit, filter.Offset)
+
+	rows, err := s.pool.Query(ctx, dataQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var entries []*store.AuditEntry
+	for rows.Next() {
+		e, err := scanAdminAuditRow(rows.Scan)
+		if err != nil {
+			return nil, 0, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, total, rows.Err()
 }
 
 func (s *Store) CreateActivityMute(ctx context.Context, mute *store.ActivityMute) error {
@@ -1945,6 +2206,19 @@ const pendingApprovalColumns = `
 	callback_url, status, expires_at, created_at
 `
 
+// pgPrefixColumns qualifies every comma-separated column in cols with the
+// given table alias so a bare column list can be reused inside a JOIN where an
+// unqualified column name (e.g. `id`) would be ambiguous.
+func pgPrefixColumns(alias, cols string) string {
+	parts := strings.Split(cols, ",")
+	for i, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			parts[i] = alias + "." + t
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 // taskScopeClauseAt returns "task_id IS NULL" when taskID == "", or
 // "task_id = $N" with N = nextPlaceholder when not. Callers append the same
 // taskID to their args slice. The placeholder index is explicit because
@@ -2068,6 +2342,61 @@ func (s *Store) ListExpiredPendingApprovals(ctx context.Context) ([]*store.Pendi
 	}
 	defer rows.Close()
 	return scanPendingApprovals(rows)
+}
+
+// scanAdminPendingApprovalRow scans a pending_approvals row plus a trailing
+// owner_email column (LEFT JOIN users). Mirrors scanPendingApprovalRow.
+func scanAdminPendingApprovalRow(scan func(...any) error) (*store.PendingApproval, error) {
+	pa := &store.PendingApproval{}
+	var requestBlob []byte
+	if err := scan(
+		&pa.ID, &pa.UserID, &pa.RequestID, &pa.TaskID, &pa.AuditID, &pa.ApprovalRecordID, &requestBlob,
+		&pa.CallbackURL, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt, &pa.OwnerEmail,
+	); err != nil {
+		return nil, err
+	}
+	pa.RequestBlob = json.RawMessage(requestBlob)
+	return pa, nil
+}
+
+// ListAllPendingApprovals returns every unresolved hold across all users with
+// owner_email joined (04b admin approval queue). This is what lets an admin —
+// not the governed member — resolve a hold.
+func (s *Store) ListAllPendingApprovals(ctx context.Context) ([]*store.PendingApproval, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+pgPrefixColumns("pa", pendingApprovalColumns)+`, COALESCE(u.email, '')
+		 FROM pending_approvals pa
+		 LEFT JOIN users u ON u.id = pa.user_id
+		 WHERE pa.status = 'pending' AND pa.expires_at > NOW()
+		 ORDER BY pa.created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var pas []*store.PendingApproval
+	for rows.Next() {
+		pa, err := scanAdminPendingApprovalRow(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		pas = append(pas, pa)
+	}
+	return pas, rows.Err()
+}
+
+// GetPendingApprovalByID looks up a hold by its primary key across all users
+// (04b admin resolve path). request_id is only unique within a user, so the
+// admin queue addresses rows by id and learns the owner from the row.
+func (s *Store) GetPendingApprovalByID(ctx context.Context, id string) (*store.PendingApproval, error) {
+	pa, err := scanAdminPendingApprovalRow(s.pool.QueryRow(ctx,
+		`SELECT `+pgPrefixColumns("pa", pendingApprovalColumns)+`, COALESCE(u.email, '')
+		 FROM pending_approvals pa
+		 LEFT JOIN users u ON u.id = pa.user_id
+		 WHERE pa.id = $1`, id).Scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return pa, err
 }
 
 // ── Notification Messages ──────────────────────────────────────────────────────
@@ -3913,6 +4242,16 @@ func (s *Store) UpdatePairedDevicePushToStartToken(ctx context.Context, id, toke
 }
 
 func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
+	return scanAgentRows(rows, false)
+}
+
+// scanAgentsWithOwner scans agent rows that carry a trailing owner_email
+// column (the admin fleet view's LEFT JOIN users). 04b.
+func scanAgentsWithOwner(rows pgx.Rows) ([]*store.Agent, error) {
+	return scanAgentRows(rows, true)
+}
+
+func scanAgentRows(rows pgx.Rows, withOwner bool) ([]*store.Agent, error) {
 	var agents []*store.Agent
 	for rows.Next() {
 		a := &store.Agent{}
@@ -3928,12 +4267,16 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 		var settingsConversationAutoApprove *string
 		var settingsCreatedAt *time.Time
 		var settingsUpdatedAt *time.Time
-		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID, &a.Description,
+		dest := []any{&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID, &a.Description,
 			&installContext,
 			&a.ActiveTaskCount, &a.LastTaskAt, &settingsAgentID, &settingsEnabled, &settingsMode,
 			&settingsProfile, &settingsOutbound, &settingsInject, &settingsLiteProxySecretDetectionDisabled,
 			&settingsConversationAutoApprove,
-			&settingsCreatedAt, &settingsUpdatedAt); err != nil {
+			&settingsCreatedAt, &settingsUpdatedAt}
+		if withOwner {
+			dest = append(dest, &a.OwnerEmail)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		if orgID != nil {
