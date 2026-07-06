@@ -28,8 +28,12 @@ func TestLLMProxyPassthroughAnthropic(t *testing.T) {
 	h := testharness.New(t)
 	upstream := newUpstreamCapture(t)
 
+	// Spec 02: header-driven passthrough is disabled under the default vault
+	// posture (the F1 fix); passthrough is now a server-side posture. Opt in
+	// via the upstream_auth knob so this mode-B lane keeps its coverage.
 	cv := testapp.StartWith(t, h, map[string]string{
-		"CLAWVISOR_LLM_UPSTREAM_ANTHROPIC": upstream.URL(),
+		"CLAWVISOR_LLM_UPSTREAM_ANTHROPIC":   upstream.URL(),
+		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH": "passthrough",
 	})
 	user := cv.LoginAsLocalUser(t)
 

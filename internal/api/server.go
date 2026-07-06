@@ -1343,6 +1343,10 @@ func (s *Server) registerLiteProxyRoutes(
 		llmHandler.OrgGovCallbacks = s.orgGovCallbacks
 		llmHandler.OrgIDForAgent = s.orgIDForAgent
 		llmHandler.Instruments = s.instruments
+		// Spec 02: the server-side upstream_auth / enforcement posture knobs.
+		llmHandler.UpstreamAuth = s.cfg.ProxyLite.UpstreamAuth
+		llmHandler.EnforcementMode = s.cfg.ProxyLite.EnforcementMode
+		llmHandler.AllowSubscriptionBillingMigration = s.cfg.ProxyLite.AllowSubscriptionBillingMigration
 		if v := s.cfg.ProxyLite.AnthropicBaseURL; v != "" {
 			llmHandler.Forwarder.Upstream.AnthropicBaseURL = v
 		}
