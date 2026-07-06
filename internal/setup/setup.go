@@ -538,6 +538,11 @@ func stepPosture(cfg *config) error {
 				Options(
 					huh.NewOption("Observe (recommended): route agent LLM traffic through Clawvisor for visibility; agents keep their own API keys", "observe"),
 					huh.NewOption("Skill gateway only: keep agents pointed at their provider; opt out of routing", "gateway"),
+					// Contain is not offered as a working choice until the
+					// capability-parity lane is CI-required (spec 09 D5). Shown
+					// as "(coming soon)"; selecting it falls back to Observe
+					// with a notice pointing to the experimental config gate.
+					huh.NewOption("Contain (coming soon): network-layer containment of the agent process — experimental", "contain"),
 				).
 				// Observe is the pre-selected recommended default (the flip).
 				Value(&choice),
@@ -545,6 +550,14 @@ func stepPosture(cfg *config) error {
 	).Run()
 	if err != nil {
 		return err
+	}
+
+	if choice == "contain" {
+		fmt.Println(dim.Padding(0, 2).Render("Contain is experimental and not yet offered by the wizard."))
+		fmt.Println(dim.Padding(0, 2).Render("To enable it, set posture: contain and experimental_contain: true"))
+		fmt.Println(dim.Padding(0, 2).Render("in config.yaml (see docs). Falling back to Observe for now."))
+		fmt.Println()
+		choice = "observe"
 	}
 
 	if choice != "observe" {

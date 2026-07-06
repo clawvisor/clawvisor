@@ -50,6 +50,11 @@ type CreateRuntimeSessionResponse struct {
 	ProxyURL        string         `json:"proxy_url"`
 	CACertPEM       string         `json:"ca_cert_pem,omitempty"`
 	ObservationMode bool           `json:"observation_mode"`
+	// LLMRoute is "proxy_lite" when the contained process's LLM traffic must
+	// be routed through proxy-lite (the Contain superset): the launcher sets
+	// ANTHROPIC_BASE_URL/OPENAI_BASE_URL and bypasses the runtime proxy for
+	// the daemon host. Empty/"direct" = legacy runtime-proxy MITM.
+	LLMRoute string `json:"llm_route,omitempty"`
 }
 
 type AgentRuntimeSettings struct {

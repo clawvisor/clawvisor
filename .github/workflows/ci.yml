@@ -35,6 +35,27 @@ jobs:
       - name: Test
         run: go test ./...
 
+  contain-parity:
+    name: Contain parity (spec 09)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Re-run the deterministic e2e scenario suite under the Contain posture:
+      # the runtime proxy is booted and LLM traffic is routed through
+      # proxy-lite (llm_route=proxy_lite). Every Govern scenario must pass
+      # byte-identical, proving Contain is a strict superset by construction.
+      # This lane gates exposing Contain; until it is required-blocking the
+      # posture stays behind experimental_contain (config + module gate).
+      - name: Contain-posture scenarios
+        env:
+          CLAWVISOR_E2E_POSTURE: contain
+        run: go test ./e2e/scenarios/...
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

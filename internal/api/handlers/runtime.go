@@ -72,7 +72,12 @@ func (h *RuntimeHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.manager == nil || h.cfg == nil || !h.cfg.RuntimeProxy.Enabled {
-		writeError(w, http.StatusConflict, "RUNTIME_PROXY_DISABLED", "runtime proxy is not enabled")
+		// Contract (spec 09 D6): contain-only control endpoints and any attempt
+		// to start a runtime-run/docker-run session require the runtime proxy.
+		// A correctly-postured contain install never hits this (the preset sets
+		// runtime_proxy.enabled=true); it fires only for a hand-configured
+		// server that asked for a contain-only API without the proxy.
+		writeError(w, http.StatusConflict, "RUNTIME_PROXY_DISABLED", "contain posture requires runtime_proxy.enabled=true (set posture: contain)")
 		return
 	}
 	var req struct {
@@ -436,6 +441,12 @@ func (h *RuntimeHandler) Status(w http.ResponseWriter, r *http.Request) {
 		"inject_stored_bearer": h.cfg != nil && h.cfg.RuntimePolicy.InjectStoredBearer,
 		"ca_cert_pem":          caCertPEM,
 		"starter_profiles":     runtimepolicy.StarterProfiles(),
+		"llm_route": func() string {
+			if h.cfg == nil || strings.TrimSpace(h.cfg.RuntimeProxy.LLMRoute) == "" {
+				return "direct"
+			}
+			return strings.ToLower(strings.TrimSpace(h.cfg.RuntimeProxy.LLMRoute))
+		}(),
 	}
 	if h.cfg != nil && h.cfg.ProxyLite.Enabled {
 		resp["proxy_lite_enabled"] = true

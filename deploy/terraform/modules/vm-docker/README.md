@@ -36,7 +36,8 @@ distribution. A publish-only registry mirror is deferred to v1.1 (PRD §6).
 | `name` | string | `"clawvisor"` | resource name prefix |
 | `region` | string | — (required) | AWS region |
 | `image` | string | — (required) | full image ref incl. tag; `:latest`/untagged rejected |
-| `posture` | string | `"observe"` | `observe`/`govern`/`contain`; rendered into config.yaml (preset knobs land with spec 02) |
+| `posture` | string | `"observe"` | `observe`/`govern`/`contain`; rendered into config.yaml as the active `posture:` key (server applies the preset). `contain` requires `experimental_contain = true` |
+| `experimental_contain` | bool | `false` | gate for the experimental Contain posture (spec 09). `posture = "contain"` is refused at plan time unless this is true; when set, writes `experimental_contain: true` into config.yaml. Removed when the parity lane is CI-required-blocking |
 | `db` | string | `"managed"` | v1 accepts only `"managed"` (RDS Postgres); `"container"` is v1.1 |
 | `db_instance_class` | string | `"db.t4g.micro"` | RDS instance class |
 | `db_allocated_storage` | number | `20` | RDS storage (GiB) |

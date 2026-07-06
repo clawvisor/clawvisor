@@ -251,6 +251,15 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 	if st == nil || st.Session == nil {
 		return resp
 	}
+	// Contain superset (spec 09 D3): when LLM traffic is routed through
+	// proxy-lite, the runtime proxy's duplicate LLM stream/body processing is
+	// gated off — LLM responses never transit the runtime proxy (the D2
+	// backstop blocks direct hits, and NO_PROXY bypasses composed traffic), so
+	// this is defense-in-depth. The processors are kept for legacy runtime-only
+	// mode; physical removal is a follow-up after legacy sunset.
+	if sessionLLMRouteProxyLite(st.Session, hooks.Config) {
+		return resp
+	}
 	rewriter := registry.Match(ctx.Req, resp)
 	if rewriter == nil || resp.Body == nil {
 		return resp

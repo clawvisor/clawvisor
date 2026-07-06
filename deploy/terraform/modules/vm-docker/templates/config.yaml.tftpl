@@ -32,14 +32,15 @@ observability:
 # --- Posture preset ---------------------------------------------------------
 # posture = "${posture}"
 #
-# SOFT DEPENDENCY ON SPEC 02. The concrete preset knobs (enforcement_mode,
-# upstream_auth, and the posture->config mapping) are defined by spec 02 and
-# are NOT yet present in this server build. Until spec 02 merges, this module
-# ships the observe-only proxy-lite config above for every posture value and
-# leaves this clearly-marked seam. When spec 02 lands, replace this block with
-# the rendered preset keys for ${posture} (the module already accepts and
-# validates the posture input, so only this template changes).
-%{ if posture != "observe" ~}
-# WARNING: posture "${posture}" was requested but preset knobs are not wired
-# yet (spec 02 pending). The server is running observe-only proxy-lite config.
+# Spec 02 defined the posture->config mapping (applyPosturePreset) and spec 09
+# added the Contain superset. The server applies the preset for this value at
+# load time; the concrete knobs (enforcement_mode, upstream_auth, and — for
+# contain — runtime_proxy.enabled + runtime_proxy.llm_route) are set by the
+# server from the posture, so this file only needs to carry the posture key.
+posture: "${posture}"
+%{ if experimental_contain ~}
+# Contain is experimental until the capability-parity lane is CI-required
+# (spec 09 D5). The gate flag is required for the server to accept
+# posture: contain.
+experimental_contain: true
 %{ endif ~}

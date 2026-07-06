@@ -42,6 +42,16 @@ type Config struct {
 	// CurrentConfigSchema). Absent/0 on hand-written or pre-flip configs.
 	ConfigSchema int `yaml:"config_schema"`
 
+	// ExperimentalContain gates the not-yet-required-blocking Contain posture
+	// (spec 09). Until the capability-parity lane is CI-required, `posture:
+	// contain` is refused by Validate() unless this flag is set true. It is a
+	// deliberate release valve, not a behavior knob: with the flag, contain
+	// loads and applies its preset; without it, contain fails config load.
+	// Env override: CLAWVISOR_EXPERIMENTAL_CONTAIN. Remove this gate (and the
+	// Terraform module variable) in the release where CI runs the parity lane
+	// required-blocking.
+	ExperimentalContain bool `yaml:"experimental_contain"`
+
 	Server        ServerConfig        `yaml:"server"`
 	Database      DatabaseConfig      `yaml:"database"`
 	Vault         VaultConfig         `yaml:"vault"`
@@ -313,6 +323,22 @@ type RuntimeProxyConfig struct {
 	TimingTraceDir     string   `yaml:"timing_trace_dir"`
 	BodyTraceEnabled   bool     `yaml:"body_trace_enabled"`
 	BodyTraceDir       string   `yaml:"body_trace_dir"`
+
+	// LLMRoute selects how a contained agent's LLM traffic is handled:
+	// "direct" (default — today's behavior: the runtime proxy MITMs LLM
+	// hosts) or "proxy_lite" (Contain superset, spec 09: the env injection
+	// points ANTHROPIC_BASE_URL/OPENAI_BASE_URL at proxy-lite and the runtime
+	// proxy bypasses/backstops LLM hosts, so LLM traffic flows through the
+	// govern pipeline unchanged). "proxy_lite" requires proxy_lite.enabled.
+	// The contain posture preset sets this to "proxy_lite". Env override:
+	// CLAWVISOR_RUNTIME_LLM_ROUTE.
+	LLMRoute string `yaml:"llm_route"`
+}
+
+// LLMRouteProxyLite reports whether a contained agent's LLM traffic is routed
+// through proxy-lite (the Contain superset). Empty is treated as "direct".
+func (r RuntimeProxyConfig) LLMRouteProxyLite() bool {
+	return strings.EqualFold(strings.TrimSpace(r.LLMRoute), "proxy_lite")
 }
 
 type RuntimePolicyConfig struct {
@@ -517,6 +543,10 @@ func Default() *Config {
 			TimingTraceDir:     "~/.clawvisor/runtime-proxy/timing-traces",
 			BodyTraceEnabled:   false,
 			BodyTraceDir:       "~/.clawvisor/runtime-proxy/body-traces",
+			// LLMRoute defaults to "direct" — legacy runtime-only behavior.
+			// The contain posture preset flips it to "proxy_lite"; this default
+			// is never changed for behavior-affecting reasons (spec 09).
+			LLMRoute: "direct",
 		},
 		RuntimePolicy: RuntimePolicyConfig{
 			ObservationModeDefault:  false,
@@ -909,6 +939,9 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_BODY_TRACE_DIR"); v != "" {
 		cfg.RuntimeProxy.BodyTraceDir = v
 	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_LLM_ROUTE"); v != "" {
+		cfg.RuntimeProxy.LLMRoute = strings.ToLower(strings.TrimSpace(v))
+	}
 	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_OBSERVATION_DEFAULT"); v != "" {
 		cfg.RuntimePolicy.ObservationModeDefault = v == "true" || v == "1"
 	}
@@ -967,6 +1000,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION"); v != "" {
 		cfg.ProxyLite.AllowSubscriptionBillingMigration = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_EXPERIMENTAL_CONTAIN"); v != "" {
+		cfg.ExperimentalContain = v == "true" || v == "1"
 	}
 
 	if v := os.Getenv("CLAWVISOR_RELAY_URL"); v != "" {
@@ -1079,8 +1115,10 @@ func ensureGeminiCache(p **GeminiCacheConfig) *GeminiCacheConfig {
 //     upstream_auth="passthrough".
 //   - "govern":  proxy_lite.enabled=true, enforcement_mode="enforce",
 //     upstream_auth="vault".
-//   - "contain": not applied here — Validate() rejects it until the superset
-//     gate lands (PRD §13 item 9).
+//   - "contain": Govern preset (proxy_lite.enabled=true, enforce, vault) PLUS
+//     runtime_proxy.enabled=true and runtime_proxy.llm_route="proxy_lite" — the
+//     superset composition (spec 09). Validate() still gates load on
+//     ExperimentalContain until the parity lane is CI-required.
 //   - "" / unknown: no-op (unknown is rejected by Validate()).
 //
 // AllowSubscriptionBillingMigration is intentionally never set by a preset —
@@ -1101,6 +1139,16 @@ func applyPosturePreset(cfg *Config, raw []byte) {
 			cfg.ProxyLite.UpstreamAuth = v
 		}
 	}
+	setRuntimeEnabled := func(v bool) {
+		if !yamlHasKey(raw, "runtime_proxy", "enabled") {
+			cfg.RuntimeProxy.Enabled = v
+		}
+	}
+	setLLMRoute := func(v string) {
+		if !yamlHasKey(raw, "runtime_proxy", "llm_route") {
+			cfg.RuntimeProxy.LLMRoute = v
+		}
+	}
 	switch strings.ToLower(strings.TrimSpace(cfg.Posture)) {
 	case "observe":
 		setEnabled(true)
@@ -1110,6 +1158,12 @@ func applyPosturePreset(cfg *Config, raw []byte) {
 		setEnabled(true)
 		setEnforcement("enforce")
 		setUpstreamAuth("vault")
+	case "contain":
+		setEnabled(true)
+		setEnforcement("enforce")
+		setUpstreamAuth("vault")
+		setRuntimeEnabled(true)
+		setLLMRoute("proxy_lite")
 	}
 }
 
@@ -1237,9 +1291,23 @@ func (c *Config) Validate() error {
 	switch strings.ToLower(strings.TrimSpace(c.Posture)) {
 	case "", "observe", "govern":
 	case "contain":
-		return fmt.Errorf("posture contain is not yet available; it ships once the runtime-proxy composition makes it a strict superset of govern")
+		// Spec 09 lifts spec 02's unconditional rejection and replaces it with
+		// an experimental gate. Contain is a strict superset of Govern by
+		// construction, but stays behind the flag until the capability-parity
+		// lane is CI-required-blocking.
+		if !c.ExperimentalContain {
+			return fmt.Errorf("posture contain requires experimental_contain=true until the parity lane is required-blocking")
+		}
 	default:
 		return fmt.Errorf("posture must be one of observe, govern, contain (got %q)", c.Posture)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.RuntimeProxy.LLMRoute)) {
+	case "", "direct", "proxy_lite":
+	default:
+		return fmt.Errorf("runtime_proxy.llm_route must be one of direct, proxy_lite (got %q)", c.RuntimeProxy.LLMRoute)
+	}
+	if c.RuntimeProxy.LLMRouteProxyLite() && !c.ProxyLite.Enabled {
+		return fmt.Errorf("runtime_proxy.llm_route=proxy_lite requires proxy_lite.enabled=true")
 	}
 	switch strings.ToLower(strings.TrimSpace(c.ProxyLite.EnforcementMode)) {
 	case "", "enforce", "observe":
