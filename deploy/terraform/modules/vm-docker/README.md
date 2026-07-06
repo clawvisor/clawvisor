@@ -42,6 +42,7 @@ distribution. A publish-only registry mirror is deferred to v1.1 (PRD §6).
 | `db_instance_class` | string | `"db.t4g.micro"` | RDS instance class |
 | `db_allocated_storage` | number | `20` | RDS storage (GiB) |
 | `vault_backend` | string | `"local"` | v1 accepts only `"local"`; reference backends ship with spec 10 |
+| `reference_allowlist` | list(string) | `[]` | permitted vault-reference id prefixes → `vault.reference_allowlist` (env `VAULT_REFERENCE_ALLOWLIST`). **Empty = fail-closed** (reference creation disabled). Entries must be non-empty and whitespace-free (spec 10) |
 | `jwt_secret_ref` | string | `""` | AWS Secrets Manager ARN; empty ⇒ generated on-instance. Never a literal |
 | `vault_key_ref` | string | `""` | same semantics as `jwt_secret_ref` |
 | `otel_endpoint` | string | `""` | OTLP endpoint; empty disables export (spec 01) |
@@ -61,10 +62,11 @@ distribution. A publish-only registry mirror is deferred to v1.1 (PRD §6).
 
 | Name | Sensitive | Value |
 |---|---|---|
-| `server_url` | no | `https://<public_fqdn>` |
+| `server_url` | no | `https://<public_fqdn>` — **agent** endpoint (443); serves `/v1/*`, `/skill/install/*`, `/health`, `/ready` only |
+| `admin_url` | no | `https://<public_fqdn>:8443` — **provider/management** endpoint (dashboard + `/api/*`). Point the Terraform provider here, not `server_url` |
 | `bootstrap_admin_token` | **yes** | single-use `cvat_` instance-admin token (spec 05) |
-| `install_commands` | no | per-harness `curl … | sh` one-liners |
-| `provider_block` | no | ready-to-paste `provider "clawvisor"` block (attr is `api_token`) |
+| `install_commands` | no | per-harness install commands: `curl … \| sh` for `claude-code`/`codex`; the `.md` URL to open for `hermes`/`openclaw` (assisted install — no pipe-to-sh) |
+| `provider_block` | no | ready-to-paste `provider "clawvisor"` block; `endpoint` = `admin_url`, attr is `api_token` |
 | `instance_id` | no | EC2 instance id |
 | `server_ip` | no | public IP the DNS record must point at |
 | `db_endpoint` | **yes** | connection string (contains the DB password) |

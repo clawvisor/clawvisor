@@ -41,6 +41,82 @@ run "compose_uses_postgres_driver" {
   }
 }
 
+run "admin_url_is_management_endpoint_on_8443" {
+  command = apply
+
+  assert {
+    condition     = output.admin_url == "https://clawvisor.example.com:8443"
+    error_message = "admin_url must be the management endpoint on the admin port (8443)"
+  }
+
+  assert {
+    condition     = output.server_url == "https://clawvisor.example.com"
+    error_message = "server_url must remain the agent endpoint on 443 (unchanged semantics)"
+  }
+
+  assert {
+    condition     = can(regex("endpoint  = \"https://clawvisor.example.com:8443\"", output.provider_block))
+    error_message = "provider_block endpoint must equal admin_url (8443) — no drift from the management endpoint"
+  }
+}
+
+run "install_commands_match_installer_target_table" {
+  command = apply
+
+  # Source of truth: internal/api/handlers/installer.go installerTargets.
+  # claude-code/codex are shell-canonical (.sh, pipe to sh).
+  assert {
+    condition     = output.install_commands["claude-code"] == "curl -fsSL https://clawvisor.example.com/skill/install/claude-code.sh | sh"
+    error_message = "claude-code must be the .sh pipe-to-sh one-liner"
+  }
+
+  assert {
+    condition     = output.install_commands["codex"] == "curl -fsSL https://clawvisor.example.com/skill/install/codex.sh | sh"
+    error_message = "codex must be the .sh pipe-to-sh one-liner"
+  }
+
+  # hermes/openclaw are markdown-canonical (.md); .sh 404s, so no pipe-to-sh.
+  assert {
+    condition     = output.install_commands["hermes"] == "assisted install — open this URL: https://clawvisor.example.com/skill/install/hermes.md"
+    error_message = "hermes must be the assisted-install .md URL, not a pipe-to-sh (hermes.sh 404s)"
+  }
+
+  assert {
+    condition     = output.install_commands["openclaw"] == "assisted install — open this URL: https://clawvisor.example.com/skill/install/openclaw.md"
+    error_message = "openclaw must be the assisted-install .md URL, not a pipe-to-sh (openclaw.sh 404s)"
+  }
+
+  assert {
+    condition     = !can(regex("hermes.sh|openclaw.sh", join(" ", values(output.install_commands))))
+    error_message = "no install command may reference the non-existent hermes.sh/openclaw.sh shell installers"
+  }
+}
+
+run "reference_allowlist_empty_by_default_fails_closed" {
+  command = apply
+
+  assert {
+    condition     = !can(regex("VAULT_REFERENCE_ALLOWLIST", local.compose_rendered))
+    error_message = "an empty reference_allowlist must omit VAULT_REFERENCE_ALLOWLIST so the server fails closed"
+  }
+}
+
+run "reference_allowlist_populated_renders_csv" {
+  command = apply
+
+  variables {
+    reference_allowlist = [
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:clawvisor/",
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:shared/",
+    ]
+  }
+
+  assert {
+    condition     = can(regex("VAULT_REFERENCE_ALLOWLIST: \"arn:aws:secretsmanager:us-east-1:123456789012:secret:clawvisor/,arn:aws:secretsmanager:us-east-1:123456789012:secret:shared/\"", local.compose_rendered))
+    error_message = "a populated reference_allowlist must render as the comma-joined VAULT_REFERENCE_ALLOWLIST env"
+  }
+}
+
 run "config_carries_posture_and_proxy_lite" {
   command = apply
 

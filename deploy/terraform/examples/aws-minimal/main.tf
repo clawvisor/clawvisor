@@ -53,10 +53,21 @@ module "clawvisor" {
   # Deny-by-default: set these to reach the deploy at all.
   agent_ingress_cidrs = var.office_cidrs
   admin_ingress_cidrs = var.office_cidrs
+
+  # Vault-reference allowlist (spec 10). Empty (the default) = fail-closed:
+  # clawvisor_vault_reference resources are rejected. Uncomment and list the
+  # permitted secret ARN/name prefixes to enable reference-mode credentials.
+  # reference_allowlist = [
+  #   "arn:aws:secretsmanager:us-east-1:123456789012:secret:clawvisor/",
+  # ]
 }
 
 output "server_url" {
   value = module.clawvisor.server_url
+}
+
+output "admin_url" {
+  value = module.clawvisor.admin_url
 }
 
 output "server_ip" {

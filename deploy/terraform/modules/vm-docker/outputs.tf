@@ -1,6 +1,11 @@
 output "server_url" {
-  description = "Base URL of the Clawvisor server (agent endpoint on 443)."
+  description = "Base URL of the Clawvisor server (agent endpoint on 443). This is the AGENT endpoint (§8): Caddy serves only /v1/*, /skill/install/*, /health, /ready here. The management API (/api/*) is NOT served on 443 — wire the provider to admin_url, not this."
   value       = "https://${var.public_fqdn}"
+}
+
+output "admin_url" {
+  description = "Provider/management endpoint (admin surface on 8443). This is where /api/* and the dashboard live and what terraform-provider-clawvisor's `endpoint` must point at — server_url (:443) 404s /api/*. SG-gated to admin_ingress_cidrs."
+  value       = local.admin_url
 }
 
 output "bootstrap_admin_token" {
@@ -10,12 +15,12 @@ output "bootstrap_admin_token" {
 }
 
 output "install_commands" {
-  description = "Per-harness agent install one-liners (served by internal/api/handlers/installer.go at the agent endpoint)."
+  description = "Per-harness agent install commands (served at the agent endpoint on 443). Per-target FORM mirrors the target table in internal/api/handlers/installer.go (`installerTargets`), the source of truth for which extension each target serves: claude-code/codex are self-install shell one-liners (.sh, pipe to sh); hermes/openclaw are assisted-install markdown skills (.md) — GET /skill/install/hermes.sh 404s, so these are the .md URL to open, NOT a pipe-to-sh. Keep this map in sync with installerTargets if a target's canonicalExt changes."
   value = {
     claude-code = "curl -fsSL https://${var.public_fqdn}/skill/install/claude-code.sh | sh"
     codex       = "curl -fsSL https://${var.public_fqdn}/skill/install/codex.sh | sh"
-    hermes      = "curl -fsSL https://${var.public_fqdn}/skill/install/hermes.sh | sh"
-    openclaw    = "curl -fsSL https://${var.public_fqdn}/skill/install/openclaw.sh | sh"
+    hermes      = "assisted install — open this URL: https://${var.public_fqdn}/skill/install/hermes.md"
+    openclaw    = "assisted install — open this URL: https://${var.public_fqdn}/skill/install/openclaw.md"
   }
 }
 
@@ -23,7 +28,7 @@ output "provider_block" {
   description = "Ready-to-paste Terraform provider block for terraform-provider-clawvisor (spec 06b). The credential attribute is `api_token` (never `token`). Wire it to the sensitive bootstrap_admin_token output rather than pasting the literal."
   value       = <<-EOT
     provider "clawvisor" {
-      endpoint  = "https://${var.public_fqdn}:${local.admin_port}"
+      endpoint  = "${local.admin_url}" # management endpoint (8443); == admin_url output
       api_token = var.clawvisor_api_token # e.g. terraform output -raw bootstrap_admin_token
     }
   EOT
