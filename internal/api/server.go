@@ -181,6 +181,10 @@ type FeatureSet struct {
 	// there is no config gate — so it is set unconditionally in
 	// handleFeatures rather than plumbed through WithFeatures.
 	APITokens bool `json:"api_tokens"`
+	// LocalGovernance advertises the instance-scoped /api/governance/*
+	// routes (spec 06a) so the Terraform provider un-skips its governance
+	// resources. Reflects config.Governance.Enabled; set in handleFeatures.
+	LocalGovernance bool `json:"local_governance"`
 }
 
 // GatewayHooks allows cloud/enterprise layers to inject additional
@@ -1119,6 +1123,30 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/audit/mutes", user(auditHandler.CreateMute))
 	mux.Handle("DELETE /api/audit/mutes/{id}", user(auditHandler.DeleteMute))
 
+	// Local governance (spec 06a). Instance-scoped policy CRUD the Terraform
+	// provider drives; shapes are byte-identical to cloud's org-scoped
+	// governance handler. All routes are admin-gated (RequireAdminOrToken:
+	// JWT admin OR an instance-admin API token — a config-write token is 403
+	// INSUFFICIENT_SCOPE). Registered iff governance is enabled (default
+	// true); the capability flag on /api/features mirrors this gate.
+	if s.cfg.Governance.Enabled {
+		govHandler := handlers.NewGovernanceLocalHandler(s.store, s.logger)
+		mux.Handle("GET /api/governance/model_policy", adminOrToken(govHandler.GetModelPolicy))
+		mux.Handle("PUT /api/governance/model_policy", adminOrToken(govHandler.PutModelPolicy))
+		mux.Handle("DELETE /api/governance/model_policy", adminOrToken(govHandler.DeleteModelPolicy))
+		mux.Handle("GET /api/governance/spend_caps", adminOrToken(govHandler.ListSpendCaps))
+		mux.Handle("PUT /api/governance/spend_caps/{window}", adminOrToken(govHandler.PutSpendCap))
+		mux.Handle("DELETE /api/governance/spend_caps/{window}", adminOrToken(govHandler.DeleteSpendCap))
+		mux.Handle("GET /api/governance/content_policies", adminOrToken(govHandler.ListContentPolicies))
+		mux.Handle("POST /api/governance/content_policies", adminOrToken(govHandler.CreateContentPolicy))
+		mux.Handle("PUT /api/governance/content_policies/{cpid}", adminOrToken(govHandler.UpdateContentPolicy))
+		mux.Handle("DELETE /api/governance/content_policies/{cpid}", adminOrToken(govHandler.DeleteContentPolicy))
+		mux.Handle("GET /api/governance/task_policy", adminOrToken(govHandler.GetTaskPolicy))
+		mux.Handle("PUT /api/governance/task_policy", adminOrToken(govHandler.PutTaskPolicy))
+		mux.Handle("DELETE /api/governance/task_policy", adminOrToken(govHandler.DeleteTaskPolicy))
+		mux.Handle("GET /api/governance/violations", adminOrToken(govHandler.ListViolations))
+	}
+
 	if s.cfg.ProxyLite.Enabled {
 		s.registerLiteProxyRoutes(
 			mux, baseURL, verifier, tasksHandler, vaultHandler, e2e, user,
@@ -1607,6 +1635,10 @@ func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
 	// API tokens are always available (no config gate); advertise them so
 	// the Terraform provider knows the endpoints exist.
 	fs.APITokens = true
+	// Local governance (spec 06a): the /api/governance/* routes exist iff
+	// governance is enabled (default true). The provider gates its
+	// governance resources on this capability.
+	fs.LocalGovernance = s.cfg.Governance.Enabled
 	w.Header().Set("Content-Type", "application/json")
 	// The response varies per-user (via featuresHook). Without no-store, a
 	// browser may cache the anonymous response and serve it back after the
