@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -186,7 +187,18 @@ var (
 // must exist, be unused, be unexpired, and (when the invite pinned an
 // email) match the registrant's email case-insensitively.
 func (h *AuthHandler) resolveInvite(r *http.Request, token, email string) (*store.UserInvite, error) {
-	inv, err := h.st.GetUserInviteByHash(r.Context(), auth.HashToken(strings.TrimSpace(token)))
+	return resolveInviteToken(r.Context(), h.st, token, email)
+}
+
+// resolveInviteToken is the store-level invite validation shared by the
+// register path (resolveInvite) and the installer enrollment path
+// (ConnectionsHandler.EnrollWithInvite): the invite must exist, be unused, be
+// unexpired, and (when it pinned an email) match the supplied email
+// case-insensitively. Centralizing it keeps both callers on the same
+// single-use / expiry / possession-binding invariants (spec 04 invite
+// security rules).
+func resolveInviteToken(ctx context.Context, st store.Store, token, email string) (*store.UserInvite, error) {
+	inv, err := st.GetUserInviteByHash(ctx, auth.HashToken(strings.TrimSpace(token)))
 	if err != nil {
 		return nil, errInviteNotFound
 	}
@@ -196,7 +208,13 @@ func (h *AuthHandler) resolveInvite(r *http.Request, token, email string) (*stor
 	if time.Now().After(inv.ExpiresAt) {
 		return nil, errInviteExpired
 	}
-	if inv.Email != "" && !strings.EqualFold(inv.Email, email) {
+	// Bind a pinned invite to its email only when the caller actually supplies
+	// one to check. The register path always carries the registrant's email
+	// (rejected earlier if empty), so this still enforces the pin there. The
+	// installer enrollment path may omit it — the script doesn't know the
+	// invitee's address — in which case the invite's own pinned email is
+	// authoritative and there is nothing to mismatch against.
+	if inv.Email != "" && email != "" && !strings.EqualFold(inv.Email, email) {
 		return nil, errInviteEmail
 	}
 	return inv, nil
