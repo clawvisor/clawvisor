@@ -1070,6 +1070,93 @@ func TestInstallerSubscriptionModeNoApiKey(t *testing.T) {
 	}
 }
 
+// TestInstallerInviteStdinWiring — the invite-delivery gap-fix (AGENT-GUIDE
+// §2A / spec 04). Every generated shell installer (both self-install harnesses,
+// default AND skill-only, plus claude-code's subscription variant) must:
+//   - accept the invite on stdin (--invite-stdin) or a file (--invite-file=),
+//     with CLAWVISOR_INVITE as the documented CI fallback,
+//   - read it into a shell variable (never argv), and
+//   - POST it to /api/agents/enroll with the body streamed on stdin.
+func TestInstallerInviteStdinWiring(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	for _, tc := range inviteShellVariants() {
+		t.Run(tc.name, func(t *testing.T) {
+			body := installerGetShellQuery(t, h, tc.target, tc.query)
+			assertContainsAll(t, body,
+				// Flag surface.
+				"--invite-stdin",
+				"--invite-file=",
+				// Reads the invite into a variable off stdin / file / env —
+				// never argv.
+				"IFS= read -r CV_INVITE",
+				`CV_INVITE=$(cat "$CV_INVITE_FILE")`,
+				"${CLAWVISOR_INVITE:-}",
+				// Accepts a full invite URL by extracting the token via pure
+				// shell parameter expansion (no external command sees it).
+				"${CV_INVITE#*token=}",
+				// Enrollment call: server-side claim + agent register in one POST.
+				"/api/agents/enroll",
+				// Body (carrying the invite) is streamed to curl on stdin.
+				"--data @-",
+			)
+		})
+	}
+}
+
+// TestInstallerInviteNeverOnCommandLine — the shell-history / process-table
+// hygiene guard. The invite value is a bearer credential; it must never be
+// interpolated onto an external command's argv (where `ps` / shell history
+// would capture it). Scans every generated shell installer line-by-line and
+// fails if an invite-bearing variable rides a curl / jq --arg / --data <value>
+// argument. The only sanctioned path is stdin (`printf '%s' "$CV_INVITE" |
+// jq -Rs …` → `… | curl … --data @-`); printf is a POSIX special builtin, so
+// the value never forks out to a separate process's argv.
+func TestInstallerInviteNeverOnCommandLine(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	for _, tc := range inviteShellVariants() {
+		t.Run(tc.name, func(t *testing.T) {
+			body := installerGetShellQuery(t, h, tc.target, tc.query)
+			for i, line := range strings.Split(body, "\n") {
+				code := line
+				if idx := strings.Index(code, "#"); idx >= 0 {
+					code = code[:idx] // ignore comments — prose may mention argv
+				}
+				if !strings.Contains(code, "CV_INVITE") && !strings.Contains(code, "CLAWVISOR_INVITE") {
+					continue
+				}
+				// The invite variable must not share a line with a network or
+				// arg-passing command — those put it on an external argv. The
+				// sanctioned `printf '%s' "$CV_INVITE" | jq -Rs \` continuation
+				// line carries neither curl, --arg, nor --data, so it passes.
+				// `curl` catches its own -d/--data short forms too, since they
+				// only appear on a curl line; `tr -d` (used to strip CRLF from
+				// the invite via a printf pipe) is not a leak, so we don't
+				// blanket-ban a bare `-d`.
+				for _, bad := range []string{"curl", "--arg", "--data", "wget"} {
+					if strings.Contains(code, bad) {
+						t.Errorf("line %d puts the invite on a command line (contains %q): %q", i+1, bad, line)
+					}
+				}
+			}
+		})
+	}
+}
+
+// inviteShellVariants enumerates every generated shell installer that must
+// carry the invite-stdin wiring: both self-install harnesses, in default and
+// skill-only form, plus claude-code's subscription variant (which must ALSO
+// never touch a provider key while enrolling — covered by
+// TestInstallerSubscriptionModeNoApiKey).
+func inviteShellVariants() []struct{ name, target, query string } {
+	return []struct{ name, target, query string }{
+		{"claude-code-default", "claude-code", "claim=ABCDEFGHIJ"},
+		{"claude-code-skill-only", "claude-code", "claim=ABCDEFGHIJ&route=skill-only"},
+		{"claude-code-subscription", "claude-code", "claim=ABCDEFGHIJ&route=subscription"},
+		{"codex-default", "codex", "claim=CLAIMCODE0"},
+		{"codex-skill-only", "codex", "claim=CLAIMCODE0&route=skill-only"},
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

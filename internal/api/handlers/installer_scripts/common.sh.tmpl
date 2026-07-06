@@ -32,6 +32,14 @@ usage() {
 Usage: curl -fsSL "<url>/skill/install/{{.Target}}.sh?..." | sh [-- FLAGS]
 
 Flags:
+  --invite-stdin         Read a single-use enrollment invite from stdin and
+                         enroll this laptop as the invited member. The invite
+                         never appears on the command line, in shell history,
+                         or in the process table. Recommended one-liner:
+                           printf '%s' "<invite-url>" | \
+                             sh -c "$(curl -fsSL <url>/skill/install/{{.Target}}.sh)" -- --invite-stdin
+  --invite-file=PATH     Read the invite from PATH instead of stdin (same
+                         enrollment; the path, not the invite, is on argv).
   --default-everywhere   Make Clawvisor the default for every session of
                          this harness (writes to its settings file).
   --alias-only           Skip the settings file and install a shell alias
@@ -56,8 +64,12 @@ CV_DEFAULT_MODE=""    # "yes" (default-everywhere) or "no" (alias-only)
 CV_YOLO=""            # "yes" or "no"
 CV_ALIAS_NAME=""      # function name for alias mode (default in per-target tmpl)
 CV_NO_TUI="${CLAWVISOR_NO_TUI:-0}"  # 1 disables the arrow-key selector
+CV_INVITE_STDIN=""    # "1" when --invite-stdin was passed
+CV_INVITE_FILE=""     # path when --invite-file=PATH was passed
 for arg in "$@"; do
     case "$arg" in
+        --invite-stdin)       CV_INVITE_STDIN=1 ;;
+        --invite-file=*)      CV_INVITE_FILE=${arg#--invite-file=} ;;
         --default-everywhere) CV_DEFAULT_MODE=yes ;;
         --alias-only)         CV_DEFAULT_MODE=no  ;;
         --alias-name=*)       CV_ALIAS_NAME=${arg#--alias-name=} ;;
@@ -248,6 +260,57 @@ HARNESS_LABEL='{{.HarnessLabel}}'
 APP_URL='{{.AppURL}}'
 LLM_URL='{{.LLMURL}}'
 HOST_OS=$(uname -s)
+
+# --- Read the enrollment invite (never off argv/env-on-the-command-line) -----
+# The invite is a single-use bearer credential. It is read ONLY from stdin or a
+# file so it never lands in shell history or the process table (`ps` lists
+# argv, not this). CLAWVISOR_INVITE is accepted as a documented, argv/env-
+# exposed fallback for non-interactive CI (spec 04 invite security rule 3).
+CV_INVITE=""
+if [ -n "$CV_INVITE_FILE" ]; then
+    [ -r "$CV_INVITE_FILE" ] || { echo "cannot read --invite-file: $CV_INVITE_FILE" >&2; exit 1; }
+    CV_INVITE=$(cat "$CV_INVITE_FILE")
+elif [ -n "$CV_INVITE_STDIN" ]; then
+    # Read one line from stdin. In the recommended one-liner the invite is piped
+    # in on fd 0 while the script body is delivered as an argument to sh
+    # (sh -c "$(curl ...)" -- --invite-stdin), leaving fd 0 free for the secret.
+    IFS= read -r CV_INVITE || true
+elif [ -n "${CLAWVISOR_INVITE:-}" ]; then
+    CV_INVITE=$CLAWVISOR_INVITE
+fi
+# Normalize: accept a raw cvinv_ token OR a full invite URL
+# (https://<fqdn>/join?token=cvinv_...). Extraction is pure shell parameter
+# expansion — no external command ever receives the secret on its argv. printf
+# is a POSIX special builtin, so the pipe into tr does not fork the value out.
+case "$CV_INVITE" in
+    *token=*)
+        CV_INVITE=${CV_INVITE#*token=}
+        CV_INVITE=${CV_INVITE%%&*}
+        ;;
+esac
+CV_INVITE=$(printf '%s' "$CV_INVITE" | tr -d '\r\n')
+if [ -n "$CV_INVITE_STDIN$CV_INVITE_FILE" ] && [ -z "$CV_INVITE" ]; then
+    echo "no invite value found — nothing to enroll with" >&2
+    echo "pipe the invite in, e.g.:" >&2
+    echo "  printf '%s' \"<invite-url>\" | sh -c \"\$(curl -fsSL $APP_URL/skill/install/$HARNESS.sh)\" -- --invite-stdin" >&2
+    exit 1
+fi
+# Shape guard. If --invite-stdin was used with the naive "curl … | sh" form,
+# sh's stdin is the script itself, so `read` grabs a line of shell source
+# instead of the invite — catch that here with a clear pointer at the form that
+# actually frees fd 0 for the secret (script delivered as an argument to sh).
+if [ -n "$CV_INVITE" ]; then
+    case "$CV_INVITE" in
+        cvinv_*) : ;;
+        *)
+            echo "that doesn't look like a Clawvisor invite (expected a cvinv_… token or invite URL)." >&2
+            echo "If you ran 'curl … | sh -s -- --invite-stdin', the invite can't ride that pipe —" >&2
+            echo "sh is already reading the script on stdin. Use this form instead:" >&2
+            echo "  printf '%s' \"<invite-url>\" | sh -c \"\$(curl -fsSL $APP_URL/skill/install/$HARNESS.sh)\" -- --invite-stdin" >&2
+            exit 1
+            ;;
+    esac
+fi
 {{end -}}
 
 {{- /*
@@ -279,43 +342,76 @@ if [ -f "$EXISTING_JSON" ]; then
 fi
 
 if [ -z "$TOKEN" ]; then
+    if [ -n "$CV_INVITE" ]; then
+        # --- Enroll via single-use invite (spec 04 / AGENT-GUIDE §2A) --------
+        # The invite claims a member account (email possession proven by holding
+        # the invite URL, magic-link mode), registers this per-user agent, and
+        # returns its cvis_ token — all in one call to /api/agents/enroll.
+        #
+        # The invite is fed to jq on stdin (printf is a POSIX builtin, so the
+        # token never reaches an external process's argv) and the resulting body
+        # is handed to curl on stdin via --data @-. At no point is the invite on
+        # a command line, in shell history, or in the process table.
+        echo "→ Claiming invite and registering {{.HarnessLabel}} agent at $APP_URL"
+        ENROLL_BODY=$(printf '%s' "$CV_INVITE" | jq -Rs \
+            --arg name "$AGENT_NAME" \
+            --arg desc "$HARNESS_LABEL on $HOST_OS" \
+            --arg harness "$HARNESS" \
+            --arg host_os "$HOST_OS" \
+            '{invite_token: rtrimstr("\n"), name:$name, description:$desc, install_context:{harness:$harness, host_os:$host_os, mode:"sh-invite"}}')
+        RESPONSE=$(printf '%s' "$ENROLL_BODY" | curl -sS -X POST "$APP_URL/api/agents/enroll" \
+            -H 'Content-Type: application/json' \
+            --data @-) || {
+            echo "could not reach Clawvisor at $APP_URL" >&2
+            exit 1
+        }
+        TOKEN=$(printf '%s' "$RESPONSE" | jq -r '.token // empty')
+        if [ -z "$TOKEN" ]; then
+            STATUS=$(printf '%s' "$RESPONSE" | jq -r '.code // .error // "unknown"')
+            echo "invite enrollment failed ($STATUS)" >&2
+            exit 1
+        fi
+        AGENT_ID=$(printf '%s' "$RESPONSE" | jq -r '.agent_id // empty')
+        echo "✓ Invite claimed — agent registered"
+    else
 {{if .Claim -}}
-    CONNECT_URL="$APP_URL/api/agents/connect?claim={{.Claim}}"
+        CONNECT_URL="$APP_URL/api/agents/connect?claim={{.Claim}}"
 {{- else if .UserID -}}
-    CONNECT_URL="$APP_URL/api/agents/connect?user_id={{.UserID}}&wait=true&timeout=120"
+        CONNECT_URL="$APP_URL/api/agents/connect?user_id={{.UserID}}&wait=true&timeout=120"
 {{- else -}}
-    CONNECT_URL="$APP_URL/api/agents/connect?wait=true&timeout=120"
+        CONNECT_URL="$APP_URL/api/agents/connect?wait=true&timeout=120"
 {{- end}}
 
-    CONNECT_BODY=$(jq -nc \
-        --arg name "$AGENT_NAME" \
-        --arg desc "$HARNESS_LABEL on $HOST_OS" \
-        --arg harness "$HARNESS" \
-        --arg host_os "$HOST_OS" \
-        '{name:$name, description:$desc, install_context:{harness:$harness, host_os:$host_os, mode:"sh-one-liner"}}')
+        CONNECT_BODY=$(jq -nc \
+            --arg name "$AGENT_NAME" \
+            --arg desc "$HARNESS_LABEL on $HOST_OS" \
+            --arg harness "$HARNESS" \
+            --arg host_os "$HOST_OS" \
+            '{name:$name, description:$desc, install_context:{harness:$harness, host_os:$host_os, mode:"sh-one-liner"}}')
 
-    # The claim has 120s of validity from when the dashboard minted it; if
-    # it's already expired or consumed (re-paste after a timeout), the
-    # daemon returns 401 INVALID_CLAIM here. The idempotent-reuse branch
-    # above handles the most common re-paste case — this fallback fires
-    # only when there's no local token file at all.
-    RESPONSE=$(curl -sS -X POST "$CONNECT_URL" \
-        -H 'Content-Type: application/json' \
-        --data "$CONNECT_BODY") || {
-        echo "could not reach Clawvisor at $APP_URL" >&2
-        exit 1
-    }
-    TOKEN=$(printf '%s' "$RESPONSE" | jq -r '.token // empty')
-    if [ -z "$TOKEN" ]; then
-        STATUS=$(printf '%s' "$RESPONSE" | jq -r '.status // .error // "unknown"')
-        echo "agent registration failed (status: $STATUS): $RESPONSE" >&2
-        exit 1
+        # The claim has 120s of validity from when the dashboard minted it; if
+        # it's already expired or consumed (re-paste after a timeout), the
+        # daemon returns 401 INVALID_CLAIM here. The idempotent-reuse branch
+        # above handles the most common re-paste case — this fallback fires
+        # only when there's no local token file at all.
+        RESPONSE=$(curl -sS -X POST "$CONNECT_URL" \
+            -H 'Content-Type: application/json' \
+            --data "$CONNECT_BODY") || {
+            echo "could not reach Clawvisor at $APP_URL" >&2
+            exit 1
+        }
+        TOKEN=$(printf '%s' "$RESPONSE" | jq -r '.token // empty')
+        if [ -z "$TOKEN" ]; then
+            STATUS=$(printf '%s' "$RESPONSE" | jq -r '.status // .error // "unknown"')
+            echo "agent registration failed (status: $STATUS): $RESPONSE" >&2
+            exit 1
+        fi
+        # AGENT_ID is captured so per-target steps can scope dashboard URLs and
+        # credential lookups to this specific agent — see the credential
+        # pre-flight in claude_code.sh.tmpl.
+        AGENT_ID=$(printf '%s' "$RESPONSE" | jq -r '.agent_id // empty')
+        echo "✓ Agent registered"
     fi
-    # AGENT_ID is captured so per-target steps can scope dashboard URLs and
-    # credential lookups to this specific agent — see the credential
-    # pre-flight in claude_code.sh.tmpl.
-    AGENT_ID=$(printf '%s' "$RESPONSE" | jq -r '.agent_id // empty')
-    echo "✓ Agent registered"
 fi
 {{end -}}
 
