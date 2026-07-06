@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/clawvisor/clawvisor/internal/observability"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 )
 
@@ -88,6 +89,12 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 			return result, fmt.Errorf("policy %q: %w", policy.Name(), err)
 		}
 		result.Verdicts = append(result.Verdicts, PolicyVerdict{Name: policy.Name(), Verdict: verdict})
+
+		// Emit the pipeline.verdicts metric + a policy.verdict span event.
+		// outcome is mapped through DecisionFromOutcome so all six Outcome
+		// values collapse to the coarse audit decision (allow/block/rewrite).
+		observability.RecordPolicyVerdict(ctx, policy.Name(),
+			string(DecisionFromOutcome(verdict.Outcome)), "pre", verdict.Reason)
 
 		switch verdict.Outcome {
 		case OutcomeDeny, OutcomeAllow, OutcomeSkip:

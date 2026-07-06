@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/clawvisor/clawvisor/internal/observability"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
@@ -36,6 +37,12 @@ type AuditEmitter struct {
 	// prompt change is forensically visible. Set by the handler when it
 	// knows the active validator's prompt hash.
 	ValidatorPromptSHA string
+
+	// Instruments carries the OpenTelemetry metric instruments. Token and
+	// cost counters are emitted here — the single point where per-request
+	// usage is priced and recorded — so metrics never recompute or diverge
+	// from the llm_request_cost rows. nil disables metric emission.
+	Instruments *observability.Instruments
 }
 
 // NewAuditEmitter builds an AuditEmitter with sensible defaults. Logger
@@ -226,6 +233,16 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 				CacheReadTokens:  extras.Usage.Usage.CacheReadTokens,
 				CacheWriteTokens: cacheWriteTotal,
 				CostMicros:       costMicros,
+			}
+			// Emit token + cost metrics from the same values recorded on
+			// the cost row (one source of truth, no recomputation).
+			e.Instruments.RecordTokens(ctx, provider, normModel,
+				int64(extras.Usage.Usage.InputTokens),
+				int64(extras.Usage.Usage.OutputTokens),
+				int64(extras.Usage.Usage.CacheReadTokens),
+				int64(cacheWriteTotal))
+			if costMicros != nil {
+				e.Instruments.RecordCost(ctx, provider, normModel, *costMicros)
 			}
 			if err := e.Store.RecordLLMRequestCost(ctx, row); err != nil {
 				// ErrConflict on the cost insert is the expected,

@@ -17,8 +17,8 @@ import (
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
-	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	runtimeleases "github.com/clawvisor/clawvisor/pkg/runtime/leases"
 	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
@@ -127,6 +127,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			ContextJudge: contextJudge,
 		})
 		runtimeSrv.InstallTimingTrace()
+		runtimeSrv.InstallObservability(opts.Instruments)
 		runtimeMgr = &runtimeproxy.Manager{
 			Store:  opts.Store,
 			Config: opts.Config,
@@ -399,6 +400,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	}
 	if opts.LocalServiceExecutor != nil {
 		apiOpts = append(apiOpts, api.WithLocalServiceExecutor(&localExecAdapter{opts.LocalServiceExecutor}))
+	}
+	if opts.Instruments != nil {
+		apiOpts = append(apiOpts, api.WithInstruments(opts.Instruments))
 	}
 
 	srv, err := api.New(

@@ -16,6 +16,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
+	"github.com/clawvisor/clawvisor/internal/observability"
 	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -213,6 +214,13 @@ type ServerOptions struct {
 	TaskCheckoutStore  llmproxy.TaskCheckoutStore
 	ScopeDriftRegistry llmproxy.ScopeDriftRegistry
 	RedisClient        *redis.Client
+
+	// Instruments is the shared OpenTelemetry metric instrument set,
+	// constructed once from the global meter provider after
+	// observability.Start. Threaded into the API handlers and the runtime
+	// proxy so they emit operational metrics. nil when observability export
+	// is disabled (the default), in which case all instrumentation no-ops.
+	Instruments *observability.Instruments
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.
