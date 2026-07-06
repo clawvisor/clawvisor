@@ -1,0 +1,54 @@
+# docker-compose for the single-VM Clawvisor deploy, rendered by the
+# vm-docker Terraform module. Translated from deploy/docker-compose.yml.
+#
+# v1 uses managed RDS Postgres (no postgres sidecar). Caddy terminates TLS
+# and reverse-proxies to app:25297.
+#
+# Secret VALUES are injected via the ${secrets_env_file} env_file written at
+# boot from Secrets Manager — they never appear in this file, in user_data,
+# or in Terraform state. Non-secret config comes from the rendered map below.
+
+services:
+  app:
+    container_name: clawvisor
+    # The image tag is supplied at RUNTIME by the on-instance deploy script
+    # via compose.env (clawvisor_image=<tag from the SSM parameter>), so an
+    # `image`-only upgrade never rewrites this file or replaces the instance.
+    # `$${...}` renders to a literal `$${...}` that docker compose substitutes.
+    image: $${clawvisor_image}
+    restart: unless-stopped
+    environment:
+      DATABASE_DRIVER: "postgres"
+      SERVER_HOST: "0.0.0.0"
+      CONFIG_FILE: "/etc/clawvisor/config.yaml"
+      VAULT_BACKEND: "${vault_backend}"
+%{ for k, v in app_env ~}
+      ${k}: "${v}"
+%{ endfor ~}
+    env_file:
+      # DATABASE_URL, JWT_SECRET, VAULT_KEY, CLAWVISOR_BOOTSTRAP_TOKEN —
+      # written at boot from Secrets Manager, mode 0600, never in state.
+      - ${secrets_env_file}
+    volumes:
+      - /etc/clawvisor/config.yaml:/etc/clawvisor/config.yaml:ro
+    expose:
+      - "25297"
+
+  caddy:
+    container_name: clawvisor-caddy
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "443:443"     # agent endpoint (SG-gated to agent_ingress_cidrs)
+      - "${admin_port}:${admin_port}" # admin surface (SG-gated to admin_ingress_cidrs)
+      - "80:80"       # ACME HTTP-01 redirect
+    volumes:
+      - /etc/clawvisor/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
