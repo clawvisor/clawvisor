@@ -170,6 +170,11 @@ type FeatureSet struct {
 	RuntimeActivity   bool `json:"runtime_activity"`
 	AgentLiveSessions bool `json:"agent_live_sessions"`
 	ServicePresets    bool `json:"service_presets"`
+	// APITokens advertises the long-lived scoped API-token endpoints so the
+	// Terraform provider can capability-negotiate (PRD §9.1). Always on —
+	// there is no config gate — so it is set unconditionally in
+	// handleFeatures rather than plumbed through WithFeatures.
+	APITokens bool `json:"api_tokens"`
 }
 
 // GatewayHooks allows cloud/enterprise layers to inject additional
@@ -719,6 +724,16 @@ func (s *Server) routes() http.Handler {
 	gatewayHandler.SetGatewayRateLimiter(gatewayRL, agentKeyFn)
 
 	user := func(h http.HandlerFunc) http.Handler { return requireUser(h) }
+	// userOrToken accepts a user JWT OR a `cvat_…` API token (spec 05). In
+	// 05-lite the only issuable scope is instance-admin, so one wrapper
+	// covers the whole token-reachable surface; full-05 splits it into
+	// read/write/admin variants keyed on scope. A non-`cvat_` bearer falls
+	// through to the JWT path byte-identically to `user`.
+	requireUserOrToken := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeInstanceAdmin)
+	userOrToken := func(h http.HandlerFunc) http.Handler { return requireUserOrToken(h) }
+	userOrTokenPolicyRL := func(h http.HandlerFunc) http.Handler {
+		return requireUserOrToken(middleware.RateLimit(policyRL, userKeyFn, rlCfg.PolicyAPI.Limit)(h))
+	}
 	// E2E encryption middleware — wraps agent-facing routes so relay traffic is encrypted.
 	// Local requests pass through unencrypted; relay requests without E2E get 403.
 	e2e := func(h http.Handler) http.Handler { return h }
@@ -728,9 +743,6 @@ func (s *Server) routes() http.Handler {
 	}
 	userOAuthRL := func(h http.HandlerFunc) http.Handler {
 		return requireUser(middleware.RateLimit(oauthRL, userKeyFn, rlCfg.OAuth.Limit)(h))
-	}
-	userPolicyRL := func(h http.HandlerFunc) http.Handler {
-		return requireUser(middleware.RateLimit(policyRL, userKeyFn, rlCfg.PolicyAPI.Limit)(h))
 	}
 	llmPreAuthKeyFn := func(r *http.Request) string { return "llm-ip:" + ipKeyFn(r) }
 	llmAgentKeyFn := func(r *http.Request) string {
@@ -809,18 +821,27 @@ func (s *Server) routes() http.Handler {
 	// the deployment-level set.
 	mux.Handle("GET /api/features", middleware.OptionalUser(s.jwtSvc, s.store)(http.HandlerFunc(s.handleFeatures)))
 
-	// Restrictions (rate-limited writes)
-	mux.Handle("GET /api/restrictions", user(restrictionsHandler.List))
-	mux.Handle("POST /api/restrictions", userPolicyRL(restrictionsHandler.Create))
-	mux.Handle("DELETE /api/restrictions/{id}", userPolicyRL(restrictionsHandler.Delete))
+	// API tokens (spec 05) — admin-gated management surface. In 05-lite
+	// "admin" means a valid JWT user (single-tenant, they are the admin)
+	// OR an instance-admin API token; spec 04 adds the JWT role gate.
+	apiTokensHandler := handlers.NewAPITokensHandler(s.store, s.logger)
+	mux.Handle("POST /api/tokens", userOrToken(apiTokensHandler.Create))
+	mux.Handle("GET /api/tokens", userOrToken(apiTokensHandler.List))
+	mux.Handle("DELETE /api/tokens/{id}", userOrToken(apiTokensHandler.Delete))
 
-	// Agents (user JWT)
-	mux.Handle("GET /api/agents", user(agentsHandler.List))
-	mux.Handle("POST /api/agents", user(agentsHandler.Create))
-	mux.Handle("POST /api/agents/{id}/rotate", user(agentsHandler.RotateToken))
-	mux.Handle("GET /api/agents/{id}/runtime-settings", user(agentsHandler.GetRuntimeSettings))
-	mux.Handle("PUT /api/agents/{id}/runtime-settings", user(agentsHandler.UpdateRuntimeSettings))
-	mux.Handle("DELETE /api/agents/{id}", user(agentsHandler.Delete))
+	// Restrictions (rate-limited writes) — part of the declarative-config
+	// surface an API token drives headlessly.
+	mux.Handle("GET /api/restrictions", userOrToken(restrictionsHandler.List))
+	mux.Handle("POST /api/restrictions", userOrTokenPolicyRL(restrictionsHandler.Create))
+	mux.Handle("DELETE /api/restrictions/{id}", userOrTokenPolicyRL(restrictionsHandler.Delete))
+
+	// Agents (user JWT or API token)
+	mux.Handle("GET /api/agents", userOrToken(agentsHandler.List))
+	mux.Handle("POST /api/agents", userOrToken(agentsHandler.Create))
+	mux.Handle("POST /api/agents/{id}/rotate", userOrToken(agentsHandler.RotateToken))
+	mux.Handle("GET /api/agents/{id}/runtime-settings", userOrToken(agentsHandler.GetRuntimeSettings))
+	mux.Handle("PUT /api/agents/{id}/runtime-settings", userOrToken(agentsHandler.UpdateRuntimeSettings))
+	mux.Handle("DELETE /api/agents/{id}", userOrToken(agentsHandler.Delete))
 
 	// Notifications (user JWT)
 	mux.Handle("GET /api/notifications", user(notificationsHandler.List))
@@ -960,23 +981,27 @@ func (s *Server) routes() http.Handler {
 	// Callback secret registration (agent token)
 	mux.Handle("POST /api/callbacks/register", requireAgent(e2e(http.HandlerFunc(gatewayHandler.RegisterCallback))))
 
-	// Services / OAuth (user JWT, rate-limited)
-	mux.Handle("GET /api/services", user(servicesHandler.List))
+	// Services / OAuth (user JWT or API token)
+	mux.Handle("GET /api/services", userOrToken(servicesHandler.List))
 	if s.cfg.ProxyLite.Enabled {
-		mux.Handle("GET /api/vault/items", user(vaultHandler.ListForUser))
-		mux.Handle("POST /api/vault/items", user(vaultHandler.CreateForUser))
-		mux.Handle("GET /api/vault/items/{id}", user(vaultHandler.GetForUser))
-		mux.Handle("PUT /api/vault/items/{id}", user(vaultHandler.UpdateForUser))
-		mux.Handle("DELETE /api/vault/items/{id}", user(vaultHandler.DeleteForUser))
+		// Personal vault items — token auth lives under the same ProxyLite
+		// gate as the JWT routes (gotcha #5). In 05-lite an instance-admin
+		// token writes the caller's (`_instance`) personal vault entries;
+		// shared/`_instance` vault routes are a spec-04 addition.
+		mux.Handle("GET /api/vault/items", userOrToken(vaultHandler.ListForUser))
+		mux.Handle("POST /api/vault/items", userOrToken(vaultHandler.CreateForUser))
+		mux.Handle("GET /api/vault/items/{id}", userOrToken(vaultHandler.GetForUser))
+		mux.Handle("PUT /api/vault/items/{id}", userOrToken(vaultHandler.UpdateForUser))
+		mux.Handle("DELETE /api/vault/items/{id}", userOrToken(vaultHandler.DeleteForUser))
 		mux.Handle("GET /api/agent/vault/items", requireAgent(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
 	}
 	mux.Handle("GET /api/oauth/url", userOAuthRL(servicesHandler.OAuthGetURL))  // fetch → returns {"url":"..."}
 	mux.Handle("GET /api/oauth/start", userOAuthRL(servicesHandler.OAuthStart)) // kept for compat
 	mux.HandleFunc("GET /api/oauth/callback", servicesHandler.OAuthCallback)    // no auth: browser redirect
-	mux.Handle("POST /api/services/{serviceID}/activate", user(servicesHandler.Activate))
-	mux.Handle("POST /api/services/{serviceID}/activate-key", user(servicesHandler.ActivateWithKey))
-	mux.Handle("POST /api/services/{serviceID}/deactivate", user(servicesHandler.Deactivate))
-	mux.Handle("POST /api/services/{serviceID}/rename-alias", user(servicesHandler.RenameAlias))
+	mux.Handle("POST /api/services/{serviceID}/activate", userOrToken(servicesHandler.Activate))
+	mux.Handle("POST /api/services/{serviceID}/activate-key", userOrToken(servicesHandler.ActivateWithKey))
+	mux.Handle("POST /api/services/{serviceID}/deactivate", userOrToken(servicesHandler.Deactivate))
+	mux.Handle("POST /api/services/{serviceID}/rename-alias", userOrToken(servicesHandler.RenameAlias))
 	mux.Handle("POST /api/services/{serviceID}/device-flow/start", user(servicesHandler.DeviceFlowStart))
 	mux.Handle("POST /api/services/{serviceID}/device-flow/poll", user(servicesHandler.DeviceFlowPoll))
 	mux.Handle("POST /api/services/{serviceID}/pkce-flow/start", user(servicesHandler.PKCEFlowStart))
@@ -1518,6 +1543,9 @@ func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
 	if s.featuresHook != nil {
 		fs = s.featuresHook(r.Context(), middleware.UserFromContext(r.Context()), fs)
 	}
+	// API tokens are always available (no config gate); advertise them so
+	// the Terraform provider knows the endpoints exist.
+	fs.APITokens = true
 	w.Header().Set("Content-Type", "application/json")
 	// The response varies per-user (via featuresHook). Without no-store, a
 	// browser may cache the anonymous response and serve it back after the

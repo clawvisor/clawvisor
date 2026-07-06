@@ -107,7 +107,7 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID, newPasswordHash 
 
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id != '__system__' AND email != 'admin@local'`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id NOT IN ('__system__', '_instance') AND email != 'admin@local'`).Scan(&n)
 	return n, err
 }
 
@@ -119,6 +119,122 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return store.ErrNotFound
+	}
+	return nil
+}
+
+// ── API tokens ──────────────────────────────────────────────────────────────
+
+func (s *Store) CreateAPIToken(ctx context.Context, t *store.APIToken) error {
+	if t.ID == "" {
+		t.ID = uuid.New().String()
+	}
+	var expiresAt any
+	if t.ExpiresAt != nil {
+		expiresAt = t.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO api_tokens (id, name, token_hash, token_prefix, scope, created_by, expires_at, is_bootstrap)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, t.ID, t.Name, t.TokenHash, t.TokenPrefix, t.Scope, t.CreatedBy, expiresAt, boolToInt(t.IsBootstrap))
+	if err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) GetAPITokenByHash(ctx context.Context, tokenHash string) (*store.APIToken, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, name, token_hash, token_prefix, scope, created_by, created_at, expires_at, last_used_at, revoked_at, is_bootstrap
+		FROM api_tokens WHERE token_hash = ?
+	`, tokenHash)
+	t, err := scanAPIToken(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return t, err
+}
+
+func (s *Store) ListAPITokens(ctx context.Context) ([]*store.APIToken, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, token_hash, token_prefix, scope, created_by, created_at, expires_at, last_used_at, revoked_at, is_bootstrap
+		FROM api_tokens ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.APIToken
+	for rows.Next() {
+		t, err := scanAPIToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RevokeAPIToken(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+		time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Distinguish "unknown id" (404) from "already revoked" (idempotent
+		// success): only the former is ErrNotFound.
+		var exists int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE id = ?`, id).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return store.ErrNotFound
+		}
+	}
+	return nil
+}
+
+func (s *Store) TouchAPITokenLastUsed(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE api_tokens SET last_used_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
+// apiTokenScanner is satisfied by both *sql.Row and *sql.Rows.
+type apiTokenScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanAPIToken(sc apiTokenScanner) (*store.APIToken, error) {
+	t := &store.APIToken{}
+	var createdBy *string
+	var createdAt string
+	var expiresAt, lastUsedAt, revokedAt *string
+	var isBootstrap int
+	if err := sc.Scan(&t.ID, &t.Name, &t.TokenHash, &t.TokenPrefix, &t.Scope, &createdBy, &createdAt, &expiresAt, &lastUsedAt, &revokedAt, &isBootstrap); err != nil {
+		return nil, err
+	}
+	t.CreatedBy = createdBy
+	t.CreatedAt = parseTime(createdAt)
+	t.ExpiresAt = parseNullableTime(expiresAt)
+	t.LastUsedAt = parseNullableTime(lastUsedAt)
+	t.RevokedAt = parseNullableTime(revokedAt)
+	t.IsBootstrap = isBootstrap != 0
+	return t, nil
+}
+
+func parseNullableTime(s *string) *time.Time {
+	if s == nil || *s == "" {
+		return nil
+	}
+	if t := parseTime(*s); !t.IsZero() {
+		return &t
 	}
 	return nil
 }
