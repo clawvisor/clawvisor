@@ -2499,7 +2499,45 @@ func (h *GatewayHandler) routeToApproval(
 	}
 
 	_ = h.store.SaveNotificationMessage(ctx, "approval", approvalNotifyTargetID(blob.RequestID, blob.TaskID), "telegram", msgID)
+
+	// Admin-notify (04b): when enabled, also alert every instance admin — not
+	// just the owner — so the governed party isn't the only person who knows a
+	// hold is waiting. Single flat "all admins" audience; no per-team routing
+	// (that is paid hierarchy). Best-effort and off the request path: a slow
+	// or unpaired admin channel must not delay the agent's response.
+	if h.cfg.Approval.AdminNotify {
+		h.notifyAdminsOfHold(ctx, userID, blob)
+	}
 	return nil
+}
+
+// notifyAdminsOfHold sends a lightweight alert to every instance admin (other
+// than the hold's owner) that a hold is waiting in the admin queue. Runs in a
+// panic-safe goroutine; failures are logged, never surfaced to the agent.
+func (h *GatewayHandler) notifyAdminsOfHold(ctx context.Context, ownerID string, blob *pendingRequestBlob) {
+	if h.notifier == nil {
+		return
+	}
+	agentName := blob.AgentName
+	requestID := blob.RequestID
+	safeGo(h.logger, "admin approval notify", func() {
+		bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		admins, err := h.store.ListAdmins(bgCtx)
+		if err != nil {
+			h.logger.WarnContext(bgCtx, "admin-notify: list admins failed", "err", err)
+			return
+		}
+		text := fmt.Sprintf("🔔 <b>Approval waiting</b> — agent %q raised a hold. Review it in the admin approval queue.", agentName)
+		for _, a := range admins {
+			if a.ID == ownerID {
+				continue // the owner already got the actionable notification
+			}
+			if alertErr := h.notifier.SendAlert(bgCtx, a.ID, text); alertErr != nil {
+				h.logger.WarnContext(bgCtx, "admin-notify: send alert failed", "admin_id", a.ID, "request_id", requestID, "err", alertErr)
+			}
+		}
+	})
 }
 
 // approvalNotifyTargetID composes the notification_messages target_id for a

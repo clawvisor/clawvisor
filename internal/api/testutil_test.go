@@ -16,6 +16,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api"
 	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -93,7 +94,7 @@ func newTestEnvWithConfig(t *testing.T, llmCfg config.LLMConfig, wrapVault func(
 			AccessTokenTTL:  "15m",
 			RefreshTokenTTL: "720h",
 		},
-		Approval: config.ApprovalConfig{Timeout: 300, OnTimeout: "fail"},
+		Approval: config.ApprovalConfig{Timeout: 300, OnTimeout: "fail", AllowSelfApprove: true, AdminNotify: true},
 		Task:     config.TaskConfig{DefaultExpirySeconds: 3600},
 		// Tests cover the missing-task_id classification path (TestGateway_NoTaskID_*),
 		// which only runs when the runtime proxy is enabled. Flip the bit so the
@@ -124,6 +125,58 @@ func newTestEnvWithConfig(t *testing.T, llmCfg config.LLMConfig, wrapVault func(
 		Store:  st,
 		client: ts.Client(),
 	}
+}
+
+// newCloudCompositionTestEnv builds an API server wired like the cloud
+// (multi-org) composition: WithOrgGov is supplied, which sets orgIDForAgent
+// and flips Server.isCloudComposition() true. Used by the 04b F5 test to prove
+// the org-blind /api/admin/* fleet-visibility routes are NOT mounted in a
+// multi-org build.
+func newCloudCompositionTestEnv(t *testing.T) *testEnv {
+	t.Helper()
+	ctx := context.Background()
+
+	db, err := sqlitestore.New(ctx, t.TempDir()+"/test.db")
+	if err != nil {
+		t.Fatalf("sqlite: %v", err)
+	}
+	st := sqlitestore.NewStore(db)
+
+	v, err := intvault.NewLocalVault(t.TempDir()+"/vault.key", db, "sqlite")
+	if err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+
+	jwtSvc, err := auth.NewJWTService("test-secret-for-integration-tests")
+	if err != nil {
+		t.Fatalf("jwt: %v", err)
+	}
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{Host: "127.0.0.1", Port: 0},
+		Auth: config.AuthConfig{
+			JWTSecret:       "test-secret-for-integration-tests",
+			AccessTokenTTL:  "15m",
+			RefreshTokenTTL: "720h",
+		},
+		Approval: config.ApprovalConfig{Timeout: 300, OnTimeout: "fail", AllowSelfApprove: true, AdminNotify: true},
+		Task:     config.TaskConfig{DefaultExpirySeconds: 3600},
+	}
+
+	srv, err := api.New(cfg, st, v, jwtSvc, adapters.NewRegistry(), nil, config.LLMConfig{}, nil,
+		api.WithFeatures(api.FeatureSet{PasswordAuth: true}),
+		// Any non-nil orgIDForAgent marks this as the cloud composition.
+		api.WithOrgGov(orggov.Callbacks{}, func(context.Context, string) string { return "" }),
+	)
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	t.Cleanup(func() { _ = st.Close() })
+
+	return &testEnv{t: t, ts: ts, Vault: v, Store: st, client: ts.Client()}
 }
 
 // magicLinkTestEnv extends testEnv with a MagicTokenStore for magic-link tests.
@@ -162,7 +215,7 @@ func newMagicLinkTestEnv(t *testing.T) *magicLinkTestEnv {
 			AccessTokenTTL:  "15m",
 			RefreshTokenTTL: "720h",
 		},
-		Approval: config.ApprovalConfig{Timeout: 300, OnTimeout: "fail"},
+		Approval: config.ApprovalConfig{Timeout: 300, OnTimeout: "fail", AllowSelfApprove: true, AdminNotify: true},
 		Task:     config.TaskConfig{DefaultExpirySeconds: 3600},
 		// Tests cover the missing-task_id classification path (TestGateway_NoTaskID_*),
 		// which only runs when the runtime proxy is enabled. Flip the bit so the

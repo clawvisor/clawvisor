@@ -131,6 +131,7 @@ type Server struct {
 	// orgIDForAgent resolves an agent_id to its org_id without forcing
 	// the policy layer to take a store dependency.
 	orgIDForAgent func(ctx context.Context, agentID string) string
+	// isCloudComposition is a helper method (below) — do not add fields here.
 	// intentPromptResolver is the per-org override resolver for the
 	// intent verifier. nil → defaults apply.
 	intentPromptResolver intent.PromptResolverFn
@@ -305,6 +306,15 @@ func WithOrgGov(callbacks orggov.Callbacks, orgIDForAgent func(ctx context.Conte
 		s.orgGovCallbacks = callbacks
 		s.orgIDForAgent = orgIDForAgent
 	}
+}
+
+// isCloudComposition reports whether this server is running inside the cloud
+// (multi-org) composition. Cloud wires WithOrgGov (which sets orgIDForAgent);
+// the OSS build never does. Used to withhold the org-blind /api/admin/*
+// fleet-visibility routes from a multi-org build, where an instance admin must
+// not read another org's agents/costs/audit (spec 04b §F5).
+func (s *Server) isCloudComposition() bool {
+	return s.orgIDForAgent != nil
 }
 
 // WithIntentPromptResolver registers the per-org override resolver for
@@ -1081,6 +1091,21 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/approvals", user(approvalsHandler.List))
 	mux.Handle("POST /api/approvals/{request_id}/approve", user(approvalsHandler.Approve))
 	mux.Handle("POST /api/approvals/{request_id}/deny", user(approvalsHandler.Deny))
+
+	// Admin visibility (04b): fleet-wide read + admin approval queue, single
+	// instance only. Every route is gated by RequireAdminOrToken (a JWT admin
+	// OR an instance-admin token; a member gets 403 FORBIDDEN). These reads are
+	// org-blind by construction, so they are mounted ONLY in the OSS build —
+	// when a cloud composition wires OrgGov (s.isCloudComposition()), they are
+	// omitted and cloud provides org-scoped equivalents (spec 04b §F5).
+	if !s.isCloudComposition() {
+		adminHandler := handlers.NewAdminHandler(s.store, s.logger)
+		mux.Handle("GET /api/admin/agents", adminOrToken(adminHandler.ListAgents))
+		mux.Handle("GET /api/admin/approvals", adminOrToken(approvalsHandler.AdminListApprovals))
+		mux.Handle("POST /api/admin/approvals/{id}/resolve", adminOrToken(approvalsHandler.AdminResolveApproval))
+		mux.Handle("GET /api/admin/audit", adminOrToken(adminHandler.ListAudit))
+		mux.Handle("GET /api/admin/costs", adminOrToken(adminHandler.Costs))
+	}
 
 	// Unified queue (user JWT)
 	queueHandler := handlers.NewQueueHandler(s.store)
