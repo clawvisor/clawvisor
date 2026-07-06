@@ -15,10 +15,13 @@ import (
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/browser"
 	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/observability"
 	"github.com/clawvisor/clawvisor/internal/telemetry"
 	"github.com/clawvisor/clawvisor/pkg/clawvisor"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/version"
+
+	"go.opentelemetry.io/otel"
 )
 
 // RunOptions holds optional flags for the server entrypoint.
@@ -172,6 +175,33 @@ func Run(logger *slog.Logger, ropts RunOptions) error {
 
 	// ── Telemetry ──────────────────────────────────────────────────────────
 	telemetry.Start(context.Background(), opts.Config, opts.Store, logger)
+
+	// ── Observability (OTel export) ─────────────────────────────────────────
+	// Distinct from the anonymous product telemetry above: this exports
+	// operational traces/metrics to an operator-controlled OTLP endpoint.
+	// When disabled (the default), Start is a no-op and instrumentation goes
+	// through the global no-op providers at zero cost.
+	otelShutdown, err := observability.Start(context.Background(), opts.Config.Observability.OTel, logger)
+	if err != nil {
+		// Do not fail server startup on an observability export problem;
+		// operational metrics are best-effort.
+		logger.Error("observability: OTel export failed to start; continuing without export", "err", err)
+	} else {
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := otelShutdown(shutdownCtx); err != nil {
+				logger.Warn("observability: OTel shutdown error", "err", err)
+			}
+		}()
+		if opts.Config.Observability.OTel.Enabled {
+			if inst, err := observability.NewInstruments(otel.GetMeterProvider().Meter(observability.TracerName)); err != nil {
+				logger.Error("observability: building metric instruments failed; metrics disabled", "err", err)
+			} else {
+				opts.Instruments = inst
+			}
+		}
+	}
 
 	return clawvisor.Run(opts)
 }

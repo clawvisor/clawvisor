@@ -27,12 +27,13 @@ import (
 	"github.com/clawvisor/clawvisor/internal/mcp"
 	mcpoauth "github.com/clawvisor/clawvisor/internal/mcp/oauth"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
+	"github.com/clawvisor/clawvisor/internal/observability"
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/relay"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge/llmjudge"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
@@ -136,6 +137,11 @@ type Server struct {
 	// taskRiskPromptResolver is the per-org override resolver for the
 	// task risk assessor.
 	taskRiskPromptResolver taskrisk.PromptResolverFn
+
+	// instruments is the shared OpenTelemetry metric instrument set. nil
+	// when observability export is disabled (the default); handlers no-op
+	// their metric emission when it is nil.
+	instruments *observability.Instruments
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.
@@ -390,6 +396,13 @@ func WithExtractionTracker(t handlers.ExtractionTracker) ServerOption {
 	return func(s *Server) { s.extractionTracker = t }
 }
 
+// WithInstruments supplies the shared OpenTelemetry metric instrument set so
+// the proxy-lite and gateway handlers emit operational metrics. nil (the
+// default) disables metric emission.
+func WithInstruments(inst *observability.Instruments) ServerOption {
+	return func(s *Server) { s.instruments = inst }
+}
+
 // WithCallerNonceCache overrides the default in-memory caller-nonce cache
 // used by the lite-proxy resolver. Use the Redis-backed cache in
 // multi-instance deployments so a nonce minted on one daemon can be
@@ -607,6 +620,7 @@ func (s *Server) routes() http.Handler {
 		s.notifier, verifier, extractor, *s.cfg, s.logger, baseURL, s.eventHub,
 	)
 	gatewayHandler.SetCallbackDispatcher(s.cbDispatcher)
+	gatewayHandler.SetInstruments(s.instruments)
 	if s.llmCfg.Verification.Enabled {
 		gatewayHandler.SetGatewayRequestResolver(runtimepolicy.NewLLMGatewayRequestResolver(s.llmHealth, s.logger))
 	}
@@ -653,6 +667,7 @@ func (s *Server) routes() http.Handler {
 	s.taskRiskAssessor = assessor
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, *s.cfg, assessor, s.logger, s.eventHub)
 	approvalsHandler.SetCallbackDispatcher(s.cbDispatcher)
+	approvalsHandler.SetInstruments(s.instruments)
 	s.approvalsHandler = approvalsHandler
 
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
@@ -1327,6 +1342,7 @@ func (s *Server) registerLiteProxyRoutes(
 		llmHandler := handlers.NewLLMEndpointHandler(s.store, s.vault, s.logger)
 		llmHandler.OrgGovCallbacks = s.orgGovCallbacks
 		llmHandler.OrgIDForAgent = s.orgIDForAgent
+		llmHandler.Instruments = s.instruments
 		if v := s.cfg.ProxyLite.AnthropicBaseURL; v != "" {
 			llmHandler.Forwarder.Upstream.AnthropicBaseURL = v
 		}
@@ -1408,6 +1424,7 @@ func (s *Server) registerLiteProxyRoutes(
 		}
 
 		auditEmitter := llmproxy.NewAuditEmitter(s.store, s.logger, nil)
+		auditEmitter.Instruments = s.instruments
 		llmHandler.AuditEmitter = auditEmitter
 		llmHandler.Catalog = llmproxy.NewLazyServiceCatalog(llmproxy.DefsFromRegistry(s.adapterReg))
 		llmHandler.TaskScope = llmproxy.NewStoreTaskScopeChecker(s.store)
