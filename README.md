@@ -508,6 +508,39 @@ clawvisor-server agent run --agent my-agent -- claude
 
 For provider-specific wrappers and raw environment exports, see [docs/LITE_PROXY.md](docs/LITE_PROXY.md).
 
+### Postures
+
+Proxy-lite is configured through a coarse `posture` preset (in the config
+file only — there is no env override) plus two independent, individually
+overridable axes:
+
+| Posture | `upstream_auth` | `enforcement_mode` | Behavior |
+|---|---|---|---|
+| **observe** | `passthrough` | `observe` | Zero behavior change: forwards the agent's own provider credential, and records every hold/deny verdict as an observation instead of enforcing it. The pipeline still inspects, attributes, audits, and meters cost. |
+| **govern** | `vault` | `enforce` | Injects the stored provider key (client-presented API keys are stripped) and enforces holds/denials/policies. |
+| **contain** | — | — | Not yet available; fails startup until the runtime-proxy superset lands. |
+
+- **`upstream_auth`** (`vault` default \| `passthrough`; env
+  `CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH`). In `vault` posture the server injects
+  the vaulted key and **strips any client-presented API key** — `upstream_auth`
+  is a server-side decision, not a per-request client choice. `passthrough`
+  forwards the client's own OAuth/API credential unchanged.
+- **`enforcement_mode`** (`enforce` default \| `observe`; env
+  `CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE`). `observe` downgrades every enforcing
+  verdict (deny, hold, policy rewrite) to a recorded observation — the audit
+  view flags these as `observed`. Clawvisor's own agent-token auth is never
+  weakened by observe mode.
+
+**Subscription (OAuth) seats.** Observe carries a Claude subscription session
+transparently (the `Authorization: Bearer` OAuth token and `anthropic-beta`
+header are forwarded unchanged). Under **govern/vault**, a subscription bearer
+is **refused** with `SUBSCRIPTION_SEAT_NOT_GOVERNABLE` (HTTP 403) rather than
+silently converted from subscription billing to org-metered API billing.
+Provide an org provider API key for that agent, or set
+`proxy_lite.allow_subscription_billing_migration: true` to consent to the
+migration. That flag is **instance-wide** — enabling it migrates every
+subscription seat on the instance at once.
+
 ## Architecture
 
 | Layer | Choice |
