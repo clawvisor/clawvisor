@@ -240,6 +240,22 @@ runtime_proxy:
 	for k, v := range opts.extraEnv {
 		env = append(env, k+"="+v)
 	}
+	// Contain-posture parity matrix (spec 09): when CLAWVISOR_E2E_POSTURE=contain
+	// the scenario package re-runs every existing flow with the runtime proxy
+	// booted and LLM traffic routed through proxy-lite. LLM traffic still
+	// bypasses the runtime proxy (NO_PROXY), so proxy-lite sees byte-identical
+	// requests — the superset holds by construction. Only applied when the
+	// fixture has proxy_lite (the pre-flip scenario omits it) and the caller
+	// hasn't wired the runtime proxy itself. A fresh runtime-proxy port is
+	// allocated per attempt so early-exit retries don't reuse a colliding port.
+	if PostureFromEnv() == "contain" && !opts.omitProxyLite && !extraEnvHasKey(opts.extraEnv, "CLAWVISOR_RUNTIME_PROXY_ENABLED") {
+		rpPort := freePort(t)
+		env = append(env,
+			"CLAWVISOR_RUNTIME_PROXY_ENABLED=true",
+			fmt.Sprintf("CLAWVISOR_RUNTIME_PROXY_LISTEN_ADDR=127.0.0.1:%d", rpPort),
+			"CLAWVISOR_RUNTIME_LLM_ROUTE=proxy_lite",
+		)
+	}
 	cmd.Env = env
 
 	stdout, _ := cmd.StdoutPipe()
@@ -365,6 +381,23 @@ func (s *Server) waitDrains(timeout time.Duration) {
 	case <-done:
 	case <-time.After(timeout):
 	}
+}
+
+// PostureFromEnv returns the CI parity matrix posture selector
+// (CLAWVISOR_E2E_POSTURE): "contain" boots the runtime proxy + proxy_lite LLM
+// routing; anything else (incl. "govern"/"") is the baseline proxy-lite path.
+// Scenario helpers key their contain-only assertions off this.
+func PostureFromEnv() string {
+	return strings.ToLower(strings.TrimSpace(os.Getenv("CLAWVISOR_E2E_POSTURE")))
+}
+
+func extraEnvHasKey(extraEnv map[string]string, key string) bool {
+	for k := range extraEnv {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func freePort(t *testing.T) int {
