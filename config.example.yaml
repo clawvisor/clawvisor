@@ -120,6 +120,11 @@ telemetry:
 # preset is applied by detecting which knobs the YAML sets explicitly. An
 # explicit knob ALWAYS wins over the preset.
 #
+# Fresh-install default: the setup wizard now recommends Observe (proxy-lite
+# routing for visibility, zero behavior change); "skill gateway only" is the
+# explicit opt-out. This is a writer-side default — the compiled default of
+# proxy_lite.enabled stays false, so existing configs are never changed.
+#
 #   observe — visibility, zero behavior change: proxy-lite enabled, upstream
 #             auth = passthrough (forward the agent's own provider credential,
 #             no vault injection), enforcement = observe (the pipeline

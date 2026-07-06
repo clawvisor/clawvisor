@@ -496,6 +496,8 @@ Clawvisor exposes an MCP (Model Context Protocol) server at `/mcp` with OAuth 2.
 
 Proxy-lite runs inside the Clawvisor daemon and presents Anthropic/OpenAI-compatible LLM endpoints to command-line agents. It can observe model API calls, intercept tool-use, hold inline approvals, and attribute requests to a registered agent without requiring a CONNECT/TLS MITM proxy.
 
+**Fresh-install default: Observe.** The setup wizard and the per-harness install scripts now route agent LLM traffic through proxy-lite in the **Observe** posture by default (visibility, zero behavior change). Skill-gateway-only remains a first-class opt-out — choose it in the wizard, or pass `route=skill-only` to an install script. Existing installs are never changed: the compiled default of `proxy_lite.enabled` stays `false`, so a config that predates the flip keeps its behavior on upgrade.
+
 > [!WARNING]
 > **Proxy-lite is in active development.** Behavior, flags, and the API surface may change in any release while it remains pre-1.0. Treat it as preview-quality and pin to a specific Clawvisor version in production.
 
