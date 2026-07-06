@@ -932,6 +932,16 @@ func (s *Server) routes() http.Handler {
 		middleware.RateLimit(connectionsRL, ipKeyFn, 10)(e2e(http.HandlerFunc(connectionsHandler.RequestConnect))))
 	mux.Handle("GET /api/agents/connect/{id}/status", e2e(http.HandlerFunc(connectionsHandler.PollStatus)))
 
+	// Installer invite enrollment (spec 04 §B / AGENT-GUIDE §2A): the employee
+	// install script POSTs a single-use cvinv_ invite (read off stdin/file,
+	// never argv/env) and gets a per-user agent token back. Only usable in
+	// magic-link mode, where the invite claim proves email possession inline
+	// (invite security rule 2's carve-out); the seat cap mirrors auth.max_users.
+	connectionsHandler.ConfigureInviteEnroll(s.magicStore != nil, s.cfg.Auth.MaxUsers)
+	enrollRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
+	mux.Handle("POST /api/agents/enroll",
+		middleware.RateLimit(enrollRL, ipKeyFn, 10)(e2e(http.HandlerFunc(connectionsHandler.EnrollWithInvite))))
+
 	// Connection request management (user JWT)
 	// Claim-code minting supports proxy-lite bootstrap curls; keep the
 	// route absent for proxy-lite-disabled installs so the connect API
