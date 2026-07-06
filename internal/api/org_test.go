@@ -53,7 +53,7 @@ func newTestEnvWithHooks(t *testing.T, hooks *api.GatewayHooks, extra ...adapter
 			AccessTokenTTL:  "15m",
 			RefreshTokenTTL: "720h",
 		},
-		Approval: config.ApprovalConfig{Timeout: 300, OnTimeout: "fail"},
+		Approval: config.ApprovalConfig{Timeout: 300, OnTimeout: "fail", AllowSelfApprove: true, AdminNotify: true},
 		Task:     config.TaskConfig{DefaultExpirySeconds: 3600},
 	}
 

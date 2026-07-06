@@ -78,7 +78,7 @@ func newRouteSetEnv(t *testing.T, routeSet string) *routeSetEnv {
 			AccessTokenTTL:  "15m",
 			RefreshTokenTTL: "720h",
 		},
-		Approval:  config.ApprovalConfig{Timeout: 300, OnTimeout: "fail"},
+		Approval:  config.ApprovalConfig{Timeout: 300, OnTimeout: "fail", AllowSelfApprove: true, AdminNotify: true},
 		Task:      config.TaskConfig{DefaultExpirySeconds: 3600},
 		ProxyLite: config.ProxyLiteConfig{Enabled: true},
 	}

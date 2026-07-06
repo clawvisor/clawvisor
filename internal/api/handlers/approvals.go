@@ -210,6 +210,17 @@ func (h *ApprovalsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your approval")
 		return
 	}
+	// Self-approval gate (04b F7). When allow_self_approve is off (the Govern/
+	// Contain default) the governed party may not resolve a hold raised by
+	// their own agent — that is exactly what makes governance real. The member
+	// route only ever addresses the caller's OWN holds, so the check is
+	// unconditional here; a hold owned by someone else must be resolved by an
+	// admin via /api/admin/approvals/{id}/resolve (which carries the
+	// solo-admin exception).
+	if !h.cfg.Approval.AllowSelfApprove {
+		writeError(w, http.StatusForbidden, "SELF_APPROVE_FORBIDDEN", "self-approval is disabled; another user must resolve this hold")
+		return
+	}
 	if time.Now().After(pa.ExpiresAt) {
 		writeError(w, http.StatusGone, "APPROVAL_EXPIRED", "this approval request has expired")
 		return
@@ -475,6 +486,13 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 
 	if pa.UserID != user.ID {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your approval")
+		return
+	}
+	// Self-approval gate (04b F7) — see Approve for the full rationale. Denying
+	// your own hold is still a self-resolution and is blocked when
+	// allow_self_approve is off.
+	if !h.cfg.Approval.AllowSelfApprove {
+		writeError(w, http.StatusForbidden, "SELF_APPROVE_FORBIDDEN", "self-approval is disabled; another user must resolve this hold")
 		return
 	}
 

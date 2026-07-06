@@ -42,6 +42,12 @@ auth:
 approval:
   timeout: 300             # seconds before approval request expires
   on_timeout: "fail"       # "fail" | "skip"
+  admin_notify: true       # also notify instance admins when any user's agent raises a hold
+  # allow_self_approve: whether a user may resolve a hold raised by their OWN
+  # agent. Default true (backward-compat). The "govern"/"contain" posture
+  # presets set this false so the governed party is not the sole approver;
+  # setting it explicitly here always wins over the preset.
+  allow_self_approve: true
 
 callback:
   allow_private_cidrs: []  # CIDRs exempt from SSRF callback blocking, e.g. ["192.168.1.0/24"]
