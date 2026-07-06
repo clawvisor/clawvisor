@@ -133,10 +133,20 @@ telemetry:
 #   govern  — observe + control: proxy-lite enabled, upstream auth = vault
 #             (inject the stored key; client-presented API keys are stripped),
 #             enforcement = enforce.
-#   contain — not yet available; startup fails with a clear error until the
-#             runtime-proxy superset lands.
+#   contain — govern + network-layer containment of the agent process via the
+#             runtime proxy (HTTP(S)_PROXY injection, TLS MITM, egress policy).
+#             LLM traffic still flows through proxy-lite unchanged — Contain is
+#             a strict superset of Govern (runtime_proxy.llm_route=proxy_lite).
+#             EXPERIMENTAL: requires experimental_contain: true (below) until
+#             the capability-parity CI lane is required-blocking. The preset
+#             also sets runtime_proxy.enabled=true + llm_route=proxy_lite.
 #
 # posture: observe
+
+# experimental_contain gates the not-yet-required-blocking Contain posture.
+# posture: contain fails startup unless this is true. Env:
+# CLAWVISOR_EXPERIMENTAL_CONTAIN. Removed once the parity lane blocks CI.
+# experimental_contain: false
 
 # config_schema marks the config convention version. The setup wizard writes
 # `config_schema: 2` + an explicit `proxy_lite.enabled:` on every fresh
