@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# clawvisor-deploy.sh — on-instance reconciler for the honest upgrade path.
+#
+# Installed at first boot by cloud-init. A systemd timer runs it on a short
+# interval. It reads the DESIRED image tag from an SSM parameter and, when it
+# differs from the last-deployed tag, takes an RDS snapshot BEFORE pulling and
+# restarting (a new image may run DB migrations). `terraform apply` with a new
+# `image` only updates the SSM parameter — no instance replacement, no SSH,
+# no user_data re-run.
+#
+# Rollback: reset the SSM parameter to the previous tag (the timer redeploys),
+# then restore the pre-upgrade snapshot if a migration ran (README runbook).
+set -euo pipefail
+
+REGION="${region}"
+SSM_PARAM="${image_ssm_param}"
+DB_INSTANCE_ID="${db_instance_id}"
+NAME="${name}"
+RETENTION_DAYS="${backup_retention_days}"
+DIR=/etc/clawvisor
+STATE_FILE="$DIR/.deployed-image"
+LOCK="$DIR/.deploy.lock"
+
+# Serialize against overlapping timer fires.
+exec 9>"$LOCK"
+flock -n 9 || { echo "deploy already running; skipping"; exit 0; }
+
+log() { echo "[clawvisor-deploy] $*"; }
+
+desired="$(aws ssm get-parameter --region "$REGION" --name "$SSM_PARAM" \
+  --query 'Parameter.Value' --output text)"
+current="$(cat "$STATE_FILE" 2>/dev/null || echo none)"
+
+# In generated-mode (no operator-supplied ref) the JWT/VAULT values are
+# generated ON THE INSTANCE the first time and PUT into Secrets Manager, so
+# the literal never enters Terraform state or the plan (PRD §7). ensure_gen
+# is a no-op once a version exists (idempotent across reboots).
+ensure_gen() {
+  local arn="$1" gen="$2"
+  if ! aws secretsmanager get-secret-value --region "$REGION" --secret-id "$arn" \
+       --query 'SecretString' --output text >/dev/null 2>&1; then
+    aws secretsmanager put-secret-value --region "$REGION" --secret-id "$arn" \
+      --secret-string "$(bash -c "$gen")" >/dev/null
+  fi
+}
+%{ if jwt_generate ~}
+ensure_gen "${jwt_secret_arn}" "openssl rand -hex 32"
+%{ endif ~}
+%{ if vault_key_generate ~}
+ensure_gen "${vault_key_arn}" "openssl rand -base64 32"
+%{ endif ~}
+
+# Refresh secrets env every run so rotated secrets take effect on next restart.
+# Written mode 0600, never echoed. These are the only secret-bearing values;
+# they live in Secrets Manager, not in Terraform state or user_data.
+umask 077
+{
+  printf 'DATABASE_URL=%s\n'              "$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "${db_url_secret_arn}"     --query 'SecretString' --output text)"
+  printf 'JWT_SECRET=%s\n'                "$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "${jwt_secret_arn}"        --query 'SecretString' --output text)"
+  printf 'VAULT_KEY=%s\n'                 "$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "${vault_key_arn}"         --query 'SecretString' --output text)"
+  printf 'CLAWVISOR_BOOTSTRAP_TOKEN=%s\n' "$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "${bootstrap_secret_arn}" --query 'SecretString' --output text)"
+} > "$DIR/secrets.env"
+
+# docker compose substitutes $${clawvisor_image} from this .env file.
+echo "clawvisor_image=$desired" > "$DIR/compose.env"
+
+compose() {
+  docker compose -f "$DIR/docker-compose.yaml" --env-file "$DIR/compose.env" "$@"
+}
+
+if [ "$desired" != "$current" ] && [ "$current" != "none" ]; then
+  ts="$(date -u +%Y%m%d%H%M%S)"
+  snap="$NAME-preupgrade-$ts"
+  log "image change $current -> $desired; snapshotting $DB_INSTANCE_ID as $snap"
+  aws rds create-db-snapshot --region "$REGION" \
+    --db-instance-identifier "$DB_INSTANCE_ID" \
+    --db-snapshot-identifier "$snap" || log "WARNING: snapshot failed; continuing"
+
+  # Prune manual pre-upgrade snapshots older than the retention window.
+  cutoff="$(date -u -d "-$RETENTION_DAYS days" +%s 2>/dev/null || date -u -v-"$RETENTION_DAYS"d +%s)"
+  aws rds describe-db-snapshots --region "$REGION" \
+    --db-instance-identifier "$DB_INSTANCE_ID" --snapshot-type manual \
+    --query "DBSnapshots[?starts_with(DBSnapshotIdentifier, '$NAME-preupgrade-')].[DBSnapshotIdentifier,SnapshotCreateTime]" \
+    --output text 2>/dev/null | while read -r sid stime; do
+      screated="$(date -u -d "$stime" +%s 2>/dev/null || echo 0)"
+      if [ "$screated" -gt 0 ] && [ "$screated" -lt "$cutoff" ]; then
+        log "pruning old snapshot $sid"
+        aws rds delete-db-snapshot --region "$REGION" --db-snapshot-identifier "$sid" || true
+      fi
+    done
+fi
+
+log "pulling $desired"
+compose pull
+log "starting"
+compose up -d
+echo "$desired" > "$STATE_FILE"
+log "reconciled to $desired"

@@ -26,8 +26,11 @@ web/dist/*
 *.swp
 *.swo
 
-# Terraform (has its own git repo)
-terraform/
+# Legacy root-level terraform mirror (had its own git repo). Anchored to the
+# repo root so it does NOT hide deploy/terraform/, which is a tracked
+# deliverable (spec 03). deploy/terraform has its own .gitignore for working
+# dirs/state.
+/terraform/
 
 # Landing page (has its own git repo)
 landing/

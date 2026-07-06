@@ -1,0 +1,45 @@
+# Clawvisor server config, rendered by the vm-docker Terraform module and
+# mounted at /etc/clawvisor/config.yaml (the server reads it via CONFIG_FILE).
+#
+# WHY A FILE AND NOT ENV: posture presets (spec 02) are non-env config keys.
+# Env-only deploys cannot carry preset knobs, so the module renders a real
+# config.yaml. Secret-bearing values (JWT_SECRET, VAULT_KEY, DATABASE_URL,
+# CLAWVISOR_BOOTSTRAP_TOKEN) stay in the container ENV, resolved from Secrets
+# Manager at boot — they are NOT written into this file.
+
+server:
+  host: "0.0.0.0"
+  port: 25297
+  public_url: "https://${public_fqdn}"
+  auth_mode: "password"
+
+# proxy-lite is the LLM-endpoint proxy. Enabling it here is the explicit
+# writer-side flip (never Default()): fresh module deploys land on the
+# proxy-lite path. See PRD §11 / global gotcha #1.
+proxy_lite:
+  enabled: true
+  public_url: "https://${public_fqdn}"
+
+%{ if otel_endpoint != "" ~}
+observability:
+  otel:
+    enabled: true
+    endpoint: "${otel_endpoint}"
+    protocol: "grpc"
+    service_name: "clawvisor"
+%{ endif ~}
+
+# --- Posture preset ---------------------------------------------------------
+# posture = "${posture}"
+#
+# SOFT DEPENDENCY ON SPEC 02. The concrete preset knobs (enforcement_mode,
+# upstream_auth, and the posture->config mapping) are defined by spec 02 and
+# are NOT yet present in this server build. Until spec 02 merges, this module
+# ships the observe-only proxy-lite config above for every posture value and
+# leaves this clearly-marked seam. When spec 02 lands, replace this block with
+# the rendered preset keys for ${posture} (the module already accepts and
+# validates the posture input, so only this template changes).
+%{ if posture != "observe" ~}
+# WARNING: posture "${posture}" was requested but preset knobs are not wired
+# yet (spec 02 pending). The server is running observe-only proxy-lite config.
+%{ endif ~}

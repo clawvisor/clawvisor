@@ -1,0 +1,68 @@
+#cloud-config
+# Cloud-init for the Clawvisor application VM, rendered by the vm-docker
+# Terraform module. Installs Docker + compose, writes the rendered compose /
+# Caddyfile / config.yaml / deploy script, and starts the systemd timer that
+# reconciles the running image against the SSM parameter (the upgrade path).
+#
+# No secret literals appear here: the deploy script fetches JWT/VAULT/DB/
+# bootstrap values from Secrets Manager at boot. user_data carries only ARNs
+# and non-secret config.
+
+package_update: true
+
+write_files:
+  - path: /etc/clawvisor/docker-compose.yaml
+    permissions: "0644"
+    encoding: b64
+    content: ${compose_b64}
+  - path: /etc/clawvisor/Caddyfile
+    permissions: "0644"
+    encoding: b64
+    content: ${caddyfile_b64}
+  - path: /etc/clawvisor/config.yaml
+    permissions: "0644"
+    encoding: b64
+    content: ${config_b64}
+  - path: /usr/local/bin/clawvisor-deploy.sh
+    permissions: "0755"
+    encoding: b64
+    content: ${deploy_b64}
+  - path: /etc/systemd/system/clawvisor-deploy.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Clawvisor image reconciler (SSM-driven upgrade)
+      After=docker.service network-online.target
+      Wants=network-online.target
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/clawvisor-deploy.sh
+  - path: /etc/systemd/system/clawvisor-deploy.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Poll SSM for the desired Clawvisor image and reconcile
+      [Timer]
+      OnBootSec=30s
+      OnUnitActiveSec=2min
+      AccuracySec=15s
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  # --- Docker + compose plugin + awscli ---
+  - |
+    set -e
+    if command -v dnf >/dev/null 2>&1; then PM=dnf; else PM=yum; fi
+    $PM install -y docker awscli
+    systemctl enable --now docker
+    # compose v2 plugin
+    mkdir -p /usr/libexec/docker/cli-plugins
+    ARCH=$(uname -m); case "$ARCH" in aarch64) CA=aarch64;; *) CA=x86_64;; esac
+    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$${CA}" \
+      -o /usr/libexec/docker/cli-plugins/docker-compose
+    chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+  # --- First reconcile + enable the upgrade timer ---
+  - systemctl daemon-reload
+  - /usr/local/bin/clawvisor-deploy.sh
+  - systemctl enable --now clawvisor-deploy.timer

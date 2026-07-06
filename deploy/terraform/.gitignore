@@ -1,0 +1,14 @@
+# Terraform working directories and state — never committed.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+# local-docker render output
+examples/local-docker/rendered/
