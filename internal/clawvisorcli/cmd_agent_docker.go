@@ -282,6 +282,17 @@ func buildDockerAgentEnvVars(opts *dockerProxyOptions, templated bool) []dockerE
 			dockerEnvVar{Key: "ANTHROPIC_BASE_URL", Value: liteProxyAPIBaseURL(opts.ContainerURL), Comment: "Route Anthropic traffic through Clawvisor proxy-lite (contain superset)"},
 			dockerEnvVar{Key: "OPENAI_BASE_URL", Value: liteProxyOpenAIBaseURL(opts.ContainerURL), Comment: "Route OpenAI traffic through Clawvisor proxy-lite (contain superset)"},
 		)
+		// proxy-lite (middleware.RequireAgentLLM) authenticates the agent by the
+		// cvis_ token in X-Clawvisor-Agent-Token; mirror the Govern lite path
+		// (buildLiteProxyEnv): carry the token as an Anthropic custom header and
+		// clear the client's own Anthropic credentials so the SDK doesn't send a
+		// competing Authorization/x-api-key that would 401. Codex auth is
+		// deferred (spec 09) — no OPENAI_API_KEY here, matching lite.
+		vars = append(vars,
+			dockerEnvVar{Key: "ANTHROPIC_CUSTOM_HEADERS", Value: liteProxyClaudeAgentTokenHeader + ": " + token, Comment: "Authenticate Anthropic traffic to proxy-lite with the agent token (contain superset)"},
+			dockerEnvVar{Key: "ANTHROPIC_AUTH_TOKEN", Value: "", Comment: "Clear client Anthropic auth token so proxy-lite agent-token auth is used"},
+			dockerEnvVar{Key: "ANTHROPIC_API_KEY", Value: "", Comment: "Clear client Anthropic API key so proxy-lite agent-token auth is used"},
+		)
 	}
 	return vars
 }
