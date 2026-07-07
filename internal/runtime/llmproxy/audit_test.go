@@ -9,6 +9,10 @@ import (
 	"testing"
 	"time"
 
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
+	"github.com/clawvisor/clawvisor/internal/observability"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
@@ -193,6 +197,82 @@ func TestAuditEmitter_LogEndpointCall_DedupCostUsesCanonicalAuditID(t *testing.T
 	}
 	if orphans != 0 {
 		t.Fatalf("found %d orphan cost rows pointing at non-existent audit_log rows", orphans)
+	}
+}
+
+// TestAuditEmitter_LogEndpointCall_MetricsNotDoubleCountedOnDedup pins the
+// fix that token/cost metrics are recorded only after RecordLLMRequestCost
+// confirms the insert. A dedup retry (same request_id) hits ErrConflict on
+// both the audit insert and the cost insert, so its tokens/cost must NOT be
+// counted again — otherwise every dedup retry double-counts usage.
+func TestAuditEmitter_LogEndpointCall_MetricsNotDoubleCountedOnDedup(t *testing.T) {
+	st, agent := newAuditTestStore(t)
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	inst, err := observability.NewInstruments(mp.Meter("test"))
+	if err != nil {
+		t.Fatalf("NewInstruments: %v", err)
+	}
+	em := NewAuditEmitter(st, nil, nil)
+	em.Instruments = inst
+	ctx := context.Background()
+
+	usage := &ExtractUsageResult{
+		Found: true,
+		Model: "claude-opus-4-7",
+		Usage: pricing.Usage{InputTokens: 100, OutputTokens: 50},
+	}
+
+	// First call lands the canonical audit + cost row and records metrics.
+	em.LogEndpointCall(ctx, agent, "req-metric-dedup", "anthropic", "lite_proxy.messages.create",
+		200, "allow", "success", "", 0, nil, EndpointCallExtras{Usage: usage})
+	// Second call: same request_id → ErrConflict on both audit and cost
+	// inserts. Metrics must not be re-recorded.
+	em.LogEndpointCall(ctx, agent, "req-metric-dedup", "anthropic", "lite_proxy.messages.create",
+		200, "allow", "success", "", 0, nil, EndpointCallExtras{Usage: usage})
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(ctx, &rm); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	tokensByDir := map[string]int64{}
+	var costMicros int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			switch m.Name {
+			case observability.MetricLLMTokens:
+				sum, ok := m.Data.(metricdata.Sum[int64])
+				if !ok {
+					t.Fatalf("%s not int64 sum: %T", m.Name, m.Data)
+				}
+				for _, dp := range sum.DataPoints {
+					dir, _ := dp.Attributes.Value(observability.AttrDirection)
+					tokensByDir[dir.AsString()] += dp.Value
+				}
+			case observability.MetricLLMCostUSDMicros:
+				sum, ok := m.Data.(metricdata.Sum[int64])
+				if !ok {
+					t.Fatalf("%s not int64 sum: %T", m.Name, m.Data)
+				}
+				for _, dp := range sum.DataPoints {
+					costMicros += dp.Value
+				}
+			}
+		}
+	}
+
+	// Exactly one call's worth of tokens — not two.
+	if tokensByDir["input"] != 100 {
+		t.Errorf("input tokens = %d, want 100 (double-counted on dedup retry?)", tokensByDir["input"])
+	}
+	if tokensByDir["output"] != 50 {
+		t.Errorf("output tokens = %d, want 50 (double-counted on dedup retry?)", tokensByDir["output"])
+	}
+	// Cost, if the model is priced, must reflect a single call.
+	wantCost := pricing.Compute(pricing.Normalize(usage.Model), usage.Usage)
+	if wantCost.Known && costMicros != wantCost.CostMicros {
+		t.Errorf("cost micros = %d, want %d (single call)", costMicros, wantCost.CostMicros)
 	}
 }
 

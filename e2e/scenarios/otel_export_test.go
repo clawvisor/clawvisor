@@ -136,6 +136,30 @@ func TestProxyLiteRequestEmitsSpanTree(t *testing.T) {
 		}
 	}
 
+	// The request-side policy chain runs before the upstream forward, so its
+	// per-policy policy.verdict events must attach to the pipeline.pre span —
+	// not the root. (Regression guard: the pre phase span used to be opened
+	// only after the pre-policy chain had already run, so every verdict event
+	// landed on the root span.)
+	preSpan := rcv.SpanByName("clawvisor.pipeline.pre")
+	if preSpan == nil {
+		t.Fatal("pipeline.pre span not exported")
+	}
+	preVerdicts := 0
+	for _, ev := range preSpan.GetEvents() {
+		if ev.GetName() == "policy.verdict" {
+			preVerdicts++
+		}
+	}
+	if preVerdicts == 0 {
+		t.Error("pipeline.pre span carries no policy.verdict events; pre-policy verdicts are not attaching to the pre phase span")
+	}
+	for _, ev := range root.GetEvents() {
+		if ev.GetName() == "policy.verdict" {
+			t.Errorf("root span carries a policy.verdict event %q; pre-policy verdicts must attach to pipeline.pre, not root", ev.GetName())
+		}
+	}
+
 	// Root span attributes.
 	if got := otlp.AttrString(root.GetAttributes(), "provider"); got != "anthropic" {
 		t.Errorf("root span provider=%q, want anthropic", got)

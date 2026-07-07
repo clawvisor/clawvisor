@@ -847,10 +847,18 @@ func (h *ApprovalsHandler) resolveCanonicalApproval(ctx context.Context, pa *sto
 		h.logger.ErrorContext(ctx, "illegal canonical approval transition", "approval_id", rec.ID, "request_id", pa.RequestID, "kind", rec.Kind, "from_status", rec.Status, "resolution", resolution, "status", status, "err", err)
 		return
 	}
-	if err := h.st.ResolveApprovalRecord(ctx, *approvalID, resolution, status, time.Now().UTC()); err != nil && !errors.Is(err, store.ErrNotFound) {
-		h.logger.ErrorContext(ctx, "failed to resolve canonical approval", "approval_id", *approvalID, "request_id", pa.RequestID, "err", err)
+	if err := h.st.ResolveApprovalRecord(ctx, *approvalID, resolution, status, time.Now().UTC()); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			h.logger.ErrorContext(ctx, "failed to resolve canonical approval", "approval_id", *approvalID, "request_id", pa.RequestID, "err", err)
+		}
+		// The canonical resolve failed (or the record was already resolved /
+		// missing) — no hold transition actually happened, so don't record
+		// one. Emitting here would inflate clawvisor.approvals.holds on
+		// error and ErrNotFound paths.
+		return
 	}
-	// clawvisor.approvals.holds — canonical resolve path (deny / expiry).
+	// clawvisor.approvals.holds — canonical resolve path (deny / expiry),
+	// only after the resolve actually landed.
 	h.instruments.RecordHold(ctx, holdResolutionFromStatus(status))
 }
 
