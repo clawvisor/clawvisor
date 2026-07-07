@@ -134,6 +134,35 @@ func (s *Store) CreateAPIToken(ctx context.Context, t *store.APIToken) error {
 	return nil
 }
 
+func (s *Store) CreateAPITokenAndBurnBootstrap(ctx context.Context, t *store.APIToken, bootstrapID string) error {
+	if t.ID == "" {
+		t.ID = uuid.New().String()
+	}
+	var expiresAt any
+	if t.ExpiresAt != nil {
+		expiresAt = t.ExpiresAt.UTC()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO api_tokens (id, name, token_hash, token_prefix, scope, created_by, expires_at, is_bootstrap)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, t.ID, t.Name, t.TokenHash, t.TokenPrefix, t.Scope, t.CreatedBy, expiresAt, t.IsBootstrap); err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE api_tokens SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL`, bootstrapID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) GetAPITokenByHash(ctx context.Context, tokenHash string) (*store.APIToken, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, name, token_hash, token_prefix, scope, created_by, created_at, expires_at, last_used_at, revoked_at, is_bootstrap

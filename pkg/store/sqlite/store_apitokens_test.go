@@ -97,6 +97,86 @@ func TestAPITokenStore_CRUD(t *testing.T) {
 	}
 }
 
+// TestAPITokenStore_CreateAndBurnBootstrap verifies the atomic
+// mint-and-burn: the new token is created AND the bootstrap token is
+// revoked in a single call (burn-on-first-use, 05).
+func TestAPITokenStore_CreateAndBurnBootstrap(t *testing.T) {
+	st, ctx := newAPITokenStore(t)
+
+	exp := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
+	boot := &store.APIToken{
+		Name:        "bootstrap",
+		TokenHash:   "boot-hash",
+		TokenPrefix: "cvat_BootBootBo",
+		Scope:       "instance-admin",
+		ExpiresAt:   &exp,
+		IsBootstrap: true,
+	}
+	if err := st.CreateAPIToken(ctx, boot); err != nil {
+		t.Fatalf("seed bootstrap: %v", err)
+	}
+
+	minted := &store.APIToken{
+		Name:        "terraform",
+		TokenHash:   "minted-hash",
+		TokenPrefix: "cvat_MintMintMi",
+		Scope:       "instance-admin",
+		ExpiresAt:   &exp,
+	}
+	if err := st.CreateAPITokenAndBurnBootstrap(ctx, minted, boot.ID); err != nil {
+		t.Fatalf("CreateAPITokenAndBurnBootstrap: %v", err)
+	}
+
+	// New token exists and is live.
+	got, err := st.GetAPITokenByHash(ctx, "minted-hash")
+	if err != nil {
+		t.Fatalf("get minted: %v", err)
+	}
+	if got.RevokedAt != nil {
+		t.Fatal("minted token must not be revoked")
+	}
+
+	// Bootstrap token is burned in the same operation.
+	gotBoot, err := st.GetAPITokenByHash(ctx, "boot-hash")
+	if err != nil {
+		t.Fatalf("get bootstrap: %v", err)
+	}
+	if gotBoot.RevokedAt == nil {
+		t.Fatal("bootstrap token must be revoked after mint-and-burn")
+	}
+
+	// A conflicting mint (duplicate hash) rolls back and leaves the bootstrap
+	// state untouched — burn happens if and only if the mint lands.
+	seedBoot2 := &store.APIToken{
+		Name:        "bootstrap2",
+		TokenHash:   "boot-hash-2",
+		TokenPrefix: "cvat_Boot2Boot2",
+		Scope:       "instance-admin",
+		ExpiresAt:   &exp,
+		IsBootstrap: true,
+	}
+	if err := st.CreateAPIToken(ctx, seedBoot2); err != nil {
+		t.Fatalf("seed bootstrap2: %v", err)
+	}
+	dup := &store.APIToken{
+		Name:        "dup",
+		TokenHash:   "minted-hash", // collides with the earlier mint
+		TokenPrefix: "cvat_DupDupDupp",
+		Scope:       "instance-admin",
+		ExpiresAt:   &exp,
+	}
+	if err := st.CreateAPITokenAndBurnBootstrap(ctx, dup, seedBoot2.ID); err != store.ErrConflict {
+		t.Fatalf("CreateAPITokenAndBurnBootstrap(dup) = %v, want ErrConflict", err)
+	}
+	gotBoot2, err := st.GetAPITokenByHash(ctx, "boot-hash-2")
+	if err != nil {
+		t.Fatalf("get bootstrap2: %v", err)
+	}
+	if gotBoot2.RevokedAt != nil {
+		t.Fatal("bootstrap2 must stay live when the mint fails (transaction rolled back)")
+	}
+}
+
 // TestAPITokenStore_InstanceSeededAndExcludedFromCount verifies the
 // migration seeds the `_instance` user and that CountUsers excludes it
 // (so it never trips first-user onboarding detection).

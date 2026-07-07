@@ -146,6 +146,36 @@ func (s *Store) CreateAPIToken(ctx context.Context, t *store.APIToken) error {
 	return nil
 }
 
+func (s *Store) CreateAPITokenAndBurnBootstrap(ctx context.Context, t *store.APIToken, bootstrapID string) error {
+	if t.ID == "" {
+		t.ID = uuid.New().String()
+	}
+	var expiresAt any
+	if t.ExpiresAt != nil {
+		expiresAt = t.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO api_tokens (id, name, token_hash, token_prefix, scope, created_by, expires_at, is_bootstrap)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, t.ID, t.Name, t.TokenHash, t.TokenPrefix, t.Scope, t.CreatedBy, expiresAt, boolToInt(t.IsBootstrap)); err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+		time.Now().UTC().Format(time.RFC3339), bootstrapID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) GetAPITokenByHash(ctx context.Context, tokenHash string) (*store.APIToken, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, token_hash, token_prefix, scope, created_by, created_at, expires_at, last_used_at, revoked_at, is_bootstrap
