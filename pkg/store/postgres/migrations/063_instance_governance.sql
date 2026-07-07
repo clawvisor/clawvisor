@@ -69,5 +69,5 @@ CREATE INDEX IF NOT EXISTS idx_instance_violation_time
 -- back to a full table scan. Add a timestamp-leading index so the window
 -- filter seeks directly — same reasoning as migration 057's
 -- (agent_id, timestamp) covering index for the cloud dashboards.
-CREATE INDEX IF NOT EXISTS idx_llm_cost_time
+CREATE INDEX IF NOT EXISTS idx_llm_cost_ts_raw
     ON llm_request_cost(timestamp);
