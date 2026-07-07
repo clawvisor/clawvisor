@@ -39,13 +39,19 @@ func TestAuditRowHasHTTPStatus(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+agent.Token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Request-Id", reqID)
-	resp, _ := cv.Client.Do(req)
+	resp, err := cv.Client.Do(req)
+	if err != nil {
+		t.Fatalf("do messages: %v", err)
+	}
 	resp.Body.Close()
 
 	// Raw fetch so we can inspect http_status on the row.
 	req2, _ := http.NewRequest("GET", cv.URL+"/api/audit?limit=200", nil)
 	req2.Header.Set("Authorization", "Bearer "+user.AccessToken)
-	resp2, _ := cv.Client.Do(req2)
+	resp2, err := cv.Client.Do(req2)
+	if err != nil {
+		t.Fatalf("do /api/audit: %v", err)
+	}
 	body, _ := io.ReadAll(resp2.Body)
 	resp2.Body.Close()
 	var raw struct {
@@ -90,7 +96,10 @@ func TestAuditRowsAreOrderedByTimestamp(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+agent.Token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Request-Id", fmt.Sprintf("req-aud-order-%d", i))
-		resp, _ := cv.Client.Do(req)
+		resp, err := cv.Client.Do(req)
+		if err != nil {
+			t.Fatalf("do %d: %v", i, err)
+		}
 		resp.Body.Close()
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -135,7 +144,10 @@ func TestAuditPaginationCovers(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+agent.Token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Request-Id", rid)
-		resp, _ := cv.Client.Do(req)
+		resp, err := cv.Client.Do(req)
+		if err != nil {
+			t.Fatalf("do %s: %v", rid, err)
+		}
 		resp.Body.Close()
 	}
 	time.Sleep(300 * time.Millisecond)
@@ -145,7 +157,10 @@ func TestAuditPaginationCovers(t *testing.T) {
 		req, _ := http.NewRequest("GET",
 			fmt.Sprintf("%s/api/audit?limit=10&offset=%d", cv.URL, offset), nil)
 		req.Header.Set("Authorization", "Bearer "+user.AccessToken)
-		resp, _ := cv.Client.Do(req)
+		resp, err := cv.Client.Do(req)
+		if err != nil {
+			t.Fatalf("GET /api/audit offset=%d: %v", offset, err)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		var page auditList
@@ -202,7 +217,10 @@ func TestAuditServiceAndActionPopulated(t *testing.T) {
 		bytes.NewReader([]byte(`{"model":"x","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`)))
 	req.Header.Set("Authorization", "Bearer "+agent.Token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := cv.Client.Do(req)
+	resp, err := cv.Client.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
 	resp.Body.Close()
 	time.Sleep(150 * time.Millisecond)
 
@@ -240,7 +258,10 @@ func TestAuditSeparateAgentsHaveSeparateRows(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Request-Id", rid)
-		resp, _ := cv.Client.Do(req)
+		resp, err := cv.Client.Do(req)
+		if err != nil {
+			t.Fatalf("do %s: %v", rid, err)
+		}
 		resp.Body.Close()
 	}
 	do(a1.Token, "req-sep-agent-1")

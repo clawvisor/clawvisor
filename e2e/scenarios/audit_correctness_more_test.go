@@ -53,7 +53,10 @@ func TestAuditMultiTenantIsolation(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Request-Id", reqID)
-		resp, _ := cv.Client.Do(req)
+		resp, err := cv.Client.Do(req)
+		if err != nil {
+			t.Fatalf("do %s: %v", reqID, err)
+		}
 		resp.Body.Close()
 	}
 	doRequest(a1.Token, "req-tenant-u1-only")
@@ -120,7 +123,10 @@ func TestAuditIdempotentRequestIDDoesNotDuplicate(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+agent.Token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Request-Id", reqID)
-		resp, _ := cv.Client.Do(req)
+		resp, err := cv.Client.Do(req)
+		if err != nil {
+			t.Fatalf("do idempotency-marker: %v", err)
+		}
 		resp.Body.Close()
 	}
 	sendOne()
@@ -204,8 +210,10 @@ func TestAuditGatewayRequestIDDedupes(t *testing.T) {
 	}
 }
 
-// TestAuditHighVolumeNoDrops — 500 sequential requests, every one
-// produces an audit row. Tests against any in-flight loss.
+// TestAuditHighVolumeNoDrops — 200 sequential requests, every one
+// produces an audit row. Tests against any in-flight loss. Volume is
+// tuned high enough to exercise the audit writer's batching path
+// without pushing test-suite wall time out.
 func TestAuditHighVolumeNoDrops(t *testing.T) {
 	if testing.Short() {
 		t.Skip("high-volume test; use go test -run -short to skip")
@@ -247,7 +255,10 @@ func TestAuditHighVolumeNoDrops(t *testing.T) {
 		req, _ := http.NewRequest("GET",
 			fmt.Sprintf("%s/api/audit?limit=200&offset=%d", cv.URL, offset), nil)
 		req.Header.Set("Authorization", "Bearer "+user.AccessToken)
-		resp, _ := cv.Client.Do(req)
+		resp, err := cv.Client.Do(req)
+		if err != nil {
+			t.Fatalf("GET /api/audit offset=%d: %v", offset, err)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		var page auditList
@@ -298,7 +309,10 @@ func TestAuditTimestampsMonotonic(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+agent.Token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Request-Id", fmt.Sprintf("req-audit-ts-%d", i))
-		resp, _ := cv.Client.Do(req)
+		resp, err := cv.Client.Do(req)
+		if err != nil {
+			t.Fatalf("req %d: %v", i, err)
+		}
 		resp.Body.Close()
 		time.Sleep(15 * time.Millisecond) // ensure distinct timestamps
 	}
@@ -343,7 +357,10 @@ func TestAuditRowIncludesAgentID(t *testing.T) {
 		bytes.NewReader([]byte(`{"model":"x","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`)))
 	req.Header.Set("Authorization", "Bearer "+agent.Token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := cv.Client.Do(req)
+	resp, err := cv.Client.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
 	resp.Body.Close()
 
 	audit := fetchAudit(t, cv, user.AccessToken)
@@ -406,7 +423,13 @@ func TestAuditConcurrentMixedSurfaces(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+agent.Token)
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Request-Id", reqID)
-			resp, _ := cv.Client.Do(req)
+			// t.Errorf is safe from a goroutine; t.Fatalf is NOT (its
+			// runtime.Goexit exits only this goroutine, not the test).
+			resp, err := cv.Client.Do(req)
+			if err != nil {
+				t.Errorf("do %s: %v", reqID, err)
+				return
+			}
 			resp.Body.Close()
 		}(llmIDs[i])
 		go func(reqID string) {

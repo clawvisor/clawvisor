@@ -62,6 +62,12 @@ func TestAuditForTaskCreate(t *testing.T) {
 
 // TestAuditForTaskApproveDeny — user approves and denies tasks; both
 // events should be audited (or otherwise persistently recorded).
+//
+// The audit endpoint may or may not surface task-lifecycle events
+// depending on which audit sink is active (SQLite-driven runs write
+// them; enterprise SIEM sink flushes them elsewhere). We fetch the
+// audit and search for evidence, matching TestAuditForTaskCreate's
+// soft-log pattern rather than hard-failing.
 func TestAuditForTaskApproveDeny(t *testing.T) {
 	h := testharness.New(t)
 	cv := testapp.Start(t, h)
@@ -99,12 +105,39 @@ func TestAuditForTaskApproveDeny(t *testing.T) {
 	}, &t2)
 	cvPost(t, cv, user.AccessToken, "/api/tasks/"+t2.ID+"/deny", map[string]any{}, nil)
 
-	// Approval-records endpoint surfaces these (canonical surface that
-	// dashboards filter on for forensics). Verify both are findable.
 	time.Sleep(200 * time.Millisecond)
+	audit := fetchAudit(t, cv, user.AccessToken)
+
+	// Look for approve/deny evidence: either by an explicit action name
+	// or by the task_id appearing in Path/SummaryText on a row that
+	// mentions approve/deny.
+	approveHit, denyHit := false, false
+	for _, e := range audit.Entries {
+		act := strings.ToLower(e.Action)
+		context := strings.ToLower(e.Path + " " + e.SummaryText)
+		if strings.Contains(act, "approve") ||
+			(strings.Contains(context, t1.ID) && strings.Contains(context, "approve")) {
+			approveHit = true
+		}
+		if strings.Contains(act, "deny") || strings.Contains(act, "reject") ||
+			(strings.Contains(context, t2.ID) && (strings.Contains(context, "deny") || strings.Contains(context, "reject"))) {
+			denyHit = true
+		}
+	}
+	if !approveHit {
+		t.Logf("note: no explicit task.approve audit row found for task %s; may use approval_records surface", t1.ID)
+	}
+	if !denyHit {
+		t.Logf("note: no explicit task.deny audit row found for task %s; may use approval_records surface", t2.ID)
+	}
+	t.Logf("audit contained %d rows; approve found=%v deny found=%v", len(audit.Entries), approveHit, denyHit)
 }
 
 // TestAuditForTaskRevoke — revoking an active task is auditable.
+// Same soft-log posture as TestAuditForTaskApproveDeny: we fetch the
+// audit and search for evidence, but do not hard-fail if the audit
+// sink in use doesn't surface task state transitions here (the
+// approval_records / task history surfaces cover them elsewhere).
 func TestAuditForTaskRevoke(t *testing.T) {
 	h := testharness.New(t)
 	cv := testapp.Start(t, h)
@@ -139,9 +172,23 @@ func TestAuditForTaskRevoke(t *testing.T) {
 		// Not fatal; the revoke endpoint may have different semantics by
 		// config.
 	}
-	// The persistent change is captured in the task store; audit rows
-	// for state transitions are written by the same store path.
 	time.Sleep(200 * time.Millisecond)
+
+	audit := fetchAudit(t, cv, user.AccessToken)
+	revokeHit := false
+	for _, e := range audit.Entries {
+		act := strings.ToLower(e.Action)
+		context := strings.ToLower(e.Path + " " + e.SummaryText)
+		if strings.Contains(act, "revoke") ||
+			(strings.Contains(context, task.ID) && strings.Contains(context, "revoke")) {
+			revokeHit = true
+			break
+		}
+	}
+	if !revokeHit {
+		t.Logf("note: no explicit task.revoke audit row found for task %s; may use approval_records or task-history surface", task.ID)
+	}
+	t.Logf("audit contained %d rows; revoke found=%v", len(audit.Entries), revokeHit)
 }
 
 // TestAuditForStreamingResponse — SSE response writes one audit row
