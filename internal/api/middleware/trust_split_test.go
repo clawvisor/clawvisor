@@ -47,9 +47,9 @@ func TestAPIToken_ScopeEnforcement(t *testing.T) {
 	writeTok := seedAPIToken(t, st, ScopeConfigWrite, nil, false, false)
 	adminTok := seedAPIToken(t, st, ScopeInstanceAdmin, nil, false, false)
 
-	readGate := RequireUserOrAPIToken(jwtSvc, st, ScopeConfigRead)(okHandler())
-	writeGate := RequireUserOrAPIToken(jwtSvc, st, ScopeConfigWrite)(okHandler())
-	adminGate := RequireUserOrAPIToken(jwtSvc, st, ScopeInstanceAdmin)(okHandler())
+	readGate := RequireUserOrAPIToken(jwtSvc, st, ScopeConfigRead, true)(okHandler())
+	writeGate := RequireUserOrAPIToken(jwtSvc, st, ScopeConfigWrite, true)(okHandler())
+	adminGate := RequireUserOrAPIToken(jwtSvc, st, ScopeInstanceAdmin, true)(okHandler())
 
 	cases := []struct {
 		name       string
@@ -87,7 +87,7 @@ func TestAPIToken_ScopeEnforcement(t *testing.T) {
 func TestAPIToken_TrustSplit(t *testing.T) {
 	st := newAPITokenTestStore(t)
 	jwtSvc := newTestJWT(t)
-	gate := RequireAdminOrToken(jwtSvc, st)(okHandler())
+	gate := RequireAdminOrToken(jwtSvc, st, true)(okHandler())
 
 	adminTok := seedAPIToken(t, st, ScopeInstanceAdmin, nil, false, false)
 	writeTok := seedAPIToken(t, st, ScopeConfigWrite, nil, false, false)
@@ -119,7 +119,7 @@ func TestRejectInstanceItemWriteByScopedToken(t *testing.T) {
 
 	// Wire the guard exactly as server.go does: config-write gate, then the
 	// item-write guard, then the handler.
-	gate := RequireUserOrAPIToken(jwtSvc, st, ScopeConfigWrite)(
+	gate := RequireUserOrAPIToken(jwtSvc, st, ScopeConfigWrite, true)(
 		RejectInstanceItemWriteByScopedToken(okHandler()))
 
 	writeTok := seedAPIToken(t, st, ScopeConfigWrite, nil, false, false)

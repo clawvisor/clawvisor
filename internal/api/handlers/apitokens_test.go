@@ -139,7 +139,7 @@ func TestCreate_ConcurrentBootstrapBurnConflictReturns409(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewJWTService: %v", err)
 	}
-	handler := middleware.RequireUserOrAPIToken(jwtSvc, st, middleware.ScopeInstanceAdmin)(http.HandlerFunc(h.Create))
+	handler := middleware.RequireUserOrAPIToken(jwtSvc, st, middleware.ScopeInstanceAdmin, true)(http.HandlerFunc(h.Create))
 
 	body, _ := json.Marshal(map[string]string{"name": "terraform", "scope": middleware.ScopeInstanceAdmin})
 	req := httptest.NewRequest(http.MethodPost, "/api/tokens", bytes.NewReader(body))
