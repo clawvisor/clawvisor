@@ -68,31 +68,42 @@ compose() {
   docker compose -f "$DIR/docker-compose.yaml" --env-file "$DIR/compose.env" "$@"
 }
 
-if [ "$desired" != "$current" ] && [ "$current" != "none" ]; then
-  ts="$(date -u +%Y%m%d%H%M%S)"
-  snap="$NAME-preupgrade-$ts"
-  log "image change $current -> $desired; snapshotting $DB_INSTANCE_ID as $snap"
-  aws rds create-db-snapshot --region "$REGION" \
-    --db-instance-identifier "$DB_INSTANCE_ID" \
-    --db-snapshot-identifier "$snap" || log "WARNING: snapshot failed; continuing"
+# Reconcile only on change. First boot (current == none) still fires because
+# desired != none; steady-state runs are a no-op, so pull/up never restart the
+# stack outside an actual image change (spec 03: pull/up run "on change ...
+# after taking an RDS snapshot").
+if [ "$desired" != "$current" ]; then
+  if [ "$current" != "none" ]; then
+    ts="$(date -u +%Y%m%d%H%M%S)"
+    snap="$NAME-preupgrade-$ts"
+    log "image change $current -> $desired; snapshotting $DB_INSTANCE_ID as $snap"
+    # A migration may run on the new image; the snapshot MUST succeed before we
+    # pull/up, or the snapshot-before-restart guarantee is a lie. Abort on
+    # failure (the timer retries next fire) rather than upgrading unprotected.
+    aws rds create-db-snapshot --region "$REGION" \
+      --db-instance-identifier "$DB_INSTANCE_ID" \
+      --db-snapshot-identifier "$snap" || { log "ERROR: snapshot failed; aborting upgrade"; exit 1; }
 
-  # Prune manual pre-upgrade snapshots older than the retention window.
-  cutoff="$(date -u -d "-$RETENTION_DAYS days" +%s 2>/dev/null || date -u -v-"$RETENTION_DAYS"d +%s)"
-  aws rds describe-db-snapshots --region "$REGION" \
-    --db-instance-identifier "$DB_INSTANCE_ID" --snapshot-type manual \
-    --query "DBSnapshots[?starts_with(DBSnapshotIdentifier, '$NAME-preupgrade-')].[DBSnapshotIdentifier,SnapshotCreateTime]" \
-    --output text 2>/dev/null | while read -r sid stime; do
-      screated="$(date -u -d "$stime" +%s 2>/dev/null || echo 0)"
-      if [ "$screated" -gt 0 ] && [ "$screated" -lt "$cutoff" ]; then
-        log "pruning old snapshot $sid"
-        aws rds delete-db-snapshot --region "$REGION" --db-snapshot-identifier "$sid" || true
-      fi
-    done
+    # Prune manual pre-upgrade snapshots older than the retention window.
+    cutoff="$(date -u -d "-$RETENTION_DAYS days" +%s 2>/dev/null || date -u -v-"$RETENTION_DAYS"d +%s)"
+    aws rds describe-db-snapshots --region "$REGION" \
+      --db-instance-identifier "$DB_INSTANCE_ID" --snapshot-type manual \
+      --query "DBSnapshots[?starts_with(DBSnapshotIdentifier, '$NAME-preupgrade-')].[DBSnapshotIdentifier,SnapshotCreateTime]" \
+      --output text 2>/dev/null | while read -r sid stime; do
+        screated="$(date -u -d "$stime" +%s 2>/dev/null || echo 0)"
+        if [ "$screated" -gt 0 ] && [ "$screated" -lt "$cutoff" ]; then
+          log "pruning old snapshot $sid"
+          aws rds delete-db-snapshot --region "$REGION" --db-snapshot-identifier "$sid" || true
+        fi
+      done
+  fi
+
+  log "pulling $desired"
+  compose pull
+  log "starting"
+  compose up -d
+  echo "$desired" > "$STATE_FILE"
+  log "reconciled to $desired"
+else
+  log "already at $desired; nothing to do"
 fi
-
-log "pulling $desired"
-compose pull
-log "starting"
-compose up -d
-echo "$desired" > "$STATE_FILE"
-log "reconciled to $desired"

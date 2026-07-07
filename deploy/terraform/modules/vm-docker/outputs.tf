@@ -14,6 +14,11 @@ output "bootstrap_admin_token" {
   sensitive   = true
 }
 
+output "admin_url" {
+  description = "Admin dashboard + management API URL (admin surface on the admin port, gated to admin_ingress_cidrs)."
+  value       = "https://${var.public_fqdn}:${local.admin_port}"
+}
+
 output "install_commands" {
   description = "Per-harness agent install commands (served at the agent endpoint on 443). Per-target FORM mirrors the target table in internal/api/handlers/installer.go (`installerTargets`), the source of truth for which extension each target serves: claude-code/codex are self-install shell one-liners (.sh, pipe to sh); hermes/openclaw are assisted-install markdown skills (.md) — GET /skill/install/hermes.sh 404s, so these are the .md URL to open, NOT a pipe-to-sh. Keep this map in sync with installerTargets if a target's canonicalExt changes."
   value = {

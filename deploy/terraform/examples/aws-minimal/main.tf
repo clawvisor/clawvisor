@@ -74,6 +74,10 @@ output "server_ip" {
   value = module.clawvisor.server_ip
 }
 
+output "instance_id" {
+  value = module.clawvisor.instance_id
+}
+
 output "install_commands" {
   value = module.clawvisor.install_commands
 }

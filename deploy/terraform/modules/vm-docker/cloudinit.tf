@@ -26,7 +26,7 @@ locals {
   })
 
   deploy_rendered = templatefile("${path.module}/templates/deploy.sh.tftpl", {
-    region                = var.region
+    region                = data.aws_region.current.name
     name                  = var.name
     image_ssm_param       = aws_ssm_parameter.image.name
     db_instance_id        = aws_db_instance.this.identifier
@@ -40,9 +40,12 @@ locals {
   })
 
   user_data = templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
-    compose_b64   = base64encode(local.compose_rendered)
-    caddyfile_b64 = base64encode(local.caddyfile_rendered)
-    config_b64    = base64encode(local.config_rendered)
-    deploy_b64    = base64encode(local.deploy_rendered)
+    compose_b64                   = base64encode(local.compose_rendered)
+    caddyfile_b64                 = base64encode(local.caddyfile_rendered)
+    config_b64                    = base64encode(local.config_rendered)
+    deploy_b64                    = base64encode(local.deploy_rendered)
+    docker_compose_version        = var.docker_compose_version
+    docker_compose_sha256_x86_64  = var.docker_compose_sha256["x86_64"]
+    docker_compose_sha256_aarch64 = var.docker_compose_sha256["aarch64"]
   })
 }

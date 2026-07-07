@@ -73,12 +73,29 @@ until aws rds describe-db-snapshots --region "$REGION" \
 done
 echo "PASS: pre-upgrade snapshot exists"
 
-echo "== assert the running image advanced to $IMG_V2 =="
+echo "== assert the DEPLOYED image advanced to $IMG_V2 (read .deployed-image via SSM) =="
+# A /health re-poll only proves the instance is up — it can be stuck on the
+# old-but-healthy image. Read the reconciler's state file over SSM RunShell and
+# assert it actually advanced, so a reconcile that never fired is caught.
+INSTANCE_ID="$(terraform -chdir="$DIR" output -raw instance_id)"
 deadline=$(( $(date +%s) + 600 ))
-until curl -fsSk "${SERVER_URL}/health" >/dev/null 2>&1; do
-  [ "$(date +%s)" -ge "$deadline" ] && { echo "FAIL: server unhealthy after upgrade"; exit 1; }
+while true; do
+  cmd_id="$(aws ssm send-command --region "$REGION" \
+    --instance-ids "$INSTANCE_ID" \
+    --document-name "AWS-RunShellScript" \
+    --parameters 'commands=["cat /etc/clawvisor/.deployed-image"]' \
+    --query 'Command.CommandId' --output text)"
+  sleep 5
+  deployed="$(aws ssm get-command-invocation --region "$REGION" \
+    --command-id "$cmd_id" --instance-id "$INSTANCE_ID" \
+    --query 'StandardOutputContent' --output text 2>/dev/null | tr -d '[:space:]')"
+  [ "$deployed" = "$IMG_V2" ] && break
+  [ "$(date +%s)" -ge "$deadline" ] && { echo "FAIL: .deployed-image never advanced to $IMG_V2 (last: '$deployed')"; exit 1; }
   sleep 15
 done
-echo "PASS: server healthy post-upgrade"
+echo "PASS: .deployed-image advanced to $IMG_V2"
+
+echo "== confirm the server is healthy on the new image =="
+curl -fsSk "${SERVER_URL}/health" >/dev/null 2>&1 && echo "PASS: /health 200 post-upgrade" || { echo "FAIL: server unhealthy after upgrade"; exit 1; }
 
 echo "ALL GOOD (destroy runs on trap exit)"

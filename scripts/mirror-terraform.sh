@@ -26,5 +26,8 @@ TAG="${GITHUB_REF_NAME:-$(git describe --tags --abbrev=0)}"
 echo "Splitting $SUBTREE_PREFIX and pushing to $MIRROR_REPO @ $TAG"
 SPLIT_SHA="$(git subtree split --prefix="$SUBTREE_PREFIX" HEAD)"
 git push "$MIRROR_REPO" "${SPLIT_SHA}:refs/heads/main" --force
-git push "$MIRROR_REPO" "HEAD:refs/tags/${TAG}" || true
+# Tag the SUBTREE commit, not the monorepo HEAD (which would push the whole
+# monorepo tree under the module tag). Do NOT swallow errors — a failed tag
+# push must fail the release, not silently ship a mismatched/absent tag.
+git push "$MIRROR_REPO" "${SPLIT_SHA}:refs/tags/${TAG}"
 echo "Mirror push complete."
