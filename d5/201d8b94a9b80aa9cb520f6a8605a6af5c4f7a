@@ -1,53 +1,123 @@
 .github/workflows/ci.yml
   s_55f7a841d7c10e::t_9d342a39c43f58 38-63,86-142
+  s_55f7a841d7c10e::t_2e28d3007f12cf 38-53,59-61,63
+  s_55f7a841d7c10e::t_6cfb15a3dfc072 54-58,62
 .github/workflows/realclient.yml
   s_55f7a841d7c10e::t_1769df5530bf17 1-67
+  s_55f7a841d7c10e::t_9629b50ee8bc68 42-58
 .github/workflows/terraform-ci.yml
   s_55f7a841d7c10e::t_f16ad0a639c332 1-182
+  s_55f7a841d7c10e::t_65b7a23247a83c 132-169
+  s_55f7a841d7c10e::t_c1ff9eb2111deb 8,18
+  s_55f7a841d7c10e::t_29c94ab8689b4e 106-108,110,116-118,122
+  s_55f7a841d7c10e::t_7be305a4e8df3e 76-81
+  s_55f7a841d7c10e::t_1d312a2e69b4d1 93-99
+  s_55f7a841d7c10e::t_a9c8bb671b3d44 11-12,20-22
+  s_55f7a841d7c10e::t_ca82dab2e70675 11-12,20-22,76-81,93-99,106-108,110,116-118,122
+  s_55f7a841d7c10e::t_11a35fbcc4b78f 8,11-12,18,20-22,76-81,93-99,106-108,110,116-118,122,132-169
+  s_55f7a841d7c10e::t_92f26382d6f085 11-12,20-22,76-81,93-99,106-108,110,116-118,122
+  s_55f7a841d7c10e::t_96c4df80b77e67 11-12,20-22,76-81,93-99,106-108,110,116-118,122
+  s_55f7a841d7c10e::t_406b4bfc25fa4a 11-12,20-22,76-81,93-99,106-108,110,116-118,122
+  s_55f7a841d7c10e::t_e802b801beed8c 11-12,20-22,76-81,93-99,106-108,110,116-118,122
+  s_55f7a841d7c10e::t_f40909eb5f2825 11-12,20-22,76-81,93-99,106-108,110,116-118,122
+  s_55f7a841d7c10e::t_9da47cd1a3abb6 11-12,20-22,76-81,93-99,106-108,110,116-118,122
+  s_55f7a841d7c10e::t_4342de697a5b3e 11-12,20-22,76-81,93-99,106-108,110,116-118,122
+  s_55f7a841d7c10e::t_d39e8b6d579da9 11-12,20-22,76-81,93-99,106-108,110,116-118,122
 .gitignore
   s_55f7a841d7c10e::t_6e92e8d757ed39 23-30,37-41
 CHANGELOG.md
   s_55f7a841d7c10e::t_223d26b73e156d 7-9
+  s_55f7a841d7c10e::t_1132656838f59d 8
+  s_55f7a841d7c10e::t_9a72d8a1969af7 9
+  s_55f7a841d7c10e::t_911e9e876dbd27 7
 Makefile
   s_55f7a841d7c10e::t_946e12bdeb33b6 1,97-104
 README.md
   s_55f7a841d7c10e::t_a3a5cdafd2f922 499-500,513-545
 config.example.yaml
   s_55f7a841d7c10e::t_ca46c404f02630 14,18-32,38-40,45-50,141-218
+  s_55f7a841d7c10e::t_b76b6468ffedb8 14,18-31
+  s_2272b9604c80ae::t_bfd821b881b348 32
+  s_55f7a841d7c10e::t_9425c19527eacd 160-166,170-173
+  s_55f7a841d7c10e::t_df641191ad27f1 174
+  s_55f7a841d7c10e::t_a622765fb55afa 38-40
+  s_55f7a841d7c10e::t_fb7ad435d1e3d6 209-218
+  s_55f7a841d7c10e::t_790f3bab7d0d4f 45-50
+  s_55f7a841d7c10e::t_bd84b0571cd86c 236
 deploy/terraform/.gitignore
   s_55f7a841d7c10e::t_c31b3a11fe67de 1-14
 deploy/terraform/examples/aws-minimal/main.tf
   s_55f7a841d7c10e::t_6acc551cadf76a 1-88
+  s_328bea3ee33bfb::t_0928baead3a784 56-62,69-72
+  s_55f7a841d7c10e::t_dfa12bdfe3e428 77-80
 deploy/terraform/examples/local-docker/render.tf
   s_55f7a841d7c10e::t_02141e376f224c 1-140
+  s_55f7a841d7c10e::t_1f3d473f6c774f 54-57
 deploy/terraform/examples/local-docker/run.sh
   s_55f7a841d7c10e::t_7fec71ff4bbb9f 1-62
+  s_55f7a841d7c10e::t_261fc7e11b2cd2 44-45,49-50
+  s_55f7a841d7c10e::t_72df27214befa2 29-35
+  s_55f7a841d7c10e::t_3136d06ba9fc5c 51
 deploy/terraform/modules/vm-docker/README.md
   s_55f7a841d7c10e::t_d90b0bf8d62dbb 1-168
+  s_55f7a841d7c10e::t_71c25384351d9c 39-40
+  s_328bea3ee33bfb::t_4acf1b34900835 45,65-66,68-69
 deploy/terraform/modules/vm-docker/aws.tf
   s_55f7a841d7c10e::t_2ec8cb3aa74170 1-298
+  s_55f7a841d7c10e::t_934e57234bd13e 287-296
+  s_55f7a841d7c10e::t_34c74cd0eba5b2 190-192,194,199-206
+  s_55f7a841d7c10e::t_77c64757d680e1 3-10
+  s_55f7a841d7c10e::t_aca801e8862b50 162-173
 deploy/terraform/modules/vm-docker/cloudinit.tf
   s_55f7a841d7c10e::t_090aa34c01693c 1-51
+  s_55f7a841d7c10e::t_f704fe8829fc67 22-25
+  s_55f7a841d7c10e::t_89ec9b8684f3cd 29
+  s_55f7a841d7c10e::t_739bc5bfa1f7d9 43-49
 deploy/terraform/modules/vm-docker/main.tf
   s_55f7a841d7c10e::t_28d88277614a6c 1-124
+  s_55f7a841d7c10e::t_9069a7555c7820 12-17
+  s_55f7a841d7c10e::t_5e23d3eee1d954 27-32
 deploy/terraform/modules/vm-docker/outputs.tf
   s_55f7a841d7c10e::t_74d7dd683440a4 1-61
+  s_55f7a841d7c10e::t_287dfc582f6da3 36
+  s_55f7a841d7c10e::t_3691da78708793 9-10
+  s_55f7a841d7c10e::t_971066e18a2eb8 23,27-28
+  s_55f7a841d7c10e::t_a8f9ce20aed14c 2,6-8
+  s_55f7a841d7c10e::t_5a8ec249e9f061 17-21
 deploy/terraform/modules/vm-docker/templates/Caddyfile.tftpl
   s_55f7a841d7c10e::t_2e4c0a9ff810a2 1-32
 deploy/terraform/modules/vm-docker/templates/cloud-init.yaml.tftpl
   s_55f7a841d7c10e::t_4e474094625e4d 1-75
+  s_55f7a841d7c10e::t_510e84f7b3a6a9 59-61,63-68,70
 deploy/terraform/modules/vm-docker/templates/config.yaml.tftpl
   s_55f7a841d7c10e::t_252db1d4c20f0f 1-46
+  s_55f7a841d7c10e::t_a94dec75af1411 35-45
 deploy/terraform/modules/vm-docker/templates/deploy.sh.tftpl
   s_55f7a841d7c10e::t_5e999532926ef0 1-109
+  s_55f7a841d7c10e::t_a3d22280fe8c15 71-85,87-99,101-109
 deploy/terraform/modules/vm-docker/templates/docker-compose.yaml.tftpl
   s_55f7a841d7c10e::t_a9844dfb02dfdb 1-54
 deploy/terraform/modules/vm-docker/tests/render.tftest.hcl
   s_55f7a841d7c10e::t_8c6f88b9897694 1-254
+  s_55f7a841d7c10e::t_7b2469f1b95038 138-169
+  s_2272b9604c80ae::t_86be5d1b8eff8c 44-119
+  s_55f7a841d7c10e::t_a123a388595259 196-254
 deploy/terraform/modules/vm-docker/tests/validate.tftest.hcl
   s_55f7a841d7c10e::t_7ae550f9931a0f 1-252
+  s_55f7a841d7c10e::t_2aac8659487cc1 93-113
+  s_328bea3ee33bfb::t_920fdf2ee634f6 114-135,147-155
+  s_55f7a841d7c10e::t_47e514303f7af2 136-146
+  s_55f7a841d7c10e::t_fe166677b857db 189-252
 deploy/terraform/modules/vm-docker/variables.tf
   s_55f7a841d7c10e::t_f792b08b11270a 1-317
+  s_55f7a841d7c10e::t_d997b05e5cfcca 50-61
+  s_2272b9604c80ae::t_14a10fded94cb2 96-101,104-105,107,109-111
+  s_55f7a841d7c10e::t_79c3b2a153349f 102-103,106,108
+  s_55f7a841d7c10e::t_d38814d5103a90 224-236
+  s_55f7a841d7c10e::t_c76e50bb5e07f4 203-211
+  s_55f7a841d7c10e::t_6aaf6bf3ce2038 247-256
+  s_55f7a841d7c10e::t_ff85011dda2ee6 269-275
+  s_55f7a841d7c10e::t_868f61467642b6 283-317
 deploy/terraform/modules/vm-docker/versions.tf
   s_55f7a841d7c10e::t_2d6d0d1c3ee7ce 1-19
 docs/INTEGRATE_CLAUDE_CODE.md
@@ -58,10 +128,13 @@ docs/SETUP.md
   s_55f7a841d7c10e::t_6d57e6070fad4e 37-43
 docs/flip-cloud-coordination.md
   s_55f7a841d7c10e::t_787aaa06259e05 1-73
+  s_55f7a841d7c10e::t_6a219f405df09f 1,3-7,9,11,24-43,45-48,52-54,58-73
 e2e/README.md
   s_55f7a841d7c10e::t_2555552b962fc7 1-124
+  s_55f7a841d7c10e::t_349ddcb5fe94cb 32-36
 e2e/browser/global-setup.ts
   s_55f7a841d7c10e::t_bf5d9417eb5910 1-97
+  s_55f7a841d7c10e::t_ddc83d85ca1e61 43-50
 e2e/browser/package-lock.json
   s_55f7a841d7c10e::t_229087ab0bca1e 1-78
 e2e/browser/package.json
@@ -70,6 +143,12 @@ e2e/browser/playwright.config.ts
   s_55f7a841d7c10e::t_3b1ab1f46c744c 1-62
 e2e/browser/serve/main.go
   s_55f7a841d7c10e::t_b6304ccfb922e5 1-337
+  s_55f7a841d7c10e::t_6cf20f4ce35493 198,201-202,212,214
+  s_55f7a841d7c10e::t_d928524cbb6725 184
+  s_55f7a841d7c10e::t_fae96bca94fe7b 240
+  s_55f7a841d7c10e::t_70adcde9843037 84,86
+  s_55f7a841d7c10e::t_487fe5ef4e5e3d 115-118
+  s_55f7a841d7c10e::t_063e034bf4d64d 124,127
 e2e/browser/tests/agents.spec.ts
   s_55f7a841d7c10e::t_37926ca54f011d 1-39
 e2e/browser/tests/approvals.spec.ts
@@ -92,16 +171,25 @@ e2e/realclient/codex_test.go
   s_55f7a841d7c10e::t_3820872255e796 1-77
 e2e/realclient/tmux.go
   s_55f7a841d7c10e::t_4bf6434e6c99a8 1-393
+  s_55f7a841d7c10e::t_65f7e800734847 272-275,285-291,293-295
 e2e/scenarios/api_tokens_test.go
   s_55f7a841d7c10e::t_953ae83c02b735 120-187
+  s_55f7a841d7c10e::t_06bbb9a53b8e1b 120-159
+  s_55f7a841d7c10e::t_cef23ae9280e39 160-187
 e2e/scenarios/enroll_invite_test.go
   s_55f7a841d7c10e::t_d67324378183d0 13-16,18-20,22-23,25-27,29-31,33,36-41,44-53,56-62,65-66,68-69,71,73-74,76-79,81-82,85-87,90-97,99-103,105-107,109-110,112-113,117,120-126,129-133,135-136,138-140,142-145,147-148,150-151,154-159,161-162,166-171,173-191,195-201,203-240,245-250,252-256
+  s_55f7a841d7c10e::t_326bfeeaadf4af 1-85,88-194,245-258
+  s_55f7a841d7c10e::t_d472521417be2c 86-87
+  s_55f7a841d7c10e::t_99fbb1afffbe3b 195-244
 e2e/scenarios/flip_test.go
   s_55f7a841d7c10e::t_3089197cfef96e 1-83
 e2e/scenarios/llm_proxy_local_gov_test.go
   s_55f7a841d7c10e::t_f5fb893a4d3acc 1-311
+  s_55f7a841d7c10e::t_77850fe70baab7 1-310
+  s_55f7a841d7c10e::t_c9dcca1db3206b 311
 e2e/scenarios/llm_proxy_observe_live_test.go
   s_55f7a841d7c10e::t_82bd77e1ad4cab 1-110
+  s_55f7a841d7c10e::t_14c22a8f3086b7 28
 e2e/scenarios/llm_proxy_observe_test.go
   s_55f7a841d7c10e::t_3843d9fe4beacf 5-6,16-19,21-27,29-31,33-56,59-65,67-76,78,86,88-103,105-116,118-119,122-123,125-132,134-141,143-144,148-153,155-161,163,171,173-179,182-184,186-204,206-215,217-218,222-225,227,229-230,234-235,239,241-243,245-246
 e2e/scenarios/llm_proxy_openai_test.go
@@ -110,54 +198,130 @@ e2e/scenarios/llm_proxy_passthrough_test.go
   s_55f7a841d7c10e::t_ed03ac6f226f71 31-33,35-36
 e2e/scenarios/llm_proxy_posture_test.go
   s_55f7a841d7c10e::t_95e5f2651c917c 14-25,27-32,34-36,40-42,44-56,58-71,73-78,80-81,83-88,90-91,95-99,101-115,117-125,129-132,136-137,140,142-163,166-169,171,173-174,177-178,180-185,187-192,194-208,210-215,217-218,220-221,225-228,232-233,236-238,240-252,256-259,263-265,268-270,272-287,291-296,300-301,304-305,307-313,315-323,327-329,333-334,337,339-343,345-349
+  s_55f7a841d7c10e::t_7646a3f9864562 288,291-323
+  s_55f7a841d7c10e::t_7c62bbcd62931d 289-290
 e2e/scenarios/llm_proxy_security_test.go
   s_55f7a841d7c10e::t_ad7a30565106e5 24-28
 e2e/scenarios/llm_proxy_shared_vault_test.go
   s_55f7a841d7c10e::t_52d6c9196b0edb 1-65
+  s_55f7a841d7c10e::t_5dfbff1ce267d8 1-65
 e2e/scenarios/vault_ref_test.go
   s_55f7a841d7c10e::t_bae19764435709 8,15-24,26-31,34-54,56,58-67,71-81,84-85,87-89,91-92,94-97,102-111,113,115,120-132,135-146,151-155,157-160,162,164-173,176-184,187-195,197-206
+  s_55f7a841d7c10e::t_ec9eea44ae32b3 1-134,139-208
+  s_55f7a841d7c10e::t_a0e53f2bec480f 135-138
 e2e/testapp/server.go
   s_55f7a841d7c10e::t_450630054d5886 41-50,70-100,105,161,217-224,240,243-258,393-409
+  s_55f7a841d7c10e::t_92c2267a3e418c 393-409
+  s_55f7a841d7c10e::t_e61ec1852e8237 243-258
+  s_55f7a841d7c10e::t_72dc1d3af7e6b5 301-310
 e2e/testapp/server_internal_test.go
   s_55f7a841d7c10e::t_9fb78dc3ade3d2 30,52,91
+  s_55f7a841d7c10e::t_6f8c7f9642d5ee 58-64
 go.mod
   s_55f7a841d7c10e::t_bb55a7b746b3ce 9-12,59-69
+  s_55f7a841d7c10e::t_8e77edee490814 9-12,59-69
 go.sum
   s_55f7a841d7c10e::t_afb4adcdb210b8 21-50
+  s_55f7a841d7c10e::t_d0a2fe9c56dfac 21-50
 internal/api/admin_visibility_test.go
   s_55f7a841d7c10e::t_1a8a2da3866233 1-516
+  s_55f7a841d7c10e::t_d5702b9369e77a 10
+  s_55f7a841d7c10e::t_47fb605a50d7f8 285
+  s_55f7a841d7c10e::t_e2e3de73945d36 256,259
+  s_55f7a841d7c10e::t_ab15a98e26014e 1-4,6-9,11-255,258,260-284,286-398
+  s_55f7a841d7c10e::t_e9351b88a6af28 257
+  s_55f7a841d7c10e::t_9fa5954aaa33b2 399-516
+  s_55f7a841d7c10e::t_ab6affb9651ec3 5
 internal/api/handlers/admin.go
   s_55f7a841d7c10e::t_2973afc8ec5374 1-181
+  s_55f7a841d7c10e::t_0357c5f113ac6b 1-181
 internal/api/handlers/admin_approvals.go
   s_55f7a841d7c10e::t_1aa8d90627a37b 1-176
+  s_55f7a841d7c10e::t_436f5ab66c3889 4
+  s_55f7a841d7c10e::t_2784769cec9320 1-3,5-119,127-153,162-167,169,171-176
+  s_55f7a841d7c10e::t_a658b56dc8ef9f 154-161,168,170
+  s_55f7a841d7c10e::t_9c2f7c541b1d0a 120-126
 internal/api/handlers/agents.go
   s_55f7a841d7c10e::t_8a6bba0fb68a1d 38-45
+  s_55f7a841d7c10e::t_a61a72f9ab84f4 38-45
 internal/api/handlers/apitokens.go
   s_55f7a841d7c10e::t_e609bafa20a4a4 16-18,51-55,60,62
+  s_55f7a841d7c10e::t_dd6c3befc27a01 16-18
+  s_55f7a841d7c10e::t_2a270966f3d778 51-55,60,62
+  s_55f7a841d7c10e::t_f42c5dcf90db42 97-103,105,114-115,117-119
+  s_55f7a841d7c10e::t_ff36268f680945 106-113
+  s_55f7a841d7c10e::t_9725d2a4306b6a 62
 internal/api/handlers/apitokens_test.go
   s_55f7a841d7c10e::t_08cebdbcd525a5 12,21-93
+  s_55f7a841d7c10e::t_8bb3f4c37969d4 1-3,6,9-10,12-14,19-92
+  s_55f7a841d7c10e::t_ca8376d339b6f9 1-11,13-20,94-162
 internal/api/handlers/approvals.go
   s_55f7a841d7c10e::t_648539624f5693 213-223,430-431,433-441,502-508
+  s_55f7a841d7c10e::t_5b80322534de28 213-223,507-508
+  s_55f7a841d7c10e::t_374ded6d85d56d 502-506
+  s_55f7a841d7c10e::t_04d4de04c940f2 430-431,433-441
+  s_55f7a841d7c10e::t_ca29469a89567c 861-869,871-872
 internal/api/handlers/approvals_test.go
   s_55f7a841d7c10e::t_3359223e8ee478 69,210
+  s_55f7a841d7c10e::t_4bbbe84ba362a6 210
+  s_55f7a841d7c10e::t_5d44cc047b8fb2 6,13-16,23-68,70-190
+  s_55f7a841d7c10e::t_dea4822b08f29c 191
 internal/api/handlers/audit.go
   s_55f7a841d7c10e::t_9a3e96f3420156 372-382
 internal/api/handlers/audit_test.go
   s_55f7a841d7c10e::t_4eb08659d1d13d 26,117,184,286-290,310
+  s_55f7a841d7c10e::t_39cc2e6094fc1a 26,117,184,310
 internal/api/handlers/auth.go
   s_55f7a841d7c10e::t_3153597446c01a 4,45-59,62-64,75-86,88,93-104,124-158,177-244,276-282,508-522
+  s_55f7a841d7c10e::t_7779c48c385a40 45-59,62-64,75-86,88,93-104,124-127,132,137,140,141-158,177-189,202,209-215,223-235,237,242-243
+  s_55f7a841d7c10e::t_cc4fbec0e364a5 508-510,514,518,521-522
+  s_55f7a841d7c10e::t_f440fb8850397d 276-282
+  s_55f7a841d7c10e::t_6f721af3097069 244
+  s_55f7a841d7c10e::t_d1ab0868ef20f3 4
+  s_55f7a841d7c10e::t_4ce74db9050722 190-201
+  s_55f7a841d7c10e::t_79615badb5ba60 216-222
+  s_55f7a841d7c10e::t_a79f570c3eed9b 511-513,515-517,519-520
+  s_55f7a841d7c10e::t_b5b6d77fcf2dd8 128-131,133-136,138-139
+  s_55f7a841d7c10e::t_b73f85156da152 203-205,208
+  s_55f7a841d7c10e::t_b6e8605b116aac 236,238
+  s_55f7a841d7c10e::t_459cae29f0018b 236,238-241
+  s_55f7a841d7c10e::t_63317bbe9de84d 203-208
 internal/api/handlers/connections.go
   s_55f7a841d7c10e::t_1e5203199ecb18 12,64-80,431-685
+  s_55f7a841d7c10e::t_1afb37a5a45320 64-80
+  s_55f7a841d7c10e::t_c01143a56437a2 431-505,514-535,560-563,568-569,573-577,579-580,597-601,603-607,609-623,625-629,631-642,645-650,662-685
+  s_55f7a841d7c10e::t_04987fcf0afd81 12
+  s_55f7a841d7c10e::t_bc80d2a7fa5e4d 563-575
+  s_55f7a841d7c10e::t_8604d0ffa64248 549-560
+  s_55f7a841d7c10e::t_d02e85a994f710 561-562
+  s_55f7a841d7c10e::t_5aa3cfa59e18b4 578-592,602,608,624,630,643-644,651-659
+  s_55f7a841d7c10e::t_3bf12dcb9bded2 660-661
+  s_55f7a841d7c10e::t_cf55cfaf2622e0 506-513
+  s_55f7a841d7c10e::t_af79bca60894e4 536-548
 internal/api/handlers/connections_test.go
   s_55f7a841d7c10e::t_553eca6c564d40 4,6-7,9-10,15,73,119,173,244-423
+  s_55f7a841d7c10e::t_c9f5359c11f9a4 73,119,173
+  s_55f7a841d7c10e::t_25e32e4ca8d819 244-423
+  s_55f7a841d7c10e::t_4ba3dcead5977c 4,6-7,9-10,15
 internal/api/handlers/control_test.go
   s_55f7a841d7c10e::t_4957d1b828c538 110
+  s_55f7a841d7c10e::t_f4d88ed2aa4e58 110
 internal/api/handlers/flat_team_test.go
   s_55f7a841d7c10e::t_15d0c2fe4a5fd3 1-316
+  s_55f7a841d7c10e::t_69d5dff5380086 1-5,7-21,34-70,75-140,147-162,175-316
+  s_55f7a841d7c10e::t_3d1944d7ddd0cc 71-74
+  s_55f7a841d7c10e::t_5aff3d8b7fdb23 163-171
+  s_55f7a841d7c10e::t_a08d1b13cd5c66 6,22-32,173
+  s_55f7a841d7c10e::t_835f48cd55211a 141-146
+  s_55f7a841d7c10e::t_1b88b9399f8b2c 33,172,174
 internal/api/handlers/gateway.go
   s_55f7a841d7c10e::t_f9e5fd5d8d2293 2505-2513,2517-2545
+  s_55f7a841d7c10e::t_b4b8bade8e5001 2505-2513,2517-2543
+  s_55f7a841d7c10e::t_c56c99aa6facd8 2544-2545
+  s_55f7a841d7c10e::t_ebbd62def3833d 121-127
 internal/api/handlers/governance_local.go
   s_55f7a841d7c10e::t_c6e6c7cfd859a8 1-418
+  s_55f7a841d7c10e::t_b5ef915206d901 1-418
 internal/api/handlers/installer.go
   s_55f7a841d7c10e::t_97224f7bf5026a 130-137,374-380,523
 internal/api/handlers/installer_scripts.go
@@ -170,38 +334,62 @@ internal/api/handlers/installer_scripts/codex_skill_only.sh.tmpl
   s_55f7a841d7c10e::t_ec545761b0dfef 1-34
 internal/api/handlers/installer_scripts/common.sh.tmpl
   s_55f7a841d7c10e::t_b135259cd33478 35-42,67-68,71-72,263-313,345-376,378,380,382,385-390,392-413
+  s_55f7a841d7c10e::t_8ac31beb5b74f6 263-297
+  s_55f7a841d7c10e::t_a4a2616a549f9f 345-376,378,380,382,385-390,392-413
+  s_55f7a841d7c10e::t_9d60839ed4d73b 67-68,71-72
+  s_55f7a841d7c10e::t_94ac1cf559b7c4 298-313
+  s_55f7a841d7c10e::t_c9f37ea94df583 35-42
 internal/api/handlers/installer_test.go
   s_55f7a841d7c10e::t_3695ab374aecde 966-1159
+  s_55f7a841d7c10e::t_d28b35e0429866 1073-1130,1136-1159
+  s_55f7a841d7c10e::t_42a3d3147cc206 1131-1135
 internal/api/handlers/llm_endpoint.go
   s_55f7a841d7c10e::t_a6fe92c3c8831c 28,243-261,266-297,523-581,800-803,807-814,1648,1752-1753,2001,2059-2060,2232-2247
+  s_55f7a841d7c10e::t_c98ec44bb457bc 800-803,807-814
+  s_55f7a841d7c10e::t_ecc0be9b0c9077 1182-1184
+  s_55f7a841d7c10e::t_3722c072a15863 635-643
 internal/api/handlers/llm_endpoint_active_tasks_render_test.go
   s_55f7a841d7c10e::t_3939b6f5b001f2 32,95
+  s_55f7a841d7c10e::t_52aab42ba54d32 32,95
 internal/api/handlers/llm_endpoint_test.go
   s_55f7a841d7c10e::t_79a53a9ba9521c 168
+  s_55f7a841d7c10e::t_76eb892682ba1a 168
 internal/api/handlers/mcp_e2e_test.go
   s_55f7a841d7c10e::t_7ee27d0b29dfd8 301,398
+  s_55f7a841d7c10e::t_0b633619be631c 301,398
 internal/api/handlers/mobileconfig_test.go
   s_55f7a841d7c10e::t_2a22473c425289 40,116,165
+  s_55f7a841d7c10e::t_7e3b37d74e2a3f 40,116,165
 internal/api/handlers/proxy_resolver_test.go
   s_55f7a841d7c10e::t_c5bc5fab583caf 38,487
+  s_55f7a841d7c10e::t_ac1b0c8fecfbc4 38,487
 internal/api/handlers/runtime.go
   s_55f7a841d7c10e::t_b1233b331bdd48 75-80,444-449
+  s_55f7a841d7c10e::t_bf42e9a59e6cd0 444-449
+  s_55f7a841d7c10e::t_3da3c63001e9b8 75-80
 internal/api/handlers/runtime_controls_test.go
   s_55f7a841d7c10e::t_113f4da7a96b0d 28,137,165,204,285,510,641,779,828,879,963,1016,1090
+  s_55f7a841d7c10e::t_e42e7b60aad0e1 28,137,165,204,285,510,641,779,828,879,963,1016,1090
 internal/api/handlers/runtime_test.go
   s_55f7a841d7c10e::t_b0a60c89fcc965 37,106,203,268,326,457,553,625,731,820,894,982,1062
+  s_55f7a841d7c10e::t_c8bdc5e655cd0a 37,106,203,268,326,457,553,625,731,820,894,982,1062
 internal/api/handlers/service_config.go
   s_55f7a841d7c10e::t_0d878538255664 1-131
 internal/api/handlers/service_config_test.go
   s_55f7a841d7c10e::t_d4947e6b63aee2 1-141
+  s_55f7a841d7c10e::t_5b35a9345f4d4e 29
 internal/api/handlers/services_pending_hijack_test.go
   s_55f7a841d7c10e::t_a266dd7ad04821 14,37,41,103-104
+  s_55f7a841d7c10e::t_591f4a3a573fd6 14,37,41,103-104
 internal/api/handlers/tasks_complete_test.go
   s_55f7a841d7c10e::t_4578a8d5087b5a 13,222
+  s_55f7a841d7c10e::t_d3fe1786de8209 13,222
 internal/api/handlers/tasks_inline_test.go
   s_55f7a841d7c10e::t_8caa2f65b0f017 37
+  s_55f7a841d7c10e::t_7c08314ad8a86f 37
 internal/api/handlers/tasks_runtime_start_test.go
   s_55f7a841d7c10e::t_0ca31df3503ead 27,98
+  s_55f7a841d7c10e::t_0fc15850c73e1c 27,98
 internal/api/handlers/testdata/llm_characterization/control_notice_injected.json
   s_55f7a841d7c10e::t_319481dcdf6d3c 10
 internal/api/handlers/testdata/llm_characterization/malformed_request.json
@@ -216,68 +404,145 @@ internal/api/handlers/testdata/llm_characterization/tool_use_held_for_approval.j
   s_55f7a841d7c10e::t_14edb90cd1a789 40
 internal/api/handlers/users.go
   s_55f7a841d7c10e::t_a8428681c6d8b0 1-282
+  s_55f7a841d7c10e::t_d41f2ffb3ca505 1-282
 internal/api/handlers/vault.go
   s_55f7a841d7c10e::t_0fd1f9b2989e43 95-97,111-123,130-139,198-199,204-214,219-222,432-446,477-480,485
+  s_55f7a841d7c10e::t_34c13da78765c6 139,222,432-446
+  s_55f7a841d7c10e::t_0440a4dc0412c6 95-97,111,117,120-123,130-137
+  s_55f7a841d7c10e::t_5a6234799079f0 207-208
+  s_55f7a841d7c10e::t_bab3b45214874d 138,198-199,204-206,209-214,219-221
+  s_55f7a841d7c10e::t_398e5734388a51 477-480,485
+  s_55f7a841d7c10e::t_ab69eab82c5957 112-116,118-119
 internal/api/handlers/vault_control_test.go
   s_55f7a841d7c10e::t_0b88ec0e821d71 29,86,136
+  s_55f7a841d7c10e::t_c2ec11ea39ea1d 29,86,136
 internal/api/handlers/vault_reference.go
   s_55f7a841d7c10e::t_d9ceca8ea4ecca 1-135
+  s_55f7a841d7c10e::t_5a3822248503ef 1-29,47-79,81-135
+  s_55f7a841d7c10e::t_e472f34bdb4034 80
+  s_55f7a841d7c10e::t_02fcb849cee4e7 30-46
 internal/api/handlers/vault_shared.go
   s_55f7a841d7c10e::t_df8ef22ea02da8 1-97
+  s_55f7a841d7c10e::t_56a87d54353947 1-97
 internal/api/middleware/agent_llm_test.go
   s_55f7a841d7c10e::t_5fb6833db45afd 27,52
+  s_55f7a841d7c10e::t_6576756c5738b4 27,52
 internal/api/middleware/apitoken.go
   s_55f7a841d7c10e::t_fdf833be100390 43-50,175-223
+  s_55f7a841d7c10e::t_969fba83475b48 175-202
+  s_55f7a841d7c10e::t_3ab87a2fd3cc91 43-50
+  s_55f7a841d7c10e::t_bf1da159fcec31 68-70,74-76,83-96
+  s_55f7a841d7c10e::t_10ea3d951294f5 203-223
 internal/api/middleware/auth.go
   s_55f7a841d7c10e::t_cc6c0ac5eb15b3 73-88
+  s_55f7a841d7c10e::t_fb8da320c41ce4 73-88
 internal/api/middleware/trust_split_test.go
   s_55f7a841d7c10e::t_73020e291a618d 1-138
+  s_55f7a841d7c10e::t_df339a12eb1043 1-109
+  s_55f7a841d7c10e::t_d8f29a4f01ed07 110-138
 internal/api/org_test.go
   s_55f7a841d7c10e::t_70b29ec0ba855f 56
+  s_55f7a841d7c10e::t_db633b360b5a0c 56
 internal/api/proxy_lite_routes_test.go
   s_55f7a841d7c10e::t_66fb8dee510d01 81
+  s_55f7a841d7c10e::t_38a94e5caab047 81
 internal/api/server.go
   s_55f7a841d7c10e::t_e58b8811b4c702 134-140,191-200,324,328-337,778-791,793-798,802-803,894-896,898-912,916,921,924,963-972,1077,1083-1087,1089-1096,1105-1111,1137-1151,1189-1212,1477-1480,1701-1708
+  s_55f7a841d7c10e::t_da86c89a1cae78 894-896,898-900
+  s_55f7a841d7c10e::t_382f9dd5b98975 1089-1096
+  s_55f7a841d7c10e::t_dccf2bb20a608d 778-791,802-803
+  s_55f7a841d7c10e::t_666615121ccac7 902-912
+  s_55f7a841d7c10e::t_c74532468d6567 901,916,921,924,1077,1083,1085,1109
+  s_55f7a841d7c10e::t_949916e9c87754 963-972
+  s_55f7a841d7c10e::t_a0f48e5c2c9319 1189-1212
+  s_55f7a841d7c10e::t_6ecefd4e7e09e8 197-200
+  s_55f7a841d7c10e::t_e0ac379f464a9d 1705-1708
+  s_55f7a841d7c10e::t_409e18f27223ed 328,334,336-337
+  s_55f7a841d7c10e::t_0f123dfc3b3d35 1137-1150
+  s_55f7a841d7c10e::t_d162c6d913119a 1151
+  s_55f7a841d7c10e::t_5b2ca35bd85fc4 758-765
+  s_55f7a841d7c10e::t_e04120c3f837cf 1701-1704
+  s_55f7a841d7c10e::t_c3917e91fa3c3e 191-196
+  s_55f7a841d7c10e::t_44af9f6f1b7efd 134-140
+  s_55f7a841d7c10e::t_6190de8e491bc5 324,329-333,335
+  s_55f7a841d7c10e::t_05d60d035a00bb 793-798
+  s_55f7a841d7c10e::t_2fd74188216a35 1084,1086-1087
 internal/api/testutil_test.go
   s_55f7a841d7c10e::t_abd59aa529c62d 19,97,130-189,226,264
+  s_55f7a841d7c10e::t_ad4e5f4e1d5a8d 264
+  s_55f7a841d7c10e::t_558ad838dc9d58 97,130,138-140,146-174,178-189,226
+  s_55f7a841d7c10e::t_921948a671f7c4 19
+  s_55f7a841d7c10e::t_26097c9585542c 131-137,141-144
+  s_55f7a841d7c10e::t_7aba48f78c7394 175-177
+  s_55f7a841d7c10e::t_ce68f3e4b9daa6 145
 internal/auth/token.go
   s_55f7a841d7c10e::t_248eb689f689a0 57-73
+  s_55f7a841d7c10e::t_5f90dd11dddf69 59-73
+  s_55f7a841d7c10e::t_02f100f520a8de 57-58
 internal/clawvisorcli/cmd_agent_docker.go
   s_55f7a841d7c10e::t_319574ff7dc436 29,54-59,226-234,245-254,256,277-297,805
+  s_55f7a841d7c10e::t_72347e17bf67a1 29
+  s_55f7a841d7c10e::t_68c67a185b54ed 230-234
+  s_55f7a841d7c10e::t_32bcfbd4d107f3 54-59
+  s_55f7a841d7c10e::t_1c685039750e77 245-254,256
+  s_55f7a841d7c10e::t_550ce19d682485 277-284,296-297
+  s_55f7a841d7c10e::t_1719ecb830868b 805
+  s_55f7a841d7c10e::t_b6153c9b882b06 226-229
+  s_55f7a841d7c10e::t_d2140e13fd75c7 285-295
 internal/clawvisorcli/cmd_agent_docker_test.go
   s_55f7a841d7c10e::t_c819b3cb4af83a 90-162
+  s_55f7a841d7c10e::t_6d2db972922796 90-162
 internal/clawvisorcli/cmd_agent_runtime.go
   s_55f7a841d7c10e::t_0da7db2d29c945 6,208-221,238-247,318-338
+  s_55f7a841d7c10e::t_a6ccc566513856 247,318-338
+  s_55f7a841d7c10e::t_d985e71f1ebb99 6
+  s_55f7a841d7c10e::t_34e51e23931e32 208-221,238-246
 internal/clawvisorcli/cmd_agent_runtime_test.go
   s_55f7a841d7c10e::t_afb8230a052c1d 106-182
+  s_55f7a841d7c10e::t_6d60019077ea60 106-182
 internal/daemon/install_test.go
   s_55f7a841d7c10e::t_84d361681f9250 179-183
 internal/daemon/setup.go
   s_55f7a841d7c10e::t_e53913742ba19c 17,595-599
 internal/e2e/harness/contain_scenarios_test.go
   s_55f7a841d7c10e::t_3fb01fb11ea1ad 1-249
+  s_55f7a841d7c10e::t_959be692c17a81 1-249
 internal/e2e/harness/principal.go
   s_55f7a841d7c10e::t_2f5b0629e069c7 35
+  s_55f7a841d7c10e::t_b7b14aa6b06784 35
 internal/e2e/lite/harness.go
   s_55f7a841d7c10e::t_3cbd0810c3feef 121,184-188
+  s_55f7a841d7c10e::t_e49f8168c880a0 121
 internal/govlocal/govlocal.go
   s_55f7a841d7c10e::t_1efb593a392a70 1-210
+  s_55f7a841d7c10e::t_0b6ca8b9137f28 1-210
 internal/govlocal/govlocal_test.go
   s_55f7a841d7c10e::t_aca1806d573581 1-194
+  s_55f7a841d7c10e::t_429bb2715b57eb 1-4,7-8,10-23,48-194
+  s_55f7a841d7c10e::t_d9c5769b88b069 5-6,9,24-47
 internal/govlocal/scan.go
   s_55f7a841d7c10e::t_177472a54217e6 1-45
+  s_55f7a841d7c10e::t_0726011bc4686a 1-45
 internal/govlocal/scan_test.go
   s_55f7a841d7c10e::t_3c3ffc7661c7bc 1-68
+  s_55f7a841d7c10e::t_c14e66546f14de 1-68
 internal/govlocal/store.go
   s_55f7a841d7c10e::t_08fa08d8b55b55 1-77
+  s_55f7a841d7c10e::t_645d6fc269b1c7 1-77
 internal/notify/telegram/secret_test.go
   s_55f7a841d7c10e::t_f7ce2b2938301a 27,109
+  s_55f7a841d7c10e::t_3530399af52664 27,109
 internal/notify/telegram/telegram_test.go
   s_55f7a841d7c10e::t_a35870b033b79e 13,32
+  s_55f7a841d7c10e::t_e7ac5454ce5783 13,32
 internal/observability/emit.go
   s_55f7a841d7c10e::t_f5e24bdaa3b210 27-31,136-142,150,154-175,253-262,268
 internal/runtime/llmproxy/audit_test.go
   s_55f7a841d7c10e::t_329436fe4001e5 32,461
+  s_55f7a841d7c10e::t_5fc7326e080e4a 32,461
+  s_55f7a841d7c10e::t_0e05ef4f59f2cb 12-15
+  s_55f7a841d7c10e::t_8ea0689d96547d 203-276
+  s_55f7a841d7c10e::t_0c13dd176ea228 277-278
 internal/runtime/llmproxy/auth_context.go
   s_55f7a841d7c10e::t_255bd8ff072413 10-13,22-31
 internal/runtime/llmproxy/byte_fidelity_test.go
@@ -286,300 +551,691 @@ internal/runtime/llmproxy/config.go
   s_55f7a841d7c10e::t_ec40685a1aadb7 226-233,245-250,263-271
 internal/runtime/llmproxy/credential_class.go
   s_55f7a841d7c10e::t_660156d99cc306 1-132
+  s_55f7a841d7c10e::t_1659e00b9020e7 76-80,83
 internal/runtime/llmproxy/credential_class_test.go
   s_55f7a841d7c10e::t_37a081eb6517e8 1-73
+  s_55f7a841d7c10e::t_f486da61e54ab2 45-49
 internal/runtime/llmproxy/forward.go
   s_55f7a841d7c10e::t_cfe05661fab354 123-127,221-233,316-331
+  s_55f7a841d7c10e::t_0c5d3bc7768006 233,316-329
+  s_55f7a841d7c10e::t_af52945898447b 123-127,221-232,330-331
 internal/runtime/llmproxy/forward_test.go
   s_55f7a841d7c10e::t_60b9f5b590c299 154-228
+  s_55f7a841d7c10e::t_c95066215ab67a 154-228
 internal/runtime/llmproxy/pipeline/observe.go
   s_55f7a841d7c10e::t_b077558070759e 1-100
+  s_55f7a841d7c10e::t_e602e0f7f0f2e5 51-55
+  s_55f7a841d7c10e::t_5b27108a32bf6a 77
 internal/runtime/llmproxy/pipeline/orchestrator.go
   s_55f7a841d7c10e::t_01993d61060cf4 46-52,92-97,99,120-135,141-150,158-165,171-179,192-204
+  s_55f7a841d7c10e::t_02aa5d2b907870 177
 internal/runtime/llmproxy/pipeline/orchestrator_test.go
   s_55f7a841d7c10e::t_d38c9e5e2310fb 276-311
+  s_55f7a841d7c10e::t_af1a67717fe076 276-311
 internal/runtime/llmproxy/policies/emitter_equivalence_test.go
   s_55f7a841d7c10e::t_3714b14cc93267 316
+  s_55f7a841d7c10e::t_f079b8563c0ce7 316
 internal/runtime/llmproxy/postproc/postproc.go
   s_55f7a841d7c10e::t_27f72d06b61c14 8,13-84,161-164,209-213,225-229
+  s_55f7a841d7c10e::t_167926ae6c17a1 163
+  s_55f7a841d7c10e::t_7d0a5d38b071cb 23,32,54-64,69-82
+  s_55f7a841d7c10e::t_9220844fcb2dbd 83-84
 internal/runtime/llmproxy/postproc/postprocess_test.go
   s_55f7a841d7c10e::t_6f860f6da46d8f 35,63,1696-1769
+  s_55f7a841d7c10e::t_37dca829cdad70 35,63
+  s_55f7a841d7c10e::t_1fbb0f19891f8a 1696-1717,1724-1769
+  s_55f7a841d7c10e::t_aa4758beb8f905 1718-1723
 internal/runtime/llmproxy/postproc/stream.go
   s_55f7a841d7c10e::t_221eef3ee9d615 120-129,243-246
+  s_55f7a841d7c10e::t_f86fa12eea2949 123
 internal/runtime/llmproxy/postproc/taskscope_test.go
   s_55f7a841d7c10e::t_e129f7c8cc6fec 26,167,171-172,176-177,179,207,211-212,216-217,219,263,267-269,273-274,276,312,316-318,322-323,325,349,353-355,359-360,362,391,395-396,400-401,403,425,429-430,433-441,445-446,448
+  s_55f7a841d7c10e::t_55a0799022d3c9 26,167,171-172,176-177,179,207,211-212,216-217,219,263,267-269,273-274,276,312,316-318,322-323,325,349,353-355,359-360,362,391,395-396,400-401,403,425,429-430,433-441,445-446,448
 internal/runtime/llmproxy/test_helpers_test.go
   s_55f7a841d7c10e::t_09f81d5775c67e 30,74
+  s_55f7a841d7c10e::t_4899210e32fbf7 30,74
 internal/server/run.go
   s_55f7a841d7c10e::t_b05d0f1c969e66 68-70
+  s_55f7a841d7c10e::t_347384fed91a45 68-70
 internal/setup/setup.go
   s_55f7a841d7c10e::t_ada0b841f79672 4,12,18,20-22,25-27,66-73,76-87,195-200,533-719,854-862,886-894,923-931
+  s_55f7a841d7c10e::t_3e1982ee5bfb2a 668-672,682-687
+  s_55f7a841d7c10e::t_3c0ae69ce9636e 688-689
+  s_55f7a841d7c10e::t_662e4d1d263187 886-894
+  s_55f7a841d7c10e::t_a6768f56702d41 76-87
+  s_55f7a841d7c10e::t_a30ccdf38409fc 533-635
+  s_55f7a841d7c10e::t_fd6e6ace0b91f9 4,12,20-22
+  s_55f7a841d7c10e::t_45211e14a84fc7 195-197
 internal/setup/setup_test.go
   s_55f7a841d7c10e::t_990b1fe860e0e6 1-168
+  s_55f7a841d7c10e::t_a13dc60a73e4df 4-5,12
+  s_55f7a841d7c10e::t_23f8ea7da6bea3 113-168
 internal/tui/client/types.go
   s_55f7a841d7c10e::t_1f20a41f5d2111 53-57
+  s_55f7a841d7c10e::t_d0d15a7bd3d19c 53-57
 pkg/clawvisor/defaults.go
   s_55f7a841d7c10e::t_9f37f64a760741 52-53,678-702,705,707,713,715,720-734
+  s_55f7a841d7c10e::t_7b210d063d936a 52-53
+  s_55f7a841d7c10e::t_b7a7c7923b79da 693-702,705,707,713,715,720-734
+  s_55f7a841d7c10e::t_dd682ed605d799 678-685,689-692
 pkg/clawvisor/governance.go
   s_55f7a841d7c10e::t_75f89183d1021a 1-68
+  s_55f7a841d7c10e::t_e030f02a249328 1-68
 pkg/clawvisor/governance_test.go
   s_55f7a841d7c10e::t_2ffd916e12c730 1-99
+  s_55f7a841d7c10e::t_1d032f5df19737 1-99
 pkg/clawvisor/run.go
   s_55f7a841d7c10e::t_cf9085868cdce7 266-280,282-289
+  s_55f7a841d7c10e::t_ab052a07adaff5 278-279
+  s_55f7a841d7c10e::t_9a99cec2bceb05 266-277,280,282-289
 pkg/config/config.go
   s_55f7a841d7c10e::t_1e55cdfc917114 22-29,31-54,68,82-95,231-244,253-257,263-276,389-404,462-509,555-561,616-619,630-648,695-696,706-707,711-727,753-761,786-788,1028-1030,1037-1045,1065-1067,1089-1104,1219-1323,1416-1446
+  s_55f7a841d7c10e::t_cba2322fd3204e 1230-1233,1254-1263,1285-1290
+  s_55f7a841d7c10e::t_f2305fe7c9a335 45-54
+  s_55f7a841d7c10e::t_f7afe6be49236f 616-619
+  s_55f7a841d7c10e::t_ba5fcaada33cc1 389-404
+  s_55f7a841d7c10e::t_ac5603504da7b0 1028-1030
+  s_55f7a841d7c10e::t_2cffb0325400ea 1102-1104
+  s_55f7a841d7c10e::t_1ba1dff3ec9585 1419-1425,1429-1436
+  s_55f7a841d7c10e::t_d8445e1f9478ff 231-244
+  s_55f7a841d7c10e::t_4d6934ab03fbde 753-761
+  s_55f7a841d7c10e::t_73030164d8d92f 253-257
+  s_55f7a841d7c10e::t_c89970e7c6e196 786-788
+  s_55f7a841d7c10e::t_b6c32d4068ae8f 82-95
+  s_55f7a841d7c10e::t_4102041edf327c 68
+  s_55f7a841d7c10e::t_33dfaef049fc5c 1065-1066
+  s_55f7a841d7c10e::t_b792c4d6e6c667 642-648
+  s_55f7a841d7c10e::t_fbd6569b2698d0 1067
+  s_55f7a841d7c10e::t_3e2f0dec592ad8 263-276
+  s_55f7a841d7c10e::t_3f084e6bfa49cc 555-561
+  s_55f7a841d7c10e::t_a46fe66abc6eff 1037-1045
+  s_55f7a841d7c10e::t_048d402967d824 1264-1274,1284,1291
+  s_55f7a841d7c10e::t_98723415bbca16 1165-1178
+  s_55f7a841d7c10e::t_fd91b43a0559d2 171-190
 pkg/config/config_test.go
   s_55f7a841d7c10e::t_e1db2a03b697bc 4-5,250-546
+  s_55f7a841d7c10e::t_303ceec2ea6534 466,468-488,491,497,499-506
+  s_55f7a841d7c10e::t_c1a8a50d01164a 429-432,434-465
+  s_55f7a841d7c10e::t_85c70b7a180cd7 489-490,492-496,498
+  s_55f7a841d7c10e::t_0594c981d1bde7 467
+  s_55f7a841d7c10e::t_2177b00d334352 371-428
+  s_55f7a841d7c10e::t_d3bda56f63eeb8 194,203-208
 pkg/runtime/proxy/auth.go
   s_55f7a841d7c10e::t_f4cfd732af96bb 189,262
+  s_55f7a841d7c10e::t_b520ffaca9f891 189
+  s_55f7a841d7c10e::t_6ade0d0e535c09 262
 pkg/runtime/proxy/auth_test.go
   s_55f7a841d7c10e::t_1d088dacd8fd12 15,131,177-235,245,301,348,404
+  s_55f7a841d7c10e::t_978076fbf1d7da 15,131,245,301,348,404
+  s_55f7a841d7c10e::t_997fe999a81d35 191
+  s_55f7a841d7c10e::t_5d80396570cbe3 177-185,187-190,192-235
+  s_55f7a841d7c10e::t_1f35a78dc2504f 186
 pkg/runtime/proxy/contain_test.go
   s_55f7a841d7c10e::t_8b214bd64968c6 1-92
+  s_55f7a841d7c10e::t_bc05b14f942560 1-46,66-92
+  s_55f7a841d7c10e::t_3f5d380b0d719a 47-65
 pkg/runtime/proxy/manager.go
   s_55f7a841d7c10e::t_3d40ed1e68ef49 11,40-45,97
+  s_55f7a841d7c10e::t_79b61819cd2131 40-45
+  s_55f7a841d7c10e::t_7b058c06b76dc8 97
+  s_55f7a841d7c10e::t_e5cb83961f8658 11
 pkg/runtime/proxy/manager_test.go
   s_55f7a841d7c10e::t_31c0a2defa3fdb 14,25
+  s_55f7a841d7c10e::t_66d06d90ab5217 14,25
 pkg/runtime/proxy/policy_hook.go
   s_55f7a841d7c10e::t_3377549672e185 73-79,759-771,782-789,797-857
+  s_55f7a841d7c10e::t_aa21c514a9d334 73-79
+  s_55f7a841d7c10e::t_4839596047d6a5 759-762,771,782-789,797-802
+  s_55f7a841d7c10e::t_6231b48a61bae1 805,807,809-857
+  s_55f7a841d7c10e::t_a17d7c05a1f170 803-804,806,808
+  s_55f7a841d7c10e::t_e1a5db43303d09 763-770
+  s_55f7a841d7c10e::t_06a4c70d4a2708 164
+  s_55f7a841d7c10e::t_3e68d36c4d0620 496
+  s_55f7a841d7c10e::t_89957224793e65 255
 pkg/runtime/proxy/policy_hook_test.go
   s_55f7a841d7c10e::t_05ea75e0f91f26 19,810
+  s_55f7a841d7c10e::t_7429fb5c4f535c 19,810
 pkg/runtime/proxy/session_settings.go
   s_55f7a841d7c10e::t_b944a47c412f37 34-41,55-57,102-104,108-120
+  s_55f7a841d7c10e::t_60b4364913d918 102-104,108-118
+  s_55f7a841d7c10e::t_15caeca2bf68b9 55-57
+  s_55f7a841d7c10e::t_d580a0205adf07 34-41
+  s_55f7a841d7c10e::t_2edd737fadb7fd 119-120
 pkg/runtime/proxy/tooluse_runtime.go
   s_55f7a841d7c10e::t_2fb7c82412e744 254-262
+  s_55f7a841d7c10e::t_8719d57b4f9f0f 254-262
 pkg/store/postgres/migrations/060_user_roles.sql
   s_55f7a841d7c10e::t_703f8e10bf6ae2 1-21
+  s_55f7a841d7c10e::t_36744a91fa44c7 1-12,17-21
+  s_55f7a841d7c10e::t_1201780a1f699b 13-16
 pkg/store/postgres/migrations/061_user_invites.sql
   s_55f7a841d7c10e::t_8df107f754300d 1-14
+  s_55f7a841d7c10e::t_37e11a41ef21f9 1-14
 pkg/store/postgres/migrations/062_audit_actor_retain.sql
   s_55f7a841d7c10e::t_7054f81a04f711 1-34
+  s_55f7a841d7c10e::t_53834a38713355 1-34
 pkg/store/postgres/migrations/063_instance_governance.sql
   s_55f7a841d7c10e::t_b4a4d23ad3f892 1-73
+  s_55f7a841d7c10e::t_6e2bcc5ee045cf 64-71,73
+  s_55f7a841d7c10e::t_49a30fc9bdceb5 72
+  s_55f7a841d7c10e::t_1f35a78dc2504f 72
 pkg/store/postgres/migrations/064_admin_visibility_indexes.sql
   s_55f7a841d7c10e::t_1f5ea0c8d7538e 1-10
+  s_55f7a841d7c10e::t_d7266b68cca77f 1-10
 pkg/store/postgres/migrations/065_vault_entry_kind.sql
   s_55f7a841d7c10e::t_0e215811109684 1-10
+  s_55f7a841d7c10e::t_54378858fb3c8b 1-10
 pkg/store/postgres/store.go
   s_55f7a841d7c10e::t_178f51f3d75691 9,41-57,60-62,69,72-114,116-124,132-133,154-182,185-191,195-322,656-685,1171-1173,1182-1183,1192,1205,1210-1211,1214,1287-1389,1588-1696,2286-2298,2424-2478,4322-4331,4347,4352-4356
+  s_55f7a841d7c10e::t_c1863715312d99 1171-1173,1182-1183,1192
+  s_55f7a841d7c10e::t_e01950d33f9753 1205,1210-1211,1214
+  s_55f7a841d7c10e::t_a87c5ea092bb6d 41-57,60-62,69,112-114,116-124,132-133,154-182,185-191,195-212,231-321
+  s_2272b9604c80ae::t_50e380011540fa 322
+  s_55f7a841d7c10e::t_87ebdb4e23d807 1287-1389
+  s_55f7a841d7c10e::t_bcc8a1a7f01df3 1594-1597,1599,1611-1613
+  s_55f7a841d7c10e::t_8303232fde7d67 2286-2298
+  s_55f7a841d7c10e::t_60256880431139 4322-4331,4347,4352-4356
+  s_55f7a841d7c10e::t_bb13dbc7608d03 1588-1593,1598,1600-1610,1614-1696
+  s_55f7a841d7c10e::t_081c3655b56259 213-230
+  s_55f7a841d7c10e::t_1f8853ee542482 9
+  s_55f7a841d7c10e::t_452b9c9457b90f 656-685
+  s_55f7a841d7c10e::t_2f749ff5e3cff6 2424-2478
+  s_55f7a841d7c10e::t_f092dc06b88157 72-111
+  s_55f7a841d7c10e::t_b50920a8caaca8 357-378,382-383,391-393
+  s_55f7a841d7c10e::t_2cf8423aa58a11 379-381,384-389
+  s_55f7a841d7c10e::t_f06854bb71e9ad 390
 pkg/store/postgres/store_governance.go
   s_55f7a841d7c10e::t_48189b0c19dc99 1-331
 pkg/store/sqlite/flat_team_migration_test.go
   s_55f7a841d7c10e::t_fd6d25a7572387 1-182
+  s_55f7a841d7c10e::t_cc3c89037620b0 1-7,9,11-84
+  s_55f7a841d7c10e::t_c24fbd70e785f5 85-182
+  s_55f7a841d7c10e::t_628b5acefa72c4 8,10
 pkg/store/sqlite/migrations/061_user_roles.sql
   s_55f7a841d7c10e::t_e2c22e001978e2 1-35
+  s_55f7a841d7c10e::t_577e1b0233fd42 1-21,28-35
+  s_55f7a841d7c10e::t_0debb1ee7a33f6 22-27
 pkg/store/sqlite/migrations/062_user_invites.sql
   s_55f7a841d7c10e::t_b9241b2b7c0074 1-19
+  s_55f7a841d7c10e::t_fe8247cb70e16c 1-19
 pkg/store/sqlite/migrations/063_audit_actor_retain.sql
   s_55f7a841d7c10e::t_a2844836735c9b 1-119
+  s_55f7a841d7c10e::t_4c4f42cc4244ed 1-8,17-24,27,29-95,98-99,102-119
+  s_55f7a841d7c10e::t_17469e9d5791be 25-26,28
+  s_55f7a841d7c10e::t_d71b9147dfc3fd 9-16
+  s_55f7a841d7c10e::t_2bb3f309e48605 96-97,100-101
 pkg/store/sqlite/migrations/064_instance_governance.sql
   s_55f7a841d7c10e::t_7c5f4b35644db2 1-99
+  s_55f7a841d7c10e::t_93e14c15d0ac97 90-97,99
+  s_55f7a841d7c10e::t_960ac8277bccb7 98
+  s_55f7a841d7c10e::t_1f35a78dc2504f 98
 pkg/store/sqlite/migrations/065_admin_visibility_indexes.sql
   s_55f7a841d7c10e::t_249814735f77ea 1-16
+  s_55f7a841d7c10e::t_c2f5c4e6d8f758 1-8,15
+  s_55f7a841d7c10e::t_f6ae57dd6feb4d 9-14,16
 pkg/store/sqlite/migrations/066_vault_entry_kind.sql
   s_55f7a841d7c10e::t_0ee738332f269c 1-12
+  s_55f7a841d7c10e::t_829fd0193df042 1-12
 pkg/store/sqlite/store.go
   s_55f7a841d7c10e::t_2d55d1f8c82016 42-53,55-58,60-61,72-113,116-117,123-126,130-140,142-143,147-194,198-225,261-367,754-823,1415-1418,1427-1428,1436,1451,1456-1457,1461,1532-1646,1855-1966,2708-2721,2834,2843-2899
+  s_55f7a841d7c10e::t_691710387e1b15 1415-1418,1427-1428,1436
+  s_55f7a841d7c10e::t_43e845016f9c07 1451,1456-1457,1461
+  s_55f7a841d7c10e::t_31ac6642789e25 261-276
+  s_55f7a841d7c10e::t_4f8c07626fca0f 277-367
+  s_55f7a841d7c10e::t_584c57a3451f8b 42-53,55-58,60-61,113,116-117,123-126,130-140,142-143,147-194,198-207
+  s_55f7a841d7c10e::t_fa515f3a04c91f 2708-2721
+  s_55f7a841d7c10e::t_c28988d9fb71f8 1532-1646
+  s_55f7a841d7c10e::t_15d8a9840960ed 1863-1866,1868
+  s_55f7a841d7c10e::t_99ba17e5333760 1881-1883
+  s_55f7a841d7c10e::t_67dbe895354c0a 754-823
+  s_55f7a841d7c10e::t_07395364d6036f 210-227
+  s_55f7a841d7c10e::t_5d1fadbcb8916f 1855-1862,1867,1869-1880,1884-1966
+  s_55f7a841d7c10e::t_2f10ed07336ab3 2843-2867,2869-2899
+  s_55f7a841d7c10e::t_7cf31bcde3097b 72-112
+  s_55f7a841d7c10e::t_f56e4c687aad8f 391-412,414,417-418,426-428
+  s_55f7a841d7c10e::t_3fe57fc194ccac 413,415-416,419-424
+  s_55f7a841d7c10e::t_11422e4aa43f34 425
+  s_55f7a841d7c10e::t_d256768d3e333d 2868
+  s_55f7a841d7c10e::t_ac28a4f3e4ec16 2834
 pkg/store/sqlite/store_admin_visibility_test.go
   s_55f7a841d7c10e::t_2f70bbd00b168c 1-316
+  s_55f7a841d7c10e::t_18ebc3db1d095b 1-6,8-13,53-263
+  s_55f7a841d7c10e::t_fbf22322063d81 264-315
+  s_55f7a841d7c10e::t_2ccf6870ec97a7 43-49
+  s_55f7a841d7c10e::t_34104d3e17d29b 7,14-42,50-51,316
+  s_2272b9604c80ae::t_cad2b490b5f01a 52
 pkg/store/sqlite/store_agent_threshold_test.go
   s_55f7a841d7c10e::t_dc672b5fd853b2 27,110
+  s_55f7a841d7c10e::t_1c62aea3408a9a 27,110
 pkg/store/sqlite/store_apitokens_test.go
   s_55f7a841d7c10e::t_ac4b47058ebf00 218
+  s_55f7a841d7c10e::t_ff266dfdb45070 218
+  s_55f7a841d7c10e::t_98d58fd0525075 100-177,194-195
+  s_55f7a841d7c10e::t_211b8f2563f073 178-193
 pkg/store/sqlite/store_governance.go
   s_55f7a841d7c10e::t_cdf73e24374982 1-340
+  s_55f7a841d7c10e::t_7e9f88391b8b78 131-140,146
 pkg/store/sqlite/store_governance_test.go
   s_55f7a841d7c10e::t_25d92f1b7278bc 1-230
+  s_55f7a841d7c10e::t_7f9abfe9dbcf08 171-190,204-230
 pkg/store/sqlite/store_inline_chat_expiry_test.go
   s_55f7a841d7c10e::t_77fd45e89fc6a8 31
+  s_55f7a841d7c10e::t_db57012f182ab6 31
 pkg/store/sqlite/store_runtime_test.go
   s_55f7a841d7c10e::t_35344986e527ef 27,459,537,589,654,721,792,836,904,968
+  s_55f7a841d7c10e::t_7e2f5db182e4e1 27,459,537,589,654,721,792,836,904,968
 pkg/store/sqlite/store_task_lifecycle_test.go
   s_55f7a841d7c10e::t_3d7ba46c2fd1b0 31
+  s_55f7a841d7c10e::t_341aae2f905e02 31
 pkg/store/store.go
   s_55f7a841d7c10e::t_e819734c5b0ab9 26-30,42-57,61-63,66-82,99-131,149-155,259-265,274-280,375-380,387-392,600-607,613,616-641,663-729,868-873,999-1004,1069-1130,1273-1276,1356-1359,1660-1670
+  s_55f7a841d7c10e::t_2009260fed43d6 42-51,61-63,66-69,74-82
+  s_55f7a841d7c10e::t_3bbb2550922785 600-607,616-623,628-641
+  s_55f7a841d7c10e::t_c22af2578a3bf4 70-73
+  s_55f7a841d7c10e::t_1e748d64164351 387-392
+  s_55f7a841d7c10e::t_bef15cf1a8cda5 868-873
+  s_55f7a841d7c10e::t_5cfb8d5a522591 999-1004
+  s_55f7a841d7c10e::t_98b11f11559dcc 1069-1130
+  s_55f7a841d7c10e::t_9bb014bed031f5 1356-1359
+  s_55f7a841d7c10e::t_744461da363bcc 1665-1670
+  s_55f7a841d7c10e::t_944e0c9c12e2c4 259-265
+  s_55f7a841d7c10e::t_59d4572364aa22 149-155
+  s_55f7a841d7c10e::t_3661903b0d81f1 274-280
+  s_55f7a841d7c10e::t_cd0b5f5ca28c2b 375-380
+  s_55f7a841d7c10e::t_2c878ba3dbf163 610-615,1273-1276,1660-1664
+  s_55f7a841d7c10e::t_08881b64892bdc 52-57
+  s_55f7a841d7c10e::t_c0176809389f96 26-30
+  s_55f7a841d7c10e::t_33b98ba18e9ef6 88-93
+  s_55f7a841d7c10e::t_38fb1827aff4c5 624-627
 pkg/store/store_test.go
   s_55f7a841d7c10e::t_45709ad70f3fc5 7,10-32
+  s_55f7a841d7c10e::t_22eb2ff869083f 7,10-31
+  s_55f7a841d7c10e::t_d28225d02b5d63 32
 pkg/vault/instance_aware.go
   s_55f7a841d7c10e::t_9fcc7acf51d072 1-111
+  s_55f7a841d7c10e::t_2a635ee2e2ed4e 1-2,7-44,46-103,110-111
+  s_55f7a841d7c10e::t_500f3444d3b62b 104-109
+  s_55f7a841d7c10e::t_b70289e0c39f62 45
+  s_55f7a841d7c10e::t_bf2f22c2c0eb82 3-6
 pkg/vault/instance_aware_test.go
   s_55f7a841d7c10e::t_03e1b807817cd1 1-168
+  s_55f7a841d7c10e::t_d26692e22646a9 1-6,8-12,48-168
+  s_55f7a841d7c10e::t_561c3cd1f0d2c2 7,13-46
+  s_55f7a841d7c10e::t_84bdaf8bbce3c1 47
 pkg/vault/refaws/refaws.go
   s_55f7a841d7c10e::t_0fc00d3a8c0051 1-127
+  s_55f7a841d7c10e::t_40582b096af622 1-70,72,78-85,87-127
+  s_55f7a841d7c10e::t_da0d23ce185b97 86
+  s_55f7a841d7c10e::t_a485c8c36e0557 71,73-77
 pkg/vault/refaws/refaws_live_test.go
   s_55f7a841d7c10e::t_0c15720ed1d4cc 1-44
+  s_55f7a841d7c10e::t_07fbd1713c2388 1-44
 pkg/vault/refaws/refaws_localstack_test.go
   s_55f7a841d7c10e::t_f6e16c692d8fa3 1-50
+  s_55f7a841d7c10e::t_3ba585207e328f 1-50
 pkg/vault/refaws/refaws_test.go
   s_55f7a841d7c10e::t_c2bae623967026 1-100
+  s_55f7a841d7c10e::t_9466c068d91e40 1-52,80-100
+  s_55f7a841d7c10e::t_4f236ac2e2af1b 53-79
 pkg/vault/reference.go
   s_55f7a841d7c10e::t_c45bacb601aab2 1-506
+  s_55f7a841d7c10e::t_0cf7f4a60d114c 425-430
+  s_55f7a841d7c10e::t_3500d0988f3e71 1-9,11-12,15-41,48-111,118,125-206,208-381,383-424,431-506
+  s_55f7a841d7c10e::t_473d9b73a9ab80 10,13-14
+  s_2272b9604c80ae::t_c7defbe6c1367a 207,382
+  s_55f7a841d7c10e::t_d58df6ef8ab17e 42-47
+  s_55f7a841d7c10e::t_cd559ee9e33894 112-117,119-124
 pkg/vault/reference_test.go
   s_55f7a841d7c10e::t_226a3ce5bf0eee 1-428
+  s_55f7a841d7c10e::t_3dc234421b14fe 1-65,67-392,404-428
+  s_55f7a841d7c10e::t_924849f0c1fe77 66
+  s_55f7a841d7c10e::t_7e8cdbc03bf926 393-403
 pkg/vault/refgcp/refgcp.go
   s_55f7a841d7c10e::t_0d60e9d0b3391f 1-98
+  s_55f7a841d7c10e::t_d9a91259c1951a 1-16,18,20-43,45-47,49-51,53-54,60-66,68-74,76-98
+  s_55f7a841d7c10e::t_af1544632d3145 17,19,48,52,75
+  s_55f7a841d7c10e::t_f8650f72701435 44,55-59
+  s_55f7a841d7c10e::t_b6442d9c86f661 67
 pkg/vault/refgcp/refgcp_live_test.go
   s_55f7a841d7c10e::t_25f32bcb3613af 1-43
+  s_55f7a841d7c10e::t_a8c48ffd23eb3a 1-43
 pkg/vault/refgcp/refgcp_test.go
   s_55f7a841d7c10e::t_683abc71950a00 1-32
+  s_55f7a841d7c10e::t_46ccb772d1b94c 1-32
 provider/README.md
   s_55f7a841d7c10e::t_0dc35b441c2e11 1-93
+  s_55f7a841d7c10e::t_16385c9716e746 1-87,91-93
+  s_55f7a841d7c10e::t_d2c20d1c39b8ee 88-90
 provider/docs/index.md
   s_55f7a841d7c10e::t_0251b05d79d7ab 1-50
+  s_55f7a841d7c10e::t_13b70408d9b441 1-50
 provider/docs/resources/agent.md
   s_55f7a841d7c10e::t_3f7934efd16e64 1-58
+  s_55f7a841d7c10e::t_645da56a879ae2 1-58
 provider/docs/resources/api_token.md
   s_55f7a841d7c10e::t_48f10f86396d62 1-56
+  s_55f7a841d7c10e::t_e329cea95f4be9 1-38,40-56
+  s_55f7a841d7c10e::t_151db2f8694681 39
 provider/docs/resources/content_policy.md
   s_55f7a841d7c10e::t_1cac0088fdf633 1-56
+  s_55f7a841d7c10e::t_ddc83d61fa3f68 1-56
 provider/docs/resources/model_policy.md
   s_55f7a841d7c10e::t_4be7f35f5c985e 1-48
+  s_55f7a841d7c10e::t_948e219156df1c 1-48
 provider/docs/resources/service_config.md
   s_55f7a841d7c10e::t_bc40b3b546b83d 1-52
+  s_55f7a841d7c10e::t_490443596aab51 1-52
 provider/docs/resources/spend_cap.md
   s_55f7a841d7c10e::t_4cc08bfffe2daf 1-50
+  s_55f7a841d7c10e::t_6da4c065396792 1-50
 provider/docs/resources/task_policy.md
   s_55f7a841d7c10e::t_293936675990a1 1-43
+  s_55f7a841d7c10e::t_cc33fcb9cca82e 1-43
 provider/docs/resources/user.md
   s_55f7a841d7c10e::t_baffca836df762 1-58
+  s_55f7a841d7c10e::t_9c388644ac0cef 1-58
 provider/docs/resources/vault_entry.md
   s_55f7a841d7c10e::t_cf36d83a4e74d8 1-56
+  s_55f7a841d7c10e::t_aa5861cef29c7e 1-56
 provider/examples/bootstrap/main.tf
   s_55f7a841d7c10e::t_c096acd91f7792 1-97
+  s_55f7a841d7c10e::t_8a0292d9ba07f4 1-97
 provider/examples/provider/provider.tf
   s_55f7a841d7c10e::t_a0c7ed13b4e377 1-26
+  s_55f7a841d7c10e::t_6031c7d733d552 1-26
 provider/examples/resources/clawvisor_agent/import.sh
   s_55f7a841d7c10e::t_7b8b69baeba245 1-3
+  s_55f7a841d7c10e::t_98fa00812f5415 1-3
 provider/examples/resources/clawvisor_agent/resource.tf
   s_55f7a841d7c10e::t_3a79e7a2f548fb 1-13
+  s_55f7a841d7c10e::t_2fc4c3eef23f18 1-13
 provider/examples/resources/clawvisor_api_token/import.sh
   s_55f7a841d7c10e::t_55c77210535455 1-3
+  s_55f7a841d7c10e::t_8861d38e29d08a 1-3
 provider/examples/resources/clawvisor_api_token/resource.tf
   s_55f7a841d7c10e::t_4aee4b2468fb39 1-11
+  s_55f7a841d7c10e::t_5ed1f31ed0ada7 1-11
 provider/examples/resources/clawvisor_content_policy/import.sh
   s_55f7a841d7c10e::t_765dfe905fefeb 1-2
+  s_55f7a841d7c10e::t_c01080e6bbd395 1-2
 provider/examples/resources/clawvisor_content_policy/resource.tf
   s_55f7a841d7c10e::t_119b9ded919ecb 1-10
+  s_55f7a841d7c10e::t_5694ceb72bca19 1-10
 provider/examples/resources/clawvisor_model_policy/import.sh
   s_55f7a841d7c10e::t_fad5343596c2a5 1-2
+  s_55f7a841d7c10e::t_7413e970606a53 1-2
 provider/examples/resources/clawvisor_model_policy/resource.tf
   s_55f7a841d7c10e::t_754ffa7ab59a7a 1-9
+  s_55f7a841d7c10e::t_88fc5514b8325e 1-9
 provider/examples/resources/clawvisor_service_config/import.sh
   s_55f7a841d7c10e::t_f83012c9f57baf 1-2
+  s_55f7a841d7c10e::t_efd21139115152 1-2
 provider/examples/resources/clawvisor_service_config/resource.tf
   s_55f7a841d7c10e::t_d5a6d291c4a44e 1-9
+  s_55f7a841d7c10e::t_7726e2661f1a27 1-9
 provider/examples/resources/clawvisor_spend_cap/import.sh
   s_55f7a841d7c10e::t_f1618a2741d1e5 1-2
+  s_55f7a841d7c10e::t_b4449f83b7adf2 1-2
 provider/examples/resources/clawvisor_spend_cap/resource.tf
   s_55f7a841d7c10e::t_a7561ca28ee095 1-7
+  s_55f7a841d7c10e::t_cc3f8fbde1dc31 1-7
 provider/examples/resources/clawvisor_task_policy/import.sh
   s_55f7a841d7c10e::t_43450e49d1cf6b 1-2
+  s_55f7a841d7c10e::t_57451f4d2912b8 1-2
 provider/examples/resources/clawvisor_task_policy/resource.tf
   s_55f7a841d7c10e::t_ff79d3e34009e2 1-5
+  s_55f7a841d7c10e::t_151a6727ffb22b 1-5
 provider/examples/resources/clawvisor_user/import.sh
   s_55f7a841d7c10e::t_3cb0e7fd94a800 1-3
+  s_55f7a841d7c10e::t_ad75a2907530be 1-3
 provider/examples/resources/clawvisor_user/resource.tf
   s_55f7a841d7c10e::t_382b92b16ae131 1-18
+  s_55f7a841d7c10e::t_f27a56ce6a49f6 1-18
 provider/examples/resources/clawvisor_vault_entry/import.sh
   s_55f7a841d7c10e::t_92070941d046cc 1-3
+  s_55f7a841d7c10e::t_fe001a8f028106 1-3
 provider/examples/resources/clawvisor_vault_entry/resource.tf
   s_55f7a841d7c10e::t_7db0a45fa81ba7 1-12
+  s_55f7a841d7c10e::t_3a261fdde45838 1-12
 provider/go.mod
   s_55f7a841d7c10e::t_7a4e10b98146fa 1-68
+  s_55f7a841d7c10e::t_579e5c1e8af189 1-68
 provider/go.sum
   s_55f7a841d7c10e::t_8c807d077b5fd3 1-245
+  s_55f7a841d7c10e::t_7a2c11a2bb7d52 1-245
 provider/internal/client/agents.go
   s_55f7a841d7c10e::t_b6c3855051efbc 1-75
+  s_55f7a841d7c10e::t_4f0ae977ea68d7 1-75
 provider/internal/client/client.go
   s_55f7a841d7c10e::t_a24f79f114db66 1-154
+  s_55f7a841d7c10e::t_50591ed1f78497 1-154
 provider/internal/client/client_test.go
   s_55f7a841d7c10e::t_5c45cf1686967c 1-119
+  s_55f7a841d7c10e::t_d65e6afe89d41c 1-119
 provider/internal/client/features.go
   s_55f7a841d7c10e::t_d90cc861609926 1-66
+  s_55f7a841d7c10e::t_4ba9246574934e 1-66
 provider/internal/client/governance.go
   s_55f7a841d7c10e::t_8152cbd3d4eae9 1-172
+  s_55f7a841d7c10e::t_022c314f804e29 1-172
 provider/internal/client/services.go
   s_55f7a841d7c10e::t_221e737c89789c 1-47
+  s_55f7a841d7c10e::t_6094cf6d383d25 1-47
 provider/internal/client/tokens.go
   s_55f7a841d7c10e::t_c3b7e68790425c 1-62
+  s_55f7a841d7c10e::t_028e57515c0652 1-15,19-62
+  s_55f7a841d7c10e::t_fa0a1e08a87f49 16-18
 provider/internal/client/users.go
   s_55f7a841d7c10e::t_151c5dc49b52a1 1-80
+  s_55f7a841d7c10e::t_d77b717210bc94 1-80
 provider/internal/client/vault.go
   s_55f7a841d7c10e::t_09d2a232be50e3 1-71
+  s_55f7a841d7c10e::t_fdd6f4b8e63a27 1-41
+  s_55f7a841d7c10e::t_86f3b10f63f84e 42-71
 provider/internal/provider/capability_test.go
   s_55f7a841d7c10e::t_048cdc08f094ca 1-62
+  s_55f7a841d7c10e::t_a2533e3512290b 1-62
 provider/internal/provider/common.go
   s_55f7a841d7c10e::t_ccc0e7ce3fab86 1-86
+  s_55f7a841d7c10e::t_ea1afa959e08de 1-57,61-86
+  s_55f7a841d7c10e::t_526132bdb41a9c 58-60
 provider/internal/provider/provider.go
   s_55f7a841d7c10e::t_021c41ec08ee8a 1-177
+  s_55f7a841d7c10e::t_17f8e1514ed5a3 1-152,154-155,157-177
+  s_55f7a841d7c10e::t_807f213a5dceda 156
+  s_55f7a841d7c10e::t_1994253a579c0e 153
 provider/internal/provider/resource_agent.go
   s_55f7a841d7c10e::t_9a17779621788f 1-204
+  s_55f7a841d7c10e::t_ec568570d87f6a 8,15-44
+  s_55f7a841d7c10e::t_d0a78f0ed5273a 1-7,9-14,45-111,113-204
+  s_55f7a841d7c10e::t_cc25cb06739aaa 112
 provider/internal/provider/resource_api_token.go
   s_55f7a841d7c10e::t_969133dfc50665 1-160
+  s_55f7a841d7c10e::t_8916060e54a11e 1-65,67-160
+  s_55f7a841d7c10e::t_e87da77f87baf1 66
 provider/internal/provider/resource_content_policy.go
   s_55f7a841d7c10e::t_078d8a024e4731 1-179
+  s_55f7a841d7c10e::t_6c238a286c9435 1-179
 provider/internal/provider/resource_model_policy.go
   s_55f7a841d7c10e::t_63fe87ad13d194 1-148
+  s_55f7a841d7c10e::t_eec2cf857aa65c 1-148
 provider/internal/provider/resource_service_config.go
   s_55f7a841d7c10e::t_f2eee27e1cf74d 1-159
+  s_55f7a841d7c10e::t_5484363e6c03dc 1-159
 provider/internal/provider/resource_spend_cap.go
   s_55f7a841d7c10e::t_c53c5fb7210182 1-148
+  s_55f7a841d7c10e::t_9a1062be1c7615 1-148
 provider/internal/provider/resource_task_policy.go
   s_55f7a841d7c10e::t_6a2f2cb0fab86f 1-126
+  s_55f7a841d7c10e::t_be5b6f19e7ed5e 1-126
 provider/internal/provider/resource_user.go
   s_55f7a841d7c10e::t_7cfaea00d53f26 1-364
+  s_55f7a841d7c10e::t_63bef104a69fc7 1-123,127-149,153-203,207-270,274-364
+  s_55f7a841d7c10e::t_5bec2569ae8270 150-152
+  s_55f7a841d7c10e::t_55cb91f45ace9b 204-206
+  s_55f7a841d7c10e::t_5d4645a4d152f5 124-126
+  s_55f7a841d7c10e::t_cb0559fcdb3f8c 271-273
 provider/internal/provider/resource_user_test.go
   s_55f7a841d7c10e::t_5fa8da98a93365 1-59
+  s_55f7a841d7c10e::t_40b22a1a110aac 1-59
 provider/internal/provider/resource_vault_entry.go
   s_55f7a841d7c10e::t_b523724cc0bc99 1-173
+  s_55f7a841d7c10e::t_fd00bc94a19439 7
+  s_55f7a841d7c10e::t_3c85825dd65427 1-6,8-90,99-173
+  s_55f7a841d7c10e::t_567d3e8b85fa4b 91-98
 provider/internal/provider/resource_vault_reference.go
   s_55f7a841d7c10e::t_3b7c5e64fbf65b 1-183
+  s_55f7a841d7c10e::t_291aa6ba66373d 1-24,26-71,73-96,98-102,106-119,123-128,130-142,146-150,152-160,164-177,179-183
+  s_55f7a841d7c10e::t_611fd2970e719e 151
+  s_55f7a841d7c10e::t_a570527cbb1eff 178
+  s_55f7a841d7c10e::t_4878e9eae95602 72
+  s_55f7a841d7c10e::t_ace5e762d20b04 25
+  s_55f7a841d7c10e::t_29e4bf12d55652 129
+  s_55f7a841d7c10e::t_d89dd4e3b5a668 97
+  s_55f7a841d7c10e::t_0a44b71ea1dbe5 103-105
+  s_55f7a841d7c10e::t_69a91f794c3913 120-122
+  s_55f7a841d7c10e::t_adea3ea34d93bb 161-163
+  s_55f7a841d7c10e::t_368a662205b832 143-145
 provider/internal/provider/resource_vault_reference_test.go
   s_55f7a841d7c10e::t_617b7cac0a1ab6 1-59
+  s_55f7a841d7c10e::t_f483c6c5e20c4c 1-59
 provider/internal/provider/testacc/agent_test.go
   s_55f7a841d7c10e::t_078afd2eb2dd60 1-108
+  s_55f7a841d7c10e::t_ea7c58e8d69399 1-108
 provider/internal/provider/testacc/api_token_test.go
   s_55f7a841d7c10e::t_e310bac3aed082 1-92
+  s_55f7a841d7c10e::t_b44c1d096f9c6c 1-92
 provider/internal/provider/testacc/build_test.go
   s_55f7a841d7c10e::t_ccfeef5ab3e967 1-62
+  s_55f7a841d7c10e::t_98d0b53b4609a4 1-33,38-46,55-62
+  s_55f7a841d7c10e::t_1c8ade5def4fe9 34-37
+  s_55f7a841d7c10e::t_afb257928202e5 47-54
 provider/internal/provider/testacc/capability_gate_test.go
   s_55f7a841d7c10e::t_32d2116a6259d1 1-31
+  s_55f7a841d7c10e::t_0bf499b62b0c38 1-31
 provider/internal/provider/testacc/content_policy_test.go
   s_55f7a841d7c10e::t_15a5a63eddcbbc 1-114
+  s_55f7a841d7c10e::t_c9edb8d0519bdb 1-114
 provider/internal/provider/testacc/helpers_test.go
   s_55f7a841d7c10e::t_538e7dec7781ef 1-72
+  s_55f7a841d7c10e::t_79a63fc453a6aa 1-6,8-13,26-72
+  s_55f7a841d7c10e::t_39effccefcf8c6 7,14-25
 provider/internal/provider/testacc/model_policy_test.go
   s_55f7a841d7c10e::t_313b39010be294 1-101
+  s_55f7a841d7c10e::t_e00bd5736dc1e0 1-101
 provider/internal/provider/testacc/provider_test.go
   s_55f7a841d7c10e::t_b37bc8a125fd11 1-226
+  s_55f7a841d7c10e::t_83b35cc092b034 1-35,39-117,121-226
+  s_55f7a841d7c10e::t_9627612762e5c6 36-38
+  s_55f7a841d7c10e::t_56bc9b73e47e3c 118-120
 provider/internal/provider/testacc/service_config_test.go
   s_55f7a841d7c10e::t_92efb57c96ef4a 1-103
+  s_55f7a841d7c10e::t_ea15be10f096ea 1-103
 provider/internal/provider/testacc/spend_cap_test.go
   s_55f7a841d7c10e::t_7e7c1deb13e034 1-96
+  s_55f7a841d7c10e::t_a246f8493d998c 1-96
 provider/internal/provider/testacc/task_policy_test.go
   s_55f7a841d7c10e::t_6fa76e999165d5 1-85
+  s_55f7a841d7c10e::t_b79ae9b93fbb70 1-85
 provider/internal/provider/testacc/user_test.go
   s_55f7a841d7c10e::t_d2567dd6c65e53 1-157
+  s_55f7a841d7c10e::t_35e2e293e92526 1-157
 provider/internal/provider/testacc/vault_entry_test.go
   s_55f7a841d7c10e::t_ee66c68e7b2d0a 1-126
+  s_55f7a841d7c10e::t_a7cd9d82404578 1-94,99-126
+  s_55f7a841d7c10e::t_a0a6c376478a6a 95-98
 provider/internal/provider/testacc/vault_reference_test.go
   s_55f7a841d7c10e::t_1b11beb08acc36 1-140
+  s_55f7a841d7c10e::t_39b08a513033e5 1-4,6-14,16-28,30-36,38-52,54-55,57-61,63-64,66-78,80-86,88-89,91-103,105-127,130-132,134-135,137-140
+  s_55f7a841d7c10e::t_d6cd7052e74f25 5
+  s_55f7a841d7c10e::t_a06afdba42221b 128-129
+  s_55f7a841d7c10e::t_ce062273e13e2e 136
+  s_55f7a841d7c10e::t_d4a7c63a32103f 15,29,37,53,56,62,65,79,87,90,104,133
 provider/main.go
   s_55f7a841d7c10e::t_8eadef0fbf07b2 1-32
+  s_55f7a841d7c10e::t_801ee4f4747ef8 1-32
 scripts/mirror-terraform.sh
   s_55f7a841d7c10e::t_01075876aeca12 1-33
+  s_55f7a841d7c10e::t_c35fee88e58ded 29-32
 scripts/terraform-plan-secret-scan.sh
   s_55f7a841d7c10e::t_39161176f68273 1-51
 scripts/terraform-real-aws-lane.sh
   s_55f7a841d7c10e::t_7025860946b3bf 1-101
+  s_55f7a841d7c10e::t_b7756eeb728644 76-80,82-93,96-99
 web/src/api/client.ts
   s_55f7a841d7c10e::t_39b2ff9415d81f 213,218-269,1526-1543
+  s_55f7a841d7c10e::t_3cd76f1f36d645 213,218-268
+  s_55f7a841d7c10e::t_4ae5f021316e94 1526-1542
+  s_55f7a841d7c10e::t_a3cf8441451821 269,1543
 web/src/pages/Admin.tsx
   s_55f7a841d7c10e::t_85c2cbe1213e38 1-236
+  s_55f7a841d7c10e::t_92e9cae94c014d 17
+  s_55f7a841d7c10e::t_2d9b95ed3c9907 2-16,18-25,34,36,38-63,66-68,70-74,76-78,81-101,103-108,110-117,119-123,125-142,146-161,163-176,178-181,183-236
+  s_55f7a841d7c10e::t_d8fc9fa8ceead3 1
+  s_55f7a841d7c10e::t_64c45994688977 162
+  s_55f7a841d7c10e::t_857671c3fd16a3 177,182
+  s_55f7a841d7c10e::t_775f578ed1856a 79-80
+  s_55f7a841d7c10e::t_7a3389dd21852d 64-65,69,75
+  s_55f7a841d7c10e::t_b36232e4370aca 26-33
+  s_55f7a841d7c10e::t_a343b7f60f4c10 124
+  s_55f7a841d7c10e::t_a6e0fff618ef94 35,37
+  s_55f7a841d7c10e::t_ccc0bd8aaa7f21 143-145
+  s_55f7a841d7c10e::t_5978a7465105aa 102,109,118
 web/src/pages/Agents.tsx
   s_55f7a841d7c10e::t_fcfab5a73f716c 2265-2268,2322-2324,2326,2358-2383
 web/src/pages/Dashboard.tsx
   s_55f7a841d7c10e::t_a0d0e5799a182f 23,45-50,226,431-435
+  s_55f7a841d7c10e::t_49798196a7c27d 45-50
+  s_55f7a841d7c10e::t_0492a478246bff 23
+  s_55f7a841d7c10e::t_ea781a256a5498 226
+  s_55f7a841d7c10e::t_ff478e204afbf0 431-435
+deploy/docker-compose.yml
+  s_55f7a841d7c10e::t_2e577d4eb07e50 54
+pkg/store/sqlite/migrations/060_api_tokens.sql
+  s_55f7a841d7c10e::t_2cfef191a84f4f 13-21
+pkg/clawvisor/bootstrap.go
+  s_55f7a841d7c10e::t_a4798db795cab7 79-88
+pkg/clawvisor/bootstrap_test.go
+  s_55f7a841d7c10e::t_d7dd5688a8a00c 97-128
+e2e/scenarios/otel_export_test.go
+  s_55f7a841d7c10e::t_db80dc6cf29ba2 139-162
+internal/runtime/llmproxy/audit.go
+  s_55f7a841d7c10e::t_d3491f6d2e8a95 252-265
+  s_55f7a841d7c10e::t_418b4f0c3d9b99 266
+internal/observability/provider.go
+  s_55f7a841d7c10e::t_539626358ee326 156-159
+  s_55f7a841d7c10e::t_be2805ad1efb75 17
+internal/observability/provider_test.go
+  s_55f7a841d7c10e::t_087b28895c16fc 82-106
+testharness/otlp/receiver.go
+  s_55f7a841d7c10e::t_b8377321cb5386 264-266
+  s_55f7a841d7c10e::t_cdd28b9f2496ff 35-40
+  s_55f7a841d7c10e::t_74a70fa3454d11 133-142
+  s_55f7a841d7c10e::t_5d7bd7d8d9525e 96
+  s_55f7a841d7c10e::t_67e71ef680cf7c 74
+testharness/otlp/receiver_test.go
+  s_55f7a841d7c10e::t_e75b5adc2b1ae9 1-84
+pkg/runtime/proxy/observability_hook_test.go
+  s_55f7a841d7c10e::t_17a7b87ea0982f 1-76
+pkg/runtime/proxy/state.go
+  s_55f7a841d7c10e::t_fd6f3d27d70cd9 37-43
+pkg/runtime/proxy/observability_hook.go
+  s_55f7a841d7c10e::t_084b1cbc8850fe 46,62-72,78-113
+  s_55f7a841d7c10e::t_509f8f20610ed2 5,8
+  s_55f7a841d7c10e::t_69f447c747139e 123-130,139-141
+  s_55f7a841d7c10e::t_f16b0fe59cb11e 114
+pkg/runtime/proxy/placeholder_runtime.go
+  s_55f7a841d7c10e::t_57bdf73b665a23 200
+  s_55f7a841d7c10e::t_cfb907c98e4212 107
+pkg/runtime/proxy/placeholder_runtime_test.go
+  s_55f7a841d7c10e::t_3c801fa28598af 14-15
+  s_55f7a841d7c10e::t_ee3d87c3160d8e 137-152
+  s_55f7a841d7c10e::t_3016156a9c001a 212,233-236
+  s_55f7a841d7c10e::t_399bd63b30069a 484,506-510
+  s_55f7a841d7c10e::t_0026be13a6c3fb 237
+  s_55f7a841d7c10e::t_832dabd4ada5a3 511
+e2e/scenarios/otel_collector_live_test.go
+  s_55f7a841d7c10e::t_4ee46c3510e66b 1-69
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -587,6 +1243,22 @@ web/src/pages/Dashboard.tsx
   "base_commit_sha": "d5201d8b94a9b80aa9cb520f6a8605a6af5c4f7a",
   "prompts": {},
   "sessions": {
+    "s_2272b9604c80ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01bd258c-cdde-4b3f-afd2-10b73065bcd5",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_328bea3ee33bfb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a913f1e79634958c0",
+        "model": "unknown"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
     "s_55f7a841d7c10e": {
       "agent_id": {
         "tool": "claude",
