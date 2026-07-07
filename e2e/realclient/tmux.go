@@ -269,7 +269,10 @@ func shellQuote(s string) string {
 
 // ── server-state assertions ─────────────────────────────────────────────────
 
-// getJSON does an authenticated GET and decodes into dst.
+// getJSON does an authenticated GET and decodes into dst. The polling endpoints
+// (audit, approvals) return 200 on every poll, so any non-2xx status or a
+// read/decode failure is a real server error — we fail fast on it rather than
+// let it hide behind an opaque poll timeout.
 func (l *liteServer) getJSON(t *testing.T, path string, dst any) int {
 	t.Helper()
 	req, _ := http.NewRequest("GET", l.baseURL+path, nil)
@@ -279,9 +282,17 @@ func (l *liteServer) getJSON(t *testing.T, path string, dst any) int {
 		t.Fatalf("GET %s: %v", path, err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("GET %s: read body: %v", path, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		t.Fatalf("GET %s: unexpected status %d: %s", path, resp.StatusCode, body)
+	}
 	if dst != nil && len(body) > 0 {
-		_ = json.NewDecoder(bytes.NewReader(body)).Decode(dst)
+		if err := json.NewDecoder(bytes.NewReader(body)).Decode(dst); err != nil {
+			t.Fatalf("GET %s: decode body: %v: %s", path, err, body)
+		}
 	}
 	return resp.StatusCode
 }
