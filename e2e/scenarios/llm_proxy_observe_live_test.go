@@ -25,7 +25,7 @@ import (
 //     never consulted.
 //
 // Gated on ANTHROPIC_API_KEY (run e.g.
-// ANTHROPIC_API_KEY="$CLAWVISOR_ANTHROPIC_E2E_KEY" go test ...). The upstream
+// ANTHROPIC_API_KEY=<key> go test ...). The upstream
 // is left at the real https://api.anthropic.com default (no
 // CLAWVISOR_LLM_UPSTREAM_ANTHROPIC override).
 //
