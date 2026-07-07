@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -394,4 +395,122 @@ func TestCloudCannotReachOrgBlindListAll(t *testing.T) {
 	setRole(t, oss, ossAdmin.UserID, store.RoleAdmin)
 	resp := oss.do("GET", "/api/admin/agents", ossAdmin.AccessToken, nil)
 	mustStatus(t, resp, http.StatusOK)
+}
+
+// TestCloudNilOrgIDForAgentStillGatesRoutes (F5 hardening): a cloud build that
+// wires WithOrgGov but passes a nil orgIDForAgent must STILL withhold the
+// org-blind /api/admin/* routes. Route gating keys off orgGovConfigured, not
+// off the optional resolver being non-nil, so a nil resolver can't leak the
+// cross-org fleet routes.
+func TestCloudNilOrgIDForAgentStillGatesRoutes(t *testing.T) {
+	cloud := newCloudCompositionTestEnv(t, nil)
+	admin := newSession(t, cloud)
+	setRole(t, cloud, admin.UserID, store.RoleAdmin)
+
+	for _, path := range []string{"/api/admin/agents", "/api/admin/approvals", "/api/admin/audit", "/api/admin/costs?window=daily"} {
+		resp := cloud.do("GET", path, admin.AccessToken, nil)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("cloud build (nil orgIDForAgent) %s = %d, want 404 (route must be absent)", path, resp.StatusCode)
+		}
+	}
+}
+
+// TestSoloAdminSelfDenyRecordsSelfDeny (F7): a solo admin denying a hold raised
+// by their OWN agent (allow_self_approve=false) is written to the audit trail
+// as action=self_deny/outcome=self_denied — NOT the contradictory
+// self_approve/self_approved marker the deny path previously hardcoded.
+func TestSoloAdminSelfDenyRecordsSelfDeny(t *testing.T) {
+	adapter := newMockAdapter("mock.soloselfdeny", "run").withResult("ok", map[string]any{"done": true})
+	env := newTestEnvWithConfig(t, config.LLMConfig{}, nil, func(c *config.Config) {
+		c.Approval.AllowSelfApprove = false
+	}, adapter)
+
+	// Exactly one admin in the instance → the solo-admin self-resolve exception
+	// applies.
+	admin := newScenario(t, env, "soloadmin")
+	setRole(t, env, admin.session.UserID, store.RoleAdmin)
+
+	reqID := raiseHold(t, env, admin, "mock.soloselfdeny")
+	id := adminPendingIDForRequest(t, env, admin.session.AccessToken, reqID)
+
+	resp := env.do("POST", "/api/admin/approvals/"+id+"/resolve", admin.session.AccessToken, map[string]any{"decision": "deny"})
+	res := mustStatus(t, resp, http.StatusOK)
+	if res["decision"] != "deny" {
+		t.Fatalf("resolve response = %+v", res)
+	}
+
+	resp = env.do("GET", "/api/admin/audit?service=governance", admin.session.AccessToken, nil)
+	auditBody := mustStatus(t, resp, http.StatusOK)
+	sawSelfDeny := false
+	for _, e := range arr(t, auditBody, "entries") {
+		m := e.(map[string]any)
+		if m["outcome"] == "self_approved" || m["action"] == "self_approve" {
+			t.Fatalf("solo-admin self-DENY mislabeled as a self-approval: %+v", m)
+		}
+		if m["action"] == "self_deny" {
+			sawSelfDeny = true
+			if m["outcome"] != "self_denied" {
+				t.Fatalf("self-deny outcome = %v, want self_denied", m["outcome"])
+			}
+			if m["decision"] != "deny" {
+				t.Fatalf("self-deny decision = %v, want deny", m["decision"])
+			}
+		}
+	}
+	if !sawSelfDeny {
+		t.Fatal("solo-admin self-deny not recorded as self_deny in the audit trail")
+	}
+}
+
+// TestAdminDenyPreTaskHoldSharingRequestID: admin-denying a pre-task hold
+// (task_id NULL) that shares a request_id with a task-scoped hold resolves the
+// exact loaded row (200) instead of re-resolving by (request_id, user_id) and
+// spuriously returning 409 (ErrAmbiguous). The task-scoped sibling is left
+// untouched.
+func TestAdminDenyPreTaskHoldSharingRequestID(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+
+	admin := newSession(t, env)
+	setRole(t, env, admin.UserID, store.RoleAdmin)
+	member := newSession(t, env)
+	setRole(t, env, member.UserID, store.RoleMember)
+
+	reqID := "req-shared-" + randSuffix()
+	taskScoped := "task-" + randSuffix()
+
+	preTask := &store.PendingApproval{
+		UserID: member.UserID, RequestID: reqID, AuditID: "audit-pre-" + randSuffix(),
+		RequestBlob: json.RawMessage(`{"service":"gmail"}`),
+		ExpiresAt:   time.Now().Add(time.Hour).UTC(),
+	}
+	scoped := &store.PendingApproval{
+		UserID: member.UserID, RequestID: reqID, TaskID: &taskScoped, AuditID: "audit-task-" + randSuffix(),
+		RequestBlob: json.RawMessage(`{"service":"gmail"}`),
+		ExpiresAt:   time.Now().Add(time.Hour).UTC(),
+	}
+	for _, pa := range []*store.PendingApproval{preTask, scoped} {
+		if err := env.Store.SavePendingApproval(ctx, pa); err != nil {
+			t.Fatalf("SavePendingApproval: %v", err)
+		}
+	}
+
+	resp := env.do("POST", "/api/admin/approvals/"+preTask.ID+"/resolve", admin.AccessToken, map[string]any{"decision": "deny"})
+	res := mustStatus(t, resp, http.StatusOK)
+	if res["decision"] != "deny" {
+		t.Fatalf("resolve response = %+v", res)
+	}
+
+	// The pre-task hold is denied+removed; the task-scoped sibling survives.
+	if _, err := env.Store.GetPendingApprovalByID(ctx, preTask.ID); err != store.ErrNotFound {
+		t.Fatalf("pre-task hold still present after deny: err=%v", err)
+	}
+	sibling, err := env.Store.GetPendingApprovalByID(ctx, scoped.ID)
+	if err != nil {
+		t.Fatalf("task-scoped sibling vanished: %v", err)
+	}
+	if sibling.Status != "pending" {
+		t.Fatalf("task-scoped sibling status = %q, want pending (untouched)", sibling.Status)
+	}
 }

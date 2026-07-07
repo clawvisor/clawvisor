@@ -128,13 +128,20 @@ func newTestEnvWithConfig(t *testing.T, llmCfg config.LLMConfig, wrapVault func(
 }
 
 // newCloudCompositionTestEnv builds an API server wired like the cloud
-// (multi-org) composition: WithOrgGov is supplied, which sets orgIDForAgent
-// and flips Server.isCloudComposition() true. Used by the 04b F5 test to prove
-// the org-blind /api/admin/* fleet-visibility routes are NOT mounted in a
-// multi-org build.
-func newCloudCompositionTestEnv(t *testing.T) *testEnv {
+// (multi-org) composition: WithOrgGov is supplied, which flips
+// Server.isCloudComposition() true. Used by the 04b F5 test to prove the
+// org-blind /api/admin/* fleet-visibility routes are NOT mounted in a
+// multi-org build. An optional orgIDForAgent overrides the default resolver;
+// pass an explicit nil to exercise the "WithOrgGov with a nil orgIDForAgent
+// still gates routes" path.
+func newCloudCompositionTestEnv(t *testing.T, orgIDForAgent ...func(context.Context, string) string) *testEnv {
 	t.Helper()
 	ctx := context.Background()
+
+	resolver := func(context.Context, string) string { return "" }
+	if len(orgIDForAgent) > 0 {
+		resolver = orgIDForAgent[0]
+	}
 
 	db, err := sqlitestore.New(ctx, t.TempDir()+"/test.db")
 	if err != nil {
@@ -165,8 +172,9 @@ func newCloudCompositionTestEnv(t *testing.T) *testEnv {
 
 	srv, err := api.New(cfg, st, v, jwtSvc, adapters.NewRegistry(), nil, config.LLMConfig{}, nil,
 		api.WithFeatures(api.FeatureSet{PasswordAuth: true}),
-		// Any non-nil orgIDForAgent marks this as the cloud composition.
-		api.WithOrgGov(orggov.Callbacks{}, func(context.Context, string) string { return "" }),
+		// WithOrgGov marks this as the cloud composition regardless of whether
+		// the resolver is nil (see orgGovConfigured).
+		api.WithOrgGov(orggov.Callbacks{}, resolver),
 	)
 	if err != nil {
 		t.Fatalf("api.New: %v", err)
