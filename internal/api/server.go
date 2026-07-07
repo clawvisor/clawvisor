@@ -131,7 +131,13 @@ type Server struct {
 	// orgIDForAgent resolves an agent_id to its org_id without forcing
 	// the policy layer to take a store dependency.
 	orgIDForAgent func(ctx context.Context, agentID string) string
-	// isCloudComposition is a helper method (below) — do not add fields here.
+	// orgGovConfigured records that a cloud composition wired WithOrgGov,
+	// independent of whether any individual callback (incl. orgIDForAgent) is
+	// non-nil. Route gating keys off this so a cloud build that passes a nil
+	// orgIDForAgent still withholds the org-blind /api/admin/* fleet routes
+	// (spec 04b §F5) rather than leaking them.
+	orgGovConfigured bool
+	// isCloudComposition is a helper method (below).
 	// intentPromptResolver is the per-org override resolver for the
 	// intent verifier. nil → defaults apply.
 	intentPromptResolver intent.PromptResolverFn
@@ -309,16 +315,18 @@ func WithOrgGov(callbacks orggov.Callbacks, orgIDForAgent func(ctx context.Conte
 	return func(s *Server) {
 		s.orgGovCallbacks = callbacks
 		s.orgIDForAgent = orgIDForAgent
+		s.orgGovConfigured = true
 	}
 }
 
 // isCloudComposition reports whether this server is running inside the cloud
-// (multi-org) composition. Cloud wires WithOrgGov (which sets orgIDForAgent);
-// the OSS build never does. Used to withhold the org-blind /api/admin/*
-// fleet-visibility routes from a multi-org build, where an instance admin must
-// not read another org's agents/costs/audit (spec 04b §F5).
+// (multi-org) composition. Cloud wires WithOrgGov (regardless of whether the
+// orgIDForAgent it passes is nil); the OSS build never does. Used to withhold
+// the org-blind /api/admin/* fleet-visibility routes from a multi-org build,
+// where an instance admin must not read another org's agents/costs/audit
+// (spec 04b §F5).
 func (s *Server) isCloudComposition() bool {
-	return s.orgIDForAgent != nil
+	return s.orgGovConfigured
 }
 
 // WithIntentPromptResolver registers the per-org override resolver for

@@ -427,7 +427,18 @@ func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userI
 	if pa.UserID != userID {
 		return errors.New("not your approval")
 	}
+	return h.denyLoadedApproval(ctx, pa)
+}
 
+// denyLoadedApproval runs the deny CAS and side effects against an
+// already-loaded PendingApproval, keyed to its exact (request_id, user_id,
+// task scope). Callers that selected the row by its globally-unique id (the
+// admin resolve path) use this directly so they don't re-resolve by
+// (request_id, user_id) — a lookup that returns ErrAmbiguous when a pre-task
+// hold (task_id NULL) shares its request_id with a task-scoped hold.
+func (h *ApprovalsHandler) denyLoadedApproval(ctx context.Context, pa *store.PendingApproval) error {
+	requestID := pa.RequestID
+	userID := pa.UserID
 	taskID := paTaskID(pa)
 	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, requestID, userID, taskID, "pending", "denied")
 	if err != nil {

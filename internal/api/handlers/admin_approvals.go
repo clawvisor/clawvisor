@@ -117,10 +117,13 @@ func (h *ApprovalsHandler) AdminResolveApproval(w http.ResponseWriter, r *http.R
 		}
 		h.publishQueueAndAudit(pa.UserID, pa.AuditID)
 	case "deny":
-		// Reuse the shared deny core against the OWNER's user id (pa.UserID),
-		// which satisfies its internal ownership check. A lost CAS / already-
-		// resolved row surfaces as an error we map to 409.
-		if err := h.DenyByRequestID(ctx, pa.RequestID, pa.UserID, paTaskID(pa)); err != nil {
+		// Deny against the exact row we already loaded by its globally-unique
+		// id. Going back through DenyByRequestID would re-resolve by
+		// (request_id, user_id) and spuriously 409 (ErrAmbiguous) when a
+		// pre-task hold (task_id NULL) shares its request_id with a
+		// task-scoped hold. A lost CAS / already-resolved row surfaces as an
+		// error we map to 409.
+		if err := h.denyLoadedApproval(ctx, pa); err != nil {
 			h.logger.WarnContext(ctx, "admin deny failed", "request_id", pa.RequestID, "err", err)
 			writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "this approval is no longer pending — refresh to see the current state")
 			return
@@ -148,16 +151,23 @@ func (h *ApprovalsHandler) logSoloAdminSelfApproval(ctx context.Context, resolve
 	if err := json.Unmarshal(pa.RequestBlob, &blob); err == nil && blob.AgentID != "" {
 		agentID = &blob.AgentID
 	}
-	reason := "solo-admin self-approval (allow_self_approve=false)"
+	// Derive the marker's Action/Outcome from the actual decision so a
+	// solo-admin self-DENY isn't mislabeled as a self-approval. Anything other
+	// than an explicit approve is recorded as a self-deny.
+	action, outcome := "self_deny", "self_denied"
+	if decision == "approve" {
+		action, outcome = "self_approve", "self_approved"
+	}
+	reason := "solo-admin self-resolution (allow_self_approve=false)"
 	entry := &store.AuditEntry{
 		UserID:    resolver.ID,
 		AgentID:   agentID,
 		RequestID: pa.RequestID,
 		Timestamp: time.Now().UTC(),
 		Service:   "governance",
-		Action:    "self_approve",
+		Action:    action,
 		Decision:  decision,
-		Outcome:   "self_approved",
+		Outcome:   outcome,
 		Reason:    &reason,
 	}
 	if err := h.st.LogAudit(ctx, entry); err != nil {

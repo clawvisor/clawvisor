@@ -4,11 +4,51 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
+
+// TestCostSummaryIndexIsUsable: idx_llm_cost_time must index the same
+// strftime('%s', timestamp) expression InstanceCostSummary filters on, so the
+// planner uses the index instead of full-scanning. A plain-column index on
+// timestamp is unusable for a strftime() predicate.
+func TestCostSummaryIndexIsUsable(t *testing.T) {
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows, err := db.QueryContext(ctx,
+		`EXPLAIN QUERY PLAN SELECT COUNT(*) FROM llm_request_cost
+		 WHERE strftime('%s', timestamp) >= strftime('%s', ?)`, "2026-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN: %v", err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var a, b, c int
+		var detail string
+		if err := rows.Scan(&a, &b, &c, &detail); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		plan.WriteString(detail)
+		plan.WriteByte('\n')
+	}
+	// Must be a SEARCH (index seek), not a SCAN. A plain-column index on
+	// timestamp still shows up as "SCAN … USING COVERING INDEX idx_llm_cost_time"
+	// — a full index scan — so asserting the index name alone would not catch
+	// the regression. The expression index makes it a seek: "SEARCH … (<expr>>?)".
+	got := plan.String()
+	if !strings.Contains(got, "SEARCH") || !strings.Contains(got, "idx_llm_cost_time") {
+		t.Fatalf("cost rollup does not seek idx_llm_cost_time (still full-scans):\n%s", got)
+	}
+}
 
 func newAdminVisStore(t *testing.T) (*Store, context.Context) {
 	t.Helper()
@@ -220,4 +260,57 @@ func TestListAllPendingApprovals_AndGetByID(t *testing.T) {
 	if _, err := st.GetPendingApprovalByID(ctx, "nonexistent"); err != store.ErrNotFound {
 		t.Fatalf("GetPendingApprovalByID(nonexistent) err = %v, want ErrNotFound", err)
 	}
+}
+
+// TestPendingApprovals_ExcludeExpired: a hold whose expires_at is in the past
+// must NOT appear in either the admin queue (ListAllPendingApprovals) or the
+// user queue (ListPendingApprovals). Regression guard for the RFC3339-text vs
+// datetime('now') comparison bug: expires_at is stored as "…T…Z", so a plain
+// `expires_at > datetime('now')` compared the 'T' at char 10 against a space
+// and treated any same-day expired hold as still live. The queries now compare
+// via strftime('%s', …).
+func TestPendingApprovals_ExcludeExpired(t *testing.T) {
+	st, ctx := newAdminVisStore(t)
+
+	member, _ := st.CreateUser(ctx, "holder@test.example", "hash", store.RoleMember)
+	live := &store.PendingApproval{
+		UserID: member.ID, RequestID: "req-live", AuditID: "audit-live",
+		RequestBlob: json.RawMessage(`{"service":"gmail"}`),
+		ExpiresAt:   time.Now().Add(time.Hour).UTC(),
+	}
+	expired := &store.PendingApproval{
+		UserID: member.ID, RequestID: "req-expired", AuditID: "audit-expired",
+		RequestBlob: json.RawMessage(`{"service":"gmail"}`),
+		ExpiresAt:   time.Now().Add(-time.Minute).UTC(),
+	}
+	for _, pa := range []*store.PendingApproval{live, expired} {
+		if err := st.SavePendingApproval(ctx, pa); err != nil {
+			t.Fatalf("SavePendingApproval(%s): %v", pa.RequestID, err)
+		}
+	}
+
+	assertOnlyLive := func(name string, list []*store.PendingApproval) {
+		ids := map[string]bool{}
+		for _, pa := range list {
+			ids[pa.RequestID] = true
+		}
+		if !ids["req-live"] {
+			t.Fatalf("%s: live hold missing", name)
+		}
+		if ids["req-expired"] {
+			t.Fatalf("%s: expired hold still visible (RFC3339 comparison bug)", name)
+		}
+	}
+
+	all, err := st.ListAllPendingApprovals(ctx)
+	if err != nil {
+		t.Fatalf("ListAllPendingApprovals: %v", err)
+	}
+	assertOnlyLive("ListAllPendingApprovals", all)
+
+	perUser, err := st.ListPendingApprovals(ctx, member.ID)
+	if err != nil {
+		t.Fatalf("ListPendingApprovals: %v", err)
+	}
+	assertOnlyLive("ListPendingApprovals", perUser)
 }

@@ -428,10 +428,11 @@ export default function Dashboard() {
           <Route path="keys/:provider" element={<KeyVault />} />
           <Route path="runtime" element={<Navigate to="/dashboard/policy" replace />} />
           <Route path="settings" element={<Settings />} />
-          {/* Admin fleet view (04b) — the page itself re-checks role and the
-              backing routes are 403 for members, so the route can always be
-              mounted; the nav item is what's role-gated. */}
-          <Route path="fleet" element={<Admin />} />
+          {/* Admin fleet view (04b) — the page re-checks role, but the backing
+              /api/admin/* routes are absent in the cloud multi-org build (404).
+              Gate the route on !currentOrg to match the nav item so an
+              org-context admin can't deep-link into the instance-only page. */}
+          {!currentOrg && <Route path="fleet" element={<Admin />} />}
           {features?.billing && <Route path="billing" element={<Billing />} />}
           {features?.teams && (
             <>
