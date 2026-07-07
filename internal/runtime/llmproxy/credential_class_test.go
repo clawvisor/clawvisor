@@ -42,6 +42,11 @@ func TestClassifyUpstreamCredential(t *testing.T) {
 			"x-api-key":     "cvis_abc",
 			"Authorization": "Bearer sk-ant-oat01-sub",
 		}, CredentialSubscription},
+		// Case-insensitive scheme: a lowercase `bearer` prefix on a
+		// subscription token must NOT slip past to CredentialNone (which would
+		// bypass the §4c refusal and get silently vault-injected).
+		{"lowercase bearer scheme subscription", map[string]string{"Authorization": "bearer sk-ant-oat01-sub"}, CredentialSubscription},
+		{"mixed-case bearer scheme org key", map[string]string{"Authorization": "BeArEr sk-ant-api03-realkey"}, CredentialOrgAPIKey},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

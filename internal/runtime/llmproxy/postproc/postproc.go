@@ -20,7 +20,7 @@ import (
 // then replaced with a plain allow so the original tool_use passes
 // through byte-for-byte. Verdicts that are already Allowed (pass-through
 // and mechanical resolver/credential rewrites) are left untouched.
-func applyObserveDowngrade(ctx context.Context, cfg llmproxy.PostprocessConfig, verdictByTU map[string]conversation.ToolUseVerdict, toolUses []conversation.ToolUse) []llmproxy.ObservedToolUseVerdict {
+func applyObserveDowngrade(ctx context.Context, cfg llmproxy.PostprocessConfig, verdictByTU map[string]conversation.ToolUseVerdict, toolUses []conversation.ToolUse, holdSink *capturedHoldSink) []llmproxy.ObservedToolUseVerdict {
 	if !cfg.ObserveMode {
 		return nil
 	}
@@ -29,6 +29,7 @@ func applyObserveDowngrade(ctx context.Context, cfg llmproxy.PostprocessConfig, 
 		nameByID[tu.ID] = tu.Name
 	}
 	seen := make(map[string]bool, len(toolUses))
+	downgraded := make(map[string]bool, len(toolUses))
 	var observed []llmproxy.ObservedToolUseVerdict
 	for _, tu := range toolUses {
 		if seen[tu.ID] {
@@ -50,8 +51,35 @@ func applyObserveDowngrade(ctx context.Context, cfg llmproxy.PostprocessConfig, 
 		})
 		observability.RecordToolUseVerdictObserved(ctx, tu.Name, decision, v.Reason, true)
 		verdictByTU[tu.ID] = conversation.ToolUseVerdict{Allowed: true, Outcome: conversation.OutcomeAllow}
+		downgraded[tu.ID] = true
+	}
+	// Drop the captured approval holds for every downgraded tool_use.
+	// Rewriting verdictByTU alone is not enough: the eval pass already
+	// buffered these Hold() calls in holdSink, and finalize →
+	// feedFinalizer keys the finalizer's SubmitHold replay off the
+	// captured Payload (not the verdict Kind). Leaving the payloads in
+	// place would persist held state that Observe mode (spec 02 §3)
+	// forbids. The observation record above is preserved.
+	if holdSink != nil && len(downgraded) > 0 {
+		dropObservedHolds(holdSink, downgraded)
 	}
 	return observed
+}
+
+// dropObservedHolds removes the buffered Hold() captures for the given
+// downgraded tool_use IDs so the finalizer's replay skips them (nil
+// Payload). The tool_use capture itself is still emitted by
+// feedFinalizer for coalesce/audit rendering — only the hold submission
+// is suppressed.
+func dropObservedHolds(holdSink *capturedHoldSink, downgraded map[string]bool) {
+	kept := holdSink.holds[:0]
+	for _, h := range holdSink.holds {
+		if downgraded[h.Pending.ToolUse.ID] {
+			continue
+		}
+		kept = append(kept, h)
+	}
+	holdSink.holds = kept
 }
 
 // Postprocess inspects, rewrites, and audits the upstream response.
@@ -132,7 +160,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg llmprox
 
 	// Observe posture: downgrade enforcing verdicts to observations
 	// before commit so no hold is stored and no block is rewritten.
-	observedVerdicts := applyObserveDowngrade(ctx, cfg, verdictByTU, preExtracted)
+	observedVerdicts := applyObserveDowngrade(ctx, cfg, verdictByTU, preExtracted, session.holdSink)
 
 	if commitErr := session.commitVerdictSideEffects(ctx, verdictByTU, preExtracted); commitErr != nil {
 		return failClosed("verdict side-effect commit failed: " + commitErr.Error())

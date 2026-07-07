@@ -653,6 +653,10 @@ func stepPosture(cfg *config) error {
 	fmt.Println()
 
 	// Pre-select the recommended default so hitting Enter lands on Observe.
+	// (Post-flip end state per spec 08: the option is labeled "recommended"
+	// and recommendedPosture() returns "observe". The spec-02 standalone PR
+	// defaulted to "gateway" because at that point the flip had not landed;
+	// once it has, Observe is the intended pre-selection.)
 	choice := recommendedPosture()
 	err := huh.NewForm(
 		huh.NewGroup(

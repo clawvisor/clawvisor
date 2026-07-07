@@ -73,11 +73,14 @@ func ClassifyUpstreamCredential(r *http.Request) CredentialClass {
 // non-cvis provider credential, else "".
 func providerBearerToken(r *http.Request) string {
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	const prefix = "Bearer "
-	if !strings.HasPrefix(auth, prefix) {
+	// Parse the scheme case-insensitively: a lowercase `authorization: bearer
+	// sk-ant-oat01-…` is still a bearer credential and must not slip past the
+	// §4c subscription refusal into a silent vault strip-and-inject.
+	scheme, rest, found := strings.Cut(auth, " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
 		return ""
 	}
-	token := strings.TrimSpace(auth[len(prefix):])
+	token := strings.TrimSpace(rest)
 	if token == "" || strings.HasPrefix(token, "cvis_") {
 		return ""
 	}

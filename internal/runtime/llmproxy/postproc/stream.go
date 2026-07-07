@@ -120,7 +120,7 @@ func PostprocessStream(
 	// Observe posture: downgrade enforcing verdicts to observations
 	// before commit. Sync the positional slice from the (downgraded) map
 	// so the streaming rewrite emits the original tool_use unmodified.
-	observedVerdicts := applyObserveDowngrade(req.Context(), cfg, verdictByTU, toolUses)
+	observedVerdicts := applyObserveDowngrade(req.Context(), cfg, verdictByTU, toolUses, session.holdSink)
 	if cfg.ObserveMode {
 		for i, tu := range toolUses {
 			verdicts[i] = verdictByTU[tu.ID]

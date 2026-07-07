@@ -273,6 +273,42 @@ func TestRunPre_HaltsOnShortCircuit(t *testing.T) {
 	}
 }
 
+// TestRunPre_ObserveDowngradesShortCircuit verifies that under Observe mode a
+// non-exempt policy's OutcomeShortCircuit is downgraded to a recorded
+// observation: ShortCircuit stays nil, the chain continues, the Observed trail
+// captures it, AND AuditParams["observed"] is stamped true (parity with the
+// deny and body-rewrite downgrade paths, so the endpoint audit row can render
+// the observed badge).
+func TestRunPre_ObserveDowngradesShortCircuit(t *testing.T) {
+	after := &bodyObservingPolicy{name: "runs_after"}
+	policies := []pipeline.RequestPolicy{
+		&allowingPolicy{name: "first", field: "first_ran", value: true},
+		// "secret_hold" is an enforcing (non-exempt) policy whose
+		// short-circuit is a would-be approval hold.
+		&shortCircuitingPolicy{name: "secret_hold", body: []byte(`{"synthetic":true}`)},
+		after,
+	}
+
+	req := &orchTestRequest{provider: conversation.ProviderAnthropic, body: []byte(`{}`)}
+	result, err := pipeline.RunPre(pipeline.WithObserveMode(context.Background()), req, policies)
+	if err != nil {
+		t.Fatalf("RunPre: %v", err)
+	}
+
+	if result.ShortCircuit != nil {
+		t.Fatalf("observe mode must not apply the short-circuit; got %q", result.ShortCircuit.Body)
+	}
+	if after.seen == nil {
+		t.Fatalf("observe mode must continue the chain past a downgraded short-circuit")
+	}
+	if len(result.Observed) != 1 || result.Observed[0].Policy != "secret_hold" {
+		t.Fatalf("expected the short-circuit recorded in Observed, got %+v", result.Observed)
+	}
+	if result.AuditParams["observed"] != true {
+		t.Fatalf("expected AuditParams[observed]=true on a downgraded short-circuit, got %v", result.AuditParams["observed"])
+	}
+}
+
 // TestRunPre_PropagatesPolicyError verifies that a policy returning a
 // Go error halts the chain with the wrapped error.
 func TestRunPre_PropagatesPolicyError(t *testing.T) {
