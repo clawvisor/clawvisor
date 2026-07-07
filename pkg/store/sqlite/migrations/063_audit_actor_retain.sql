@@ -6,13 +6,14 @@
 -- record stays attributable via email-at-the-time even after user_id nulls.
 --
 -- SQLite cannot alter an FK in place, so the audit_log table is recreated
--- (the 028_* pattern). The wrinkle 028 didn't face: 052 later added
--- llm_request_cost with `audit_id REFERENCES audit_log(id) ON DELETE
--- CASCADE`. With foreign_keys=ON, DROP TABLE audit_log fires an implicit
--- delete that cascades into llm_request_cost and would wipe all cost rows.
--- PRAGMA foreign_keys is a no-op inside the migration transaction, so we
--- protect the cost rows by round-tripping them through a TEMP table across
--- the audit_log swap.
+-- (the 028_* pattern). The wrinkle 028 didn't face: two tables carry an
+-- `audit_id REFERENCES audit_log(id) ON DELETE CASCADE` FK — 052's
+-- llm_request_cost AND 013's chain_facts. With foreign_keys=ON, DROP TABLE
+-- audit_log fires an implicit delete that cascades into BOTH and would wipe
+-- all cost rows and all chain_facts. PRAGMA foreign_keys is a no-op inside
+-- the migration transaction, so we protect both by round-tripping them
+-- through TEMP tables across the audit_log swap (mirroring migration 044,
+-- which does the same chain_facts snapshot/restore).
 
 -- 1. Cost table only gains a column (no FK change) — simple ALTER, plus a
 --    server-derived backfill (email-at-the-time; sentinel for rows whose
@@ -21,8 +22,10 @@ ALTER TABLE llm_request_cost ADD COLUMN actor_email TEXT NOT NULL DEFAULT '';
 UPDATE llm_request_cost SET actor_email =
     COALESCE((SELECT email FROM users WHERE users.id = llm_request_cost.user_id), '(deleted-user)');
 
--- 2. Back up cost rows before the audit_log DROP cascades them away.
+-- 2. Back up the rows the audit_log DROP would cascade away: cost rows AND
+--    chain_facts (both reference audit_log(id) ON DELETE CASCADE).
 CREATE TEMP TABLE _cost_actor_bak AS SELECT * FROM llm_request_cost;
+CREATE TEMP TABLE _chain_facts_bak AS SELECT * FROM chain_facts;
 
 -- 3. Recreate audit_log with user_id nullable + SET NULL + actor_email.
 CREATE TABLE audit_log_new (
@@ -90,9 +93,12 @@ FROM audit_log;
 DROP TABLE audit_log;
 ALTER TABLE audit_log_new RENAME TO audit_log;
 
--- 4. Restore cost rows (audit ids preserved, so the audit_id FK re-satisfies).
+-- 4. Restore cost rows and chain_facts (audit ids preserved, so the
+--    audit_id FK re-satisfies for both).
 INSERT INTO llm_request_cost SELECT * FROM _cost_actor_bak;
 DROP TABLE _cost_actor_bak;
+INSERT INTO chain_facts SELECT * FROM _chain_facts_bak;
+DROP TABLE _chain_facts_bak;
 
 -- 5. Rebuild audit_log indexes (identical to pre-recreate definitions).
 CREATE INDEX idx_audit_user_time ON audit_log(user_id, timestamp DESC);
