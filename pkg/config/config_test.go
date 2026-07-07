@@ -189,6 +189,7 @@ func TestLoadAppliesObservabilityOTelEnv(t *testing.T) {
 	t.Setenv("CLAWVISOR_OTEL_PROTOCOL", "http")
 	t.Setenv("CLAWVISOR_OTEL_INSECURE", "true")
 	t.Setenv("CLAWVISOR_OTEL_SERVICE_NAME", "clawvisor-edge")
+	t.Setenv("CLAWVISOR_OTEL_HEADERS", "api-key=secret , x-scope=team-a ")
 
 	cfg, err := Load("")
 	if err != nil {
@@ -196,6 +197,12 @@ func TestLoadAppliesObservabilityOTelEnv(t *testing.T) {
 	}
 	if !cfg.Observability.OTel.Enabled {
 		t.Fatal("expected otel enabled via env")
+	}
+	if cfg.Observability.OTel.Headers["api-key"] != "secret" {
+		t.Fatalf("Headers[api-key]=%q", cfg.Observability.OTel.Headers["api-key"])
+	}
+	if cfg.Observability.OTel.Headers["x-scope"] != "team-a" {
+		t.Fatalf("Headers[x-scope]=%q", cfg.Observability.OTel.Headers["x-scope"])
 	}
 	if cfg.Observability.OTel.Endpoint != "otel-collector:4317" {
 		t.Fatalf("Endpoint=%q", cfg.Observability.OTel.Endpoint)

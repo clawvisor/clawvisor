@@ -131,7 +131,7 @@ telemetry:
 #     trace_sample_ratio: 1.0   # 0.0–1.0 parent-based ratio sampler
 #     metrics_interval_seconds: 60  # periodic metric export interval
 #     headers:                  # optional per-request headers (vendor auth)
-#       api-key: "..."
+#       api-key: "..."          # Env: CLAWVISOR_OTEL_HEADERS="api-key=...,other=..."
 
 mcp:
   approval_timeout: 240    # MCP tool calls block this many seconds waiting for approval

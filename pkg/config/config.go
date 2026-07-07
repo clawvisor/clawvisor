@@ -121,6 +121,26 @@ type OTelConfig struct {
 	MetricsIntervalSec int               `yaml:"metrics_interval_seconds"` // default 60
 }
 
+// parseOTelHeaders parses a comma-separated list of key=value pairs (the
+// OpenTelemetry OTEL_EXPORTER_OTLP_HEADERS format) into a header map. Entries
+// without an "=" or with an empty key are skipped. Keys and values are trimmed.
+func parseOTelHeaders(raw string) map[string]string {
+	headers := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			continue
+		}
+		headers[k] = strings.TrimSpace(v)
+	}
+	return headers
+}
+
 // CallbackConfig holds settings for callback delivery.
 type CallbackConfig struct {
 	AllowPrivateCIDRs []string `yaml:"allow_private_cidrs"` // CIDRs exempt from SSRF callback blocking
@@ -903,6 +923,20 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_OTEL_SERVICE_NAME"); v != "" {
 		cfg.Observability.OTel.ServiceName = strings.TrimSpace(v)
+	}
+	// OTLP headers for authenticated vendor endpoints (Datadog, Grafana Cloud,
+	// etc.). Comma-separated key=value pairs, matching the OpenTelemetry
+	// OTEL_EXPORTER_OTLP_HEADERS convention, so env-only deployments (Docker
+	// Compose, Kubernetes, Render) can supply auth headers without a config file.
+	if v := os.Getenv("CLAWVISOR_OTEL_HEADERS"); strings.TrimSpace(v) != "" {
+		if headers := parseOTelHeaders(v); len(headers) > 0 {
+			if cfg.Observability.OTel.Headers == nil {
+				cfg.Observability.OTel.Headers = make(map[string]string, len(headers))
+			}
+			for k, val := range headers {
+				cfg.Observability.OTel.Headers[k] = val
+			}
+		}
 	}
 	// Metric export interval override. Not in the spec's enumerated set but
 	// added alongside it so operators (and the deterministic e2e lane) can
