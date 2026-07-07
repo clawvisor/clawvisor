@@ -30,7 +30,9 @@ func newServiceConfigTestHandler(t *testing.T) (*ServicesHandler, *store.User) {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	h := NewServicesHandler(st, nil, adapters.NewRegistry(),
+	reg := adapters.NewRegistry()
+	reg.Register(resolverOAuthTestAdapter{serviceID: "svc"})
+	h := NewServicesHandler(st, nil, reg,
 		slog.New(slog.NewTextHandler(discardWriter{}, nil)), "", nil)
 	return h, user
 }
@@ -125,6 +127,26 @@ func TestServiceConfigPutValidation(t *testing.T) {
 	h.PutConfig(rec, configRequest(user, http.MethodPut, "/api/services/svc/config", "svc", `{"config":"not-an-object"`))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid JSON: got %d, want 400", rec.Code)
+	}
+}
+
+// TestServiceConfigPutUnknownService rejects a typo'd/unsupported service ID so
+// no orphan config row is persisted for a service that does not exist.
+func TestServiceConfigPutUnknownService(t *testing.T) {
+	h, user := newServiceConfigTestHandler(t)
+
+	rec := httptest.NewRecorder()
+	h.PutConfig(rec, configRequest(user, http.MethodPut, "/api/services/nope/config", "nope",
+		`{"config":{"region":"us-east-1"}}`))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("PUT unknown service: got %d (%s), want 404", rec.Code, rec.Body.String())
+	}
+
+	// The rejected write must not have persisted an orphan row.
+	rec = httptest.NewRecorder()
+	h.GetConfig(rec, configRequest(user, http.MethodGet, "/api/services/nope/config", "nope", ""))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET after rejected PUT: got %d, want 404 (orphan row persisted)", rec.Code)
 	}
 }
 
