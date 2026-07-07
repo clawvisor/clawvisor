@@ -175,6 +175,27 @@ func RequireAdminOrToken(jwtSvc auth.TokenService, st store.Store) func(http.Han
 	}
 }
 
+// RejectInstanceItemWriteByScopedToken blocks per-user vault item writes
+// (POST/PUT/DELETE /api/vault/items…) when the request authenticated with a
+// non-instance-admin API token. Such a token is injected as the `_instance`
+// system user, so a write through the config-write item gate would plant or
+// delete a fleet-wide shared entry — exactly the boundary the instance-admin
+// `/api/vault/shared` surface exists to guard. Instance-admin tokens and JWT
+// users (who own their own rows) pass through untouched. Must run AFTER the
+// RequireUserOrAPIToken gate so the token and injected user are in context.
+func RejectInstanceItemWriteByScopedToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if at := APITokenFromContext(r.Context()); at != nil && at.Scope != ScopeInstanceAdmin {
+			if u := UserFromContext(r.Context()); u != nil && u.ID == store.InstanceUserID {
+				writeAuthError(w, http.StatusForbidden, "FORBIDDEN",
+					"shared vault entries must be written via /api/vault/shared with an instance-admin token")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // apiTokenFromRequest returns a `cvat_…` API token sniffed from the
 // Authorization bearer slot, or "" if the bearer is absent or carries a
 // different shape (JWT, cvis_ agent token). Mirrors agentTokenFromRequest.

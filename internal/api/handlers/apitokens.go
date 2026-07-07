@@ -47,16 +47,19 @@ func (h *APITokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 05-lite issues a single scope. Empty defaults to instance-admin; any
-	// other value (config-write / config-read) is rejected until spec 04
-	// lands the scope split.
+	// Spec 04 lands the trust split, so the three scopes the userOrToken*
+	// route gates accept are all mintable. Empty defaults to instance-admin
+	// (the historical 05-lite behavior); any other value must be one of the
+	// known scopes.
 	scope := body.Scope
 	if scope == "" {
 		scope = middleware.ScopeInstanceAdmin
 	}
-	if scope != middleware.ScopeInstanceAdmin {
+	switch scope {
+	case middleware.ScopeConfigRead, middleware.ScopeConfigWrite, middleware.ScopeInstanceAdmin:
+	default:
 		writeError(w, http.StatusBadRequest, "INVALID_SCOPE",
-			"only the \"instance-admin\" scope is supported in this build; config-write/config-read land with roles")
+			"scope must be one of \"config-read\", \"config-write\", or \"instance-admin\"")
 		return
 	}
 
