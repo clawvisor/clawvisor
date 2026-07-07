@@ -126,6 +126,52 @@ func TestGovernHeaderPlacementCannotSelectPassthrough(t *testing.T) {
 	}
 }
 
+// TestGovernInjectsLLMCredentialSetKey: the full govern key-migration loop as
+// the Terraform provider drives it. An instance-admin cvat_ token (NOT a user
+// JWT, NOT a cvis_ agent token) sets the org anthropic key via the
+// llm-credentials path; it is stored under _instance and resolves as the shared
+// fallback for every agent. A govern proxy-lite request carrying NO client key
+// is then vault-injected and succeeds, with audit recording auth_mode:vault.
+func TestGovernInjectsLLMCredentialSetKey(t *testing.T) {
+	h := testharness.New(t)
+	upstream := newUpstreamCapture(t)
+	cv := testapp.StartWith(t, h, map[string]string{
+		"CLAWVISOR_LLM_UPSTREAM_ANTHROPIC":   upstream.URL(),
+		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH": "vault",
+	})
+	user := cv.LoginAsLocalUser(t)
+
+	// Mint the instance-admin token the provider authenticates with, then set
+	// the org key AS that token — the path that RequireUserOrAgent used to
+	// reject and clawvisor_llm_credential now drives.
+	_, adminTok := mintToken(t, cv, user.AccessToken, "tf-provider", "instance-admin")
+	const vaultKey = "sk-ant-api03-INSTANCE-SET-key"
+	put := cvDo(t, cv, adminTok, "PUT", "/api/runtime/llm-credentials/anthropic", map[string]any{"api_key": vaultKey})
+	if put.StatusCode != http.StatusOK {
+		t.Fatalf("instance-admin PUT llm-credentials: status=%d body=%s", put.StatusCode, readBodyStr(put))
+	}
+	put.Body.Close()
+
+	_, token := newPostureAgent(t, cv, user.AccessToken, "govern-instance-key")
+
+	// Govern request with NO client key at all → must be vault-injected from
+	// the instance-shared key.
+	resp := postureAgentReq(t, cv, token, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want 200 (vault-injected from instance-set key); body=%s", resp.StatusCode, readBodyStr(resp))
+	}
+	if upstream.Count() != 1 {
+		t.Fatalf("upstream hits=%d, want 1", upstream.Count())
+	}
+	if k := upstream.Last().Headers.Get("x-api-key"); k != vaultKey {
+		t.Fatalf("upstream x-api-key=%q, want instance-set vault key %q", k, vaultKey)
+	}
+	if !auditContains(t, cv, user.AccessToken, `"auth_mode":"vault"`) {
+		t.Fatal("audit did not record auth_mode: vault")
+	}
+}
+
 // TestObserveCarriesSubscriptionSession (§4c): observe/passthrough carries a
 // Claude subscription OAuth bearer + anthropic-beta header to the upstream
 // unchanged, and audit records auth_mode:passthrough.
