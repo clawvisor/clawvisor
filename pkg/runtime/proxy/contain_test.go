@@ -44,6 +44,25 @@ func TestContainAllowsDaemonHost(t *testing.T) {
 	}
 }
 
+// TestDirectRouteDoesNotAllowlistDaemonHost asserts fix for the D1.3 carve-out:
+// the daemon host (Server.PublicURL) is only allowlisted under the Contain
+// superset (proxy_lite). A direct/legacy session must remain subject to normal
+// egress policy for the daemon host — allowlisting it there is an unearned
+// bypass since direct sessions never route LLM traffic through it.
+func TestDirectRouteDoesNotAllowlistDaemonHost(t *testing.T) {
+	direct := &config.Config{}
+	direct.Server.PublicURL = "https://clawvisor.example.com"
+	// direct.RuntimeProxy.LLMRoute is empty → direct route.
+	if isHarnessAllowlistedForSession(nil, direct, "clawvisor.example.com") {
+		t.Error("direct route: daemon host must NOT be allowlisted (no proxy_lite carve-out)")
+	}
+
+	// The contain carve-out still applies when llm_route=proxy_lite.
+	if !isHarnessAllowlistedForSession(nil, containCfg(), "clawvisor.example.com") {
+		t.Error("contain route: daemon host must remain allowlisted")
+	}
+}
+
 // TestContainBackstopHostSet asserts the backstop host set covers all three
 // provider hosts including chatgpt.com (gotcha 4).
 func TestContainBackstopHostSet(t *testing.T) {
