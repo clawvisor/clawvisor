@@ -188,6 +188,12 @@ type FeatureSet struct {
 	// there is no config gate — so it is set unconditionally in
 	// handleFeatures rather than plumbed through WithFeatures.
 	APITokens bool `json:"api_tokens"`
+	// UserManagement advertises the user/invite endpoints (spec 04) so the
+	// Terraform provider can capability-negotiate its clawvisor_user resource
+	// (spec 06b finding M1). The /api/users(/invites) routes are registered
+	// unconditionally, so like APITokens this is set unconditionally in
+	// handleFeatures rather than plumbed through WithFeatures.
+	UserManagement bool `json:"user_management"`
 	// LocalGovernance advertises the instance-scoped /api/governance/*
 	// routes (spec 06a) so the Terraform provider un-skips its governance
 	// resources. Reflects config.Governance.Enabled; set in handleFeatures.
@@ -1692,6 +1698,10 @@ func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
 	// API tokens are always available (no config gate); advertise them so
 	// the Terraform provider knows the endpoints exist.
 	fs.APITokens = true
+	// User management + invites (spec 04) are likewise unconditionally
+	// registered; advertise the capability so the Terraform provider does not
+	// wrongly block clawvisor_user (spec 06b finding M1).
+	fs.UserManagement = true
 	// Local governance (spec 06a): the /api/governance/* routes exist iff
 	// governance is enabled (default true). The provider gates its
 	// governance resources on this capability.
