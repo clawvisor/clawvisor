@@ -13,8 +13,9 @@ import (
 
 // APITokensHandler manages the lifecycle of long-lived, scoped, revocable
 // API tokens (spec 05). All three routes are admin-gated: a JWT admin (via
-// spec 04's role system, once it lands) or an `instance-admin` API token.
-// In 05-lite the only issuable scope is `instance-admin`.
+// spec 04's role system) or an `instance-admin` API token. Mintable scopes
+// are `config-read`, `config-write`, and `instance-admin`; the mint route
+// itself stays instance-admin-gated, so a lesser scope cannot issue tokens.
 type APITokensHandler struct {
 	st     store.Store
 	logger *slog.Logger
@@ -47,16 +48,18 @@ func (h *APITokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 05-lite issues a single scope. Empty defaults to instance-admin; any
-	// other value (config-write / config-read) is rejected until spec 04
-	// lands the scope split.
+	// The full scope system (spec 04) is live: accept exactly config-read,
+	// config-write, or instance-admin. Empty defaults to instance-admin; any
+	// other value is rejected. Minting stays admin-gated at the route
+	// (RequireAdminOrToken instance-admin), so a config-write token cannot
+	// mint anything — the scope here only sets the new token's authority.
 	scope := body.Scope
 	if scope == "" {
 		scope = middleware.ScopeInstanceAdmin
 	}
-	if scope != middleware.ScopeInstanceAdmin {
+	if !middleware.ValidTokenScope(scope) {
 		writeError(w, http.StatusBadRequest, "INVALID_SCOPE",
-			"only the \"instance-admin\" scope is supported in this build; config-write/config-read land with roles")
+			"scope must be one of \"config-read\", \"config-write\", or \"instance-admin\"")
 		return
 	}
 

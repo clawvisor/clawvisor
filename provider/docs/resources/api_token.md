@@ -36,7 +36,7 @@ output "terraform_api_token" {
 ### Optional
 
 - `expires_at` (String) Optional RFC3339 expiry. Changing it forces replacement.
-- `scope` (String) Token scope. One of `instance-admin`, `config-write`, `config-read` (05-lite issues only `instance-admin`). Changing it forces replacement.
+- `scope` (String) Token scope, narrowest first: `config-read` (read config), `config-write` (service configs + personal declarative state), or `instance-admin` (everything, including user management, governance changes, and shared-vault writes). Defaults to `instance-admin`. Changing it forces replacement.
 
 ### Read-Only
 
