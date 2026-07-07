@@ -288,6 +288,42 @@ func TestGovernMigratesSubscriptionWithConsent(t *testing.T) {
 	}
 }
 
+// TestPassthroughForwardsClientXApiKey (§4): passthrough posture where the
+// client presents ONLY an x-api-key (Anthropic SDK convention, no Authorization
+// bearer) must forward that key upstream — never fall through to the vault key.
+// No vault key is seeded here, so an implicit vault fallback (which §4 forbids)
+// would surface UPSTREAM_KEY_MISSING and never reach the upstream capture.
+func TestPassthroughForwardsClientXApiKey(t *testing.T) {
+	h := testharness.New(t)
+	upstream := newUpstreamCapture(t)
+	cv := testapp.StartWith(t, h, map[string]string{
+		"CLAWVISOR_LLM_UPSTREAM_ANTHROPIC":   upstream.URL(),
+		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH": "passthrough",
+	})
+	user := cv.LoginAsLocalUser(t)
+	// Deliberately do NOT seed a vault key — a vault fallback would fail.
+	_, token := newPostureAgent(t, cv, user.AccessToken, "passthrough-xapikey")
+
+	const clientKey = "sk-ant-api03-CLIENT-own-key"
+	resp := postureAgentReq(t, cv, token, map[string]string{
+		"x-api-key": clientKey,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status=%d, want 200 (client x-api-key should be forwarded, not a vault fallback); body=%s", resp.StatusCode, readBodyStr(resp))
+	}
+	if upstream.Count() != 1 {
+		t.Fatalf("upstream hits=%d, want 1", upstream.Count())
+	}
+	got := upstream.Last()
+	if k := got.Headers.Get("x-api-key"); k != clientKey {
+		t.Fatalf("upstream x-api-key=%q, want the client key %q", k, clientKey)
+	}
+	if !auditContains(t, cv, user.AccessToken, `"auth_mode":"passthrough"`) {
+		t.Fatal("audit did not record auth_mode: passthrough")
+	}
+}
+
 // TestPassthroughNoCredential (§4): passthrough posture with only the cvis
 // token (no client provider credential) returns 401 PASSTHROUGH_NO_CREDENTIAL.
 func TestPassthroughNoCredential(t *testing.T) {
