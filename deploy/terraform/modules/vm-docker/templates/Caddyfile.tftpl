@@ -13,10 +13,13 @@
 }
 
 # --- Agent endpoint (443) --------------------------------------------------
-# Reachable from agent_ingress_cidrs. Only the LLM/proxy + installer surface
-# is proxied; the admin dashboard and management API are NOT served here.
+# Agent-facing proxy-lite surface only; the admin dashboard + management API
+# (/api/tokens, /api/users, /api/vault/items, /api/governance, ...) are NOT
+# served here. SDKs use ANTHROPIC_BASE_URL=<fqdn>/api and hit /api/v1/*, so the
+# allowlist is the /api/v1 LLM routes + /api/control + /api/agent/* +
+# /api/agents/connect* (enrollment) + installer/health — NOT bare /v1/*.
 https://${public_fqdn} {
-	@agent path /v1/* /skill/install/* /skill/uninstall/* /health /ready
+	@agent path /api/v1/* /api/control /api/control/* /api/agent/* /api/agents/connect /api/agents/connect/* /api/agents/connections /skill/install/* /skill/uninstall/* /health /ready
 	handle @agent {
 		reverse_proxy app:25297
 	}
