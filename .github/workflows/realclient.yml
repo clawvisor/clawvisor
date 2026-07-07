@@ -39,6 +39,23 @@ jobs:
       - name: Build server
         run: go build -o bin/clawvisor-server ./cmd/clawvisor-server
 
+      - name: Preflight — provider secrets present
+        # The tests t.Skipf when a provider key is empty, so a misconfigured lane
+        # would report green with zero coverage. Fail loudly instead if either
+        # repo secret is unset before running the suite.
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
+        run: |
+          missing=
+          [ -z "$ANTHROPIC_API_KEY" ] && missing="$missing E2E_ANTHROPIC_API_KEY"
+          [ -z "$OPENAI_API_KEY" ] && missing="$missing E2E_OPENAI_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::realclient lane misconfigured — missing secret(s):$missing" >&2
+            exit 1
+          fi
+          echo "provider secrets present"
+
       - name: Run realclient lane
         # Advisory: real API cost, weekly-shipping TUIs — expected to be flaky.
         run: CLAWVISOR_REALCLIENT=1 go test -tags realclient -v -timeout 30m ./e2e/realclient/
