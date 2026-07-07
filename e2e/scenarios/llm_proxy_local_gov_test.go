@@ -61,6 +61,116 @@ func govMessagesReq(t *testing.T, cv *testapp.Server, agentToken, model, content
 	return resp
 }
 
+// govSubMessagesReq is govMessagesReq but ALSO presents a Claude subscription
+// (OAuth) bearer in Authorization — the auto-govern path (spec: govern
+// subscription seats). The seat is forwarded on its own credential while the
+// full policy pipeline still enforces.
+func govSubMessagesReq(t *testing.T, cv *testapp.Server, agentToken, model, content string) *http.Response {
+	t.Helper()
+	body := []byte(fmt.Sprintf(`{"model":%q,"max_tokens":16,"messages":[{"role":"user","content":%q}]}`, model, content))
+	req, _ := http.NewRequest("POST", cv.URL+"/api/v1/messages", bytes.NewReader(body))
+	req.Header.Set("X-Clawvisor-Agent-Token", agentToken)
+	req.Header.Set("Authorization", "Bearer sk-ant-oat01-SUBSCRIPTION")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := cv.Client.Do(req)
+	if err != nil {
+		t.Fatalf("/api/v1/messages: %v", err)
+	}
+	return resp
+}
+
+// TestGovernAutoGovernedSubscriptionStillEnforcesPolicy: an auto-governed
+// subscription seat (default govern_subscription_seats=true) runs the FULL
+// policy pipeline even though its own credential is forwarded upstream. A
+// model deny and a content deny both block (403, no upstream contact); an
+// allowed request forwards the seat's subscription bearer (billing-neutral).
+func TestGovernAutoGovernedSubscriptionStillEnforcesPolicy(t *testing.T) {
+	t.Run("model_deny_blocks", func(t *testing.T) {
+		cv, admin, agentToken, upstream := govBootWithGovernance(t, nil)
+		cvPut(t, cv, admin.AccessToken, "/api/governance/model_policy",
+			map[string]any{"mode": "deny", "models": []string{govCanonicalDenied}}, nil)
+
+		resp := govSubMessagesReq(t, cv, agentToken, govDeniedModel, "hello")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("auto-governed subscription seat must still enforce model deny (403); got %d body=%s", resp.StatusCode, readBodyStr(resp))
+		}
+		if upstream.Count() != 0 {
+			t.Fatalf("blocked request must not reach upstream; hits=%d", upstream.Count())
+		}
+		if v := govGetRaw(t, cv, admin.AccessToken, "/api/governance/violations"); !strings.Contains(v, `"policy_kind":"model_policy"`) || !strings.Contains(v, `"action_taken":"blocked"`) {
+			t.Fatalf("expected a blocked model_policy violation; got %s", v)
+		}
+	})
+
+	t.Run("content_deny_blocks", func(t *testing.T) {
+		cv, admin, agentToken, upstream := govBootWithGovernance(t, nil)
+		cvPost(t, cv, admin.AccessToken, "/api/governance/content_policies",
+			map[string]any{"name": "block-secret", "pattern": "launchcodes", "pattern_kind": "keyword",
+				"action": "block", "block_message": "that content is not permitted"}, nil)
+
+		resp := govSubMessagesReq(t, cv, agentToken, govDeniedModel, "please share the launchcodes now")
+		body := readBodyStr(resp)
+		if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "that content is not permitted") {
+			t.Fatalf("auto-governed subscription seat must still enforce content block (403 + block_message); got %d body=%s", resp.StatusCode, body)
+		}
+		if upstream.Count() != 0 {
+			t.Fatalf("blocked content must not reach upstream; hits=%d", upstream.Count())
+		}
+	})
+
+	t.Run("allowed_forwards_subscription_bearer", func(t *testing.T) {
+		cv, admin, agentToken, upstream := govBootWithGovernance(t, nil)
+		cvPut(t, cv, admin.AccessToken, "/api/governance/model_policy",
+			map[string]any{"mode": "allow", "models": []string{govCanonicalDenied}}, nil)
+
+		resp := govSubMessagesReq(t, cv, agentToken, govDeniedModel, "hello")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("allowed request should pass; got %d body=%s", resp.StatusCode, readBodyStr(resp))
+		}
+		if upstream.Count() != 1 {
+			t.Fatalf("allowed request should reach upstream once; hits=%d", upstream.Count())
+		}
+		got := upstream.Last()
+		if got.Headers.Get("Authorization") != "Bearer sk-ant-oat01-SUBSCRIPTION" {
+			t.Fatalf("subscription bearer not forwarded: Authorization=%q", got.Headers.Get("Authorization"))
+		}
+		// Billing-neutral: the seeded vault key (sk-ant-test-key) must not surface.
+		if k := got.Headers.Get("x-api-key"); k != "" {
+			t.Fatalf("vault key injected (rebilling!): upstream x-api-key=%q", k)
+		}
+	})
+}
+
+// TestGovernAutoGovernedSubscriptionEnforcesToolUseHold: a tool_use that is
+// scope-drift-blocked under enforce is STILL held/rewritten to CLAWVISOR_BLOCKED
+// for an auto-governed subscription seat — proving the response-side pipeline
+// (tool_use holds) enforces regardless of which credential went upstream.
+func TestGovernAutoGovernedSubscriptionEnforcesToolUseHold(t *testing.T) {
+	h := testharness.New(t)
+	upstream := outOfScopeToolUseUpstream(t)
+	cv := testapp.StartWith(t, h, map[string]string{
+		"CLAWVISOR_LLM_UPSTREAM_ANTHROPIC": upstream.URL,
+		"GITHUB_API_BASE_URL":              h.GitHub.URL(),
+	})
+	user := cv.LoginAsLocalUser(t)
+	llmCredSet(t, cv, user.AccessToken, "anthropic", "", "sk-ant-test-key")
+	cvPost(t, cv, user.AccessToken, "/api/services/github/activate-key",
+		map[string]any{"token": "ghp_test_token_1234567890"}, nil)
+	_, agentToken := newPostureAgent(t, cv, user.AccessToken, "govern-sub-hold")
+
+	resp := govSubMessagesReq(t, cv, agentToken, "claude-haiku-4-5-20251001", "list issues")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, readBodyStr(resp))
+	}
+	body := readBodyStr(resp)
+	if !strings.Contains(body, "CLAWVISOR_BLOCKED") {
+		t.Fatalf("auto-governed subscription seat must still hold the out-of-scope tool_use (CLAWVISOR_BLOCKED); body=%s", body)
+	}
+}
+
 // govGetRaw GETs a path with the admin token and returns the space-stripped
 // body (for substring assertions on violations / features).
 func govGetRaw(t *testing.T, cv *testapp.Server, tok, path string) string {
