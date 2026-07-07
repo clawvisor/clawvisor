@@ -1,0 +1,19 @@
+internal/runtime/autovault/placeholder.go
+  s_740272bf3dffbe::t_68f9341e3c1564 9-29,32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7a266ce6ed98aa18dce668646ce947602f080fb0",
+  "prompts": {},
+  "sessions": {
+    "s_740272bf3dffbe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "929aeebf-7a18-4ae4-bdfd-737b03ffb126",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

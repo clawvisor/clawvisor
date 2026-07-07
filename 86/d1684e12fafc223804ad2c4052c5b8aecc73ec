@@ -1,0 +1,23 @@
+go.sum
+  s_df5ff8e375b5f9::t_2dba36b77adfc0 207-216,220-221,224-227,230-231,236-241,244-245
+go.mod
+  s_df5ff8e375b5f9::t_9e808c2e21879b 92
+  s_df5ff8e375b5f9::t_838e501a2891d6 89-91,93
+  s_df5ff8e375b5f9::t_dee943c9ff52f1 24-25,27-28,96-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "86d1684e12fafc223804ad2c4052c5b8aecc73ec",
+  "prompts": {},
+  "sessions": {
+    "s_df5ff8e375b5f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f31357ee-1f36-4a1a-9810-9ecc83f60014",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

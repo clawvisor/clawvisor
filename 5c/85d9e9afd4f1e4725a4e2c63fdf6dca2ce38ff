@@ -1,0 +1,23 @@
+internal/api/handlers/proxy_resolver.go
+  s_e9a569f8378396::t_0bbc3ad6f3cf09 42-43
+  s_e9a569f8378396::t_bd6da79317b16a 73
+internal/api/handlers/llm_endpoint.go
+  s_e9a569f8378396::t_37e80a48bad6c9 139-142
+  s_e9a569f8378396::t_0918f8a36bcf16 177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "5c85d9e9afd4f1e4725a4e2c63fdf6dca2ce38ff",
+  "prompts": {},
+  "sessions": {
+    "s_e9a569f8378396": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "427d5016-dad5-4487-afc4-b9076e28cfa1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

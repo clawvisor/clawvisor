@@ -1,0 +1,19 @@
+internal/api/server.go
+  s_35af8c84ac2d35::t_7b209b01d8bff9 1376-1379
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "215da688fe06f820e60c6d21202b5e6a0f2212f7",
+  "prompts": {},
+  "sessions": {
+    "s_35af8c84ac2d35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c3bca568-1830-4b5d-82a7-10f3623e4752",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

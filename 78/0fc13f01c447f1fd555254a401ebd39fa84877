@@ -1,0 +1,29 @@
+internal/e2e/lite/library/scope_drift_oneoff_markup/scenario.yaml
+  s_48544d04b3a3f6::t_20dfe7084ae064 74-86
+internal/runtime/llmproxy/scope_drift_resolve_test.go
+  s_48544d04b3a3f6::t_ad0401dbd23655 491-520
+internal/intent/verifier_test.go
+  s_48544d04b3a3f6::t_2104f5a662d99e 563-592
+internal/runtime/llmproxy/scope_drift_resolve.go
+  s_48544d04b3a3f6::t_71e766a6e3b5fa 255-268
+internal/intent/prompts.go
+  s_48544d04b3a3f6::t_41e8aa238b66fd 454-460
+internal/api/server.go
+  s_48544d04b3a3f6::t_82e32b2cdbfc0c 1326-1328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "780fc13f01c447f1fd555254a401ebd39fa84877",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

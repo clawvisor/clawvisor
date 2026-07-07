@@ -1,0 +1,54 @@
+internal/api/handlers/llm_credentials.go
+  s_0b181676ce207b::t_096c57c3865c1f 338-339,373-388
+  s_0b181676ce207b::t_dce4ac92f98588 255-261,263-294
+  s_0b181676ce207b::t_a1e0c563fbcf67 55,162
+  s_0b181676ce207b::t_de2ce8a9aa9425 165
+  s_0b181676ce207b::t_260ce581a1f0fb 58
+  s_0b181676ce207b::t_f22c6f887d803a 209-210
+internal/api/handlers/auth.go
+  s_0b181676ce207b::t_26a371aab0571b 126-131
+internal/api/handlers/proxy_resolver.go
+  s_0b181676ce207b::t_b71e17d64bf402 1013,1023,1025
+  s_0b181676ce207b::t_2e2b44f5f49e29 1084-1110,1112-1121
+  s_0b181676ce207b::t_443a4e184ac525 531-532,549-554
+  s_0b181676ce207b::t_d9475dfd9342ec 14
+  s_0b181676ce207b::t_045858c4d97bab 1014-1022
+  s_0b181676ce207b::t_7d7e2edf5fab0b 816-830
+internal/api/handlers/llm_endpoint.go
+  s_0b181676ce207b::t_3ea99b5ed6893d 1085-1092,1094-1095,1100
+  s_0b181676ce207b::t_122ebda15ad21c 3228-3229,3234-3238
+internal/api/handlers/oauth_state_store.go
+  s_0b181676ce207b::t_ae181ae82a702b 93-97
+  s_0b181676ce207b::t_9568b9ea9b394f 47-56
+  s_0b181676ce207b::t_c49a11a47379ae 68-73
+internal/api/handlers/installer.go
+  s_0b181676ce207b::t_95ea5c4919d3a9 851-853,856
+  s_0b181676ce207b::t_d66ffa539952b0 1056-1058,1060,1062
+internal/runtime/autovault/swap.go
+  s_0b181676ce207b::t_7029448689fb1c 7
+  s_0b181676ce207b::t_2827f379bf0dac 56-75,78
+internal/api/middleware/device.go
+  s_0b181676ce207b::t_db2616c7215236 58-71,82-97,102-112,153-161,171-180
+docs/security-review-2026-06-12.md
+  s_0b181676ce207b::t_d03057c58ae973 240-247
+  s_0b181676ce207b::t_942028941c833a 248
+  s_0b181676ce207b::t_4760c00f6d30fd 1-239,249-294
+internal/auth/password.go
+  s_0b181676ce207b::t_118a9e3f574bf8 4-5,7,30-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "9e2baac765f49d548c3f2ea435a8d651af890ffa",
+  "prompts": {},
+  "sessions": {
+    "s_0b181676ce207b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6cc36606-d695-41bf-a6e0-1b90992915a7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

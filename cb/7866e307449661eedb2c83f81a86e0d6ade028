@@ -1,0 +1,31 @@
+internal/e2e/lite/harness.go
+  s_48544d04b3a3f6::t_94891bb25d33e2 163-173
+internal/e2e/lite/scenario.go
+  s_48544d04b3a3f6::t_2c0b1d84ee7e94 22-34
+internal/e2e/lite/lite_test.go
+  s_48544d04b3a3f6::t_96bc56e787b89c 23
+internal/e2e/lite/scenario_loader_test.go
+  s_48544d04b3a3f6::t_92bf8631754a53 18
+internal/e2e/lite/service_catalog.go
+  s_48544d04b3a3f6::t_9d1144aeeebf58 1-73
+internal/e2e/lite/library/scope_drift_github_drift/scenario.yaml
+  s_48544d04b3a3f6::t_bf5ad77f6a5d29 3-9,11-20,22-34
+  s_48544d04b3a3f6::t_aff8f1cfcc8b2a 76-78,93-94
+  s_48544d04b3a3f6::t_655ed4618b11f7 1-2,10,21,35-75,79-92,95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "cb7866e307449661eedb2c83f81a86e0d6ade028",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

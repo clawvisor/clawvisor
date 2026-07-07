@@ -1,0 +1,41 @@
+internal/api/handlers/installer.go
+  s_7f68b5733f1191::t_2000aeebb72e79 348
+  s_7f68b5733f1191::t_a14dd6c0b56177 349-351,353-354
+docs/INTEGRATE_CLAUDE_CODE.md
+  s_7f68b5733f1191::t_d400e935751231 122
+internal/api/handlers/onboarding.go
+  s_7f68b5733f1191::t_e67f15c4738855 263
+web/src/pages/Agents.tsx
+  s_7f68b5733f1191::t_bfe17d0a907e7c 1316,1737
+internal/api/middleware/agent_llm_test.go
+  s_7f68b5733f1191::t_642c322b569dba 89-110
+  s_7f68b5733f1191::t_eda63e1882b3f7 169-174
+internal/daemon/claude_code.go
+  s_7f68b5733f1191::t_6204ad7e2ee864 83
+internal/api/middleware/agent.go
+  s_7f68b5733f1191::t_f998490ee11610 20-21,25,62-67
+internal/api/handlers/installer_test.go
+  s_7f68b5733f1191::t_95d652c251237a 109,214
+internal/api/handlers/skill.go
+  s_7f68b5733f1191::t_9e5347f97bcc86 154
+skills/clawvisor/SKILL.md.tmpl
+  s_7f68b5733f1191::t_fc7f912faa6d47 88
+docs/INTEGRATE_GENERIC.md
+  s_7f68b5733f1191::t_0a983b3e309269 79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0cb38ff9ffb4084f064ca1f7d6eae1791b705b93",
+  "prompts": {},
+  "sessions": {
+    "s_7f68b5733f1191": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e7060-b911-78f0-899d-d4e5c0c4e13b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

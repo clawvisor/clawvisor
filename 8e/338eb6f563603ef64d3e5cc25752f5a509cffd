@@ -1,0 +1,20 @@
+internal/runtime/llmproxy/approval_characterization_test.go
+  s_5690062ed6cda8::t_c6190cca61c08e 21,35,86,97
+  s_5690062ed6cda8::t_789beb8b1a7fc6 1-20,22-34,36-85,87-96,98-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "8e338eb6f563603ef64d3e5cc25752f5a509cffd",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
