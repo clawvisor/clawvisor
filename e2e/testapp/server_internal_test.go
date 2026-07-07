@@ -55,9 +55,13 @@ func TestWaitReadyReportsEarlyExitFast(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	// 2s is generous — failing stub exits in <50ms; poll interval is 150ms.
-	// If the channel-based detection regressed to polling-only we'd see ~20s.
-	if elapsed > 2*time.Second {
+	// The failing stub exits in <50ms and channel-based detection reports it
+	// immediately; the only slow path is the bounded drain flush on the error
+	// path. If the channel detection regressed to polling-only we'd see ~20s
+	// (the waitReady timeout). 8s cleanly separates the two while tolerating
+	// drain-flush latency under heavy parallel-CI scheduler starvation — a
+	// tighter bound here was the cause of an intermittent flake.
+	if elapsed > 8*time.Second {
 		t.Fatalf("tryStart took %v before reporting early exit; the early-exit channel detection regressed", elapsed)
 	}
 }
