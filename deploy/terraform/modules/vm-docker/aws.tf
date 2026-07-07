@@ -1,5 +1,13 @@
 # AWS resources for the single-VM Clawvisor deploy.
 
+# --- Provider-derived identity ---------------------------------------------
+# Everything the module renders on-instance (deploy script region, snapshot
+# ARNs) is keyed off the ACTUAL provider region/partition/account, never a
+# separate var.region that could silently disagree with the provider.
+data "aws_region" "current" {}
+data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
+
 # --- Placement (default VPC when not supplied) -----------------------------
 data "aws_vpc" "default" {
   count   = var.vpc_id == "" ? 1 : 0
@@ -151,6 +159,18 @@ data "aws_iam_policy_document" "instance" {
     actions   = ["secretsmanager:GetSecretValue"]
     resources = local.read_secret_arns
   }
+  # CMK decrypt for operator-supplied refs encrypted with a customer-managed
+  # key. Module-owned secrets use the AWS-managed key (aws/secretsmanager),
+  # which GetSecretValue can already decrypt; a CMK-encrypted jwt/vault ref
+  # would otherwise fail decrypt at boot. Only emitted when kms_key_arn is set.
+  dynamic "statement" {
+    for_each = var.kms_key_arn != "" ? [1] : []
+    content {
+      sid       = "DecryptSecretsCMK"
+      actions   = ["kms:Decrypt"]
+      resources = [var.kms_key_arn]
+    }
+  }
   # Generated-mode: write JWT/VAULT on first boot (only the module-owned
   # secrets, never operator-supplied refs).
   dynamic "statement" {
@@ -167,14 +187,23 @@ data "aws_iam_policy_document" "instance" {
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.image.arn]
   }
-  # Snapshot-before-upgrade + prune.
+  # Snapshot-before-upgrade + prune. Create/Delete are scoped to THIS module's
+  # DB and its `<name>-preupgrade-*` snapshots to cut blast radius. Describe has
+  # no resource-level permission support in RDS, so it must stay "*".
   statement {
-    sid = "SnapshotDB"
+    sid = "SnapshotDBWrite"
     actions = [
       "rds:CreateDBSnapshot",
-      "rds:DescribeDBSnapshots",
       "rds:DeleteDBSnapshot",
     ]
+    resources = [
+      aws_db_instance.this.arn,
+      "arn:${data.aws_partition.current.partition}:rds:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:snapshot:${var.name}-preupgrade-*",
+    ]
+  }
+  statement {
+    sid       = "SnapshotDBDescribe"
+    actions   = ["rds:DescribeDBSnapshots"]
     resources = ["*"]
   }
 }
@@ -254,6 +283,16 @@ resource "aws_instance" "app" {
     volume_size = 30
     encrypted   = true
   }
+
+  # user_data references the secret ARNs but not their versions; make the
+  # ordering explicit so the instance never boots before the bootstrap/db_url
+  # secret values exist (the real race is near-nil, but the dependency is
+  # correct and cheap). Generated jwt/vault secrets have no version by design
+  # (written on-instance at first boot), so they are not listed here.
+  depends_on = [
+    aws_secretsmanager_secret_version.bootstrap,
+    aws_secretsmanager_secret_version.db_url,
+  ]
 
   tags = { Name = var.name, "clawvisor:managed" = "true" }
 }

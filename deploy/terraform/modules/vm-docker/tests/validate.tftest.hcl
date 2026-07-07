@@ -123,3 +123,67 @@ run "accepts_public_cidr_with_ack" {
     i_understand_public_exposure = true
   }
 }
+
+run "rejects_reserved_secret_in_extra_env" {
+  command = plan
+
+  variables {
+    image     = "ghcr.io/clawvisor/clawvisor:v1.4.2"
+    extra_env = { JWT_SECRET = "shadow-me" }
+  }
+
+  expect_failures = [var.extra_env]
+}
+
+run "accepts_non_reserved_extra_env" {
+  command = plan
+
+  variables {
+    image     = "ghcr.io/clawvisor/clawvisor:v1.4.2"
+    extra_env = { LOG_LEVEL = "debug" }
+  }
+}
+
+run "rejects_graviton_instance_type" {
+  command = plan
+
+  variables {
+    image         = "ghcr.io/clawvisor/clawvisor:v1.4.2"
+    instance_type = "t4g.micro"
+  }
+
+  expect_failures = [var.instance_type]
+}
+
+run "rejects_vpc_id_without_subnets" {
+  command = plan
+
+  variables {
+    image  = "ghcr.io/clawvisor/clawvisor:v1.4.2"
+    vpc_id = "vpc-0123456789abcdef0"
+  }
+
+  expect_failures = [var.vpc_id]
+}
+
+run "rejects_single_db_subnet" {
+  command = plan
+
+  variables {
+    image         = "ghcr.io/clawvisor/clawvisor:v1.4.2"
+    db_subnet_ids = ["subnet-a"]
+  }
+
+  expect_failures = [var.db_subnet_ids]
+}
+
+run "rejects_literal_kms_key_arn" {
+  command = plan
+
+  variables {
+    image       = "ghcr.io/clawvisor/clawvisor:v1.4.2"
+    kms_key_arn = "not-an-arn"
+  }
+
+  expect_failures = [var.kms_key_arn]
+}

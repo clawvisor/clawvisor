@@ -56,11 +56,18 @@ runcmd:
     if command -v dnf >/dev/null 2>&1; then PM=dnf; else PM=yum; fi
     $PM install -y docker awscli
     systemctl enable --now docker
-    # compose v2 plugin
+    # compose v2 plugin — pinned release, checksum-verified before install.
+    # Never `latest`: this runs in a privileged bootstrap, and the module
+    # already rejects a floating app-image tag; the plugin gets the same rigor.
     mkdir -p /usr/libexec/docker/cli-plugins
-    ARCH=$(uname -m); case "$ARCH" in aarch64) CA=aarch64;; *) CA=x86_64;; esac
-    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$${CA}" \
+    ARCH=$(uname -m)
+    case "$ARCH" in
+      aarch64) CA=aarch64; SHA="${docker_compose_sha256_aarch64}";;
+      *)       CA=x86_64;  SHA="${docker_compose_sha256_x86_64}";;
+    esac
+    curl -fsSL "https://github.com/docker/compose/releases/download/${docker_compose_version}/docker-compose-linux-$${CA}" \
       -o /usr/libexec/docker/cli-plugins/docker-compose
+    echo "$${SHA}  /usr/libexec/docker/cli-plugins/docker-compose" | sha256sum -c -
     chmod +x /usr/libexec/docker/cli-plugins/docker-compose
   # --- First reconcile + enable the upgrade timer ---
   - systemctl daemon-reload

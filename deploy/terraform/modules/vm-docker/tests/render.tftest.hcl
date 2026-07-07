@@ -85,3 +85,62 @@ run "image_ssm_parameter_holds_pinned_tag" {
     error_message = "the SSM image parameter must hold the pinned image tag (the upgrade lever)"
   }
 }
+
+run "cloudinit_pins_and_verifies_docker_compose" {
+  command = apply
+
+  assert {
+    condition     = can(regex("releases/download/v2.29.7/docker-compose-linux", local.user_data))
+    error_message = "cloud-init must download a pinned docker compose release tag"
+  }
+
+  assert {
+    condition     = !can(regex("releases/latest/download", local.user_data))
+    error_message = "cloud-init must NOT pull docker compose from the floating latest release"
+  }
+
+  assert {
+    condition     = can(regex("sha256sum -c", local.user_data))
+    error_message = "cloud-init must checksum-verify the docker compose binary before install"
+  }
+}
+
+run "deploy_script_gates_and_hardens_reconcile" {
+  command = apply
+
+  # Snapshot failure must abort, not continue (README snapshot-before-restart
+  # guarantee).
+  assert {
+    condition     = can(regex("snapshot failed; aborting upgrade", local.deploy_rendered))
+    error_message = "deploy script must abort the upgrade when the pre-upgrade snapshot fails"
+  }
+
+  assert {
+    condition     = !can(regex("snapshot failed; continuing", local.deploy_rendered))
+    error_message = "deploy script must not continue past a failed snapshot"
+  }
+
+  # pull/up is gated on change: the no-op else branch proves the guard wraps
+  # the pull/up path (steady-state timer fires no longer restart the stack).
+  assert {
+    condition     = can(regex("already at .*nothing to do", local.deploy_rendered))
+    error_message = "deploy script must gate pull/up on an image change (a no-op branch for steady state)"
+  }
+}
+
+run "admin_url_output_matches_pr_body" {
+  command = apply
+
+  assert {
+    condition     = output.admin_url == "https://clawvisor.example.com:8443"
+    error_message = "admin_url output must expose the admin surface on the admin port (PR body: :8443)"
+  }
+}
+
+run "accepts_kms_key_arn_for_cmk_refs" {
+  command = apply
+
+  variables {
+    kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/abcd1234-ab12-cd34-ef56-abcdef123456"
+  }
+}

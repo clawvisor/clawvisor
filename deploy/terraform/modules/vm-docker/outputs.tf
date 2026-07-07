@@ -9,6 +9,11 @@ output "bootstrap_admin_token" {
   sensitive   = true
 }
 
+output "admin_url" {
+  description = "Admin dashboard + management API URL (admin surface on the admin port, gated to admin_ingress_cidrs)."
+  value       = "https://${var.public_fqdn}:${local.admin_port}"
+}
+
 output "install_commands" {
   description = "Per-harness agent install one-liners (served by internal/api/handlers/installer.go at the agent endpoint)."
   value = {
