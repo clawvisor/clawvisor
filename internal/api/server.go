@@ -1697,16 +1697,23 @@ func (s *Server) registerLiteProxyRoutes(
 
 	if includeCredentialRoutes {
 		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
-		// Accept either a user JWT or a `cvis_…` agent token. The one-paste
-		// install skill (which holds the freshly-minted agent token but no
-		// dashboard session) vaults the user's upstream LLM key from inside
-		// the skill via this endpoint; the dashboard's Settings UI still
-		// uses the same routes with user-JWT auth.
-		requireUserOrAgent := middleware.RequireUserOrAgent(s.jwtSvc, s.store)
-		userOrAgent := func(h http.HandlerFunc) http.Handler { return requireUserOrAgent(h) }
-		mux.Handle("PUT /api/runtime/llm-credentials/{provider}", userOrAgent(llmCredHandler.Set))
-		mux.Handle("DELETE /api/runtime/llm-credentials/{provider}", userOrAgent(llmCredHandler.Delete))
-		mux.Handle("GET /api/runtime/llm-credentials", userOrAgent(llmCredHandler.List))
+		// Accept a user JWT, a `cvis_…` agent token, OR a `cvat_…` API token.
+		// The one-paste install skill (which holds the freshly-minted agent
+		// token but no dashboard session) vaults the user's upstream LLM key
+		// from inside the skill; the dashboard's Settings UI uses the same
+		// routes with user-JWT auth; and the Terraform provider authenticates
+		// with a `cvat_` instance-admin token, which resolves to `_instance` so
+		// the key is stored as the shared govern "org provider key". Writes gate
+		// at instance-admin (a config-write/read token — also injected as
+		// `_instance` — must not plant a fleet-shared provider key, mirroring the
+		// shared-vault-write gate); reads gate at config-read.
+		requireCredWrite := middleware.RequireUserOrAgentOrToken(s.jwtSvc, s.store, middleware.ScopeInstanceAdmin, s.features.APITokens)
+		requireCredRead := middleware.RequireUserOrAgentOrToken(s.jwtSvc, s.store, middleware.ScopeConfigRead, s.features.APITokens)
+		credWrite := func(h http.HandlerFunc) http.Handler { return requireCredWrite(h) }
+		credRead := func(h http.HandlerFunc) http.Handler { return requireCredRead(h) }
+		mux.Handle("PUT /api/runtime/llm-credentials/{provider}", credWrite(llmCredHandler.Set))
+		mux.Handle("DELETE /api/runtime/llm-credentials/{provider}", credWrite(llmCredHandler.Delete))
+		mux.Handle("GET /api/runtime/llm-credentials", credRead(llmCredHandler.List))
 	}
 }
 

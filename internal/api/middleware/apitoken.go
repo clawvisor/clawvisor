@@ -187,6 +187,43 @@ func RequireUserOrAPIToken(jwtSvc auth.TokenService, st store.Store, minScope st
 	}
 }
 
+// RequireUserOrAgentOrToken accepts a user JWT, a `cvis_…` agent token, OR a
+// `cvat_…` API token satisfying minScope. It layers the API-token path on top
+// of RequireUserOrAgent WITHOUT weakening either the user or the agent branch:
+//   - a `cvat_` bearer is routed to RequireUserOrAPIToken, which injects the
+//     `_instance` system user + token record and enforces minScope (a token
+//     below minScope gets 403 INSUFFICIENT_SCOPE and never reaches the handler);
+//   - anything else falls through to RequireUserOrAgent (user JWT or `cvis_`
+//     agent token) exactly as before.
+//
+// Used on /api/runtime/llm-credentials/*: the Terraform provider authenticates
+// with a `cvat_` instance-admin token, which resolves to store.InstanceUserID
+// so the provider key is stored under the shared `_instance` scope (the govern
+// "org provider key" the InstanceAwareVault serves as the fallback for every
+// agent). Pass minScope=ScopeInstanceAdmin on the write routes so a
+// config-write / config-read token — which is also injected as `_instance` and
+// would otherwise plant a fleet-shared key — is refused, mirroring the
+// shared-vault-write gate. The `cvis_` agent branch is unchanged, so an agent
+// may still set its OWN agent-scoped credential.
+func RequireUserOrAgentOrToken(jwtSvc auth.TokenService, st store.Store, minScope string, apiTokensEnabled bool) func(http.Handler) http.Handler {
+	userOrAgent := RequireUserOrAgent(jwtSvc, st)
+	userOrToken := RequireUserOrAPIToken(jwtSvc, st, minScope, apiTokensEnabled)
+	return func(next http.Handler) http.Handler {
+		agentBranch := userOrAgent(next)
+		tokenBranch := userOrToken(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// A `cvat_` bearer is never a JWT and never a `cvis_` agent token,
+			// so sniffing it up front keeps the shared bearer slot from handing
+			// an API token to the agent/JWT validator.
+			if apiTokenFromRequest(r) != "" {
+				tokenBranch.ServeHTTP(w, r)
+				return
+			}
+			agentBranch.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireAdminOrToken gates the instance-administrative surface (user
 // management, shared-vault writes, token management, governance-disabling
 // changes — the spec's trust split). It accepts EITHER:
