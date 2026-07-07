@@ -402,6 +402,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	if opts.Instruments != nil {
 		apiOpts = append(apiOpts, api.WithInstruments(opts.Instruments))
 	}
+	if opts.RedisClient != nil {
+		apiOpts = append(apiOpts, api.WithRedisClient(opts.RedisClient))
+	}
 
 	srv, err := api.New(
 		opts.Config, opts.Store, opts.Vault, opts.JWTService,
