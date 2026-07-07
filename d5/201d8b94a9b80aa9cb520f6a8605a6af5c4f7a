@@ -1,0 +1,599 @@
+.github/workflows/ci.yml
+  s_55f7a841d7c10e::t_9d342a39c43f58 38-63,86-142
+.github/workflows/realclient.yml
+  s_55f7a841d7c10e::t_1769df5530bf17 1-67
+.github/workflows/terraform-ci.yml
+  s_55f7a841d7c10e::t_f16ad0a639c332 1-182
+.gitignore
+  s_55f7a841d7c10e::t_6e92e8d757ed39 23-30,37-41
+CHANGELOG.md
+  s_55f7a841d7c10e::t_223d26b73e156d 7-9
+Makefile
+  s_55f7a841d7c10e::t_946e12bdeb33b6 1,97-104
+README.md
+  s_55f7a841d7c10e::t_a3a5cdafd2f922 499-500,513-545
+config.example.yaml
+  s_55f7a841d7c10e::t_ca46c404f02630 14,18-32,38-40,45-50,141-218
+deploy/terraform/.gitignore
+  s_55f7a841d7c10e::t_c31b3a11fe67de 1-14
+deploy/terraform/examples/aws-minimal/main.tf
+  s_55f7a841d7c10e::t_6acc551cadf76a 1-88
+deploy/terraform/examples/local-docker/render.tf
+  s_55f7a841d7c10e::t_02141e376f224c 1-140
+deploy/terraform/examples/local-docker/run.sh
+  s_55f7a841d7c10e::t_7fec71ff4bbb9f 1-62
+deploy/terraform/modules/vm-docker/README.md
+  s_55f7a841d7c10e::t_d90b0bf8d62dbb 1-168
+deploy/terraform/modules/vm-docker/aws.tf
+  s_55f7a841d7c10e::t_2ec8cb3aa74170 1-298
+deploy/terraform/modules/vm-docker/cloudinit.tf
+  s_55f7a841d7c10e::t_090aa34c01693c 1-51
+deploy/terraform/modules/vm-docker/main.tf
+  s_55f7a841d7c10e::t_28d88277614a6c 1-124
+deploy/terraform/modules/vm-docker/outputs.tf
+  s_55f7a841d7c10e::t_74d7dd683440a4 1-61
+deploy/terraform/modules/vm-docker/templates/Caddyfile.tftpl
+  s_55f7a841d7c10e::t_2e4c0a9ff810a2 1-32
+deploy/terraform/modules/vm-docker/templates/cloud-init.yaml.tftpl
+  s_55f7a841d7c10e::t_4e474094625e4d 1-75
+deploy/terraform/modules/vm-docker/templates/config.yaml.tftpl
+  s_55f7a841d7c10e::t_252db1d4c20f0f 1-46
+deploy/terraform/modules/vm-docker/templates/deploy.sh.tftpl
+  s_55f7a841d7c10e::t_5e999532926ef0 1-109
+deploy/terraform/modules/vm-docker/templates/docker-compose.yaml.tftpl
+  s_55f7a841d7c10e::t_a9844dfb02dfdb 1-54
+deploy/terraform/modules/vm-docker/tests/render.tftest.hcl
+  s_55f7a841d7c10e::t_8c6f88b9897694 1-254
+deploy/terraform/modules/vm-docker/tests/validate.tftest.hcl
+  s_55f7a841d7c10e::t_7ae550f9931a0f 1-252
+deploy/terraform/modules/vm-docker/variables.tf
+  s_55f7a841d7c10e::t_f792b08b11270a 1-317
+deploy/terraform/modules/vm-docker/versions.tf
+  s_55f7a841d7c10e::t_2d6d0d1c3ee7ce 1-19
+docs/INTEGRATE_CLAUDE_CODE.md
+  s_55f7a841d7c10e::t_4c24cd8607d36d 9-18
+docs/LITE_PROXY.md
+  s_55f7a841d7c10e::t_42a3430b78745d 27
+docs/SETUP.md
+  s_55f7a841d7c10e::t_6d57e6070fad4e 37-43
+docs/flip-cloud-coordination.md
+  s_55f7a841d7c10e::t_787aaa06259e05 1-73
+e2e/README.md
+  s_55f7a841d7c10e::t_2555552b962fc7 1-124
+e2e/browser/global-setup.ts
+  s_55f7a841d7c10e::t_bf5d9417eb5910 1-97
+e2e/browser/package-lock.json
+  s_55f7a841d7c10e::t_229087ab0bca1e 1-78
+e2e/browser/package.json
+  s_55f7a841d7c10e::t_1812cba7202e09 1-14
+e2e/browser/playwright.config.ts
+  s_55f7a841d7c10e::t_3b1ab1f46c744c 1-62
+e2e/browser/serve/main.go
+  s_55f7a841d7c10e::t_b6304ccfb922e5 1-337
+e2e/browser/tests/agents.spec.ts
+  s_55f7a841d7c10e::t_37926ca54f011d 1-39
+e2e/browser/tests/approvals.spec.ts
+  s_55f7a841d7c10e::t_fb1e69436b8a77 1-49
+e2e/browser/tests/auth-magic-link.spec.ts
+  s_55f7a841d7c10e::t_bd12c4971ba19d 1-29
+e2e/browser/tests/dashboard.spec.ts
+  s_55f7a841d7c10e::t_523ff8bc376dcf 1-26
+e2e/browser/tests/helpers.ts
+  s_55f7a841d7c10e::t_9a2a005b57fddf 1-67
+e2e/browser/tests/keyvault.spec.ts
+  s_55f7a841d7c10e::t_a0b01c0219f275 1-49
+e2e/browser/tests/policies.spec.ts
+  s_55f7a841d7c10e::t_07103b02541ffa 1-39
+e2e/install/Dockerfile
+  s_55f7a841d7c10e::t_2052a8f3e657eb 66-68
+e2e/realclient/claude_code_test.go
+  s_55f7a841d7c10e::t_52575e34317877 1-145
+e2e/realclient/codex_test.go
+  s_55f7a841d7c10e::t_3820872255e796 1-77
+e2e/realclient/tmux.go
+  s_55f7a841d7c10e::t_4bf6434e6c99a8 1-393
+e2e/scenarios/api_tokens_test.go
+  s_55f7a841d7c10e::t_953ae83c02b735 120-187
+e2e/scenarios/enroll_invite_test.go
+  s_55f7a841d7c10e::t_d67324378183d0 13-16,18-20,22-23,25-27,29-31,33,36-41,44-53,56-62,65-66,68-69,71,73-74,76-79,81-82,85-87,90-97,99-103,105-107,109-110,112-113,117,120-126,129-133,135-136,138-140,142-145,147-148,150-151,154-159,161-162,166-171,173-191,195-201,203-240,245-250,252-256
+e2e/scenarios/flip_test.go
+  s_55f7a841d7c10e::t_3089197cfef96e 1-83
+e2e/scenarios/llm_proxy_local_gov_test.go
+  s_55f7a841d7c10e::t_f5fb893a4d3acc 1-311
+e2e/scenarios/llm_proxy_observe_live_test.go
+  s_55f7a841d7c10e::t_82bd77e1ad4cab 1-110
+e2e/scenarios/llm_proxy_observe_test.go
+  s_55f7a841d7c10e::t_3843d9fe4beacf 5-6,16-19,21-27,29-31,33-56,59-65,67-76,78,86,88-103,105-116,118-119,122-123,125-132,134-141,143-144,148-153,155-161,163,171,173-179,182-184,186-204,206-215,217-218,222-225,227,229-230,234-235,239,241-243,245-246
+e2e/scenarios/llm_proxy_openai_test.go
+  s_55f7a841d7c10e::t_c3ea2d22df0449 24-27,68-71,126-129
+e2e/scenarios/llm_proxy_passthrough_test.go
+  s_55f7a841d7c10e::t_ed03ac6f226f71 31-33,35-36
+e2e/scenarios/llm_proxy_posture_test.go
+  s_55f7a841d7c10e::t_95e5f2651c917c 14-25,27-32,34-36,40-42,44-56,58-71,73-78,80-81,83-88,90-91,95-99,101-115,117-125,129-132,136-137,140,142-163,166-169,171,173-174,177-178,180-185,187-192,194-208,210-215,217-218,220-221,225-228,232-233,236-238,240-252,256-259,263-265,268-270,272-287,291-296,300-301,304-305,307-313,315-323,327-329,333-334,337,339-343,345-349
+e2e/scenarios/llm_proxy_security_test.go
+  s_55f7a841d7c10e::t_ad7a30565106e5 24-28
+e2e/scenarios/llm_proxy_shared_vault_test.go
+  s_55f7a841d7c10e::t_52d6c9196b0edb 1-65
+e2e/scenarios/vault_ref_test.go
+  s_55f7a841d7c10e::t_bae19764435709 8,15-24,26-31,34-54,56,58-67,71-81,84-85,87-89,91-92,94-97,102-111,113,115,120-132,135-146,151-155,157-160,162,164-173,176-184,187-195,197-206
+e2e/testapp/server.go
+  s_55f7a841d7c10e::t_450630054d5886 41-50,70-100,105,161,217-224,240,243-258,393-409
+e2e/testapp/server_internal_test.go
+  s_55f7a841d7c10e::t_9fb78dc3ade3d2 30,52,91
+go.mod
+  s_55f7a841d7c10e::t_bb55a7b746b3ce 9-12,59-69
+go.sum
+  s_55f7a841d7c10e::t_afb4adcdb210b8 21-50
+internal/api/admin_visibility_test.go
+  s_55f7a841d7c10e::t_1a8a2da3866233 1-516
+internal/api/handlers/admin.go
+  s_55f7a841d7c10e::t_2973afc8ec5374 1-181
+internal/api/handlers/admin_approvals.go
+  s_55f7a841d7c10e::t_1aa8d90627a37b 1-176
+internal/api/handlers/agents.go
+  s_55f7a841d7c10e::t_8a6bba0fb68a1d 38-45
+internal/api/handlers/apitokens.go
+  s_55f7a841d7c10e::t_e609bafa20a4a4 16-18,51-55,60,62
+internal/api/handlers/apitokens_test.go
+  s_55f7a841d7c10e::t_08cebdbcd525a5 12,21-93
+internal/api/handlers/approvals.go
+  s_55f7a841d7c10e::t_648539624f5693 213-223,430-431,433-441,502-508
+internal/api/handlers/approvals_test.go
+  s_55f7a841d7c10e::t_3359223e8ee478 69,210
+internal/api/handlers/audit.go
+  s_55f7a841d7c10e::t_9a3e96f3420156 372-382
+internal/api/handlers/audit_test.go
+  s_55f7a841d7c10e::t_4eb08659d1d13d 26,117,184,286-290,310
+internal/api/handlers/auth.go
+  s_55f7a841d7c10e::t_3153597446c01a 4,45-59,62-64,75-86,88,93-104,124-158,177-244,276-282,508-522
+internal/api/handlers/connections.go
+  s_55f7a841d7c10e::t_1e5203199ecb18 12,64-80,431-685
+internal/api/handlers/connections_test.go
+  s_55f7a841d7c10e::t_553eca6c564d40 4,6-7,9-10,15,73,119,173,244-423
+internal/api/handlers/control_test.go
+  s_55f7a841d7c10e::t_4957d1b828c538 110
+internal/api/handlers/flat_team_test.go
+  s_55f7a841d7c10e::t_15d0c2fe4a5fd3 1-316
+internal/api/handlers/gateway.go
+  s_55f7a841d7c10e::t_f9e5fd5d8d2293 2505-2513,2517-2545
+internal/api/handlers/governance_local.go
+  s_55f7a841d7c10e::t_c6e6c7cfd859a8 1-418
+internal/api/handlers/installer.go
+  s_55f7a841d7c10e::t_97224f7bf5026a 130-137,374-380,523
+internal/api/handlers/installer_scripts.go
+  s_55f7a841d7c10e::t_8ae01f856ecef8 39,42-48,50-57,67,77-81,92
+internal/api/handlers/installer_scripts/claude_code_skill_only.sh.tmpl
+  s_55f7a841d7c10e::t_c5262f013142d9 1-33
+internal/api/handlers/installer_scripts/claude_code_subscription.sh.tmpl
+  s_55f7a841d7c10e::t_3dccc840225b23 1-207
+internal/api/handlers/installer_scripts/codex_skill_only.sh.tmpl
+  s_55f7a841d7c10e::t_ec545761b0dfef 1-34
+internal/api/handlers/installer_scripts/common.sh.tmpl
+  s_55f7a841d7c10e::t_b135259cd33478 35-42,67-68,71-72,263-313,345-376,378,380,382,385-390,392-413
+internal/api/handlers/installer_test.go
+  s_55f7a841d7c10e::t_3695ab374aecde 966-1159
+internal/api/handlers/llm_endpoint.go
+  s_55f7a841d7c10e::t_a6fe92c3c8831c 28,243-261,266-297,523-581,800-803,807-814,1648,1752-1753,2001,2059-2060,2232-2247
+internal/api/handlers/llm_endpoint_active_tasks_render_test.go
+  s_55f7a841d7c10e::t_3939b6f5b001f2 32,95
+internal/api/handlers/llm_endpoint_test.go
+  s_55f7a841d7c10e::t_79a53a9ba9521c 168
+internal/api/handlers/mcp_e2e_test.go
+  s_55f7a841d7c10e::t_7ee27d0b29dfd8 301,398
+internal/api/handlers/mobileconfig_test.go
+  s_55f7a841d7c10e::t_2a22473c425289 40,116,165
+internal/api/handlers/proxy_resolver_test.go
+  s_55f7a841d7c10e::t_c5bc5fab583caf 38,487
+internal/api/handlers/runtime.go
+  s_55f7a841d7c10e::t_b1233b331bdd48 75-80,444-449
+internal/api/handlers/runtime_controls_test.go
+  s_55f7a841d7c10e::t_113f4da7a96b0d 28,137,165,204,285,510,641,779,828,879,963,1016,1090
+internal/api/handlers/runtime_test.go
+  s_55f7a841d7c10e::t_b0a60c89fcc965 37,106,203,268,326,457,553,625,731,820,894,982,1062
+internal/api/handlers/service_config.go
+  s_55f7a841d7c10e::t_0d878538255664 1-131
+internal/api/handlers/service_config_test.go
+  s_55f7a841d7c10e::t_d4947e6b63aee2 1-141
+internal/api/handlers/services_pending_hijack_test.go
+  s_55f7a841d7c10e::t_a266dd7ad04821 14,37,41,103-104
+internal/api/handlers/tasks_complete_test.go
+  s_55f7a841d7c10e::t_4578a8d5087b5a 13,222
+internal/api/handlers/tasks_inline_test.go
+  s_55f7a841d7c10e::t_8caa2f65b0f017 37
+internal/api/handlers/tasks_runtime_start_test.go
+  s_55f7a841d7c10e::t_0ca31df3503ead 27,98
+internal/api/handlers/testdata/llm_characterization/control_notice_injected.json
+  s_55f7a841d7c10e::t_319481dcdf6d3c 10
+internal/api/handlers/testdata/llm_characterization/malformed_request.json
+  s_55f7a841d7c10e::t_e1e92784087704 11
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_anthropic.json
+  s_55f7a841d7c10e::t_f96c2abc95a54e 10
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_openai_chat.json
+  s_55f7a841d7c10e::t_36049be98f0be3 10
+internal/api/handlers/testdata/llm_characterization/tool_use_credential_rewrite.json
+  s_55f7a841d7c10e::t_5a100dfbe2c522 52
+internal/api/handlers/testdata/llm_characterization/tool_use_held_for_approval.json
+  s_55f7a841d7c10e::t_14edb90cd1a789 40
+internal/api/handlers/users.go
+  s_55f7a841d7c10e::t_a8428681c6d8b0 1-282
+internal/api/handlers/vault.go
+  s_55f7a841d7c10e::t_0fd1f9b2989e43 95-97,111-123,130-139,198-199,204-214,219-222,432-446,477-480,485
+internal/api/handlers/vault_control_test.go
+  s_55f7a841d7c10e::t_0b88ec0e821d71 29,86,136
+internal/api/handlers/vault_reference.go
+  s_55f7a841d7c10e::t_d9ceca8ea4ecca 1-135
+internal/api/handlers/vault_shared.go
+  s_55f7a841d7c10e::t_df8ef22ea02da8 1-97
+internal/api/middleware/agent_llm_test.go
+  s_55f7a841d7c10e::t_5fb6833db45afd 27,52
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_fdf833be100390 43-50,175-223
+internal/api/middleware/auth.go
+  s_55f7a841d7c10e::t_cc6c0ac5eb15b3 73-88
+internal/api/middleware/trust_split_test.go
+  s_55f7a841d7c10e::t_73020e291a618d 1-138
+internal/api/org_test.go
+  s_55f7a841d7c10e::t_70b29ec0ba855f 56
+internal/api/proxy_lite_routes_test.go
+  s_55f7a841d7c10e::t_66fb8dee510d01 81
+internal/api/server.go
+  s_55f7a841d7c10e::t_e58b8811b4c702 134-140,191-200,324,328-337,778-791,793-798,802-803,894-896,898-912,916,921,924,963-972,1077,1083-1087,1089-1096,1105-1111,1137-1151,1189-1212,1477-1480,1701-1708
+internal/api/testutil_test.go
+  s_55f7a841d7c10e::t_abd59aa529c62d 19,97,130-189,226,264
+internal/auth/token.go
+  s_55f7a841d7c10e::t_248eb689f689a0 57-73
+internal/clawvisorcli/cmd_agent_docker.go
+  s_55f7a841d7c10e::t_319574ff7dc436 29,54-59,226-234,245-254,256,277-297,805
+internal/clawvisorcli/cmd_agent_docker_test.go
+  s_55f7a841d7c10e::t_c819b3cb4af83a 90-162
+internal/clawvisorcli/cmd_agent_runtime.go
+  s_55f7a841d7c10e::t_0da7db2d29c945 6,208-221,238-247,318-338
+internal/clawvisorcli/cmd_agent_runtime_test.go
+  s_55f7a841d7c10e::t_afb8230a052c1d 106-182
+internal/daemon/install_test.go
+  s_55f7a841d7c10e::t_84d361681f9250 179-183
+internal/daemon/setup.go
+  s_55f7a841d7c10e::t_e53913742ba19c 17,595-599
+internal/e2e/harness/contain_scenarios_test.go
+  s_55f7a841d7c10e::t_3fb01fb11ea1ad 1-249
+internal/e2e/harness/principal.go
+  s_55f7a841d7c10e::t_2f5b0629e069c7 35
+internal/e2e/lite/harness.go
+  s_55f7a841d7c10e::t_3cbd0810c3feef 121,184-188
+internal/govlocal/govlocal.go
+  s_55f7a841d7c10e::t_1efb593a392a70 1-210
+internal/govlocal/govlocal_test.go
+  s_55f7a841d7c10e::t_aca1806d573581 1-194
+internal/govlocal/scan.go
+  s_55f7a841d7c10e::t_177472a54217e6 1-45
+internal/govlocal/scan_test.go
+  s_55f7a841d7c10e::t_3c3ffc7661c7bc 1-68
+internal/govlocal/store.go
+  s_55f7a841d7c10e::t_08fa08d8b55b55 1-77
+internal/notify/telegram/secret_test.go
+  s_55f7a841d7c10e::t_f7ce2b2938301a 27,109
+internal/notify/telegram/telegram_test.go
+  s_55f7a841d7c10e::t_a35870b033b79e 13,32
+internal/observability/emit.go
+  s_55f7a841d7c10e::t_f5e24bdaa3b210 27-31,136-142,150,154-175,253-262,268
+internal/runtime/llmproxy/audit_test.go
+  s_55f7a841d7c10e::t_329436fe4001e5 32,461
+internal/runtime/llmproxy/auth_context.go
+  s_55f7a841d7c10e::t_255bd8ff072413 10-13,22-31
+internal/runtime/llmproxy/byte_fidelity_test.go
+  s_55f7a841d7c10e::t_2e58d9fcaf5d0c 4-5,10,132-270
+internal/runtime/llmproxy/config.go
+  s_55f7a841d7c10e::t_ec40685a1aadb7 226-233,245-250,263-271
+internal/runtime/llmproxy/credential_class.go
+  s_55f7a841d7c10e::t_660156d99cc306 1-132
+internal/runtime/llmproxy/credential_class_test.go
+  s_55f7a841d7c10e::t_37a081eb6517e8 1-73
+internal/runtime/llmproxy/forward.go
+  s_55f7a841d7c10e::t_cfe05661fab354 123-127,221-233,316-331
+internal/runtime/llmproxy/forward_test.go
+  s_55f7a841d7c10e::t_60b9f5b590c299 154-228
+internal/runtime/llmproxy/pipeline/observe.go
+  s_55f7a841d7c10e::t_b077558070759e 1-100
+internal/runtime/llmproxy/pipeline/orchestrator.go
+  s_55f7a841d7c10e::t_01993d61060cf4 46-52,92-97,99,120-135,141-150,158-165,171-179,192-204
+internal/runtime/llmproxy/pipeline/orchestrator_test.go
+  s_55f7a841d7c10e::t_d38c9e5e2310fb 276-311
+internal/runtime/llmproxy/policies/emitter_equivalence_test.go
+  s_55f7a841d7c10e::t_3714b14cc93267 316
+internal/runtime/llmproxy/postproc/postproc.go
+  s_55f7a841d7c10e::t_27f72d06b61c14 8,13-84,161-164,209-213,225-229
+internal/runtime/llmproxy/postproc/postprocess_test.go
+  s_55f7a841d7c10e::t_6f860f6da46d8f 35,63,1696-1769
+internal/runtime/llmproxy/postproc/stream.go
+  s_55f7a841d7c10e::t_221eef3ee9d615 120-129,243-246
+internal/runtime/llmproxy/postproc/taskscope_test.go
+  s_55f7a841d7c10e::t_e129f7c8cc6fec 26,167,171-172,176-177,179,207,211-212,216-217,219,263,267-269,273-274,276,312,316-318,322-323,325,349,353-355,359-360,362,391,395-396,400-401,403,425,429-430,433-441,445-446,448
+internal/runtime/llmproxy/test_helpers_test.go
+  s_55f7a841d7c10e::t_09f81d5775c67e 30,74
+internal/server/run.go
+  s_55f7a841d7c10e::t_b05d0f1c969e66 68-70
+internal/setup/setup.go
+  s_55f7a841d7c10e::t_ada0b841f79672 4,12,18,20-22,25-27,66-73,76-87,195-200,533-719,854-862,886-894,923-931
+internal/setup/setup_test.go
+  s_55f7a841d7c10e::t_990b1fe860e0e6 1-168
+internal/tui/client/types.go
+  s_55f7a841d7c10e::t_1f20a41f5d2111 53-57
+pkg/clawvisor/defaults.go
+  s_55f7a841d7c10e::t_9f37f64a760741 52-53,678-702,705,707,713,715,720-734
+pkg/clawvisor/governance.go
+  s_55f7a841d7c10e::t_75f89183d1021a 1-68
+pkg/clawvisor/governance_test.go
+  s_55f7a841d7c10e::t_2ffd916e12c730 1-99
+pkg/clawvisor/run.go
+  s_55f7a841d7c10e::t_cf9085868cdce7 266-280,282-289
+pkg/config/config.go
+  s_55f7a841d7c10e::t_1e55cdfc917114 22-29,31-54,68,82-95,231-244,253-257,263-276,389-404,462-509,555-561,616-619,630-648,695-696,706-707,711-727,753-761,786-788,1028-1030,1037-1045,1065-1067,1089-1104,1219-1323,1416-1446
+pkg/config/config_test.go
+  s_55f7a841d7c10e::t_e1db2a03b697bc 4-5,250-546
+pkg/runtime/proxy/auth.go
+  s_55f7a841d7c10e::t_f4cfd732af96bb 189,262
+pkg/runtime/proxy/auth_test.go
+  s_55f7a841d7c10e::t_1d088dacd8fd12 15,131,177-235,245,301,348,404
+pkg/runtime/proxy/contain_test.go
+  s_55f7a841d7c10e::t_8b214bd64968c6 1-92
+pkg/runtime/proxy/manager.go
+  s_55f7a841d7c10e::t_3d40ed1e68ef49 11,40-45,97
+pkg/runtime/proxy/manager_test.go
+  s_55f7a841d7c10e::t_31c0a2defa3fdb 14,25
+pkg/runtime/proxy/policy_hook.go
+  s_55f7a841d7c10e::t_3377549672e185 73-79,759-771,782-789,797-857
+pkg/runtime/proxy/policy_hook_test.go
+  s_55f7a841d7c10e::t_05ea75e0f91f26 19,810
+pkg/runtime/proxy/session_settings.go
+  s_55f7a841d7c10e::t_b944a47c412f37 34-41,55-57,102-104,108-120
+pkg/runtime/proxy/tooluse_runtime.go
+  s_55f7a841d7c10e::t_2fb7c82412e744 254-262
+pkg/store/postgres/migrations/060_user_roles.sql
+  s_55f7a841d7c10e::t_703f8e10bf6ae2 1-21
+pkg/store/postgres/migrations/061_user_invites.sql
+  s_55f7a841d7c10e::t_8df107f754300d 1-14
+pkg/store/postgres/migrations/062_audit_actor_retain.sql
+  s_55f7a841d7c10e::t_7054f81a04f711 1-34
+pkg/store/postgres/migrations/063_instance_governance.sql
+  s_55f7a841d7c10e::t_b4a4d23ad3f892 1-73
+pkg/store/postgres/migrations/064_admin_visibility_indexes.sql
+  s_55f7a841d7c10e::t_1f5ea0c8d7538e 1-10
+pkg/store/postgres/migrations/065_vault_entry_kind.sql
+  s_55f7a841d7c10e::t_0e215811109684 1-10
+pkg/store/postgres/store.go
+  s_55f7a841d7c10e::t_178f51f3d75691 9,41-57,60-62,69,72-114,116-124,132-133,154-182,185-191,195-322,656-685,1171-1173,1182-1183,1192,1205,1210-1211,1214,1287-1389,1588-1696,2286-2298,2424-2478,4322-4331,4347,4352-4356
+pkg/store/postgres/store_governance.go
+  s_55f7a841d7c10e::t_48189b0c19dc99 1-331
+pkg/store/sqlite/flat_team_migration_test.go
+  s_55f7a841d7c10e::t_fd6d25a7572387 1-182
+pkg/store/sqlite/migrations/061_user_roles.sql
+  s_55f7a841d7c10e::t_e2c22e001978e2 1-35
+pkg/store/sqlite/migrations/062_user_invites.sql
+  s_55f7a841d7c10e::t_b9241b2b7c0074 1-19
+pkg/store/sqlite/migrations/063_audit_actor_retain.sql
+  s_55f7a841d7c10e::t_a2844836735c9b 1-119
+pkg/store/sqlite/migrations/064_instance_governance.sql
+  s_55f7a841d7c10e::t_7c5f4b35644db2 1-99
+pkg/store/sqlite/migrations/065_admin_visibility_indexes.sql
+  s_55f7a841d7c10e::t_249814735f77ea 1-16
+pkg/store/sqlite/migrations/066_vault_entry_kind.sql
+  s_55f7a841d7c10e::t_0ee738332f269c 1-12
+pkg/store/sqlite/store.go
+  s_55f7a841d7c10e::t_2d55d1f8c82016 42-53,55-58,60-61,72-113,116-117,123-126,130-140,142-143,147-194,198-225,261-367,754-823,1415-1418,1427-1428,1436,1451,1456-1457,1461,1532-1646,1855-1966,2708-2721,2834,2843-2899
+pkg/store/sqlite/store_admin_visibility_test.go
+  s_55f7a841d7c10e::t_2f70bbd00b168c 1-316
+pkg/store/sqlite/store_agent_threshold_test.go
+  s_55f7a841d7c10e::t_dc672b5fd853b2 27,110
+pkg/store/sqlite/store_apitokens_test.go
+  s_55f7a841d7c10e::t_ac4b47058ebf00 218
+pkg/store/sqlite/store_governance.go
+  s_55f7a841d7c10e::t_cdf73e24374982 1-340
+pkg/store/sqlite/store_governance_test.go
+  s_55f7a841d7c10e::t_25d92f1b7278bc 1-230
+pkg/store/sqlite/store_inline_chat_expiry_test.go
+  s_55f7a841d7c10e::t_77fd45e89fc6a8 31
+pkg/store/sqlite/store_runtime_test.go
+  s_55f7a841d7c10e::t_35344986e527ef 27,459,537,589,654,721,792,836,904,968
+pkg/store/sqlite/store_task_lifecycle_test.go
+  s_55f7a841d7c10e::t_3d7ba46c2fd1b0 31
+pkg/store/store.go
+  s_55f7a841d7c10e::t_e819734c5b0ab9 26-30,42-57,61-63,66-82,99-131,149-155,259-265,274-280,375-380,387-392,600-607,613,616-641,663-729,868-873,999-1004,1069-1130,1273-1276,1356-1359,1660-1670
+pkg/store/store_test.go
+  s_55f7a841d7c10e::t_45709ad70f3fc5 7,10-32
+pkg/vault/instance_aware.go
+  s_55f7a841d7c10e::t_9fcc7acf51d072 1-111
+pkg/vault/instance_aware_test.go
+  s_55f7a841d7c10e::t_03e1b807817cd1 1-168
+pkg/vault/refaws/refaws.go
+  s_55f7a841d7c10e::t_0fc00d3a8c0051 1-127
+pkg/vault/refaws/refaws_live_test.go
+  s_55f7a841d7c10e::t_0c15720ed1d4cc 1-44
+pkg/vault/refaws/refaws_localstack_test.go
+  s_55f7a841d7c10e::t_f6e16c692d8fa3 1-50
+pkg/vault/refaws/refaws_test.go
+  s_55f7a841d7c10e::t_c2bae623967026 1-100
+pkg/vault/reference.go
+  s_55f7a841d7c10e::t_c45bacb601aab2 1-506
+pkg/vault/reference_test.go
+  s_55f7a841d7c10e::t_226a3ce5bf0eee 1-428
+pkg/vault/refgcp/refgcp.go
+  s_55f7a841d7c10e::t_0d60e9d0b3391f 1-98
+pkg/vault/refgcp/refgcp_live_test.go
+  s_55f7a841d7c10e::t_25f32bcb3613af 1-43
+pkg/vault/refgcp/refgcp_test.go
+  s_55f7a841d7c10e::t_683abc71950a00 1-32
+provider/README.md
+  s_55f7a841d7c10e::t_0dc35b441c2e11 1-93
+provider/docs/index.md
+  s_55f7a841d7c10e::t_0251b05d79d7ab 1-50
+provider/docs/resources/agent.md
+  s_55f7a841d7c10e::t_3f7934efd16e64 1-58
+provider/docs/resources/api_token.md
+  s_55f7a841d7c10e::t_48f10f86396d62 1-56
+provider/docs/resources/content_policy.md
+  s_55f7a841d7c10e::t_1cac0088fdf633 1-56
+provider/docs/resources/model_policy.md
+  s_55f7a841d7c10e::t_4be7f35f5c985e 1-48
+provider/docs/resources/service_config.md
+  s_55f7a841d7c10e::t_bc40b3b546b83d 1-52
+provider/docs/resources/spend_cap.md
+  s_55f7a841d7c10e::t_4cc08bfffe2daf 1-50
+provider/docs/resources/task_policy.md
+  s_55f7a841d7c10e::t_293936675990a1 1-43
+provider/docs/resources/user.md
+  s_55f7a841d7c10e::t_baffca836df762 1-58
+provider/docs/resources/vault_entry.md
+  s_55f7a841d7c10e::t_cf36d83a4e74d8 1-56
+provider/examples/bootstrap/main.tf
+  s_55f7a841d7c10e::t_c096acd91f7792 1-97
+provider/examples/provider/provider.tf
+  s_55f7a841d7c10e::t_a0c7ed13b4e377 1-26
+provider/examples/resources/clawvisor_agent/import.sh
+  s_55f7a841d7c10e::t_7b8b69baeba245 1-3
+provider/examples/resources/clawvisor_agent/resource.tf
+  s_55f7a841d7c10e::t_3a79e7a2f548fb 1-13
+provider/examples/resources/clawvisor_api_token/import.sh
+  s_55f7a841d7c10e::t_55c77210535455 1-3
+provider/examples/resources/clawvisor_api_token/resource.tf
+  s_55f7a841d7c10e::t_4aee4b2468fb39 1-11
+provider/examples/resources/clawvisor_content_policy/import.sh
+  s_55f7a841d7c10e::t_765dfe905fefeb 1-2
+provider/examples/resources/clawvisor_content_policy/resource.tf
+  s_55f7a841d7c10e::t_119b9ded919ecb 1-10
+provider/examples/resources/clawvisor_model_policy/import.sh
+  s_55f7a841d7c10e::t_fad5343596c2a5 1-2
+provider/examples/resources/clawvisor_model_policy/resource.tf
+  s_55f7a841d7c10e::t_754ffa7ab59a7a 1-9
+provider/examples/resources/clawvisor_service_config/import.sh
+  s_55f7a841d7c10e::t_f83012c9f57baf 1-2
+provider/examples/resources/clawvisor_service_config/resource.tf
+  s_55f7a841d7c10e::t_d5a6d291c4a44e 1-9
+provider/examples/resources/clawvisor_spend_cap/import.sh
+  s_55f7a841d7c10e::t_f1618a2741d1e5 1-2
+provider/examples/resources/clawvisor_spend_cap/resource.tf
+  s_55f7a841d7c10e::t_a7561ca28ee095 1-7
+provider/examples/resources/clawvisor_task_policy/import.sh
+  s_55f7a841d7c10e::t_43450e49d1cf6b 1-2
+provider/examples/resources/clawvisor_task_policy/resource.tf
+  s_55f7a841d7c10e::t_ff79d3e34009e2 1-5
+provider/examples/resources/clawvisor_user/import.sh
+  s_55f7a841d7c10e::t_3cb0e7fd94a800 1-3
+provider/examples/resources/clawvisor_user/resource.tf
+  s_55f7a841d7c10e::t_382b92b16ae131 1-18
+provider/examples/resources/clawvisor_vault_entry/import.sh
+  s_55f7a841d7c10e::t_92070941d046cc 1-3
+provider/examples/resources/clawvisor_vault_entry/resource.tf
+  s_55f7a841d7c10e::t_7db0a45fa81ba7 1-12
+provider/go.mod
+  s_55f7a841d7c10e::t_7a4e10b98146fa 1-68
+provider/go.sum
+  s_55f7a841d7c10e::t_8c807d077b5fd3 1-245
+provider/internal/client/agents.go
+  s_55f7a841d7c10e::t_b6c3855051efbc 1-75
+provider/internal/client/client.go
+  s_55f7a841d7c10e::t_a24f79f114db66 1-154
+provider/internal/client/client_test.go
+  s_55f7a841d7c10e::t_5c45cf1686967c 1-119
+provider/internal/client/features.go
+  s_55f7a841d7c10e::t_d90cc861609926 1-66
+provider/internal/client/governance.go
+  s_55f7a841d7c10e::t_8152cbd3d4eae9 1-172
+provider/internal/client/services.go
+  s_55f7a841d7c10e::t_221e737c89789c 1-47
+provider/internal/client/tokens.go
+  s_55f7a841d7c10e::t_c3b7e68790425c 1-62
+provider/internal/client/users.go
+  s_55f7a841d7c10e::t_151c5dc49b52a1 1-80
+provider/internal/client/vault.go
+  s_55f7a841d7c10e::t_09d2a232be50e3 1-71
+provider/internal/provider/capability_test.go
+  s_55f7a841d7c10e::t_048cdc08f094ca 1-62
+provider/internal/provider/common.go
+  s_55f7a841d7c10e::t_ccc0e7ce3fab86 1-86
+provider/internal/provider/provider.go
+  s_55f7a841d7c10e::t_021c41ec08ee8a 1-177
+provider/internal/provider/resource_agent.go
+  s_55f7a841d7c10e::t_9a17779621788f 1-204
+provider/internal/provider/resource_api_token.go
+  s_55f7a841d7c10e::t_969133dfc50665 1-160
+provider/internal/provider/resource_content_policy.go
+  s_55f7a841d7c10e::t_078d8a024e4731 1-179
+provider/internal/provider/resource_model_policy.go
+  s_55f7a841d7c10e::t_63fe87ad13d194 1-148
+provider/internal/provider/resource_service_config.go
+  s_55f7a841d7c10e::t_f2eee27e1cf74d 1-159
+provider/internal/provider/resource_spend_cap.go
+  s_55f7a841d7c10e::t_c53c5fb7210182 1-148
+provider/internal/provider/resource_task_policy.go
+  s_55f7a841d7c10e::t_6a2f2cb0fab86f 1-126
+provider/internal/provider/resource_user.go
+  s_55f7a841d7c10e::t_7cfaea00d53f26 1-364
+provider/internal/provider/resource_user_test.go
+  s_55f7a841d7c10e::t_5fa8da98a93365 1-59
+provider/internal/provider/resource_vault_entry.go
+  s_55f7a841d7c10e::t_b523724cc0bc99 1-173
+provider/internal/provider/resource_vault_reference.go
+  s_55f7a841d7c10e::t_3b7c5e64fbf65b 1-183
+provider/internal/provider/resource_vault_reference_test.go
+  s_55f7a841d7c10e::t_617b7cac0a1ab6 1-59
+provider/internal/provider/testacc/agent_test.go
+  s_55f7a841d7c10e::t_078afd2eb2dd60 1-108
+provider/internal/provider/testacc/api_token_test.go
+  s_55f7a841d7c10e::t_e310bac3aed082 1-92
+provider/internal/provider/testacc/build_test.go
+  s_55f7a841d7c10e::t_ccfeef5ab3e967 1-62
+provider/internal/provider/testacc/capability_gate_test.go
+  s_55f7a841d7c10e::t_32d2116a6259d1 1-31
+provider/internal/provider/testacc/content_policy_test.go
+  s_55f7a841d7c10e::t_15a5a63eddcbbc 1-114
+provider/internal/provider/testacc/helpers_test.go
+  s_55f7a841d7c10e::t_538e7dec7781ef 1-72
+provider/internal/provider/testacc/model_policy_test.go
+  s_55f7a841d7c10e::t_313b39010be294 1-101
+provider/internal/provider/testacc/provider_test.go
+  s_55f7a841d7c10e::t_b37bc8a125fd11 1-226
+provider/internal/provider/testacc/service_config_test.go
+  s_55f7a841d7c10e::t_92efb57c96ef4a 1-103
+provider/internal/provider/testacc/spend_cap_test.go
+  s_55f7a841d7c10e::t_7e7c1deb13e034 1-96
+provider/internal/provider/testacc/task_policy_test.go
+  s_55f7a841d7c10e::t_6fa76e999165d5 1-85
+provider/internal/provider/testacc/user_test.go
+  s_55f7a841d7c10e::t_d2567dd6c65e53 1-157
+provider/internal/provider/testacc/vault_entry_test.go
+  s_55f7a841d7c10e::t_ee66c68e7b2d0a 1-126
+provider/internal/provider/testacc/vault_reference_test.go
+  s_55f7a841d7c10e::t_1b11beb08acc36 1-140
+provider/main.go
+  s_55f7a841d7c10e::t_8eadef0fbf07b2 1-32
+scripts/mirror-terraform.sh
+  s_55f7a841d7c10e::t_01075876aeca12 1-33
+scripts/terraform-plan-secret-scan.sh
+  s_55f7a841d7c10e::t_39161176f68273 1-51
+scripts/terraform-real-aws-lane.sh
+  s_55f7a841d7c10e::t_7025860946b3bf 1-101
+web/src/api/client.ts
+  s_55f7a841d7c10e::t_39b2ff9415d81f 213,218-269,1526-1543
+web/src/pages/Admin.tsx
+  s_55f7a841d7c10e::t_85c2cbe1213e38 1-236
+web/src/pages/Agents.tsx
+  s_55f7a841d7c10e::t_fcfab5a73f716c 2265-2268,2322-2324,2326,2358-2383
+web/src/pages/Dashboard.tsx
+  s_55f7a841d7c10e::t_a0d0e5799a182f 23,45-50,226,431-435
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d5201d8b94a9b80aa9cb520f6a8605a6af5c4f7a",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
