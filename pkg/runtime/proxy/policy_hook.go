@@ -760,9 +760,14 @@ func isHarnessAllowlistedForSession(session *store.RuntimeSession, cfg *config.C
 		// ignore NO_PROXY. LLM traffic is pointed at the Clawvisor daemon host
 		// (ANTHROPIC_BASE_URL/OPENAI_BASE_URL); if such a client sends that
 		// request through the runtime proxy anyway, the daemon host must pass
-		// so it still reaches proxy-lite.
-		if daemonHost := normalizedEndpointHost(cfg.Server.PublicURL); daemonHost != "" && host == daemonHost {
-			return true
+		// so it still reaches proxy-lite. This is a contain-only carve-out —
+		// gating it behind proxy_lite keeps direct/legacy sessions subject to
+		// normal egress policy for the daemon host (they never route LLM
+		// traffic there, so allowlisting it would be an unearned bypass).
+		if sessionLLMRouteProxyLite(session, cfg) {
+			if daemonHost := normalizedEndpointHost(cfg.Server.PublicURL); daemonHost != "" && host == daemonHost {
+				return true
+			}
 		}
 	}
 	for _, allowed := range sessionHarnessAllowlist(session, cfg) {

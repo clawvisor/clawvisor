@@ -186,6 +186,7 @@ func (a *Authenticator) getOrCreateAgentRuntimeSession(ctx context.Context, agen
 		"starter_profile":          settings.StarterProfile,
 		"outbound_credential_mode": settings.OutboundCredentialMode,
 		"inject_stored_bearer":     settings.InjectStoredBearer,
+		"llm_route":                settings.LLMRoute,
 	}
 	if launchID != "" {
 		metadata["launch_id"] = launchID
@@ -258,7 +259,7 @@ func selectReusableAgentTokenRuntimeSession(sessions []*store.RuntimeSession, no
 			continue
 		}
 		got := sessionRuntimeSettingsFromMetadata(session, nil)
-		if got.RuntimeEnabled != want.RuntimeEnabled || got.RuntimeMode != want.RuntimeMode || got.StarterProfile != want.StarterProfile || got.OutboundCredentialMode != want.OutboundCredentialMode || got.InjectStoredBearer != want.InjectStoredBearer {
+		if got.RuntimeEnabled != want.RuntimeEnabled || got.RuntimeMode != want.RuntimeMode || got.StarterProfile != want.StarterProfile || got.OutboundCredentialMode != want.OutboundCredentialMode || got.InjectStoredBearer != want.InjectStoredBearer || got.LLMRoute != want.LLMRoute {
 			continue
 		}
 		if best == nil || session.CreatedAt.After(best.CreatedAt) {
