@@ -124,19 +124,19 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	// invite. No tokens are issued — the invitee confirms email possession
 	// via the magic-link flow first.
 	if invite != nil {
-		user, err := h.st.CreateInvitedUser(r.Context(), body.Email, hash, store.RoleMember)
+		// Create the account and burn the invite atomically. Losing the
+		// single-use race rolls the whole transaction back, so no orphaned
+		// pending_verification user is left behind.
+		user, err := h.st.ClaimInvitedUser(r.Context(), invite.ID, body.Email, hash, store.RoleMember)
 		if err != nil {
-			if errors.Is(err, store.ErrConflict) {
+			switch {
+			case errors.Is(err, store.ErrInviteUsed):
+				writeError(w, http.StatusConflict, "INVITE_ALREADY_USED", "invite has already been claimed")
+			case errors.Is(err, store.ErrConflict):
 				writeError(w, http.StatusConflict, "EMAIL_TAKEN", "an account with that email already exists")
-				return
+			default:
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create user")
 			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create user")
-			return
-		}
-		if err := h.st.MarkUserInviteUsed(r.Context(), invite.ID, user.ID); err != nil {
-			// Lost a single-use race: another claim already burned it.
-			_ = h.st.DeleteUser(r.Context(), user.ID)
-			writeError(w, http.StatusConflict, "INVITE_ALREADY_USED", "invite has already been claimed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -481,11 +481,16 @@ func (h *AuthHandler) ExchangeMagic(w http.ResponseWriter, r *http.Request) {
 	// Exchanging a magic link proves control of the account's email — this
 	// is the email-possession confirm that flips a pending_verification
 	// invite-claimed account to usable (invite security rule 2). Idempotent.
+	// The write must succeed before we mint a session: if it fails we'd
+	// otherwise hand out a full token pair while the account stays
+	// pending_verification forever, defeating the email-possession gate.
 	if !user.Verified() {
-		if err := h.st.MarkUserVerified(r.Context(), user.ID); err == nil {
-			now := time.Now().UTC()
-			user.VerifiedAt = &now
+		if err := h.st.MarkUserVerified(r.Context(), user.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not confirm verification")
+			return
 		}
+		now := time.Now().UTC()
+		user.VerifiedAt = &now
 	}
 
 	resp, err := h.issueTokens(w, r, user)

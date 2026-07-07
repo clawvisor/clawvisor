@@ -68,6 +68,46 @@ func (s *Store) createUser(ctx context.Context, email, passwordHash, role string
 	return s.GetUserByID(ctx, id)
 }
 
+// ClaimInvitedUser creates a pending_verification account and burns the invite
+// atomically. Losing a single-use race rolls the whole transaction back, so no
+// orphaned user row is ever committed.
+func (s *Store) ClaimInvitedUser(ctx context.Context, inviteID, email, passwordHash, role string) (*store.User, error) {
+	if role != store.RoleAdmin && role != store.RoleMember {
+		role = store.RoleMember
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	id := uuid.New().String()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO users (id, email, password_hash, role, verified_at)
+		VALUES ($1, $2, $3, $4, NULL)
+	`, id, email, passwordHash, role); err != nil {
+		if isDuplicate(err) {
+			return nil, store.ErrConflict
+		}
+		return nil, err
+	}
+
+	res, err := tx.Exec(ctx,
+		`UPDATE user_invites SET used_by = $1, used_at = NOW() WHERE id = $2 AND used_at IS NULL`,
+		id, inviteID)
+	if err != nil {
+		return nil, err
+	}
+	if res.RowsAffected() == 0 {
+		return nil, store.ErrInviteUsed
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.GetUserByID(ctx, id)
+}
+
 const pgUserColumns = `id, email, password_hash, role, created_at, updated_at, verified_at`
 
 func scanPGUser(scan func(...any) error) (*store.User, error) {
