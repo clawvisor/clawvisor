@@ -1,0 +1,29 @@
+e2e/scenarios/vault_test.go
+  s_8b1f6f8ddc53d3::t_5c66c9a7c9dac3 30-31
+e2e/scenarios/health_test.go
+  s_8b1f6f8ddc53d3::t_abca26732411bc 28-32,41
+e2e/scenarios/restrictions_test.go
+  s_8b1f6f8ddc53d3::t_4a43282e2fa164 118-122,124,126,133
+  s_8b1f6f8ddc53d3::t_449da2d7bf1cbc 116-117,125,127-132,134-136
+e2e/scenarios/intent_verify_test.go
+  s_8b1f6f8ddc53d3::t_78c0fb30409ee1 4
+  s_8b1f6f8ddc53d3::t_2052288c0e8162 157-161,163-166
+  s_8b1f6f8ddc53d3::t_08b45de8c2b9e0 169-181
+  s_8b1f6f8ddc53d3::t_320739c94bae4c 239-245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d64a43c133ef578191e8b710b30bf416c78c1bdf",
+  "prompts": {},
+  "sessions": {
+    "s_8b1f6f8ddc53d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2217843-2b00-445d-88f2-f33b3fb654b2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
