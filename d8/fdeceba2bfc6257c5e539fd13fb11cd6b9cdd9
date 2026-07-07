@@ -1,0 +1,51 @@
+config.example.yaml
+  s_55f7a841d7c10e::t_7c2ed47852b3fb 41-45
+internal/api/api_tokens_disabled_test.go
+  s_55f7a841d7c10e::t_97d0ff1b147ceb 1-128
+internal/api/handlers/apitokens_test.go
+  s_55f7a841d7c10e::t_00af871577a3c5 142
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_aa1f011720b6eb 117-125,134-140,201-202
+internal/api/middleware/apitoken_test.go
+  s_55f7a841d7c10e::t_099ea5e183f9fc 103,143,160,174,187,202,225,242,252-276
+internal/api/middleware/trust_split_test.go
+  s_55f7a841d7c10e::t_fa8cc912cb4a91 50-52,90,122
+internal/api/ratelimit_factory_test.go
+  s_55f7a841d7c10e::t_e10f0894c4e80e 1-91
+internal/api/server.go
+  s_55f7a841d7c10e::t_d46fe49aad5d66 50,153-158,441-447,744-747,803,805,816,911-920,978,989,998,1042,1718-1722,1932,1934-1941,1945-1952
+internal/api/testutil_test.go
+  s_55f7a841d7c10e::t_a0f07c934f4193 110-111,113,176
+internal/govlocal/store.go
+  s_55f7a841d7c10e::t_f7b89503fab8a8 30-36
+pkg/clawvisor/bootstrap.go
+  s_55f7a841d7c10e::t_38c61620ff11d0 13,28-39
+pkg/clawvisor/bootstrap_test.go
+  s_55f7a841d7c10e::t_06fdf466fadea7 12,157-196
+pkg/clawvisor/defaults.go
+  s_55f7a841d7c10e::t_e673376573be45 149-152,763-767
+pkg/clawvisor/defaults_test.go
+  s_55f7a841d7c10e::t_450231366a5d02 101-126
+pkg/clawvisor/options.go
+  s_55f7a841d7c10e::t_d96945417c7dc4 293-298
+pkg/clawvisor/run.go
+  s_55f7a841d7c10e::t_48a145d12fbc27 159,321,339,405-407
+pkg/config/config.go
+  s_55f7a841d7c10e::t_4c1a8bef7e9818 258-267,799-801
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d8fdeceba2bfc6257c5e539fd13fb11cd6b9cdd9",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
