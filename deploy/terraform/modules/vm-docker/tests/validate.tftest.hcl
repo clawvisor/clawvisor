@@ -133,6 +133,17 @@ run "rejects_reference_allowlist_whitespace_entry" {
   expect_failures = [var.reference_allowlist]
 }
 
+run "rejects_reference_allowlist_comma_entry" {
+  command = plan
+
+  variables {
+    image               = "ghcr.io/clawvisor/clawvisor:v1.4.2"
+    reference_allowlist = ["arn:aws:secretsmanager:us-east-1:123456789012:secret:ok/,"]
+  }
+
+  expect_failures = [var.reference_allowlist]
+}
+
 run "accepts_reference_allowlist_clean_entries" {
   command = plan
 
