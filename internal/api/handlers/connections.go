@@ -503,7 +503,14 @@ func (h *ConnectionsHandler) EnrollWithInvite(w http.ResponseWriter, r *http.Req
 	// Reuse an existing account (idempotent re-run) rather than creating a
 	// second one; creating a fresh user is what consumes a seat.
 	owner, getErr := h.st.GetUserByEmail(r.Context(), email)
-	createdNew := getErr != nil
+	if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
+		// A real lookup failure — do NOT fall through to create, or a transient
+		// backend error would mask the failure and could duplicate an existing
+		// account. Only genuine absence (ErrNotFound) means "create new".
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not look up account")
+		return
+	}
+	createdNew := errors.Is(getErr, store.ErrNotFound)
 	if createdNew {
 		if h.maxUsers > 0 {
 			count, cErr := h.st.CountUsers(r.Context())
