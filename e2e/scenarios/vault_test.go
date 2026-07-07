@@ -27,8 +27,8 @@ func TestVaultItemCRUD(t *testing.T) {
 		"id":    itemID,
 		"value": "ghp_secret_should_never_appear_in_responses",
 	}, &created)
-	if created.Status != "created" || itemID != itemID {
-		t.Fatalf("unexpected create response: %+v", created)
+	if created.Status != "created" || created.ID != itemID {
+		t.Fatalf("unexpected create response: %+v (want status=created id=%s)", created, itemID)
 	}
 
 	// 2. List — should include our item; value field absent or empty.

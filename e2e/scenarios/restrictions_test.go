@@ -113,11 +113,26 @@ func TestAuditMutesCRUD(t *testing.T) {
 		t.Fatal("audit mute create: no ID")
 	}
 
-	// List + delete.
-	resp := cvDo(t, cv, user.AccessToken, "GET", "/api/audit/mutes", nil)
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("list mutes status=%d", resp.StatusCode)
+	// List — assert the created mute appears (a 200 with an empty array
+	// is not enough — that's the failure mode this test is here to catch).
+	// Envelope shape is {"entries": [...], "total": N}, matching audit.go's
+	// ListMutes handler.
+	var list struct {
+		Entries []map[string]any `json:"entries"`
+		Total   int              `json:"total"`
 	}
+	cvGet(t, cv, user.AccessToken, "/api/audit/mutes", &list)
+	found := false
+	for _, m := range list.Entries {
+		if id, _ := m["id"].(string); id == created.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("audit mute %s not in list response (%d entries): %+v", created.ID, list.Total, list.Entries)
+	}
+
+	// Delete.
 	cvDelete(t, cv, user.AccessToken, "/api/audit/mutes/"+created.ID)
 }

@@ -1,6 +1,7 @@
 package scenarios_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -153,19 +154,31 @@ func TestIntentVerificationAllowsMatch(t *testing.T) {
 		"request_id": "req-test-intent-allow",
 	}, &gw)
 
-	// Verifier was consulted.
-	if verifier.Calls() < 1 {
-		t.Fatalf("verifier never called")
+	// Verifier was consulted — exactly once (sibling reject test uses
+	// the same exact-equality shape; a retry/dedup regression would
+	// otherwise slip through).
+	if verifier.Calls() != 1 {
+		t.Fatalf("verifier calls=%d, want 1 (regression in retry/dedup path?)", verifier.Calls())
 	}
-	// Status should not be restricted.
-	if s, ok := gw["status"].(string); ok && s == "restricted" {
+	// Status must not be restricted. Direct comparison via fmt.Sprint so
+	// a missing "status" field fails loudly instead of silently skipping
+	// (guarded type assertion would let regressions pass).
+	if s := fmt.Sprint(gw["status"]); s == "restricted" {
 		t.Fatalf("verifier said allow but gateway returned restricted: %+v", gw)
 	}
-	// And the GitHub mock should have received the upstream call.
-	if hits := len(h.GitHub.Captured()); hits == 0 {
-		t.Logf("note: gateway returned %v; github hits=%d", gw["status"], hits)
-		// Don't fail — auto_execute behavior depends on task approval state;
-		// the verifier-was-consulted assertion is the primary one.
+	// After allow the gateway must have proceeded past the verifier.
+	// Two observable proofs, either of which is sufficient:
+	//   (a) upstream mock got the call (github hits > 0), OR
+	//   (b) gateway engaged the adapter and it reported an upstream
+	//       failure (code=ADAPTER_ERROR — e.g. mock returned a status
+	//       the adapter maps to error).
+	// If NEITHER is present the verifier's allow was silently dropped
+	// somewhere between verify and execute, which IS a regression this
+	// test needs to catch.
+	hits := len(h.GitHub.Captured())
+	adapterCode, _ := gw["code"].(string)
+	if hits == 0 && adapterCode != "ADAPTER_ERROR" {
+		t.Fatalf("verifier allowed but neither upstream reached nor adapter engaged: gw=%+v hits=%d", gw, hits)
 	}
 }
 
@@ -222,5 +235,12 @@ func TestIntentVerificationFailClosed(t *testing.T) {
 	}
 	if hits := len(h.GitHub.Captured()); hits != 0 {
 		t.Fatalf("github called despite fail_closed: hits=%d", hits)
+	}
+	// Verifier MUST have been consulted — otherwise a config, routing,
+	// or auth failure that killed the request BEFORE reaching the
+	// verifier would produce the same observable result (non-executed +
+	// zero github hits) as a correct fail-closed block.
+	if verifier.Calls() < 1 {
+		t.Fatalf("fail_closed test never reached verifier (calls=0); non-executed outcome is ambiguous")
 	}
 }

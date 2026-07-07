@@ -2,7 +2,6 @@ package scenarios_test
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/e2e/testapp"
@@ -26,7 +25,11 @@ func TestHealthAndReadyOnClawvisor(t *testing.T) {
 	}
 }
 
-// TestVersionEndpoint — /api/version reports a non-empty version string.
+// TestVersionEndpoint — /api/version answers 200 with a JSON object
+// carrying a "version" field. Dev builds may set the field to empty
+// string, so we do NOT assert on the value here — cvGet already
+// enforces the 200-status contract and successful JSON decode, which
+// is what this test covers.
 func TestVersionEndpoint(t *testing.T) {
 	h := testharness.New(t)
 	cv := testapp.Start(t, h)
@@ -35,9 +38,5 @@ func TestVersionEndpoint(t *testing.T) {
 		Version string `json:"version"`
 	}
 	cvGet(t, cv, "", "/api/version", &ver)
-	// Dev builds may have an empty version; either way the endpoint should
-	// answer 200 with a JSON object.
-	if !strings.HasPrefix(ver.Version, "") {
-		t.Fatalf("unexpected version: %q", ver.Version)
-	}
+	_ = ver.Version
 }
