@@ -526,6 +526,33 @@ func (h *ConnectionsHandler) EnrollWithInvite(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create account")
 			return
 		}
+	} else if owner.Role != store.RoleMember {
+		// Invite enrollment is a member-only onboarding path (rule 1: the token
+		// rode an unauthenticated channel, so it must never touch admin
+		// privilege). Reusing a pre-existing non-member account would either
+		// silently attach an agent under an admin or force a demotion — and
+		// role changes are a deliberate admin act (PUT /api/users/{id}/role),
+		// never a side effect of a bearer-token claim. Refuse instead, so the
+		// "enrollment only ever produces a member" invariant holds on the reuse
+		// path too, not just on create.
+		writeError(w, http.StatusConflict, "INVITE_ACCOUNT_NOT_MEMBER",
+			"an account with this email already exists and is not a member; enroll cannot claim it")
+		return
+	}
+
+	// Email-possession proof inline (rule 2 carve-out — magic-link mode only,
+	// which is what enrollEnabled gates on). Do this BEFORE burning the invite:
+	// verification is idempotent, so a failure here must not consume the
+	// single-use token and strand a claimed-but-unverified account that can
+	// never retry with the same invite.
+	if !owner.Verified() {
+		if err := h.st.MarkUserVerified(r.Context(), owner.ID); err != nil {
+			if createdNew {
+				_ = h.st.DeleteUser(r.Context(), owner.ID)
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not confirm account")
+			return
+		}
 	}
 
 	// Burn the invite (single-use). On a lost race another claim already took
@@ -537,15 +564,6 @@ func (h *ConnectionsHandler) EnrollWithInvite(w http.ResponseWriter, r *http.Req
 		}
 		writeError(w, http.StatusConflict, "INVITE_ALREADY_USED", "invite has already been claimed")
 		return
-	}
-
-	// Email-possession proof inline (rule 2 carve-out — magic-link mode only,
-	// which is what enrollEnabled gates on).
-	if !owner.Verified() {
-		if err := h.st.MarkUserVerified(r.Context(), owner.ID); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not confirm account")
-			return
-		}
 	}
 
 	// Register the per-user agent and auto-approve it. Reuse the same

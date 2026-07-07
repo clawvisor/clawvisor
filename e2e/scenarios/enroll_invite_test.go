@@ -192,6 +192,56 @@ func TestEnrollViaInvite_MemberOnlyDowngrade(t *testing.T) {
 	}
 }
 
+// TestEnrollViaInvite_ExistingNonMemberRejected — the reuse path (a still-valid
+// invite pinned to an email that already has an account) must refuse to claim a
+// non-member account. Enrollment is a member-only onboarding path: it must
+// neither silently attach an agent under an admin nor silently demote that
+// admin (role changes are a deliberate admin act, never a bearer-token side
+// effect). Rule 1's "only ever produces a member" invariant holds on reuse too.
+func TestEnrollViaInvite_ExistingNonMemberRejected(t *testing.T) {
+	h := testharness.New(t)
+	cv := testapp.Start(t, h)
+	admin := cv.LoginAsLocalUser(t)
+
+	const email = "boss@example.com"
+
+	// Materialize a member account, then promote it to admin — this is the only
+	// legitimate way to admin: a deliberate PUT /role by an existing admin.
+	first := enroll(t, cv, mintInvite(t, cv, admin.AccessToken, email, "member"), "boss-laptop-1")
+	if first.UserID == "" {
+		t.Fatalf("first enroll returned no user: %+v", first)
+	}
+	cvPut(t, cv, admin.AccessToken, "/api/users/"+first.UserID+"/role",
+		map[string]any{"role": "admin"}, nil)
+
+	// A fresh invite for the same (now-admin) email, claimed over the enrollment
+	// channel, must be refused — not reused, not demoted.
+	invite2 := mintInvite(t, cv, admin.AccessToken, email, "member")
+	resp := cvDo(t, cv, "", "POST", "/api/agents/enroll",
+		map[string]any{"invite_token": invite2, "name": "boss-laptop-2"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("enroll onto existing admin = %d, want 409", resp.StatusCode)
+	}
+	if !bodyHasCodeStr(readBodyStr(resp), "INVITE_ACCOUNT_NOT_MEMBER") {
+		t.Fatal("enroll onto existing admin should return INVITE_ACCOUNT_NOT_MEMBER")
+	}
+
+	// The account keeps its admin role — the refused claim did not demote it.
+	var users struct {
+		Users []struct {
+			ID   string `json:"id"`
+			Role string `json:"role"`
+		} `json:"users"`
+	}
+	cvGet(t, cv, admin.AccessToken, "/api/users", &users)
+	for _, u := range users.Users {
+		if u.ID == first.UserID && u.Role != "admin" {
+			t.Fatalf("account role = %q after refused enroll, want admin (no demotion)", u.Role)
+		}
+	}
+}
+
 // TestEnrollViaInvite_InvalidInviteRejected — a bogus / unknown invite token is
 // rejected, and no agent or account is created.
 func TestEnrollViaInvite_InvalidInviteRejected(t *testing.T) {
