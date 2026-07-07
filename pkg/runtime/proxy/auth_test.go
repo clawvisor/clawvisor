@@ -183,7 +183,7 @@ func TestAuthenticatorPersistsAndComparesLLMRouteOnReuse(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "proxy-auth-llmroute@test.example", "hash")
+	user, err := st.CreateUser(ctx, "proxy-auth-llmroute@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
