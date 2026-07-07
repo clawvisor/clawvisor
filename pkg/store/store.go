@@ -23,6 +23,11 @@ var ErrNotFound = errors.New("store: record not found")
 // ErrConflict is returned when a uniqueness constraint is violated.
 var ErrConflict = errors.New("store: record already exists")
 
+// ErrInviteUsed is returned by ClaimInvitedUser when the invite was already
+// claimed by a concurrent registration. Distinct from ErrConflict (which means
+// the email is taken) so the caller can map each case to the right HTTP error.
+var ErrInviteUsed = errors.New("store: invite already used")
+
 // ErrAmbiguous is returned by request-id-only lookups (GetPendingApproval,
 // GetApprovalRecordByRequestID) when more than one row matches under the
 // symmetric (user_id, request_id, COALESCE(task_id,”)) dedup scope.
@@ -44,6 +49,12 @@ type Store interface {
 	// NULL) for the invite-claim path — it cannot authenticate or mint an
 	// agent token until a magic-link confirm sets verified_at.
 	CreateInvitedUser(ctx context.Context, email, passwordHash, role string) (*User, error)
+	// ClaimInvitedUser atomically creates a pending_verification account and
+	// burns the invite in a single transaction. If the invite was already
+	// claimed by a concurrent registration the whole operation rolls back (no
+	// orphaned user row) and returns ErrInviteUsed; a duplicate email returns
+	// ErrConflict.
+	ClaimInvitedUser(ctx context.Context, inviteID, email, passwordHash, role string) (*User, error)
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	GetUserByID(ctx context.Context, id string) (*User, error)
 	UpdateUserPassword(ctx context.Context, userID, newPasswordHash string) error
