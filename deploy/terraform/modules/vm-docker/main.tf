@@ -9,6 +9,12 @@ locals {
   # agent_ingress_cidrs. Caddy path-splits the two zones (see Caddyfile).
   admin_port = 8443
 
+  # The provider/management endpoint. The management API (/api/*) is served
+  # ONLY on the admin port (Caddyfile routes :443 to /v1/*, /skill/install/*,
+  # /health, /ready); server_url (:443) is the agent endpoint. Single source
+  # so the admin_url output and provider_block cannot drift.
+  admin_url = "https://${var.public_fqdn}:${local.admin_port}"
+
   db_name = "clawvisor"
   db_user = "clawvisor"
 
@@ -18,6 +24,12 @@ locals {
   app_env = merge(
     { AUTH_MODE = "password" },
     var.max_users > 0 ? { MAX_USERS = tostring(var.max_users) } : {},
+    # vault.reference_allowlist (spec 10 confused-deputy control), carried as
+    # the comma-separated VAULT_REFERENCE_ALLOWLIST env the server reads
+    # (pkg/config/config.go). An EMPTY list omits the env entirely so the
+    # server fails closed (reference creation disabled) — matching config.go,
+    # which only applies the override when the env value is non-empty.
+    length(var.reference_allowlist) > 0 ? { VAULT_REFERENCE_ALLOWLIST = join(",", var.reference_allowlist) } : {},
     var.extra_env,
   )
 
