@@ -160,8 +160,12 @@ telemetry:
 #             inspects/attributes/audits/meters cost but records every
 #             hold/deny verdict as an observation instead of enforcing it).
 #   govern  — observe + control: proxy-lite enabled, upstream auth = vault
-#             (inject the stored key; client-presented API keys are stripped),
-#             enforcement = enforce.
+#             (inject the stored key; client-presented API *keys* are stripped),
+#             enforcement = enforce. Subscription (OAuth) seats are the
+#             exception: by default they are governed on their OWN credential
+#             (forwarded upstream, billing unchanged) while still enforced —
+#             see govern_subscription_seats below. Set that false to instead
+#             refuse subscription seats (strict "vaulted keys only").
 #   contain — govern + network-layer containment of the agent process via the
 #             runtime proxy (HTTP(S)_PROXY injection, TLS MITM, egress policy).
 #             LLM traffic still flows through proxy-lite unchanged — Contain is
