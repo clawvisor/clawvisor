@@ -22,7 +22,7 @@ type vaultReferenceModel struct {
 	ID        types.String `tfsdk:"id"`
 	ServiceID types.String `tfsdk:"service_id"`
 	Backend   types.String `tfsdk:"backend"`
-	RefID     types.String `tfsdk:"ref_id"`
+	Reference types.String `tfsdk:"reference"`
 	JSONKey   types.String `tfsdk:"json_key"`
 	Verify    types.Bool   `tfsdk:"verify"`
 }
@@ -69,7 +69,7 @@ func (r *vaultReferenceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Required:            true,
 				MarkdownDescription: "The external secret backend: `aws-sm`, `gcp-sm`, or `hashicorp` (hashicorp is reserved and not yet implemented).",
 			},
-			"ref_id": schema.StringAttribute{
+			"reference": schema.StringAttribute{
 				Required: true,
 				MarkdownDescription: "The backend-specific locator: an ARN (aws-sm), a full resource name " +
 					"`projects/{p}/secrets/{s}` (gcp-sm; append `/versions/N` to pin a version, else `latest`), " +
@@ -94,7 +94,7 @@ func (r *vaultReferenceResource) Schema(_ context.Context, _ resource.SchemaRequ
 func (m vaultReferenceModel) input() client.VaultReferenceInput {
 	return client.VaultReferenceInput{
 		Backend: m.Backend.ValueString(),
-		ID:      m.RefID.ValueString(),
+		ID:      m.Reference.ValueString(),
 		JSONKey: m.JSONKey.ValueString(),
 	}
 }
@@ -120,7 +120,7 @@ func (r *vaultReferenceResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 	// Existence check only. The server exposes reference metadata but never the
-	// envelope details or the resolved value, so the configured backend/ref_id/
+	// envelope details or the resolved value, so the configured backend/reference/
 	// json_key stay authoritative and Read must not overwrite them.
 	if _, err := r.pd.client.GetVaultEntry(ctx, state.ID.ValueString()); err != nil {
 		if client.NotFound(err) {
@@ -139,7 +139,7 @@ func (r *vaultReferenceResource) Update(ctx context.Context, req resource.Update
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// backend / ref_id / json_key change in place; service_id is RequiresReplace.
+	// backend / reference / json_key change in place; service_id is RequiresReplace.
 	if err := r.pd.client.UpdateVaultReference(ctx, plan.ServiceID.ValueString(), plan.input(), plan.Verify.ValueBool()); err != nil {
 		diagFromError("Updating clawvisor_vault_reference", err, &resp.Diagnostics)
 		return
@@ -163,7 +163,7 @@ func (r *vaultReferenceResource) Delete(ctx context.Context, req resource.Delete
 }
 
 func (r *vaultReferenceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Import by vault item id; sets id and service_id. backend/ref_id/json_key
+	// Import by vault item id; sets id and service_id. backend/reference/json_key
 	// must be supplied by config afterward (the server does not expose the
 	// stored envelope through the read side).
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, pathRoot("id"), req.ID)...)
