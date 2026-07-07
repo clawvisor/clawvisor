@@ -16,6 +16,8 @@ An employee identity, enrolled via a one-shot invite. Create mints a pinned invi
 # One clawvisor_user per employee, keyed by email. Each exposes a computed,
 # sensitive invite_url — deliver it over a secret manager / 1Password share,
 # never Slack or a plain terraform output (it is a one-shot bearer credential).
+# Destroying a user offboards them (invalidates their cvis_ tokens immediately;
+# audit/cost history is retained). Taint to reissue a fresh invite_url.
 variable "employees" {
   type = map(string) # email => role ("admin" | "member")
   default = {
@@ -41,9 +43,9 @@ resource "clawvisor_user" "employee" {
 
 ### Read-Only
 
+- `expires_at` (String) RFC3339 expiry of the invite (default < 48h). Unavailable on import (null).
 - `id` (String) Server-assigned id. While the invite is pending this is the invite id; once the employee claims it, it becomes the user id.
 - `invite_url` (String, Sensitive) The one-shot enrollment URL (`<base>/join?token=cvinv_...`), returned only at create/reissue and stored in state; treat state as sensitive. Unavailable on import (null).
-- `expires_at` (String) RFC3339 expiry of the invite (default < 48h). Unavailable on import (null).
 
 ## Import
 
