@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -17,6 +18,18 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
+
+// faultyInviteStore fronts a real store but forces GetUserInviteByHash to
+// return a transient (non-ErrNotFound) error, to prove resolveInvite
+// surfaces a DB blip as 500 rather than misreporting INVITE_INVALID.
+type faultyInviteStore struct {
+	store.Store
+	err error
+}
+
+func (f faultyInviteStore) GetUserInviteByHash(context.Context, string) (*store.UserInvite, error) {
+	return nil, f.err
+}
 
 func flatTeamStore(t *testing.T) store.Store {
 	t.Helper()
@@ -125,9 +138,12 @@ func TestInviteFlow(t *testing.T) {
 		t.Fatal("invitee must start pending_verification")
 	}
 
-	// Single-use: re-claim rejected.
-	if again := registerJSON(t, auth, `{"email":"invitee@x","password":"hunter2hunter2","invite_token":"`+mint.InviteToken+`"}`); again.Code != http.StatusConflict {
-		t.Fatalf("re-claim: %d want 409", again.Code)
+	// Single-use: re-claim rejected as a burned invite. Use a FRESH email so
+	// the rejection can only come from the invite being spent (a same-email
+	// retry would trip EMAIL_TAKEN on the user INSERT and never exercise the
+	// single-use burn), and assert the specific code to isolate that path.
+	if again := registerJSON(t, auth, `{"email":"invitee2@x","password":"hunter2hunter2","invite_token":"`+mint.InviteToken+`"}`); again.Code != http.StatusConflict || !bodyHasCode(again.Body.String(), "INVITE_ALREADY_USED") {
+		t.Fatalf("re-claim: %d %s want 409 INVITE_ALREADY_USED", again.Code, again.Body.String())
 	}
 
 	// Expired invite rejected.
@@ -141,6 +157,18 @@ func TestInviteFlow(t *testing.T) {
 	}
 	if rec := registerJSON(t, auth, `{"email":"late@x","password":"hunter2hunter2","invite_token":"cvinv_deadbeef"}`); rec.Code != http.StatusForbidden || !bodyHasCode(rec.Body.String(), "INVITE_EXPIRED") {
 		t.Fatalf("expired claim: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInviteFlow_TransientLookupErrorIs500(t *testing.T) {
+	st := faultyInviteStore{Store: flatTeamStore(t), err: errors.New("db unavailable")}
+	h := flatTeamAuth(t, st, config.AuthConfig{})
+
+	// A DB blip during invite resolution must surface as 500, not a 403 that
+	// tells a valid registrant their (possibly fine) invite is invalid.
+	rec := registerJSON(t, h, `{"email":"reg@x","password":"hunter2hunter2","invite_token":"cvinv_whatever"}`)
+	if rec.Code != http.StatusInternalServerError || !bodyHasCode(rec.Body.String(), "INTERNAL_ERROR") {
+		t.Fatalf("transient invite lookup: %d %s want 500 INTERNAL_ERROR", rec.Code, rec.Body.String())
 	}
 }
 

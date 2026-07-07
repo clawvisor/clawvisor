@@ -188,7 +188,12 @@ var (
 func (h *AuthHandler) resolveInvite(r *http.Request, token, email string) (*store.UserInvite, error) {
 	inv, err := h.st.GetUserInviteByHash(r.Context(), auth.HashToken(strings.TrimSpace(token)))
 	if err != nil {
-		return nil, errInviteNotFound
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, errInviteNotFound
+		}
+		// A transient DB error must surface as 500, not a 403 that tells a
+		// valid registrant their invite is invalid.
+		return nil, err
 	}
 	if inv.UsedAt != nil {
 		return nil, errInviteUsed
@@ -210,8 +215,12 @@ func writeInviteError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "INVITE_ALREADY_USED", "invite has already been claimed")
 	case errors.Is(err, errInviteEmail):
 		writeError(w, http.StatusForbidden, "INVITE_EMAIL_MISMATCH", "invite is bound to a different email")
-	default:
+	case errors.Is(err, errInviteNotFound):
 		writeError(w, http.StatusForbidden, "INVITE_INVALID", "invite is not valid")
+	default:
+		// A non-sentinel error is an unexpected store failure, not a bad
+		// invite: surface it as 500 rather than misreporting INVITE_INVALID.
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not resolve invite")
 	}
 }
 
