@@ -1,0 +1,71 @@
+internal/api/middleware/apitoken_test.go
+  s_55f7a841d7c10e::t_3df8c567d0e88a 252-276
+  s_55f7a841d7c10e::t_bc88899cf8ef21 103,143,160,174,187,202,225,242
+pkg/clawvisor/defaults_test.go
+  s_55f7a841d7c10e::t_1f90cf6419f72b 101-126
+pkg/clawvisor/bootstrap.go
+  s_55f7a841d7c10e::t_33c546ad739748 13
+  s_55f7a841d7c10e::t_4414f4b152a994 28-39
+config.example.yaml
+  s_55f7a841d7c10e::t_8443515d2c95c5 41-45
+pkg/clawvisor/bootstrap_test.go
+  s_55f7a841d7c10e::t_28b9f651567e19 12
+  s_55f7a841d7c10e::t_170e398db16570 157-196
+internal/api/testutil_test.go
+  s_55f7a841d7c10e::t_40bddda4369e82 110-111,113
+  s_55f7a841d7c10e::t_652213d006a329 176
+internal/api/handlers/apitokens_test.go
+  s_55f7a841d7c10e::t_539c5c5edca526 142
+pkg/config/config.go
+  s_55f7a841d7c10e::t_ad374fb0e066e4 258-267
+  s_55f7a841d7c10e::t_645e89e4bac11d 799-801
+internal/api/server.go
+  s_55f7a841d7c10e::t_5409b5bff33e41 1704-1708
+  s_55f7a841d7c10e::t_4546292d9233ed 897-906
+  s_55f7a841d7c10e::t_d590d7d82aa5ef 802
+  s_55f7a841d7c10e::t_b1229564fe5e1f 789,791
+pkg/clawvisor/defaults.go
+  s_55f7a841d7c10e::t_d5871d45e8a87c 149-151
+  s_55f7a841d7c10e::t_347f7d21d35831 152
+  s_55f7a841d7c10e::t_43f7381da99024 763-767
+internal/api/api_tokens_disabled_test.go
+  s_55f7a841d7c10e::t_c5942d8fc33c41 1-65,85-91,102,106-128
+  s_55f7a841d7c10e::t_8074e04d221a87 66-84
+  s_55f7a841d7c10e::t_552a5f38f1f4e9 92-101,103-105
+pkg/clawvisor/options.go
+  s_55f7a841d7c10e::t_560278ab0c277a 293-298
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_c87f8438f34abc 117-125,134-138
+  s_55f7a841d7c10e::t_efeaecb27ca2e4 201-202
+  s_2272b9604c80ae::t_1f231378450e8f 139-140
+pkg/clawvisor/run.go
+  s_55f7a841d7c10e::t_af4768eb7b950e 339
+  s_55f7a841d7c10e::t_aa7dd03dfce170 321
+  s_55f7a841d7c10e::t_d8f3b65dc37ae9 159
+internal/api/middleware/trust_split_test.go
+  s_55f7a841d7c10e::t_9071a2118330d7 50-52,90,122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "37c39fec9ac9833f1d2946b0ce63e087982deb29",
+  "prompts": {},
+  "sessions": {
+    "s_2272b9604c80ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01bd258c-cdde-4b3f-afd2-10b73065bcd5",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
