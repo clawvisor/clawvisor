@@ -99,13 +99,13 @@ variable "reference_allowlist" {
   description = "Operator allowlist of permitted vault-reference id prefixes (ARN / resource-name / path), wired to server config vault.reference_allowlist via the VAULT_REFERENCE_ALLOWLIST env (spec 10 confused-deputy control). A reference whose id does not begin with a listed prefix is rejected at create time. EMPTY (the default) disables reference creation entirely — fail-closed; the env is omitted so the server keeps an empty allowlist."
 
   # Entries are joined with commas into VAULT_REFERENCE_ALLOWLIST, so an empty
-  # string or embedded whitespace would silently create a bogus (or
-  # everything-matching) prefix. Reject both loudly at plan time.
+  # string, embedded whitespace, or an embedded comma would silently create a
+  # bogus (or everything-matching) prefix. Reject all loudly at plan time.
   validation {
     condition = alltrue([
-      for e in var.reference_allowlist : length(e) > 0 && !can(regex("\\s", e))
+      for e in var.reference_allowlist : length(e) > 0 && !can(regex("[,\\s]", e))
     ])
-    error_message = "reference_allowlist entries must be non-empty and contain no whitespace (they are comma-joined into VAULT_REFERENCE_ALLOWLIST as reference-id prefixes)."
+    error_message = "reference_allowlist entries must be non-empty and contain no commas or whitespace (they are comma-joined into VAULT_REFERENCE_ALLOWLIST as reference-id prefixes)."
   }
 }
 
