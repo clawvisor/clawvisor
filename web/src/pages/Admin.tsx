@@ -23,9 +23,18 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
+// ErrorBanner renders a query/mutation failure so a section shows a real error
+// instead of a misleading empty state (or, for the cost rollup, an eternal
+// spinner). Mirrors the inline text-danger convention used elsewhere.
+function ErrorBanner({ error }: { error: unknown }) {
+  const message = error instanceof Error ? error.message : 'Something went wrong.'
+  return <div className="p-4 text-danger text-sm">Failed to load: {message}</div>
+}
+
 function FleetAgents() {
-  const { data, isLoading } = useQuery({ queryKey: ['admin', 'agents'], queryFn: () => api.admin.agents() })
+  const { data, isLoading, isError, error } = useQuery({ queryKey: ['admin', 'agents'], queryFn: () => api.admin.agents() })
   if (isLoading) return <div className="p-4 text-text-secondary text-sm">Loading…</div>
+  if (isError) return <ErrorBanner error={error} />
   const agents = data?.agents ?? []
   if (agents.length === 0) return <div className="p-4 text-text-secondary text-sm">No agents.</div>
   return (
@@ -52,18 +61,23 @@ function FleetAgents() {
 
 function ApprovalQueue() {
   const qc = useQueryClient()
-  const { data, isLoading } = useQuery({ queryKey: ['admin', 'approvals'], queryFn: () => api.admin.approvals() })
+  const [actionError, setActionError] = useState<string | null>(null)
+  const { data, isLoading, isError, error } = useQuery({ queryKey: ['admin', 'approvals'], queryFn: () => api.admin.approvals() })
   const resolve = useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: 'approve' | 'deny' }) =>
       api.admin.resolveApproval(id, decision),
+    onError: (err: Error) => setActionError(err.message),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'approvals'] })
     },
   })
   if (isLoading) return <div className="p-4 text-text-secondary text-sm">Loading…</div>
+  if (isError) return <ErrorBanner error={error} />
   const entries = data?.entries ?? []
   if (entries.length === 0) return <div className="p-4 text-text-secondary text-sm">No pending holds.</div>
   return (
+    <>
+    {actionError && <div className="px-4 pt-3 text-xs text-danger">{actionError}</div>}
     <table className="w-full text-sm">
       <thead className="text-text-secondary text-left">
         <tr>
@@ -85,14 +99,14 @@ function ApprovalQueue() {
               <button
                 className="px-2 py-1 rounded bg-success text-surface-0 text-xs mr-2 disabled:opacity-50"
                 disabled={resolve.isPending}
-                onClick={() => resolve.mutate({ id: e.id, decision: 'approve' })}
+                onClick={() => { setActionError(null); resolve.mutate({ id: e.id, decision: 'approve' }) }}
               >
                 Approve
               </button>
               <button
                 className="px-2 py-1 rounded bg-danger text-surface-0 text-xs disabled:opacity-50"
                 disabled={resolve.isPending}
-                onClick={() => resolve.mutate({ id: e.id, decision: 'deny' })}
+                onClick={() => { setActionError(null); resolve.mutate({ id: e.id, decision: 'deny' }) }}
               >
                 Deny
               </button>
@@ -101,12 +115,13 @@ function ApprovalQueue() {
         ))}
       </tbody>
     </table>
+    </>
   )
 }
 
 function CostRollup() {
   const [window, setWindow] = useState<'daily' | 'monthly'>('daily')
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['admin', 'costs', window],
     queryFn: () => api.admin.costs(window),
   })
@@ -125,7 +140,9 @@ function CostRollup() {
           </button>
         ))}
       </div>
-      {isLoading || !data ? (
+      {isError ? (
+        <ErrorBanner error={error} />
+      ) : isLoading || !data ? (
         <div className="text-text-secondary text-sm">Loading…</div>
       ) : (
         <>
@@ -142,7 +159,7 @@ function CostRollup() {
             </thead>
             <tbody>
               {data.by_user.map((u) => (
-                <tr key={u.user_id} className="border-t border-border-default">
+                <tr key={`${u.user_id}:${u.actor_email}`} className="border-t border-border-default">
                   <td className="px-2 py-1 text-text-secondary">{u.owner_label}</td>
                   <td className="px-2 py-1 text-right text-text-secondary">{u.request_count}</td>
                   <td className="px-2 py-1 text-right text-text-primary">{usd(u.cost_micros)}</td>
@@ -157,11 +174,12 @@ function CostRollup() {
 }
 
 function CrossUserAudit() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['admin', 'audit'],
     queryFn: () => api.admin.audit({ limit: 25 }),
   })
   if (isLoading) return <div className="p-4 text-text-secondary text-sm">Loading…</div>
+  if (isError) return <ErrorBanner error={error} />
   const entries = data?.entries ?? []
   if (entries.length === 0) return <div className="p-4 text-text-secondary text-sm">No audit events.</div>
   return (
