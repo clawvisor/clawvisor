@@ -156,9 +156,17 @@ func (s *Store) CreateAPITokenAndBurnBootstrap(ctx context.Context, t *store.API
 		}
 		return err
 	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE api_tokens SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL`, bootstrapID); err != nil {
+	tag, err := tx.Exec(ctx,
+		`UPDATE api_tokens SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL`, bootstrapID)
+	if err != nil {
 		return err
+	}
+	// The burn must revoke exactly one live row. Zero rows means the
+	// bootstrap token was already revoked (a concurrent first-use won the
+	// race), so roll back this whole mint — the bootstrap credential is
+	// strictly single-use even under concurrency.
+	if tag.RowsAffected() == 0 {
+		return store.ErrConflict
 	}
 	return tx.Commit(ctx)
 }

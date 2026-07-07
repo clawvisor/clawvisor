@@ -175,6 +175,22 @@ func TestAPITokenStore_CreateAndBurnBootstrap(t *testing.T) {
 	if gotBoot2.RevokedAt != nil {
 		t.Fatal("bootstrap2 must stay live when the mint fails (transaction rolled back)")
 	}
+
+	// Re-using an already-burned bootstrap id must roll back (single-use even
+	// if a second first-use request slips past auth before the first commits).
+	second := &store.APIToken{
+		Name:        "second-from-burned-boot",
+		TokenHash:   "second-hash",
+		TokenPrefix: "cvat_SecondSeco",
+		Scope:       "instance-admin",
+		ExpiresAt:   &exp,
+	}
+	if err := st.CreateAPITokenAndBurnBootstrap(ctx, second, boot.ID); err != store.ErrConflict {
+		t.Fatalf("CreateAPITokenAndBurnBootstrap(already-burned) = %v, want ErrConflict", err)
+	}
+	if _, err := st.GetAPITokenByHash(ctx, "second-hash"); err != store.ErrNotFound {
+		t.Fatalf("token must not be minted from an already-burned bootstrap: %v", err)
+	}
 }
 
 // TestAPITokenStore_InstanceSeededAndExcludedFromCount verifies the
