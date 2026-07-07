@@ -66,7 +66,7 @@ func holdsCount(t *testing.T, reader sdkmetric.Reader, resolution string) int64 
 func seedPendingApproval(t *testing.T, st store.Store, dbName string) *store.PendingApproval {
 	t.Helper()
 	ctx := context.Background()
-	user, err := st.CreateUser(ctx, dbName+"@test.example", "hash")
+	user, err := st.CreateUser(ctx, dbName+"@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestExpireTimedOut_StrandedExecutorPreservesApprovedCanonical(t *testing.T)
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "stranded-canonical@test.example", "hash")
+	user, err := st.CreateUser(ctx, "stranded-canonical@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

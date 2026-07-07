@@ -496,6 +496,8 @@ Clawvisor exposes an MCP (Model Context Protocol) server at `/mcp` with OAuth 2.
 
 Proxy-lite runs inside the Clawvisor daemon and presents Anthropic/OpenAI-compatible LLM endpoints to command-line agents. It can observe model API calls, intercept tool-use, hold inline approvals, and attribute requests to a registered agent without requiring a CONNECT/TLS MITM proxy.
 
+**Fresh-install default: Observe.** The setup wizard and the per-harness install scripts now route agent LLM traffic through proxy-lite in the **Observe** posture by default (visibility, zero behavior change). Skill-gateway-only remains a first-class opt-out — choose it in the wizard, or pass `route=skill-only` to an install script. Existing installs are never changed: the compiled default of `proxy_lite.enabled` stays `false`, so a config that predates the flip keeps its behavior on upgrade.
+
 > [!WARNING]
 > **Proxy-lite is in active development.** Behavior, flags, and the API surface may change in any release while it remains pre-1.0. Treat it as preview-quality and pin to a specific Clawvisor version in production.
 
@@ -507,6 +509,39 @@ clawvisor-server agent run --agent my-agent -- claude
 ```
 
 For provider-specific wrappers and raw environment exports, see [docs/LITE_PROXY.md](docs/LITE_PROXY.md).
+
+### Postures
+
+Proxy-lite is configured through a coarse `posture` preset (in the config
+file only — there is no env override) plus two independent, individually
+overridable axes:
+
+| Posture | `upstream_auth` | `enforcement_mode` | Behavior |
+|---|---|---|---|
+| **observe** | `passthrough` | `observe` | Zero behavior change: forwards the agent's own provider credential, and records every hold/deny verdict as an observation instead of enforcing it. The pipeline still inspects, attributes, audits, and meters cost. |
+| **govern** | `vault` | `enforce` | Injects the stored provider key (client-presented API keys are stripped) and enforces holds/denials/policies. |
+| **contain** | — | — | Not yet available; fails startup until the runtime-proxy superset lands. |
+
+- **`upstream_auth`** (`vault` default \| `passthrough`; env
+  `CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH`). In `vault` posture the server injects
+  the vaulted key and **strips any client-presented API key** — `upstream_auth`
+  is a server-side decision, not a per-request client choice. `passthrough`
+  forwards the client's own OAuth/API credential unchanged.
+- **`enforcement_mode`** (`enforce` default \| `observe`; env
+  `CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE`). `observe` downgrades every enforcing
+  verdict (deny, hold, policy rewrite) to a recorded observation — the audit
+  view flags these as `observed`. Clawvisor's own agent-token auth is never
+  weakened by observe mode.
+
+**Subscription (OAuth) seats.** Observe carries a Claude subscription session
+transparently (the `Authorization: Bearer` OAuth token and `anthropic-beta`
+header are forwarded unchanged). Under **govern/vault**, a subscription bearer
+is **refused** with `SUBSCRIPTION_SEAT_NOT_GOVERNABLE` (HTTP 403) rather than
+silently converted from subscription billing to org-metered API billing.
+Provide an org provider API key for that agent, or set
+`proxy_lite.allow_subscription_billing_migration: true` to consent to the
+migration. That flag is **instance-wide** — enabling it migrates every
+subscription seat on the instance at once.
 
 ## Architecture
 

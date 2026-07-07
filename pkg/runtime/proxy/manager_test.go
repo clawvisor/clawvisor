@@ -10,8 +10,8 @@ import (
 
 	"log/slog"
 
-	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
 func TestManagerCreateRuntimeSession(t *testing.T) {
@@ -22,7 +22,7 @@ func TestManagerCreateRuntimeSession(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
-	if _, err := st.CreateUser(ctx, "user-1@test.example", "hash"); err != nil {
+	if _, err := st.CreateUser(ctx, "user-1@test.example", "hash", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	user, err := st.GetUserByEmail(ctx, "user-1@test.example")

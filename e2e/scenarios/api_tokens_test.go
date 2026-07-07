@@ -117,6 +117,74 @@ func TestAPIToken_AdminGateByScope(t *testing.T) {
 	}
 }
 
+// TestAPIToken_ConfigWriteScope: the mint accepts a config-write scope over
+// the API (spec 04's scope split is live), and the resulting token enforces
+// correctly — refused on an admin-gated route (INSUFFICIENT_SCOPE), accepted
+// on a config-write route. An unknown scope is still 400 INVALID_SCOPE.
+func TestAPIToken_ConfigWriteScope(t *testing.T) {
+	h := testharness.New(t)
+	cv := testapp.Start(t, h)
+	user := cv.LoginAsLocalUser(t)
+
+	// Mint a config-write token via the API (admin-gated mint).
+	_, cwTok := mintToken(t, cv, user.AccessToken, "ci-config", "config-write")
+
+	// Refused on an admin-gated route (user management is instance-admin).
+	resp := cvDo(t, cv, cwTok, "POST", "/api/users/invites",
+		map[string]any{"email": "x@example.com", "role": "member"})
+	body := readBodyStr(resp)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden || !bodyHasCodeStr(body, "INSUFFICIENT_SCOPE") {
+		t.Fatalf("config-write on admin-gated route = %d body=%q, want 403 INSUFFICIENT_SCOPE", resp.StatusCode, body)
+	}
+
+	// Accepted on a config-write route (agent create).
+	var created struct {
+		ID string `json:"id"`
+	}
+	cvPost(t, cv, cwTok, "/api/agents", map[string]any{"name": "cw-agent"}, &created)
+	if created.ID == "" {
+		t.Fatal("config-write token could not create an agent on a config-write route")
+	}
+
+	// An unknown scope is rejected at mint.
+	bad := cvDo(t, cv, user.AccessToken, "POST", "/api/tokens",
+		map[string]any{"name": "bad", "scope": "root"})
+	badBody := readBodyStr(bad)
+	bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest || !bodyHasCodeStr(badBody, "INVALID_SCOPE") {
+		t.Fatalf("invalid scope mint = %d body=%q, want 400 INVALID_SCOPE", bad.StatusCode, badBody)
+	}
+}
+
+// TestAPIToken_MintScopeSplit: spec 04 lands the trust split, so POST
+// /api/tokens must mint config-read and config-write tokens (not just
+// instance-admin) — otherwise the userOrTokenRead/userOrToken route gates
+// that already accept those scopes are inert. A bogus scope is still 400.
+func TestAPIToken_MintScopeSplit(t *testing.T) {
+	h := testharness.New(t)
+	cv := testapp.Start(t, h)
+	user := cv.LoginAsLocalUser(t)
+
+	for _, scope := range []string{"config-read", "config-write", "instance-admin"} {
+		var out struct {
+			Token string `json:"token"`
+			Scope string `json:"scope"`
+		}
+		cvPost(t, cv, user.AccessToken, "/api/tokens", map[string]any{"name": scope + "-tok", "scope": scope}, &out)
+		if out.Token == "" || out.Scope != scope {
+			t.Fatalf("mint scope=%q: token=%q returned scope=%q", scope, out.Token, out.Scope)
+		}
+	}
+
+	// An unknown scope is rejected with 400 INVALID_SCOPE.
+	resp := cvDo(t, cv, user.AccessToken, "POST", "/api/tokens", map[string]any{"name": "bad", "scope": "root"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !bodyHasCodeStr(readBodyStr(resp), "INVALID_SCOPE") {
+		t.Fatalf("bogus scope: status=%d want 400 INVALID_SCOPE", resp.StatusCode)
+	}
+}
+
 // TestAPIToken_Attribution: an agent created via an API token is owned by
 // `_instance`, not by the JWT user who minted the token. It is therefore
 // visible when listing under the token (which resolves to `_instance`) but

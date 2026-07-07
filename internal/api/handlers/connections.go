@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +61,23 @@ type ConnectionsHandler struct {
 	// Per-IP concurrent poll tracking.
 	ipPollsMu sync.Mutex
 	ipPolls   map[string]int
+
+	// enrollEnabled gates POST /api/agents/enroll (the installer invite path).
+	// Only true in magic-link mode, where "the claim IS the magic-link" so
+	// possession of the delivered invite URL is itself the email-possession
+	// proof (spec 04 invite security rule 2's carve-out). maxUsers mirrors the
+	// register-path seat cap (0 = unlimited).
+	enrollEnabled bool
+	maxUsers      int
+}
+
+// ConfigureInviteEnroll toggles the installer invite-enrollment endpoint and
+// sets the seat cap it enforces. Called once at wiring time from server.go:
+// enabled tracks magic-link mode (the only mode where the invite claim proves
+// email possession inline), maxUsers mirrors auth.max_users.
+func (h *ConnectionsHandler) ConfigureInviteEnroll(enabled bool, maxUsers int) {
+	h.enrollEnabled = enabled
+	h.maxUsers = maxUsers
 }
 
 type approvedToken struct {
@@ -408,6 +426,261 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		"poll_url":      "/api/agents/connect/" + req.ID + "/status",
 		"expires_at":    req.ExpiresAt,
 	})
+}
+
+// EnrollWithInvite handles POST /api/agents/enroll (unauthenticated).
+//
+// This is the installer's invite-delivery path (AGENT-GUIDE §2A). An
+// employee's install script reads a single-use cvinv_ invite off stdin/file
+// (never argv/env — see the shell templates) and POSTs it here in the request
+// BODY. The endpoint performs the whole enrollment atomically so the script
+// obtains a working per-user agent token in one round-trip:
+//
+//  1. Validate the invite via the same resolveInviteToken the register path
+//     uses — single-use, unexpired, email-bound (spec 04 invite security
+//     rules). No new validation, no relaxed invariant.
+//  2. Create (or reuse) the invited member account. Role is forced to member
+//     (rule 1: the token rode an unauthenticated channel, so it must never
+//     grant admin — promotion stays a deliberate admin act).
+//  3. Confirm email possession inline. This endpoint is only mounted in
+//     magic-link mode, where "the claim IS the magic-link" (rule 2's
+//     carve-out): possessing the delivered invite URL is the possession
+//     proof, so the account is marked verified here instead of stalling on a
+//     separate magic-link round-trip the script cannot complete.
+//  4. Register a per-user agent owned by the new member and auto-approve it —
+//     the invite claim is the authorization, exactly as a dashboard claim
+//     code auto-approves in RequestConnect. The cvis_ token is returned once.
+//
+// It never reads, injects, or clears a provider key — this path only registers
+// an agent, so a subscription-seat install carrying an invite still never
+// touches provider credentials.
+func (h *ConnectionsHandler) EnrollWithInvite(w http.ResponseWriter, r *http.Request) {
+	if !h.enrollEnabled {
+		writeError(w, http.StatusNotFound, "NOT_ENABLED",
+			"invite enrollment is not available on this server")
+		return
+	}
+
+	var body struct {
+		InviteToken    string                `json:"invite_token"`
+		Email          string                `json:"email"`
+		Name           string                `json:"name"`
+		Description    string                `json:"description"`
+		InstallContext *store.InstallContext `json:"install_context"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.InviteToken) == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invite_token is required")
+		return
+	}
+	if strings.TrimSpace(body.Name) == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "name is required")
+		return
+	}
+
+	invite, err := resolveInviteToken(r.Context(), h.st, body.InviteToken, body.Email)
+	if err != nil {
+		writeInviteError(w, err)
+		return
+	}
+
+	// The account needs an email. Prefer the invite's pinned email (the
+	// Terraform per-employee flow always pins one); fall back to a caller-
+	// supplied email for an any-email member invite. resolveInviteToken has
+	// already rejected a mismatch when both are present.
+	email := invite.Email
+	if email == "" {
+		email = strings.TrimSpace(body.Email)
+	}
+	if email == "" {
+		writeError(w, http.StatusBadRequest, "INVITE_EMAIL_REQUIRED",
+			"this invite is not pinned to an email; supply an email to enroll")
+		return
+	}
+
+	// Reuse an existing account (idempotent re-run) rather than creating a
+	// second one; creating a fresh user is what consumes a seat.
+	owner, getErr := h.st.GetUserByEmail(r.Context(), email)
+	if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
+		// A real lookup failure — do NOT fall through to create, or a transient
+		// backend error would mask the failure and could duplicate an existing
+		// account. Only genuine absence (ErrNotFound) means "create new".
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not look up account")
+		return
+	}
+	createdNew := errors.Is(getErr, store.ErrNotFound)
+	if createdNew {
+		if h.maxUsers > 0 {
+			count, cErr := h.st.CountUsers(r.Context())
+			if cErr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not check user count")
+				return
+			}
+			if count >= h.maxUsers {
+				writeError(w, http.StatusForbidden, "REGISTRATION_DISABLED", "maximum number of users reached")
+				return
+			}
+		}
+		hash, hErr := auth.HashPassword(randomEnrollPassword())
+		if hErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create account")
+			return
+		}
+		owner, err = h.st.CreateInvitedUser(r.Context(), email, hash, store.RoleMember)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create account")
+			return
+		}
+	} else if invite.Email == "" {
+		// The account already exists but this invite is NOT pinned to an email —
+		// the address came from the caller-supplied body, which proves nothing
+		// about who holds the invite. Reusing a pre-existing account here would
+		// let an unauthenticated caller mint an agent token under someone else's
+		// account simply by naming their email (rule 2: the token must be bound
+		// to possession). Only a pinned invite (invite.Email != "") authorizes
+		// claiming an existing account — the pin IS that binding. For an unpinned
+		// invite a pre-existing account is a conflict, mirroring the register
+		// path where CreateInvitedUser rejects the duplicate.
+		writeError(w, http.StatusConflict, "INVITE_ACCOUNT_EXISTS",
+			"an account with this email already exists; this invite is not pinned to it and cannot claim it")
+		return
+	} else if owner.Role != store.RoleMember {
+		// Invite enrollment is a member-only onboarding path (rule 1: the token
+		// rode an unauthenticated channel, so it must never touch admin
+		// privilege). Reusing a pre-existing non-member account would either
+		// silently attach an agent under an admin or force a demotion — and
+		// role changes are a deliberate admin act (PUT /api/users/{id}/role),
+		// never a side effect of a bearer-token claim. Refuse instead, so the
+		// "enrollment only ever produces a member" invariant holds on the reuse
+		// path too, not just on create.
+		writeError(w, http.StatusConflict, "INVITE_ACCOUNT_NOT_MEMBER",
+			"an account with this email already exists and is not a member; enroll cannot claim it")
+		return
+	}
+
+	// Email-possession proof inline (rule 2 carve-out — magic-link mode only,
+	// which is what enrollEnabled gates on). Do this BEFORE burning the invite:
+	// verification is idempotent, so a failure here must not consume the
+	// single-use token and strand a claimed-but-unverified account that can
+	// never retry with the same invite.
+	if !owner.Verified() {
+		if err := h.st.MarkUserVerified(r.Context(), owner.ID); err != nil {
+			if createdNew {
+				_ = h.st.DeleteUser(r.Context(), owner.ID)
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not confirm account")
+			return
+		}
+	}
+
+	// Provision the per-user agent BEFORE burning the invite. Reuse the same
+	// create-request → ApproveByID machinery a dashboard claim uses, so agent
+	// creation, name-collision handling, and token minting stay identical.
+	//
+	// The single-use invite is the LAST thing we consume (see the burn below):
+	// a name collision or any provisioning failure here must leave the token
+	// unspent so the installer can be re-run, rather than stranding a burned
+	// invite the operator has to manually reissue. On every failure we also
+	// roll back an account we just created, so a retry starts clean.
+	//
+	// Concurrency: MarkUserInviteUsed is an atomic conditional claim, so even
+	// with the burn last only one racer wins it. A racer that provisioned an
+	// agent but loses the burn rolls that agent (and any fresh account) back
+	// below, leaving exactly one agent for the winning claim.
+	rollbackNewUser := func() {
+		if createdNew {
+			_ = h.st.DeleteUser(r.Context(), owner.ID)
+		}
+	}
+	if body.InstallContext != nil {
+		clampInstallContext(body.InstallContext)
+	}
+	existingAgents, err := h.st.ListAgents(r.Context(), owner.ID)
+	if err != nil {
+		rollbackNewUser()
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list agents")
+		return
+	}
+	for _, a := range existingAgents {
+		if a.Name == body.Name {
+			rollbackNewUser()
+			writeError(w, http.StatusConflict, "AGENT_NAME_EXISTS",
+				fmt.Sprintf("agent %q already exists; pick a different name or delete it first", body.Name))
+			return
+		}
+	}
+	req := &store.ConnectionRequest{
+		UserID:         owner.ID,
+		Name:           body.Name,
+		Description:    body.Description,
+		Status:         "pending",
+		IPAddress:      r.RemoteAddr,
+		ExpiresAt:      time.Now().Add(connectionRequestExpiry),
+		InstallContext: body.InstallContext,
+	}
+	if err := h.st.CreateConnectionRequest(r.Context(), req); err != nil {
+		rollbackNewUser()
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create connection request")
+		return
+	}
+	agentID, err := h.ApproveByID(r.Context(), req.ID, owner.ID)
+	if err != nil {
+		rollbackNewUser()
+		if errors.Is(err, errAgentNameTaken) {
+			writeError(w, http.StatusConflict, "AGENT_NAME_EXISTS",
+				"an agent with this name already exists; pick a different name")
+			return
+		}
+		h.logger.WarnContext(r.Context(), "enroll: auto-approve failed",
+			"connection_id", req.ID, "err", err.Error())
+		writeError(w, http.StatusInternalServerError, "AUTO_APPROVE_FAILED", "agent registration failed")
+		return
+	}
+	raw, ok := h.tokenCache.Load(req.ID)
+	if !ok {
+		_ = h.st.DeleteAgent(r.Context(), agentID, owner.ID)
+		rollbackNewUser()
+		h.logger.WarnContext(r.Context(), "enroll: approved agent missing token in cache",
+			"connection_id", req.ID)
+		writeError(w, http.StatusInternalServerError, "TOKEN_UNAVAILABLE",
+			"agent was approved but its token is unavailable; re-run the installer")
+		return
+	}
+
+	// Burn the invite (single-use) — the final mutation, now that the agent and
+	// its token are in hand. On a lost race another claim already took it: roll
+	// back the agent we just approved (and any fresh account) and surface the
+	// same conflict the register path does.
+	if err := h.st.MarkUserInviteUsed(r.Context(), invite.ID, owner.ID); err != nil {
+		_ = h.st.DeleteAgent(r.Context(), agentID, owner.ID)
+		rollbackNewUser()
+		writeError(w, http.StatusConflict, "INVITE_ALREADY_USED", "invite has already been claimed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"connection_id": req.ID,
+		"agent_id":      agentID,
+		"user_id":       owner.ID,
+		"status":        "approved",
+		"token":         raw,
+		"expires_at":    req.ExpiresAt,
+	})
+}
+
+// randomEnrollPassword returns an unguessable password hash seed for an
+// invite-enrolled account. The account authenticates by magic link, never by
+// password, so this value exists only to satisfy the NOT NULL password_hash
+// column with something no one can log in against.
+func randomEnrollPassword() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// rand.Read failure is effectively impossible; fall back to a
+		// time-seeded value so account creation never blocks on it.
+		return "enroll-" + time.Now().Format(time.RFC3339Nano)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // clampInstallContext truncates every string field on the install context

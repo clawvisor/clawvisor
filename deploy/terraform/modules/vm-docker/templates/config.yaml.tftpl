@@ -1,0 +1,46 @@
+# Clawvisor server config, rendered by the vm-docker Terraform module and
+# mounted at /etc/clawvisor/config.yaml (the server reads it via CONFIG_FILE).
+#
+# WHY A FILE AND NOT ENV: posture presets (spec 02) are non-env config keys.
+# Env-only deploys cannot carry preset knobs, so the module renders a real
+# config.yaml. Secret-bearing values (JWT_SECRET, VAULT_KEY, DATABASE_URL,
+# CLAWVISOR_BOOTSTRAP_TOKEN) stay in the container ENV, resolved from Secrets
+# Manager at boot — they are NOT written into this file.
+
+server:
+  host: "0.0.0.0"
+  port: 25297
+  public_url: "https://${public_fqdn}"
+  auth_mode: "password"
+
+# proxy-lite is the LLM-endpoint proxy. Enabling it here is the explicit
+# writer-side flip (never Default()): fresh module deploys land on the
+# proxy-lite path. See PRD §11 / global gotcha #1.
+proxy_lite:
+  enabled: true
+  public_url: "https://${public_fqdn}"
+
+%{ if otel_endpoint != "" ~}
+observability:
+  otel:
+    enabled: true
+    endpoint: "${otel_endpoint}"
+    protocol: "grpc"
+    service_name: "clawvisor"
+%{ endif ~}
+
+# --- Posture preset ---------------------------------------------------------
+# posture = "${posture}"
+#
+# Spec 02 defined the posture->config mapping (applyPosturePreset) and spec 09
+# added the Contain superset. The server applies the preset for this value at
+# load time; the concrete knobs (enforcement_mode, upstream_auth, and — for
+# contain — runtime_proxy.enabled + runtime_proxy.llm_route) are set by the
+# server from the posture, so this file only needs to carry the posture key.
+posture: "${posture}"
+%{ if experimental_contain ~}
+# Contain is experimental until the capability-parity lane is CI-required
+# (spec 09 D5). The gate flag is required for the server to accept
+# posture: contain.
+experimental_contain: true
+%{ endif ~}

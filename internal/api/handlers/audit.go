@@ -369,6 +369,17 @@ func stripSecretsNode(value any) any {
 // reason). "oauth" alone is not treated as a secret marker — it's the
 // protocol name; "oauth_token" still matches because the "token" token does.
 func looksSecretKey(key string) bool {
+	// Exact non-secret governance/metadata keys that would otherwise trip the
+	// token matcher below (they carry an "auth" token but are enums, never
+	// credentials). The audit view surfaces these as forensic fields: the
+	// server-side upstream-auth posture (vault/passthrough — spec 02) and the
+	// caller-auth source (which header authenticated the agent). Redacting
+	// them would blind operators to whether a request was vault-injected,
+	// passed through, or observed.
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "auth_mode", "caller_auth_source":
+		return false
+	}
 	tokens := tokenizeSecretKey(key)
 	for _, t := range tokens {
 		switch t {

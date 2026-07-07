@@ -23,7 +23,7 @@ func newTaskscopeStore(t *testing.T) (store.Store, *store.User, *store.Agent) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "ts@example.com", "x")
+	user, err := st.CreateUser(ctx, "ts@example.com", "x", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -164,19 +164,19 @@ func TestPostprocess_TaskScopeBlocksUnauthorizedAction(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
-			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue", Method: "POST", PathTemplate: "/repos/{{.o}}/{{.r}}/issues"}, true
-		}},
+				return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue", Method: "POST", PathTemplate: "/repos/{{.o}}/{{.r}}/issues"}, true
+			}},
 			TaskScope: stubTaskScope{decision: llmproxy.TaskScopeDecision{Reason: "needs_new_task"}},
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -204,19 +204,19 @@ func TestPostprocess_TaskScopeAllowsAuthorizedAction(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
-			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
-		}},
+				return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+			}},
 			TaskScope: stubTaskScope{decision: llmproxy.TaskScopeDecision{Allowed: true, TaskID: "task-x"}},
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -260,20 +260,20 @@ func TestPostprocess_IntentVerifierBlocksOnDeny(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
-			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
-		}},
-			TaskScope: scope,
+				return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+			}},
+			TaskScope:      scope,
 			IntentVerifier: verifier,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -309,20 +309,20 @@ func TestPostprocess_IntentVerifierLenientFlag(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
-			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
-		}},
-			TaskScope: scope,
+				return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+			}},
+			TaskScope:      scope,
 			IntentVerifier: verifier,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -346,20 +346,20 @@ func TestPostprocess_IntentVerifierOffSkipsCall(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
-			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
-		}},
-			TaskScope: scope,
+				return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+			}},
+			TaskScope:      scope,
 			IntentVerifier: verifier,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -388,19 +388,19 @@ func TestPostprocess_TaskScopeFallthroughOnUnknownAction(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
-			return llmproxy.ResolvedAction{}, false // catalog miss
-		}},
+				return llmproxy.ResolvedAction{}, false // catalog miss
+			}},
 			TaskScope: denyAll,
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 
@@ -422,30 +422,30 @@ func TestPostprocess_SharedDecisionAllowSkipsLegacyTaskScope(t *testing.T) {
 		ToolUseEvaluatorFactory: pipelineFactory,
 		AgentContext: llmproxy.AgentContext{
 			AgentUserID: userID,
-			AgentID: agentID,
+			AgentID:     agentID,
 		},
 		AuthorizationContext: llmproxy.AuthorizationContext{
 			Catalog: stubCatalog{resolve: func(host, method, path string) (llmproxy.ResolvedAction, bool) {
-			return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
-		}},
+				return llmproxy.ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+			}},
 			TaskScope: denyAll,
 			CandidateTasks: []*store.Task{{
-			ID:      "task-1",
-			UserID:  userID,
-			AgentID: agentID,
-			Status:  "active",
-			AuthorizedActions: []store.TaskAction{{
-				Service:      "github",
-				Action:       "create_issue",
-				Verification: "off",
+				ID:      "task-1",
+				UserID:  userID,
+				AgentID: agentID,
+				Status:  "active",
+				AuthorizedActions: []store.TaskAction{{
+					Service:      "github",
+					Action:       "create_issue",
+					Verification: "off",
+				}},
 			}},
-		}},
 		},
 		RewriteContext: llmproxy.RewriteContext{
-			Inspector: insp,
-			RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
-			Store: st,
+			Store:        st,
 		},
 	})
 

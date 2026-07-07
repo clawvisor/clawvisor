@@ -38,6 +38,16 @@ type Server struct {
 	drains   sync.WaitGroup // drain goroutines; Wait() returns once pipes hit EOF
 }
 
+// Stderr returns the subprocess stderr captured so far. Config-load advisories
+// (e.g. the pre-flip config_schema notice, spec 08) are emitted here at
+// startup via the default slog handler before the server installs its own
+// leveled logger, so they appear regardless of the configured log level.
+func (s *Server) Stderr() string {
+	s.stdoutMu.Lock()
+	defer s.stdoutMu.Unlock()
+	return string(s.stderr)
+}
+
 // Start builds + boots clawvisor-server on a free port, wires it to the
 // provided Harness via env-var overrides, waits for /ready, and returns.
 // The subprocess is killed via t.Cleanup; if the test failed, its
@@ -57,11 +67,42 @@ func Start(t *testing.T, h *testharness.Harness) *Server {
 // and retry up to maxStartAttempts times with a fresh port. Slow-start
 // timeouts (no early exit) are NOT retried — they'd just timeout again.
 func StartWith(t *testing.T, h *testharness.Harness, extraEnv map[string]string) *Server {
+	return StartWithConfig(t, h, extraEnv, "")
+}
+
+// StartWithConfig is like StartWith but appends configOverlay (raw YAML,
+// top-level keys) to the generated config file before boot. Use it for
+// file-only config surfaces that have no env override — e.g. the
+// `posture:` preset key (spec 02), which is read from the config file
+// only. The overlay is appended after the base blocks, so it may set new
+// top-level keys or rely on preset semantics for absent sub-knobs.
+func StartWithConfig(t *testing.T, h *testharness.Harness, extraEnv map[string]string, configOverlay string) *Server {
+	return startWith(t, h, startOpts{extraEnv: extraEnv, overlay: configOverlay})
+}
+
+// StartWithoutProxyLite boots a server whose config file has NO proxy_lite
+// section at all — byte-for-byte the shape a pre-flip wizard produced. Used by
+// the flip's pre-flip-config scenario (spec 08) to prove absent-key ==
+// disabled by construction and that Load()'s advisory config_schema notice
+// fires. All other blocks (server/db/vault/auth) match the standard fixture.
+func StartWithoutProxyLite(t *testing.T, h *testharness.Harness, extraEnv map[string]string) *Server {
+	return startWith(t, h, startOpts{extraEnv: extraEnv, omitProxyLite: true})
+}
+
+// startOpts carries the per-boot knobs that vary between the public Start*
+// helpers. Kept internal so the public surface stays additive.
+type startOpts struct {
+	extraEnv      map[string]string
+	overlay       string
+	omitProxyLite bool
+}
+
+func startWith(t *testing.T, h *testharness.Harness, opts startOpts) *Server {
 	t.Helper()
 	binPath := buildServerBinary(t)
 	var lastErr error
 	for attempt := 0; attempt < maxStartAttempts; attempt++ {
-		s, err := tryStart(t, h, extraEnv, binPath)
+		s, err := tryStart(t, h, binPath, opts)
 		if err == nil {
 			return s
 		}
@@ -117,7 +158,7 @@ func (e *earlyExitError) Unwrap() error { return e.err }
 // and returns the *Server. On failure: tears down its own subprocess
 // inline and returns the error (no cleanup registered, so retries
 // don't accumulate cleanup callbacks).
-func tryStart(t *testing.T, h *testharness.Harness, extraEnv map[string]string, binPath string) (*Server, error) {
+func tryStart(t *testing.T, h *testharness.Harness, binPath string, opts startOpts) (*Server, error) {
 	t.Helper()
 	port := freePort(t)
 	publicURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -172,10 +213,15 @@ telemetry:
 
 runtime_proxy:
   enabled: false
-
-proxy_lite:
-  enabled: true
 `, port, publicURL, dataDir, vaultKeyFile)
+	// proxy_lite is enabled by default in the fixture; the pre-flip scenario
+	// omits the block entirely to prove absent-key == disabled (spec 08).
+	if !opts.omitProxyLite {
+		cfg += "\nproxy_lite:\n  enabled: true\n"
+	}
+	if opts.overlay != "" {
+		cfg += "\n" + opts.overlay + "\n"
+	}
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0600); err != nil {
 		return nil, fmt.Errorf("write config: %w", err)
 	}
@@ -191,8 +237,24 @@ proxy_lite:
 	for k, v := range h.Env() {
 		env = append(env, k+"="+v)
 	}
-	for k, v := range extraEnv {
+	for k, v := range opts.extraEnv {
 		env = append(env, k+"="+v)
+	}
+	// Contain-posture parity matrix (spec 09): when CLAWVISOR_E2E_POSTURE=contain
+	// the scenario package re-runs every existing flow with the runtime proxy
+	// booted and LLM traffic routed through proxy-lite. LLM traffic still
+	// bypasses the runtime proxy (NO_PROXY), so proxy-lite sees byte-identical
+	// requests — the superset holds by construction. Only applied when the
+	// fixture has proxy_lite (the pre-flip scenario omits it) and the caller
+	// hasn't wired the runtime proxy itself. A fresh runtime-proxy port is
+	// allocated per attempt so early-exit retries don't reuse a colliding port.
+	if PostureFromEnv() == "contain" && !opts.omitProxyLite && !extraEnvHasKey(opts.extraEnv, "CLAWVISOR_RUNTIME_PROXY_ENABLED") {
+		rpPort := freePort(t)
+		env = append(env,
+			"CLAWVISOR_RUNTIME_PROXY_ENABLED=true",
+			fmt.Sprintf("CLAWVISOR_RUNTIME_PROXY_LISTEN_ADDR=127.0.0.1:%d", rpPort),
+			"CLAWVISOR_RUNTIME_LLM_ROUTE=proxy_lite",
+		)
 	}
 	cmd.Env = env
 
@@ -326,6 +388,23 @@ func (s *Server) waitDrains(timeout time.Duration) {
 	case <-done:
 	case <-time.After(timeout):
 	}
+}
+
+// PostureFromEnv returns the CI parity matrix posture selector
+// (CLAWVISOR_E2E_POSTURE): "contain" boots the runtime proxy + proxy_lite LLM
+// routing; anything else (incl. "govern"/"") is the baseline proxy-lite path.
+// Scenario helpers key their contain-only assertions off this.
+func PostureFromEnv() string {
+	return strings.ToLower(strings.TrimSpace(os.Getenv("CLAWVISOR_E2E_POSTURE")))
+}
+
+func extraEnvHasKey(extraEnv map[string]string, key string) bool {
+	for k := range extraEnv {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func freePort(t *testing.T) int {

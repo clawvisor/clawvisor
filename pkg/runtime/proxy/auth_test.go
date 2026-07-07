@@ -10,9 +10,9 @@ import (
 	"time"
 
 	intauth "github.com/clawvisor/clawvisor/internal/auth"
-	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
 type authStoreWrapper struct {
@@ -128,7 +128,7 @@ func TestAuthenticatorAcceptsAgentTokenAndCreatesReusableRuntimeSession(t *testi
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "proxy-auth@test.example", "hash")
+	user, err := st.CreateUser(ctx, "proxy-auth@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -174,6 +174,65 @@ func TestAuthenticatorAcceptsAgentTokenAndCreatesReusableRuntimeSession(t *testi
 	}
 }
 
+func TestAuthenticatorPersistsAndComparesLLMRouteOnReuse(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/proxy-auth-llmroute.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "proxy-auth-llmroute@test.example", "hash", "")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	rawToken := "cvis_runtime_agent_token_llmroute"
+	if _, err := st.CreateAgent(ctx, user.ID, "runtime-agent", intauth.HashToken(rawToken)); err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.RuntimeProxy.LLMRoute = "proxy_lite"
+	authn := &Authenticator{Store: st, Config: cfg}
+	header := http.Header{}
+	header.Set("Proxy-Authorization", "Bearer "+rawToken)
+
+	first, err := authn.Authenticate(ctx, header)
+	if err != nil {
+		t.Fatalf("Authenticate(first): %v", err)
+	}
+	// The route must be persisted into session metadata so a later cfg flip
+	// cannot reinterpret the existing session's route.
+	var meta map[string]any
+	if err := json.Unmarshal(first.MetadataJSON, &meta); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	if got := meta["llm_route"]; got != "proxy_lite" {
+		t.Fatalf("expected llm_route=proxy_lite persisted in metadata, got %v", got)
+	}
+
+	// Same cfg → session is reused.
+	second, err := authn.Authenticate(ctx, header)
+	if err != nil {
+		t.Fatalf("Authenticate(second): %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected reuse for identical route, got first=%q second=%q", first.ID, second.ID)
+	}
+
+	// Live cfg flip to direct → the proxy_lite session must NOT be reused;
+	// a fresh session is minted rather than silently reinterpreting the route.
+	cfg.RuntimeProxy.LLMRoute = "direct"
+	third, err := authn.Authenticate(ctx, header)
+	if err != nil {
+		t.Fatalf("Authenticate(third): %v", err)
+	}
+	if third.ID == first.ID {
+		t.Fatalf("route flip must mint a new session, got reuse of %q", first.ID)
+	}
+}
+
 func TestAuthenticatorDoesNotReuseBootstrapRuntimeSessionsForAgentTokenAuth(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, t.TempDir()+"/proxy-auth-bootstrap.db")
@@ -183,7 +242,7 @@ func TestAuthenticatorDoesNotReuseBootstrapRuntimeSessionsForAgentTokenAuth(t *t
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "proxy-bootstrap@test.example", "hash")
+	user, err := st.CreateUser(ctx, "proxy-bootstrap@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -239,7 +298,7 @@ func TestAuthenticatorMintsDistinctSessionsPerLaunchID(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "proxy-auth-launch@test.example", "hash")
+	user, err := st.CreateUser(ctx, "proxy-auth-launch@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -286,7 +345,7 @@ func TestAuthenticatorExtendsExpiryWhenSessionIsActivelyUsed(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "proxy-auth-extend@test.example", "hash")
+	user, err := st.CreateUser(ctx, "proxy-auth-extend@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -342,7 +401,7 @@ func TestAuthenticatorReturnsUnavailableOnStoreErrors(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	baseStore := sqlite.NewStore(db)
 
-	user, err := baseStore.CreateUser(ctx, "proxy-auth-unavailable@test.example", "hash")
+	user, err := baseStore.CreateUser(ctx, "proxy-auth-unavailable@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

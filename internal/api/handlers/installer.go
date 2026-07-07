@@ -127,6 +127,14 @@ type installerCtx struct {
 	// so dev/staging/prod token files for the same logical name don't
 	// overwrite each other on a multi-env user's disk.
 	AgentSlot string
+	// Route selects the install variant (spec 08 flip). "" / "proxy" is the
+	// new default — bake ANTHROPIC_BASE_URL/OPENAI_BASE_URL so LLM traffic
+	// routes through Clawvisor (Observe). "skill-only" is the explicit opt-out
+	// that registers the agent without routing. "subscription" (claude-code
+	// only) routes a Claude-subscription/OAuth seat: it sets the base URL and
+	// the X-Clawvisor-Agent-Token header while leaving the OAuth session in
+	// Authorization untouched and never referencing an API key.
+	Route string
 }
 
 // installerRenderer renders an installer body of one format (shell or
@@ -363,6 +371,13 @@ func (h *InstallerHandler) installerCtxFromRequest(r *http.Request, target Insta
 	if n := r.URL.Query().Get("agent_name"); n != "" && validAgentName.MatchString(n) {
 		ctx.AgentName = n
 	}
+	// route selects the install variant (spec 08 flip). Default is proxy
+	// (routing baked). "subscription" is only meaningful for claude-code (a
+	// Claude OAuth seat) — other targets treat it as the plain proxy default.
+	ctx.Route = queryChoice(r, "route", "proxy", "proxy", "skill-only", "subscription")
+	if ctx.Route == "subscription" && target != InstallerClaudeCode {
+		ctx.Route = "proxy"
+	}
 	if env := installerEnvSlug(ctx.LLMURL); env != "" {
 		ctx.AgentSlot = env + "/" + ctx.AgentName
 	} else {
@@ -505,7 +520,7 @@ description: Install Clawvisor into %s — probe the environment, mint and appro
 func setupFrontmatter(harness string) string {
 	return fmt.Sprintf(`---
 name: clawvisor-setup
-description: One-paste connect %s to Clawvisor — register, install the skill, optionally route every session through Clawvisor, and remove this command file.
+description: One-paste connect %s to Clawvisor — register, install the skill, route every session through Clawvisor by default (Observe; pass route=skill-only to opt out), and remove this command file.
 ---
 
 `, harness)

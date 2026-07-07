@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
 // TestReactivatePendingRequest_RejectsCrossUserHijack verifies that
@@ -34,11 +34,11 @@ func TestReactivatePendingRequest_RejectsCrossUserHijack(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	st := sqlitestore.NewStore(db)
-	victim, err := st.CreateUser(ctx, "victim@test.example", "hash")
+	victim, err := st.CreateUser(ctx, "victim@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser victim: %v", err)
 	}
-	attacker, err := st.CreateUser(ctx, "attacker@test.example", "hash")
+	attacker, err := st.CreateUser(ctx, "attacker@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser attacker: %v", err)
 	}
@@ -100,8 +100,8 @@ func TestCheckPendingRequestOwnership_RejectsCrossUser(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	st := sqlitestore.NewStore(db)
-	victim, _ := st.CreateUser(ctx, "v@test", "h")
-	attacker, _ := st.CreateUser(ctx, "a@test", "h")
+	victim, _ := st.CreateUser(ctx, "v@test", "h", "")
+	attacker, _ := st.CreateUser(ctx, "a@test", "h", "")
 
 	pa := &store.PendingApproval{
 		ID:        "pa-x",

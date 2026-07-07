@@ -36,14 +36,25 @@ type installerScriptCtx struct {
 	Slug                string
 	DisplayLabel        string
 	RelayPermissionRule string
+	Route               string
 }
 
-// renderClaudeCodeShellInstaller renders the Claude Code shell installer
-// from claude_code.sh.tmpl using the supplied installerCtx. Returns an error
-// if template execution fails so the caller can return HTTP 500 instead of
-// silently shipping a broken script to the user's shell.
+// renderClaudeCodeShellInstaller renders the Claude Code shell installer using
+// the supplied installerCtx. The default (route=proxy) template bakes
+// ANTHROPIC_BASE_URL routing so the seat lands in Observe; route=skill-only
+// registers the agent without routing (the explicit opt-out); route=
+// subscription routes a Claude-subscription/OAuth seat without touching its
+// auth (spec 08 flip). Returns an error if template execution fails so the
+// caller can return HTTP 500 instead of shipping a broken script to the shell.
 func renderClaudeCodeShellInstaller(ctx installerCtx) (string, error) {
-	return renderInstallerScript("claude_code.sh.tmpl", installerScriptCtx{
+	tmpl := "claude_code.sh.tmpl"
+	switch ctx.Route {
+	case "skill-only":
+		tmpl = "claude_code_skill_only.sh.tmpl"
+	case "subscription":
+		tmpl = "claude_code_subscription.sh.tmpl"
+	}
+	return renderInstallerScript(tmpl, installerScriptCtx{
 		AppURL:              strings.TrimRight(ctx.AppURL, "/"),
 		LLMURL:              strings.TrimRight(ctx.LLMURL, "/"),
 		Claim:               ctx.Claim,
@@ -53,6 +64,7 @@ func renderClaudeCodeShellInstaller(ctx installerCtx) (string, error) {
 		Target:              string(InstallerClaudeCode),
 		HarnessLabel:        "Claude Code",
 		RelayPermissionRule: relayPermissionRule(),
+		Route:               ctx.Route,
 	})
 }
 
@@ -62,7 +74,11 @@ func renderClaudeCodeShellInstaller(ctx installerCtx) (string, error) {
 // Returns an error on template execution failure.
 func renderCodexShellInstaller(ctx installerCtx) (string, error) {
 	slug, display := codexProviderID(ctx.LLMURL)
-	return renderInstallerScript("codex.sh.tmpl", installerScriptCtx{
+	tmpl := "codex.sh.tmpl"
+	if ctx.Route == "skill-only" {
+		tmpl = "codex_skill_only.sh.tmpl"
+	}
+	return renderInstallerScript(tmpl, installerScriptCtx{
 		AppURL:       strings.TrimRight(ctx.AppURL, "/"),
 		LLMURL:       strings.TrimRight(ctx.LLMURL, "/"),
 		Claim:        ctx.Claim,
@@ -73,6 +89,7 @@ func renderCodexShellInstaller(ctx installerCtx) (string, error) {
 		HarnessLabel: "Codex",
 		Slug:         slug,
 		DisplayLabel: display,
+		Route:        ctx.Route,
 	})
 }
 

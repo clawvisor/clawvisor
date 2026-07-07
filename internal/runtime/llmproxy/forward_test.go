@@ -151,6 +151,81 @@ func TestForward_AnthropicPassthroughAuthPreservesOAuthAuthorization(t *testing.
 	}
 }
 
+// TestForward_AnthropicPassthroughForwardsClientXAPIKey covers the
+// x-api-key-only passthrough case: the client presented its own Anthropic key
+// via x-api-key (the SDK convention) and NO Authorization bearer. Passthrough
+// posture must forward that key upstream — never fall through to lookupVaultKey
+// (the implicit vault fallback spec 02 §4 forbids). The vault is empty here, so
+// a fallthrough would surface UPSTREAM_KEY_MISSING instead of forwarding.
+func TestForward_AnthropicPassthroughForwardsClientXAPIKey(t *testing.T) {
+	v := &stubVault{} // deliberately empty: any vault fallback would error
+
+	var seenAuth, seenAPIKey string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		seenAPIKey = r.Header.Get("x-api-key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1"}`))
+	}))
+	defer upstream.Close()
+
+	f := NewForwarder(v)
+	f.Upstream = UpstreamSelector{AnthropicBaseURL: upstream.URL}
+
+	inbound := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader([]byte(`{"model":"claude"}`)))
+	inbound.Header.Set("x-api-key", "sk-ant-api03-clientkey")
+
+	ctx := WithPassthroughUpstreamAuth(context.Background())
+	resp, err := f.Forward(ctx, "user1", "", conversation.ProviderAnthropic, inbound, []byte(`{"model":"claude"}`))
+	if err != nil {
+		t.Fatalf("Forward: %v (expected the client x-api-key to be forwarded, not a vault fallback)", err)
+	}
+	defer resp.Body.Close()
+
+	if seenAPIKey != "sk-ant-api03-clientkey" {
+		t.Fatalf("expected upstream x-api-key to be the client key sk-ant-api03-clientkey, got %q", seenAPIKey)
+	}
+	if seenAuth != "" {
+		t.Fatalf("expected no upstream Authorization header, got %q", seenAuth)
+	}
+}
+
+// TestForward_GooglePassthroughForwardsClientXAPIKey covers the x-api-key-only
+// passthrough case for Google: injectUpstreamAuth maps the forwarded key onto
+// x-goog-api-key. Again the vault is empty, so a fallthrough would error.
+func TestForward_GooglePassthroughForwardsClientXAPIKey(t *testing.T) {
+	v := &stubVault{}
+
+	var seenGoogleAPIKey, seenAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenGoogleAPIKey = r.Header.Get("x-goog-api-key")
+		seenAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+
+	f := NewForwarder(v)
+	f.Upstream = UpstreamSelector{GoogleBaseURL: upstream.URL}
+
+	inbound := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini:generateContent", strings.NewReader("{}"))
+	inbound.Header.Set("x-api-key", "client-google-key")
+
+	ctx := WithPassthroughUpstreamAuth(context.Background())
+	resp, err := f.Forward(ctx, "user1", "", conversation.ProviderGoogle, inbound, []byte("{}"))
+	if err != nil {
+		t.Fatalf("Forward: %v (expected the client x-api-key to be forwarded, not a vault fallback)", err)
+	}
+	defer resp.Body.Close()
+
+	if seenGoogleAPIKey != "client-google-key" {
+		t.Fatalf("expected upstream x-goog-api-key to be the client key, got %q", seenGoogleAPIKey)
+	}
+	if seenAuth != "" {
+		t.Fatalf("expected no upstream Authorization header, got %q", seenAuth)
+	}
+}
+
 func TestForward_OpenAIInjectsKey(t *testing.T) {
 	v := &stubVault{}
 	v.Set(context.Background(), "user1", "openai", []byte("sk-real-openai-key"))

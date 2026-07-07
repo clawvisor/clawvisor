@@ -87,6 +87,79 @@ func splitProxyUserAndSuffix(t *testing.T, raw string) (string, string) {
 	return user, after
 }
 
+func TestBuildDockerAgentEnvVarsProxyLiteInjectsClaudeAuth(t *testing.T) {
+	opts := &dockerProxyOptions{
+		BaseURL:           "http://127.0.0.1:25297",
+		ContainerURL:      "http://host.docker.internal:25297",
+		AgentToken:        "cvis_test_token",
+		ProxyHost:         "host.docker.internal",
+		ProxyPort:         25290,
+		CAInside:          "/clawvisor/ca.pem",
+		CAHost:            "/host/ca.pem",
+		LLMRouteProxyLite: true,
+	}
+
+	present := map[string]bool{}
+	values := map[string]string{}
+	for _, v := range buildDockerAgentEnvVars(opts, false) {
+		present[v.Key] = true
+		values[v.Key] = v.Value
+	}
+
+	// proxy-lite authenticates the agent by the cvis_ token in the custom
+	// header; without it the SDK's LLM calls 401.
+	if got := values["ANTHROPIC_CUSTOM_HEADERS"]; got != "X-Clawvisor-Agent-Token: cvis_test_token" {
+		t.Fatalf("unexpected ANTHROPIC_CUSTOM_HEADERS %q", got)
+	}
+	// The client's own Anthropic creds must be cleared so they don't compete.
+	if !present["ANTHROPIC_AUTH_TOKEN"] || values["ANTHROPIC_AUTH_TOKEN"] != "" {
+		t.Fatalf("expected ANTHROPIC_AUTH_TOKEN to be present and empty, got present=%v value=%q", present["ANTHROPIC_AUTH_TOKEN"], values["ANTHROPIC_AUTH_TOKEN"])
+	}
+	if !present["ANTHROPIC_API_KEY"] || values["ANTHROPIC_API_KEY"] != "" {
+		t.Fatalf("expected ANTHROPIC_API_KEY to be present and empty, got present=%v value=%q", present["ANTHROPIC_API_KEY"], values["ANTHROPIC_API_KEY"])
+	}
+	// Codex auth is deferred (spec 09): lite never sets OPENAI_API_KEY, so
+	// neither should the docker env.
+	if present["OPENAI_API_KEY"] {
+		t.Fatalf("proxy-lite docker env must not set OPENAI_API_KEY (codex auth deferred), got %q", values["OPENAI_API_KEY"])
+	}
+}
+
+func TestBuildDockerAgentEnvVarsNoProxyLiteOmitsClaudeAuth(t *testing.T) {
+	opts := &dockerProxyOptions{
+		BaseURL:      "http://127.0.0.1:25297",
+		ContainerURL: "http://host.docker.internal:25297",
+		AgentToken:   "cvis_test_token",
+		ProxyHost:    "host.docker.internal",
+		ProxyPort:    25290,
+		CAInside:     "/clawvisor/ca.pem",
+	}
+	for _, v := range buildDockerAgentEnvVars(opts, false) {
+		switch v.Key {
+		case "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL":
+			t.Fatalf("direct route must not emit proxy-lite env %q", v.Key)
+		}
+	}
+}
+
+func TestBuildDockerAgentEnvVarsProxyLiteTemplatedHeaderUsesTokenVar(t *testing.T) {
+	opts := &dockerProxyOptions{
+		ContainerURL:      "http://host.docker.internal:25297",
+		AgentToken:        "ignored",
+		ProxyHost:         "host.docker.internal",
+		ProxyPort:         25290,
+		CAInside:          "/clawvisor/ca.pem",
+		LLMRouteProxyLite: true,
+	}
+	values := map[string]string{}
+	for _, v := range buildDockerAgentEnvVars(opts, true) {
+		values[v.Key] = v.Value
+	}
+	if got := values["ANTHROPIC_CUSTOM_HEADERS"]; got != "X-Clawvisor-Agent-Token: ${CLAWVISOR_AGENT_TOKEN}" {
+		t.Fatalf("expected templated agent token in ANTHROPIC_CUSTOM_HEADERS, got %q", got)
+	}
+}
+
 func TestBuildDockerAgentEnvVarsAssignsUniqueLaunchID(t *testing.T) {
 	opts := &dockerProxyOptions{
 		AgentToken: "cvis_test_token",

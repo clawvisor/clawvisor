@@ -24,7 +24,7 @@ func TestSaveTelegramConfig_EncryptsBotToken(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	st := sqlitestore.NewStore(db)
-	user, err := st.CreateUser(ctx, "encrypt@test.example", "hash")
+	user, err := st.CreateUser(ctx, "encrypt@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestUserConfig_LegacyPlaintextRowFallback(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	st := sqlitestore.NewStore(db)
-	user, err := st.CreateUser(ctx, "legacy@test.example", "hash")
+	user, err := st.CreateUser(ctx, "legacy@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

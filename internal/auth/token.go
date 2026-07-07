@@ -56,6 +56,23 @@ func GenerateAgentToken() (string, error) {
 	return "cvis_" + hex.EncodeToString(b), nil
 }
 
+// InviteTokenPrefix is the canonical prefix for single-use enrollment
+// invites (spec 04). Distinct from agent (cvis_) and API (cvat_) tokens so
+// the auth paths stay disjoint. An invite is a bearer credential: only the
+// SHA-256 hash lives at rest and the plaintext is revealed exactly once.
+const InviteTokenPrefix = "cvinv_"
+
+// GenerateInviteToken mints a new invite token: "cvinv_" + 64 hex chars
+// (32 random bytes). Follows the GenerateAgentToken pattern; only its
+// HashToken digest is persisted.
+func GenerateInviteToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return InviteTokenPrefix + hex.EncodeToString(b), nil
+}
+
 // HashToken returns the SHA-256 hex digest of any token string.
 // Used for both agent tokens and refresh tokens.
 func HashToken(token string) string {

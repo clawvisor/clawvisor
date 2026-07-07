@@ -25,7 +25,7 @@ func TestRuntimeHandlerRuleCRUDAndStarterProfile(t *testing.T) {
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-controls@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-controls@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestRuntimeHandlerEnablePassthroughRejectsExcessiveTTL(t *testing.T) {
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-passthrough-ttl@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-passthrough-ttl@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestRuntimeHandlerEnablePassthroughRequiresConfirmationForGlobalTimed(t *te
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-passthrough-global-confirm@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-passthrough-global-confirm@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestRuntimeStatusShowsAgentScopedPassthrough(t *testing.T) {
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-passthrough-status@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-passthrough-status@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestRuntimeHandlerToolControlsDiscoverAndUpsert(t *testing.T) {
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-tool-controls@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-tool-controls@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -507,7 +507,7 @@ func TestRuntimeHandlerToolControlsPreferCurrentShellToolForReadOnlySetting(t *t
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-tool-controls-shell-alias@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-tool-controls-shell-alias@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -638,7 +638,7 @@ func TestDefaultToolRulesSeedAndRespectUnset(t *testing.T) {
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-default-readonly@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-default-readonly@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -776,7 +776,7 @@ func TestDefaultToolRulesMigratesStaleGlobalSystemDefaultsToAgent(t *testing.T) 
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-default-readonly-migrate@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-default-readonly-migrate@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -825,7 +825,7 @@ func TestToolControlsListPreservesAgentScopedDefaultToolRules(t *testing.T) {
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-tool-controls-migrate@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-tool-controls-migrate@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -876,7 +876,7 @@ func TestToolControlsListSeedsClaudeDefaultToolsFromDiscovery(t *testing.T) {
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-tool-controls-claude-readonly@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-tool-controls-claude-readonly@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -960,7 +960,7 @@ func TestRuntimeHandlerToolControlsScopesGlobalAdvancedRules(t *testing.T) {
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-tool-controls-global@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-tool-controls-global@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -1013,7 +1013,7 @@ func TestRuntimeHandlerToolControlsExposeGlobalAndAgentSimplePolicies(t *testing
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-tool-controls-simple-scopes@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-tool-controls-simple-scopes@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -1087,7 +1087,7 @@ func TestRuntimeHandlerPromoteEventToTask(t *testing.T) {
 	}
 	defer db.Close()
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "runtime-promote@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-promote@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

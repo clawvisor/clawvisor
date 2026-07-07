@@ -24,7 +24,7 @@ The two can coexist. The lite-proxy is the focus of this document.
 
 ## Enable the proxy
 
-**The lite-proxy ships off by default.** All routes listed below, the dashboard panels, and the CLI helpers refuse to operate until `proxy_lite.enabled` is set to `true`. Users who never touch this config see no behavior change.
+**Fresh installs enable the lite-proxy in the Observe posture by default** — the setup wizard recommends it and the per-harness install scripts route through it (skill-gateway-only is the explicit opt-out: choose it in the wizard, or pass `route=skill-only` to an install script). The switch is **writer-side**: the compiled default of `proxy_lite.enabled` stays `false`, so **an existing config that never set the key is never silently enabled at upgrade** — it keeps behaving exactly as before. All routes listed below, the dashboard panels, and the CLI helpers refuse to operate until `proxy_lite.enabled` is `true` (which fresh wizard/daemon configs now write explicitly).
 
 In `config.yaml`:
 

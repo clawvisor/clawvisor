@@ -70,6 +70,13 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		req.ContentLength = int64(len(bodyBytes))
 
 		host := requestHost(req)
+		// Contain superset backstop (spec 09 D2): in llm_route=proxy_lite a
+		// request to a known LLM host reaching the runtime proxy is a routing
+		// escape (it dodged ANTHROPIC_BASE_URL/OPENAI_BASE_URL + NO_PROXY), not
+		// traffic to duplicate-process. Block (enforce) or warn (observe).
+		if sessionLLMRouteProxyLite(st.Session, hooks.Config) && isContainLLMBackstopHost(host) {
+			return s.handleContainLLMBypass(req, st, hooks, host)
+		}
 		if isHarnessAllowlistedForSession(st.Session, hooks.Config, host) {
 			return req, nil
 		}
@@ -749,6 +756,19 @@ func isHarnessAllowlistedForSession(session *store.RuntimeSession, cfg *config.C
 		if endpointHost := normalizedEndpointHost(cfg.LLM.Endpoint); endpointHost != "" && host == endpointHost {
 			return true
 		}
+		// Contain superset (spec 09 D1.3): defense-in-depth for clients that
+		// ignore NO_PROXY. LLM traffic is pointed at the Clawvisor daemon host
+		// (ANTHROPIC_BASE_URL/OPENAI_BASE_URL); if such a client sends that
+		// request through the runtime proxy anyway, the daemon host must pass
+		// so it still reaches proxy-lite. This is a contain-only carve-out —
+		// gating it behind proxy_lite keeps direct/legacy sessions subject to
+		// normal egress policy for the daemon host (they never route LLM
+		// traffic there, so allowlisting it would be an unearned bypass).
+		if sessionLLMRouteProxyLite(session, cfg) {
+			if daemonHost := normalizedEndpointHost(cfg.Server.PublicURL); daemonHost != "" && host == daemonHost {
+				return true
+			}
+		}
 	}
 	for _, allowed := range sessionHarnessAllowlist(session, cfg) {
 		allowed = strings.ToLower(strings.TrimSpace(allowed))
@@ -759,11 +779,80 @@ func isHarnessAllowlistedForSession(session *store.RuntimeSession, cfg *config.C
 			return true
 		}
 	}
+	// Legacy runtime-only mode allows the harness to reach the provider LLM
+	// hosts directly. In the Contain superset (llm_route=proxy_lite) these
+	// hosts are a routing escape, not traffic to allow — the D2 backstop
+	// (earlier in the egress hook) intercepts them, and this case is skipped
+	// so a dodged request falls through to normal egress policy (denied).
+	if sessionLLMRouteProxyLite(session, cfg) {
+		return false
+	}
 	switch host {
 	case "api.anthropic.com", "api.openai.com", "chatgpt.com":
 		return true
 	}
 	return false
+}
+
+// isContainLLMBackstopHost reports whether host is a known provider LLM host
+// that, in the Contain superset, must never be reached directly through the
+// runtime proxy (it must go to proxy-lite via ANTHROPIC_BASE_URL/
+// OPENAI_BASE_URL). chatgpt.com is included per spec 09 gotcha 4.
+func isContainLLMBackstopHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "api.anthropic.com", "api.openai.com", "chatgpt.com":
+		return true
+	}
+	return false
+}
+
+const containLLMBypassBody = `{"error":"llm_direct_bypass","detail":"LLM traffic must use the Clawvisor endpoint set in ANTHROPIC_BASE_URL/OPENAI_BASE_URL"}`
+
+// handleContainLLMBypass is the Contain superset backstop (spec 09 D2) for a
+// direct LLM-host hit that dodged the env-var routing. In enforce mode it
+// blocks with 403 llm_direct_bypass; in observation mode it warns (passes the
+// request through). Both paths write a runtime.llm_bypass_blocked audit event
+// with the decision recorded in clawvisor.runtimeproxy.requests via the
+// observability OnResponse hook.
+func (s *Server) handleContainLLMBypass(req *http.Request, st *RequestState, hooks PolicyHooks, host string) (*http.Request, *http.Response) {
+	paramsSafe, _ := json.Marshal(map[string]any{
+		"host":   host,
+		"path":   req.URL.Path,
+		"reason": "llm_direct_bypass",
+	})
+	metadata := map[string]any{
+		"host":         host,
+		"method":       req.Method,
+		"path":         req.URL.Path,
+		"observe_mode": st.Session.ObservationMode,
+	}
+	if st.Session.ObservationMode {
+		metadata["action"] = "warned"
+		st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
+			WouldBlock: true,
+		}, paramsSafe, req.Method, "allow", "warned", "contain: direct LLM-host hit bypassed proxy-lite routing (observation mode)")
+		emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+			EventType:  "runtime.llm_bypass_blocked",
+			ActionKind: "egress",
+			Decision:   stringPtr("allow"),
+			Outcome:    stringPtr("warned"),
+			Reason:     stringPtr("contain: direct LLM-host hit bypassed proxy-lite routing"),
+			Metadata:   metadata,
+		})
+		return req, nil
+	}
+	metadata["action"] = "blocked"
+	st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{}, paramsSafe, req.Method, "deny", "blocked", "contain: direct LLM-host hit must use ANTHROPIC_BASE_URL/OPENAI_BASE_URL")
+	emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+		EventType:  "runtime.llm_bypass_blocked",
+		ActionKind: "egress",
+		Decision:   stringPtr("deny"),
+		Outcome:    stringPtr("blocked"),
+		Reason:     stringPtr("contain: direct LLM-host hit must use ANTHROPIC_BASE_URL/OPENAI_BASE_URL"),
+		Metadata:   metadata,
+	})
+	st.SkipAuditOutcomeUpdate = true
+	return req, goproxy.NewResponse(req, "application/json", http.StatusForbidden, containLLMBypassBody)
 }
 
 func normalizedEndpointHost(endpoint string) string {

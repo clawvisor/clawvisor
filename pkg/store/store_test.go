@@ -4,7 +4,31 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
 )
+
+// TestUserVerified guards the auth-gate predicate: a NULL (nil) or zero
+// VerifiedAt is pending per the struct contract; only a non-zero timestamp
+// counts as verified.
+func TestUserVerified(t *testing.T) {
+	nonZero := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var zero time.Time
+	cases := []struct {
+		name string
+		u    *User
+		want bool
+	}{
+		{"nil user", nil, false},
+		{"nil VerifiedAt (NULL)", &User{}, false},
+		{"zero VerifiedAt", &User{VerifiedAt: &zero}, false},
+		{"non-zero VerifiedAt", &User{VerifiedAt: &nonZero}, true},
+	}
+	for _, c := range cases {
+		if got := c.u.Verified(); got != c.want {
+			t.Errorf("%s: Verified()=%v want %v", c.name, got, c.want)
+		}
+	}
+}
 
 func TestValidateConversationAutoApproveThreshold(t *testing.T) {
 	cases := []struct {

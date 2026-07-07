@@ -24,7 +24,7 @@ func TestTasksHandlerStartBindsRuntimeSessionToTask(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-start@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-start@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestTasksHandlerEndClearsRuntimeSessionBindingWithoutCompletingTask(t *test
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "runtime-end@test.example", "hash")
+	user, err := st.CreateUser(ctx, "runtime-end@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
