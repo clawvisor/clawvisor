@@ -4,10 +4,46 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
+
+// wrappedNotFoundVault fronts a real backend but wraps ErrNotFound from Get
+// (as a spec-10 reference backend legitimately might). It proves the shared
+// fallback uses errors.Is, not `==`.
+type wrappedNotFoundVault struct{ Vault }
+
+func (w wrappedNotFoundVault) Get(ctx context.Context, userID, serviceID string) ([]byte, error) {
+	b, err := w.Vault.Get(ctx, userID, serviceID)
+	if err == ErrNotFound {
+		return nil, fmt.Errorf("backend miss for %s/%s: %w", userID, serviceID, err)
+	}
+	return b, err
+}
+
+// TestInstanceVault_WrappedNotFoundStillFallsBack: a backend that wraps
+// ErrNotFound must not defeat the specific→shared fallback. Under the old
+// `err != ErrNotFound` check the wrapped error would short-circuit and
+// alice would never see the shared key.
+func TestInstanceVault_WrappedNotFoundStillFallsBack(t *testing.T) {
+	inner, ctx := newDBVault(t)
+	iv := NewInstanceAware(wrappedNotFoundVault{inner})
+
+	shared := []byte("shared-anthropic-key")
+	if err := inner.Set(ctx, InstanceUserID, "anthropic", shared); err != nil {
+		t.Fatalf("seed shared: %v", err)
+	}
+
+	got, err := iv.Get(ctx, "alice", "anthropic")
+	if err != nil {
+		t.Fatalf("alice Get (wrapped-notfound backend): %v", err)
+	}
+	if !bytes.Equal(got, shared) {
+		t.Fatalf("alice got %q, want shared fallback", got)
+	}
+}
 
 func newDBVault(t *testing.T) (*LocalVault, context.Context) {
 	t.Helper()
