@@ -48,6 +48,11 @@ func ObserveModeFromContext(ctx context.Context) bool {
 //	  synthetic_history_strip prompt-cache-preserving history reconstruction
 //	  secret_history_strip   history hygiene
 //	  secret_rewrites        vault placeholder / credential resolution
+//	  secret_decision        applies the user's chosen secret action
+//	                         (allow_once/discard/vault/not_secret); a
+//	                         control-flow reply-processor, not a verdict —
+//	                         parallels approval_release / task_approval_reply.
+//	                         Its enforcing counterpart is secret_hold below.
 //	  control_notice         notice injection
 //	  inline_task_augment    history augmentation
 //	  approval_release       resolves an in-flight hold (no hold exists in observe)
@@ -69,6 +74,7 @@ var observeExemptPolicies = map[string]bool{
 	"synthetic_history_strip": true,
 	"secret_history_strip":    true,
 	"secret_rewrites":         true,
+	"secret_decision":         true,
 	"control_notice":          true,
 	"inline_task_augment":     true,
 	"approval_release":        true,
