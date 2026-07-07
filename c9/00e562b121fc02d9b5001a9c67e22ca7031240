@@ -1,0 +1,65 @@
+.gitignore
+  s_55f7a841d7c10e::t_791986dbb5a148 23-30
+.github/workflows/ci.yml
+  s_55f7a841d7c10e::t_5b39df985fd88e 60-116
+e2e/browser/package-lock.json
+  s_55f7a841d7c10e::t_aac1a473b4b1ba 1-78
+e2e/browser/tests/agents.spec.ts
+  s_55f7a841d7c10e::t_111d1463529119 1-39
+e2e/browser/tests/approvals.spec.ts
+  s_55f7a841d7c10e::t_47fba0d14c4dce 1-49
+e2e/browser/tests/keyvault.spec.ts
+  s_55f7a841d7c10e::t_f6208e525d0673 1-49
+e2e/browser/tests/policies.spec.ts
+  s_55f7a841d7c10e::t_9e44b3b988c5ea 1-39
+Makefile
+  s_71caa72c69080b::t_480e5326f87f67 1,97-104
+e2e/browser/global-setup.ts
+  s_71caa72c69080b::t_f648c0535bbcc3 1-90
+e2e/browser/package.json
+  s_71caa72c69080b::t_f228786cc958a8 1-14
+e2e/browser/playwright.config.ts
+  s_71caa72c69080b::t_eeb14fe0ad4bfb 1-62
+e2e/browser/serve/main.go
+  s_71caa72c69080b::t_6507e9dad158bb 1-336
+e2e/browser/tests/auth-magic-link.spec.ts
+  s_67bb71ed17151a::t_d07903683e5bfd 1-29
+e2e/browser/tests/dashboard.spec.ts
+  s_71caa72c69080b::t_60fe4f1c23e438 1-26
+e2e/browser/tests/helpers.ts
+  s_71caa72c69080b::t_408b304b5b33c1 1-67
+e2e/install/Dockerfile
+  s_71caa72c69080b::t_c56eeaa99667a7 66-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c900e562b121fc02d9b5001a9c67e22ca7031240",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_67bb71ed17151a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a22a0352e38803312",
+        "model": "unknown"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_71caa72c69080b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab2b6869e459bf037",
+        "model": "unknown"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

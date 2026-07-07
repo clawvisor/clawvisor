@@ -1,0 +1,21 @@
+pkg/store/sqlite/store_governance.go
+  s_55f7a841d7c10e::t_7e9f88391b8b78 131-140,146
+pkg/store/sqlite/store_governance_test.go
+  s_55f7a841d7c10e::t_7f9abfe9dbcf08 171-190,204-230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "096ef944d04f3fe489e4145f52fa36fa26cb19fa",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

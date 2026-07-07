@@ -1,0 +1,26 @@
+pkg/config/config.go
+  s_55f7a841d7c10e::t_5190be49dfd730 907-914
+  s_55f7a841d7c10e::t_703fb024b67ec4 40
+  s_55f7a841d7c10e::t_aa1ea6cffc672b 104-123
+  s_55f7a841d7c10e::t_b650b59215430e 1044-1054
+  s_55f7a841d7c10e::t_b885cf222e9ddd 485-493
+  s_55f7a841d7c10e::t_08bcb442eeab62 892-906,915
+pkg/config/config_test.go
+  s_55f7a841d7c10e::t_eb9cd91e94a471 166-240
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "714933a52e936ca48b5d77f1b2f355a1fff0bef0",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

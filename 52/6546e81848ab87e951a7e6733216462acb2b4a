@@ -1,0 +1,31 @@
+deploy/terraform/examples/aws-minimal/main.tf
+  s_55f7a841d7c10e::t_dfa12bdfe3e428 66-69
+scripts/mirror-terraform.sh
+  s_55f7a841d7c10e::t_c35fee88e58ded 29-32
+.github/workflows/terraform-ci.yml
+  s_55f7a841d7c10e::t_7be305a4e8df3e 74-79
+  s_55f7a841d7c10e::t_1d312a2e69b4d1 91-97
+  s_55f7a841d7c10e::t_a9c8bb671b3d44 10-11,18-20
+scripts/terraform-real-aws-lane.sh
+  s_55f7a841d7c10e::t_b7756eeb728644 76-80,82-93,96-99
+deploy/terraform/examples/local-docker/run.sh
+  s_55f7a841d7c10e::t_261fc7e11b2cd2 44-45,49-50
+  s_55f7a841d7c10e::t_72df27214befa2 29-35
+  s_55f7a841d7c10e::t_3136d06ba9fc5c 51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "526546e81848ab87e951a7e6733216462acb2b4a",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
