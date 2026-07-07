@@ -158,6 +158,16 @@ func cvPut(t *testing.T, cv *testapp.Server, tok, path string, body, dst any) {
 	}
 }
 
+func cvDelete(t *testing.T, cv *testapp.Server, tok, path string) {
+	t.Helper()
+	resp := cvDo(t, cv, tok, "DELETE", path, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("DELETE %s status=%d body=%s", path, resp.StatusCode, b)
+	}
+}
+
 // readBodyStr is a tiny inline helper for failure-path printing —
 // reads up to 4 KiB so we surface enough context without dragging in
 // io.ReadAll at every call site.
