@@ -1,6 +1,9 @@
 package vault
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // InstanceUserID is the owner of instance-shared vault entries. It mirrors
 // store.InstanceUserID (the `_instance` system user seeded by 05-lite); it
@@ -39,7 +42,7 @@ func (v *InstanceAwareVault) Get(ctx context.Context, userID, serviceID string) 
 	if err == nil {
 		return cred, nil
 	}
-	if err != ErrNotFound || userID == InstanceUserID {
+	if !errors.Is(err, ErrNotFound) || userID == InstanceUserID {
 		return nil, err
 	}
 	return v.inner.Get(ctx, InstanceUserID, serviceID)

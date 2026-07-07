@@ -621,8 +621,10 @@ type User struct {
 	VerifiedAt *time.Time `json:"verified_at,omitempty"`
 }
 
-// Verified reports whether the account has proven email possession.
-func (u *User) Verified() bool { return u != nil && u.VerifiedAt != nil }
+// Verified reports whether the account has proven email possession. A
+// non-nil but zero VerifiedAt (e.g. a malformed parse) is still pending per
+// the struct contract ("NULL/zero means pending"), so it must not count.
+func (u *User) Verified() bool { return u != nil && u.VerifiedAt != nil && !u.VerifiedAt.IsZero() }
 
 // UserInvite is a single-use, short-lived enrollment credential. Only the
 // SHA-256 hash of the `cvinv_...` token lives at rest; the plaintext is

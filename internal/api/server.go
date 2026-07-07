@@ -776,6 +776,12 @@ func (s *Server) routes() http.Handler {
 	userOrTokenRead := func(h http.HandlerFunc) http.Handler { return requireUserOrTokenRead(h) }
 	requireUserOrToken := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigWrite)
 	userOrToken := func(h http.HandlerFunc) http.Handler { return requireUserOrToken(h) }
+	// Personal vault item writes: a config-write token authenticates as the
+	// `_instance` user, so without this guard it could plant/delete shared
+	// entries the instance-admin `/api/vault/shared` surface reserves.
+	userOrTokenItemWrite := func(h http.HandlerFunc) http.Handler {
+		return requireUserOrToken(middleware.RejectInstanceItemWriteByScopedToken(h))
+	}
 	userOrTokenPolicyRL := func(h http.HandlerFunc) http.Handler {
 		return requireUserOrToken(middleware.RateLimit(policyRL, userKeyFn, rlCfg.PolicyAPI.Limit)(h))
 	}
@@ -1061,10 +1067,10 @@ func (s *Server) routes() http.Handler {
 		// token writes the caller's (`_instance`) personal vault entries;
 		// shared/`_instance` vault routes are a spec-04 addition.
 		mux.Handle("GET /api/vault/items", userOrTokenRead(vaultHandler.ListForUser))
-		mux.Handle("POST /api/vault/items", userOrToken(vaultHandler.CreateForUser))
+		mux.Handle("POST /api/vault/items", userOrTokenItemWrite(vaultHandler.CreateForUser))
 		mux.Handle("GET /api/vault/items/{id}", userOrTokenRead(vaultHandler.GetForUser))
-		mux.Handle("PUT /api/vault/items/{id}", userOrToken(vaultHandler.UpdateForUser))
-		mux.Handle("DELETE /api/vault/items/{id}", userOrToken(vaultHandler.DeleteForUser))
+		mux.Handle("PUT /api/vault/items/{id}", userOrTokenItemWrite(vaultHandler.UpdateForUser))
+		mux.Handle("DELETE /api/vault/items/{id}", userOrTokenItemWrite(vaultHandler.DeleteForUser))
 		mux.Handle("GET /api/agent/vault/items", requireAgent(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
 
 		// Instance-shared vault entries (spec 04 §C) — writing one injects a

@@ -107,3 +107,32 @@ func TestAPIToken_TrustSplit(t *testing.T) {
 		t.Errorf("member JWT: status=%d body=%s want 403 FORBIDDEN", code, body)
 	}
 }
+
+// TestRejectInstanceItemWriteByScopedToken pins the /api/vault/items write
+// guard: a config-write API token authenticates as the `_instance` user, so
+// letting it write a "personal" item would plant a fleet-wide shared entry
+// the instance-admin /api/vault/shared surface reserves. The guard blocks it
+// while leaving instance-admin tokens and JWT users untouched.
+func TestRejectInstanceItemWriteByScopedToken(t *testing.T) {
+	st := newAPITokenTestStore(t)
+	jwtSvc := newTestJWT(t)
+
+	// Wire the guard exactly as server.go does: config-write gate, then the
+	// item-write guard, then the handler.
+	gate := RequireUserOrAPIToken(jwtSvc, st, ScopeConfigWrite)(
+		RejectInstanceItemWriteByScopedToken(okHandler()))
+
+	writeTok := seedAPIToken(t, st, ScopeConfigWrite, nil, false, false)
+	adminTok := seedAPIToken(t, st, ScopeInstanceAdmin, nil, false, false)
+	memberJWT := jwtFor(t, st, jwtSvc, "member@x", store.RoleMember)
+
+	if code, body := statusFor(gate, writeTok); code != http.StatusForbidden || !bodyHasCode(body, "FORBIDDEN") {
+		t.Errorf("config-write token: status=%d body=%s want 403 FORBIDDEN (shared-entry plant blocked)", code, body)
+	}
+	if code, body := statusFor(gate, adminTok); code != http.StatusOK {
+		t.Errorf("instance-admin token: status=%d want 200 body=%s", code, body)
+	}
+	if code, body := statusFor(gate, memberJWT); code != http.StatusOK {
+		t.Errorf("member JWT (owns its own rows): status=%d want 200 body=%s", code, body)
+	}
+}
