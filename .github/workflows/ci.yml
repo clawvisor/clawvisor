@@ -51,10 +51,15 @@ jobs:
       # byte-identical, proving Contain is a strict superset by construction.
       # This lane gates exposing Contain; until it is required-blocking the
       # posture stays behind experimental_contain (config + module gate).
+      #
+      # -count=1 is required: Go's test cache does not key on the
+      # CLAWVISOR_E2E_POSTURE env var, and setup-go@v5 shares GOCACHE across
+      # jobs by go.sum, so without it the default-posture lane's cached result
+      # would satisfy this lane and it would never run under Contain.
       - name: Contain-posture scenarios
         env:
           CLAWVISOR_E2E_POSTURE: contain
-        run: go test ./e2e/scenarios/...
+        run: go test -count=1 ./e2e/scenarios/...
 
   frontend:
     name: Frontend
