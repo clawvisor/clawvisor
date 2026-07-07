@@ -150,6 +150,7 @@ func (p *clawvisorProvider) Configure(ctx context.Context, req provider.Configur
 func (p *clawvisorProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewAgentResource,
+		NewUserResource,
 		NewServiceConfigResource,
 		NewVaultEntryResource,
 		NewVaultReferenceResource,
