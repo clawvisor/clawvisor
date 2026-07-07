@@ -390,6 +390,17 @@ func TestLooksLikeRefEnvelope(t *testing.T) {
 	if LooksLikeRefEnvelope([]byte("sk-ant-plain-key")) {
 		t.Fatalf("plain value must not be flagged")
 	}
+	// A plaintext credential that merely contains the marker substring must
+	// not be flagged — only a JSON object carrying the top-level marker key is
+	// a masquerading envelope.
+	if LooksLikeRefEnvelope([]byte(`sk-ant-"$clawvisor_ref"-in-the-middle`)) {
+		t.Fatalf("plain value containing the marker substring must not be flagged")
+	}
+	// A legitimate JSON secret payload that mentions the marker in a value
+	// position (not as a top-level key) must not be flagged.
+	if LooksLikeRefEnvelope([]byte(`{"note":"$clawvisor_ref is a reserved marker"}`)) {
+		t.Fatalf("JSON payload mentioning the marker in a value must not be flagged")
+	}
 }
 
 func TestExtractJSONKey(t *testing.T) {

@@ -39,9 +39,12 @@ const (
 // carry the marker (spoofing a ref via the value channel — gotcha #4).
 const refEnvelopeMarker = 1
 
-// refMarkerToken is the substring the push-value path scans for to reject a
-// value that is trying to masquerade as a reference envelope.
-const refMarkerToken = `"$clawvisor_ref"`
+// refMarkerKey is the top-level JSON object key the push-value path looks for
+// to reject a value that is trying to masquerade as a reference envelope. It is
+// matched structurally (a JSON object carrying this key), never as a raw
+// substring, so a legitimate credential that merely contains the text
+// "$clawvisor_ref" somewhere is not falsely rejected.
+const refMarkerKey = `$clawvisor_ref`
 
 // RefEnvelope is the plaintext (pre-encryption) shape of a reference entry.
 // It is AES-GCM sealed with the same rowAAD binding as a pushed value, so an
@@ -106,8 +109,19 @@ var (
 // masquerade as a reference envelope. The credential API rejects such values
 // on the plain `value` path so a member cannot smuggle a reference in via the
 // member-allowed push channel (gotcha #4).
+//
+// Detection is structural: the value must parse as a JSON object that carries
+// the reference marker as a top-level key — exactly the shape a real envelope
+// takes. A plaintext credential, or a JSON secret payload that merely mentions
+// the marker text in a value position, is NOT flagged, so valid credentials
+// containing the substring "$clawvisor_ref" are still storable.
 func LooksLikeRefEnvelope(value []byte) bool {
-	return strings.Contains(string(value), refMarkerToken)
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(value, &obj); err != nil {
+		return false
+	}
+	_, ok := obj[refMarkerKey]
+	return ok
 }
 
 // refKindStore reads/writes the kind discriminator and the ref-envelope rows.
