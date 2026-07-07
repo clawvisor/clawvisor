@@ -76,6 +76,16 @@ func bootstrapAPIToken(ctx context.Context, st store.Store, logger *slog.Logger)
 		IsBootstrap: true,
 	}
 	if err := st.CreateAPIToken(ctx, tok); err != nil {
+		// The GetAPITokenByHash check above and this insert are not atomic, so
+		// a concurrent replica may have seeded the very same token between the
+		// check and here. A same-hash ErrConflict is therefore the idempotent
+		// case (step 3), not a failure: the token exists, so treat it as a
+		// no-op rather than refusing to start. Any other conflict (e.g. a
+		// duplicate id) is a genuine fault and still propagates.
+		if errors.Is(err, store.ErrConflict) {
+			logger.Info("bootstrap API token concurrently seeded by another replica; skipping seed")
+			return nil
+		}
 		return fmt.Errorf("seeding bootstrap token: %w", err)
 	}
 	logger.Info("seeded bootstrap API token (single-use, first mint burns it)", "expires_at", expiresAt.Format(time.RFC3339))

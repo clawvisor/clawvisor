@@ -94,6 +94,38 @@ func TestBootstrap_Idempotent(t *testing.T) {
 	}
 }
 
+// raceSeedStore wraps a real store but simulates the first-boot seed race:
+// GetAPITokenByHash reports the bootstrap token absent (the check-then-insert
+// is not atomic) while the subsequent CreateAPIToken then loses the insert
+// race with a same-hash ErrConflict — another replica seeded it in the window.
+type raceSeedStore struct {
+	store.Store
+}
+
+func (raceSeedStore) GetAPITokenByHash(context.Context, string) (*store.APIToken, error) {
+	return nil, store.ErrNotFound
+}
+
+func (raceSeedStore) CreateAPIToken(context.Context, *store.APIToken) error {
+	return store.ErrConflict
+}
+
+// TestBootstrap_ConcurrentSeedRaceIsIdempotent: when a concurrent replica
+// seeds the identical bootstrap token between our absence check and our
+// insert, the losing CreateAPIToken returns a same-hash ErrConflict. That is
+// the idempotent case, not a startup failure — the server must not refuse to
+// start (spec step 3's idempotency promise).
+func TestBootstrap_ConcurrentSeedRaceIsIdempotent(t *testing.T) {
+	real, ctx := newBootstrapStore(t)
+	st := raceSeedStore{real}
+	raw := genBootstrapToken(t)
+	t.Setenv(bootstrapTokenEnv, raw)
+
+	if err := bootstrapAPIToken(ctx, st, quietLogger()); err != nil {
+		t.Fatalf("concurrent same-hash seed race must be an idempotent no-op, got %v", err)
+	}
+}
+
 // TestBootstrap_RefusesMalformed: a malformed value returns an error
 // (the caller refuses to start).
 func TestBootstrap_RefusesMalformed(t *testing.T) {

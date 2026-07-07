@@ -10,8 +10,15 @@
 --
 -- 05-lite OWNS this seed (not 04). Do NOT split these across two numbered
 -- files — that would consume 04's reserved migration block.
-INSERT OR IGNORE INTO users (id, email, password_hash)
-VALUES ('_instance', 'instance@system.clawvisor.invalid', '!locked!');
+--
+-- Use an id-targeted ON CONFLICT (matching the postgres/059 sibling) rather
+-- than a blanket INSERT OR IGNORE: the latter swallows EVERY uniqueness
+-- conflict (including the unique `email`), so a pre-existing row with the
+-- same email but a different id would silently skip the `_instance` seed and
+-- leave token-authenticated writes with no system user to attribute to.
+INSERT INTO users (id, email, password_hash)
+VALUES ('_instance', 'instance@system.clawvisor.invalid', '!locked!')
+ON CONFLICT (id) DO NOTHING;
 
 -- Long-lived, scoped, revocable API tokens (the Terraform provider / CI
 -- credential). Plaintext is returned exactly once on create; only the
