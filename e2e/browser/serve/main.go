@@ -81,9 +81,9 @@ func run(port int, dataDir string) error {
 				return fmt.Errorf("alloc port: %w", err)
 			}
 		}
-		child, url, err := start(binPath, frontendDir, dataDir, boundPort)
+		child, exited, url, err := start(binPath, frontendDir, dataDir, boundPort)
 		if err == nil {
-			return serveUntilSignal(child, url)
+			return serveUntilSignal(child, exited, url)
 		}
 		lastErr = err
 		var early *earlyExitError
@@ -112,17 +112,19 @@ func errString(err error) string {
 }
 
 // start writes the config, launches the server, and waits for /ready. On
-// failure it tears down its own child inline and returns the error.
-func start(binPath, frontendDir, dataDir string, port int) (*exec.Cmd, string, error) {
+// success it returns the child, an `exited` channel closed when the child's
+// single cmd.Wait() completes, and the URL. On failure it tears down its own
+// child inline and returns the error.
+func start(binPath, frontendDir, dataDir string, port int) (*exec.Cmd, <-chan struct{}, string, error) {
 	publicURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	vaultKeyFile := filepath.Join(dataDir, "vault.key")
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
-		return nil, "", fmt.Errorf("rand: %w", err)
+		return nil, nil, "", fmt.Errorf("rand: %w", err)
 	}
 	if err := os.WriteFile(vaultKeyFile, []byte(base64.StdEncoding.EncodeToString(keyBytes)), 0600); err != nil {
-		return nil, "", fmt.Errorf("write vault key: %w", err)
+		return nil, nil, "", fmt.Errorf("write vault key: %w", err)
 	}
 
 	cfgPath := filepath.Join(dataDir, "config.yaml")
@@ -179,7 +181,7 @@ proxy_lite:
   enabled: true
 `, port, publicURL, frontendDir, dataDir, vaultKeyFile)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0600); err != nil {
-		return nil, "", fmt.Errorf("write config: %w", err)
+		return nil, nil, "", fmt.Errorf("write config: %w", err)
 	}
 
 	cmd := exec.Command(binPath, "server")
@@ -193,9 +195,11 @@ proxy_lite:
 	cmd.Stderr = os.Stderr // surface startup failures to the caller's log
 
 	if err := cmd.Start(); err != nil {
-		return nil, "", fmt.Errorf("start server: %w", err)
+		return nil, nil, "", fmt.Errorf("start server: %w", err)
 	}
 
+	// The child's cmd.Wait() is called exactly once, here. serveUntilSignal
+	// reuses this channel rather than calling Wait() a second time.
 	exited := make(chan struct{})
 	go func() { cmd.Wait(); close(exited) }()
 
@@ -205,9 +209,9 @@ proxy_lite:
 		case <-exited:
 		case <-time.After(5 * time.Second):
 		}
-		return nil, "", err
+		return nil, nil, "", err
 	}
-	return cmd, publicURL, nil
+	return cmd, exited, publicURL, nil
 }
 
 func waitReady(baseURL string, timeout time.Duration, exited <-chan struct{}) error {
@@ -233,7 +237,7 @@ func waitReady(baseURL string, timeout time.Duration, exited <-chan struct{}) er
 
 // serveUntilSignal prints the readiness line and blocks until a termination
 // signal, then kills the child and returns nil (exit 0).
-func serveUntilSignal(cmd *exec.Cmd, url string) error {
+func serveUntilSignal(cmd *exec.Cmd, exited <-chan struct{}, url string) error {
 	line, err := json.Marshal(struct {
 		URL string `json:"url"`
 		PID int    `json:"pid"`
@@ -246,9 +250,6 @@ func serveUntilSignal(cmd *exec.Cmd, url string) error {
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-
-	exited := make(chan struct{})
-	go func() { cmd.Wait(); close(exited) }()
 
 	select {
 	case <-sig:
