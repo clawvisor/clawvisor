@@ -200,7 +200,14 @@ func (h *AuthHandler) resolveInvite(r *http.Request, token, email string) (*stor
 func resolveInviteToken(ctx context.Context, st store.Store, token, email string) (*store.UserInvite, error) {
 	inv, err := st.GetUserInviteByHash(ctx, auth.HashToken(strings.TrimSpace(token)))
 	if err != nil {
-		return nil, errInviteNotFound
+		// Only genuine absence is an invalid-invite outcome. A backend/scan
+		// failure must surface as a 500, not be masked as a 403 INVITE_INVALID,
+		// which would tell the caller their invite is bad when the store simply
+		// failed. Return the raw error so writeInviteError maps it to 500.
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, errInviteNotFound
+		}
+		return nil, err
 	}
 	if inv.UsedAt != nil {
 		return nil, errInviteUsed
@@ -228,8 +235,12 @@ func writeInviteError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "INVITE_ALREADY_USED", "invite has already been claimed")
 	case errors.Is(err, errInviteEmail):
 		writeError(w, http.StatusForbidden, "INVITE_EMAIL_MISMATCH", "invite is bound to a different email")
-	default:
+	case errors.Is(err, errInviteNotFound):
 		writeError(w, http.StatusForbidden, "INVITE_INVALID", "invite is not valid")
+	default:
+		// A backend/lookup failure (not a validation outcome) — surface it as a
+		// 500 instead of masking it as a 403 INVITE_INVALID.
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not validate invite")
 	}
 }
 
