@@ -1,0 +1,22 @@
+pkg/store/store.go
+  s_55f7a841d7c10e::t_38fb1827aff4c5 548-551
+pkg/store/store_test.go
+  s_55f7a841d7c10e::t_22eb2ff869083f 7,10-31
+  s_55f7a841d7c10e::t_d28225d02b5d63 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4385b3bfdfea801e1054bea0c53f90ba983e7335",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
