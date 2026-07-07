@@ -521,6 +521,15 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Open the pre-policy phase span before the first request-side policy
+	// runs. Everything from here to the upstream forward is the pre chain;
+	// per-policy verdicts land as policy.verdict events on this span. Opening
+	// it here (rather than after the chain) keeps the nine pre-policy verdicts
+	// — anthropic_sanitize, inbound_sanitize, org model/spend/content,
+	// task_approval_reply, inline task intercept/augment, control_notice —
+	// attached to pipeline.pre instead of the root span.
+	setPhase(observability.SpanPipelinePre)
+
 	// Validate that the body parses for the selected provider. Surfaces
 	// schema errors as a 400 before we burn an upstream call.
 	//
@@ -1054,10 +1063,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	if conversationID != "" {
 		auditParams["conversation_id"] = conversationID
 	}
-	// Open the pre-policy phase span. Everything from here to the upstream
-	// forward runs the request-side policy chain; per-policy verdicts land
-	// as policy.verdict events on this span.
-	setPhase(observability.SpanPipelinePre)
+	// The pipeline.pre phase span was opened before the first pre-policy
+	// (see setPhase above) so the whole request-side chain's verdict events
+	// attach to it; it remains open here through to the upstream forward.
 	h.Logger.DebugContext(r.Context(), "lite-proxy request accepted",
 		"request_id", requestID,
 		"agent_id", agent.ID,
