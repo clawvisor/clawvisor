@@ -51,7 +51,7 @@ services:
   # (or the CLAWVISOR_OTEL_* env equivalents). Exported spans/metrics show up
   # in this collector's debug log: `docker compose logs -f otel-collector`.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.104.0
     container_name: clawvisor-otel-collector
     profiles: ["observability"]
     command: ["--config=/etc/otel-collector.yaml"]
