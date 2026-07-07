@@ -29,8 +29,11 @@ approvals, policy, agents) against a freshly built server + real frontend.
 - `serve/main.go` boots a real `clawvisor-server` subprocess with proxy-lite
   enabled and the frontend served from `web/dist`. It mirrors `e2e/testapp`'s
   config template + port-collision retry, and prints one JSON readiness line.
-- `global-setup.ts` spawns the server, logs in via the two magic-link API calls
-  (same as `e2e/testapp/fixture.go`), and saves `storageState.json`.
+- `global-setup.ts` spawns the server and writes its `BASE_URL` to `.env-browser`
+  for the config + specs to read. There is **no shared `storageState`**: the
+  server's refresh token is single-use/rotating, so authentication is per-spec
+  via `helpers.login()` (the two magic-link API calls, same as
+  `e2e/testapp/fixture.go`).
 - Specs seed via the HTTP API only — never by writing SQLite.
 
 Run locally:
