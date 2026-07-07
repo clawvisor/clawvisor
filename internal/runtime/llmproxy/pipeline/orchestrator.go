@@ -174,6 +174,7 @@ func RunPre(ctx context.Context, req ReadOnlyRequest, policies []RequestPolicy) 
 				result.Observed = append(result.Observed, ObservedVerdict{
 					Policy: policy.Name(), Outcome: string(DecisionFromOutcome(verdict.Outcome)), Reason: verdict.Reason,
 				})
+				result.AuditParams["observed"] = true
 				continue
 			}
 			result.ShortCircuit = verdict.ShortCircuit
