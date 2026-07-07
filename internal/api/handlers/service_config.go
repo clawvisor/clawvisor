@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -72,13 +71,6 @@ func (h *ServicesHandler) PutConfig(w http.ResponseWriter, r *http.Request) {
 	serviceID := r.PathValue("serviceID")
 	if serviceID == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service id is required")
-		return
-	}
-	// Reject unknown/typo'd service IDs so a config document never persists as
-	// an orphan row for a service that does not exist (matching the activation
-	// handlers' GetForUser guard).
-	if _, ok := h.adapterReg.GetForUser(r.Context(), serviceID, user.ID); !ok {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
 		return
 	}
 	var body struct {
