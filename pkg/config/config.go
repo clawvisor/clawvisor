@@ -255,6 +255,16 @@ type AuthConfig struct {
 	// registers and becomes admin. Default false: open-registration behavior
 	// is unchanged (full backward compatibility). Env: AUTH_REQUIRE_INVITE.
 	RequireInvite bool `yaml:"require_invite"`
+	// DisableAPITokens, when true, turns OFF the long-lived scoped API-token
+	// subsystem instance-wide: the mint/manage routes are never registered
+	// (404), no bootstrap token is seeded, /api/features advertises
+	// api_tokens:false, and the auth middleware rejects any presented `cvat_`
+	// bearer with 401 WITHOUT consulting the token table — so a leaked or
+	// DB-planted instance-admin token is inert. Default false: OSS self-hosted
+	// and the Terraform provider depend on bootstrap→mint→instance-admin, so
+	// tokens stay ENABLED unless an operator (the cloud deployment) opts out.
+	// Env: AUTH_DISABLE_API_TOKENS.
+	DisableAPITokens bool `yaml:"disable_api_tokens"`
 }
 
 type ApprovalConfig struct {
@@ -785,6 +795,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("AUTH_REQUIRE_INVITE"); v != "" {
 		cfg.Auth.RequireInvite = v == "1" || strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("AUTH_DISABLE_API_TOKENS"); v != "" {
+		cfg.Auth.DisableAPITokens = v == "1" || strings.EqualFold(v, "true")
 	}
 
 	if v := os.Getenv("CALLBACK_ALLOW_PRIVATE_CIDRS"); v != "" {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -23,6 +24,18 @@ const bootstrapTokenEnv = "CLAWVISOR_BOOTSTRAP_TOKEN"
 // The token exists in plaintext in the secret manager, the compose env on
 // disk, and Terraform state, so it must be short-lived by construction.
 const bootstrapTokenTTL = 24 * time.Hour
+
+// bootstrapAPITokenIfEnabled seeds the first-boot bootstrap token unless the
+// API-token subsystem is disabled instance-wide (auth.disable_api_tokens). When
+// disabled nothing is seeded even if CLAWVISOR_BOOTSTRAP_TOKEN is present, so a
+// locked-down deployment can never carry an instance-admin credential. When
+// enabled it delegates to bootstrapAPIToken unchanged.
+func bootstrapAPITokenIfEnabled(ctx context.Context, cfg *config.Config, st store.Store, logger *slog.Logger) error {
+	if cfg != nil && cfg.Auth.DisableAPITokens {
+		return nil
+	}
+	return bootstrapAPIToken(ctx, st, logger)
+}
 
 // bootstrapAPIToken seeds the first-boot bootstrap API token from
 // CLAWVISOR_BOOTSTRAP_TOKEN. It is idempotent across restarts and never

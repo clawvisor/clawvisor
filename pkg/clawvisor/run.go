@@ -156,6 +156,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		RuntimeActivity:   opts.Features.RuntimeActivity,
 		AgentLiveSessions: opts.Features.AgentLiveSessions,
 		ServicePresets:    opts.Features.ServicePresets,
+		APITokens:         opts.Features.APITokens,
 	}))
 
 	apiOpts = append(apiOpts, api.WithExtraRoutes(func(mux *http.ServeMux, deps api.Dependencies) {
@@ -317,6 +318,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 				RuntimeActivity:   fs.RuntimeActivity,
 				AgentLiveSessions: fs.AgentLiveSessions,
 				ServicePresets:    fs.ServicePresets,
+				APITokens:         fs.APITokens,
 			})
 			fs.MultiTenant = modified.MultiTenant
 			fs.EmailVerification = modified.EmailVerification
@@ -334,6 +336,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			fs.RuntimeActivity = modified.RuntimeActivity
 			fs.AgentLiveSessions = modified.AgentLiveSessions
 			fs.ServicePresets = modified.ServicePresets
+			fs.APITokens = modified.APITokens
 			return fs
 		}))
 	}
@@ -398,6 +401,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	}
 	if opts.Instruments != nil {
 		apiOpts = append(apiOpts, api.WithInstruments(opts.Instruments))
+	}
+	if opts.RedisClient != nil {
+		apiOpts = append(apiOpts, api.WithRedisClient(opts.RedisClient))
 	}
 
 	srv, err := api.New(
