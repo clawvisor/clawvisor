@@ -5,14 +5,21 @@ on:
     branches: [main]
     paths:
       - "deploy/terraform/**"
+      - "provider/**"
       - ".github/workflows/terraform-ci.yml"
       - "scripts/mirror-terraform.sh"
+      - "scripts/terraform-plan-secret-scan.sh"
+      - "scripts/terraform-real-aws-lane.sh"
     tags: ["v*"]
   pull_request:
     branches: [main]
     paths:
       - "deploy/terraform/**"
+      - "provider/**"
       - ".github/workflows/terraform-ci.yml"
+      - "scripts/mirror-terraform.sh"
+      - "scripts/terraform-plan-secret-scan.sh"
+      - "scripts/terraform-real-aws-lane.sh"
   workflow_dispatch:
     inputs:
       real_cloud:
@@ -66,7 +73,12 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "~> 1.9"
-      - name: render + validate compose
+      - name: install caddy (for Caddyfile validation)
+        run: |
+          curl -fsSL https://github.com/caddyserver/caddy/releases/download/v2.8.4/caddy_2.8.4_linux_amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin caddy
+          caddy version
+      - name: render + validate compose + Caddyfile
         run: |
           cd deploy/terraform/examples/local-docker
           ./run.sh
@@ -78,23 +90,36 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.real_cloud }}
     environment: terraform-aws
+    # The lane uses fixed resource names (NAME=clawvisor: shared SSM param, DB,
+    # snapshots). Serialize the lane globally so two manual dispatches can't
+    # clobber each other's SSM param / DB / snapshots. Never cancel a run
+    # mid-apply — that would orphan half-created billable resources.
+    concurrency:
+      group: terraform-real-aws-lane
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "~> 1.9"
 
+      # The `secrets` context is not available in `if:` expressions (using it
+      # invalidates the whole workflow at parse time), so gate via a step
+      # output instead.
       - name: guard — require AWS credentials
+        id: guard
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         run: |
           if [ -z "$AWS_ACCESS_KEY_ID" ]; then
             echo "No AWS credentials configured; skipping real-cloud lane."
-            exit 0
+            echo "has_aws=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_aws=1" >> "$GITHUB_OUTPUT"
           fi
 
       - name: apply → upgrade → snapshot → destroy
-        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
+        if: ${{ steps.guard.outputs.has_aws == '1' }}
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -104,7 +129,44 @@ jobs:
           TF_VAR_office_cidrs: ${{ vars.CLAWVISOR_CI_CIDRS }}
         run: bash scripts/terraform-real-aws-lane.sh
 
-  # Job 4 — publish-only registry mirror on release tags (DEFERRED to v1.1).
+  # Job 4 — Terraform provider (spec 06b): build the separate provider module,
+  # verify committed tfplugindocs output is up to date, and run the hermetic
+  # acceptance lane. testapp boots a real clawvisor-server subprocess and mints
+  # an instance-admin token via the 05-lite bootstrap flow — no cloud creds.
+  provider:
+    name: provider build + docs + acceptance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: provider/go.mod
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.9"
+          terraform_wrapper: false
+
+      - name: build (separate module)
+        run: cd provider && go build ./...
+
+      - name: unit tests
+        run: cd provider && go test ./internal/client/... ./internal/provider/...
+
+      - name: docs are up to date
+        run: |
+          cd provider
+          go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest generate --provider-name clawvisor
+          git diff --exit-code docs/ || {
+            echo "::error::provider docs are stale — run tfplugindocs generate and commit docs/"; exit 1; }
+
+      - name: acceptance tests (TF_ACC, hermetic testapp)
+        env:
+          TF_ACC: "1"
+        run: cd provider && go test ./internal/provider/testacc/... -run TestAcc -v
+
+  # Job 5 — publish-only registry mirror on release tags (DEFERRED to v1.1).
   # Present but disabled: PRD §6/§13 keep the monorepo path as the v1
   # distribution. Flip `if: false` to `if: startsWith(github.ref, 'refs/tags/v')`
   # when the mirror repo exists.
