@@ -1498,6 +1498,7 @@ func (s *Server) registerLiteProxyRoutes(
 		llmHandler.UpstreamAuth = s.cfg.ProxyLite.UpstreamAuth
 		llmHandler.EnforcementMode = s.cfg.ProxyLite.EnforcementMode
 		llmHandler.AllowSubscriptionBillingMigration = s.cfg.ProxyLite.AllowSubscriptionBillingMigration
+		llmHandler.GovernSubscriptionSeats = s.cfg.ProxyLite.GovernSubscriptionSeats
 		if v := s.cfg.ProxyLite.AnthropicBaseURL; v != "" {
 			llmHandler.Forwarder.Upstream.AnthropicBaseURL = v
 		}

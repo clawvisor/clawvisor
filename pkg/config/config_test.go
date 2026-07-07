@@ -279,6 +279,9 @@ func TestFlipDefaultStaysFalse(t *testing.T) {
 	if d.ProxyLite.AllowSubscriptionBillingMigration {
 		t.Fatal("Default allow_subscription_billing_migration must be false")
 	}
+	if !d.ProxyLite.GovernSubscriptionSeats {
+		t.Fatal("Default govern_subscription_seats must be true (auto-govern subscription seats on by default)")
+	}
 }
 
 // TestProxyLiteEnableMatrix asserts exactly which (key present/absent) ×
@@ -543,4 +546,30 @@ func TestLoadAppliesSubMigrationEnv(t *testing.T) {
 	if !cfg.ProxyLite.AllowSubscriptionBillingMigration {
 		t.Fatal("expected allow_subscription_billing_migration env override to apply")
 	}
+}
+
+// TestLoadAppliesGovernSubscriptionSeatsEnv verifies the default-true opt-out:
+// the env override can force strict "vaulted keys only" mode (false) and can
+// restore auto-govern (true).
+func TestLoadAppliesGovernSubscriptionSeatsEnv(t *testing.T) {
+	t.Run("false forces strict mode", func(t *testing.T) {
+		t.Setenv("CLAWVISOR_PROXY_LITE_GOVERN_SUBSCRIPTION_SEATS", "false")
+		cfg, err := Load("")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.ProxyLite.GovernSubscriptionSeats {
+			t.Fatal("expected govern_subscription_seats=false env override to force strict mode")
+		}
+	})
+	t.Run("true keeps auto-govern", func(t *testing.T) {
+		t.Setenv("CLAWVISOR_PROXY_LITE_GOVERN_SUBSCRIPTION_SEATS", "true")
+		cfg, err := Load("")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.ProxyLite.GovernSubscriptionSeats {
+			t.Fatal("expected govern_subscription_seats=true env override to keep auto-govern")
+		}
+	})
 }
