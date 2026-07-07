@@ -163,10 +163,66 @@ func TestObserveCarriesSubscriptionSession(t *testing.T) {
 	}
 }
 
-// TestGovernRefusesSubscriptionSeatWithoutConsent (§4c): govern with a
-// subscription bearer and no consent flag refuses with
-// SUBSCRIPTION_SEAT_NOT_GOVERNABLE and never reaches upstream.
-func TestGovernRefusesSubscriptionSeatWithoutConsent(t *testing.T) {
+// TestGovernAutoGovernsSubscriptionSeat: govern (vault) with the default
+// govern_subscription_seats=true FORWARDS the seat's own subscription bearer
+// upstream (billing stays on the subscription — no rebilling) rather than
+// refusing it. A vault key IS seeded to prove billing-neutrality: it must NOT
+// be injected. Audit records auth_mode:subscription_passthrough +
+// subscription_governed:true so an admin sees a governed (credential-local,
+// enforced) subscription seat. Policy enforcement under this mode is proven
+// separately in llm_proxy_local_gov_test.go.
+func TestGovernAutoGovernsSubscriptionSeat(t *testing.T) {
+	h := testharness.New(t)
+	upstream := newUpstreamCapture(t)
+	cv := testapp.StartWith(t, h, map[string]string{
+		"CLAWVISOR_LLM_UPSTREAM_ANTHROPIC":   upstream.URL(),
+		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH": "vault",
+	})
+	user := cv.LoginAsLocalUser(t)
+	// Seed a vault key that MUST NOT surface upstream (billing-neutral proof).
+	const vaultKey = "sk-ant-api03-VAULT-must-not-inject"
+	llmCredSet(t, cv, user.AccessToken, "anthropic", "", vaultKey)
+	_, token := newPostureAgent(t, cv, user.AccessToken, "govern-autogovern")
+
+	const subBearer = "Bearer sk-ant-oat01-SUBSCRIPTION"
+	resp := postureAgentReq(t, cv, token, map[string]string{
+		"Authorization":  subBearer,
+		"anthropic-beta": "oauth-test",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status=%d, want 200 (subscription seat auto-governed, not refused); body=%s", resp.StatusCode, readBodyStr(resp))
+	}
+	if upstream.Count() != 1 {
+		t.Fatalf("upstream hits=%d, want 1", upstream.Count())
+	}
+	got := upstream.Last()
+	if got.Headers.Get("Authorization") != subBearer {
+		t.Fatalf("subscription bearer not forwarded: Authorization=%q, want %q", got.Headers.Get("Authorization"), subBearer)
+	}
+	if k := got.Headers.Get("x-api-key"); k != "" {
+		t.Fatalf("vault key injected (rebilling!): upstream x-api-key=%q, want empty", k)
+	}
+	if strings.Contains(got.Headers.Get("Authorization"), "VAULT-must-not-inject") {
+		t.Fatalf("vault key leaked upstream: Authorization=%q", got.Headers.Get("Authorization"))
+	}
+	if got.Headers.Get("anthropic-beta") != "oauth-test" {
+		t.Fatalf("anthropic-beta altered: %q, want oauth-test", got.Headers.Get("anthropic-beta"))
+	}
+	if !auditContains(t, cv, user.AccessToken, `"auth_mode":"subscription_passthrough"`) {
+		t.Fatal("audit did not record auth_mode: subscription_passthrough")
+	}
+	if !auditContains(t, cv, user.AccessToken, `"subscription_governed":true`) {
+		t.Fatal("audit did not record subscription_governed: true")
+	}
+}
+
+// TestGovernAutoGovernsUnrecognizedBearer: under the default auto-govern, an
+// opaque (unrecognized) bearer is treated like any forwardable client bearer —
+// forwarded upstream and governed — matching Observe, which forwards any
+// bearer. (Under strict mode it fails closed; see
+// TestGovernStrictModeRefusesUnrecognizedBearer.)
+func TestGovernAutoGovernsUnrecognizedBearer(t *testing.T) {
 	h := testharness.New(t)
 	upstream := newUpstreamCapture(t)
 	cv := testapp.StartWith(t, h, map[string]string{
@@ -175,7 +231,39 @@ func TestGovernRefusesSubscriptionSeatWithoutConsent(t *testing.T) {
 	})
 	user := cv.LoginAsLocalUser(t)
 	llmCredSet(t, cv, user.AccessToken, "anthropic", "", "sk-ant-api03-vault")
-	_, token := newPostureAgent(t, cv, user.AccessToken, "govern-refuse")
+	_, token := newPostureAgent(t, cv, user.AccessToken, "govern-opaque-auto")
+
+	const opaque = "Bearer opaque-unknown-future-token"
+	resp := postureAgentReq(t, cv, token, map[string]string{
+		"Authorization": opaque,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status=%d, want 200 (unrecognized bearer auto-governed); body=%s", resp.StatusCode, readBodyStr(resp))
+	}
+	if got := upstream.Last(); got.Headers.Get("Authorization") != opaque {
+		t.Fatalf("unrecognized bearer not forwarded: Authorization=%q", got.Headers.Get("Authorization"))
+	}
+	if !auditContains(t, cv, user.AccessToken, `"auth_mode":"subscription_passthrough"`) {
+		t.Fatal("audit did not record auth_mode: subscription_passthrough for the auto-governed bearer")
+	}
+}
+
+// TestGovernStrictModeRefusesSubscriptionSeat: with the opt-out
+// govern_subscription_seats=false, govern reverts to the strict
+// "vaulted keys only" behavior — a subscription bearer is refused with
+// SUBSCRIPTION_SEAT_NOT_GOVERNABLE and never reaches upstream (no rebill).
+func TestGovernStrictModeRefusesSubscriptionSeat(t *testing.T) {
+	h := testharness.New(t)
+	upstream := newUpstreamCapture(t)
+	cv := testapp.StartWith(t, h, map[string]string{
+		"CLAWVISOR_LLM_UPSTREAM_ANTHROPIC":               upstream.URL(),
+		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH":             "vault",
+		"CLAWVISOR_PROXY_LITE_GOVERN_SUBSCRIPTION_SEATS": "false",
+	})
+	user := cv.LoginAsLocalUser(t)
+	llmCredSet(t, cv, user.AccessToken, "anthropic", "", "sk-ant-api03-vault")
+	_, token := newPostureAgent(t, cv, user.AccessToken, "govern-strict-refuse")
 
 	resp := postureAgentReq(t, cv, token, map[string]string{
 		"Authorization": "Bearer sk-ant-oat01-SUBSCRIPTION",
@@ -184,28 +272,28 @@ func TestGovernRefusesSubscriptionSeatWithoutConsent(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status=%d, want 403; body=%s", resp.StatusCode, readBodyStr(resp))
 	}
-	body := readBodyStr(resp)
-	if !strings.Contains(body, "SUBSCRIPTION_SEAT_NOT_GOVERNABLE") {
-		t.Fatalf("body missing SUBSCRIPTION_SEAT_NOT_GOVERNABLE: %s", body)
+	if !strings.Contains(readBodyStr(resp), "SUBSCRIPTION_SEAT_NOT_GOVERNABLE") {
+		t.Fatal("strict mode should refuse with SUBSCRIPTION_SEAT_NOT_GOVERNABLE")
 	}
 	if upstream.Count() != 0 {
 		t.Fatalf("upstream hits=%d, want 0 (no silent rebill)", upstream.Count())
 	}
 }
 
-// TestGovernRefusesUnrecognizedBearer (§4c F3, fail-closed): govern with an
-// opaque non-API-key bearer and no anthropic-beta header is refused, not
-// silently injected.
-func TestGovernRefusesUnrecognizedBearer(t *testing.T) {
+// TestGovernStrictModeRefusesUnrecognizedBearer (fail-closed under strict): with
+// govern_subscription_seats=false, an opaque non-API-key bearer is refused, not
+// forwarded — preserving the keys-off-laptops guarantee.
+func TestGovernStrictModeRefusesUnrecognizedBearer(t *testing.T) {
 	h := testharness.New(t)
 	upstream := newUpstreamCapture(t)
 	cv := testapp.StartWith(t, h, map[string]string{
-		"CLAWVISOR_LLM_UPSTREAM_ANTHROPIC":   upstream.URL(),
-		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH": "vault",
+		"CLAWVISOR_LLM_UPSTREAM_ANTHROPIC":               upstream.URL(),
+		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH":             "vault",
+		"CLAWVISOR_PROXY_LITE_GOVERN_SUBSCRIPTION_SEATS": "false",
 	})
 	user := cv.LoginAsLocalUser(t)
 	llmCredSet(t, cv, user.AccessToken, "anthropic", "", "sk-ant-api03-vault")
-	_, token := newPostureAgent(t, cv, user.AccessToken, "govern-opaque")
+	_, token := newPostureAgent(t, cv, user.AccessToken, "govern-strict-opaque")
 
 	resp := postureAgentReq(t, cv, token, map[string]string{
 		"Authorization": "Bearer opaque-unknown-future-token",
@@ -215,7 +303,7 @@ func TestGovernRefusesUnrecognizedBearer(t *testing.T) {
 		t.Fatalf("status=%d, want 403; body=%s", resp.StatusCode, readBodyStr(resp))
 	}
 	if !strings.Contains(readBodyStr(resp), "SUBSCRIPTION_SEAT_NOT_GOVERNABLE") {
-		t.Fatal("opaque bearer should fail closed with SUBSCRIPTION_SEAT_NOT_GOVERNABLE")
+		t.Fatal("opaque bearer should fail closed with SUBSCRIPTION_SEAT_NOT_GOVERNABLE under strict mode")
 	}
 	if upstream.Count() != 0 {
 		t.Fatalf("upstream hits=%d, want 0", upstream.Count())
