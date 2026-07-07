@@ -520,7 +520,10 @@ func stepPosture(cfg *config) error {
 	fmt.Println(section.Render("── Agent Connection ───────────────────────"))
 	fmt.Println()
 
-	var choice string
+	// Default remains the skill gateway: huh preselects the first option, so
+	// initialize choice to "gateway" (not "") so pressing Enter writes the
+	// stated default rather than the first-listed "observe" option.
+	choice := "gateway"
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
