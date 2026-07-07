@@ -61,3 +61,13 @@ CREATE TABLE IF NOT EXISTS instance_policy_violation (
 );
 CREATE INDEX IF NOT EXISTS idx_instance_violation_time
     ON instance_policy_violation(created_at);
+
+-- SumInstanceCostMicros (the spend-cap read path) aggregates
+-- SUM(cost_micros) over every llm_request_cost row in a time window,
+-- instance-wide (no user_id / agent_id filter). Every existing index on
+-- that table is (user_id,…) or (agent_id,…) leading, so this rollup falls
+-- back to a full table scan. Add a timestamp-leading index so the window
+-- filter seeks directly — same reasoning as migration 057's
+-- (agent_id, timestamp) covering index for the cloud dashboards.
+CREATE INDEX IF NOT EXISTS idx_llm_cost_time
+    ON llm_request_cost(timestamp);

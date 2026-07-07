@@ -168,6 +168,26 @@ func TestInstancePolicyViolation_RecordList(t *testing.T) {
 	}
 }
 
+// seedCostRow writes an audit_log parent (FK target for llm_request_cost)
+// and the cost row at ts with the given cost. Uses the seeded __system__
+// user so the audit_log.user_id FK is satisfied.
+func seedCostRow(t *testing.T, st *Store, ctx context.Context, id string, ts time.Time, costMicros int64) {
+	t.Helper()
+	if err := st.LogAudit(ctx, &store.AuditEntry{
+		ID: id, UserID: "__system__", RequestID: id, Timestamp: ts,
+		Service: "gateway", Action: "llm_request", Decision: "allow", Outcome: "success",
+	}); err != nil {
+		t.Fatalf("LogAudit(%s): %v", id, err)
+	}
+	c := costMicros
+	if err := st.RecordLLMRequestCost(ctx, &store.LLMRequestCost{
+		AuditID: id, UserID: "__system__", RequestID: id, Timestamp: ts,
+		Provider: "anthropic", Model: "claude-3-5-sonnet", CostMicros: &c,
+	}); err != nil {
+		t.Fatalf("RecordLLMRequestCost(%s): %v", id, err)
+	}
+}
+
 // TestSumInstanceCostMicros sums cost across the window regardless of agent.
 func TestSumInstanceCostMicros(t *testing.T) {
 	st, ctx := newGovStore(t)
@@ -179,5 +199,32 @@ func TestSumInstanceCostMicros(t *testing.T) {
 	}
 	if sum != 0 {
 		t.Fatalf("expected 0 sum on empty, got %d", sum)
+	}
+}
+
+// TestSumInstanceCostMicros_SubSecondBoundary proves a row landing in the
+// first sub-second of a whole-second window is attributed to that window.
+// Regression: timestamps are stored as RFC3339Nano, so a row at
+// "…00:00:00.5Z" sorted lexically before an RFC3339 "…00:00:00Z" lower
+// bound ('.' < 'Z') and was dropped — misattributed to the prior window.
+func TestSumInstanceCostMicros_SubSecondBoundary(t *testing.T) {
+	st, ctx := newGovStore(t)
+
+	// Whole-second window boundary, matching windowBounds' midnight-UTC bounds.
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	until := since.Add(24 * time.Hour)
+
+	seedCostRow(t, st, ctx, "boundary", since.Add(500*time.Millisecond), 1000) // first sub-second of window
+	seedCostRow(t, st, ctx, "exact", since, 250)                               // exactly at lower bound (inclusive)
+	seedCostRow(t, st, ctx, "inside", since.Add(time.Hour), 500)               // well inside
+	seedCostRow(t, st, ctx, "before", since.Add(-time.Millisecond), 9999)      // prior window, excluded
+	seedCostRow(t, st, ctx, "atupper", until, 8888)                            // exactly at upper bound (exclusive)
+
+	sum, err := st.SumInstanceCostMicros(ctx, since, until)
+	if err != nil {
+		t.Fatalf("SumInstanceCostMicros: %v", err)
+	}
+	if want := int64(1000 + 250 + 500); sum != want {
+		t.Fatalf("expected %d (boundary+exact+inside, sub-second row NOT dropped), got %d", want, sum)
 	}
 }
