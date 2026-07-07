@@ -117,6 +117,46 @@ func TestAPIToken_AdminGateByScope(t *testing.T) {
 	}
 }
 
+// TestAPIToken_ConfigWriteScope: the mint accepts a config-write scope over
+// the API (spec 04's scope split is live), and the resulting token enforces
+// correctly — refused on an admin-gated route (INSUFFICIENT_SCOPE), accepted
+// on a config-write route. An unknown scope is still 400 INVALID_SCOPE.
+func TestAPIToken_ConfigWriteScope(t *testing.T) {
+	h := testharness.New(t)
+	cv := testapp.Start(t, h)
+	user := cv.LoginAsLocalUser(t)
+
+	// Mint a config-write token via the API (admin-gated mint).
+	_, cwTok := mintToken(t, cv, user.AccessToken, "ci-config", "config-write")
+
+	// Refused on an admin-gated route (user management is instance-admin).
+	resp := cvDo(t, cv, cwTok, "POST", "/api/users/invites",
+		map[string]any{"email": "x@example.com", "role": "member"})
+	body := readBodyStr(resp)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden || !bodyHasCodeStr(body, "INSUFFICIENT_SCOPE") {
+		t.Fatalf("config-write on admin-gated route = %d body=%q, want 403 INSUFFICIENT_SCOPE", resp.StatusCode, body)
+	}
+
+	// Accepted on a config-write route (agent create).
+	var created struct {
+		ID string `json:"id"`
+	}
+	cvPost(t, cv, cwTok, "/api/agents", map[string]any{"name": "cw-agent"}, &created)
+	if created.ID == "" {
+		t.Fatal("config-write token could not create an agent on a config-write route")
+	}
+
+	// An unknown scope is rejected at mint.
+	bad := cvDo(t, cv, user.AccessToken, "POST", "/api/tokens",
+		map[string]any{"name": "bad", "scope": "root"})
+	badBody := readBodyStr(bad)
+	bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest || !bodyHasCodeStr(badBody, "INVALID_SCOPE") {
+		t.Fatalf("invalid scope mint = %d body=%q, want 400 INVALID_SCOPE", bad.StatusCode, badBody)
+	}
+}
+
 // TestAPIToken_Attribution: an agent created via an API token is owned by
 // `_instance`, not by the JWT user who minted the token. It is therefore
 // visible when listing under the token (which resolves to `_instance`) but

@@ -13,8 +13,9 @@ type APIToken struct {
 	ExpiresAt   string `json:"expires_at"`
 }
 
-// CreateTokenRequest is the POST /api/tokens body. In 05-lite the only
-// accepted scope is "instance-admin"; ExpiresAt is optional RFC3339.
+// CreateTokenRequest is the POST /api/tokens body. Scope is one of
+// "config-read", "config-write", or "instance-admin" (empty defaults to
+// instance-admin); ExpiresAt is optional RFC3339.
 type CreateTokenRequest struct {
 	Name      string `json:"name"`
 	Scope     string `json:"scope,omitempty"`

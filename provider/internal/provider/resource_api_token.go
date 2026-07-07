@@ -63,7 +63,7 @@ func (r *apiTokenResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Optional:            true,
 				Computed:            true,
 				Default:             stringdefault.StaticString("instance-admin"),
-				MarkdownDescription: "Token scope. One of `instance-admin`, `config-write`, `config-read` (05-lite issues only `instance-admin`). Changing it forces replacement.",
+				MarkdownDescription: "Token scope, narrowest first: `config-read` (read config), `config-write` (service configs + personal declarative state), or `instance-admin` (everything, including user management, governance changes, and shared-vault writes). Defaults to `instance-admin`. Changing it forces replacement.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"expires_at": schema.StringAttribute{

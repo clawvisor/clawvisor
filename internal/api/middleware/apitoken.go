@@ -40,6 +40,14 @@ func ScopeSatisfies(tokenScope, minScope string) bool {
 	return scopeRank[tokenScope] >= scopeRank[minScope] && scopeRank[minScope] > 0
 }
 
+// ValidTokenScope reports whether s is one of the three mintable scopes
+// (config-read, config-write, instance-admin). Unknown scopes are rejected
+// at mint time (fail closed).
+func ValidTokenScope(s string) bool {
+	_, ok := scopeRank[s]
+	return ok
+}
+
 // apiTokenContextKey is the context key for the authenticated API token.
 type apiTokenContextKey struct{}
 
