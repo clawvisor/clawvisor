@@ -37,6 +37,7 @@ type Config struct {
 	RateLimit     RateLimitConfig     `yaml:"rate_limit"`
 	Relay         RelayConfig         `yaml:"relay"`
 	Telemetry     TelemetryConfig     `yaml:"telemetry"`
+	Observability ObservabilityConfig `yaml:"observability"`
 	Daemon        DaemonConfig        `yaml:"daemon"`
 	Push          PushConfig          `yaml:"push"`
 	AutoUpdate    AutoUpdateConfig    `yaml:"auto_update"`
@@ -98,6 +99,46 @@ type RedisConfig struct {
 type TelemetryConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Endpoint string `yaml:"endpoint,omitempty"`
+}
+
+// ObservabilityConfig holds settings for operational observability export.
+// This is distinct from TelemetryConfig (anonymous product analytics): it
+// exports OpenTelemetry traces and metrics to an operator-controlled OTLP
+// endpoint (Datadog, CloudWatch/ADOT, Grafana, or a local collector).
+type ObservabilityConfig struct {
+	OTel OTelConfig `yaml:"otel"`
+}
+
+// OTelConfig configures OTLP trace + metric export.
+type OTelConfig struct {
+	Enabled            bool              `yaml:"enabled"`                  // default false
+	Endpoint           string            `yaml:"endpoint"`                 // OTLP endpoint, e.g. "localhost:4317"
+	Protocol           string            `yaml:"protocol"`                 // "grpc" (default) | "http"
+	Insecure           bool              `yaml:"insecure"`                 // default false; true for local collectors
+	Headers            map[string]string `yaml:"headers"`                  // e.g. {"api-key": "..."} for vendor endpoints
+	ServiceName        string            `yaml:"service_name"`             // default "clawvisor"
+	TraceSampleRatio   float64           `yaml:"trace_sample_ratio"`       // default 1.0
+	MetricsIntervalSec int               `yaml:"metrics_interval_seconds"` // default 60
+}
+
+// parseOTelHeaders parses a comma-separated list of key=value pairs (the
+// OpenTelemetry OTEL_EXPORTER_OTLP_HEADERS format) into a header map. Entries
+// without an "=" or with an empty key are skipped. Keys and values are trimmed.
+func parseOTelHeaders(raw string) map[string]string {
+	headers := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			continue
+		}
+		headers[k] = strings.TrimSpace(v)
+	}
+	return headers
 }
 
 // CallbackConfig holds settings for callback delivery.
@@ -460,6 +501,15 @@ func Default() *Config {
 		AutoUpdate: AutoUpdateConfig{
 			Enabled:       false,
 			CheckInterval: "6h",
+		},
+		Observability: ObservabilityConfig{
+			OTel: OTelConfig{
+				Enabled:            false,
+				Protocol:           "grpc",
+				ServiceName:        "clawvisor",
+				TraceSampleRatio:   1.0,
+				MetricsIntervalSec: 60,
+			},
 		},
 	}
 }
@@ -859,6 +909,44 @@ func Load(path string) (*Config, error) {
 		cfg.Telemetry.Endpoint = v
 	}
 
+	if v := os.Getenv("CLAWVISOR_OTEL_ENABLED"); v != "" {
+		cfg.Observability.OTel.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_OTEL_ENDPOINT"); v != "" {
+		cfg.Observability.OTel.Endpoint = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("CLAWVISOR_OTEL_PROTOCOL"); v != "" {
+		cfg.Observability.OTel.Protocol = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("CLAWVISOR_OTEL_INSECURE"); v != "" {
+		cfg.Observability.OTel.Insecure = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_OTEL_SERVICE_NAME"); v != "" {
+		cfg.Observability.OTel.ServiceName = strings.TrimSpace(v)
+	}
+	// OTLP headers for authenticated vendor endpoints (Datadog, Grafana Cloud,
+	// etc.). Comma-separated key=value pairs, matching the OpenTelemetry
+	// OTEL_EXPORTER_OTLP_HEADERS convention, so env-only deployments (Docker
+	// Compose, Kubernetes, Render) can supply auth headers without a config file.
+	if v := os.Getenv("CLAWVISOR_OTEL_HEADERS"); strings.TrimSpace(v) != "" {
+		if headers := parseOTelHeaders(v); len(headers) > 0 {
+			if cfg.Observability.OTel.Headers == nil {
+				cfg.Observability.OTel.Headers = make(map[string]string, len(headers))
+			}
+			for k, val := range headers {
+				cfg.Observability.OTel.Headers[k] = val
+			}
+		}
+	}
+	// Metric export interval override. Not in the spec's enumerated set but
+	// added alongside it so operators (and the deterministic e2e lane) can
+	// tune the periodic reader; keep it last so it composes with the others.
+	if v := os.Getenv("CLAWVISOR_OTEL_METRICS_INTERVAL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Observability.OTel.MetricsIntervalSec = n
+		}
+	}
+
 	// Inherit: fill empty subsection fields from shared LLM config.
 	inheritLLMDefaults(&cfg.LLM.Verification.LLMProviderConfig, &cfg.LLM)
 	inheritLLMDefaults(&cfg.LLM.TaskRisk.LLMProviderConfig, &cfg.LLM)
@@ -986,6 +1074,17 @@ func (c *Config) Validate() error {
 	case "", "observe", "auto", "strict":
 	default:
 		return fmt.Errorf("runtime_policy.autovault_mode must be one of observe, auto, strict (got %q)", c.RuntimePolicy.AutovaultMode)
+	}
+	if c.Observability.OTel.Enabled && strings.TrimSpace(c.Observability.OTel.Endpoint) == "" {
+		return fmt.Errorf("observability.otel.endpoint must be set when observability.otel.enabled is true")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Observability.OTel.Protocol)) {
+	case "", "grpc", "http":
+	default:
+		return fmt.Errorf("observability.otel.protocol must be one of grpc, http (got %q)", c.Observability.OTel.Protocol)
+	}
+	if c.Observability.OTel.TraceSampleRatio < 0 || c.Observability.OTel.TraceSampleRatio > 1 {
+		return fmt.Errorf("observability.otel.trace_sample_ratio must be in [0,1] (got %v)", c.Observability.OTel.TraceSampleRatio)
 	}
 	return nil
 }

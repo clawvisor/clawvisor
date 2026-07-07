@@ -20,6 +20,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/observability"
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -28,6 +29,8 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // pendingRequestBlob is stored in pending_approvals.request_blob.
@@ -89,6 +92,44 @@ type GatewayHandler struct {
 	cbDispatch       *CallbackDispatcher  // bounded callback delivery; may be nil
 	gatewayRL        ratelimit.Limiter    // gateway-bucket limiter for per-sub-request charging in HandleBatch; may be nil
 	gatewayRLKey     func(*http.Request) string
+	instruments      *observability.Instruments // OTel metric instruments; may be nil (observability disabled)
+}
+
+// SetInstruments configures the OpenTelemetry metric instrument set so the
+// gateway emits clawvisor.gateway.requests. nil disables emission.
+func (h *GatewayHandler) SetInstruments(inst *observability.Instruments) {
+	h.instruments = inst
+}
+
+// statusRecorder wraps an http.ResponseWriter to capture the response status
+// code for observability, transparently forwarding Flush when the underlying
+// writer supports it.
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	if !r.wroteHeader {
+		r.status = code
+		r.wroteHeader = true
+	}
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// No Write override: the embedded ResponseWriter.Write is promoted and used
+// directly. status is initialized to 200 at construction, so an implicit-200
+// response (Write with no prior WriteHeader) is already recorded correctly.
+// Overriding Write here only forwarded bytes unchanged while making static
+// analysis (go/reflected-xss) model a fresh response-write sink on proxied
+// bytes — a false positive, since this is a content-agnostic passthrough that
+// renders no HTML. Dropping it removes the phantom sink with no behavior change.
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func NewGatewayHandler(
@@ -185,15 +226,42 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	ctx := r.Context()
 
+	// ── Observability: gateway root span + request metric ───────────────
+	// Wrap the writer to capture the final status, open a root span, and
+	// emit clawvisor.gateway.requests on exit. No-op when observability is
+	// disabled (global tracer no-op, nil instruments).
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	w = rec
+	gwCtx, gwSpan := observability.Tracer().Start(ctx, observability.SpanGatewayRequest)
+	ctx = gwCtx
+	r = r.WithContext(ctx)
+	var gwServiceAttr, gwAgentAttr string
+	defer func() {
+		gwSpan.SetAttributes(
+			attribute.String(observability.AttrService, gwServiceAttr),
+			attribute.String(observability.SpanAttrAgentID, gwAgentAttr),
+			attribute.Int(observability.AttrStatus, rec.status),
+		)
+		gwSpan.End()
+		h.instruments.RecordGatewayRequest(context.Background(), gwServiceAttr, observability.StatusBucket(rec.status))
+	}()
+
 	agent := middleware.AgentFromContext(ctx)
 	if agent == nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 		return
 	}
+	gwAgentAttr = agent.ID
 
 	var req gateway.Request
 	if !decodeJSON(w, r, &req) {
 		return
+	}
+	// Alias-stripped service for low-cardinality metrics, matching the
+	// normalization in internal/telemetry/telemetry.go.
+	gwServiceAttr = req.Service
+	if idx := strings.IndexByte(gwServiceAttr, ':'); idx >= 0 {
+		gwServiceAttr = gwServiceAttr[:idx]
 	}
 
 	// Collect missing pre-restriction required fields (service, action, reason).
@@ -2389,6 +2457,8 @@ func (h *GatewayHandler) routeToApproval(
 	if err := h.store.CreateApprovalRecordWithPending(ctx, approvalRecord, pa); err != nil {
 		return fmt.Errorf("create approval + pending: %w", err)
 	}
+	// clawvisor.approvals.holds — a request was held for human approval.
+	h.instruments.RecordHold(ctx, "pending")
 
 	if h.notifier == nil {
 		return nil

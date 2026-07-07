@@ -41,5 +41,25 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  # Optional local OpenTelemetry collector for users with no observability
+  # stack. Starts only with `docker compose --profile observability up`.
+  # Point Clawvisor at it with:
+  #   observability.otel.enabled: true
+  #   observability.otel.endpoint: "otel-collector:4317"
+  #   observability.otel.insecure: true
+  # (or the CLAWVISOR_OTEL_* env equivalents). Exported spans/metrics show up
+  # in this collector's debug log: `docker compose logs -f otel-collector`.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    container_name: clawvisor-otel-collector
+    profiles: ["observability"]
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+
 volumes:
   postgres_data:

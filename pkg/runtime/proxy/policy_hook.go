@@ -154,6 +154,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 					Metadata:   ruleMetadata,
 				})
 				st.SkipAuditOutcomeUpdate = true
+				st.PolicyDenied = true
 				return req, goproxy.NewResponse(req, "application/json", http.StatusForbidden, `{"error":"blocked by runtime policy","code":"RUNTIME_POLICY_DENY"}`)
 			case "allow":
 				outcome := "approved"
@@ -244,6 +245,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 					Metadata:            ruleMetadata,
 				})
 				st.SkipAuditOutcomeUpdate = true
+				st.PolicyDenied = true
 				respBody, _ := json.Marshal(map[string]any{
 					"error":               "runtime review required by policy",
 					"code":                "RUNTIME_POLICY_REVIEW_REQUIRED",
@@ -484,6 +486,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			Metadata:            map[string]any{"host": host, "method": req.Method, "path": req.URL.Path},
 		})
 		st.SkipAuditOutcomeUpdate = true
+		st.PolicyDenied = true
 
 		respBody, _ := json.Marshal(map[string]any{
 			"error":               "runtime approval required",

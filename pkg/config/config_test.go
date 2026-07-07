@@ -163,3 +163,85 @@ func TestInheritLLMDefaults_DoesNotInheritAnthropicEndpointIntoNonAnthropicSubBl
 		}
 	})
 }
+
+func TestObservabilityOTelDefaults(t *testing.T) {
+	cfg := Default()
+	if cfg.Observability.OTel.Enabled {
+		t.Fatal("expected observability.otel.enabled to default false")
+	}
+	if cfg.Observability.OTel.Protocol != "grpc" {
+		t.Fatalf("Protocol=%q, want grpc", cfg.Observability.OTel.Protocol)
+	}
+	if cfg.Observability.OTel.ServiceName != "clawvisor" {
+		t.Fatalf("ServiceName=%q, want clawvisor", cfg.Observability.OTel.ServiceName)
+	}
+	if cfg.Observability.OTel.TraceSampleRatio != 1.0 {
+		t.Fatalf("TraceSampleRatio=%v, want 1.0", cfg.Observability.OTel.TraceSampleRatio)
+	}
+	if cfg.Observability.OTel.MetricsIntervalSec != 60 {
+		t.Fatalf("MetricsIntervalSec=%d, want 60", cfg.Observability.OTel.MetricsIntervalSec)
+	}
+}
+
+func TestLoadAppliesObservabilityOTelEnv(t *testing.T) {
+	t.Setenv("CLAWVISOR_OTEL_ENABLED", "true")
+	t.Setenv("CLAWVISOR_OTEL_ENDPOINT", "otel-collector:4317")
+	t.Setenv("CLAWVISOR_OTEL_PROTOCOL", "http")
+	t.Setenv("CLAWVISOR_OTEL_INSECURE", "true")
+	t.Setenv("CLAWVISOR_OTEL_SERVICE_NAME", "clawvisor-edge")
+	t.Setenv("CLAWVISOR_OTEL_HEADERS", "api-key=secret , x-scope=team-a ")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Observability.OTel.Enabled {
+		t.Fatal("expected otel enabled via env")
+	}
+	if cfg.Observability.OTel.Headers["api-key"] != "secret" {
+		t.Fatalf("Headers[api-key]=%q", cfg.Observability.OTel.Headers["api-key"])
+	}
+	if cfg.Observability.OTel.Headers["x-scope"] != "team-a" {
+		t.Fatalf("Headers[x-scope]=%q", cfg.Observability.OTel.Headers["x-scope"])
+	}
+	if cfg.Observability.OTel.Endpoint != "otel-collector:4317" {
+		t.Fatalf("Endpoint=%q", cfg.Observability.OTel.Endpoint)
+	}
+	if cfg.Observability.OTel.Protocol != "http" {
+		t.Fatalf("Protocol=%q", cfg.Observability.OTel.Protocol)
+	}
+	if !cfg.Observability.OTel.Insecure {
+		t.Fatal("expected insecure enabled via env")
+	}
+	if cfg.Observability.OTel.ServiceName != "clawvisor-edge" {
+		t.Fatalf("ServiceName=%q", cfg.Observability.OTel.ServiceName)
+	}
+}
+
+func TestValidateObservabilityOTelRules(t *testing.T) {
+	t.Run("enabled requires endpoint", func(t *testing.T) {
+		cfg := Default()
+		cfg.Observability.OTel.Enabled = true
+		cfg.Observability.OTel.Endpoint = "  "
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "observability.otel.endpoint") {
+			t.Fatalf("expected endpoint validation error, got %v", err)
+		}
+	})
+	t.Run("protocol must be grpc or http", func(t *testing.T) {
+		cfg := Default()
+		cfg.Observability.OTel.Protocol = "thrift"
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "observability.otel.protocol") {
+			t.Fatalf("expected protocol validation error, got %v", err)
+		}
+	})
+	t.Run("sample ratio in range", func(t *testing.T) {
+		cfg := Default()
+		cfg.Observability.OTel.TraceSampleRatio = 1.5
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "observability.otel.trace_sample_ratio") {
+			t.Fatalf("expected sample ratio validation error, got %v", err)
+		}
+	})
+}

@@ -190,3 +190,40 @@ Remind the user to:
 
 **Next:** Connect your agent — see [SETUP.md](SETUP.md#2-connect-your-agent)
 for integration guides.
+
+## Observability (OpenTelemetry) — see your data locally
+
+Clawvisor exports operational traces and metrics (LLM request counts, latency,
+token/cost counters, policy verdicts, approval holds, gateway and runtime-proxy
+requests) over OTLP. Point it at whatever you already run — Datadog,
+CloudWatch/ADOT, Grafana — or at the bundled local collector to just *see* the
+data. (This is separate from the anonymous `telemetry:` block.)
+
+Three lines of config turn it on against the bundled collector. Add to your
+`app` service environment (or your config file's `observability.otel` block):
+
+```yaml
+CLAWVISOR_OTEL_ENABLED: "true"
+CLAWVISOR_OTEL_ENDPOINT: "otel-collector:4317"
+CLAWVISOR_OTEL_INSECURE: "true"
+```
+
+Then start the stack with the `observability` profile so the collector runs:
+
+```bash
+docker compose -f deploy/docker-compose.yml --profile observability up -d --build
+```
+
+Watch your spans and metrics land in the collector's debug log:
+
+```bash
+docker compose -f deploy/docker-compose.yml logs -f otel-collector
+```
+
+To forward to a real backend, uncomment and configure an exporter in
+`deploy/otel-collector.yaml` (a Datadog and a generic OTLP example are included)
+and add it to the `traces`/`metrics` pipelines.
+
+Attributes never carry prompt/completion content, credentials, or raw
+destination hostnames — high-cardinality identifiers (agent/conversation/session
+ids) live on spans only, never on metrics.

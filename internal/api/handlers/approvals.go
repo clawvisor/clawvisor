@@ -16,6 +16,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/internal/observability"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -27,15 +28,23 @@ import (
 
 // ApprovalsHandler manages pending approval decisions.
 type ApprovalsHandler struct {
-	st         store.Store
-	vault      vault.Vault
-	adapterReg *adapters.Registry
-	notifier   notify.Notifier // may be nil
-	cfg        config.Config
-	assessor   taskrisk.Assessor
-	logger     *slog.Logger
-	eventHub   events.EventHub
-	cbDispatch *CallbackDispatcher // bounded callback delivery; may be nil (falls back to inline panic-safe goroutines)
+	st          store.Store
+	vault       vault.Vault
+	adapterReg  *adapters.Registry
+	notifier    notify.Notifier // may be nil
+	cfg         config.Config
+	assessor    taskrisk.Assessor
+	logger      *slog.Logger
+	eventHub    events.EventHub
+	cbDispatch  *CallbackDispatcher        // bounded callback delivery; may be nil (falls back to inline panic-safe goroutines)
+	instruments *observability.Instruments // OTel metric instruments; may be nil (observability disabled)
+}
+
+// SetInstruments configures the OpenTelemetry metric instrument set so the
+// approvals handler emits clawvisor.approvals.holds at resolve time. nil
+// disables emission.
+func (h *ApprovalsHandler) SetInstruments(inst *observability.Instruments) {
+	h.instruments = inst
 }
 
 func NewApprovalsHandler(st store.Store, v vault.Vault, adapterReg *adapters.Registry, notifier notify.Notifier, cfg config.Config, assessor taskrisk.Assessor, logger *slog.Logger, eventHub events.EventHub) *ApprovalsHandler {
@@ -820,8 +829,34 @@ func (h *ApprovalsHandler) resolveCanonicalApproval(ctx context.Context, pa *sto
 		h.logger.ErrorContext(ctx, "illegal canonical approval transition", "approval_id", rec.ID, "request_id", pa.RequestID, "kind", rec.Kind, "from_status", rec.Status, "resolution", resolution, "status", status, "err", err)
 		return
 	}
-	if err := h.st.ResolveApprovalRecord(ctx, *approvalID, resolution, status, time.Now().UTC()); err != nil && !errors.Is(err, store.ErrNotFound) {
-		h.logger.ErrorContext(ctx, "failed to resolve canonical approval", "approval_id", *approvalID, "request_id", pa.RequestID, "err", err)
+	if err := h.st.ResolveApprovalRecord(ctx, *approvalID, resolution, status, time.Now().UTC()); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			h.logger.ErrorContext(ctx, "failed to resolve canonical approval", "approval_id", *approvalID, "request_id", pa.RequestID, "err", err)
+		}
+		// The canonical resolve failed (or the record was already resolved /
+		// missing) — no hold transition actually happened, so don't record
+		// one. Emitting here would inflate clawvisor.approvals.holds on
+		// error and ErrNotFound paths.
+		return
+	}
+	// clawvisor.approvals.holds — canonical resolve path (deny / expiry),
+	// only after the resolve actually landed.
+	h.instruments.RecordHold(ctx, holdResolutionFromStatus(status))
+}
+
+// holdResolutionFromStatus maps an internal approval status to the coarse
+// clawvisor.approvals.holds resolution attribute (approved/denied/timeout/
+// pending).
+func holdResolutionFromStatus(status string) string {
+	switch status {
+	case "approved":
+		return "approved"
+	case "denied":
+		return "denied"
+	case "expired", "timeout":
+		return "timeout"
+	default:
+		return status
 	}
 }
 

@@ -1,0 +1,50 @@
+# Minimal OpenTelemetry Collector config for local Clawvisor observability.
+#
+# Receives OTLP traces + metrics from Clawvisor and prints them to the
+# collector's stdout (the `debug` exporter). This lets you *see* your data
+# with no external observability stack. To forward to a real backend, add an
+# exporter (Datadog, an OTLP endpoint, etc.) and list it in the pipelines.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  # Prints every span and metric to the container log. Watch with:
+  #   docker compose logs -f otel-collector
+  debug:
+    verbosity: detailed
+
+  # ── Forward to a real backend (uncomment + configure ONE) ────────────────
+  #
+  # Datadog:
+  # datadog:
+  #   api:
+  #     key: "${DD_API_KEY}"
+  #     site: "datadoghq.com"
+  #
+  # Generic OTLP forward (Grafana/Tempo/Mimir, New Relic, Honeycomb, ...):
+  # otlp/backend:
+  #   endpoint: "otlp.example-vendor.com:4317"
+  #   headers:
+  #     api-key: "${VENDOR_API_KEY}"
+
+processors:
+  batch: {}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+      # exporters: [debug, datadog]        # add your backend here
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+      # exporters: [debug, datadog]

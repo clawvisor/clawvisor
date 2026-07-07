@@ -114,6 +114,25 @@ telemetry:
                            # sends: OS, arch, db driver, agent count (bucketed), requests per service (bucketed)
                            # no instance ID, IP, credentials, or personal data is collected
 
+# ── Observability (OpenTelemetry export) ────────────────────────────────────
+# Operational traces + metrics from the proxy-lite pipeline, the skill
+# gateway, and the runtime proxy, exported over OTLP to whatever you already
+# run (Datadog, CloudWatch/ADOT, Grafana, or the bundled local collector —
+# `docker compose --profile observability up`). This is DISTINCT from the
+# anonymous `telemetry:` block above; it exports operator-facing signals to an
+# endpoint you control.
+# observability:
+#   otel:
+#     enabled: false            # Env: CLAWVISOR_OTEL_ENABLED (default false)
+#     endpoint: "localhost:4317" # OTLP endpoint. Env: CLAWVISOR_OTEL_ENDPOINT
+#     protocol: "grpc"          # "grpc" (default) or "http". Env: CLAWVISOR_OTEL_PROTOCOL
+#     insecure: false           # true for a local/plaintext collector. Env: CLAWVISOR_OTEL_INSECURE
+#     service_name: "clawvisor" # resource service.name. Env: CLAWVISOR_OTEL_SERVICE_NAME
+#     trace_sample_ratio: 1.0   # 0.0–1.0 parent-based ratio sampler
+#     metrics_interval_seconds: 60  # periodic metric export interval
+#     headers:                  # optional per-request headers (vendor auth)
+#       api-key: "..."          # Env: CLAWVISOR_OTEL_HEADERS="api-key=...,other=..."
+
 mcp:
   approval_timeout: 240    # MCP tool calls block this many seconds waiting for approval
 

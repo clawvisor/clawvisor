@@ -10,29 +10,33 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/observability"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/bodytransform"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/scriptjudge"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/clawvisor/clawvisor/pkg/version"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // LLMEndpointHandler is the lite-proxy LLM termination point. It accepts
@@ -84,6 +88,12 @@ type LLMEndpointHandler struct {
 	// AuditEmitter writes one audit_log row per /api/v1/* request and per
 	// inspected tool_use. nil disables audit logging.
 	AuditEmitter *llmproxy.AuditEmitter
+
+	// Instruments carries the OpenTelemetry metric instrument set for the
+	// proxy-lite pipeline (request/token/cost counters, verdict counter,
+	// hold counter). nil (observability disabled) makes every metric
+	// emission a no-op.
+	Instruments *observability.Instruments
 
 	// Catalog reverse-resolves outbound (host, method, path) → (service,
 	// action) for the task-scope check. Optional: when nil, task-scope
@@ -295,6 +305,41 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		requestID = uuid.NewString()
 	}
 
+	// ── Observability: root span per LLM call ───────────────────────────
+	// The root span is opened here and closed in the deferred finalizer
+	// below (after the SSE stream completes, since serve blocks until the
+	// stream is fully written). Instruments ride in the context so the
+	// pipeline verdict emitter can reach them without threading. When
+	// observability is disabled the global tracer is a no-op and this
+	// costs nothing.
+	tracer := observability.Tracer()
+	rootCtx, rootSpan := tracer.Start(r.Context(), observability.SpanProxyLiteRequest)
+	rootCtx = observability.ContextWithInstruments(rootCtx, h.Instruments)
+	r = r.WithContext(rootCtx)
+	// authModeMetric is the low-cardinality auth mode for metrics/spans
+	// (passthrough vs vault), distinct from the diagnostic header-shape
+	// string liteProxyAuthMode returns.
+	authModeMetric := "vault"
+	// curChildSpan tracks the currently-open phase child span
+	// (pipeline.pre / upstream.forward / pipeline.post). setPhase ends the
+	// previous phase and starts the next as a sibling child of the root so
+	// the exported tree is root → {pre, forward, post}. Passing "" ends the
+	// current phase and restores the root context.
+	var curChildSpan trace.Span
+	setPhase := func(name string) {
+		if curChildSpan != nil {
+			curChildSpan.End()
+			curChildSpan = nil
+		}
+		if name == "" {
+			r = r.WithContext(rootCtx)
+			return
+		}
+		cctx, span := tracer.Start(rootCtx, name)
+		curChildSpan = span
+		r = r.WithContext(cctx)
+	}
+
 	// Per-request audit state captured at every exit path.
 	var (
 		auditAgent   *store.Agent
@@ -346,6 +391,50 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			time.Since(start), auditParams,
 			llmproxy.EndpointCallExtras{TaskID: auditTaskID, Usage: auditUsage})
 	}()
+	// Deferred LIFO: this runs BEFORE the audit emitter above (which is
+	// fine — token/cost metrics ride the audit emitter's own path) and
+	// AFTER the request body has fully streamed. It closes the span tree
+	// and emits the request/duration metrics from the final audit state.
+	defer func() {
+		// Close any still-open phase span, then finalize the root.
+		if curChildSpan != nil {
+			curChildSpan.End()
+			curChildSpan = nil
+		}
+		metricOutcome := "allowed"
+		switch {
+		case auditStatus >= 500 || auditOutcome == "upstream_error":
+			metricOutcome = "error"
+		case auditDecide == "deny":
+			metricOutcome = "denied"
+		case strings.HasPrefix(auditOutcome, "hold") || strings.Contains(auditOutcome, "held"):
+			metricOutcome = "held"
+		}
+		provName, _ := auditParams["provider"].(string)
+		model, _ := auditParams["model"].(string)
+		streaming, _ := auditParams["stream"].(bool)
+		convID := ""
+		if v, ok := auditParams["conversation_id"].(string); ok {
+			convID = v
+		}
+		agentID := ""
+		if auditAgent != nil {
+			agentID = auditAgent.ID
+		}
+		rootSpan.SetAttributes(
+			attribute.String(observability.SpanAttrProvider, provName),
+			attribute.String(observability.SpanAttrModel, model),
+			attribute.Bool(observability.SpanAttrStreaming, streaming),
+			attribute.String(observability.SpanAttrAgentID, agentID),
+			attribute.String(observability.SpanAttrConversationID, convID),
+			attribute.String(observability.SpanAttrAuthMode, authModeMetric),
+			attribute.String(observability.SpanAttrOutcome, metricOutcome),
+		)
+		rootSpan.End()
+
+		h.Instruments.RecordLLMRequest(context.Background(), provName, model,
+			streaming, metricOutcome, authModeMetric, float64(time.Since(start).Milliseconds()))
+	}()
 
 	agent := middleware.AgentFromContext(r.Context())
 	if agent == nil {
@@ -394,6 +483,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	passthrough := h.activeLitePassthrough(r.Context(), agent)
 	if passthrough.Enabled {
+		authModeMetric = "passthrough"
 		auditParams["passthrough"] = true
 		auditParams["passthrough_rule_id"] = passthrough.RuleID
 		auditParams["passthrough_reason"] = passthrough.Reason
@@ -430,6 +520,15 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			Marker:       "before_preprocess",
 		})
 	}
+
+	// Open the pre-policy phase span before the first request-side policy
+	// runs. Everything from here to the upstream forward is the pre chain;
+	// per-policy verdicts land as policy.verdict events on this span. Opening
+	// it here (rather than after the chain) keeps the nine pre-policy verdicts
+	// — anthropic_sanitize, inbound_sanitize, org model/spend/content,
+	// task_approval_reply, inline task intercept/augment, control_notice —
+	// attached to pipeline.pre instead of the root span.
+	setPhase(observability.SpanPipelinePre)
 
 	// Validate that the body parses for the selected provider. Surfaces
 	// schema errors as a 400 before we burn an upstream call.
@@ -961,6 +1060,12 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	auditParams["stream"] = reqSummary.Stream
 	auditParams["request_body_bytes"] = len(body)
 	auditParams["available_tools"] = reqSummary.AvailableTools
+	if conversationID != "" {
+		auditParams["conversation_id"] = conversationID
+	}
+	// The pipeline.pre phase span was opened before the first pre-policy
+	// (see setPhase above) so the whole request-side chain's verdict events
+	// attach to it; it remains open here through to the upstream forward.
 	h.Logger.DebugContext(r.Context(), "lite-proxy request accepted",
 		"request_id", requestID,
 		"agent_id", agent.ID,
@@ -1272,6 +1377,11 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	forwardStart := time.Now()
+	// Open the upstream-forward phase span; it wraps the upstream HTTP call.
+	setPhase(observability.SpanUpstreamForward)
+	if curChildSpan != nil {
+		curChildSpan.SetAttributes(attribute.String(observability.SpanAttrUpstreamHost, upstreamHostForSpan(upstreamURL)))
+	}
 	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, body)
 	if err != nil {
 		// Distinguish client-cancelled from genuine upstream failures
@@ -1310,6 +1420,11 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	upstreamHeadersMs := time.Since(forwardStart).Milliseconds()
 	auditStatus = resp.StatusCode
 	auditOutcome = outcomeFromStatus(resp.StatusCode)
+	if curChildSpan != nil {
+		curChildSpan.SetAttributes(attribute.Int(observability.SpanAttrHTTPStatus, resp.StatusCode))
+	}
+	// Transition to the post/tool_use phase span for response handling.
+	setPhase(observability.SpanPipelinePost)
 	h.Logger.InfoContext(context.Background(), "lite-proxy upstream headers received",
 		"request_id", requestID,
 		"agent_id", agent.ID,
@@ -1435,8 +1550,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 					ToolRules:       toolRules,
 					EgressRules:     egressRules,
 					PreferredTaskID: preferredTaskID,
-				ScopeDrifts:     h.ScopeDrifts,
-				TransientBudget: h.TransientBudget,
+					ScopeDrifts:     h.ScopeDrifts,
+					TransientBudget: h.TransientBudget,
 				},
 				ApprovalContext: llmproxy.ApprovalContext{
 					PendingApprovals:                 h.PendingApprovals,
@@ -1768,7 +1883,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				AgentUserID: agent.UserID,
 				AgentID:     agent.ID,
 				AgentName:   agent.Name,
-					AgentOrgID:  agent.OrgID,
+				AgentOrgID:  agent.OrgID,
 			},
 			AuditContext: llmproxy.AuditContext{
 				ConversationID: conversationID,
@@ -2070,7 +2185,6 @@ func readLimited(r io.Reader, max int64) ([]byte, error) {
 	}
 	return buf, nil
 }
-
 
 type flushingWriter struct {
 	w       io.Writer
@@ -2386,7 +2500,6 @@ func mergeAuditUsage(dst **llmproxy.ExtractUsageResult, auditParams map[string]a
 	auditParams[label+"_usage_dropped_model_mismatch"] = true
 }
 
-
 // actionForRoute maps a request path to an audit-log action label.
 func actionForRoute(path string) string {
 	path = strings.TrimPrefix(path, "/api")
@@ -2405,6 +2518,21 @@ func actionForRoute(path string) string {
 
 // outcomeFromStatus turns an HTTP status code into a coarse outcome label
 // for the audit row. 2xx → success, 4xx → client_error, 5xx → upstream_error.
+// upstreamHostForSpan extracts just the host component of the upstream URL
+// for the upstream.forward span. This is the LLM provider endpoint
+// (api.anthropic.com / api.openai.com or a configured base URL), never
+// conversation content. Returns "" on parse failure.
+func upstreamHostForSpan(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
 func outcomeFromStatus(status int) string {
 	switch {
 	case status >= 200 && status < 300:

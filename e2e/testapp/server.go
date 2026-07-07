@@ -236,9 +236,16 @@ proxy_lite:
 		}
 		// Wait for drain goroutines to flush so the captured buffers
 		// include the final stderr lines (the actual EADDRINUSE / config
-		// error / panic). Bounded — pipes should EOF immediately after
-		// the process exits; the timeout is a backstop, not the path.
-		s.waitDrains(500 * time.Millisecond)
+		// error / panic). The process has already exited (exited is closed
+		// above), so cmd.Wait has closed the pipes and both drains are
+		// guaranteed to hit EOF and return; waitDrains returns the instant
+		// they do (sub-millisecond normally). The timeout is only a hang
+		// backstop — set generously so that under heavy parallel-CI
+		// scheduler starvation a slow-to-schedule drain goroutine still
+		// gets to append the sentinel stderr before we read it, rather than
+		// being cut off at a too-tight ceiling (the cause of a
+		// TestEarlyExitErrorCarriesSubprocessDiagnostics flake).
+		s.waitDrains(10 * time.Second)
 		// Attach the captured output to the error so retries don't lose
 		// it. StartWith's final t.Fatalf prints the last attempt's error,
 		// which now carries the diagnostics.

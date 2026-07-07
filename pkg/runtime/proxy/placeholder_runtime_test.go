@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/elazarl/goproxy"
+
 	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -132,6 +134,22 @@ func TestRuntimeProxySwapsScopedPlaceholders(t *testing.T) {
 	}
 }
 
+// captureRuntimeProxyDecision installs an OnResponse hook that records the
+// runtimeProxyDecision classification for each proxied request's RequestState.
+// It lets a test assert that a Clawvisor synthetic 403 is observability-classified
+// as "denied" — i.e. that st.PolicyDenied was set at the 403 site — rather than
+// silently counted as "allowed". The returned pointer holds the last decision seen.
+func captureRuntimeProxyDecision(srv *Server) *string {
+	var got string
+	srv.GoProxy().OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+		if st := StateOf(ctx); st != nil && st.Session != nil {
+			got = runtimeProxyDecision(st)
+		}
+		return resp
+	})
+	return &got
+}
+
 func mustURL(t *testing.T, raw string) *url.URL {
 	t.Helper()
 	u, err := url.Parse(raw)
@@ -191,6 +209,7 @@ func TestRuntimeProxyRejectsPlaceholderOutsideBoundServiceHost(t *testing.T) {
 	}
 	srv.InstallSessionGuard(&Authenticator{Store: st})
 	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v, Config: cfg})
+	decision := captureRuntimeProxyDecision(srv)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -210,6 +229,11 @@ func TestRuntimeProxyRejectsPlaceholderOutsideBoundServiceHost(t *testing.T) {
 	}
 	if seenAuth != "" {
 		t.Fatalf("placeholder should not be swapped or forwarded to unrelated host, saw auth %q", seenAuth)
+	}
+	// The PLACEHOLDER_REJECTED synthetic 403 is a Clawvisor block and must be
+	// classified "denied" — not "allowed" — by the observability decision path.
+	if *decision != "denied" {
+		t.Fatalf("expected placeholder-rejection to be classified denied, got %q", *decision)
 	}
 }
 
@@ -457,6 +481,7 @@ func TestRuntimeProxyStrictModeRequiresCredentialReview(t *testing.T) {
 	}
 	srv.InstallSessionGuard(&Authenticator{Store: st})
 	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v, Config: cfg})
+	decision := captureRuntimeProxyDecision(srv)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -477,6 +502,12 @@ func TestRuntimeProxyStrictModeRequiresCredentialReview(t *testing.T) {
 	}
 	if strings.Contains(string(body), rawToken) {
 		t.Fatalf("response leaked raw credential: %s", string(body))
+	}
+	// The RUNTIME_CREDENTIAL_REVIEW_REQUIRED synthetic 403 is a Clawvisor
+	// strict-mode hold and must be classified "denied" by the observability
+	// decision path, not counted as an allowed request.
+	if *decision != "denied" {
+		t.Fatalf("expected strict-mode review hold to be classified denied, got %q", *decision)
 	}
 	records, err := st.ListPendingApprovalRecords(ctx, userID)
 	if err != nil {
