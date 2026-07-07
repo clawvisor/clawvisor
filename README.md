@@ -191,8 +191,40 @@ Clawvisor loads `config.yaml` from the working directory (override with `CONFIG_
 | Rate limits | `RATE_LIMIT_*` | Per-agent gateway, per-user OAuth, policy API, and review limits |
 | MCP timeout | `MCP_APPROVAL_TIMEOUT` | Seconds MCP blocks waiting for approval (default 240) |
 | Telemetry | `TELEMETRY_ENABLED` | Opt-in anonymous usage telemetry |
+| Bootstrap token | `CLAWVISOR_BOOTSTRAP_TOKEN` | First-boot API token for headless provisioning (Terraform / CI). See **API tokens** below |
 
 See [`config.example.yaml`](config.example.yaml) for the full configuration reference.
+
+### API tokens
+
+Long-lived, scoped, revocable bearer credentials (prefix `cvat_`) let the
+Terraform provider and CI drive the management API without a 15-minute
+dashboard JWT. Manage them at `POST/GET/DELETE /api/tokens` (admin-gated).
+Tokens are hashed at rest; the plaintext is returned exactly once, on
+create. Resources created via a token are owned by the `_instance` system
+user (so they are not trapped in a personal account).
+
+**Bootstrap (first boot).** Set `CLAWVISOR_BOOTSTRAP_TOKEN` to a value of
+the exact shape `cvat_` + 43 base64url characters. On startup the server:
+
+- refuses to start if the value is malformed (a misconfiguration, not a
+  warning);
+- seeds a single-use `instance-admin` token with a **mandatory 24-hour
+  expiry** — but only if no non-revoked `instance-admin` token already
+  exists (it never overrides a live install);
+- is idempotent across restarts.
+
+The intended flow: an automation authenticates once with the bootstrap
+token, mints a long-lived scoped token via `POST /api/tokens`, and that
+first successful mint **burns** the bootstrap token (it is revoked in the
+same request). Reads never burn it, so a failed apply can retry.
+
+**Rotation runbook.** To issue a fresh bootstrap credential, `terraform
+apply` with a tainted bootstrap secret regenerates the value; the server
+mints a new 24-hour bootstrap token on the next boot *only if* no
+non-revoked `instance-admin` token exists. If a live admin token already
+exists, do not re-bootstrap — rotate by minting a new scoped token via the
+existing one and revoking the old (`DELETE /api/tokens/{id}`).
 
 ## How It Works
 

@@ -141,6 +141,13 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		return nil, fmt.Errorf("unsupported database driver %q (use \"postgres\" or \"sqlite\")", cfg.Database.Driver)
 	}
 
+	// ── Bootstrap API token (spec 05) ────────────────────────────────────────
+	// Seed the first-boot bootstrap token from CLAWVISOR_BOOTSTRAP_TOKEN if
+	// present. A malformed value is a misconfiguration → refuse to start.
+	if err := bootstrapAPIToken(ctx, st, logger); err != nil {
+		return nil, err
+	}
+
 	// ── Auth ────────────────────────────────────────────────────────────────
 	jwtSvc, err := auth.NewJWTService(cfg.Auth.JWTSecret)
 	if err != nil {

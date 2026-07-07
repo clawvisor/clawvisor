@@ -96,7 +96,7 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID, newPasswordHash 
 
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE id != '__system__' AND email != 'admin@local'`).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE id NOT IN ('__system__', '_instance') AND email != 'admin@local'`).Scan(&n)
 	return n, err
 }
 
@@ -109,6 +109,142 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 		return store.ErrNotFound
 	}
 	return nil
+}
+
+// ── API tokens ──────────────────────────────────────────────────────────────
+
+func (s *Store) CreateAPIToken(ctx context.Context, t *store.APIToken) error {
+	if t.ID == "" {
+		t.ID = uuid.New().String()
+	}
+	var expiresAt any
+	if t.ExpiresAt != nil {
+		expiresAt = t.ExpiresAt.UTC()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO api_tokens (id, name, token_hash, token_prefix, scope, created_by, expires_at, is_bootstrap)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, t.ID, t.Name, t.TokenHash, t.TokenPrefix, t.Scope, t.CreatedBy, expiresAt, t.IsBootstrap)
+	if err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) CreateAPITokenAndBurnBootstrap(ctx context.Context, t *store.APIToken, bootstrapID string) error {
+	if t.ID == "" {
+		t.ID = uuid.New().String()
+	}
+	var expiresAt any
+	if t.ExpiresAt != nil {
+		expiresAt = t.ExpiresAt.UTC()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO api_tokens (id, name, token_hash, token_prefix, scope, created_by, expires_at, is_bootstrap)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, t.ID, t.Name, t.TokenHash, t.TokenPrefix, t.Scope, t.CreatedBy, expiresAt, t.IsBootstrap); err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE api_tokens SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL`, bootstrapID)
+	if err != nil {
+		return err
+	}
+	// The burn must revoke exactly one live row. Zero rows means the
+	// bootstrap token was already revoked (a concurrent first-use won the
+	// race), so roll back this whole mint — the bootstrap credential is
+	// strictly single-use even under concurrency.
+	if tag.RowsAffected() == 0 {
+		return store.ErrConflict
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) GetAPITokenByHash(ctx context.Context, tokenHash string) (*store.APIToken, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, name, token_hash, token_prefix, scope, created_by, created_at, expires_at, last_used_at, revoked_at, is_bootstrap
+		FROM api_tokens WHERE token_hash = $1
+	`, tokenHash)
+	t, err := scanAPIToken(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return t, err
+}
+
+func (s *Store) ListAPITokens(ctx context.Context) ([]*store.APIToken, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, name, token_hash, token_prefix, scope, created_by, created_at, expires_at, last_used_at, revoked_at, is_bootstrap
+		FROM api_tokens ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.APIToken
+	for rows.Next() {
+		t, err := scanAPIToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RevokeAPIToken(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE api_tokens SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// Distinguish "unknown id" (404) from "already revoked" (idempotent
+		// success): only the former is ErrNotFound.
+		var exists int
+		if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM api_tokens WHERE id = $1`, id).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return store.ErrNotFound
+		}
+	}
+	return nil
+}
+
+func (s *Store) TouchAPITokenLastUsed(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE api_tokens SET last_used_at = NOW() WHERE id = $1`, id)
+	return err
+}
+
+// apiTokenScanner is satisfied by both pgx.Row and pgx.Rows.
+type apiTokenScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanAPIToken(sc apiTokenScanner) (*store.APIToken, error) {
+	t := &store.APIToken{}
+	var createdBy *string
+	var expiresAt, lastUsedAt, revokedAt *time.Time
+	if err := sc.Scan(&t.ID, &t.Name, &t.TokenHash, &t.TokenPrefix, &t.Scope, &createdBy, &t.CreatedAt, &expiresAt, &lastUsedAt, &revokedAt, &t.IsBootstrap); err != nil {
+		return nil, err
+	}
+	t.CreatedBy = createdBy
+	t.ExpiresAt = expiresAt
+	t.LastUsedAt = lastUsedAt
+	t.RevokedAt = revokedAt
+	return t, nil
 }
 
 // ── Restrictions ──────────────────────────────────────────────────────────────

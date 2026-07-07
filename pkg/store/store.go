@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+// InstanceUserID is the id of the `_instance` system user seeded by the
+// 05-lite api_tokens migration. Resources created via an API token are
+// owned by this user so they aren't trapped in a personal account
+// (PRD §9.1). It is excluded from user counts/lists exactly like
+// `__system__`. Never authenticatable via login (its password_hash is a
+// non-bcrypt sentinel).
+const InstanceUserID = "_instance"
+
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("store: record not found")
 
@@ -32,6 +40,21 @@ type Store interface {
 	UpdateUserPassword(ctx context.Context, userID, newPasswordHash string) error
 	DeleteUser(ctx context.Context, userID string) error
 	CountUsers(ctx context.Context) (int, error)
+
+	// API tokens (long-lived, scoped, revocable — the Terraform provider /
+	// CI credential). See the api_tokens migration (05-lite). Plaintext is
+	// never persisted; only CreateAPIToken's caller sees it once.
+	CreateAPIToken(ctx context.Context, t *APIToken) error
+	// CreateAPITokenAndBurnBootstrap atomically inserts t and revokes the
+	// bootstrap token bootstrapID in a single transaction. The bootstrap
+	// credential is burned if and only if the new token is minted: on any
+	// failure the whole operation rolls back, leaving the bootstrap token
+	// live so a failed apply can retry the mint (burn-on-first-use, 05).
+	CreateAPITokenAndBurnBootstrap(ctx context.Context, t *APIToken, bootstrapID string) error
+	GetAPITokenByHash(ctx context.Context, tokenHash string) (*APIToken, error)
+	ListAPITokens(ctx context.Context) ([]*APIToken, error)
+	RevokeAPIToken(ctx context.Context, id string) error
+	TouchAPITokenLastUsed(ctx context.Context, id string) error
 
 	// Restrictions
 	CreateRestriction(ctx context.Context, r *Restriction) (*Restriction, error)
@@ -475,6 +498,25 @@ type User struct {
 	PasswordHash string    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// APIToken is a long-lived, scoped, revocable bearer credential. The
+// plaintext value (`cvat_` + 43 base64url chars) is returned exactly once
+// on create; only TokenHash (SHA-256 hex) and TokenPrefix (first 16 chars,
+// for display) live at rest. TokenHash is json:"-" so it never leaks into
+// list responses.
+type APIToken struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	TokenHash   string     `json:"-"`
+	TokenPrefix string     `json:"token_prefix"`
+	Scope       string     `json:"scope"`
+	CreatedBy   *string    `json:"created_by"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	LastUsedAt  *time.Time `json:"last_used_at"`
+	RevokedAt   *time.Time `json:"revoked_at"`
+	IsBootstrap bool       `json:"-"`
 }
 
 // Risk-level constants for ConversationAutoApproveThreshold and the
