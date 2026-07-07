@@ -100,6 +100,14 @@ func (h *APITokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// token can never be reused to mint a second credential.
 	if bt := middleware.APITokenFromContext(r.Context()); bt != nil && bt.IsBootstrap {
 		if err := h.st.CreateAPITokenAndBurnBootstrap(r.Context(), tok, bt.ID); err != nil {
+			// The burn is strictly single-use: a concurrent first-boot mint
+			// races on the bootstrap revoke and the loser gets ErrConflict.
+			// That is a retry-safe condition (the winner already minted), not
+			// a server fault, so surface it as 409 rather than 500.
+			if errors.Is(err, store.ErrConflict) {
+				writeError(w, http.StatusConflict, "CONFLICT", "bootstrap token already consumed by a concurrent request")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create token")
 			return
 		}
