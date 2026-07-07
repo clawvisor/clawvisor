@@ -234,16 +234,6 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 				CacheWriteTokens: cacheWriteTotal,
 				CostMicros:       costMicros,
 			}
-			// Emit token + cost metrics from the same values recorded on
-			// the cost row (one source of truth, no recomputation).
-			e.Instruments.RecordTokens(ctx, provider, normModel,
-				int64(extras.Usage.Usage.InputTokens),
-				int64(extras.Usage.Usage.OutputTokens),
-				int64(extras.Usage.Usage.CacheReadTokens),
-				int64(cacheWriteTotal))
-			if costMicros != nil {
-				e.Instruments.RecordCost(ctx, provider, normModel, *costMicros)
-			}
 			if err := e.Store.RecordLLMRequestCost(ctx, row); err != nil {
 				// ErrConflict on the cost insert is the expected,
 				// harmless path during dedup retries: the audit
@@ -258,6 +248,21 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 				} else {
 					e.Logger.WarnContext(ctx, "lite-proxy: cost record failed",
 						"agent_id", agent.ID, "audit_id", entry.ID, "err", err.Error())
+				}
+			} else {
+				// Emit token + cost metrics from the same values recorded
+				// on the cost row (one source of truth, no recomputation).
+				// Recorded ONLY after the insert confirms — a dedup-retry
+				// hits ErrConflict above and skips this branch, so the
+				// tokens/cost aren't double-counted for a request whose
+				// canonical cost row already landed on the original call.
+				e.Instruments.RecordTokens(ctx, provider, normModel,
+					int64(extras.Usage.Usage.InputTokens),
+					int64(extras.Usage.Usage.OutputTokens),
+					int64(extras.Usage.Usage.CacheReadTokens),
+					int64(cacheWriteTotal))
+				if costMicros != nil {
+					e.Instruments.RecordCost(ctx, provider, normModel, *costMicros)
 				}
 			}
 		}
