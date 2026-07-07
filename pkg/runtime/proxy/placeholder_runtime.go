@@ -104,6 +104,7 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 					return runtimeautovault.ExtractCredentialValue(credBytes)
 				})
 				if err != nil {
+					st.PolicyDenied = true
 					return req, goproxy.NewResponse(req, "application/json", http.StatusForbidden, `{"error":"runtime placeholder rejected","code":"PLACEHOLDER_REJECTED"}`)
 				}
 				replacedValues[i] = replaced
@@ -196,6 +197,7 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 							"approval_id":    rec.ID,
 							"credential_ref": detection.CredentialRef,
 						})
+						st.PolicyDenied = true
 						return req, goproxy.NewResponse(req, "application/json", http.StatusForbidden, string(respBody))
 					}
 				}
