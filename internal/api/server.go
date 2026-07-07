@@ -47,6 +47,7 @@ import (
 	skillfiles "github.com/clawvisor/clawvisor/skills"
 	webfs "github.com/clawvisor/clawvisor/web"
 
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/time/rate"
 )
 
@@ -149,6 +150,12 @@ type Server struct {
 	// when observability export is disabled (the default); handlers no-op
 	// their metric emission when it is nil.
 	instruments *observability.Instruments
+
+	// redisClient, when non-nil, makes the per-IP rate limiters Redis-backed
+	// so brute-force caps hold across replicas instead of becoming cap*N under
+	// horizontal autoscaling. nil (the single-VM / local-dev default) selects
+	// the in-memory per-process limiter — see newKeyedLimiterFromBucket.
+	redisClient *redis.Client
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.
@@ -429,6 +436,13 @@ func WithExtractionTracker(t handlers.ExtractionTracker) ServerOption {
 // default) disables metric emission.
 func WithInstruments(inst *observability.Instruments) ServerOption {
 	return func(s *Server) { s.instruments = inst }
+}
+
+// WithRedisClient supplies the shared Redis client so the per-IP rate limiters
+// enforce their caps across replicas. nil (the single-VM / local-dev default)
+// leaves the limiters in-memory and per-process — see newKeyedLimiterFromBucket.
+func WithRedisClient(rdb *redis.Client) ServerOption {
+	return func(s *Server) { s.redisClient = rdb }
 }
 
 // WithCallerNonceCache overrides the default in-memory caller-nonce cache
@@ -727,10 +741,10 @@ func (s *Server) routes() http.Handler {
 
 	// Rate limiters (skip when config is zero-valued, e.g. in tests)
 	rlCfg := s.cfg.RateLimit
-	gatewayRL := newKeyedLimiterFromBucket(rlCfg.Gateway)
-	oauthRL := newKeyedLimiterFromBucket(rlCfg.OAuth)
-	policyRL := newKeyedLimiterFromBucket(rlCfg.PolicyAPI)
-	authRL := newKeyedLimiterFromBucket(rlCfg.Auth)
+	gatewayRL := s.newKeyedLimiterFromBucket(rlCfg.Gateway)
+	oauthRL := s.newKeyedLimiterFromBucket(rlCfg.OAuth)
+	policyRL := s.newKeyedLimiterFromBucket(rlCfg.PolicyAPI)
+	authRL := s.newKeyedLimiterFromBucket(rlCfg.Auth)
 
 	// Parse trusted-proxy CIDRs once. When r.RemoteAddr falls inside any of
 	// these networks, ipKeyFn honors X-Forwarded-For — otherwise the rate
@@ -961,7 +975,7 @@ func (s *Server) routes() http.Handler {
 		connectionsHandler.SetClaimCodeCache(s.claimCodeCache)
 	}
 	s.connectionsHandler = connectionsHandler
-	connectionsRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
+	connectionsRL := s.newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
 	mux.Handle("POST /api/agents/connect",
 		middleware.RateLimit(connectionsRL, ipKeyFn, 10)(e2e(http.HandlerFunc(connectionsHandler.RequestConnect))))
 	mux.Handle("GET /api/agents/connect/{id}/status", e2e(http.HandlerFunc(connectionsHandler.PollStatus)))
@@ -972,7 +986,7 @@ func (s *Server) routes() http.Handler {
 	// magic-link mode, where the invite claim proves email possession inline
 	// (invite security rule 2's carve-out); the seat cap mirrors auth.max_users.
 	connectionsHandler.ConfigureInviteEnroll(s.magicStore != nil, s.cfg.Auth.MaxUsers)
-	enrollRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
+	enrollRL := s.newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
 	mux.Handle("POST /api/agents/enroll",
 		middleware.RateLimit(enrollRL, ipKeyFn, 10)(e2e(http.HandlerFunc(connectionsHandler.EnrollWithInvite))))
 
@@ -981,7 +995,7 @@ func (s *Server) routes() http.Handler {
 	// route absent for proxy-lite-disabled installs so the connect API
 	// surface matches main.
 	if s.cfg.ProxyLite.Enabled {
-		claimMintRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 30, Window: 60})
+		claimMintRL := s.newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 30, Window: 60})
 		mux.Handle("POST /api/agents/connect/claim",
 			requireUser(middleware.RateLimit(claimMintRL, userKeyFn, 30)(http.HandlerFunc(connectionsHandler.MintClaim))))
 	}
@@ -1025,7 +1039,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/devices/{id}/push-to-start-token", requireDevice(e2e(http.HandlerFunc(devicesHandler.UpdatePushToStartToken))))
 	// Pairing and management routes (gated by mobile_pairing feature flag)
 	if s.features.MobilePairing {
-		devicesRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 5, Window: 60})
+		devicesRL := s.newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 5, Window: 60})
 		mux.Handle("GET /api/devices/pair/info", user(devicesHandler.PairInfo))
 		mux.Handle("POST /api/devices/pair", user(devicesHandler.StartPairing))
 		mux.Handle("POST /api/devices/pair/complete",
@@ -1915,11 +1929,26 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-// newKeyedLimiterFromBucket creates a KeyedLimiter from a config bucket.
+// newKeyedLimiterFromBucket creates a keyed rate limiter from a config bucket.
 // Returns nil when the bucket has zero values (unconfigured).
-func newKeyedLimiterFromBucket(b config.RateLimitBucket) ratelimit.Limiter {
+//
+// When the server has a Redis client (multi-instance / horizontally-autoscaled
+// deployments such as Cloud Run), it returns a Redis-backed limiter whose
+// counter is shared across replicas, so per-IP brute-force caps stay at their
+// configured value instead of growing to cap*N with the replica count.
+// Otherwise (the Redis-less single-VM / local-dev default) it returns the
+// in-memory per-process limiter — behavior is byte-for-byte unchanged there.
+func (s *Server) newKeyedLimiterFromBucket(b config.RateLimitBucket) ratelimit.Limiter {
 	if b.Limit <= 0 || b.Window <= 0 {
 		return nil
+	}
+	if s.redisClient != nil {
+		return ratelimit.NewRedisKeyedLimiter(
+			s.redisClient,
+			float64(b.Limit)/float64(b.Window),
+			b.Limit,
+			time.Duration(b.Window)*time.Second,
+		)
 	}
 	return ratelimit.NewKeyedLimiter(
 		rate.Limit(float64(b.Limit)/float64(b.Window)),
