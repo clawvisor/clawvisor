@@ -2752,7 +2752,7 @@ func (s *Store) DeletePendingApproval(ctx context.Context, requestID, userID, ta
 func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*store.PendingApproval, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+pendingApprovalColumns+` FROM pending_approvals
-		 WHERE user_id = ? AND status = 'pending' AND expires_at > datetime('now')
+		 WHERE user_id = ? AND status = 'pending' AND strftime('%s', expires_at) > strftime('%s','now')
 		 ORDER BY created_at ASC`, userID)
 	if err != nil {
 		return nil, err
@@ -2786,7 +2786,7 @@ func (s *Store) ListAllPendingApprovals(ctx context.Context) ([]*store.PendingAp
 		`SELECT `+prefixColumns("pa", pendingApprovalColumns)+`, COALESCE(u.email, '')
 		 FROM pending_approvals pa
 		 LEFT JOIN users u ON u.id = pa.user_id
-		 WHERE pa.status = 'pending' AND pa.expires_at > datetime('now')
+		 WHERE pa.status = 'pending' AND strftime('%s', pa.expires_at) > strftime('%s','now')
 		 ORDER BY pa.created_at ASC`)
 	if err != nil {
 		return nil, err

@@ -6,5 +6,11 @@
 -- back the admin-only ListAllAuditEvents ordering and the InstanceCostSummary
 -- time-window rollup. Members' user-scoped queries are unaffected (they keep
 -- hitting the composite user_id-prefixed indexes).
+--
+-- InstanceCostSummary filters on strftime('%s', timestamp) >= strftime('%s', ?)
+-- (SQLite text timestamps don't compare as instants), so the cost index must
+-- match that expression — a plain-column index on timestamp is unusable by the
+-- planner for a strftime() predicate. The audit query orders by the raw
+-- timestamp column, so its index stays plain.
 CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_llm_cost_time ON llm_request_cost(timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_cost_time ON llm_request_cost(strftime('%s', timestamp));
