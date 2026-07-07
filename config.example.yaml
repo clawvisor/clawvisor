@@ -38,6 +38,11 @@ auth:
   require_invite: false    # from env: AUTH_REQUIRE_INVITE — when true, registration needs a valid
                            # invite (403 INVITE_REQUIRED) except the very first user, who becomes admin.
                            # The first registered user is admin; subsequent users are members.
+  disable_api_tokens: false # from env: AUTH_DISABLE_API_TOKENS — when true, fully disables the
+                           # long-lived scoped API-token subsystem: mint/manage routes return 404,
+                           # no bootstrap token is seeded, /api/features reports api_tokens:false, and
+                           # any presented cvat_ bearer is rejected 401 without a token-table lookup.
+                           # Keep false for OSS/self-hosted; the Terraform provider requires tokens.
 
 approval:
   timeout: 300             # seconds before approval request expires

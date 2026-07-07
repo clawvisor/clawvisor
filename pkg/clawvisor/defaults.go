@@ -146,7 +146,10 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// ── Bootstrap API token (spec 05) ────────────────────────────────────────
 	// Seed the first-boot bootstrap token from CLAWVISOR_BOOTSTRAP_TOKEN if
 	// present. A malformed value is a misconfiguration → refuse to start.
-	if err := bootstrapAPIToken(ctx, st, logger); err != nil {
+	// Skipped entirely when API tokens are disabled (auth.disable_api_tokens):
+	// nothing is seeded even if CLAWVISOR_BOOTSTRAP_TOKEN is present, so no
+	// instance-admin credential can exist on a locked-down deployment.
+	if err := bootstrapAPITokenIfEnabled(ctx, cfg, st, logger); err != nil {
 		return nil, err
 	}
 
@@ -757,6 +760,11 @@ func computeFeatureSet(cfg *config.Config) FeatureSet {
 		RuntimeActivity:   runtimeSurface,
 		AgentLiveSessions: cfg.RuntimeProxy.Enabled || proxyLiteEnabled,
 		ServicePresets:    runtimeSurface && cfg.Features.ServicePresets,
+		// API tokens default ENABLED. Cloud sets auth.disable_api_tokens=true
+		// (via AUTH_DISABLE_API_TOKENS) to close the instance-admin-token
+		// takeover path; OSS self-hosted + the Terraform provider depend on
+		// bootstrap→mint→instance-admin, so the default must stay true.
+		APITokens: !cfg.Auth.DisableAPITokens,
 	}
 }
 
