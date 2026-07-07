@@ -199,14 +199,31 @@ telemetry:
 #                              # Env: CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE.
 #                              # observe: record hold/deny verdicts as
 #                              #   observations; never blocks or holds.
+#   govern_subscription_seats: true
+#                              # Env: CLAWVISOR_PROXY_LITE_GOVERN_SUBSCRIPTION_SEATS.
+#                              # When true (default), a govern/vault request
+#                              # carrying a Claude subscription (OAuth) — or
+#                              # otherwise unrecognized — bearer is AUTO-GOVERNED:
+#                              # the seat's own credential is forwarded upstream
+#                              # (billing stays on the subscription, no rebilling)
+#                              # while the full policy pipeline still enforces
+#                              # (holds, model/spend/content policy, approvals,
+#                              # cost attribution). Set false for strict
+#                              # "vaulted keys only" mode: a subscription/
+#                              # unrecognized seat is REFUSED with
+#                              # SUBSCRIPTION_SEAT_NOT_GOVERNABLE (keys-off-laptops).
 #   allow_subscription_billing_migration: false
 #                              # Env: CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION.
-#                              # When false (default), a govern/vault request
-#                              # carrying a Claude subscription (OAuth) bearer
-#                              # is REFUSED with SUBSCRIPTION_SEAT_NOT_GOVERNABLE
-#                              # rather than silently rebilled to the org API
-#                              # key. Set true ONLY to consent to migrating
-#                              # subscription seats to vaulted-API-key billing.
+#                              # Takes PRECEDENCE over govern_subscription_seats.
+#                              # When true, a govern/vault request carrying a
+#                              # Claude subscription (OAuth) bearer is MIGRATED:
+#                              # the bearer is stripped and the vaulted org API
+#                              # key injected, shifting billing from the user's
+#                              # subscription to org-metered API billing. Leave
+#                              # false (default) to keep billing on the seat's
+#                              # own subscription (auto-govern) or to refuse it
+#                              # (strict mode). Set true ONLY to consent to that
+#                              # billing shift.
 #                              # WARNING: this flag is INSTANCE-WIDE — enabling
 #                              # it migrates EVERY subscription seat on the
 #                              # instance at once, not one.
