@@ -40,7 +40,14 @@ async function startServer(): Promise<{ child: ChildProcess; url: string }> {
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
-      child.kill('SIGTERM')
+      // Tear down the whole detached group (go run + server child), mirroring
+      // stopServer — killing only the go-run parent leaks the server grandchild.
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, 'SIGTERM')
+        else child.kill('SIGTERM')
+      } catch {
+        child.kill('SIGTERM')
+      }
       rejectPromise(new Error('serve did not report readiness within 60s'))
     }, 60_000)
 
