@@ -50,6 +50,33 @@ func TestResolve_SecretString_RawAndJSONKey(t *testing.T) {
 	}
 }
 
+// TestResolve_ClientInitUsesBackgroundContext proves the lazy client init does
+// not thread the first caller's request context into newClient. If it did, a
+// cancelled or short-deadline first request would cache an error in sync.Once
+// and permanently poison the resolver for every later Resolve.
+func TestResolve_ClientInitUsesBackgroundContext(t *testing.T) {
+	var initCtxErr error
+	r := &Resolver{}
+	r.newClient = func(ctx context.Context) (smClient, error) {
+		initCtxErr = ctx.Err()
+		return &fakeSM{out: &secretsmanager.GetSecretValueOutput{SecretString: aws.String("sk-ant-ok")}}, nil
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel() // first caller arrives with an already-cancelled context
+
+	got, err := r.Resolve(cancelled, vault.RefEnvelope{Backend: vault.BackendAWSSM, ID: "arn:aws:x"})
+	if initCtxErr != nil {
+		t.Fatalf("client init observed a cancelled context (%v); must construct with context.Background()", initCtxErr)
+	}
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if string(got) != "sk-ant-ok" {
+		t.Fatalf("got %q, want sk-ant-ok", got)
+	}
+}
+
 func TestResolve_ErrorMapping(t *testing.T) {
 	cases := []struct {
 		code string

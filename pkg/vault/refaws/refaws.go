@@ -68,9 +68,13 @@ func (r *Resolver) defaultNewClient(ctx context.Context) (smClient, error) {
 	}), nil
 }
 
-func (r *Resolver) client(ctx context.Context) (smClient, error) {
+func (r *Resolver) client() (smClient, error) {
 	r.once.Do(func() {
-		r.cli, r.err = r.newClient(ctx)
+		// Construct the client with a background context so a cancelled or
+		// short-deadline first-caller request context cannot permanently
+		// poison r.err for every subsequent Resolve. The caller ctx is
+		// reserved for the per-request API call in Resolve.
+		r.cli, r.err = r.newClient(context.Background())
 	})
 	return r.cli, r.err
 }
@@ -79,7 +83,7 @@ func (r *Resolver) client(ctx context.Context) (smClient, error) {
 // ref.ID is an ARN or secret name; a version can be pinned by encoding it in
 // the ARN, otherwise AWSCURRENT is used.
 func (r *Resolver) Resolve(ctx context.Context, ref vault.RefEnvelope) ([]byte, error) {
-	cli, err := r.client(ctx)
+	cli, err := r.client()
 	if err != nil {
 		return nil, err
 	}
