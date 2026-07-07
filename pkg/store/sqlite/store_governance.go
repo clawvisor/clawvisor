@@ -128,12 +128,22 @@ func (s *Store) DeleteInstanceSpendCap(ctx context.Context, windowKind string) e
 	return nil
 }
 
+// llmCostTimeBound formats a window bound the same fixed-width way the
+// timestamp column is compared against. RecordLLMRequestCost stores
+// timestamps as RFC3339Nano, so a row at "…00:00:00.5Z" would sort
+// lexically *before* an RFC3339 "…00:00:00Z" bound ('.' < 'Z') and be
+// dropped from the window. Formatting the bound with a full nanosecond
+// fraction makes it the lexically-smallest value in its second, so every
+// sub-second row at or after the (whole-second) window boundary compares
+// correctly.
+const llmCostTimeBound = "2006-01-02T15:04:05.000000000Z07:00"
+
 func (s *Store) SumInstanceCostMicros(ctx context.Context, since, until time.Time) (int64, error) {
 	var sum int64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(cost_micros), 0) FROM llm_request_cost
 		WHERE timestamp >= ? AND timestamp < ?`,
-		since.UTC().Format(time.RFC3339), until.UTC().Format(time.RFC3339)).Scan(&sum)
+		since.UTC().Format(llmCostTimeBound), until.UTC().Format(llmCostTimeBound)).Scan(&sum)
 	return sum, err
 }
 
