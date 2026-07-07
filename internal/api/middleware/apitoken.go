@@ -65,18 +65,35 @@ func withAPIToken(ctx context.Context, t *store.APIToken) context.Context {
 	return context.WithValue(ctx, apiTokenContextKey{}, t)
 }
 
+// lastUsedInterval is the throttle window for last_used_at writes.
+const lastUsedInterval = time.Minute
+
 // lastUsedThrottle rate-limits last_used_at writes to once per minute per
 // token so a busy CI credential doesn't turn every request into a write.
 type lastUsedThrottle struct {
-	mu   sync.Mutex
-	seen map[string]time.Time
+	mu        sync.Mutex
+	seen      map[string]time.Time
+	lastSweep time.Time
 }
 
 func (l *lastUsedThrottle) shouldTouch(id string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
-	if last, ok := l.seen[id]; ok && now.Sub(last) < time.Minute {
+	// Evict entries older than the throttle window so the map can't grow
+	// without bound as short-lived tokens are minted and revoked over time.
+	// An expired entry is meaningless (it would be treated as touchable and
+	// overwritten anyway), so dropping it changes no behavior. Sweep at most
+	// once per window to keep this O(1) amortized.
+	if now.Sub(l.lastSweep) >= lastUsedInterval {
+		for k, ts := range l.seen {
+			if now.Sub(ts) >= lastUsedInterval {
+				delete(l.seen, k)
+			}
+		}
+		l.lastSweep = now
+	}
+	if last, ok := l.seen[id]; ok && now.Sub(last) < lastUsedInterval {
 		return false
 	}
 	l.seen[id] = now

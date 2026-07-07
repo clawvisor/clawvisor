@@ -74,6 +74,12 @@ type Store interface {
 	// CI credential). See the api_tokens migration (05-lite). Plaintext is
 	// never persisted; only CreateAPIToken's caller sees it once.
 	CreateAPIToken(ctx context.Context, t *APIToken) error
+	// CreateAPITokenAndBurnBootstrap atomically inserts t and revokes the
+	// bootstrap token bootstrapID in a single transaction. The bootstrap
+	// credential is burned if and only if the new token is minted: on any
+	// failure the whole operation rolls back, leaving the bootstrap token
+	// live so a failed apply can retry the mint (burn-on-first-use, 05).
+	CreateAPITokenAndBurnBootstrap(ctx context.Context, t *APIToken, bootstrapID string) error
 	GetAPITokenByHash(ctx context.Context, tokenHash string) (*APIToken, error)
 	ListAPITokens(ctx context.Context) ([]*APIToken, error)
 	RevokeAPIToken(ctx context.Context, id string) error

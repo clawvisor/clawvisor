@@ -741,6 +741,14 @@ func (s *Server) routes() http.Handler {
 		return ""
 	}
 	userKeyFn := func(r *http.Request) string {
+		// Token-authenticated requests all resolve to the shared `_instance`
+		// user, so key them on the token ID instead — otherwise every
+		// automation token contends for one bucket and a single busy token
+		// could throttle all the others. JWT callers still key on their own
+		// user ID.
+		if t := middleware.APITokenFromContext(r.Context()); t != nil {
+			return "token:" + t.ID
+		}
 		if u := middleware.UserFromContext(r.Context()); u != nil {
 			return u.ID
 		}

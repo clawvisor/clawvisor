@@ -93,21 +93,22 @@ func (h *APITokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 		CreatedBy:   createdBy,
 		ExpiresAt:   expiresAt,
 	}
-	if err := h.st.CreateAPIToken(r.Context(), tok); err != nil {
+
+	// Burn-on-first-use: when the authenticating credential is the bootstrap
+	// token, the mint and the bootstrap revoke happen in ONE transaction, so
+	// the bootstrap credential is burned if and only if the new token lands.
+	// If the transaction fails, nothing is minted and nothing is burned — the
+	// bootstrap token stays live so a failed apply can retry the mint. A
+	// partial state (minted-but-not-burned) can never occur, so the bootstrap
+	// token can never be reused to mint a second credential.
+	if bt := middleware.APITokenFromContext(r.Context()); bt != nil && bt.IsBootstrap {
+		if err := h.st.CreateAPITokenAndBurnBootstrap(r.Context(), tok, bt.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create token")
+			return
+		}
+	} else if err := h.st.CreateAPIToken(r.Context(), tok); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create token")
 		return
-	}
-
-	// Burn-on-first-use: only a successful scoped-token mint burns the
-	// bootstrap credential. Reads/other calls never reach here, so a failed
-	// apply can retry the mint until it succeeds.
-	if bt := middleware.APITokenFromContext(r.Context()); bt != nil && bt.IsBootstrap {
-		if err := h.st.RevokeAPIToken(r.Context(), bt.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-			// The token IS minted; log but don't fail the mint. The bootstrap
-			// token still hard-expires at +24h even if this best-effort
-			// revoke didn't land.
-			h.logger.Error("failed to burn bootstrap token after mint", "err", err, "bootstrap_token_id", bt.ID)
-		}
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
