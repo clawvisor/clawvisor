@@ -26,6 +26,13 @@ echo "== validate rendered compose =="
 docker compose --env-file compose.env config >/dev/null
 echo "rendered compose is valid"
 
+# The deterministic lane skips caddy at boot (see the override's tls profile),
+# so without this the Caddyfile contract is never checked and a malformed
+# Caddyfile passes CI and fails only on AWS. Adapt+validate the rendered file.
+echo "== validate rendered Caddyfile =="
+caddy validate --adapter caddyfile --config Caddyfile
+echo "rendered Caddyfile is valid"
+
 if [ "${BOOT:-0}" != "1" ]; then
   echo "SKIP boot (set BOOT=1 to build + run + health-check)"
   exit 0
@@ -34,11 +41,13 @@ fi
 echo "== build image =="
 docker build -t "$IMAGE" -f "$REPO_ROOT/deploy/Dockerfile" "$REPO_ROOT"
 
-echo "== boot app + postgres =="
-docker compose --env-file compose.env up -d app postgres
-
+# Register teardown BEFORE `up` so a failed startup (set -e) still tears down
+# the partially-created stack instead of leaking containers/volumes.
 cleanup() { docker compose --env-file compose.env down -v || true; }
 trap cleanup EXIT
+
+echo "== boot app + postgres =="
+docker compose --env-file compose.env up -d app postgres
 
 echo "== poll /health =="
 deadline=$(( $(date +%s) + 120 ))
