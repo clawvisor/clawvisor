@@ -92,9 +92,10 @@ func TestAccClawvisorVaultEntry_disappears(t *testing.T) {
 	})
 }
 
-// TestAccVaultEntry_neverEchoes proves the value only ever exists in state as
-// the configured input, and that the server never echoes it back through Read.
-func TestAccVaultEntry_neverEchoes(t *testing.T) {
+// TestAccClawvisorVaultEntry_neverEchoes proves the value only ever exists in
+// state as the configured input, and that the server never echoes it back
+// through Read.
+func TestAccClawvisorVaultEntry_neverEchoes(t *testing.T) {
 	const secret = "n3v3r-3ch03d-s3cr3t"
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: protoV6Factories,
