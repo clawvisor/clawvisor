@@ -502,6 +502,23 @@ type ProxyLiteConfig struct {
 	// it; it is always an explicit operator choice. Env override:
 	// CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION.
 	AllowSubscriptionBillingMigration bool `yaml:"allow_subscription_billing_migration"`
+
+	// GovernSubscriptionSeats controls how govern/contain (vault upstream_auth)
+	// treats a seat presenting a Claude subscription (OAuth) — or otherwise
+	// unrecognized — bearer, when billing migration is NOT enabled. Default
+	// true: AUTO-GOVERN — forward the seat's own subscription credential
+	// upstream (billing stays on the subscription, no rebilling) while running
+	// the full policy pipeline (inspection, tool-use holds, model/spend/content
+	// policy, approvals, cost attribution). The credential stays on the laptop;
+	// only enforcement is centralized. Set false for strict "vaulted keys only"
+	// mode: a subscription/unrecognized seat is REFUSED with
+	// SUBSCRIPTION_SEAT_NOT_GOVERNABLE (the pre-auto-govern behavior), so an
+	// operator can mandate keys-off-laptops. Precedence: an explicit
+	// AllowSubscriptionBillingMigration still wins (migrate to the vault key);
+	// this flag only chooses between auto-govern (true) and strict-refuse
+	// (false) for the non-migration case. Env override:
+	// CLAWVISOR_PROXY_LITE_GOVERN_SUBSCRIPTION_SEATS.
+	GovernSubscriptionSeats bool `yaml:"govern_subscription_seats"`
 }
 
 // ObserveMode reports whether enforcement is downgraded to observation: the
@@ -648,6 +665,11 @@ func Default() *Config {
 			EnforcementMode:                   "enforce",
 			UpstreamAuth:                      "vault",
 			AllowSubscriptionBillingMigration: false,
+			// Auto-govern subscription seats by default: forward the seat's own
+			// subscription credential upstream (billing-neutral) while still
+			// enforcing the full policy pipeline. Opt out (false) for strict
+			// vaulted-keys-only mode that refuses subscription seats.
+			GovernSubscriptionSeats: true,
 		},
 		Governance: GovernanceConfig{
 			// Enabled by default: the governance tables are empty on a fresh
@@ -1111,6 +1133,11 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION"); v != "" {
 		cfg.ProxyLite.AllowSubscriptionBillingMigration = v == "true" || v == "1"
+	}
+	// Default-true opt-out: an explicit false/0 forces strict vaulted-keys-only
+	// mode (refuse subscription seats); true/1 restores auto-govern.
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_GOVERN_SUBSCRIPTION_SEATS"); v != "" {
+		cfg.ProxyLite.GovernSubscriptionSeats = v == "true" || v == "1"
 	}
 	if v := os.Getenv("CLAWVISOR_EXPERIMENTAL_CONTAIN"); v != "" {
 		cfg.ExperimentalContain = v == "true" || v == "1"
