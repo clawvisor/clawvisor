@@ -79,3 +79,28 @@ func TestNewInstrumentsWithNoopMeter(t *testing.T) {
 		t.Fatal("NewInstruments returned incomplete instrument set")
 	}
 }
+
+// TestProtocolNormalization asserts protocol() applies the same
+// ToLower/TrimSpace normalization as config.Validate, so a value the user
+// means as HTTP ("HTTP", " http ") selects the HTTP exporter instead of
+// silently falling through to the gRPC exporter.
+func TestProtocolNormalization(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"http", "http"},
+		{"HTTP", "http"},
+		{" http ", "http"},
+		{"Http", "http"},
+		{"grpc", "grpc"},
+		{"GRPC", "grpc"},
+		{"", "grpc"},
+		{"  ", "grpc"},
+	}
+	for _, tc := range cases {
+		if got := protocol(config.OTelConfig{Protocol: tc.in}); got != tc.want {
+			t.Errorf("protocol(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

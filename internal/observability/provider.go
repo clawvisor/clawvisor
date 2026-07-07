@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -152,7 +153,10 @@ func newMetricExporter(ctx context.Context, cfg config.OTelConfig) (metric.Expor
 }
 
 func protocol(cfg config.OTelConfig) string {
-	if cfg.Protocol == "http" {
+	// Normalize with the same ToLower/TrimSpace that config.Validate applies,
+	// so a value the user means as HTTP ("HTTP", " http ") selects the HTTP
+	// exporter instead of silently falling through to gRPC.
+	if strings.EqualFold(strings.TrimSpace(cfg.Protocol), "http") {
 		return "http"
 	}
 	return "grpc"
