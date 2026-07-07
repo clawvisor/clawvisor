@@ -533,6 +533,19 @@ func (h *ConnectionsHandler) EnrollWithInvite(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create account")
 			return
 		}
+	} else if invite.Email == "" {
+		// The account already exists but this invite is NOT pinned to an email —
+		// the address came from the caller-supplied body, which proves nothing
+		// about who holds the invite. Reusing a pre-existing account here would
+		// let an unauthenticated caller mint an agent token under someone else's
+		// account simply by naming their email (rule 2: the token must be bound
+		// to possession). Only a pinned invite (invite.Email != "") authorizes
+		// claiming an existing account — the pin IS that binding. For an unpinned
+		// invite a pre-existing account is a conflict, mirroring the register
+		// path where CreateInvitedUser rejects the duplicate.
+		writeError(w, http.StatusConflict, "INVITE_ACCOUNT_EXISTS",
+			"an account with this email already exists; this invite is not pinned to it and cannot claim it")
+		return
 	} else if owner.Role != store.RoleMember {
 		// Invite enrollment is a member-only onboarding path (rule 1: the token
 		// rode an unauthenticated channel, so it must never touch admin
