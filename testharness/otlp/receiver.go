@@ -32,6 +32,12 @@ type Receiver struct {
 	mu      sync.Mutex
 	spans   []*tracepb.Span
 	metrics []*metricpb.Metric
+	// resourceAttrs accumulates the Resource attributes off every received
+	// ResourceSpans/ResourceMetrics envelope. The receiver otherwise flattens
+	// straight to spans/metrics and would drop these, leaving the leak
+	// sentinel (AllStringAttrValues) blind to anything carried on resource
+	// attributes (service.name, service.version, and any future additions).
+	resourceAttrs []*commonpb.KeyValue
 }
 
 // NewReceiver starts the receiver and registers cleanup on t.
@@ -65,6 +71,7 @@ func (r *Receiver) handleTraces(w http.ResponseWriter, req *http.Request) {
 	}
 	r.mu.Lock()
 	for _, rs := range msg.GetResourceSpans() {
+		r.resourceAttrs = append(r.resourceAttrs, rs.GetResource().GetAttributes()...)
 		for _, ss := range rs.GetScopeSpans() {
 			r.spans = append(r.spans, ss.GetSpans()...)
 		}
@@ -86,6 +93,7 @@ func (r *Receiver) handleMetrics(w http.ResponseWriter, req *http.Request) {
 	}
 	r.mu.Lock()
 	for _, rm := range msg.GetResourceMetrics() {
+		r.resourceAttrs = append(r.resourceAttrs, rm.GetResource().GetAttributes()...)
 		for _, sm := range rm.GetScopeMetrics() {
 			r.metrics = append(r.metrics, sm.GetMetrics()...)
 		}
@@ -119,6 +127,16 @@ func (r *Receiver) Metrics() []*metricpb.Metric {
 	defer r.mu.Unlock()
 	out := make([]*metricpb.Metric, len(r.metrics))
 	copy(out, r.metrics)
+	return out
+}
+
+// ResourceAttrs returns a snapshot of the Resource attributes seen across all
+// received ResourceSpans/ResourceMetrics envelopes.
+func (r *Receiver) ResourceAttrs() []*commonpb.KeyValue {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*commonpb.KeyValue, len(r.resourceAttrs))
+	copy(out, r.resourceAttrs)
 	return out
 }
 
@@ -243,6 +261,9 @@ func attrsMatch(attrs []*commonpb.KeyValue, want map[string]string) bool {
 // the content-safety test to prove no prompt sentinel leaked into telemetry.
 func (r *Receiver) AllStringAttrValues() []string {
 	var out []string
+	for _, kv := range r.ResourceAttrs() {
+		out = append(out, kv.GetValue().GetStringValue())
+	}
 	for _, s := range r.Spans() {
 		out = append(out, s.GetName())
 		for _, kv := range s.GetAttributes() {
