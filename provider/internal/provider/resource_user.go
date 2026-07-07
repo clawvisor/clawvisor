@@ -121,6 +121,9 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 }
 
 func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	if !requireCapability(r.pd, client.CapabilityUserManagement, "clawvisor_user", &resp.Diagnostics) {
+		return
+	}
 	var plan userModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -144,6 +147,9 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 }
 
 func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	if !requireCapability(r.pd, client.CapabilityUserManagement, "clawvisor_user", &resp.Diagnostics) {
+		return
+	}
 	var state userModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -195,6 +201,9 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 }
 
 func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	if !requireCapability(r.pd, client.CapabilityUserManagement, "clawvisor_user", &resp.Diagnostics) {
+		return
+	}
 	var plan, state userModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -259,6 +268,9 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 }
 
 func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	if !requireCapability(r.pd, client.CapabilityUserManagement, "clawvisor_user", &resp.Diagnostics) {
+		return
+	}
 	var state userModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
