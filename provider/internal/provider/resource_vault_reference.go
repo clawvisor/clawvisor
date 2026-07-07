@@ -100,6 +100,9 @@ func (m vaultReferenceModel) input() client.VaultReferenceInput {
 }
 
 func (r *vaultReferenceResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	if !requireCapability(r.pd, client.CapabilitySecretVault, "clawvisor_vault_reference", &resp.Diagnostics) {
+		return
+	}
 	var plan vaultReferenceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -114,6 +117,9 @@ func (r *vaultReferenceResource) Create(ctx context.Context, req resource.Create
 }
 
 func (r *vaultReferenceResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	if !requireCapability(r.pd, client.CapabilitySecretVault, "clawvisor_vault_reference", &resp.Diagnostics) {
+		return
+	}
 	var state vaultReferenceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -134,6 +140,9 @@ func (r *vaultReferenceResource) Read(ctx context.Context, req resource.ReadRequ
 }
 
 func (r *vaultReferenceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	if !requireCapability(r.pd, client.CapabilitySecretVault, "clawvisor_vault_reference", &resp.Diagnostics) {
+		return
+	}
 	var plan vaultReferenceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -149,6 +158,9 @@ func (r *vaultReferenceResource) Update(ctx context.Context, req resource.Update
 }
 
 func (r *vaultReferenceResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	if !requireCapability(r.pd, client.CapabilitySecretVault, "clawvisor_vault_reference", &resp.Diagnostics) {
+		return
+	}
 	var state vaultReferenceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {

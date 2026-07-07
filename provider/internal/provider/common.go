@@ -55,6 +55,9 @@ func capabilityHint(capability string) string {
 			"On OSS, upgrade to a build that reports the `local_governance` capability."
 	case client.CapabilityUserManagement:
 		return "This resource needs the flat-team/user management feature (spec 04) or Clawvisor Cloud."
+	case client.CapabilitySecretVault:
+		return "This resource needs the secret vault feature (spec 10). " +
+			"On OSS, upgrade to a build that reports the `secret_vault` capability."
 	case client.CapabilityTeams, client.CapabilitySSO, client.CapabilityMultiTenant:
 		return "This resource needs a Clawvisor Cloud or in-VPC deployment."
 	default:

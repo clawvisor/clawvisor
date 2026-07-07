@@ -41,7 +41,7 @@ func New(endpoint string) *Resolver {
 	return &Resolver{endpoint: endpoint}
 }
 
-func (r *Resolver) client(ctx context.Context) (*secretmanager.Client, error) {
+func (r *Resolver) client() (*secretmanager.Client, error) {
 	r.once.Do(func() {
 		var opts []option.ClientOption
 		if r.endpoint != "" {
@@ -52,7 +52,11 @@ func (r *Resolver) client(ctx context.Context) (*secretmanager.Client, error) {
 				option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
 			)
 		}
-		r.cli, r.err = secretmanager.NewClient(ctx, opts...)
+		// Construct the client with a background context so a cancelled or
+		// short-deadline first-caller request context cannot permanently
+		// poison r.err for every subsequent Resolve. The caller ctx is
+		// reserved for the per-request AccessSecretVersion call in Resolve.
+		r.cli, r.err = secretmanager.NewClient(context.Background(), opts...)
 	})
 	return r.cli, r.err
 }
@@ -60,7 +64,7 @@ func (r *Resolver) client(ctx context.Context) (*secretmanager.Client, error) {
 // Resolve fetches {id}/versions/latest (unless the id already pins a version)
 // and applies the optional json_key.
 func (r *Resolver) Resolve(ctx context.Context, ref vault.RefEnvelope) ([]byte, error) {
-	cli, err := r.client(ctx)
+	cli, err := r.client()
 	if err != nil {
 		return nil, err
 	}
