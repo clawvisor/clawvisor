@@ -2,8 +2,10 @@ package proxy
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/elazarl/goproxy"
 	"go.opentelemetry.io/otel/attribute"
@@ -41,13 +43,7 @@ func (s *Server) InstallObservability(inst *observability.Instruments) {
 		}
 		hostCategory := runtimeHostCategory(host)
 
-		decision := "allowed"
-		switch {
-		case resp != nil && resp.StatusCode == http.StatusForbidden:
-			decision = "denied"
-		case st.Session.ObservationMode:
-			decision = "observed"
-		}
+		decision := runtimeProxyDecision(st)
 
 		inst.RecordRuntimeProxyRequest(context.Background(), decision, hostCategory)
 
@@ -63,10 +59,57 @@ func (s *Server) InstallObservability(inst *observability.Instruments) {
 			attribute.String(observability.SpanAttrDecision, decision),
 			attribute.String(observability.SpanAttrSessionID, st.Session.ID),
 		)
-		span.End()
+		// Defer span.End() to a body-close wrapper so the span covers the
+		// full request lifetime — goproxy copies the (often streaming or
+		// large) response body to the client AFTER this OnResponse hook
+		// returns, so ending the span here would truncate the duration.
+		// Mirrors the newToolUseStreamBody body-wrap pattern in this package.
+		// Fall back to ending inline when there's no body to hang the end on.
+		if resp != nil && resp.Body != nil {
+			resp.Body = newSpanEndBody(resp.Body, span)
+		} else {
+			span.End()
+		}
 
 		return resp
 	})
+}
+
+// runtimeProxyDecision maps a completed request's RequestState to the coarse
+// decision attribute (allowed/denied/observed). A Clawvisor policy block is
+// recorded from the explicit PolicyDenied marker set by the policy hook — NOT
+// from resp.StatusCode — so a genuine upstream 403 (e.g. a bad API key) is not
+// mislabeled as a Clawvisor denial and the security-relevant denied count
+// stays accurate.
+func runtimeProxyDecision(st *RequestState) string {
+	switch {
+	case st.PolicyDenied:
+		return "denied"
+	case st.Session != nil && st.Session.ObservationMode:
+		return "observed"
+	default:
+		return "allowed"
+	}
+}
+
+// spanEndBody wraps a response body so the runtimeproxy.request span ends when
+// the body is closed — i.e. after goproxy has copied the full (possibly
+// streaming) response to the client — instead of at OnResponse time before the
+// body is written. Mirrors the body-wrap pattern used by newToolUseStreamBody.
+type spanEndBody struct {
+	io.ReadCloser
+	span trace.Span
+	once sync.Once
+}
+
+func newSpanEndBody(body io.ReadCloser, span trace.Span) *spanEndBody {
+	return &spanEndBody{ReadCloser: body, span: span}
+}
+
+func (b *spanEndBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.once.Do(func() { b.span.End() })
+	return err
 }
 
 // runtimeHostCategory buckets a destination host into "llm" or "other" so the
@@ -77,6 +120,14 @@ func runtimeHostCategory(host string) string {
 	if i := strings.IndexByte(h, ':'); i >= 0 {
 		h = h[:i]
 	}
+	// Bedrock uses regional endpoints, bedrock-runtime.<region>.amazonaws.com
+	// (e.g. bedrock-runtime.us-east-1.amazonaws.com). The static suffix list
+	// can't express the wildcard region segment, so match the prefix+suffix
+	// pair explicitly before the generic loop — otherwise all real Bedrock
+	// traffic falls through to "other".
+	if strings.HasPrefix(h, "bedrock-runtime.") && strings.HasSuffix(h, ".amazonaws.com") {
+		return "llm"
+	}
 	for _, suffix := range llmHostSuffixes {
 		if h == suffix || strings.HasSuffix(h, "."+suffix) {
 			return "llm"
@@ -85,10 +136,12 @@ func runtimeHostCategory(host string) string {
 	return "other"
 }
 
+// llmHostSuffixes are exact-or-subdomain LLM provider hosts. Bedrock regional
+// endpoints are handled separately in runtimeHostCategory because their
+// <region> segment can't be expressed as a fixed suffix.
 var llmHostSuffixes = []string{
 	"api.anthropic.com",
 	"api.openai.com",
 	"generativelanguage.googleapis.com",
 	"aiplatform.googleapis.com",
-	"bedrock-runtime.amazonaws.com",
 }
