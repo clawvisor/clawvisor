@@ -786,9 +786,9 @@ func (s *Server) routes() http.Handler {
 	//     writes, token management). A config-write token is 403
 	//     INSUFFICIENT_SCOPE here; a member JWT is 403 FORBIDDEN.
 	// A non-`cvat_` bearer falls through to the JWT path exactly like `user`.
-	requireUserOrTokenRead := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigRead)
+	requireUserOrTokenRead := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigRead, s.features.APITokens)
 	userOrTokenRead := func(h http.HandlerFunc) http.Handler { return requireUserOrTokenRead(h) }
-	requireUserOrToken := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigWrite)
+	requireUserOrToken := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigWrite, s.features.APITokens)
 	userOrToken := func(h http.HandlerFunc) http.Handler { return requireUserOrToken(h) }
 	// Personal vault item writes: a config-write token authenticates as the
 	// `_instance` user, so without this guard it could plant/delete shared
@@ -799,7 +799,7 @@ func (s *Server) routes() http.Handler {
 	userOrTokenPolicyRL := func(h http.HandlerFunc) http.Handler {
 		return requireUserOrToken(middleware.RateLimit(policyRL, userKeyFn, rlCfg.PolicyAPI.Limit)(h))
 	}
-	requireAdminOrToken := middleware.RequireAdminOrToken(s.jwtSvc, s.store)
+	requireAdminOrToken := middleware.RequireAdminOrToken(s.jwtSvc, s.store, s.features.APITokens)
 	adminOrToken := func(h http.HandlerFunc) http.Handler { return requireAdminOrToken(h) }
 	// E2E encryption middleware — wraps agent-facing routes so relay traffic is encrypted.
 	// Local requests pass through unencrypted; relay requests without E2E get 403.
@@ -894,10 +894,16 @@ func (s *Server) routes() http.Handler {
 	// Token management is instance-administrative: minting a token (and
 	// especially an instance-admin token) is privilege escalation, so a
 	// config-write token must not reach these routes.
-	apiTokensHandler := handlers.NewAPITokensHandler(s.store, s.logger)
-	mux.Handle("POST /api/tokens", adminOrToken(apiTokensHandler.Create))
-	mux.Handle("GET /api/tokens", adminOrToken(apiTokensHandler.List))
-	mux.Handle("DELETE /api/tokens/{id}", adminOrToken(apiTokensHandler.Delete))
+	// When API tokens are disabled instance-wide (auth.disable_api_tokens,
+	// cloud lockdown) the routes are never registered, so the Go mux returns
+	// 404 for mint/list/revoke. The auth middleware separately rejects any
+	// presented cvat_ bearer on every other instance-admin route.
+	if s.features.APITokens {
+		apiTokensHandler := handlers.NewAPITokensHandler(s.store, s.logger)
+		mux.Handle("POST /api/tokens", adminOrToken(apiTokensHandler.Create))
+		mux.Handle("GET /api/tokens", adminOrToken(apiTokensHandler.List))
+		mux.Handle("DELETE /api/tokens/{id}", adminOrToken(apiTokensHandler.Delete))
+	}
 
 	// User management + invites (spec 04). Admin-gated: a JWT admin OR an
 	// instance-admin API token (so Terraform employee-onboarding runs
@@ -1695,9 +1701,11 @@ func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
 	if s.featuresHook != nil {
 		fs = s.featuresHook(r.Context(), middleware.UserFromContext(r.Context()), fs)
 	}
-	// API tokens are always available (no config gate); advertise them so
-	// the Terraform provider knows the endpoints exist.
-	fs.APITokens = true
+	// API tokens are gated by auth.disable_api_tokens (default enabled).
+	// Advertise the real state so the Terraform provider capability-negotiates:
+	// when disabled it fails fast with a clear capability error instead of
+	// hitting 404/401 on the token routes.
+	fs.APITokens = s.features.APITokens
 	// User management + invites (spec 04) are likewise unconditionally
 	// registered; advertise the capability so the Terraform provider does not
 	// wrongly block clawvisor_user (spec 06b finding M1).

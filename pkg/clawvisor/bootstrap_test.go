@@ -9,6 +9,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
@@ -150,6 +151,46 @@ func TestBootstrap_Unset(t *testing.T) {
 	list, _ := st.ListAPITokens(ctx)
 	if len(list) != 0 {
 		t.Fatalf("unset must not seed a row, got %d", len(list))
+	}
+}
+
+// TestBootstrap_SkippedWhenAPITokensDisabled: with auth.disable_api_tokens set
+// AND a valid CLAWVISOR_BOOTSTRAP_TOKEN present, the gate skips seeding entirely
+// so no instance-admin credential can exist on a locked-down deployment.
+func TestBootstrap_SkippedWhenAPITokensDisabled(t *testing.T) {
+	st, ctx := newBootstrapStore(t)
+	raw := genBootstrapToken(t)
+	t.Setenv(bootstrapTokenEnv, raw)
+
+	cfg := config.Default()
+	cfg.Auth.DisableAPITokens = true
+
+	if err := bootstrapAPITokenIfEnabled(ctx, cfg, st, quietLogger()); err != nil {
+		t.Fatalf("bootstrapAPITokenIfEnabled: %v", err)
+	}
+	if _, err := st.GetAPITokenByHash(ctx, auth.HashToken(raw)); err != store.ErrNotFound {
+		t.Fatalf("expected no seeded row when API tokens disabled (ErrNotFound), got %v", err)
+	}
+	list, _ := st.ListAPITokens(ctx)
+	if len(list) != 0 {
+		t.Fatalf("disabled API tokens must seed no row, got %d", len(list))
+	}
+}
+
+// TestBootstrap_SeededWhenAPITokensEnabled: the default (enabled) config still
+// seeds through the gate — the guard must not break the normal path.
+func TestBootstrap_SeededWhenAPITokensEnabled(t *testing.T) {
+	st, ctx := newBootstrapStore(t)
+	raw := genBootstrapToken(t)
+	t.Setenv(bootstrapTokenEnv, raw)
+
+	cfg := config.Default() // DisableAPITokens defaults false
+
+	if err := bootstrapAPITokenIfEnabled(ctx, cfg, st, quietLogger()); err != nil {
+		t.Fatalf("bootstrapAPITokenIfEnabled: %v", err)
+	}
+	if _, err := st.GetAPITokenByHash(ctx, auth.HashToken(raw)); err != nil {
+		t.Fatalf("expected bootstrap row seeded when enabled, got %v", err)
 	}
 }
 
