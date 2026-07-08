@@ -2,8 +2,10 @@
 
 This example shows the full self-hosted flow: an instance-admin `cvat_` token
 creates an org and mints a `cvot_` org token, and that `cvot_` then configures
-the org's governance (and SSO). Requires a `self_hosted` deployment with an
-enterprise license (`CLAWVISOR_DEPLOYMENT_MODE=self_hosted` + `CLAWVISOR_LICENSE_FILE`).
+the org's governance. (SSO is configured by the same `cvot_` — see the
+`clawvisor_sso_connection` resource and its example; it's omitted here to keep
+this example focused on the bootstrap.) Requires a `self_hosted` deployment with
+an enterprise license (`CLAWVISOR_DEPLOYMENT_MODE=self_hosted` + `CLAWVISOR_LICENSE_FILE`).
 
 ## Two-stage apply (required)
 
@@ -23,5 +25,8 @@ terraform apply
 This is a Terraform core constraint (provider config from resource output), not a
 Clawvisor limitation. The two-stage `apply` is needed whenever the `cvot_` is
 (re)created: on the first apply, and again any time `clawvisor_org_token` is
-replaced — all its inputs are `ForceNew` — or its write-once `token` is lost from
-state. A steady-state `apply` that doesn't recreate the token needs only one pass.
+replaced (all its inputs are `ForceNew`). The write-once `token` is never
+re-fetched on read, so if its value is lost from state you must recreate the
+token — `terraform apply -replace=clawvisor_org_token.terraform` — which is
+itself a recreation and so takes the two stages. A steady-state `apply` that
+doesn't recreate the token needs only one pass.
