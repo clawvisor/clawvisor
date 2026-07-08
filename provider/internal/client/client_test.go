@@ -35,6 +35,19 @@ func TestPathScopeRouting(t *testing.T) {
 // TestClientErrorMapping proves non-2xx responses become typed *APIError
 // values carrying the server's status, `error`, and `code` fields, so the
 // resource layer can map them to framework diagnostics without re-parsing.
+
+// TestPathScopeOrg covers the org-scoped (non-governance) path builder used by
+// clawvisor_org_settings.
+func TestPathScopeOrg(t *testing.T) {
+	ps := PathScope{OrgID: "org_abc123"}
+	if got, want := ps.Org("settings"), "/api/orgs/org_abc123/settings"; got != want {
+		t.Fatalf("Org(settings) = %q, want %q", got, want)
+	}
+	if got, want := ps.Org("sso"), "/api/orgs/org_abc123/sso"; got != want {
+		t.Fatalf("Org(sso) = %q, want %q", got, want)
+	}
+}
+
 func TestClientErrorMapping(t *testing.T) {
 	cases := []struct {
 		status  int
@@ -117,10 +130,3 @@ func TestFeaturesMissingFieldIsFalse(t *testing.T) {
 }
 
 func padToken() string { return "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }
-
-func TestPathScopeOrg(t *testing.T) {
-	ps := PathScope{OrgID: "org_abc123"}
-	if got := ps.Org("sso"); got != "/api/orgs/org_abc123/sso" {
-		t.Fatalf("Org(sso) = %q, want /api/orgs/org_abc123/sso", got)
-	}
-}

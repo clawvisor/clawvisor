@@ -1230,6 +1230,12 @@ export interface OrgMembership {
   role: 'owner' | 'admin' | 'member'
 }
 
+export interface OrgSettings {
+  // Whether non-admin members may run the personal connect flows (connect
+  // agents, activate services). Default true.
+  member_self_service: boolean
+}
+
 export interface OrgRestriction {
   id: string
   org_id: string
@@ -1844,6 +1850,11 @@ export const api = {
     update: (id: string, name: string) =>
       put<Org>(`/api/orgs/${id}`, { name }),
     delete: (id: string) => del<void>(`/api/orgs/${id}`),
+    settings: {
+      get: (orgId: string) => get<OrgSettings>(`/api/orgs/${orgId}/settings`),
+      update: (orgId: string, memberSelfService: boolean) =>
+        put<OrgSettings>(`/api/orgs/${orgId}/settings`, { member_self_service: memberSelfService }),
+    },
     members: {
       list: (orgId: string) => get<OrgMember[]>(`/api/orgs/${orgId}/members`),
       add: (orgId: string, userId: string, role: string) =>

@@ -51,9 +51,10 @@ func (p PathScope) Governance(sub string) string {
 	return "/api/governance/" + sub
 }
 
-// Org returns an org-scoped (non-governance) route for sub (e.g. "sso"). Only
-// meaningful when OrgID is set — these are Clawvisor Cloud / enterprise routes
-// with no instance-scoped equivalent, so callers must verify OrgID first.
+// Org returns an org-scoped (non-governance) route for sub (e.g. "sso" or
+// "settings"). Only meaningful when OrgID is set — these are Clawvisor Cloud /
+// enterprise routes with no instance-scoped equivalent, so callers must verify
+// OrgID first.
 func (p PathScope) Org(sub string) string {
 	return fmt.Sprintf("/api/orgs/%s/%s", p.OrgID, sub)
 }
