@@ -65,7 +65,9 @@ func (p *clawvisorProvider) Schema(_ context.Context, _ provider.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "The Clawvisor provider configures a Clawvisor instance (OSS) or " +
 			"organization (Cloud) declaratively over its REST API. Authenticate with a " +
-			"long-lived `cvat_` API token (spec 05).",
+			"long-lived `cvat_` instance-admin token (self-hosted / VPC, instance-scoped " +
+			"routes), or a `cvot_` org-scoped token together with `org_id` (Clawvisor " +
+			"Cloud, org-scoped routes) — spec 05.",
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
 				Optional: true,
@@ -133,7 +135,8 @@ func (p *clawvisorProvider) Configure(ctx context.Context, req provider.Configur
 			resp.Diagnostics.AddError(
 				"Clawvisor authentication failed",
 				"GET /api/features on "+endpoint+" returned "+ae.Error()+". "+
-					"Check that api_token is a valid, non-revoked cvat_ token with the instance-admin scope.",
+					"Check that api_token is a valid, non-revoked `cvat_` instance-admin token " +
+					"(self-hosted), or a `cvot_` org-scoped token used together with `org_id` (Cloud).",
 			)
 			return
 		}
