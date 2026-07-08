@@ -75,7 +75,7 @@ func (r *orgResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 }
 
 func (r *orgResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	if !requireCapability(r.pd, client.CapabilityTeams, "clawvisor_org", &resp.Diagnostics) {
+	if !requireCapability(r.pd, client.CapabilityMultiTenant, "clawvisor_org", &resp.Diagnostics) {
 		return
 	}
 	var plan orgModel
@@ -97,7 +97,7 @@ func (r *orgResource) Create(ctx context.Context, req resource.CreateRequest, re
 }
 
 func (r *orgResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	if !requireCapability(r.pd, client.CapabilityTeams, "clawvisor_org", &resp.Diagnostics) {
+	if !requireCapability(r.pd, client.CapabilityMultiTenant, "clawvisor_org", &resp.Diagnostics) {
 		return
 	}
 	var state orgModel
