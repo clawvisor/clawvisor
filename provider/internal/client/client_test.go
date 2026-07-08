@@ -117,3 +117,10 @@ func TestFeaturesMissingFieldIsFalse(t *testing.T) {
 }
 
 func padToken() string { return "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }
+
+func TestPathScopeOrg(t *testing.T) {
+	ps := PathScope{OrgID: "org_abc123"}
+	if got := ps.Org("sso"); got != "/api/orgs/org_abc123/sso" {
+		t.Fatalf("Org(sso) = %q, want /api/orgs/org_abc123/sso", got)
+	}
+}
