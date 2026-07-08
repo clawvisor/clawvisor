@@ -130,3 +130,23 @@ func TestFeaturesMissingFieldIsFalse(t *testing.T) {
 }
 
 func padToken() string { return "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }
+
+// TestClientAcceptsOrgToken proves a cvot_ org-scoped token is accepted and
+// sent verbatim as the Bearer credential — the client is prefix-agnostic, so
+// the same provider drives self-hosted (cvat_) and cloud-org (cvot_) servers.
+func TestClientAcceptsOrgToken(t *testing.T) {
+	const token = "cvot_" + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, token, "org_abc123", srv.Client())
+	if _, err := c.ListAgents(context.Background()); err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	if want := "Bearer " + token; gotAuth != want {
+		t.Fatalf("Authorization = %q, want %q", gotAuth, want)
+	}
+}
