@@ -32,18 +32,30 @@ func NewLLMCredentialsHandler(st store.Store, v vault.Vault, logger *slog.Logger
 }
 
 type setLLMCredentialBody struct {
-	APIKey string `json:"api_key"`
+	APIKey    string          `json:"api_key"`
+	Reference *referenceInput `json:"reference,omitempty"`
 }
 
-// Set writes the upstream API key to the vault under (user_id, provider) —
-// or, when ?agent_id=<id> is present, under the agent-scoped service ID
-// (`agent:<id>:<provider>`) so the lite-proxy can prefer it for that agent.
+// Set writes the upstream provider credential to the vault under (user_id,
+// provider) — or, when ?agent_id=<id> is present, under the agent-scoped
+// service ID (`agent:<id>:<provider>`) so the lite-proxy can prefer it for
+// that agent.
+//
+// The credential is supplied in exactly ONE of two shapes:
+//   - push:      {"api_key": "sk-ant-..."} — the literal key transits the
+//     request and is sealed in the vault at rest.
+//   - reference: {"reference": {"backend": "aws-sm|gcp-sm", "id": "...",
+//     "json_key": "..."}} — a pointer to a secret in the operator's own store,
+//     resolved to plaintext only at injection time and never persisted. The
+//     reference path is admin-gated + allowlist-constrained (spec 10), reusing
+//     the same storeReference logic the generic vault endpoints use, and is
+//     stored under the SAME service ID the push path uses so the forwarder
+//     resolves it transparently.
 //
 // PUT /api/runtime/llm-credentials/{provider}
 // PUT /api/runtime/llm-credentials/{provider}?agent_id=<id>
 //
-//	body: {"api_key": "sk-ant-..."}
-//	provider: "anthropic" | "openai"
+//	provider: "anthropic" | "openai" | "google"
 func (h *LLMCredentialsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
@@ -72,10 +84,59 @@ func (h *LLMCredentialsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiKey := strings.TrimSpace(body.APIKey)
-	if apiKey == "" {
-		writeJSONError(w, http.StatusBadRequest, "MISSING_KEY", "api_key is required")
+	hasKey := apiKey != ""
+	hasRef := body.Reference != nil
+	// Exactly one of api_key / reference is required — never both (ambiguous)
+	// and never neither (nothing to store).
+	if hasKey == hasRef {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_REQUEST",
+			"exactly one of api_key or reference is required")
 		return
 	}
+
+	// Reference mode (spec 10): store an external-secret reference under the
+	// same service ID the push path uses, so the forwarder's vault.Get resolves
+	// it identically. Admin-gated + allowlist-constrained via the shared
+	// storeReference helper; the api_key branch below is never reached. No
+	// secret value is ever logged or echoed.
+	//
+	// NOTE: unlike the push path (which runs validateLLMAPIKey to reject a
+	// wrong-prefix key for the selected provider), reference mode does NOT
+	// validate the resolved secret's shape against the provider — storeReference's
+	// verify only confirms the external secret resolves and is allowlisted, not
+	// that its plaintext is a valid key for `provider`. A reference stored for the
+	// wrong provider therefore succeeds here and only fails at runtime during
+	// proxy injection. This is deliberate (the resolver stays provider-agnostic
+	// and we never inspect resolved plaintext here); operators are responsible
+	// for key↔provider alignment. Documented on the clawvisor_llm_credential
+	// resource so callers know to ensure the referenced secret matches `provider`.
+	if hasRef {
+		if apiErr := storeReference(r.Context(), h.Vault, callerIsInstanceAdmin(r.Context()), user.ID, serviceID, *body.Reference, wantsVerify(r)); apiErr != nil {
+			apiErr.write(w)
+			return
+		}
+		h.Logger.InfoContext(r.Context(), "lite-proxy: llm credential reference stored",
+			"user_id", user.ID,
+			"service_id", serviceID,
+			"provider", provider,
+			"agent_id", agentID,
+			"action", "reference_set",
+		)
+		resp := map[string]string{
+			"provider":   provider,
+			"service_id": serviceID,
+			"status":     "stored",
+			"kind":       vault.KindRef,
+		}
+		if agentID != "" {
+			resp["agent_id"] = agentID
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
+
 	if reason, ok := validateLLMAPIKey(provider, apiKey); !ok {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_KEY", reason)
 		return

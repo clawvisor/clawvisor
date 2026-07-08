@@ -156,7 +156,24 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		RuntimeActivity:   opts.Features.RuntimeActivity,
 		AgentLiveSessions: opts.Features.AgentLiveSessions,
 		ServicePresets:    opts.Features.ServicePresets,
+		APITokens:         opts.Features.APITokens,
 	}))
+
+	// Consistency guard (spec 05): the /api/tokens routes gate on
+	// opts.Features.APITokens, but first-boot bootstrap seeding
+	// (bootstrapAPITokenIfEnabled) gates on cfg.Auth.DisableAPITokens. In the
+	// OSS path both derive from cfg.Auth.DisableAPITokens so they always agree;
+	// a caller that overrides the feature independently (e.g. the cloud token
+	// lockdown sets Features.APITokens=false) MUST also set
+	// auth.disable_api_tokens, or bootstrap would seed an instance-admin token
+	// the routes then refuse to mint — contradicting the lockdown's guarantee.
+	// Warn loudly if the two sources of truth diverge.
+	if opts.Config != nil && opts.Logger != nil &&
+		opts.Features.APITokens == opts.Config.Auth.DisableAPITokens {
+		opts.Logger.WarnContext(ctx, "APITokens feature gate disagrees with auth.disable_api_tokens; /api/tokens routes follow the feature while bootstrap seeding follows the config flag — set both consistently to avoid seeding an unmintable token",
+			"features_api_tokens", opts.Features.APITokens,
+			"disable_api_tokens", opts.Config.Auth.DisableAPITokens)
+	}
 
 	apiOpts = append(apiOpts, api.WithExtraRoutes(func(mux *http.ServeMux, deps api.Dependencies) {
 		if runtimeMgr != nil || (opts.Config != nil && opts.Config.ProxyLite.Enabled) {
@@ -317,6 +334,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 				RuntimeActivity:   fs.RuntimeActivity,
 				AgentLiveSessions: fs.AgentLiveSessions,
 				ServicePresets:    fs.ServicePresets,
+				APITokens:         fs.APITokens,
 			})
 			fs.MultiTenant = modified.MultiTenant
 			fs.EmailVerification = modified.EmailVerification
@@ -334,6 +352,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			fs.RuntimeActivity = modified.RuntimeActivity
 			fs.AgentLiveSessions = modified.AgentLiveSessions
 			fs.ServicePresets = modified.ServicePresets
+			fs.APITokens = modified.APITokens
 			return fs
 		}))
 	}
@@ -398,6 +417,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	}
 	if opts.Instruments != nil {
 		apiOpts = append(apiOpts, api.WithInstruments(opts.Instruments))
+	}
+	if opts.RedisClient != nil {
+		apiOpts = append(apiOpts, api.WithRedisClient(opts.RedisClient))
 	}
 
 	srv, err := api.New(

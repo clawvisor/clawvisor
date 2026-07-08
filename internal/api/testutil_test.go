@@ -107,8 +107,10 @@ func newTestEnvWithConfig(t *testing.T, llmCfg config.LLMConfig, wrapVault func(
 	}
 
 	// Tests use password auth so Register/Login routes are available.
+	// APITokens mirrors the production default (enabled) so the token
+	// mint/manage routes are registered like a normal self-hosted install.
 	srv, err := api.New(cfg, st, v, jwtSvc, adapterReg, nil, llmCfg, nil,
-		api.WithFeatures(api.FeatureSet{PasswordAuth: true}),
+		api.WithFeatures(api.FeatureSet{PasswordAuth: true, APITokens: true}),
 	)
 	if err != nil {
 		t.Fatalf("api.New: %v", err)
@@ -171,7 +173,7 @@ func newCloudCompositionTestEnv(t *testing.T, orgIDForAgent ...func(context.Cont
 	}
 
 	srv, err := api.New(cfg, st, v, jwtSvc, adapters.NewRegistry(), nil, config.LLMConfig{}, nil,
-		api.WithFeatures(api.FeatureSet{PasswordAuth: true}),
+		api.WithFeatures(api.FeatureSet{PasswordAuth: true, APITokens: true}),
 		// WithOrgGov marks this as the cloud composition regardless of whether
 		// the resolver is nil (see orgGovConfigured).
 		api.WithOrgGov(orggov.Callbacks{}, resolver),

@@ -47,6 +47,7 @@ import (
 	skillfiles "github.com/clawvisor/clawvisor/skills"
 	webfs "github.com/clawvisor/clawvisor/web"
 
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/time/rate"
 )
 
@@ -149,6 +150,12 @@ type Server struct {
 	// when observability export is disabled (the default); handlers no-op
 	// their metric emission when it is nil.
 	instruments *observability.Instruments
+
+	// redisClient, when non-nil, makes the per-IP rate limiters Redis-backed
+	// so brute-force caps hold across replicas instead of becoming cap*N under
+	// horizontal autoscaling. nil (the single-VM / local-dev default) selects
+	// the in-memory per-process limiter — see newKeyedLimiterFromBucket.
+	redisClient *redis.Client
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.
@@ -429,6 +436,13 @@ func WithExtractionTracker(t handlers.ExtractionTracker) ServerOption {
 // default) disables metric emission.
 func WithInstruments(inst *observability.Instruments) ServerOption {
 	return func(s *Server) { s.instruments = inst }
+}
+
+// WithRedisClient supplies the shared Redis client so the per-IP rate limiters
+// enforce their caps across replicas. nil (the single-VM / local-dev default)
+// leaves the limiters in-memory and per-process — see newKeyedLimiterFromBucket.
+func WithRedisClient(rdb *redis.Client) ServerOption {
+	return func(s *Server) { s.redisClient = rdb }
 }
 
 // WithCallerNonceCache overrides the default in-memory caller-nonce cache
@@ -727,10 +741,10 @@ func (s *Server) routes() http.Handler {
 
 	// Rate limiters (skip when config is zero-valued, e.g. in tests)
 	rlCfg := s.cfg.RateLimit
-	gatewayRL := newKeyedLimiterFromBucket(rlCfg.Gateway)
-	oauthRL := newKeyedLimiterFromBucket(rlCfg.OAuth)
-	policyRL := newKeyedLimiterFromBucket(rlCfg.PolicyAPI)
-	authRL := newKeyedLimiterFromBucket(rlCfg.Auth)
+	gatewayRL := s.newKeyedLimiterFromBucket(rlCfg.Gateway)
+	oauthRL := s.newKeyedLimiterFromBucket(rlCfg.OAuth)
+	policyRL := s.newKeyedLimiterFromBucket(rlCfg.PolicyAPI)
+	authRL := s.newKeyedLimiterFromBucket(rlCfg.Auth)
 
 	// Parse trusted-proxy CIDRs once. When r.RemoteAddr falls inside any of
 	// these networks, ipKeyFn honors X-Forwarded-For — otherwise the rate
@@ -786,9 +800,9 @@ func (s *Server) routes() http.Handler {
 	//     writes, token management). A config-write token is 403
 	//     INSUFFICIENT_SCOPE here; a member JWT is 403 FORBIDDEN.
 	// A non-`cvat_` bearer falls through to the JWT path exactly like `user`.
-	requireUserOrTokenRead := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigRead)
+	requireUserOrTokenRead := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigRead, s.features.APITokens)
 	userOrTokenRead := func(h http.HandlerFunc) http.Handler { return requireUserOrTokenRead(h) }
-	requireUserOrToken := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigWrite)
+	requireUserOrToken := middleware.RequireUserOrAPIToken(s.jwtSvc, s.store, middleware.ScopeConfigWrite, s.features.APITokens)
 	userOrToken := func(h http.HandlerFunc) http.Handler { return requireUserOrToken(h) }
 	// Personal vault item writes: a config-write token authenticates as the
 	// `_instance` user, so without this guard it could plant/delete shared
@@ -799,7 +813,7 @@ func (s *Server) routes() http.Handler {
 	userOrTokenPolicyRL := func(h http.HandlerFunc) http.Handler {
 		return requireUserOrToken(middleware.RateLimit(policyRL, userKeyFn, rlCfg.PolicyAPI.Limit)(h))
 	}
-	requireAdminOrToken := middleware.RequireAdminOrToken(s.jwtSvc, s.store)
+	requireAdminOrToken := middleware.RequireAdminOrToken(s.jwtSvc, s.store, s.features.APITokens)
 	adminOrToken := func(h http.HandlerFunc) http.Handler { return requireAdminOrToken(h) }
 	// E2E encryption middleware — wraps agent-facing routes so relay traffic is encrypted.
 	// Local requests pass through unencrypted; relay requests without E2E get 403.
@@ -894,10 +908,16 @@ func (s *Server) routes() http.Handler {
 	// Token management is instance-administrative: minting a token (and
 	// especially an instance-admin token) is privilege escalation, so a
 	// config-write token must not reach these routes.
-	apiTokensHandler := handlers.NewAPITokensHandler(s.store, s.logger)
-	mux.Handle("POST /api/tokens", adminOrToken(apiTokensHandler.Create))
-	mux.Handle("GET /api/tokens", adminOrToken(apiTokensHandler.List))
-	mux.Handle("DELETE /api/tokens/{id}", adminOrToken(apiTokensHandler.Delete))
+	// When API tokens are disabled instance-wide (auth.disable_api_tokens,
+	// cloud lockdown) the routes are never registered, so the Go mux returns
+	// 404 for mint/list/revoke. The auth middleware separately rejects any
+	// presented cvat_ bearer on every other instance-admin route.
+	if s.features.APITokens {
+		apiTokensHandler := handlers.NewAPITokensHandler(s.store, s.logger)
+		mux.Handle("POST /api/tokens", adminOrToken(apiTokensHandler.Create))
+		mux.Handle("GET /api/tokens", adminOrToken(apiTokensHandler.List))
+		mux.Handle("DELETE /api/tokens/{id}", adminOrToken(apiTokensHandler.Delete))
+	}
 
 	// User management + invites (spec 04). Admin-gated: a JWT admin OR an
 	// instance-admin API token (so Terraform employee-onboarding runs
@@ -955,7 +975,7 @@ func (s *Server) routes() http.Handler {
 		connectionsHandler.SetClaimCodeCache(s.claimCodeCache)
 	}
 	s.connectionsHandler = connectionsHandler
-	connectionsRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
+	connectionsRL := s.newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
 	mux.Handle("POST /api/agents/connect",
 		middleware.RateLimit(connectionsRL, ipKeyFn, 10)(e2e(http.HandlerFunc(connectionsHandler.RequestConnect))))
 	mux.Handle("GET /api/agents/connect/{id}/status", e2e(http.HandlerFunc(connectionsHandler.PollStatus)))
@@ -966,7 +986,7 @@ func (s *Server) routes() http.Handler {
 	// magic-link mode, where the invite claim proves email possession inline
 	// (invite security rule 2's carve-out); the seat cap mirrors auth.max_users.
 	connectionsHandler.ConfigureInviteEnroll(s.magicStore != nil, s.cfg.Auth.MaxUsers)
-	enrollRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
+	enrollRL := s.newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
 	mux.Handle("POST /api/agents/enroll",
 		middleware.RateLimit(enrollRL, ipKeyFn, 10)(e2e(http.HandlerFunc(connectionsHandler.EnrollWithInvite))))
 
@@ -975,7 +995,7 @@ func (s *Server) routes() http.Handler {
 	// route absent for proxy-lite-disabled installs so the connect API
 	// surface matches main.
 	if s.cfg.ProxyLite.Enabled {
-		claimMintRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 30, Window: 60})
+		claimMintRL := s.newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 30, Window: 60})
 		mux.Handle("POST /api/agents/connect/claim",
 			requireUser(middleware.RateLimit(claimMintRL, userKeyFn, 30)(http.HandlerFunc(connectionsHandler.MintClaim))))
 	}
@@ -1019,7 +1039,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/devices/{id}/push-to-start-token", requireDevice(e2e(http.HandlerFunc(devicesHandler.UpdatePushToStartToken))))
 	// Pairing and management routes (gated by mobile_pairing feature flag)
 	if s.features.MobilePairing {
-		devicesRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 5, Window: 60})
+		devicesRL := s.newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 5, Window: 60})
 		mux.Handle("GET /api/devices/pair/info", user(devicesHandler.PairInfo))
 		mux.Handle("POST /api/devices/pair", user(devicesHandler.StartPairing))
 		mux.Handle("POST /api/devices/pair/complete",
@@ -1478,6 +1498,7 @@ func (s *Server) registerLiteProxyRoutes(
 		llmHandler.UpstreamAuth = s.cfg.ProxyLite.UpstreamAuth
 		llmHandler.EnforcementMode = s.cfg.ProxyLite.EnforcementMode
 		llmHandler.AllowSubscriptionBillingMigration = s.cfg.ProxyLite.AllowSubscriptionBillingMigration
+		llmHandler.GovernSubscriptionSeats = s.cfg.ProxyLite.GovernSubscriptionSeats
 		if v := s.cfg.ProxyLite.AnthropicBaseURL; v != "" {
 			llmHandler.Forwarder.Upstream.AnthropicBaseURL = v
 		}
@@ -1676,16 +1697,23 @@ func (s *Server) registerLiteProxyRoutes(
 
 	if includeCredentialRoutes {
 		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
-		// Accept either a user JWT or a `cvis_…` agent token. The one-paste
-		// install skill (which holds the freshly-minted agent token but no
-		// dashboard session) vaults the user's upstream LLM key from inside
-		// the skill via this endpoint; the dashboard's Settings UI still
-		// uses the same routes with user-JWT auth.
-		requireUserOrAgent := middleware.RequireUserOrAgent(s.jwtSvc, s.store)
-		userOrAgent := func(h http.HandlerFunc) http.Handler { return requireUserOrAgent(h) }
-		mux.Handle("PUT /api/runtime/llm-credentials/{provider}", userOrAgent(llmCredHandler.Set))
-		mux.Handle("DELETE /api/runtime/llm-credentials/{provider}", userOrAgent(llmCredHandler.Delete))
-		mux.Handle("GET /api/runtime/llm-credentials", userOrAgent(llmCredHandler.List))
+		// Accept a user JWT, a `cvis_…` agent token, OR a `cvat_…` API token.
+		// The one-paste install skill (which holds the freshly-minted agent
+		// token but no dashboard session) vaults the user's upstream LLM key
+		// from inside the skill; the dashboard's Settings UI uses the same
+		// routes with user-JWT auth; and the Terraform provider authenticates
+		// with a `cvat_` instance-admin token, which resolves to `_instance` so
+		// the key is stored as the shared govern "org provider key". Writes gate
+		// at instance-admin (a config-write/read token — also injected as
+		// `_instance` — must not plant a fleet-shared provider key, mirroring the
+		// shared-vault-write gate); reads gate at config-read.
+		requireCredWrite := middleware.RequireUserOrAgentOrToken(s.jwtSvc, s.store, middleware.ScopeInstanceAdmin, s.features.APITokens)
+		requireCredRead := middleware.RequireUserOrAgentOrToken(s.jwtSvc, s.store, middleware.ScopeConfigRead, s.features.APITokens)
+		credWrite := func(h http.HandlerFunc) http.Handler { return requireCredWrite(h) }
+		credRead := func(h http.HandlerFunc) http.Handler { return requireCredRead(h) }
+		mux.Handle("PUT /api/runtime/llm-credentials/{provider}", credWrite(llmCredHandler.Set))
+		mux.Handle("DELETE /api/runtime/llm-credentials/{provider}", credWrite(llmCredHandler.Delete))
+		mux.Handle("GET /api/runtime/llm-credentials", credRead(llmCredHandler.List))
 	}
 }
 
@@ -1695,9 +1723,11 @@ func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
 	if s.featuresHook != nil {
 		fs = s.featuresHook(r.Context(), middleware.UserFromContext(r.Context()), fs)
 	}
-	// API tokens are always available (no config gate); advertise them so
-	// the Terraform provider knows the endpoints exist.
-	fs.APITokens = true
+	// API tokens are gated by auth.disable_api_tokens (default enabled).
+	// Advertise the real state so the Terraform provider capability-negotiates:
+	// when disabled it fails fast with a clear capability error instead of
+	// hitting 404/401 on the token routes.
+	fs.APITokens = s.features.APITokens
 	// User management + invites (spec 04) are likewise unconditionally
 	// registered; advertise the capability so the Terraform provider does not
 	// wrongly block clawvisor_user (spec 06b finding M1).
@@ -1907,11 +1937,26 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-// newKeyedLimiterFromBucket creates a KeyedLimiter from a config bucket.
+// newKeyedLimiterFromBucket creates a keyed rate limiter from a config bucket.
 // Returns nil when the bucket has zero values (unconfigured).
-func newKeyedLimiterFromBucket(b config.RateLimitBucket) ratelimit.Limiter {
+//
+// When the server has a Redis client (multi-instance / horizontally-autoscaled
+// deployments such as Cloud Run), it returns a Redis-backed limiter whose
+// counter is shared across replicas, so per-IP brute-force caps stay at their
+// configured value instead of growing to cap*N with the replica count.
+// Otherwise (the Redis-less single-VM / local-dev default) it returns the
+// in-memory per-process limiter — behavior is byte-for-byte unchanged there.
+func (s *Server) newKeyedLimiterFromBucket(b config.RateLimitBucket) ratelimit.Limiter {
 	if b.Limit <= 0 || b.Window <= 0 {
 		return nil
+	}
+	if s.redisClient != nil {
+		return ratelimit.NewRedisKeyedLimiter(
+			s.redisClient,
+			float64(b.Limit)/float64(b.Window),
+			b.Limit,
+			time.Duration(b.Window)*time.Second,
+		)
 	}
 	return ratelimit.NewKeyedLimiter(
 		rate.Limit(float64(b.Limit)/float64(b.Window)),

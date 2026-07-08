@@ -38,6 +38,11 @@ auth:
   require_invite: false    # from env: AUTH_REQUIRE_INVITE — when true, registration needs a valid
                            # invite (403 INVITE_REQUIRED) except the very first user, who becomes admin.
                            # The first registered user is admin; subsequent users are members.
+  disable_api_tokens: false # from env: AUTH_DISABLE_API_TOKENS — when true, fully disables the
+                           # long-lived scoped API-token subsystem: mint/manage routes return 404,
+                           # no bootstrap token is seeded, /api/features reports api_tokens:false, and
+                           # any presented cvat_ bearer is rejected 401 without a token-table lookup.
+                           # Keep false for OSS/self-hosted; the Terraform provider requires tokens.
 
 approval:
   timeout: 300             # seconds before approval request expires
@@ -155,8 +160,12 @@ telemetry:
 #             inspects/attributes/audits/meters cost but records every
 #             hold/deny verdict as an observation instead of enforcing it).
 #   govern  — observe + control: proxy-lite enabled, upstream auth = vault
-#             (inject the stored key; client-presented API keys are stripped),
-#             enforcement = enforce.
+#             (inject the stored key; client-presented API *keys* are stripped),
+#             enforcement = enforce. Subscription (OAuth) seats are the
+#             exception: by default they are governed on their OWN credential
+#             (forwarded upstream, billing unchanged) while still enforced —
+#             see govern_subscription_seats below. Set that false to instead
+#             refuse subscription seats (strict "vaulted keys only").
 #   contain — govern + network-layer containment of the agent process via the
 #             runtime proxy (HTTP(S)_PROXY injection, TLS MITM, egress policy).
 #             LLM traffic still flows through proxy-lite unchanged — Contain is
@@ -194,14 +203,31 @@ telemetry:
 #                              # Env: CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE.
 #                              # observe: record hold/deny verdicts as
 #                              #   observations; never blocks or holds.
+#   govern_subscription_seats: true
+#                              # Env: CLAWVISOR_PROXY_LITE_GOVERN_SUBSCRIPTION_SEATS.
+#                              # When true (default), a govern/vault request
+#                              # carrying a Claude subscription (OAuth) — or
+#                              # otherwise unrecognized — bearer is AUTO-GOVERNED:
+#                              # the seat's own credential is forwarded upstream
+#                              # (billing stays on the subscription, no rebilling)
+#                              # while the full policy pipeline still enforces
+#                              # (holds, model/spend/content policy, approvals,
+#                              # cost attribution). Set false for strict
+#                              # "vaulted keys only" mode: a subscription/
+#                              # unrecognized seat is REFUSED with
+#                              # SUBSCRIPTION_SEAT_NOT_GOVERNABLE (keys-off-laptops).
 #   allow_subscription_billing_migration: false
 #                              # Env: CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION.
-#                              # When false (default), a govern/vault request
-#                              # carrying a Claude subscription (OAuth) bearer
-#                              # is REFUSED with SUBSCRIPTION_SEAT_NOT_GOVERNABLE
-#                              # rather than silently rebilled to the org API
-#                              # key. Set true ONLY to consent to migrating
-#                              # subscription seats to vaulted-API-key billing.
+#                              # Takes PRECEDENCE over govern_subscription_seats.
+#                              # When true, a govern/vault request carrying a
+#                              # Claude subscription (OAuth) bearer is MIGRATED:
+#                              # the bearer is stripped and the vaulted org API
+#                              # key injected, shifting billing from the user's
+#                              # subscription to org-metered API billing. Leave
+#                              # false (default) to keep billing on the seat's
+#                              # own subscription (auto-govern) or to refuse it
+#                              # (strict mode). Set true ONLY to consent to that
+#                              # billing shift.
 #                              # WARNING: this flag is INSTANCE-WIDE — enabling
 #                              # it migrates EVERY subscription seat on the
 #                              # instance at once, not one.

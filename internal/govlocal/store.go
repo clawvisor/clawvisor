@@ -27,6 +27,13 @@ const spendCacheTTL = 60 * time.Second
 // monthly) for spendCacheTTL. Plain mutex + timestamp — no new
 // dependency. Cached per window because the daily and monthly windows
 // have different bounds and roll over independently.
+//
+// This is a per-process cache, correct for the supported single-VM OSS
+// deployment. Under a hypothetical multi-instance OSS deployment each
+// replica keeps its own copy, so up to N replicas could each serve a
+// stale sum for up to spendCacheTTL — allowing up to N parallel TTL
+// windows of hard-cap slack before the caps reconverge. Single-instance
+// OSS sees no such slack; cloud enforces spend caps out of band.
 type spendCache struct {
 	mu      sync.Mutex
 	entries map[string]spendCacheEntry

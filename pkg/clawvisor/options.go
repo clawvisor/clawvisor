@@ -290,4 +290,10 @@ type FeatureSet struct {
 	RuntimeActivity   bool `json:"runtime_activity"`
 	AgentLiveSessions bool `json:"agent_live_sessions"`
 	ServicePresets    bool `json:"service_presets"`
+	// APITokens gates the long-lived scoped API-token subsystem (mint/manage
+	// routes, bootstrap seeding, cvat_ bearer acceptance). Defaults TRUE via
+	// computeFeatureSet (APITokens: !cfg.Auth.DisableAPITokens); the cloud
+	// layer can override it to false to close the instance-admin-token
+	// takeover path.
+	APITokens bool `json:"api_tokens"`
 }
