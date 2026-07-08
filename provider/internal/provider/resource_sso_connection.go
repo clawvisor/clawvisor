@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/clawvisor/clawvisor/provider/internal/client"
 
@@ -190,13 +191,22 @@ func (m ssoConnectionModel) toClient() client.SSOConnection {
 	}
 }
 
-// orgID returns the provider's configured org id, erroring if unset — the SSO
-// connection is org-scoped and has no instance-level equivalent.
-func (r *ssoConnectionResource) orgID(diags *diag.Diagnostics) (string, bool) {
+// resolveOrgID returns the provider's configured org id, erroring if it is
+// unset (the SSO connection is org-scoped, with no instance-level equivalent)
+// or if it does not match the resource's recorded id — that means the resource
+// belongs to a different provider org, and Read/Update/Delete would otherwise
+// silently target the wrong org. stateID is empty on a fresh create.
+func (r *ssoConnectionResource) resolveOrgID(stateID string, diags *diag.Diagnostics) (string, bool) {
 	id := r.pd.client.Scope.OrgID
 	if id == "" {
 		diags.AddError("org_id is required",
 			"clawvisor_sso_connection is an org-scoped enterprise resource — set org_id on the provider block.")
+		return "", false
+	}
+	if stateID != "" && stateID != id {
+		diags.AddError("Provider org_id mismatch",
+			fmt.Sprintf("this clawvisor_sso_connection belongs to org %q, but the provider is configured for org %q. "+
+				"Point the provider at the owning org (or re-import the resource) before managing it.", stateID, id))
 		return "", false
 	}
 	return id, true
@@ -206,7 +216,7 @@ func (r *ssoConnectionResource) Create(ctx context.Context, req resource.CreateR
 	if !requireCapability(r.pd, client.CapabilitySSO, "clawvisor_sso_connection", &resp.Diagnostics) {
 		return
 	}
-	orgID, ok := r.orgID(&resp.Diagnostics)
+	orgID, ok := r.resolveOrgID("", &resp.Diagnostics)
 	if !ok {
 		return
 	}
@@ -230,6 +240,9 @@ func (r *ssoConnectionResource) Read(ctx context.Context, req resource.ReadReque
 	var state ssoConnectionModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if _, ok := r.resolveOrgID(state.ID.ValueString(), &resp.Diagnostics); !ok {
 		return
 	}
 	conn, err := r.pd.client.GetSSOConnection(ctx)
@@ -273,6 +286,9 @@ func (r *ssoConnectionResource) Update(ctx context.Context, req resource.UpdateR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if _, ok := r.resolveOrgID(plan.ID.ValueString(), &resp.Diagnostics); !ok {
+		return
+	}
 	if err := r.pd.client.PutSSOConnection(ctx, plan.toClient()); err != nil {
 		diagFromError("Updating clawvisor_sso_connection", err, &resp.Diagnostics)
 		return
@@ -281,6 +297,14 @@ func (r *ssoConnectionResource) Update(ctx context.Context, req resource.UpdateR
 }
 
 func (r *ssoConnectionResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state ssoConnectionModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if _, ok := r.resolveOrgID(state.ID.ValueString(), &resp.Diagnostics); !ok {
+		return
+	}
 	if err := r.pd.client.DeleteSSOConnection(ctx); err != nil {
 		if client.NotFound(err) {
 			return
