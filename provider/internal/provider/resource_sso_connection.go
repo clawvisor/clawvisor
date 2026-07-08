@@ -297,6 +297,9 @@ func (r *ssoConnectionResource) Update(ctx context.Context, req resource.UpdateR
 }
 
 func (r *ssoConnectionResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	if !requireCapability(r.pd, client.CapabilitySSO, "clawvisor_sso_connection", &resp.Diagnostics) {
+		return
+	}
 	var state ssoConnectionModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {

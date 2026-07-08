@@ -2,6 +2,20 @@
 # Enterprise / Clawvisor Cloud only: it requires the server's `sso` capability
 # and the provider's org_id to be set — it errors cleanly on an OSS deployment.
 
+variable "clawvisor_api_token" {
+  type      = string
+  sensitive = true
+}
+
+variable "okta_client_id" {
+  type = string
+}
+
+variable "okta_client_secret" {
+  type      = string
+  sensitive = true
+}
+
 provider "clawvisor" {
   endpoint = "https://clawvisor.example.com:8443"
   api_token = var.clawvisor_api_token # sensitive
