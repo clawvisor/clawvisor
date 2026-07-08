@@ -1,0 +1,26 @@
+pkg/runtime/proxy/tooluse_runtime.go
+  s_55f7a841d7c10e::t_8719d57b4f9f0f 254-262
+pkg/runtime/proxy/contain_test.go
+  s_55f7a841d7c10e::t_bc05b14f942560 1-73
+pkg/runtime/proxy/policy_hook.go
+  s_55f7a841d7c10e::t_aa21c514a9d334 73-79
+  s_55f7a841d7c10e::t_4839596047d6a5 756-763,774-781,789-794
+  s_55f7a841d7c10e::t_6231b48a61bae1 797,799,801-849
+  s_55f7a841d7c10e::t_a17d7c05a1f170 795-796,798,800
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "11e07e59195ca7dccbce684f27831a04ec4ffeb2",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

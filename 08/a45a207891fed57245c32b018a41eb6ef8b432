@@ -1,0 +1,21 @@
+e2e/scenarios/api_tokens_test.go
+  s_55f7a841d7c10e::t_f8c074c125379d 251-263
+  s_55f7a841d7c10e::t_f75d57407de33b 242-244,246-247
+  s_55f7a841d7c10e::t_50667702dff5eb 1-241,245,248-250,264-293
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "08a45a207891fed57245c32b018a41eb6ef8b432",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

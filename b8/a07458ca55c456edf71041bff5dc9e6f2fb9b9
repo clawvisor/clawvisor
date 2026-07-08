@@ -1,0 +1,35 @@
+pkg/store/sqlite/migrations/065_admin_visibility_indexes.sql
+  s_55f7a841d7c10e::t_f6ae57dd6feb4d 9-14,16
+pkg/store/sqlite/store.go
+  s_55f7a841d7c10e::t_d256768d3e333d 2789
+  s_55f7a841d7c10e::t_ac28a4f3e4ec16 2755
+pkg/store/sqlite/store_admin_visibility_test.go
+  s_55f7a841d7c10e::t_fbf22322063d81 264-315
+  s_55f7a841d7c10e::t_2ccf6870ec97a7 43-49
+  s_55f7a841d7c10e::t_34104d3e17d29b 7,14-42,50-51,316
+  s_2272b9604c80ae::t_cad2b490b5f01a 52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b8a07458ca55c456edf71041bff5dc9e6f2fb9b9",
+  "prompts": {},
+  "sessions": {
+    "s_2272b9604c80ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01bd258c-cdde-4b3f-afd2-10b73065bcd5",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

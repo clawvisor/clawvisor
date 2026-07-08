@@ -1,0 +1,22 @@
+web/src/pages/Agents.tsx
+  s_55f7a841d7c10e::t_1f95d61af15a58 2265-2268
+  s_55f7a841d7c10e::t_7a129e200a05d1 2359-2383
+  s_55f7a841d7c10e::t_7be30c3c03b2de 2322-2324,2326
+  s_55f7a841d7c10e::t_f42428121606eb 2358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "12e9f6c70561b667ceb53266fa4359f8a00d61de",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

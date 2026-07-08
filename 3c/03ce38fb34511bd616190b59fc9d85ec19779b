@@ -1,0 +1,26 @@
+internal/api/handlers/installer_scripts/common.sh.tmpl
+  s_55f7a841d7c10e::t_8ac31beb5b74f6 263-297
+  s_55f7a841d7c10e::t_a4a2616a549f9f 345-376,378,380,382,385-390,392-413
+  s_55f7a841d7c10e::t_9d60839ed4d73b 67-68,71-72
+  s_55f7a841d7c10e::t_94ac1cf559b7c4 298-313
+  s_55f7a841d7c10e::t_c9f37ea94df583 35-42
+internal/api/handlers/installer_test.go
+  s_55f7a841d7c10e::t_d28b35e0429866 1073-1130,1136-1159
+  s_55f7a841d7c10e::t_42a3d3147cc206 1131-1135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3c03ce38fb34511bd616190b59fc9d85ec19779b",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}

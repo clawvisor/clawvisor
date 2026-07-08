@@ -1,0 +1,21 @@
+pkg/runtime/proxy/policy_hook.go
+  s_55f7a841d7c10e::t_e1a5db43303d09 760-767
+pkg/runtime/proxy/contain_test.go
+  s_55f7a841d7c10e::t_3f5d380b0d719a 47-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3770171cf4b13034ede5558fba152efd3acda4db",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    }
+  }
+}

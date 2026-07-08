@@ -1,0 +1,34 @@
+pkg/config/config.go
+  s_55f7a841d7c10e::t_b6c32d4068ae8f 82-95
+  s_55f7a841d7c10e::t_4102041edf327c 68
+  s_55f7a841d7c10e::t_33dfaef049fc5c 1015-1016
+  s_55f7a841d7c10e::t_b792c4d6e6c667 601-607
+  s_55f7a841d7c10e::t_fbd6569b2698d0 1017
+pkg/clawvisor/governance.go
+  s_55f7a841d7c10e::t_e030f02a249328 1-68
+config.example.yaml
+  s_55f7a841d7c10e::t_fb7ad435d1e3d6 203-212
+pkg/clawvisor/run.go
+  s_55f7a841d7c10e::t_ab052a07adaff5 278-279
+  s_55f7a841d7c10e::t_9a99cec2bceb05 266-277,280,282-289
+pkg/clawvisor/governance_test.go
+  s_55f7a841d7c10e::t_1d032f5df19737 1-99
+internal/api/handlers/llm_endpoint.go
+  s_55f7a841d7c10e::t_c98ec44bb457bc 791-794,798-805
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0c515c4d7d505a85672431613599d5aedef33d75",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
