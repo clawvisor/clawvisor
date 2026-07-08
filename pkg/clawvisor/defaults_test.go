@@ -98,3 +98,29 @@ func TestComputeFeatureSet_SecretVaultHiddenWithoutAnyProxy(t *testing.T) {
 		t.Errorf("SecretVault should be hidden when no proxy is enabled and no explicit opt-in")
 	}
 }
+
+// TestComputeFeatureSet_APITokensDefaultEnabled locks the HARD INVARIANT:
+// a default config leaves API tokens ENABLED (DisableAPITokens=false →
+// APITokens=true). OSS self-hosted and the Terraform provider depend on
+// bootstrap→mint→instance-admin; getting this default wrong breaks every
+// Terraform install.
+func TestComputeFeatureSet_APITokensDefaultEnabled(t *testing.T) {
+	cfg := config.Default()
+
+	got := computeFeatureSet(cfg)
+	if !got.APITokens {
+		t.Fatal("APITokens must default to true (DisableAPITokens defaults false); OSS + Terraform depend on it")
+	}
+}
+
+// TestComputeFeatureSet_APITokensDisabled proves the cloud lockdown seam:
+// setting auth.disable_api_tokens flips FeatureSet.APITokens to false.
+func TestComputeFeatureSet_APITokensDisabled(t *testing.T) {
+	cfg := config.Default()
+	cfg.Auth.DisableAPITokens = true
+
+	got := computeFeatureSet(cfg)
+	if got.APITokens {
+		t.Fatal("APITokens must be false when DisableAPITokens is set")
+	}
+}

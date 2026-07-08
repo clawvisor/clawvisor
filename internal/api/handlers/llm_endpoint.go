@@ -259,6 +259,16 @@ type LLMEndpointHandler struct {
 	// rather than silently rebilled (spec 02 §4c). Instance-wide (F4).
 	AllowSubscriptionBillingMigration bool
 
+	// GovernSubscriptionSeats mirrors cfg.ProxyLite.GovernSubscriptionSeats.
+	// When true (default), a govern/contain (vault) request carrying a
+	// subscription/OAuth (or unrecognized) bearer — and no billing-migration
+	// consent — is AUTO-GOVERNED: the seat's own credential is forwarded
+	// upstream (billing stays on the subscription) while the full policy
+	// pipeline still enforces. When false, the seat is refused with
+	// SUBSCRIPTION_SEAT_NOT_GOVERNABLE (strict vaulted-keys-only mode). An
+	// explicit AllowSubscriptionBillingMigration takes precedence over both.
+	GovernSubscriptionSeats bool
+
 	defaultToolRulesMu   sync.Mutex
 	defaultToolRulesSeen map[string]map[string]struct{}
 }
@@ -273,6 +283,38 @@ func (h *LLMEndpointHandler) upstreamAuthPassthrough() bool {
 // observations rather than enforced (spec 02 §3).
 func (h *LLMEndpointHandler) observeMode() bool {
 	return strings.EqualFold(strings.TrimSpace(h.EnforcementMode), "observe")
+}
+
+// subscriptionSeatDecision enumerates how a vault-posture request presenting a
+// subscription/OAuth (or otherwise unrecognized) client bearer is handled.
+type subscriptionSeatDecision int
+
+const (
+	// subSeatMigrate strips the client bearer and injects the vault key,
+	// migrating billing from the user's subscription to org-metered API
+	// billing (operator consented via allow_subscription_billing_migration).
+	subSeatMigrate subscriptionSeatDecision = iota
+	// subSeatRefuse rejects the request with SUBSCRIPTION_SEAT_NOT_GOVERNABLE
+	// (strict govern_subscription_seats=false, keys-off-laptops).
+	subSeatRefuse
+	// subSeatAutoGovern forwards the seat's own subscription credential
+	// upstream (billing-neutral) while still enforcing the full pipeline.
+	subSeatAutoGovern
+)
+
+// decideSubscriptionSeat resolves the fixed precedence for a subscription/
+// unrecognized bearer under vault posture: billing-migration consent wins
+// first (centralize on the org key), then strict refuse when subscription
+// governance is opted out, else the default auto-govern (forward + enforce).
+func decideSubscriptionSeat(allowBillingMigration, governSubscriptionSeats bool) subscriptionSeatDecision {
+	switch {
+	case allowBillingMigration:
+		return subSeatMigrate
+	case !governSubscriptionSeats:
+		return subSeatRefuse
+	default:
+		return subSeatAutoGovern
+	}
 }
 
 // recordObservedToolUseVerdicts stamps the endpoint_call audit row with
@@ -323,6 +365,12 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		CallerNonces:         llmproxy.NewMemoryCallerNonceCache(5 * time.Minute),
 		MaxRequestBytes:      34 << 20,
 		defaultToolRulesSeen: map[string]map[string]struct{}{},
+		// Match the documented + config-layer default (config.go
+		// GovernSubscriptionSeats: true). Without this, a handler built
+		// directly (tests, custom embeddings) gets the Go zero value false
+		// and silently switches to strict subSeatRefuse. server.go still
+		// overrides this from cfg.ProxyLite.GovernSubscriptionSeats.
+		GovernSubscriptionSeats: true,
 	}
 }
 
@@ -555,16 +603,46 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditParams["auth_mode"] = "vault"
 		switch llmproxy.ClassifyUpstreamCredential(r) {
 		case llmproxy.CredentialSubscription, llmproxy.CredentialUnrecognized:
-			if !h.AllowSubscriptionBillingMigration {
+			// A subscription/OAuth (or otherwise unrecognized) client bearer
+			// under vault posture is NOT safe to silently strip-and-inject: the
+			// org-API-key path (CredentialOrgAPIKey) and the no-credential path
+			// (CredentialNone) fall through unchanged and get the normal vault
+			// injection. Only this forwardable client bearer branches, by
+			// precedence: billing-migration consent > strict refuse > default
+			// auto-govern (see decideSubscriptionSeat).
+			switch decideSubscriptionSeat(h.AllowSubscriptionBillingMigration, h.GovernSubscriptionSeats) {
+			case subSeatMigrate:
+				// The operator chose to centralize billing on the org key: keep
+				// today's migration behavior — proceed with vault injection (the
+				// bearer is stripped downstream). auth_mode stays "vault".
+				auditParams["subscription_billing_migration"] = true
+			case subSeatRefuse:
+				// Strict "vaulted keys only" opt-out: refuse rather than govern a
+				// credential that must stay off the laptop.
 				auditStatus = http.StatusForbidden
 				auditDecide = "deny"
 				auditOutcome = "subscription_seat_not_governable"
-				auditReason = "govern refused a subscription/unrecognized bearer without billing-migration consent"
+				auditReason = "govern refused a subscription/unrecognized bearer (govern_subscription_seats: false, no billing-migration consent)"
 				writeNestedJSONError(w, http.StatusForbidden, "SUBSCRIPTION_SEAT_NOT_GOVERNABLE",
-					"this seat's credential can't be governed without either an org provider API key for this agent or explicit billing-migration consent (proxy_lite.allow_subscription_billing_migration); it was not silently rebilled.")
+					"this seat's credential can't be governed without either an org provider API key for this agent or explicit billing-migration consent (proxy_lite.allow_subscription_billing_migration); it was not silently rebilled. (proxy_lite.govern_subscription_seats is false, so subscription seats are not auto-governed.)")
 				return
+			case subSeatAutoGovern:
+				// DEFAULT — auto-govern: forward the seat's own subscription
+				// credential upstream so billing stays on the subscription (no
+				// rebilling), while the full policy pipeline still enforces
+				// (holds/policies/approvals/cost). Flip THIS request to
+				// passthrough upstream auth on rootCtx (the F1 fix: setPhase
+				// re-derives r's context from rootCtx before the forward, so the
+				// override must live on rootCtx) so forward.go forwards the
+				// client bearer. Enforcement (observe mode) is a separate axis
+				// and stays ON under govern/contain — only the upstream
+				// credential source changes, not whether verdicts enforce.
+				rootCtx = llmproxy.WithPassthroughUpstreamAuth(rootCtx)
+				r = r.WithContext(rootCtx)
+				auditParams["auth_mode"] = "subscription_passthrough"
+				authModeMetric = "subscription_passthrough"
+				auditParams["subscription_governed"] = true
 			}
-			auditParams["subscription_billing_migration"] = true
 		}
 	}
 

@@ -114,13 +114,28 @@ var apiTokenLastUsed = &lastUsedThrottle{seen: map[string]time.Time{}}
 // RequireUserOrAgent falls through to the JWT path today. The `cvat_`
 // sniff happens BEFORE any JWT parsing so the shared bearer slot never
 // hands an API token to the JWT validator.
-func RequireUserOrAPIToken(jwtSvc auth.TokenService, st store.Store, minScope string) func(http.Handler) http.Handler {
+//
+// apiTokensEnabled reflects the instance-wide FeatureSet.APITokens gate
+// (auth.disable_api_tokens). When false and the request carries a `cvat_`
+// bearer, the middleware short-circuits 401 WITHOUT consulting the token
+// table — so a leaked / pre-existing / DB-planted token is inert on EVERY
+// route this gate protects (mint, /api/users*, shared vault, restrictions).
+// A `cvat_` is not a JWT, so a rejected bearer never falls through to JWT
+// parsing; a normal JWT request (no `cvat_` prefix) still works unchanged.
+func RequireUserOrAPIToken(jwtSvc auth.TokenService, st store.Store, minScope string, apiTokensEnabled bool) func(http.Handler) http.Handler {
 	requireUser := RequireUser(jwtSvc, st)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			tok := apiTokenFromRequest(r)
 			if tok == "" {
 				requireUser(next).ServeHTTP(w, r)
+				return
+			}
+			if !apiTokensEnabled {
+				// API tokens are disabled instance-wide. Reject the presented
+				// cvat_ bearer without a token-table lookup and do NOT fall
+				// through to JWT parsing (a cvat_ is not a JWT).
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "api tokens are disabled")
 				return
 			}
 
@@ -172,6 +187,43 @@ func RequireUserOrAPIToken(jwtSvc auth.TokenService, st store.Store, minScope st
 	}
 }
 
+// RequireUserOrAgentOrToken accepts a user JWT, a `cvis_…` agent token, OR a
+// `cvat_…` API token satisfying minScope. It layers the API-token path on top
+// of RequireUserOrAgent WITHOUT weakening either the user or the agent branch:
+//   - a `cvat_` bearer is routed to RequireUserOrAPIToken, which injects the
+//     `_instance` system user + token record and enforces minScope (a token
+//     below minScope gets 403 INSUFFICIENT_SCOPE and never reaches the handler);
+//   - anything else falls through to RequireUserOrAgent (user JWT or `cvis_`
+//     agent token) exactly as before.
+//
+// Used on /api/runtime/llm-credentials/*: the Terraform provider authenticates
+// with a `cvat_` instance-admin token, which resolves to store.InstanceUserID
+// so the provider key is stored under the shared `_instance` scope (the govern
+// "org provider key" the InstanceAwareVault serves as the fallback for every
+// agent). Pass minScope=ScopeInstanceAdmin on the write routes so a
+// config-write / config-read token — which is also injected as `_instance` and
+// would otherwise plant a fleet-shared key — is refused, mirroring the
+// shared-vault-write gate. The `cvis_` agent branch is unchanged, so an agent
+// may still set its OWN agent-scoped credential.
+func RequireUserOrAgentOrToken(jwtSvc auth.TokenService, st store.Store, minScope string, apiTokensEnabled bool) func(http.Handler) http.Handler {
+	userOrAgent := RequireUserOrAgent(jwtSvc, st)
+	userOrToken := RequireUserOrAPIToken(jwtSvc, st, minScope, apiTokensEnabled)
+	return func(next http.Handler) http.Handler {
+		agentBranch := userOrAgent(next)
+		tokenBranch := userOrToken(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// A `cvat_` bearer is never a JWT and never a `cvis_` agent token,
+			// so sniffing it up front keeps the shared bearer slot from handing
+			// an API token to the agent/JWT validator.
+			if apiTokenFromRequest(r) != "" {
+				tokenBranch.ServeHTTP(w, r)
+				return
+			}
+			agentBranch.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireAdminOrToken gates the instance-administrative surface (user
 // management, shared-vault writes, token management, governance-disabling
 // changes — the spec's trust split). It accepts EITHER:
@@ -183,8 +235,8 @@ func RequireUserOrAPIToken(jwtSvc auth.TokenService, st store.Store, minScope st
 // Authorization precedence: when a token authenticated the request the gate
 // is the token's scope and the injected `_instance` user's role is NEVER
 // consulted. Only on the JWT path is the role checked.
-func RequireAdminOrToken(jwtSvc auth.TokenService, st store.Store) func(http.Handler) http.Handler {
-	requireUserOrToken := RequireUserOrAPIToken(jwtSvc, st, ScopeInstanceAdmin)
+func RequireAdminOrToken(jwtSvc auth.TokenService, st store.Store, apiTokensEnabled bool) func(http.Handler) http.Handler {
+	requireUserOrToken := RequireUserOrAPIToken(jwtSvc, st, ScopeInstanceAdmin, apiTokensEnabled)
 	return func(next http.Handler) http.Handler {
 		return requireUserOrToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if APITokenFromContext(r.Context()) != nil {

@@ -5,16 +5,24 @@
 # --- Subscription-mode routing (Claude subscription / OAuth seat) ------------
 # This variant is for a Claude Code seat authenticated with a Claude
 # subscription (OAuth) rather than a provider API key. We route LLM traffic
-# through Clawvisor for Observe visibility WITHOUT touching how the seat
-# authenticates: Clawvisor's proxy-lite carries the OAuth session in
-# Authorization unchanged (observe passthrough, spec 02 §4c), and the seat's
-# identity to Clawvisor is the agent token in the X-Clawvisor-Agent-Token
-# header. We never inject or clear an API key — the subscription stays the
-# billing path (no silent rebill to org-metered API usage).
+# through Clawvisor WITHOUT touching how the seat authenticates: Clawvisor's
+# proxy-lite carries the OAuth session in Authorization unchanged (passthrough),
+# and the seat's identity to Clawvisor is the agent token in the
+# X-Clawvisor-Agent-Token header. We never inject or clear an API key — the
+# subscription stays the billing path (no silent rebill to org-metered usage).
 #
-# Governing this seat later (Govern posture) requires the operator to supply an
-# org provider key for it, or to explicitly set
-# allow_subscription_billing_migration — Observe never migrates billing.
+# This same wiring works under every posture:
+#   - Observe: the OAuth session is forwarded, verdicts are recorded only.
+#   - Govern / Contain: by default (govern_subscription_seats: true) the seat is
+#     AUTO-GOVERNED — its own subscription credential is forwarded upstream
+#     (billing-neutral) while the full policy pipeline enforces (holds, model/
+#     spend/content policy, approvals, cost attribution). The credential stays
+#     on this laptop; only enforcement is centralized.
+# Operators can instead: supply an org provider key for the seat (vaulted), set
+# allow_subscription_billing_migration to centralize billing on the org key, or
+# set govern_subscription_seats: false to refuse subscription seats outright.
+# None of those change THIS script — it only ever routes; it never strips the
+# OAuth credential.
 
 # --- End-to-end smoke test: round-trip through Clawvisor on the OAuth session.
 # We set ONLY the base URL + the Clawvisor agent-token header. We do NOT set

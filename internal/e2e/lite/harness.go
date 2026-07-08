@@ -186,6 +186,7 @@ func Start(t *testing.T, scn *Scenario, keys Keys) (*Harness, error) {
 	h.UpstreamAuth = cfg.ProxyLite.UpstreamAuth
 	h.EnforcementMode = cfg.ProxyLite.EnforcementMode
 	h.AllowSubscriptionBillingMigration = cfg.ProxyLite.AllowSubscriptionBillingMigration
+	h.GovernSubscriptionSeats = cfg.ProxyLite.GovernSubscriptionSeats
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	h.InlineTaskCreator = recorder
 	h.TaskScope = llmproxy.NewStoreTaskScopeChecker(st)
