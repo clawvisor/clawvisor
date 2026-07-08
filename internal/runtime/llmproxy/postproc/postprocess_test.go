@@ -32,7 +32,7 @@ func newAuditTestStore(t *testing.T) (store.Store, *store.Agent) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
-	user, err := st.CreateUser(ctx, "audit@example.com", "x")
+	user, err := st.CreateUser(ctx, "audit@example.com", "x", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -60,7 +60,7 @@ func seedPostprocessStoreWithService(t *testing.T, placeholder, serviceID string
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "post@example.com", "x")
+	user, err := st.CreateUser(ctx, "post@example.com", "x", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -1690,6 +1690,80 @@ func TestPostprocess_ObservePostureDoesNotBlockToolDenyRule(t *testing.T) {
 	}
 	if !strings.Contains(string(got.Body), "https://proxy.example/api/proxy/repos/x/y/issues") {
 		t.Fatalf("observe mode should allow rewrite through proxy: %s", got.Body)
+	}
+}
+
+// TestPostprocess_ObservePostureDoesNotCommitApprovalHold guards the
+// finalize-side hold leak: applyObserveDowngrade rewrites verdictByTU to
+// Allow, but the eval pass already buffered the review rule's Hold() call in
+// the session hold sink. If those captured payloads aren't dropped, finalize →
+// feedFinalizer → replay still calls SubmitHold and persists held state that
+// Observe mode (spec 02 §3) forbids. Assert zero holds land in the cache while
+// the observation is still recorded.
+func TestPostprocess_ObservePostureDoesNotCommitApprovalHold(t *testing.T) {
+	body := anthropicJSONWithToolUse(`{"url":"https://example.com/one"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
+		ObserveMode:             true,
+		AgentContext: llmproxy.AgentContext{
+			AgentUserID: userID,
+			AgentID:     agentID,
+		},
+		AuthorizationContext: llmproxy.AuthorizationContext{
+			// Mirror production: the decision layer always runs PostureEnforce
+			// (liteProxyDecisionPosture), so the evaluator emits a real hold
+			// verdict + Hold() capture; Observe lives only in the postproc
+			// ObserveMode flag. This is the exact combination that triggers the
+			// finalize-side hold leak.
+			Posture:        runtimedecision.PostureEnforce,
+			CandidateTasks: []*store.Task{},
+			ToolRules: []*store.RuntimePolicyRule{{
+				ID:       "review-webfetch",
+				UserID:   userID,
+				AgentID:  &agentID,
+				Kind:     "tool",
+				Action:   "review",
+				ToolName: "WebFetch",
+				Reason:   "review web fetch",
+				Enabled:  true,
+			}},
+			EgressRules: []*store.RuntimePolicyRule{},
+		},
+		ApprovalContext: llmproxy.ApprovalContext{
+			PendingApprovals: cache,
+		},
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
+			Store:        st,
+		},
+		RoutingContext: llmproxy.RoutingContext{
+			ResponseRegistry: conversation.DefaultResponseRegistry(),
+		},
+	})
+
+	// The captured hold must NOT be committed: Observe mode records the
+	// verdict but stores no held state.
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	if len(holds) != 0 {
+		t.Fatalf("observe mode must not commit approval holds, got %d: %+v", len(holds), holds)
+	}
+	// The observation is still recorded so the audit row can render it.
+	if len(got.ObservedVerdicts) != 1 {
+		t.Fatalf("expected exactly one observed verdict, got %d: %+v", len(got.ObservedVerdicts), got.ObservedVerdicts)
+	}
+	if got.ObservedVerdicts[0].Decision != "hold" {
+		t.Fatalf("expected observed decision 'hold', got %q", got.ObservedVerdicts[0].Decision)
+	}
+	// The original tool_use passes through — no coalesced approval prompt.
+	if strings.Contains(string(got.Body), "paused this turn for approval") {
+		t.Fatalf("observe mode must not emit an approval prompt: %s", got.Body)
 	}
 }
 

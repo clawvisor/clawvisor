@@ -14,9 +14,9 @@ import (
 	"time"
 
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
-	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
 func TestRuntimeProxyAllowsMatchedTaskAndConsumesOneOffApprovals(t *testing.T) {
@@ -807,7 +807,7 @@ func seedRuntimePrincipal(t *testing.T, st store.Store) (string, string) {
 	t.Helper()
 	ctx := context.Background()
 	email := "runtime@test.example"
-	if _, err := st.CreateUser(ctx, email, "hash"); err != nil {
+	if _, err := st.CreateUser(ctx, email, "hash", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	user, err := st.GetUserByEmail(ctx, email)

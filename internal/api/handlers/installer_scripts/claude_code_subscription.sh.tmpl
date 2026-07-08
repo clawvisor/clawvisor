@@ -1,0 +1,207 @@
+{{- template "preamble" . -}}
+{{- template "mint" . -}}
+{{- template "persist_token" . -}}
+
+# --- Subscription-mode routing (Claude subscription / OAuth seat) ------------
+# This variant is for a Claude Code seat authenticated with a Claude
+# subscription (OAuth) rather than a provider API key. We route LLM traffic
+# through Clawvisor for Observe visibility WITHOUT touching how the seat
+# authenticates: Clawvisor's proxy-lite carries the OAuth session in
+# Authorization unchanged (observe passthrough, spec 02 §4c), and the seat's
+# identity to Clawvisor is the agent token in the X-Clawvisor-Agent-Token
+# header. We never inject or clear an API key — the subscription stays the
+# billing path (no silent rebill to org-metered API usage).
+#
+# Governing this seat later (Govern posture) requires the operator to supply an
+# org provider key for it, or to explicitly set
+# allow_subscription_billing_migration — Observe never migrates billing.
+
+# --- End-to-end smoke test: round-trip through Clawvisor on the OAuth session.
+# We set ONLY the base URL + the Clawvisor agent-token header. We do NOT set
+# ANTHROPIC_AUTH_TOKEN or any key env, so Claude Code uses its own stored
+# subscription/OAuth credential in Authorization, which passthrough forwards
+# unchanged. Skips when `claude` isn't on $PATH.
+run_claude_smoke() {
+    # </dev/null is load-bearing under `curl | sh`: claude -p reads stdin, so
+    # without it claude consumes the rest of the script.
+    SMOKE_OUT=$(
+        CLAWVISOR_URL="$APP_URL" \
+        CLAWVISOR_AGENT_TOKEN="$TOKEN" \
+        ANTHROPIC_BASE_URL="$LLM_URL/api" \
+        ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $TOKEN" \
+        claude -p "respond with the word OK" </dev/null 2>&1
+    )
+    smoke_exit=$?
+    if [ $smoke_exit -ne 0 ]; then
+        return $smoke_exit
+    fi
+    printf '%s' "$SMOKE_OUT" | grep -qi 'OK'
+}
+
+if command -v claude >/dev/null 2>&1; then
+    echo "→ Smoke-testing claude through Clawvisor on your subscription session…"
+    if run_claude_smoke; then
+        echo "✓ Claude round-tripped through Clawvisor (subscription session preserved)"
+    else
+        cat >&2 <<EOF
+claude couldn't round-trip through Clawvisor on your subscription session.
+Make sure you're logged in with your Claude subscription ($(printf '\033[1mclaude login\033[0m'))
+and re-run. Clawvisor forwards your OAuth session unchanged in Observe.
+
+Raw error from claude:
+EOF
+        printf '%s\n' "$SMOKE_OUT" >&2
+        exit 1
+    fi
+else
+    echo "(skipping end-to-end test — 'claude' CLI not on \$PATH)"
+fi
+
+# --- Ask: make Clawvisor the default for every Claude Code session? ---------
+if [ -z "$CV_DEFAULT_MODE" ]; then
+    if prompt_choice \
+        "How should Clawvisor route your Claude Code calls?" \
+        "Make it the default for every claude session (~/.claude/settings.json)" \
+        "Install a shell alias (opt in per session)"
+    then
+        CV_DEFAULT_MODE=yes
+    else
+        CV_DEFAULT_MODE=no
+    fi
+fi
+
+case "$SHELL" in
+    */zsh)  RC="$HOME/.zshrc" ;;
+    */bash) RC="$HOME/.bashrc" ;;
+    */fish) RC="$HOME/.config/fish/config.fish" ;;
+    *)      RC="" ;;
+esac
+
+ANTHROPIC_BASE="$LLM_URL/api"
+CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $TOKEN"
+
+if [ "$CV_DEFAULT_MODE" = yes ]; then
+    # --- Default-everywhere: merge ~/.claude/settings.json ------------------
+    # We add ONLY the base URL + the Clawvisor agent-token header. We
+    # deliberately do NOT write any key env or ANTHROPIC_AUTH_TOKEN — the
+    # subscription/OAuth session Claude Code already holds is left intact and
+    # passthrough forwards it unchanged.
+    SETTINGS="$HOME/.claude/settings.json"
+    mkdir -p "$HOME/.claude"
+    [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+
+    jq \
+        --arg url "$APP_URL" \
+        --arg token "$TOKEN" \
+        --arg base "$ANTHROPIC_BASE" \
+        --arg headers "$CUSTOM_HEADERS" \
+        --arg rule_url '{{.RelayPermissionRule}}' \
+        '
+        .env = ((.env // {}) + {
+            CLAWVISOR_URL: $url,
+            CLAWVISOR_AGENT_TOKEN: $token,
+            ANTHROPIC_BASE_URL: $base,
+            ANTHROPIC_CUSTOM_HEADERS: $headers
+        })
+        | .permissions = ((.permissions // {}))
+        | .permissions.allow = (
+            ((.permissions.allow // []) + [
+                "Bash(curl *http://localhost:25297/*)",
+                "Bash(curl *$CLAWVISOR_URL/*)",
+                $rule_url
+            ]) | unique
+        )
+        ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
+    echo "✓ Updated $SETTINGS (subscription session left untouched)"
+    INSTALL_MODE_LABEL=default-everywhere
+else
+    # --- Alias-only: install a shell function (default name: claude-cv) -----
+    if [ -z "$CV_ALIAS_NAME" ]; then
+        CV_ALIAS_NAME=$(prompt_text "What should the alias be called?" "claude-cv")
+    fi
+    if [ -z "$CV_YOLO" ]; then
+        if prompt_choice \
+            "How should '$CV_ALIAS_NAME' handle Claude Code's permission prompts?" \
+            "Skip them (--dangerously-skip-permissions)" \
+            "Keep them on (Claude asks before each curl)"
+        then
+            CV_YOLO=yes
+        else
+            CV_YOLO=no
+        fi
+    fi
+
+    if [ "$CV_YOLO" = yes ]; then
+        SKIP_FLAG=" --dangerously-skip-permissions"
+    else
+        SKIP_FLAG=""
+    fi
+
+    mkdir -p "$HOME/.clawvisor/diffs/$AGENT_SLOT"
+
+    if [ -n "$RC" ]; then
+        FUNC_MARKER="# clawvisor-managed: alias=$CV_ALIAS_NAME slot=$AGENT_SLOT yolo=$CV_YOLO"
+        FUNC_BLOCK=$(cat <<EOF
+$FUNC_MARKER
+$CV_ALIAS_NAME() {
+    CLAWVISOR_URL="$APP_URL" \\
+    CLAWVISOR_AGENT_TOKEN="\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_SLOT.json)" \\
+    ANTHROPIC_BASE_URL="$LLM_URL/api" \\
+    ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: \$CLAWVISOR_AGENT_TOKEN" \\
+        claude$SKIP_FLAG "\$@"
+}
+EOF
+)
+        if grep -F -q "$FUNC_MARKER" "$RC" 2>/dev/null; then
+            echo "  ($CV_ALIAS_NAME() for $AGENT_SLOT (yolo=$CV_YOLO) already in $RC; leaving it untouched)"
+        else
+            printf '\n%s\n' "$FUNC_BLOCK" >> "$RC"
+            jq -n \
+                --arg file "$RC" \
+                --arg content "$FUNC_BLOCK" \
+                '{file:$file, type:"text_append", content:$content}' \
+                > "$HOME/.clawvisor/diffs/$AGENT_SLOT/claude_cv.json"
+            echo "✓ Appended $CV_ALIAS_NAME() to $RC"
+        fi
+    else
+        echo "  (unknown shell: $SHELL — append the $CV_ALIAS_NAME function manually)" >&2
+    fi
+    INSTALL_MODE_LABEL=alias-only
+fi
+
+# --- Write the uninstall reference -------------------------------------------
+UNINSTALL_DOC="$HOME/.clawvisor/uninstall-claude-code.md"
+if [ "$INSTALL_MODE_LABEL" = default-everywhere ]; then
+    cat > "$UNINSTALL_DOC" <<EOF
+# How to disconnect Claude Code from Clawvisor (subscription, default-everywhere)
+
+1. Edit ~/.claude/settings.json and remove these keys from the top-level
+   \`env\` object (leave any unrelated env keys in place):
+       CLAWVISOR_URL, CLAWVISOR_AGENT_TOKEN,
+       ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS
+   Also remove any \`Bash(curl *…clawvisor…/*)\` entries from
+   \`.permissions.allow\`. Your subscription login is untouched.
+2. Delete the token file: rm ~/.clawvisor/agents/$AGENT_SLOT.json
+3. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
+4. Restart Claude Code so the cleared env takes effect.
+EOF
+else
+    cat > "$UNINSTALL_DOC" <<EOF
+# How to disconnect Claude Code from Clawvisor (subscription, alias-only)
+
+1. Remove the \`$CV_ALIAS_NAME()\` function from your shell rc. The exact text
+   that was appended is recorded under
+   ~/.clawvisor/diffs/$AGENT_SLOT/claude_cv.json.
+2. Delete the token file: rm ~/.clawvisor/agents/$AGENT_SLOT.json
+3. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
+4. Open a new shell to drop the $CV_ALIAS_NAME function.
+EOF
+fi
+echo "✓ Wrote revert recipe to $UNINSTALL_DOC"
+
+echo
+if [ "$INSTALL_MODE_LABEL" = default-everywhere ]; then
+    echo "Done. Restart Claude Code so the new env keys take effect."
+else
+    echo "Done. Open a new shell or 'source $RC' to pick up $CV_ALIAS_NAME."
+fi

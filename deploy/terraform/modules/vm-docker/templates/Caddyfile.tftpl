@@ -1,0 +1,35 @@
+# Caddyfile rendered by the vm-docker Terraform module.
+#
+# Two trust zones, two listeners (security groups are L3/L4 and cannot
+# path-route, so the two-zone split is enforced at the port level and gated
+# by two separate SG rule sets — see aws.tf):
+#
+#   :443            agent endpoint   → /v1/*, /skill/install/*, /health only
+#   :${admin_port}  admin surface    → everything (dashboard + /api/*)
+#
+# Both listeners serve ${public_fqdn} and share one ACME-issued certificate.
+{
+	email ${acme_email}
+}
+
+# --- Agent endpoint (443) --------------------------------------------------
+# Agent-facing proxy-lite surface only; the admin dashboard + management API
+# (/api/tokens, /api/users, /api/vault/items, /api/governance, ...) are NOT
+# served here. SDKs use ANTHROPIC_BASE_URL=<fqdn>/api and hit /api/v1/*, so the
+# allowlist is the /api/v1 LLM routes + /api/control + /api/agent/* +
+# /api/agents/connect* (enrollment) + installer/health — NOT bare /v1/*.
+https://${public_fqdn} {
+	@agent path /api/v1/* /api/control /api/control/* /api/agent/* /api/agents/connect /api/agents/connect/* /api/agents/connections /skill/install/* /skill/uninstall/* /health /ready
+	handle @agent {
+		reverse_proxy app:25297
+	}
+	handle {
+		respond "This is the Clawvisor agent endpoint. The admin dashboard is served on port ${admin_port}." 404
+	}
+}
+
+# --- Admin surface (${admin_port}) -----------------------------------------
+# Reachable only from admin_ingress_cidrs. Full dashboard + management API.
+https://${public_fqdn}:${admin_port} {
+	reverse_proxy app:25297
+}

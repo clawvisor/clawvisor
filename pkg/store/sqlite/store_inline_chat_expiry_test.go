@@ -28,7 +28,7 @@ func TestListExpiredInlineChatPendingTasks_CutoffFormatRespectsSQLiteDatetime(t 
 	t.Cleanup(func() { _ = db.Close() })
 	st := NewStore(db)
 
-	user, err := st.CreateUser(ctx, "expiry@test.example", "hash")
+	user, err := st.CreateUser(ctx, "expiry@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

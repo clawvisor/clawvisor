@@ -2262,6 +2262,10 @@ function OnePasteGuide({
 }) {
   const spec = ONE_PASTE_SPECS[target]
   const [helper, setHelper] = useState<OnePasteHelper>(spec.defaultHelper)
+  // Routing choice for self-install targets (spec 08 flip). 'proxy' is the
+  // recommended default — route LLM traffic through Clawvisor (Observe).
+  // 'skill-only' is the explicit opt-out (registers the agent without routing).
+  const [route, setRoute] = useState<'proxy' | 'skill-only'>('proxy')
   // Reset helper choice when the target changes — switching from Claude Code
   // to Hermes (or back) should land on each target's natural default helper.
   useEffect(() => {
@@ -2315,8 +2319,11 @@ function OnePasteGuide({
     const qs = new URLSearchParams()
     if (claim) qs.set('claim', claim)
     qs.set('agent_name', agentName)
+    // Only self-install targets honor route=skill-only; the markdown helpers
+    // route by default and have their own detection flow.
+    if (spec.selfInstall && route === 'skill-only') qs.set('route', 'skill-only')
     return `${installerBaseURL}/skill/install/${target}?${qs.toString()}`
-  }, [agentName, claim, installerBaseURL, target])
+  }, [agentName, claim, installerBaseURL, target, route, spec.selfInstall])
 
   const oneLiner = spec.selfInstall
     ? `curl -fsSL "${installURL}" | sh`
@@ -2346,6 +2353,32 @@ function OnePasteGuide({
               {ONE_PASTE_HELPERS[h].label}
             </button>
           ))}
+        </div>
+      )}
+
+      {spec.selfInstall && (
+        <div className="flex items-center gap-2 text-xs text-text-secondary">
+          <span>LLM routing:</span>
+          <button
+            onClick={() => setRoute('proxy')}
+            className={`rounded px-2.5 py-1 border ${
+              route === 'proxy'
+                ? 'border-brand bg-brand/10 text-text-primary'
+                : 'border-border-subtle text-text-tertiary hover:text-text-primary'
+            }`}
+          >
+            Route through Clawvisor (Observe)
+          </button>
+          <button
+            onClick={() => setRoute('skill-only')}
+            className={`rounded px-2.5 py-1 border ${
+              route === 'skill-only'
+                ? 'border-brand bg-brand/10 text-text-primary'
+                : 'border-border-subtle text-text-tertiary hover:text-text-primary'
+            }`}
+          >
+            Skill gateway only
+          </button>
         </div>
       )}
 

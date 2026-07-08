@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/notify"
+	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -29,7 +29,7 @@ func TestSendConnectionRequestAddsInlineButtons(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	st := sqlitestore.NewStore(db)
-	user, err := st.CreateUser(ctx, "notify@test.example", "hash")
+	user, err := st.CreateUser(ctx, "notify@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

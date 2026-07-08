@@ -20,14 +20,25 @@ web/dist/*
 !web/dist/.gitkeep
 !web/dist/placeholder.html
 
+# Browser lane (Playwright) — build/runtime artifacts, never committed
+e2e/browser/node_modules/
+e2e/browser/test-results/
+e2e/browser/playwright-report/
+e2e/browser/.env-browser
+# Stray root-level build output from `go build ./e2e/browser/serve`
+/serve
+
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Terraform (has its own git repo)
-terraform/
+# Legacy root-level terraform mirror (had its own git repo). Anchored to the
+# repo root so it does NOT hide deploy/terraform/, which is a tracked
+# deliverable (spec 03). deploy/terraform has its own .gitignore for working
+# dirs/state.
+/terraform/
 
 # Landing page (has its own git repo)
 landing/

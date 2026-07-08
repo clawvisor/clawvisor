@@ -1,0 +1,67 @@
+name: Realclient (tmux)
+
+# Advisory, NOT a merge gate (see PRD §11/§12): drives real Claude Code / Codex
+# TUIs in tmux against a live proxy-lite server. Scheduled weekly + manual
+# dispatch only — never on PRs (secrets exposure), never wired into ci.yml.
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  realclient:
+    name: Realclient lane
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Install real clients (pinned)
+        run: npm install -g @anthropic-ai/claude-code@1.0.44 @openai/codex@0.10.0
+
+      - name: Build frontend
+        run: cd web && npm ci && npm run build
+
+      - name: Build server
+        run: go build -o bin/clawvisor-server ./cmd/clawvisor-server
+
+      - name: Preflight — provider secrets present
+        # The tests t.Skipf when a provider key is empty, so a misconfigured lane
+        # would report green with zero coverage. Fail loudly instead if either
+        # repo secret is unset before running the suite.
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
+        run: |
+          missing=
+          [ -z "$ANTHROPIC_API_KEY" ] && missing="$missing E2E_ANTHROPIC_API_KEY"
+          [ -z "$OPENAI_API_KEY" ] && missing="$missing E2E_OPENAI_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::realclient lane misconfigured — missing secret(s):$missing" >&2
+            exit 1
+          fi
+          echo "provider secrets present"
+
+      - name: Run realclient lane
+        # Advisory: real API cost, weekly-shipping TUIs — expected to be flaky.
+        run: CLAWVISOR_REALCLIENT=1 go test -tags realclient -v -timeout 30m ./e2e/realclient/
+        env:
+          CLAWVISOR_BIN: ${{ github.workspace }}/bin/clawvisor-server
+          # Repo secrets mapped to the env names the tests gate on. Never inline
+          # a key; never expose to fork PRs (this workflow does not run on PRs).
+          ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}

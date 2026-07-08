@@ -63,7 +63,9 @@ COPY --chown=testuser:testuser e2e/install/test_clawvisor_install.sh /home/testu
 COPY --chown=testuser:testuser e2e/install/test_curl_install.sh /home/testuser/test_curl_install.sh
 COPY --chown=testuser:testuser e2e/install/assertions.sh /home/testuser/assertions.sh
 COPY --chown=testuser:testuser e2e/install/mock_github_server.py /home/testuser/mock_github_server.py
-COPY --chown=testuser:testuser e2e/install/verify_dashboard.mjs /home/testuser/verify_dashboard.mjs
+# verify_dashboard.mjs lives in e2e/browser/scripts/ (single source; the
+# browser lane and this install lane both consume it).
+COPY --chown=testuser:testuser e2e/browser/scripts/verify_dashboard.mjs /home/testuser/verify_dashboard.mjs
 COPY --chown=testuser:testuser scripts/install.sh /home/testuser/install.sh
 
 RUN chmod +x /home/testuser/test_clawvisor_install.sh \

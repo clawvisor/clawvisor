@@ -65,7 +65,9 @@ func SetupLocalAuth(opts *clawvisor.ServerOptions, logger *slog.Logger) (*LocalA
 		if err != nil {
 			return nil, fmt.Errorf("hashing local user password: %w", err)
 		}
-		if _, err := opts.Store.CreateUser(bgCtx, localEmail, hash); err != nil {
+		// The local magic-link operator is the instance admin so it can
+		// manage users/invites from the dashboard in single-user local mode.
+		if _, err := opts.Store.CreateUser(bgCtx, localEmail, hash, "admin"); err != nil {
 			return nil, fmt.Errorf("creating local user: %w", err)
 		}
 		logger.DebugContext(bgCtx, "created local user", "email", localEmail)

@@ -117,6 +117,16 @@ func PostprocessStream(
 		verdictByTU[tu.ID] = v
 	}
 
+	// Observe posture: downgrade enforcing verdicts to observations
+	// before commit. Sync the positional slice from the (downgraded) map
+	// so the streaming rewrite emits the original tool_use unmodified.
+	observedVerdicts := applyObserveDowngrade(req.Context(), cfg, verdictByTU, toolUses, session.holdSink)
+	if cfg.ObserveMode {
+		for i, tu := range toolUses {
+			verdicts[i] = verdictByTU[tu.ID]
+		}
+	}
+
 	if commitErr := session.commitVerdictSideEffects(req.Context(), verdictByTU, toolUses); commitErr != nil {
 		session.rollback(req.Context(), toolUses, verdictByTU)
 		return llmproxy.PostprocessResult{
@@ -230,9 +240,10 @@ func PostprocessStream(
 	}
 
 	return llmproxy.PostprocessResult{
-		ContentType: contentType,
-		Rewritten:   anyRewritten || anyBlocked,
-		Decisions:   decisions,
+		ContentType:      contentType,
+		Rewritten:        anyRewritten || anyBlocked,
+		Decisions:        decisions,
+		ObservedVerdicts: observedVerdicts,
 	}, nil
 }
 

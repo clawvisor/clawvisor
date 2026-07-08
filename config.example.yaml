@@ -11,19 +11,43 @@ database:
   sqlite_path: "./clawvisor.db"
 
 vault:
-  backend: "local"         # "local" | "gcp"
+  backend: "local"         # "local" | "gcp" — the PUSH backend (stores values)
   local_key_file: "./vault.key"
   gcp_project: ""          # from env: GCP_PROJECT
+
+  # Reference-mode secrets (spec 10). A vault entry may hold a REFERENCE to a
+  # secret in your own store (AWS Secrets Manager / GCP Secret Manager),
+  # resolved to plaintext at injection time and never persisted by Clawvisor.
+  # References are per-entry and coexist with pushed values under any backend.
+  #
+  # Resolution uses AMBIENT cloud identity only (instance role / workload
+  # identity) — never credentials stored in this config. To prevent a
+  # confused-deputy (a member referencing an instance-readable secret they
+  # shouldn't), reference targets are constrained to this prefix allowlist.
+  # An EMPTY allowlist disables reference creation entirely (fail closed).
+  # env override: VAULT_REFERENCE_ALLOWLIST (comma-separated).
+  reference_allowlist: []
+  # - "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/"
+  # - "projects/my-project/secrets/"
 
 auth:
   jwt_secret: ""           # from env: JWT_SECRET  (auto-generated locally; required in prod)
   access_token_ttl: "15m"
   refresh_token_ttl: "720h"
   max_users: 0             # from env: MAX_USERS — 0 = unlimited; set to 1 for single-user deployments
+  require_invite: false    # from env: AUTH_REQUIRE_INVITE — when true, registration needs a valid
+                           # invite (403 INVITE_REQUIRED) except the very first user, who becomes admin.
+                           # The first registered user is admin; subsequent users are members.
 
 approval:
   timeout: 300             # seconds before approval request expires
   on_timeout: "fail"       # "fail" | "skip"
+  admin_notify: true       # also notify instance admins when any user's agent raises a hold
+  # allow_self_approve: whether a user may resolve a hold raised by their OWN
+  # agent. Default true (backward-compat). The "govern"/"contain" posture
+  # presets set this false so the governed party is not the sole approver;
+  # setting it explicitly here always wins over the preset.
+  allow_self_approve: true
 
 callback:
   allow_private_cidrs: []  # CIDRs exempt from SSRF callback blocking, e.g. ["192.168.1.0/24"]
@@ -113,6 +137,84 @@ telemetry:
   enabled: false           # opt-in anonymous usage telemetry. Env: CLAWVISOR_TELEMETRY_ENABLED
                            # sends: OS, arch, db driver, agent count (bucketed), requests per service (bucketed)
                            # no instance ID, IP, credentials, or personal data is collected
+
+# ── Posture & proxy-lite (agent LLM proxy) ──────────────────────────────────
+# `posture` is a coarse preset over the proxy-lite knobs below. It is read
+# from THIS FILE ONLY (there is no CLAWVISOR_POSTURE env override) because the
+# preset is applied by detecting which knobs the YAML sets explicitly. An
+# explicit knob ALWAYS wins over the preset.
+#
+# Fresh-install default: the setup wizard now recommends Observe (proxy-lite
+# routing for visibility, zero behavior change); "skill gateway only" is the
+# explicit opt-out. This is a writer-side default — the compiled default of
+# proxy_lite.enabled stays false, so existing configs are never changed.
+#
+#   observe — visibility, zero behavior change: proxy-lite enabled, upstream
+#             auth = passthrough (forward the agent's own provider credential,
+#             no vault injection), enforcement = observe (the pipeline
+#             inspects/attributes/audits/meters cost but records every
+#             hold/deny verdict as an observation instead of enforcing it).
+#   govern  — observe + control: proxy-lite enabled, upstream auth = vault
+#             (inject the stored key; client-presented API keys are stripped),
+#             enforcement = enforce.
+#   contain — govern + network-layer containment of the agent process via the
+#             runtime proxy (HTTP(S)_PROXY injection, TLS MITM, egress policy).
+#             LLM traffic still flows through proxy-lite unchanged — Contain is
+#             a strict superset of Govern (runtime_proxy.llm_route=proxy_lite).
+#             EXPERIMENTAL: requires experimental_contain: true (below) until
+#             the capability-parity CI lane is required-blocking. The preset
+#             also sets runtime_proxy.enabled=true + llm_route=proxy_lite.
+#
+# posture: observe
+
+# experimental_contain gates the not-yet-required-blocking Contain posture.
+# posture: contain fails startup unless this is true. Env:
+# CLAWVISOR_EXPERIMENTAL_CONTAIN. Removed once the parity lane blocks CI.
+# experimental_contain: false
+
+# config_schema marks the config convention version. The setup wizard writes
+# `config_schema: 2` + an explicit `proxy_lite.enabled:` on every fresh
+# install. The marker is advisory (Load() only logs a notice when it is older
+# than the current version); the compiled default of proxy_lite.enabled is
+# false permanently, so an existing file without the key is never silently
+# enabled at upgrade.
+# config_schema: 2
+
+# proxy_lite:
+#   enabled: false             # Env: CLAWVISOR_PROXY_LITE_ENABLED
+#   public_url: "http://localhost:8080"
+#   # Two independent axes (usually set via `posture` above, but overridable):
+#   upstream_auth: "vault"     # "vault" (default) | "passthrough".
+#                              # Env: CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH.
+#                              # vault: inject the stored provider key and
+#                              #   strip any client-presented API key.
+#                              # passthrough: forward the client's own
+#                              #   OAuth/API credential unchanged (Observe).
+#   enforcement_mode: "enforce" # "enforce" (default) | "observe".
+#                              # Env: CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE.
+#                              # observe: record hold/deny verdicts as
+#                              #   observations; never blocks or holds.
+#   allow_subscription_billing_migration: false
+#                              # Env: CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION.
+#                              # When false (default), a govern/vault request
+#                              # carrying a Claude subscription (OAuth) bearer
+#                              # is REFUSED with SUBSCRIPTION_SEAT_NOT_GOVERNABLE
+#                              # rather than silently rebilled to the org API
+#                              # key. Set true ONLY to consent to migrating
+#                              # subscription seats to vaulted-API-key billing.
+#                              # WARNING: this flag is INSTANCE-WIDE — enabling
+#                              # it migrates EVERY subscription seat on the
+#                              # instance at once, not one.
+
+# ── Governance (instance-scoped / local orggov) ─────────────────────────────
+# Local model allow/deny, spend caps, content policy, and violation logging
+# enforced on the proxy-lite path, configured via /api/governance/* (the
+# Terraform provider's governance resources). Enabled by default: the tables
+# are empty on a fresh install, so it is a no-op until an admin writes a
+# policy. Set false to disable the local callbacks and drop the
+# `local_governance` capability from /api/features.
+# governance:
+#   enabled: true                # Env: CLAWVISOR_GOVERNANCE_ENABLED
 
 # ── Observability (OpenTelemetry export) ────────────────────────────────────
 # Operational traces + metrics from the proxy-lite pipeline, the skill

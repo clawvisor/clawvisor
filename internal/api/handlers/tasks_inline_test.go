@@ -34,7 +34,7 @@ func newInlineTasksHandlerForTest(t *testing.T) (*TasksHandler, store.Store, *st
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "inline-tasks@test.example", "hash")
+	user, err := st.CreateUser(ctx, "inline-tasks@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

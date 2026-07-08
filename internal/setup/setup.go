@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -8,13 +9,21 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 
 	tuiconfig "github.com/clawvisor/clawvisor/internal/tui/config"
+	cfgpkg "github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/haikuproxy"
+	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/clawvisor/clawvisor/pkg/vault/refaws"
+	"github.com/clawvisor/clawvisor/pkg/vault/refgcp"
 )
+
+// configWriterSchema is the schema marker every wizard-written config carries.
+const configWriterSchema = cfgpkg.CurrentConfigSchema
 
 var (
 	bold    = lipgloss.NewStyle().Bold(true)
@@ -54,7 +63,27 @@ type config struct {
 	taskRiskEnabled     bool
 	chainContextEnabled bool
 
+	// posture, when set (currently only "observe"), selects the posture
+	// preset written to config. Empty means "skill gateway only" — the
+	// current default. proxyLiteEnabled + proxyLitePublicURL are the
+	// explicit proxy_lite knobs writeConfig always emits (schema 2).
+	posture            string
+	proxyLiteEnabled   bool
+	proxyLitePublicURL string
+
 	telemetryEnabled bool
+
+	// Secrets mode (spec 10, PRD §7). "push" (default) stores credentials
+	// encrypted in Clawvisor's vault; "reference" points the vault at a secret
+	// in the operator's own cloud secret manager, resolved at injection time.
+	// When reference mode is chosen the wizard captures one reference, verifies
+	// it resolves, and writes vault.reference_allowlist so references are
+	// enabled (empty allowlist = references disabled, fail closed).
+	secretsMode        string // "push" | "reference"
+	refBackend         string // aws-sm | gcp-sm
+	refID              string
+	refJSONKey         string
+	referenceAllowlist []string
 
 	outputDir string // set by RunWithOptions; empty = CWD
 }
@@ -161,6 +190,12 @@ func runSetup() (*config, error) {
 		return nil, err
 	}
 	if err := stepLLM(cfg); err != nil {
+		return nil, err
+	}
+	if err := stepSecretsMode(cfg); err != nil {
+		return nil, err
+	}
+	if err := stepPosture(cfg); err != nil {
 		return nil, err
 	}
 	if err := stepTelemetry(cfg); err != nil {
@@ -495,6 +530,193 @@ func stepLLM(cfg *config) error {
 	).Run()
 }
 
+// newWizardResolvers builds the reference resolvers the wizard uses to verify
+// a chosen reference. It is a package var so tests can inject fakes without
+// cloud credentials.
+var newWizardResolvers = func() map[string]vault.Resolver {
+	return map[string]vault.Resolver{
+		vault.BackendAWSSM: refaws.New(""),
+		vault.BackendGCPSM: refgcp.New(""),
+	}
+}
+
+// verifyWizardReference resolves a candidate reference once and discards the
+// plaintext, returning an actionable error on failure. The plaintext is never
+// printed or stored.
+func verifyWizardReference(ctx context.Context, resolvers map[string]vault.Resolver, env vault.RefEnvelope) error {
+	r, ok := resolvers[env.Backend]
+	if !ok {
+		return fmt.Errorf("unknown backend %q", env.Backend)
+	}
+	if _, err := r.Resolve(ctx, env); err != nil {
+		return err
+	}
+	return nil
+}
+
+// stepSecretsMode offers the two vaulting modes (PRD §7). Push is
+// pre-selected; reference mode is offered for operators who already keep
+// secrets in a cloud secret manager. Choosing reference captures one target,
+// verifies it resolves via the instance's ambient identity, and enables
+// references by allowlisting the target prefix.
+func stepSecretsMode(cfg *config) error {
+	fmt.Println(section.Render("── Secrets ────────────────────────────────"))
+	fmt.Println()
+	fmt.Println(dim.Padding(0, 2).Render("How should Clawvisor obtain provider/service secrets?"))
+	fmt.Println()
+
+	mode := "push"
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Secrets mode").
+				Options(
+					huh.NewOption("Paste keys (stored encrypted in Clawvisor's vault)", "push"),
+					huh.NewOption("Reference an existing secret manager entry (AWS/GCP)", "reference"),
+				).
+				Value(&mode),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	cfg.secretsMode = mode
+	if mode != "reference" {
+		return nil
+	}
+
+	backend := vault.BackendAWSSM
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Reference backend").
+				Options(
+					huh.NewOption("AWS Secrets Manager", vault.BackendAWSSM),
+					huh.NewOption("GCP Secret Manager", vault.BackendGCPSM),
+				).
+				Value(&backend),
+			huh.NewInput().
+				Title("Secret reference (ARN / projects/{p}/secrets/{s})").
+				Value(&cfg.refID).
+				Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" {
+						return fmt.Errorf("required")
+					}
+					return nil
+				}),
+			huh.NewInput().
+				Title("JSON key (optional — leave blank to use the raw secret)").
+				Value(&cfg.refJSONKey),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	cfg.refBackend = backend
+	cfg.refID = strings.TrimSpace(cfg.refID)
+
+	// Enable references by allowlisting exactly this target (a full id is a
+	// valid prefix). The Terraform module widens this to a shared prefix.
+	cfg.referenceAllowlist = []string{cfg.refID}
+
+	// Verify the reference resolves now, so a bad ARN/permission is caught at
+	// setup rather than at first agent request.
+	env := vault.RefEnvelope{Backend: cfg.refBackend, ID: cfg.refID, JSONKey: strings.TrimSpace(cfg.refJSONKey)}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := verifyWizardReference(ctx, newWizardResolvers(), env); err != nil {
+		fmt.Println(yellow.Padding(0, 2).Render("  Could not resolve the reference: " + err.Error()))
+		fmt.Println(dim.Padding(0, 2).Render("  Setup will continue; grant the instance identity read access and retry via the dashboard/Terraform."))
+		fmt.Println()
+	} else {
+		fmt.Println(green.Padding(0, 2).Render("  ✓ Reference resolved"))
+		fmt.Println()
+	}
+	return nil
+}
+
+// recommendedPosture is the fresh-install posture the wizard pre-selects and
+// recommends. Spec 08 (the default flip) makes this "observe" — proxy-lite in
+// the Observe posture — so a fresh wizard install lands on visibility-by-
+// default. Skill-gateway-only is the explicit opt-out. This is the writer-side
+// flip: Default() is untouched (proxy_lite.enabled stays false permanently,
+// TestFlipDefaultStaysFalse); the new default is carried only by what the
+// wizard recommends here and what writeConfig emits.
+func recommendedPosture() string { return "observe" }
+
+// stepPosture asks how agents connect. The flip (spec 08 / PRD §11) makes
+// Observe the recommended, pre-selected default; skill-gateway-only is the
+// explicit opt-out. Choosing Observe writes posture: observe plus an explicit
+// proxy_lite block. Either way writeConfig stamps config_schema: 2 and an
+// explicit proxy_lite.enabled — the default is never carried by Default(),
+// always by the writer.
+func stepPosture(cfg *config) error {
+	fmt.Println(section.Render("── Agent Connection ───────────────────────"))
+	fmt.Println()
+
+	// Pre-select the recommended default so hitting Enter lands on Observe.
+	// (Post-flip end state per spec 08: the option is labeled "recommended"
+	// and recommendedPosture() returns "observe". The spec-02 standalone PR
+	// defaulted to "gateway" because at that point the flip had not landed;
+	// once it has, Observe is the intended pre-selection.)
+	choice := recommendedPosture()
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("How should agents connect?").
+				Options(
+					huh.NewOption("Observe (recommended): route agent LLM traffic through Clawvisor for visibility; agents keep their own API keys", "observe"),
+					huh.NewOption("Skill gateway only: keep agents pointed at their provider; opt out of routing", "gateway"),
+					// Contain is not offered as a working choice until the
+					// capability-parity lane is CI-required (spec 09 D5). Shown
+					// as "(coming soon)"; selecting it falls back to Observe
+					// with a notice pointing to the experimental config gate.
+					huh.NewOption("Contain (coming soon): network-layer containment of the agent process — experimental", "contain"),
+				).
+				// Observe is the pre-selected recommended default (the flip).
+				Value(&choice),
+		),
+	).Run()
+	if err != nil {
+		return err
+	}
+
+	if choice == "contain" {
+		fmt.Println(dim.Padding(0, 2).Render("Contain is experimental and not yet offered by the wizard."))
+		fmt.Println(dim.Padding(0, 2).Render("To enable it, set posture: contain and experimental_contain: true"))
+		fmt.Println(dim.Padding(0, 2).Render("in config.yaml (see docs). Falling back to Observe for now."))
+		fmt.Println()
+		choice = "observe"
+	}
+
+	if choice != "observe" {
+		// Skill gateway only: proxy-lite stays disabled, but writeConfig
+		// still emits the explicit key + schema marker.
+		cfg.posture = ""
+		cfg.proxyLiteEnabled = false
+		return nil
+	}
+
+	cfg.posture = "observe"
+	cfg.proxyLiteEnabled = true
+
+	host := cfg.host
+	if host == "0.0.0.0" || host == "" {
+		host = "127.0.0.1"
+	}
+	cfg.proxyLitePublicURL = fmt.Sprintf("http://%s:%s", host, cfg.port)
+	err = huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Proxy-lite public URL").
+				Description("The externally reachable URL agents point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at.").
+				Value(&cfg.proxyLitePublicURL),
+		),
+	).Run()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func stepTelemetry(cfg *config) error {
 	fmt.Println(section.Render("── Telemetry ──────────────────────────────"))
 	fmt.Println()
@@ -629,6 +851,15 @@ func writeConfig(cfg *config, path string) error {
 		frontendDir = "" // daemon mode — no frontend served
 	}
 
+	// Advisory schema marker (first line). Schema 2 = "the writer emits
+	// proxy_lite.enabled explicitly" so the flip is writer-side only and
+	// existing installs are never silently enabled (PRD §11, spec 02 §5).
+	fmt.Fprintf(&b, "config_schema: %d\n", configWriterSchema)
+	if cfg.posture != "" {
+		fmt.Fprintf(&b, "posture: %s\n", cfg.posture)
+	}
+	fmt.Fprintf(&b, "\n")
+
 	fmt.Fprintf(&b, "server:\n")
 	fmt.Fprintf(&b, "  port: %s\n", cfg.port)
 	fmt.Fprintf(&b, "  host: \"%s\"\n", cfg.host)
@@ -651,6 +882,15 @@ func writeConfig(cfg *config, path string) error {
 		fmt.Fprintf(&b, "  gcp_project: \"%s\"\n", cfg.gcpProject)
 	} else {
 		fmt.Fprintf(&b, "  local_key_file: \"%s\"\n", vaultKeyPath)
+	}
+	// Reference mode (spec 10): the allowlist enables reference resolution and
+	// constrains it to the operator's chosen targets. Absent/empty = references
+	// disabled (fail closed).
+	if len(cfg.referenceAllowlist) > 0 {
+		fmt.Fprintf(&b, "  reference_allowlist:\n")
+		for _, prefix := range cfg.referenceAllowlist {
+			fmt.Fprintf(&b, "    - \"%s\"\n", prefix)
+		}
 	}
 
 	if cfg.envMode == "production" {
@@ -679,6 +919,15 @@ func writeConfig(cfg *config, path string) error {
 	fmt.Fprintf(&b, "    enabled: %t\n", cfg.taskRiskEnabled)
 	fmt.Fprintf(&b, "  chain_context:\n")
 	fmt.Fprintf(&b, "    enabled: %t\n", cfg.chainContextEnabled)
+
+	// Explicit proxy_lite block. enabled is ALWAYS emitted (schema 2) so the
+	// compiled Default() never carries the flip. public_url is written only
+	// when the Observe path collected one.
+	fmt.Fprintf(&b, "\nproxy_lite:\n")
+	fmt.Fprintf(&b, "  enabled: %t\n", cfg.proxyLiteEnabled)
+	if cfg.proxyLitePublicURL != "" {
+		fmt.Fprintf(&b, "  public_url: \"%s\"\n", cfg.proxyLitePublicURL)
+	}
 
 	fmt.Fprintf(&b, "\ntelemetry:\n")
 	fmt.Fprintf(&b, "  enabled: %t\n", cfg.telemetryEnabled)

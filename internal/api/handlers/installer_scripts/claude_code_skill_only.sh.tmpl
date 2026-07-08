@@ -1,0 +1,33 @@
+{{- template "preamble" . -}}
+{{- template "mint" . -}}
+{{- template "persist_token" . -}}
+{{- template "smoke_test" . -}}
+
+# --- Skill-only install (opt-out of LLM routing) -----------------------------
+# This is the explicit skill-gateway variant (route=skill-only). Claude Code
+# keeps talking to Anthropic directly — we do NOT set ANTHROPIC_BASE_URL, so no
+# LLM traffic is routed through Clawvisor. The registered agent token lets the
+# Clawvisor skill/tools govern tool calls; LLM observability is not enabled.
+#
+# To route LLM traffic through Clawvisor later (the recommended Observe
+# default), re-run this installer WITHOUT route=skill-only:
+#
+#   curl -fsSL "$APP_URL/skill/install/{{.Target}}.sh?claim=<claim>" | sh
+echo "✓ Registered {{.HarnessLabel}} with Clawvisor (skill-only — LLM traffic is NOT routed)."
+echo "  The Clawvisor skill catalog is available at $APP_URL/skill."
+
+# --- Write the uninstall reference -------------------------------------------
+UNINSTALL_DOC="$HOME/.clawvisor/uninstall-claude-code.md"
+cat > "$UNINSTALL_DOC" <<EOF
+# How to disconnect Claude Code from Clawvisor (skill-only install)
+
+This install did not change how Claude Code reaches Anthropic — it only
+registered an agent token. To fully disconnect:
+
+1. Delete the token file: rm ~/.clawvisor/agents/$AGENT_SLOT.json
+2. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
+EOF
+echo "✓ Wrote revert recipe to $UNINSTALL_DOC"
+
+echo
+echo "Done. Skill-only install complete — no routing changes were made."

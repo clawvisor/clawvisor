@@ -120,10 +120,11 @@ type Forwarder struct {
 // or unresponsive upstream can't hold a goroutine forever.
 //
 // Env-var overrides (all optional; production leaves all unset):
-//   CLAWVISOR_LLM_UPSTREAM_ANTHROPIC — replace https://api.anthropic.com
-//   CLAWVISOR_LLM_UPSTREAM_OPENAI    — replace https://api.openai.com
-//   CLAWVISOR_LLM_UPSTREAM_GOOGLE    — replace generativelanguage URL
-//   CLAWVISOR_LLM_UPSTREAM_CHATGPT   — replace chatgpt.com (passthrough OAuth)
+//
+//	CLAWVISOR_LLM_UPSTREAM_ANTHROPIC — replace https://api.anthropic.com
+//	CLAWVISOR_LLM_UPSTREAM_OPENAI    — replace https://api.openai.com
+//	CLAWVISOR_LLM_UPSTREAM_GOOGLE    — replace generativelanguage URL
+//	CLAWVISOR_LLM_UPSTREAM_CHATGPT   — replace chatgpt.com (passthrough OAuth)
 //
 // E2E tests point these at a cassette-backed mock to deterministically
 // replay LLM responses without touching the network.
@@ -217,6 +218,19 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 				return f.Client.Do(req)
 			}
 		}
+		// No forwardable Authorization bearer, but the client presented its
+		// own provider API key via x-api-key (Anthropic SDK convention /
+		// Google). The passthrough gate (HasClientProviderCredential) accepts
+		// x-api-key, so forward THAT key upstream — never fall through to the
+		// vault key, which would be the implicit vault fallback the passthrough
+		// posture forbids (spec 02 §4). injectUpstreamAuth maps the raw key to
+		// the correct per-provider header (x-api-key / Bearer / x-goog-api-key).
+		if key := passthroughClientAPIKey(inbound); key != "" {
+			if err := injectUpstreamAuth(req, provider, []byte(key)); err != nil {
+				return nil, err
+			}
+			return f.Client.Do(req)
+		}
 	}
 
 	keyBytes, serviceID, err := f.lookupVaultKey(ctx, userID, agentID, provider)
@@ -297,6 +311,22 @@ func injectUpstreamAuth(req *http.Request, provider conversation.Provider, key [
 		return fmt.Errorf("llmproxy: unknown provider %q", provider)
 	}
 	return nil
+}
+
+// passthroughClientAPIKey returns the client-presented x-api-key when it is a
+// real provider key (not the cvis_ agent token), else "". Passthrough posture
+// forwards this upstream so an x-api-key-only request (no Authorization bearer)
+// never falls through to the vault key (spec 02 §4). Mirrors the x-api-key
+// branch of HasClientProviderCredential, which is what gated the request in.
+func passthroughClientAPIKey(inbound *http.Request) string {
+	if inbound == nil {
+		return ""
+	}
+	key := strings.TrimSpace(inbound.Header.Get("x-api-key"))
+	if key == "" || strings.HasPrefix(key, "cvis_") {
+		return ""
+	}
+	return key
 }
 
 func passthroughBearerAuthorization(inbound *http.Request) string {

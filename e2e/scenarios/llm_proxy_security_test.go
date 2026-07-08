@@ -21,6 +21,11 @@ func TestLLMProxyCallerAuthSourceClawvisorHeader(t *testing.T) {
 	upstream := newUpstreamCapture(t)
 	cv := testapp.StartWith(t, h, map[string]string{
 		"CLAWVISOR_LLM_UPSTREAM_ANTHROPIC": upstream.URL(),
+		// Spec 02 §4b: the default posture is vault, which overrides the
+		// middleware's header-derived passthrough flag. This test asserts
+		// passthrough (caller_auth_source + forwarded bearer), so it opts
+		// into passthrough upstream auth explicitly.
+		"CLAWVISOR_PROXY_LITE_UPSTREAM_AUTH": "passthrough",
 	})
 	user := cv.LoginAsLocalUser(t)
 	var agent struct {

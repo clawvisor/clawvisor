@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -219,7 +219,7 @@ func TestComplete_CrossUser_Returns403(t *testing.T) {
 	h, st, _, agentA := newInlineTasksHandlerForTest(t)
 	ctx := context.Background()
 
-	otherUser, err := st.CreateUser(ctx, "other-user@test.example", "hash")
+	otherUser, err := st.CreateUser(ctx, "other-user@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

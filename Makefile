@@ -1,4 +1,4 @@
-.PHONY: build build-legacy build-staging build-local build-server build-standalone-server install install-local test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci
+.PHONY: build build-legacy build-staging build-local build-server build-standalone-server install install-local test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci test-e2e-browser
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 ENVIRONMENT ?= production
@@ -93,6 +93,14 @@ test-e2e-install: web/dist
 	docker build -f e2e/install/Dockerfile -t clawvisor-e2e-install .
 	docker run --rm clawvisor-e2e-install /home/testuser/test_clawvisor_install.sh
 	docker run --rm clawvisor-e2e-install /home/testuser/test_curl_install.sh
+
+# Playwright browser lane: builds the real frontend + server, then drives the
+# human-session flows against a booted subprocess. Playwright ONLY — the
+# browser-harness CDP tool must never appear here (see e2e/README.md).
+test-e2e-browser: web/dist build
+	cd e2e/browser && npm ci
+	cd e2e/browser && npx playwright install chromium
+	cd e2e/browser && CLAWVISOR_BIN=$(CURDIR)/bin/clawvisor-server npx playwright test
 
 # ── Run ────────────────────────────────────────────────────────────────────────
 

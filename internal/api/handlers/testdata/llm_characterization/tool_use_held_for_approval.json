@@ -37,6 +37,7 @@
     "used_active_task_context": false,
     "used_lease_bias": false,
     "params": {
+      "auth_mode": "vault",
       "available_tools": [
         "Bash"
       ],

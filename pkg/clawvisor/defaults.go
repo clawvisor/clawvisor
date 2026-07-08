@@ -49,6 +49,8 @@ import (
 	pgstore "github.com/clawvisor/clawvisor/pkg/store/postgres"
 	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/clawvisor/clawvisor/pkg/vault/refaws"
+	"github.com/clawvisor/clawvisor/pkg/vault/refgcp"
 
 	"github.com/clawvisor/clawvisor/internal/adaptergen"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -673,25 +675,63 @@ func ConnectStore(logger *slog.Logger) (*config.Config, store.Store, error) {
 }
 
 func buildVault(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, error) {
+	inner, err := buildVaultBackend(cfg, db, driver)
+	if err != nil {
+		return nil, err
+	}
+	// Wrap unconditionally so instance-shared entries (owned by the
+	// `_instance` sentinel) resolve specific-first-then-shared. With no
+	// shared entries it is a transparent passthrough. Cloud wraps this
+	// again with OrgAwareVault → org → user → instance order.
+	// Order matters vs the reference layer below: InstanceAware sits
+	// outside ReferenceVault so a shared (_instance-owned) entry that is
+	// itself a reference still resolves at injection time.
+	return vault.NewInstanceAware(inner), nil
+}
+
+func buildVaultBackend(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, error) {
+	// Resolve the master key once: it seals both pushed values (local push
+	// backend) and the ref-envelope rows (every backend — refs always live in
+	// the DB, design D2). ResolveKey never auto-generates, matching the prior
+	// per-backend behaviour.
+	key, err := intvault.ResolveKey(cfg.Vault.MasterKey, cfg.Vault.LocalKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("resolving vault key: %w", err)
+	}
+
+	var push vault.Vault
 	switch cfg.Vault.Backend {
 	case "local":
-		key, err := intvault.ResolveKey(cfg.Vault.MasterKey, cfg.Vault.LocalKeyFile)
+		push, err = intvault.NewLocalVaultFromKeyWithDB(key, db, driver)
 		if err != nil {
-			return nil, fmt.Errorf("resolving vault key: %w", err)
+			return nil, err
 		}
-		return intvault.NewLocalVaultFromKeyWithDB(key, db, driver)
 	case "gcp":
 		if cfg.Vault.GCPProject == "" {
 			return nil, fmt.Errorf("GCP_PROJECT must be set for gcp vault backend")
 		}
-		key, err := intvault.ResolveKey(cfg.Vault.MasterKey, cfg.Vault.LocalKeyFile)
+		push, err = intvault.NewGCPVault(context.Background(), cfg.Vault.GCPProject, key)
 		if err != nil {
-			return nil, fmt.Errorf("resolving vault key for gcp backend: %w", err)
+			return nil, err
 		}
-		return intvault.NewGCPVault(context.Background(), cfg.Vault.GCPProject, key)
 	default:
 		return nil, fmt.Errorf("unsupported vault backend %q (use \"local\" or \"gcp\")", cfg.Vault.Backend)
 	}
+
+	// Reference resolution wraps EVERY push backend so references are a
+	// per-entry choice, not a per-instance one. The ref envelopes are sealed
+	// and stored via a DB-backed LocalVault regardless of the push backend.
+	refCrypto, err := intvault.NewLocalVaultFromKeyWithDB(key, db, driver)
+	if err != nil {
+		return nil, fmt.Errorf("building reference crypto store: %w", err)
+	}
+	resolvers := map[string]intvault.Resolver{
+		intvault.BackendAWSSM: refaws.New(cfg.Vault.AWSSMEndpoint),
+		intvault.BackendGCPSM: refgcp.New(cfg.Vault.GCPSMEndpoint),
+		// hashicorp is deferred in v1: the seam exists (backend id reserved,
+		// buildVault would register its resolver here) but no resolver ships.
+	}
+	return intvault.NewReferenceVault(push, refCrypto, resolvers, cfg.Vault.ReferenceAllowlist), nil
 }
 
 // computeFeatureSet returns the FeatureSet derived from cfg. Pulled

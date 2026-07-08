@@ -29,7 +29,7 @@ func TestRenderActiveTasksSnapshot_SlidingExpiryStable(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "snapshot@test.example", "hash")
+	user, err := st.CreateUser(ctx, "snapshot@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestRenderActiveTasksSnapshot_SessionExpiryRendered(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	st := sqlite.NewStore(db)
 
-	user, err := st.CreateUser(ctx, "session@test.example", "hash")
+	user, err := st.CreateUser(ctx, "session@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

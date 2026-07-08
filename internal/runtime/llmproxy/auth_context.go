@@ -7,13 +7,26 @@ import (
 
 type upstreamAuthModeContextKey struct{}
 
-const upstreamAuthModePassthrough = "passthrough"
+const (
+	upstreamAuthModePassthrough = "passthrough"
+	upstreamAuthModeVault       = "vault"
+)
 
 // WithPassthroughUpstreamAuth marks a lite-proxy request as authenticated to
 // Clawvisor out-of-band, allowing the upstream Authorization header to remain
 // the user's provider OAuth/subscription credential.
 func WithPassthroughUpstreamAuth(ctx context.Context) context.Context {
 	return context.WithValue(ctx, upstreamAuthModeContextKey{}, upstreamAuthModePassthrough)
+}
+
+// WithVaultUpstreamAuth forces vault upstream auth, overriding any
+// passthrough flag the auth middleware set from header placement. The govern/
+// contain posture (upstream_auth: vault) calls this so a client cannot select
+// the passthrough lane — and skip vault injection + the subscription check —
+// merely by putting its cvis_ token in X-Clawvisor-Agent-Token and a provider
+// key in Authorization (spec 02 §4b, the F1 fix).
+func WithVaultUpstreamAuth(ctx context.Context) context.Context {
+	return context.WithValue(ctx, upstreamAuthModeContextKey{}, upstreamAuthModeVault)
 }
 
 // PassthroughUpstreamAuth reports whether the request should preserve a

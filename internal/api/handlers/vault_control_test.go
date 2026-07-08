@@ -26,7 +26,7 @@ func TestVaultControlItemsReturnsCompactAgentList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocalVault: %v", err)
 	}
-	user, err := st.CreateUser(ctx, "vault-control@test.example", "hash")
+	user, err := st.CreateUser(ctx, "vault-control@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestVaultAgentItemsKeepsDashboardShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocalVault: %v", err)
 	}
-	user, err := st.CreateUser(ctx, "vault-agent@test.example", "hash")
+	user, err := st.CreateUser(ctx, "vault-agent@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestVaultControlItemDetailReturnsCompactMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocalVault: %v", err)
 	}
-	user, err := st.CreateUser(ctx, "vault-control-detail@test.example", "hash")
+	user, err := st.CreateUser(ctx, "vault-control-detail@test.example", "hash", "")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

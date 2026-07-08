@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -244,4 +246,301 @@ func TestValidateObservabilityOTelRules(t *testing.T) {
 			t.Fatalf("expected sample ratio validation error, got %v", err)
 		}
 	})
+}
+
+// --- spec 02: posture presets, config schema marker, knob precedence ---
+
+func writePostureConfig(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return p
+}
+
+// TestFlipDefaultStaysFalse locks the writer-side flip invariant (PRD §11,
+// spec 08): the compiled default for proxy_lite.enabled is false and must
+// stay false permanently, so an existing install lacking the key is never
+// silently enabled at a binary upgrade. Enforcement/upstream defaults carry
+// today's behavior (enforce + vault) but the enablement bit does not move.
+func TestFlipDefaultStaysFalse(t *testing.T) {
+	d := Default()
+	if d.ProxyLite.Enabled {
+		t.Fatal("Default().ProxyLite.Enabled must stay false permanently (writer-side flip)")
+	}
+	if d.ProxyLite.EnforcementMode != "enforce" {
+		t.Fatalf("Default enforcement_mode=%q, want enforce", d.ProxyLite.EnforcementMode)
+	}
+	if d.ProxyLite.UpstreamAuth != "vault" {
+		t.Fatalf("Default upstream_auth=%q, want vault", d.ProxyLite.UpstreamAuth)
+	}
+	if d.ProxyLite.AllowSubscriptionBillingMigration {
+		t.Fatal("Default allow_subscription_billing_migration must be false")
+	}
+}
+
+// TestProxyLiteEnableMatrix asserts exactly which (key present/absent) ×
+// (config_schema) × (posture) × (env override) combinations enable
+// proxy-lite. Absent key with no posture/env is always disabled regardless
+// of the advisory marker — the marker never drives behavior.
+func TestProxyLiteEnableMatrix(t *testing.T) {
+	cases := []struct {
+		name        string
+		yaml        string
+		envEnabled  string // "" = unset
+		wantEnabled bool
+	}{
+		{"absent key, schema 0, no posture", "config_schema: 0\n", "", false},
+		{"absent key, schema 2, no posture", "config_schema: 2\n", "", false},
+		{"explicit false, schema 2", "config_schema: 2\nproxy_lite:\n  enabled: false\n", "", false},
+		{"explicit true, schema 2", "config_schema: 2\nproxy_lite:\n  enabled: true\n", "", true},
+		{"explicit true, schema 0", "config_schema: 0\nproxy_lite:\n  enabled: true\n", "", true},
+		{"posture observe, absent key", "posture: observe\n", "", true},
+		{"posture observe, explicit false beats preset", "posture: observe\nproxy_lite:\n  enabled: false\n", "", false},
+		{"posture govern, absent key", "posture: govern\n", "", true},
+		{"no posture, env true", "config_schema: 2\n", "true", true},
+		{"posture observe, env false beats preset", "posture: observe\n", "false", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.envEnabled != "" {
+				t.Setenv("CLAWVISOR_PROXY_LITE_ENABLED", tc.envEnabled)
+			}
+			cfg, err := Load(writePostureConfig(t, tc.yaml))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.ProxyLite.Enabled != tc.wantEnabled {
+				t.Fatalf("ProxyLite.Enabled=%v, want %v", cfg.ProxyLite.Enabled, tc.wantEnabled)
+			}
+		})
+	}
+}
+
+// TestPosturePresetKnobPrecedence covers the knob-beats-preset matrix for
+// enforcement_mode and upstream_auth: a preset sets a knob only when the YAML
+// did not set it explicitly, and an explicit env override always wins.
+func TestPosturePresetKnobPrecedence(t *testing.T) {
+	t.Run("observe preset sets both knobs", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: observe\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.ProxyLite.Enabled || !cfg.ProxyLite.ObserveMode() || !cfg.ProxyLite.PassthroughUpstreamAuth() {
+			t.Fatalf("observe preset: enabled=%v observe=%v passthrough=%v",
+				cfg.ProxyLite.Enabled, cfg.ProxyLite.ObserveMode(), cfg.ProxyLite.PassthroughUpstreamAuth())
+		}
+	})
+	t.Run("govern preset sets enforce+vault", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: govern\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.ProxyLite.Enabled || cfg.ProxyLite.ObserveMode() || cfg.ProxyLite.PassthroughUpstreamAuth() {
+			t.Fatalf("govern preset: enabled=%v observe=%v passthrough=%v",
+				cfg.ProxyLite.Enabled, cfg.ProxyLite.ObserveMode(), cfg.ProxyLite.PassthroughUpstreamAuth())
+		}
+	})
+	t.Run("explicit enforcement_mode beats observe preset", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: observe\nproxy_lite:\n  enforcement_mode: enforce\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.ProxyLite.ObserveMode() {
+			t.Fatal("explicit enforcement_mode: enforce should override observe preset")
+		}
+		// upstream_auth was NOT set explicitly, so the preset still applies.
+		if !cfg.ProxyLite.PassthroughUpstreamAuth() {
+			t.Fatal("upstream_auth should still be passthrough from the observe preset")
+		}
+	})
+	t.Run("env enforcement_mode beats preset", func(t *testing.T) {
+		t.Setenv("CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE", "enforce")
+		cfg, err := Load(writePostureConfig(t, "posture: observe\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.ProxyLite.ObserveMode() {
+			t.Fatal("env CLAWVISOR_PROXY_LITE_ENFORCEMENT_MODE=enforce should beat observe preset")
+		}
+	})
+}
+
+// TestPostureFlipsSelfApprove (04b step 5) asserts the govern/contain presets
+// turn allow_self_approve off (so the governed party is not the sole
+// approver), that observe leaves it on, and that an explicit knob or env
+// override still wins over the preset.
+func TestPostureFlipsSelfApprove(t *testing.T) {
+	t.Run("default keeps self-approve on", func(t *testing.T) {
+		if !Default().Approval.AllowSelfApprove {
+			t.Fatal("default allow_self_approve should be true (backward-compat)")
+		}
+	})
+	t.Run("govern preset disables self-approve", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: govern\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Approval.AllowSelfApprove {
+			t.Fatal("govern preset must set allow_self_approve=false")
+		}
+	})
+	t.Run("contain preset disables self-approve", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: contain\nexperimental_contain: true\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Approval.AllowSelfApprove {
+			t.Fatal("contain preset must set allow_self_approve=false")
+		}
+	})
+	t.Run("observe leaves self-approve on", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: observe\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Approval.AllowSelfApprove {
+			t.Fatal("observe preset must not touch allow_self_approve")
+		}
+	})
+	t.Run("explicit allow_self_approve beats govern preset", func(t *testing.T) {
+		cfg, err := Load(writePostureConfig(t, "posture: govern\napproval:\n  allow_self_approve: true\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Approval.AllowSelfApprove {
+			t.Fatal("explicit allow_self_approve: true must win over the govern preset")
+		}
+	})
+	t.Run("env allow_self_approve beats govern preset", func(t *testing.T) {
+		t.Setenv("CLAWVISOR_APPROVAL_ALLOW_SELF_APPROVE", "true")
+		cfg, err := Load(writePostureConfig(t, "posture: govern\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Approval.AllowSelfApprove {
+			t.Fatal("env CLAWVISOR_APPROVAL_ALLOW_SELF_APPROVE=true must beat the govern preset")
+		}
+	})
+}
+
+// TestValidatePostureContainRejected asserts the spec 09 gate semantics that
+// replaced spec 02's unconditional rejection: contain is refused UNLESS
+// experimental_contain=true, and accepted (with the superset preset applied)
+// once the flag is present.
+func TestValidatePostureContainRejected(t *testing.T) {
+	t.Run("rejected without experimental_contain", func(t *testing.T) {
+		cfg := Default()
+		cfg.Posture = "contain"
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "posture contain requires experimental_contain=true") {
+			t.Fatalf("expected contain gate rejection, got %v", err)
+		}
+	})
+	t.Run("accepted with experimental_contain and superset preset", func(t *testing.T) {
+		cfg := Default()
+		cfg.Posture = "contain"
+		cfg.ExperimentalContain = true
+		// Mimic the applied contain preset (Validate runs post-preset).
+		cfg.ProxyLite.Enabled = true
+		cfg.RuntimeProxy.Enabled = true
+		cfg.RuntimeProxy.LLMRoute = "proxy_lite"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("expected contain to validate with the gate flag, got %v", err)
+		}
+	})
+	t.Run("contain preset without proxy_lite.enabled fails llm_route gate", func(t *testing.T) {
+		cfg := Default()
+		cfg.Posture = "contain"
+		cfg.ExperimentalContain = true
+		cfg.ProxyLite.Enabled = false
+		cfg.RuntimeProxy.Enabled = true
+		cfg.RuntimeProxy.LLMRoute = "proxy_lite"
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "llm_route=proxy_lite requires proxy_lite.enabled=true") {
+			t.Fatalf("expected llm_route gate error, got %v", err)
+		}
+	})
+}
+
+// TestContainPresetAppliesSuperset asserts that loading a contain-postured
+// config (with the experimental gate) applies the Govern preset PLUS the
+// runtime-proxy superset knobs (enabled + llm_route=proxy_lite), per spec 09.
+func TestContainPresetAppliesSuperset(t *testing.T) {
+	cfg, err := Load(writePostureConfig(t, "posture: contain\nexperimental_contain: true\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.ProxyLite.Enabled || cfg.ProxyLite.ObserveMode() || cfg.ProxyLite.PassthroughUpstreamAuth() {
+		t.Fatalf("contain preset should apply govern proxy_lite knobs: enabled=%v observe=%v passthrough=%v",
+			cfg.ProxyLite.Enabled, cfg.ProxyLite.ObserveMode(), cfg.ProxyLite.PassthroughUpstreamAuth())
+	}
+	if !cfg.RuntimeProxy.Enabled {
+		t.Fatal("contain preset should enable the runtime proxy")
+	}
+	if !cfg.RuntimeProxy.LLMRouteProxyLite() {
+		t.Fatalf("contain preset should set llm_route=proxy_lite, got %q", cfg.RuntimeProxy.LLMRoute)
+	}
+}
+
+// TestContainPresetWithoutGateFailsLoad asserts that contain without the
+// experimental gate fails startup validation (Load applies the preset; the
+// server rejects it at Validate()).
+func TestContainPresetWithoutGateFailsLoad(t *testing.T) {
+	cfg, err := Load(writePostureConfig(t, "posture: contain\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "posture contain requires experimental_contain=true") {
+		t.Fatalf("expected contain Validate to fail on the gate, got %v", err)
+	}
+}
+
+// TestDefaultLLMRouteIsDirect locks the legacy-safe default: llm_route is
+// "direct" so an install that never opts into contain keeps today's behavior.
+func TestDefaultLLMRouteIsDirect(t *testing.T) {
+	if d := Default(); d.RuntimeProxy.LLMRoute != "direct" {
+		t.Fatalf("Default().RuntimeProxy.LLMRoute=%q, want direct", d.RuntimeProxy.LLMRoute)
+	}
+}
+
+func TestValidatePostureUnknownRejected(t *testing.T) {
+	cfg := Default()
+	cfg.Posture = "lockdown"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "posture must be one of") {
+		t.Fatalf("expected unknown-posture rejection, got %v", err)
+	}
+}
+
+func TestValidateEnforcementModeEnum(t *testing.T) {
+	cfg := Default()
+	cfg.ProxyLite.EnforcementMode = "audit"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "proxy_lite.enforcement_mode") {
+		t.Fatalf("expected enforcement_mode enum error, got %v", err)
+	}
+}
+
+func TestValidateUpstreamAuthEnum(t *testing.T) {
+	cfg := Default()
+	cfg.ProxyLite.UpstreamAuth = "byo"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "proxy_lite.upstream_auth") {
+		t.Fatalf("expected upstream_auth enum error, got %v", err)
+	}
+}
+
+func TestLoadAppliesSubMigrationEnv(t *testing.T) {
+	t.Setenv("CLAWVISOR_PROXY_LITE_ALLOW_SUB_MIGRATION", "true")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.ProxyLite.AllowSubscriptionBillingMigration {
+		t.Fatal("expected allow_subscription_billing_migration env override to apply")
+	}
 }

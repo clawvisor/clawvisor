@@ -25,6 +25,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/jsonsurgery"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/orggov"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pipeline"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/policies"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/postproc"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/pricing"
@@ -239,8 +240,59 @@ type LLMEndpointHandler struct {
 	// UPSTREAM_TOO_LARGE.
 	MaxResponseBytes int64
 
+	// UpstreamAuth mirrors cfg.ProxyLite.UpstreamAuth: "vault" (default) or
+	// "passthrough". It is the server-side posture decision that overrides
+	// the auth middleware's header-derived passthrough flag (spec 02 §4/§4b).
+	// Empty is treated as "vault".
+	UpstreamAuth string
+
+	// EnforcementMode mirrors cfg.ProxyLite.EnforcementMode: "enforce"
+	// (default) or "observe". In observe mode the pipeline runs fully but
+	// hold/deny/rewrite verdicts are downgraded to recorded observations
+	// (spec 02 §3). Empty is treated as "enforce".
+	EnforcementMode string
+
+	// AllowSubscriptionBillingMigration mirrors
+	// cfg.ProxyLite.AllowSubscriptionBillingMigration. When false (default),
+	// a govern/contain request carrying a subscription/OAuth (or
+	// unrecognized) bearer is refused with SUBSCRIPTION_SEAT_NOT_GOVERNABLE
+	// rather than silently rebilled (spec 02 §4c). Instance-wide (F4).
+	AllowSubscriptionBillingMigration bool
+
 	defaultToolRulesMu   sync.Mutex
 	defaultToolRulesSeen map[string]map[string]struct{}
+}
+
+// upstreamAuthPassthrough reports whether the server-side posture forwards the
+// client's own provider credential instead of injecting the vault key.
+func (h *LLMEndpointHandler) upstreamAuthPassthrough() bool {
+	return strings.EqualFold(strings.TrimSpace(h.UpstreamAuth), "passthrough")
+}
+
+// observeMode reports whether pipeline verdicts are downgraded to
+// observations rather than enforced (spec 02 §3).
+func (h *LLMEndpointHandler) observeMode() bool {
+	return strings.EqualFold(strings.TrimSpace(h.EnforcementMode), "observe")
+}
+
+// recordObservedToolUseVerdicts stamps the endpoint_call audit row with
+// the tool_use verdicts Observe mode downgraded to observations (spec 02
+// §3), so the audit view can render an "observed" badge. No-op when the
+// postprocess pass enforced normally.
+func recordObservedToolUseVerdicts(auditParams map[string]any, observed []llmproxy.ObservedToolUseVerdict) {
+	if len(observed) == 0 {
+		return
+	}
+	auditParams["observed"] = true
+	records := make([]map[string]any, 0, len(observed))
+	for _, o := range observed {
+		records = append(records, map[string]any{
+			"tool_name": o.ToolName,
+			"decision":  o.Decision,
+			"reason":    o.Reason,
+		})
+	}
+	auditParams["observed_tool_use_verdicts"] = records
 }
 
 const defaultToolRulesSeenMaxAgents = 10000
@@ -468,6 +520,65 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditParams["caller_auth_source"] = src
 	}
 
+	// Spec 02 §4/§4b/§4c: apply the server-side upstream_auth posture. This
+	// OVERRIDES the auth middleware's header-derived passthrough flag, so a
+	// client cannot select the passthrough lane — and skip vault injection +
+	// the subscription check — merely by header placement (the F1 fix).
+	if h.upstreamAuthPassthrough() {
+		// Passthrough posture: forward the client's own provider credential
+		// for EVERY request, and require one to be present.
+		// Mutate rootCtx (not just r) so the setPhase closure — which
+		// re-derives r's context from rootCtx before the upstream forward —
+		// carries the posture override rather than reverting to the
+		// middleware's header-derived flag.
+		rootCtx = llmproxy.WithPassthroughUpstreamAuth(rootCtx)
+		r = r.WithContext(rootCtx)
+		auditParams["auth_mode"] = "passthrough"
+		authModeMetric = "passthrough"
+		if !llmproxy.HasClientProviderCredential(r) {
+			auditStatus = http.StatusUnauthorized
+			auditDecide = "deny"
+			auditOutcome = "passthrough_no_credential"
+			auditReason = "passthrough posture but no client provider credential presented"
+			writeNestedJSONError(w, http.StatusUnauthorized, "PASSTHROUGH_NO_CREDENTIAL",
+				"observe posture forwards your own provider credential; none was found. Provide your provider key, or set proxy_lite.upstream_auth: vault.")
+			return
+		}
+	} else {
+		// Vault posture (default): force passthrough OFF and apply the
+		// subscription/OAuth carve-out before any silent strip-and-inject.
+		// Mutate rootCtx (see the passthrough branch): setPhase re-derives
+		// r's context from rootCtx before the forward, so the F1 override
+		// must live on rootCtx to survive.
+		rootCtx = llmproxy.WithVaultUpstreamAuth(rootCtx)
+		r = r.WithContext(rootCtx)
+		auditParams["auth_mode"] = "vault"
+		switch llmproxy.ClassifyUpstreamCredential(r) {
+		case llmproxy.CredentialSubscription, llmproxy.CredentialUnrecognized:
+			if !h.AllowSubscriptionBillingMigration {
+				auditStatus = http.StatusForbidden
+				auditDecide = "deny"
+				auditOutcome = "subscription_seat_not_governable"
+				auditReason = "govern refused a subscription/unrecognized bearer without billing-migration consent"
+				writeNestedJSONError(w, http.StatusForbidden, "SUBSCRIPTION_SEAT_NOT_GOVERNABLE",
+					"this seat's credential can't be governed without either an org provider API key for this agent or explicit billing-migration consent (proxy_lite.allow_subscription_billing_migration); it was not silently rebilled.")
+				return
+			}
+			auditParams["subscription_billing_migration"] = true
+		}
+	}
+
+	// Observe posture (spec 02 §3): thread the enforcement-off flag through
+	// the request context so every pipeline call site (RunPre pre-phase +
+	// the tool_use postprocess) downgrades enforcing verdicts to recorded
+	// observations. Clawvisor's own auth is unaffected — only policy
+	// verdicts are downgraded, and only after the request is authenticated.
+	if h.observeMode() {
+		rootCtx = pipeline.WithObserveMode(rootCtx)
+		r = r.WithContext(rootCtx)
+		auditParams["enforcement_mode"] = "observe"
+	}
+
 	if h.Inspector != nil && !liteProxyResponsePolicyAvailable(provider, conversation.DefaultResponseRegistry()) {
 		auditStatus = http.StatusNotImplemented
 		auditDecide = "deny"
@@ -686,16 +797,21 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			agentID:  agent.ID,
 		}
 		result, err := runSinglePolicy(r.Context(), pipeReq, policies.NewOrgModelPolicy(h.OrgGovCallbacks, h.OrgIDForAgent))
-		if err == nil && result.DenyReason != "" {
+		if err == nil {
+			// Merge audit params unconditionally (matching the spend-cap and
+			// content-policy blocks below) so an Observe-mode downgrade stamps
+			// observed=true on the audit row even though DenyReason is cleared.
 			for k, v := range result.AuditParams {
 				auditParams[k] = v
 			}
-			auditStatus = http.StatusForbidden
-			auditDecide = "deny"
-			auditOutcome = "org_model_policy_denied"
-			auditReason = result.DenyReason
-			http.Error(w, result.DenyReason, http.StatusForbidden)
-			return
+			if result.DenyReason != "" {
+				auditStatus = http.StatusForbidden
+				auditDecide = "deny"
+				auditOutcome = "org_model_policy_denied"
+				auditReason = result.DenyReason
+				http.Error(w, result.DenyReason, http.StatusForbidden)
+				return
+			}
 		}
 	}
 
@@ -1529,6 +1645,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 			cfg := llmproxy.PostprocessConfig{
 				ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
+				ObserveMode:             h.observeMode(),
 				AgentContext: llmproxy.AgentContext{
 					AgentUserID: agent.UserID,
 					AgentID:     agent.ID,
@@ -1631,6 +1748,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"decisions", len(processed.Decisions),
 				"skipped_reason", processed.SkippedReason,
 			)
+
+			recordObservedToolUseVerdicts(auditParams, processed.ObservedVerdicts)
 
 			if auditTaskID == "" {
 				for _, dec := range processed.Decisions {
@@ -1879,6 +1998,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		autoApproveThreshold := agentConversationAutoApproveThreshold(agent)
 		processed := postproc.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
 			ToolUseEvaluatorFactory: pipelineToolUseEvaluatorFactory,
+			ObserveMode:             h.observeMode(),
 			AgentContext: llmproxy.AgentContext{
 				AgentUserID: agent.UserID,
 				AgentID:     agent.ID,
@@ -1935,6 +2055,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"decisions", len(processed.Decisions),
 			"skipped_reason", processed.SkippedReason,
 		)
+
+		recordObservedToolUseVerdicts(auditParams, processed.ObservedVerdicts)
 
 		// Auto-approved task attribution: scoop the created task id out
 		// of the decisions so audit can link to it even when the
@@ -2105,6 +2227,22 @@ func upstreamCredMissingError(r *http.Request, agent *store.Agent, provider conv
 	}
 	message = "no " + providerName + " API key configured. Get one at " + consoleURL + " and paste it at " + dashboardBase + "/dashboard/agents/" + agent.ID + "."
 	return code, outcome, message
+}
+
+// writeNestedJSONError emits the provider-style nested error envelope
+// {"error": {"code": ..., "message": ...}} at the given HTTP status. Used by
+// the upstream_auth posture gate (spec 02 §4/§4c) where the contract fixes
+// both the status (401/403) and the nested body shape, distinct from the
+// flat writeJSONError shape and the 200-envelope writeLiteProxyError.
+func writeNestedJSONError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]string{
+			"code":    code,
+			"message": message,
+		},
+	})
 }
 
 // writeJSONError produces a uniform JSON error response. Use this only

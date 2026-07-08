@@ -23,6 +23,11 @@ var ErrNotFound = errors.New("store: record not found")
 // ErrConflict is returned when a uniqueness constraint is violated.
 var ErrConflict = errors.New("store: record already exists")
 
+// ErrInviteUsed is returned by ClaimInvitedUser when the invite was already
+// claimed by a concurrent registration. Distinct from ErrConflict (which means
+// the email is taken) so the caller can map each case to the right HTTP error.
+var ErrInviteUsed = errors.New("store: invite already used")
+
 // ErrAmbiguous is returned by request-id-only lookups (GetPendingApproval,
 // GetApprovalRecordByRequestID) when more than one row matches under the
 // symmetric (user_id, request_id, COALESCE(task_id,”)) dedup scope.
@@ -34,12 +39,47 @@ var ErrAmbiguous = errors.New("store: multiple records match without task scope"
 // through this interface; no direct queries are made outside the store package.
 type Store interface {
 	// Users
-	CreateUser(ctx context.Context, email, passwordHash string) (*User, error)
+	//
+	// CreateUser creates a VERIFIED account with the given role (invite
+	// security: the enrollment path uses CreateInvitedUser instead, which
+	// starts unverified). The role parameter is a coordinated public-seam
+	// break (spec 04) — cloud updates its call site at submodule-bump time.
+	CreateUser(ctx context.Context, email, passwordHash, role string) (*User, error)
+	// CreateInvitedUser creates a pending_verification account (verified_at
+	// NULL) for the invite-claim path — it cannot authenticate or mint an
+	// agent token until a magic-link confirm sets verified_at.
+	CreateInvitedUser(ctx context.Context, email, passwordHash, role string) (*User, error)
+	// ClaimInvitedUser atomically creates a pending_verification account and
+	// burns the invite in a single transaction. If the invite was already
+	// claimed by a concurrent registration the whole operation rolls back (no
+	// orphaned user row) and returns ErrInviteUsed; a duplicate email returns
+	// ErrConflict.
+	ClaimInvitedUser(ctx context.Context, inviteID, email, passwordHash, role string) (*User, error)
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	GetUserByID(ctx context.Context, id string) (*User, error)
 	UpdateUserPassword(ctx context.Context, userID, newPasswordHash string) error
+	UpdateUserRole(ctx context.Context, userID, role string) error
+	// MarkUserVerified sets verified_at (email-possession proof). Idempotent.
+	MarkUserVerified(ctx context.Context, userID string) error
 	DeleteUser(ctx context.Context, userID string) error
 	CountUsers(ctx context.Context) (int, error)
+	CountAdmins(ctx context.Context) (int, error)
+	// ListUsers returns real users (system rows `_instance`/`__system__` and
+	// the `admin@local` magic seed excluded), newest first.
+	ListUsers(ctx context.Context) ([]*User, error)
+	// ListAdmins returns the real users whose role is admin (system rows and
+	// the `admin@local` magic seed excluded), newest first. Used by the
+	// admin-notify fan-out (04b) to reach every human who can resolve a hold.
+	ListAdmins(ctx context.Context) ([]*User, error)
+
+	// User invites (single-use, short-lived enrollment credentials, spec 04).
+	CreateUserInvite(ctx context.Context, inv *UserInvite) error
+	GetUserInviteByHash(ctx context.Context, tokenHash string) (*UserInvite, error)
+	ListPendingUserInvites(ctx context.Context) ([]*UserInvite, error)
+	DeleteUserInvite(ctx context.Context, id string) error
+	// MarkUserInviteUsed atomically claims an invite: sets used_by/used_at
+	// only if still unused. ErrConflict means another claim already won.
+	MarkUserInviteUsed(ctx context.Context, id, usedBy string) error
 
 	// API tokens (long-lived, scoped, revocable — the Terraform provider /
 	// CI credential). See the api_tokens migration (05-lite). Plaintext is
@@ -55,6 +95,39 @@ type Store interface {
 	ListAPITokens(ctx context.Context) ([]*APIToken, error)
 	RevokeAPIToken(ctx context.Context, id string) error
 	TouchAPITokenLastUsed(ctx context.Context, id string) error
+
+	// Instance governance (spec 06a — local orggov). Instance-scoped, one
+	// flat policy set (no org/team dimension). The OSS build implements the
+	// four governance callbacks against these tables; cloud keeps its own
+	// org_* tables and leaves these dormant. Model/task policies are
+	// append-only (Put inserts a new active row and demotes the prior one)
+	// for point-in-time history; spend caps and content policies mutate in
+	// place. All methods here are a coordinated public-seam addition —
+	// cloud's CloudStore embeds store.Store, so these promote automatically.
+	GetActiveInstanceModelPolicy(ctx context.Context) (*InstanceModelPolicy, error)
+	PutInstanceModelPolicy(ctx context.Context, p *InstanceModelPolicy) error
+	ClearInstanceModelPolicy(ctx context.Context) error
+
+	ListInstanceSpendCaps(ctx context.Context) ([]*InstanceSpendCap, error)
+	GetInstanceSpendCap(ctx context.Context, windowKind string) (*InstanceSpendCap, error)
+	PutInstanceSpendCap(ctx context.Context, c *InstanceSpendCap) error
+	DeleteInstanceSpendCap(ctx context.Context, windowKind string) error
+	// SumInstanceCostMicros sums llm_request_cost.cost_micros for every
+	// agent/user over [since, until). Backs the local spend-cap check.
+	SumInstanceCostMicros(ctx context.Context, since, until time.Time) (int64, error)
+
+	ListInstanceContentPolicies(ctx context.Context) ([]*InstanceContentPolicy, error)
+	GetInstanceContentPolicy(ctx context.Context, id string) (*InstanceContentPolicy, error)
+	CreateInstanceContentPolicy(ctx context.Context, p *InstanceContentPolicy) error
+	UpdateInstanceContentPolicy(ctx context.Context, p *InstanceContentPolicy) error
+	DeleteInstanceContentPolicy(ctx context.Context, id string) error
+
+	GetActiveInstanceTaskPolicy(ctx context.Context) (*InstanceTaskPolicy, error)
+	PutInstanceTaskPolicy(ctx context.Context, p *InstanceTaskPolicy) error
+	ClearInstanceTaskPolicy(ctx context.Context) error
+
+	RecordInstancePolicyViolation(ctx context.Context, v *InstancePolicyViolation) error
+	ListInstancePolicyViolations(ctx context.Context, limit int) ([]*InstancePolicyViolation, error)
 
 	// Restrictions
 	CreateRestriction(ctx context.Context, r *Restriction) (*Restriction, error)
@@ -73,6 +146,13 @@ type Store interface {
 	GetAgentByToken(ctx context.Context, tokenHash string) (*Agent, error)
 	GetAgent(ctx context.Context, agentID string) (*Agent, error)
 	ListAgents(ctx context.Context, userID string) ([]*Agent, error)
+	// ListAllAgents returns EVERY agent across all owners — including
+	// `_instance` (Terraform/CI) rows — with OwnerEmail populated for
+	// attribution. Admin fleet view only (04b). Org-blind by construction:
+	// OSS-only, never mounted in a cloud multi-org build. Do not widen
+	// ListAgents to this behavior — cloud embeds Store and must not silently
+	// gain a cross-user read.
+	ListAllAgents(ctx context.Context) ([]*Agent, error)
 	UpdateAgentDescription(ctx context.Context, agentID, userID, description string) error
 	// SetAgentInstallContext stamps the install context onto an existing
 	// agent. Called from the connection-request approve flow so the dashboard
@@ -176,6 +256,13 @@ type Store interface {
 	// observations with DedupKey set are excluded.
 	FindDedupCandidate(ctx context.Context, requestID, userID, taskID string) (*AuditEntry, error)
 	ListAuditEntries(ctx context.Context, userID string, filter AuditFilter) ([]*AuditEntry, int, error)
+	// ListAllAuditEvents is the admin cross-user audit read (04b). Same filter
+	// shape as ListAuditEntries plus an optional UserID facet. It MUST include
+	// rows whose owning user has been deleted (audit_log.user_id SET NULL on
+	// delete, spec 04 Q4): it left-joins nothing and reads the denormalized
+	// actor_email, so departed actors surface as "<email> (removed)". Org-blind
+	// by construction: OSS-only, never mounted in a cloud multi-org build.
+	ListAllAuditEvents(ctx context.Context, filter AuditFilter) ([]*AuditEntry, int, error)
 	AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]ActivityBucket, error)
 
 	// LLM request cost tracking. RecordLLMRequestCost stores one row per
@@ -184,6 +271,13 @@ type Store interface {
 	// task.
 	RecordLLMRequestCost(ctx context.Context, cost *LLMRequestCost) error
 	GetTaskCost(ctx context.Context, userID, taskID string) (*TaskCostSummary, error)
+	// InstanceCostSummary is the admin-only, single-instance spend rollup over
+	// a time window, broken down per-user and per-agent (04b). Departed users'
+	// and `_instance` (Terraform/CI) spend stay in the totals — attributed by
+	// the denormalized actor_email, never dropped for failing to join a user.
+	// Org-blind by construction: OSS-only, never mounted in a cloud multi-org
+	// build.
+	InstanceCostSummary(ctx context.Context, window InstanceCostWindow) (*InstanceCostSummary, error)
 	CreateActivityMute(ctx context.Context, mute *ActivityMute) error
 	ListActivityMutes(ctx context.Context, userID string) ([]*ActivityMute, error)
 	DeleteActivityMute(ctx context.Context, id, userID string) error
@@ -278,12 +372,24 @@ type Store interface {
 	// exact (request_id, user_id, task_id). taskID == "" matches the
 	// pre-task scope (task_id IS NULL in SQL).
 	GetPendingApprovalByTask(ctx context.Context, requestID, userID, taskID string) (*PendingApproval, error)
+	// GetPendingApprovalByID returns a pending approval by its globally-unique
+	// primary key, WITHOUT a user scope. Admin-only (04b): the admin approval
+	// queue resolves any user's hold, so it addresses rows by id (request_id
+	// is only unique within a user) and discovers the owner from the row.
+	// OwnerEmail is populated for attribution. Returns ErrNotFound if absent.
+	GetPendingApprovalByID(ctx context.Context, id string) (*PendingApproval, error)
 	// ListPendingApprovalsByRequestID returns every pending approval that
 	// matches (request_id, user_id). Used by the approval HTTP handlers to
 	// surface candidate task_ids in a 409 AMBIGUOUS response when a caller
 	// addresses a request_id-only endpoint and more than one row exists.
 	ListPendingApprovalsByRequestID(ctx context.Context, requestID, userID string) ([]*PendingApproval, error)
 	ListPendingApprovals(ctx context.Context, userID string) ([]*PendingApproval, error)
+	// ListAllPendingApprovals returns EVERY unresolved hold across all users,
+	// with OwnerEmail populated, newest-relevant first. Admin approval queue
+	// only (04b) — this is what lets an admin (not the governed member) be the
+	// approver. Org-blind by construction: OSS-only, never mounted in a cloud
+	// multi-org build.
+	ListAllPendingApprovals(ctx context.Context) ([]*PendingApproval, error)
 	// DeletePendingApproval removes the unique pending approval for
 	// (request_id, user_id, task_id). Pass taskID == "" for the pre-task
 	// scope. Callers must always supply task_id (typically read from a
@@ -491,13 +597,48 @@ type TelemetryCounts struct {
 	RequestsByService map[string]int // gateway requests per service (e.g. "gmail": 120)
 }
 
+// Role constants for User.Role. Strictly two roles — flat team, no orgs
+// (PRD §5). Admin gates user management, shared-vault writes, and
+// governance-disabling changes; member is everything else.
+const (
+	RoleAdmin  = "admin"
+	RoleMember = "member"
+)
+
 // User represents a registered Clawvisor account.
 type User struct {
 	ID           string    `json:"id"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
+	Role         string    `json:"role"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	// VerifiedAt is the email-possession proof timestamp (invite security
+	// rule 2). NULL/zero means the account is pending_verification and
+	// cannot authenticate or mint an agent token. Existing and normally
+	// registered accounts are verified; only invite-claimed accounts start
+	// unverified until a magic-link confirm.
+	VerifiedAt *time.Time `json:"verified_at,omitempty"`
+}
+
+// Verified reports whether the account has proven email possession. A
+// non-nil but zero VerifiedAt (e.g. a malformed parse) is still pending per
+// the struct contract ("NULL/zero means pending"), so it must not count.
+func (u *User) Verified() bool { return u != nil && u.VerifiedAt != nil && !u.VerifiedAt.IsZero() }
+
+// UserInvite is a single-use, short-lived enrollment credential. Only the
+// SHA-256 hash of the `cvinv_...` token lives at rest; the plaintext is
+// returned exactly once on mint. Email == "" means any email may claim it.
+type UserInvite struct {
+	ID        string     `json:"id"`
+	TokenHash string     `json:"-"`
+	Email     string     `json:"email"`
+	Role      string     `json:"role"`
+	CreatedBy *string    `json:"created_by"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	UsedBy    *string    `json:"used_by,omitempty"`
+	UsedAt    *time.Time `json:"used_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // APIToken is a long-lived, scoped, revocable bearer credential. The
@@ -517,6 +658,73 @@ type APIToken struct {
 	LastUsedAt  *time.Time `json:"last_used_at"`
 	RevokedAt   *time.Time `json:"revoked_at"`
 	IsBootstrap bool       `json:"-"`
+}
+
+// InstanceModelPolicy is the singleton allow/deny model policy for a
+// self-hosted instance (spec 06a). Mode is "allow" or "deny"; Models is
+// the list of provider-qualified canonical ids (e.g.
+// "anthropic/claude-3-5-sonnet"). Append-only: the active row is the
+// current policy, older rows are point-in-time history.
+type InstanceModelPolicy struct {
+	ID        string    `json:"-"`
+	Mode      string    `json:"mode"`
+	Models    []string  `json:"models"`
+	CreatedBy string    `json:"-"`
+	CreatedAt time.Time `json:"-"`
+}
+
+// InstanceSpendCap is a per-window spend cap. WindowKind is "daily" or
+// "monthly"; Enforcement is "soft" (warn) or "hard" (block at 100%).
+// CapMicros is int64 micro-USD matching llm_request_cost.cost_micros.
+type InstanceSpendCap struct {
+	ID          string    `json:"-"`
+	WindowKind  string    `json:"window"`
+	CapMicros   int64     `json:"cap_micros"`
+	Enforcement string    `json:"enforcement"`
+	CreatedBy   string    `json:"-"`
+	CreatedAt   time.Time `json:"-"`
+	UpdatedAt   time.Time `json:"-"`
+}
+
+// InstanceContentPolicy is one content-scanning rule. Action "block"
+// rejects the request with BlockMessage; "flag" allows it but records a
+// violation. PatternKind is "regex" or "keyword".
+type InstanceContentPolicy struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Pattern      string    `json:"pattern"`
+	PatternKind  string    `json:"pattern_kind"`
+	Action       string    `json:"action"`
+	BlockMessage string    `json:"block_message"`
+	Enabled      bool      `json:"enabled"`
+	CreatedBy    string    `json:"-"`
+	CreatedAt    time.Time `json:"-"`
+	UpdatedAt    time.Time `json:"-"`
+}
+
+// InstanceTaskPolicy is the singleton task-guidance policy. Append-only
+// like InstanceModelPolicy.
+type InstanceTaskPolicy struct {
+	ID        string    `json:"-"`
+	Guidance  string    `json:"guidance"`
+	CreatedBy string    `json:"-"`
+	CreatedAt time.Time `json:"-"`
+}
+
+// InstancePolicyViolation is an append-only record of a blocked, flagged,
+// or warned request. No org_id — the "local" OrgID sentinel the pipeline
+// carries is never persisted. PolicyKind ∈ model_policy | spend_cap |
+// content_policy | task_policy; ActionTaken ∈ blocked | flagged | warned.
+type InstancePolicyViolation struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id,omitempty"`
+	AgentID     string    `json:"agent_id,omitempty"`
+	TaskID      string    `json:"task_id,omitempty"`
+	PolicyKind  string    `json:"policy_kind"`
+	PolicyID    string    `json:"policy_id,omitempty"`
+	ActionTaken string    `json:"action_taken"`
+	Detail      string    `json:"detail,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Risk-level constants for ConversationAutoApproveThreshold and the
@@ -657,6 +865,12 @@ type Agent struct {
 	// agents minted by paths that don't carry install context (legacy
 	// /api/agents POST, MCP/relay pairing, etc.).
 	InstallContext *InstallContext `json:"install_context,omitempty"`
+	// OwnerEmail is populated only by the admin fleet view (ListAllAgents) so
+	// the UI can attribute an agent to its owner. Empty on the user-scoped
+	// ListAgents path (a member never needs to see their own email echoed).
+	// For `_instance`-owned (Terraform/CI) rows this carries the system
+	// sentinel email; the admin UI renders those as "Terraform / automation".
+	OwnerEmail string `json:"owner_email,omitempty"`
 }
 
 type AgentRuntimeSettings struct {
@@ -782,6 +996,12 @@ type AuditEntry struct {
 	// DedupedOf is set on retry-attempt rows to the id of the canonical
 	// audit entry they shadow. Canonical rows have DedupedOf == nil.
 	DedupedOf *string `json:"deduped_of,omitempty"`
+	// ActorEmail is the server-derived, denormalized email-at-the-time of the
+	// row's principal (spec 04 Q4). Populated only by the admin cross-user
+	// read (ListAllAuditEvents) so departed users — whose user_id has been
+	// SET NULL on delete — remain attributable; the admin UI renders such
+	// rows as "<email> (removed)". Empty on the user-scoped list path.
+	ActorEmail string `json:"actor_email,omitempty"`
 }
 
 // LLMRequestCost is one row per upstream LLM call recording the model,
@@ -844,6 +1064,68 @@ type TaskCostByModelEntry struct {
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
 	CostMicros       int64  `json:"cost_micros"`
 	Known            bool   `json:"known"`
+}
+
+// InstanceCostWindow selects the aggregation window for InstanceCostSummary.
+type InstanceCostWindow string
+
+const (
+	// InstanceCostWindowDaily rolls up spend over the trailing 24 hours.
+	InstanceCostWindowDaily InstanceCostWindow = "daily"
+	// InstanceCostWindowMonthly rolls up spend over the trailing 30 days.
+	InstanceCostWindowMonthly InstanceCostWindow = "monthly"
+)
+
+// InstanceCostSummary is the admin-only, single-instance rollup of every
+// user's LLM spend over a time window (04b). It is org-blind by construction
+// — it aggregates the whole llm_request_cost table — which is correct for the
+// OSS single-instance model but MUST NOT be reachable in a cloud multi-org
+// build (see spec 04b §F5 / the OSS-only admin-route gate).
+//
+// Departed users keep their spend in the rollup: llm_request_cost carries a
+// denormalized actor_email, so per-user rows attribute by (user_id,
+// actor_email) without joining the users table (a deleted user no longer
+// joins). Rows owned by `_instance` are included and labeled as automation by
+// the handler, or spend reports would under-count Terraform/CI usage.
+type InstanceCostSummary struct {
+	Window           InstanceCostWindow         `json:"window"`
+	Since            time.Time                  `json:"since"`
+	RequestCount     int                        `json:"request_count"`
+	InputTokens      int64                      `json:"input_tokens"`
+	OutputTokens     int64                      `json:"output_tokens"`
+	CacheReadTokens  int64                      `json:"cache_read_tokens"`
+	CacheWriteTokens int64                      `json:"cache_write_tokens"`
+	CostMicros       int64                      `json:"cost_micros"`
+	UnknownModels    []string                   `json:"unknown_models"`
+	ByUser           []InstanceCostByUserEntry  `json:"by_user"`
+	ByAgent          []InstanceCostByAgentEntry `json:"by_agent"`
+}
+
+// InstanceCostByUserEntry is one user's contribution to the instance rollup.
+// ActorEmail is the denormalized email-at-the-time so departed users stay
+// attributable. UserID == InstanceUserID marks Terraform/CI automation spend.
+type InstanceCostByUserEntry struct {
+	UserID           string `json:"user_id"`
+	ActorEmail       string `json:"actor_email"`
+	RequestCount     int    `json:"request_count"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	CostMicros       int64  `json:"cost_micros"`
+}
+
+// InstanceCostByAgentEntry is one agent's contribution to the instance rollup.
+type InstanceCostByAgentEntry struct {
+	AgentID          string `json:"agent_id"`
+	UserID           string `json:"user_id"`
+	ActorEmail       string `json:"actor_email"`
+	RequestCount     int    `json:"request_count"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	CostMicros       int64  `json:"cost_micros"`
 }
 
 // ActivityMute suppresses noisy runtime egress rows from the activity feed.
@@ -988,10 +1270,10 @@ type TaskEnvelopeUpdate struct {
 
 // Task represents a task-scoped authorization.
 type Task struct {
-	ID                     string          `json:"id"`
-	UserID                 string          `json:"user_id"`
-	AgentID                string          `json:"agent_id"`
-	Purpose                string          `json:"purpose"`
+	ID      string `json:"id"`
+	UserID  string `json:"user_id"`
+	AgentID string `json:"agent_id"`
+	Purpose string `json:"purpose"`
 	// Status: pending_approval | active | completed | expired |
 	// denied | cancelled | pending_scope_expansion | revoked.
 	//
@@ -1071,6 +1353,10 @@ type PendingApproval struct {
 	Status           string          `json:"status"` // "pending" or "approved"
 	ExpiresAt        time.Time       `json:"expires_at"`
 	CreatedAt        time.Time       `json:"created_at"`
+	// OwnerEmail is populated only by the admin approval queue
+	// (ListAllPendingApprovals) so an admin can see whose agent raised the
+	// hold. Empty on the user-scoped ListPendingApprovals path.
+	OwnerEmail string `json:"owner_email,omitempty"`
 }
 
 // ApprovalRecord is the canonical approval object shared across surfaces.
@@ -1371,13 +1657,17 @@ type TaskFilter struct {
 // AuditFilter controls which entries are returned by ListAuditEntries.
 // Zero values mean "no filter" for that field.
 type AuditFilter struct {
-	Service        string // filter by service
-	Outcome        string // filter by outcome
-	DataOrigin     string // filter by data_origin
-	TaskID         string // filter by task_id
-	AgentID        string // filter by agent_id
-	IncludeRuntime *bool  // nil -> default include, false -> suppress runtime.* rows
-	Limit          int    // 0 -> default (50)
+	Service    string // filter by service
+	Outcome    string // filter by outcome
+	DataOrigin string // filter by data_origin
+	TaskID     string // filter by task_id
+	AgentID    string // filter by agent_id
+	// UserID is an admin-only facet honored ONLY by ListAllAuditEvents (the
+	// cross-user read); ListAuditEntries ignores it because it is already
+	// user-scoped by its userID argument. Empty means "all users".
+	UserID         string
+	IncludeRuntime *bool // nil -> default include, false -> suppress runtime.* rows
+	Limit          int   // 0 -> default (50)
 	Offset         int
 }
 
