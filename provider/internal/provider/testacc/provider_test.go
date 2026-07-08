@@ -34,6 +34,7 @@ var (
 	testEndpoint       string
 	testToken          string
 	hasLocalGovernance bool
+	hasSSO             bool
 	govSkipReason      = "server does not report the 'local_governance' capability; unskip when spec 06a lands"
 	protoV6Factories   map[string]func() (tfprotov6.ProviderServer, error)
 )
@@ -195,6 +196,7 @@ proxy_lite:
 	adminClient := client.New(endpoint, tok.Token, "", &http.Client{Timeout: 10 * time.Second})
 	if features, err := adminClient.Features(ctx); err == nil {
 		hasLocalGovernance = features.LocalGovernance
+		hasSSO = features.SSO
 	}
 
 	return shutdown, nil
