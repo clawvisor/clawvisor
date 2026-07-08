@@ -45,6 +45,6 @@ variable "clawvisor_api_token" {
 
 ### Optional
 
-- `api_token` (String, Sensitive) A `cvat_` API token with the `instance-admin` scope. May also be set via the `CLAWVISOR_API_TOKEN` environment variable. Marked sensitive; it grants full instance configuration authority.
+- `api_token` (String, Sensitive) A Clawvisor API token, sent as a Bearer credential. Use a `cvat_` instance-admin token to configure a self-hosted / VPC instance (instance-scoped routes), or a `cvot_` org-scoped token **together with `org_id`** to configure a Clawvisor Cloud organization (org-scoped routes). May also be set via the `CLAWVISOR_API_TOKEN` environment variable. Marked sensitive.
 - `endpoint` (String) Base URL of the Clawvisor server, e.g. `https://clawvisor.internal:25297`. May also be set via the `CLAWVISOR_ENDPOINT` environment variable.
-- `org_id` (String) Organization id (Clawvisor Cloud only). When set, governance and org-scoped resources route to `/api/orgs/{org_id}/...`; when omitted, resources use the instance-scoped OSS routes.
+- `org_id` (String) Organization id. Set it, with a `cvot_` org-scoped `api_token` minted by an org admin, to configure a Clawvisor Cloud / enterprise organization — governance and org-scoped resources then route to `/api/orgs/{org_id}/...`. Omit it, with a `cvat_` instance-admin token, for a self-hosted instance's instance-scoped routes.

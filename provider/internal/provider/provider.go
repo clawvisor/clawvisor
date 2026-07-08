@@ -76,15 +76,18 @@ func (p *clawvisorProvider) Schema(_ context.Context, _ provider.SchemaRequest, 
 			"api_token": schema.StringAttribute{
 				Optional:  true,
 				Sensitive: true,
-				MarkdownDescription: "A `cvat_` API token with the `instance-admin` scope. " +
-					"May also be set via the `CLAWVISOR_API_TOKEN` environment variable. " +
-					"Marked sensitive; it grants full instance configuration authority.",
+				MarkdownDescription: "A Clawvisor API token, sent as a Bearer credential. Use a " +
+					"`cvat_` instance-admin token to configure a self-hosted / VPC instance " +
+					"(instance-scoped routes), or a `cvot_` org-scoped token **together with `org_id`** " +
+					"to configure a Clawvisor Cloud organization (org-scoped routes). May also be set " +
+					"via the `CLAWVISOR_API_TOKEN` environment variable. Marked sensitive.",
 			},
 			"org_id": schema.StringAttribute{
 				Optional: true,
-				MarkdownDescription: "Organization id (Clawvisor Cloud only). When set, " +
-					"governance and org-scoped resources route to `/api/orgs/{org_id}/...`; " +
-					"when omitted, resources use the instance-scoped OSS routes.",
+				MarkdownDescription: "Organization id. Set it, with a `cvot_` org-scoped `api_token` " +
+					"minted by an org admin, to configure a Clawvisor Cloud / enterprise organization — " +
+					"governance and org-scoped resources then route to `/api/orgs/{org_id}/...`. Omit it, " +
+					"with a `cvat_` instance-admin token, for a self-hosted instance's instance-scoped routes.",
 			},
 		},
 	}
