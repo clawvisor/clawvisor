@@ -161,6 +161,7 @@ func (p *clawvisorProvider) Resources(_ context.Context) []func() resource.Resou
 		NewContentPolicyResource,
 		NewTaskPolicyResource,
 		NewSSOConnectionResource,
+		NewOrgSettingsResource,
 	}
 }
 

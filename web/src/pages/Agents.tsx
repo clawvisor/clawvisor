@@ -16,6 +16,16 @@ export default function Agents() {
   const navigate = useNavigate()
   const orgId = currentOrg?.id
   const qc = useQueryClient()
+  // In org mode, the personal connect flows (guide + wizard) are surfaced only
+  // when the org allows member self-service (default true). Personal mode (no
+  // org) always allows them. While the setting loads, default to allowing —
+  // it matches the server default and the common case.
+  const { data: orgSettings } = useQuery({
+    queryKey: ['org-settings', orgId],
+    queryFn: () => api.orgs.settings.get(orgId!),
+    enabled: !!orgId,
+  })
+  const canSelfServe = !orgId || (orgSettings?.member_self_service ?? true)
   const liveSessionsUI = !orgId && !!features?.agent_live_sessions
   const runtimePolicyUI = !orgId && !!features?.runtime_policy_ui
   const proxyLiteUI = !orgId && !!features?.proxy_lite
@@ -24,7 +34,7 @@ export default function Agents() {
   // the wizard renders its own copy inline so the user sees their request
   // in the same scroll position as the install instructions.
   const [topLevelSearchParams] = useSearchParams()
-  const wizardActive = !orgId && !!topLevelSearchParams.get('agent')
+  const wizardActive = canSelfServe && !!topLevelSearchParams.get('agent')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [newToken, setNewToken] = useState<string | null>(null)
@@ -39,7 +49,7 @@ export default function Agents() {
   const { data: connections } = useQuery({
     queryKey: ['connections'],
     queryFn: () => api.connections.list(),
-    enabled: !orgId,
+    enabled: canSelfServe,
   })
   const { data: runtimeStatus } = useQuery({
     queryKey: ['runtime-status'],
@@ -76,7 +86,7 @@ export default function Agents() {
     onError: (err: Error) => setFormError(err.message),
   })
 
-  const pending = (!orgId ? connections : undefined) ?? []
+  const pending = (canSelfServe ? connections : undefined) ?? []
   const sessionsByAgent = useMemo(() => {
     const grouped = new Map<string, RuntimeSession[]>()
     for (const session of runtimeSessions?.entries ?? []) {
@@ -143,13 +153,13 @@ export default function Agents() {
       </p>
 
       {/* Connect an Agent guide (personal context only) */}
-      {!orgId && <ConnectAgentGuide newToken={newToken} />}
+      {canSelfServe && <ConnectAgentGuide newToken={newToken} />}
 
       {/* Pending connection requests (personal context only).
           Hidden while the wizard is mid-flight — the wizard renders its
           own copy of these cards inline so the user can approve without
           scrolling. */}
-      {!orgId && !wizardActive && pending.length > 0 && (
+      {canSelfServe && !wizardActive && pending.length > 0 && (
         <section>
           <div className="flex items-center gap-3 mb-3">
             <h2 className="text-lg font-semibold text-text-primary">Pending Connections</h2>
