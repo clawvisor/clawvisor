@@ -14,7 +14,11 @@ type SSOConnection struct {
 	OIDCIssuer         string `json:"oidc_issuer,omitempty"`
 	OIDCClientID       string `json:"oidc_client_id,omitempty"`
 	// OIDCClientSecret is sent on PUT only; the server encrypts it at rest and
-	// never returns it, so reads leave this empty.
+	// never returns it, so reads leave this empty. `omitempty` is load-bearing:
+	// an empty value is dropped from the payload, and the server preserves the
+	// existing encrypted secret when the field is absent (only requiring it on
+	// first creation) — so a PUT that doesn't rotate the secret cannot clear it.
+	// The resource additionally requires this for kind=oidc at plan time.
 	OIDCClientSecret string `json:"oidc_client_secret,omitempty"`
 	JITProvision     bool   `json:"jit_provision"`
 	DefaultRole      string `json:"default_role,omitempty"`
