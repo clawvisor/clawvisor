@@ -29,6 +29,11 @@ func TestOrgAdminPaths(t *testing.T) {
 		case r.Method == "DELETE" && r.URL.Path == "/api/admin/orgs/org_1":
 			w.WriteHeader(204)
 		case r.Method == "POST" && r.URL.Path == "/api/admin/orgs/org_1/tokens":
+			var tbody CreateOrgTokenRequest
+			_ = json.NewDecoder(r.Body).Decode(&tbody)
+			if tbody.Name == "" {
+				t.Errorf("mint token body missing name: %+v", tbody)
+			}
 			w.WriteHeader(201)
 			_, _ = w.Write([]byte(`{"id":"tk_1","name":"terraform","role":"admin","token_prefix":"cvot_abc","token":"cvot_SECRET"}`))
 		case r.Method == "GET" && r.URL.Path == "/api/admin/orgs/org_1/tokens":

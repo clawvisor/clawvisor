@@ -28,6 +28,11 @@ resource "clawvisor_org_token" "terraform" {
 }
 
 # Hand the minted cvot_ to a second provider alias to configure the org.
+# NOTE: this provider is configured from a resource output (the token), which
+# Terraform cannot resolve during planning. On first creation, bootstrap the
+# org + token in a targeted stage, then apply the rest:
+#   terraform apply -target=clawvisor_org.acme -target=clawvisor_org_token.terraform
+#   terraform apply
 provider "clawvisor" {
   alias     = "org"
   endpoint  = "https://clawvisor.internal"

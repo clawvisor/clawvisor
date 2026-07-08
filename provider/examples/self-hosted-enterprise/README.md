@@ -21,4 +21,7 @@ terraform apply
 ```
 
 This is a Terraform core constraint (provider config from resource output), not a
-Clawvisor limitation; the two `apply`s are only needed on first creation.
+Clawvisor limitation. The two-stage `apply` is needed whenever the `cvot_` is
+(re)created: on the first apply, and again any time `clawvisor_org_token` is
+replaced — all its inputs are `ForceNew` — or its write-once `token` is lost from
+state. A steady-state `apply` that doesn't recreate the token needs only one pass.

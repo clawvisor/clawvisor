@@ -134,6 +134,9 @@ func (r *orgResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !requireCapability(r.pd, client.CapabilityMultiTenant, "clawvisor_org", &resp.Diagnostics) {
+		return
+	}
 	if err := r.pd.client.DeleteOrg(ctx, state.ID.ValueString()); err != nil {
 		if client.NotFound(err) {
 			return
