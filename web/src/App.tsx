@@ -2,6 +2,7 @@ import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import Login from './pages/Login'
+import SSOLogin from './pages/SSOLogin'
 import Register from './pages/Register'
 import MagicLink from './pages/MagicLink'
 import CheckEmail from './pages/CheckEmail'
@@ -94,6 +95,7 @@ export default function App() {
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/waitlist" element={<Waitlist />} />
       <Route path="/accept-invite" element={<AcceptInvite />} />
+      <Route path="/login/sso" element={<SSOLogin />} />
       <Route path="/sso/complete" element={<SSOComplete />} />
       <Route path="/pricing" element={<Pricing />} />
       <Route
