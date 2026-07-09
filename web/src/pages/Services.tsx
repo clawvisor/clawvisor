@@ -1980,6 +1980,17 @@ export default function Services() {
   const qc = useQueryClient()
   const { features, currentOrg } = useAuth()
   const orgId = currentOrg?.id
+  // The connect-service flow is a personal self-service action. In org mode it
+  // is surfaced only when the org allows member self-service (default true);
+  // otherwise members get the read-only org accounts view. Personal mode (no
+  // org) always allows it. While the setting loads, default to allowing — it
+  // matches the server default and the common case. Mirrors Agents.tsx.
+  const { data: orgSettings } = useQuery({
+    queryKey: ['org-settings', orgId],
+    queryFn: () => api.orgs.settings.get(orgId!),
+    enabled: !!orgId,
+  })
+  const canSelfServe = !orgId || (orgSettings?.member_self_service ?? true)
   const secretVaultUI = !orgId && !!features?.secret_vault
   const proxyLiteUI = !orgId && !!features?.proxy_lite
   const legacySecretVaultUI = secretVaultUI && !proxyLiteUI
@@ -1999,7 +2010,7 @@ export default function Services() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['services'],
     queryFn: () => api.services.list(),
-    enabled: !orgId,
+    enabled: canSelfServe,
   })
 
   // In single-tenant mode, check if Google/Microsoft OAuth credentials are configured.
@@ -2047,7 +2058,10 @@ export default function Services() {
     return () => window.removeEventListener('message', handler)
   }, [qc])
 
-  if (orgId) {
+  // Org members without self-service get the read-only org accounts view; the
+  // connect-service flow below stays hidden for them. Self-serving members fall
+  // through to the personal connect flow, same as personal mode.
+  if (orgId && !canSelfServe) {
     return <OrgServicesView orgId={orgId} orgName={currentOrg!.name} />
   }
 
