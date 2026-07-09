@@ -24,6 +24,11 @@ interface AuthContextValue {
   isAuthenticated: boolean
   authMode: 'magic_link' | 'password' | 'passkey' | null
   features: FeatureSet | null
+  /** True once /api/features has loaded for the *current* user. Route trees
+   *  that gate on feature flags (e.g. the org/Teams routes) must wait for this,
+   *  otherwise a direct load renders with stale/undefined features and the
+   *  catch-all redirect fires before the real flags arrive. */
+  featuresReady: boolean
   currentOrg: Org | null
   setCurrentOrg: (org: Org | null) => void
   onboardingComplete: boolean | null
@@ -42,6 +47,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [authMode, setAuthMode] = useState<'magic_link' | 'password' | 'passkey' | null>(null)
   const [features, setFeatures] = useState<FeatureSet | null>(null)
+  // The identity ('anon' or user id) the current `features` were loaded for.
+  // featuresReady (below) compares it to the current user synchronously, so
+  // route gating never renders with another identity's stale features.
+  const [featuresUserKey, setFeaturesUserKey] = useState<string | null>(null)
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null)
   const [currentOrg, setCurrentOrgState] = useState<Org | null>(() => {
     try {
@@ -143,9 +152,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // before the in-flight request resolves.
   useEffect(() => {
     let cancelled = false
+    const key = user?.id ?? 'anon'
     api.features.get()
-      .then((f) => { if (!cancelled) setFeatures(f) })
-      .catch((e) => console.warn('useAuth: failed to fetch features', e))
+      .then((f) => { if (!cancelled) { setFeatures(f); setFeaturesUserKey(key) } })
+      .catch((e) => {
+        console.warn('useAuth: failed to fetch features', e)
+        // Mark ready even on failure so route gating proceeds (feature-gated
+        // routes stay off) rather than spinning forever.
+        if (!cancelled) setFeaturesUserKey(key)
+      })
     return () => { cancelled = true }
   }, [user, onboardingComplete])
 
@@ -202,8 +217,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setOnboardingComplete(null)
   }, [])
 
+  // Synchronous readiness: features are usable only once loaded for THIS user.
+  // On an auth transition featuresUserKey lags the new user id, so this is false
+  // until the per-user features arrive — no stale-render redirect.
+  const featuresReady = featuresUserKey === (user?.id ?? 'anon')
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, currentOrg, setCurrentOrg, onboardingComplete, refreshOnboarding, login, register, logout, setSession }}>
+    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, featuresReady, currentOrg, setCurrentOrg, onboardingComplete, refreshOnboarding, login, register, logout, setSession }}>
       {children}
     </AuthContext.Provider>
   )
