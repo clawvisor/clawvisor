@@ -72,6 +72,7 @@ export default function App() {
 
   const unauthRedirect = authMode === 'magic_link' ? '/magic-link' : '/login'
   const passwordAuth = features?.password_auth ?? false
+  const ssoEnabled = features?.sso ?? false
 
   return (
     <ErrorBoundary>
@@ -95,7 +96,7 @@ export default function App() {
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/waitlist" element={<Waitlist />} />
       <Route path="/accept-invite" element={<AcceptInvite />} />
-      <Route path="/login/sso" element={<SSOLogin />} />
+      {ssoEnabled && <Route path="/login/sso" element={<SSOLogin />} />}
       <Route path="/sso/complete" element={<SSOComplete />} />
       <Route path="/pricing" element={<Pricing />} />
       <Route

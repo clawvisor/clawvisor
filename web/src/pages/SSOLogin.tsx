@@ -31,6 +31,13 @@ export default function SSOLogin() {
         window.location.href = data.kickoff_url
         return
       }
+      if (data.sso_available) {
+        // The server says SSO is available but didn't return a kickoff URL —
+        // a server-side inconsistency, not a "not configured" domain. Surface
+        // it as a transient error so the user retries rather than giving up.
+        setError('Single sign-on is temporarily unavailable for your organization. Please try again.')
+        return
+      }
       setError(
         'Single sign-on is not configured for that email domain. Check the address, or sign in with your password instead.',
       )
