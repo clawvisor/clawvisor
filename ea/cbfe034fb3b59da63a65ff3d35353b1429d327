@@ -1,0 +1,45 @@
+internal/runtime/llmproxy/pipeline/policy.go
+  s_813cf813d8b1d0::t_741a1e7a1cbf37 163-170
+internal/runtime/llmproxy/policies/tool_use_audit_emitter.go
+  s_813cf813d8b1d0::t_411e2f31fb60c8 166-202
+  s_813cf813d8b1d0::t_e513a5161af925 80-89,107-108,110-123,131-142
+internal/runtime/llmproxy/policies/boundary_check_evaluator.go
+  s_813cf813d8b1d0::t_559fa6dfbc5e79 88-97,102,109
+internal/runtime/llmproxy/policies/control_tool_use_evaluator.go
+  s_813cf813d8b1d0::t_fbd2f3ecfcc98f 180,196,208,219,237-242
+  s_813cf813d8b1d0::t_fa4abaa1d5105e 109,124,135,145,162-166
+internal/runtime/llmproxy/policies/intent_verify_evaluator.go
+  s_813cf813d8b1d0::t_04b1f383e33030 62,74,80,87
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator.go
+  s_813cf813d8b1d0::t_1a8b6b7d4760e4 96-101,116-121,141-146,164-169
+internal/runtime/llmproxy/policies/inspector_evaluator.go
+  s_813cf813d8b1d0::t_57f40250c29a68 75,88,97,105
+internal/runtime/llmproxy/policies/inspector_chain_test.go
+  s_813cf813d8b1d0::t_6f4265058a7b99 192-202,204
+internal/runtime/llmproxy/pipeline/facts.go
+  s_813cf813d8b1d0::t_d765f7ac8fb226 1-27,29-113
+  s_813cf813d8b1d0::t_2e08a114f4a22a 28
+internal/runtime/llmproxy/policies/inspector_chain.go
+  s_813cf813d8b1d0::t_e01e676f2ab32a 101,117,123,135,145,161,175-184,190,199,203-216
+  s_813cf813d8b1d0::t_5d304fdda67769 110-113
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_813cf813d8b1d0::t_4cdd0644b74d0e 92-97,103,116
+internal/runtime/llmproxy/policies/script_session_evaluator.go
+  s_813cf813d8b1d0::t_bf5f84d9b57fab 65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "eacbfe034fb3b59da63a65ff3d35353b1429d327",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

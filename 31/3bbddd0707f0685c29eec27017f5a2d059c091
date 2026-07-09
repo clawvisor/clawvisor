@@ -1,0 +1,26 @@
+internal/runtime/conversation/response_test.go
+  s_068454be9023ad::t_12df11e05d196e 314-362
+internal/runtime/llmproxy/askuserquestion_reply_test.go
+  s_068454be9023ad::t_c38a9982e856ea 224-273
+internal/runtime/llmproxy/askuserquestion_reply.go
+  s_068454be9023ad::t_4000f41d4907f0 6
+  s_068454be9023ad::t_25f5579bd0abe6 197-210,219-222,238-250,254-287
+internal/runtime/conversation/anthropic_response.go
+  s_068454be9023ad::t_e9744e26f5e1b8 405-414,416
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "313bbddd0707f0685c29eec27017f5a2d059c091",
+  "prompts": {},
+  "sessions": {
+    "s_068454be9023ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6c43e544-5845-4973-a64b-7695becd7168",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

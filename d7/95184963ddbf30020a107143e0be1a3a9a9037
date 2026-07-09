@@ -1,0 +1,45 @@
+internal/runtime/llmproxy/pipeline/policy.go
+  s_813cf813d8b1d0::t_0687da30f0b2f6 1-10,14-15,38-60,65-72,77-84,94-97,102-112,114-123,125-126,211-227,242-257,203,210
+  s_813cf813d8b1d0::t_984f29c6c2b526 85-93
+  s_813cf813d8b1d0::t_22c7d85a0f0aca 204,209
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_813cf813d8b1d0::t_ac66b992dcec86 1,7,20-24,26-33,35-42,44,94,143-144,146-153,156-159,162-163,165-168,172-174,179-187,315-316,318-322,325-326,331-339,295-296,304,307,310-312,267
+  s_522af339bc956c::t_5bf0006658b0e5 57
+  s_813cf813d8b1d0::t_3c708c1fe011ba 66,92
+  s_813cf813d8b1d0::t_f708ea38e1ee37 73,104,139
+  s_813cf813d8b1d0::t_8481c02f44c47b 83,87,93
+  s_813cf813d8b1d0::t_185ab7ff71f3f5 188-189
+  s_813cf813d8b1d0::t_721c1314bd6a75 197,203,205-206
+  s_813cf813d8b1d0::t_1f13ee1748cb38 201
+  s_522af339bc956c::t_81987adf38be61 223-224
+  s_813cf813d8b1d0::t_865879a86dbc2f 240-241,246
+  s_813cf813d8b1d0::t_07505de54700ee 248-252,268,278-280
+  s_813cf813d8b1d0::t_e84f90ddd48919 25
+  s_813cf813d8b1d0::t_c8fb80cc30a8e9 288
+  s_813cf813d8b1d0::t_9c24b789e695a1 247,260,262-263
+  s_522af339bc956c::t_8393b91f2d90bc 265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "d795184963ddbf30020a107143e0be1a3a9a9037",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

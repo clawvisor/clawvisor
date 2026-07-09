@@ -1,0 +1,79 @@
+internal/runtime/llmproxy/secret_decision_history.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 1-135
+internal/runtime/llmproxy/secret_detection_test.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 1-630
+internal/api/handlers/llm_endpoint.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 6,9,17,79-88,148,255-263,276-292,319-373,479-480,979-1721
+internal/runtime/autovault/inbound_shared.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 1-264
+pkg/clawvisor/run.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 170-173
+scripts/raw-log-viewer.html
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 1-1318
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 211-215,369,377
+pkg/runtime/proxy/inbound_secret_runtime.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 41,262,274,302-305,307,313-314,317,325,449,453,457,527,605,664,710,782,790,942,946,950,954,958,962,966,970,974,978,982,986,990,1001
+internal/runtime/llmproxy/control.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 11,21,24-28,44,76-78,81,146,148,159-161,177-202,277-280,284
+internal/runtime/policy/starter_profiles_test.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 64-84
+internal/runtime/llmproxy/secret_decision_history_test.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 1-71
+internal/runtime/llmproxy/trace.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 86
+scripts/live-codex-secret-smoke.sh
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 1-230
+scripts/raw-log-viewer.py
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 1-176
+internal/runtime/autovault/detect_test.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 18-26
+web/src/api/client.ts
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 651,663-670,709,1275-1278
+internal/api/handlers/runtime.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 414
+internal/runtime/llmproxy/rawlog.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 23-29,36-38,86-88
+internal/api/handlers/control.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 47-48,50,100,117
+internal/api/server.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 32,894
+internal/api/handlers/runtime_passthrough.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 1-200
+internal/runtime/autovault/adjudicator.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 1-178
+internal/runtime/llmproxy/approval_body_editor.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 415
+pkg/runtime/proxy/inbound_secret_runtime_test.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 85-123
+web/src/pages/Runtime.tsx
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 123-131,165-169,237-260,275-277,292-361
+internal/runtime/llmproxy/control_test.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 9,35-39,67-77
+internal/runtime/llmproxy/inbound_sanitize.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 32-33,415,445
+internal/api/handlers/llm_endpoint_test.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 4,12,19,28-29,32-41,56-65,272-834
+internal/runtime/autovault/detect.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 21,41,43-46,74-78,80-83
+internal/runtime/policy/starter_profiles.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 66-70,82-107
+internal/runtime/llmproxy/secret_detection.go
+  s_5690062ed6cda8::t_e1b6e81ec5bb8b 1-564
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "31c855c3a1742c7a57f17031c1d326bf8c2d3c21",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

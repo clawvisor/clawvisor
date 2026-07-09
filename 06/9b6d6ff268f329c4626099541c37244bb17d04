@@ -1,0 +1,21 @@
+internal/intent/extractor_test.go
+  s_652f614e5eaa1f::t_ec1613cf55211d 4,7,65-68,75-80
+internal/intent/extractor.go
+  s_652f614e5eaa1f::t_ec1613cf55211d 743-745,750
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "069b6d6ff268f329c4626099541c37244bb17d04",
+  "prompts": {},
+  "sessions": {
+    "s_652f614e5eaa1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6272389e-6e27-4873-a478-9519d4a986cc",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

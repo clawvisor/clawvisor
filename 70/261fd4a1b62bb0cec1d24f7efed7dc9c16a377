@@ -1,0 +1,61 @@
+deploy/terraform/examples/local-docker/run.sh
+  s_55f7a841d7c10e::t_1fa87f4e744fe2 1-53
+deploy/terraform/modules/vm-docker/main.tf
+  s_55f7a841d7c10e::t_6103569d124cf5 1-112
+deploy/terraform/modules/vm-docker/cloudinit.tf
+  s_55f7a841d7c10e::t_8d388b4d9ebe16 1-47
+deploy/terraform/modules/vm-docker/templates/Caddyfile.tftpl
+  s_55f7a841d7c10e::t_49f1c925a464b5 1-32
+deploy/terraform/modules/vm-docker/templates/cloud-init.yaml.tftpl
+  s_55f7a841d7c10e::t_94be4d3cc481af 1-68
+deploy/terraform/modules/vm-docker/variables.tf
+  s_55f7a841d7c10e::t_fbe8adec635d2e 131-138,145-152
+  s_55f7a841d7c10e::t_6ae5f866a8072b 1-130,139-144,153-216
+deploy/terraform/modules/vm-docker/templates/deploy.sh.tftpl
+  s_55f7a841d7c10e::t_da66c9768efe30 1-33,53-98
+  s_55f7a841d7c10e::t_fd0a91196df398 34-52
+deploy/terraform/examples/aws-minimal/main.tf
+  s_55f7a841d7c10e::t_1625ffe8e9b26b 1-73
+deploy/terraform/modules/vm-docker/templates/config.yaml.tftpl
+  s_55f7a841d7c10e::t_ddb2adfa907ff0 1-45
+deploy/terraform/modules/vm-docker/aws.tf
+  s_55f7a841d7c10e::t_17b96a5702e592 1-259
+deploy/terraform/modules/vm-docker/outputs.tf
+  s_55f7a841d7c10e::t_781e75bdcb4418 1-51
+deploy/terraform/modules/vm-docker/tests/validate.tftest.hcl
+  s_55f7a841d7c10e::t_e95251e35d8bd7 1-5,23-125
+  s_55f7a841d7c10e::t_89593ec3317c04 6-22
+deploy/terraform/modules/vm-docker/README.md
+  s_55f7a841d7c10e::t_e5f7aafe9ee8b1 1-165
+deploy/terraform/examples/local-docker/render.tf
+  s_55f7a841d7c10e::t_d74b26548361e3 1-113,116-139
+  s_55f7a841d7c10e::t_9e84d200cd6edb 114-115
+deploy/terraform/modules/vm-docker/versions.tf
+  s_55f7a841d7c10e::t_0bfb656432c408 1-19
+deploy/terraform/modules/vm-docker/tests/render.tftest.hcl
+  s_55f7a841d7c10e::t_5f2650916f0d2b 7-23
+  s_55f7a841d7c10e::t_12a243e10739cf 1-6,24-87
+deploy/terraform/modules/vm-docker/templates/docker-compose.yaml.tftpl
+  s_55f7a841d7c10e::t_46fcab0e20f7a2 1-13,19-54
+  s_55f7a841d7c10e::t_258d03e64dcb7c 14-18
+.gitignore
+  s_55f7a841d7c10e::t_2f6f356e5b0cff 29-33
+deploy/terraform/.gitignore
+  s_55f7a841d7c10e::t_2ccb1f7e19c78c 1-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "70261fd4a1b62bb0cec1d24f7efed7dc9c16a377",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

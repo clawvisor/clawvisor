@@ -1,0 +1,23 @@
+internal/runtime/llmproxy/postproc/recoverable_deny.go
+  s_bbe778adcf6f02::t_c31d28d0c4b523 34-41
+internal/runtime/conversation/openai_response.go
+  s_bbe778adcf6f02::t_56b60d3d1d3d15 25-26,28,31-85,89,92-97,104,106-110,113-136,138
+internal/runtime/llmproxy/assistant_notice_prepend.go
+  s_bbe778adcf6f02::t_6beac4dc7b0e2f 55-56,58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "edf55cee5b8d27e209c08b9e496741e21ec34e3e",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

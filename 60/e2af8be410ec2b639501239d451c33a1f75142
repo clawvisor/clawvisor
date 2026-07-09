@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/policies/secret_decision_test.go
+  s_813cf813d8b1d0::t_7e200c63292784 1-110
+internal/runtime/llmproxy/policies/secret_decision.go
+  s_813cf813d8b1d0::t_f553a0128b5ba1 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "60e2af8be410ec2b639501239d451c33a1f75142",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

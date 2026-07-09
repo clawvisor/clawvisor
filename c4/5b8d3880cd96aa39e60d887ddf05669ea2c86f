@@ -1,0 +1,83 @@
+internal/runtime/llmproxy/inline_task_prompt_test.go
+  s_068454be9023ad::t_0d3fb9e0d8044c 134,150-159,179
+  s_068454be9023ad::t_8c025567ad70d3 132-133,135-149,160-178,180-184
+  s_068454be9023ad::t_38d0d7bf5a419f 130-131
+internal/runtime/llmproxy/config.go
+  s_068454be9023ad::t_828438371a3869 144-149
+internal/runtime/llmproxy/inline_task_prompt.go
+  s_068454be9023ad::t_29ed50225bf61e 77-84
+  s_068454be9023ad::t_629bdf072df74f 74-76
+  s_068454be9023ad::t_e30f047a5c4470 41-62
+internal/api/handlers/llm_endpoint.go
+  s_068454be9023ad::t_ed6a9261eccd1f 1184
+  s_068454be9023ad::t_e5936e8bfe8d1a 1594
+  s_068454be9023ad::t_1662451b92b1d1 1665
+internal/runtime/conversation/approval_release_test.go
+  s_068454be9023ad::t_d0c87db798475a 340-367
+  s_068454be9023ad::t_856f8fed4809d9 368-414
+  s_068454be9023ad::t_bec9ed2863a0ba 231-339,415-433
+internal/runtime/llmproxy/approval_body_editor_test.go
+  s_068454be9023ad::t_7d546cc47b1ad8 311-319
+  s_068454be9023ad::t_61d6ec0132b885 267-310,320-382
+internal/runtime/llmproxy/postproc/stream.go
+  s_068454be9023ad::t_9e7026a4fbb907 463-529
+  s_068454be9023ad::t_38fa1cc4a40488 390-400,402-408,418-421,423,426-432,436,442-444,446-451,453,456
+  s_068454be9023ad::t_aca2244d57d58a 174-184,187-197
+  s_068454be9023ad::t_abdfce4ce0267a 401,409-417,422,424-425,437-438,459-462
+  s_068454be9023ad::t_5d50ba41fc7eea 433-435,439-441,445,452,454-455,457-458
+  s_068454be9023ad::t_ea03b57b70af74 185-186
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_068454be9023ad::t_d88dfbe992a282 401-406,408-409,423-429
+  s_068454be9023ad::t_9c09df728e664d 410-420
+  s_068454be9023ad::t_84c506152bc548 434-437,439-444,455
+  s_068454be9023ad::t_6c326e7f7f47f2 394-395,398,400,421-422,430-433,438,445-454,456-465
+  s_068454be9023ad::t_3cd2e8107f5ddc 407
+internal/runtime/conversation/anthropic_response.go
+  s_068454be9023ad::t_440c35da2620b0 129-133,140,148-156
+  s_068454be9023ad::t_2040a1e03759ab 39-81
+  s_068454be9023ad::t_c297458f383bad 134-139,141-147
+  s_068454be9023ad::t_b7d4b6494e69d4 394-410
+internal/runtime/conversation/response_test.go
+  s_068454be9023ad::t_78f3328eeeecbc 152,157-162,167,183-184,186-193,195
+  s_068454be9023ad::t_88871723f32519 140-151,153-156,163-166,168-182,185,194,196-313
+internal/runtime/llmproxy/approval_body_editor.go
+  s_068454be9023ad::t_0060824ce9c229 117-139,159-205,215-242,253-268,270-274,276,283-284,296,298-299,301-365,381-400,407-420
+  s_068454be9023ad::t_d9b98baf9b2127 401-406
+  s_068454be9023ad::t_f8ddfd37cf7607 206-214
+  s_068454be9023ad::t_b010092a810af4 243-252,269,275,277-282,285-295,297,300
+  s_068454be9023ad::t_325102437058c3 366-380
+internal/runtime/conversation/response.go
+  s_068454be9023ad::t_9487402613da1b 31-44
+internal/runtime/conversation/approval_release.go
+  s_068454be9023ad::t_7f1a74caca205e 6
+  s_068454be9023ad::t_baaa07dbac05a6 150-156
+  s_068454be9023ad::t_111a5369a95c7c 49-64,67-118,133-138,172-197,200-202,204-245,253-268,270-274,280,289-292,300-318,320
+  s_068454be9023ad::t_f67f9a43124df3 246-252,269,275-279,281-288,293-299
+  s_068454be9023ad::t_9e18e05568d917 119-132,139-149,157-171
+internal/runtime/llmproxy/synthetic_history_strip_test.go
+  s_068454be9023ad::t_e9ee1e77914273 49-144,146-149
+  s_068454be9023ad::t_d6837120d2367b 145
+internal/runtime/llmproxy/postproc/postprocess_test.go
+  s_068454be9023ad::t_56113f001efbc3 2402-2496
+internal/runtime/llmproxy/historystrip/synthetic_history_strip.go
+  s_068454be9023ad::t_9fbc19907b9820 67-72,75-76,84-99,103-113
+  s_068454be9023ad::t_68c7db74dd8193 259-356
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_068454be9023ad::t_71ed11ec818fcb 323-348
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "c45b8d3880cd96aa39e60d887ddf05669ea2c86f",
+  "prompts": {},
+  "sessions": {
+    "s_068454be9023ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6c43e544-5845-4973-a64b-7695becd7168",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

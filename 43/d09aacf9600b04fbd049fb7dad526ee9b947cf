@@ -1,0 +1,43 @@
+internal/runtime/llmproxy/redis_stores_test.go
+  s_522af339bc956c::t_b7137c1ccaf695 58-89
+  s_522af339bc956c::t_dc04cc0bf3ac7e 5,26-57,90-130
+internal/api/handlers/proxy_resolver.go
+  s_522af339bc956c::t_7d6963615c7fc5 47-52,350-361,363-364,555,576-578,603-605,618-628,630
+  s_522af339bc956c::t_4201acce172f18 362,629
+pkg/clawvisor/options.go
+  s_522af339bc956c::t_8ca459eef59200 151
+pkg/config/config.go
+  s_522af339bc956c::t_3b20d36a2cb4c5 322-323
+internal/runtime/llmproxy/rawlog.go
+  s_522af339bc956c::t_75e21b5171b1cf 46-47
+  s_522af339bc956c::t_a907a749fc8891 34-38,41-42
+internal/runtime/llmproxy/script_session_redis.go
+  s_522af339bc956c::t_5c05354c686362 19-21,121,140-142
+  s_522af339bc956c::t_2b61fcb2113b04 1-18,22-120,122-139,143-240
+internal/api/handlers/llm_endpoint.go
+  s_522af339bc956c::t_a35991162b3046 156-157
+pkg/clawvisor/defaults.go
+  s_522af339bc956c::t_fa23e1863ce0b0 459,502,555
+pkg/clawvisor/run.go
+  s_522af339bc956c::t_e3c2f530cc2321 344-346
+internal/api/server.go
+  s_522af339bc956c::t_31a341435da760 1255-1257,1269-1271,1313
+internal/api/handlers/proxy_resolver_test.go
+  s_522af339bc956c::t_446094f3e30db5 4,141-142,155-157,177-212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "43d09aacf9600b04fbd049fb7dad526ee9b947cf",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    }
+  }
+}

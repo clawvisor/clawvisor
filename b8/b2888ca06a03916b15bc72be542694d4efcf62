@@ -1,0 +1,22 @@
+e2e/scenarios/reference_vault_gcp_real_test.go
+  s_55f7a841d7c10e::t_996462349698f8 1-12,14-40,42-43,45-130
+  s_55f7a841d7c10e::t_ab2736c3d815dd 44
+  s_55f7a841d7c10e::t_0524aa6bba17db 13
+  s_55f7a841d7c10e::t_3b82f0df751011 41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b8b2888ca06a03916b15bc72be542694d4efcf62",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

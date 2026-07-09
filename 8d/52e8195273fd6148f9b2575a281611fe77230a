@@ -1,0 +1,48 @@
+pkg/store/sqlite/store.go
+  s_c55c88f9f7074a::t_9a368c4ee0ba54 3358-3368
+internal/api/connections_test.go
+  s_c55c88f9f7074a::t_3eab8ffc4042cb 579-634
+pkg/store/postgres/store.go
+  s_c55c88f9f7074a::t_75222cccca38be 3012-3021
+internal/api/handlers/connections.go
+  s_c55c88f9f7074a::t_85a2b47355babe 270-300,302-305,308-325
+  s_c55c88f9f7074a::t_e1df8a67687bec 517-522
+  s_c55c88f9f7074a::t_7e40409aede9f6 360-369
+  s_c55c88f9f7074a::t_3e32fd785b18c6 682-695,702
+  s_c55c88f9f7074a::t_a70e537f25c888 579
+  s_c55c88f9f7074a::t_6ac6a73dc11b41 393-395,397-403
+internal/api/handlers/connections_test.go
+  s_c55c88f9f7074a::t_27df9a9f02ab19 133-134,137-138
+internal/runtime/conversation/testdata/codex/responses_clawvisor_task.sse
+  s_c55c88f9f7074a::t_29cc56cf367a56 1-15
+internal/api/handlers/claim_cache.go
+  s_c55c88f9f7074a::t_fd9607823f1344 15-17
+  s_c55c88f9f7074a::t_1e3ee0613f12ff 85-87
+  s_c55c88f9f7074a::t_8e52dbe7e51acd 44,47-51,53
+internal/runtime/conversation/openai_codex_response_test.go
+  s_c55c88f9f7074a::t_a2d58aae2631cb 9-19,21,23,26,34,38-41,45-50,52,59,63-71,73
+pkg/store/store.go
+  s_c55c88f9f7074a::t_43252f1300611f 328-334
+internal/api/server.go
+  s_c55c88f9f7074a::t_4ee9fe2beb6156 720-725
+web/src/pages/Agents.tsx
+  s_c55c88f9f7074a::t_14ee454024e18c 851-855,859,861,866-870
+internal/api/handlers/claim_cache_redis.go
+  s_c55c88f9f7074a::t_9b78f75957fbfe 6,28-32,35,39-42,47-52,61-62,67-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "8d52e8195273fd6148f9b2575a281611fe77230a",
+  "prompts": {},
+  "sessions": {
+    "s_c55c88f9f7074a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e8958da-493e-4cef-9029-07eb2d87ba12",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
