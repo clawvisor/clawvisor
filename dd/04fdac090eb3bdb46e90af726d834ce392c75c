@@ -1,0 +1,41 @@
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_5e221f1030bd1f 190-226
+provider/docs/resources/llm_credential.md
+  s_55f7a841d7c10e::t_5e221f1030bd1f 1-103
+internal/api/server.go
+  s_55f7a841d7c10e::t_5e221f1030bd1f 1700-1716
+provider/examples/resources/clawvisor_llm_credential/resource.tf
+  s_55f7a841d7c10e::t_5e221f1030bd1f 1-41
+internal/api/handlers/llm_credentials.go
+  s_55f7a841d7c10e::t_5e221f1030bd1f 35-36,39-53,58,87-93,96-128
+provider/internal/client/llm_credentials.go
+  s_55f7a841d7c10e::t_5e221f1030bd1f 1-91
+provider/examples/resources/clawvisor_llm_credential/import.sh
+  s_55f7a841d7c10e::t_5e221f1030bd1f 1-5
+e2e/scenarios/llm_proxy_posture_test.go
+  s_55f7a841d7c10e::t_5e221f1030bd1f 129-174
+provider/internal/provider/provider.go
+  s_55f7a841d7c10e::t_5e221f1030bd1f 157
+provider/internal/provider/resource_llm_credential.go
+  s_55f7a841d7c10e::t_5e221f1030bd1f 1-300
+internal/api/handlers/llm_credentials_test.go
+  s_55f7a841d7c10e::t_5e221f1030bd1f 3-218
+provider/internal/provider/testacc/llm_credential_test.go
+  s_55f7a841d7c10e::t_5e221f1030bd1f 1-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "dd04fdac090eb3bdb46e90af726d834ce392c75c",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

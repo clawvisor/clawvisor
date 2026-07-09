@@ -1,0 +1,21 @@
+README.md
+  s_8c262ff100da48::t_ecc0a7db538eab 42
+scripts/install.sh
+  s_8c262ff100da48::t_90a4380b2f65fd 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "a9db9380c369d9a9ccad1d52d6ea41daae9b1911",
+  "prompts": {},
+  "sessions": {
+    "s_8c262ff100da48": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cfb24cd6-f572-46ae-b749-e58ad77ca470",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

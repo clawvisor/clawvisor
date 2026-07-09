@@ -1,0 +1,22 @@
+internal/daemon/setup.go
+  s_55f7a841d7c10e::t_1bfd227b326065 595-599
+  s_55f7a841d7c10e::t_e301b4d50ac714 17
+internal/daemon/install_test.go
+  s_55f7a841d7c10e::t_e6a9e6067f4bbe 179-183
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ec53caa4f3403c88fc761e49b35f5679104460dc",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

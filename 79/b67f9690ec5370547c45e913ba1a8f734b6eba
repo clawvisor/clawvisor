@@ -1,0 +1,40 @@
+internal/api/handlers/tasks_inline.go
+  s_5968b5a9192332::t_352534c2c27d10 217,491
+internal/api/handlers/approvals.go
+  s_5968b5a9192332::t_8e73c24df2595d 916
+internal/api/handlers/llm_endpoint.go
+  s_5968b5a9192332::t_67019ccae514f0 187
+  s_5968b5a9192332::t_8188c501e08988 555-559
+  s_5968b5a9192332::t_34ce9f429923c3 1305,1655
+  s_5968b5a9192332::t_45ab8715ff6a26 4524
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_5968b5a9192332::t_53aaaf2411dff8 858
+internal/taskrisk/resolver_test.go
+  s_5968b5a9192332::t_4e4460ebfb3354 1-65
+internal/api/handlers/tasks.go
+  s_5968b5a9192332::t_9bd8557497b1c4 584
+internal/runtime/llmproxy/config.go
+  s_5968b5a9192332::t_43c1d13811102c 109-113
+  s_5968b5a9192332::t_04e449ccd50bbb 47-49
+internal/taskrisk/assessor.go
+  s_5968b5a9192332::t_093bb169c61233 62-74
+  s_5968b5a9192332::t_022cf5f9e1556a 115-120,126
+  s_5968b5a9192332::t_42b85534a830fc 148-155
+  s_5968b5a9192332::t_68430bf9c22af3 183-190,193-198,206-209,214,216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "79b67f9690ec5370547c45e913ba1a8f734b6eba",
+  "prompts": {},
+  "sessions": {
+    "s_5968b5a9192332": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a904c4d-ba8e-4c28-baa2-feb0913c70b6",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

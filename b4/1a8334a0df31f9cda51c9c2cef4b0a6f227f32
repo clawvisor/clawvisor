@@ -1,0 +1,239 @@
+internal/intent/prompts.go
+  s_8de9dcae61d3e3::t_97cff7c536908d 23
+  s_8de9dcae61d3e3::t_42a84e44a7f03e 24
+internal/runtime/llmproxy/inspector/validator_llm_test.go
+  s_8de9dcae61d3e3::t_93aae9ed1da8d5 1-160
+internal/runtime/policy/task_match_test.go
+  s_8de9dcae61d3e3::t_400050e61859a4 146-176
+  s_8de9dcae61d3e3::t_6d68710f1ee1c0 177-186
+internal/runtime/llmproxy/caller_nonce_test.go
+  8de9dcae61d3e38a 168-194
+internal/api/handlers/runtime.go
+  s_8de9dcae61d3e3::t_d0d574c1ec0f76 381-389
+internal/runtime/llmproxy/inspector/readonly_bash.go
+  s_8de9dcae61d3e3::t_4b779545d108d0 1-104,110-113,124-244
+  s_8de9dcae61d3e3::t_00e8ab23665d50 105-109,114-123
+  s_8de9dcae61d3e3::t_2948d4d1342b97 245-279
+internal/runtime/llmproxy/taskscope.go
+  s_8de9dcae61d3e3::t_e62448ad22eaf8 79-84
+pkg/runtime/decision/decision_test.go
+  s_8de9dcae61d3e3::t_8621afa44c64a4 301-330,349-352
+  s_8de9dcae61d3e3::t_fff3c05eeeba26 331-348
+internal/runtime/llmproxy/trace_test.go
+  s_8de9dcae61d3e3::t_963a720d126410 1-87
+web/vite.config.ts
+  8de9dcae61d3e38a 21-24
+internal/runtime/llmproxy/inspector/inspector.go
+  s_8de9dcae61d3e3::t_36c14abbdda827 169-171
+  8de9dcae61d3e38a 177,184-187,197-201
+  s_8de9dcae61d3e3::t_857e4fba111fa4 203-205
+  s_8de9dcae61d3e3::t_2b7fd936b1a907 213
+internal/api/handlers/runtime_test.go
+  s_8de9dcae61d3e3::t_94927ae5b5178c 334-434
+internal/runtime/llmproxy/audit.go
+  8de9dcae61d3e38a 326-327
+internal/runtime/llmproxy/inbound_sanitize.go
+  s_8de9dcae61d3e3::t_fb5113836a95b1 1-3,5-188,200-503
+  s_8de9dcae61d3e3::t_faa16a3b4f49a4 4
+  s_8de9dcae61d3e3::t_d4c86e279ccc47 189-199
+internal/runtime/llmproxy/circuitbreaker_test.go
+  8de9dcae61d3e38a 221-265
+internal/runtime/autovault/placeholder.go
+  s_8de9dcae61d3e3::t_944bebece283dd 34
+pkg/runtime/decision/decision.go
+  s_8de9dcae61d3e3::t_b21579311993da 164-192
+internal/runtime/conversation/openai_response.go
+  8de9dcae61d3e38a 268-275,344-347,364-376,446-466,517-520,553,566-568
+  s_8de9dcae61d3e3::t_fa151eeef756e0 351-355
+  s_8de9dcae61d3e3::t_4fd113a54c4dc4 362
+  s_8de9dcae61d3e3::t_6146e91dd14c11 560-565
+  s_8de9dcae61d3e3::t_cbe6e4f82a2fbd 1199-1201
+  s_8de9dcae61d3e3::t_ee3cea1b041350 1202-1220,1223-1226,1229
+cmd/clawvisor/cmd_agent_lite_test.go
+  8de9dcae61d3e38a 60-61
+internal/runtime/llmproxy/inspector/readonly_bash_test.go
+  s_8de9dcae61d3e3::t_c3449aac952dc4 1-31,34-37,40-77,80-125
+  s_8de9dcae61d3e3::t_0841f257249f62 32-33,38-39
+  s_8de9dcae61d3e3::t_bedb22b23cdb33 78-79
+  s_8de9dcae61d3e3::t_cbb8e451368a9c 126-162
+pkg/clawvisor/defaults.go
+  s_8de9dcae61d3e3::t_9681258530fd53 475
+  s_8de9dcae61d3e3::t_bb6843108bd260 623,625-648,651
+internal/runtime/llmproxy/forward_test.go
+  8de9dcae61d3e38a 291-315
+internal/api/server.go
+  s_8f3d790934e389::t_fa390b916ed2db 325,875,912,918,926,938,943,959,963,969,974,985,990,997
+  s_8de9dcae61d3e3::t_7b0b6fdc8887af 871,874,886,888-901,909,954
+  s_8de9dcae61d3e3::t_8b31f83b147ad9 878-885,887
+internal/api/handlers/proxy_resolver.go
+  8de9dcae61d3e38a 126-130,132-142,440,448-453,483-517
+  s_8de9dcae61d3e3::t_b29ae19f2ffacc 199
+  s_8de9dcae61d3e3::t_4bbee3e25413ed 560-563,577
+internal/runtime/llmproxy/release.go
+  8de9dcae61d3e38a 108,146
+web/src/pages/Agents.tsx
+  8de9dcae61d3e38a 1330-1342
+internal/runtime/llmproxy/caller_nonce.go
+  8de9dcae61d3e38a 118-122,158,163-178
+internal/runtime/llmproxy/catalog_test.go
+  8de9dcae61d3e38a 138-169,181-202,222
+  s_8de9dcae61d3e3::t_108cf1621f511b 203-221
+internal/runtime/llmproxy/inspector/parser_flags_test.go
+  s_8de9dcae61d3e3::t_243ad267d32449 1-51,53-60,63-120
+  s_8de9dcae61d3e3::t_5ecf1218ba2a19 124-138,141-171
+  s_8de9dcae61d3e3::t_4d28f2479efb5c 139-140
+internal/runtime/llmproxy/inspector/inspector_test.go
+  s_8de9dcae61d3e3::t_bbbfadc2855356 24-27
+  s_8de9dcae61d3e3::t_a105d8b7f35c31 80-130,132,135,138-152
+  s_8de9dcae61d3e3::t_e3a55b948c5e32 283-334
+  s_8de9dcae61d3e3::t_b6e5389e22e5d8 666-669,671-692
+internal/runtime/llmproxy/inbound_sanitize_test.go
+  s_8de9dcae61d3e3::t_a8b48dbdc7330f 1-174,208-219
+  s_8de9dcae61d3e3::t_dca91ca9944ad1 175-207
+internal/runtime/llmproxy/inspector/boundservices_test.go
+  8de9dcae61d3e38a 1-17,21-31
+  s_8de9dcae61d3e3::t_999d043f258a6a 32-50,53-61
+pkg/config/config.go
+  s_8de9dcae61d3e3::t_4f427a59f87d6d 285,289,293,298,302-308,310
+web/src/pages/Restrictions.tsx
+  8de9dcae61d3e38a 748-752
+docs/LITE_PROXY.md
+  s_8de9dcae61d3e3::t_da1b424059fd3d 1-295
+internal/runtime/llmproxy/control_test.go
+  8de9dcae61d3e38a 1-52
+internal/runtime/llmproxy/postprocess.go
+  s_8de9dcae61d3e3::t_c8d6539b844837 9
+  s_8de9dcae61d3e3::t_f1d142e52587c0 125-130
+  8de9dcae61d3e38a 190-193,479-484,486
+  s_8de9dcae61d3e3::t_141061136151e3 194-221
+  s_8de9dcae61d3e3::t_e7238dd54483c3 264-266,280-283
+  s_8de9dcae61d3e3::t_b72689bd49ecad 267-273
+  s_8de9dcae61d3e3::t_b2df66568f746d 285-294
+  s_8de9dcae61d3e3::t_8e54f4dcd74d91 316-322
+  s_8de9dcae61d3e3::t_a5dc36ba6dd641 341-350,362
+  s_8de9dcae61d3e3::t_88595a6ca71d4d 351-355
+  s_8de9dcae61d3e3::t_6d234370246075 390-398,401
+  s_8de9dcae61d3e3::t_0203d2b31709b7 432-440
+  s_8de9dcae61d3e3::t_0eeb94982ea0a9 511-548
+  s_8de9dcae61d3e3::t_0aa74380bb70b6 558-565
+  s_8de9dcae61d3e3::t_ff203cd1b5c8c7 670-682
+  s_8de9dcae61d3e3::t_2fc17b589bb78c 701,706
+  s_8de9dcae61d3e3::t_3b11dba8e97c1c 752-760
+  s_8de9dcae61d3e3::t_991ad7cc8552ed 765-787
+  s_8de9dcae61d3e3::t_01249af48a3637 788-811
+internal/runtime/llmproxy/anthropic_sanitize.go
+  8de9dcae61d3e38a 101-104,106-110
+internal/runtime/llmproxy/pending_approval_cache.go
+  s_8f3d790934e389::t_e2ea52402d8e4c 42-43
+  s_8f3d790934e389::t_c795de7a48fa21 169-170
+internal/api/handlers/llm_endpoint_test.go
+  s_8de9dcae61d3e3::t_6e32f2c1a8683c 205-211,214,222-223,225,227-231
+  s_8de9dcae61d3e3::t_1a0b8b16385a63 215-218
+  s_8de9dcae61d3e3::t_23ba837a3f3905 219
+  s_8de9dcae61d3e3::t_1c2b8714f6b87f 220-221
+  s_8de9dcae61d3e3::t_645f3716d79709 234-235
+  s_8de9dcae61d3e3::t_f897397f9c7a23 600-602,604
+internal/runtime/llmproxy/forward.go
+  8de9dcae61d3e38a 247-250,256-258,266-284
+internal/runtime/policy/task_match.go
+  s_8de9dcae61d3e3::t_8697d8f6ed47ae 42-56
+  s_8de9dcae61d3e3::t_56cdd811e77c87 80-104,106-108,110,112,114-118
+  s_8de9dcae61d3e3::t_cf55d40d48517e 109,111,113
+internal/api/handlers/runtime_tool_controls.go
+  8de9dcae61d3e38a 111,121-137,141,197-202,275-292
+  s_8de9dcae61d3e3::t_0665b2e67f7de6 293-302,311
+internal/runtime/llmproxy/inspector/validator_llm.go
+  s_8de9dcae61d3e3::t_a8d37c9ffef420 1-151
+internal/runtime/llmproxy/postprocess_test.go
+  s_8de9dcae61d3e3::t_05857d4cb846b9 177-233
+  s_8de9dcae61d3e3::t_80ee145f5b151e 234-300
+  s_8de9dcae61d3e3::t_22ead2c7eabdcd 345-349
+  s_8de9dcae61d3e3::t_b7f66ee9981f31 376-379
+internal/runtime/llmproxy/inspector/parser.go
+  s_8de9dcae61d3e3::t_1fab766a441357 9-10
+  s_8de9dcae61d3e3::t_1d0391c8d7fab5 28-39,49-50,54,76
+  s_8de9dcae61d3e3::t_00f50e0d93dc5e 51-53,55-75,77-94
+  s_8de9dcae61d3e3::t_ebb66f80914b8a 163-174
+  s_8de9dcae61d3e3::t_cb9195bcbb6cbc 180-194,197
+  s_8de9dcae61d3e3::t_8139867316634a 216-253,258,260-283
+  s_8de9dcae61d3e3::t_27769d700a16dc 284-437
+  s_8de9dcae61d3e3::t_b0cd719273771a 585
+internal/api/handlers/proxy_resolver_test.go
+  8de9dcae61d3e38a 381-385,387,394-395
+internal/runtime/llmproxy/control.go
+  s_8de9dcae61d3e3::t_565b29b46c9349 18-23,26
+  s_8de9dcae61d3e3::t_f246330744b482 28,41,43,54
+  s_8de9dcae61d3e3::t_74d0a7a4742f9c 29,32
+  8de9dcae61d3e38a 367-371,374,376-381
+internal/runtime/llmproxy/catalog.go
+  8de9dcae61d3e38a 57,76,82-83,92,136-146,148-155,163-175,178-183,186,193-211,222-235
+  s_8de9dcae61d3e3::t_88719cc0e36e3d 212-221
+internal/runtime/conversation/openai_response_custom_input_test.go
+  s_8de9dcae61d3e3::t_be838614fc4b29 1-21,23-37,39-47
+  s_8de9dcae61d3e3::t_2dcca3f1520ba2 22
+  s_8de9dcae61d3e3::t_c9286a1e8142a5 38,48-61
+internal/runtime/llmproxy/audit_test.go
+  8de9dcae61d3e38a 236-245
+internal/runtime/llmproxy/circuitbreaker.go
+  8de9dcae61d3e38a 97-98,101-103,121-125,131,134,137,139,142,145,152-159,174-180,184,194
+pkg/clawvisor/defaults_test.go
+  s_8de9dcae61d3e3::t_54a516b842dc70 28-82
+internal/runtime/llmproxy/inspector/boundservices.go
+  8de9dcae61d3e38a 18,53,68-74
+  s_8de9dcae61d3e3::t_0b3667f2f7f4d5 54-67,77-79,82-86
+internal/runtime/llmproxy/inspector/rewriter.go
+  8de9dcae61d3e38a 146-148,151-156
+  s_8de9dcae61d3e3::t_8cac4d450e4346 162-170
+  s_8de9dcae61d3e3::t_d8150695db726f 238-242
+internal/api/handlers/llm_endpoint.go
+  s_8de9dcae61d3e3::t_efc7d77cd882f5 84-88
+  s_8de9dcae61d3e3::t_42c2c9e9d5ec13 231-250
+  8de9dcae61d3e38a 387-390,461-477,797-818
+  s_8de9dcae61d3e3::t_ef76046a2cdff9 456
+internal/runtime/autovault/swap.go
+  s_8de9dcae61d3e3::t_5ae3241bdfba81 11
+internal/api/handlers/runtime_tool_controls_test.go
+  s_8de9dcae61d3e3::t_452c651d728c64 1-76
+internal/runtime/llmproxy/caller_nonce_redis.go
+  s_8de9dcae61d3e3::t_2c7d65a8430c00 7
+  s_8de9dcae61d3e3::t_41c11cd33b1d3a 47-49
+internal/runtime/llmproxy/trace.go
+  s_8de9dcae61d3e3::t_834aa0c2a618af 1-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "b41a8334a0df31f9cda51c9c2cef4b0a6f227f32",
+  "prompts": {
+    "8de9dcae61d3e38a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine",
+      "total_additions": 342,
+      "total_deletions": 72,
+      "accepted_lines": 694,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+provider/examples/self-hosted-enterprise/README.md
+  s_55f7a841d7c10e::t_8f3c3120158682 1-24
+provider/examples/self-hosted-enterprise/main.tf
+  s_55f7a841d7c10e::t_d947f177aaac1e 1-61
+provider/internal/provider/resource_org.go
+  s_55f7a841d7c10e::t_9700aeb8bef913 78,100
+provider/internal/provider/resource_org_token.go
+  s_55f7a841d7c10e::t_71a6135bc5a31d 96,122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b6b690ff5803534070a6377f705461685568e84d",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

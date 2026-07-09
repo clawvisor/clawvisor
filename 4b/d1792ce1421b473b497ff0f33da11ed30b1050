@@ -1,0 +1,22 @@
+internal/e2e/harness/contain_scenarios_test.go
+  s_55f7a841d7c10e::t_959be692c17a81 1-249
+e2e/testapp/server.go
+  s_55f7a841d7c10e::t_92c2267a3e418c 386-402
+  s_55f7a841d7c10e::t_e61ec1852e8237 243-258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4bd1792ce1421b473b497ff0f33da11ed30b1050",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

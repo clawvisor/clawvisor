@@ -1,0 +1,43 @@
+internal/api/handlers/approvals_test.go
+  s_55f7a841d7c10e::t_3800b2911de7f0 69
+internal/api/handlers/auth.go
+  s_55f7a841d7c10e::t_d408b6c3d7c992 203-208,236,238-241
+internal/api/handlers/flat_team_test.go
+  s_55f7a841d7c10e::t_822873ea0efc62 6,22-33,141-146,163-174
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_4ce6f0bbaf0414 203-223
+internal/api/middleware/trust_split_test.go
+  s_55f7a841d7c10e::t_4706e4bb6c6c62 110-138
+internal/api/server.go
+  s_55f7a841d7c10e::t_fca41a6344ee01 779-784,1070,1072-1073
+pkg/store/sqlite/flat_team_migration_test.go
+  s_55f7a841d7c10e::t_da401944ed694a 8,10,85-182
+pkg/store/sqlite/migrations/063_audit_actor_retain.sql
+  s_55f7a841d7c10e::t_91a9cf2b830fb5 9-16,25-26,28,96-97,100-101
+pkg/store/store.go
+  s_55f7a841d7c10e::t_dc3d04ab0d2db9 624-627
+pkg/store/store_test.go
+  s_55f7a841d7c10e::t_2cca1a0a87072e 7,10-32
+pkg/vault/instance_aware.go
+  s_55f7a841d7c10e::t_fe245f9545aaf0 3-6,45
+pkg/vault/instance_aware_test.go
+  s_55f7a841d7c10e::t_57143e80ab4faa 7,13-47
+e2e/scenarios/api_tokens_test.go
+  s_55f7a841d7c10e::t_2bdeece18f8f7e 160-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "face794bf2af695fe635f426c09741a6565fcece",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+e2e/realclient/tmux.go
+  s_55f7a841d7c10e::t_65f7e800734847 272-275,285-291,293-295
+.github/workflows/realclient.yml
+  s_55f7a841d7c10e::t_9629b50ee8bc68 42-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "226d21f6396a5909d10812992a65ec0d1f741a15",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

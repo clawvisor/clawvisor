@@ -1,0 +1,70 @@
+internal/api/server.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 957
+pkg/store/store.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 153-159,654-696,699-710
+internal/runtime/llmproxy/audit.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 13,52-56,67-72,77-82,99-103,147-198,201-202
+  s_b47422c857896c::t_84873774a8b5a8 57-66
+  s_b47422c857896c::t_9adb42304b5e6a 104-106
+  s_b47422c857896c::t_3c8973b85b6edd 137
+  s_b47422c857896c::t_a7ecaeea58d796 571-572
+internal/runtime/llmproxy/pricing/pricing.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 1-62,65-69,77-80,83,97-180
+  s_b47422c857896c::t_2757b0d6fe1881 84-87
+pkg/store/sqlite/store.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 9,928-955,957-966,968-1005
+web/src/api/client.ts
+  s_b47422c857896c::t_eca9ef1cfe57fe 1631,1635-1653,1655
+internal/api/handlers/tasks.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 877-920
+internal/api/handlers/control.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 305
+internal/runtime/llmproxy/usage.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 1-44,54-66,87-131,140-368
+  s_b47422c857896c::t_21259ba5a025fa 45-53,67-85
+  s_b47422c857896c::t_368ec190dc2f66 132-139
+internal/api/handlers/llm_endpoint_continuation_test.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 109,266,354,405,474,539
+internal/runtime/llmproxy/usage_test.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 1-113,140-209
+  s_b47422c857896c::t_6340c5fe096b34 114-139
+internal/api/handlers/llm_endpoint.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 235-239,274-275,788-808,909-911,991,1053,1058,1060,1062-1067,1069,1331,1337,1350,1399,1403,1414,1419,1422,1428-1440,1565
+  s_b47422c857896c::t_da2a1ceaa6258a 1052
+  s_b47422c857896c::t_2b7d98f23f3302 1609-1610
+web/src/components/TaskCard.tsx
+  s_b47422c857896c::t_eca9ef1cfe57fe 3,72,138-140,146,148,537-539,1081-1113,1115-1125,1127-1169
+  s_b47422c857896c::t_020a0ef2fcd758 124-128,141,147
+  s_b47422c857896c::t_3bfebe24648229 142-145
+  s_b47422c857896c::t_74c3b09449ff89 465-473,475-481
+internal/runtime/llmproxy/pricing/pricing_test.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 1-86
+internal/runtime/llmproxy/audit_test.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 41,212
+  s_b47422c857896c::t_fd7fe19ab6a3b5 81-83
+pkg/store/sqlite/migrations/052_llm_request_cost.sql
+  s_b47422c857896c::t_eca9ef1cfe57fe 1-15,17-30,37-41
+  s_b47422c857896c::t_4f5ab3d9ee64fb 31-36
+pkg/store/postgres/store.go
+  s_b47422c857896c::t_eca9ef1cfe57fe 8,775-798,804-806,813,815-848
+  s_b47422c857896c::t_3d65cf55e07143 800-803,807-812
+pkg/store/postgres/migrations/052_llm_request_cost.sql
+  s_b47422c857896c::t_eca9ef1cfe57fe 1-6,8-21,28-31
+  s_b47422c857896c::t_4fc0f7e9f76ff5 22-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3e22a8ecbe572233c4b7a6b8a4f94ffe6b5b8270",
+  "prompts": {},
+  "sessions": {
+    "s_b47422c857896c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0dfb7a51-803f-47d4-9fe1-8735c83fb1ce",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

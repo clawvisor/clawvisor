@@ -1,0 +1,46 @@
+internal/intent/prompts.go
+  s_1ebb3e9ec57238::t_bb7a3ed726d855 23-24,26,30-32,35,38-39,42-43,45
+  s_1ebb3e9ec57238::t_3effed69545b2b 337-366
+  s_1ebb3e9ec57238::t_f0a9117052eb14 41
+  s_1ebb3e9ec57238::t_77dcef20f9746f 50-55
+  s_1ebb3e9ec57238::t_c70a78355b99c8 367-392
+  s_1ebb3e9ec57238::t_15f42b1f061864 25,27-29
+  s_1ebb3e9ec57238::t_f5902d9c56c129 330,335-336
+  s_1ebb3e9ec57238::t_288970551c9c83 92
+  s_1ebb3e9ec57238::t_582eecdf008792 323-328
+  s_1ebb3e9ec57238::t_f9b33df549f544 36-37,40,44,46
+  s_1ebb3e9ec57238::t_e2f3bfcf1be2be 58-59
+  s_1ebb3e9ec57238::t_59a9fea9b748ed 407
+  s_1ebb3e9ec57238::t_cc2a0ff8c9b60f 170-176
+  s_1ebb3e9ec57238::t_5f570aae373af7 314-316
+  s_1ebb3e9ec57238::t_04151f0e93ba51 433-434
+  s_1ebb3e9ec57238::t_9ccc1c93482d0b 292-313,317-322,329,331-334
+  s_1ebb3e9ec57238::t_afeab036b1bada 48-49
+  s_1ebb3e9ec57238::t_df8281b6b2e896 409
+internal/intent/eval_gemini_test.go
+  s_1ebb3e9ec57238::t_7358851d476328 250
+internal/intent/testdata/eval_cases.json
+  s_1ebb3e9ec57238::t_54f5c2302e20ca 1440,1443
+  s_1ebb3e9ec57238::t_a638ae2ca968cb 1258-1259
+  s_1ebb3e9ec57238::t_47bc3f0caf8f7f 1131-1132
+internal/intent/eval_test.go
+  s_1ebb3e9ec57238::t_08ca85f1cbe3a2 299-313
+  s_1ebb3e9ec57238::t_183b7a1b30ce8f 314-323,325-344,349-351
+  s_1ebb3e9ec57238::t_5050ab9770a255 202
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "c276972151ea071179325363388495565c815072",
+  "prompts": {},
+  "sessions": {
+    "s_1ebb3e9ec57238": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c51e4117-d0f1-4fba-bfbb-836f409d16ac",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

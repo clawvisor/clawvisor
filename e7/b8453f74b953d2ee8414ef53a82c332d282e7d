@@ -1,0 +1,33 @@
+internal/e2e/lite/scope_drift_counters.go
+  s_bbe778adcf6f02::t_bb9701f7ee8839 99-102
+internal/runtime/llmproxy/postproc/postproc.go
+  s_bbe778adcf6f02::t_30d1e77fac8ea9 82-86
+  s_bbe778adcf6f02::t_542209b0b91836 42-52,55
+internal/runtime/llmproxy/postproc/recoverable_deny.go
+  s_bbe778adcf6f02::t_3611e847264f35 25-30,32,37,41,46,50,59-64,71,77
+internal/runtime/llmproxy/scope_drift_registry.go
+  s_bbe778adcf6f02::t_83522bc0b1b1c7 210-215
+  s_bbe778adcf6f02::t_3a477a2ef5e098 401-409
+internal/runtime/llmproxy/postproc/recoverable_deny_test.go
+  s_bbe778adcf6f02::t_e7ba03a9f6291f 34-40
+  s_bbe778adcf6f02::t_6d623b1a5dd8fa 126-152
+  s_bbe778adcf6f02::t_efdbc5f379f291 108-111
+internal/runtime/llmproxy/postproc/stream.go
+  s_bbe778adcf6f02::t_212b8e56da88f7 100-110,113-117,146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "e7b8453f74b953d2ee8414ef53a82c332d282e7d",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

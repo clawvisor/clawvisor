@@ -1,0 +1,20 @@
+internal/api/handlers/inline_task_e2e_test.go
+  s_8f3d790934e389::t_7148d761e26ccf 325
+  s_8f3d790934e389::t_00f422f5a8091c 359-362
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "d1f4f140d7c735cc85d7df814020c68fe90e636a",
+  "prompts": {},
+  "sessions": {
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

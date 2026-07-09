@@ -1,0 +1,30 @@
+pkg/runtime/proxy/policy_hook.go
+  s_55f7a841d7c10e::t_06a4c70d4a2708 157
+  s_55f7a841d7c10e::t_3e68d36c4d0620 489
+  s_55f7a841d7c10e::t_89957224793e65 248
+pkg/runtime/proxy/observability_hook_test.go
+  s_55f7a841d7c10e::t_17a7b87ea0982f 1-76
+pkg/runtime/proxy/state.go
+  s_55f7a841d7c10e::t_fd6f3d27d70cd9 37-43
+pkg/runtime/proxy/observability_hook.go
+  s_55f7a841d7c10e::t_084b1cbc8850fe 46,62-72,78-113
+  s_55f7a841d7c10e::t_509f8f20610ed2 5,8
+  s_55f7a841d7c10e::t_69f447c747139e 123-130,139-141
+  s_55f7a841d7c10e::t_f16b0fe59cb11e 114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8d54a9b9add58a7e9bd1872353d909d5752ebc2d",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

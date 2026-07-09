@@ -1,0 +1,149 @@
+provider/internal/provider/testacc/content_policy_test.go
+  s_55f7a841d7c10e::t_c9edb8d0519bdb 1-114
+provider/internal/provider/testacc/helpers_test.go
+  s_55f7a841d7c10e::t_79a63fc453a6aa 1-6,8-13,26-72
+  s_55f7a841d7c10e::t_39effccefcf8c6 7,14-25
+provider/internal/provider/resource_vault_entry.go
+  s_55f7a841d7c10e::t_fd00bc94a19439 7
+  s_55f7a841d7c10e::t_3c85825dd65427 1-6,8-90,99-173
+  s_55f7a841d7c10e::t_567d3e8b85fa4b 91-98
+provider/internal/client/agents.go
+  s_55f7a841d7c10e::t_4f0ae977ea68d7 1-75
+provider/internal/provider/testacc/service_config_test.go
+  s_55f7a841d7c10e::t_ea15be10f096ea 1-103
+provider/examples/bootstrap/main.tf
+  s_55f7a841d7c10e::t_8a0292d9ba07f4 1-97
+provider/internal/provider/resource_spend_cap.go
+  s_55f7a841d7c10e::t_9a1062be1c7615 1-148
+provider/internal/provider/capability_test.go
+  s_55f7a841d7c10e::t_a2533e3512290b 1-62
+provider/internal/client/features.go
+  s_55f7a841d7c10e::t_4ba9246574934e 1-66
+provider/internal/provider/resource_model_policy.go
+  s_55f7a841d7c10e::t_eec2cf857aa65c 1-148
+provider/internal/client/vault.go
+  s_55f7a841d7c10e::t_fdd6f4b8e63a27 1-41
+provider/internal/provider/resource_task_policy.go
+  s_55f7a841d7c10e::t_be5b6f19e7ed5e 1-126
+provider/internal/client/services.go
+  s_55f7a841d7c10e::t_6094cf6d383d25 1-47
+provider/README.md
+  s_55f7a841d7c10e::t_16385c9716e746 1-93
+provider/internal/provider/resource_content_policy.go
+  s_55f7a841d7c10e::t_6c238a286c9435 1-179
+provider/internal/client/client.go
+  s_55f7a841d7c10e::t_50591ed1f78497 1-154
+provider/internal/client/client_test.go
+  s_55f7a841d7c10e::t_d65e6afe89d41c 1-119
+provider/internal/provider/testacc/provider_test.go
+  s_55f7a841d7c10e::t_83b35cc092b034 1-35,39-223
+  s_55f7a841d7c10e::t_9627612762e5c6 36-38
+provider/internal/provider/testacc/agent_test.go
+  s_55f7a841d7c10e::t_ea7c58e8d69399 1-108
+provider/internal/provider/resource_api_token.go
+  s_55f7a841d7c10e::t_8916060e54a11e 1-160
+provider/internal/provider/testacc/capability_gate_test.go
+  s_55f7a841d7c10e::t_0bf499b62b0c38 1-31
+provider/internal/provider/testacc/spend_cap_test.go
+  s_55f7a841d7c10e::t_a246f8493d998c 1-96
+provider/internal/provider/testacc/vault_entry_test.go
+  s_55f7a841d7c10e::t_a7cd9d82404578 1-125
+provider/internal/client/governance.go
+  s_55f7a841d7c10e::t_022c314f804e29 1-172
+provider/examples/provider/provider.tf
+  s_55f7a841d7c10e::t_6031c7d733d552 1-26
+provider/internal/provider/testacc/api_token_test.go
+  s_55f7a841d7c10e::t_b44c1d096f9c6c 1-92
+provider/internal/provider/common.go
+  s_55f7a841d7c10e::t_ea1afa959e08de 1-83
+provider/main.go
+  s_55f7a841d7c10e::t_801ee4f4747ef8 1-32
+provider/internal/provider/testacc/build_test.go
+  s_55f7a841d7c10e::t_98d0b53b4609a4 1-33,38-46,55-62
+  s_55f7a841d7c10e::t_1c8ade5def4fe9 34-37
+  s_55f7a841d7c10e::t_afb257928202e5 47-54
+provider/internal/provider/resource_service_config.go
+  s_55f7a841d7c10e::t_5484363e6c03dc 1-159
+provider/internal/provider/testacc/model_policy_test.go
+  s_55f7a841d7c10e::t_e00bd5736dc1e0 1-101
+provider/internal/provider/testacc/task_policy_test.go
+  s_55f7a841d7c10e::t_b79ae9b93fbb70 1-85
+provider/internal/client/tokens.go
+  s_55f7a841d7c10e::t_028e57515c0652 1-61
+provider/internal/provider/resource_agent.go
+  s_55f7a841d7c10e::t_ec568570d87f6a 8,15-44
+  s_55f7a841d7c10e::t_d0a78f0ed5273a 1-7,9-14,45-111,113-204
+  s_55f7a841d7c10e::t_cc25cb06739aaa 112
+provider/internal/provider/provider.go
+  s_55f7a841d7c10e::t_17f8e1514ed5a3 1-175
+provider/docs/index.md
+  s_55f7a841d7c10e::t_13b70408d9b441 1-50
+provider/docs/resources/agent.md
+  s_55f7a841d7c10e::t_645da56a879ae2 1-58
+provider/docs/resources/api_token.md
+  s_55f7a841d7c10e::t_e329cea95f4be9 1-56
+provider/docs/resources/content_policy.md
+  s_55f7a841d7c10e::t_ddc83d61fa3f68 1-56
+provider/docs/resources/model_policy.md
+  s_55f7a841d7c10e::t_948e219156df1c 1-48
+provider/docs/resources/service_config.md
+  s_55f7a841d7c10e::t_490443596aab51 1-52
+provider/docs/resources/spend_cap.md
+  s_55f7a841d7c10e::t_6da4c065396792 1-50
+provider/docs/resources/task_policy.md
+  s_55f7a841d7c10e::t_cc33fcb9cca82e 1-43
+provider/docs/resources/vault_entry.md
+  s_55f7a841d7c10e::t_aa5861cef29c7e 1-56
+provider/examples/resources/clawvisor_agent/import.sh
+  s_55f7a841d7c10e::t_98fa00812f5415 1-3
+provider/examples/resources/clawvisor_agent/resource.tf
+  s_55f7a841d7c10e::t_2fc4c3eef23f18 1-13
+provider/examples/resources/clawvisor_api_token/import.sh
+  s_55f7a841d7c10e::t_8861d38e29d08a 1-3
+provider/examples/resources/clawvisor_api_token/resource.tf
+  s_55f7a841d7c10e::t_5ed1f31ed0ada7 1-11
+provider/examples/resources/clawvisor_content_policy/import.sh
+  s_55f7a841d7c10e::t_c01080e6bbd395 1-2
+provider/examples/resources/clawvisor_content_policy/resource.tf
+  s_55f7a841d7c10e::t_5694ceb72bca19 1-10
+provider/examples/resources/clawvisor_model_policy/import.sh
+  s_55f7a841d7c10e::t_7413e970606a53 1-2
+provider/examples/resources/clawvisor_model_policy/resource.tf
+  s_55f7a841d7c10e::t_88fc5514b8325e 1-9
+provider/examples/resources/clawvisor_service_config/import.sh
+  s_55f7a841d7c10e::t_efd21139115152 1-2
+provider/examples/resources/clawvisor_service_config/resource.tf
+  s_55f7a841d7c10e::t_7726e2661f1a27 1-9
+provider/examples/resources/clawvisor_spend_cap/import.sh
+  s_55f7a841d7c10e::t_b4449f83b7adf2 1-2
+provider/examples/resources/clawvisor_spend_cap/resource.tf
+  s_55f7a841d7c10e::t_cc3f8fbde1dc31 1-7
+provider/examples/resources/clawvisor_task_policy/import.sh
+  s_55f7a841d7c10e::t_57451f4d2912b8 1-2
+provider/examples/resources/clawvisor_task_policy/resource.tf
+  s_55f7a841d7c10e::t_151a6727ffb22b 1-5
+provider/examples/resources/clawvisor_vault_entry/import.sh
+  s_55f7a841d7c10e::t_fe001a8f028106 1-3
+provider/examples/resources/clawvisor_vault_entry/resource.tf
+  s_55f7a841d7c10e::t_3a261fdde45838 1-12
+provider/go.mod
+  s_55f7a841d7c10e::t_579e5c1e8af189 1-68
+provider/go.sum
+  s_55f7a841d7c10e::t_7a2c11a2bb7d52 1-245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b249f21c97d2f3107aebf32cd90eb4f9f32f772e",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

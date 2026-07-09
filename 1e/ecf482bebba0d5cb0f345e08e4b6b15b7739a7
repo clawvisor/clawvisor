@@ -1,0 +1,23 @@
+internal/api/connections_test.go
+  s_c55c88f9f7074a::t_480d624eea71e8 575-610
+internal/api/handlers/connections.go
+  s_c55c88f9f7074a::t_b2c3125434d02b 294-304
+web/src/pages/Agents.tsx
+  s_c55c88f9f7074a::t_7141bfbe442163 1028-1031
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "1eecf482bebba0d5cb0f345e08e4b6b15b7739a7",
+  "prompts": {},
+  "sessions": {
+    "s_c55c88f9f7074a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e8958da-493e-4cef-9029-07eb2d87ba12",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
