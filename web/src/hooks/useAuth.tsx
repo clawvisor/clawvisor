@@ -5,6 +5,9 @@ const CURRENT_ORG_KEY = 'clawvisor_current_org'
 const INITIAL_REFRESH_RETRY_MS = 1_000
 const MAX_INITIAL_REFRESH_RETRY_MS = 5_000
 const MAX_INITIAL_REFRESH_ATTEMPTS = 5
+// Deadline after which a still-pending /api/features request is treated as
+// "settled" (features gated off) so RequireAuth's gate can't deadlock the app.
+const FEATURES_LOAD_TIMEOUT_MS = 10_000
 
 function safeSetItem(key: string, value: string) {
   try { localStorage.setItem(key, value) } catch { /* quota exceeded — ignore */ }
@@ -153,6 +156,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false
     const key = user?.id ?? 'anon'
+    // Safety valve: /api/features has no request-level timeout, and
+    // RequireAuth blocks the authenticated app until featuresReady flips true.
+    // If the request hangs indefinitely, mark features "ready" (gated off)
+    // after a deadline so navigation can't deadlock on a stalled fetch. A late
+    // real response still applies below and upgrades the flags.
+    const timer = setTimeout(() => {
+      if (!cancelled) {
+        console.warn('useAuth: /api/features slow; proceeding with features gated off')
+        setFeaturesUserKey(key)
+      }
+    }, FEATURES_LOAD_TIMEOUT_MS)
     api.features.get()
       .then((f) => { if (!cancelled) { setFeatures(f); setFeaturesUserKey(key) } })
       .catch((e) => {
@@ -161,7 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // routes stay off) rather than spinning forever.
         if (!cancelled) setFeaturesUserKey(key)
       })
-    return () => { cancelled = true }
+      .finally(() => clearTimeout(timer))
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [user, onboardingComplete])
 
   // Register a refresh callback so the API client can silently handle 401s on

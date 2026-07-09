@@ -57,14 +57,19 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, authMode, onboardingComplete, featuresReady } = useAuth()
   const location = useLocation()
-  // Wait for features to load for the current user before rendering the
-  // authenticated app. Feature-gated route trees (e.g. the org/Teams routes in
-  // Dashboard) are absent until features arrive; rendering early lets the
-  // catch-all redirect fire on a deep-link/refresh before the flags load.
-  if (isLoading || !featuresReady) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+  // Wait for session restore first, then resolve auth. An unauthenticated
+  // visitor is redirected to login immediately — before the features gate —
+  // so logout and deep-links don't stall on an /api/features request that
+  // logged-out users don't need.
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
   if (!isAuthenticated) {
     return <Navigate to={authMode === 'magic_link' ? '/magic-link' : '/login'} replace />
   }
+  // Authenticated: wait for THIS user's features before rendering the app.
+  // Feature-gated route trees (e.g. the org/Teams routes in Dashboard) are
+  // absent until features arrive; rendering early lets the catch-all redirect
+  // fire on a deep-link/refresh before the flags load.
+  if (!featuresReady) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
   if (onboardingComplete === false && location.pathname !== '/onboarding') {
     return <Navigate to="/onboarding" replace />
   }
