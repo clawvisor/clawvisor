@@ -65,39 +65,6 @@ export default function Login() {
     }
   }
 
-  async function handleSSO() {
-    if (!email) {
-      setError('Enter your email above to sign in via SSO.')
-      return
-    }
-    setError(null)
-    setIsSubmitting(true)
-    try {
-      const res = await fetch(`/api/auth/sso/discover?email=${encodeURIComponent(email)}`)
-      // Discovery returns 200 with sso_available=false for the
-      // anti-enumeration "not configured" path. Anything other than 2xx is
-      // an actual transport/server failure and must not be conflated with
-      // "no SSO for this domain".
-      if (!res.ok) {
-        setError('SSO discovery is temporarily unavailable. Please try again.')
-        return
-      }
-      const data = await res.json()
-      if (data.sso_available && data.kickoff_url) {
-        // Note: any pending invite token is already persisted in
-        // localStorage by AcceptInvite, so it survives the IdP round-trip
-        // and SSOComplete picks it up via nextAfterAuth().
-        window.location.href = data.kickoff_url
-        return
-      }
-      setError('SSO is not configured for that email domain.')
-    } catch (err: any) {
-      setError(err?.message ?? 'SSO discovery failed.')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
@@ -222,14 +189,9 @@ export default function Login() {
         {features?.sso && (
           <p className="text-center text-xs text-text-tertiary">
             Have SSO?{' '}
-            <button
-              type="button"
-              onClick={handleSSO}
-              disabled={isSubmitting}
-              className="text-brand hover:underline disabled:opacity-50"
-            >
+            <Link to="/login/sso" className="text-brand hover:underline">
               Sign in with SSO
-            </button>
+            </Link>
           </p>
         )}
 
