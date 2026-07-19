@@ -2,11 +2,12 @@ package vault
 
 import (
 	"context"
+	crand "crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"sort"
 	"strings"
 	"time"
@@ -132,16 +133,24 @@ type refKindStore struct {
 	crypto *LocalVault // AES-GCM helpers + db/driver, keyed by the master key
 }
 
-func (s refKindStore) ph(n int) string { return s.crypto.ph(n) }
+// q selects the driver-appropriate query string. Both variants are
+// compile-time constant SQL with positional placeholders; values always bind
+// via query args, never via string formatting.
+func (s refKindStore) q(postgres, other string) string {
+	if s.crypto.driver == "postgres" {
+		return postgres
+	}
+	return other
+}
 
 // readKind returns the kind of the DB row for (userID, serviceID) and whether
 // such a row exists. Under the `gcp` push backend, only ref rows live in the
 // DB, so a missing row means "not a reference" and the caller falls through to
 // the push backend.
 func (s refKindStore) readKind(ctx context.Context, userID, serviceID string) (kind string, exists bool, err error) {
-	q := fmt.Sprintf(
-		`SELECT kind FROM vault_entries WHERE user_id = %s AND service_id = %s`,
-		s.ph(1), s.ph(2),
+	q := s.q(
+		`SELECT kind FROM vault_entries WHERE user_id = $1 AND service_id = $2`,
+		`SELECT kind FROM vault_entries WHERE user_id = ? AND service_id = ?`,
 	)
 	err = s.crypto.db.QueryRowContext(ctx, q, userID, serviceID).Scan(&kind)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -158,9 +167,9 @@ func (s refKindStore) readKind(ctx context.Context, userID, serviceID string) (k
 // (gotcha #1: ref rows are AES-wrapped identically, so the legacy-AAD
 // fallback must be exercised for them too).
 func (s refKindStore) getEnvelope(ctx context.Context, userID, serviceID string) (RefEnvelope, error) {
-	q := fmt.Sprintf(
-		`SELECT encrypted, iv, auth_tag, kind FROM vault_entries WHERE user_id = %s AND service_id = %s`,
-		s.ph(1), s.ph(2),
+	q := s.q(
+		`SELECT encrypted, iv, auth_tag, kind FROM vault_entries WHERE user_id = $1 AND service_id = $2`,
+		`SELECT encrypted, iv, auth_tag, kind FROM vault_entries WHERE user_id = ? AND service_id = ?`,
 	)
 	var encrypted, iv, authTag, kind string
 	err := s.crypto.db.QueryRowContext(ctx, q, userID, serviceID).Scan(&encrypted, &iv, &authTag, &kind)
@@ -236,9 +245,9 @@ func (s refKindStore) putEnvelope(ctx context.Context, userID, serviceID string,
 // is never later reinterpreted as an envelope. Under `gcp` push there is
 // normally no DB row for a push entry, so this is a harmless no-op there.
 func (s refKindStore) resetKindToPush(ctx context.Context, userID, serviceID string) error {
-	q := fmt.Sprintf(
-		`UPDATE vault_entries SET kind = 'push' WHERE user_id = %s AND service_id = %s AND kind <> 'push'`,
-		s.ph(1), s.ph(2),
+	q := s.q(
+		`UPDATE vault_entries SET kind = 'push' WHERE user_id = $1 AND service_id = $2 AND kind <> 'push'`,
+		`UPDATE vault_entries SET kind = 'push' WHERE user_id = ? AND service_id = ? AND kind <> 'push'`,
 	)
 	_, err := s.crypto.db.ExecContext(ctx, q, userID, serviceID)
 	return err
@@ -248,9 +257,9 @@ func (s refKindStore) resetKindToPush(ctx context.Context, userID, serviceID str
 // ref rows under the `gcp` push backend, where inner.Delete only touches
 // Secret Manager).
 func (s refKindStore) deleteRow(ctx context.Context, userID, serviceID string) error {
-	q := fmt.Sprintf(
-		`DELETE FROM vault_entries WHERE user_id = %s AND service_id = %s AND kind = 'ref'`,
-		s.ph(1), s.ph(2),
+	q := s.q(
+		`DELETE FROM vault_entries WHERE user_id = $1 AND service_id = $2 AND kind = 'ref'`,
+		`DELETE FROM vault_entries WHERE user_id = ? AND service_id = ? AND kind = 'ref'`,
 	)
 	_, err := s.crypto.db.ExecContext(ctx, q, userID, serviceID)
 	return err
@@ -258,9 +267,9 @@ func (s refKindStore) deleteRow(ctx context.Context, userID, serviceID string) e
 
 // listRefServiceIDs returns serviceIDs of ref rows for userID.
 func (s refKindStore) listRefServiceIDs(ctx context.Context, userID string) ([]string, error) {
-	q := fmt.Sprintf(
-		`SELECT service_id FROM vault_entries WHERE user_id = %s AND kind = 'ref' ORDER BY service_id`,
-		s.ph(1),
+	q := s.q(
+		`SELECT service_id FROM vault_entries WHERE user_id = $1 AND kind = 'ref' ORDER BY service_id`,
+		`SELECT service_id FROM vault_entries WHERE user_id = ? AND kind = 'ref' ORDER BY service_id`,
 	)
 	rows, err := s.crypto.db.QueryContext(ctx, q, userID)
 	if err != nil {
@@ -468,7 +477,7 @@ func resolveWithRetry(ctx context.Context, r Resolver, env RefEnvelope) ([]byte,
 		}
 		// Exponential backoff (base * 2^attempt) plus up to base jitter.
 		delay := base * time.Duration(1<<attempt)
-		delay += time.Duration(rand.Int63n(int64(base))) //nolint:gosec // jitter, not security-sensitive
+		delay += cryptoJitter(base)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -476,6 +485,18 @@ func resolveWithRetry(ctx context.Context, r Resolver, env RefEnvelope) ([]byte,
 		}
 	}
 	return nil, lastErr
+}
+
+// cryptoJitter returns a uniformly random duration in [0, max) sourced from
+// crypto/rand. The jitter itself has no security requirement, but sourcing it
+// from crypto/rand costs nothing on this path (max 3 retry attempts) and keeps
+// math/rand out of the vault package entirely.
+func cryptoJitter(max time.Duration) time.Duration {
+	n, err := crand.Int(crand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return max / 2 // degraded fallback: fixed half-max jitter
+	}
+	return time.Duration(n.Int64())
 }
 
 // ExtractJSONKey applies a RefEnvelope's json_key to a fetched secret payload:

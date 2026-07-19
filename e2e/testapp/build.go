@@ -11,10 +11,12 @@ package testapp
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -41,8 +43,19 @@ func buildBinary(t *testing.T, pkg string) string {
 	t.Helper()
 	once, _ := buildOnce.LoadOrStore(pkg, &sync.Once{})
 	once.(*sync.Once).Do(func() {
+		// Only packages from this module may be built; the sole variable
+		// argument to the constant `go` binary is therefore constrained.
+		if !strings.HasPrefix(pkg, "github.com/clawvisor/clawvisor/") {
+			buildErr.Store(pkg, fmt.Errorf("refusing to build non-clawvisor package %q", pkg))
+			return
+		}
+		goBin, err := exec.LookPath("go")
+		if err != nil {
+			buildErr.Store(pkg, err)
+			return
+		}
 		dir := cacheDir(pkg)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0750); err != nil {
 			buildErr.Store(pkg, err)
 			return
 		}
@@ -50,7 +63,7 @@ func buildBinary(t *testing.T, pkg string) string {
 		if runtime.GOOS == "windows" {
 			bin += ".exe"
 		}
-		cmd := exec.Command("go", "build", "-o", bin, pkg)
+		cmd := exec.Command(goBin, "build", "-o", bin, pkg)
 		cmd.Env = os.Environ()
 		out, err := cmd.CombinedOutput()
 		if err != nil {

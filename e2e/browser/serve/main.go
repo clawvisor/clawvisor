@@ -297,7 +297,14 @@ func resolveBinary() (string, error) {
 		return "", err
 	}
 	bin := filepath.Join(os.TempDir(), "clawvisor-browser-lane-server")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/clawvisor-server")
+	// The binary name is constant ("go", resolved via PATH lookup) and the
+	// package argument is a fixed in-repo path; only the output path varies,
+	// and it is derived from os.TempDir + a constant name.
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		return "", err
+	}
+	build := exec.Command(goBin, "build", "-o", bin, "./cmd/clawvisor-server")
 	build.Dir = root
 	build.Stdout = os.Stderr
 	build.Stderr = os.Stderr

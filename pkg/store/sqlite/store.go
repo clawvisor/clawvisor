@@ -1939,15 +1939,20 @@ func (s *Store) ListAllAuditEvents(ctx context.Context, filter store.AuditFilter
 		where += " AND service NOT LIKE 'runtime.%'"
 	}
 
+	// Both queries below are assembled exclusively from constant SQL
+	// fragments (the conditional WHERE pieces above are string literals with
+	// `?` placeholders); every user-supplied value binds via args.
+	countQuery := "SELECT COUNT(*) FROM audit_log " + where
+	dataQuery := `SELECT ` + auditColumns + `, actor_email FROM audit_log ` + where +
+		` ORDER BY timestamp DESC LIMIT ? OFFSET ?`
+
 	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_log "+where, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	dataArgs := append(args, limit, filter.Offset)
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+auditColumns+`, actor_email FROM audit_log `+where+` ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
-		dataArgs...)
+	rows, err := s.db.QueryContext(ctx, dataQuery, dataArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2857,16 +2862,21 @@ func scanAdminPendingApprovalRow(scan func(...any) error) (*store.PendingApprova
 	return pa, nil
 }
 
+// adminPendingApprovalSelect is the shared SELECT head for the admin (cross-
+// user) pending-approval reads. Assembled once at init from the constant
+// column list — it contains no runtime input; values always bind via args.
+var adminPendingApprovalSelect = `SELECT ` + prefixColumns("pa", pendingApprovalColumns) + `, COALESCE(u.email, '')
+	 FROM pending_approvals pa
+	 LEFT JOIN users u ON u.id = pa.user_id`
+
 // ListAllPendingApprovals returns every unresolved hold across all users with
 // owner_email joined (04b admin approval queue). This is what lets an admin —
 // not the governed member — resolve a hold.
 func (s *Store) ListAllPendingApprovals(ctx context.Context) ([]*store.PendingApproval, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+prefixColumns("pa", pendingApprovalColumns)+`, COALESCE(u.email, '')
-		 FROM pending_approvals pa
-		 LEFT JOIN users u ON u.id = pa.user_id
+	query := adminPendingApprovalSelect + `
 		 WHERE pa.status = 'pending' AND strftime('%s', pa.expires_at) > strftime('%s','now')
-		 ORDER BY pa.created_at ASC`)
+		 ORDER BY pa.created_at ASC`
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -2886,11 +2896,9 @@ func (s *Store) ListAllPendingApprovals(ctx context.Context) ([]*store.PendingAp
 // (04b admin resolve path). request_id is only unique within a user, so the
 // admin queue addresses rows by id and learns the owner from the row.
 func (s *Store) GetPendingApprovalByID(ctx context.Context, id string) (*store.PendingApproval, error) {
-	pa, err := scanAdminPendingApprovalRow(s.db.QueryRowContext(ctx,
-		`SELECT `+prefixColumns("pa", pendingApprovalColumns)+`, COALESCE(u.email, '')
-		 FROM pending_approvals pa
-		 LEFT JOIN users u ON u.id = pa.user_id
-		 WHERE pa.id = ?`, id).Scan)
+	query := adminPendingApprovalSelect + `
+		 WHERE pa.id = ?`
+	pa, err := scanAdminPendingApprovalRow(s.db.QueryRowContext(ctx, query, id).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
