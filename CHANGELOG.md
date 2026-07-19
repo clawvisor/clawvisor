@@ -9,6 +9,42 @@
 * **installer:** wire invite delivery into the shell installers. The generated `claude-code`/`codex` scripts (default, skill-only, and claude-code's subscription variant) accept an enrollment invite via `--invite-stdin` or `--invite-file=PATH` (with `CLAWVISOR_INVITE` as a documented, argv-exposed CI fallback), read it off stdin/file — never argv, so it stays out of shell history and the process table — and POST it to the new unauthenticated `POST /api/agents/enroll`. The endpoint claims the invite (single-use, member-only, expiry preserved), confirms email possession inline (magic-link mode's "claim IS the magic-link" carve-out), registers a per-user agent under the new member, and returns its `cvis_` token in one round-trip. A subscription-seat install carrying an invite still never touches a provider key. Enrollment is only mounted in magic-link mode. Note: the invite must be delivered on a free stdin (`printf '%s' "<invite-url>" | sh -c "$(curl -fsSL …/skill/install/claude-code.sh)" -- --invite-stdin`), since `curl … | sh` already occupies stdin with the script body.
 * **api-tokens:** long-lived, scoped, revocable API tokens (`cvat_` prefix) at `POST/GET/DELETE /api/tokens`, plus a first-boot bootstrap path via the new `CLAWVISOR_BOOTSTRAP_TOKEN` env var (single-use, 24h expiry, burned on first mint). `GET /api/features` now advertises `api_tokens: true`. **Cloud submodule-bump note:** a `cvat_` bearer passes through `proxy_lite_gate.go` untouched (it sniffs only `cvis_`/`cv-nonce-`) and falls through the per-user `proxy_lite_users` gate on `/api/vault/items`; instance-admin tokens are intended to bypass per-user proxy-lite gating, so this is acceptable but must be an explicit, reviewed decision at the bump.
 
+## [0.9.11](https://github.com/clawvisor/clawvisor/compare/v0.9.10...v0.9.11) (2026-07-19)
+
+
+### Features
+
+* **api:** long-lived scoped API tokens with first-boot bootstrap ([#608](https://github.com/clawvisor/clawvisor/issues/608)) ([08b50be](https://github.com/clawvisor/clawvisor/commit/08b50bec29682e72d66533cdeea51503e173ca07))
+* **conversation:** cross-provider marker + summarizer preservation directive ([#601](https://github.com/clawvisor/clawvisor/issues/601)) ([3723013](https://github.com/clawvisor/clawvisor/commit/37230136f8496aad622e7033510de0a27c6c05e3))
+* **dashboard:** expose Governance link in the org sidebar ([#639](https://github.com/clawvisor/clawvisor/issues/639)) ([17cdad2](https://github.com/clawvisor/clawvisor/commit/17cdad2e355761e5493e92a1db63ad6e67ac3a93))
+* **llmproxy:** brand first-turn notice Local / Staging / production ([#589](https://github.com/clawvisor/clawvisor/issues/589)) ([fac1aa2](https://github.com/clawvisor/clawvisor/commit/fac1aa248e34db8978e6c8cb6219ab19abcd447e))
+* **llmproxy:** env-var overrides for upstream provider URLs ([#597](https://github.com/clawvisor/clawvisor/issues/597)) ([5bb58b2](https://github.com/clawvisor/clawvisor/commit/5bb58b2b5cbe7c7984c357d8c33b308b5376c7ec))
+* **llmproxy:** Redis-backed ScopeDriftRegistry for multi-replica deployments ([#593](https://github.com/clawvisor/clawvisor/issues/593)) ([89548a1](https://github.com/clawvisor/clawvisor/commit/89548a1fef30751f80470b39fa73eaeb2b49e2a0))
+* **observability:** OTLP trace + metric export layer ([#609](https://github.com/clawvisor/clawvisor/issues/609)) ([c40bd62](https://github.com/clawvisor/clawvisor/commit/c40bd625b12c634175ebabd9d14fd47e1fd5ed06))
+* **provider:** clawvisor_org + clawvisor_org_token resources ([#635](https://github.com/clawvisor/clawvisor/issues/635)) ([0e2ed1d](https://github.com/clawvisor/clawvisor/commit/0e2ed1ddf0a7192e4812e5f959300b23d51b4513))
+* **provider:** clawvisor_org_settings + surface member connect flows in org mode ([#633](https://github.com/clawvisor/clawvisor/issues/633)) ([1de6f63](https://github.com/clawvisor/clawvisor/commit/1de6f63c5bef66fdefe60e9432e6e8a4f316993f))
+* **provider:** clawvisor_sso_connection — enterprise SSO via Terraform (gated on CapabilitySSO) ([#632](https://github.com/clawvisor/clawvisor/issues/632)) ([1b08c8c](https://github.com/clawvisor/clawvisor/commit/1b08c8cd22530dd0d3d1ee7e5494818fce5bca51))
+* **provider:** cvot_ org tokens for Cloud Terraform (self-hosted + cloud) ([#634](https://github.com/clawvisor/clawvisor/issues/634)) ([e338afd](https://github.com/clawvisor/clawvisor/commit/e338afd5bfb5461d98406ce58a6e8fb37cfeaa16))
+* **tasks:** plumb surface=inline through scope expansions ([#590](https://github.com/clawvisor/clawvisor/issues/590)) ([f5b25bc](https://github.com/clawvisor/clawvisor/commit/f5b25bc0d7257fa30ae9f2cc855ed789e78c11da))
+* **tasks:** wire LLM risk assessment into task expansion ([#588](https://github.com/clawvisor/clawvisor/issues/588)) ([5014445](https://github.com/clawvisor/clawvisor/commit/5014445a7b0ec48034f260dff81a33b69387ba83))
+* terraform-centric v1 — module, provider, postures, flat-team, governance ([#626](https://github.com/clawvisor/clawvisor/issues/626)) ([6bb25fe](https://github.com/clawvisor/clawvisor/commit/6bb25fe1f94fddc7373ba163adcbac1cbe715c60))
+* token lockdown + subscription auto-govern + clawvisor_llm_credential ([#631](https://github.com/clawvisor/clawvisor/issues/631)) ([51bd752](https://github.com/clawvisor/clawvisor/commit/51bd7522602fddd4cc30a82424f0aad7e25f5965))
+* **web:** dedicated SSO sign-in page (/login/sso) ([#636](https://github.com/clawvisor/clawvisor/issues/636)) ([6dfa00f](https://github.com/clawvisor/clawvisor/commit/6dfa00f41bdb0e7cf47252409f69bc573705d447))
+
+
+### Bug Fixes
+
+* **llmproxy:** enforce strict per-conversation task-scope isolation ([#595](https://github.com/clawvisor/clawvisor/issues/595)) ([123ec37](https://github.com/clawvisor/clawvisor/commit/123ec37439a7a2a47937ba3e40495cdfa281b080))
+* **llmproxy:** resolve concurrency, routing, and registry lock bugs from PR 579 ([#583](https://github.com/clawvisor/clawvisor/issues/583)) ([da4f7f3](https://github.com/clawvisor/clawvisor/commit/da4f7f397fee7194cda999688a9cca2b7060aacf))
+* **proxy:** strip auto-approve + routing notices from echoed history ([#592](https://github.com/clawvisor/clawvisor/issues/592)) ([aa7c58d](https://github.com/clawvisor/clawvisor/commit/aa7c58d67f5e4d2c542ab5836ec665a97b43d684))
+* **reliability:** keep audit writes alive on client cancel; stop polling on lost telegram lock ([#585](https://github.com/clawvisor/clawvisor/issues/585)) ([c6ebe08](https://github.com/clawvisor/clawvisor/commit/c6ebe0899b15aa90eaddfdd93a9ea24664945ac1))
+* **services:** key connect flow off org self-service flag ([#637](https://github.com/clawvisor/clawvisor/issues/637)) ([58cdf60](https://github.com/clawvisor/clawvisor/commit/58cdf605d87a5983c52334ae95ae6ea0f0b52a01))
+
+
+### Performance Improvements
+
+* **gmail:** batch list_messages metadata via /batch/gmail/v1 ([#591](https://github.com/clawvisor/clawvisor/issues/591)) ([f4f9588](https://github.com/clawvisor/clawvisor/commit/f4f9588d58b15829f3e3efc398a6b4fe4c430f71))
+
 ## [0.9.10](https://github.com/clawvisor/clawvisor/compare/v0.9.9...v0.9.10) (2026-06-22)
 
 
