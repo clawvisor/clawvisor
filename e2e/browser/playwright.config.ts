@@ -6,7 +6,8 @@ import { defineConfig, devices } from '@playwright/test'
 // global-setup and read back here at runtime.
 //
 // Chromium only in v1 — matches the install lane's single-browser pin
-// (Playwright 1.52.0). Firefox/WebKit are a later addition, not a v1 gap.
+// (Playwright version in package.json). Firefox/WebKit are a later addition,
+// not a v1 gap.
 
 const baseURL = process.env.BASE_URL || readBaseURLFile()
 

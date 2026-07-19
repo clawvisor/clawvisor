@@ -25,7 +25,7 @@ Drives every human-session flow (magic-link login, dashboard render, key vault,
 approvals, policy, agents) against a freshly built server + real frontend.
 
 - Own npm package (`e2e/browser/package.json`, `@playwright/test` pinned to
-  **1.52.0** to match the install lane — bump both together).
+  **1.55.1** to match the install lane — bump both together).
 - `serve/main.go` boots a real `clawvisor-server` subprocess with proxy-lite
   enabled and the frontend served from `web/dist`. It mirrors `e2e/testapp`'s
   config template + port-collision retry, and prints one JSON readiness line.
@@ -47,7 +47,7 @@ cd e2e/browser && npm ci && npx playwright install chromium
 CLAWVISOR_BIN=$PWD/../../bin/clawvisor-server npx playwright test
 ```
 
-> **Node version:** use Node 20 (the version CI pins). Playwright 1.52.0's TS
+> **Node version:** use Node 20 (the version CI pins). Playwright's TS
 > loader does not run under very new Node majors (e.g. Node 26). If `npx
 > playwright test` hangs at startup with a `module.register()` deprecation
 > warning, you are on an unsupported Node — switch to Node 20.

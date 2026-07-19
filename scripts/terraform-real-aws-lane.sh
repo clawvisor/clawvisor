@@ -48,8 +48,10 @@ echo "NOTE: the public_fqdn A record must resolve to $SERVER_IP for ACME."
 SSM_PARAM="/clawvisor/${NAME}/image"
 
 echo "== health check (poll /health via the agent endpoint) =="
+# TLS verification is intentionally ON: the poll only passes once the ACME
+# certificate for public_fqdn is issued and valid, which is part of "healthy".
 deadline=$(( $(date +%s) + 600 ))
-until curl -fsSk "${SERVER_URL}/health" >/dev/null 2>&1; do
+until curl -fsS "${SERVER_URL}/health" >/dev/null 2>&1; do
   [ "$(date +%s)" -ge "$deadline" ] && { echo "FAIL: /health never returned 200"; exit 1; }
   sleep 15
 done
@@ -96,6 +98,6 @@ done
 echo "PASS: .deployed-image advanced to $IMG_V2"
 
 echo "== confirm the server is healthy on the new image =="
-curl -fsSk "${SERVER_URL}/health" >/dev/null 2>&1 && echo "PASS: /health 200 post-upgrade" || { echo "FAIL: server unhealthy after upgrade"; exit 1; }
+curl -fsS "${SERVER_URL}/health" >/dev/null 2>&1 && echo "PASS: /health 200 post-upgrade" || { echo "FAIL: server unhealthy after upgrade"; exit 1; }
 
 echo "ALL GOOD (destroy runs on trap exit)"

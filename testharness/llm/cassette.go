@@ -103,7 +103,7 @@ func (c *Cassette) RoundTrip(req *http.Request) (*http.Response, error) {
 		return c.upstream.RoundTrip(req)
 
 	case ModeRecord:
-		if err := os.MkdirAll(c.dir, 0755); err != nil {
+		if err := os.MkdirAll(c.dir, 0750); err != nil {
 			return nil, fmt.Errorf("cassette mkdir: %w", err)
 		}
 		// Re-build the body since RoundTrip below consumes it.
@@ -297,7 +297,7 @@ func (c *Cassette) writeNext(entry cassetteEntry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0644)
+	return os.WriteFile(path, b, 0600)
 }
 
 // readNext returns the next entry matching key. Entries are read in
@@ -338,12 +338,19 @@ func loadAllEntries(dir string) ([]cassetteEntry, error) {
 		return nil, err
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name() < files[j].Name() })
+	base := filepath.Clean(dir)
 	out := make([]cassetteEntry, 0, len(files))
 	for _, f := range files {
 		if !strings.HasSuffix(f.Name(), ".json") {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(dir, f.Name()))
+		// Path-inclusion guard: names come from ReadDir of the cassette dir,
+		// but re-verify the cleaned path stays inside it before reading.
+		path := filepath.Join(base, f.Name())
+		if !strings.HasPrefix(path, base+string(os.PathSeparator)) {
+			return nil, fmt.Errorf("cassette entry %q escapes cassette dir %q", f.Name(), base)
+		}
+		b, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}
