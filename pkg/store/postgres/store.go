@@ -321,14 +321,42 @@ func (s *Store) actorEmailFor(ctx context.Context, userID string) string {
 }
 
 func (s *Store) DeleteUser(ctx context.Context, userID string) error {
-	res, err := s.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	// Preserve attribution even if the asynchronous historical backfill has
+	// not reached this user's old audit/cost rows yet. Keep the denormalization
+	// and user deletion atomic so ON DELETE SET NULL can never erase the only
+	// remaining link to the actor's email.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var email string
+	if err := tx.QueryRow(ctx, `SELECT email FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&email); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.ErrNotFound
+		}
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE audit_log SET actor_email = $1 WHERE user_id = $2 AND actor_email = ''`,
+		email, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE llm_request_cost SET actor_email = $1 WHERE user_id = $2 AND actor_email = ''`,
+		email, userID); err != nil {
+		return err
+	}
+
+	res, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
 	if err != nil {
 		return err
 	}
 	if res.RowsAffected() == 0 {
 		return store.ErrNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // ── API tokens ──────────────────────────────────────────────────────────────

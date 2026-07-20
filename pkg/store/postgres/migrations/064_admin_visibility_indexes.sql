@@ -6,5 +6,15 @@
 -- the admin-only ListAllAuditEvents ordering and the InstanceCostSummary
 -- time-window rollup. Members' user-scoped queries are unaffected (they keep
 -- hitting the composite user_id-prefixed indexes).
-CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(timestamp DESC);
+--
+-- Do not build idx_audit_time in the transactional startup runner. Production
+-- audit_log can be multi-gigabyte; a regular CREATE INDEX can exceed Cloud
+-- Run's startup deadline and blocks writes for the duration. Operators should
+-- create it separately with:
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_audit_time
+--       ON audit_log(timestamp DESC);
+--
+-- The fleet-wide admin routes are OSS-only, so cloud correctness does not
+-- depend on this optional performance index.
 CREATE INDEX IF NOT EXISTS idx_llm_cost_time ON llm_request_cost(timestamp);
