@@ -1,0 +1,31 @@
+pkg/store/sqlite/migrations/064_instance_governance.sql
+  s_55f7a841d7c10e::t_8ff95b72ad7326 1-89
+pkg/store/postgres/migrations/063_instance_governance.sql
+  s_55f7a841d7c10e::t_d77cad077c6d61 1-63
+pkg/store/sqlite/store_governance.go
+  s_55f7a841d7c10e::t_0631c52f15c58d 1-330
+pkg/store/sqlite/store_governance_test.go
+  s_55f7a841d7c10e::t_6844f4a388ce61 1-183
+pkg/store/store.go
+  s_55f7a841d7c10e::t_f28093c0ca3b72 607-673
+  s_55f7a841d7c10e::t_1937753bcf244f 78-110
+pkg/store/postgres/store_governance.go
+  s_55f7a841d7c10e::t_0f0105b9973ebe 1-6,8-331
+  s_55f7a841d7c10e::t_7a61afc9124ecf 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7c7ebd0508673ed020d442320ed4a6f2ebdf5614",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

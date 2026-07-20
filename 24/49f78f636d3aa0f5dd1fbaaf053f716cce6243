@@ -1,0 +1,20 @@
+e2e/scenarios/llm_proxy_local_gov_test.go
+  s_55f7a841d7c10e::t_77850fe70baab7 1-310
+  s_55f7a841d7c10e::t_c9dcca1db3206b 311
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2449f78f636d3aa0f5dd1fbaaf053f716cce6243",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

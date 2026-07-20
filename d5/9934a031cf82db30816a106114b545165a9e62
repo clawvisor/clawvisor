@@ -1,0 +1,24 @@
+internal/runtime/llmproxy/audit.go
+  s_55f7a841d7c10e::t_d3491f6d2e8a95 252-265
+  s_55f7a841d7c10e::t_418b4f0c3d9b99 266
+internal/runtime/llmproxy/audit_test.go
+  s_55f7a841d7c10e::t_0e05ef4f59f2cb 12-15
+  s_55f7a841d7c10e::t_8ea0689d96547d 203-276
+  s_55f7a841d7c10e::t_0c13dd176ea228 277-278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d59934a031cf82db30816a106114b545165a9e62",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

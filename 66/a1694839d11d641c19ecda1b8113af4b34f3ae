@@ -1,0 +1,43 @@
+pkg/store/postgres/migrations/045_runtime_placeholder_grants.sql
+  s_5690062ed6cda8::t_5a03f397084f99 1-9
+pkg/store/sqlite/store.go
+  s_5690062ed6cda8::t_7dd9719771f604 2492-2500,2506-2507,2525-2526,2558,2572-2577,2581-2588
+pkg/runtime/proxy/placeholder_runtime.go
+  s_5690062ed6cda8::t_e5c0478d446269 77-80
+internal/api/handlers/tasks_inline.go
+  s_5690062ed6cda8::t_db3f9ca8a3ea6b 99,141-143,175-176
+  s_5690062ed6cda8::t_3c6d575d40d482 169-174
+internal/api/handlers/vault.go
+  s_5690062ed6cda8::t_4e6f801a681ffc 118,120-122
+pkg/store/store.go
+  s_5690062ed6cda8::t_ed57dfe07a51c7 714-725
+pkg/store/sqlite/migrations/045_runtime_placeholder_grants.sql
+  s_5690062ed6cda8::t_5a03f397084f99 1-9
+internal/api/handlers/tasks.go
+  s_5690062ed6cda8::t_db2ce0ba86eebd 24,1139-1147,1169-1173,1195-1196,1924-1930,1945-1946
+  s_5690062ed6cda8::t_a19235db82b4f9 1258-1349
+pkg/store/postgres/store.go
+  s_5690062ed6cda8::t_2dd107bbea6055 2261-2268,2274-2275,2293-2294,2326,2338-2342
+internal/api/task_v2_test.go
+  s_5690062ed6cda8::t_17c54217a1c7a2 84,86,98-99,115-124
+internal/api/handlers/proxy_resolver.go
+  s_5690062ed6cda8::t_4c2e2d3f847079 391-405
+web/src/api/client.ts
+  s_5690062ed6cda8::t_e7f7d0659dc387 446-448,450-451,453
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "66a1694839d11d641c19ecda1b8113af4b34f3ae",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

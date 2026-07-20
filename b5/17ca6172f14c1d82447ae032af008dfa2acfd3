@@ -1,0 +1,110 @@
+internal/api/handlers/llm_endpoint.go
+  s_8dd60ead3cc936::t_18f95e2dbc3a03 4675-4681,4694-4695
+  s_8dd60ead3cc936::t_ce3b4d6f6098d0 4693
+  s_8dd60ead3cc936::t_f275c6387236b1 4708-4711,4713-4722
+  s_8dd60ead3cc936::t_c99819ee5b88b1 1233-1236,1241,1243-1246
+  s_8dd60ead3cc936::t_d6a4a04099c8f3 1501-1510
+  s_8dd60ead3cc936::t_37b419c3ffb2d6 1237-1240,1242
+  s_8dd60ead3cc936::t_918cd48ea0b43f 1910-1919
+internal/api/handlers/testdata/llm_characterization/tool_use_credential_rewrite.json
+  s_8dd60ead3cc936::t_b6f2798dfd7508 71
+docs/design-task-model-routing.md
+  s_8dd60ead3cc936::t_3131a469e9e604 1-422
+internal/taskrisk/prompts.go
+  s_8dd60ead3cc936::t_4703239fa47349 311-336
+  s_8dd60ead3cc936::t_db02dec6713940 90-97
+  s_8dd60ead3cc936::t_be861a69ea95c9 74-89,98-99,109-115,118
+internal/runtime/llmproxy/turn_classifier_test.go
+  s_8dd60ead3cc936::t_2efd5baa95c5d8 1-62
+internal/runtime/llmproxy/model_override_test.go
+  s_8dd60ead3cc936::t_f5714a01eceddc 1-86
+internal/llm/models/catalog.go
+  s_8dd60ead3cc936::t_84721a3b242145 249-257,262
+  s_8dd60ead3cc936::t_0d561b8a4c930f 30-51
+  s_8dd60ead3cc936::t_96b50e54410b8b 88-108,114-119,123-128,139
+  s_8dd60ead3cc936::t_24293ba93f39c5 156-166,169-171,174-176,178-180,182
+  s_8dd60ead3cc936::t_1642bb5e0eeffb 202,209-222
+  s_8dd60ead3cc936::t_408b0698628ecf 1-29,52-87,109-113,120-122,129-138,140-155,167-168,172-173,177,181,183-186,188-194,196-201,203-208,223-248,258-261,263-293
+  s_8dd60ead3cc936::t_2a52a0b274a7a3 294-312
+  s_8dd60ead3cc936::t_1185e85ab08253 187,195
+internal/taskrisk/assessor.go
+  s_8dd60ead3cc936::t_aa5170219189b4 63,77-82
+  s_8dd60ead3cc936::t_2f760206ffbe2f 83-97
+  s_8dd60ead3cc936::t_405604d9a522a1 122-150
+  s_8dd60ead3cc936::t_0eb267f2f61ddf 554-576,578-587
+  s_8dd60ead3cc936::t_9590529fe3bab7 17
+  s_8dd60ead3cc936::t_0a68d199d1350d 266-283
+  s_8dd60ead3cc936::t_224a6c7397bfb3 510-519
+  s_8dd60ead3cc936::t_a66f67c9069a0a 259,265
+  s_8dd60ead3cc936::t_ebefdf3c79be40 260-264
+  s_8dd60ead3cc936::t_cb9e9b5ab2a811 192-206
+  s_8dd60ead3cc936::t_c31bcdee9fd222 479-500
+  s_8dd60ead3cc936::t_26d32481f22bfa 333-338
+  s_8dd60ead3cc936::t_569a0d651976b2 76
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_8dd60ead3cc936::t_f87a370dd1c0a0 884-885
+  s_8dd60ead3cc936::t_52ab09f84bb17d 19-37
+  s_8dd60ead3cc936::t_2a7f97c9c1a34d 886
+  s_8dd60ead3cc936::t_18c9122d41e99f 901-904,906-915
+internal/runtime/llmproxy/model_override_response.go
+  s_8dd60ead3cc936::t_10dc1739c6b4ab 1-99
+internal/runtime/llmproxy/inline_task_prompt.go
+  s_8dd60ead3cc936::t_5447a3abfcddd5 165-199
+internal/api/handlers/testdata/llm_characterization/control_notice_injected.json
+  s_8dd60ead3cc936::t_b6f2798dfd7508 32
+internal/api/handlers/llm_endpoint_model_override.go
+  s_8dd60ead3cc936::t_1eac445913413f 5
+  s_8dd60ead3cc936::t_41ae440b22e969 41-52
+  s_8dd60ead3cc936::t_7545979bb5a05b 39,55,59,69,74,85,88,113-119
+  s_8dd60ead3cc936::t_d00ecd0c2126a4 30,36-37
+  s_8dd60ead3cc936::t_cbbf260390c38c 124-128,135-138
+  s_8dd60ead3cc936::t_0b32452a6cc205 1-4,6-29,31-35,38,40,53-54,56-58,60-68,70-73,75-84,86-87,89-99,120-123,129-134,139-148
+  s_8dd60ead3cc936::t_a199b897d220bc 100-107
+  s_8dd60ead3cc936::t_fbbf5fa5fbe605 108-112
+internal/runtime/llmproxy/model_override.go
+  s_8dd60ead3cc936::t_b6b6f2c4f26f10 1-5,10-52
+  s_8dd60ead3cc936::t_0c111aa67d49c0 97-102,104-156
+  s_8dd60ead3cc936::t_06116635882272 6-7
+  s_8dd60ead3cc936::t_5de2385e253440 103
+  s_8dd60ead3cc936::t_d0ac2b8567fb0c 8-9
+  s_8dd60ead3cc936::t_fc2241515bff60 54-59,61-67,69-71,76-83
+  s_8dd60ead3cc936::t_2ce86e73427f71 157-167,169
+  s_8dd60ead3cc936::t_dc9133d9dba05a 53,60,68,72-75,84-96,168,170-179
+internal/runtime/llmproxy/turn_classifier.go
+  s_8dd60ead3cc936::t_1130649d9cdc81 1-129
+internal/api/handlers/testdata/llm_characterization/tool_use_held_for_approval.json
+  s_8dd60ead3cc936::t_b6f2798dfd7508 61
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_openai_chat.json
+  s_8dd60ead3cc936::t_b6f2798dfd7508 29
+internal/runtime/llmproxy/model_override_strip_test.go
+  s_8dd60ead3cc936::t_502d0075a59bc6 1-116
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_anthropic.json
+  s_8dd60ead3cc936::t_b6f2798dfd7508 29
+internal/runtime/llmproxy/model_override_response_test.go
+  s_8dd60ead3cc936::t_4daef29cfa524f 1-91
+internal/api/server.go
+  s_8dd60ead3cc936::t_a3dabc10ffd47c 645,653
+  s_8dd60ead3cc936::t_448cd8811ee3d9 126,141-144
+  s_8dd60ead3cc936::t_61ed037dc5f8af 27
+  s_8dd60ead3cc936::t_1aa8b68d514e4f 140
+internal/runtime/llmproxy/config.go
+  s_8dd60ead3cc936::t_307ed077e404e7 63-70
+  s_8dd60ead3cc936::t_1a79920505b184 71-76
+  s_8dd60ead3cc936::t_042fb577ddcd0f 88-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b517ca6172f14c1d82447ae032af008dfa2acfd3",
+  "prompts": {},
+  "sessions": {
+    "s_8dd60ead3cc936": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5dba4f6-f68d-4afa-8b7f-2bc6ffdfa200",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

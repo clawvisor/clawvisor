@@ -1,0 +1,71 @@
+web/src/api/client.ts
+  s_98743970e8b00b::t_ffd4548b678559 882-887
+web/src/pages/Overview.tsx
+  s_98743970e8b00b::t_c03c1c5f1781d4 475-501
+internal/api/handlers/gateway.go
+  s_98743970e8b00b::t_52dbc216eb05fd 48-55
+internal/runtime/llmproxy/coalesce.go
+  s_98743970e8b00b::t_c7b4914539cad8 120-138
+  s_98743970e8b00b::t_eafc4b0523619b 205-208,210-211
+  s_98743970e8b00b::t_ae95c46a39e8c7 217-223,225-236
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_98743970e8b00b::t_220f9f2b7e25de 300,307-310,331,345-348,350-355,365
+  s_98743970e8b00b::t_ab44c63be7295c 311-315,356-364
+  s_98743970e8b00b::t_c874ecf734df2b 316-324,327-330
+  s_98743970e8b00b::t_8dd7d600c8b5cf 332-343,349
+  s_98743970e8b00b::t_6a78af7a9ab3de 344
+  s_98743970e8b00b::t_297588df13b690 601,607-611
+  s_98743970e8b00b::t_e96da010c270bb 602-606,612-620,635-642,652-656
+  s_98743970e8b00b::t_49943e524bb8ea 621-634,643
+  s_98743970e8b00b::t_8937c5da4a3855 644-647,651
+internal/api/handlers/inline_task_blob_test.go
+  s_98743970e8b00b::t_41102829123a02 1-4,6-57,66-79
+  s_98743970e8b00b::t_b004e83943965f 5
+  s_98743970e8b00b::t_a8611ecae67b2f 58-65
+internal/api/handlers/llm_endpoint.go
+  s_98743970e8b00b::t_11cef027a18f36 476
+internal/api/handlers/overview.go
+  s_98743970e8b00b::t_0d92ed8be63d83 55-61
+internal/runtime/llmproxy/coalesce_drop_test.go
+  s_98743970e8b00b::t_9556949dc6426f 1-4,8-11,14-80
+  s_98743970e8b00b::t_b62fb8ce4c219e 5-7,12-13
+  s_98743970e8b00b::t_e50f0565db865c 81-163
+internal/api/handlers/queue.go
+  s_98743970e8b00b::t_da760853bbca3e 34-39
+  s_98743970e8b00b::t_0890fa22811f86 83-89
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_98743970e8b00b::t_4b9860ce1dbf1a 6
+  s_98743970e8b00b::t_8c17686f88cb6b 42-48
+  s_98743970e8b00b::t_340d56b60d0e00 181-190,204-208
+  s_98743970e8b00b::t_c2bfe48635e0cb 191-195,210-211
+  s_98743970e8b00b::t_91d74149bfe0a0 196,209
+  s_98743970e8b00b::t_30f6c21b1166a8 197-203
+internal/api/handlers/approvals_chat_required_test.go
+  s_98743970e8b00b::t_95aa3c75b23861 1-80
+internal/runtime/llmproxy/postprocess.go
+  s_98743970e8b00b::t_41846fccad89c0 922-926
+internal/api/handlers/approvals.go
+  s_98743970e8b00b::t_d9790b87ed5ab2 222-225
+  s_98743970e8b00b::t_74be695d61c8e4 318-321,333-348
+  s_98743970e8b00b::t_680f1fad193e6c 322-332
+  s_98743970e8b00b::t_2a40d71804a106 361-363
+  s_98743970e8b00b::t_12f7cf677eb5d5 447-449
+  s_98743970e8b00b::t_83ebd1345a9612 511-514
+  s_98743970e8b00b::t_4ad98827d33ba4 657-668,689-691
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "08db58be9f45e5641204b0bfa36ac31b87173fd6",
+  "prompts": {},
+  "sessions": {
+    "s_98743970e8b00b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9e29f8b-93f1-4e36-852b-34ec8729e599",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

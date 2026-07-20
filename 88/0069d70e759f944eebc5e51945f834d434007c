@@ -1,0 +1,21 @@
+internal/local/tunnel/client.go
+  s_aeeca9dea99c0c::t_bd5a0ee7ef1f28 118,276
+internal/api/handlers/gateway.go
+  s_aeeca9dea99c0c::t_6e3d4e71ec8b2b 1580-1581,1794
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "880069d70e759f944eebc5e51945f834d434007c",
+  "prompts": {},
+  "sessions": {
+    "s_aeeca9dea99c0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "29f21bad-67c4-4e04-9440-142cf0795719",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

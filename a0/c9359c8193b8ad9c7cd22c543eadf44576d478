@@ -1,0 +1,77 @@
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_2581e8b0055e64::t_907a5acbe82cd9 705-717
+  s_2581e8b0055e64::t_24c53a652479bf 150
+  s_2581e8b0055e64::t_a403cf11d5e768 697-701
+internal/api/handlers/inline_task_e2e_test.go
+  s_2581e8b0055e64::t_ee14eac8761665 167
+pkg/runtime/proxy/observe_notice_test.go
+  s_2581e8b0055e64::t_b52c523f28a877 135-142,148,170,180,186,192
+  s_2581e8b0055e64::t_9d8d0b02bc6b39 240,273
+internal/runtime/llmproxy/inline_task_augment_test.go
+  s_2581e8b0055e64::t_d79b881ca923e4 12,18-25
+  s_2581e8b0055e64::t_87c1a5b4a937af 192
+  s_2581e8b0055e64::t_4641f3fc002dfb 417-420,422-432
+  s_2581e8b0055e64::t_42dcad9057a684 136
+  s_2581e8b0055e64::t_249b2b9de0b199 72,75,77
+  s_2581e8b0055e64::t_f893f176ca7660 13-17
+  s_2581e8b0055e64::t_2f3a8ae7e15926 190-191
+  s_2581e8b0055e64::t_70f373b554d2bd 66,76
+internal/runtime/llmproxy/clawvisor_notice_test.go
+  s_2581e8b0055e64::t_1a6c2b8fac5719 10-11,13-14
+  s_2581e8b0055e64::t_383dda648209f2 86-95,97,102-103,112-113
+  s_2581e8b0055e64::t_46e4873d18f9ee 26
+  s_2581e8b0055e64::t_afa9a8da9c0e96 46-47
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_2581e8b0055e64::t_89b434d764a0fc 467-470
+  s_2581e8b0055e64::t_5c0aa2843fbf38 492-495,497,499
+pkg/runtime/proxy/observe_notice.go
+  s_2581e8b0055e64::t_f538bda4e4695b 27-28,30-32,34-37
+  s_2581e8b0055e64::t_927301f0e479e3 76-83,93,97-98
+  s_2581e8b0055e64::t_73a86ab08e870d 85-92
+internal/runtime/llmproxy/secret_detection.go
+  s_2581e8b0055e64::t_9133b5722b8534 473-477,495-501
+  s_2581e8b0055e64::t_df2911add5491d 478
+internal/runtime/llmproxy/control.go
+  s_2581e8b0055e64::t_550e6987467157 105
+internal/runtime/llmproxy/human_turns.go
+  s_2581e8b0055e64::t_0a366dff4da1e2 264-267,270-271
+  s_2581e8b0055e64::t_bfc0e05320ffc3 235-242,245-247
+internal/runtime/llmproxy/agent_notice_test.go
+  s_2581e8b0055e64::t_0711925ff49f1b 90,98,108
+  s_2581e8b0055e64::t_bf810e9d3d094b 58-72
+  s_2581e8b0055e64::t_246ffa152cc415 14,22,30,38
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_2581e8b0055e64::t_ff7c34b39232f9 364-368,371,403,411,419-420,438
+  s_2581e8b0055e64::t_7a69ff3ed31347 313,317-318,321-328
+  s_2581e8b0055e64::t_0cd6759d3eca7b 226-231,233-235,238-244,246
+internal/runtime/llmproxy/human_turns_test.go
+  s_2581e8b0055e64::t_b9892a527b3944 132-134
+internal/runtime/llmproxy/synthetic_history_strip.go
+  s_2581e8b0055e64::t_08bd4192697901 202-207
+internal/runtime/llmproxy/synthetic_history_strip_test.go
+  s_2581e8b0055e64::t_622eedd9393df5 71
+  s_2581e8b0055e64::t_79b7ca685468a4 172
+internal/runtime/llmproxy/agent_notice.go
+  s_2581e8b0055e64::t_e9860e78fa281f 42-48,50,52
+  s_2581e8b0055e64::t_8bad3772169458 36-40
+internal/runtime/llmproxy/clawvisor_notice.go
+  s_2581e8b0055e64::t_131b7dae6bb2e6 9-21
+internal/runtime/llmproxy/inline_task_release_test.go
+  s_2581e8b0055e64::t_62d2625322ea87 145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a0c9359c8193b8ad9c7cd22c543eadf44576d478",
+  "prompts": {},
+  "sessions": {
+    "s_2581e8b0055e64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8df711c8-5f9d-40ab-a17b-49d576ed5015",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

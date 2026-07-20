@@ -1,0 +1,19 @@
+e2e/scenarios/llm_proxy_posture_test.go
+  s_55f7a841d7c10e::t_459d25d97b3eff 129-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ca8b773fe819698958b1ebe1e1bbb64a5b6cc67b",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

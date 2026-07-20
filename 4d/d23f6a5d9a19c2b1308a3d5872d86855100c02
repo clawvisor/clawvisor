@@ -1,0 +1,43 @@
+internal/api/handlers/control.go
+  s_b7635082fff64b::t_6550a09a40a540 20,24-26,30,38-93,95-96,98,108-109,139,142-233,266-267,271
+  s_b7635082fff64b::t_1244130b1644b7 140-141
+pkg/store/sqlite/store.go
+  s_b7635082fff64b::t_2265871d3205aa 1338-1341
+internal/runtime/llmproxy/control_test.go
+  s_b7635082fff64b::t_8e3347487ab0d0 45-48
+internal/api/handlers/control_test.go
+  s_b7635082fff64b::t_fc38b4c2ab8d1d 61-106
+internal/api/handlers/llm_endpoint_test.go
+  s_b7635082fff64b::t_412e2236825f19 264,296
+pkg/store/sqlite/store_runtime_test.go
+  s_b7635082fff64b::t_61418fd8141cdd 1008-1047
+pkg/store/postgres/store.go
+  s_b7635082fff64b::t_6d00f35787d5db 1147-1151
+internal/api/handlers/inline_task_e2e_test.go
+  s_b7635082fff64b::t_9c79d899bbdad0 367,370,374
+  s_b7635082fff64b::t_1244130b1644b7 20-31
+pkg/store/store.go
+  s_b7635082fff64b::t_39bda57a64b27f 856
+internal/api/handlers/tasks.go
+  s_b7635082fff64b::t_05faacf6f4afbe 1008-1065
+internal/runtime/llmproxy/control.go
+  s_b7635082fff64b::t_708ea2a64e2d51 35,48,50-51,88-89
+internal/api/server.go
+  s_b7635082fff64b::t_2acd87e34e66c1 1024-1025,1029
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "4dd23f6a5d9a19c2b1308a3d5872d86855100c02",
+  "prompts": {},
+  "sessions": {
+    "s_b7635082fff64b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e32a6-368e-7c40-a4de-d67d7171c8f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
