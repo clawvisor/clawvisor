@@ -1,5 +1,13 @@
 -- 04 flat-team: audit/cost survive user deletion (PRD §15.4, Q4).
--- Postgres can alter the FK in place (no table recreate needed).
+--
+-- STARTUP-SAFETY: this migration runs while the server is starting. Keep the
+-- transaction to metadata-only changes and fail quickly instead of waiting
+-- behind application traffic with an AccessExclusiveLock queued. In
+-- particular, DO NOT backfill actor_email here: production audit_log tables
+-- can contain millions of rows, and rewriting them in this transaction holds
+-- the DDL lock until the entire update commits.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
 --
 -- Flip audit_log.user_id from ON DELETE CASCADE to ON DELETE SET NULL,
 -- make it nullable, and add a server-derived NOT-NULL actor_email so a
@@ -23,12 +31,11 @@ END $$;
 
 ALTER TABLE audit_log ALTER COLUMN user_id DROP NOT NULL;
 ALTER TABLE audit_log ADD CONSTRAINT audit_log_user_id_fkey
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL NOT VALID;
 
+-- On Postgres 11+, adding a column with a constant default is metadata-only.
+-- Existing rows intentionally retain ''. New writes always supply the
+-- server-derived email. Historical rows are filled by the separate resumable
+-- backfill, outside the startup migration transaction.
 ALTER TABLE audit_log ADD COLUMN actor_email TEXT NOT NULL DEFAULT '';
-UPDATE audit_log SET actor_email =
-    COALESCE((SELECT email FROM users u WHERE u.id = audit_log.user_id), '(deleted-user)');
-
 ALTER TABLE llm_request_cost ADD COLUMN actor_email TEXT NOT NULL DEFAULT '';
-UPDATE llm_request_cost SET actor_email =
-    COALESCE((SELECT email FROM users u WHERE u.id = llm_request_cost.user_id), '(deleted-user)');
