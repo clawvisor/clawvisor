@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -257,7 +258,14 @@ func (h *LLMControlHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if task.ExpiresAt != nil && task.ExpiresAt.Before(now) {
-			_ = h.Store.UpdateTaskStatus(r.Context(), task.ID, "expired")
+			won, statusErr := h.Store.UpdateTaskStatusFrom(r.Context(), task.ID, "active", "expired")
+			if statusErr != nil {
+				slog.DebugContext(r.Context(), "opportunistic task expiration update failed (control List)", "err", statusErr, "task_id", task.ID)
+			} else if won {
+				if err := h.Store.DeleteChainFactsByTask(r.Context(), task.ID); err != nil {
+					slog.WarnContext(r.Context(), "chain facts cleanup failed on task expiration (control List)", "err", err, "task_id", task.ID)
+				}
+			}
 			continue
 		}
 		checkedOut := task.ID == checkoutID

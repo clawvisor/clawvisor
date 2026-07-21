@@ -302,3 +302,39 @@ func TestControlToolUseEvaluator_InlineInterceptClaimsCall(t *testing.T) {
 		t.Errorf("nonce mint should not have been called (got agent=%q)", cache.lastAgID)
 	}
 }
+
+func TestControlToolUseEvaluator_MethodMismatchRedirectsToFailure(t *testing.T) {
+	cache := &stubNonceCache{minted: "cv-nonce-failure-abc"}
+	e := policies.NewControlToolUseEvaluator(func(_ context.Context, _ conversation.ToolUse) *policies.ControlToolUseInputs {
+		return &policies.ControlToolUseInputs{
+			ControlBaseURL: "http://localhost:25297",
+			AgentID:        "agent-1",
+			CallerNonces:   cache,
+		}
+	})
+	// A bodyless complete curl has no -X POST, so its actual method is GET.
+	// But /complete requires POST. This triggers method mismatch.
+	tu := conversation.ToolUse{
+		ID:    "toolu_1",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command":"curl -sS 'https://clawvisor.local/control/tasks/task-xyz/complete'"}`),
+	}
+	mut := &recordingMutator{}
+	v, err := e.Evaluate(context.Background(), newStubResp(), tu, mut)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Outcome != pipeline.OutcomeRewrite {
+		t.Fatalf("Outcome = %q (Reason: %s), want Rewrite to failure path", v.Outcome, v.Reason)
+	}
+	if !strings.Contains(v.Reason, "method mismatch") {
+		t.Errorf("expected reason to mention method mismatch, got: %q", v.Reason)
+	}
+	if len(mut.rewrites) != 1 {
+		t.Errorf("rewrites = %d, want 1", len(mut.rewrites))
+	}
+	// Verify it targeted the failure endpoint
+	if cache.lastTgt.Path != "/api/control/failure" {
+		t.Errorf("expected failure path rewrite target, got %+v", cache.lastTgt)
+	}
+}
