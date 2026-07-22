@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/upstreamflavor"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
@@ -31,12 +32,21 @@ var DefaultUpstream = UpstreamSelector{
 }
 
 // UpstreamSelector resolves a (provider, path) pair to a concrete upstream
-// URL. Configurable to point staging deployments at non-prod hosts and to
-// support BYO Bedrock/Vertex/Azure endpoints in future phases.
+// URL. Configurable to point staging deployments at non-prod hosts.
+//
+// When AnthropicFlavor is non-nil, Anthropic-shaped requests are
+// rewritten by the flavor adapter (Vertex AI / Azure AI Foundry / AWS
+// Bedrock) instead of being forwarded to AnthropicBaseURL. OpenAI and
+// Google traffic is unaffected.
 type UpstreamSelector struct {
 	AnthropicBaseURL string
 	OpenAIBaseURL    string
 	GoogleBaseURL    string
+
+	// AnthropicFlavor, when non-nil, replaces native-Anthropic
+	// forwarding with a deployment-specific adapter. See the
+	// upstreamflavor package for available implementations.
+	AnthropicFlavor upstreamflavor.Flavor
 }
 
 // URL returns the upstream URL the lite-proxy should forward to for a given
@@ -171,6 +181,13 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 		return nil, errors.New("llmproxy: inbound request is nil")
 	}
 
+	// Flavor dispatch: when a non-native Anthropic deployment is
+	// configured, the flavor adapter owns URL/body/auth and the rest
+	// of the native path is bypassed.
+	if provider == conversation.ProviderAnthropic && f.Upstream.AnthropicFlavor != nil {
+		return f.forwardFlavor(ctx, userID, agentID, f.Upstream.AnthropicFlavor, inbound, body)
+	}
+
 	upstreamPath := ProviderPath(provider, inbound.URL.Path)
 	upstreamURL, err := f.Upstream.URL(provider, upstreamPath)
 	if err != nil {
@@ -247,6 +264,88 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 	return f.Client.Do(req)
 }
 
+// forwardFlavor handles Anthropic-shaped requests addressed to a
+// non-native deployment (Vertex AI, Azure AI Foundry, AWS Bedrock).
+// The flavor adapter rewrites URL, body, and auth; everything else
+// (header copy, identity encoding, header sanitization) mirrors the
+// native path so streaming + postprocess behavior is unchanged.
+func (f *Forwarder) forwardFlavor(ctx context.Context, userID, agentID string, flavor upstreamflavor.Flavor, inbound *http.Request, body []byte) (*http.Response, error) {
+	upstreamPath := ProviderPath(conversation.ProviderAnthropic, inbound.URL.Path)
+
+	model, err := upstreamflavor.ExtractModel(body)
+	if err != nil {
+		return nil, fmt.Errorf("llmproxy: flavor %s: %w", flavor.Name(), err)
+	}
+
+	upstreamURL, err := flavor.BuildURL(upstreamPath, model)
+	if err != nil {
+		return nil, fmt.Errorf("llmproxy: flavor %s build URL: %w", flavor.Name(), err)
+	}
+	// Preserve any inbound query string the client may have sent
+	// (e.g. ?beta=true). The flavor's own query (api-version for
+	// Azure) takes precedence when keys collide.
+	if inbound.URL.RawQuery != "" {
+		upstreamURL = mergeQuery(upstreamURL, inbound.URL.RawQuery)
+	}
+
+	newBody, err := flavor.TransformBody(body)
+	if err != nil {
+		return nil, fmt.Errorf("llmproxy: flavor %s transform body: %w", flavor.Name(), err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, inbound.Method, upstreamURL.String(), bytes.NewReader(newBody))
+	if err != nil {
+		return nil, fmt.Errorf("llmproxy: flavor %s build upstream request: %w", flavor.Name(), err)
+	}
+	copyForwardableHeaders(req.Header, inbound.Header)
+	req.Header.Set("Host", upstreamURL.Host)
+	req.Host = upstreamURL.Host
+	req.Header.Set("Accept-Encoding", "identity")
+
+	if PassthroughUpstreamAuth(ctx) {
+		if auth := passthroughBearerAuthorization(inbound); auth != "" {
+			req.Header.Set("Authorization", auth)
+			if err := flavor.InjectAuth(req, nil); err != nil {
+				return nil, fmt.Errorf("llmproxy: flavor %s passthrough auth: %w", flavor.Name(), err)
+			}
+			return f.Client.Do(req)
+		}
+	}
+
+	serviceID := flavor.VaultServiceID()
+	if serviceID == "" {
+		return nil, fmt.Errorf("llmproxy: flavor %s is passthrough-only but inbound request has no passthrough Authorization", flavor.Name())
+	}
+	keyBytes, _, err := f.lookupVaultKeyForService(ctx, userID, agentID, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer zeroBytes(keyBytes)
+
+	if err := flavor.InjectAuth(req, keyBytes); err != nil {
+		return nil, fmt.Errorf("llmproxy: flavor %s auth: %w", flavor.Name(), err)
+	}
+	return f.Client.Do(req)
+}
+
+// mergeQuery merges an inbound RawQuery into u, with u's existing keys
+// taking precedence on collision.
+func mergeQuery(u *url.URL, inboundRaw string) *url.URL {
+	inbound, err := url.ParseQuery(inboundRaw)
+	if err != nil {
+		return u
+	}
+	existing := u.Query()
+	for k, vs := range inbound {
+		if _, exists := existing[k]; exists {
+			continue
+		}
+		existing[k] = vs
+	}
+	u.RawQuery = existing.Encode()
+	return u
+}
+
 // lookupVaultKey resolves the upstream API key with agent-scoped-first
 // fallback to user-scoped. Returns (key bytes, the serviceID actually
 // used, error). The serviceID is useful for audit so the row records
@@ -276,6 +375,34 @@ func (f *Forwarder) lookupVaultKey(ctx context.Context, userID, agentID string, 
 		return nil, userServiceID, fmt.Errorf("llmproxy: vault get: %w", err)
 	}
 	return key, userServiceID, nil
+}
+
+// lookupVaultKeyForService is the flavor-driven analogue of lookupVaultKey:
+// the caller supplies the bare service ID (e.g. "vertex", "azure",
+// "bedrock") instead of a Provider enum. Same agent-scoped → user-scoped
+// fallback semantics.
+func (f *Forwarder) lookupVaultKeyForService(ctx context.Context, userID, agentID, serviceID string) ([]byte, string, error) {
+	if serviceID == "" {
+		return nil, "", errors.New("llmproxy: empty serviceID")
+	}
+	if agentID != "" {
+		scoped := "agent:" + agentID + ":" + serviceID
+		key, err := f.Vault.Get(ctx, userID, scoped)
+		if err == nil {
+			return key, scoped, nil
+		}
+		if !errors.Is(err, vault.ErrNotFound) {
+			return nil, "", fmt.Errorf("llmproxy: vault get agent-scoped: %w", err)
+		}
+	}
+	key, err := f.Vault.Get(ctx, userID, serviceID)
+	if err != nil {
+		if errors.Is(err, vault.ErrNotFound) {
+			return nil, serviceID, fmt.Errorf("llmproxy: upstream credential not found in vault for service %q: %w", serviceID, vault.ErrNotFound)
+		}
+		return nil, serviceID, fmt.Errorf("llmproxy: vault get: %w", err)
+	}
+	return key, serviceID, nil
 }
 
 // injectUpstreamAuth writes the upstream-specific auth header using the raw
