@@ -32,14 +32,15 @@ func proxyLiteProbe(t *testing.T, cv *testapp.Server) int {
 	return resp.StatusCode
 }
 
-// TestFlipFreshWizardLandsObserve — a fresh wizard install that accepts the
-// recommended defaults lands in the Observe posture (spec 08 / PRD §12). The
-// wizard writes config_schema: 2, posture: observe, and proxy_lite.enabled:
-// true (proven byte-for-byte by internal/setup's TestWizardWritesMarkerAndEx-
-// plicitKey + TestFlipWizardDefaultsToObserve). Here we boot a server on that
-// exact config shape and assert it becomes ready and the proxy-lite endpoint
-// is served. A schema-2 config must also NOT trip the pre-flip advisory.
-func TestFlipFreshWizardLandsObserve(t *testing.T) {
+// TestObservePostureMountsProxyLite — an operator who explicitly opts into the
+// Observe posture gets a server that boots and serves the proxy-lite endpoint.
+// Observe is the opt-in, not the fresh-install default: the wizard now
+// pre-selects skill-gateway-only (internal/setup's
+// TestWizardDefaultsToSkillGateway), and the byte-for-byte config shape is
+// covered by TestWizardWritesMarkerAndExplicitKey. Here we boot a server on an
+// explicit schema-2 Observe config and assert it becomes ready, the proxy-lite
+// endpoint is served, and the pre-flip advisory does not fire.
+func TestObservePostureMountsProxyLite(t *testing.T) {
 	h := testharness.New(t)
 	cv := testapp.StartWithConfig(t, h, nil, "config_schema: 2\nposture: observe")
 

@@ -2272,10 +2272,11 @@ function OnePasteGuide({
 }) {
   const spec = ONE_PASTE_SPECS[target]
   const [helper, setHelper] = useState<OnePasteHelper>(spec.defaultHelper)
-  // Routing choice for self-install targets (spec 08 flip). 'proxy' is the
-  // recommended default — route LLM traffic through Clawvisor (Observe).
-  // 'skill-only' is the explicit opt-out (registers the agent without routing).
-  const [route, setRoute] = useState<'proxy' | 'skill-only'>('proxy')
+  // Routing choice for self-install targets. 'skill-only' is the default —
+  // register the agent and leave its LLM traffic pointed at its own provider.
+  // 'proxy' is the explicit opt-in that routes model calls through Clawvisor
+  // (Observe), and only works for users entitled to proxy-lite.
+  const [route, setRoute] = useState<'proxy' | 'skill-only'>('skill-only')
   // Reset helper choice when the target changes — switching from Claude Code
   // to Hermes (or back) should land on each target's natural default helper.
   useEffect(() => {
@@ -2329,9 +2330,10 @@ function OnePasteGuide({
     const qs = new URLSearchParams()
     if (claim) qs.set('claim', claim)
     qs.set('agent_name', agentName)
-    // Only self-install targets honor route=skill-only; the markdown helpers
-    // route by default and have their own detection flow.
-    if (spec.selfInstall && route === 'skill-only') qs.set('route', 'skill-only')
+    // Only self-install targets honor an explicit route; the markdown helpers
+    // have their own detection flow. skill-only is the server-side default, so
+    // the param is only appended when opting IN to routing.
+    if (spec.selfInstall && route === 'proxy') qs.set('route', 'proxy')
     return `${installerBaseURL}/skill/install/${target}?${qs.toString()}`
   }, [agentName, claim, installerBaseURL, target, route, spec.selfInstall])
 

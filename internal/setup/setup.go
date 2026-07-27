@@ -634,44 +634,41 @@ func stepSecretsMode(cfg *config) error {
 }
 
 // recommendedPosture is the fresh-install posture the wizard pre-selects and
-// recommends. Spec 08 (the default flip) makes this "observe" — proxy-lite in
-// the Observe posture — so a fresh wizard install lands on visibility-by-
-// default. Skill-gateway-only is the explicit opt-out. This is the writer-side
-// flip: Default() is untouched (proxy_lite.enabled stays false permanently,
-// TestFlipDefaultStaysFalse); the new default is carried only by what the
-// wizard recommends here and what writeConfig emits.
-func recommendedPosture() string { return "observe" }
+// recommends: skill-gateway-only, so a fresh install lands with agents pointed
+// at their own provider and proxy-lite off. Observe is the explicit opt-in for
+// operators who want model traffic routed through Clawvisor.
+//
+// This is writer-side only: Default() is untouched (proxy_lite.enabled stays
+// false permanently, TestFlipDefaultStaysFalse), so the recommendation here now
+// agrees with the zero value instead of overriding it.
+func recommendedPosture() string { return "gateway" }
 
-// stepPosture asks how agents connect. The flip (spec 08 / PRD §11) makes
-// Observe the recommended, pre-selected default; skill-gateway-only is the
-// explicit opt-out. Choosing Observe writes posture: observe plus an explicit
-// proxy_lite block. Either way writeConfig stamps config_schema: 2 and an
-// explicit proxy_lite.enabled — the default is never carried by Default(),
-// always by the writer.
+// stepPosture asks how agents connect. Skill-gateway-only is the recommended,
+// pre-selected default; Observe is the explicit opt-in. Choosing Observe writes
+// posture: observe plus an explicit proxy_lite block. Either way writeConfig
+// stamps config_schema: 2 and an explicit proxy_lite.enabled — the default is
+// never carried by Default(), always by the writer.
 func stepPosture(cfg *config) error {
 	fmt.Println(section.Render("── Agent Connection ───────────────────────"))
 	fmt.Println()
 
-	// Pre-select the recommended default so hitting Enter lands on Observe.
-	// (Post-flip end state per spec 08: the option is labeled "recommended"
-	// and recommendedPosture() returns "observe". The spec-02 standalone PR
-	// defaulted to "gateway" because at that point the flip had not landed;
-	// once it has, Observe is the intended pre-selection.)
+	// Pre-select the recommended default so hitting Enter lands on the skill
+	// gateway, leaving agents pointed at their own provider.
 	choice := recommendedPosture()
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("How should agents connect?").
 				Options(
-					huh.NewOption("Observe (recommended): route agent LLM traffic through Clawvisor for visibility; agents keep their own API keys", "observe"),
-					huh.NewOption("Skill gateway only: keep agents pointed at their provider; opt out of routing", "gateway"),
+					huh.NewOption("Skill gateway only (recommended): keep agents pointed at their provider; Clawvisor governs tool calls", "gateway"),
+					huh.NewOption("Observe: also route agent LLM traffic through Clawvisor for visibility; agents keep their own API keys", "observe"),
 					// Contain is not offered as a working choice until the
 					// capability-parity lane is CI-required (spec 09 D5). Shown
 					// as "(coming soon)"; selecting it falls back to Observe
 					// with a notice pointing to the experimental config gate.
 					huh.NewOption("Contain (coming soon): network-layer containment of the agent process — experimental", "contain"),
 				).
-				// Observe is the pre-selected recommended default (the flip).
+				// Skill gateway only is the pre-selected recommended default.
 				Value(&choice),
 		),
 	).Run()

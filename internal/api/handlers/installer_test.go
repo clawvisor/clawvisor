@@ -496,7 +496,10 @@ func installerGetShell(t *testing.T, h *InstallerHandler, target, claim string) 
 // --dangerously-skip-permissions), and a mode-aware uninstall doc.
 func TestInstallerClaudeCodeShell(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
-	body := installerGetShell(t, h, "claude-code", "ABCDEFGHIJ")
+	// Exercises the routed (proxy) template specifically — alias setup, key
+	// waiting, custom headers. That is now the opt-in variant, so ask for it
+	// explicitly; the default is covered by TestInstallerDefaultIsSkillOnly.
+	body := installerGetShellQuery(t, h, "claude-code", "claim=ABCDEFGHIJ&route=proxy")
 	assertContainsAll(t, body,
 		"#!/bin/sh",
 		"set -eu",
@@ -575,7 +578,9 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 // mapping.
 func TestInstallerCodexShell(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
-	body := installerGetShell(t, h, "codex", "CLAIMCODE0")
+	// Routed (proxy) template — now the opt-in variant, so request it
+	// explicitly. The default is covered by TestInstallerDefaultIsSkillOnly.
+	body := installerGetShellQuery(t, h, "codex", "claim=CLAIMCODE0&route=proxy")
 	assertContainsAll(t, body,
 		"#!/bin/sh",
 		"set -eu",
@@ -673,7 +678,10 @@ func TestInstallerCodexShellProviderSlugByEnv(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := NewInstallerHandler("", "", true, tc.llmProxyURL, "")
-			body := installerGetShell(t, h, "codex", "CLAIMCODE0")
+			// The [model_providers.*] block only exists in the routed
+			// template, so request route=proxy explicitly now that skill-only
+			// is the default.
+			body := installerGetShellQuery(t, h, "codex", "claim=CLAIMCODE0&route=proxy")
 			// Slug + display are baked into shell assignments at the top of
 			// the codex section; downstream references via $SLUG / $DISPLAY.
 			assertContainsAll(t, body,
@@ -714,7 +722,11 @@ func TestInstallerShellAgentSlotByEnv(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := NewInstallerHandler("", "", true, tc.llmProxyURL, "")
-			body := installerGetShell(t, h, "codex", "CLAIMCODE0")
+			// Uses the routed template: the ~/.clawvisor/diffs/$AGENT_SLOT
+			// assertions below only apply where the installer mutates provider
+			// config and records a reversal diff. Skill-only mutates nothing,
+			// so it has no diffs path by design.
+			body := installerGetShellQuery(t, h, "codex", "claim=CLAIMCODE0&route=proxy")
 			assertContainsAll(t, body,
 				"AGENT_SLOT='"+tc.wantSlot+"'",
 				// AGENT_NAME stays the bare logical name regardless of env —
@@ -992,21 +1004,41 @@ func installerGetShellQuery(t *testing.T, h *InstallerHandler, target, query str
 	return string(body)
 }
 
-// TestInstallerDefaultRoutesLLM — the flip (spec 08 / PRD §11): the DEFAULT
-// generated script for each self-install target bakes the provider base-URL
-// export so LLM traffic routes through Clawvisor (Observe). This is the
-// fresh-install default; no query param is required.
-func TestInstallerDefaultRoutesLLM(t *testing.T) {
+// TestInstallerDefaultIsSkillOnly — the DEFAULT generated script for each
+// self-install target registers the agent WITHOUT touching where its model
+// traffic goes. These routes are unauthenticated, so the installer cannot know
+// whether the installing user is entitled to proxy-lite; baking routing by
+// default hands an unentitled user a seat that 403s on its first model call.
+func TestInstallerDefaultIsSkillOnly(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
-	// claude-code default bakes ANTHROPIC_BASE_URL.
+
 	claude := installerGetShell(t, h, "claude-code", "ABCDEFGHIJ")
-	if !strings.Contains(claude, "ANTHROPIC_BASE_URL") {
-		t.Error("default claude-code script must bake ANTHROPIC_BASE_URL routing")
+	if strings.Contains(claude, "ANTHROPIC_BASE_URL=") {
+		t.Errorf("default claude-code script must NOT export ANTHROPIC_BASE_URL; body:\n%s", claude)
 	}
-	// codex default bakes the [model_providers.*] block pointed at the proxy.
+	assertContainsAll(t, claude, "skill-only", "/api/agents/connect", "LLM traffic is NOT routed")
+
 	codex := installerGetShell(t, h, "codex", "CLAIMCODE0")
+	if strings.Contains(codex, "OPENAI_BASE_URL=") || strings.Contains(codex, "base_url = \"$LLM_URL") {
+		t.Errorf("default codex script must NOT bake a provider base URL; body:\n%s", codex)
+	}
+	assertContainsAll(t, codex, "skill-only", "/api/agents/connect", "LLM traffic is NOT routed")
+}
+
+// TestInstallerProxyRouteOptIn — route=proxy is now the explicit opt-in, and
+// must still produce the fully-routed script. Guards the inverted default:
+// without this, flipping the fallback could silently make routing unreachable.
+func TestInstallerProxyRouteOptIn(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+
+	claude := installerGetShellQuery(t, h, "claude-code", "claim=ABCDEFGHIJ&route=proxy")
+	if !strings.Contains(claude, "ANTHROPIC_BASE_URL") {
+		t.Errorf("route=proxy claude-code script must bake ANTHROPIC_BASE_URL; body:\n%s", claude)
+	}
+
+	codex := installerGetShellQuery(t, h, "codex", "claim=CLAIMCODE0&route=proxy")
 	if !strings.Contains(codex, "base_url = \"$LLM_URL/api/v1\"") {
-		t.Error("default codex script must bake the proxy base_url routing")
+		t.Errorf("route=proxy codex script must bake the proxy base_url; body:\n%s", codex)
 	}
 }
 

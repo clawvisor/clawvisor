@@ -127,12 +127,16 @@ type installerCtx struct {
 	// so dev/staging/prod token files for the same logical name don't
 	// overwrite each other on a multi-env user's disk.
 	AgentSlot string
-	// Route selects the install variant (spec 08 flip). "" / "proxy" is the
-	// new default — bake ANTHROPIC_BASE_URL/OPENAI_BASE_URL so LLM traffic
-	// routes through Clawvisor (Observe). "skill-only" is the explicit opt-out
-	// that registers the agent without routing. "subscription" (claude-code
-	// only) routes a Claude-subscription/OAuth seat: it sets the base URL and
-	// the X-Clawvisor-Agent-Token header while leaving the OAuth session in
+	// Route selects the install variant. "" / "skill-only" is the default —
+	// register the agent against the gateway without touching where its LLM
+	// traffic goes. "proxy" is the explicit opt-in that bakes
+	// ANTHROPIC_BASE_URL/OPENAI_BASE_URL so model calls route through
+	// Clawvisor (Observe); it requires proxy-lite to be both enabled on the
+	// deployment and permitted for the installing user, so an installer that
+	// bakes it for an unentitled user produces a seat that 403s on its first
+	// model call. "subscription" (claude-code only) routes a
+	// Claude-subscription/OAuth seat: it sets the base URL and the
+	// X-Clawvisor-Agent-Token header while leaving the OAuth session in
 	// Authorization untouched and never referencing an API key.
 	Route string
 }
@@ -371,12 +375,17 @@ func (h *InstallerHandler) installerCtxFromRequest(r *http.Request, target Insta
 	if n := r.URL.Query().Get("agent_name"); n != "" && validAgentName.MatchString(n) {
 		ctx.AgentName = n
 	}
-	// route selects the install variant (spec 08 flip). Default is proxy
-	// (routing baked). "subscription" is only meaningful for claude-code (a
-	// Claude OAuth seat) — other targets treat it as the plain proxy default.
-	ctx.Route = queryChoice(r, "route", "proxy", "proxy", "skill-only", "subscription")
+	// route selects the install variant. The default is skill-only: register
+	// the agent and leave its LLM traffic pointed at its own provider. Baking
+	// routing is opt-in because these routes are unauthenticated, so the
+	// installer cannot tell whether the installing user is actually permitted
+	// to use proxy-lite — defaulting to routing hands an unentitled user a
+	// seat that 403s on its first model call.
+	ctx.Route = queryChoice(r, "route", "skill-only", "proxy", "skill-only", "subscription")
+	// "subscription" is only meaningful for claude-code (a Claude OAuth seat);
+	// on any other target it falls back to the plain default.
 	if ctx.Route == "subscription" && target != InstallerClaudeCode {
-		ctx.Route = "proxy"
+		ctx.Route = "skill-only"
 	}
 	if env := installerEnvSlug(ctx.LLMURL); env != "" {
 		ctx.AgentSlot = env + "/" + ctx.AgentName
