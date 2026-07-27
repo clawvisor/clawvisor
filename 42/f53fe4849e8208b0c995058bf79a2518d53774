@@ -1,0 +1,95 @@
+config.example.yaml
+  s_55f7a841d7c10e::t_efac7dab0eb76e 41-45,163-168,206-218,221-230
+e2e/scenarios/llm_proxy_posture_test.go
+  s_55f7a841d7c10e::t_88a9e6b680a023 129-174,212-271,280-312,321-322,329-332,336-338,342,352
+e2e/scenarios/reference_vault_gcp_real_test.go
+  s_55f7a841d7c10e::t_c0630da439fbb2 1-130
+internal/api/api_tokens_disabled_test.go
+  s_55f7a841d7c10e::t_eebb8a0e1b38aa 1-128
+internal/api/handlers/apitokens_test.go
+  s_55f7a841d7c10e::t_0725f9451d2ca7 142
+internal/api/handlers/installer_scripts/claude_code_subscription.sh.tmpl
+  s_55f7a841d7c10e::t_6aa2f12c724d06 8-12,14-25
+internal/api/handlers/llm_credentials.go
+  s_2272b9604c80ae::t_1c487c22710a2b 35-36,39-53,58,87-93,96-139
+internal/api/handlers/llm_credentials_test.go
+  s_55f7a841d7c10e::t_a48c586cd83a74 3-218
+internal/api/handlers/llm_endpoint_subscription_seat_test.go
+  s_55f7a841d7c10e::t_22b50c12e29729 1-32
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_68ca11abb88634 117-125,134-140,190-226,238-239
+internal/api/middleware/apitoken_test.go
+  s_55f7a841d7c10e::t_9b8e484c33ffc0 103,143,160,174,187,202,225,242,252-276
+internal/api/middleware/trust_split_test.go
+  s_55f7a841d7c10e::t_e2897bbc4e8eb1 50-52,90,122
+internal/api/ratelimit_factory_test.go
+  s_55f7a841d7c10e::t_a00597f2f006db 1-91
+internal/api/server.go
+  s_55f7a841d7c10e::t_3a4ed31d9ec216 50,153-158,441-447,744-747,803,805,816,911-920,978,989,998,1042,1501,1700-1716,1726-1730,1940,1942-1949,1953-1960
+internal/api/testutil_test.go
+  s_55f7a841d7c10e::t_7e3c93936d242e 110-111,113,176
+internal/e2e/lite/harness.go
+  s_55f7a841d7c10e::t_f3e2be550d8515 189
+internal/govlocal/store.go
+  s_55f7a841d7c10e::t_4ab9f4fea75ac1 30-36
+pkg/clawvisor/bootstrap.go
+  s_55f7a841d7c10e::t_88d1ae76a8192f 13,28-39
+pkg/clawvisor/bootstrap_test.go
+  s_55f7a841d7c10e::t_9a7890f7a40ee4 12,157-196
+pkg/clawvisor/defaults.go
+  s_55f7a841d7c10e::t_9fe85af044990e 149-152,763-767
+pkg/clawvisor/defaults_test.go
+  s_55f7a841d7c10e::t_81e9e46b2a47f7 101-126
+pkg/clawvisor/options.go
+  s_55f7a841d7c10e::t_0bcc8e7e02e123 293-298
+pkg/config/config.go
+  s_55f7a841d7c10e::t_235e957036eea1 258-267,505-521,668-672,821-823,1137-1141
+provider/examples/resources/clawvisor_llm_credential/import.sh
+  s_55f7a841d7c10e::t_ba9b5e9d194636 1-5
+provider/examples/resources/clawvisor_llm_credential/resource.tf
+  s_55f7a841d7c10e::t_b8c0013fc54592 1-41
+provider/internal/client/llm_credentials.go
+  s_55f7a841d7c10e::t_db5596879a0322 1-91
+provider/internal/provider/provider.go
+  s_55f7a841d7c10e::t_1f51f1d49b0046 157
+provider/internal/provider/testacc/llm_credential_test.go
+  s_55f7a841d7c10e::t_150fc40f7732fd 1-121
+e2e/scenarios/llm_proxy_local_gov_test.go
+  s_55f7a841d7c10e::t_6b5927f1d1da26 51-54,60-62,70-171
+internal/api/handlers/llm_endpoint.go
+  s_55f7a841d7c10e::t_c4b53fc0b20b45 262-271,288-319,368-373,606-621,625,627,629-644
+internal/intent/soft_policy_real_test.go
+  s_55f7a841d7c10e::t_b3f5493d2971da 1-109
+pkg/clawvisor/run.go
+  s_55f7a841d7c10e::t_3477c6336ae91e 159,162-177,337,355,421-423
+pkg/config/config_test.go
+  s_55f7a841d7c10e::t_4335ad97c3b17a 282-284,550-578
+provider/internal/provider/resource_llm_credential.go
+  s_55f7a841d7c10e::t_e86dc83cd979fd 1-303
+provider/docs/resources/llm_credential.md
+  s_55f7a841d7c10e::t_e9e7493c457b3c 1-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "42f53fe4849e8208b0c995058bf79a2518d53774",
+  "prompts": {},
+  "sessions": {
+    "s_2272b9604c80ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01bd258c-cdde-4b3f-afd2-10b73065bcd5",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

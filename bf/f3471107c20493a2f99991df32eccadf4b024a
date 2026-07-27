@@ -1,0 +1,36 @@
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator.go
+  s_813cf813d8b1d0::t_27d5a30fd9f2cc 121,123-125
+internal/runtime/llmproxy/postprocess.go
+  s_813cf813d8b1d0::t_ab6b9808e0414b 674-688,690-699,703-704
+internal/runtime/llmproxy/pipeline/tool_use_bridge.go
+  s_813cf813d8b1d0::t_106245d050fdb4 97-103
+internal/api/handlers/llm_endpoint_pipeline_evaluator.go
+  s_813cf813d8b1d0::t_114d6768c5b2e6 5,8-13
+internal/runtime/llmproxy/pipeline_factory_init_test.go
+  s_813cf813d8b1d0::t_4926acdec8e017 1-11
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_813cf813d8b1d0::t_d56d02396f5344 140
+  s_813cf813d8b1d0::t_185ab7ff71f3f5 273-275,280-308
+  s_813cf813d8b1d0::t_2a506c08f86959 247
+  s_813cf813d8b1d0::t_3c5bc66b59d68f 97,99
+  s_813cf813d8b1d0::t_ac66b992dcec86 1-33,42-96,98,100-139,141-246,248-272,276-279,309-337
+  s_813cf813d8b1d0::t_55fcee6d405b02 34-41
+internal/runtime/llmproxy/pipeline/policy.go
+  s_813cf813d8b1d0::t_c54728cd4a083b 142-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "bff3471107c20493a2f99991df32eccadf4b024a",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

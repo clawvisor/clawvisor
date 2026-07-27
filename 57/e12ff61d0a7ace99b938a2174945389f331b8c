@@ -1,0 +1,30 @@
+pkg/notify/notify.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 11-26,37-68,140-146,148-158
+  s_fd6d9b102e043d::t_7917d9c6ff163d 159-162,169-170
+  s_fd6d9b102e043d::t_c7203ac770a92f 27-36
+  s_fd6d9b102e043d::t_4841d521161a23 163-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "57e12ff61d0a7ace99b938a2174945389f331b8c",
+  "prompts": {},
+  "sessions": {
+    "s_f24d8a6cdaa62a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3ceed6ee-edc3-4484-bea4-8d25bf23cdfe",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

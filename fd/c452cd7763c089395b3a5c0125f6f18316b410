@@ -1,0 +1,51 @@
+internal/runtime/conversation/response.go
+  s_bbe778adcf6f02::t_34cd6f19bec7ca 58,60-66,78
+  s_bbe778adcf6f02::t_45cfbd91716204 59,67-77
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_bbe778adcf6f02::t_8273c2777b23ac 215,238-239,249-250
+  s_bbe778adcf6f02::t_f19b75e452869c 349-365,425,431,435,437-438
+  s_bbe778adcf6f02::t_ee17c368dfe356 366-378
+  s_bbe778adcf6f02::t_b2424e1530e2d1 248,217-237,240-247
+  s_bbe778adcf6f02::t_a2f56ac90e6cf3 379-395,424
+  s_bbe778adcf6f02::t_9a676956e1c8f6 439-451
+  s_bbe778adcf6f02::t_699e8fae017883 396-420
+internal/runtime/llmproxy/postproc/inline_task_intercept_test.go
+  s_bbe778adcf6f02::t_19ff2b7e4a78ef 236-239,284-288,290
+  s_bbe778adcf6f02::t_fae3d2023bc1bc 738,762-763,784-785
+  s_bbe778adcf6f02::t_924a5984621ed9 776,777-781
+  s_bbe778adcf6f02::t_d68223590933a5 877-884,887-890,893-901
+  s_bbe778adcf6f02::t_9a9ea3802df9ef 892
+  s_bbe778adcf6f02::t_03097bcf800300 913-918,928-929,931-932,934-936
+  s_bbe778adcf6f02::t_515b0e3fe07039 937,938-939,941-942
+  s_bbe778adcf6f02::t_0e75099bfe5005 1166-1168,783
+  s_bbe778adcf6f02::t_59fd7c45e92339 1190-1197,1199-1205,940,943,989,995,998,1001,272,289,956,965,968,971,976
+  s_bbe778adcf6f02::t_0fc6707a390245 944,247,251,255,259,263,267,274,278,282,291,946-952,957-959,963-964,966-967,969-970,972-975,977
+  s_bbe778adcf6f02::t_70ca3a8a42262b 945,979-988,990-994,996-997,999-1000,1002-1007,248,252,256,260,264,268,275,279,283,292,953-955,960-962,978
+  s_bbe778adcf6f02::t_dc1f9b9de9e5bd 198-200
+  s_bbe778adcf6f02::t_a7f33923c0d6b2 240-246,249-250,253-254,257-258,261-262,265-266,269-271,273,276-277,280-281
+  s_bbe778adcf6f02::t_5f9160413fd4cd 782,1162-1164
+  s_bbe778adcf6f02::t_92da48c8ca7946 807-812
+  s_bbe778adcf6f02::t_9fe7107b826cb9 891,1198
+internal/runtime/llmproxy/assistant_notice_prepend.go
+  s_bbe778adcf6f02::t_7fda4325829eaa 1-3,6-31,41-55,58,60-68,76,81-82,86,90,93,96,110-111,113-114,128,137,143,150,156,159,162,168-169,171
+  s_bbe778adcf6f02::t_057cd2df1b2b89 4
+  s_bbe778adcf6f02::t_1f187f372d8066 32-40
+internal/runtime/llmproxy/pending_approval_cache.go
+  s_bbe778adcf6f02::t_d2dab2555abc35 497-513
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "fdc452cd7763c089395b3a5c0125f6f18316b410",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

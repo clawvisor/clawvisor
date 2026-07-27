@@ -1,0 +1,25 @@
+internal/runtime/llmproxy/scope_drift_resolve_test.go
+  s_48544d04b3a3f6::t_1e5c16c9e32c61 148,194,227,256,288,335,423,437,446
+internal/runtime/llmproxy/scope_drift_resolve.go
+  s_48544d04b3a3f6::t_58aff1c26da8fa 195,197,201,210
+internal/runtime/llmproxy/postprocess.go
+  s_48544d04b3a3f6::t_6eb5c79e3e05a7 576,581
+internal/runtime/llmproxy/scope_drift_reply.go
+  s_48544d04b3a3f6::t_8afc8b9f254f6e 94-116,120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3223158f6db1d614ec9a0aeb203d62fb6e417526",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

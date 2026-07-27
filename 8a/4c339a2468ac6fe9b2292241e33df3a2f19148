@@ -1,0 +1,50 @@
+internal/runtime/llmproxy/postproc/inline_task_intercept_test.go
+  s_bbe778adcf6f02::t_19ff2b7e4a78ef 232-235
+  s_bbe778adcf6f02::t_fae3d2023bc1bc 681,705-706,720-721
+  s_bbe778adcf6f02::t_924a5984621ed9 719
+  s_bbe778adcf6f02::t_d68223590933a5 808-815,818-821,824-832
+  s_bbe778adcf6f02::t_9a9ea3802df9ef 823
+  s_bbe778adcf6f02::t_03097bcf800300 844-849,859-860,862-863,865-867
+  s_bbe778adcf6f02::t_515b0e3fe07039 868,869-870,872-873
+  s_bbe778adcf6f02::t_0e75099bfe5005 1063-1065
+  s_bbe778adcf6f02::t_59fd7c45e92339 1087-1094,1096-1102,871,874,887,893,896,899
+  s_bbe778adcf6f02::t_0fc6707a390245 875
+  s_bbe778adcf6f02::t_70ca3a8a42262b 876-886,888-892,894-895,897-898,900-905
+internal/runtime/conversation/openai_response.go
+  s_bbe778adcf6f02::t_29521bd52a32e4 34,38
+  s_bbe778adcf6f02::t_56b60d3d1d3d15 36
+  s_bbe778adcf6f02::t_fc8e25fe2e4c60 101-133
+  s_bbe778adcf6f02::t_9b151139bd7103 134-152
+  s_bbe778adcf6f02::t_e80663b80075e8 153-180
+  s_bbe778adcf6f02::t_67ea97b2317048 251-253
+  s_bbe778adcf6f02::t_68db3bf1680e63 533-535
+  s_bbe778adcf6f02::t_f3682d30800289 944,946-950,954-956
+  s_bbe778adcf6f02::t_70abe3fd111873 957
+internal/runtime/llmproxy/postproc/stream.go
+  s_bbe778adcf6f02::t_197bd8adf1372a 773,600,605,678,687,696,721,752-760,774-777,781
+  s_bbe778adcf6f02::t_05b82fc7173271 562-564,566,596-599,601-604
+  s_bbe778adcf6f02::t_913f653615285f 654,662-677,679-686,688-695,697-709
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_bbe778adcf6f02::t_8273c2777b23ac 215,229-230,232-233
+  s_bbe778adcf6f02::t_f19b75e452869c 332-348,390,396,400,402-403
+  s_bbe778adcf6f02::t_ee17c368dfe356 349-361
+  s_bbe778adcf6f02::t_b2424e1530e2d1 231
+  s_bbe778adcf6f02::t_a2f56ac90e6cf3 362-378,389
+  s_bbe778adcf6f02::t_9a676956e1c8f6 404-416
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "8a4c339a2468ac6fe9b2292241e33df3a2f19148",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

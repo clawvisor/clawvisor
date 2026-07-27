@@ -1,0 +1,21 @@
+internal/local/state/state.go
+  s_aeeca9dea99c0c::t_0920640865be41 28
+internal/api/handlers/gateway.go
+  s_aeeca9dea99c0c::t_6e3d4e71ec8b2b 1580-1581,1767
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "bd93ec7c23f41e94be19c912ff2ddac78576439e",
+  "prompts": {},
+  "sessions": {
+    "s_aeeca9dea99c0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "29f21bad-67c4-4e04-9440-142cf0795719",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

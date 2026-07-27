@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/inspector/readonly_bash_test.go
+  s_69905dfe20e322::t_9d524883183732 26-27,85-86
+internal/runtime/llmproxy/inspector/readonly_bash.go
+  s_69905dfe20e322::t_073085851ddf3f 213-214,256-261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "8eb70939af2343809842b8fff42801819a11ab35",
+  "prompts": {},
+  "sessions": {
+    "s_69905dfe20e322": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e46df-8e1d-75e1-ac16-0dc9b080d6ba",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

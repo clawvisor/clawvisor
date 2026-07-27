@@ -1,0 +1,37 @@
+web/src/lib/nextAfterAuth.ts
+  s_5968b5a9192332::t_c3c1e5ca85a8c1 1-15
+web/src/pages/TOTPVerify.tsx
+  s_5968b5a9192332::t_c2996da5d62c97 5
+web/src/pages/Login.tsx
+  s_5968b5a9192332::t_2c33a96787dff0 222-235
+  s_5968b5a9192332::t_5f557d62a6b890 6
+  s_5968b5a9192332::t_c5aef508694313 77-84,87-89
+web/src/pages/SecuritySetup.tsx
+  s_5968b5a9192332::t_d3f35c7800c558 6
+web/src/lib/pendingInvite.ts
+  s_5968b5a9192332::t_f770c609bb83cc 30-36
+web/src/pages/SetupAuth.tsx
+  s_5968b5a9192332::t_6b5dbfede619e5 6
+web/src/pages/SSOComplete.tsx
+  s_5968b5a9192332::t_7bb08ba937cb37 1,4-6,8,14,19-23,26-28,47-50
+web/src/pages/AcceptInvite.tsx
+  s_5968b5a9192332::t_0803f335a61b9c 79-88
+web/src/pages/MFAVerify.tsx
+  s_5968b5a9192332::t_442dc25b7a4251 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "016917de5ab8f2d441d13ef19b25e91cca3ad797",
+  "prompts": {},
+  "sessions": {
+    "s_5968b5a9192332": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a904c4d-ba8e-4c28-baa2-feb0913c70b6",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

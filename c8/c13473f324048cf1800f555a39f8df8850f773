@@ -1,0 +1,22 @@
+internal/runtime/llmproxy/synthetic_history_strip_test.go
+  s_2bfa8e580c8b9a::t_f851908291b147 351-543
+internal/runtime/llmproxy/historystrip/synthetic_history_strip.go
+  s_2bfa8e580c8b9a::t_fdbd639f5f6d0e 116-130,143-147,157-165,167,173-189,213-223
+  s_2bfa8e580c8b9a::t_a9acd5a8798179 416-525
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "c8c13473f324048cf1800f555a39f8df8850f773",
+  "prompts": {},
+  "sessions": {
+    "s_2bfa8e580c8b9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90ab0a12-b6ce-4890-905f-937f6f148695",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
