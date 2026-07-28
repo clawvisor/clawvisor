@@ -138,6 +138,17 @@ type installerCtx struct {
 	// Claude-subscription/OAuth seat: it sets the base URL and the
 	// X-Clawvisor-Agent-Token header while leaving the OAuth session in
 	// Authorization untouched and never referencing an API key.
+	//
+	// KNOWN GAP: only the self-install shell targets (claude-code, codex) honor
+	// this field. The markdown helper renderers — renderOpenClawInstaller and
+	// renderHermesInstaller — ignore it and unconditionally instruct the user to
+	// point their provider at Clawvisor. OpenClaw matters most, because it is in
+	// the dashboard's non-proxy tab set (LEGACY_AGENT_TABS in web/src/pages/
+	// Agents.tsx) and so is reachable by a user who has no proxy-lite
+	// entitlement, who then gets 403 PROXY_LITE_DISABLED. Giving those two a
+	// skill-only variant means dropping their vault-key/preflight/point-at-
+	// Clawvisor steps and renumbering the doc, which is left as follow-up rather
+	// than bundled into the default flip.
 	Route string
 }
 

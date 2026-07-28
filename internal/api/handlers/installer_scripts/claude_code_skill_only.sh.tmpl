@@ -3,16 +3,18 @@
 {{- template "persist_token" . -}}
 {{- template "smoke_test" . -}}
 
-# --- Skill-only install (opt-out of LLM routing) -----------------------------
-# This is the explicit skill-gateway variant (route=skill-only). Claude Code
-# keeps talking to Anthropic directly — we do NOT set ANTHROPIC_BASE_URL, so no
-# LLM traffic is routed through Clawvisor. The registered agent token lets the
-# Clawvisor skill/tools govern tool calls; LLM observability is not enabled.
+# --- Skill-only install (the default) ----------------------------------------
+# This is the skill-gateway variant. Claude Code keeps talking to Anthropic
+# directly — we do NOT set ANTHROPIC_BASE_URL, so no LLM traffic is routed
+# through Clawvisor. The registered agent token lets the Clawvisor skill/tools
+# govern tool calls; LLM observability is not enabled.
 #
-# To route LLM traffic through Clawvisor later (the recommended Observe
-# default), re-run this installer WITHOUT route=skill-only:
+# To route LLM traffic through Clawvisor later (the Observe posture), re-run
+# this installer WITH route=proxy. Routing is opt-in and needs proxy-lite
+# enabled for your account, so a routed install without it returns
+# 403 PROXY_LITE_DISABLED on the first model call:
 #
-#   curl -fsSL "$APP_URL/skill/install/{{.Target}}.sh?claim=<claim>" | sh
+#   curl -fsSL "$APP_URL/skill/install/{{.Target}}.sh?claim=<claim>&route=proxy" | sh
 echo "✓ Registered {{.HarnessLabel}} with Clawvisor (skill-only — LLM traffic is NOT routed)."
 echo "  The Clawvisor skill catalog is available at $APP_URL/skill."
 
