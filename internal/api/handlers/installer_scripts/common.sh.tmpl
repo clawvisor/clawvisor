@@ -517,31 +517,57 @@ if [ "$CV_WANT_DRY_RUN" = yes ]; then
     # Output is deliberately NOT captured — the point is for the user to watch
     # the two requests land. Only CLAWVISOR_* is exported: no ANTHROPIC_*/
     # OPENAI_* routing vars, which is what makes this a skill-only check.
+    CV_DRY_STATUS=missing
 {{- if eq .Target "codex" }}
     if command -v codex >/dev/null 2>&1; then
-        CLAWVISOR_URL="$APP_URL" \
-        CLAWVISOR_AGENT_TOKEN="$TOKEN" \
-            codex exec --skip-git-repo-check "$(cv_dry_run_prompt)" </dev/null || true
+        if CLAWVISOR_URL="$APP_URL" \
+           CLAWVISOR_AGENT_TOKEN="$TOKEN" \
+               codex exec --skip-git-repo-check "$(cv_dry_run_prompt)" </dev/null; then
+            CV_DRY_STATUS=ok
+        else
+            CV_DRY_STATUS=failed
+        fi
     else
         echo "  codex is not on your PATH, so the dry run was skipped." >&2
         echo "  Install codex and re-run with --dry-run to try again." >&2
     fi
 {{- else }}
     if command -v claude >/dev/null 2>&1; then
-        CLAWVISOR_URL="$APP_URL" \
-        CLAWVISOR_AGENT_TOKEN="$TOKEN" \
-            claude -p "$(cv_dry_run_prompt)" </dev/null || true
+        if CLAWVISOR_URL="$APP_URL" \
+           CLAWVISOR_AGENT_TOKEN="$TOKEN" \
+               claude -p "$(cv_dry_run_prompt)" </dev/null; then
+            CV_DRY_STATUS=ok
+        else
+            CV_DRY_STATUS=failed
+        fi
     else
         echo "  claude is not on your PATH, so the dry run was skipped." >&2
         echo "  Install Claude Code and re-run with --dry-run to try again." >&2
     fi
 {{- end }}
-    # `|| true` above is deliberate: the install itself already succeeded and is
-    # persisted. A failed or abandoned dry run is diagnostic information, not a
-    # reason to report the install as broken.
+    # Never fails the install: it already succeeded and is persisted on disk. A
+    # failed or abandoned dry run is diagnostic information, not a reason to
+    # report the install as broken.
+    #
+    # The outcome is reported honestly, though. Printing "read the summary
+    # above" when the harness never started — not logged in, missing binary —
+    # points the user at a summary that does not exist and reads as though
+    # something passed.
     echo
-    echo "  Dry run finished. Read the summary above — the in-scope request should"
-    echo "  have succeeded and the out-of-scope one should have been denied."
+    case "$CV_DRY_STATUS" in
+        ok)
+            echo "  Dry run finished. Read the summary above — the in-scope request should"
+            echo "  have succeeded and the out-of-scope one should have been denied."
+            ;;
+        failed)
+            echo "  The dry run did not complete — see the harness output above. Your install"
+            echo "  is still fine; re-run the dry run any time with --dry-run."
+            ;;
+        *)
+            echo "  Dry run skipped. Re-run this installer with --dry-run once the harness"
+            echo "  is available to try again."
+            ;;
+    esac
 fi
 {{end -}}
 

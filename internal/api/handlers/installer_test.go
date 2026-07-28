@@ -1126,6 +1126,53 @@ func TestCodexSkillOnlyAsksBeforeRelaxingSandbox(t *testing.T) {
 	assertContainsAll(t, codex, "leaving the Codex sandbox unchanged")
 }
 
+// TestCodexSandboxWriteCannotDuplicateTheTable pins the ordering of the sandbox
+// decision, which a substring assertion alone would miss.
+//
+// The first version of this code checked the --allow-network flag before
+// checking whether the setting was already present, so a second run with the
+// flag appended a second [sandbox_workspace_write] table. Codex then refuses to
+// load config.toml at all ("duplicate key") — the installer bricked the harness
+// it had just set up. Caught by actually running it twice, not by any test.
+//
+// Two invariants, both order-dependent:
+//   - the "already true" check must precede the flag branches, so a repeat run
+//     with --allow-network is a no-op
+//   - the "table already exists" check must also precede them, so a user whose
+//     config has that section (with other keys) gets instructions instead of a
+//     duplicate header
+func TestCodexSandboxWriteCannotDuplicateTheTable(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	codex := installerGetShell(t, h, "codex", "CLAIMCODE0")
+
+	alreadyTrue := strings.Index(codex, "network_access[[:space:]]*=[[:space:]]*true")
+	tableExists := strings.Index(codex, `\[sandbox_workspace_write\]`)
+	flagBranch := strings.Index(codex, `[ "$CV_ALLOW_NETWORK" = yes ]`)
+
+	for _, probe := range []struct {
+		name string
+		idx  int
+	}{
+		{"already-true guard", alreadyTrue},
+		{"existing-table guard", tableExists},
+		{"--allow-network branch", flagBranch},
+	} {
+		if probe.idx < 0 {
+			t.Fatalf("%s not found in the rendered codex installer", probe.name)
+		}
+	}
+
+	if alreadyTrue > flagBranch {
+		t.Error("the already-enabled check must run BEFORE --allow-network, or a repeat " +
+			"run with the flag appends a duplicate [sandbox_workspace_write] table and " +
+			"Codex stops loading config.toml entirely")
+	}
+	if tableExists > flagBranch {
+		t.Error("the existing-table check must run BEFORE --allow-network, or a user who " +
+			"already has [sandbox_workspace_write] gets a duplicate header appended")
+	}
+}
+
 // TestInstallerProxyRouteOptIn — route=proxy is now the explicit opt-in, and
 // must still produce the fully-routed script. Guards the inverted default:
 // without this, flipping the fallback could silently make routing unreachable.

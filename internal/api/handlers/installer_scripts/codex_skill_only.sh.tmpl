@@ -81,14 +81,31 @@ network_access = true'
 mkdir -p "$HOME/.codex"
 touch "$CODEX_CONFIG"
 
+# Order matters here. The "is it already done?" checks run BEFORE the flags,
+# because appending a second [sandbox_workspace_write] table makes Codex refuse
+# to load config.toml at all ("duplicate key") — it stops working entirely. A
+# re-run with --allow-network must be a no-op, not a wedge.
 CV_WANT_NETWORK=no
-if [ "$CV_ALLOW_NETWORK" = yes ]; then
+if grep -q "^[[:space:]]*network_access[[:space:]]*=[[:space:]]*true" "$CODEX_CONFIG" 2>/dev/null; then
+    echo "✓ Codex sandbox already allows network access — nothing to change"
+    CV_WANT_NETWORK=already
+elif grep -q "^[[:space:]]*\[sandbox_workspace_write\]" "$CODEX_CONFIG" 2>/dev/null; then
+    # The table exists but network_access isn't set to true in it. Appending
+    # our own copy of the header would duplicate the table and break Codex, and
+    # inserting a key into an existing TOML table with sed is not something to
+    # attempt blind against a file the user owns. Hand it back to them.
+    echo "→ $CODEX_CONFIG already has a [sandbox_workspace_write] section, so this"
+    echo "  installer will not edit it — adding a second one would stop Codex loading"
+    echo "  the file. Add this line under the existing section yourself:"
+    echo
+    echo "    network_access = true"
+    echo
+    echo "  Until then the Clawvisor skill will not be able to reach $APP_URL."
+    CV_WANT_NETWORK=manual
+elif [ "$CV_ALLOW_NETWORK" = yes ]; then
     CV_WANT_NETWORK=yes
 elif [ "$CV_ALLOW_NETWORK" = no ]; then
     CV_WANT_NETWORK=no
-elif grep -q "^network_access[[:space:]]*=[[:space:]]*true" "$CODEX_CONFIG" 2>/dev/null; then
-    echo "✓ Codex sandbox already allows network access — nothing to change"
-    CV_WANT_NETWORK=already
 elif [ -r /dev/tty ] && [ -w /dev/tty ]; then
     echo
     echo "Codex sandboxes its shell and blocks outbound network by default, which"
