@@ -139,16 +139,17 @@ type installerCtx struct {
 	// X-Clawvisor-Agent-Token header while leaving the OAuth session in
 	// Authorization untouched and never referencing an API key.
 	//
-	// KNOWN GAP: only the self-install shell targets (claude-code, codex) honor
-	// this field. The markdown helper renderers — renderOpenClawInstaller and
-	// renderHermesInstaller — ignore it and unconditionally instruct the user to
-	// point their provider at Clawvisor. OpenClaw matters most, because it is in
-	// the dashboard's non-proxy tab set (LEGACY_AGENT_TABS in web/src/pages/
-	// Agents.tsx) and so is reachable by a user who has no proxy-lite
-	// entitlement, who then gets 403 PROXY_LITE_DISABLED. Giving those two a
-	// skill-only variant means dropping their vault-key/preflight/point-at-
-	// Clawvisor steps and renumbering the doc, which is left as follow-up rather
-	// than bundled into the default flip.
+	// Every target honors this field. The self-install shell targets pick a
+	// template (claude_code_skill_only.sh.tmpl / codex_skill_only.sh.tmpl);
+	// the markdown helper renderers pick a render function
+	// (renderOpenClawSkillOnlyInstaller / renderHermesSkillOnlyInstaller),
+	// which drops the detect-provider / vault-key / probe / preflight /
+	// point-at-Clawvisor steps and renumbers the doc from 8 steps to 4. That
+	// matters most for OpenClaw, which is in the dashboard's non-proxy tab set
+	// (LEGACY_AGENT_TABS in web/src/pages/Agents.tsx) and so is reachable by a
+	// user who has no proxy-lite entitlement: while the markdown renderers
+	// ignored this field, such a user got a routed doc and then
+	// 403 PROXY_LITE_DISABLED on their first model call.
 	Route string
 }
 
@@ -537,6 +538,10 @@ description: Install Clawvisor into %s — probe the environment, mint and appro
 // command name is `clawvisor-setup` (vs. `clawvisor-install` for harness
 // installs), (b) the description reflects the new flow — no dashboard
 // approval, optional default-everywhere routing, subprocess smoke test.
+//
+// This is the header for the ROUTED (route=proxy) variant only; the
+// skill-only docs use setupFrontmatterSkillOnly, whose description doesn't
+// promise routing the install never sets up.
 func setupFrontmatter(harness string) string {
 	return fmt.Sprintf(`---
 name: clawvisor-setup
@@ -544,6 +549,21 @@ description: One-paste connect %s to Clawvisor — register, install the skill, 
 ---
 
 `, harness)
+}
+
+// setupFrontmatterSkillOnly is setupFrontmatter for the skill-only route.
+// It exists as a separate header because setupFrontmatter's description
+// promises to "route every session through Clawvisor", which is precisely
+// what this variant does not do — and that description is what the user
+// reads in their harness's slash-command / skill picker, so leaving it in
+// place would advertise a routing posture the install never configures.
+func setupFrontmatterSkillOnly(harness string) string {
+	return fmt.Sprintf(`---
+name: clawvisor-setup
+description: One-paste connect %s to Clawvisor — register the agent, install the skill, and remove this command file. %s keeps talking to its own LLM provider; pass route=proxy to route model traffic through Clawvisor (Observe) instead.
+---
+
+`, harness, harness)
 }
 
 // ── Shared markdown helpers ──────────────────────────────────────────────────
@@ -567,7 +587,12 @@ func sectionUninstallDoc(harness, uninstallSteps string, step int) string {
 	return b.String()
 }
 
-func sectionSelfUninstall(harness, skillRemovePath string, step int) string {
+// sectionSelfUninstall renders the closing step. `routed` selects the wrap-up
+// the helper reads back to the user: the routed doc can say the harness is now
+// routed through Clawvisor, but a skill-only install has deliberately left the
+// harness pointed at its own provider, so claiming otherwise would send the
+// user looking for observability data that will never appear.
+func sectionSelfUninstall(harness, skillRemovePath string, step int, routed bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %d. Self-uninstall automatically\n\n", step)
 	fmt.Fprintf(&b, "Setup is done. Remove this installer skill now; it is one-shot setup\n")
@@ -578,8 +603,20 @@ func sectionSelfUninstall(harness, skillRemovePath string, step int) string {
 	fmt.Fprintf(&b, "%s\n", skillRemovePath)
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "Tell the user:\n\n")
-	fmt.Fprintf(&b, "- %s is now routed through Clawvisor.\n", harness)
-	fmt.Fprintf(&b, "- Their first real interaction is where they'll see the policy-enforcement demo.\n")
+	if routed {
+		fmt.Fprintf(&b, "- %s is now routed through Clawvisor.\n", harness)
+		fmt.Fprintf(&b, "- Their first real interaction is where they'll see the policy-enforcement demo.\n")
+	} else {
+		// Say the quiet part out loud: nothing about the harness's model
+		// access changed. Users who assume otherwise open the dashboard,
+		// see no LLM traffic, and read that as Clawvisor being broken.
+		fmt.Fprintf(&b, "- %s is registered with Clawvisor. Its LLM traffic still goes straight to\n", harness)
+		fmt.Fprintf(&b, "  its own provider — this install changed nothing about how it reaches a model.\n")
+		fmt.Fprintf(&b, "- The governed tools live in the skill catalog at `$CLAWVISOR_APP_URL/skill`;\n")
+		fmt.Fprintf(&b, "  policy enforcement kicks in the first time the agent calls one of them.\n")
+		fmt.Fprintf(&b, "- Routing model traffic through Clawvisor (Observe) is a separate opt-in —\n")
+		fmt.Fprintf(&b, "  re-run the installer with `route=proxy` if they want it.\n")
+	}
 	fmt.Fprintf(&b, "- The uninstall guide is at `~/.clawvisor/uninstall-%s.md` if they need to back out.\n", harness)
 	return b.String()
 }
@@ -882,6 +919,89 @@ func sectionEnsureVaultedKeyDynamic(step int) string {
 	return b.String()
 }
 
+// ── Shared markdown helpers for the skill-only route ────────────────────────
+//
+// route=skill-only (the default) registers the agent against the gateway and
+// stops there: the harness keeps talking to its own LLM provider. That makes
+// every routing-shaped step of the routed doc dead weight — detect the
+// provider, vault an upstream key (the vaulted key only matters because the
+// proxy injects it, and with no routing there is nothing to inject), probe
+// the deployment, preflight from the harness's own network namespace, and
+// point the harness at Clawvisor all exist to serve a base-URL swap that
+// never happens. So the skill-only docs are register → verify → uninstall
+// reference → self-uninstall, numbered 1-4 with no gaps.
+//
+// These live in their own render functions rather than as `if ctx.Route`
+// branches inside the routed bodies, mirroring how the shell targets do it
+// (codex_skill_only.sh.tmpl sits beside codex.sh.tmpl) and keeping the
+// routed output impossible to disturb by accident.
+
+// sectionSkillOnlyPreamble is the title + orientation block for the
+// skill-only markdown docs. It spells out the prohibitions — no base URL, no
+// vaulted key, no edit to the harness's config file — as instructions rather
+// than as description, because the reader is an LLM helper agent that has
+// very likely seen the routed variant of this same skill and will otherwise
+// "helpfully" finish the job by configuring routing anyway. It closes with
+// the route=proxy escape hatch so a user who does want Observe can get there.
+func sectionSkillOnlyPreamble(harness, target, configFile, appURL string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Connect %s to Clawvisor\n\n", harness)
+	fmt.Fprintf(&b, "You are running a one-shot setup skill. The dashboard pre-baked the\n")
+	fmt.Fprintf(&b, "Clawvisor URL, a single-use claim code, and the agent name into this file.\n")
+	fmt.Fprintf(&b, "The dashboard already approved the connection — no second click is needed.\n\n")
+	fmt.Fprintf(&b, "This is the **skill-only** install, which is the default. It registers\n")
+	fmt.Fprintf(&b, "%s with Clawvisor and persists an agent token — that is the whole job.\n", harness)
+	fmt.Fprintf(&b, "Specifically, and non-negotiably:\n\n")
+	fmt.Fprintf(&b, "- DO NOT set a provider base URL (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`,\n")
+	fmt.Fprintf(&b, "  a `base_url` config field, or any equivalent).\n")
+	fmt.Fprintf(&b, "- DO NOT vault an upstream API key in Clawvisor. Clawvisor's proxy-lite\n")
+	fmt.Fprintf(&b, "  injects a vaulted key on each call, and nothing here routes calls\n")
+	fmt.Fprintf(&b, "  through it, so there is nothing for a vaulted key to do.\n")
+	fmt.Fprintf(&b, "- DO NOT edit `%s`.\n\n", configFile)
+	fmt.Fprintf(&b, "%s keeps reaching its LLM provider exactly the way it does today. The\n", harness)
+	fmt.Fprintf(&b, "agent token is what lets the Clawvisor skill and its tools govern\n")
+	fmt.Fprintf(&b, "%s's tool calls; LLM observability is not part of this install.\n\n", harness)
+	fmt.Fprintf(&b, "Routing model traffic through Clawvisor (the Observe posture) is a\n")
+	fmt.Fprintf(&b, "separate, explicit opt-in. It needs proxy-lite enabled for the account,\n")
+	fmt.Fprintf(&b, "so a routed install for a user without that entitlement returns\n")
+	fmt.Fprintf(&b, "`403 PROXY_LITE_DISABLED` on the first model call — which is why it isn't\n")
+	fmt.Fprintf(&b, "the default. If the user explicitly asks for it, re-fetch this skill with\n")
+	fmt.Fprintf(&b, "`route=proxy` and follow that version instead:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "curl -fsSL \"%s/skill/install/%s.md?claim=<claim>&route=proxy\"\n", strings.TrimRight(appURL, "/"), target)
+	fmt.Fprintf(&b, "```\n\n")
+	return b.String()
+}
+
+// sectionSkillOnlyVerify proves the freshly minted token is actually accepted
+// before the doc declares success. The routed docs verify from the harness's
+// own network namespace (`docker exec`, `ssh`) because they are about to bake
+// a URL the harness itself has to reach; a skill-only install writes nothing
+// on the harness side, so the helper's own shell is both the right and the
+// only necessary vantage point. Hits the control-plane host, which is where
+// /api/skill/catalog is served in split deployments.
+func sectionSkillOnlyVerify(harness string, step int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %d. Verify the token and show the user the skill catalog\n\n", step)
+	fmt.Fprintf(&b, "Registration is the entire install, so the only thing left to prove is\n")
+	fmt.Fprintf(&b, "that the token Clawvisor just minted is accepted. Run this from your own\n")
+	fmt.Fprintf(&b, "shell — there is no %s-side configuration to test, so no `docker exec`\n", harness)
+	fmt.Fprintf(&b, "or `ssh` variant is needed:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "curl -fsSL -H \"X-Clawvisor-Agent-Token: $TOKEN\" \\\n")
+	fmt.Fprintf(&b, "  \"$CLAWVISOR_APP_URL/api/skill/catalog\" >/dev/null && echo OK\n")
+	fmt.Fprintf(&b, "```\n\n")
+	fmt.Fprintf(&b, "If `OK` doesn't appear, surface the response to the user and STOP — the\n")
+	fmt.Fprintf(&b, "token in `$TOKEN_FILE` isn't usable. Re-running the install from the\n")
+	fmt.Fprintf(&b, "dashboard is the fix; do not try to work around it by reconfiguring\n")
+	fmt.Fprintf(&b, "%s.\n\n", harness)
+	fmt.Fprintf(&b, "Then show the user where the governed tools live:\n\n")
+	fmt.Fprintf(&b, "```bash\n")
+	fmt.Fprintf(&b, "echo \"$CLAWVISOR_APP_URL/skill\"\n")
+	fmt.Fprintf(&b, "```\n\n")
+	return b.String()
+}
+
 // ── Shared helpers for the one-paste setup skill (Claude Code, Codex) ────────
 
 // sectionClaimedConnect renders the connect-with-claim curl + token-file
@@ -1043,6 +1163,13 @@ func installerEnvSlug(llmURL string) string {
 }
 
 func renderHermesInstaller(ctx installerCtx) string {
+	// Only route=proxy earns the routing steps. Everything else lands on the
+	// register-only doc: the skill-only default, and "subscription", which
+	// installerCtxFromRequest already folds into skill-only for every target
+	// other than claude-code.
+	if ctx.Route != "proxy" {
+		return renderHermesSkillOnlyInstaller(ctx)
+	}
 	var b strings.Builder
 	llmHost := dockerHostURL(ctx.LLMURL)
 	b.WriteString(setupFrontmatter("Hermes"))
@@ -1232,12 +1359,53 @@ func renderHermesInstaller(ctx installerCtx) string {
 `, 7))
 
 	// Step 8: self-uninstall — remove this setup skill from the helper.
-	b.WriteString(sectionSelfUninstall("hermes", helperSetupCleanupCommands(), 8))
+	b.WriteString(sectionSelfUninstall("hermes", helperSetupCleanupCommands(), 8, true))
+
+	return b.String()
+}
+
+// renderHermesSkillOnlyInstaller renders the default (skill-only) Hermes doc:
+// register, verify, uninstall reference, self-uninstall. Hermes's routed doc
+// runs in swap mode — it hands Clawvisor's agent token to Hermes as the
+// upstream provider's API-key env var and lets the proxy swap in a vaulted
+// key — and every step that supports that swap is absent here.
+func renderHermesSkillOnlyInstaller(ctx installerCtx) string {
+	var b strings.Builder
+	b.WriteString(setupFrontmatterSkillOnly("Hermes"))
+	b.WriteString(sectionSkillOnlyPreamble("Hermes", string(InstallerHermes), "~/.hermes/config.yaml", ctx.AppURL))
+
+	// Step 1: auto-approved claim connect → token saved to $TOKEN_FILE.
+	b.WriteString(sectionClaimedConnect("hermes", ctx.AppURL, ctx.LLMURL, ctx.Claim, ctx.AgentName))
+
+	// Step 2: prove the minted token is accepted before declaring success.
+	b.WriteString(sectionSkillOnlyVerify("Hermes", 2))
+
+	// Step 3: uninstall reference. Deliberately far shorter than the routed
+	// recipe: there is no `model:` block in ~/.hermes/config.yaml to strip, no
+	// HERMES_CV_API_KEY line in ~/.hermes/.env, no `hermes-cv` shell function,
+	// and no vaulted upstream key to reconsider, because a skill-only install
+	// creates none of them. Listing them anyway would send the user hunting
+	// through config files for entries that were never written.
+	b.WriteString(sectionUninstallDoc("hermes", `This was a skill-only install: it never changed how Hermes reaches its LLM
+provider, so `+"`~/.hermes/config.yaml`"+` and your shell rc were left untouched and
+there is nothing there to revert.
+
+1. Delete the token file: `+"`rm ~/.clawvisor/agents/"+ctx.AgentName+".json`"+`.
+2. Revoke the agent in the Clawvisor dashboard under Agents → `+ctx.AgentName+` → Delete.
+`, 3))
+
+	// Step 4: self-uninstall — remove this setup skill from the helper.
+	b.WriteString(sectionSelfUninstall("hermes", helperSetupCleanupCommands(), 4, false))
 
 	return b.String()
 }
 
 func renderOpenClawInstaller(ctx installerCtx) string {
+	// Only route=proxy earns the routing steps; see renderHermesInstaller for
+	// why "subscription" can't reach this branch on a markdown target.
+	if ctx.Route != "proxy" {
+		return renderOpenClawSkillOnlyInstaller(ctx)
+	}
 	var b strings.Builder
 	maxTokens := openClawDefaultMaxTokens()
 	llmHost := dockerHostURL(ctx.LLMURL)
@@ -1404,7 +1572,45 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 `, 7))
 
 	// Step 8: self-uninstall — remove this setup skill from the helper.
-	b.WriteString(sectionSelfUninstall("openclaw", helperSetupCleanupCommands(), 8))
+	b.WriteString(sectionSelfUninstall("openclaw", helperSetupCleanupCommands(), 8, true))
+
+	return b.String()
+}
+
+// renderOpenClawSkillOnlyInstaller renders the default (skill-only) OpenClaw
+// doc: register, verify, uninstall reference, self-uninstall. This is the
+// variant that matters most, because `openclaw` sits in the dashboard's
+// LEGACY_AGENT_TABS — the tab set shown to users without a proxy-lite
+// entitlement — so it is the doc most likely to be followed by someone whose
+// first routed model call would have returned 403 PROXY_LITE_DISABLED.
+func renderOpenClawSkillOnlyInstaller(ctx installerCtx) string {
+	var b strings.Builder
+	b.WriteString(setupFrontmatterSkillOnly("OpenClaw"))
+	b.WriteString(sectionSkillOnlyPreamble("OpenClaw", string(InstallerOpenClaw), "~/.openclaw/openclaw.json", ctx.AppURL))
+
+	// Step 1: auto-approved claim connect → token saved to $TOKEN_FILE.
+	b.WriteString(sectionClaimedConnect("openclaw", ctx.AppURL, ctx.LLMURL, ctx.Claim, ctx.AgentName))
+
+	// Step 2: prove the minted token is accepted before declaring success.
+	b.WriteString(sectionSkillOnlyVerify("OpenClaw", 2))
+
+	// Step 3: uninstall reference. Deliberately shorter than the routed
+	// recipe: there is no `models.providers.clawvisor` entry to delete, no
+	// `models.default` to point back, and no vaulted upstream key to
+	// reconsider, because a skill-only install creates none of them. Telling
+	// the user to remove a provider entry this install never wrote would have
+	// them hand-editing ~/.openclaw/openclaw.json looking for a key that
+	// isn't there.
+	b.WriteString(sectionUninstallDoc("openclaw", `This was a skill-only install: it never changed how OpenClaw reaches its LLM
+provider, so `+"`~/.openclaw/openclaw.json`"+` was left untouched and there is no
+Clawvisor provider entry to remove.
+
+1. Delete the token file: `+"`rm ~/.clawvisor/agents/"+ctx.AgentName+".json`"+`.
+2. Revoke the agent in the Clawvisor dashboard under Agents → `+ctx.AgentName+` → Delete.
+`, 3))
+
+	// Step 4: self-uninstall — remove this setup skill from the helper.
+	b.WriteString(sectionSelfUninstall("openclaw", helperSetupCleanupCommands(), 4, false))
 
 	return b.String()
 }

@@ -2330,9 +2330,12 @@ function OnePasteGuide({
     const qs = new URLSearchParams()
     if (claim) qs.set('claim', claim)
     qs.set('agent_name', agentName)
-    // Only self-install targets honor an explicit route; the markdown helpers
-    // have their own detection flow. skill-only is the server-side default, so
-    // the param is only appended when opting IN to routing.
+    // Every target honors route server-side now, the markdown helpers
+    // (hermes, openclaw) included. The guard stays on selfInstall only because
+    // the LLM-routing toggle below is rendered for those targets alone, so
+    // `route` is always 'skill-only' for the markdown ones and appending it
+    // would be a no-op. skill-only is the server-side default, so the param is
+    // only appended when opting IN to routing.
     if (spec.selfInstall && route === 'proxy') qs.set('route', 'proxy')
     return `${installerBaseURL}/skill/install/${target}?${qs.toString()}`
   }, [agentName, claim, installerBaseURL, target, route, spec.selfInstall])

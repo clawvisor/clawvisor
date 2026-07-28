@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -80,9 +82,13 @@ func TestInstallerUnknownTargetIs404(t *testing.T) {
 	}
 }
 
+// TestInstallerHermesRender asserts the shape of the ROUTED Hermes doc, so it
+// fetches with route=proxy explicitly. The default is skill-only, which drops
+// every step this test is about (detect provider, vault a key, probe,
+// preflight, configure) — see TestInstallerHermesSkillOnlyRender for that one.
 func TestInstallerHermesRender(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
-	body := installerGet(t, h, "hermes", "abcDEF1234")
+	body := installerGetQuery(t, h, "hermes", "claim=abcDEF1234&route=proxy")
 
 	assertContainsAll(t, body,
 		"# Connect Hermes to Clawvisor",
@@ -188,9 +194,12 @@ func TestInstallerHermesRender(t *testing.T) {
 	}
 }
 
+// TestInstallerOpenClawRender asserts the shape of the ROUTED OpenClaw doc, so
+// it fetches with route=proxy explicitly. The default is skill-only — see
+// TestInstallerOpenClawSkillOnlyRender.
 func TestInstallerOpenClawRender(t *testing.T) {
 	h := NewInstallerHandler("", "", true, "", "")
-	body := installerGet(t, h, "openclaw", "CLAIMOPEN12")
+	body := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12&route=proxy")
 
 	assertContainsAll(t, body,
 		"# Connect OpenClaw to Clawvisor",
@@ -314,8 +323,9 @@ func TestInstallerOpenClawRendersAllModes(t *testing.T) {
 	// the rendered markdown must contain command variants for all three.
 	// Provider is also no longer baked, so the per-mode snippets use the
 	// $BASE_PATH / $OPENCLAW_API shell vars instead of hardcoded literals.
+	// The per-mode snippets only exist in the routed doc, so fetch route=proxy.
 	h := NewInstallerHandler("", "", true, "", "")
-	body := installerGet(t, h, "openclaw", "CLAIMOPEN12")
+	body := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12&route=proxy")
 
 	assertContainsAll(t, body,
 		// Host: bare `openclaw config set` (no openclaw-cli; no onboard).
@@ -1070,6 +1080,236 @@ func TestFlipSkillOnlyOptOut(t *testing.T) {
 		"/api/agents/connect",
 		"LLM traffic is NOT routed",
 	)
+}
+
+// ── Markdown route variants (hermes, openclaw) ───────────────────────────────
+
+// assertNotContainsAny fails the test if any needle is present in body.
+// Mirrors assertContainsAll: reports every hit in one run rather than bailing
+// on the first, so a regression that reintroduces several routing steps
+// surfaces all of them.
+func assertNotContainsAny(t *testing.T, label, body string, needles ...string) {
+	t.Helper()
+	for _, n := range needles {
+		if strings.Contains(body, n) {
+			t.Errorf("[%s] body must not contain %q", label, n)
+		}
+	}
+}
+
+// markdownStepHeadings pulls the `## <n>. …` step numbers out of a rendered
+// doc in order. Sub-steps (`### 3.a. …`) are deliberately not matched — only
+// top-level steps carry the numbering contract.
+var markdownStepHeadings = regexp.MustCompile(`(?m)^## (\d+)\. `)
+
+// assertStepsContiguous checks the doc's top-level step headings are 1, 2, 3, …
+// with no gaps or repeats. Dropping a step from a variant without renumbering
+// is the easy mistake here — it produces a doc that jumps "4, 6, 7" and leaves
+// the reader hunting for a step that was never emitted.
+func assertStepsContiguous(t *testing.T, label, body string) {
+	t.Helper()
+	matches := markdownStepHeadings.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		t.Errorf("[%s] no `## <n>.` step headings found", label)
+		return
+	}
+	for i, m := range matches {
+		want := strconv.Itoa(i + 1)
+		if m[1] != want {
+			t.Errorf("[%s] step %d is numbered %q, want %q (headings: %v)",
+				label, i+1, m[1], want, matches)
+		}
+	}
+}
+
+// TestInstallerMarkdownDefaultIsSkillOnly — the markdown helper targets
+// (hermes, openclaw) must honor route the same way the shell targets do. The
+// default doc registers the agent and stops: it must not instruct the user to
+// point their provider at Clawvisor, and must not walk them through vaulting
+// an upstream key (the vaulted key only matters because the proxy injects it,
+// and with no routing there is nothing to inject).
+//
+// openclaw is the one that actually bites users: it's in the dashboard's
+// LEGACY_AGENT_TABS (web/src/pages/Agents.tsx), the tab set shown to users
+// WITHOUT proxy-lite, so a routed default handed an unentitled user a doc whose
+// first model call returns 403 PROXY_LITE_DISABLED. hermes is proxy-lite-only
+// in the UI, but had the identical latent bug.
+func TestInstallerMarkdownDefaultIsSkillOnly(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+
+	// Both the implicit default (no route param) and the explicit opt-out must
+	// land on the same doc — the dashboard emits the bare URL for some flows.
+	for _, query := range []string{"claim=CLAIMOPEN12", "claim=CLAIMOPEN12&route=skill-only"} {
+		body := installerGetQuery(t, h, "openclaw", query)
+		assertContainsAll(t, body,
+			"**skill-only** install",
+			"## 1. Register and persist the token",
+			"/api/agents/connect",
+			`chmod 600 "$TOKEN_FILE"`,
+			"## 2. Verify the token and show the user the skill catalog",
+			`"$CLAWVISOR_APP_URL/api/skill/catalog"`,
+			`echo "$CLAWVISOR_APP_URL/skill"`,
+			"## 3. Save an uninstall reference",
+			"## 4. Self-uninstall automatically",
+			// The opt-in has to stay discoverable from the default doc.
+			"route=proxy",
+			"403 PROXY_LITE_DISABLED",
+		)
+		assertNotContainsAny(t, "openclaw "+query, body,
+			// Routing steps, by heading.
+			"Detect the upstream LLM provider",
+			"Ensure a vaulted upstream key exists",
+			"Preflight: confirm OpenClaw can reach Clawvisor",
+			"Point OpenClaw at Clawvisor",
+			// The provider-routing mechanics themselves.
+			"openclaw config set models.providers.clawvisor",
+			`--arg baseUrl "$CLAWVISOR_LLM_URL$BASE_PATH"`,
+			"/api/runtime/llm-credentials",
+			"Vault a $PROVIDER_LABEL API key",
+			`case "$PROVIDER" in`,
+			// The routed wrap-up claim, which would be false here.
+			"is now routed through Clawvisor",
+		)
+		assertStepsContiguous(t, "openclaw "+query, body)
+	}
+
+	for _, query := range []string{"claim=abcDEF1234", "claim=abcDEF1234&route=skill-only"} {
+		body := installerGetQuery(t, h, "hermes", query)
+		assertContainsAll(t, body,
+			"**skill-only** install",
+			"## 1. Register and persist the token",
+			"/api/agents/connect",
+			`chmod 600 "$TOKEN_FILE"`,
+			"## 2. Verify the token and show the user the skill catalog",
+			`"$CLAWVISOR_APP_URL/api/skill/catalog"`,
+			"## 3. Save an uninstall reference",
+			"## 4. Self-uninstall automatically",
+			"route=proxy",
+			"403 PROXY_LITE_DISABLED",
+		)
+		assertNotContainsAny(t, "hermes "+query, body,
+			"Detect the upstream LLM provider",
+			"Ensure a vaulted upstream key exists",
+			"Preflight: confirm Hermes can reach Clawvisor",
+			"Configure Hermes",
+			// Swap-mode mechanics: the token-as-provider-key handoff and the
+			// config.yaml / .env / shell-alias writes that support it.
+			`"$BASE_ENV=$CLAWVISOR_LLM_URL$BASE_PATH"`,
+			"HERMES_CV_API_KEY",
+			"hermes-cv",
+			"/api/runtime/llm-credentials",
+			`case "$PROVIDER" in`,
+			"is now routed through Clawvisor",
+		)
+		assertStepsContiguous(t, "hermes "+query, body)
+	}
+}
+
+// TestInstallerMarkdownProxyRouteOptIn — route=proxy must still emit the fully
+// routed doc for both markdown targets. Guards the inverted default the same
+// way TestInstallerProxyRouteOptIn does for the shell targets: without this,
+// a later refactor could make routing unreachable for hermes/openclaw and
+// every remaining test would still pass.
+func TestInstallerMarkdownProxyRouteOptIn(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+
+	openclaw := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12&route=proxy")
+	assertContainsAll(t, openclaw,
+		"## 2. Detect the upstream LLM provider",
+		"## 3. Ensure a vaulted upstream key exists",
+		"## 5. Preflight: confirm OpenClaw can reach Clawvisor",
+		"## 6. Point OpenClaw at Clawvisor",
+		`openclaw config set models.providers.clawvisor "$PROVIDER_JSON" --strict-json --merge`,
+		`--arg baseUrl "$CLAWVISOR_LLM_URL$BASE_PATH"`,
+		"## 8. Self-uninstall automatically",
+		"openclaw is now routed through Clawvisor",
+	)
+	assertStepsContiguous(t, "openclaw route=proxy", openclaw)
+
+	hermes := installerGetQuery(t, h, "hermes", "claim=abcDEF1234&route=proxy")
+	assertContainsAll(t, hermes,
+		"## 2. Detect the upstream LLM provider",
+		"## 3. Ensure a vaulted upstream key exists",
+		"## 5. Preflight: confirm Hermes can reach Clawvisor",
+		"## 6. Configure Hermes",
+		`"$BASE_ENV=$CLAWVISOR_LLM_URL$BASE_PATH"`,
+		"HERMES_CV_API_KEY=$TOKEN",
+		"## 8. Self-uninstall automatically",
+		"hermes is now routed through Clawvisor",
+	)
+	assertStepsContiguous(t, "hermes route=proxy", hermes)
+}
+
+// TestInstallerMarkdownSkillOnlyUninstallDoc — the on-disk revert recipe must
+// match what the install actually did. A skill-only install never wrote a
+// `models.providers.clawvisor` entry, a `model:` block, a `HERMES_CV_API_KEY`
+// line, or a vaulted upstream key, so telling the user to remove them sends
+// them hand-editing config files hunting for entries that aren't there — and
+// makes the exit look scarier than it is.
+func TestInstallerMarkdownSkillOnlyUninstallDoc(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+
+	openclawSkill := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12")
+	openclawProxy := installerGetQuery(t, h, "openclaw", "claim=CLAIMOPEN12&route=proxy")
+	assertContainsAll(t, openclawSkill,
+		"This was a skill-only install",
+		"there is no\nClawvisor provider entry to remove",
+		"1. Delete the token file: `rm ~/.clawvisor/agents/openclaw.json`.",
+		"2. Revoke the agent in the Clawvisor dashboard under Agents → openclaw → Delete.",
+	)
+	assertNotContainsAny(t, "openclaw skill-only uninstall", openclawSkill,
+		"Remove the Clawvisor provider entry",
+		"If you set `models.default`",
+		"remove the user-level upstream key",
+	)
+	// The routed recipe keeps every one of those, since a routed install does
+	// create them.
+	assertContainsAll(t, openclawProxy,
+		"Remove the Clawvisor provider entry",
+		"If you set `models.default`",
+		"remove the user-level upstream key",
+	)
+
+	hermesSkill := installerGetQuery(t, h, "hermes", "claim=abcDEF1234")
+	hermesProxy := installerGetQuery(t, h, "hermes", "claim=abcDEF1234&route=proxy")
+	assertContainsAll(t, hermesSkill,
+		"This was a skill-only install",
+		"1. Delete the token file: `rm ~/.clawvisor/agents/hermes.json`.",
+		"2. Revoke the agent in the Clawvisor dashboard under Agents → hermes → Delete.",
+	)
+	assertNotContainsAny(t, "hermes skill-only uninstall", hermesSkill,
+		"Remove the `model:` block",
+		"Remove the `HERMES_CV_API_KEY` line",
+		"Remove the `hermes-cv` function",
+		"remove the user-level upstream key",
+	)
+	assertContainsAll(t, hermesProxy,
+		"Remove the `model:` block",
+		"Remove the `HERMES_CV_API_KEY` line",
+		"Remove the `hermes-cv` function",
+		"remove the user-level upstream key",
+	)
+}
+
+// TestInstallerMarkdownSkillOnlyFrontmatter — the frontmatter `description` is
+// what the user reads in their harness's skill / slash-command picker, so the
+// routed header's "route every session through Clawvisor by default" promise
+// must not ride along on a doc that configures no routing at all.
+func TestInstallerMarkdownSkillOnlyFrontmatter(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	for _, target := range []string{"hermes", "openclaw"} {
+		body := installerGetQuery(t, h, target, "")
+		if !strings.HasPrefix(body, "---\nname: clawvisor-setup\ndescription:") {
+			t.Errorf("[%s] skill-only doc lost its frontmatter", target)
+		}
+		assertNotContainsAny(t, target, body,
+			"route every session through Clawvisor by default",
+		)
+		assertContainsAll(t, body,
+			"keeps talking to its own LLM provider",
+			"pass route=proxy",
+		)
+	}
 }
 
 // TestInstallerSubscriptionModeNoApiKey — a Claude-subscription/OAuth seat
