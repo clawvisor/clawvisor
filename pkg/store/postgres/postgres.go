@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -77,8 +78,17 @@ func runMigrationsFS(ctx context.Context, pool *pgxpool.Pool, migrations fs.FS) 
 		return fmt.Errorf("acquiring migration advisory lock: %w", err)
 	}
 	defer func() {
-		// Best effort only: the session releases the lock when conn is released.
-		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationAdvisoryLockID)
+		// Deliberately not derived from ctx: cleanup has to run even when the
+		// caller's context is already cancelled (a startup abort), which is
+		// exactly when the unlock matters most. It is bounded instead, because
+		// this defer runs before the deferred conn.Release() above — an
+		// unresponsive database would otherwise block here forever and leak the
+		// connection, turning a failed startup into a hang. Best effort only:
+		// the session releases the lock when conn is released, so a timed-out
+		// or failed unlock is not fatal.
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = conn.Exec(unlockCtx, `SELECT pg_advisory_unlock($1)`, migrationAdvisoryLockID)
 	}()
 
 	// Create migrations tracking table

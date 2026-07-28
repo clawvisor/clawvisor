@@ -44,22 +44,23 @@ func TestLargeTableMigrationsStayStartupSafe(t *testing.T) {
 				t.Fatalf("read %s: %v", tt.migration, err)
 			}
 			// Operator instructions in comments intentionally show the deferred
-			// statements. Only inspect executable lines.
-			var activeLines []string
-			for _, line := range strings.Split(string(data), "\n") {
-				if strings.HasPrefix(strings.TrimSpace(line), "--") {
-					continue
-				}
-				activeLines = append(activeLines, line)
-			}
-			sql := strings.Join(activeLines, "\n")
+			// statements, so only executable SQL is inspected. Uses the same
+			// normalizeSQL as the general guard — when this test stripped
+			// comments its own way it disagreed with its sibling about which
+			// bytes were executable, including on inline trailing comments.
+			//
+			// Compared case-insensitively: SQL keywords are, so a migration
+			// written as `update audit_log` would otherwise sail past a
+			// prohibition spelled `UPDATE audit_log`. Needles below are
+			// uppercase-normalized too, so their casing here is cosmetic.
+			sql := strings.ToUpper(normalizeSQL(string(data)))
 			for _, required := range tt.required {
-				if !strings.Contains(sql, required) {
+				if !strings.Contains(sql, strings.ToUpper(required)) {
 					t.Errorf("%s must contain %q", tt.migration, required)
 				}
 			}
 			for _, prohibited := range tt.prohibited {
-				if strings.Contains(sql, prohibited) {
+				if strings.Contains(sql, strings.ToUpper(prohibited)) {
 					t.Errorf("%s must not contain %q", tt.migration, prohibited)
 				}
 			}
