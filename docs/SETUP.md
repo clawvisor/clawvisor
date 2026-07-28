@@ -34,11 +34,11 @@ is running and the user has dashboard access.
 
 ## Step 2: Connect an agent
 
-> Fresh installs default to the **Observe** posture: the interactive setup
-> wizard recommends routing agent LLM traffic through Clawvisor for visibility,
-> and the per-harness install scripts bake the routing by default. Prefer the
-> skill gateway only (no LLM routing)? Pick "Skill gateway only" in the wizard,
-> or pass `route=skill-only` to an install script. Existing installs are never
+> Fresh installs default to the **skill gateway**: the interactive setup wizard
+> recommends it, and the per-harness install scripts install the Clawvisor skill
+> while leaving your agent pointed at its own model provider. Want Clawvisor to
+> also see LLM traffic (the **Observe** posture)? Pick "Observe" in the wizard,
+> or pass `route=proxy` to an install script. Existing installs are never
 > changed on upgrade.
 
 The fastest way to connect an agent is:

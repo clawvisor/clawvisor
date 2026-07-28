@@ -20,6 +20,19 @@ metadata:
       },
   }
 ---
+{{- else if eq .Target "codex" -}}
+---
+name: clawvisor
+description: >
+  Route tool requests through Clawvisor for credential vaulting, task-scoped
+  authorization, and human approval flows. Use for Gmail, Calendar, Drive,
+  Contacts, GitHub, and iMessage (macOS). Clawvisor enforces restrictions,
+  manages task scopes, and injects credentials — the agent never handles
+  secrets directly.
+version: {{ .SkillVersion }}
+published_at: {{ .SkillPublishedAt }}
+homepage: https://github.com/clawvisor/clawvisor
+---
 {{- else if eq .Target "cowork" -}}
 ---
 name: clawvisor
@@ -31,7 +44,7 @@ description: >
   credentials — you never handle secrets directly.
 ---
 {{- end }}
-{{ if eq .Target "claude-code" -}}
+{{ if or (eq .Target "claude-code") (eq .Target "codex") -}}
 # Clawvisor Skill
 
 ## Setup
@@ -63,7 +76,7 @@ The authorization model has two layers — applied in order:
 
 ## Typical Flow
 {{ if .UseCurl }}
-> **Execute all curl commands as a single line.** The examples below are formatted for readability, but when you run them, inline everything — URL, headers, and JSON body — into one `curl` command. Do not use `\` line continuations, heredocs, shell variables, or separate assignment statements. Multi-line commands trigger a separate approval prompt for each line.
+> **Execute all curl commands as a single line.** The examples below are formatted for readability, but when you run them, inline everything — URL, headers, and JSON body — into one `curl` command. Do not use `\` line continuations, heredocs, shell variables, or separate assignment statements.{{ if eq .Target "claude-code" }} Multi-line commands trigger a separate approval prompt for each line.{{ end }}
 
 1. Fetch the catalog — confirm the service is active and the action isn't restricted
 2. Create a task with `POST /api/tasks?wait=true` — this blocks until the user approves
@@ -473,8 +486,8 @@ without re-executing.
 {{ if not .Condensed }}
 ## Important Rules
 
-- **Always execute curl commands as a single line** — the examples in this document are multi-line for readability, but when running them, inline all variables, headers, and JSON bodies into one command. Never use `\` line continuations, heredocs, or separate variable assignments — each triggers a separate approval prompt.
-- Always fetch the catalog first to know what's available and restricted
+{{ if .UseCurl }}- **Always execute curl commands as a single line** — the examples in this document are multi-line for readability, but when running them, inline all variables, headers, and JSON bodies into one command. Never use `\` line continuations, heredocs, or separate variable assignments{{ if eq .Target "claude-code" }} — each triggers a separate approval prompt{{ end }}.
+{{ end }}- Always fetch the catalog first to know what's available and restricted
 - Never attempt to bypass restrictions — they are hard blocks set by the user
 - Always create a task before making gateway requests
 - Use `auto_execute: false` for any action that sends, modifies, or deletes data

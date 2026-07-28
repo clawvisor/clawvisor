@@ -4,32 +4,122 @@
 {{- template "smoke_test" . -}}
 
 # --- Skill-only install (the default) ----------------------------------------
-# This is the skill-gateway variant. Codex keeps talking to OpenAI directly —
-# we do NOT add a [model_providers.*] block or set OPENAI_BASE_URL, so no LLM
-# traffic is routed through Clawvisor. The registered agent token lets the
-# Clawvisor skill/tools govern tool calls; LLM observability is not enabled.
+# Codex keeps talking to OpenAI directly — we never add a [model_providers.*]
+# block or set OPENAI_BASE_URL, so no LLM traffic is routed through Clawvisor.
+# What this install provides is the gateway: the Clawvisor skill, the agent
+# token it authenticates with, and (with your consent) the sandbox egress it
+# needs to reach Clawvisor at all.
 #
-# To route LLM traffic through Clawvisor later (the Observe posture), re-run
-# this installer WITH route=proxy. Routing is opt-in and needs proxy-lite
-# enabled for your account, so a routed install without it returns
-# 403 PROXY_LITE_DISABLED on the first model call:
+# To route model traffic through Clawvisor as well (the Observe posture), re-run
+# WITH route=proxy. Routing is opt-in and needs proxy-lite enabled for your
+# account, or the first model call returns 403 PROXY_LITE_DISABLED:
 #
 #   curl -fsSL "$APP_URL/skill/install/{{.Target}}.sh?claim=<claim>&route=proxy" | sh
+
+# --- Install the Clawvisor skill ---------------------------------------------
+# Codex reads skills from ~/.codex/skills/<name>/SKILL.md. The per-skill
+# subdirectory has to exist first — curl --create-dirs will not create it for a
+# path it is only writing a file into.
+SKILL_DIR="$HOME/.codex/skills/clawvisor"
+mkdir -p "$SKILL_DIR"
+if ! curl -fsSL "$APP_URL/skill/SKILL.md?target=codex" -o "$SKILL_DIR/SKILL.md.tmp"; then
+    echo "could not download the Clawvisor skill from $APP_URL/skill/SKILL.md" >&2
+    rm -f "$SKILL_DIR/SKILL.md.tmp"
+    exit 1
+fi
+# ?target=codex matters: the Claude Code render carries a rationale about
+# permission globs that does not apply to Codex, and an OpenClaw metadata block
+# Codex has no use for.
+#
+# Swap into place only after a complete download, so an interrupted install
+# can't leave a truncated SKILL.md that Codex would try to load — it rejects
+# skills missing name/description frontmatter at startup.
+mv "$SKILL_DIR/SKILL.md.tmp" "$SKILL_DIR/SKILL.md"
+echo "✓ Installed the Clawvisor skill to $SKILL_DIR/SKILL.md"
+
+# --- Export the env the skill needs ------------------------------------------
+# The skill's frontmatter declares CLAWVISOR_URL and CLAWVISOR_AGENT_TOKEN.
+# Both are exported, by reference rather than by value: the token stays in the
+# 0600 file under ~/.clawvisor/agents/ and is read at shell start, so it never
+# lands in an rc file that is typically world-readable.
+case "$SHELL" in
+    */zsh)  RC="$HOME/.zshrc" ;;
+    */bash) RC="$HOME/.bashrc" ;;
+    *)      RC="" ;;
+esac
+if [ -n "$RC" ]; then
+    RC_EXPORT="export CLAWVISOR_URL=\"$APP_URL\"
+export CLAWVISOR_AGENT_TOKEN=\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_SLOT.json)"
+    # Guard on a stable substring rather than the whole block, so a re-run with
+    # a different APP_URL still matches and doesn't stack duplicate exports.
+    if grep -F -q "agents/$AGENT_SLOT.json" "$RC" 2>/dev/null; then
+        echo "  (CLAWVISOR_* exports for $AGENT_SLOT already in $RC; leaving them untouched)"
+    else
+        printf '\n%s\n' "$RC_EXPORT" >> "$RC"
+        echo "✓ Appended CLAWVISOR_URL + CLAWVISOR_AGENT_TOKEN exports to $RC"
+        echo "  (open a new shell, or run: . $RC)"
+    fi
+else
+    echo "  (unknown shell: $SHELL — export these yourself)" >&2
+    echo "    export CLAWVISOR_URL=\"$APP_URL\"" >&2
+    echo "    export CLAWVISOR_AGENT_TOKEN=\$(jq -r .token \$HOME/.clawvisor/agents/$AGENT_SLOT.json)" >&2
+fi
+
+# --- Sandbox egress (asks first) ---------------------------------------------
+# Codex has no per-command allowlist like Claude Code's permissions.allow. Its
+# sandbox blocks outbound network by default, so the skill's gateway curls fail
+# with connection-refused until workspace-write is allowed network access.
+#
+# That is a real relaxation of the sandbox, so it is never applied silently:
+# an explicit flag wins, otherwise we ask, and with no terminal we decline and
+# print the line. The routed installer only ever passes this per-invocation
+# (-c) for its own smoke test; persisting it is a bigger step and is treated
+# as one.
+CODEX_CONFIG="$HOME/.codex/config.toml"
+NET_LINE='[sandbox_workspace_write]
+network_access = true'
+mkdir -p "$HOME/.codex"
+touch "$CODEX_CONFIG"
+
+CV_WANT_NETWORK=no
+if [ "$CV_ALLOW_NETWORK" = yes ]; then
+    CV_WANT_NETWORK=yes
+elif [ "$CV_ALLOW_NETWORK" = no ]; then
+    CV_WANT_NETWORK=no
+elif grep -q "^network_access[[:space:]]*=[[:space:]]*true" "$CODEX_CONFIG" 2>/dev/null; then
+    echo "✓ Codex sandbox already allows network access — nothing to change"
+    CV_WANT_NETWORK=already
+elif [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    echo
+    echo "Codex sandboxes its shell and blocks outbound network by default, which"
+    echo "means the Clawvisor skill cannot reach $APP_URL."
+    echo "Allowing egress writes this to $CODEX_CONFIG:"
+    echo
+    echo "    [sandbox_workspace_write]"
+    echo "    network_access = true"
+    echo
+    echo "This lets sandboxed Codex commands reach the network in general, not just"
+    echo "Clawvisor. Decline if you would rather scope it yourself."
+    if prompt_yn "Allow Codex sandbox network access?" yes; then
+        CV_WANT_NETWORK=yes
+    fi
+else
+    echo "  (no terminal to ask on; leaving the Codex sandbox unchanged)"
+fi
+
+if [ "$CV_WANT_NETWORK" = yes ]; then
+    printf '\n%s\n' "$NET_LINE" >> "$CODEX_CONFIG"
+    echo "✓ Allowed Codex sandbox network access in $CODEX_CONFIG"
+elif [ "$CV_WANT_NETWORK" = no ]; then
+    echo "→ Left the Codex sandbox unchanged. The Clawvisor skill will not be able to"
+    echo "  reach $APP_URL until you add this to $CODEX_CONFIG:"
+    echo
+    echo "    [sandbox_workspace_write]"
+    echo "    network_access = true"
+fi
+
 echo "✓ Registered {{.HarnessLabel}} with Clawvisor (skill-only — LLM traffic is NOT routed)."
-echo "  The Clawvisor skill catalog is available at $APP_URL/skill."
 
-# --- Write the uninstall reference -------------------------------------------
-UNINSTALL_DOC="$HOME/.clawvisor/uninstall-codex.md"
-cat > "$UNINSTALL_DOC" <<EOF
-# How to disconnect Codex from Clawvisor (skill-only install)
-
-This install did not change how Codex reaches OpenAI — it only registered an
-agent token. To fully disconnect:
-
-1. Delete the token file: rm ~/.clawvisor/agents/$AGENT_SLOT.json
-2. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
-EOF
-echo "✓ Wrote revert recipe to $UNINSTALL_DOC"
-
+{{ template "dry_run" . }}
 echo
-echo "Done. Skill-only install complete — no routing changes were made."
+echo "Done. Codex reaches the Clawvisor gateway through the skill; LLM traffic is NOT routed."

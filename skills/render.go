@@ -17,6 +17,13 @@ const (
 	// instructions, full detail.
 	TargetClaudeCode Target = "claude-code"
 
+	// TargetCodex renders for Codex — curl-based examples like Claude Code,
+	// since Codex executes shell and has no Clawvisor MCP server in this flow.
+	// Distinct from TargetClaudeCode because Codex requires name+description
+	// frontmatter and must not receive Claude Code's permission-glob rationale
+	// for single-line curls, which does not apply to it.
+	TargetCodex Target = "codex"
+
 	// TargetCowork renders for the Claude Desktop (Cowork) plugin — MCP tool
 	// names, no curl examples, no setup.
 	TargetCowork Target = "cowork"
@@ -55,29 +62,68 @@ type templateData struct {
 }
 
 // dataForTarget returns the template data for the given target.
-func dataForTarget(t Target) templateData {
+//
+// An unrecognised target is an error rather than a zero-value fallback. The old
+// default arm returned templateData{Target: t}, which renders a document with
+// NO frontmatter (Codex rejects those at startup) describing MCP tool names to
+// a harness that has no MCP tools — and it did so while returning nil, so the
+// caller had no way to notice. Failing loudly is the only safe behaviour for a
+// value that reaches an unauthenticated HTTP handler.
+func dataForTarget(t Target) (templateData, error) {
 	switch t {
 	case TargetClaudeCode:
 		return templateData{
 			Target:    t,
 			UseCurl:   true,
 			Condensed: false,
-		}
+		}, nil
+	case TargetCodex:
+		return templateData{
+			Target:    t,
+			UseCurl:   true,
+			Condensed: false,
+		}, nil
 	case TargetCowork:
 		return templateData{
 			Target:    t,
 			UseCurl:   false,
 			Condensed: false,
-		}
+		}, nil
 	case TargetMCP:
 		return templateData{
 			Target:    t,
 			UseCurl:   false,
 			Condensed: true,
-		}
+		}, nil
 	default:
-		return templateData{Target: t}
+		return templateData{}, fmt.Errorf("unknown skill target %q (want one of %s)",
+			t, strings.Join(TargetNames(), ", "))
 	}
+}
+
+// TargetNames lists every renderable target. Used for error messages and for
+// validating a caller-supplied target (e.g. an HTTP query param) before render.
+func TargetNames() []string {
+	return []string{
+		string(TargetClaudeCode),
+		string(TargetCodex),
+		string(TargetCowork),
+		string(TargetMCP),
+	}
+}
+
+// ParseTarget validates s against the known targets. Callers that accept a
+// target from outside the process (HTTP query params, CLI argv) should use this
+// rather than converting with Target(s), which silently produces an invalid
+// value.
+func ParseTarget(s string) (Target, error) {
+	for _, name := range TargetNames() {
+		if s == name {
+			return Target(name), nil
+		}
+	}
+	return "", fmt.Errorf("unknown skill target %q (want one of %s)",
+		s, strings.Join(TargetNames(), ", "))
 }
 
 // Render produces the SKILL.md content for the given target by executing the
@@ -99,7 +145,10 @@ func RenderWithOptions(target Target, opts RenderOptions) (string, error) {
 		return "", fmt.Errorf("parsing SKILL.md.tmpl: %w", err)
 	}
 
-	data := dataForTarget(target)
+	data, err := dataForTarget(target)
+	if err != nil {
+		return "", err
+	}
 	data.ClawvisorURL = opts.ClawvisorURL
 	data.ViaRelay = opts.ViaRelay
 	data.FeedbackEnabled = opts.FeedbackEnabled

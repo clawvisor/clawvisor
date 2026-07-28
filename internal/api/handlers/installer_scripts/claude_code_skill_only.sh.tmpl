@@ -4,32 +4,78 @@
 {{- template "smoke_test" . -}}
 
 # --- Skill-only install (the default) ----------------------------------------
-# This is the skill-gateway variant. Claude Code keeps talking to Anthropic
-# directly — we do NOT set ANTHROPIC_BASE_URL, so no LLM traffic is routed
-# through Clawvisor. The registered agent token lets the Clawvisor skill/tools
-# govern tool calls; LLM observability is not enabled.
+# Claude Code keeps talking to Anthropic directly — we never set
+# ANTHROPIC_BASE_URL, so no LLM traffic is routed through Clawvisor. What this
+# install does provide is the gateway: the Clawvisor skill, the agent token it
+# authenticates with, and the permission rules that let it call out without a
+# prompt on every request.
 #
-# To route LLM traffic through Clawvisor later (the Observe posture), re-run
-# this installer WITH route=proxy. Routing is opt-in and needs proxy-lite
-# enabled for your account, so a routed install without it returns
-# 403 PROXY_LITE_DISABLED on the first model call:
+# To route model traffic through Clawvisor as well (the Observe posture), re-run
+# WITH route=proxy. Routing is opt-in and needs proxy-lite enabled for your
+# account, or the first model call returns 403 PROXY_LITE_DISABLED:
 #
 #   curl -fsSL "$APP_URL/skill/install/{{.Target}}.sh?claim=<claim>&route=proxy" | sh
+
+# --- Install the Clawvisor skill ---------------------------------------------
+# ~/.claude/skills/clawvisor/SKILL.md is the global location Claude Code reads
+# in every project — the same path `clawvisor-server connect-agent claude-code`
+# writes, so a later daemon-side setup overwrites rather than conflicts.
+#
+# ?target=claude-code is passed explicitly even though it is the server's
+# default: this script is the wrong place to depend on a default that lives in
+# another process.
+SKILL_DIR="$HOME/.claude/skills/clawvisor"
+mkdir -p "$SKILL_DIR"
+if ! curl -fsSL "$APP_URL/skill/SKILL.md?target=claude-code" -o "$SKILL_DIR/SKILL.md.tmp"; then
+    echo "could not download the Clawvisor skill from $APP_URL/skill/SKILL.md" >&2
+    rm -f "$SKILL_DIR/SKILL.md.tmp"
+    exit 1
+fi
+# Swap into place only after a complete download, so an interrupted install
+# can't leave a truncated SKILL.md that Claude Code would happily load.
+mv "$SKILL_DIR/SKILL.md.tmp" "$SKILL_DIR/SKILL.md"
+echo "✓ Installed the Clawvisor skill to $SKILL_DIR/SKILL.md"
+
+# --- Wire the env the skill needs, and allow its calls -----------------------
+# The skill's frontmatter declares CLAWVISOR_URL + CLAWVISOR_AGENT_TOKEN, and
+# Claude Code supplies env from settings.json. The permission rules matter just
+# as much: without them the skill's gateway curls prompt on every single call,
+# which leaves the install technically complete and practically unusable.
+SETTINGS="$HOME/.claude/settings.json"
+mkdir -p "$HOME/.claude"
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+
+# umask before the write rather than chmod after it: $SETTINGS.tmp carries the
+# agent token, and a chmod that follows the write leaves a window where the
+# token is readable at the ambient umask (commonly 0644). The same token is
+# already 0600 in ~/.clawvisor/agents/ — it must not be world-readable here.
+CV_OLD_UMASK=$(umask)
+umask 077
+jq \
+    --arg url "$APP_URL" \
+    --arg token "$TOKEN" \
+    --arg rule_url '{{.RelayPermissionRule}}' \
+    '
+    .env = ((.env // {}) + {
+        CLAWVISOR_URL: $url,
+        CLAWVISOR_AGENT_TOKEN: $token
+    })
+    | .permissions = ((.permissions // {}))
+    | .permissions.allow = (
+        ((.permissions.allow // []) + [
+            "Bash(curl *http://localhost:25297/*)",
+            "Bash(curl *$CLAWVISOR_URL/*)",
+            $rule_url
+        ]) | unique
+    )
+    ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
+chmod 600 "$SETTINGS"
+umask "$CV_OLD_UMASK"
+echo "✓ Wired CLAWVISOR_URL + CLAWVISOR_AGENT_TOKEN into $SETTINGS (chmod 600)"
+echo "  and allowed the skill's gateway calls in permissions.allow"
+
 echo "✓ Registered {{.HarnessLabel}} with Clawvisor (skill-only — LLM traffic is NOT routed)."
-echo "  The Clawvisor skill catalog is available at $APP_URL/skill."
 
-# --- Write the uninstall reference -------------------------------------------
-UNINSTALL_DOC="$HOME/.clawvisor/uninstall-claude-code.md"
-cat > "$UNINSTALL_DOC" <<EOF
-# How to disconnect Claude Code from Clawvisor (skill-only install)
-
-This install did not change how Claude Code reaches Anthropic — it only
-registered an agent token. To fully disconnect:
-
-1. Delete the token file: rm ~/.clawvisor/agents/$AGENT_SLOT.json
-2. Revoke the agent in the Clawvisor dashboard under Agents → $AGENT_NAME → Delete.
-EOF
-echo "✓ Wrote revert recipe to $UNINSTALL_DOC"
-
+{{ template "dry_run" . }}
 echo
-echo "Done. Skill-only install complete — no routing changes were made."
+echo "Done. Claude Code reaches the Clawvisor gateway through the skill; LLM traffic is NOT routed."

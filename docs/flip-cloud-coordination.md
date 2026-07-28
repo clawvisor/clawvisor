@@ -14,8 +14,10 @@ The flip is **writer-side only**:
 - `internal/daemon/setup.go` — stamps `config_schema: 2` (already wrote
   `proxy_lite.enabled: true`).
 - `internal/api/handlers/installer.go` + `installer_scripts/*.tmpl` — the
-  per-harness install scripts route LLM traffic by default; `route=skill-only`
-  is the opt-out; `route=subscription` handles OAuth seats.
+  per-harness install scripts install the Clawvisor skill and do **not** route
+  LLM traffic; `route=proxy` is the opt-in; `route=subscription` handles OAuth
+  seats. (The default was inverted in #643 — this document describes the
+  original forward flip and is retained for history.)
 - `pkg/config` — `Config` gains one **additive** field, `ConfigSchema int`
   (`config_schema`), plus the `CurrentConfigSchema` const. `Default()` is
   **unchanged**: `ProxyLite.Enabled` stays `false` permanently

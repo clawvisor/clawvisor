@@ -53,6 +53,19 @@ Flags:
   --no-yolo              Don't pass that flag.
   --no-tui               Use the plain [y/n] prompts instead of the
                          arrow-key selector (also: CLAWVISOR_NO_TUI=1).
+  --dry-run              Run the end-to-end dry run at the end without asking.
+                         Spawns this harness and has it exercise the gateway
+                         for real: one in-scope request, then one out-of-scope
+                         request that must be denied. Skill-only installs only.
+  --no-dry-run           Skip the dry run without asking. This is also what
+                         happens when there is no terminal to prompt on, so
+                         the dry run never fires unattended.
+  --allow-network        (codex) Persist sandbox_workspace_write.network_access
+                         = true so the skill can reach the gateway, without
+                         asking.
+  --no-allow-network     (codex) Leave the sandbox alone. The skill will not be
+                         able to reach the gateway until you allow egress
+                         yourself; the script prints the exact line.
   -h, --help             Show this help and exit.
 
 Without --default-everywhere / --alias-only, the script reads /dev/tty.
@@ -66,6 +79,8 @@ CV_ALIAS_NAME=""      # function name for alias mode (default in per-target tmpl
 CV_NO_TUI="${CLAWVISOR_NO_TUI:-0}"  # 1 disables the arrow-key selector
 CV_INVITE_STDIN=""    # "1" when --invite-stdin was passed
 CV_INVITE_FILE=""     # path when --invite-file=PATH was passed
+CV_DRY_RUN=""         # "yes" or "no"; empty means ask (skill-only installs)
+CV_ALLOW_NETWORK=""   # "yes" or "no"; empty means ask (codex skill-only)
 for arg in "$@"; do
     case "$arg" in
         --invite-stdin)       CV_INVITE_STDIN=1 ;;
@@ -76,6 +91,10 @@ for arg in "$@"; do
         --yolo)               CV_YOLO=yes ;;
         --no-yolo)            CV_YOLO=no  ;;
         --no-tui)             CV_NO_TUI=1 ;;
+        --dry-run)            CV_DRY_RUN=yes ;;
+        --no-dry-run)         CV_DRY_RUN=no  ;;
+        --allow-network)      CV_ALLOW_NETWORK=yes ;;
+        --no-allow-network)   CV_ALLOW_NETWORK=no  ;;
         -h|--help)            usage ;;
         *) echo "unknown flag: $arg" >&2; usage ;;
     esac
@@ -428,6 +447,102 @@ jq -n \
     > "$AGENT_JSON"
 chmod 600 "$AGENT_JSON"
 echo "✓ Token saved to $AGENT_JSON (chmod 600)"
+{{end -}}
+
+{{define "dry_run"}}# --- Optional end-to-end dry run ---------------------------------------------
+# The smoke test above only proves the token is live. This proves the product
+# works: that the skill loaded, the env resolved inside the harness, the calls
+# are permitted, the gateway is reachable, and — the part nothing else checks —
+# that an out-of-scope request is actually DENIED.
+#
+# The prompt hands the whole flow to the Clawvisor skill, which already owns
+# creating a task, long-polling for approval, and telling the user to approve it
+# in the dashboard. Nothing here needs its own polling or timeout logic.
+cv_dry_run_prompt() {
+    cat <<'CVPROMPT'
+Use the Clawvisor skill to run an end-to-end check of this setup, then report
+what happened. Follow the skill's own instructions for each step.
+
+1. Fetch the Clawvisor catalog and pick any service that is already connected.
+2. Create a task whose scope is narrow and READ-ONLY — for example "read the
+   subject of my most recent email" or "list my GitHub notifications". Follow
+   the skill's guidance on waiting for approval, and tell me clearly that I need
+   to approve it in the Clawvisor dashboard or mobile app.
+3. Once it is approved, make one request that is INSIDE the task's scope. Show
+   me the response.
+4. Then make a second request against the SAME task that is clearly OUTSIDE its
+   scope — for instance sending or deleting something when the task only allows
+   reading. Show me the result. This one is SUPPOSED to be rejected; a rejection
+   here is a pass, not a failure.
+5. Summarise: the in-scope request should have succeeded and the out-of-scope
+   request should have been denied. If either came back differently, say so
+   plainly and help me work out why.
+
+Do not modify any configuration files. This is a read-only check of an install
+that has already completed.
+CVPROMPT
+}
+
+# Decide whether to run it. An explicit flag always wins. Otherwise ask — but
+# only when there is a terminal to ask on. prompt_yn falls back to its default
+# when /dev/tty is unavailable, which would make an unattended `curl | sh` spawn
+# an agent; requiring a tty keeps the interactive default "yes" without ever
+# firing in CI.
+CV_WANT_DRY_RUN=no
+if [ "$CV_DRY_RUN" = yes ]; then
+    CV_WANT_DRY_RUN=yes
+elif [ "$CV_DRY_RUN" = no ]; then
+    CV_WANT_DRY_RUN=no
+elif [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    echo
+    echo "One last optional step: a dry run that spawns {{.HarnessLabel}} and has it make a"
+    echo "real in-scope request plus an out-of-scope one, to prove enforcement works."
+    echo "It will ask you to approve a task in the Clawvisor dashboard."
+    if prompt_yn "Run the end-to-end dry run now?" yes; then
+        CV_WANT_DRY_RUN=yes
+    fi
+else
+    echo "  (skipping the optional dry run — no terminal to prompt on; pass --dry-run to force it)"
+fi
+
+if [ "$CV_WANT_DRY_RUN" = yes ]; then
+    echo
+    echo "→ Running the end-to-end dry run via {{.HarnessLabel}}…"
+    echo "  (approve the task in the Clawvisor dashboard when prompted)"
+    echo
+    # </dev/null is load-bearing: under `curl | sh`, sh's stdin IS the curl pipe
+    # carrying the rest of this script. Without the redirect the harness reads
+    # it as prompt input and sh exits silently at EOF once the harness returns.
+    #
+    # Output is deliberately NOT captured — the point is for the user to watch
+    # the two requests land. Only CLAWVISOR_* is exported: no ANTHROPIC_*/
+    # OPENAI_* routing vars, which is what makes this a skill-only check.
+{{- if eq .Target "codex" }}
+    if command -v codex >/dev/null 2>&1; then
+        CLAWVISOR_URL="$APP_URL" \
+        CLAWVISOR_AGENT_TOKEN="$TOKEN" \
+            codex exec --skip-git-repo-check "$(cv_dry_run_prompt)" </dev/null || true
+    else
+        echo "  codex is not on your PATH, so the dry run was skipped." >&2
+        echo "  Install codex and re-run with --dry-run to try again." >&2
+    fi
+{{- else }}
+    if command -v claude >/dev/null 2>&1; then
+        CLAWVISOR_URL="$APP_URL" \
+        CLAWVISOR_AGENT_TOKEN="$TOKEN" \
+            claude -p "$(cv_dry_run_prompt)" </dev/null || true
+    else
+        echo "  claude is not on your PATH, so the dry run was skipped." >&2
+        echo "  Install Claude Code and re-run with --dry-run to try again." >&2
+    fi
+{{- end }}
+    # `|| true` above is deliberate: the install itself already succeeded and is
+    # persisted. A failed or abandoned dry run is diagnostic information, not a
+    # reason to report the install as broken.
+    echo
+    echo "  Dry run finished. Read the summary above — the in-scope request should"
+    echo "  have succeeded and the out-of-scope one should have been denied."
+fi
 {{end -}}
 
 {{define "smoke_test"}}# --- Smoke test: token is live -----------------------------------------------

@@ -1306,8 +1306,31 @@ func (s *Server) routes() http.Handler {
 		}
 	}
 
+	// skillTargetFromQuery resolves ?target= to a render target. Defaults to
+	// Claude Code so every existing consumer — the onboarding docs, the skill's
+	// own self-update pointer — keeps getting exactly what it got before. A
+	// supplied-but-unknown target is a 400 rather than a silent fallback: the
+	// shell installers pick the target, and quietly serving a Claude Code skill
+	// to Codex is the bug this parameter exists to prevent.
+	//
+	// A query param rather than a path segment: GET /skill/{target}/SKILL.md
+	// would be shadowed by the mux.Handle("/skill/", …) file-server catch-all
+	// registered below.
+	skillTargetFromQuery := func(r *http.Request) (skillfiles.Target, error) {
+		raw := r.URL.Query().Get("target")
+		if raw == "" {
+			return skillfiles.TargetClaudeCode, nil
+		}
+		return skillfiles.ParseTarget(raw)
+	}
+
 	mux.HandleFunc("GET /skill/SKILL.md", func(w http.ResponseWriter, r *http.Request) {
-		rendered, err := skillfiles.RenderWithOptions(skillfiles.TargetClaudeCode, skillRenderOpts(r))
+		target, err := skillTargetFromQuery(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		rendered, err := skillfiles.RenderWithOptions(target, skillRenderOpts(r))
 		if err != nil {
 			http.Error(w, "rendering SKILL.md: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -1316,9 +1339,14 @@ func (s *Server) routes() http.Handler {
 		w.Write([]byte(rendered))
 	})
 	mux.HandleFunc("GET /skill/skill.zip", func(w http.ResponseWriter, r *http.Request) {
+		target, err := skillTargetFromQuery(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", `attachment; filename="skill.zip"`)
-		rendered, err := skillfiles.RenderWithOptions(skillfiles.TargetClaudeCode, skillRenderOpts(r))
+		rendered, err := skillfiles.RenderWithOptions(target, skillRenderOpts(r))
 		if err != nil {
 			http.Error(w, "rendering SKILL.md: "+err.Error(), http.StatusInternalServerError)
 			return

@@ -1025,6 +1025,107 @@ func TestInstallerDefaultIsSkillOnly(t *testing.T) {
 	assertContainsAll(t, codex, "skill-only", "/api/agents/connect", "LLM traffic is NOT routed")
 }
 
+// TestSkillOnlyInstallsTheSkill — the whole point of a skill-only install. Until
+// this existed the script minted a token and stopped, so the harness ended up
+// with a credential on disk and no idea Clawvisor existed: the agent never
+// routed tool calls through the gateway because nothing had told it to. The
+// installer must leave the skill on disk AND make the env it declares
+// (CLAWVISOR_URL, CLAWVISOR_AGENT_TOKEN) resolvable by the harness.
+func TestSkillOnlyInstallsTheSkill(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+
+	claude := installerGetShell(t, h, "claude-code", "ABCDEFGHIJ")
+	assertContainsAll(t, claude,
+		// Fetched per-target: the Claude Code render carries permission-glob
+		// guidance that would mislead any other harness.
+		"/skill/SKILL.md?target=claude-code",
+		".claude/skills/clawvisor",
+		"CLAWVISOR_URL",
+		"CLAWVISOR_AGENT_TOKEN",
+		// Without the allow-rules the skill prompts on every gateway call,
+		// which is "installed" but not usable.
+		"permissions.allow",
+	)
+
+	codex := installerGetShell(t, h, "codex", "CLAIMCODE0")
+	assertContainsAll(t, codex,
+		"/skill/SKILL.md?target=codex",
+		".codex/skills/clawvisor",
+		"CLAWVISOR_URL",
+		"CLAWVISOR_AGENT_TOKEN",
+	)
+}
+
+// TestSkillOnlyProtectsTheTokenAtRest — the agent token is written into
+// ~/.claude/settings.json so Claude Code can read it as env. The same secret is
+// already chmod 600 in ~/.clawvisor/agents/, and the routed installer leaves the
+// settings copy at the ambient umask (commonly 0644). Skill-only must not repeat
+// that: umask before the write covers the temp file too, which a trailing chmod
+// would not.
+func TestSkillOnlyProtectsTheTokenAtRest(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	claude := installerGetShell(t, h, "claude-code", "ABCDEFGHIJ")
+
+	assertContainsAll(t, claude, "umask 077", "chmod 600")
+
+	// The token must never be written BY VALUE into a shell rc, where it would
+	// sit at the ambient umask forever. Codex reads it by reference instead.
+	//
+	// Scoped to the `export` form on purpose: passing the token as a
+	// per-invocation process env (as the dry run does when it spawns the
+	// harness) is fine and necessary — it is never persisted. An assertion
+	// broad enough to catch that is a false positive, not a finding.
+	codex := installerGetShell(t, h, "codex", "CLAIMCODE0")
+	if strings.Contains(codex, `export CLAWVISOR_AGENT_TOKEN="$TOKEN"`) {
+		t.Error("codex skill-only must export the token by reference (jq from the 0600 file), not by value into an rc")
+	}
+	assertContainsAll(t, codex, "jq -r .token")
+}
+
+// TestSkillOnlyDryRunIsOptIn — the dry run spawns the harness, so it must never
+// fire unattended. `curl | sh` with no terminal has to fall through to skipping
+// it; a default that spawns an agent in CI would be a nasty surprise.
+func TestSkillOnlyDryRunIsOptIn(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	for _, tc := range []struct{ target, claim string }{
+		{"claude-code", "ABCDEFGHIJ"},
+		{"codex", "CLAIMCODE0"},
+	} {
+		body := installerGetShell(t, h, tc.target, tc.claim)
+		assertContainsAll(t, body,
+			"cv_dry_run_prompt",
+			// Gated on an interactive terminal, not on a bare default.
+			"[ -r /dev/tty ]",
+			// Load-bearing: under `curl | sh` the harness would otherwise read
+			// the rest of this script from the pipe as its prompt.
+			"</dev/null",
+			// The out-of-scope half is the only thing that proves enforcement.
+			"OUTSIDE",
+		)
+		if !strings.Contains(body, "--dry-run") {
+			t.Errorf("%s: dry run must be pre-answerable with --dry-run for non-interactive installs", tc.target)
+		}
+	}
+}
+
+// TestCodexSkillOnlyAsksBeforeRelaxingSandbox — persisting
+// network_access = true weakens the sandbox for every workspace-write command,
+// not just Clawvisor's. It must be consented to, and declining must tell the
+// user what to do instead rather than leaving them with a silently broken skill.
+func TestCodexSkillOnlyAsksBeforeRelaxingSandbox(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	codex := installerGetShell(t, h, "codex", "CLAIMCODE0")
+
+	assertContainsAll(t, codex,
+		"sandbox_workspace_write",
+		"network_access = true",
+		"CV_ALLOW_NETWORK",
+		"[ -r /dev/tty ]",
+	)
+	// No terminal must mean "leave the sandbox alone", never "relax it quietly".
+	assertContainsAll(t, codex, "leaving the Codex sandbox unchanged")
+}
+
 // TestInstallerProxyRouteOptIn — route=proxy is now the explicit opt-in, and
 // must still produce the fully-routed script. Guards the inverted default:
 // without this, flipping the fallback could silently make routing unreachable.
