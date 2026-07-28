@@ -472,11 +472,17 @@ what happened. Follow the skill's own instructions for each step.
    me the response.
 4. Then make a second request against the SAME task that is clearly OUTSIDE its
    scope — for instance sending or deleting something when the task only allows
-   reading. Show me the result. This one is SUPPOSED to be rejected; a rejection
-   here is a pass, not a failure.
-5. Summarise: the in-scope request should have succeeded and the out-of-scope
-   request should have been denied. If either came back differently, say so
-   plainly and help me work out why.
+   reading. Show me the result.
+
+   The pass condition here is that the write NEVER EXECUTES on the read-only
+   task's authority. Do not expect a flat rejection: per the authorization
+   model an out-of-scope action normally comes back as pending_scope_expansion,
+   where the gate holds it and offers to ask me to widen the scope. That is a
+   pass. A blocked status is also a pass but means something different — a
+   restriction matched. Tell me which one you actually got.
+5. Summarise: the in-scope request should have succeeded, and the out-of-scope
+   one should have been held rather than executed. If either came back
+   differently, say so plainly and help me work out why.
 
 Do not modify any configuration files. This is a read-only check of an install
 that has already completed.
@@ -488,8 +494,25 @@ CVPROMPT
 # when /dev/tty is unavailable, which would make an unattended `curl | sh` spawn
 # an agent; requiring a tty keeps the interactive default "yes" without ever
 # firing in CI.
+# Every gateway request needs a task, and every task needs a service to scope
+# against — so with an empty catalog the dry run cannot do the thing it
+# promises. That is the normal state right after a fresh install, which is
+# exactly when this runs. Checking here means the user gets one clear sentence
+# instead of spending an agent turn to be told the same thing.
+CV_CATALOG=$(curl -sf -H "X-Clawvisor-Agent-Token: $TOKEN" \
+    "$APP_URL/api/skill/catalog" 2>/dev/null || true)
+CV_HAVE_SERVICES=yes
+case "$CV_CATALOG" in
+    *"No cloud services are currently activated"*|"") CV_HAVE_SERVICES=no ;;
+esac
+
 CV_WANT_DRY_RUN=no
-if [ "$CV_DRY_RUN" = yes ]; then
+if [ "$CV_HAVE_SERVICES" = no ] && [ "$CV_DRY_RUN" != yes ]; then
+    echo
+    echo "  Skipping the end-to-end dry run: no services are connected yet, so there is"
+    echo "  nothing for a task to be scoped against. Connect one in the Clawvisor"
+    echo "  dashboard (Services), then re-run this installer with --dry-run."
+elif [ "$CV_DRY_RUN" = yes ]; then
     CV_WANT_DRY_RUN=yes
 elif [ "$CV_DRY_RUN" = no ]; then
     CV_WANT_DRY_RUN=no
