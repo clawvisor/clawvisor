@@ -499,11 +499,23 @@ CVPROMPT
 # promises. That is the normal state right after a fresh install, which is
 # exactly when this runs. Checking here means the user gets one clear sentence
 # instead of spending an agent turn to be told the same thing.
+# The catalog is markdown, not JSON, and the agent token cannot read the
+# structured /api/services (that route takes a user session or an API token),
+# so this has to be inferred from the rendered text. Look for the marker the
+# renderer emits ONLY when there is at least one entry, and additionally
+# require the absence of the empty-state sentence.
+#
+# Presence-matching on purpose. Matching only the empty sentence fails OPEN if
+# that copy is ever reworded: the guard concludes "services exist", offers the
+# dry run, and the agent dies at the same wall this check exists to avoid.
+# Requiring a positive marker fails CLOSED instead — a renderer change makes us
+# skip and print an actionable message, and --dry-run still forces it.
 CV_CATALOG=$(curl -sf -H "X-Clawvisor-Agent-Token: $TOKEN" \
     "$APP_URL/api/skill/catalog" 2>/dev/null || true)
-CV_HAVE_SERVICES=yes
+CV_HAVE_SERVICES=no
 case "$CV_CATALOG" in
-    *"No cloud services are currently activated"*|"") CV_HAVE_SERVICES=no ;;
+    *"No cloud services are currently activated"*) CV_HAVE_SERVICES=no ;;
+    *"?service=<service_id>"*)                     CV_HAVE_SERVICES=yes ;;
 esac
 
 CV_WANT_DRY_RUN=no
@@ -556,13 +568,67 @@ if [ "$CV_WANT_DRY_RUN" = yes ]; then
     fi
 {{- else }}
     if command -v claude >/dev/null 2>&1; then
-        if CLAWVISOR_URL="$APP_URL" \
-           CLAWVISOR_AGENT_TOKEN="$TOKEN" \
-               claude -p "$(cv_dry_run_prompt)" </dev/null; then
+        # `claude -p` prints only the final message, so every gateway call and
+        # its response happens invisibly — which is exactly the part worth
+        # watching. stream-json emits an event per step; the jq filter below
+        # renders it as a readable transcript as it arrives.
+        #
+        # Tokens are redacted on the way out. The raw stream can carry a cvis_
+        # token in a tool_result if the agent ever echoes its environment, and
+        # this transcript goes to the user's terminal and scrollback.
+        #
+        # Only stdout is piped: stderr goes straight to the terminal, so a
+        # "Not logged in" style failure is still visible rather than being
+        # swallowed by a filter that only understands JSON.
+        CV_STREAM_LOG=$(mktemp)
+        cat > "$CV_STREAM_LOG.jq" <<'CVJQ'
+def clip($n): if (.|length) > $n then (.[0:$n] + " …") else . end;
+def redact: gsub("cvis_[A-Za-z0-9_-]+"; "cvis_<redacted>")
+          | gsub("sk-[A-Za-z0-9_-]{8,}"; "sk-<redacted>");
+fromjson? // empty
+| if .type == "assistant" then
+    (.message.content // [])[]
+    | if .type == "text" then
+        (.text // "" | redact | select(length > 0) | "  " + .)
+      elif .type == "tool_use" then
+        ("  → " + (.name // "tool") + "  "
+          + ((.input.command // .input.file_path // (.input | tostring)) | redact | clip(200)))
+      else empty end
+  elif .type == "user" then
+    (.message.content // [])[]
+    | if .type == "tool_result" then
+        ("  ← " + ((if (.content | type) == "array" then (.content[0].text // "") else (.content // "" | tostring) end)
+                    | redact | gsub("\n"; " ") | clip(200)))
+      else empty end
+  elif .type == "result" and (.is_error // false) then
+    # Surface the terminating error. Without this the run can end with nothing
+    # explaining why — the message lives only in this event, and stderr is
+    # sometimes empty.
+    ("  ✗ " + ((.result // "harness reported an error") | redact | clip(300)))
+  else empty end
+CVJQ
+        CLAWVISOR_URL="$APP_URL" \
+        CLAWVISOR_AGENT_TOKEN="$TOKEN" \
+            claude -p --output-format=stream-json --verbose "$(cv_dry_run_prompt)" </dev/null \
+            | tee "$CV_STREAM_LOG" \
+            | jq -R --unbuffered -r -f "$CV_STREAM_LOG.jq" 2>/dev/null || true
+        # Success comes from the terminating result event, not the exit status:
+        # in a pipeline POSIX sh reports jq's status, not the harness's.
+        #
+        # Read is_error, NOT subtype. An unauthenticated run emits
+        #   {"type":"result","subtype":"success","is_error":true,
+        #    "result":"Not logged in · Please run /login"}
+        # so subtype says "success" for a run that did nothing. This is the same
+        # silent-failure shape run_claude_smoke guards against in the routed
+        # installer, just surfacing through a different field.
+        CV_RESULT_ERR=$(jq -r 'select(.type == "result") | .is_error' \
+            "$CV_STREAM_LOG" 2>/dev/null | tail -1)
+        if [ "$CV_RESULT_ERR" = "false" ]; then
             CV_DRY_STATUS=ok
         else
             CV_DRY_STATUS=failed
         fi
+        rm -f "$CV_STREAM_LOG" "$CV_STREAM_LOG.jq"
     else
         echo "  claude is not on your PATH, so the dry run was skipped." >&2
         echo "  Install Claude Code and re-run with --dry-run to try again." >&2
