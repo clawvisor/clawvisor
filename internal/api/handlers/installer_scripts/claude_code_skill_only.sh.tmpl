@@ -41,6 +41,14 @@ echo "✓ Installed the Clawvisor skill to $SKILL_DIR/SKILL.md"
 # Claude Code supplies env from settings.json. The permission rules matter just
 # as much: without them the skill's gateway curls prompt on every single call,
 # which leaves the install technically complete and practically unusable.
+#
+# The host must be interpolated (\($url)) rather than written as the literal
+# $CLAWVISOR_URL. Permission globs are matched literally and never expanded, so
+# a rule naming the variable matches no command that will ever run -- which is
+# how the "installed but prompts on every call" failure shipped. Interpolating
+# also makes the rule follow the environment being installed against: staging
+# renders the staging host, production the production one. The array
+# subtraction evicts the literal-variable rule left behind by older installers.
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
@@ -64,9 +72,9 @@ jq \
     | .permissions.allow = (
         ((.permissions.allow // []) + [
             "Bash(curl *http://localhost:25297/*)",
-            "Bash(curl *$CLAWVISOR_URL/*)",
+            "Bash(curl *\($url)/*)",
             $rule_url
-        ]) | unique
+        ] - ["Bash(curl *$CLAWVISOR_URL/*)"]) | unique
     )
     ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
 chmod 600 "$SETTINGS"

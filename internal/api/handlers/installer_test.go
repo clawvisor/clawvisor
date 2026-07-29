@@ -1045,6 +1045,15 @@ func TestSkillOnlyInstallsTheSkill(t *testing.T) {
 		// Without the allow-rules the skill prompts on every gateway call,
 		// which is "installed" but not usable.
 		"permissions.allow",
+		// ...and the rule has to name a host, not a variable. Permission globs
+		// are matched literally and never expanded, so a rule written as the
+		// literal "Bash(curl *$CLAWVISOR_URL/*)" matches no command that will
+		// ever run: every gateway call still prompts, which is the same
+		// "installed but unusable" failure the assertion above guards. jq
+		// interpolation also makes the rule track the environment being
+		// installed against -- staging renders staging, production renders
+		// production -- so this must stay an interpolation, not a fixed host.
+		`"Bash(curl *\($url)/*)"`,
 	)
 
 	codex := installerGetShell(t, h, "codex", "CLAIMCODE0")

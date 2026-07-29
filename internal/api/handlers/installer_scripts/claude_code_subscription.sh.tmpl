@@ -115,9 +115,9 @@ if [ "$CV_DEFAULT_MODE" = yes ]; then
         | .permissions.allow = (
             ((.permissions.allow // []) + [
                 "Bash(curl *http://localhost:25297/*)",
-                "Bash(curl *$CLAWVISOR_URL/*)",
+                "Bash(curl *\($url)/*)",
                 $rule_url
-            ]) | unique
+            ] - ["Bash(curl *$CLAWVISOR_URL/*)"]) | unique
         )
         ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
     echo "✓ Updated $SETTINGS (subscription session left untouched)"
