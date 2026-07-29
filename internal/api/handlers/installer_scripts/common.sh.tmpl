@@ -51,6 +51,11 @@ Flags:
                          for codex; --dangerously-skip-permissions for
                          claude).
   --no-yolo              Don't pass that flag.
+  --claim=CODE           Register using this single-use claim code instead of
+                         one baked into the script at download time. Useful
+                         when the baked code has expired (they last ~5 min) —
+                         mint a fresh one in the dashboard and re-run the same
+                         script rather than re-downloading it.
   --no-tui               Use the plain [y/n] prompts instead of the
                          arrow-key selector (also: CLAWVISOR_NO_TUI=1).
   --dry-run              Run the end-to-end dry run at the end without asking.
@@ -81,10 +86,12 @@ CV_INVITE_STDIN=""    # "1" when --invite-stdin was passed
 CV_INVITE_FILE=""     # path when --invite-file=PATH was passed
 CV_DRY_RUN=""         # "yes" or "no"; empty means ask (skill-only installs)
 CV_ALLOW_NETWORK=""   # "yes" or "no"; empty means ask (codex skill-only)
+CV_CLAIM=""           # --claim=CODE; overrides any claim baked in at render
 for arg in "$@"; do
     case "$arg" in
         --invite-stdin)       CV_INVITE_STDIN=1 ;;
         --invite-file=*)      CV_INVITE_FILE=${arg#--invite-file=} ;;
+        --claim=*)            CV_CLAIM=${arg#--claim=} ;;
         --default-everywhere) CV_DEFAULT_MODE=yes ;;
         --alias-only)         CV_DEFAULT_MODE=no  ;;
         --alias-name=*)       CV_ALIAS_NAME=${arg#--alias-name=} ;;
@@ -393,13 +400,39 @@ if [ -z "$TOKEN" ]; then
         AGENT_ID=$(printf '%s' "$RESPONSE" | jq -r '.agent_id // empty')
         echo "✓ Invite claimed — agent registered"
     else
-{{if .Claim -}}
-        CONNECT_URL="$APP_URL/api/agents/connect?claim={{.Claim}}"
-{{- else if .UserID -}}
-        CONNECT_URL="$APP_URL/api/agents/connect?user_id={{.UserID}}&wait=true&timeout=120"
-{{- else -}}
-        CONNECT_URL="$APP_URL/api/agents/connect?wait=true&timeout=120"
-{{- end}}
+        # A claim baked in at render time expires in ~5 minutes, so a script
+        # saved to disk, or a page left open, is stale by the time it runs.
+        # --claim=CODE lets the same script be re-run with a fresh code instead
+        # of re-fetching the whole installer. The flag wins when both are
+        # present; without either we fall back to the approval flow.
+        #
+        # On argv rather than stdin, unlike --invite-stdin: a claim is
+        # single-use, short-lived, and already travels in the installer URL
+        # (equally visible in the process table via curl), so the argv exposure
+        # an invite must avoid does not apply here.
+        CV_CLAIM_BAKED='{{.Claim}}'
+        if [ -z "$CV_CLAIM" ]; then
+            CV_CLAIM="$CV_CLAIM_BAKED"
+        fi
+        # Mirror the server's own charset check (^[A-Za-z0-9_-]{1,64}$) so a
+        # mistyped code fails here with a clear message instead of being spliced
+        # into a URL and coming back as an opaque rejection.
+        if [ -n "$CV_CLAIM" ]; then
+            if ! printf '%s' "$CV_CLAIM" | grep -Eq '^[A-Za-z0-9_-]{1,64}$'; then
+                echo "invalid --claim value: expected 1-64 chars of [A-Za-z0-9_-]" >&2
+                exit 2
+            fi
+        fi
+
+        if [ -n "$CV_CLAIM" ]; then
+            CONNECT_URL="$APP_URL/api/agents/connect?claim=$CV_CLAIM"
+{{- if .UserID }}
+        elif [ -n "{{.UserID}}" ]; then
+            CONNECT_URL="$APP_URL/api/agents/connect?user_id={{.UserID}}&wait=true&timeout=120"
+{{- end }}
+        else
+            CONNECT_URL="$APP_URL/api/agents/connect?wait=true&timeout=120"
+        fi
 
         CONNECT_BODY=$(jq -nc \
             --arg name "$AGENT_NAME" \
