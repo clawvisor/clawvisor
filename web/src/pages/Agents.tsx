@@ -880,7 +880,11 @@ type AgentTab = 'openclaw' | 'hermes' | 'claude-code' | 'codex' | 'claude-deskto
 // traffic through Clawvisor. Surfaced only when the LLM proxy is on, since
 // that's the regime where they need a discoverable path.
 const PROXY_LITE_AGENT_TABS: AgentTab[] = ['openclaw', 'hermes', 'claude-code', 'codex', 'claude-desktop', 'gbrain', 'cloud-agent', 'other']
-const LEGACY_AGENT_TABS: AgentTab[] = ['openclaw', 'claude-code', 'claude-desktop', 'other']
+// codex belongs here even without the LLM proxy: its one-liner installs the
+// Clawvisor skill and leaves model traffic alone, so there is nothing
+// proxy-specific about offering it. It was absent only because the installer
+// used to bake routing unconditionally.
+const LEGACY_AGENT_TABS: AgentTab[] = ['openclaw', 'claude-code', 'codex', 'claude-desktop', 'other']
 
 interface AgentMeta {
   label: string
@@ -1038,12 +1042,31 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
               ← Choose a different agent
             </button>
 
+            {/* claude-code and codex are outside the proxyLiteUI branch on
+                purpose. Their one-liners default to skill-only: they install
+                the Clawvisor skill and leave model traffic pointed at the
+                agent's own provider, so there is nothing about them that
+                requires the LLM proxy. The branch existed because the
+                installer used to bake ANTHROPIC_BASE_URL unconditionally,
+                which would have handed an unentitled user a seat that 403s.
+                That stopped being true in #643/#645.
+
+                Keeping them inside meant the skill-only installers were
+                reachable only by users who already had proxy-lite — i.e. not
+                the users they were built for, who got the /clawvisor-setup
+                slash-command flow instead. */}
+            {picked === 'claude-code' && <OnePasteGuide target="claude-code" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} canRoute={proxyLiteUI} />}
+            {picked === 'codex' && <OnePasteGuide target="codex" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} canRoute={proxyLiteUI} />}
+
             {proxyLiteUI ? (
               <>
-                {picked === 'openclaw' && <OnePasteGuide target="openclaw" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} />}
-                {picked === 'hermes' && <OnePasteGuide target="hermes" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} />}
-                {picked === 'claude-code' && <OnePasteGuide target="claude-code" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} />}
-                {picked === 'codex' && <OnePasteGuide target="codex" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} />}
+                {/* openclaw and hermes stay gated: their markdown renderers
+                    still ignore ctx.Route, so an unentitled user would get a
+                    doc telling them to point their provider at Clawvisor and
+                    then hit 403 PROXY_LITE_DISABLED. See the KNOWN GAP on
+                    installerCtx.Route. */}
+                {picked === 'openclaw' && <OnePasteGuide target="openclaw" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} canRoute />}
+                {picked === 'hermes' && <OnePasteGuide target="hermes" installerBaseURL={clawvisorURL} claim={claim?.code} onCopy={copyText} canRoute />}
                 {picked === 'claude-desktop' && <ClaudeDesktopProfileGuide />}
                 {picked === 'gbrain' && <GBrainStreamlinedGuide clawvisorURL={clawvisorURL} onCopy={copyText} />}
                 {picked === 'cloud-agent' && <CloudAgentPromptGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
@@ -1052,7 +1075,6 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
             ) : (
               <>
                 {picked === 'openclaw' && <LegacyOpenClawGuide setupURL={setupURL} copied={copied} onCopy={copyText} />}
-                {picked === 'claude-code' && <LegacyClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
                 {picked === 'claude-desktop' && <LegacyClaudeDesktopGuide isLocal={isLocal} onCopy={copyText} />}
                 {picked === 'other' && <LegacyOtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
               </>
@@ -1146,66 +1168,6 @@ function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void
   )
 }
 
-// Renders a compact opt-in checkbox that toggles
-// `--dangerously-skip-permissions` (Claude Code) or its Codex equivalent into
-// the test-connection and alias commands above. The flag is dangerous on
-// purpose — the label spells out what's being bypassed so users can't
-// flip it accidentally and then forget. Kept as a thin wrapper around a
-// native `<input type="checkbox">` so it inherits the form-control styling
-// the dashboard already ships.
-function LegacyClaudeCodeGuide({ clawvisorURL, userIdParam, onCopy }: {
-  clawvisorURL: string
-  userIdParam: string
-  onCopy: (text: string) => void
-}) {
-  const installCmd = `curl -sf "${clawvisorURL}/skill/clawvisor-setup.md${userIdParam}" \\\n  --create-dirs -o ~/.claude/commands/clawvisor-setup.md`
-
-  return (
-    <div className="space-y-5">
-      <p className="text-sm text-text-secondary">
-        Install a slash command, then run it in Claude Code. It handles agent registration,
-        skill installation, environment setup, and a smoke test — all interactively.
-      </p>
-
-      <div className="flex items-start gap-3">
-        <StepNumber n={1} />
-        <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Install the setup command</p>
-          <p className="text-xs text-text-tertiary">
-            Run this in your terminal to install the{' '}
-            <code className="font-mono text-text-secondary">/clawvisor-setup</code> slash command:
-          </p>
-          <CodeBlock onCopy={() => onCopy(installCmd)}>{installCmd}</CodeBlock>
-        </div>
-      </div>
-
-      <div className="flex items-start gap-3">
-        <StepNumber n={2} />
-        <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Run /clawvisor-setup in Claude Code</p>
-          <p className="text-xs text-text-tertiary">
-            Open Claude Code and type{' '}
-            <code className="font-mono text-text-secondary">/clawvisor-setup</code>.
-            Claude will walk you through the setup — registering as an agent, configuring
-            environment variables, and verifying the connection.
-          </p>
-        </div>
-      </div>
-
-      <div className="flex items-start gap-3">
-        <StepNumber n={3} />
-        <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Approve the connection</p>
-          <p className="text-xs text-text-tertiary">
-            During setup, Claude Code sends a connection request. Approve it in the{' '}
-            <strong>Pending Connections</strong> section above. Once approved, Claude Code
-            finishes setup automatically and runs a smoke test.
-          </p>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function LegacyClaudeDesktopGuide({ isLocal, onCopy }: { isLocal: boolean; onCopy: (text: string) => void }) {
   const marketplaceSlug = 'clawvisor/cowork-plugins'
@@ -2264,11 +2226,19 @@ function OnePasteGuide({
   installerBaseURL,
   claim,
   onCopy,
+  canRoute = false,
 }: {
   target: OnePasteTarget
   installerBaseURL: string
   claim: string | undefined
   onCopy: (text: string) => void
+  // canRoute gates the LLM-routing toggle. Routing needs proxy-lite enabled
+  // for the account, so offering it to a user without that entitlement hands
+  // them an installer that bakes ANTHROPIC_BASE_URL and then returns
+  // 403 PROXY_LITE_DISABLED on the first model call. Defaults to false: this
+  // guide is now rendered for claude-code and codex regardless of
+  // entitlement, and the safe default is to not offer what won't work.
+  canRoute?: boolean
 }) {
   const spec = ONE_PASTE_SPECS[target]
   const [helper, setHelper] = useState<OnePasteHelper>(spec.defaultHelper)
@@ -2368,7 +2338,7 @@ function OnePasteGuide({
         </div>
       )}
 
-      {spec.selfInstall && (
+      {spec.selfInstall && canRoute && (
         <div className="flex items-center gap-2 text-xs text-text-secondary">
           <span>LLM routing:</span>
           <button
