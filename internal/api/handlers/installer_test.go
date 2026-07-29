@@ -511,7 +511,10 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		"--yolo",
 		"--no-yolo",
 		// Mint with claim — claim auto-approves on the daemon, no second click.
-		"claim=ABCDEFGHIJ",
+		// The code is now baked into CV_CLAIM_BAKED rather than spliced
+		// straight into the URL, so --claim can override an expired one at run
+		// time; the connect URL reads the resolved variable.
+		"CV_CLAIM_BAKED='ABCDEFGHIJ'",
 		"/api/agents/connect",
 		// Token is persisted to ~/.clawvisor/agents/<name>.json with chmod 600.
 		"~/.clawvisor/agents",
@@ -597,8 +600,10 @@ func TestInstallerCodexShell(t *testing.T) {
 		"prompt_text",
 		"How should Clawvisor route your codex calls?",
 		`"codex-cv"`,
-		// Mint + persist + token-accepted smoke test.
-		"claim=CLAIMCODE0",
+		// Mint + persist + token-accepted smoke test. The claim is baked into
+		// CV_CLAIM_BAKED rather than the URL so --claim can supersede an
+		// expired code without re-downloading the script.
+		"CV_CLAIM_BAKED='CLAIMCODE0'",
 		"/api/agents/connect",
 		"~/.clawvisor/agents",
 		"chmod 600",
@@ -1124,6 +1129,41 @@ func TestCodexSkillOnlyAsksBeforeRelaxingSandbox(t *testing.T) {
 	)
 	// No terminal must mean "leave the sandbox alone", never "relax it quietly".
 	assertContainsAll(t, codex, "leaving the Codex sandbox unchanged")
+}
+
+// TestInstallerAcceptsClaimFlag — a claim baked in at render time expires in
+// about five minutes, so a saved script, or a dashboard page left open, is stale
+// by the time it runs. --claim=CODE lets the same script be re-run with a fresh
+// code instead of re-downloading the whole installer.
+//
+// Both paths must survive: the flag overrides, and a baked claim still works
+// when no flag is passed.
+func TestInstallerAcceptsClaimFlag(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+
+	for _, target := range []string{"claude-code", "codex"} {
+		t.Run(target, func(t *testing.T) {
+			// Nothing baked in: the flag is the only possible source.
+			bare := installerGetShellQuery(t, h, target, "")
+			assertContainsAll(t, bare,
+				"--claim=*)",
+				"CV_CLAIM",
+				// Validated client-side against the server's own charset, so a
+				// typo fails with a clear message rather than being spliced
+				// into a URL and returning an opaque rejection.
+				"^[A-Za-z0-9_-]{1,64}$",
+				`connect?claim=$CV_CLAIM`,
+				// With neither flag nor baked claim, fall back to approval.
+				"wait=true&timeout=120",
+			)
+
+			// A claim supplied at render time still populates the default.
+			baked := installerGetShellQuery(t, h, target, "claim=ABCDEFGHIJ")
+			if !strings.Contains(baked, `CV_CLAIM_BAKED='ABCDEFGHIJ'`) {
+				t.Error("a claim supplied at render time must still be baked in as the default")
+			}
+		})
+	}
 }
 
 // TestCodexSandboxWriteCannotDuplicateTheTable pins the ordering of the sandbox
