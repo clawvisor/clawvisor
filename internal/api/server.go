@@ -991,14 +991,21 @@ func (s *Server) routes() http.Handler {
 		middleware.RateLimit(enrollRL, ipKeyFn, 10)(e2e(http.HandlerFunc(connectionsHandler.EnrollWithInvite))))
 
 	// Connection request management (user JWT)
-	// Claim-code minting supports proxy-lite bootstrap curls; keep the
-	// route absent for proxy-lite-disabled installs so the connect API
-	// surface matches main.
-	if s.cfg.ProxyLite.Enabled {
-		claimMintRL := s.newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 30, Window: 60})
-		mux.Handle("POST /api/agents/connect/claim",
-			requireUser(middleware.RateLimit(claimMintRL, userKeyFn, 30)(http.HandlerFunc(connectionsHandler.MintClaim))))
-	}
+	//
+	// Claim-code minting is NOT proxy-lite-specific and must not be gated on
+	// it. Every per-harness one-liner needs a claim so the agent can
+	// self-register without a second dashboard click, and since the installers
+	// default to skill-only the majority of the users who need one have
+	// proxy-lite switched off. Gating this left them with an installer whose
+	// connect request fell back to ?wait=true and expired unapproved.
+	//
+	// A claim is an enrollment convenience, not a privilege: minting requires
+	// an authenticated session, is rate-limited per user, encodes only the
+	// minting user's own ID, and expires at claimCodeTTL. It removes an
+	// approval step for the user's own agent; it grants no new reach.
+	claimMintRL := s.newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 30, Window: 60})
+	mux.Handle("POST /api/agents/connect/claim",
+		requireUser(middleware.RateLimit(claimMintRL, userKeyFn, 30)(http.HandlerFunc(connectionsHandler.MintClaim))))
 	mux.Handle("GET /api/agents/connections", user(connectionsHandler.List))
 	mux.Handle("POST /api/agents/connect/{id}/approve", user(connectionsHandler.Approve))
 	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))

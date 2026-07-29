@@ -41,24 +41,55 @@ func setupConnectionEnv(t *testing.T) (*testEnv, *testSession) {
 	return env, session
 }
 
-func TestConnectionRequest_ClaimRouteRequiresProxyLite(t *testing.T) {
+// TestConnectionRequest_ClaimRouteAvailableWithoutProxyLite — claim minting is
+// an enrollment primitive, not a proxy-lite feature, so it must be reachable
+// with proxy-lite off.
+//
+// This inverts an earlier invariant that kept the route absent on
+// proxy-lite-disabled builds so the connect API surface matched between the two.
+// That parity cost more than it bought: the per-harness one-liners default to
+// skill-only, so the users who most need a claim are precisely those with
+// proxy-lite off. Without one the generated installer's connect request falls
+// back to ?wait=true&timeout=120 and expires unapproved — the install dies
+// before the skill is written.
+//
+// Minting remains authenticated, per-user rate-limited, scoped to the caller's
+// own ID and TTL-bounded, so this drops an approval step rather than a boundary.
+// TestConnectionRequest_ClaimRouteRequiresAuth pins the part that must not move.
+func TestConnectionRequest_ClaimRouteAvailableWithoutProxyLite(t *testing.T) {
 	env := newTestEnv(t)
 	const password = "TestPass123!"
 	resp := env.do("POST", "/api/auth/register", "", map[string]any{
-		"email": "claim-disabled@local", "password": password,
+		"email": "claim-nolite@local", "password": password,
 	})
 	body := mustStatus(t, resp, http.StatusCreated)
 	session := &testSession{
 		env:          env,
-		Email:        "claim-disabled@local",
+		Email:        "claim-nolite@local",
 		UserID:       str(t, nested(t, body, "user"), "id"),
 		AccessToken:  str(t, body, "access_token"),
 		RefreshToken: str(t, body, "refresh_token"),
 	}
 	resp = session.do("POST", "/api/agents/connect/claim", nil)
+	if resp.StatusCode == http.StatusNotFound {
+		resp.Body.Close()
+		t.Fatal("claim route absent with proxy_lite disabled — the skill-only one-liners " +
+			"cannot self-register without a claim")
+	}
+	claim := mustStatus(t, resp, http.StatusCreated)
+	if code := str(t, claim, "code"); len(code) != 10 {
+		t.Errorf("expected a 10-char claim code, got %q", code)
+	}
+}
+
+// TestConnectionRequest_ClaimRouteRequiresAuth — ungating on proxy-lite must not
+// ungate authentication. An anonymous caller gets no claim.
+func TestConnectionRequest_ClaimRouteRequiresAuth(t *testing.T) {
+	env := newTestEnv(t)
+	resp := env.do("POST", "/api/agents/connect/claim", "", nil)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("expected claim route to be absent when proxy_lite is disabled, got %d", resp.StatusCode)
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
+		t.Fatalf("claim minting must require an authenticated session; got %d", resp.StatusCode)
 	}
 }
 

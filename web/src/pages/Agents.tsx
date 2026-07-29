@@ -986,10 +986,14 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
   // Mint a single-use claim code so the bootstrap curl never has to embed
   // the user's ID. Codes expire server-side at claimCodeTTL (5 min); refetch
   // every 4 min to keep the visible curl warm.
+  //
+  // Deliberately not gated on proxyLiteUI. claude-code and codex now show the
+  // one-liner to every user, and that one-liner needs a claim to self-register.
+  // While this was gated, unentitled users got a claimless installer whose
+  // connect request fell back to ?wait=true&timeout=120 and expired unapproved.
   const { data: claim } = useQuery({
     queryKey: ['connection-claim'],
     queryFn: () => api.connections.mintClaim(),
-    enabled: proxyLiteUI,
     refetchInterval: 4 * 60 * 1000,
     staleTime: 0,
   })
