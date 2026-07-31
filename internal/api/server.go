@@ -1999,18 +1999,16 @@ func (s *Server) newKeyedLimiterFromBucket(b config.RateLimitBucket) ratelimit.L
 // a skill-directed call, so every one prompts for approval: unrecoverable in
 // the non-interactive dry run, and it puts a high-privilege agent token on a
 // plaintext request. Honour the same header here so the two agree.
+//
+// Shares handlers.ForwardedScheme with resolveAppURL rather than re-deriving
+// the scheme: the header is attacker-controllable, this value is interpolated
+// into a SKILL.md an agent will act on, and the two must not disagree about
+// what is acceptable.
 func skillBaseURL(r *http.Request, viaRelay bool, daemonID, relayHost string) string {
 	if viaRelay && daemonID != "" {
 		return fmt.Sprintf("https://%s/d/%s", relayHost, daemonID)
 	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
-		scheme = fp
-	}
-	return scheme + "://" + r.Host
+	return handlers.ForwardedScheme(r) + "://" + r.Host
 }
 
 // relayHostFromCfg returns the relay hostname, falling back to the default

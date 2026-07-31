@@ -134,14 +134,7 @@ func (h *MobileConfigHandler) resolveURL(r *http.Request) string {
 		return h.publicURL
 	}
 	if !relay.ViaRelay(r.Context()) {
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
-			scheme = fp
-		}
-		return scheme + "://" + r.Host
+		return ForwardedScheme(r) + "://" + r.Host
 	}
 	if h.daemonID != "" && h.relayHost != "" {
 		return fmt.Sprintf("https://%s/d/%s", h.relayHost, h.daemonID)

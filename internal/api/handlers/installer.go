@@ -480,19 +480,43 @@ func providerKeyEnv(provider string) string {
 // Notably NOT cfg.ProxyLite.PublicURL — the LLM proxy host typically does
 // not serve the control-plane endpoints. Conflating them is what caused the
 // install script to POST /api/agents/connect at the proxy host and 404.
+// ForwardedScheme returns the scheme the client originally used, honouring
+// X-Forwarded-Proto so that a TLS-terminating proxy (which leaves r.TLS nil)
+// does not make an https request look like http.
+//
+// The header is attacker-controllable unless the edge overwrites rather than
+// appends, and every caller interpolates the result into something that is then
+// executed or followed: the APP_URL of a `curl | sh` installer, and the base URL
+// baked into a SKILL.md an agent acts on. Reflecting it verbatim let
+// "'; cmd; '" break out of the shell quoting in the rendered installer, so only
+// the two schemes we can actually serve are accepted; anything else falls back
+// to what the transport says.
+func ForwardedScheme(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	fp := r.Header.Get("X-Forwarded-Proto")
+	// Chained proxies append rather than replace ("https, http"); the
+	// client-facing hop is the first entry.
+	if i := strings.IndexByte(fp, ','); i >= 0 {
+		fp = fp[:i]
+	}
+	switch strings.ToLower(strings.TrimSpace(fp)) {
+	case "https":
+		return "https"
+	case "http":
+		return "http"
+	}
+	return scheme
+}
+
 func (h *InstallerHandler) resolveAppURL(r *http.Request) string {
 	if h.publicURL != "" {
 		return h.publicURL
 	}
 	if !relay.ViaRelay(r.Context()) {
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
-			scheme = fp
-		}
-		return scheme + "://" + r.Host
+		return ForwardedScheme(r) + "://" + r.Host
 	}
 	if h.daemonID != "" && h.relayHost != "" {
 		return fmt.Sprintf("https://%s/d/%s", h.relayHost, h.daemonID)

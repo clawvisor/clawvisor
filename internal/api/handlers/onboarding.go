@@ -158,14 +158,7 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 func (h *OnboardingHandler) resolveURL(r *http.Request) string {
 	if !relay.ViaRelay(r.Context()) {
 		// Direct (local) access — use the request's own host.
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
-			scheme = fp
-		}
-		return scheme + "://" + r.Host
+		return ForwardedScheme(r) + "://" + r.Host
 	}
 	if h.daemonID != "" && h.relayHost != "" {
 		return fmt.Sprintf("https://%s/d/%s", h.relayHost, h.daemonID)
