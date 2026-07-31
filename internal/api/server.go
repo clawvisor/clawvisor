@@ -1295,19 +1295,8 @@ func (s *Server) routes() http.Handler {
 	// arrived directly (local) or via the relay (cloud).
 	skillRenderOpts := func(r *http.Request) skillfiles.RenderOptions {
 		viaRelay := relay.ViaRelay(r.Context())
-		var url string
-		if viaRelay && s.daemonID != "" {
-			rh := relayHostFromCfg(s.cfg.Relay.URL)
-			url = fmt.Sprintf("https://%s/d/%s", rh, s.daemonID)
-		} else {
-			scheme := "http"
-			if r.TLS != nil {
-				scheme = "https"
-			}
-			url = scheme + "://" + r.Host
-		}
 		return skillfiles.RenderOptions{
-			ClawvisorURL:    url,
+			ClawvisorURL:    skillBaseURL(r, viaRelay, s.daemonID, relayHostFromCfg(s.cfg.Relay.URL)),
 			ViaRelay:        viaRelay,
 			FeedbackEnabled: s.llmCfg.FeedbackReview.Enabled,
 		}
@@ -1997,6 +1986,31 @@ func (s *Server) newKeyedLimiterFromBucket(b config.RateLimitBucket) ratelimit.L
 		rate.Limit(float64(b.Limit)/float64(b.Window)),
 		b.Limit,
 	)
+}
+
+// skillBaseURL returns the base URL to bake into a rendered SKILL.md, i.e. the
+// host the agent is told to send its gateway calls to.
+//
+// The scheme has to match what the installer writes into the Claude Code
+// permission allowlist, which comes from InstallerHandler.resolveAppURL. Behind
+// a TLS-terminating load balancer r.TLS is nil, so deriving the scheme from
+// r.TLS alone yields http:// while resolveAppURL -- which honours
+// X-Forwarded-Proto -- yields https://. The permission rule then never matches
+// a skill-directed call, so every one prompts for approval: unrecoverable in
+// the non-interactive dry run, and it puts a high-privilege agent token on a
+// plaintext request. Honour the same header here so the two agree.
+func skillBaseURL(r *http.Request, viaRelay bool, daemonID, relayHost string) string {
+	if viaRelay && daemonID != "" {
+		return fmt.Sprintf("https://%s/d/%s", relayHost, daemonID)
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
+		scheme = fp
+	}
+	return scheme + "://" + r.Host
 }
 
 // relayHostFromCfg returns the relay hostname, falling back to the default
