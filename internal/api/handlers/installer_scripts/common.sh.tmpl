@@ -458,35 +458,63 @@ echo "✓ Token saved to $AGENT_JSON (chmod 600)"
 # The prompt hands the whole flow to the Clawvisor skill, which already owns
 # creating a task, long-polling for approval, and telling the user to approve it
 # in the dashboard. Nothing here needs its own polling or timeout logic.
+#
+# It is deliberately narrow. An earlier version asked the agent to "report what
+# happened" and, if anything looked off, to "help me work out why" — so a first
+# call that failed turned into an open-ended debugging session: probing env
+# vars, reading dotfiles, recommending permission changes. None of that is the
+# check. Worse, "follow the skill's own instructions" pulled in SKILL.md's
+# troubleshooting section, whose advice on any failure is to re-fetch the skill
+# — a call the allowlist does not cover, so the diagnosis failed too.
+#
+# Hence: four calls, no investigation, hard stop on the first failure, and one
+# machine-readable verdict line that the shell below keys on.
 cv_dry_run_prompt() {
     cat <<'CVPROMPT'
-Use the Clawvisor skill to run an end-to-end check of this setup, then report
-what happened. Follow the skill's own instructions for each step.
+Use the Clawvisor skill to make exactly these calls, in order. Do nothing else.
 
-1. Fetch the Clawvisor catalog and pick any service that is already connected.
-2. Create a task whose scope is narrow and READ-ONLY — for example "read the
-   subject of my most recent email" or "list my GitHub notifications". Follow
-   the skill's guidance on waiting for approval, and tell me clearly that I need
-   to approve it in the Clawvisor dashboard or mobile app.
-3. Once it is approved, make one request that is INSIDE the task's scope. Show
-   me the response.
-4. Then make a second request against the SAME task that is clearly OUTSIDE its
-   scope — for instance sending or deleting something when the task only allows
-   reading. Show me the result.
+1. Fetch the Clawvisor catalog. Pick any service that is already connected.
+2. Create a task against that service with a narrow READ-ONLY scope, and wait
+   for approval. Tell me plainly that I need to approve it in the Clawvisor
+   dashboard or mobile app.
+3. Make one request that is INSIDE the approved task's scope.
+4. Make one request against the SAME task that is clearly OUTSIDE its scope —
+   a write when the task only allows reading.
 
-   The pass condition here is that the write NEVER EXECUTES on the read-only
-   task's authority. Do not expect a flat rejection: per the authorization
-   model an out-of-scope action normally comes back as pending_scope_expansion,
-   where the gate holds it and offers to ask me to widen the scope. That is a
-   pass. A blocked status is also a pass but means something different — a
-   restriction matched. Tell me which one you actually got.
-5. Summarise: the in-scope request should have succeeded, and the out-of-scope
-   one should have been held rather than executed. If either came back
-   differently, say so plainly and help me work out why.
+Rules:
+- Do not diagnose, investigate, or propose fixes.
+- Do not read, inspect, or modify any file.
+- Do not check the skill version or re-fetch the skill, whatever happens.
+- If any step fails, stop immediately. Do not retry, do not work around it,
+  do not continue to later steps.
 
-Do not modify any configuration files. This is a read-only check of an install
-that has already completed.
+For step 4 the pass condition is that the write NEVER EXECUTES on the
+read-only task's authority. pending_scope_expansion is a pass — the gate held
+it and is offering to widen the scope. blocked is also a pass, but means
+something different: a restriction matched. executed is a FAILURE.
+
+Then print exactly one final line, and nothing after it:
+
+  CLAWVISOR_DRY_RUN: PASS <step-4 status>
+  CLAWVISOR_DRY_RUN: FAIL <step number> <one-line reason>
+
+Print PASS only if step 3 succeeded and step 4 did not execute. If you did not
+complete all four calls for any reason, print the FAIL line.
 CVPROMPT
+}
+
+# Read the agent's verdict line back out. Echoes one of: ok | failed |
+# inconclusive. The PASS/FAIL grep is anchored so a verdict quoted inside the
+# agent's own prose (e.g. restating the format) cannot be mistaken for the
+# real thing.
+cv_dry_run_verdict() {
+    if grep -q '^CLAWVISOR_DRY_RUN: PASS' "$1" 2>/dev/null; then
+        echo ok
+    elif grep -q '^CLAWVISOR_DRY_RUN: FAIL' "$1" 2>/dev/null; then
+        echo failed
+    else
+        echo inconclusive
+    fi
 }
 
 # Decide whether to run it. An explicit flag always wins. Otherwise ask — but
@@ -537,37 +565,42 @@ if [ "$CV_WANT_DRY_RUN" = yes ]; then
     # carrying the rest of this script. Without the redirect the harness reads
     # it as prompt input and sh exits silently at EOF once the harness returns.
     #
-    # Output is deliberately NOT captured — the point is for the user to watch
-    # the two requests land. Only CLAWVISOR_* is exported: no ANTHROPIC_*/
-    # OPENAI_* routing vars, which is what makes this a skill-only check.
+    # Streamed AND captured: the user still watches the requests land, but the
+    # verdict has to be read back out. Only CLAWVISOR_* is exported: no
+    # ANTHROPIC_*/OPENAI_* routing vars, which is what makes this skill-only.
+    #
+    # The verdict keys on the line the agent prints, NOT on its exit status. An
+    # agent that cannot make a single call still exits 0 after politely
+    # explaining why, so the old exit-code check reported "the in-scope request
+    # should have succeeded" over a run in which nothing whatsoever happened.
+    # Absence of a verdict line is therefore its own outcome: the agent died,
+    # wandered off, or never got far enough to reach a conclusion.
     CV_DRY_STATUS=missing
+    CV_DRY_OUT=$(mktemp "${TMPDIR:-/tmp}/clawvisor-dry-run.XXXXXX")
 {{- if eq .Target "codex" }}
     if command -v codex >/dev/null 2>&1; then
-        if CLAWVISOR_URL="$APP_URL" \
-           CLAWVISOR_AGENT_TOKEN="$TOKEN" \
-               codex exec --skip-git-repo-check "$(cv_dry_run_prompt)" </dev/null; then
-            CV_DRY_STATUS=ok
-        else
-            CV_DRY_STATUS=failed
-        fi
+        CLAWVISOR_URL="$APP_URL" \
+        CLAWVISOR_AGENT_TOKEN="$TOKEN" \
+            codex exec --skip-git-repo-check "$(cv_dry_run_prompt)" </dev/null 2>&1 \
+            | tee "$CV_DRY_OUT"
+        CV_DRY_STATUS=$(cv_dry_run_verdict "$CV_DRY_OUT")
     else
         echo "  codex is not on your PATH, so the dry run was skipped." >&2
         echo "  Install codex and re-run with --dry-run to try again." >&2
     fi
 {{- else }}
     if command -v claude >/dev/null 2>&1; then
-        if CLAWVISOR_URL="$APP_URL" \
-           CLAWVISOR_AGENT_TOKEN="$TOKEN" \
-               claude -p "$(cv_dry_run_prompt)" </dev/null; then
-            CV_DRY_STATUS=ok
-        else
-            CV_DRY_STATUS=failed
-        fi
+        CLAWVISOR_URL="$APP_URL" \
+        CLAWVISOR_AGENT_TOKEN="$TOKEN" \
+            claude -p "$(cv_dry_run_prompt)" </dev/null 2>&1 \
+            | tee "$CV_DRY_OUT"
+        CV_DRY_STATUS=$(cv_dry_run_verdict "$CV_DRY_OUT")
     else
         echo "  claude is not on your PATH, so the dry run was skipped." >&2
         echo "  Install Claude Code and re-run with --dry-run to try again." >&2
     fi
 {{- end }}
+    rm -f "$CV_DRY_OUT"
     # Never fails the install: it already succeeded and is persisted on disk. A
     # failed or abandoned dry run is diagnostic information, not a reason to
     # report the install as broken.
@@ -579,12 +612,19 @@ if [ "$CV_WANT_DRY_RUN" = yes ]; then
     echo
     case "$CV_DRY_STATUS" in
         ok)
-            echo "  Dry run finished. Read the summary above — the in-scope request should"
-            echo "  have succeeded and the out-of-scope one should have been denied."
+            echo "  Dry run PASSED: the in-scope request succeeded and the out-of-scope one"
+            echo "  was held rather than executed. See the verdict line above for which."
             ;;
         failed)
-            echo "  The dry run did not complete — see the harness output above. Your install"
-            echo "  is still fine; re-run the dry run any time with --dry-run."
+            echo "  Dry run FAILED — the verdict line above says which step and why. Your"
+            echo "  install itself is fine and is persisted on disk; re-run the check any"
+            echo "  time with --dry-run."
+            ;;
+        inconclusive)
+            echo "  Dry run INCONCLUSIVE: {{.HarnessLabel}} ran but never reported a verdict,"
+            echo "  so nothing was proven either way. Usually that means it could not make"
+            echo "  the calls at all — not signed in, or the gateway calls are not permitted."
+            echo "  Your install itself is fine; re-run the check with --dry-run."
             ;;
         *)
             echo "  Dry run skipped. Re-run this installer with --dry-run once the harness"

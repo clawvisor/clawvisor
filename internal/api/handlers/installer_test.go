@@ -1108,6 +1108,43 @@ func TestSkillOnlyDryRunIsOptIn(t *testing.T) {
 	}
 }
 
+// TestDryRunVerdictIsNotTheExitCode — the dry run used to set CV_DRY_STATUS=ok
+// purely on the harness exiting 0, then print "the in-scope request should have
+// succeeded". An agent that cannot make a single call still exits 0 after
+// explaining why, so a run in which nothing happened was reported as a pass.
+// The verdict has to come from a line the agent prints, and the absence of that
+// line has to be its own outcome rather than collapsing into success.
+func TestDryRunVerdictIsNotTheExitCode(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	for _, tc := range []struct{ target, claim string }{
+		{"claude-code", "ABCDEFGHIJ"},
+		{"codex", "CLAIMCODE0"},
+	} {
+		body := installerGetShell(t, h, tc.target, tc.claim)
+		assertContainsAll(t, body,
+			// Captured as well as streamed, so the verdict can be read back.
+			"cv_dry_run_verdict",
+			"CLAWVISOR_DRY_RUN: PASS",
+			"CLAWVISOR_DRY_RUN: FAIL",
+			// Ran but said nothing is distinct from passed and from skipped.
+			"inconclusive",
+			// The prompt has to stay narrow. "help me work out why" turned a
+			// failed first call into an open-ended debugging session, and
+			// SKILL.md's troubleshooting advice sent it re-fetching the skill
+			// over a URL the allowlist does not cover.
+			"Do nothing else",
+			"Do not check the skill version",
+			"stop immediately",
+		)
+		// The old reassurance must not survive: it asserted an outcome the
+		// script had not established. Matched on the exact banner rather than
+		// the phrase, which also appears in the comment explaining this.
+		if strings.Contains(body, "Dry run finished. Read the summary above") {
+			t.Errorf("%s: dry run still claims success it has not verified", tc.target)
+		}
+	}
+}
+
 // TestCodexSkillOnlyAsksBeforeRelaxingSandbox — persisting
 // network_access = true weakens the sandbox for every workspace-write command,
 // not just Clawvisor's. It must be consented to, and declining must tell the
