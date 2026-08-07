@@ -277,9 +277,12 @@ All three LLM subsystems (intent verification, chain context extraction, and tas
 | `linear` | Linear | `list_issues`, `get_issue`, `create_issue`, `update_issue`, `add_comment`, `list_teams`, `list_projects`, `search_issues` |
 | `stripe` | Stripe | `list_customers`, `get_customer`, `list_charges`, `get_charge`, `list_subscriptions`, `get_subscription`, `create_refund`, `get_balance` |
 | `twilio` | Twilio | `send_sms`, `send_whatsapp`, `list_messages`, `get_message` |
+| `pagerduty` | PagerDuty | `list_incidents`, `get_incident`, `list_oncalls`, `list_services`, `acknowledge_incident`, `resolve_incident`, `create_incident` |
 | `apple.imessage` | iMessage | `search_messages`, `list_threads`, `get_thread`, `send_message` |
 
-Google services share a single OAuth connection — activating one activates all four. GitHub, Slack, Notion, Linear, Stripe, and Twilio each use per-user API keys/tokens. iMessage reads the local `chat.db` on macOS and is always available without activation on supported machines.
+Google services share a single OAuth connection — activating one activates all four. GitHub, Slack, Notion, Linear, Stripe, Twilio, and PagerDuty each use per-user API keys/tokens. iMessage reads the local `chat.db` on macOS and is always available without activation on supported machines.
+
+PagerDuty requires a **User** REST API token (not an account-level key) so that write actions — acknowledge, resolve, create — are attributed to the token's owner without a `From` header. See [docs/PAGERDUTY_SETUP.md](docs/PAGERDUTY_SETUP.md).
 
 ## Agent Integration
 

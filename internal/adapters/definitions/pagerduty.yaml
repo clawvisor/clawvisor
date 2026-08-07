@@ -1,0 +1,208 @@
+service:
+  id: pagerduty
+  display_name: PagerDuty
+  description: "Triage on-call incidents: list and read incidents, see who is on call, browse services, and acknowledge, resolve, or create incidents."
+  setup_url: "https://support.pagerduty.com/docs/api-access-keys#section-generate-a-user-token-rest-api-key"
+  key_hint: "PagerDuty User REST API token (20 chars, e.g. u+XXXXXXXXXXXXXXXXXX)"
+  key_display_name: "REST API token"
+  key_description: "Use a User token (My Profile → User Settings → Create API User Token), not an account-level key. User tokens let write actions (acknowledge/resolve/create) run without a From header. See docs/PAGERDUTY_SETUP.md."
+  icon_url: "/logos/Pagerduty_logo.svg"
+  identity:
+    endpoint: "/users/me"
+    field: "user.name"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: "Token token="
+  extra_headers:
+    Accept: "application/vnd.pagerduty+json;version=2"
+
+api:
+  base_url: "https://api.pagerduty.com"
+  type: rest
+
+# Guidance for the intent verification system. Read actions are low-risk and
+# safe to auto-execute under an approved task; the three mutations
+# (acknowledge/resolve/create) change incident state or page responders and
+# should be declared with auto_execute: false so they fall to explicit approval.
+verification_hints: >
+  Reads (list_incidents, get_incident, list_oncalls, list_services) are
+  non-destructive and operate only on operational metadata. Mutations
+  (acknowledge_incident, resolve_incident, create_incident) change incident
+  state or notify on-call responders — treat them as requiring human approval
+  and verify the target incident id / service id matches the stated purpose.
+
+actions:
+  list_incidents:
+    display_name: "List incidents"
+    risk: { category: read, sensitivity: low, description: "List PagerDuty incidents" }
+    method: GET
+    path: "/incidents"
+    params:
+      statuses: { type: string, location: query, map_to: "statuses[]" }
+      urgencies: { type: string, location: query, map_to: "urgencies[]" }
+      service_ids: { type: string, location: query, map_to: "service_ids[]" }
+      since: { type: string, location: query }
+      until: { type: string, location: query }
+      sort_by: { type: string, location: query }
+      max_results: { type: int, default: 25, max: 100, map_to: limit, location: query }
+      offset: { type: int, default: 0, location: query }
+    response:
+      data_path: "incidents"
+      fields:
+        - { name: id }
+        - { name: incident_number }
+        - { name: title, sanitize: true }
+        - { name: status }
+        - { name: urgency }
+        - { name: created_at }
+        - { name: service, path: "service.summary" }
+        - { name: html_url, rename: url }
+      meta:
+        - { name: more }
+        - { name: limit }
+        - { name: offset }
+      summary: "{{len .Data}} incident(s)"
+
+  get_incident:
+    display_name: "Get incident"
+    risk: { category: read, sensitivity: low, description: "Read a specific PagerDuty incident" }
+    method: GET
+    path: "/incidents/{{.id}}"
+    params:
+      id: { type: string, required: true, location: path }
+    response:
+      data_path: "incident"
+      fields:
+        - { name: id }
+        - { name: incident_number }
+        - { name: title, sanitize: true }
+        - { name: description, sanitize: true }
+        - { name: status }
+        - { name: urgency }
+        - { name: created_at }
+        - { name: service, path: "service.summary" }
+        - { name: html_url, rename: url }
+      summary: "Incident #{{.incident_number}}: {{.title}} [{{.status}}]"
+
+  list_oncalls:
+    display_name: "List on-calls"
+    risk: { category: read, sensitivity: low, description: "List who is currently on call" }
+    method: GET
+    path: "/oncalls"
+    params:
+      schedule_ids: { type: string, location: query, map_to: "schedule_ids[]" }
+      user_ids: { type: string, location: query, map_to: "user_ids[]" }
+      escalation_policy_ids: { type: string, location: query, map_to: "escalation_policy_ids[]" }
+      since: { type: string, location: query }
+      until: { type: string, location: query }
+      max_results: { type: int, default: 25, max: 100, map_to: limit, location: query }
+      offset: { type: int, default: 0, location: query }
+    response:
+      data_path: "oncalls"
+      fields:
+        - { name: escalation_level }
+        - { name: user, path: "user.summary" }
+        - { name: schedule, path: "schedule.summary" }
+        - { name: escalation_policy, path: "escalation_policy.summary" }
+        - { name: start, nullable: true }
+        - { name: end, nullable: true }
+      meta:
+        - { name: more }
+        - { name: limit }
+        - { name: offset }
+      summary: "{{len .Data}} on-call(s)"
+
+  list_services:
+    display_name: "List services"
+    risk: { category: read, sensitivity: low, description: "List PagerDuty services" }
+    method: GET
+    path: "/services"
+    params:
+      query: { type: string, location: query }
+      sort_by: { type: string, location: query }
+      max_results: { type: int, default: 25, max: 100, map_to: limit, location: query }
+      offset: { type: int, default: 0, location: query }
+    response:
+      data_path: "services"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: status }
+        - { name: description, sanitize: true }
+        - { name: html_url, rename: url }
+      meta:
+        - { name: more }
+        - { name: limit }
+        - { name: offset }
+      summary: "{{len .Data}} service(s)"
+
+  acknowledge_incident:
+    display_name: "Acknowledge incident"
+    risk: { category: write, sensitivity: medium, description: "Acknowledge a PagerDuty incident (stops escalation)" }
+    method: PUT
+    path: "/incidents/{{.id}}"
+    params:
+      id: { type: string, required: true, location: path }
+      incident:
+        type: object
+        location: body
+        default: { type: "incident_reference", status: "acknowledged" }
+    response:
+      data_path: "incident"
+      fields:
+        - { name: id }
+        - { name: incident_number }
+        - { name: status }
+        - { name: html_url, rename: url }
+      summary: "Acknowledged incident #{{.incident_number}} [{{.status}}]"
+
+  resolve_incident:
+    display_name: "Resolve incident"
+    risk: { category: write, sensitivity: medium, description: "Resolve a PagerDuty incident" }
+    method: PUT
+    path: "/incidents/{{.id}}"
+    params:
+      id: { type: string, required: true, location: path }
+      incident:
+        type: object
+        location: body
+        default: { type: "incident_reference", status: "resolved" }
+    response:
+      data_path: "incident"
+      fields:
+        - { name: id }
+        - { name: incident_number }
+        - { name: status }
+        - { name: html_url, rename: url }
+      summary: "Resolved incident #{{.incident_number}} [{{.status}}]"
+
+  create_incident:
+    display_name: "Create incident"
+    risk: { category: write, sensitivity: medium, description: "Create a PagerDuty incident (pages the service's on-call responders)" }
+    method: POST
+    path: "/incidents"
+    params:
+      # Friendly, flat inputs. They carry no location, so they are not sent
+      # directly — they feed the synthesized `incident` body object below.
+      title: { type: string, required: true, description: "Short summary of the incident" }
+      service_id: { type: string, required: true, description: "PagerDuty service ID to raise the incident on (from list_services)" }
+      urgency: { type: string, default: "high", description: "Incident urgency: high or low" }
+      details: { type: string, description: "Optional longer description of the incident" }
+      # PagerDuty wraps the payload in an `incident` envelope. Build it from the
+      # friendly params above; include the body block only when details given.
+      incident:
+        type: object
+        location: body
+        default_expr: '(details ?? "") == "" ? {"type": "incident", "title": title, "service": {"id": service_id, "type": "service_reference"}, "urgency": urgency ?? "high"} : {"type": "incident", "title": title, "service": {"id": service_id, "type": "service_reference"}, "urgency": urgency ?? "high", "body": {"type": "incident_body", "details": details}}'
+    response:
+      data_path: "incident"
+      fields:
+        - { name: id }
+        - { name: incident_number }
+        - { name: title, sanitize: true }
+        - { name: status }
+        - { name: urgency }
+        - { name: html_url, rename: url }
+      summary: "Created incident #{{.incident_number}}: {{.title}}"
