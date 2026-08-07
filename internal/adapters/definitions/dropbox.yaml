@@ -75,6 +75,8 @@ actions:
     display_name: "Download file"
     risk: { category: read, sensitivity: low, description: "Download a file's content from Dropbox" }
     override: go
+    # Content is returned base64-encoded for every file type, so the file
+    # round-trips byte for byte. Decode it before use.
     params:
       path:
         type: string

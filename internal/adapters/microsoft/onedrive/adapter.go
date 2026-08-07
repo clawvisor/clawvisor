@@ -144,7 +144,6 @@ func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params 
 		return a.downloadViaContent(ctx, client, contentEndpoint, itemID, fileName, int64(fileSize))
 	}
 
-
 	// Use a plain HTTP client for the pre-signed URL download.
 	// The download URL is pre-authenticated; sending an OAuth Bearer token
 	// to the SharePoint download host causes a 401.
@@ -205,26 +204,25 @@ func (a *Adapter) downloadViaContent(ctx context.Context, oauthClient *http.Clie
 	return a.buildDownloadResult(itemID, fileName, fileSize, body), nil
 }
 
-// buildDownloadResult constructs the download response with appropriate
-// content encoding (text or base64).
+// buildDownloadResult constructs the download response. Content is always
+// base64-encoded, for every type.
 func (a *Adapter) buildDownloadResult(itemID, fileName string, fileSize int64, body []byte) *adapters.Result {
 	contentType := mime.TypeByExtension(filepath.Ext(fileName))
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
+	// A download must round-trip the file byte for byte, which the text path
+	// could not: format.SanitizeText strips HTML and truncates at MaxBodyLen
+	// runes, and even unsanitized, bytes placed in a JSON string lose anything
+	// that is not valid UTF-8 to U+FFFD.
 	result := map[string]any{
 		"name":         format.SanitizeText(fileName, format.MaxFieldLen),
 		"id":           itemID,
 		"size":         fileSize,
 		"content_type": contentType,
-	}
-
-	if isTextContent(contentType) {
-		result["content"] = format.SanitizeText(string(body), format.MaxBodyLen)
-	} else {
-		result["encoding"] = "base64"
-		result["content"] = base64.StdEncoding.EncodeToString(body)
+		"encoding":     "base64",
+		"content":      base64.StdEncoding.EncodeToString(body),
 	}
 
 	return &adapters.Result{

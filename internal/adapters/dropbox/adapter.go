@@ -177,18 +177,17 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	// Always base64, for every content type — a download must round-trip the
+	// file byte for byte. The text path could not: format.SanitizeText strips
+	// HTML and truncates at MaxBodyLen runes, and even unsanitized, bytes
+	// placed in a JSON string lose anything that is not valid UTF-8 to U+FFFD.
 	result := map[string]any{
 		"name":         format.SanitizeText(meta.Name, format.MaxFieldLen),
 		"id":           meta.ID,
 		"size":         meta.Size,
 		"content_type": contentType,
-	}
-
-	if isTextContent(contentType) {
-		result["content"] = format.SanitizeText(string(body), format.MaxBodyLen)
-	} else {
-		result["encoding"] = "base64"
-		result["content"] = base64.StdEncoding.EncodeToString(body)
+		"encoding":     "base64",
+		"content":      base64.StdEncoding.EncodeToString(body),
 	}
 
 	return &adapters.Result{
@@ -241,11 +240,11 @@ func (a *Adapter) uploadFile(ctx context.Context, token string, params map[strin
 	}
 
 	var uploaded struct {
-		Name         string `json:"name"`
-		ID           string `json:"id"`
-		PathDisplay  string `json:"path_display"`
-		Size         int64  `json:"size"`
-		ContentHash  string `json:"content_hash"`
+		Name        string `json:"name"`
+		ID          string `json:"id"`
+		PathDisplay string `json:"path_display"`
+		Size        int64  `json:"size"`
+		ContentHash string `json:"content_hash"`
 	}
 	if err := json.Unmarshal(body, &uploaded); err != nil {
 		return nil, fmt.Errorf("dropbox upload_file: parsing response: %w", err)
@@ -288,4 +287,3 @@ func isTextContent(contentType string) bool {
 		contentType == "application/json" ||
 		contentType == "application/xml"
 }
-

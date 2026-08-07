@@ -360,12 +360,16 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 		return nil, fmt.Errorf("drive export_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
 	}
 
+	// Always base64. Export targets include PDF and the OOXML formats, which
+	// format.SanitizeText would destroy outright, and even for text targets it
+	// strips HTML and truncates at MaxBodyLen runes.
 	result := map[string]any{
 		"id":               meta.ID,
 		"name":             format.SanitizeText(meta.Name, format.MaxFieldLen),
 		"source_mime_type": meta.MimeType,
 		"export_mime_type": targetMime,
-		"content":          format.SanitizeText(string(body), format.MaxBodyLen),
+		"encoding":         "base64",
+		"content":          base64.StdEncoding.EncodeToString(body),
 	}
 	res := &adapters.Result{
 		Summary: format.Summary("Exported %s as %s", meta.Name, targetMime),
@@ -466,7 +470,11 @@ func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, 
 		"source_mime_type": sheetsMimeType,
 		"export_mime_type": targetMime,
 		"sheet_name":       sheetName,
-		"content":          format.SanitizeText(buf.String(), format.MaxBodyLen),
+		// Base64 for parity with the other export path, and because
+		// SanitizeText would strip markup out of cell values and truncate the
+		// sheet at MaxBodyLen runes.
+		"encoding": "base64",
+		"content":  base64.StdEncoding.EncodeToString(buf.Bytes()),
 	}
 	return &adapters.Result{
 		Summary: format.Summary("Exported %s [%s] as %s (%d row(s))", fileName, sheetName, targetMime, len(valuesResp.Values)),
