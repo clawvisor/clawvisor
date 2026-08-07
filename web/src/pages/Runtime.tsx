@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Agent, type ApprovalRecord, type RuntimeEvent, type RuntimePolicyRule, type RuntimeStatus, type RuntimeSession, type StarterProfile } from '../api/client'
+import { RuntimeExplanationPanel } from '../components/RuntimeExplanationPanel'
 
 export type RuleDraft = Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }
 
@@ -829,6 +830,7 @@ export function RuntimeApprovalsPanel({ approvals, onResolved }: { approvals: Ap
               {typeof payload.reason === 'string' && payload.reason.trim() !== '' && (
                 <div className="mt-1 text-xs text-text-tertiary">{payload.reason}</div>
               )}
+              <RuntimeExplanationPanel data={approval} compact defaultExpanded className="mt-3" />
               <div className="mt-3 flex flex-wrap gap-2">
                 <ApprovalButton label="Allow Once" onClick={() => resolveMut.mutate({ approvalId: approval.id, resolution: 'allow_once' })} busy={resolveMut.isPending} />
                 <ApprovalButton label="Allow Session" onClick={() => resolveMut.mutate({ approvalId: approval.id, resolution: 'allow_session' })} busy={resolveMut.isPending} />
@@ -964,6 +966,7 @@ export function RuntimeEventsPanel({
                     {agents.get(event.agent_id)?.name ?? event.agent_id} · {event.action_kind || 'runtime'} · {event.decision || 'observe'} / {event.outcome || 'n/a'}
                   </div>
                   {event.reason && <div className="mt-2 text-sm text-text-secondary">{event.reason}</div>}
+                  <RuntimeExplanationPanel data={event} compact className="mt-3" />
                 </div>
                 <div className="text-xs text-text-tertiary">{new Date(event.timestamp).toLocaleString()}</div>
               </div>

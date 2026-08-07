@@ -7,6 +7,7 @@ import { isLocalHost } from '../lib/env'
 import CountdownTimer from './CountdownTimer'
 import VerificationIcon from './VerificationIcon'
 import ScopePill, { type ScopePillValue } from './ScopePill'
+import { RuntimeExplanationPanel } from './RuntimeExplanationPanel'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -191,6 +192,22 @@ export default function TaskCard({
   }, [plannedCalls])
   const totalPlanned = plannedCalls.length
   const hasRuntimeEnvelope = expectedTools.length > 0 || expectedEgress.length > 0 || task.schema_version === 2 || !!task.expected_use || !!task.intent_verification_mode
+  const taskExplanationData = useMemo(() => {
+    const toolNames = expectedTools.map(tool => tool.tool_name).filter(Boolean)
+    return {
+      id: task.id,
+      status: task.status,
+      decision: needsApproval || needsExpansion ? 'needs_approval' : task.status,
+      reason: task.pending_reason
+        || (task.approval_source === 'inline_chat'
+          ? 'The agent requested task scope before running a reviewed tool.'
+          : 'This task needs approval before the agent can continue.'),
+      tool_name: toolNames.length > 0 ? toolNames.join(', ') : undefined,
+      task_id: task.id,
+      agent_id: task.agent_id,
+      risk_level: task.risk_level,
+    }
+  }, [expectedTools, needsApproval, needsExpansion, task.agent_id, task.approval_source, task.id, task.pending_reason, task.risk_level, task.status])
 
   const [showPlannedCalls, setShowPlannedCalls] = useState(() => {
     if (totalPlanned === 0) return false
@@ -326,6 +343,9 @@ export default function TaskCard({
         <>
           {showRisk && <RiskPanel risk={riskDetails} level={riskLevel} />}
           {showRationale && <AutoApprovalPanel rationale={task.approval_rationale!} />}
+          <div className="px-4 pb-3">
+            <RuntimeExplanationPanel data={taskExplanationData} defaultExpanded />
+          </div>
           <div className="px-4 pb-3">
             {totalPlanned > 0 && (
               <div className="flex items-center justify-end pb-2">
