@@ -92,6 +92,12 @@ actions:
         - { name: text, sanitize: true }
         - { name: ts }
         - { name: thread_ts, optional: true }
+        # Projected down to the fields needed to identify and fetch an
+        # attachment — a raw Slack file object carries ~40 fields of
+        # thumbnail and preview metadata per file.
+        - name: files
+          expr: 'files == nil ? nil : map(files, {{"id": #.id, "name": #.name, "mimetype": #.mimetype, "size": #.size}})'
+          optional: true
       meta:
         - { name: response_metadata.next_cursor, rename: next_cursor }
       summary: "{{len .Data}} message(s)"
@@ -156,3 +162,74 @@ actions:
       meta:
         - { name: response_metadata.next_cursor, rename: next_cursor }
       summary: "{{len .Data}} user(s)"
+
+  list_files:
+    display_name: "List files"
+    risk: { category: read, sensitivity: low, description: "List files in a Slack workspace" }
+    method: GET
+    path: "/files.list"
+    params:
+      channel: { type: string, location: query }
+      user: { type: string, location: query }
+      types: { type: string, location: query }
+      count: { type: int, default: 50, max: 200, location: query }
+      page: { type: int, default: 1, location: query }
+    error_check: { success_path: "ok", error_path: "error" }
+    response:
+      data_path: "files"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: title, sanitize: true, optional: true }
+        - { name: mimetype }
+        - { name: size }
+        - { name: created }
+        - { name: user, optional: true }
+        - { name: permalink, optional: true }
+      meta:
+        - { name: paging.pages, rename: total_pages }
+        - { name: paging.total, rename: total_results }
+      summary: "{{len .Data}} file(s)"
+
+  get_file:
+    display_name: "Get file"
+    risk: { category: read, sensitivity: low, description: "Read metadata for a specific Slack file" }
+    method: GET
+    path: "/files.info"
+    params:
+      file: { type: string, required: true, location: query }
+    error_check: { success_path: "ok", error_path: "error" }
+    response:
+      data_path: "file"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: title, sanitize: true, optional: true }
+        - { name: mimetype }
+        - { name: size }
+        - { name: created }
+        - { name: user, optional: true }
+        - { name: permalink, optional: true }
+      summary: "File {{.name}}"
+
+  # Go override: the content lives on files.slack.com rather than the API
+  # base URL and is returned as raw bytes, neither of which the YAML REST
+  # runtime can express.
+  download_file:
+    display_name: "Download file"
+    risk: { category: read, sensitivity: low, description: "Download a file's content from Slack" }
+    override: go
+    # Content is always returned base64-encoded, for every file type, so the
+    # file round-trips byte for byte. Decode it before use.
+    params:
+      file_id:
+        type: string
+        required: true
+        description: "Slack file ID (e.g. F01234ABCDE), from list_files or a message's files[]"
+      max_bytes:
+        type: int
+        description: >
+          Maximum bytes to download (default 1 MB, max 10 MB). Content is
+          returned base64-encoded, which inflates it by ~4/3 — only raise this
+          when streaming the response to a file rather than reading it into
+          context.

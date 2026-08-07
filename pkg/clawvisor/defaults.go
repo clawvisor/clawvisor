@@ -31,6 +31,7 @@ import (
 	onedriveadapter "github.com/clawvisor/clawvisor/internal/adapters/microsoft/onedrive"
 	outlookadapter "github.com/clawvisor/clawvisor/internal/adapters/microsoft/outlook"
 	perplexityadapter "github.com/clawvisor/clawvisor/internal/adapters/perplexity"
+	slackadapter "github.com/clawvisor/clawvisor/internal/adapters/slack"
 	sqladapter "github.com/clawvisor/clawvisor/internal/adapters/sql"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
@@ -201,6 +202,9 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	for _, action := range []string{"list_folder", "download_file", "upload_file"} {
 		goOverrides["dropbox:"+action] = dbx.Execute
 	}
+
+	slk := slackadapter.New()
+	goOverrides["slack:download_file"] = slk.Execute
 
 	pplx := perplexityadapter.New()
 	goOverrides["perplexity:chat"] = pplx.Execute

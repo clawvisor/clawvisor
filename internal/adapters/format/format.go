@@ -17,6 +17,22 @@ const (
 	MaxFieldLen   = 500
 	MaxArrayItems = 200
 	MaxDataBytes  = 100 * 1024
+
+	// MaxDownloadBytes is the ceiling on binary file downloads. It is
+	// deliberately separate from MaxBodyLen: that constant is a rune count
+	// used to truncate human-readable text (mail bodies, event descriptions),
+	// and downloads only ever borrowed it as a byte count.
+	//
+	// A download this large is only usable when the caller streams the
+	// response to disk (e.g. curl > out.json) rather than reading it into an
+	// LLM context — 10 MB of content is ~13.3 MB of base64.
+	MaxDownloadBytes = 10 * 1024 * 1024
+
+	// DefaultDownloadBytes is the cap applied when the caller does not ask
+	// for a larger one. It is sized to survive being read into a model
+	// context; callers that stream to disk opt in to MaxDownloadBytes
+	// explicitly via a max_bytes parameter.
+	DefaultDownloadBytes = 1024 * 1024
 )
 
 // SanitizeText strips HTML, removes dangerous Unicode, and truncates to maxLen runes.
