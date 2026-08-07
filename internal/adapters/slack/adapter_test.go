@@ -26,6 +26,7 @@ type slackServer struct {
 	contentDisposition string
 	contentCode        int
 	gotAuth            string
+	redirectTo         string // when set, /files/download 302s here
 }
 
 func newSlackServer(t *testing.T) *slackServer {
@@ -42,6 +43,10 @@ func newSlackServer(t *testing.T) *slackServer {
 	})
 	mux.HandleFunc("/files/download", func(w http.ResponseWriter, r *http.Request) {
 		s.gotAuth = r.Header.Get("Authorization")
+		if s.redirectTo != "" {
+			http.Redirect(w, r, s.redirectTo, http.StatusFound)
+			return
+		}
 		w.Header().Set("Content-Type", s.contentType)
 		if s.contentDisposition != "" {
 			w.Header().Set("Content-Disposition", s.contentDisposition)
@@ -167,6 +172,81 @@ func TestDownloadFileSurvivesJSONRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(got, s.content) {
 		t.Errorf("bytes changed across JSON:\n got %v\nwant %v", got, s.content)
+	}
+}
+
+// files.slack.com 302s to a CDN host. Slack requires the bearer token at the
+// final hop — the opposite of OneDrive's pre-signed URLs, which must have it
+// stripped — so assert the token survives the redirect and that the hop is
+// still host-checked. Without this the token could be forwarded to an
+// arbitrary host, or dropped, and CI would stay green.
+func TestDownloadFileForwardsTokenAcrossRedirectAndChecksHost(t *testing.T) {
+	var finalAuth string
+	var checked []string
+
+	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		finalAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte{0x89, 'P', 'N', 'G'})
+	}))
+	defer final.Close()
+
+	s := newSlackServer(t)
+	s.redirectTo = final.URL + "/cdn/blob"
+	s.fileMeta = map[string]any{
+		"id": "F20", "name": "shot.png", "mimetype": "image/png",
+		"size": 4, "url_private_download": s.URL + "/files/download",
+	}
+
+	// Record every URL the host check sees instead of disabling it.
+	oldAPI, oldCheck := apiBase, hostCheck
+	apiBase = s.URL + "/api"
+	hostCheck = func(u string) error { checked = append(checked, u); return nil }
+	t.Cleanup(func() { apiBase, hostCheck = oldAPI, oldCheck })
+
+	if _, err := run(t, map[string]any{"file_id": "F20"}, cred("xoxp-tok")); err != nil {
+		t.Fatalf("redirected download should succeed: %v", err)
+	}
+	if finalAuth != "Bearer xoxp-tok" {
+		t.Errorf("token did not survive the redirect: final hop saw %q", finalAuth)
+	}
+	// Initial URL plus the redirect target.
+	if len(checked) < 2 {
+		t.Fatalf("expected the redirect target to be host-checked, saw %v", checked)
+	}
+	if !strings.Contains(checked[len(checked)-1], "/cdn/blob") {
+		t.Errorf("redirect target was not host-checked, saw %v", checked)
+	}
+}
+
+// A redirect to a non-Slack host must abort the download.
+func TestDownloadFileRejectsRedirectToForeignHost(t *testing.T) {
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("request reached the foreign host — the token may have leaked")
+		w.WriteHeader(200)
+	}))
+	defer evil.Close()
+
+	s := newSlackServer(t)
+	s.redirectTo = evil.URL + "/steal"
+	s.fileMeta = map[string]any{
+		"id": "F21", "name": "shot.png", "mimetype": "image/png",
+		"size": 4, "url_private_download": s.URL + "/files/download",
+	}
+
+	// Real host check, with only the API base treated as Slack.
+	oldAPI, oldCheck := apiBase, hostCheck
+	apiBase = s.URL + "/api"
+	hostCheck = func(u string) error {
+		if strings.HasPrefix(u, s.URL) {
+			return nil
+		}
+		return checkSlackHost(u)
+	}
+	t.Cleanup(func() { apiBase, hostCheck = oldAPI, oldCheck })
+
+	if _, err := run(t, map[string]any{"file_id": "F21"}, cred("t")); err == nil {
+		t.Fatal("expected a redirect to a non-Slack host to be refused")
 	}
 }
 

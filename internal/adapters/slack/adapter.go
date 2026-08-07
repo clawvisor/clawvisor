@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -28,9 +29,20 @@ var (
 )
 
 // maxFileInfoBytes caps the files.info metadata read. Slack embeds preview and
-// plain_text content for textual files, so this tracks file size rather than
-// being a small fixed envelope.
-const maxFileInfoBytes = 8 << 20
+// plain_text content for textual files, so the metadata scales with the file
+// rather than being a small fixed envelope. Derived from the download ceiling
+// so a file that max_bytes permits can never be rejected at the metadata step:
+// twice the payload covers JSON escaping, plus headroom for the other fields.
+const maxFileInfoBytes = 2*format.MaxDownloadBytes + (1 << 20)
+
+// HTTP timeouts. Without them a stalled files.slack.com response would pin a
+// gateway goroutine for as long as the caller's context allows, which may be
+// no deadline at all. The content budget is the larger of the two because it
+// covers up to MaxDownloadBytes of transfer.
+const (
+	fileInfoTimeout = 30 * time.Second
+	downloadTimeout = 2 * time.Minute
+)
 
 // Adapter handles Slack actions that require fetching file content.
 type Adapter struct{}
@@ -63,8 +75,8 @@ type fileInfo struct {
 	URLPrivate         string `json:"url_private"`
 }
 
-// downloadFile fetches a file's content from Slack and returns it base64-encoded
-// (or as text, for textual content types).
+// downloadFile fetches a file's content from Slack and returns it
+// base64-encoded, for every content type — see the encoding note below.
 //
 // Unlike Dropbox and Drive, this is a two-host operation: files.info is served
 // from slack.com/api, but the bytes come from files.slack.com and require the
@@ -157,7 +169,7 @@ func (a *Adapter) fileInfo(ctx context.Context, token, fileID string) (*fileInfo
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{Timeout: fileInfoTimeout}).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -168,12 +180,14 @@ func (a *Adapter) fileInfo(ctx context.Context, token, fileID string) (*fileInfo
 	// metadata response scales with the file and blows past a 200 KB cap.
 	// Truncating it yields invalid JSON and an error that points nowhere near
 	// the real cause.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFileInfoBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("files.info: reading response: %w", err)
-	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxFileInfoBytes+1))
+	// Status first, as in fetchContent: on a 4xx the partial body carries the
+	// error message and is more useful than the read failure.
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("files.info: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("files.info: reading response after %d bytes: %w", len(body), readErr)
 	}
 	if int64(len(body)) > maxFileInfoBytes {
 		return nil, fmt.Errorf("files.info: metadata response exceeds %s", humanBytes(maxFileInfoBytes))
@@ -208,6 +222,7 @@ func (a *Adapter) fetchContent(ctx context.Context, token, downloadURL string, m
 	// pre-signed URLs, Slack requires the token at the final hop) — but the
 	// redirect target must still be a Slack host.
 	client := &http.Client{
+		Timeout: downloadTimeout,
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("too many redirects")
@@ -224,9 +239,18 @@ func (a *Adapter) fetchContent(ctx context.Context, token, downloadURL string, m
 
 	// Read one byte past the limit so truncation is detectable. files.info's
 	// size can disagree with reality for some file types.
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	//
+	// The read error is propagated rather than dropped: a connection broken
+	// mid-transfer otherwise yields a short body that base64-encodes cleanly
+	// and is returned as a successful — but silently truncated — download.
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	// Status first: on a 4xx the partial body is the error message, which is
+	// more useful than the read failure.
 	if resp.StatusCode >= 400 {
 		return nil, "", fmt.Errorf("status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	if readErr != nil {
+		return nil, "", fmt.Errorf("reading content after %d bytes: %w", len(body), readErr)
 	}
 	if int64(len(body)) > maxBytes {
 		return nil, "", fmt.Errorf(
