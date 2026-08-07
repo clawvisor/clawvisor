@@ -104,3 +104,28 @@ func TestReadBounded(t *testing.T) {
 		t.Errorf("under limit: body=%q overflow=%v err=%v", body, overflow, err)
 	}
 }
+
+func TestOverflowMessage(t *testing.T) {
+	// Below the ceiling: point at max_bytes, there is headroom.
+	if got := OverflowMessage(1024); !strings.Contains(got, "raise max_bytes") {
+		t.Errorf("below ceiling should suggest max_bytes, got %q", got)
+	}
+	// At the ceiling: suggesting max_bytes would name the value already in use.
+	got := OverflowMessage(MaxDownloadBytes)
+	if strings.Contains(got, "raise max_bytes") {
+		t.Errorf("at ceiling should not suggest an impossible raise, got %q", got)
+	}
+	if !strings.Contains(got, "maximum supported size") {
+		t.Errorf("at ceiling should name the hard limit, got %q", got)
+	}
+}
+
+func TestResolveMaxBytesRejectsOutOfRangeFloat(t *testing.T) {
+	// Converting an out-of-range float to int64 is implementation-defined, so
+	// the magnitude must be checked while still in float space.
+	for _, v := range []float64{1e19, -1e19, 1e30} {
+		if _, err := ResolveMaxBytes(v); err == nil {
+			t.Errorf("ResolveMaxBytes(%v) should be rejected", v)
+		}
+	}
+}

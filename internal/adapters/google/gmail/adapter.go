@@ -316,9 +316,7 @@ func (a *GmailAdapter) getMessageRaw(ctx context.Context, client *http.Client, p
 		// decoded-size check below, so add the same guidance here rather than
 		// leaving the caller with a bare "response exceeds N bytes".
 		if strings.Contains(err.Error(), "response exceeds") {
-			return nil, fmt.Errorf(
-				"gmail get_message_raw: message exceeds the %d byte limit; raise max_bytes (up to %d)",
-				maxBytes, format.MaxDownloadBytes)
+			return nil, fmt.Errorf("gmail get_message_raw: message %s", format.OverflowMessage(maxBytes))
 		}
 		return nil, fmt.Errorf("gmail get_message_raw: %w", err)
 	}
@@ -334,9 +332,8 @@ func (a *GmailAdapter) getMessageRaw(ctx context.Context, client *http.Client, p
 		return nil, fmt.Errorf("gmail get_message_raw: decoding raw message: %w", err)
 	}
 	if int64(len(decoded)) > maxBytes {
-		return nil, fmt.Errorf(
-			"gmail get_message_raw: message is %d bytes, which exceeds the %d byte limit; raise max_bytes (up to %d)",
-			len(decoded), maxBytes, format.MaxDownloadBytes)
+		return nil, fmt.Errorf("gmail get_message_raw: message is %d bytes, which %s",
+			len(decoded), format.OverflowMessage(maxBytes))
 	}
 
 	return &adapters.Result{

@@ -278,9 +278,7 @@ func (a *Adapter) fetchContent(ctx context.Context, token, downloadURL string, m
 		return nil, "", fmt.Errorf("reading content after %d bytes: %w", len(body), readErr)
 	}
 	if int64(len(body)) > maxBytes {
-		return nil, "", fmt.Errorf(
-			"content exceeds the %s limit; raise max_bytes (up to %s)",
-			humanBytes(maxBytes), humanBytes(format.MaxDownloadBytes))
+		return nil, "", fmt.Errorf("content %s", format.OverflowMessage(maxBytes))
 	}
 
 	contentType := resp.Header.Get("Content-Type")
