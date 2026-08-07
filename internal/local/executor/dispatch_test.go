@@ -9,35 +9,63 @@ import (
 	"github.com/clawvisor/clawvisor/internal/local/services"
 )
 
-// testRegistry builds a registry with two exec services: a slow one and a fast
-// one, each with a single action.
-func testRegistry(t *testing.T, slowFor time.Duration) *services.Registry {
+// testRegistry builds a registry of exec services, each with a single "go"
+// action. The Run argv is never executed — tests inject a fake runExec — but
+// it must be non-empty for the manifest to be well formed.
+func testRegistry(t *testing.T, ids ...string) *services.Registry {
 	t.Helper()
 
-	mkService := func(id string, run []string) *services.Service {
-		return &services.Service{
+	svcs := make([]*services.Service, 0, len(ids))
+	for _, id := range ids {
+		svcs = append(svcs, &services.Service{
 			ID:   id,
 			Name: id,
 			Type: "exec",
 			Actions: []services.Action{{
 				ID:      "go",
 				Name:    "go",
-				Run:     run,
+				Run:     []string{"true"},
 				Timeout: 30 * time.Second,
 			}},
-		}
+		})
 	}
 
 	reg := services.NewRegistry()
-	reg.Load(&services.DiscoverResult{Services: []*services.Service{
-		mkService("chatty", []string{"sleep", formatSeconds(slowFor)}),
-		mkService("quiet", []string{"true"}),
-	}})
+	reg.Load(&services.DiscoverResult{Services: svcs})
 	return reg
 }
 
-func formatSeconds(d time.Duration) string {
-	return time.Duration(d).Truncate(time.Millisecond).String()
+// blockingExec returns a fake runExec that parks every request for the named
+// service until release is closed, and completes all others immediately. Each
+// parked start is signalled on the returned channel, so tests can synchronise
+// on real dispatch progress instead of sleeping.
+func blockingExec(blockService string, release <-chan struct{}) (
+	func(context.Context, *services.Service, *services.Action, map[string]string, map[string]string, int64, string) *ExecResult,
+	<-chan struct{},
+) {
+	started := make(chan struct{}, 64)
+
+	fn := func(
+		ctx context.Context,
+		svc *services.Service,
+		_ *services.Action,
+		_ map[string]string,
+		_ map[string]string,
+		_ int64,
+		_ string,
+	) *ExecResult {
+		if svc.ID != blockService {
+			return &ExecResult{Success: true}
+		}
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return &ExecResult{Success: true}
+	}
+
+	return fn, started
 }
 
 // TestDispatchPerServiceFairness is the regression test for one service
@@ -46,25 +74,29 @@ func formatSeconds(d time.Duration) string {
 // concurrent apple.photos calls sat until the 30s queue timeout even though
 // the tunnel was healthy.
 //
-// Global limit 4, per-service limit 2: the chatty service can hold at most 2
-// slots, so the quiet service must still get one promptly. Without the
-// per-service cap, all 4 global slots go to chatty and the quiet request waits
-// for a sleep to finish.
+// Global limit 4, per-service limit 2. The assertions are that exactly
+// perSvcLimit chatty requests get to run — no more — and that the quiet
+// service still gets a slot while chatty is saturated. Without the cap,
+// chatty takes all 4 global slots and both assertions fail.
+//
+// The fake executor parks requests on a channel rather than shelling out, so
+// the test cannot pass vacuously if an external binary is missing, and does
+// not depend on subprocess timing.
 func TestDispatchPerServiceFairness(t *testing.T) {
 	const (
-		slowFor       = 2 * time.Second
-		globalLimit   = 4
-		perSvcLimit   = 2
-		chattyBurst   = 8
-		quietDeadline = 1500 * time.Millisecond
+		globalLimit = 4
+		perSvcLimit = 2
+		chattyBurst = 8
 	)
 
-	reg := testRegistry(t, slowFor)
-	d := NewDispatcher(reg, nil, nil, 1<<20, globalLimit, perSvcLimit)
+	release := make(chan struct{})
+	fake, started := blockingExec("chatty", release)
+
+	d := NewDispatcher(testRegistry(t, "chatty", "quiet"), nil, nil, 1<<20, globalLimit, perSvcLimit)
+	d.runExec = fake
 
 	ctx := context.Background()
 
-	// Flood the dispatcher with slow requests from one service.
 	var wg sync.WaitGroup
 	for i := 0; i < chattyBurst; i++ {
 		wg.Add(1)
@@ -73,23 +105,40 @@ func TestDispatchPerServiceFairness(t *testing.T) {
 			d.Dispatch(ctx, "chatty", "go", nil, "req-chatty")
 		}()
 	}
+	defer func() {
+		close(release)
+		wg.Wait()
+	}()
 
-	// Give the burst time to claim every slot it can.
-	time.Sleep(300 * time.Millisecond)
+	// Wait for chatty to saturate its allowance. Failing here means the fake
+	// executor was never reached, which would otherwise let the test pass
+	// without exercising the cap at all.
+	for i := 0; i < perSvcLimit; i++ {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("only %d of %d chatty requests started; executor never ran", i, perSvcLimit)
+		}
+	}
 
-	start := time.Now()
-	resp := d.Dispatch(ctx, "quiet", "go", nil, "req-quiet")
-	elapsed := time.Since(start)
+	// The cap must hold: no further chatty request may enter the executor
+	// while the first perSvcLimit are still parked.
+	select {
+	case <-started:
+		t.Fatalf("more than %d chatty requests ran concurrently; per-service cap not enforced", perSvcLimit)
+	case <-time.After(500 * time.Millisecond):
+	}
 
+	// And the whole point: another service still gets through. The context
+	// bound converts a starved dispatch into a failed response rather than a
+	// 30s hang.
+	quietCtx, quietCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer quietCancel()
+
+	resp := d.Dispatch(quietCtx, "quiet", "go", nil, "req-quiet")
 	if !resp.Success {
-		t.Fatalf("quiet request failed: %s", resp.Error)
+		t.Fatalf("quiet request starved by chatty service: %s", resp.Error)
 	}
-	if elapsed > quietDeadline {
-		t.Fatalf("quiet request waited %v behind the chatty service; want under %v "+
-			"(per-service cap should reserve global slots)", elapsed, quietDeadline)
-	}
-
-	wg.Wait()
 }
 
 // TestDispatchPerServiceCapDefaults checks the derivation and clamping of the
@@ -147,6 +196,28 @@ func TestDispatchServiceSemaphoreIsStable(t *testing.T) {
 	for i := range got {
 		if got[i] != got[0] {
 			t.Fatalf("goroutine %d observed a different semaphore", i)
+		}
+	}
+}
+
+// TestDispatchSlotsAreReleased checks slots are returned after a request
+// completes, so a burst does not permanently consume the pool.
+func TestDispatchSlotsAreReleased(t *testing.T) {
+	release := make(chan struct{})
+	close(release) // never block
+	fake, _ := blockingExec("none", release)
+
+	d := NewDispatcher(testRegistry(t, "svc"), nil, nil, 1<<20, 2, 1)
+	d.runExec = fake
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// More requests than the per-service cap, run sequentially: each must
+	// succeed, which is only possible if slots are released.
+	for i := 0; i < 5; i++ {
+		if resp := d.Dispatch(ctx, "svc", "go", nil, "req"); !resp.Success {
+			t.Fatalf("request %d failed: %s", i, resp.Error)
 		}
 	}
 }
