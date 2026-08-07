@@ -1,0 +1,28 @@
+e2e/scenarios/llm_proxy_shared_vault_test.go
+  s_55f7a841d7c10e::t_5dfbff1ce267d8 1-65
+pkg/vault/instance_aware_test.go
+  s_55f7a841d7c10e::t_d26692e22646a9 1-132
+internal/api/middleware/trust_split_test.go
+  s_55f7a841d7c10e::t_df339a12eb1043 1-109
+pkg/store/sqlite/flat_team_migration_test.go
+  s_55f7a841d7c10e::t_cc3c89037620b0 1-82
+internal/api/handlers/flat_team_test.go
+  s_55f7a841d7c10e::t_69d5dff5380086 1-57,62-288
+  s_55f7a841d7c10e::t_3d1944d7ddd0cc 58-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8591946723e3a3c6635bb9996d127993c4f2933e",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

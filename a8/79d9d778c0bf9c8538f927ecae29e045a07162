@@ -1,0 +1,28 @@
+internal/runtime/llmproxy/control.go
+  s_8de9dcae61d3e3::t_f246330744b482 28-35,43-48,56
+internal/runtime/llmproxy/inbound_sanitize.go
+  s_8de9dcae61d3e3::t_fb5113836a95b1 1-3,5-503
+  s_8de9dcae61d3e3::t_faa16a3b4f49a4 4
+internal/api/handlers/llm_endpoint.go
+  s_8de9dcae61d3e3::t_42c2c9e9d5ec13 231-250
+internal/api/handlers/llm_endpoint_test.go
+  s_8de9dcae61d3e3::t_1c2b8714f6b87f 218-221,224
+internal/runtime/llmproxy/inbound_sanitize_test.go
+  s_8de9dcae61d3e3::t_a8b48dbdc7330f 1-219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "a879d9d778c0bf9c8538f927ecae29e045a07162",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "unknown"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

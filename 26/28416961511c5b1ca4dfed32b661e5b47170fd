@@ -1,0 +1,23 @@
+internal/api/handlers/mobileconfig.go
+  s_5586d0270aa1bf::t_4ed132f164348e 1-195
+internal/api/handlers/mobileconfig_test.go
+  s_5586d0270aa1bf::t_fc32057fdb5bdf 1-179
+internal/api/server.go
+  s_5586d0270aa1bf::t_d57317ba86095a 1010-1017
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2628416961511c5b1ca4dfed32b661e5b47170fd",
+  "prompts": {},
+  "sessions": {
+    "s_5586d0270aa1bf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7eb20790-6cf6-416b-878c-fa2cd86186f9",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

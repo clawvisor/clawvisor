@@ -1,0 +1,21 @@
+web/src/App.tsx
+  s_55f7a841d7c10e::t_2006490a288220 75,99
+web/src/pages/SSOLogin.tsx
+  s_55f7a841d7c10e::t_c2ec61cf8b710e 34-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5766cebd08317c1a6ff588461ccb349c967e319b",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

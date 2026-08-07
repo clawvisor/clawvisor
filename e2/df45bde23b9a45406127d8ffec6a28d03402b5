@@ -1,0 +1,21 @@
+provider/examples/self-hosted-enterprise/README.md
+  s_55f7a841d7c10e::t_f82592b7f9a615 5-8,28-32
+provider/examples/self-hosted-enterprise/main.tf
+  s_55f7a841d7c10e::t_fb8c9c4632b795 3,35,61-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e2df45bde23b9a45406127d8ffec6a28d03402b5",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+web/src/pages/Services.tsx
+  s_c7a2daca61d8f8::t_9ee4d7bcb5c56c 1983-1993
+  s_c7a2daca61d8f8::t_236356790c092f 2013
+  s_c7a2daca61d8f8::t_21b8cfd3694567 2061-2064
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e4541eb6926e19c72c091f6a9d444f5d1b29d312",
+  "prompts": {},
+  "sessions": {
+    "s_c7a2daca61d8f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32816f94-51ea-42c7-925a-7f11d9b8e1d9",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

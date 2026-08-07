@@ -1,0 +1,52 @@
+testharness/llm/cassette_test.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-90
+e2e/testapp/server_test.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-58
+testharness/google/google_fix_test.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-195
+testharness/httpmock/mock_test.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-50
+testharness/linear/linear.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-26
+testharness/microsoft/microsoft.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-32
+e2e/testapp/server_internal_test.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-112
+testharness/slack/slack.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-40
+e2e/testapp/server.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-352
+testharness/llm/anthropic_live_test.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-94
+testharness/harness.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-14,21-132
+  s_8b1f6f8ddc53d3::t_95c0e8f1ada2e1 15-20
+testharness/llm/cassette_fidelity_test.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-145
+testharness/email/email_test.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-74
+testharness/github/github.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-38
+testharness/twilio/twilio.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-30
+testharness/google/google_test.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-171
+testharness/notion/notion.go
+  s_8b1f6f8ddc53d3::t_f4692e65fd8ea8 1-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "9a79a3a15447153b5fefb4eceb4488123b87335e",
+  "prompts": {},
+  "sessions": {
+    "s_8b1f6f8ddc53d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2217843-2b00-445d-88f2-f33b3fb654b2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

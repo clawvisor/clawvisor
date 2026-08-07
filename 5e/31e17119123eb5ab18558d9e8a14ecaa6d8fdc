@@ -1,0 +1,63 @@
+internal/api/handlers/runtime_tool_controls.go
+  8de9dcae61d3e38a 197-202,275-295
+internal/runtime/llmproxy/inspector/inspector.go
+  8de9dcae61d3e38a 177,184-187,197-201
+internal/runtime/conversation/openai_response.go
+  8de9dcae61d3e38a 344-347,354,517-520
+web/src/pages/Agents.tsx
+  8de9dcae61d3e38a 1330-1342
+internal/api/handlers/proxy_resolver.go
+  8de9dcae61d3e38a 126-130,132-142,440,448-453,483-517
+internal/runtime/llmproxy/control_test.go
+  8de9dcae61d3e38a 1-54
+internal/runtime/llmproxy/control.go
+  8de9dcae61d3e38a 367-374,376-381
+internal/runtime/llmproxy/audit_test.go
+  8de9dcae61d3e38a 236-245
+internal/runtime/llmproxy/caller_nonce_test.go
+  8de9dcae61d3e38a 168-194
+internal/api/handlers/proxy_resolver_test.go
+  8de9dcae61d3e38a 381-385,387,394-395
+internal/runtime/llmproxy/forward.go
+  8de9dcae61d3e38a 247-250,256-258,266-284
+internal/runtime/llmproxy/caller_nonce.go
+  8de9dcae61d3e38a 118-122,158,163-178
+cmd/clawvisor/cmd_agent_lite_test.go
+  8de9dcae61d3e38a 60-61
+internal/runtime/llmproxy/postprocess.go
+  8de9dcae61d3e38a 190-216
+internal/runtime/llmproxy/catalog.go
+  8de9dcae61d3e38a 136-146,148-155,163-175
+internal/runtime/llmproxy/audit.go
+  8de9dcae61d3e38a 326-327
+internal/runtime/llmproxy/circuitbreaker.go
+  8de9dcae61d3e38a 97-98,101-103,121-125,131,134,137,139,142,145,152-159,174-180,184,194
+internal/runtime/llmproxy/circuitbreaker_test.go
+  8de9dcae61d3e38a 221-265
+internal/runtime/llmproxy/catalog_test.go
+  8de9dcae61d3e38a 138-169
+internal/runtime/llmproxy/forward_test.go
+  8de9dcae61d3e38a 291-315
+internal/runtime/llmproxy/release.go
+  8de9dcae61d3e38a 108,146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "5e31e17119123eb5ab18558d9e8a14ecaa6d8fdc",
+  "prompts": {
+    "8de9dcae61d3e38a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine",
+      "messages": [],
+      "total_additions": 487,
+      "total_deletions": 1520,
+      "accepted_lines": 483,
+      "overriden_lines": 0
+    }
+  }
+}

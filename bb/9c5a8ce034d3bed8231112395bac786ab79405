@@ -1,0 +1,24 @@
+internal/runtime/policy/task_match_test.go
+  s_8de9dcae61d3e3::t_400050e61859a4 146-185
+internal/runtime/policy/task_match.go
+  s_8de9dcae61d3e3::t_56cdd811e77c87 80-118
+  s_8de9dcae61d3e3::t_8697d8f6ed47ae 42-56
+pkg/runtime/decision/decision_test.go
+  s_8de9dcae61d3e3::t_fff3c05eeeba26 331-348
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "bb9c5a8ce034d3bed8231112395bac786ab79405",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

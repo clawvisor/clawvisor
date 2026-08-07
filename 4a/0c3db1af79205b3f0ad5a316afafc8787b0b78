@@ -1,0 +1,61 @@
+internal/runtime/llmproxy/postprocess.go
+  s_48544d04b3a3f6::t_7f04eebf0b2001 568-576,578
+internal/runtime/llmproxy/pending_approval_cache.go
+  s_48544d04b3a3f6::t_90126b70d049ba 47-54
+  s_48544d04b3a3f6::t_1d3514291b817a 106-120
+internal/runtime/llmproxy/scope_drift_reply_test.go
+  s_48544d04b3a3f6::t_e761ee1f274c06 1-211
+internal/runtime/llmproxy/scope_drift_resolve_test.go
+  s_48544d04b3a3f6::t_8e28fe5c16dd40 261-262
+  s_48544d04b3a3f6::t_fb4219d6bbcafd 303-304,331,341,343
+  s_48544d04b3a3f6::t_43e2e92103e225 52-54,59,68-94
+  s_48544d04b3a3f6::t_d2e3b83dacb040 205,207-208
+  s_48544d04b3a3f6::t_70a12c719b2056 1-50,98-204,206,209-260,263-268,270,272-274,278-280,285-286,288,302,351,353-395
+  s_48544d04b3a3f6::t_459a414bc24cd2 269,271,275-277,281-284,287,289-301,305-330,332-340,342,344-350,352
+  s_48544d04b3a3f6::t_9f98faa9ba776b 51,55-58,60-67,95-97
+internal/runtime/llmproxy/scope_drift_test.go
+  s_48544d04b3a3f6::t_3a8139a7a4be73 128,130,137-138,150
+  s_48544d04b3a3f6::t_e20042b2be78df 114,133-135,145-147,154
+internal/runtime/llmproxy/scope_drift_resolve.go
+  s_48544d04b3a3f6::t_2fbddfbf1abc4e 315,319-324,343
+  s_48544d04b3a3f6::t_e5b6f8d17d6aa4 50-52,63-65,87-89,93,110-112,116,129,141,153,166-167,169-171
+  s_48544d04b3a3f6::t_306e537d8ae9b6 90-92,94-109,113-115,117-128,130-140,142-152,154-165,168,172
+  s_48544d04b3a3f6::t_22162f29a40c16 270-275,279,288-292,297
+  s_48544d04b3a3f6::t_c9cfd340ca4ef9 1-49,53-62,66-86,173-269,276-278,280-287,293-296,298-299,303,345-391
+  s_48544d04b3a3f6::t_76bd468f0f3a79 300-302,304-314,316-318,325-342,344
+internal/api/server.go
+  s_48544d04b3a3f6::t_824bd2d2685352 1368-1375
+internal/runtime/llmproxy/approval_reply_resolver.go
+  s_48544d04b3a3f6::t_27cb1430698b63 17-23
+  s_48544d04b3a3f6::t_500bd378dc387b 89-90,92-94,98-99,101-103
+internal/runtime/llmproxy/release.go
+  s_48544d04b3a3f6::t_6ee077eeb4644b 236-247
+internal/runtime/llmproxy/scope_drift_one_off_prompt.go
+  s_48544d04b3a3f6::t_e1a134fcdc496c 1-63
+internal/api/handlers/control.go
+  s_48544d04b3a3f6::t_080d8d21d2871b 101,103-106,108-109
+internal/runtime/llmproxy/scope_drift_reply.go
+  s_48544d04b3a3f6::t_74148535a1f634 1-165
+internal/runtime/llmproxy/scope_drift_prompt.go
+  s_48544d04b3a3f6::t_b78ad09616cb61 89-95
+  s_48544d04b3a3f6::t_149e6b2a40fd1f 102
+  s_48544d04b3a3f6::t_d7a52895a32cbd 14-23,27-28,69,78-79,87-88,97-101,104
+internal/api/handlers/llm_endpoint.go
+  s_48544d04b3a3f6::t_a4e03ab7ce6df7 483-527
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4a0c3db1af79205b3f0ad5a316afafc8787b0b78",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

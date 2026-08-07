@@ -1,0 +1,19 @@
+scripts/dev.sh
+  s_6148daac1fe103::t_90f28b79e03fca 105-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "f0e96e269d0f9f564d7efd4c334665ec6ff9c59d",
+  "prompts": {},
+  "sessions": {
+    "s_6148daac1fe103": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6a265d4-0ae8-4b9c-8220-9bb59495676b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

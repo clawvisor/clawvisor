@@ -1,0 +1,49 @@
+internal/api/handlers/users.go
+  s_55f7a841d7c10e::t_d41f2ffb3ca505 1-282
+internal/api/middleware/auth.go
+  s_55f7a841d7c10e::t_fb8da320c41ce4 73-88
+internal/api/server.go
+  s_55f7a841d7c10e::t_da86c89a1cae78 852-854,856-858
+  s_55f7a841d7c10e::t_382f9dd5b98975 1037-1044
+  s_55f7a841d7c10e::t_dccf2bb20a608d 742-755,760-761
+  s_55f7a841d7c10e::t_666615121ccac7 860-870
+  s_55f7a841d7c10e::t_c74532468d6567 859,874,879,882,1025,1031,1033,1057
+pkg/clawvisor/defaults.go
+  s_55f7a841d7c10e::t_dd682ed605d799 676-687
+internal/auth/token.go
+  s_55f7a841d7c10e::t_5f90dd11dddf69 59-73
+  s_55f7a841d7c10e::t_02f100f520a8de 57-58
+pkg/vault/instance_aware.go
+  s_55f7a841d7c10e::t_2a635ee2e2ed4e 1-102
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_969fba83475b48 150-177
+internal/api/handlers/agents.go
+  s_55f7a841d7c10e::t_a61a72f9ab84f4 38-45
+internal/api/handlers/auth.go
+  s_55f7a841d7c10e::t_7779c48c385a40 44-58,61-63,74-85,87,92-103,123-157,176-216
+  s_55f7a841d7c10e::t_cc4fbec0e364a5 481-485,488-490
+  s_55f7a841d7c10e::t_ac5c7fab2d9adb 486-487
+  s_55f7a841d7c10e::t_f440fb8850397d 249-255
+  s_55f7a841d7c10e::t_6f721af3097069 217
+pkg/config/config.go
+  s_55f7a841d7c10e::t_73030164d8d92f 194-198
+  s_55f7a841d7c10e::t_c89970e7c6e196 670-672
+internal/api/handlers/vault_shared.go
+  s_55f7a841d7c10e::t_56a87d54353947 1-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f21063de5ecb7cbac5fabd257d905f83f5f12a5f",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

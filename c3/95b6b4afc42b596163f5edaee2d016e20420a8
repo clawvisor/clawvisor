@@ -1,0 +1,25 @@
+pkg/store/store.go
+  s_e6ce99dbd88a86::t_043cd3561e82f5 701-709
+pkg/store/sqlite/store.go
+  s_e6ce99dbd88a86::t_acf218c85b6c4d 279-281,283-285,287
+pkg/store/postgres/store.go
+  s_e6ce99dbd88a86::t_c30566a55446c9 268-270,272
+internal/api/handlers/llm_endpoint.go
+  s_e6ce99dbd88a86::t_b75a695ddcef50 3008-3016,3021-3022
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "c395b6b4afc42b596163f5edaee2d016e20420a8",
+  "prompts": {},
+  "sessions": {
+    "s_e6ce99dbd88a86": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d8f54215-59b6-4fa0-8853-7dbf71fbb95c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

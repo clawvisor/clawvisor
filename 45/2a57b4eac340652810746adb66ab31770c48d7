@@ -1,0 +1,37 @@
+pkg/store/postgres/store.go
+  s_5690062ed6cda8::t_0d63331496bb27 2361,2464,2466,2472-2473
+internal/api/handlers/runtime.go
+  s_5690062ed6cda8::t_bcf6228114d29e 212-214,225-235,254-255,263-283,297
+  s_5690062ed6cda8::t_6bc1a17af65afe 292-296,298
+internal/api/handlers/runtime_test.go
+  s_5690062ed6cda8::t_0da640690c6c50 145
+  s_5690062ed6cda8::t_9bcab7b65078eb 78-144,146-147,170-171
+  s_5690062ed6cda8::t_d6e5d4cde028dd 148-169
+pkg/store/sqlite/migrations/047_manual_placeholder_credential_authorizations.sql
+  s_5690062ed6cda8::t_ce0bd43a2e982a 1-48
+web/src/pages/Services.tsx
+  s_5690062ed6cda8::t_f6edd2eb91e39d 231,559-567,569-623,625-643
+  s_5690062ed6cda8::t_908a39c6af545e 568,624
+web/src/api/client.ts
+  s_5690062ed6cda8::t_082a2cf6af3c29 1295-1296
+pkg/store/postgres/migrations/047_manual_placeholder_credential_authorizations.sql
+  s_5690062ed6cda8::t_ce0bd43a2e982a 1-6
+pkg/store/sqlite/store.go
+  s_5690062ed6cda8::t_0d63331496bb27 2609,2713,2716,2722-2723
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "452a57b4eac340652810746adb66ab31770c48d7",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
