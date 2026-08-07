@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -1475,4 +1476,106 @@ func TestSyntheticApprovalToolUses_SingletonMatchesLegacy(t *testing.T) {
 	if !reflect.DeepEqual(legacyJSON, multiJSON) {
 		t.Fatalf("singleton multi-synth diverges semantically from legacy:\nlegacy=%s\nmulti =%s", legacy.Body, multi.Body)
 	}
+}
+
+var errSimulatedPromptRewrite = errors.New("simulated prompt rewrite failure")
+
+func TestPostprocess_DropsCoalescedHoldOnPromptRewriteFailure(t *testing.T) {
+	body := []byte(`{
+		"id":"msg_1",
+		"type":"message",
+		"role":"assistant",
+		"model":"claude-haiku-4-5",
+		"content":[
+			{"type":"tool_use","id":"toolu_bash","name":"Bash","input":{"command":"ls -la"}},
+			{"type":"tool_use","id":"toolu_fetch","name":"WebFetch","input":{"url":"https://example.com/x"}}
+		],
+		"stop_reason":"tool_use"
+	}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+
+	// Create our custom flaky rewriter
+	anthropicRewriter := conversation.DefaultResponseRegistry().ForProvider(conversation.ProviderAnthropic)
+	flaky := &flakyRewriter{inner: anthropicRewriter}
+	registry := conversation.NewResponseRegistry(flaky)
+
+	got := Postprocess(req, body, "application/json", llmproxy.PostprocessConfig{
+		ToolUseEvaluatorFactory: pipelineFactory,
+		AgentContext: llmproxy.AgentContext{
+			AgentUserID: userID,
+			AgentID:     agentID,
+		},
+		AuthorizationContext: llmproxy.AuthorizationContext{
+			CandidateTasks: []*store.Task{},
+			ToolRules: []*store.RuntimePolicyRule{
+				{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true},
+			},
+			EgressRules: []*store.RuntimePolicyRule{},
+		},
+		ApprovalContext: llmproxy.ApprovalContext{
+			PendingApprovals: cache,
+		},
+		RewriteContext: llmproxy.RewriteContext{
+			Inspector:    insp,
+			RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
+			CallerNonces: llmproxy.NewMemoryCallerNonceCache(time.Minute),
+			Store:        st,
+		},
+		RoutingContext: llmproxy.RoutingContext{
+			ResponseRegistry: registry,
+		},
+	})
+
+	if got.SkippedReason == "" {
+		t.Fatal("expected coalesced prompt rewrite failure to fail closed")
+	}
+	if !strings.Contains(got.SkippedReason, errSimulatedPromptRewrite.Error()) {
+		t.Fatalf("expected simulated error in SkippedReason, got: %s", got.SkippedReason)
+	}
+	if got.Body != nil {
+		t.Fatalf("failClosed must drop body; got %d bytes", len(got.Body))
+	}
+
+	// The coalesced hold should have been committed during finalize but dropped/rolled back when rewrite failed.
+	holds := cache.SnapshotHoldsForTest(userID, agentID, conversation.ProviderAnthropic)
+	if len(holds) != 0 {
+		t.Fatalf("coalesced hold should be dropped after prompt rewrite failure, got %+v", holds)
+	}
+}
+
+// flakyRewriter intercepts rewrite passes. It identifies the coalesced rewrite
+// pass by inspecting the evaluation verdicts and triggers a failure during
+// that pass, simulating a rewrite failure after storage has already committed.
+type flakyRewriter struct {
+	inner conversation.ResponseRewriter
+}
+
+func (f *flakyRewriter) Name() conversation.Provider {
+	return f.inner.Name()
+}
+
+func (f *flakyRewriter) MatchesResponse(req *http.Request, resp *http.Response) bool {
+	return f.inner.MatchesResponse(req, resp)
+}
+
+func (f *flakyRewriter) Rewrite(body []byte, contentType string, eval conversation.ToolUseEvaluator) (conversation.RewriteResult, error) {
+	isCoalescedPass := false
+	wrappedEval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		verdict := eval(tu)
+		if strings.Contains(verdict.Reason, "coalesced turn") {
+			isCoalescedPass = true
+		}
+		return verdict
+	}
+	res, err := f.inner.Rewrite(body, contentType, wrappedEval)
+	if err != nil {
+		return res, err
+	}
+	if isCoalescedPass {
+		return conversation.RewriteResult{}, errSimulatedPromptRewrite
+	}
+	return res, nil
 }
