@@ -58,6 +58,13 @@ func ResolveMaxBytes(v any) (int64, error) {
 		if x != math.Trunc(x) {
 			return 0, fmt.Errorf("max_bytes must be a whole number, got %v", x)
 		}
+		// Range-check in float space. Converting an out-of-range float to
+		// int64 is implementation-defined in Go, so a value like 1e19 would
+		// otherwise reach the checks below as an arbitrary number that only
+		// happens to be negative on common platforms.
+		if x < 0 || x > float64(MaxDownloadBytes) {
+			return 0, fmt.Errorf("max_bytes must be between 1 and %d, got %v", MaxDownloadBytes, x)
+		}
 		n = int64(x)
 	case int:
 		n = int64(x)
@@ -79,6 +86,16 @@ func ResolveMaxBytes(v any) (int64, error) {
 		return 0, fmt.Errorf("max_bytes may not exceed %d", MaxDownloadBytes)
 	}
 	return n, nil
+}
+
+// OverflowMessage explains that content exceeded a limit, and only suggests
+// raising max_bytes when there is headroom left. At the ceiling the advice
+// would name the very value the caller already has.
+func OverflowMessage(limit int64) string {
+	if limit >= MaxDownloadBytes {
+		return fmt.Sprintf("exceeds the maximum supported size of %d bytes", MaxDownloadBytes)
+	}
+	return fmt.Sprintf("exceeds the %d byte limit; raise max_bytes (up to %d)", limit, MaxDownloadBytes)
 }
 
 // ReadBounded reads at most limit bytes and reports whether the source had

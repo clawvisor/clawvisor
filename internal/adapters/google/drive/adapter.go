@@ -290,9 +290,7 @@ func (a *DriveAdapter) downloadFile(ctx context.Context, client *http.Client, pa
 		return nil, fmt.Errorf("drive download_file: reading content after %d bytes: %w", len(body), readErr)
 	}
 	if overflow {
-		return nil, fmt.Errorf(
-			"drive download_file: %q exceeds the %d byte limit; raise max_bytes (up to %d)",
-			meta.Name, maxBytes, format.MaxDownloadBytes)
+		return nil, fmt.Errorf("drive download_file: %q %s", meta.Name, format.OverflowMessage(maxBytes))
 	}
 
 	result := map[string]any{
@@ -380,9 +378,7 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 		return nil, fmt.Errorf("drive export_file: reading content after %d bytes: %w", len(body), readErr)
 	}
 	if overflow {
-		return nil, fmt.Errorf(
-			"drive export_file: %q exported to %s exceeds the %d byte limit; raise max_bytes (up to %d)",
-			meta.Name, targetMime, exportMaxBytes, format.MaxDownloadBytes)
+		return nil, fmt.Errorf("drive export_file: %q exported to %s %s", meta.Name, targetMime, format.OverflowMessage(exportMaxBytes))
 	}
 
 	// Always base64. Export targets include PDF and the OOXML formats, which
@@ -464,7 +460,11 @@ func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, 
 		Range  string          `json:"range"`
 		Values [][]interface{} `json:"values"`
 	}
-	if err := apiGET(ctx, client, valuesURL, &valuesResp); err != nil {
+	// Bound the values response rather than only the serialized CSV: the JSON
+	// is materialized first, so an unbounded read would already have consumed
+	// the memory by the time a post-serialization check could reject it. The
+	// JSON envelope is larger than the CSV it produces, so allow headroom.
+	if err := apiGETLimited(ctx, client, valuesURL, &valuesResp, maxBytes*3+(1<<16)); err != nil {
 		return nil, fmt.Errorf("drive export_file: reading sheet values: %w", err)
 	}
 
@@ -491,9 +491,8 @@ func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, 
 	// The CSV is built in memory from the Sheets response, so bound it the
 	// same way a fetched export is bounded.
 	if int64(buf.Len()) > maxBytes {
-		return nil, fmt.Errorf(
-			"drive export_file: %q [%s] serializes to %d bytes, which exceeds the %d byte limit; raise max_bytes (up to %d)",
-			fileName, sheetName, buf.Len(), maxBytes, format.MaxDownloadBytes)
+		return nil, fmt.Errorf("drive export_file: %q [%s] serializes to %d bytes, which %s",
+			fileName, sheetName, buf.Len(), format.OverflowMessage(maxBytes))
 	}
 
 	result := map[string]any{
@@ -649,6 +648,32 @@ func apiGET(ctx context.Context, client *http.Client, apiURL string, out any) er
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	return json.Unmarshal(body, out)
+}
+
+// apiGETLimited is apiGET with a bound on the response body, for endpoints
+// whose size scales with user content rather than being a fixed envelope.
+func apiGETLimited(ctx context.Context, client *http.Client, apiURL string, out any, limit int64) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, overflow, readErr := format.ReadBounded(resp.Body, limit)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	if readErr != nil {
+		return fmt.Errorf("reading response after %d bytes: %w", len(body), readErr)
+	}
+	if overflow {
+		return fmt.Errorf("response exceeds %d bytes; raise max_bytes or export a smaller range", limit)
 	}
 	return json.Unmarshal(body, out)
 }

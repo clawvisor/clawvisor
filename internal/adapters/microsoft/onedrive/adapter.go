@@ -173,9 +173,7 @@ func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params 
 		return nil, fmt.Errorf("onedrive download_file: reading content after %d bytes: %w", len(body), readErr)
 	}
 	if overflow {
-		return nil, fmt.Errorf(
-			"onedrive download_file: %q exceeds the %d byte limit; raise max_bytes (up to %d)",
-			fileName, maxBytes, format.MaxDownloadBytes)
+		return nil, fmt.Errorf("onedrive download_file: %q %s", fileName, format.OverflowMessage(maxBytes))
 	}
 
 	return a.buildDownloadResult(itemID, fileName, int64(fileSize), body), nil
