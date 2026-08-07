@@ -1,0 +1,29 @@
+provider/internal/provider/provider.go
+  s_55f7a841d7c10e::t_1c87a80a96ba9f 68-70,138-139
+provider/docs/index.md
+  s_e81f547cde1417::t_aa0c3685c821e3 5,10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f2e40db293b148310dd6859a57cb5f6e470e51f0",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_e81f547cde1417": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a22657c3e8afab976",
+        "model": "unknown"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

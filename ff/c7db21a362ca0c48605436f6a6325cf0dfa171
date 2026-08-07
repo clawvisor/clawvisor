@@ -1,0 +1,32 @@
+internal/api/handlers/control.go
+  s_b7635082fff64b::t_74313efe2caff1 5,7,9-11,16,19-24,48,52-105,111,115,137-222,226-285,288-317,321-368,372-415,419-441
+  s_b7635082fff64b::t_dffd59372da672 485-690
+internal/runtime/llmproxy/control.go
+  s_b7635082fff64b::t_9f45dd27c94d81 36-37,43,45,47,49-50,52-53,55-56,58-65,67-68,71-73,78-79
+internal/api/middleware/agent_llm.go
+  s_b7635082fff64b::t_17ab0f77c8087a 164-200
+internal/runtime/llmproxy/control_test.go
+  s_b7635082fff64b::t_4eb134b9cd23bd 11,14-28,33-36,45-46
+internal/api/handlers/control_test.go
+  s_b7635082fff64b::t_5730c08eca7763 5,9,12-15,29-31,36-48,50,65-67,96,104-184
+internal/api/handlers/llm_endpoint_test.go
+  s_b7635082fff64b::t_27bda809d64207 265-269,271,287-291,341-345
+internal/api/server.go
+  s_b7635082fff64b::t_3e33abf9ca6367 1001,1012,1026-1027
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "ffc7db21a362ca0c48605436f6a6325cf0dfa171",
+  "prompts": {},
+  "sessions": {
+    "s_b7635082fff64b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e32a6-368e-7c40-a4de-d67d7171c8f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

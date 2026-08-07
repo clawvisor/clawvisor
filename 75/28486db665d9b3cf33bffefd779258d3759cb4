@@ -1,0 +1,41 @@
+internal/api/handlers/llm_endpoint_conversation_id_marker_test.go
+  s_ae08316ed37510::t_6234a68b2c66ad 208-216,245-306,308,322-323,326-327
+internal/api/handlers/llm_endpoint.go
+  s_ae08316ed37510::t_799cc003991a6b 1019-1037,1043-1044
+  s_ae08316ed37510::t_e18cebd88561b6 4270-4275,4279-4281
+internal/runtime/llmproxy/controltool/control.go
+  s_ae08316ed37510::t_4f9ba0bed34d0d 185-186
+internal/runtime/conversation/conversation_id.go
+  s_ae08316ed37510::t_f76ac84b39bc2f 19-21,23,25-35,37-45,48,57-63,71-77
+  s_ae08316ed37510::t_7f1dd6e9154d1a 82-86,96-107,110,113-115,119-120,122
+internal/api/handlers/testdata/llm_characterization/control_notice_injected.json
+  s_ae08316ed37510::t_659d98b824c2c9 18-19
+internal/api/handlers/testdata/llm_characterization/tool_use_credential_rewrite.json
+  s_ae08316ed37510::t_659d98b824c2c9 57-58
+internal/api/handlers/testdata/llm_characterization/tool_use_held_for_approval.json
+  s_ae08316ed37510::t_659d98b824c2c9 47-48
+internal/runtime/conversation/conversation_id_marker_test.go
+  s_ae08316ed37510::t_e93695c3840d50 169-176,178-188,191-192,196-203,205-232,234-235
+internal/runtime/llmproxy/controltool/marker_preservation_test.go
+  s_ae08316ed37510::t_820f3a5ef81e73 1-31
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_anthropic.json
+  s_ae08316ed37510::t_659d98b824c2c9 15-16
+internal/runtime/conversation/conversation_id_marker.go
+  s_ae08316ed37510::t_502a0e9dd6ae6f 69,74-77,80-82,85,88-107,110-117,129-145,148-179,182-184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "7528486db665d9b3cf33bffefd779258d3759cb4",
+  "prompts": {},
+  "sessions": {
+    "s_ae08316ed37510": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5680719f-610d-40c6-91f4-3ca1c8c23b97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

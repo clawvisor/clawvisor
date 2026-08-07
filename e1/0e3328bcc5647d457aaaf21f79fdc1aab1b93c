@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/controltool/control.go
+  s_d937730cc571e0::t_7642cc3185daed 1264-1271
+internal/runtime/llmproxy/controltool/control_test.go
+  s_d937730cc571e0::t_3867b21041646a 310-340
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "e10e3328bcc5647d457aaaf21f79fdc1aab1b93c",
+  "prompts": {},
+  "sessions": {
+    "s_d937730cc571e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44fa7574-f3cf-45f3-aa60-247502858b10",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

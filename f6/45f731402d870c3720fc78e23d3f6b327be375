@@ -1,0 +1,22 @@
+CHANGELOG.md
+  s_55f7a841d7c10e::t_e33c38cd0c6fd6 3-8
+README.md
+  s_55f7a841d7c10e::t_1dbc5cb259a7b6 194,198-227
+  s_55f7a841d7c10e::t_b9ab7f92debf62 228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f645f731402d870c3720fc78e23d3f6b327be375",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,43 @@
+internal/runtime/llmproxy/policies/inbound_sanitize.go
+  s_813cf813d8b1d0::t_b940d1fa84bd99 1-5,7-42,44-46,48-56,58-69,71-76
+  s_522af339bc956c::t_bf39f45c52d41c 57,70
+  s_522af339bc956c::t_caaeee60e6c689 6,43,47
+internal/runtime/llmproxy/bodytransform/inbound_sanitize_test.go
+  s_522af339bc956c::t_64b58393400d4e 1-289
+internal/runtime/llmproxy/policies/anthropic_sanitize.go
+  s_813cf813d8b1d0::t_1bc36411da5463 1-6,8-15,17-31,35-39,41-43,47-58,60-66
+  s_522af339bc956c::t_bf39f45c52d41c 45,59
+  s_522af339bc956c::t_2012302ee908cd 7,16,40
+internal/runtime/llmproxy/bodytransform/anthropic_sanitize.go
+  s_522af339bc956c::t_64b58393400d4e 1-230
+internal/runtime/llmproxy/bodytransform/anthropic_sanitize_test.go
+  s_522af339bc956c::t_64b58393400d4e 1-64
+internal/runtime/llmproxy/bodytransform.go
+  s_522af339bc956c::t_dfaab8982d11d0 1-28
+internal/runtime/llmproxy/bodytransform/inbound_sanitize.go
+  s_522af339bc956c::t_64b58393400d4e 1-626
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "6223d6620756614039156aa5de8cae848b803c98",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

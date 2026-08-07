@@ -1,0 +1,35 @@
+internal/runtime/conversation/stream/stream_edge_test.go
+  s_522af339bc956c::t_dfaa18c22387d0 251-322
+internal/runtime/llmproxy/pipeline/finalizer_test.go
+  s_522af339bc956c::t_ee8d5e09d4e924 18-19,35-38,275-303
+internal/runtime/conversation/stream/openai_responses_prepend_test.go
+  s_522af339bc956c::t_dfaa18c22387d0 143-182
+internal/runtime/conversation/streaming_assistant_prepend_test.go
+  s_522af339bc956c::t_dfaa18c22387d0 389-390
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator.go
+  s_522af339bc956c::t_0efb6d639e17a5 71,73-77
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator_test.go
+  s_522af339bc956c::t_ee8d5e09d4e924 7,155-168
+internal/runtime/llmproxy/policies/inspector_chain_test.go
+  s_522af339bc956c::t_ee8d5e09d4e924 107-156
+internal/runtime/conversation/streaming_assistant_prepend.go
+  s_522af339bc956c::t_0efb6d639e17a5 42-45
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator_test.go
+  s_522af339bc956c::t_ee8d5e09d4e924 7,170-250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "d476ea16f6c2e353cef15be977ae46d5b72987d7",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

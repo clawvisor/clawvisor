@@ -1,0 +1,23 @@
+internal/api/handlers/control_autovault_script.go
+  s_9d2636c1f87777::t_89dadbf0b563da 391
+  s_9d2636c1f87777::t_451d9b14b03618 27
+  s_9d2636c1f87777::t_dc78ba1be4d606 287
+internal/runtime/llmproxy/postprocess.go
+  s_9d2636c1f87777::t_9742da990b9527 1249
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9695c183f3c6872d346a7e0114b07704a68b43df",
+  "prompts": {},
+  "sessions": {
+    "s_9d2636c1f87777": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "faef0cc8-ea1a-4b2c-a659-bbe6a39635b1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

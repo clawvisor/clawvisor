@@ -1,0 +1,27 @@
+internal/runtime/llmproxy/pipeline/response_mutator_impl_test.go
+  s_813cf813d8b1d0::t_754979f30d8b3c 127-163
+internal/runtime/conversation/stream/openai_chat_prepend.go
+  s_813cf813d8b1d0::t_737946125c658f 1-80
+internal/runtime/llmproxy/pipeline/response_mutator_impl.go
+  s_813cf813d8b1d0::t_305e8cebc72682 104-105
+  s_813cf813d8b1d0::t_4fd922f207742b 43,45-47
+internal/runtime/conversation/stream/openai_chat_prepend_test.go
+  s_813cf813d8b1d0::t_277e2c5ee8bb9c 44-50
+  s_813cf813d8b1d0::t_b0b2816d45ef7a 1-43,51-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "7ba3f52d894a6ddfd40a225b6c0651b9ca53fd78",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

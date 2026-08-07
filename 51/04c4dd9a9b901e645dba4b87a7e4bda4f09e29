@@ -1,0 +1,24 @@
+internal/runtime/llmproxy/json_surgery.go
+  s_4c4a32022426f9::t_8967c057260a6a 193,200
+  s_4c4a32022426f9::t_465504d371197e 124
+  s_4c4a32022426f9::t_975e76eab6f596 7
+  s_4c4a32022426f9::t_3528a10bf98aa5 151
+internal/runtime/conversation/assistant_prepend.go
+  s_4c4a32022426f9::t_3c76918fb3a37a 937-940
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5104c4dd9a9b901e645dba4b87a7e4bda4f09e29",
+  "prompts": {},
+  "sessions": {
+    "s_4c4a32022426f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "064ca6c4-1275-4b5f-ac62-2f39b7e5f939",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

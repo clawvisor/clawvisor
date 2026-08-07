@@ -1,0 +1,74 @@
+internal/runtime/llmproxy/human_turns_test.go
+  s_273708382f1863::t_1ca6b3eadc0d92 1-104,131-378,117-118,120-126,128-130
+  s_a5f33eee989c6d::t_13c2bf8cd557fb 105,116,119
+pkg/store/store.go
+  s_273708382f1863::t_1ca6b3eadc0d92 7-8,389-429,449-479,510-526,442,445,447-448
+  s_a5f33eee989c6d::t_fb4099e416da1f 430-441,444,446
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_273708382f1863::t_1ca6b3eadc0d92 13,133-143,167-174,176-184,187-222,224,245-249,317-339,355,357-360,371-372,374-375,377-378,380,382-383,417,424-434,436-441,165,367,310,313,315-316,291,293-294
+  s_a5f33eee989c6d::t_416fe647026f84 279-280,295-303,305-307,311-312,314
+  s_a5f33eee989c6d::t_c64c202504a007 223,225-237
+  s_a5f33eee989c6d::t_13f9f3bbc87284 144-156,158-164,166
+  s_64d006930de2e2::t_83f0fdd07f9413 157,290
+  s_a5f33eee989c6d::t_cf7ee1d6921580 340-347,356,366,368-370,373,376,379,381
+  s_a5f33eee989c6d::t_d730b35b70a37f 238-244
+  s_a5f33eee989c6d::t_bc41308074336c 281-289,292
+  s_a5f33eee989c6d::t_7e4694f969c549 348-354
+  s_a5f33eee989c6d::t_9ad0184d84726c 361-365
+pkg/store/postgres/store.go
+  s_273708382f1863::t_1ca6b3eadc0d92 278,296-297,304,322-324,332,335-336,3194,3200,3229-3230
+  s_a5f33eee989c6d::t_e41791397818b9 316-319
+pkg/store/sqlite/store_agent_threshold_test.go
+  s_273708382f1863::t_1ca6b3eadc0d92 1-35,41-54,58-136
+  s_a5f33eee989c6d::t_1cfeb015dc15a9 36-40,55-57
+internal/runtime/llmproxy/human_turns.go
+  s_273708382f1863::t_1ca6b3eadc0d92 1-99,104-112,114-235,248-266,246
+  s_a5f33eee989c6d::t_c5e1de72bf82e7 236-245
+pkg/store/sqlite/store.go
+  s_273708382f1863::t_1ca6b3eadc0d92 296,322,327-328,339,363-364,374-375,401-403,411,414-415,3597,3622-3623
+  s_a5f33eee989c6d::t_bfc354a604acb3 394-398
+internal/api/handlers/llm_endpoint.go
+  s_273708382f1863::t_1ca6b3eadc0d92 819-830,853-860,1748-1762,2996,3001-3008,3010-3015,931,1086,1095-1096,1099,1127,1140,1145,1148,1152,1256-1257,1182,1207,1219,1253-1254,1123
+  s_a5f33eee989c6d::t_d8dc605c8115e9 1048-1049,1050-1077,1079-1084,1087-1090,1092-1094,1097,1124-1126,1128-1132,1134-1135,1138-1139,1141-1144,1146-1147,1149-1151,1255,1215
+  s_a5f33eee989c6d::t_a6933d3ffeac49 872-878,886-912,914-923,925-926
+  s_a5f33eee989c6d::t_7cdc3d1bd4671d 924,928
+  s_a5f33eee989c6d::t_72cc854f24876d 929
+  s_a5f33eee989c6d::t_279c6fbc432f4a 930,1091,1173,1208-1211,1214,1217-1218,1220-1221,1226-1230,1251-1252
+  s_a5f33eee989c6d::t_1c3c9d6a57aa59 1085,1098,1100-1122
+  s_a5f33eee989c6d::t_e7b0f6cf8a5bfb 1153-1166,1168-1172,1174-1181
+  s_a5f33eee989c6d::t_2ce18d7ddc3b8a 1167
+  s_a5f33eee989c6d::t_3f6119ad972774 1190-1206
+  s_a5f33eee989c6d::t_da776a08e51db0 1224-1225,1242-1247,1249-1250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "a65238eb4f3bbbd5a3c0f1476b98bd19fb13b3ce",
+  "prompts": {},
+  "sessions": {
+    "s_273708382f1863": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65ad44a3-10d2-499a-9b48-97e867b288d0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_64d006930de2e2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e588d-2478-7461-b7c2-2c65009f3c84",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_a5f33eee989c6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37aa2c5f-2455-40a0-84dc-0b1a4ce1fdcd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

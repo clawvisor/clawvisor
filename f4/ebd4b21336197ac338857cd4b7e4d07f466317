@@ -1,0 +1,21 @@
+pkg/store/sqlite/migrations/061_user_roles.sql
+  s_55f7a841d7c10e::t_0debb1ee7a33f6 22-27
+pkg/store/postgres/migrations/060_user_roles.sql
+  s_55f7a841d7c10e::t_1201780a1f699b 13-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f4ebd4b21336197ac338857cd4b7e4d07f466317",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

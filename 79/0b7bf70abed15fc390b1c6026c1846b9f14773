@@ -1,0 +1,43 @@
+internal/runtime/llmproxy/placeholder_validation.go
+  s_5690062ed6cda8::t_429f2805ee9a84 61,67-79
+  s_5690062ed6cda8::t_866d26a39c9099 6
+web/src/pages/Services.tsx
+  s_5690062ed6cda8::t_72249140233179 92,94,125,127-131,177-180
+internal/api/handlers/vault.go
+  s_5690062ed6cda8::t_bf7ee657fe64db 249-260
+  s_5690062ed6cda8::t_090477c8a4d40a 206
+  s_5690062ed6cda8::t_fcaf2a0d7a586b 38,40,137-144,168-171,190-205,207-246
+internal/api/handlers/llm_credentials.go
+  s_5690062ed6cda8::t_417c50b8097cde 152-155
+internal/runtime/llmproxy/inspector/boundservices.go
+  s_5690062ed6cda8::t_2de2434831d246 82-93
+internal/runtime/llmproxy/inspector/boundservices_test.go
+  s_5690062ed6cda8::t_c7bc49d7bcc23d 53-69
+  s_5690062ed6cda8::t_8f621c1124d59c 18-20
+internal/api/handlers/tasks.go
+  s_5690062ed6cda8::t_d6333977f88678 1281-1282,1299,1305-1306,1331
+internal/api/task_v2_test.go
+  s_5690062ed6cda8::t_cb2e4897278a2c 4
+  s_5690062ed6cda8::t_2bac7e866d3981 129-163
+web/src/api/client.ts
+  s_5690062ed6cda8::t_d21b34c7c91ccb 465,467,469
+internal/api/vault_items_test.go
+  s_5690062ed6cda8::t_ea4550bd70438d 90,92-94
+  s_5690062ed6cda8::t_512f1243dab603 63-89,91,95-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "790b7bf70abed15fc390b1c6026c1846b9f14773",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
