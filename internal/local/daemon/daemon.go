@@ -133,6 +133,7 @@ func (d *Daemon) RunContext(ctx context.Context) error {
 		cfg.Env,
 		cfg.MaxOutputSize,
 		cfg.MaxConcurrentReqs,
+		cfg.MaxConcurrentPerSvc,
 	)
 
 	// Start pairing HTTP server.

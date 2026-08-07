@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/local/services"
@@ -11,24 +12,48 @@ import (
 
 // Dispatcher routes incoming requests to the appropriate executor.
 type Dispatcher struct {
-	registry       *services.Registry
-	serverMgr      *ServerManager
-	globalEnv      map[string]string
-	maxOutputSize  int64
+	registry      *services.Registry
+	serverMgr     *ServerManager
+	globalEnv     map[string]string
+	maxOutputSize int64
 
 	// Concurrency control.
 	semaphore    chan struct{}
 	queueTimeout time.Duration
+
+	// Per-service concurrency. Without it, one chatty service can hold every
+	// global slot and starve the others until they hit queueTimeout: a burst
+	// of slow apple.imessage get_thread calls filled all 10 slots and made
+	// concurrent apple.photos calls time out after 30s despite a healthy
+	// tunnel. Capping each service below the global limit reserves headroom
+	// for everyone else.
+	perServiceMax int
+	perServiceMu  sync.Mutex
+	perService    map[string]chan struct{}
 }
 
-// NewDispatcher creates a new request dispatcher.
+// NewDispatcher creates a new request dispatcher. maxPerService caps how many
+// requests a single service may run concurrently; values below 1 fall back to
+// half the global limit so no service can monopolise the pool.
 func NewDispatcher(
 	registry *services.Registry,
 	serverMgr *ServerManager,
 	globalEnv map[string]string,
 	maxOutputSize int64,
 	maxConcurrent int,
+	maxPerService int,
 ) *Dispatcher {
+	if maxPerService < 1 {
+		maxPerService = maxConcurrent / 2
+	}
+	// Always leave at least one slot usable, and never exceed the global cap.
+	if maxPerService < 1 {
+		maxPerService = 1
+	}
+	if maxPerService > maxConcurrent {
+		maxPerService = maxConcurrent
+	}
+
 	return &Dispatcher{
 		registry:      registry,
 		serverMgr:     serverMgr,
@@ -36,7 +61,22 @@ func NewDispatcher(
 		maxOutputSize: maxOutputSize,
 		semaphore:     make(chan struct{}, maxConcurrent),
 		queueTimeout:  30 * time.Second,
+		perServiceMax: maxPerService,
+		perService:    make(map[string]chan struct{}),
 	}
+}
+
+// serviceSemaphore returns the per-service slot channel, creating it on first
+// use.
+func (d *Dispatcher) serviceSemaphore(serviceID string) chan struct{} {
+	d.perServiceMu.Lock()
+	defer d.perServiceMu.Unlock()
+	sem, ok := d.perService[serviceID]
+	if !ok {
+		sem = make(chan struct{}, d.perServiceMax)
+		d.perService[serviceID] = sem
+	}
+	return sem
 }
 
 // Response is the generic response payload sent back to the cloud.
@@ -68,10 +108,27 @@ func (d *Dispatcher) Dispatch(ctx context.Context, serviceID, actionID string, p
 		}
 	}
 
-	// Acquire dispatch slot with timeout. The semaphore itself enforces both
-	// concurrency and queue depth (buffered channel capacity).
+	// Acquire dispatch slots with timeout. The semaphores themselves enforce
+	// both concurrency and queue depth (buffered channel capacity).
 	queueCtx, queueCancel := context.WithTimeout(ctx, d.queueTimeout)
 	defer queueCancel()
+
+	// Take the per-service slot first. Acquiring the global slot first would
+	// let a service sit on scarce global capacity while blocked on its own
+	// cap, which is the starvation this is meant to prevent.
+	svcSem := d.serviceSemaphore(serviceID)
+	select {
+	case svcSem <- struct{}{}:
+		defer func() { <-svcSem }()
+	case <-ctx.Done():
+		return &Response{Success: false, Error: "request discarded (connection closed)"}
+	case <-queueCtx.Done():
+		return &Response{
+			Success: false,
+			Error: fmt.Sprintf("timed out waiting for a dispatch slot for %s (limit %d concurrent)",
+				serviceID, d.perServiceMax),
+		}
+	}
 
 	select {
 	case d.semaphore <- struct{}{}:
