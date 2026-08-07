@@ -55,7 +55,7 @@ func (a *GmailAdapter) ServiceID() string { return serviceID }
 
 func (a *GmailAdapter) SupportedActions() []string {
 	return []string{
-		"list_messages", "get_message", "get_thread", "get_attachment",
+		"list_messages", "get_message", "get_message_raw", "get_thread", "get_attachment",
 		"send_message", "create_draft", "archive_message",
 	}
 }
@@ -104,6 +104,8 @@ func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 		return a.listMessages(ctx, client, req.Params)
 	case "get_message":
 		return a.getMessage(ctx, client, req.Params)
+	case "get_message_raw":
+		return a.getMessageRaw(ctx, client, req.Params)
 	case "get_thread":
 		return a.getThread(ctx, client, req.Params)
 	case "get_attachment":
@@ -274,6 +276,77 @@ func (a *GmailAdapter) getMessage(ctx context.Context, client *http.Client, para
 		summary = format.Summary("Email from %s: %q (%d attachments)", detail.From, detail.Subject, len(detail.Attachments))
 	}
 	return &adapters.Result{Summary: summary, Data: detail}, nil
+}
+
+// ── get_message_raw ───────────────────────────────────────────────────────────
+
+// getMessageRaw returns the original RFC 5322 message exactly as Gmail stores
+// it, base64-encoded.
+//
+// This is an alternative to get_message, not a replacement: get_message parses
+// the MIME tree and returns a readable projection (from/subject/body/labels),
+// which is what most callers want and is far cheaper. get_message_raw exists
+// for the cases that projection cannot serve — verifying DKIM or other headers,
+// re-sending or archiving the message verbatim, or parsing MIME parts the
+// projection drops.
+func (a *GmailAdapter) getMessageRaw(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	msgID, _ := params["message_id"].(string)
+	if msgID == "" {
+		return nil, fmt.Errorf("gmail get_message_raw: message_id is required")
+	}
+
+	maxBytes, err := format.ResolveMaxBytes(params["max_bytes"])
+	if err != nil {
+		return nil, fmt.Errorf("gmail get_message_raw: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=raw",
+		url.PathEscape(msgID))
+	var msg struct {
+		ID           string `json:"id"`
+		ThreadID     string `json:"threadId"`
+		SizeEstimate int64  `json:"sizeEstimate"`
+		Raw          string `json:"raw"`
+	}
+	// Bounded read: a raw message carries its attachments inline, so it can be
+	// far larger than the parsed projection. base64 inflates by 4/3, and the
+	// JSON envelope adds a little more.
+	if err := gmailGETLimited(ctx, client, endpoint, &msg, maxBytes*4/3+(1<<16)); err != nil {
+		// A message far over the limit trips the envelope bound before the
+		// decoded-size check below, so add the same guidance here rather than
+		// leaving the caller with a bare "response exceeds N bytes".
+		if strings.Contains(err.Error(), "response exceeds") {
+			return nil, fmt.Errorf("gmail get_message_raw: message %s", format.OverflowMessage(maxBytes))
+		}
+		return nil, fmt.Errorf("gmail get_message_raw: %w", err)
+	}
+	if msg.Raw == "" {
+		return nil, fmt.Errorf("gmail get_message_raw: message %q returned no raw content", msgID)
+	}
+
+	// Gmail encodes raw as URL-safe base64. Re-encode as standard base64 so
+	// the result matches the `encoding: base64` contract used by every other
+	// content-returning action.
+	decoded, err := decodeBase64Bytes(msg.Raw)
+	if err != nil {
+		return nil, fmt.Errorf("gmail get_message_raw: decoding raw message: %w", err)
+	}
+	if int64(len(decoded)) > maxBytes {
+		return nil, fmt.Errorf("gmail get_message_raw: message is %d bytes, which %s",
+			len(decoded), format.OverflowMessage(maxBytes))
+	}
+
+	return &adapters.Result{
+		Summary: format.Summary("Raw message %s (%d bytes)", msg.ID, len(decoded)),
+		Data: map[string]any{
+			"id":        msg.ID,
+			"thread_id": msg.ThreadID,
+			"mime_type": "message/rfc822",
+			"size":      len(decoded),
+			"encoding":  "base64",
+			"content":   base64.StdEncoding.EncodeToString(decoded),
+		},
+	}, nil
 }
 
 // ── get_thread ────────────────────────────────────────────────────────────────
@@ -714,6 +787,32 @@ func gmailGET(ctx context.Context, client *http.Client, url string, out any) err
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("gmail API %s: %d: %s", url, resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	return json.Unmarshal(body, out)
+}
+
+// gmailGETLimited is gmailGET with a bound on the response body, for endpoints
+// whose size scales with user content rather than being a fixed envelope.
+func gmailGETLimited(ctx context.Context, client *http.Client, url string, out any, limit int64) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("gmail API %s: %d: %s", url, resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	if readErr != nil {
+		return fmt.Errorf("gmail API %s: reading response after %d bytes: %w", url, len(body), readErr)
+	}
+	if int64(len(body)) > limit {
+		return fmt.Errorf("gmail API %s: response exceeds %d bytes", url, limit)
 	}
 	return json.Unmarshal(body, out)
 }
@@ -1268,6 +1367,21 @@ func stripHTML(s string) string {
 		}
 	}
 	return strings.Join(kept, "\n")
+}
+
+// decodeBase64Bytes decodes Gmail's base64 (URL-safe, padding optional) and
+// reports failure. decodeBase64 swallows errors and returns "", which is fine
+// for a display projection but not for content that must round-trip.
+func decodeBase64Bytes(s string) ([]byte, error) {
+	for _, enc := range []*base64.Encoding{
+		base64.RawURLEncoding, base64.URLEncoding,
+		base64.RawStdEncoding, base64.StdEncoding,
+	} {
+		if b, err := enc.DecodeString(s); err == nil {
+			return b, nil
+		}
+	}
+	return nil, fmt.Errorf("not valid base64")
 }
 
 func decodeBase64(s string) string {

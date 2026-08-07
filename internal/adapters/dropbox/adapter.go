@@ -141,6 +141,11 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 		return nil, fmt.Errorf("dropbox download_file: path is required")
 	}
 
+	maxBytes, err := format.ResolveMaxBytes(params["max_bytes"])
+	if err != nil {
+		return nil, fmt.Errorf("dropbox download_file: %w", err)
+	}
+
 	apiArg, _ := json.Marshal(map[string]string{"path": path})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, contentURL+"/files/download", nil)
@@ -156,9 +161,18 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+	// Bounded by the download ceiling, not MaxBodyLen. Overflow is refused
+	// rather than returned: a truncated file base64-encodes cleanly and would
+	// be indistinguishable from a complete one.
+	body, overflow, readErr := format.ReadBounded(resp.Body, maxBytes)
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("dropbox download_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("dropbox download_file: reading content after %d bytes: %w", len(body), readErr)
+	}
+	if overflow {
+		return nil, fmt.Errorf("dropbox download_file: %q %s", path, format.OverflowMessage(maxBytes))
 	}
 
 	// Dropbox returns file metadata in the Dropbox-API-Result header.
@@ -177,18 +191,17 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	// Always base64, for every content type — a download must round-trip the
+	// file byte for byte. The text path could not: format.SanitizeText strips
+	// HTML and truncates at MaxBodyLen runes, and even unsanitized, bytes
+	// placed in a JSON string lose anything that is not valid UTF-8 to U+FFFD.
 	result := map[string]any{
 		"name":         format.SanitizeText(meta.Name, format.MaxFieldLen),
 		"id":           meta.ID,
 		"size":         meta.Size,
 		"content_type": contentType,
-	}
-
-	if isTextContent(contentType) {
-		result["content"] = format.SanitizeText(string(body), format.MaxBodyLen)
-	} else {
-		result["encoding"] = "base64"
-		result["content"] = base64.StdEncoding.EncodeToString(body)
+		"encoding":     "base64",
+		"content":      base64.StdEncoding.EncodeToString(body),
 	}
 
 	return &adapters.Result{
@@ -241,11 +254,11 @@ func (a *Adapter) uploadFile(ctx context.Context, token string, params map[strin
 	}
 
 	var uploaded struct {
-		Name         string `json:"name"`
-		ID           string `json:"id"`
-		PathDisplay  string `json:"path_display"`
-		Size         int64  `json:"size"`
-		ContentHash  string `json:"content_hash"`
+		Name        string `json:"name"`
+		ID          string `json:"id"`
+		PathDisplay string `json:"path_display"`
+		Size        int64  `json:"size"`
+		ContentHash string `json:"content_hash"`
 	}
 	if err := json.Unmarshal(body, &uploaded); err != nil {
 		return nil, fmt.Errorf("dropbox upload_file: parsing response: %w", err)
@@ -282,10 +295,3 @@ func extractToken(credBytes []byte) (string, error) {
 	}
 	return token, nil
 }
-
-func isTextContent(contentType string) bool {
-	return strings.HasPrefix(contentType, "text/") ||
-		contentType == "application/json" ||
-		contentType == "application/xml"
-}
-

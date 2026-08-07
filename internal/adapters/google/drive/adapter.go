@@ -251,6 +251,11 @@ func (a *DriveAdapter) downloadFile(ctx context.Context, client *http.Client, pa
 		return nil, fmt.Errorf("drive download_file: file_id is required")
 	}
 
+	maxBytes, err := format.ResolveMaxBytes(params["max_bytes"])
+	if err != nil {
+		return nil, fmt.Errorf("drive download_file: %w", err)
+	}
+
 	// Fetch metadata.
 	metaURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s?fields=id,name,mimeType,size",
 		url.PathEscape(fileID))
@@ -277,9 +282,15 @@ func (a *DriveAdapter) downloadFile(ctx context.Context, client *http.Client, pa
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+	body, overflow, readErr := format.ReadBounded(resp.Body, maxBytes)
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("drive download_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("drive download_file: reading content after %d bytes: %w", len(body), readErr)
+	}
+	if overflow {
+		return nil, fmt.Errorf("drive download_file: %q %s", meta.Name, format.OverflowMessage(maxBytes))
 	}
 
 	result := map[string]any{
@@ -313,6 +324,10 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 	if fileID == "" {
 		return nil, fmt.Errorf("drive export_file: file_id is required")
 	}
+	exportMaxBytes, err := format.ResolveMaxBytes(params["max_bytes"])
+	if err != nil {
+		return nil, fmt.Errorf("drive export_file: %w", err)
+	}
 	if targetMime == "" {
 		return nil, fmt.Errorf("drive export_file: mime_type is required")
 	}
@@ -340,7 +355,7 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 	}
 
 	if isSheet && wantsTabular && sheetName != "" {
-		return a.exportSheetTab(ctx, client, meta.ID, meta.Name, sheetName, targetMime)
+		return a.exportSheetTab(ctx, client, meta.ID, meta.Name, sheetName, targetMime, exportMaxBytes)
 	}
 
 	exportURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s/export?mimeType=%s",
@@ -355,17 +370,27 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+	body, overflow, readErr := format.ReadBounded(resp.Body, exportMaxBytes)
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("drive export_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
 	}
+	if readErr != nil {
+		return nil, fmt.Errorf("drive export_file: reading content after %d bytes: %w", len(body), readErr)
+	}
+	if overflow {
+		return nil, fmt.Errorf("drive export_file: %q exported to %s %s", meta.Name, targetMime, format.OverflowMessage(exportMaxBytes))
+	}
 
+	// Always base64. Export targets include PDF and the OOXML formats, which
+	// format.SanitizeText would destroy outright, and even for text targets it
+	// strips HTML and truncates at MaxBodyLen runes.
 	result := map[string]any{
 		"id":               meta.ID,
 		"name":             format.SanitizeText(meta.Name, format.MaxFieldLen),
 		"source_mime_type": meta.MimeType,
 		"export_mime_type": targetMime,
-		"content":          format.SanitizeText(string(body), format.MaxBodyLen),
+		"encoding":         "base64",
+		"content":          base64.StdEncoding.EncodeToString(body),
 	}
 	res := &adapters.Result{
 		Summary: format.Summary("Exported %s as %s", meta.Name, targetMime),
@@ -407,7 +432,7 @@ func (a *DriveAdapter) listSheetTitles(ctx context.Context, client *http.Client,
 // exportSheetTab reads a single sheet (tab) from a Google Sheets file via the
 // Sheets API and serializes the values as CSV or TSV. The drive.readonly scope
 // is sufficient to call spreadsheets.values.get.
-func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, fileID, fileName, sheetName, targetMime string) (*adapters.Result, error) {
+func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, fileID, fileName, sheetName, targetMime string, maxBytes int64) (*adapters.Result, error) {
 	// Validate that the named tab exists; surface available titles otherwise.
 	titles, err := a.listSheetTitles(ctx, client, fileID)
 	if err != nil {
@@ -435,7 +460,11 @@ func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, 
 		Range  string          `json:"range"`
 		Values [][]interface{} `json:"values"`
 	}
-	if err := apiGET(ctx, client, valuesURL, &valuesResp); err != nil {
+	// Bound the values response rather than only the serialized CSV: the JSON
+	// is materialized first, so an unbounded read would already have consumed
+	// the memory by the time a post-serialization check could reject it. The
+	// JSON envelope is larger than the CSV it produces, so allow headroom.
+	if err := apiGETLimited(ctx, client, valuesURL, &valuesResp, maxBytes*3+(1<<16)); err != nil {
 		return nil, fmt.Errorf("drive export_file: reading sheet values: %w", err)
 	}
 
@@ -459,6 +488,12 @@ func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, 
 	if err := w.Error(); err != nil {
 		return nil, fmt.Errorf("drive export_file: serializing CSV: %w", err)
 	}
+	// The CSV is built in memory from the Sheets response, so bound it the
+	// same way a fetched export is bounded.
+	if int64(buf.Len()) > maxBytes {
+		return nil, fmt.Errorf("drive export_file: %q [%s] serializes to %d bytes, which %s",
+			fileName, sheetName, buf.Len(), format.OverflowMessage(maxBytes))
+	}
 
 	result := map[string]any{
 		"id":               fileID,
@@ -466,7 +501,11 @@ func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, 
 		"source_mime_type": sheetsMimeType,
 		"export_mime_type": targetMime,
 		"sheet_name":       sheetName,
-		"content":          format.SanitizeText(buf.String(), format.MaxBodyLen),
+		// Base64 for parity with the other export path, and because
+		// SanitizeText would strip markup out of cell values and truncate the
+		// sheet at MaxBodyLen runes.
+		"encoding": "base64",
+		"content":  base64.StdEncoding.EncodeToString(buf.Bytes()),
 	}
 	return &adapters.Result{
 		Summary: format.Summary("Exported %s [%s] as %s (%d row(s))", fileName, sheetName, targetMime, len(valuesResp.Values)),
@@ -609,6 +648,32 @@ func apiGET(ctx context.Context, client *http.Client, apiURL string, out any) er
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	return json.Unmarshal(body, out)
+}
+
+// apiGETLimited is apiGET with a bound on the response body, for endpoints
+// whose size scales with user content rather than being a fixed envelope.
+func apiGETLimited(ctx context.Context, client *http.Client, apiURL string, out any, limit int64) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, overflow, readErr := format.ReadBounded(resp.Body, limit)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	if readErr != nil {
+		return fmt.Errorf("reading response after %d bytes: %w", len(body), readErr)
+	}
+	if overflow {
+		return fmt.Errorf("response exceeds %d bytes; raise max_bytes or export a smaller range", limit)
 	}
 	return json.Unmarshal(body, out)
 }

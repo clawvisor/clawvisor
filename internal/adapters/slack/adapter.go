@@ -102,7 +102,7 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 		return nil, fmt.Errorf("slack download_file: file_id is required")
 	}
 
-	maxBytes, err := resolveMaxBytes(params["max_bytes"])
+	maxBytes, err := format.ResolveMaxBytes(params["max_bytes"])
 	if err != nil {
 		return nil, fmt.Errorf("slack download_file: %w", err)
 	}
@@ -278,9 +278,7 @@ func (a *Adapter) fetchContent(ctx context.Context, token, downloadURL string, m
 		return nil, "", fmt.Errorf("reading content after %d bytes: %w", len(body), readErr)
 	}
 	if int64(len(body)) > maxBytes {
-		return nil, "", fmt.Errorf(
-			"content exceeds the %s limit; raise max_bytes (up to %s)",
-			humanBytes(maxBytes), humanBytes(format.MaxDownloadBytes))
+		return nil, "", fmt.Errorf("content %s", format.OverflowMessage(maxBytes))
 	}
 
 	contentType := resp.Header.Get("Content-Type")
@@ -318,33 +316,6 @@ func isSignInPage(resp *http.Response, body []byte, contentType string, meta *fi
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-// resolveMaxBytes returns the effective download ceiling. Callers that stream
-// the response to disk can raise it up to format.MaxDownloadBytes; the default
-// stays small enough to survive being read into a model context.
-func resolveMaxBytes(v any) (int64, error) {
-	if v == nil {
-		return format.DefaultDownloadBytes, nil
-	}
-	var n int64
-	switch x := v.(type) {
-	case float64: // JSON numbers decode as float64
-		n = int64(x)
-	case int:
-		n = int64(x)
-	case int64:
-		n = x
-	default:
-		return 0, fmt.Errorf("max_bytes must be a number")
-	}
-	if n <= 0 {
-		return 0, fmt.Errorf("max_bytes must be positive")
-	}
-	if n > format.MaxDownloadBytes {
-		return 0, fmt.Errorf("max_bytes may not exceed %s", humanBytes(format.MaxDownloadBytes))
-	}
-	return n, nil
-}
 
 // checkSlackHost rejects download URLs that do not point at Slack. The URL
 // comes from an API response rather than the caller, but it still reaches the

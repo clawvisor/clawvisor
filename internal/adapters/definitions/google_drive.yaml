@@ -67,6 +67,9 @@ actions:
     override: go
     params:
       file_id: { type: string, required: true }
+      max_bytes:
+        type: int
+        description: "Maximum bytes to download (default 1 MB, max 10 MB). Oversized files are refused, not truncated."
 
   create_file:
     display_name: "Create file"
@@ -102,6 +105,9 @@ actions:
       sheet_name:
         type: string
         description: "Google Sheets only: name of the tab to export when mime_type is text/csv or text/tab-separated-values. Without this, only the first tab is returned."
+      max_bytes:
+        type: int
+        description: "Maximum bytes to download (default 1 MB, max 10 MB). Oversized files are refused, not truncated."
 
   search_files:
     display_name: "Search files"

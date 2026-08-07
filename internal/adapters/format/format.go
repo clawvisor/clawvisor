@@ -2,7 +2,10 @@
 package format
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"math"
 	"regexp"
 	"strings"
 	"unicode"
@@ -34,6 +37,77 @@ const (
 	// explicitly via a max_bytes parameter.
 	DefaultDownloadBytes = 1024 * 1024
 )
+
+// ResolveMaxBytes turns a caller-supplied max_bytes parameter into a download
+// ceiling. Shared by every adapter that returns file content so the contract —
+// the default, the ceiling, and the validation — cannot drift between them.
+//
+// Absent means DefaultDownloadBytes, which is sized to survive being read into
+// a model context. Callers that save the response to a file opt in to more, up
+// to MaxDownloadBytes.
+func ResolveMaxBytes(v any) (int64, error) {
+	if v == nil {
+		return DefaultDownloadBytes, nil
+	}
+	var n int64
+	switch x := v.(type) {
+	case float64: // JSON numbers decode as float64
+		// Reject fractional values rather than truncating them: 0.5 would
+		// silently become 0 and then fail as "must be positive", and 1.9 would
+		// become 1, producing a limit the caller never asked for.
+		if x != math.Trunc(x) {
+			return 0, fmt.Errorf("max_bytes must be a whole number, got %v", x)
+		}
+		// Range-check in float space. Converting an out-of-range float to
+		// int64 is implementation-defined in Go, so a value like 1e19 would
+		// otherwise reach the checks below as an arbitrary number that only
+		// happens to be negative on common platforms.
+		if x < 0 || x > float64(MaxDownloadBytes) {
+			return 0, fmt.Errorf("max_bytes must be between 1 and %d, got %v", MaxDownloadBytes, x)
+		}
+		n = int64(x)
+	case int:
+		n = int64(x)
+	case int64:
+		n = x
+	case json.Number:
+		parsed, err := x.Int64()
+		if err != nil {
+			return 0, fmt.Errorf("max_bytes must be a whole number, got %v", x)
+		}
+		n = parsed
+	default:
+		return 0, fmt.Errorf("max_bytes must be a number")
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("max_bytes must be positive")
+	}
+	if n > MaxDownloadBytes {
+		return 0, fmt.Errorf("max_bytes may not exceed %d", MaxDownloadBytes)
+	}
+	return n, nil
+}
+
+// OverflowMessage explains that content exceeded a limit, and only suggests
+// raising max_bytes when there is headroom left. At the ceiling the advice
+// would name the very value the caller already has.
+func OverflowMessage(limit int64) string {
+	if limit >= MaxDownloadBytes {
+		return fmt.Sprintf("exceeds the maximum supported size of %d bytes", MaxDownloadBytes)
+	}
+	return fmt.Sprintf("exceeds the %d byte limit; raise max_bytes (up to %d)", limit, MaxDownloadBytes)
+}
+
+// ReadBounded reads at most limit bytes and reports whether the source had
+// more, so callers can refuse an oversized payload rather than returning a
+// truncated one. Reading limit+1 is what makes the overflow detectable.
+func ReadBounded(r io.Reader, limit int64) (body []byte, overflow bool, err error) {
+	body, err = io.ReadAll(io.LimitReader(r, limit+1))
+	if int64(len(body)) > limit {
+		return body[:limit], true, err
+	}
+	return body, false, err
+}
 
 // SanitizeText strips HTML, removes dangerous Unicode, and truncates to maxLen runes.
 // If maxLen <= 0, only sanitization is applied (no truncation).

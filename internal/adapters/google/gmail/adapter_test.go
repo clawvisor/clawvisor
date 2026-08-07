@@ -1076,4 +1076,116 @@ func TestListMessages_BatchContextCancel(t *testing.T) {
 	}
 }
 
+// ── get_message_raw ───────────────────────────────────────────────────────────
 
+func rawMessageClient(t *testing.T, gmailRaw string) *http.Client {
+	t.Helper()
+	return &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if !strings.Contains(req.URL.Path, "/messages/msg-raw-1") {
+				t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
+			}
+			if got := req.URL.Query().Get("format"); got != "raw" {
+				t.Fatalf("format = %q, want raw", got)
+			}
+			body := fmt.Sprintf(`{"id":"msg-raw-1","threadId":"thread-9","sizeEstimate":42,"raw":%q}`, gmailRaw)
+			return &http.Response{
+				StatusCode: 200,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		}),
+	}
+}
+
+// The raw endpoint must return the original bytes, not a projection of them.
+func TestGetMessageRaw_ReturnsByteExactRFC5322(t *testing.T) {
+	// Headers the parsed projection drops, plus a non-UTF-8 byte in the body
+	// that a JSON string would replace with U+FFFD.
+	original := append([]byte(
+		"DKIM-Signature: v=1; a=rsa-sha256; d=example.com;\r\n"+
+			"From: alice@example.com\r\n"+
+			"Subject: <b>hi</b>\r\n"+
+			"\r\n"+
+			"body "), 0xff, 0xfe)
+
+	adapter := New(nil)
+	res, err := adapter.getMessageRaw(context.Background(),
+		rawMessageClient(t, base64.URLEncoding.EncodeToString(original)),
+		map[string]any{"message_id": "msg-raw-1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data := res.Data.(map[string]any)
+	if data["encoding"] != "base64" {
+		t.Fatalf("encoding = %v, want base64", data["encoding"])
+	}
+	if data["mime_type"] != "message/rfc822" {
+		t.Errorf("mime_type = %v", data["mime_type"])
+	}
+	got, err := base64.StdEncoding.DecodeString(data["content"].(string))
+	if err != nil {
+		t.Fatalf("content is not decodable standard base64: %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Errorf("raw message was altered:\n got %q\nwant %q", got, original)
+	}
+	// The DKIM header and the markup must survive — these are exactly what
+	// get_message's projection discards or strips.
+	if !bytes.Contains(got, []byte("DKIM-Signature")) || !bytes.Contains(got, []byte("<b>hi</b>")) {
+		t.Errorf("expected headers/markup preserved, got %q", got)
+	}
+}
+
+// Gmail emits URL-safe base64; the result must be standard base64 so it
+// matches the encoding contract every other content action uses.
+func TestGetMessageRaw_AcceptsURLSafeAndUnpaddedInput(t *testing.T) {
+	original := []byte{0xfb, 0xff, 0xfe, '?', '>', '<'} // encodes with - and _
+	for name, encoded := range map[string]string{
+		"padded-urlsafe":   base64.URLEncoding.EncodeToString(original),
+		"unpadded-urlsafe": base64.RawURLEncoding.EncodeToString(original),
+	} {
+		t.Run(name, func(t *testing.T) {
+			res, err := New(nil).getMessageRaw(context.Background(),
+				rawMessageClient(t, encoded), map[string]any{"message_id": "msg-raw-1"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got, err := base64.StdEncoding.DecodeString(res.Data.(map[string]any)["content"].(string))
+			if err != nil {
+				t.Fatalf("not standard base64: %v", err)
+			}
+			if !bytes.Equal(got, original) {
+				t.Errorf("got %v want %v", got, original)
+			}
+		})
+	}
+}
+
+func TestGetMessageRaw_RefusesOversizedMessage(t *testing.T) {
+	original := bytes.Repeat([]byte("x"), 4096)
+	_, err := New(nil).getMessageRaw(context.Background(),
+		rawMessageClient(t, base64.URLEncoding.EncodeToString(original)),
+		map[string]any{"message_id": "msg-raw-1", "max_bytes": float64(1024)})
+	if err == nil {
+		t.Fatal("expected an error for a message over max_bytes")
+	}
+	if !strings.Contains(err.Error(), "max_bytes") {
+		t.Errorf("error should point at max_bytes, got: %v", err)
+	}
+}
+
+func TestGetMessageRaw_RequiresMessageID(t *testing.T) {
+	if _, err := New(nil).getMessageRaw(context.Background(), &http.Client{}, map[string]any{}); err == nil {
+		t.Fatal("expected an error when message_id is missing")
+	}
+}
+
+func TestGetMessageRaw_ErrorsOnEmptyRaw(t *testing.T) {
+	_, err := New(nil).getMessageRaw(context.Background(),
+		rawMessageClient(t, ""), map[string]any{"message_id": "msg-raw-1"})
+	if err == nil || !strings.Contains(err.Error(), "no raw content") {
+		t.Fatalf("got: %v", err)
+	}
+}

@@ -109,6 +109,11 @@ func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params 
 		return nil, fmt.Errorf("onedrive download_file: item_id is required")
 	}
 
+	maxBytes, err := format.ResolveMaxBytes(params["max_bytes"])
+	if err != nil {
+		return nil, fmt.Errorf("onedrive download_file: %w", err)
+	}
+
 	// Determine the correct endpoint. If itemID looks like a path (e.g., starts with "root:"),
 	// use the root path syntax. Otherwise, assume it's a DriveItem ID.
 	var metaEndpoint string
@@ -141,9 +146,8 @@ func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params 
 	if downloadURL == "" {
 		// Fallback: use the /content endpoint
 		contentEndpoint := metaEndpoint + "/content"
-		return a.downloadViaContent(ctx, client, contentEndpoint, itemID, fileName, int64(fileSize))
+		return a.downloadViaContent(ctx, client, contentEndpoint, itemID, fileName, int64(fileSize), maxBytes)
 	}
-
 
 	// Use a plain HTTP client for the pre-signed URL download.
 	// The download URL is pre-authenticated; sending an OAuth Bearer token
@@ -164,14 +168,20 @@ func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params 
 		return nil, fmt.Errorf("onedrive download_file: download status %d", resp.StatusCode)
 	}
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+	body, overflow, readErr := format.ReadBounded(resp.Body, maxBytes)
+	if readErr != nil {
+		return nil, fmt.Errorf("onedrive download_file: reading content after %d bytes: %w", len(body), readErr)
+	}
+	if overflow {
+		return nil, fmt.Errorf("onedrive download_file: %q %s", fileName, format.OverflowMessage(maxBytes))
+	}
 
 	return a.buildDownloadResult(itemID, fileName, int64(fileSize), body), nil
 }
 
 // downloadViaContent handles the /content redirect flow by stripping the
 // Authorization header on cross-host redirects.
-func (a *Adapter) downloadViaContent(ctx context.Context, oauthClient *http.Client, endpoint, itemID, fileName string, fileSize int64) (*adapters.Result, error) {
+func (a *Adapter) downloadViaContent(ctx context.Context, oauthClient *http.Client, endpoint, itemID, fileName string, fileSize, maxBytes int64) (*adapters.Result, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -200,31 +210,38 @@ func (a *Adapter) downloadViaContent(ctx context.Context, oauthClient *http.Clie
 		return nil, fmt.Errorf("onedrive download_file: download status %d", resp.StatusCode)
 	}
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+	body, overflow, readErr := format.ReadBounded(resp.Body, maxBytes)
+	if readErr != nil {
+		return nil, fmt.Errorf("onedrive download_file: reading content after %d bytes: %w", len(body), readErr)
+	}
+	if overflow {
+		return nil, fmt.Errorf(
+			"onedrive download_file: %q exceeds the %d byte limit; raise max_bytes (up to %d)",
+			fileName, maxBytes, format.MaxDownloadBytes)
+	}
 
 	return a.buildDownloadResult(itemID, fileName, fileSize, body), nil
 }
 
-// buildDownloadResult constructs the download response with appropriate
-// content encoding (text or base64).
+// buildDownloadResult constructs the download response. Content is always
+// base64-encoded, for every type.
 func (a *Adapter) buildDownloadResult(itemID, fileName string, fileSize int64, body []byte) *adapters.Result {
 	contentType := mime.TypeByExtension(filepath.Ext(fileName))
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
+	// A download must round-trip the file byte for byte, which the text path
+	// could not: format.SanitizeText strips HTML and truncates at MaxBodyLen
+	// runes, and even unsanitized, bytes placed in a JSON string lose anything
+	// that is not valid UTF-8 to U+FFFD.
 	result := map[string]any{
 		"name":         format.SanitizeText(fileName, format.MaxFieldLen),
 		"id":           itemID,
 		"size":         fileSize,
 		"content_type": contentType,
-	}
-
-	if isTextContent(contentType) {
-		result["content"] = format.SanitizeText(string(body), format.MaxBodyLen)
-	} else {
-		result["encoding"] = "base64"
-		result["content"] = base64.StdEncoding.EncodeToString(body)
+		"encoding":     "base64",
+		"content":      base64.StdEncoding.EncodeToString(body),
 	}
 
 	return &adapters.Result{
@@ -289,12 +306,6 @@ func (a *Adapter) uploadFile(ctx context.Context, client *http.Client, params ma
 			"size": uploaded.Size,
 		},
 	}, nil
-}
-
-func isTextContent(contentType string) bool {
-	return strings.HasPrefix(contentType, "text/") ||
-		contentType == "application/json" ||
-		contentType == "application/xml"
 }
 
 func escapePath(p string) string {

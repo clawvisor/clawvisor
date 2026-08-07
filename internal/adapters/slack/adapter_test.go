@@ -313,19 +313,6 @@ func TestDownloadFileAllowsRaisedLimit(t *testing.T) {
 	}
 }
 
-func TestResolveMaxBytesRejectsOverCeiling(t *testing.T) {
-	if _, err := resolveMaxBytes(float64(format.MaxDownloadBytes + 1)); err == nil {
-		t.Error("expected an error above the ceiling")
-	}
-	if _, err := resolveMaxBytes(float64(0)); err == nil {
-		t.Error("expected an error for zero")
-	}
-	got, err := resolveMaxBytes(nil)
-	if err != nil || got != format.DefaultDownloadBytes {
-		t.Errorf("default = %d, %v", got, err)
-	}
-}
-
 // Slack answers an under-scoped token with 200 + a sign-in page, so status
 // alone cannot be treated as success.
 func TestDownloadFileDetectsHTMLLoginPage(t *testing.T) {

@@ -1,6 +1,9 @@
 package drive
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -70,7 +73,15 @@ func TestExportFile_SheetTabByName(t *testing.T) {
 	if data["sheet_name"] != "Routing Map" {
 		t.Errorf("sheet_name = %v, want Routing Map", data["sheet_name"])
 	}
-	content, _ := data["content"].(string)
+	// Exported content is base64 so it round-trips byte for byte.
+	if data["encoding"] != "base64" {
+		t.Fatalf("encoding = %v, want base64", data["encoding"])
+	}
+	raw, err := base64.StdEncoding.DecodeString(data["content"].(string))
+	if err != nil {
+		t.Fatalf("content is not decodable base64: %v", err)
+	}
+	content := string(raw)
 	if !strings.Contains(content, "GP,Sector") || !strings.Contains(content, "Alice,Fintech") {
 		t.Errorf("content missing expected rows:\n%s", content)
 	}
@@ -256,5 +267,47 @@ func TestExportFile_UnknownSheetName(t *testing.T) {
 	}
 	if err != nil && !strings.Contains(err.Error(), "Routing Map") {
 		t.Errorf("expected error to list available tabs (got %v)", err)
+	}
+}
+
+// Regression for the truncation bug: downloads were capped at MaxBodyLen and
+// the prefix was returned as a successful, byte-exact result.
+func TestDownloadFile_RefusesOversizedInsteadOfTruncating(t *testing.T) {
+	big := bytes.Repeat([]byte("A"), 300_000) // over the old 200,000 cap
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("alt") == "media" {
+			_, _ = w.Write(big)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "f1", "name": "big.bin", "mimeType": "application/octet-stream", "size": "300000",
+		})
+	}))
+	defer srv.Close()
+
+	adapter := New(staticOAuthProvider{})
+
+	// Default limit is 1 MB, so 300 KB now succeeds intact — previously it
+	// came back truncated to 200,000 bytes.
+	res, err := adapter.downloadFile(context.Background(), newTestClient(srv), map[string]any{"file_id": "f1"})
+	if err != nil {
+		t.Fatalf("300 KB should fit the default limit: %v", err)
+	}
+	got, err := base64.StdEncoding.DecodeString(res.Data.(map[string]any)["content"].(string))
+	if err != nil {
+		t.Fatalf("undecodable base64: %v", err)
+	}
+	if !bytes.Equal(got, big) {
+		t.Errorf("content truncated: got %d bytes, want %d", len(got), len(big))
+	}
+
+	// Over the requested limit must be an error, not a truncated success.
+	_, err = adapter.downloadFile(context.Background(), newTestClient(srv),
+		map[string]any{"file_id": "f1", "max_bytes": float64(1024)})
+	if err == nil {
+		t.Fatal("expected an error for a file over max_bytes")
+	}
+	if !strings.Contains(err.Error(), "max_bytes") {
+		t.Errorf("error should point at max_bytes, got: %v", err)
 	}
 }

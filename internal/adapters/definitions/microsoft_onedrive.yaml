@@ -85,11 +85,16 @@ actions:
     risk: { category: read, sensitivity: low, description: "Download a file's content from OneDrive" }
     scopes: ["Files.ReadWrite"]
     override: go
+    # Content is returned base64-encoded for every file type, so the file
+    # round-trips byte for byte. Decode it before use.
     params:
       item_id:
         type: string
         required: true
         description: "OneDrive item ID"
+      max_bytes:
+        type: int
+        description: "Maximum bytes to download (default 1 MB, max 10 MB). Oversized files are refused, not truncated."
 
   upload_file:
     display_name: "Upload file"
