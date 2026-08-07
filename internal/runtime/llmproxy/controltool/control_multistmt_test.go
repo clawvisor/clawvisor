@@ -175,6 +175,66 @@ func TestRewriteControlToolUse_CompleteCurlInjectsCallerAuth(t *testing.T) {
 	}
 }
 
+// TestRewriteControlToolUse_BodylessCompleteCurlInjectsMethodAndCallerAuth verifies
+// that a bare curl call to /complete (no -X POST) is rewritten to target the
+// synthetic complete URL and embeds the minted caller nonce, but does NOT coerce the method.
+func TestRewriteControlToolUse_BodylessCompleteCurlInjectsMethodAndCallerAuth(t *testing.T) {
+	tu := conversation.ToolUse{
+		ID:   "tu_1",
+		Name: "Bash",
+		Input: json.RawMessage(`{
+			"command": "curl -sS https://clawvisor.local/control/tasks/task-abc/complete"
+		}`),
+	}
+	const minted = "cv-nonce-complete-xyz"
+	rewritten, verdict, ok, err := RewriteControlToolUse(tu, "https://clawvisor.example", minted)
+	if err != nil || !ok {
+		t.Fatalf("expected rewrite to succeed, got ok=%v err=%v", ok, err)
+	}
+	if verdict.Method != "POST" {
+		t.Errorf("verdict method = %q, want POST", verdict.Method)
+	}
+	cmd := string(rewritten)
+	if strings.Contains(cmd, "-X POST") {
+		t.Errorf("rewritten command should NOT inject -X POST; got %s", cmd)
+	}
+	if !strings.Contains(cmd, minted) {
+		t.Errorf("rewritten command should embed the minted caller nonce; got %s", cmd)
+	}
+	if !strings.Contains(cmd, "/api/control/tasks/task-abc/complete") {
+		t.Errorf("rewritten command should target the daemon's /api/control/.../complete path; got %s", cmd)
+	}
+}
+
+// TestRewriteControlToolUse_TrailingSlashCompleteCurlNormalizes path
+func TestRewriteControlToolUse_TrailingSlashCompleteCurlNormalizes(t *testing.T) {
+	tu := conversation.ToolUse{
+		ID:   "tu_1",
+		Name: "Bash",
+		Input: json.RawMessage(`{
+			"command": "curl -sS https://clawvisor.local/control/tasks/task-abc/complete/"
+		}`),
+	}
+	const minted = "cv-nonce-complete-xyz"
+	rewritten, verdict, ok, err := RewriteControlToolUse(tu, "https://clawvisor.example", minted)
+	if err != nil || !ok {
+		t.Fatalf("expected rewrite to succeed, got ok=%v err=%v", ok, err)
+	}
+	if verdict.Method != "POST" {
+		t.Errorf("verdict method = %q, want POST", verdict.Method)
+	}
+	cmd := string(rewritten)
+	if strings.Contains(cmd, "-X POST") {
+		t.Errorf("rewritten command should NOT inject -X POST; got %s", cmd)
+	}
+	if !strings.Contains(cmd, "/api/control/tasks/task-abc/complete") {
+		t.Errorf("rewritten command should target normalized path; got %s", cmd)
+	}
+	if strings.Contains(cmd, "/complete/") {
+		t.Errorf("rewritten command should not contain trailing slash; got %s", cmd)
+	}
+}
+
 func TestParseControlCmd_MultiStmtCatHeredocPlusCurl(t *testing.T) {
 	args, dataFiles, ok := parseControlCmd(multiStmtCatCurlCmd)
 	if !ok {

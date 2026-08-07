@@ -976,6 +976,22 @@ func ParseControlToolUseWithBase(t conversation.ToolUse, controlBaseURL string) 
 	}, true
 }
 
+func ExplicitMethodForToolUse(t conversation.ToolUse, controlBaseURL string) (string, bool) {
+	_, method, body, ok := controlCallParts(t, controlBaseURL)
+	if !ok {
+		return "", false
+	}
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == "" {
+		if len(body) > 0 {
+			method = "POST"
+		} else {
+			method = "GET"
+		}
+	}
+	return method, true
+}
+
 func controlVerdictForToolUse(t conversation.ToolUse, controlBaseURL string) (inspector.Verdict, bool) {
 	call, ok := ParseControlToolUseWithBase(t, controlBaseURL)
 	if ok {
@@ -1216,13 +1232,17 @@ func parseControlURL(raw string, controlBaseURL string) (*url.URL, bool) {
 }
 
 func normalizeControlPath(path string) (string, bool) {
+	trimmed := path
+	if len(trimmed) > 1 && strings.HasSuffix(trimmed, "/") {
+		trimmed = strings.TrimSuffix(trimmed, "/")
+	}
 	switch {
-	case path == ControlAPIPath || strings.HasPrefix(path, ControlAPIPath+"/"):
-		return path, true
-	case path == ControlSyntheticPath:
+	case trimmed == ControlAPIPath || strings.HasPrefix(trimmed, ControlAPIPath+"/"):
+		return trimmed, true
+	case trimmed == ControlSyntheticPath:
 		return ControlAPIPath, true
-	case strings.HasPrefix(path, ControlSyntheticPath+"/"):
-		return ControlAPIPath + strings.TrimPrefix(path, ControlSyntheticPath), true
+	case strings.HasPrefix(trimmed, ControlSyntheticPath+"/"):
+		return ControlAPIPath + strings.TrimPrefix(trimmed, ControlSyntheticPath), true
 	default:
 		return "", false
 	}
@@ -1282,6 +1302,7 @@ func controlMethodForPath(path string) string {
 }
 
 func controlMethodForCall(path string, body []byte) string {
+	path = strings.TrimSuffix(path, "/")
 	if strings.HasSuffix(path, "/tasks") && len(body) > 0 {
 		return "POST"
 	}
