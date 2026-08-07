@@ -5,6 +5,9 @@ const CURRENT_ORG_KEY = 'clawvisor_current_org'
 const INITIAL_REFRESH_RETRY_MS = 1_000
 const MAX_INITIAL_REFRESH_RETRY_MS = 5_000
 const MAX_INITIAL_REFRESH_ATTEMPTS = 5
+// Deadline after which a still-pending /api/features request is treated as
+// "settled" (features gated off) so RequireAuth's gate can't deadlock the app.
+const FEATURES_LOAD_TIMEOUT_MS = 10_000
 
 function safeSetItem(key: string, value: string) {
   try { localStorage.setItem(key, value) } catch { /* quota exceeded — ignore */ }
@@ -24,6 +27,11 @@ interface AuthContextValue {
   isAuthenticated: boolean
   authMode: 'magic_link' | 'password' | 'passkey' | null
   features: FeatureSet | null
+  /** True once /api/features has loaded for the *current* user. Route trees
+   *  that gate on feature flags (e.g. the org/Teams routes) must wait for this,
+   *  otherwise a direct load renders with stale/undefined features and the
+   *  catch-all redirect fires before the real flags arrive. */
+  featuresReady: boolean
   currentOrg: Org | null
   setCurrentOrg: (org: Org | null) => void
   onboardingComplete: boolean | null
@@ -42,6 +50,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [authMode, setAuthMode] = useState<'magic_link' | 'password' | 'passkey' | null>(null)
   const [features, setFeatures] = useState<FeatureSet | null>(null)
+  // The identity ('anon' or user id) the current `features` were loaded for.
+  // featuresReady (below) compares it to the current user synchronously, so
+  // route gating never renders with another identity's stale features.
+  const [featuresUserKey, setFeaturesUserKey] = useState<string | null>(null)
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null)
   const [currentOrg, setCurrentOrgState] = useState<Org | null>(() => {
     try {
@@ -143,10 +155,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // before the in-flight request resolves.
   useEffect(() => {
     let cancelled = false
+    const key = user?.id ?? 'anon'
+    // Safety valve: /api/features has no request-level timeout, and
+    // RequireAuth blocks the authenticated app until featuresReady flips true.
+    // If the request hangs indefinitely, mark features "ready" (gated off)
+    // after a deadline so navigation can't deadlock on a stalled fetch. A late
+    // real response still applies below and upgrades the flags.
+    const timer = setTimeout(() => {
+      if (!cancelled) {
+        console.warn('useAuth: /api/features slow; proceeding with features gated off')
+        setFeaturesUserKey(key)
+      }
+    }, FEATURES_LOAD_TIMEOUT_MS)
     api.features.get()
-      .then((f) => { if (!cancelled) setFeatures(f) })
-      .catch((e) => console.warn('useAuth: failed to fetch features', e))
-    return () => { cancelled = true }
+      .then((f) => { if (!cancelled) { setFeatures(f); setFeaturesUserKey(key) } })
+      .catch((e) => {
+        console.warn('useAuth: failed to fetch features', e)
+        // Mark ready even on failure so route gating proceeds (feature-gated
+        // routes stay off) rather than spinning forever.
+        if (!cancelled) setFeaturesUserKey(key)
+      })
+      .finally(() => clearTimeout(timer))
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [user, onboardingComplete])
 
   // Register a refresh callback so the API client can silently handle 401s on
@@ -202,8 +232,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setOnboardingComplete(null)
   }, [])
 
+  // Synchronous readiness: features are usable only once loaded for THIS user.
+  // On an auth transition featuresUserKey lags the new user id, so this is false
+  // until the per-user features arrive — no stale-render redirect.
+  const featuresReady = featuresUserKey === (user?.id ?? 'anon')
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, currentOrg, setCurrentOrg, onboardingComplete, refreshOnboarding, login, register, logout, setSession }}>
+    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, featuresReady, currentOrg, setCurrentOrg, onboardingComplete, refreshOnboarding, login, register, logout, setSession }}>
       {children}
     </AuthContext.Provider>
   )
