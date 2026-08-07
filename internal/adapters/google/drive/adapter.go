@@ -251,6 +251,11 @@ func (a *DriveAdapter) downloadFile(ctx context.Context, client *http.Client, pa
 		return nil, fmt.Errorf("drive download_file: file_id is required")
 	}
 
+	maxBytes, err := format.ResolveMaxBytes(params["max_bytes"])
+	if err != nil {
+		return nil, fmt.Errorf("drive download_file: %w", err)
+	}
+
 	// Fetch metadata.
 	metaURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s?fields=id,name,mimeType,size",
 		url.PathEscape(fileID))
@@ -277,9 +282,17 @@ func (a *DriveAdapter) downloadFile(ctx context.Context, client *http.Client, pa
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+	body, overflow, readErr := format.ReadBounded(resp.Body, maxBytes)
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("drive download_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("drive download_file: reading content after %d bytes: %w", len(body), readErr)
+	}
+	if overflow {
+		return nil, fmt.Errorf(
+			"drive download_file: %q exceeds the %d byte limit; raise max_bytes (up to %d)",
+			meta.Name, maxBytes, format.MaxDownloadBytes)
 	}
 
 	result := map[string]any{
@@ -313,6 +326,10 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 	if fileID == "" {
 		return nil, fmt.Errorf("drive export_file: file_id is required")
 	}
+	exportMaxBytes, err := format.ResolveMaxBytes(params["max_bytes"])
+	if err != nil {
+		return nil, fmt.Errorf("drive export_file: %w", err)
+	}
 	if targetMime == "" {
 		return nil, fmt.Errorf("drive export_file: mime_type is required")
 	}
@@ -340,7 +357,7 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 	}
 
 	if isSheet && wantsTabular && sheetName != "" {
-		return a.exportSheetTab(ctx, client, meta.ID, meta.Name, sheetName, targetMime)
+		return a.exportSheetTab(ctx, client, meta.ID, meta.Name, sheetName, targetMime, exportMaxBytes)
 	}
 
 	exportURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s/export?mimeType=%s",
@@ -355,9 +372,17 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+	body, overflow, readErr := format.ReadBounded(resp.Body, exportMaxBytes)
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("drive export_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("drive export_file: reading content after %d bytes: %w", len(body), readErr)
+	}
+	if overflow {
+		return nil, fmt.Errorf(
+			"drive export_file: %q exported to %s exceeds the %d byte limit; raise max_bytes (up to %d)",
+			meta.Name, targetMime, exportMaxBytes, format.MaxDownloadBytes)
 	}
 
 	// Always base64. Export targets include PDF and the OOXML formats, which
@@ -411,7 +436,7 @@ func (a *DriveAdapter) listSheetTitles(ctx context.Context, client *http.Client,
 // exportSheetTab reads a single sheet (tab) from a Google Sheets file via the
 // Sheets API and serializes the values as CSV or TSV. The drive.readonly scope
 // is sufficient to call spreadsheets.values.get.
-func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, fileID, fileName, sheetName, targetMime string) (*adapters.Result, error) {
+func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, fileID, fileName, sheetName, targetMime string, maxBytes int64) (*adapters.Result, error) {
 	// Validate that the named tab exists; surface available titles otherwise.
 	titles, err := a.listSheetTitles(ctx, client, fileID)
 	if err != nil {
@@ -462,6 +487,13 @@ func (a *DriveAdapter) exportSheetTab(ctx context.Context, client *http.Client, 
 	w.Flush()
 	if err := w.Error(); err != nil {
 		return nil, fmt.Errorf("drive export_file: serializing CSV: %w", err)
+	}
+	// The CSV is built in memory from the Sheets response, so bound it the
+	// same way a fetched export is bounded.
+	if int64(buf.Len()) > maxBytes {
+		return nil, fmt.Errorf(
+			"drive export_file: %q [%s] serializes to %d bytes, which exceeds the %d byte limit; raise max_bytes (up to %d)",
+			fileName, sheetName, buf.Len(), maxBytes, format.MaxDownloadBytes)
 	}
 
 	result := map[string]any{

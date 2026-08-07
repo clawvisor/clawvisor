@@ -82,6 +82,9 @@ actions:
         type: string
         required: true
         description: "File path in Dropbox (e.g. /Documents/report.pdf)"
+      max_bytes:
+        type: int
+        description: "Maximum bytes to download (default 1 MB, max 10 MB). Oversized files are refused, not truncated."
 
   upload_file:
     display_name: "Upload file"

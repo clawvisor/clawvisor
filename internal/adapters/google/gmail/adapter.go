@@ -295,7 +295,7 @@ func (a *GmailAdapter) getMessageRaw(ctx context.Context, client *http.Client, p
 		return nil, fmt.Errorf("gmail get_message_raw: message_id is required")
 	}
 
-	maxBytes, err := resolveMaxBytes(params["max_bytes"])
+	maxBytes, err := format.ResolveMaxBytes(params["max_bytes"])
 	if err != nil {
 		return nil, fmt.Errorf("gmail get_message_raw: %w", err)
 	}
@@ -312,6 +312,14 @@ func (a *GmailAdapter) getMessageRaw(ctx context.Context, client *http.Client, p
 	// far larger than the parsed projection. base64 inflates by 4/3, and the
 	// JSON envelope adds a little more.
 	if err := gmailGETLimited(ctx, client, endpoint, &msg, maxBytes*4/3+(1<<16)); err != nil {
+		// A message far over the limit trips the envelope bound before the
+		// decoded-size check below, so add the same guidance here rather than
+		// leaving the caller with a bare "response exceeds N bytes".
+		if strings.Contains(err.Error(), "response exceeds") {
+			return nil, fmt.Errorf(
+				"gmail get_message_raw: message exceeds the %d byte limit; raise max_bytes (up to %d)",
+				maxBytes, format.MaxDownloadBytes)
+		}
 		return nil, fmt.Errorf("gmail get_message_raw: %w", err)
 	}
 	if msg.Raw == "" {
@@ -342,33 +350,6 @@ func (a *GmailAdapter) getMessageRaw(ctx context.Context, client *http.Client, p
 			"content":   base64.StdEncoding.EncodeToString(decoded),
 		},
 	}, nil
-}
-
-// resolveMaxBytes mirrors the Slack adapter's contract: a modest default that
-// survives being read into a model context, raisable to format.MaxDownloadBytes
-// by callers that save the response to a file.
-func resolveMaxBytes(v any) (int64, error) {
-	if v == nil {
-		return format.DefaultDownloadBytes, nil
-	}
-	var n int64
-	switch x := v.(type) {
-	case float64: // JSON numbers decode as float64
-		n = int64(x)
-	case int:
-		n = int64(x)
-	case int64:
-		n = x
-	default:
-		return 0, fmt.Errorf("max_bytes must be a number")
-	}
-	if n <= 0 {
-		return 0, fmt.Errorf("max_bytes must be positive")
-	}
-	if n > format.MaxDownloadBytes {
-		return 0, fmt.Errorf("max_bytes may not exceed %d", format.MaxDownloadBytes)
-	}
-	return n, nil
 }
 
 // ── get_thread ────────────────────────────────────────────────────────────────

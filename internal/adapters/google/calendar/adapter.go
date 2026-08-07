@@ -14,9 +14,9 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
 
 const serviceID = "google.calendar"
@@ -321,8 +321,8 @@ func (a *CalendarAdapter) createEvent(ctx context.Context, client *http.Client, 
 	apiURL := fmt.Sprintf("https://www.googleapis.com/calendar/v3/calendars/%s/events",
 		url.PathEscape(calendarID))
 	var created struct {
-		ID      string `json:"id"`
-		Summary string `json:"summary"`
+		ID       string `json:"id"`
+		Summary  string `json:"summary"`
 		HTMLLink string `json:"htmlLink"`
 	}
 	if err := apiWrite(ctx, client, http.MethodPost, apiURL, body, &created); err != nil {
@@ -515,7 +515,6 @@ func paramInt(params map[string]any, key string) (int, bool) {
 	}
 	return 0, false
 }
-
 
 // dateToRFC3339 reads a date/datetime param (primary key or alias) from params
 // and ensures it is in RFC3339 format. Plain ISO dates ("2006-01-02") are

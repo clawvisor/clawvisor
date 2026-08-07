@@ -141,6 +141,11 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 		return nil, fmt.Errorf("dropbox download_file: path is required")
 	}
 
+	maxBytes, err := format.ResolveMaxBytes(params["max_bytes"])
+	if err != nil {
+		return nil, fmt.Errorf("dropbox download_file: %w", err)
+	}
+
 	apiArg, _ := json.Marshal(map[string]string{"path": path})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, contentURL+"/files/download", nil)
@@ -156,9 +161,20 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+	// Bounded by the download ceiling, not MaxBodyLen. Overflow is refused
+	// rather than returned: a truncated file base64-encodes cleanly and would
+	// be indistinguishable from a complete one.
+	body, overflow, readErr := format.ReadBounded(resp.Body, maxBytes)
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("dropbox download_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("dropbox download_file: reading content after %d bytes: %w", len(body), readErr)
+	}
+	if overflow {
+		return nil, fmt.Errorf(
+			"dropbox download_file: %q exceeds the %d byte limit; raise max_bytes (up to %d)",
+			path, maxBytes, format.MaxDownloadBytes)
 	}
 
 	// Dropbox returns file metadata in the Dropbox-API-Result header.
@@ -280,10 +296,4 @@ func extractToken(credBytes []byte) (string, error) {
 		return "", fmt.Errorf("credential missing token")
 	}
 	return token, nil
-}
-
-func isTextContent(contentType string) bool {
-	return strings.HasPrefix(contentType, "text/") ||
-		contentType == "application/json" ||
-		contentType == "application/xml"
 }

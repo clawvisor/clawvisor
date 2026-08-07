@@ -19,7 +19,6 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
@@ -1188,17 +1187,5 @@ func TestGetMessageRaw_ErrorsOnEmptyRaw(t *testing.T) {
 		rawMessageClient(t, ""), map[string]any{"message_id": "msg-raw-1"})
 	if err == nil || !strings.Contains(err.Error(), "no raw content") {
 		t.Fatalf("got: %v", err)
-	}
-}
-
-func TestResolveMaxBytesGmail(t *testing.T) {
-	if got, err := resolveMaxBytes(nil); err != nil || got != format.DefaultDownloadBytes {
-		t.Errorf("default = %d, %v", got, err)
-	}
-	if _, err := resolveMaxBytes(float64(format.MaxDownloadBytes + 1)); err == nil {
-		t.Error("expected an error above the ceiling")
-	}
-	if _, err := resolveMaxBytes(float64(0)); err == nil {
-		t.Error("expected an error for zero")
 	}
 }
