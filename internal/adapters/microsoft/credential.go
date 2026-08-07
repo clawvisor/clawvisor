@@ -129,8 +129,8 @@ func FetchMicrosoftEmail(ctx context.Context, client *http.Client) (string, erro
 	}
 
 	var info struct {
-		Mail               string `json:"mail"`
-		UserPrincipalName  string `json:"userPrincipalName"`
+		Mail              string `json:"mail"`
+		UserPrincipalName string `json:"userPrincipalName"`
 	}
 	if err := json.Unmarshal(body, &info); err != nil {
 		return "", fmt.Errorf("microsoft userinfo: parse: %w", err)

@@ -134,3 +134,6 @@ actions:
         - { name: webUrl, rename: web_url }
         - { name: lastModifiedDateTime, rename: modified }
       summary: "{{len .Data}} result(s)"
+      max_bytes:
+        type: int
+        description: "Maximum bytes to download (default 1 MB, max 10 MB). Oversized files are refused, not truncated."

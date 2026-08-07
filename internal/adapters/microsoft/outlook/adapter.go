@@ -70,17 +70,16 @@ func (a *Adapter) listEvents(ctx context.Context, client *http.Client, params ma
 		subject, _ := item["subject"].(string)
 
 		events = append(events, map[string]any{
-			"id":          item["id"],
-			"subject":     format.SanitizeText(subject, format.MaxFieldLen),
-			"start":       start["dateTime"],
-			"end":         end["dateTime"],
-			"timezone":    start["timeZone"],
-			"location":    loc["displayName"],
-			"is_all_day":  item["isAllDay"],
-			"web_link":    item["webLink"],
+			"id":         item["id"],
+			"subject":    format.SanitizeText(subject, format.MaxFieldLen),
+			"start":      start["dateTime"],
+			"end":        end["dateTime"],
+			"timezone":   start["timeZone"],
+			"location":   loc["displayName"],
+			"is_all_day": item["isAllDay"],
+			"web_link":   item["webLink"],
 		})
 	}
-
 
 	return &adapters.Result{
 		Summary: format.Summary("%d event(s)", len(events)),
@@ -108,26 +107,24 @@ func (a *Adapter) getEvent(ctx context.Context, client *http.Client, params map[
 	bodyContent, _ := body["content"].(string)
 
 	data := map[string]any{
-		"id":          item["id"],
-		"subject":     format.SanitizeText(subject, format.MaxFieldLen),
-		"start":       start["dateTime"],
-		"end":         end["dateTime"],
-		"timezone":    start["timeZone"],
-		"location":    loc["displayName"],
-		"body":        format.SanitizeText(bodyContent, format.MaxBodyLen),
-		"attendees":   item["attendees"],
-		"is_all_day":  item["isAllDay"],
-		"web_link":    item["webLink"],
-		"organizer":   item["organizer"],
+		"id":         item["id"],
+		"subject":    format.SanitizeText(subject, format.MaxFieldLen),
+		"start":      start["dateTime"],
+		"end":        end["dateTime"],
+		"timezone":   start["timeZone"],
+		"location":   loc["displayName"],
+		"body":       format.SanitizeText(bodyContent, format.MaxBodyLen),
+		"attendees":  item["attendees"],
+		"is_all_day": item["isAllDay"],
+		"web_link":   item["webLink"],
+		"organizer":  item["organizer"],
 	}
-
 
 	return &adapters.Result{
 		Summary: format.Summary("Event: %s", data["subject"]),
 		Data:    data,
 	}, nil
 }
-
 
 func (a *Adapter) sendMessage(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	to, _ := params["to"].(string)
