@@ -44,6 +44,27 @@ actions:
     params:
       message_id: { type: string, required: true }
 
+  # Alternative to get_message, not a replacement. get_message returns a
+  # readable projection (from/subject/body/labels) and is what most callers
+  # want. This returns the original RFC 5322 bytes, base64-encoded, for the
+  # cases a projection cannot serve: header or DKIM verification, verbatim
+  # re-send and archival, or MIME parts the projection drops.
+  get_message_raw:
+    display_name: "Get raw message"
+    risk: { category: read, sensitivity: low, description: "Read a specific email message in its original RFC 5322 form" }
+    scopes: ["https://www.googleapis.com/auth/gmail.readonly"]
+    override: go
+    params:
+      message_id: { type: string, required: true }
+      max_bytes:
+        type: int
+        description: >
+          Maximum decoded message size (default 1 MB, max 10 MB). A raw
+          message carries its attachments inline, so it can be much larger
+          than the parsed form. Content is returned base64-encoded, which
+          inflates it by ~4/3 — only raise this when saving the response to a
+          file rather than reading it into a context.
+
   get_thread:
     display_name: "Get thread"
     risk: { category: read, sensitivity: low, description: "Read all messages in an email thread" }

@@ -183,7 +183,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	goOverrides := map[string]yamlruntime.ActionFunc{}
 
 	gmail := gmailadapter.New(oauthProvider)
-	for _, action := range []string{"list_messages", "get_message", "get_thread", "get_attachment", "send_message", "create_draft", "archive_message"} {
+	for _, action := range []string{"list_messages", "get_message", "get_message_raw", "get_thread", "get_attachment", "send_message", "create_draft", "archive_message"} {
 		goOverrides["google.gmail:"+action] = gmail.Execute
 	}
 	drive := driveadapter.New(oauthProvider)

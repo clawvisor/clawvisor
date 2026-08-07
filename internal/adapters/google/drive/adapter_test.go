@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -70,7 +71,15 @@ func TestExportFile_SheetTabByName(t *testing.T) {
 	if data["sheet_name"] != "Routing Map" {
 		t.Errorf("sheet_name = %v, want Routing Map", data["sheet_name"])
 	}
-	content, _ := data["content"].(string)
+	// Exported content is base64 so it round-trips byte for byte.
+	if data["encoding"] != "base64" {
+		t.Fatalf("encoding = %v, want base64", data["encoding"])
+	}
+	raw, err := base64.StdEncoding.DecodeString(data["content"].(string))
+	if err != nil {
+		t.Fatalf("content is not decodable base64: %v", err)
+	}
+	content := string(raw)
 	if !strings.Contains(content, "GP,Sector") || !strings.Contains(content, "Alice,Fintech") {
 		t.Errorf("content missing expected rows:\n%s", content)
 	}

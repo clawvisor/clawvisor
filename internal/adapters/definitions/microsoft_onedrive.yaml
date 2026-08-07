@@ -85,6 +85,8 @@ actions:
     risk: { category: read, sensitivity: low, description: "Download a file's content from OneDrive" }
     scopes: ["Files.ReadWrite"]
     override: go
+    # Content is returned base64-encoded for every file type, so the file
+    # round-trips byte for byte. Decode it before use.
     params:
       item_id:
         type: string
