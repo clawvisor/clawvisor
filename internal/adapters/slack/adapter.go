@@ -37,12 +37,27 @@ const maxFileInfoBytes = 2*format.MaxDownloadBytes + (1 << 20)
 
 // HTTP timeouts. Without them a stalled files.slack.com response would pin a
 // gateway goroutine for as long as the caller's context allows, which may be
-// no deadline at all. The content budget is the larger of the two because it
-// covers up to MaxDownloadBytes of transfer.
+// no deadline at all.
 const (
 	fileInfoTimeout = 30 * time.Second
-	downloadTimeout = 2 * time.Minute
+
+	// baseDownloadTimeout covers connection setup and the first bytes.
+	baseDownloadTimeout = 30 * time.Second
+	// minDownloadThroughput is the pessimistic floor used to turn a byte
+	// budget into a time budget.
+	minDownloadThroughput = 128 << 10 // 128 KB/s
+	// maxDownloadTimeout bounds the result regardless of max_bytes.
+	maxDownloadTimeout = 5 * time.Minute
 )
+
+// downloadTimeoutFor scales the transfer budget with the number of bytes the
+// caller asked for. http.Client.Timeout is wall-clock and includes reading the
+// body, so a single fixed value would either kill a legitimate 10 MB download
+// on a slow link or leave a 1 MB one hanging far longer than it should.
+func downloadTimeoutFor(maxBytes int64) time.Duration {
+	d := baseDownloadTimeout + time.Duration(maxBytes/minDownloadThroughput)*time.Second
+	return min(d, maxDownloadTimeout)
+}
 
 // Adapter handles Slack actions that require fetching file content.
 type Adapter struct{}
@@ -102,7 +117,9 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 	if meta.Size > maxBytes {
 		return nil, fmt.Errorf(
 			"slack download_file: %q is %s, which exceeds the %s limit; "+
-				"pass max_bytes (up to %s) and stream the response to disk rather than into a model context",
+				"raise max_bytes (up to %s). The content is base64-encoded into the "+
+				"response, so save that response to a file and decode it rather than "+
+				"reading it into a model context",
 			meta.Name, humanBytes(meta.Size), humanBytes(maxBytes), humanBytes(format.MaxDownloadBytes))
 	}
 
@@ -217,17 +234,25 @@ func (a *Adapter) fetchContent(ctx context.Context, token, downloadURL string, m
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	// files.slack.com redirects to a CDN host. The default client forwards
-	// headers across redirects, which is what we want here (unlike OneDrive's
-	// pre-signed URLs, Slack requires the token at the final hop) — but the
-	// redirect target must still be a Slack host.
+	// files.slack.com redirects to a CDN host, and Slack requires the bearer
+	// token at the final hop — the opposite of OneDrive's pre-signed URLs,
+	// which must have it stripped.
+	//
+	// net/http drops Authorization when a redirect crosses to a host that is
+	// not the origin or a subdomain of it (shouldCopyHeaderOnRedirect), so the
+	// header is re-applied explicitly. That is only safe because hostCheck has
+	// already confirmed the target is a Slack host; the order matters.
 	client := &http.Client{
-		Timeout: downloadTimeout,
+		Timeout: downloadTimeoutFor(maxBytes),
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("too many redirects")
 			}
-			return hostCheck(r.URL.String())
+			if err := hostCheck(r.URL.String()); err != nil {
+				return err
+			}
+			r.Header.Set("Authorization", "Bearer "+token)
+			return nil
 		},
 	}
 
@@ -254,7 +279,7 @@ func (a *Adapter) fetchContent(ctx context.Context, token, downloadURL string, m
 	}
 	if int64(len(body)) > maxBytes {
 		return nil, "", fmt.Errorf(
-			"content exceeds the %s limit; pass max_bytes (up to %s) and stream the response to disk",
+			"content exceeds the %s limit; raise max_bytes (up to %s)",
 			humanBytes(maxBytes), humanBytes(format.MaxDownloadBytes))
 	}
 

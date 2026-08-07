@@ -192,7 +192,13 @@ func TestDownloadFileForwardsTokenAcrossRedirectAndChecksHost(t *testing.T) {
 	defer final.Close()
 
 	s := newSlackServer(t)
-	s.redirectTo = final.URL + "/cdn/blob"
+	// Must be a genuinely different hostname, not just a different port:
+	// net/http only strips Authorization when the redirect leaves the origin
+	// host, so a 127.0.0.1 -> 127.0.0.1 hop would preserve the header on its
+	// own and prove nothing. httptest binds 127.0.0.1; "localhost" resolves to
+	// the same listener but is a distinct host string, which is what triggers
+	// the strip this test exists to catch.
+	s.redirectTo = strings.Replace(final.URL, "127.0.0.1", "localhost", 1) + "/cdn/blob"
 	s.fileMeta = map[string]any{
 		"id": "F20", "name": "shot.png", "mimetype": "image/png",
 		"size": 4, "url_private_download": s.URL + "/files/download",
