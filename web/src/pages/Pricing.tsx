@@ -138,7 +138,11 @@ export default function Pricing() {
         plan,
         window.location.origin + '/dashboard/billing?checkout=success',
         window.location.origin + '/pricing?checkout=canceled',
-        interval,
+        // Only send the cadence when this plan actually offers it. A plan with
+        // no annual price falls back to displaying its monthly rate, so
+        // sending interval:'year' anyway would reject at checkout — or worse,
+        // bill a cadence the card never showed.
+        planSupportsInterval(plan) ? interval : undefined,
       ),
     onSuccess: (data) => {
       window.location.href = data.url
@@ -147,6 +151,11 @@ export default function Pricing() {
       setCheckoutPlan(null)
     },
   })
+
+  const planSupportsInterval = (planName: string) =>
+    !!plansData?.plans
+      .find((p) => p.name === planName)
+      ?.prices?.some((o) => o.interval === interval)
 
   const handleSelect = (plan: string) => {
     if (!isAuthenticated) {
