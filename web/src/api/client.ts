@@ -1150,20 +1150,69 @@ export interface AdapterGenResult {
 
 // ── Billing types ─────────────────────────────────────────────────────────────
 
+/** One way to buy a plan: the same tier at a different billing cadence. */
+export interface BillingPriceOption {
+  lookup_key: string
+  interval: 'month' | 'year'
+  amount_cents: number
+  per_month_cents: number
+}
+
 export interface BillingPlan {
   name: string
   display_name: string
+  /**
+   * What the customer is charged per month on the DEFAULT purchase path.
+   * Always equals the monthly option's per_month_cents — rendering this next
+   * to a checkout button that buys a different cadence overcharges people.
+   */
   monthly_price?: number
   max_connections: number
   included_requests: number
-  overage_per_request?: number
-  soft_cap_note?: string
+  prices?: BillingPriceOption[]
+  effective_rate_per_call?: number
+  discount_off_list_pct?: number
   features?: string[]
   contact_us?: boolean
 }
 
+/** A prepaid block of requests. Never expires. */
+export interface RequestPack {
+  name: string
+  display_name: string
+  requests: number
+  price_cents: number
+  list_cents: number
+  discount_pct: number
+  rate_per_call: number
+  expires: false
+}
+
+export interface PaymentMethodSummary {
+  present: boolean
+  brand?: string
+  last4?: string
+}
+
+export interface AutoRefillSettings {
+  enabled: boolean
+  pack: string
+  threshold: number
+}
+
 export interface BillingStatus {
+  /**
+   * The plan the customer is ENTITLED to. Grandfathered accounts report
+   * "grandfathered" here regardless of what they pay for.
+   */
   plan: string
+  /**
+   * What Stripe actually bills them for. Billing controls (manage
+   * subscription, cancel, promo) must key off this, not `plan` — a
+   * grandfathered account can still hold a paid subscription.
+   */
+  billed_plan?: string
+  grandfathered?: boolean
   plan_display_name?: string
   status: string
   current_period_start?: string
@@ -1173,7 +1222,12 @@ export interface BillingStatus {
   usage?: {
     requests: { used: number; limit: number }
     connections: { limit: number }
+    pack_balance?: number
   }
+  auto_refill?: AutoRefillSettings
+  payment_method?: PaymentMethodSummary
+  /** Whether quota limits are actually enforced on this deployment. */
+  enforcement?: { enabled: boolean }
   discount?: {
     name?: string
     percent_off?: number
@@ -1193,6 +1247,23 @@ export interface PromoValidation {
 
 export interface BillingPlansResponse {
   plans: BillingPlan[]
+  packs?: RequestPack[]
+  list_rate_per_call?: number
+}
+
+export interface LastAutoRefill {
+  pack: string
+  requests: number
+  price_cents: number
+  at: string
+}
+
+export interface PackStatus {
+  balance: number
+  last_auto_refill?: LastAutoRefill | null
+  auto_refill: AutoRefillSettings
+  packs: RequestPack[]
+  payment_method: PaymentMethodSummary
 }
 
 // ── Org types ─────────────────────────────────────────────────────────────────
@@ -2058,8 +2129,17 @@ export const api = {
   billing: {
     status: () => get<BillingStatus>('/api/billing/status'),
     plans: () => get<BillingPlansResponse>('/api/billing/plans'),
-    checkout: (plan: string, successUrl: string, cancelUrl: string) =>
-      post<{ url: string }>('/api/billing/checkout', { plan, success_url: successUrl, cancel_url: cancelUrl }),
+    checkout: (plan: string, successUrl: string, cancelUrl: string, interval?: 'month' | 'year') =>
+      post<{ url: string }>('/api/billing/checkout', {
+        plan, interval, success_url: successUrl, cancel_url: cancelUrl,
+      }),
+    packs: () => get<PackStatus>('/api/billing/packs'),
+    buyPack: (pack: string, successUrl: string, cancelUrl: string) =>
+      post<{ url: string }>('/api/billing/packs/buy', {
+        pack, success_url: successUrl, cancel_url: cancelUrl,
+      }),
+    setAutoRefill: (enabled: boolean, pack?: string, threshold?: number) =>
+      post<{ status: string }>('/api/billing/packs/auto-refill', { enabled, pack, threshold }),
     portal: (returnUrl: string) =>
       post<{ url: string }>('/api/billing/portal', { return_url: returnUrl }),
     applyPromo: (code: string) =>

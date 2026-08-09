@@ -27,6 +27,7 @@ import Billing from './Billing'
 import KeyVault from './KeyVault'
 import OrgSelector from '../components/OrgSelector'
 import OnboardingBanner from '../components/OnboardingBanner'
+import QuotaBanner from '../components/QuotaBanner'
 
 const navItems = [
   { to: '/dashboard/how-it-works', label: 'How it works', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg> },
@@ -364,6 +365,7 @@ export default function Dashboard() {
         )}
         {/* The connect-accounts pitch is noise on org settings pages —
             people there are managing members/teams/SSO, not onboarding. */}
+        <QuotaBanner />
         {!location.pathname.startsWith('/dashboard/org') && <OnboardingBanner />}
         {llmStatus?.spend_cap_exhausted && (
           <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">

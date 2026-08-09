@@ -74,8 +74,7 @@ export default function Welcome() {
               </li>
               <li className="flex items-center gap-2">
                 <svg className="w-4 h-4 text-success shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
-                <span className="line-through text-text-tertiary">1,000 gateway requests/month</span>{' '}
-                <span className="text-brand font-medium">Uncapped during early access</span>
+                1,000 requests/month, then top up with request packs
               </li>
               <li className="flex items-center gap-2">
                 <svg className="w-4 h-4 text-success shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
@@ -98,7 +97,7 @@ export default function Welcome() {
         </div>
 
         <p className="text-center text-xs text-text-tertiary mt-4">
-          Need more? Upgrade to Pro for $199/month.
+          Need more? Upgrade to Pro from $120/month.
         </p>
       </div>
     </div>
