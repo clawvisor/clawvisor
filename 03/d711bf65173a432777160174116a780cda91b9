@@ -1,0 +1,29 @@
+e2e/README.md
+  s_55f7a841d7c10e::t_a48a65648476b8 91-121
+  s_55f7a841d7c10e::t_9015615bc0d3cf 88-90
+  s_c6b116c0210d36::t_6e3fc7bdbaf8ac 1-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "03d711bf65173a432777160174116a780cda91b9",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_c6b116c0210d36": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a0caafa6c313d9b62",
+        "model": "unknown"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+e2e/testapp/server_internal_test.go
+  s_55f7a841d7c10e::t_6f8c7f9642d5ee 58-64
+e2e/testapp/server.go
+  s_55f7a841d7c10e::t_72dc1d3af7e6b5 239-248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c403fda9b23e64468dca22d54147f2d47b3cb0ba",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

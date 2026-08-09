@@ -1,0 +1,30 @@
+internal/runtime/llmproxy/audit.go
+  s_813cf813d8b1d0::t_88a284282e77ce 253
+  s_522af339bc956c::t_9abd13c67c83bd 287
+  s_813cf813d8b1d0::t_a4e41dbe18bd32 250,257,261-262,265-271,277-279,291,293-294,303,309-310,314,318-324,326-330
+  s_522af339bc956c::t_bdcedce946907c 331-332
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "e6b378dd36198e68724f816fdfce69c648a6ef32",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+internal/runtime/llmproxy/expand_capability_live_test.go
+  s_fd6d9b102e043d::t_731268bcc517a2 1-51,54,63-85,87-88,101-111,113-122,124,126-129,140-170,172-198,208,263,271,277,280,288,318,321,339-362,369-370,372-373,404,498-542
+  s_fd6d9b102e043d::t_f5368f2342519c 52-53,55-62
+  s_fd6d9b102e043d::t_5eb0760ab0afcf 86,89-97,99-100
+  s_fd6d9b102e043d::t_16557640818e45 98
+  s_fd6d9b102e043d::t_2f727b9e9161a6 112
+  s_fd6d9b102e043d::t_1a2cee169643a5 171,199-207,209-262,264-270,272-276,278-279,281-287,289-298,309-310,319-320,322-338,363-368,371,374-379,391-393,396,402-403
+  s_fd6d9b102e043d::t_c6a6c6e5963afa 299-308,311-317
+  s_fd6d9b102e043d::t_5a13092968d80d 380-390,394-395,397-401,405-406,463-497
+  s_fd6d9b102e043d::t_c2e0ca21236e97 407-462
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "d078d82a927171f87e832ccdf40b58c56dadfc82",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

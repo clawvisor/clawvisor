@@ -1,0 +1,20 @@
+web/src/pages/Overview.tsx
+  s_4571a77cadd726::t_61510c1fec0b4b 333-334,347-348,351-358,365
+  s_4571a77cadd726::t_3f3aeb040e895f 335-346,349-350
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2cb551225db8ba470194120051d404f04efc6345",
+  "prompts": {},
+  "sessions": {
+    "s_4571a77cadd726": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "692d1e63-7fec-486f-9cd6-49883ab30e1d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

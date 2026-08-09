@@ -1,0 +1,88 @@
+web/src/hooks/useAuth.tsx
+  s_13f393fad1beb8::t_82f9f815dc9c57 35,94-96,107,155,172,181,194
+internal/auth/token.go
+  s_13f393fad1beb8::t_f4b38c7951e1f6 23
+web/src/api/client.ts
+  s_13f393fad1beb8::t_9f375db74dafbd 2,1100-1101,1110-1111
+  s_13f393fad1beb8::t_cd6d37405a9f11 169
+internal/callback/callback.go
+  s_13f393fad1beb8::t_eaf0ad16d5ecb1 185
+pkg/adapters/yamlruntime/adapter.go
+  s_13f393fad1beb8::t_c90205213873ea 482-483
+  s_13f393fad1beb8::t_21fa9b9516c3a4 187
+.github/workflows/ci.yml
+  s_13f393fad1beb8::t_a1cdb6602a3697 9-11
+internal/e2e/harness/testadapter.go
+  s_13f393fad1beb8::t_9dbfd087adf0b2 88
+pkg/runtime/proxy/tooluse_runtime.go
+  s_13f393fad1beb8::t_bd437e9d4412ab 959
+extensions/clawvisor-webhook/index.ts
+  s_13f393fad1beb8::t_081fcdb1900773 12-14,85-89,241,294
+  s_13f393fad1beb8::t_18d3eee32d4a8c 399
+internal/api/handlers/auth.go
+  s_13f393fad1beb8::t_d9b7476280cf3b 6,39-40,136,152-163,168,188,211-212,217,361,416,440,451-463,466-479,487
+  s_13f393fad1beb8::t_b2a388ae5e2a95 36,199,213,442,446-450,480-486
+  s_13f393fad1beb8::t_9dbfd087adf0b2 101
+e2e/smoke/testserver_test.go
+  s_13f393fad1beb8::t_b9fac384253178 339
+internal/api/server.go
+  s_13f393fad1beb8::t_1205a03acedc6a 1120
+  s_13f393fad1beb8::t_223bcbb2cfbfbb 575,646-648,686
+pkg/runtime/proxy/placeholder_runtime.go
+  s_13f393fad1beb8::t_036fd7b6817300 347
+pkg/runtime/proxy/auth.go
+  s_13f393fad1beb8::t_1ca7e4996cd4cf 30
+internal/adapters/apple/imessage/adapter.go
+  s_13f393fad1beb8::t_9dbfd087adf0b2 394
+internal/runtime/conversation/parser.go
+  s_13f393fad1beb8::t_8468731cf8d49d 62,210
+  s_13f393fad1beb8::t_9dbfd087adf0b2 232-234
+internal/adapters/sql/adapter.go
+  s_13f393fad1beb8::t_9dbfd087adf0b2 27-30,51-52,566-568
+  s_13f393fad1beb8::t_02682e7fe93278 232,268,374
+internal/runtime/llmproxy/control.go
+  s_13f393fad1beb8::t_38d50e6278062c 606
+.github/workflows/e2e-install.yml
+  s_13f393fad1beb8::t_fa193ab23da090 9-11
+internal/api/auth_test.go
+  s_13f393fad1beb8::t_3c30350c720a81 4-5,160-225
+internal/api/handlers/adaptergen.go
+  s_13f393fad1beb8::t_beeca5ba2375f3 166
+  s_13f393fad1beb8::t_9dbfd087adf0b2 48-51,72
+pkg/adapters/yamlruntime/ssrf_test.go
+  s_13f393fad1beb8::t_09edbd113ff8e4 3-9,12-39
+  s_13f393fad1beb8::t_01c5ab6a2190d8 1-2,10-11,40
+internal/runtime/timing/trace_sink.go
+  s_13f393fad1beb8::t_f6674e870ac705 122
+pkg/adapters/yamlruntime/auth.go
+  s_13f393fad1beb8::t_9dbfd087adf0b2 48-54,75-80,94-100,103-106
+pkg/adapters/yamlruntime/ssrf.go
+  s_13f393fad1beb8::t_001d78f1f88668 1-7,9-40,48-56,58,60-85,87-117
+  s_13f393fad1beb8::t_efe26cd026a353 41-47
+  s_13f393fad1beb8::t_098cd0efce83c1 8,86
+  s_13f393fad1beb8::t_08efdacd319541 57,59
+internal/runtime/llmproxy/rawlog.go
+  s_13f393fad1beb8::t_b5659900760d5d 173
+pkg/runtime/proxy/inbound_secret_runtime.go
+  s_13f393fad1beb8::t_0c789e4dbfa123 840
+internal/runtime/llmproxy/secret_detection.go
+  s_13f393fad1beb8::t_8acb3a5a661485 611
+internal/local/remoteinstall/manager.go
+  s_13f393fad1beb8::t_9dbfd087adf0b2 501
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "18c6503ef28c6d39251f621674a15568fe13fa1c",
+  "prompts": {},
+  "sessions": {
+    "s_13f393fad1beb8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e461f-defd-7b12-8ffe-13c16b994ed3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

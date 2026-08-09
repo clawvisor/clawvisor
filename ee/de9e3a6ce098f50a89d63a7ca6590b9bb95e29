@@ -1,0 +1,21 @@
+pkg/store/postgres/migrations/063_instance_governance.sql
+  s_55f7a841d7c10e::t_6e2bcc5ee045cf 64-73
+pkg/store/sqlite/migrations/064_instance_governance.sql
+  s_55f7a841d7c10e::t_93e14c15d0ac97 90-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "eede9e3a6ce098f50a89d63a7ca6590b9bb95e29",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

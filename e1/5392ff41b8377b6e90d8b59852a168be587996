@@ -1,0 +1,68 @@
+internal/runtime/llmproxy/postprocess_test.go
+  s_b7635082fff64b::t_e2ae775e90ef98 205,241-242,365,373,383-401,408,417-418
+internal/runtime/llmproxy/control_test.go
+  s_b7635082fff64b::t_e2ae775e90ef98 49-50,52-53
+web/src/pages/Agents.tsx
+  s_b7635082fff64b::t_e2ae775e90ef98 311-315,392
+web/src/api/client.ts
+  s_b7635082fff64b::t_e2ae775e90ef98 733,736,1301
+internal/api/handlers/llm_endpoint.go
+  s_b7635082fff64b::t_e2ae775e90ef98 982-983,995-999,1001-1011,1019-1023,1025-1030,1032,1034,1036-1039,1041-1043,1046-1048
+  s_b7635082fff64b::t_8cd700565644c9 1031,1035
+  s_b7635082fff64b::t_6dcb05e8342396 981,986-989,991-994,1000,1044-1045,1049
+  s_b7635082fff64b::t_3933c363e57792 985,1040
+  s_b7635082fff64b::t_3e3b099c928dc6 1013-1018
+  s_b7635082fff64b::t_d51f0fe3b8a0a4 1033
+  s_b7635082fff64b::t_98568a2a236a61 478,980,984,990,1012,1024
+internal/runtime/policy/global_rules.go
+  s_b7635082fff64b::t_e2ae775e90ef98 109-111
+internal/runtime/llmproxy/control.go
+  s_b7635082fff64b::t_e2ae775e90ef98 156
+internal/runtime/llmproxy/inspector/parser.go
+  s_b7635082fff64b::t_e2ae775e90ef98 51-53,61-63,66-67,69,159-164,175-178,180-187
+  s_b7635082fff64b::t_98568a2a236a61 122,174,179
+  s_b7635082fff64b::t_b9721d15fc0eb4 123,141-153,156-158
+  s_b7635082fff64b::t_d90dca0a2fac69 154-155
+  s_b7635082fff64b::t_ed617f54a2e67d 124-140
+  s_b7635082fff64b::t_9b048f5938b318 92-104
+  s_b7635082fff64b::t_9ef63915dad46c 75-78,81,84-87
+internal/runtime/llmproxy/secret_detection_test.go
+  s_b7635082fff64b::t_e2ae775e90ef98 631-672
+internal/api/handlers/runtime_tool_controls.go
+  s_b7635082fff64b::t_e2ae775e90ef98 22,56,58,146,148-149,155,162-166,208,235-251,255,257,314-315,348,350-352
+  s_b7635082fff64b::t_98568a2a236a61 108
+  s_b7635082fff64b::t_81d0daf8b54b45 39-40,74,83,95-97,109-110
+internal/runtime/autovault/adjudicator_test.go
+  ai_agent 1,4,8-11,13-17,19-20,22-23
+internal/api/handlers/runtime_controls_test.go
+  s_b7635082fff64b::t_57455dffa070eb 431-432,441
+  s_b7635082fff64b::t_96a023b484c1ba 249
+  s_b7635082fff64b::t_94c08d2c0d3422 247-248,250-253,255
+  s_b7635082fff64b::t_98568a2a236a61 342,373,426
+  s_b7635082fff64b::t_20bb261e84c83a 497-553,561-564,567-568,570-579
+  s_b7635082fff64b::t_eba6a5fea5635b 254,324,352,356,359,396,445,496,554-560,569
+  s_b7635082fff64b::t_8b74fe10f83072 351,378,384-385,391-392,413,419,433-438,440,491-492,565-566
+  s_b7635082fff64b::t_e2ae775e90ef98 128-177,301-318,320-323,325-341,343-350,353-355,357-358,360-372,374-377,379-383,386-390,393-395,397-412,414-418,420-425,427-430,439,442-444,446-490,493-495,580-629
+  s_b7635082fff64b::t_4258fba3c94720 272-281,300,319
+web/src/pages/Restrictions.tsx
+  s_b7635082fff64b::t_d8ac6b15548cb0 754
+  s_b7635082fff64b::t_e2ae775e90ef98 377,381-383,479,520,583,593,595,602-607,632-700,702-753,755-801,811,818,835,843-845,865-877,883,885,887-891,896,911,1003-1152,1171,1194-1195,1271-1273,1275-1277
+internal/api/handlers/llm_endpoint_test.go
+  s_b7635082fff64b::t_e2ae775e90ef98 539-599
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "e15392ff41b8377b6e90d8b59852a168be587996",
+  "prompts": {},
+  "sessions": {
+    "s_b7635082fff64b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e32a6-368e-7c40-a4de-d67d7171c8f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

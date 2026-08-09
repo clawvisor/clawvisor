@@ -1,0 +1,25 @@
+internal/runtime/llmproxy/control.go
+  s_5690062ed6cda8::t_5b3c6a71674b84 96
+internal/api/handlers/vault.go
+  s_5690062ed6cda8::t_e022417d462c14 64-67,298-323
+internal/api/handlers/vault_control_test.go
+  s_5690062ed6cda8::t_67895326e176c5 1-124
+internal/api/handlers/control.go
+  s_5690062ed6cda8::t_b23c0d3eaf5fcc 45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "64f656ce1a07c1a04e9c00bbca3dcbc78824d316",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

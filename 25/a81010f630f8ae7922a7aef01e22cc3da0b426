@@ -1,0 +1,21 @@
+internal/taskrisk/assessor.go
+  s_c6a61e70898cf3::t_a8ce16c2f83fec 263-286,296-299,301
+internal/taskrisk/assessor_test.go
+  s_c6a61e70898cf3::t_28f15b05a44ec6 352-363,365-366,368-369,371-378
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "25a81010f630f8ae7922a7aef01e22cc3da0b426",
+  "prompts": {},
+  "sessions": {
+    "s_c6a61e70898cf3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c6dc6b0-3694-49be-96b1-32a372862a76",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
