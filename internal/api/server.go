@@ -69,6 +69,7 @@ type Server struct {
 	// Extension points for open-core customization.
 	extraRoutes           func(*http.ServeMux, Dependencies)
 	wrapRoutes            func(http.Handler) http.Handler
+	beforeTaskCreate      func(ctx context.Context, agent *store.Agent) error
 	features              FeatureSet
 	skipBuiltinAuthRoutes bool
 	quiet                 bool // suppress user-facing messages (e.g. during daemon setup)
@@ -243,6 +244,12 @@ func WithLogger(l *slog.Logger) ServerOption {
 // WithExtraRoutes registers additional HTTP routes (e.g. cloud-only endpoints).
 func WithExtraRoutes(fn func(*http.ServeMux, Dependencies)) ServerOption {
 	return func(s *Server) { s.extraRoutes = fn }
+}
+
+// WithTaskHooks installs a cloud-layer gate that runs before any task is
+// created, on every creation path.
+func WithTaskHooks(fn func(ctx context.Context, agent *store.Agent) error) ServerOption {
+	return func(s *Server) { s.beforeTaskCreate = fn }
 }
 
 // WithWrapRoutes wraps the entire HTTP handler (e.g. tenant-scoping middleware).
@@ -723,6 +730,9 @@ func (s *Server) routes() http.Handler {
 	}
 	if s.localServiceProvider != nil {
 		tasksHandler.SetLocalServiceProvider(s.localServiceProvider)
+	}
+	if s.beforeTaskCreate != nil {
+		tasksHandler.SetBeforeTaskCreate(s.beforeTaskCreate)
 	}
 	s.tasksHandler = tasksHandler
 	if s.ticketStore == nil {

@@ -231,6 +231,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		}
 	}))
 
+	if opts.TaskHooks != nil && opts.TaskHooks.BeforeCreate != nil {
+		apiOpts = append(apiOpts, api.WithTaskHooks(opts.TaskHooks.BeforeCreate))
+	}
 	if opts.WrapRoutes != nil {
 		apiOpts = append(apiOpts, api.WithWrapRoutes(opts.WrapRoutes))
 	}

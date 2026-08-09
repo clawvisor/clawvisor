@@ -53,6 +53,12 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 // assessment) falls back to computing fresh, matching the dashboard
 // path's behavior.
 func (h *TasksHandler) CreateInlineApprovedTaskWithAssessment(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string, precomputed *taskrisk.RiskAssessment) (*llmproxy.InlineApprovedTask, error) {
+	// Inline creation bypasses the HTTP router entirely, so the cloud gate has
+	// to run here too — otherwise an out-of-quota account keeps minting tasks
+	// through the LLM proxy.
+	if err := h.guardTaskCreate(ctx, agent); err != nil {
+		return nil, err
+	}
 	return h.createInlineApprovedTask(ctx, agent, req, originalToolUseID, precomputed)
 }
 
@@ -371,6 +377,12 @@ func inlineCredentialPlaceholders(placeholders []*store.RuntimePlaceholder) []ll
 // Returns the new task ID so the caller can hand it into the
 // llmproxy cache hold (it lands in PendingLiteApproval.PendingTaskID).
 func (h *TasksHandler) CreatePendingInlineTask(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string, precomputed *taskrisk.RiskAssessment) (string, error) {
+	// Inline creation bypasses the HTTP router entirely, so the cloud gate has
+	// to run here too — otherwise an out-of-quota account keeps minting tasks
+	// through the LLM proxy.
+	if err := h.guardTaskCreate(ctx, agent); err != nil {
+		return "", err
+	}
 	if agent == nil {
 		return "", errors.New("agent is required")
 	}
