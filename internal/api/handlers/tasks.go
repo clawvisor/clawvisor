@@ -48,8 +48,8 @@ func RequiresHardcodedApproval(service, action string) bool {
 
 // TasksHandler manages task-scoped authorization.
 type TasksHandler struct {
-	// beforeTaskCreate is a cloud-layer gate (billing quota) applied to every
-	// task-creation path. Nil in open-source builds.
+	// beforeTaskCreate is a cloud-layer gate (billing quota). Nil in
+	// open-source builds. See SetBeforeTaskCreate for which paths it covers.
 	beforeTaskCreate func(ctx context.Context, agent *store.Agent) error
 
 	st               store.Store
@@ -121,13 +121,18 @@ func NewTasksHandler(
 // SetGroupApproval configures the message buffer, LLM health, and agent-group
 // pairer used for on-demand group chat approval checks during task creation.
 // SetDedupCache overrides the default in-memory content dedup cache.
-// SetBeforeTaskCreate installs a cloud-layer check that runs before any task
-// is created, on every path — HTTP, MCP tool dispatch, and inline creation by
-// the LLM proxy. A non-nil error refuses the task.
+// SetBeforeTaskCreate installs a cloud-layer check that runs before a task is
+// created. A non-nil error refuses the task.
 //
-// This exists because those paths do not share an HTTP route: gating at the
-// router only ever covered one of the three, leaving the others as silent
+// This exists because the creation paths do not share an HTTP route, so gating
+// at the router only ever covered POST /api/tasks and left the rest as silent
 // bypasses for an out-of-quota account.
+//
+// Covered today: POST /api/tasks (and MCP tool dispatch, which routes through
+// the same handler) and the inline LLM-proxy entries that call
+// guardTaskCreate. NOT covered: runtime-event promotion and the other direct
+// store.CreateTask callers in runtime.go and runtime_controls.go. Add the
+// guard there before describing this as universal.
 func (h *TasksHandler) SetBeforeTaskCreate(fn func(ctx context.Context, agent *store.Agent) error) {
 	h.beforeTaskCreate = fn
 }

@@ -90,10 +90,12 @@ type GatewayHooks struct {
 
 // TaskHooks allows cloud/enterprise layers to gate task creation.
 type TaskHooks struct {
-	// BeforeCreate runs before any task is created, on every path — HTTP,
-	// MCP tool dispatch, and inline creation by the LLM proxy. Returning an
-	// error refuses the task. Gating at the router only covers the HTTP path,
-	// which leaves the other two as silent bypasses.
+	// BeforeCreate runs before a task is created. Returning an error refuses
+	// the task. Gating at the router only covers POST /api/tasks, which is why
+	// this hook exists.
+	//
+	// Covers POST /api/tasks, MCP tool dispatch, and the inline LLM-proxy
+	// entries. Runtime-event promotion is not yet routed through it.
 	BeforeCreate func(ctx context.Context, agent *store.Agent) error
 }
 
