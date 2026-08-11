@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router'
 import { api, APIError } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { startAuthentication } from '../lib/webauthn'

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { NavLink, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
 import { useEventStream } from '../hooks/useEventStream'

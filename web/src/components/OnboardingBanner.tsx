@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { NavLink } from 'react-router-dom'
+import { NavLink } from 'react-router'
 import { useState } from 'react'
 import { api } from '../api/client'
 import { useAuth } from '../hooks/useAuth'

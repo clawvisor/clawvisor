@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 // Dedicated SSO sign-in page: collects the user's work email, discovers
 // whether their domain has SSO configured, and hands off to the IdP. Kept

@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router'
 import { useAuth } from './hooks/useAuth'
 import Login from './pages/Login'
 import SSOLogin from './pages/SSOLogin'

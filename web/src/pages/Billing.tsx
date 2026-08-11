@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { api } from '../api/client'
 import type { AutoRefillSettings, LastAutoRefill, RequestPack } from '../api/client'
 import { quotaState } from '../lib/quota'

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode, useMemo } from 'react'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
-import { NavLink } from 'react-router-dom'
+import { NavLink } from 'react-router'
 import { api, type Agent, type AuditEntry, type ServiceInfo, type ServiceActionInfo, type VariableMeta, type LocalService, type RuntimePlaceholder, type VaultItem } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { serviceName, serviceDescription } from '../lib/services'

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { setAccessToken, api } from '../api/client'
 // SSO complete reads tokens from the URL fragment set by the ACS handler,
 // then fetches the current user via api.auth.me() (the typed wrapper for
