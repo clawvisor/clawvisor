@@ -36,7 +36,10 @@ ARG_CLAIM=${1:-}
 if [ "$ARG_CLAIM" = --claim-stdin ]; then
     [ -z "$ENV_CLAIM" ] || usage
     shift
-    IFS= read -r CLAIM || CLAIM=""
+    # POSIX read returns non-zero when EOF terminates a non-empty final line,
+    # but it still stores the bytes it read. Preserve that value so both
+    # `printf %s "$claim" | ...` and newline-terminated input work.
+    IFS= read -r CLAIM || :
     [ -n "$CLAIM" ] || usage
 elif [ -n "$ENV_CLAIM" ] && { [ "$#" -eq 0 ] || [ -z "$ARG_CLAIM" ]; }; then
     CLAIM=$ENV_CLAIM

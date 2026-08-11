@@ -214,6 +214,30 @@ printf 'STDIN=%s\n' "$claim"
 	if names[0] == names[1] {
 		t.Fatalf("rapid renders reused agent name %q", names[0])
 	}
+
+	t.Run("stdin without trailing newline", func(t *testing.T) {
+		cmd := exec.Command(
+			"sh",
+			filepath.Join(repoRoot, "scripts", "render-staging-installer.sh"),
+			"--claim-stdin",
+			"codex",
+		)
+		cmd.Stdin = strings.NewReader(claim)
+		cmd.Env = []string{
+			"HOME=" + t.TempDir(),
+			"PATH=" + fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("render from unterminated stdin claim: %v\n%s", err, out)
+		}
+		text := string(out)
+		if !strings.Contains(text, "-claim-stdin") ||
+			!strings.Contains(text, "CLAIM_ENV=unset") ||
+			!strings.Contains(text, "STDIN="+claim) {
+			t.Fatalf("unterminated stdin claim was not preserved:\n%s", text)
+		}
+	})
 }
 
 func writeTestExecutable(t *testing.T, path, body string) {
