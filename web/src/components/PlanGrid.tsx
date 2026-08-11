@@ -150,9 +150,7 @@ function PlanCard({ plan, isCurrent, onSelect, loading, interval, listRate, isAu
  * surfaces cannot disagree about prices, the selected cadence, or which plan
  * is already active.
  */
-// cancelPath is where Stripe returns a customer who abandons checkout — the
-// page they started from.
-export default function PlanGrid({ cancelPath = '/pricing' }: { cancelPath?: string }) {
+export default function PlanGrid() {
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
   const [checkoutPlan, setCheckoutPlan] = useState<string | null>(null)
@@ -183,7 +181,7 @@ export default function PlanGrid({ cancelPath = '/pricing' }: { cancelPath?: str
       api.billing.checkout(
         plan,
         window.location.origin + '/dashboard/billing?checkout=success',
-        window.location.origin + cancelPath + '?checkout=canceled',
+        window.location.origin + '/pricing?checkout=canceled',
         // Only send the cadence when this plan actually offers it. A plan with
         // no annual price falls back to displaying its monthly rate, so
         // sending interval:'year' anyway would reject at checkout — or worse,
