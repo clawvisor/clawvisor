@@ -14,7 +14,15 @@ Thanks for your interest in contributing. Clawvisor is the gatekeeper between AI
 
 ## License and contributions
 
-Clawvisor is licensed under the [Elastic License 2.0](LICENSE). By submitting a contribution, you agree that your contribution is licensed under the same terms and that you have the right to submit it. We may add a Developer Certificate of Origin (DCO) sign-off requirement in the future; for now, opening a PR is sufficient.
+Clawvisor is licensed under the [Apache License 2.0](LICENSE). Under section 5 of that license, any contribution you intentionally submit for inclusion in the work is licensed under the same terms — including the patent grant in section 3 — unless you explicitly state otherwise.
+
+We require a [Developer Certificate of Origin](https://developercertificate.org/) sign-off on every commit. It is a one-line assertion that you wrote the patch, or otherwise have the right to submit it under the project's license. Add it with `git commit -s`, which appends:
+
+```
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+The name and email must match your commit author. If you forget on a single commit, `git commit --amend -s` fixes it; for a branch, `git rebase --signoff main`.
 
 ## Development setup
 

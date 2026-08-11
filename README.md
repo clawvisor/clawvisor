@@ -634,3 +634,10 @@ make clean                          # remove build artifacts
 - **Relay authentication.** The daemon authenticates to the relay service via Ed25519 challenge-response with a 60-second replay window.
 - **Rate limiting.** Per-agent gateway rate limits and per-user limits on OAuth, policy API, and review endpoints.
 - **Agent isolation.** Clawvisor's security model assumes the agent can only reach it through the API. When self-hosting, run the agent in a separate environment (sandboxed container, separate machine, or cloud VM) — see the [self-host warning](#self-host).
+
+## License
+
+Clawvisor is licensed under the [Apache License 2.0](LICENSE), which includes an
+express patent grant. See [NOTICE](NOTICE) for attribution you must carry when
+redistributing, and [CONTRIBUTING.md](CONTRIBUTING.md) for the DCO sign-off
+required on contributions.
