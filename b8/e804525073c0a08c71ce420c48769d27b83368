@@ -3,6 +3,7 @@ pkg/adapters/yamlloader/loader_test.go
   s_ae11d5e26da131::t_d6fd3fe959a08a 27-40,93,151-161,163-169,171-196,208-209
   s_ae11d5e26da131::t_855a54f5114ece 256
   s_ae11d5e26da131::t_a91dbcdf91ecc5 210
+  s_ae11d5e26da131::t_f81bb727782c96 11,150
 pkg/adapters/yamldef/schema.go
   s_ae11d5e26da131::t_7bbd1c3a507013 158-164
 pkg/adapters/yamlruntime/adapter.go
