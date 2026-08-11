@@ -155,7 +155,13 @@ type RiskDef struct {
 
 // Param defines a single action parameter.
 type Param struct {
-	Type     string `yaml:"type"`               // "string", "int", "bool", "object", "array"
+	Type string `yaml:"type"` // "string", "int", "bool", "object", "array"
+
+	// Description is caller-facing help for this parameter, surfaced in the
+	// service catalog. Definitions have always written it; until this field
+	// existed yaml.v3 discarded it silently, so the text documented nothing.
+	Description string `yaml:"description,omitempty"`
+
 	Required bool   `yaml:"required,omitempty"`
 	Default  any    `yaml:"default,omitempty"`
 	Min      *int   `yaml:"min,omitempty"`

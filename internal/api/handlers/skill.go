@@ -437,7 +437,7 @@ func (h *SkillHandler) writeLocalServiceDetail(buf *strings.Builder, ctx context
 				extras := []string{p.Type, reqTag}
 				buf.WriteString(fmt.Sprintf("- `%s` (%s)\n", p.Name, strings.Join(extras, ", ")))
 				if p.Description != "" {
-					buf.WriteString(fmt.Sprintf("  %s\n", p.Description))
+					buf.WriteString(fmt.Sprintf("  %s\n", flattenParamDesc(p.Description)))
 				}
 			}
 		}
@@ -507,6 +507,9 @@ func (h *SkillHandler) writeServiceDetail(buf *strings.Builder, ctx context.Cont
 							extras = append(extras, fmt.Sprintf("max: %d", *p.Max))
 						}
 						buf.WriteString(fmt.Sprintf("- `%s` (%s)\n", p.Name, strings.Join(extras, ", ")))
+						if p.Description != "" {
+							buf.WriteString(fmt.Sprintf("  %s\n", flattenParamDesc(p.Description)))
+						}
 					}
 				}
 				buf.WriteString("\n")
@@ -533,6 +536,13 @@ func (h *SkillHandler) isRestricted(ctx context.Context, userID string, entry *c
 		}
 	}
 	return true
+}
+
+// flattenParamDesc collapses a parameter description onto one line. YAML block
+// scalars (">" and "|") preserve newlines, which would break out of the
+// markdown list item the description is rendered inside.
+func flattenParamDesc(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // compactParamSig builds a compact inline parameter signature like "(to, subject, body?, in_reply_to?)".

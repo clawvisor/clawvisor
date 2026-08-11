@@ -60,12 +60,13 @@ type ActionMeta struct {
 
 // ParamMeta holds documentation metadata for a single action parameter.
 type ParamMeta struct {
-	Name     string // parameter name as passed in the request
-	Type     string // "string", "int", "bool", "object", "array"
-	Required bool
-	Default  any  // default value, nil if none
-	Min      *int // minimum value (for int params)
-	Max      *int // maximum value (for int params)
+	Name        string // parameter name as passed in the request
+	Type        string // "string", "int", "bool", "object", "array"
+	Description string // caller-facing help, surfaced in the catalog
+	Required    bool
+	Default     any  // default value, nil if none
+	Min         *int // minimum value (for int params)
+	Max         *int // maximum value (for int params)
 }
 
 // ActionInfo is returned by the service catalog with per-action metadata.
@@ -250,10 +251,11 @@ type Adapter interface {
 
 // ParamInfo describes a single action parameter for validation and error reporting.
 type ParamInfo struct {
-	Name     string   `json:"name"`
-	Type     string   `json:"type"` // "string", "int", "bool", "object", "array"
-	Required bool     `json:"required"`
-	Aliases  []string `json:"aliases,omitempty"` // alternative caller-facing names; an alias satisfies Required
+	Name        string   `json:"name"`
+	Type        string   `json:"type"`                  // "string", "int", "bool", "object", "array"
+	Description string   `json:"description,omitempty"` // caller-facing help
+	Required    bool     `json:"required"`
+	Aliases     []string `json:"aliases,omitempty"` // alternative caller-facing names; an alias satisfies Required
 }
 
 // ActionParamDescriber is an optional interface that adapters can implement

@@ -81,10 +81,11 @@ func (a *YAMLAdapter) ActionParams(actionName string) []adapters.ParamInfo {
 	params := make([]adapters.ParamInfo, 0, len(action.Params))
 	for name, p := range action.Params {
 		params = append(params, adapters.ParamInfo{
-			Name:     name,
-			Type:     p.Type,
-			Required: p.Required,
-			Aliases:  p.Aliases,
+			Name:        name,
+			Type:        p.Type,
+			Description: p.Description,
+			Required:    p.Required,
+			Aliases:     p.Aliases,
 		})
 	}
 	sort.Slice(params, func(i, j int) bool { return params[i].Name < params[j].Name })
@@ -538,12 +539,13 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 			for _, pn := range names {
 				p := action.Params[pn]
 				am.Params = append(am.Params, adapters.ParamMeta{
-					Name:     pn,
-					Type:     p.Type,
-					Required: p.Required,
-					Default:  p.Default,
-					Min:      p.Min,
-					Max:      p.Max,
+					Name:        pn,
+					Type:        p.Type,
+					Description: p.Description,
+					Required:    p.Required,
+					Default:     p.Default,
+					Min:         p.Min,
+					Max:         p.Max,
 				})
 			}
 		}
