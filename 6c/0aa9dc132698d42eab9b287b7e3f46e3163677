@@ -1,0 +1,23 @@
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_bbe778adcf6f02::t_8273c2777b23ac 215,229-230,232-233
+  s_bbe778adcf6f02::t_f19b75e452869c 332-348,390,396,400,402-403
+  s_bbe778adcf6f02::t_ee17c368dfe356 349-361
+  s_bbe778adcf6f02::t_b2424e1530e2d1 231
+  s_bbe778adcf6f02::t_a2f56ac90e6cf3 362-378,389
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "6c0aa9dc132698d42eab9b287b7e3f46e3163677",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

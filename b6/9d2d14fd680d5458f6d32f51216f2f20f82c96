@@ -1,0 +1,82 @@
+internal/api/handlers/llm_endpoint.go
+  s_522af339bc956c::t_d205b37dd5cced 570,650
+  s_522af339bc956c::t_60511be4b57411 3160,3167-3174,3645,3647-3651,3659,3673,3681,3704,3720,3795,3798,3807,3834
+internal/runtime/llmproxy/pipeline/post_orchestrator_test.go
+  s_522af339bc956c::t_d4b921a25a3461 54-63,176,179,190-194
+internal/runtime/llmproxy/policies/secret_rewrites.go
+  s_522af339bc956c::t_60511be4b57411 5,24,34-37,53-56
+internal/runtime/llmproxy/policies/intent_verify_evaluator.go
+  s_522af339bc956c::t_bdbe99cccfac19 25-26,35-37,64
+internal/runtime/conversation/stream/sse.go
+  s_522af339bc956c::t_68522b141759d1 5
+internal/api/handlers/llm_endpoint_test.go
+  s_522af339bc956c::t_bc8a4ab664ebe3 1038-1042,1048-1052
+internal/runtime/llmproxy/pipeline/finalizer.go
+  s_522af339bc956c::t_d205b37dd5cced 280-281
+  s_522af339bc956c::t_891dbda137f910 312
+  s_522af339bc956c::t_d98fa300e8b879 292-296
+internal/runtime/conversation/stream/anthropic_prepend_test.go
+  s_522af339bc956c::t_d4b921a25a3461 160-181
+internal/runtime/llmproxy/pipeline/post_orchestrator.go
+  s_522af339bc956c::t_d205b37dd5cced 101
+  s_522af339bc956c::t_bdbe99cccfac19 76,92,103
+internal/runtime/llmproxy/intentverify/intentverify_test.go
+  s_522af339bc956c::t_8d7a06531e6f75 41-54
+  s_522af339bc956c::t_0e285256a38a62 1-28,31-40
+  s_522af339bc956c::t_d205b37dd5cced 29-30
+internal/runtime/llmproxy/pipeline/request_mutator_impl.go
+  s_522af339bc956c::t_d205b37dd5cced 20-21,39-42,49
+internal/runtime/llmproxy/pipeline/finalizer_test.go
+  s_522af339bc956c::t_8d7a06531e6f75 23,44,61-64,175-198
+internal/runtime/llmproxy/policies/secret_rewrites_test.go
+  s_522af339bc956c::t_bc8a4ab664ebe3 5,29-30,52-53,76-90
+internal/runtime/conversation/stream/anthropic_roundtrip_test.go
+  s_522af339bc956c::t_15ce18299ac4b9 196-227
+  s_522af339bc956c::t_d4b921a25a3461 273-288
+  s_522af339bc956c::t_8d7a06531e6f75 228-232,234-245
+  s_522af339bc956c::t_d9b7df78fede4c 233
+internal/runtime/llmproxy/policies/intent_verify_evaluator_test.go
+  s_522af339bc956c::t_0e285256a38a62 83-85,94-98
+internal/runtime/llmproxy/pipeline/orchestrator.go
+  s_522af339bc956c::t_d205b37dd5cced 18-22,112
+internal/runtime/llmproxy/forward.go
+  s_522af339bc956c::t_d98fa300e8b879 405
+  s_522af339bc956c::t_68362a7a555445 391,397,419
+internal/runtime/conversation/stream/anthropic_encoder.go
+  s_522af339bc956c::t_d98fa300e8b879 82,95-97
+  s_522af339bc956c::t_d205b37dd5cced 89-94,99,109-111
+  s_522af339bc956c::t_5bbee6593658a8 175
+  s_522af339bc956c::t_68522b141759d1 174,177
+internal/runtime/llmproxy/forward_test.go
+  s_522af339bc956c::t_c1f9080e3f0064 257,261
+  s_522af339bc956c::t_8d7a06531e6f75 273
+  s_522af339bc956c::t_0e285256a38a62 114,118,131,146-148,184,188,201,216-218,472,487-488
+  s_522af339bc956c::t_cb83b1c496f36c 288-289
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator_test.go
+  s_522af339bc956c::t_d4b921a25a3461 173-175,200-203,268-281
+  s_522af339bc956c::t_5bbee6593658a8 364,384-385
+internal/runtime/llmproxy/intentverify/intentverify.go
+  s_522af339bc956c::t_d205b37dd5cced 114
+  s_522af339bc956c::t_12ab10d50eaafe 82-84
+  s_522af339bc956c::t_d98fa300e8b879 94,96-98,117,120-122,125-126
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator.go
+  s_522af339bc956c::t_68522b141759d1 72,98-103,130
+internal/runtime/conversation/stream/anthropic_prepend.go
+  s_522af339bc956c::t_68522b141759d1 85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "b69d2d14fd680d5458f6d32f51216f2f20f82c96",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

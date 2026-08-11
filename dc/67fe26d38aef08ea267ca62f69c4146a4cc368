@@ -1,0 +1,34 @@
+internal/api/handlers/installer_scripts.go
+  s_55f7a841d7c10e::t_288325d495449f 42-48,50-57,67
+  s_55f7a841d7c10e::t_9045f1bb355871 39
+  s_55f7a841d7c10e::t_535eea8e8de5bb 77-81,92
+internal/api/handlers/installer_scripts/claude_code_skill_only.sh.tmpl
+  s_55f7a841d7c10e::t_6b45872e1b4b38 1-33
+internal/api/handlers/installer.go
+  s_55f7a841d7c10e::t_396a8d5e39ccc1 374-380
+  s_55f7a841d7c10e::t_3a9f0cd1fec718 523
+  s_55f7a841d7c10e::t_383225f066dde4 130-137
+internal/api/handlers/installer_scripts/codex_skill_only.sh.tmpl
+  s_55f7a841d7c10e::t_70aaeefc3f5f63 1-34
+internal/api/handlers/installer_scripts/claude_code_subscription.sh.tmpl
+  s_55f7a841d7c10e::t_a04638ef1510f2 1-6,8-207
+  s_55f7a841d7c10e::t_7f227b6095426d 7
+internal/api/handlers/installer_test.go
+  s_55f7a841d7c10e::t_7baefba694e260 966-1072
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "dc67fe26d38aef08ea267ca62f69c4146a4cc368",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

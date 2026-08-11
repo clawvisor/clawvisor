@@ -1,0 +1,26 @@
+pkg/config/config.go
+  s_55f7a841d7c10e::t_4849e9042fbda7 668-672
+  s_55f7a841d7c10e::t_1f74178b0641a7 1137-1141
+  s_55f7a841d7c10e::t_cd03ecae102b1a 505-521
+pkg/config/config_test.go
+  s_55f7a841d7c10e::t_e9e62ff42a7690 550-575
+  s_55f7a841d7c10e::t_0929ef6e94ad71 282-284
+config.example.yaml
+  s_55f7a841d7c10e::t_3779d240b7e83e 202-214,217-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8879f6ab1c8024300a7282399576b09cdbeed3a6",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

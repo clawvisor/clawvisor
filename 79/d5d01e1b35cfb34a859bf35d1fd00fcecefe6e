@@ -1,0 +1,35 @@
+internal/api/handlers/installer_test.go
+  s_7f68b5733f1191::t_d6c0587d2a0aff 147-148,199
+  s_7f68b5733f1191::t_fff770204ef434 169
+web/src/pages/Agents.tsx
+  s_7f68b5733f1191::t_dfa88693114f50 1920-1925,1927-1940,1947,1955,1962-1964,1968-1980,1984,2003
+  s_7f68b5733f1191::t_80cc0fd5a6a25f 2577-2592,2602-2603,2609,2629-2630,2636,2656-2657,2663,2681-2682,2688,2692
+  s_7f68b5733f1191::t_5c3b48bb05b476 2486-2490,2506-2510
+  s_7f68b5733f1191::t_a49044f33e51f5 2040,2045-2047
+  s_7f68b5733f1191::t_c54e8c6742b293 2170-2177,2290-2305,2309,2313
+  s_7f68b5733f1191::t_1cfd14d948b915 2380,2387,2392
+  s_7f68b5733f1191::t_fc51e190aab1fa 2727
+  s_7f68b5733f1191::t_191e7b96a66f1e 1766-1767
+  s_7f68b5733f1191::t_d52729d0749280 2058-2063
+  s_7f68b5733f1191::t_e1f8a0aa61075c 2834-2838,2840-2843,2877-2887,2893-2894,2910,2923
+internal/api/handlers/installer.go
+  s_7f68b5733f1191::t_683de313fa84b8 585-586,596,623
+  s_7f68b5733f1191::t_a7a5162f689528 659-660
+  s_7f68b5733f1191::t_d086b996806b25 643
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "79d5d01e1b35cfb34a859bf35d1fd00fcecefe6e",
+  "prompts": {},
+  "sessions": {
+    "s_7f68b5733f1191": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e7060-b911-78f0-899d-d4e5c0c4e13b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

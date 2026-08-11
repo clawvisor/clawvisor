@@ -1,0 +1,81 @@
+internal/runtime/eval/eval.go
+  s_e845b601bdcb3c::t_6682eee983bdf6 112-117
+  s_e845b601bdcb3c::t_ddb51533c353bc 120-136
+internal/runtime/llmproxy/policies/authorization_policy.go
+  s_e845b601bdcb3c::t_2f9a867c4595a1 171
+  s_e845b601bdcb3c::t_be6bde1d2ed2ce 243
+  s_e845b601bdcb3c::t_937f9406e22e39 259-289,298-299
+  s_e845b601bdcb3c::t_aa2bec5fca4434 180,186,214,227,234
+  s_e845b601bdcb3c::t_e058ddac90f81b 7
+  s_e845b601bdcb3c::t_15914fbcb0644d 290-297
+  s_e845b601bdcb3c::t_2f91689308c968 193
+  s_e845b601bdcb3c::t_f4bd7c2403e336 202
+pkg/runtime/decision/decision.go
+  s_e845b601bdcb3c::t_165c3b3ae80388 92-100
+  s_e845b601bdcb3c::t_bc06f0d70acbbd 488,490,503
+  s_e845b601bdcb3c::t_9a4903a65bef31 530,532-533,535
+  s_e845b601bdcb3c::t_90be33634cb7d3 267-268,273-278,282-286
+  s_e845b601bdcb3c::t_1e4e9a76df97b8 211-212,217-222,226-230
+  s_e845b601bdcb3c::t_e495549cf8c24d 699-705
+  s_e845b601bdcb3c::t_cc8d51b6919db7 148-155
+  s_e845b601bdcb3c::t_da23e837075687 422-423,428-434,438-443
+  s_e845b601bdcb3c::t_dd8dc60fe2eaee 452,454,461,480,482-483,485
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_e845b601bdcb3c::t_c38b84bde012ff 783,788,793
+  s_e845b601bdcb3c::t_7cc937272ac477 751,762
+  s_e845b601bdcb3c::t_0a086ef0340cb4 799-800,807-808
+  s_e845b601bdcb3c::t_4f2dd92c0474ec 1024
+  s_e845b601bdcb3c::t_441d8d0a68fe7f 609
+  s_e845b601bdcb3c::t_e0ad3e0fd5fbb3 24,65-84
+  s_e845b601bdcb3c::t_f5762ca97bcda2 97-104,113
+  s_e845b601bdcb3c::t_f7957b4cd50c72 677-685
+  s_e845b601bdcb3c::t_e3fb0145644201 40-64
+  s_e845b601bdcb3c::t_08c003dfda73d2 270-273,278-280,283-284,289-297
+  s_e845b601bdcb3c::t_44a3f4d6fe8bde 193
+  s_e845b601bdcb3c::t_f06d8a18aa0e8a 274-277,281-282
+  s_e845b601bdcb3c::t_fe81462bc70217 212
+  s_e845b601bdcb3c::t_513f90590cf29f 801-806
+  s_e845b601bdcb3c::t_bb56d0e5bfdf89 671,674,697,717,721,726
+internal/runtime/llmproxy/audit.go
+  s_e845b601bdcb3c::t_e1583fc0d709c3 15
+  s_e845b601bdcb3c::t_15fcc4e1b042fc 361-375,383-397
+web/src/pages/Audit.tsx
+  s_e845b601bdcb3c::t_f6e10d5e461e1c 1
+  s_e845b601bdcb3c::t_85d92923b35f96 737-761,763-764,766-767,770,775-810,812-814,818,826,833-836
+  s_e845b601bdcb3c::t_df7746c28f6824 109,122,127-313
+internal/runtime/llmproxy/intentverify/intentverify_test.go
+  s_e845b601bdcb3c::t_d1601399141330 29,37
+  s_e845b601bdcb3c::t_d84dc397bd4f57 85
+  s_e845b601bdcb3c::t_8627538882275a 98,107
+  s_e845b601bdcb3c::t_cba03c6170ad99 51
+  s_e845b601bdcb3c::t_091a2caccbf50d 71
+internal/runtime/llmproxy/intentverify/intentverify.go
+  s_e845b601bdcb3c::t_f4d8499353d88e 97-104,106,110
+  s_e845b601bdcb3c::t_5ff8b42c3a803d 30-38
+  s_e845b601bdcb3c::t_e7c14c1ce6d558 141,143,146,150,152,155,157
+  s_e845b601bdcb3c::t_d59462a7733b90 84-92
+internal/runtime/llmproxy/postprocess.go
+  s_e845b601bdcb3c::t_0b8c524cdd99aa 103,107
+internal/runtime/llmproxy/intentadapter.go
+  s_e845b601bdcb3c::t_a3e646c0d4a958 48-56
+internal/runtime/conversation/verdict.go
+  s_e845b601bdcb3c::t_4e8cadc9a645e7 137-144
+web/src/api/client.ts
+  s_e845b601bdcb3c::t_2957bcdda7b87c 416-417
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "b780a28ae32947275578a5bdfe5f6a7c670b2a2f",
+  "prompts": {},
+  "sessions": {
+    "s_e845b601bdcb3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bfb4528c-a7c1-4b5e-b8c3-d49bb10f4307",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": null
+    }
+  }
+}

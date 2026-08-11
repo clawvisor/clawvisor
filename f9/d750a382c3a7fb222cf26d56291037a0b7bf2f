@@ -1,0 +1,26 @@
+internal/runtime/conversation/stream/google_encoder.go
+  s_813cf813d8b1d0::t_903cf14bde2d07 1-46
+internal/runtime/conversation/streaming_assistant_prepend.go
+  s_813cf813d8b1d0::t_9d7c969bd22411 42-43
+  s_813cf813d8b1d0::t_6f4d1b17d17f30 23-26
+internal/runtime/conversation/stream/google_decoder.go
+  s_813cf813d8b1d0::t_42fa4cada2922a 1-110
+internal/runtime/conversation/stream/google_roundtrip_test.go
+  s_813cf813d8b1d0::t_152d9c7f47db3e 1-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "f9d750a382c3a7fb222cf26d56291037a0b7bf2f",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

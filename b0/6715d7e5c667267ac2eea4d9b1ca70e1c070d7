@@ -1,0 +1,61 @@
+internal/runtime/llmproxy/bodytransform/inbound_sanitize.go
+  s_d3a14cb269522d::t_f36c18c2b4a901 113,173,204,262,267,275,285,326,340,391
+internal/runtime/llmproxy/controltool/control.go
+  s_d3a14cb269522d::t_6c0f8d5a9787d1 542,548,554,561,566,592,596,602,619,625,691,735,766,784
+internal/runtime/llmproxy/pipeline/policy.go
+  s_d3a14cb269522d::t_7707a4603ace3f 161
+  s_d3a14cb269522d::t_08653a4243ae74 9
+internal/runtime/jsonpatch/jsonpatch.go
+  s_d3a14cb269522d::t_e8640b657c8ce8 16-39
+internal/runtime/llmproxy/inspector/rewriter.go
+  s_d3a14cb269522d::t_27eabb95b99978 9-10
+  s_d3a14cb269522d::t_37b2fc009404e9 140,254
+internal/runtime/llmproxy/historystrip/synthetic_history_strip.go
+  s_d3a14cb269522d::t_781acdd97bc31d 285,339,347,357,371,375,409,447,455,501,519,554,568,674
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_d3a14cb269522d::t_e9085dab9167f5 13
+  s_d3a14cb269522d::t_73c8c2bc71d1b5 285
+internal/runtime/llmproxy/secret_detection.go
+  s_d3a14cb269522d::t_c258a2b88df1df 20
+  s_d3a14cb269522d::t_456e46f95bc070 259
+internal/api/handlers/llm_endpoint_active_tasks_render_test.go
+  s_d3a14cb269522d::t_40f9e3187051d1 1-73,76-127
+  s_d3a14cb269522d::t_1cf1dfa4c507ff 74-75
+internal/runtime/llmproxy/historystrip/secret_decision_history.go
+  s_d3a14cb269522d::t_6dce3fe0e45912 100,112
+  s_d3a14cb269522d::t_8e890796844421 81
+  s_d3a14cb269522d::t_85ed82d3869c96 54
+internal/runtime/llmproxy/approval_body_editor.go
+  s_d3a14cb269522d::t_9d4796e71ca337 154,156,161,244,249,265,270,298,332,346,382,392,435,444,449,475,477,490,499,504,595,608,613,640,655,673
+internal/runtime/llmproxy/continuation.go
+  s_d3a14cb269522d::t_eb1158c623e3dd 11
+  s_d3a14cb269522d::t_ed4608eecf5f9d 224,243,250,255,290,319,326,331,367,390,396,401
+internal/runtime/jsonpatch/jsonpatch_test.go
+  s_d3a14cb269522d::t_439535b5e7e668 9-29,33-58
+  s_d3a14cb269522d::t_40cf091490e163 31-32
+  s_d3a14cb269522d::t_b579303950b3ea 30
+internal/api/handlers/llm_endpoint.go
+  s_d3a14cb269522d::t_8adebbc0b2f92d 2913-2926
+internal/runtime/llmproxy/controltool/control_multistmt_test.go
+  s_d3a14cb269522d::t_f1354445ef9c0d 165-167,169
+internal/runtime/llmproxy/jsonsurgery/json_surgery.go
+  s_d3a14cb269522d::t_5f7d369ec6ddd2 56-63
+internal/runtime/llmproxy/inline_task_augment_test.go
+  s_d3a14cb269522d::t_2299f512e497c6 10,14-17,19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "b06715d7e5c667267ac2eea4d9b1ca70e1c070d7",
+  "prompts": {},
+  "sessions": {
+    "s_d3a14cb269522d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d9b1f94d-0136-4fb8-9545-e0db739471ff",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

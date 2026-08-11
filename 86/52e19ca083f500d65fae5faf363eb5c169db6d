@@ -1,0 +1,72 @@
+internal/api/handlers/llm_endpoint.go
+  s_273708382f1863::t_1ca6b3eadc0d92 819-830,853-860,1479-1493,2727,2732-2739,2741-2746
+  s_a5f33eee989c6d::t_d8dc605c8115e9 987-988
+pkg/store/sqlite/store_agent_threshold_test.go
+  s_273708382f1863::t_1ca6b3eadc0d92 1-35,37-43,49-55,58-136
+pkg/store/store.go
+  s_273708382f1863::t_1ca6b3eadc0d92 7-8,389-460,491-507
+internal/api/user_settings_test.go
+  s_273708382f1863::t_1ca6b3eadc0d92 147-293
+internal/runtime/llmproxy/audit.go
+  s_273708382f1863::t_1ca6b3eadc0d92 276-321
+  ai_agent 322-324
+pkg/store/postgres/store.go
+  s_273708382f1863::t_1ca6b3eadc0d92 278,296-297,304,318-320,328,331-332,3190,3196,3225-3226
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_273708382f1863::t_1ca6b3eadc0d92 13,133-143,145-152,154-162,165-201,205-209,241-263,268,270-273,278-279,281-282,284-285,287,289-290,324,331-341,343-348
+  s_a5f33eee989c6d::t_416fe647026f84 239-240
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_273708382f1863::t_1ca6b3eadc0d92 168-169,172,178-180,184-191,425-527,531-790
+  s_a5f33eee989c6d::t_383b1535014890 528-530
+pkg/store/sqlite/store.go
+  s_273708382f1863::t_1ca6b3eadc0d92 296,322,327-328,339,363-364,374-375,396-398,406,409-410,3592,3617-3618
+pkg/store/store_test.go
+  s_273708382f1863::t_1ca6b3eadc0d92 1-88
+internal/taskrisk/assessor_test.go
+  s_273708382f1863::t_1ca6b3eadc0d92 79-149,151-169,171-182,184-188
+  s_273708382f1863::t_d30a4e5939cba7 150,170,183
+internal/runtime/llmproxy/human_turns.go
+  s_273708382f1863::t_1ca6b3eadc0d92 1-99,104-112,114-235,237-255
+internal/runtime/llmproxy/human_turns_test.go
+  s_273708382f1863::t_1ca6b3eadc0d92 1-352
+pkg/store/sqlite/migrations/051_agent_conversation_auto_approve_threshold.sql
+  s_273708382f1863::t_1ca6b3eadc0d92 1-6
+internal/api/handlers/agents.go
+  s_273708382f1863::t_1ca6b3eadc0d92 175-181,201-214,347
+pkg/store/postgres/migrations/051_agent_conversation_auto_approve_threshold.sql
+  s_273708382f1863::t_1ca6b3eadc0d92 1-14
+web/src/api/client.ts
+  s_273708382f1863::t_1ca6b3eadc0d92 166-172,270-275
+web/src/pages/Agents.tsx
+  s_273708382f1863::t_1ca6b3eadc0d92 698-724
+internal/runtime/llmproxy/postprocess.go
+  s_273708382f1863::t_1ca6b3eadc0d92 49-56,67-87,207-239
+internal/taskrisk/prompts.go
+  s_273708382f1863::t_1ca6b3eadc0d92 44-45,56-62,75-77,80,261-271,274-284
+internal/taskrisk/assessor.go
+  s_273708382f1863::t_1ca6b3eadc0d92 52-61,77-85,197-202,224-236,238-243
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "8652e19ca083f500d65fae5faf363eb5c169db6d",
+  "prompts": {},
+  "sessions": {
+    "s_273708382f1863": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65ad44a3-10d2-499a-9b48-97e867b288d0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_a5f33eee989c6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37aa2c5f-2455-40a0-84dc-0b1a4ce1fdcd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

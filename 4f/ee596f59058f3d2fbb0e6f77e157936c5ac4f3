@@ -1,0 +1,27 @@
+internal/api/testutil_test.go
+  s_55f7a841d7c10e::t_26097c9585542c 131-137,141-144
+  s_55f7a841d7c10e::t_7aba48f78c7394 175-177
+  s_55f7a841d7c10e::t_ce68f3e4b9daa6 145
+internal/api/server.go
+  s_55f7a841d7c10e::t_44af9f6f1b7efd 134-140
+  s_55f7a841d7c10e::t_6190de8e491bc5 314,319-323,325
+internal/api/admin_visibility_test.go
+  s_55f7a841d7c10e::t_9fa5954aaa33b2 399-516
+  s_55f7a841d7c10e::t_ab6affb9651ec3 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4fee596f59058f3d2fbb0e6f77e157936c5ac4f3",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

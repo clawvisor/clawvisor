@@ -1,0 +1,52 @@
+internal/api/handlers/llm_endpoint_test.go
+  s_69f9d6afb3581a::t_5aff57aa71737b 1058-1066
+  s_69f9d6afb3581a::t_cc4338a7c6c02d 1453-1461
+  s_69f9d6afb3581a::t_6339a80e4c2468 709-716
+  s_69f9d6afb3581a::t_887da42f0c9884 1482-1490
+internal/api/handlers/llm_endpoint.go
+  s_69f9d6afb3581a::t_cf07d1473b0cf9 843
+  s_69f9d6afb3581a::t_b9b92c4ce251be 369
+  s_69f9d6afb3581a::t_8f35cadbddb6af 2943
+  s_69f9d6afb3581a::t_96528efeeb9493 783
+  s_69f9d6afb3581a::t_e839058f808b66 424
+  s_69f9d6afb3581a::t_1ca2e5d5d0bde0 462
+  s_69f9d6afb3581a::t_02790e2892b735 1116-1118,1128-1142,1144-1171
+  s_69f9d6afb3581a::t_71d6b17324c17b 327
+  s_69f9d6afb3581a::t_ca438127917005 2046,2050
+  s_69f9d6afb3581a::t_e444eb2351bce9 530
+  s_69f9d6afb3581a::t_2c0998cbe67a14 698
+  s_69f9d6afb3581a::t_cbe88b2b2f4249 471
+  s_69f9d6afb3581a::t_e745874873f39b 520
+  s_69f9d6afb3581a::t_2f3ae8c7de2067 340
+  s_69f9d6afb3581a::t_35dedbb3872eec 297
+  s_69f9d6afb3581a::t_b8dec817143611 1143
+  s_69f9d6afb3581a::t_9e24a72e375bd0 678
+  s_69f9d6afb3581a::t_c335f5c5120dcf 2890
+  s_69f9d6afb3581a::t_d196dd38afdb66 2505
+  s_69f9d6afb3581a::t_61e046d3560deb 433
+  s_69f9d6afb3581a::t_c4fa33215f8d69 1008
+  s_69f9d6afb3581a::t_e2e7be2e380b65 2086
+  s_69f9d6afb3581a::t_7cdfdd4b1e2dc3 1814,1825
+internal/runtime/conversation/synthetic_error.go
+  s_69f9d6afb3581a::t_579e731eec8e6c 1-58
+internal/runtime/conversation/synthetic_error_test.go
+  s_69f9d6afb3581a::t_6ec29795667c01 1-158
+internal/api/handlers/llm_endpoint_error_test.go
+  s_69f9d6afb3581a::t_cc5ee695fc4edb 1-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "d79f4895a7d5dece9fbec27b7db320eaa204217c",
+  "prompts": {},
+  "sessions": {
+    "s_69f9d6afb3581a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f5b62fe-f3e2-49ac-ae29-0e3591252b00",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

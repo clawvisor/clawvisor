@@ -1,0 +1,19 @@
+AGENTS.md
+  s_27f6ae66651e1f::t_acb88d208019b7 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "33de8c8e4d8199f174d4e790fda96dce0c923238",
+  "prompts": {},
+  "sessions": {
+    "s_27f6ae66651e1f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3bd4-85a1-7180-95ee-b29a0f3248dd",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

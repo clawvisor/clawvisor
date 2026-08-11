@@ -1,0 +1,26 @@
+internal/e2e/lite/verifier_test.go
+  s_48544d04b3a3f6::t_9afe3e6359ba76 28,50
+internal/e2e/lite/verifier.go
+  s_48544d04b3a3f6::t_88ae63fc7c6b75 21,35,40
+internal/runtime/llmproxy/control.go
+  s_48544d04b3a3f6::t_edc6122b60840b 107-108
+internal/e2e/lite/library/scope_drift_oneoff_markup/scenario.yaml
+  s_48544d04b3a3f6::t_6d07b633433a07 40-42,60-62
+  s_48544d04b3a3f6::t_66607a9d58b1ce 3-6,8-25,66-70,75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "18100be61c9c46583312a48b2b6845df81631b2a",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
