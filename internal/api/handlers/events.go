@@ -29,7 +29,7 @@ func NewEventsHandler(hub events.EventHub, tickets auth.TicketStorer) *EventsHan
 func (h *EventsHandler) IssueTicket(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
 
@@ -46,13 +46,13 @@ func (h *EventsHandler) IssueTicket(w http.ResponseWriter, r *http.Request) {
 func (h *EventsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, `{"error":"streaming not supported"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "STREAMING_UNSUPPORTED", "streaming not supported")
 		return
 	}
 

@@ -63,12 +63,17 @@ func (s *JWTService) GeneratePurposeToken(userID, email, purpose string, ttl tim
 
 // ValidateToken parses and validates a JWT, returning its claims.
 func (s *JWTService) ValidateToken(tokenStr string) (*Claims, error) {
+	// WithValidMethods pins the exact algorithm this service signs with. The
+	// keyfunc below only checks the HMAC family, which also admits HS384 and
+	// HS512 against the same secret — accepting an algorithm we never issue
+	// widens the verifier for no reason. The keyfunc check stays as the
+	// defense against alg confusion (none/RS*/ES*).
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return s.secret, nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 	if err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}

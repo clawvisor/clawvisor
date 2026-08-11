@@ -24,7 +24,7 @@ func RequireAgent(st store.Store) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := agentToken(r)
 			if token == "" {
-				http.Error(w, `{"error":"missing authorization header","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing authorization header")
 				return
 			}
 
@@ -32,12 +32,12 @@ func RequireAgent(st store.Store) func(http.Handler) http.Handler {
 			agent, err := st.GetAgentByToken(r.Context(), hash)
 			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
-					http.Error(w, `{"error":"invalid agent token","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+					writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid agent token")
 				} else {
 					// Transient database error (e.g. SQLite busy) — return 503
 					// so agents know to retry instead of assuming their token
 					// was revoked.
-					http.Error(w, `{"error":"temporary service error, please retry","code":"SERVICE_UNAVAILABLE"}`, http.StatusServiceUnavailable)
+					writeAuthError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "temporary service error, please retry")
 				}
 				return
 			}
@@ -47,7 +47,7 @@ func RequireAgent(st store.Store) func(http.Handler) http.Handler {
 			// pairing flows set a finite expiry so a leaked token has
 			// finite blast radius. Treat expired same as not-found.
 			if agent.TokenExpiresAt != nil && time.Now().After(*agent.TokenExpiresAt) {
-				http.Error(w, `{"error":"agent token has expired","code":"TOKEN_EXPIRED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "agent token has expired")
 				return
 			}
 

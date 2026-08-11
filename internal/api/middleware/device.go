@@ -95,7 +95,7 @@ func RequireDeviceWithReplayCache(st store.Store, rc ReplayCache) func(http.Hand
 				rest = authHeader[len(prefixV1):]
 				algorithm = 1
 			default:
-				http.Error(w, `{"error":"missing DeviceHMAC authorization","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing DeviceHMAC authorization")
 				return
 			}
 
@@ -105,13 +105,13 @@ func RequireDeviceWithReplayCache(st store.Store, rc ReplayCache) func(http.Hand
 			// network observer rewrite `?param=…` without invalidating
 			// the HMAC. Clients hitting a query-using route must use v2.
 			if algorithm == 1 && r.URL.RawQuery != "" {
-				http.Error(w, `{"error":"DeviceHMAC v1 cannot sign query strings; upgrade to DeviceHMAC2","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "DeviceHMAC v1 cannot sign query strings; upgrade to DeviceHMAC2")
 				return
 			}
 
 			parts := strings.SplitN(rest, ":", 3)
 			if len(parts) != 3 {
-				http.Error(w, `{"error":"malformed DeviceHMAC header","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "malformed DeviceHMAC header")
 				return
 			}
 			deviceID, tsStr, providedHMAC := parts[0], parts[1], parts[2]
@@ -119,19 +119,19 @@ func RequireDeviceWithReplayCache(st store.Store, rc ReplayCache) func(http.Hand
 			// Validate timestamp.
 			tsUnix, err := strconv.ParseInt(tsStr, 10, 64)
 			if err != nil {
-				http.Error(w, `{"error":"invalid timestamp","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid timestamp")
 				return
 			}
 			diff := time.Since(time.Unix(tsUnix, 0))
 			if math.Abs(diff.Seconds()) > deviceTimestampSkew.Seconds() {
-				http.Error(w, `{"error":"timestamp out of range","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "timestamp out of range")
 				return
 			}
 
 			// Read body for HMAC computation, then re-attach.
 			bodyBytes, err := io.ReadAll(r.Body)
 			if err != nil {
-				http.Error(w, `{"error":"failed to read body","code":"BAD_REQUEST"}`, http.StatusBadRequest)
+				writeAuthError(w, http.StatusBadRequest, "BAD_REQUEST", "failed to read body")
 				return
 			}
 			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
@@ -139,14 +139,14 @@ func RequireDeviceWithReplayCache(st store.Store, rc ReplayCache) func(http.Hand
 			// Load device from store.
 			device, err := st.GetPairedDevice(r.Context(), deviceID)
 			if err != nil {
-				http.Error(w, `{"error":"unknown device","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unknown device")
 				return
 			}
 
 			// Compute expected HMAC.
 			hmacKey, err := hex.DecodeString(device.DeviceHMACKey)
 			if err != nil {
-				http.Error(w, `{"error":"internal error","code":"INTERNAL"}`, http.StatusInternalServerError)
+				writeAuthError(w, http.StatusInternalServerError, "INTERNAL", "internal error")
 				return
 			}
 			bodyHash := sha256.Sum256(bodyBytes)
@@ -164,7 +164,7 @@ func RequireDeviceWithReplayCache(st store.Store, rc ReplayCache) func(http.Hand
 			expectedMAC := hex.EncodeToString(mac.Sum(nil))
 
 			if !hmac.Equal([]byte(providedHMAC), []byte(expectedMAC)) {
-				http.Error(w, `{"error":"invalid HMAC signature","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid HMAC signature")
 				return
 			}
 
@@ -177,7 +177,7 @@ func RequireDeviceWithReplayCache(st store.Store, rc ReplayCache) func(http.Hand
 			// proved knowledge of the device key.
 			cacheKey := deviceID + ":" + tsStr + ":" + providedHMAC
 			if rc.Check(cacheKey) {
-				http.Error(w, `{"error":"replayed request","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "replayed request")
 				return
 			}
 
