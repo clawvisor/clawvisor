@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
+import PlanGrid from '../components/PlanGrid'
 import type { AutoRefillSettings, LastAutoRefill, RequestPack } from '../api/client'
 import { quotaState } from '../lib/quota'
 import { useState } from 'react'
@@ -28,10 +29,14 @@ export default function Billing() {
   })
 
   const here = window.location.origin + '/dashboard/billing'
+  // Which pack is being bought. buyPackMut.isPending is true for the whole
+  // mutation regardless of argument, so keying the label off it alone made
+  // every card claim it was opening checkout.
+  const [buyingPack, setBuyingPack] = useState<string | null>(null)
   const buyPackMut = useMutation({
     mutationFn: (pack: string) => api.billing.buyPack(pack, here + '?purchase=success', here),
     onSuccess: (data) => { window.location.href = data.url },
-    onError: (err: Error) => setPackError(err.message),
+    onError: (err: Error) => { setPackError(err.message); setBuyingPack(null) },
   })
 
   const autoRefillMut = useMutation({
@@ -107,7 +112,23 @@ export default function Billing() {
     <div className="p-4 sm:p-8 space-y-10">
       <h1 className="text-2xl font-bold text-text-primary">Billing</h1>
 
+      {/* No plan yet: choose one here rather than being sent to /pricing. A
+          near-empty "Current plan: none" card told the customer nothing and
+          made them navigate away to do the only thing this page is for. */}
+      {!hasSubscription && (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold text-text-primary">Choose a plan</h2>
+            <p className="text-sm text-text-tertiary mt-0.5">
+              Start free, or pick a paid plan to raise your monthly request limit.
+            </p>
+          </div>
+          <PlanGrid cancelPath="/dashboard/billing" />
+        </section>
+      )}
+
       {/* Plan Overview */}
+      {hasSubscription && (
       <section className="space-y-4">
         <div>
           <h2 className="text-lg font-semibold text-text-primary">Current plan</h2>
@@ -161,18 +182,22 @@ export default function Billing() {
                   {portalMut.isPending ? 'Opening...' : 'Manage subscription'}
                 </button>
               )}
-              {(!hasSubscription || isCanceled || (!isPaying && billedPlan === 'free')) && (
+              {/* Already inside the hasSubscription branch — the planless case
+                  is handled by the PlanGrid above, so there is no "Get started"
+                  state to reach from here. */}
+              {(isCanceled || (!isPaying && billedPlan === 'free')) && (
                 <button
                   onClick={() => navigate('/pricing')}
                   className="px-3 py-1.5 text-sm font-medium rounded-md bg-brand text-surface-0 hover:bg-brand-strong transition-colors"
                 >
-                  {isCanceled ? 'Resubscribe' : hasSubscription ? 'Choose a plan' : 'Get started'}
+                  {isCanceled ? 'Resubscribe' : 'Choose a plan'}
                 </button>
               )}
             </div>
           )}
         </div>
       </section>
+      )}
 
       {/* Out of requests */}
       {hasSubscription && !isCanceled && isBlocked && (
@@ -301,7 +326,6 @@ export default function Billing() {
 
           <div className="grid gap-3 max-w-3xl" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(178px, 1fr))' }}>
             {(packs?.packs ?? []).map((pk) => {
-              const best = pk.discount_pct >= 30
               return (
                 <div
                   key={pk.name}
@@ -312,7 +336,6 @@ export default function Billing() {
                       Save {Math.round(pk.discount_pct)}%
                     </span>
                   )}
-                  {best && <span className="text-[11px] font-semibold uppercase tracking-wide text-brand mb-0.5">Best rate</span>}
                   <div className="text-lg font-semibold text-text-primary tabular-nums">
                     {pk.requests.toLocaleString()}{' '}
                     <span className="text-xs font-normal text-text-tertiary">requests</span>
@@ -323,19 +346,15 @@ export default function Billing() {
                     )}
                     <span className="text-text-primary">${(pk.price_cents / 100).toLocaleString()}</span>
                   </div>
-                  <div className="text-xs text-text-tertiary tabular-nums">
-                    ${pk.rate_per_call.toFixed(4)} / request
-                  </div>
                   <button
-                    onClick={() => buyPackMut.mutate(pk.name)}
+                    onClick={() => { setBuyingPack(pk.name); buyPackMut.mutate(pk.name) }}
+                    // Every button disables while a purchase is in flight —
+                    // two concurrent checkouts is never what the user meant —
+                    // but only the clicked one reports progress.
                     disabled={buyPackMut.isPending}
-                    className={`mt-3 w-full px-3 py-1.5 text-sm font-medium rounded-md transition-colors disabled:opacity-50 ${
-                      best
-                        ? 'bg-brand text-surface-0 hover:bg-brand-strong'
-                        : 'bg-surface-2 text-text-primary hover:bg-surface-3'
-                    }`}
+                    className="mt-3 w-full px-3 py-1.5 text-sm font-medium rounded-md transition-colors disabled:opacity-50 bg-surface-2 text-text-primary hover:bg-surface-3"
                   >
-                    {buyPackMut.isPending ? 'Opening...' : 'Buy'}
+                    {buyingPack === pk.name && buyPackMut.isPending ? 'Opening...' : 'Buy'}
                   </button>
                 </div>
               )
