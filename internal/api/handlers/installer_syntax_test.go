@@ -60,3 +60,38 @@ func TestInstallerScriptsAreValidShell(t *testing.T) {
 		})
 	}
 }
+
+// TestInstallerShellQuotesBaseURLs exercises the rendered assignments instead
+// of only checking their syntax. Apostrophes are legal in URL paths, but raw
+// interpolation into APP_URL='...' used to terminate the shell word and turn
+// the rest of the configured URL into commands.
+func TestInstallerShellQuotesBaseURLs(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skipf("no sh on PATH: %v", err)
+	}
+	malicious := "https://example.com/';id;'"
+	h := NewInstallerHandler("", "", false, malicious, malicious)
+	body := installerGetShell(t, h, "codex", "CLAIMCODE0")
+
+	var assignments []string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "APP_URL=") || strings.HasPrefix(line, "LLM_URL=") {
+			assignments = append(assignments, line)
+		}
+	}
+	if len(assignments) != 2 {
+		t.Fatalf("found %d URL assignments, want 2", len(assignments))
+	}
+
+	script := strings.Join(assignments, "\n") + "\nprintf '<%s>\\n<%s>\\n' \"$APP_URL\" \"$LLM_URL\"\n"
+	cmd := exec.Command("sh")
+	cmd.Stdin = strings.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute URL assignments: %v\n%s\n--- script ---\n%s", err, out, script)
+	}
+	want := fmt.Sprintf("<%s>\n<%s>\n", malicious, malicious)
+	if string(out) != want {
+		t.Fatalf("URL assignment executed or changed input:\n got: %q\nwant: %q\nscript: %s", out, want, script)
+	}
+}

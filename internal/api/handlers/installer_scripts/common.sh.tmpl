@@ -276,8 +276,8 @@ AGENT_NAME='{{.AgentName}}'
 AGENT_SLOT='{{.AgentSlot}}'
 HARNESS='{{.Target}}'
 HARNESS_LABEL='{{.HarnessLabel}}'
-APP_URL='{{.AppURL}}'
-LLM_URL='{{.LLMURL}}'
+APP_URL={{shellQuote .AppURL}}
+LLM_URL={{shellQuote .LLMURL}}
 HOST_OS=$(uname -s)
 
 # --- Read the enrollment invite (never off argv/env-on-the-command-line) -----

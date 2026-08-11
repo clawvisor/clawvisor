@@ -16,8 +16,20 @@ var installerScriptFS embed.FS
 // claude_code.sh.tmpl and codex.sh.tmpl can {{template "preamble" .}} into
 // common.sh.tmpl. Parsed once at package init; renders are pure.
 var installerScriptTmpl = template.Must(
-	template.ParseFS(installerScriptFS, "installer_scripts/*.sh.tmpl"),
+	template.New("installer-scripts").Funcs(template.FuncMap{
+		"shellQuote": shellQuote,
+	}).ParseFS(installerScriptFS, "installer_scripts/*.sh.tmpl"),
 )
+
+// shellQuote returns one POSIX shell word whose value is exactly s. Installer
+// URLs normally contain no apostrophes, but URL syntax permits them in paths.
+// The templates are executable shell, so raw interpolation into a quoted
+// assignment would let an apostrophe terminate the value and inject commands.
+// Escaping at the template boundary also protects URLs that come from server
+// configuration or the request host, not only the local staging renderer.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
 
 // installerScriptCtx is the rendering context for the per-harness shell
 // installers. Mirrors installerCtx but only carries the fields the shell
