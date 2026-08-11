@@ -1,0 +1,75 @@
+internal/runtime/conversation/response.go
+  s_813cf813d8b1d0::t_516c4c26f31282 61-62
+  s_522af339bc956c::t_59902838189fb9 239
+internal/runtime/llmproxy/policies/inspector_chain.go
+  s_813cf813d8b1d0::t_c567306b7a34fa 1-16,21-34,37-38,49,53-54,57,69-73,75-83,101,106,122,125-130,136-138,141-142,145-147,157,160-162,174,178-180,183,186-188,215,48,67-68,99
+  s_813cf813d8b1d0::t_b3bb1faa46fcf0 84,92,97,102-105,107-108,120-121
+  s_813cf813d8b1d0::t_e01e676f2ab32a 164,166,172,211,98
+  s_813cf813d8b1d0::t_75c879a2965564 36,39-47,60-66
+  s_813cf813d8b1d0::t_a762b4d80f6ee9 74
+  s_813cf813d8b1d0::t_768b7a7f558a65 148-151,181-182
+internal/runtime/llmproxy/policies/inspector_evaluator.go
+  s_813cf813d8b1d0::t_b27475e88977f5 1-11,14-22,24,29-32,35-41,45-55,76-81,87-92,95-97,99,102-105
+internal/runtime/llmproxy/pipeline/policy.go
+  s_813cf813d8b1d0::t_0687da30f0b2f6 1-10,14-15,38-60,65-72,77-84,94-97,102-112,114-123,125-126,179-195,210-225,171,178
+  s_813cf813d8b1d0::t_984f29c6c2b526 85-93
+  s_813cf813d8b1d0::t_22c7d85a0f0aca 172,177
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_813cf813d8b1d0::t_fe0ec384059d52 1-6,8-11,13,18-19,25,27-28,33,68-70,73,81,98-99,103,109-112,56-57,67
+  s_813cf813d8b1d0::t_96f3158bbe7c0f 12,14-17,20,22-24,26,29-32,34-35,38-41,71-72,74-77,79-80,82-83,100-102
+  s_522af339bc956c::t_f99431c490d85b 37
+  s_813cf813d8b1d0::t_a726768f0261d3 42-43,44-55,58-65
+  s_813cf813d8b1d0::t_4cdd0644b74d0e 88
+  s_522af339bc956c::t_758b9c7bec2d8f 91-92,94
+internal/runtime/llmproxy/postproc/coalesce.go
+  s_813cf813d8b1d0::t_5349466aaadb72 2,7,14-17,19-21,25-26,44-46,50-96,265-266,295
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_813cf813d8b1d0::t_ac66b992dcec86 1,7,20-24,26-33,35-42,44,94,144-145,147-154,157-160,163-164,166-169,173-175,180-188,204-205,335-336,338-342,345-346,351-359,315-316,324,327,330-332
+  s_522af339bc956c::t_5bf0006658b0e5 57
+  s_813cf813d8b1d0::t_3c708c1fe011ba 66,92
+  s_813cf813d8b1d0::t_f708ea38e1ee37 73,105,140
+  s_813cf813d8b1d0::t_8481c02f44c47b 83,87,93
+  s_813cf813d8b1d0::t_185ab7ff71f3f5 189-190,199
+  s_813cf813d8b1d0::t_9c24b789e695a1 193-194
+  s_522af339bc956c::t_8393b91f2d90bc 196,198
+  s_813cf813d8b1d0::t_721c1314bd6a75 213,219,221-222
+  s_813cf813d8b1d0::t_1f13ee1748cb38 217
+  s_522af339bc956c::t_81987adf38be61 239-240
+  s_813cf813d8b1d0::t_865879a86dbc2f 256-257,262
+  s_813cf813d8b1d0::t_07505de54700ee 267-271,291,294,297,299-300
+  s_522af339bc956c::t_e228a597b62c17 282
+  s_522af339bc956c::t_f333195e56f4fb 285,288
+  s_813cf813d8b1d0::t_e84f90ddd48919 25
+  s_813cf813d8b1d0::t_c8fb80cc30a8e9 308
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_813cf813d8b1d0::t_b8b430d6ed98d0 74-81
+  s_813cf813d8b1d0::t_d60cb4561de65a 69-73
+  s_813cf813d8b1d0::t_91472d6ec1e156 468
+  s_813cf813d8b1d0::t_229deb84267d69 260,387,405,420
+  s_813cf813d8b1d0::t_f3b01f828986fb 460
+  s_813cf813d8b1d0::t_2fbd78497bd640 401
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "fd9fad91fbe674b077a7d03dfa409a6c17a3958d",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+internal/api/handlers/installer_test.go
+  s_6148daac1fe103::t_dd8f644240e18f 435-440
+  s_6148daac1fe103::t_4ec02ce1d695d4 441-444
+  s_6148daac1fe103::t_f184818f324969 485-487,489-490,493-495,503-504,509-510,512,518-520,522-526,528-534,550-567
+  s_6148daac1fe103::t_e492e1373c1037 584,589-590,592-594,596-598
+internal/api/handlers/installer.go
+  s_6148daac1fe103::t_71967985b90e33 2198-2201
+  s_6148daac1fe103::t_cb828df8389faa 701-703,709
+  s_6148daac1fe103::t_c1946e5a42eee7 2132-2136
+  s_6148daac1fe103::t_e14eadf76f7fc6 610-614,625,636
+  s_6148daac1fe103::t_bfc00212e1b77f 2084-2092,2095-2103,2107,2110-2113,2116-2119,2123
+  s_6148daac1fe103::t_3e154291d0e5c3 2231-2238,2240-2259,2262,2266-2284,2286-2292,2294-2302
+  s_6148daac1fe103::t_a8bc181166378d 2305-2309
+  s_6148daac1fe103::t_3b030e51d2ab65 684-689
+  s_6148daac1fe103::t_09589b142c1555 2181,2183,2186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "2250d918e2d9c54508b86e62a5ed61a071449f1a",
+  "prompts": {},
+  "sessions": {
+    "s_6148daac1fe103": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6a265d4-0ae8-4b9c-8220-9bb59495676b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

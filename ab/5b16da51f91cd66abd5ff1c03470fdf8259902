@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/inspector/parser.go
+  s_8de9dcae61d3e3::t_1d0391c8d7fab5 28-39,49-83
+internal/runtime/llmproxy/inspector/parser_flags_test.go
+  s_8de9dcae61d3e3::t_5ecf1218ba2a19 123-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "ab5b16da51f91cd66abd5ff1c03470fdf8259902",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+internal/runtime/llmproxy/coalesce_test.go
+  s_46c34c60ed93cf::t_2d9d8fc46eba92 513-576
+internal/runtime/llmproxy/postprocess.go
+  s_98743970e8b00b::t_243703b002f87f 947-953
+  s_98743970e8b00b::t_5a738aa7624eeb 931-946,954-956
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a431c7b4c80f55b95b42330d8765479c6563f210",
+  "prompts": {},
+  "sessions": {
+    "s_46c34c60ed93cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e7053-1949-72c1-bb35-43fe5c7d1e75",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_98743970e8b00b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9e29f8b-93f1-4e36-852b-34ec8729e599",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

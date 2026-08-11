@@ -1,0 +1,44 @@
+internal/adapters/google/drive/adapter.go
+  s_3ee814cbaf0571::t_529789c10f85d2 297-298,305-306,326-328,331,334-335,338-339,364,367-369,371-378,398,404,406-407,413,415-444,447-448,451-453
+  s_03effdb9cd1965::t_67da344b32902b 21,177-181,206-210,358-359,362,445-446,449-450
+  s_3ee814cbaf0571::t_465d346de75a97 299-301,329-330,332-333,336-337
+  s_3ee814cbaf0571::t_dbd4b8bd5b312f 370,379-397,399-403,405
+  s_3ee814cbaf0571::t_bdec6f97e51403 408-412,414
+  s_3ee814cbaf0571::t_10aa01ffc1c368 8,24
+internal/adapters/definitions/google_drive.yaml
+  s_3ee814cbaf0571::t_15d0e4312558db 104
+  s_3ee814cbaf0571::t_78304f305fb209 102-103
+internal/adapters/google/drive/adapter_test.go
+  s_3ee814cbaf0571::t_69c7e6be4fae46 172-178,181-187
+  s_3ee814cbaf0571::t_3abd94b4a752fb 119-126
+  s_3ee814cbaf0571::t_bbea2dfa7aa6d5 1-33,55-75,115-118,127-140,152-162,164-171,188-195,201-202
+  s_3ee814cbaf0571::t_78f43d21be95e1 179-180,196-200
+  s_3ee814cbaf0571::t_82b839db555336 38,40-46,76-114
+  s_3ee814cbaf0571::t_aa338416820135 163
+  s_3ee814cbaf0571::t_91348baebf6544 141-151
+  s_3ee814cbaf0571::t_937f02cb7f4ea1 34-37,39,47-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "4bfaf20cf090439aef9eb3c4be2e4a9de204da8f",
+  "prompts": {},
+  "sessions": {
+    "s_03effdb9cd1965": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e62a9-1455-73c3-a8c0-c4f5a1185cb3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_3ee814cbaf0571": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fd08f126-de9e-4b6f-81ad-db2eaf4c6118",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

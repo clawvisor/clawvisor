@@ -1,0 +1,22 @@
+e2e/scenarios/otel_export_test.go
+  s_55f7a841d7c10e::t_db80dc6cf29ba2 139-162
+internal/api/handlers/llm_endpoint.go
+  s_55f7a841d7c10e::t_ecc0be9b0c9077 1066-1068
+  s_55f7a841d7c10e::t_3722c072a15863 524-532
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9de004ab950db235d4457f681365abedfd33959b",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

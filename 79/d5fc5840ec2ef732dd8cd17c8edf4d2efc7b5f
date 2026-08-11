@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/credential_class_test.go
+  s_55f7a841d7c10e::t_f486da61e54ab2 45-49
+internal/runtime/llmproxy/credential_class.go
+  s_55f7a841d7c10e::t_1659e00b9020e7 76-80,83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "79d5fc5840ec2ef732dd8cd17c8edf4d2efc7b5f",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

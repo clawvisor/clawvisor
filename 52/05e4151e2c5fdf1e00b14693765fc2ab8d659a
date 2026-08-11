@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/postproc/postproc.go
+  s_a5c5f722ecfc61::t_9873a4328c59e6 92-101
+internal/runtime/llmproxy/postproc/session.go
+  s_a5c5f722ecfc61::t_03b35e31bf70df 18-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "5205e4151e2c5fdf1e00b14693765fc2ab8d659a",
+  "prompts": {},
+  "sessions": {
+    "s_a5c5f722ecfc61": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf8404af-e2fb-463e-82d2-a637ab03a34b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

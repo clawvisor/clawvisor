@@ -1,0 +1,21 @@
+internal/testharness/google/google_fix_test.go
+  s_8b1f6f8ddc53d3::t_4ac77e9cc48759 62-122
+internal/testharness/google/google.go
+  s_8b1f6f8ddc53d3::t_b24546ef503c2d 111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "0a50df7f93c0410a97ffb6190d75ea5844810afb",
+  "prompts": {},
+  "sessions": {
+    "s_8b1f6f8ddc53d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2217843-2b00-445d-88f2-f33b3fb654b2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

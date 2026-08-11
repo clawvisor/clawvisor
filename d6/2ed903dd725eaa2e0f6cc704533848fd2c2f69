@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/inline_task_prompt_test.go
+  s_8f3d790934e389::t_308f43638ad5d6 1-162
+internal/runtime/llmproxy/inline_task_prompt.go
+  s_8f3d790934e389::t_e7b525334a6f2e 1-197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "d62ed903dd725eaa2e0f6cc704533848fd2c2f69",
+  "prompts": {},
+  "sessions": {
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

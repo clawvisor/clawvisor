@@ -1,0 +1,43 @@
+pkg/clawvisor/run.go
+  s_5690062ed6cda8::t_1d1e0ee42092c6 159
+internal/api/handlers/tasks.go
+  s_5690062ed6cda8::t_4ad8e37d775707 1281,1299,1306,1331
+  s_5690062ed6cda8::t_0e233565639e8f 1352-1355
+internal/api/handlers/vault.go
+  s_5690062ed6cda8::t_76d49ac1002879 341-366
+  s_5690062ed6cda8::t_0367bd15dacaaf 35,131,162,189,243,248-266,269,288-294,300-306,367-374,378,390,394-403,406
+internal/api/handlers/runtime.go
+  s_5690062ed6cda8::t_c5e8403067450b 129-131,139-159,165-170,177
+  s_5690062ed6cda8::t_0f28698f0474a7 18,40,44,48-52
+internal/api/task_v2_test.go
+  s_5690062ed6cda8::t_bcf2770009f583 159,164-196
+internal/api/vault_items_test.go
+  s_5690062ed6cda8::t_64eb3b26444492 10
+  s_5690062ed6cda8::t_304cd453f2a5e4 106-146,192-205
+internal/runtime/llmproxy/placeholder_validation.go
+  s_5690062ed6cda8::t_475ea53bb1ad73 61-65
+internal/runtime/llmproxy/inspector/boundservices.go
+  s_5690062ed6cda8::t_2954cad4f328e9 28-51
+pkg/runtime/proxy/placeholder_runtime.go
+  s_5690062ed6cda8::t_acf0942deea06d 79-85
+internal/api/handlers/proxy_resolver.go
+  s_5690062ed6cda8::t_6cab04520b493f 432-438
+internal/runtime/llmproxy/inspector/boundservices_test.go
+  s_5690062ed6cda8::t_8c74f84611624d 70-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "ee63843bbeee560c7c43bafbad03244add94d4f4",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

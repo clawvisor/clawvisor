@@ -1,0 +1,33 @@
+internal/api/handlers/llm_characterization_test.go
+  s_813cf813d8b1d0::t_99c64f441539f7 1-41,45-56,60-63,66-85,87-161,163-231
+  s_813cf813d8b1d0::t_2463c657263597 42-44
+  s_813cf813d8b1d0::t_b1ab1216a35fcd 57-59
+  s_813cf813d8b1d0::t_6f8eaefd0df89b 64-65
+  s_813cf813d8b1d0::t_ac380770ccece3 86
+  s_813cf813d8b1d0::t_a625328db78f8f 232-285,288-308
+  s_813cf813d8b1d0::t_939b99103f0ad2 286-287
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_anthropic.json
+  s_813cf813d8b1d0::t_e158cf3b856f37 1-30
+internal/api/handlers/testdata/llm_characterization/malformed_request.json
+  s_813cf813d8b1d0::t_66390d43763811 1-23
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_openai_chat.json
+  s_813cf813d8b1d0::t_66390d43763811 1-32
+internal/api/handlers/testdata/llm_characterization/control_notice_injected.json
+  s_813cf813d8b1d0::t_66390d43763811 1-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "84163dfb908213ec89ed447962b5fa1877d4d0b9",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

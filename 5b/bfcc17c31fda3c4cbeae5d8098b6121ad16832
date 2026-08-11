@@ -1,0 +1,23 @@
+pkg/clawvisor/bootstrap_test.go
+  s_55f7a841d7c10e::t_4949d0d81bd11a 1-150
+pkg/clawvisor/defaults.go
+  s_55f7a841d7c10e::t_8b3508e24d9bb0 144-150
+pkg/clawvisor/bootstrap.go
+  s_55f7a841d7c10e::t_e991ac69b384cf 1-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5bbfcc17c31fda3c4cbeae5d8098b6121ad16832",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+web/src/pages/Admin.tsx
+  s_55f7a841d7c10e::t_64c45994688977 162
+  s_55f7a841d7c10e::t_857671c3fd16a3 177,182
+  s_55f7a841d7c10e::t_775f578ed1856a 79-80
+  s_55f7a841d7c10e::t_7a3389dd21852d 64-65,69,75
+  s_55f7a841d7c10e::t_b36232e4370aca 26-33
+  s_55f7a841d7c10e::t_a343b7f60f4c10 124
+  s_55f7a841d7c10e::t_a6e0fff618ef94 35,37
+  s_55f7a841d7c10e::t_ccc0bd8aaa7f21 143-145
+  s_55f7a841d7c10e::t_5978a7465105aa 102,109,118
+web/src/pages/Dashboard.tsx
+  s_55f7a841d7c10e::t_ff478e204afbf0 431-435
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5821ae3469ab80fd82e678b8cb7815932d6cbabb",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

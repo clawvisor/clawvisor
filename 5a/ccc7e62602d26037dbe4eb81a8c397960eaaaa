@@ -1,0 +1,35 @@
+internal/runtime/llmproxy/policies/org_model_policy_test.go
+  s_5968b5a9192332::t_06c019a2fc7297 1-22,24-147
+  s_5968b5a9192332::t_072817c5603b22 23
+internal/runtime/llmproxy/orggov/canonical.go
+  s_5968b5a9192332::t_b432bb0740a77e 1-41
+internal/runtime/llmproxy/orggov/orggov.go
+  s_5968b5a9192332::t_100f38f5aaf298 1-58
+internal/runtime/llmproxy/orggov/canonical_test.go
+  s_5968b5a9192332::t_a11fc25ab90289 1-31
+internal/api/handlers/llm_endpoint.go
+  s_5968b5a9192332::t_8855c314916391 542-545
+  s_5968b5a9192332::t_cf8b442fe36308 26
+  s_5968b5a9192332::t_67019ccae514f0 157-169
+  s_5968b5a9192332::t_fb81db0e09d083 555,559
+  s_5968b5a9192332::t_8188c501e08988 539-541,546-554,556-558,560-562
+internal/runtime/llmproxy/policies/org_model_policy.go
+  s_5968b5a9192332::t_3822af9d86e6eb 1-57,59-101
+  s_5968b5a9192332::t_742796da545bc2 58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "5accc7e62602d26037dbe4eb81a8c397960eaaaa",
+  "prompts": {},
+  "sessions": {
+    "s_5968b5a9192332": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a904c4d-ba8e-4c28-baa2-feb0913c70b6",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

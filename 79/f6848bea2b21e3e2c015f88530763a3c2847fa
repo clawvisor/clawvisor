@@ -1,0 +1,31 @@
+internal/api/handlers/llm_credentials.go
+  s_55f7a841d7c10e::t_28f46371cd3087 102-112
+pkg/config/config_test.go
+  s_55f7a841d7c10e::t_e0ac3f3ebcccfa 565-568,570,575
+internal/api/handlers/llm_endpoint.go
+  s_55f7a841d7c10e::t_eef69b13455374 368-373
+provider/internal/provider/resource_llm_credential.go
+  s_55f7a841d7c10e::t_fa4012d7ae0a14 114-117
+e2e/scenarios/llm_proxy_local_gov_test.go
+  s_55f7a841d7c10e::t_52be63d546b29a 51-54,60-62,70-73,76-77
+provider/docs/resources/llm_credential.md
+  s_55f7a841d7c10e::t_9c027fba90953f 73
+pkg/clawvisor/run.go
+  s_55f7a841d7c10e::t_3c5a1905971015 162-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "79f6848bea2b21e3e2c015f88530763a3c2847fa",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

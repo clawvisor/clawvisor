@@ -1,0 +1,19 @@
+internal/api/handlers/installer.go
+  s_6d95d507d56682::t_938395561b24b3 125-128,130-171,176,188-189,195,197-202,206-208,212-228,230-231,234-235,242-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "f10b42cc4db781be9b1f15327c33d11d894a349f",
+  "prompts": {},
+  "sessions": {
+    "s_6d95d507d56682": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e5ca272-33dd-461c-beff-3878d45c0d32",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
