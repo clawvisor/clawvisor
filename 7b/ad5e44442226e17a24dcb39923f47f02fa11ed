@@ -1,0 +1,24 @@
+internal/runtime/llmproxy/task_reply_test.go
+  s_8f3d790934e389::t_78e3b137814036 52-53,10,54-59,61-69,71-130,132-138,140-155,157-161
+  s_8f3d790934e389::t_bdc8f3b6cb745a 4,6,9,11-12
+  s_8f3d790934e389::t_2b9bb38c880663 60,70
+  s_8f3d790934e389::t_fbaabadab076e2 131,139,156
+internal/runtime/llmproxy/task_reply.go
+  s_8f3d790934e389::t_d1957dbd2cf816 40-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "7bad5e44442226e17a24dcb39923f47f02fa11ed",
+  "prompts": {},
+  "sessions": {
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

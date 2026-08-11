@@ -1,0 +1,24 @@
+internal/api/handlers/installer.go
+  s_7f68b5733f1191::t_2316e5f614e7bd 792-793,815,819-848,850-851,861-862,885-915,917-918
+  s_7f68b5733f1191::t_c292c97ad4369d 142-149
+  s_7f68b5733f1191::t_b4d1c40449a9d6 849,916
+  s_7f68b5733f1191::t_afaee5a930e01b 816-818
+internal/api/handlers/installer_test.go
+  s_7f68b5733f1191::t_937f8ece3c426e 216-220,251-252,284-286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0a03b027d8f2b16356c8faa319ecadbc97e0de18",
+  "prompts": {},
+  "sessions": {
+    "s_7f68b5733f1191": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e7060-b911-78f0-899d-d4e5c0c4e13b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

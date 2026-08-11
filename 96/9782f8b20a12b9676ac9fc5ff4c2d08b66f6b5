@@ -1,0 +1,19 @@
+internal/runtime/llmproxy/expand_capability_live_test.go
+  s_fd6d9b102e043d::t_b0b70f3604c635 123-333
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "969782f8b20a12b9676ac9fc5ff4c2d08b66f6b5",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

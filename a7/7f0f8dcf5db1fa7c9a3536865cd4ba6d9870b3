@@ -1,0 +1,126 @@
+internal/runtime/llmproxy/secret_detection_test.go
+  s_b7635082fff64b::t_14b92329ea5941 7,387-405,628,632-634
+  s_b7635082fff64b::t_0d3b8147672414 361-373
+  s_b7635082fff64b::t_843ba20ce589a4 374-386
+  s_b7635082fff64b::t_38bf390c533508 410
+  s_b7635082fff64b::t_f98ee439024516 513-540
+  s_b7635082fff64b::t_1c1bca4bb3b661 406-409,411-422
+internal/runtime/llmproxy/pending_secret_redis.go
+  s_b7635082fff64b::t_b79c809058a5e7 1-97,99-100,102-107,113-175
+  s_b7635082fff64b::t_a3ee8334914c4e 98,101,108-112
+internal/runtime/llmproxy/postprocess_test.go
+  s_b7635082fff64b::t_92168ce523909f 606-608
+internal/runtime/llmproxy/secret_decision_history.go
+  s_b7635082fff64b::t_d18c91ae20a759 120,122-125,129-135,137
+internal/runtime/llmproxy/rawlog.go
+  s_b7635082fff64b::t_db2ea0ece3fae5 75-78
+scripts/live-codex-secret-smoke.sh
+  s_b7635082fff64b::t_1686f9a65dafc6 16
+internal/api/handlers/runtime_controls_test.go
+  s_b7635082fff64b::t_a0d9fca640b662 525-526,535
+  s_b7635082fff64b::t_87cc3f4b2e02ec 243-271
+  s_b7635082fff64b::t_a4339b8f9c1d3a 128-153
+  s_b7635082fff64b::t_9d4848b764cb50 154-192
+internal/api/handlers/control_test.go
+  s_b7635082fff64b::t_63ae2d521f8abb 26-27,52-58
+internal/runtime/llmproxy/rawlog_test.go
+  s_b7635082fff64b::t_38d7954af8b8d6 7-8,46-63
+internal/api/handlers/control.go
+  s_b7635082fff64b::t_2b0bc6fa6a553c 51,67
+web/src/pages/Runtime.tsx
+  s_b7635082fff64b::t_2835506f86cb80 1,48,134-138,142-146,177-182,285,290-294,353-356,383-388,390,395
+web/src/api/client.ts
+  s_b7635082fff64b::t_da5c28da69b174 709
+internal/api/server.go
+  s_b7635082fff64b::t_4969b00675eaaa 108,328-334,988-990
+internal/runtime/llmproxy/control.go
+  s_b7635082fff64b::t_dead4b63b5b537 72
+pkg/store/store.go
+  s_b7635082fff64b::t_955a52f565c6a7 280
+  s_b7635082fff64b::t_ee0dc6bfd1dc2b 678-684
+  s_b7635082fff64b::t_1e518148e2072f 685-690
+internal/api/handlers/runtime_passthrough.go
+  s_b7635082fff64b::t_3591fe64d7f538 161-162,178-181,183-184,187-192,196-214
+  s_b7635082fff64b::t_e28f12e525ca03 173
+  s_b7635082fff64b::t_0453d1a989cde1 16-19,67-68
+  s_b7635082fff64b::t_a3dfe0118deb30 71-72
+  s_b7635082fff64b::t_e10221e119bff4 73-75
+internal/api/handlers/llm_endpoint.go
+  s_b7635082fff64b::t_9499840dc41b77 141-144
+  s_b7635082fff64b::t_d3bea419092ffc 1304-1307,1310-1311,1373,1408,1423,1434-1443
+  s_b7635082fff64b::t_52f76af9dd5c92 1458-1462,1507,1509,1512,1514,1524,1564-1565
+  s_b7635082fff64b::t_2cb25808445fc8 2102-2103,2106,2108,2113-2123
+  s_b7635082fff64b::t_5045ba76bb123d 1751-1759
+  s_b7635082fff64b::t_0b0e4fcd524d8f 1960
+  s_b7635082fff64b::t_73b6b06b23e211 1420-1422
+  s_b7635082fff64b::t_42dc6cf33bfb6a 1447,1449,1471,1477,1481,1526
+  s_b7635082fff64b::t_849e842d4519cd 1617,1624-1635,1637-1638,1653-1660,1663-1665,1668-1674,1693-1695,1698-1702,1704-1712,1714-1722
+  s_b7635082fff64b::t_4d772013126dcf 2093
+  s_b7635082fff64b::t_eef589cb1c4dc0 1136,1138-1141,1208
+  s_b7635082fff64b::t_d57eda47200434 340-341,355-358,360
+  s_b7635082fff64b::t_c7533b86e5af5c 1264-1295
+  s_b7635082fff64b::t_d7603bd34e80cb 2107
+  s_b7635082fff64b::t_8a694991290fba 1370,1374-1381,1385,1393,1463-1466
+  s_b7635082fff64b::t_96df55c1753825 1382
+  s_b7635082fff64b::t_449a1085a068c9 1296,1298,1302,1308,1337,1347,1355,1416,1419
+  s_b7635082fff64b::t_08a41ea6f8d181 13
+  s_b7635082fff64b::t_7f87fadd104143 1468-1470,1472-1476,1478-1480,1539,1570
+  s_b7635082fff64b::t_1676e9cc20fbed 1767,1772-1774
+  s_b7635082fff64b::t_29930ccc0bb087 1405-1407,1409-1415,1417-1418,1431,1433
+  s_b7635082fff64b::t_b47cd97644026a 2051-2061
+  s_b7635082fff64b::t_9c0adb764d4a5e 1024-1026,1056
+  s_b7635082fff64b::t_301ce5e340a7ae 1661-1662,1666-1667,1675-1692,1696-1697,1703,1713
+internal/runtime/llmproxy/postprocess.go
+  s_b7635082fff64b::t_7997d6525f9e48 744
+pkg/clawvisor/options.go
+  s_b7635082fff64b::t_38bf390c533508 20
+  s_b7635082fff64b::t_8b8e8ca295ef73 150
+internal/runtime/llmproxy/secret_decision_history_test.go
+  s_b7635082fff64b::t_365e0face604df 72-113
+internal/runtime/llmproxy/secret_detection.go
+  s_b7635082fff64b::t_723e6185aef66e 385-420,423-450
+  s_b7635082fff64b::t_314e2451446dd9 554-557
+  s_b7635082fff64b::t_d94e36c04aa061 251,271,274,279,283,293,313
+  s_b7635082fff64b::t_5c0cb1d25c1796 345,451-452,466-467,470
+  s_b7635082fff64b::t_40a74a0de7744b 384,453
+  s_b7635082fff64b::t_4c41a2927cb992 10,349-351,360
+  s_b7635082fff64b::t_0972a0fea226f6 363,375
+internal/api/handlers/llm_endpoint_test.go
+  s_b7635082fff64b::t_62e248b18780c4 34,48-55
+  s_b7635082fff64b::t_9d1bb90f320fff 568-612
+  s_b7635082fff64b::t_1204bdc99be72b 630-637,639-665
+  s_b7635082fff64b::t_a83d42549fbf8c 638,785
+  s_b7635082fff64b::t_23b08c95bca36e 622
+  s_b7635082fff64b::t_fac90aba03eb96 666-694
+  s_b7635082fff64b::t_54d112e6c6af51 81-84
+  s_b7635082fff64b::t_04ed84d8d6a1ab 768-784,786-791,795-857
+  s_b7635082fff64b::t_af1269fb404cb0 792-794
+  s_b7635082fff64b::t_20d32851f84b9a 858-910
+  s_b7635082fff64b::t_9dcc486aac5027 613-621,623-629
+  s_b7635082fff64b::t_30fadf69398ff8 7,33,35-47,56
+  s_b7635082fff64b::t_b98a76ece7082b 695-729
+  s_b7635082fff64b::t_6a3f7cdf2f3870 730-767
+pkg/clawvisor/run.go
+  s_b7635082fff64b::t_b27112f9ed7456 330-332
+pkg/clawvisor/defaults.go
+  s_b7635082fff64b::t_38bf390c533508 47
+  s_b7635082fff64b::t_5cbdae54e13f9d 417,455,503
+internal/runtime/llmproxy/control_test.go
+  s_b7635082fff64b::t_63ae2d521f8abb 35-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "a77f0f8dcf5db1fa7c9a3536865cd4ba6d9870b3",
+  "prompts": {},
+  "sessions": {
+    "s_b7635082fff64b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e32a6-368e-7c40-a4de-d67d7171c8f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

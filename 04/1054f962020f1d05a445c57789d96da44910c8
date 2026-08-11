@@ -1,0 +1,20 @@
+internal/api/handlers/gemini_live_smoke_test.go
+  s_813cf813d8b1d0::t_78c8c467351ef0 7,18-22,24-36,41,45,51-57,59-67,69-75
+  s_813cf813d8b1d0::t_d6c6b3d26df881 1-6,8-17,23,37-40,42-44,46-50,58,68,76-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "041054f962020f1d05a445c57789d96da44910c8",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

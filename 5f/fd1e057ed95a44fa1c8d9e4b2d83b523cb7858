@@ -1,0 +1,30 @@
+internal/auth/token.go
+  s_55f7a841d7c10e::t_e43fb5796d70e2 6,8,11-46
+  s_2272b9604c80ae::t_a43ef67d90e2ec 47
+internal/auth/token_test.go
+  s_55f7a841d7c10e::t_cd80d7d2b7b9ed 1-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5ffd1e057ed95a44fa1c8d9e4b2d83b523cb7858",
+  "prompts": {},
+  "sessions": {
+    "s_2272b9604c80ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01bd258c-cdde-4b3f-afd2-10b73065bcd5",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

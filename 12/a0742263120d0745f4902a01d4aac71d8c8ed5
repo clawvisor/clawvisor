@@ -1,0 +1,20 @@
+deploy/terraform/modules/vm-docker/templates/Caddyfile.tftpl
+  s_55f7a841d7c10e::t_4d44ed751cdf8c 16-20
+  s_55f7a841d7c10e::t_d3fc94091c4918 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "12a0742263120d0745f4902a01d4aac71d8c8ed5",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

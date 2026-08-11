@@ -1,0 +1,34 @@
+internal/api/handlers/installer_scripts/common.sh.tmpl
+  s_a9afcf61fae206::t_8ded4855de00f6 279-280
+scripts/render-staging-installer.sh
+  s_a9afcf61fae206::t_8ded4855de00f6 8,15-17,36-41,67-69,77-84,89
+cmd/render-installer/main.go
+  s_a9afcf61fae206::t_8ded4855de00f6 27,30,35-40,47,55-59,63-70,89-90,97-98,117-118,128-134,136-141
+  s_a9afcf61fae206::t_66956ef96397d1 60-62
+internal/api/handlers/installer_syntax_test.go
+  s_a9afcf61fae206::t_66956ef96397d1 72
+  s_a9afcf61fae206::t_c0b30afaec4710 63-71,73-97
+cmd/render-installer/main_test.go
+  s_a9afcf61fae206::t_c0b30afaec4710 5-8,19,43,51-83,114-121,123-224
+  s_a9afcf61fae206::t_66956ef96397d1 122
+  s_a9afcf61fae206::t_9a7d1177702d0e 84-113
+internal/api/handlers/installer_scripts.go
+  s_a9afcf61fae206::t_8ded4855de00f6 19-21,24-32
+  s_a9afcf61fae206::t_27b33f0a5b8b31 33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "e0c55839dc1623a82c64f643841b0b620730f6cb",
+  "prompts": {},
+  "sessions": {
+    "s_a9afcf61fae206": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe98b-7d19-7ae1-b820-64975bafcda2",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

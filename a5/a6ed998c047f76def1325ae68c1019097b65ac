@@ -1,0 +1,54 @@
+internal/runtime/llmproxy/postprocess.go
+  s_813cf813d8b1d0::t_ab6b9808e0414b 1119
+  s_813cf813d8b1d0::t_7ec16fea86d1d1 2333-2334,1330-1331
+  s_813cf813d8b1d0::t_3f9e4ef3aa88a5 1326,1328
+internal/runtime/llmproxy/pipeline/policy.go
+  s_813cf813d8b1d0::t_0687da30f0b2f6 1-10,14-15,38-60,65-72,77-84,94-97,102-112,114-123,125-126,152-168,183-198
+  s_813cf813d8b1d0::t_984f29c6c2b526 85-93
+internal/api/handlers/llm_endpoint_pipeline_evaluator.go
+  s_813cf813d8b1d0::t_5988663cb221ff 1-4,6
+  s_813cf813d8b1d0::t_114d6768c5b2e6 5,8-13
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_813cf813d8b1d0::t_ac66b992dcec86 1,7,20-32,41-49,51,96,146-147,149-156,159-162,165-166,168-171,175-177,182-190,206-207,313-314,316-320,323-324,329-337
+  s_522af339bc956c::t_5bf0006658b0e5 64
+  s_813cf813d8b1d0::t_3c708c1fe011ba 73,94
+  s_813cf813d8b1d0::t_f708ea38e1ee37 75,107,142
+  s_813cf813d8b1d0::t_8481c02f44c47b 85,89,95
+  s_813cf813d8b1d0::t_185ab7ff71f3f5 191-192,201
+  s_813cf813d8b1d0::t_9c24b789e695a1 195-196
+  s_522af339bc956c::t_8393b91f2d90bc 198,200,218
+  s_813cf813d8b1d0::t_721c1314bd6a75 211,221,229,231-232
+  s_813cf813d8b1d0::t_1f13ee1748cb38 215,224
+  s_522af339bc956c::t_81987adf38be61 249-250
+  s_813cf813d8b1d0::t_865879a86dbc2f 266-267,272
+  s_813cf813d8b1d0::t_07505de54700ee 277-281,301,304,307,309-310
+  s_522af339bc956c::t_e228a597b62c17 292
+  s_522af339bc956c::t_f333195e56f4fb 295,298
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator.go
+  s_813cf813d8b1d0::t_678acb801b7e5f 1-6,8-13,16-21,24-43,45-92,96-97,99-101,103-105,110-120,122,129-138,146-149
+  s_522af339bc956c::t_6fbe20ca31762c 128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "a5a6ed998c047f76def1325ae68c1019097b65ac",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

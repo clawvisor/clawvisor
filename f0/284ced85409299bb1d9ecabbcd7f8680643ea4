@@ -1,0 +1,25 @@
+internal/api/handlers/installer.go
+  s_5586d0270aa1bf::t_927467432cd47d 542
+  s_5586d0270aa1bf::t_93729f9d3efe3e 97-110
+  s_5586d0270aa1bf::t_d2b4de8a574a33 283
+  s_5586d0270aa1bf::t_7a412c4c5152c0 376
+  s_5586d0270aa1bf::t_7625415360b9bf 456
+internal/api/handlers/installer_test.go
+  s_5586d0270aa1bf::t_7f305e6967cca2 156-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f0284ced85409299bb1d9ecabbcd7f8680643ea4",
+  "prompts": {},
+  "sessions": {
+    "s_5586d0270aa1bf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7eb20790-6cf6-416b-878c-fa2cd86186f9",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

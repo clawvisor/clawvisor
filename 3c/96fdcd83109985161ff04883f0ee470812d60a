@@ -1,0 +1,19 @@
+web/src/hooks/useAuth.tsx
+  s_35af8c84ac2d35::t_96f0dea1e9dcae 139-143,152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3c96fdcd83109985161ff04883f0ee470812d60a",
+  "prompts": {},
+  "sessions": {
+    "s_35af8c84ac2d35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c3bca568-1830-4b5d-82a7-10f3623e4752",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": null
+    }
+  }
+}

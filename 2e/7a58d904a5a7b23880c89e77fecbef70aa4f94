@@ -1,0 +1,45 @@
+internal/runtime/llmproxy/historystrip/secret_decision_history.go
+  s_522af339bc956c::t_ccc392d0f705cf 1-146
+internal/runtime/llmproxy/historystrip/synthetic_history_strip.go
+  s_522af339bc956c::t_ccc392d0f705cf 1-225,227-230,232-236
+internal/runtime/llmproxy/policies/synthetic_history_strip.go
+  s_813cf813d8b1d0::t_8a1c056becc73f 1-5,7-13,16-30,34,36-39,42-44,46-57,59-64
+  s_522af339bc956c::t_bf39f45c52d41c 45,58
+  s_522af339bc956c::t_9a24141588e18e 14-15,31-33,40-41
+  s_522af339bc956c::t_c0e60cdd2aee45 6,35
+internal/runtime/llmproxy/historystrip.go
+  s_522af339bc956c::t_e1fd5d70f4b568 1-12,14-19
+  s_522af339bc956c::t_fee5aff6864909 13
+internal/runtime/llmproxy/historystrip/text.go
+  s_522af339bc956c::t_dc166cf44e975b 1-4,6-9,70-120
+  s_522af339bc956c::t_89d36beb42ad4d 5,10,12-42,44-48,51-52,55-63,65-69
+internal/runtime/llmproxy/policies/secret_history_strip.go
+  s_813cf813d8b1d0::t_baa161e42495a7 1-5,7-28,31,33-39,41-52,54-59
+  s_522af339bc956c::t_bf39f45c52d41c 40,53
+  s_522af339bc956c::t_7e072e6e2a4c64 29-30
+  s_522af339bc956c::t_7cb3e3a14278f8 6,32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "2e7a58d904a5a7b23880c89e77fecbef70aa4f94",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
