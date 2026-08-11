@@ -82,8 +82,8 @@ umask "$CV_OLD_UMASK"
 echo "✓ Wired CLAWVISOR_URL + CLAWVISOR_AGENT_TOKEN into $SETTINGS (chmod 600)"
 echo "  and allowed the skill's gateway calls in permissions.allow"
 
-echo "✓ Registered {{.HarnessLabel}} with Clawvisor (skill-only — LLM traffic is NOT routed)."
+echo "✓ Registered {{.HarnessLabel}} with Clawvisor (skill-only)."
 
 {{ template "dry_run" . }}
 echo
-echo "Done. Claude Code reaches the Clawvisor gateway through the skill; LLM traffic is NOT routed."
+echo "Done. Claude Code reaches the Clawvisor gateway through the skill."

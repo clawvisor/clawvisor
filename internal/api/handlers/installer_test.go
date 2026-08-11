@@ -516,11 +516,10 @@ func TestInstallerClaudeCodeShell(t *testing.T) {
 		// Token is persisted to ~/.clawvisor/agents/<name>.json with chmod 600.
 		"~/.clawvisor/agents",
 		"chmod 600",
-		// Idempotent re-run: if the local token file already works against
-		// the daemon, skip the mint step so a re-paste after a stall
-		// doesn't fail on a consumed claim.
-		"Reusing existing agent token",
-		"EXISTING_TOKEN",
+		// A fresh dashboard claim must always reach the connect endpoint and
+		// mint a new token; an older local token can never short-circuit it.
+		"Every installer invocation creates a new agent token",
+		"A claim is single-use",
 		// End-to-end smoke test fires FIRST — passthrough auth (claude
 		// login) flows through Clawvisor untouched, so a working round-
 		// trip means we're done regardless of vault state. Only fall
@@ -1016,13 +1015,13 @@ func TestInstallerDefaultIsSkillOnly(t *testing.T) {
 	if strings.Contains(claude, "ANTHROPIC_BASE_URL=") {
 		t.Errorf("default claude-code script must NOT export ANTHROPIC_BASE_URL; body:\n%s", claude)
 	}
-	assertContainsAll(t, claude, "skill-only", "/api/agents/connect", "LLM traffic is NOT routed")
+	assertContainsAll(t, claude, "skill-only", "/api/agents/connect")
 
 	codex := installerGetShell(t, h, "codex", "CLAIMCODE0")
 	if strings.Contains(codex, "OPENAI_BASE_URL=") || strings.Contains(codex, "base_url = \"$LLM_URL") {
 		t.Errorf("default codex script must NOT bake a provider base URL; body:\n%s", codex)
 	}
-	assertContainsAll(t, codex, "skill-only", "/api/agents/connect", "LLM traffic is NOT routed")
+	assertContainsAll(t, codex, "skill-only", "/api/agents/connect")
 }
 
 // TestSkillOnlyInstallsTheSkill — the whole point of a skill-only install. Until
@@ -1117,6 +1116,44 @@ func TestSkillOnlyDryRunIsOptIn(t *testing.T) {
 	}
 }
 
+// TestClaudeDryRunUsesAutoPermissionMode protects the noninteractive Claude
+// invocation. `claude -p` cannot show a permission prompt, so the default mode
+// rejects the skill's authenticated curl as `Contains simple_expansion` when
+// it sees $CLAWVISOR_AGENT_TOKEN. Auto mode retains Claude Code's safety
+// classifier and permits the Clawvisor-bound request; bypassPermissions would
+// be unnecessarily broad.
+func TestClaudeDryRunUsesAutoPermissionMode(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	body := installerGetShell(t, h, "claude-code", "ABCDEFGHIJ")
+	assertContainsAll(t, body,
+		"cv_claude_transcript",
+		"CV_DRY_PROMPT=$(cv_dry_run_prompt)",
+		`echo "Initial prompt:"`,
+		`printf '%s\n\n' "$CV_DRY_PROMPT"`,
+		"--permission-mode auto --verbose",
+		`--output-format stream-json "$CV_DRY_PROMPT"`,
+		`| cv_claude_transcript | tee "$CV_DRY_OUT"`,
+	)
+	if strings.Contains(body, "claude -p --dangerously-skip-permissions") {
+		t.Error("Claude dry run must not bypass permission checks")
+	}
+}
+
+// TestCodexDryRunUsesCompactJSONTranscript prevents `codex exec` from dumping
+// startup metadata, hook chatter, the prompt twice, and the full SKILL.md into
+// installer output. The JSONL formatter retains agent/tool turns and the
+// machine-readable verdict.
+func TestCodexDryRunUsesCompactJSONTranscript(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	body := installerGetShell(t, h, "codex", "ABCDEFGHIJ")
+	assertContainsAll(t, body,
+		"cv_codex_transcript",
+		"codex exec --json --ephemeral",
+		`| cv_codex_transcript | tee "$CV_DRY_OUT"`,
+		"load Clawvisor skill",
+	)
+}
+
 // TestDryRunVerdictIsNotTheExitCode — the dry run used to set CV_DRY_STATUS=ok
 // purely on the harness exiting 0, then print "the in-scope request should have
 // succeeded". An agent that cannot make a single call still exits 0 after
@@ -1144,6 +1181,10 @@ func TestDryRunVerdictIsNotTheExitCode(t *testing.T) {
 			"Do nothing else",
 			"Do not check the skill version",
 			"stop immediately",
+			"Dry run results:",
+			"In-scope call:",
+			"Out-of-scope call:",
+			"do not paste raw JSON responses",
 		)
 		// The old reassurance must not survive: it asserted an outcome the
 		// script had not established. Matched on the exact banner rather than
@@ -1152,6 +1193,59 @@ func TestDryRunVerdictIsNotTheExitCode(t *testing.T) {
 			t.Errorf("%s: dry run still claims success it has not verified", tc.target)
 		}
 	}
+}
+
+// TestInstallerNeverReusesALocalAgentToken protects the security-sensitive
+// bootstrap invariant: a newly minted dashboard claim must result in a newly
+// minted agent token. The old installer first authenticated the token already
+// present in ~/.clawvisor/agents/<slot>.json and silently reused it, so the
+// fresh claim never reached /api/agents/connect at all.
+func TestInstallerNeverReusesALocalAgentToken(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	for _, v := range shellInstallerVariants() {
+		t.Run(v.name, func(t *testing.T) {
+			body := installerGetShellQuery(t, h, v.target, v.query)
+			assertContainsAll(t, body,
+				"Every installer invocation creates a new agent token",
+				"/api/agents/connect?claim=",
+			)
+			for _, stale := range []string{
+				"Reusing existing agent token",
+				"EXISTING_TOKEN",
+				"EXISTING_JSON",
+			} {
+				if strings.Contains(body, stale) {
+					t.Errorf("installer still contains stale-token reuse path %q", stale)
+				}
+			}
+		})
+	}
+}
+
+// TestCodexDryRunEnablesItsNetworkSandbox pins the invocation-level sandbox
+// settings needed by the check itself. `codex exec` defaults to read-only;
+// merely writing sandbox_workspace_write.network_access=true to config does
+// not help unless this invocation actually selects workspace-write.
+func TestCodexDryRunEnablesItsNetworkSandbox(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	body := installerGetShell(t, h, "codex", "CLAIMCODE0")
+	assertContainsAll(t, body,
+		"codex exec --json --ephemeral --sandbox workspace-write",
+		"-c sandbox_workspace_write.network_access=true",
+	)
+}
+
+// TestDryRunRecognizesLocalOnlyCatalogs prevents the preflight from treating
+// "no cloud services" as "no services". Local daemon services appear after
+// that message and are valid task targets, so presence is determined from the
+// catalog's service headings instead.
+func TestDryRunRecognizesLocalOnlyCatalogs(t *testing.T) {
+	h := NewInstallerHandler("", "", true, "", "")
+	body := installerGetShell(t, h, "codex", "CLAIMCODE0")
+	assertContainsAll(t, body,
+		"grep -q '^## '",
+		"valid local-only",
+	)
 }
 
 // TestCodexSkillOnlyAsksBeforeRelaxingSandbox — persisting
@@ -1252,7 +1346,7 @@ func TestFlipSkillOnlyOptOut(t *testing.T) {
 		"skill-only",
 		"/api/agents/connect",
 		"chmod 600",
-		"LLM traffic is NOT routed",
+		"Done. Claude Code reaches the Clawvisor gateway through the skill.",
 	)
 
 	codex := installerGetShellQuery(t, h, "codex", "claim=CLAIMCODE0&route=skill-only")
@@ -1262,7 +1356,7 @@ func TestFlipSkillOnlyOptOut(t *testing.T) {
 	assertContainsAll(t, codex,
 		"skill-only",
 		"/api/agents/connect",
-		"LLM traffic is NOT routed",
+		"Done. Codex reaches the Clawvisor gateway through the skill.",
 	)
 }
 

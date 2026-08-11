@@ -135,8 +135,8 @@ elif [ "$CV_WANT_NETWORK" = no ]; then
     echo "    network_access = true"
 fi
 
-echo "✓ Registered {{.HarnessLabel}} with Clawvisor (skill-only — LLM traffic is NOT routed)."
+echo "✓ Registered {{.HarnessLabel}} with Clawvisor (skill-only)."
 
 {{ template "dry_run" . }}
 echo
-echo "Done. Codex reaches the Clawvisor gateway through the skill; LLM traffic is NOT routed."
+echo "Done. Codex reaches the Clawvisor gateway through the skill."
