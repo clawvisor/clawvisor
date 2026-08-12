@@ -2,18 +2,32 @@ import { Navigate, useNavigate } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 
+const checkIcon = (
+  <svg className="w-4 h-4 text-success shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+    <path d="M20 6L9 17l-5-5" />
+  </svg>
+)
+
 export default function Welcome() {
   const navigate = useNavigate()
   const qc = useQueryClient()
 
-  // If the user already has an active plan (e.g. grandfathered), skip welcome.
   const { data: billingStatus, isLoading } = useQuery({
     queryKey: ['billing-status'],
     queryFn: () => api.billing.status(),
   })
 
-  // Org members shouldn't see the personal plan-picker — they're already
-  // on the org's billing, so bounce them back to the dashboard.
+  // Every number on this page comes from the pricing API. Hardcoding them is
+  // how a "$120 advertised / $150 charged" mismatch shipped once already —
+  // this screen and /pricing must never be able to disagree.
+  const { data: plansData, isLoading: plansLoading } = useQuery({
+    queryKey: ['billing-plans'],
+    queryFn: () => api.billing.plans(),
+    staleTime: 3600_000,
+  })
+
+  // Org members shouldn't see the personal free-tier explainer — they're
+  // already on the org's billing, so bounce them back to the dashboard.
   const { data: memberships, isLoading: membershipsLoading } = useQuery({
     queryKey: ['orgs'],
     queryFn: () => api.orgs.list(),
@@ -21,18 +35,18 @@ export default function Welcome() {
   })
   const hasOrg = (memberships?.length ?? 0) > 0
 
-  const activateMut = useMutation({
-    mutationFn: () => api.billing.activateFreeTier(),
+  const dismissMut = useMutation({
+    mutationFn: () => api.billing.markSplashSeen(),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['billing-status'] })
       navigate('/dashboard')
     },
   })
 
-  // Hold the entire page until both queries resolve. Otherwise an org
-  // member could briefly see (and click) the personal "Activate free
-  // tier" button while their memberships query was still in flight,
-  // which mints a personal plan they shouldn't have.
+  // Hold the page until billing status and memberships resolve, so an org
+  // member never sees a personal plan screen flash by. Plans are allowed to
+  // still be in flight — the copy below degrades to figure-free wording
+  // rather than blocking the whole screen on a cacheable public endpoint.
   if (isLoading || membershipsLoading) {
     return (
       <div className="min-h-screen bg-surface-0 flex items-center justify-center">
@@ -44,12 +58,31 @@ export default function Welcome() {
       </div>
     )
   }
-  if (billingStatus && billingStatus.status !== 'none') {
+  // Strictly `!== null`: an already-dismissed account has a timestamp, and a
+  // deployment that doesn't track the stamp reports undefined. Neither should
+  // be held on this screen.
+  if (billingStatus && billingStatus.splash_seen_at !== null) {
     return <Navigate to="/dashboard" replace />
   }
   if (hasOrg) {
     return <Navigate to="/dashboard" replace />
   }
+
+  const freePlan = plansData?.plans.find((p) => p.name === 'free')
+  const proPlan = plansData?.plans.find((p) => p.name === 'pro')
+  // Read Pro's price off the monthly option, the cadence the upgrade button
+  // defaults to. The annual option's per_month_cents is a different (lower)
+  // number and quoting it here would under-advertise the default purchase.
+  const proMonthlyCents =
+    proPlan?.prices?.find((o) => o.interval === 'month')?.per_month_cents ?? proPlan?.monthly_price
+
+  const includedRequests = freePlan?.included_requests
+  const requestsLine =
+    includedRequests === undefined
+      ? 'A monthly request allowance, then top up with request packs'
+      : includedRequests < 0
+        ? 'Unlimited requests'
+        : `${includedRequests.toLocaleString()} requests/month, then top up with request packs`
 
   return (
     <div className="min-h-screen bg-surface-0 flex items-center justify-center">
@@ -60,7 +93,7 @@ export default function Welcome() {
           </div>
           <h1 className="text-2xl font-bold text-text-primary">Welcome to Clawvisor</h1>
           <p className="text-text-secondary mt-2">
-            Get started for free. No credit card required.
+            You're on the free plan. No credit card required.
           </p>
         </div>
 
@@ -69,36 +102,42 @@ export default function Welcome() {
             <h3 className="text-sm font-semibold text-text-primary">Your free plan includes:</h3>
             <ul className="space-y-2 text-sm text-text-secondary">
               <li className="flex items-center gap-2">
-                <svg className="w-4 h-4 text-success shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
+                {checkIcon}
                 Unlimited connections
               </li>
               <li className="flex items-center gap-2">
-                <svg className="w-4 h-4 text-success shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
-                1,000 requests/month, then top up with request packs
+                {checkIcon}
+                {plansLoading ? (
+                  <span className="h-4 w-56 rounded bg-surface-2 animate-pulse" aria-hidden="true" />
+                ) : (
+                  requestsLine
+                )}
               </li>
               <li className="flex items-center gap-2">
-                <svg className="w-4 h-4 text-success shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
+                {checkIcon}
                 Free forever, upgrade anytime
               </li>
             </ul>
           </div>
 
           <button
-            onClick={() => activateMut.mutate()}
-            disabled={activateMut.isPending}
+            onClick={() => dismissMut.mutate()}
+            disabled={dismissMut.isPending}
             className="w-full py-2.5 px-4 rounded-md bg-brand text-surface-0 text-sm font-medium hover:bg-brand-strong transition-colors disabled:opacity-70"
           >
-            {activateMut.isPending ? 'Activating...' : 'Get started'}
+            {dismissMut.isPending ? 'One moment...' : 'Get started'}
           </button>
 
-          {activateMut.isError && (
+          {dismissMut.isError && (
             <p className="text-xs text-danger text-center">Something went wrong. Please try again.</p>
           )}
         </div>
 
-        <p className="text-center text-xs text-text-tertiary mt-4">
-          Need more? Upgrade to Pro from $120/month.
-        </p>
+        {proMonthlyCents !== undefined && (
+          <p className="text-center text-xs text-text-tertiary mt-4">
+            Need more? Upgrade to Pro from ${(proMonthlyCents / 100).toFixed(0)}/month.
+          </p>
+        )}
       </div>
     </div>
   )

@@ -1218,6 +1218,14 @@ export interface BillingStatus {
   current_period_start?: string
   current_period_end?: string
   cancel_at_period_end?: boolean
+  /**
+   * When the account dismissed the first-signup free-tier explainer, or null
+   * if it never has. `undefined` means the deployment doesn't track it (the
+   * no-Stripe fallback), which is NOT the same as "never seen": only an
+   * explicit null may route a user to /welcome, because only a deployment
+   * that reports the key has an endpoint to stamp it with.
+   */
+  splash_seen_at?: string | null
   stripe_publishable_key?: string
   usage?: {
     requests: { used: number; limit: number }
@@ -2148,6 +2156,9 @@ export const api = {
       post<PromoValidation>('/api/billing/promo/validate', { code }),
     activateFreeTier: () =>
       post<{ status: string }>('/api/billing/activate', {}),
+    /** Stamps splash_seen_at so the dashboard stops routing to /welcome. */
+    markSplashSeen: () =>
+      post<{ status: string }>('/api/billing/splash-seen', {}),
   },
   oauthApprove: (params: {
     client_id: string

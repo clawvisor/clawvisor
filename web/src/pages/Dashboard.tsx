@@ -158,20 +158,25 @@ export default function Dashboard() {
   })
   const hasOrg = (memberships?.length ?? 0) > 0
 
-  // Redirect to welcome page only if the user has no billing setup AND
-  // isn't already an org member. Wait for both queries before deciding
-  // — without the loading guard, the redirect can fire on first paint
-  // before memberships have loaded, sending an invited user to the
-  // plan picker by mistake. Also bail if the /api/orgs lookup errored:
-  // treating a failure as "zero memberships" would route org-only users
-  // (who have no personal billing) to the plan picker by mistake.
+  // Show the free-tier explainer once, to accounts that have never seen it and
+  // aren't already org members. Wait for both queries before deciding —
+  // without the loading guard, the redirect can fire on first paint before
+  // memberships have loaded, sending an invited user to the welcome screen by
+  // mistake. Also bail if the /api/orgs lookup errored: treating a failure as
+  // "zero memberships" would route org-only users there by mistake.
+  //
+  // The gate is splash_seen_at, NOT the old `status === 'none' && plan ===
+  // 'none'` test. The server now seeds a Free subscription on the first status
+  // read, so that condition became permanently false and this whole screen was
+  // unreachable dead code. `=== null` is deliberately strict: a deployment
+  // without Stripe omits the key entirely and has no endpoint to stamp it, so
+  // `undefined` must not redirect or the user gets stuck in a loop.
   if (
     billingEnabled &&
     !billingLoading &&
     !membershipsLoading &&
     !membershipsErrored &&
-    billingStatus?.status === 'none' &&
-    billingStatus?.plan === 'none' &&
+    billingStatus?.splash_seen_at === null &&
     !hasOrg
   ) {
     return <Navigate to="/welcome" replace />
