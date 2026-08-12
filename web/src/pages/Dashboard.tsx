@@ -138,32 +138,7 @@ export default function Dashboard() {
     staleTime: 60_000,
   })
 
-  // Org membership — if the user is a member of any org, skip the
-  // /welcome plan-picker. Invitees joining via the org-invite flow
-  // shouldn't have to pick a personal plan; they're already part of
-  // an org and the accept handler seeds a free-tier sub anyway. This
-  // also avoids a dead-end if the free-tier seed transiently fails.
-  // Note: enabled even when the teams feature flag is off — the
-  // /api/orgs endpoint works regardless of the gate (it just returns
-  // an empty list for users with no memberships), and we always want
-  // to know "is this user in any org?" before bouncing them.
-  const {
-    data: memberships,
-    isLoading: membershipsLoading,
-    isError: membershipsErrored,
-  } = useQuery({
-    queryKey: ['orgs'],
-    queryFn: () => api.orgs.list(),
-    staleTime: 60_000,
-  })
-  const hasOrg = (memberships?.length ?? 0) > 0
-
-  // Show the free-tier explainer once, to accounts that have never seen it and
-  // aren't already org members. Wait for both queries before deciding —
-  // without the loading guard, the redirect can fire on first paint before
-  // memberships have loaded, sending an invited user to the welcome screen by
-  // mistake. Also bail if the /api/orgs lookup errored: treating a failure as
-  // "zero memberships" would route org-only users there by mistake.
+  // Show the free-tier explainer once, to accounts that have never seen it.
   //
   // The gate is splash_seen_at, NOT the old `status === 'none' && plan ===
   // 'none'` test. The server now seeds a Free subscription on the first status
@@ -171,13 +146,16 @@ export default function Dashboard() {
   // unreachable dead code. `=== null` is deliberately strict: a deployment
   // without Stripe omits the key entirely and has no endpoint to stamp it, so
   // `undefined` must not redirect or the user gets stuck in a loop.
+  //
+  // This used to also require the user to be in no org, which meant waiting on
+  // /api/orgs. That call gated the splash behind an endpoint it did not need:
+  // when it errored, the redirect was skipped and the splash silently never
+  // appeared. Removed rather than made resilient — see Welcome.tsx, which must
+  // keep the same view of orgs or the two pages bounce between each other.
   if (
     billingEnabled &&
     !billingLoading &&
-    !membershipsLoading &&
-    !membershipsErrored &&
-    billingStatus?.splash_seen_at === null &&
-    !hasOrg
+    billingStatus?.splash_seen_at === null
   ) {
     return <Navigate to="/welcome" replace />
   }

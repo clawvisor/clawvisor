@@ -25,15 +25,6 @@ export default function Welcome() {
     queryFn: () => api.billing.plans(),
   })
 
-  // Org members shouldn't see the personal free-tier explainer — they're
-  // already on the org's billing, so bounce them back to the dashboard.
-  const { data: memberships, isLoading: membershipsLoading } = useQuery({
-    queryKey: ['orgs'],
-    queryFn: () => api.orgs.list(),
-    staleTime: 60_000,
-  })
-  const hasOrg = (memberships?.length ?? 0) > 0
-
   const dismissMut = useMutation({
     mutationFn: () => api.billing.markSplashSeen(),
     onSuccess: async () => {
@@ -42,11 +33,11 @@ export default function Welcome() {
     },
   })
 
-  // Hold the page until billing status and memberships resolve, so an org
-  // member never sees a personal plan screen flash by. Plans are allowed to
-  // still be in flight — the copy below degrades to figure-free wording
-  // rather than blocking the whole screen on a cacheable public endpoint.
-  if (isLoading || membershipsLoading) {
+  // Hold the page until billing status resolves, so a dismissed account never
+  // sees the screen flash by. Plans are allowed to still be in flight — the
+  // copy below degrades to figure-free wording rather than blocking the whole
+  // screen on a cacheable public endpoint.
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-surface-0 flex items-center justify-center">
         <div
@@ -61,9 +52,6 @@ export default function Welcome() {
   // deployment that doesn't track the stamp reports undefined. Neither should
   // be held on this screen.
   if (billingStatus && billingStatus.splash_seen_at !== null) {
-    return <Navigate to="/dashboard" replace />
-  }
-  if (hasOrg) {
     return <Navigate to="/dashboard" replace />
   }
 
