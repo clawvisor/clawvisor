@@ -23,7 +23,6 @@ export default function Welcome() {
   const { data: plansData, isLoading: plansLoading } = useQuery({
     queryKey: ['billing-plans'],
     queryFn: () => api.billing.plans(),
-    staleTime: 3600_000,
   })
 
   // Org members shouldn't see the personal free-tier explainer — they're
@@ -108,7 +107,7 @@ export default function Welcome() {
               <li className="flex items-center gap-2">
                 {checkIcon}
                 {plansLoading ? (
-                  <span className="h-4 w-56 rounded bg-surface-2 animate-pulse" aria-hidden="true" />
+                  <span className="inline-block h-4 w-56 rounded bg-surface-2 animate-pulse" aria-hidden="true" />
                 ) : (
                   requestsLine
                 )}
