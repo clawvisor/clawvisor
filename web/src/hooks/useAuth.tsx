@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, createContext, useContext, useRef, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { APIError, api, setAccessToken, setRefreshCallback, setCurrentOrgId, type User, type FeatureSet, type LoginResult, type RegisterResult, type Org } from '../api/client'
 
 const CURRENT_ORG_KEY = 'clawvisor_current_org'
@@ -38,6 +39,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient()
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [authMode, setAuthMode] = useState<'magic_link' | 'password' | 'passkey' | null>(null)
@@ -200,7 +202,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCurrentOrgState(null)
     setUser(null)
     setOnboardingComplete(null)
-  }, [])
+    // Drop every cached query. The cache keys are user-agnostic ('billing-status',
+    // 'orgs', …) and there is no page reload between sessions, so without this a
+    // second account signing in on the same tab reads the first one's plan, usage
+    // and saved card — and, since splash_seen_at rides on billing status, skips
+    // the free-tier welcome screen it has never actually seen.
+    queryClient.clear()
+  }, [queryClient])
 
   return (
     <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, currentOrg, setCurrentOrg, onboardingComplete, refreshOnboarding, login, register, logout, setSession }}>
