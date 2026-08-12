@@ -1,0 +1,29 @@
+internal/adapters/google/gmail/adapter_test.go
+  s_c8d5672f06a911::t_8221ea0343fccd 792,834,862,890
+  s_c8d5672f06a911::t_0c4a7f85ae3480 642-653,655-678,680,682-683,685,687-748,751-762,765,770,774,776,778-779,781-790,794-805,807-808,810-811,813-814,819-824,827-829,836-837,839-840,842-843,847-851,853,855-857,864-865,867-876,878-882,884-888,892-893,895-896
+  s_c8d5672f06a911::t_1167d266a8b0d6 764
+  s_c8d5672f06a911::t_3b948436211330 4-5,11-12,14,16
+  s_c8d5672f06a911::t_5fc08fa753840a 22
+  s_c8d5672f06a911::t_e58dd3d0758691 763
+internal/adapters/google/gmail/adapter.go
+  s_c8d5672f06a911::t_dee0dd11cde6ad 5,14,17,19
+  s_c8d5672f06a911::t_54e061ce6bf064 183-185,187,189-190,194-200,203
+  s_c8d5672f06a911::t_3c2de7facc6b4b 939-1084,1092-1093,1114-1118
+  s_c8d5672f06a911::t_e8e96a3463e311 1119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "c13ad6c29cacd510dd529a1686b36248233a71f4",
+  "prompts": {},
+  "sessions": {
+    "s_c8d5672f06a911": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b6e9a80f-52ee-4b83-a167-6a6c8dc06582",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

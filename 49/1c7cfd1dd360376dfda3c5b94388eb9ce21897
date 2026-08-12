@@ -1,0 +1,23 @@
+web/src/pages/SSOLogin.tsx
+  s_55f7a841d7c10e::t_d32b5e9e38777f 1-91
+web/src/App.tsx
+  s_55f7a841d7c10e::t_9c98b3e0bb3202 5,98
+web/src/pages/Login.tsx
+  s_55f7a841d7c10e::t_d2e33047454ff1 192,194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "491c7cfd1dd360376dfda3c5b94388eb9ce21897",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+pkg/clawvisor/options.go
+  s_5968b5a9192332::t_f4979f99f1693c 81-82
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_5968b5a9192332::t_2a5f686a228881 296
+  s_5968b5a9192332::t_ce3fe93256fdd5 466
+pkg/runtime/proxy/tooluse_runtime.go
+  s_5968b5a9192332::t_ffb97ba1e045c0 277-283
+pkg/store/sqlite/migrations/059_agent_team_id_index.sql
+  s_5968b5a9192332::t_fc5c3a913874e1 1-6
+pkg/store/sqlite/migrations/058_agent_team_id.sql
+  s_5968b5a9192332::t_71e972fe7abe18 1-5
+internal/api/handlers/llm_endpoint.go
+  s_5968b5a9192332::t_23ae0b9fdd52ea 648-651
+  s_5968b5a9192332::t_3d1300260e54ed 621-624
+  s_5968b5a9192332::t_6f6b615ee85f33 594-597
+internal/runtime/llmproxy/inline_expansion_intercept.go
+  s_5968b5a9192332::t_ad08a99153df1f 199
+  s_5968b5a9192332::t_181261f7fbe0f5 322
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "797628a57565b1f4eff2734bbe04f8e6d090637c",
+  "prompts": {},
+  "sessions": {
+    "s_5968b5a9192332": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a904c4d-ba8e-4c28-baa2-feb0913c70b6",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

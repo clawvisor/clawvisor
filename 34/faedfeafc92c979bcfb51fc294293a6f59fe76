@@ -1,0 +1,29 @@
+internal/api/handlers/installer_scripts/claude_code_subscription.sh.tmpl
+  s_7bebf1a7f2da2e::t_690868497eeb31 120
+  s_7bebf1a7f2da2e::t_eaed642eedfacc 118
+internal/api/handlers/installer_scripts/claude_code.sh.tmpl
+  s_7bebf1a7f2da2e::t_553ddc9a01f74b 181
+  s_7bebf1a7f2da2e::t_2bd137e0b4379e 179
+internal/api/handlers/installer_scripts/claude_code_skill_only.sh.tmpl
+  s_7bebf1a7f2da2e::t_f3d164e9f6d19d 75
+  s_7bebf1a7f2da2e::t_7d00dc5f9b5b96 77
+  s_7bebf1a7f2da2e::t_b4055f8567bb17 44-51
+internal/api/handlers/installer_test.go
+  s_7bebf1a7f2da2e::t_ac3a6803918cfb 1048-1056
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "34faedfeafc92c979bcfb51fc294293a6f59fe76",
+  "prompts": {},
+  "sessions": {
+    "s_7bebf1a7f2da2e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a9063f2-d6c7-4ece-927d-f188797227cd",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

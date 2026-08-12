@@ -1,0 +1,24 @@
+testharness/otlp/receiver.go
+  s_55f7a841d7c10e::t_b13ba5b3ed0f3e 1-275
+e2e/scenarios/otel_export_test.go
+  s_55f7a841d7c10e::t_7ab3a1b92c4dc2 1-297
+internal/runtime/llmproxy/pipeline/verdict_metric_test.go
+  s_55f7a841d7c10e::t_be2b0d12e574fb 87-94
+  s_55f7a841d7c10e::t_567935242129c1 1-86,95-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5a6787d2e45d55c1f038b6c8f14e2ffc5534fe58",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

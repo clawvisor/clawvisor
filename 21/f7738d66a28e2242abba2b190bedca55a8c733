@@ -1,0 +1,23 @@
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator.go
+  s_813cf813d8b1d0::t_678acb801b7e5f 1-147
+internal/runtime/llmproxy/postprocess.go
+  s_813cf813d8b1d0::t_3f9e4ef3aa88a5 1215-1221
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator_test.go
+  s_813cf813d8b1d0::t_a3ffd5ec4609b7 1-167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "21f7738d66a28e2242abba2b190bedca55a8c733",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

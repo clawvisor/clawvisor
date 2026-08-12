@@ -1,0 +1,49 @@
+internal/runtime/llmproxy/inline_task_transitions.go
+  s_fd6d9b102e043d::t_3021da73db3c6a 308-314
+  s_fd6d9b102e043d::t_a4946862363805 183-191
+internal/runtime/llmproxy/inline_approval_recovery.go
+  s_fd6d9b102e043d::t_b19ff0cdfe9d8d 188-197,199,204-211
+internal/runtime/llmproxy/approval_body_editor.go
+  s_fd6d9b102e043d::t_e8d64c2f70d353 284-290,296
+internal/runtime/llmproxy/policies/synthetic_history_strip.go
+  s_fd6d9b102e043d::t_bda631b10e652f 25-30,35-37,39-40,45-50
+  s_fd6d9b102e043d::t_902e7a97e368db 61-64,66-68
+  s_fd6d9b102e043d::t_4648f0d5602aeb 16-24,31-34
+pkg/store/postgres/store.go
+  s_fd6d9b102e043d::t_16417b6b88de92 2482-2500
+internal/runtime/llmproxy/lifecycle_reconstruction_lookup.go
+  s_fd6d9b102e043d::t_446be8df1eed83 1-126
+internal/runtime/llmproxy/synthetic_history_strip_test.go
+  s_fd6d9b102e043d::t_14d0f15c860b37 9
+  s_fd6d9b102e043d::t_a9fc1ffd66909a 210-350
+internal/runtime/llmproxy/historystrip/synthetic_history_strip.go
+  s_fd6d9b102e043d::t_da33b63c9d2588 90,115-120,133-146,148-161,166-203,206
+  s_fd6d9b102e043d::t_1f87056b096a18 77
+  s_fd6d9b102e043d::t_0f4300902097c9 360-453
+  s_fd6d9b102e043d::t_e9bb1dd654867c 14-55
+internal/runtime/llmproxy/inline_approval_recovery_test.go
+  s_fd6d9b102e043d::t_52d41d0e3c25cf 17-21,35,39
+  s_fd6d9b102e043d::t_d5a28240dd1f3d 66-67
+pkg/store/sqlite/store.go
+  s_fd6d9b102e043d::t_33478f0372e638 2733-2760
+internal/api/handlers/llm_endpoint.go
+  s_fd6d9b102e043d::t_d60ac751268dcd 970-972
+pkg/store/store.go
+  s_fd6d9b102e043d::t_29c344ad9c2b11 341-345,347-355
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "e69a7506dae44023088c29235d274985dd61d9fa",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+provider/docs/resources/user.md
+  s_55f7a841d7c10e::t_880e1f748c8e7e 19-20,46
+provider/docs/resources/vault_reference.md
+  s_55f7a841d7c10e::t_880e1f748c8e7e 1-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b361589afb5e6fa314a08716c77fee7459e6c7f7",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

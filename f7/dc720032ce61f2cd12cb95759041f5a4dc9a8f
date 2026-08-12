@@ -1,0 +1,27 @@
+internal/api/handlers/gateway.go
+  s_aeeca9dea99c0c::t_af2e6b5a605553 1687-1693
+  s_aeeca9dea99c0c::t_40d01789e21e07 1625-1633
+internal/local/executor/exec.go
+  s_aeeca9dea99c0c::t_d471c58eaabae7 265-273
+  s_aeeca9dea99c0c::t_b0205f200699a4 288
+  s_aeeca9dea99c0c::t_7d88b3c2e4744c 247-253,255-262
+  s_aeeca9dea99c0c::t_55eb324002b752 190-205,207-218,222,224-246,254
+internal/intent/prompts.go
+  s_aeeca9dea99c0c::t_3e832e92ca1463 407-418,421,434-436
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "f7dc720032ce61f2cd12cb95759041f5a4dc9a8f",
+  "prompts": {},
+  "sessions": {
+    "s_aeeca9dea99c0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "29f21bad-67c4-4e04-9440-142cf0795719",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

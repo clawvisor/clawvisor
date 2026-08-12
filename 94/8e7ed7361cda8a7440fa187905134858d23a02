@@ -1,0 +1,35 @@
+internal/runtime/autovault/inbound_shared.go
+  s_5690062ed6cda8::t_7f4ac1951df2c5 1-91,93-255
+  s_5690062ed6cda8::t_5be34b7f0be807 92
+internal/api/handlers/llm_endpoint_test.go
+  s_5690062ed6cda8::t_551cadb4547964 496-545
+  s_5690062ed6cda8::t_4317f87855c324 41-50
+internal/runtime/llmproxy/secret_detection.go
+  s_5690062ed6cda8::t_3f97aa362eaeda 21-27
+  s_5690062ed6cda8::t_2523c6d353f7f5 185,206,209,216-217,227,239,260-262
+  s_5690062ed6cda8::t_838c26204df063 240,245-246,249,255,264-267,269-281
+  s_5690062ed6cda8::t_fa5613b2182349 244,251-254,258-259
+  s_5690062ed6cda8::t_34c48e7ac2e609 268
+internal/api/handlers/llm_endpoint.go
+  s_5690062ed6cda8::t_0cd569f79ca8cc 1093-1095,1131,1166-1195,1253-1254
+pkg/runtime/proxy/inbound_secret_runtime.go
+  s_5690062ed6cda8::t_2dd7eddf9c3a42 281,310,454,458,462,669,715
+  s_5690062ed6cda8::t_00d275f8418da3 947,951,955,959,963,967,971,975,979,983,987
+  s_5690062ed6cda8::t_3f97aa362eaeda 269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "948e7ed7361cda8a7440fa187905134858d23a02",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

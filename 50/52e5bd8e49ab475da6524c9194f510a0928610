@@ -1,0 +1,30 @@
+pkg/store/store.go
+  s_fd6d9b102e043d::t_7b7fcd7240df31 189-196
+  s_fd6d9b102e043d::t_a66930f15ed990 869-877,885
+pkg/store/sqlite/store.go
+  s_fd6d9b102e043d::t_c7938b561a80f3 1700-1710,1722,1726-1727
+internal/api/handlers/tasks.go
+  s_fd6d9b102e043d::t_108e0fbd7c0e81 2527-2536,2539-2541
+  s_fd6d9b102e043d::t_351c899499cbc4 3107-3110
+pkg/store/postgres/store.go
+  s_fd6d9b102e043d::t_db66454a58d1dd 1438-1444,1456,1458
+internal/api/gateway_test.go
+  s_fd6d9b102e043d::t_41998774ecdae5 1183,1218,1233,1242
+  s_fd6d9b102e043d::t_87d872f85fdce6 1148-1182,1184-1217,1219-1232,1234-1241,1243-1256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "5052e5bd8e49ab475da6524c9194f510a0928610",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

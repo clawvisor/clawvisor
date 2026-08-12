@@ -1,0 +1,41 @@
+deploy/terraform/modules/vm-docker/tests/render.tftest.hcl
+  s_55f7a841d7c10e::t_a123a388595259 88-146
+deploy/terraform/modules/vm-docker/templates/cloud-init.yaml.tftpl
+  s_55f7a841d7c10e::t_510e84f7b3a6a9 59-61,63-68,70
+deploy/terraform/modules/vm-docker/aws.tf
+  s_55f7a841d7c10e::t_934e57234bd13e 287-296
+  s_55f7a841d7c10e::t_34c74cd0eba5b2 190-192,194,199-206
+  s_55f7a841d7c10e::t_77c64757d680e1 3-10
+  s_55f7a841d7c10e::t_aca801e8862b50 162-173
+deploy/terraform/modules/vm-docker/outputs.tf
+  s_55f7a841d7c10e::t_5a8ec249e9f061 12-16
+deploy/terraform/modules/vm-docker/tests/validate.tftest.hcl
+  s_55f7a841d7c10e::t_fe166677b857db 126-189
+deploy/terraform/modules/vm-docker/variables.tf
+  s_55f7a841d7c10e::t_d38814d5103a90 196-208
+  s_55f7a841d7c10e::t_c76e50bb5e07f4 175-183
+  s_55f7a841d7c10e::t_6aaf6bf3ce2038 219-228
+  s_55f7a841d7c10e::t_ff85011dda2ee6 241-247
+  s_55f7a841d7c10e::t_868f61467642b6 255-289
+deploy/terraform/modules/vm-docker/templates/deploy.sh.tftpl
+  s_55f7a841d7c10e::t_a3d22280fe8c15 71-85,87-99,101-109
+deploy/terraform/modules/vm-docker/cloudinit.tf
+  s_55f7a841d7c10e::t_89ec9b8684f3cd 28
+  s_55f7a841d7c10e::t_739bc5bfa1f7d9 42-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "78ea9094fd388ed389134f61bc5b834cb55e8a9a",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
