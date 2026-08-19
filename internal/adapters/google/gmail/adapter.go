@@ -858,7 +858,11 @@ func labelIDsParam(params map[string]any, name string) ([]string, error) {
 	seen := make(map[string]struct{}, len(values))
 	for i, rawLabelID := range values {
 		labelID, ok := rawLabelID.(string)
-		if !ok || strings.TrimSpace(labelID) == "" {
+		if !ok {
+			return nil, fmt.Errorf("%s[%d] must be a non-empty string", name, i)
+		}
+		labelID = strings.TrimSpace(labelID)
+		if labelID == "" {
 			return nil, fmt.Errorf("%s[%d] must be a non-empty string", name, i)
 		}
 		if _, duplicate := seen[labelID]; duplicate {

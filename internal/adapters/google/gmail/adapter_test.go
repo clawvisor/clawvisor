@@ -13,6 +13,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -603,6 +604,75 @@ func TestModifyLabels_ValidatesRequest(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestLabelIDsParam_RejectsCanonicalDuplicates(t *testing.T) {
+	_, err := labelIDsParam(map[string]any{
+		"add_label_ids": []any{"  STARRED  ", "STARRED"},
+	}, "add_label_ids")
+	if err == nil {
+		t.Fatal("expected canonical duplicate label ID error")
+	}
+}
+
+func TestModifyLabels_RejectsCanonicalConflictsBeforeHTTP(t *testing.T) {
+	var requests atomic.Int32
+	client := &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			return nil, errors.New("unexpected HTTP request")
+		}),
+	}
+
+	_, err := (&GmailAdapter{}).modifyLabels(context.Background(), client, map[string]any{
+		"message_id":       "msg-1",
+		"add_label_ids":    []any{"  STARRED  "},
+		"remove_label_ids": []any{"STARRED"},
+	})
+	if err == nil {
+		t.Fatal("expected canonical conflicting label changes error")
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("HTTP requests = %d, want 0", requests.Load())
+	}
+}
+
+func TestModifyLabels_SendsCanonicalLabelIDs(t *testing.T) {
+	var sentPayload struct {
+		AddLabelIDs    []string `json:"addLabelIds"`
+		RemoveLabelIDs []string `json:"removeLabelIds"`
+	}
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			data, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatalf("read request body: %v", err)
+			}
+			if err := json.Unmarshal(data, &sentPayload); err != nil {
+				t.Fatalf("unmarshal modify payload: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"msg-1","threadId":"thread-1","labelIds":[]}`)),
+			}, nil
+		}),
+	}
+
+	_, err := (&GmailAdapter{}).modifyLabels(context.Background(), client, map[string]any{
+		"message_id":       "msg-1",
+		"add_label_ids":    []any{"  Label_1  "},
+		"remove_label_ids": []any{" INBOX "},
+	})
+	if err != nil {
+		t.Fatalf("modifyLabels error: %v", err)
+	}
+	if got, want := sentPayload.AddLabelIDs, []string{"Label_1"}; !slices.Equal(got, want) {
+		t.Fatalf("addLabelIds = %v, want %v", got, want)
+	}
+	if got, want := sentPayload.RemoveLabelIDs, []string{"INBOX"}; !slices.Equal(got, want) {
+		t.Fatalf("removeLabelIds = %v, want %v", got, want)
 	}
 }
 
