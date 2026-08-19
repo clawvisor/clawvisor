@@ -56,7 +56,7 @@ func (a *GmailAdapter) ServiceID() string { return serviceID }
 func (a *GmailAdapter) SupportedActions() []string {
 	return []string{
 		"list_messages", "get_message", "get_message_raw", "get_thread", "get_attachment",
-		"send_message", "create_draft", "archive_message",
+		"send_message", "create_draft", "archive_message", "modify_labels",
 	}
 }
 
@@ -122,6 +122,11 @@ func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 			return nil, err
 		}
 		return a.archiveMessage(ctx, client, req.Params)
+	case "modify_labels":
+		if err := a.requireModifyScope(req.Credential, "modify_labels", "label-modification permissions"); err != nil {
+			return nil, err
+		}
+		return a.modifyLabels(ctx, client, req.Params)
 	default:
 		return nil, fmt.Errorf("gmail: unsupported action %q", req.Action)
 	}
@@ -770,6 +775,99 @@ func (a *GmailAdapter) archiveMessage(ctx context.Context, client *http.Client, 
 	}
 	summary := format.Summary("Archived message %s", msgID)
 	return &adapters.Result{Summary: summary, Data: result}, nil
+}
+
+// ── modify_labels ────────────────────────────────────────────────────────────
+
+func (a *GmailAdapter) modifyLabels(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	msgID, _ := params["message_id"].(string)
+	if msgID == "" {
+		return nil, fmt.Errorf("gmail modify_labels: message_id is required")
+	}
+
+	addLabelIDs, err := labelIDsParam(params, "add_label_ids")
+	if err != nil {
+		return nil, fmt.Errorf("gmail modify_labels: %w", err)
+	}
+	removeLabelIDs, err := labelIDsParam(params, "remove_label_ids")
+	if err != nil {
+		return nil, fmt.Errorf("gmail modify_labels: %w", err)
+	}
+	if len(addLabelIDs) == 0 && len(removeLabelIDs) == 0 {
+		return nil, fmt.Errorf("gmail modify_labels: at least one of add_label_ids or remove_label_ids is required")
+	}
+	addSet := make(map[string]struct{}, len(addLabelIDs))
+	for _, labelID := range addLabelIDs {
+		addSet[labelID] = struct{}{}
+	}
+	for _, labelID := range removeLabelIDs {
+		if _, ok := addSet[labelID]; ok {
+			return nil, fmt.Errorf("gmail modify_labels: label %q cannot be added and removed in the same request", labelID)
+		}
+	}
+
+	payload := map[string][]string{}
+	if len(addLabelIDs) > 0 {
+		payload["addLabelIds"] = addLabelIDs
+	}
+	if len(removeLabelIDs) > 0 {
+		payload["removeLabelIds"] = removeLabelIDs
+	}
+	endpoint := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/modify", url.PathEscape(msgID))
+	var modifyResp struct {
+		ID       string   `json:"id"`
+		ThreadID string   `json:"threadId"`
+		LabelIDs []string `json:"labelIds"`
+	}
+	if err := gmailPOST(ctx, client, endpoint, payload, &modifyResp); err != nil {
+		return nil, fmt.Errorf("gmail modify_labels: %w", err)
+	}
+
+	return &adapters.Result{
+		Summary: format.Summary("Updated labels on message %s", msgID),
+		Data: map[string]any{
+			"message_id": modifyResp.ID,
+			"thread_id":  modifyResp.ThreadID,
+			"labels":     modifyResp.LabelIDs,
+		},
+	}, nil
+}
+
+func labelIDsParam(params map[string]any, name string) ([]string, error) {
+	raw, ok := params[name]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	var values []any
+	switch typed := raw.(type) {
+	case []any:
+		values = typed
+	case []string:
+		values = make([]any, len(typed))
+		for i, value := range typed {
+			values[i] = value
+		}
+	default:
+		return nil, fmt.Errorf("%s must be an array of label IDs", name)
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("%s must not be empty", name)
+	}
+
+	labelIDs := make([]string, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for i, rawLabelID := range values {
+		labelID, ok := rawLabelID.(string)
+		if !ok || strings.TrimSpace(labelID) == "" {
+			return nil, fmt.Errorf("%s[%d] must be a non-empty string", name, i)
+		}
+		if _, duplicate := seen[labelID]; duplicate {
+			return nil, fmt.Errorf("%s contains duplicate label ID %q", name, labelID)
+		}
+		seen[labelID] = struct{}{}
+		labelIDs[i] = labelID
+	}
+	return labelIDs, nil
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────

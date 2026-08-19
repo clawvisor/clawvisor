@@ -117,3 +117,13 @@ actions:
     override: go
     params:
       message_id: { type: string, required: true }
+
+  modify_labels:
+    display_name: "Modify message labels"
+    risk: { category: write, sensitivity: low, description: "Add or remove labels on a message" }
+    scopes: ["https://www.googleapis.com/auth/gmail.modify"]
+    override: go
+    params:
+      message_id: { type: string, required: true }
+      add_label_ids: { type: array, description: "Label IDs to add (for example, STARRED or a user label ID)" }
+      remove_label_ids: { type: array, description: "Label IDs to remove (for example, INBOX or UNREAD)" }

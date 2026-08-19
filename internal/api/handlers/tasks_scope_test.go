@@ -81,3 +81,16 @@ func TestCheckTaskScope_AliasFallsBackToBase(t *testing.T) {
 		t.Fatalf("expected fallback match on google.calendar, got %s", match.MatchedAction.Service)
 	}
 }
+
+func TestCheckTaskScope_GmailModifyLabelsRequiresExactAuthorization(t *testing.T) {
+	task := &store.Task{AuthorizedActions: []store.TaskAction{
+		{Service: "google.gmail", Action: "modify_labels", ExpectedUse: "Organize triaged messages"},
+	}}
+
+	if match := CheckTaskScope(task, "google.gmail", "", "modify_labels"); !match.InScope {
+		t.Fatal("expected explicitly authorized modify_labels request to be in scope")
+	}
+	if match := CheckTaskScope(task, "google.gmail", "", "archive_message"); match.InScope {
+		t.Fatal("archive_message must remain out of scope when only modify_labels is authorized")
+	}
+}

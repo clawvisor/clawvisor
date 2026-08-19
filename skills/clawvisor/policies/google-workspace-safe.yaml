@@ -17,9 +17,9 @@ rules:
     reason: Sending email requires your approval
 
   - service: google.gmail
-    actions: [archive_message]
+    actions: [archive_message, modify_labels]
     require_approval: true
-    reason: Archiving email requires your approval
+    reason: Archiving email or changing labels requires your approval
 
   - service: google.gmail
     actions: [delete_message]
