@@ -23,6 +23,7 @@ type Config struct {
 	DefaultTimeout      Duration          `yaml:"default_timeout"`
 	MaxOutputSize       int64             `yaml:"max_output_size"`
 	MaxConcurrentReqs   int               `yaml:"max_concurrent_requests"`
+	MaxConcurrentPerSvc int               `yaml:"max_concurrent_per_service,omitempty"`
 	Env                 map[string]string `yaml:"env"`
 	AllowedCloudOrigins []string          `yaml:"allowed_cloud_origins"`
 }
@@ -65,6 +66,7 @@ func DefaultConfig(baseDir string) *Config {
 		DefaultTimeout:      Duration{30 * time.Second},
 		MaxOutputSize:       1048576, // 1 MB
 		MaxConcurrentReqs:   10,
+		MaxConcurrentPerSvc: 0, // 0 = derive from MaxConcurrentReqs
 		Env:                 make(map[string]string),
 		AllowedCloudOrigins: []string{"https://app.clawvisor.com"},
 	}
@@ -101,6 +103,9 @@ func Load(baseDir string) (*Config, error) {
 	}
 	if cfg.MaxConcurrentReqs < 1 {
 		cfg.MaxConcurrentReqs = 10
+	}
+	if cfg.MaxConcurrentPerSvc > cfg.MaxConcurrentReqs {
+		cfg.MaxConcurrentPerSvc = cfg.MaxConcurrentReqs
 	}
 	if cfg.MaxOutputSize < 1 {
 		cfg.MaxOutputSize = 1048576
