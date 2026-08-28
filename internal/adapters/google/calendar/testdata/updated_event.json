@@ -1,0 +1,27 @@
+{
+  "id": "event-123",
+  "etag": "\"event-v2\"",
+  "sequence": 8,
+  "summary": "Atlas approval review (updated)",
+  "status": "confirmed",
+  "start": {
+    "dateTime": "2026-08-28T16:00:00Z",
+    "timeZone": "UTC"
+  },
+  "end": {
+    "dateTime": "2026-08-28T16:30:00Z",
+    "timeZone": "UTC"
+  },
+  "attendees": [
+    {
+      "email": "self@example.com",
+      "responseStatus": "accepted",
+      "self": true
+    },
+    {
+      "email": "organizer@example.com",
+      "responseStatus": "accepted",
+      "organizer": true
+    }
+  ]
+}
