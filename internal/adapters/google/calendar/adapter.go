@@ -292,8 +292,9 @@ func (a *CalendarAdapter) getEvent(ctx context.Context, client *http.Client, par
 	}
 
 	event := calendarEventData(item, version)
+	summary, _ := event["summary"].(string)
 	return &adapters.Result{
-		Summary: format.Summary("Event: %s on %s", item.Summary, event["start"]),
+		Summary: format.Summary("Event: %s", summary),
 		Data:    event,
 	}, nil
 }

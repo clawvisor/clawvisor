@@ -92,6 +92,9 @@ func TestGetEventExposesProviderETagAndVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getEvent: %v", err)
 	}
+	if result.Summary != "Event: Atlas approval review" {
+		t.Fatalf("summary = %q, want catalog-compatible summary", result.Summary)
+	}
 	data, ok := result.Data.(map[string]any)
 	if !ok {
 		t.Fatalf("result data = %T, want map[string]any", result.Data)
