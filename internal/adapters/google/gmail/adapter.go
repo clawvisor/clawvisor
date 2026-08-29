@@ -147,6 +147,7 @@ func (a *GmailAdapter) httpClient(ctx context.Context, credBytes []byte) (*http.
 
 type msgListItem struct {
 	ID       string   `json:"id"`
+	ThreadID string   `json:"thread_id"`
 	From     string   `json:"from"`
 	Subject  string   `json:"subject"`
 	Snippet  string   `json:"snippet"`
@@ -206,6 +207,7 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 		}
 		item := msgListItem{
 			ID:       ids[i],
+			ThreadID: meta.threadID,
 			From:     format.SanitizeHeader(meta.from, format.MaxFieldLen),
 			Subject:  format.SanitizeText(meta.subject, format.MaxFieldLen),
 			Snippet:  format.SanitizeText(meta.snippet, format.MaxSnippetLen),
@@ -1143,9 +1145,9 @@ func fetchLabelMap(ctx context.Context, client *http.Client) map[string]string {
 // ── Message parsing helpers ───────────────────────────────────────────────────
 
 type msgMeta struct {
-	from, subject, snippet, date string
-	isUnread                     bool
-	labelIDs                     []string
+	threadID, from, subject, snippet, date string
+	isUnread                               bool
+	labelIDs                               []string
 }
 
 // gmailBatchMaxRequests is Gmail's documented per-batch cap.
@@ -1313,6 +1315,7 @@ func parseBatchSubResponse(body []byte) (msgMeta, error) {
 		return msgMeta{}, fmt.Errorf("gmail batch sub: %d: %s", sub.StatusCode, format.Truncate(string(subBody), 200))
 	}
 	var raw struct {
+		ThreadID string   `json:"threadId"`
 		Snippet  string   `json:"snippet"`
 		LabelIds []string `json:"labelIds"`
 		Payload  struct {
@@ -1322,7 +1325,11 @@ func parseBatchSubResponse(body []byte) (msgMeta, error) {
 	if err := json.Unmarshal(subBody, &raw); err != nil {
 		return msgMeta{}, fmt.Errorf("gmail batch sub decode: %w", err)
 	}
-	meta := msgMeta{snippet: raw.Snippet, labelIDs: raw.LabelIds}
+	meta := msgMeta{
+		threadID: raw.ThreadID,
+		snippet:  raw.Snippet,
+		labelIDs: raw.LabelIds,
+	}
 	for _, h := range raw.Payload.Headers {
 		switch strings.ToLower(h.Name) {
 		case "from":

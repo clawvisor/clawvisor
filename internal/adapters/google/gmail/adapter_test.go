@@ -895,8 +895,8 @@ func (s *batchTestServer) serveBatch(req *http.Request) (*http.Response, error) 
 		if status >= 400 {
 			subBody = fmt.Sprintf(`{"error":{"code":%d,"message":"mock failure"}}`, status)
 		} else {
-			subBody = fmt.Sprintf(`{"snippet":"Snippet for %s","labelIds":["INBOX","UNREAD"],"payload":{"headers":[{"name":"From","value":"sender-%s@example.com"},{"name":"Subject","value":"Subject %s"},{"name":"Date","value":"Date-%s"}]}}`,
-				sub.msgID, sub.msgID, sub.msgID, sub.msgID)
+			subBody = fmt.Sprintf(`{"threadId":"thread-%s","snippet":"Snippet for %s","labelIds":["INBOX","UNREAD"],"payload":{"headers":[{"name":"From","value":"sender-%s@example.com"},{"name":"Subject","value":"Subject %s"},{"name":"Date","value":"Date-%s"}]}}`,
+				sub.msgID, sub.msgID, sub.msgID, sub.msgID, sub.msgID)
 		}
 		fmt.Fprintf(w, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
 			status, http.StatusText(status), len(subBody), subBody)
@@ -960,6 +960,14 @@ func TestListMessages_BatchSuccess(t *testing.T) {
 	for i, item := range items {
 		if item.ID != ids[i] {
 			t.Errorf("items[%d].ID = %q, want %q", i, item.ID, ids[i])
+		}
+		if want := "thread-" + ids[i]; item.ThreadID != want {
+			t.Errorf(
+				"items[%d].ThreadID = %q, want %q",
+				i,
+				item.ThreadID,
+				want,
+			)
 		}
 		if want := fmt.Sprintf("sender-%s@example.com", ids[i]); item.From != want {
 			t.Errorf("items[%d].From = %q, want %q", i, item.From, want)
