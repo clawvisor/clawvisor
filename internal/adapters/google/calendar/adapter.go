@@ -802,12 +802,20 @@ func calendarAttendeePatch(raw any) ([]map[string]string, error) {
 	}
 	attendees := make([]map[string]string, 0, len(values))
 	for _, rawValue := range values {
-		email, ok := rawValue.(string)
+		var email string
+		switch attendee := rawValue.(type) {
+		case string:
+			email = attendee
+		case map[string]any:
+			email, _ = attendee["email"].(string)
+		case map[string]string:
+			email = attendee["email"]
+		}
 		email = strings.TrimSpace(email)
-		if !ok || email == "" {
+		if email == "" {
 			return nil, &adapters.ExecutionFailure{
 				Kind: adapters.ExecutionFailureDefinite,
-				Err:  fmt.Errorf("attendees must contain non-empty email strings"),
+				Err:  fmt.Errorf("attendees must contain non-empty email strings or email objects"),
 			}
 		}
 		attendees = append(attendees, map[string]string{"email": email})

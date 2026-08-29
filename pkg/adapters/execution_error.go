@@ -42,7 +42,7 @@ func (e *ExecutionFailure) Unwrap() error {
 // unwrap chain.
 func AsExecutionFailure(err error) (*ExecutionFailure, bool) {
 	var failure *ExecutionFailure
-	if !errors.As(err, &failure) {
+	if !errors.As(err, &failure) || failure == nil {
 		return nil, false
 	}
 	return failure, true

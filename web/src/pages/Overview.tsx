@@ -313,6 +313,7 @@ interface ChartRow {
   time: string
   executed: number
   blocked: number
+  errors: number
   pending: number
 }
 
@@ -326,6 +327,7 @@ function useChartColors() {
     return {
       executed: r('--color-success'),
       blocked: r('--color-danger'),
+      errors: r('--color-danger'),
       pending: r('--color-warning'),
       axisTick: style.getPropertyValue('--color-axis-tick').trim(),
       tooltipBg: style.getPropertyValue('--color-tooltip-bg').trim(),
@@ -369,14 +371,25 @@ function ActivityChart({ data }: { data: ActivityBucket[] }) {
       'inline_task_approved',
       'inline_task_auto_approved',
     ])
+    const errorOutcomes = new Set([
+      'denied',
+      'error',
+      'http_error',
+      'timeout',
+      'provider_definite_failure',
+      'provider_stale_version',
+      'provider_ambiguous',
+      'provider_timeout',
+    ])
     for (const b of data) {
       const ms = new Date(b.bucket).getTime()
       if (!counts.has(ms)) {
-        counts.set(ms, { time: '', executed: 0, blocked: 0, pending: 0 })
+        counts.set(ms, { time: '', executed: 0, blocked: 0, errors: 0, pending: 0 })
       }
       const row = counts.get(ms)!
       if (successOutcomes.has(b.outcome)) row.executed += b.count
       else if (b.outcome === 'blocked' || b.outcome === 'restricted') row.blocked += b.count
+      else if (errorOutcomes.has(b.outcome)) row.errors += b.count
       else row.pending += b.count
     }
 
@@ -389,7 +402,7 @@ function ActivityChart({ data }: { data: ActivityBucket[] }) {
       const t = new Date(ms)
       const label = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
       const existing = counts.get(ms)
-      result.push(existing ? { ...existing, time: label } : { time: label, executed: 0, blocked: 0, pending: 0 })
+      result.push(existing ? { ...existing, time: label } : { time: label, executed: 0, blocked: 0, errors: 0, pending: 0 })
     }
     return result
   }, [data])
@@ -405,6 +418,7 @@ function ActivityChart({ data }: { data: ActivityBucket[] }) {
           />
           <Bar dataKey="executed" stackId="1" stroke={colors.executed} fill={colors.executed} fillOpacity={0.85} name="Executed" />
           <Bar dataKey="blocked" stackId="1" stroke={colors.blocked} fill={colors.blocked} fillOpacity={0.85} name="Blocked" />
+          <Bar dataKey="errors" stackId="1" stroke={colors.errors} fill={colors.errors} fillOpacity={0.55} name="Errors" />
           <Bar dataKey="pending" stackId="1" stroke={colors.pending} fill={colors.pending} fillOpacity={0.85} name="Pending" />
         </BarChart>
       </ResponsiveContainer>

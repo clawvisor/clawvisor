@@ -76,6 +76,25 @@ func requireFailure(t *testing.T, err error, kind adapters.ExecutionFailureKind)
 	return failure
 }
 
+func TestCalendarAttendeePatchAcceptsEmailObjects(t *testing.T) {
+	attendees, err := calendarAttendeePatch([]any{
+		"first@example.com",
+		map[string]any{"email": " second@example.com "},
+		map[string]string{"email": "third@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("calendarAttendeePatch returned error: %v", err)
+	}
+	want := []map[string]string{
+		{"email": "first@example.com"},
+		{"email": "second@example.com"},
+		{"email": "third@example.com"},
+	}
+	if fmt.Sprint(attendees) != fmt.Sprint(want) {
+		t.Fatalf("attendees = %#v, want %#v", attendees, want)
+	}
+}
+
 func TestGetEventExposesProviderETagAndVersion(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method != http.MethodGet || req.URL.Path != "/calendar/v3/calendars/primary/events/event-123" {
