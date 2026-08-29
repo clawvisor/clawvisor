@@ -84,3 +84,22 @@ func TestOAuthConfigForAliasUsesExplicitMapping(t *testing.T) {
 		t.Fatalf("unmapped client = %q", unmapped.ClientID)
 	}
 }
+
+func TestStoredOAuthConfigOverridesDefaultClient(t *testing.T) {
+	stored := &Stored{
+		OAuthClientID:     "bound-client",
+		OAuthClientSecret: "bound-secret",
+	}
+	base := &oauth2.Config{
+		ClientID:     "default-client",
+		ClientSecret: "default-secret",
+	}
+	config := stored.OAuthConfig(base)
+	if config.ClientID != "bound-client" ||
+		config.ClientSecret != "bound-secret" {
+		t.Fatalf("bound config = %#v", config)
+	}
+	if base.ClientID != "default-client" {
+		t.Fatal("credential binding mutated the default OAuth config")
+	}
+}

@@ -143,7 +143,9 @@ func (a *GmailAdapter) httpClient(ctx context.Context, credBytes []byte, config 
 	if err != nil {
 		return nil, fmt.Errorf("gmail: %w", err)
 	}
-	oauthConfig := a.OAuthConfigForAlias(config["_clawvisor_alias"])
+	oauthConfig := cred.OAuthConfig(
+		a.OAuthConfigForAlias(config["_clawvisor_alias"]),
+	)
 	ts := oauthConfig.TokenSource(ctx, cred.ToOAuth2Token())
 	return oauth2.NewClient(ctx, ts), nil
 }

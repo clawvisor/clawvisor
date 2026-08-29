@@ -105,7 +105,7 @@ func (a *SheetsAdapter) httpClient(ctx context.Context, credBytes []byte, config
 	if err != nil {
 		return nil, fmt.Errorf("sheets: %w", err)
 	}
-	cfg := a.OAuthConfigForAlias(config["_clawvisor_alias"])
+	cfg := cred.OAuthConfig(a.OAuthConfigForAlias(config["_clawvisor_alias"]))
 	if cfg == nil {
 		return nil, fmt.Errorf("sheets: OAuth client credentials not configured")
 	}

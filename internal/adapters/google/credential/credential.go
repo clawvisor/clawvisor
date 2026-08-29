@@ -19,12 +19,14 @@ import (
 
 // Stored is the JSON structure saved (encrypted) in the vault under key "google".
 type Stored struct {
-	Type          string    `json:"type"`
-	AccessToken   string    `json:"access_token"`
-	RefreshToken  string    `json:"refresh_token"`
-	Expiry        time.Time `json:"expiry"`
-	Scopes        []string  `json:"scopes"`
-	ScopesGranted bool      `json:"scopes_granted,omitempty"`
+	Type              string    `json:"type"`
+	AccessToken       string    `json:"access_token"`
+	RefreshToken      string    `json:"refresh_token"`
+	Expiry            time.Time `json:"expiry"`
+	Scopes            []string  `json:"scopes"`
+	ScopesGranted     bool      `json:"scopes_granted,omitempty"`
+	OAuthClientID     string    `json:"oauth_client_id,omitempty"`
+	OAuthClientSecret string    `json:"oauth_client_secret,omitempty"`
 }
 
 // Parse unmarshals vault credential bytes into a Stored credential.
@@ -73,6 +75,21 @@ func (c *Stored) ToOAuth2Token() *oauth2.Token {
 		Expiry:       c.Expiry,
 		TokenType:    "Bearer",
 	}
+}
+
+// OAuthConfig applies a credential-bound OAuth application when present.
+// Binding the app to the encrypted credential keeps refresh tokens issued by
+// different Workspace OAuth clients usable without guessing from account data.
+func (c *Stored) OAuthConfig(base *oauth2.Config) *oauth2.Config {
+	if base == nil {
+		return nil
+	}
+	config := *base
+	if c.OAuthClientID != "" && c.OAuthClientSecret != "" {
+		config.ClientID = c.OAuthClientID
+		config.ClientSecret = c.OAuthClientSecret
+	}
+	return &config
 }
 
 // OAuthConfigForAlias selects an explicitly configured OAuth application for
