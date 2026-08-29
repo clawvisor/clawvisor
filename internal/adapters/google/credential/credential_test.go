@@ -64,9 +64,9 @@ func TestHasAllScopes(t *testing.T) {
 }
 
 func TestOAuthConfigForAliasUsesExplicitMapping(t *testing.T) {
-	t.Setenv("GOOGLE_OAUTH_ALIAS__EC", "vijay@eightcapital.com")
-	t.Setenv("GOOGLE_CLIENT_ID__EC", "ec-client")
-	t.Setenv("GOOGLE_CLIENT_SECRET__EC", "ec-secret")
+	t.Setenv("GOOGLE_EC_ALIAS", "vijay@eightcapital.com")
+	t.Setenv("GOOGLE_EC_CLIENT_ID", "ec-client")
+	t.Setenv("GOOGLE_EC_CLIENT_SECRET", "ec-secret")
 	base := &oauth2.Config{
 		ClientID:     "default-client",
 		ClientSecret: "default-secret",

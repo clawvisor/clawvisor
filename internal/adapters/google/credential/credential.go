@@ -88,6 +88,18 @@ func OAuthConfigForAlias(base *oauth2.Config, alias string) *oauth2.Config {
 		return nil
 	}
 	config := *base
+	if strings.EqualFold(
+		strings.TrimSpace(os.Getenv("GOOGLE_EC_ALIAS")),
+		strings.TrimSpace(alias),
+	) {
+		clientID := os.Getenv("GOOGLE_EC_CLIENT_ID")
+		clientSecret := os.Getenv("GOOGLE_EC_CLIENT_SECRET")
+		if clientID != "" && clientSecret != "" {
+			config.ClientID = clientID
+			config.ClientSecret = clientSecret
+			return &config
+		}
+	}
 	for _, entry := range os.Environ() {
 		name, mappedAlias, found := strings.Cut(entry, "=")
 		if !found || !strings.HasPrefix(name, "GOOGLE_OAUTH_ALIAS__") {
