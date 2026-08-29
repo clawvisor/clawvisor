@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -71,6 +73,39 @@ func (c *Stored) ToOAuth2Token() *oauth2.Token {
 		Expiry:       c.Expiry,
 		TokenType:    "Bearer",
 	}
+}
+
+// OAuthConfigForAlias selects an explicitly configured OAuth application for
+// one account alias. Mappings use three variables with the same suffix:
+//
+//	GOOGLE_OAUTH_ALIAS__EC=vijay@eightcapital.com
+//	GOOGLE_CLIENT_ID__EC=...
+//	GOOGLE_CLIENT_SECRET__EC=...
+//
+// Unknown or incomplete mappings retain the default application.
+func OAuthConfigForAlias(base *oauth2.Config, alias string) *oauth2.Config {
+	if base == nil {
+		return nil
+	}
+	config := *base
+	for _, entry := range os.Environ() {
+		name, mappedAlias, found := strings.Cut(entry, "=")
+		if !found || !strings.HasPrefix(name, "GOOGLE_OAUTH_ALIAS__") {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(mappedAlias), strings.TrimSpace(alias)) {
+			continue
+		}
+		suffix := strings.TrimPrefix(name, "GOOGLE_OAUTH_ALIAS__")
+		clientID := os.Getenv("GOOGLE_CLIENT_ID__" + suffix)
+		clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET__" + suffix)
+		if clientID != "" && clientSecret != "" {
+			config.ClientID = clientID
+			config.ClientSecret = clientSecret
+		}
+		break
+	}
+	return &config
 }
 
 // MergeScopes returns the sorted set union of existing and additional scopes.

@@ -75,6 +75,10 @@ func (a *GmailAdapter) OAuthConfig() *oauth2.Config {
 	}
 }
 
+func (a *GmailAdapter) OAuthConfigForAlias(alias string) *oauth2.Config {
+	return credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+}
+
 func (a *GmailAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
 	return credential.FromToken(token, gmailScopes, false)
 }
@@ -84,8 +88,8 @@ func (a *GmailAdapter) ValidateCredential(credBytes []byte) error {
 }
 
 // FetchIdentity returns the Google account email for auto-alias detection.
-func (a *GmailAdapter) FetchIdentity(ctx context.Context, credBytes []byte, _ map[string]string) (string, error) {
-	client, err := a.httpClient(ctx, credBytes)
+func (a *GmailAdapter) FetchIdentity(ctx context.Context, credBytes []byte, config map[string]string) (string, error) {
+	client, err := a.httpClient(ctx, credBytes, config)
 	if err != nil {
 		return "", err
 	}
@@ -94,7 +98,7 @@ func (a *GmailAdapter) FetchIdentity(ctx context.Context, credBytes []byte, _ ma
 
 // Execute runs a Gmail action. Credential is injected by the gateway.
 func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	client, err := a.httpClient(ctx, req.Credential)
+	client, err := a.httpClient(ctx, req.Credential, req.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -134,12 +138,13 @@ func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 
 // ── HTTP client from stored credential ───────────────────────────────────────
 
-func (a *GmailAdapter) httpClient(ctx context.Context, credBytes []byte) (*http.Client, error) {
+func (a *GmailAdapter) httpClient(ctx context.Context, credBytes []byte, config map[string]string) (*http.Client, error) {
 	cred, err := credential.Parse(credBytes)
 	if err != nil {
 		return nil, fmt.Errorf("gmail: %w", err)
 	}
-	ts := a.OAuthConfig().TokenSource(ctx, cred.ToOAuth2Token())
+	oauthConfig := a.OAuthConfigForAlias(config["_clawvisor_alias"])
+	ts := oauthConfig.TokenSource(ctx, cred.ToOAuth2Token())
 	return oauth2.NewClient(ctx, ts), nil
 }
 

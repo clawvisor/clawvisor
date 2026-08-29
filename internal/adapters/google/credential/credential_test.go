@@ -1,6 +1,10 @@
 package credential
 
-import "testing"
+import (
+	"testing"
+
+	"golang.org/x/oauth2"
+)
 
 func TestMissingScopes(t *testing.T) {
 	tests := []struct {
@@ -56,5 +60,27 @@ func TestHasAllScopes(t *testing.T) {
 	}
 	if HasAllScopes([]string{"a"}, []string{"a", "b"}) {
 		t.Fatal("expected false when scope missing")
+	}
+}
+
+func TestOAuthConfigForAliasUsesExplicitMapping(t *testing.T) {
+	t.Setenv("GOOGLE_OAUTH_ALIAS__EC", "vijay@eightcapital.com")
+	t.Setenv("GOOGLE_CLIENT_ID__EC", "ec-client")
+	t.Setenv("GOOGLE_CLIENT_SECRET__EC", "ec-secret")
+	base := &oauth2.Config{
+		ClientID:     "default-client",
+		ClientSecret: "default-secret",
+	}
+
+	mapped := OAuthConfigForAlias(base, "VIJAY@EIGHTCAPITAL.COM")
+	if mapped.ClientID != "ec-client" || mapped.ClientSecret != "ec-secret" {
+		t.Fatalf("mapped config = %#v", mapped)
+	}
+	if base.ClientID != "default-client" {
+		t.Fatal("alias selection mutated the default OAuth config")
+	}
+	unmapped := OAuthConfigForAlias(base, "vijay@vantedgeai.com")
+	if unmapped.ClientID != "default-client" {
+		t.Fatalf("unmapped client = %q", unmapped.ClientID)
 	}
 }

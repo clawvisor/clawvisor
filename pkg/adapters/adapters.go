@@ -98,6 +98,13 @@ type OAuthCredentialProvider interface {
 	OAuthClientCredentials() (clientID, clientSecret string)
 }
 
+// AliasOAuthConfigProvider lets one service use distinct OAuth applications
+// for explicitly named account aliases. This is useful when accounts belong
+// to different Google Workspace organizations with separate OAuth audiences.
+type AliasOAuthConfigProvider interface {
+	OAuthConfigForAlias(alias string) *oauth2.Config
+}
+
 // NoopOAuthProvider is a provider that always returns empty credentials.
 // Useful in tests where OAuth configuration is not needed.
 type NoopOAuthProvider struct{}

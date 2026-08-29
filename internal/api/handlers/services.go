@@ -452,6 +452,16 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"services": services})
 }
 
+func oauthConfigForAlias(
+	adapter adapters.Adapter,
+	alias string,
+) *oauth2.Config {
+	if provider, ok := adapter.(adapters.AliasOAuthConfigProvider); ok {
+		return provider.OAuthConfigForAlias(alias)
+	}
+	return adapter.OAuthConfig()
+}
+
 // OAuthGetURL returns the OAuth2 authorization URL as JSON without redirecting.
 // The client fetches this endpoint (with Authorization header) and then navigates
 // to the returned URL — e.g. window.open(url, '_blank').
@@ -496,13 +506,6 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	oauthCfg := adapter.OAuthConfig()
-	if oauthCfg == nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service does not use OAuth2")
-		return
-	}
-	oauthCfg.RedirectURL = h.oauthRedirectURL()
-
 	alias := r.URL.Query().Get("alias")
 	if alias == "" {
 		alias = "default"
@@ -511,6 +514,12 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -, ., @, +)")
 		return
 	}
+	oauthCfg := oauthConfigForAlias(adapter, alias)
+	if oauthCfg == nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service does not use OAuth2")
+		return
+	}
+	oauthCfg.RedirectURL = h.oauthRedirectURL()
 
 	newAccount := r.URL.Query().Get("new_account") == "true"
 
@@ -605,13 +614,6 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	oauthCfg := adapter.OAuthConfig()
-	if oauthCfg == nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service does not use OAuth2")
-		return
-	}
-	oauthCfg.RedirectURL = h.oauthRedirectURL()
-
 	alias := r.URL.Query().Get("alias")
 	if alias == "" {
 		alias = "default"
@@ -620,6 +622,12 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -, ., @, +)")
 		return
 	}
+	oauthCfg := oauthConfigForAlias(adapter, alias)
+	if oauthCfg == nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service does not use OAuth2")
+		return
+	}
+	oauthCfg.RedirectURL = h.oauthRedirectURL()
 
 	mergedScopes, _ := h.resolveOAuthScopes(r.Context(), user.ID, serviceID, alias, adapter)
 
@@ -681,7 +689,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	oauthCfg := adapter.OAuthConfig()
+	oauthCfg := oauthConfigForAlias(adapter, entry.Alias)
 	oauthCfg.RedirectURL = h.oauthRedirectURL()
 	// Use the merged scopes stored during URL generation.
 	if len(entry.Scopes) > 0 {
@@ -999,7 +1007,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			TokenPath:    adapterTokenPath(adapter),
 			ExpiresAt:    time.Now().Add(10 * time.Minute),
 		})
-		oauthCfg := adapter.OAuthConfig()
+		oauthCfg := oauthConfigForAlias(adapter, alias)
 		oauthCfg.RedirectURL = h.oauthRedirectURL()
 		oauthCfg.Scopes = mergedScopes
 		authURL := oauthAuthURL(oauthCfg, stateToken, alias != "" && alias != "default", adapterScopeParam(adapter))

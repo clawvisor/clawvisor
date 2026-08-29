@@ -2423,15 +2423,19 @@ func executeAdapterRequest(
 
 	// Fetch per-user service config (variable values) if stored.
 	var config map[string]string
+	alias := serviceAlias
+	if alias == "" {
+		alias = "default"
+	}
 	if st != nil {
-		alias := serviceAlias
-		if alias == "" {
-			alias = "default"
-		}
 		if sc, err := st.GetServiceConfig(ctx, userID, serviceType, alias); err == nil {
 			_ = json.Unmarshal(sc.Config, &config)
 		}
 	}
+	if config == nil {
+		config = make(map[string]string)
+	}
+	config["_clawvisor_alias"] = alias
 
 	result, err := adapter.Execute(ctx, adapters.Request{
 		Action:     action,
