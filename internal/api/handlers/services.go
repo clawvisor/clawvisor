@@ -1012,6 +1012,11 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		oauthCfg := oauthConfigForAlias(adapter, alias)
+		if oauthCfg == nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "OAuth client configuration is unavailable")
+			return
+		}
 		stateToken := uuid.New().String()
 		h.oauthStore.StoreOAuth(stateToken, oauthStateEntry{
 			UserID:       user.ID,
@@ -1025,11 +1030,6 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			TokenPath:    adapterTokenPath(adapter),
 			ExpiresAt:    time.Now().Add(10 * time.Minute),
 		})
-		oauthCfg := oauthConfigForAlias(adapter, alias)
-		if oauthCfg == nil {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "OAuth client configuration is unavailable")
-			return
-		}
 		oauthCfg.RedirectURL = h.oauthRedirectURL()
 		oauthCfg.Scopes = mergedScopes
 		authURL := oauthAuthURL(oauthCfg, stateToken, alias != "" && alias != "default", adapterScopeParam(adapter))

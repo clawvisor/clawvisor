@@ -151,6 +151,11 @@ func (a *GmailAdapter) httpClient(ctx context.Context, credBytes []byte, alias s
 	oauthConfig := cred.OAuthConfig(
 		a.OAuthConfigForAlias(alias),
 	)
+	if oauthConfig == nil {
+		return nil, fmt.Errorf("gmail: OAuth client credentials not configured")
+	}
+	oauthConfig.Scopes = gmailScopes
+	oauthConfig.Endpoint = google.Endpoint
 	ts := oauthConfig.TokenSource(ctx, cred.ToOAuth2Token())
 	return oauth2.NewClient(ctx, ts), nil
 }

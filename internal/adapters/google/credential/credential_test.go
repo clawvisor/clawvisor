@@ -134,6 +134,12 @@ func TestStoredOAuthConfigOverridesDefaultClient(t *testing.T) {
 	if base.ClientID != "default-client" {
 		t.Fatal("credential binding mutated the default OAuth config")
 	}
+	boundOnly := stored.OAuthConfig(nil)
+	if boundOnly == nil ||
+		boundOnly.ClientID != "bound-client" ||
+		boundOnly.ClientSecret != "bound-secret" {
+		t.Fatalf("bound-only config = %#v", boundOnly)
+	}
 }
 
 func TestFromTokenWithOAuthConfigBindsIssuingClient(t *testing.T) {

@@ -114,6 +114,8 @@ func (a *SheetsAdapter) httpClient(ctx context.Context, credBytes []byte, alias 
 	if cfg == nil {
 		return nil, fmt.Errorf("sheets: OAuth client credentials not configured")
 	}
+	cfg.Scopes = sheetsScopes
+	cfg.Endpoint = google.Endpoint
 	ts := cfg.TokenSource(ctx, cred.ToOAuth2Token())
 	return oauth2.NewClient(ctx, ts), nil
 }

@@ -97,10 +97,13 @@ func (c *Stored) ToOAuth2Token() *oauth2.Token {
 // Binding the app to the encrypted credential keeps refresh tokens issued by
 // different Workspace OAuth clients usable without guessing from account data.
 func (c *Stored) OAuthConfig(base *oauth2.Config) *oauth2.Config {
-	if base == nil {
+	if base == nil && c.OAuthClientID == "" {
 		return nil
 	}
-	config := *base
+	var config oauth2.Config
+	if base != nil {
+		config = *base
+	}
 	if c.OAuthClientID != "" {
 		config.ClientID = c.OAuthClientID
 		config.ClientSecret = c.OAuthClientSecret

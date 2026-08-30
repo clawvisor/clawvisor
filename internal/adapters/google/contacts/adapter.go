@@ -149,6 +149,11 @@ func (a *ContactsAdapter) httpClient(ctx context.Context, credBytes []byte, alia
 	oauthConfig := cred.OAuthConfig(
 		a.OAuthConfigForAlias(alias),
 	)
+	if oauthConfig == nil {
+		return nil, fmt.Errorf("contacts: OAuth client credentials not configured")
+	}
+	oauthConfig.Scopes = contactsScopes
+	oauthConfig.Endpoint = google.Endpoint
 	ts := oauthConfig.TokenSource(ctx, cred.ToOAuth2Token())
 	return oauth2.NewClient(ctx, ts), nil
 }
