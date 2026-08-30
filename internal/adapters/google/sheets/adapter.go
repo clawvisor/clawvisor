@@ -56,7 +56,12 @@ func (a *SheetsAdapter) OAuthConfig() *oauth2.Config {
 }
 
 func (a *SheetsAdapter) OAuthConfigForAlias(alias string) *oauth2.Config {
-	return credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+	config := credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+	if config != nil {
+		config.Scopes = sheetsScopes
+		config.Endpoint = google.Endpoint
+	}
+	return config
 }
 
 func (a *SheetsAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
@@ -69,7 +74,7 @@ func (a *SheetsAdapter) ValidateCredential(credBytes []byte) error {
 
 // FetchIdentity returns the Google account email for auto-alias detection.
 func (a *SheetsAdapter) FetchIdentity(ctx context.Context, credBytes []byte, config map[string]string) (string, error) {
-	client, err := a.httpClient(ctx, credBytes, config)
+	client, err := a.httpClient(ctx, credBytes, "")
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +82,7 @@ func (a *SheetsAdapter) FetchIdentity(ctx context.Context, credBytes []byte, con
 }
 
 func (a *SheetsAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	client, err := a.httpClient(ctx, req.Credential, req.Config)
+	client, err := a.httpClient(ctx, req.Credential, req.Alias)
 	if err != nil {
 		return nil, err
 	}
@@ -100,12 +105,12 @@ func (a *SheetsAdapter) Execute(ctx context.Context, req adapters.Request) (*ada
 	}
 }
 
-func (a *SheetsAdapter) httpClient(ctx context.Context, credBytes []byte, config map[string]string) (*http.Client, error) {
+func (a *SheetsAdapter) httpClient(ctx context.Context, credBytes []byte, alias string) (*http.Client, error) {
 	cred, err := credential.Parse(credBytes)
 	if err != nil {
 		return nil, fmt.Errorf("sheets: %w", err)
 	}
-	cfg := cred.OAuthConfig(a.OAuthConfigForAlias(config["_clawvisor_alias"]))
+	cfg := cred.OAuthConfig(a.OAuthConfigForAlias(alias))
 	if cfg == nil {
 		return nil, fmt.Errorf("sheets: OAuth client credentials not configured")
 	}

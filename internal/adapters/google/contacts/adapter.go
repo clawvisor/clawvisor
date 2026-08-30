@@ -58,7 +58,12 @@ func (a *ContactsAdapter) OAuthConfig() *oauth2.Config {
 }
 
 func (a *ContactsAdapter) OAuthConfigForAlias(alias string) *oauth2.Config {
-	return credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+	config := credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+	if config != nil {
+		config.Scopes = contactsScopes
+		config.Endpoint = google.Endpoint
+	}
+	return config
 }
 
 func (a *ContactsAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
@@ -71,7 +76,7 @@ func (a *ContactsAdapter) ValidateCredential(credBytes []byte) error {
 
 // FetchIdentity returns the Google account email for auto-alias detection.
 func (a *ContactsAdapter) FetchIdentity(ctx context.Context, credBytes []byte, config map[string]string) (string, error) {
-	client, err := a.httpClient(ctx, credBytes, config)
+	client, err := a.httpClient(ctx, credBytes, "")
 	if err != nil {
 		return "", err
 	}
@@ -79,7 +84,7 @@ func (a *ContactsAdapter) FetchIdentity(ctx context.Context, credBytes []byte, c
 }
 
 func (a *ContactsAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	client, err := a.httpClient(ctx, req.Credential, req.Config)
+	client, err := a.httpClient(ctx, req.Credential, req.Alias)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +106,7 @@ func (a *ContactsAdapter) IsInContacts(ctx context.Context, cred []byte, email s
 	if email == "" {
 		return false, nil
 	}
-	client, err := a.httpClient(ctx, cred, nil)
+	client, err := a.httpClient(ctx, cred, "")
 	if err != nil {
 		return false, err
 	}
@@ -136,13 +141,13 @@ func (a *ContactsAdapter) IsInContacts(ctx context.Context, cred []byte, email s
 	return false, nil
 }
 
-func (a *ContactsAdapter) httpClient(ctx context.Context, credBytes []byte, config map[string]string) (*http.Client, error) {
+func (a *ContactsAdapter) httpClient(ctx context.Context, credBytes []byte, alias string) (*http.Client, error) {
 	cred, err := credential.Parse(credBytes)
 	if err != nil {
 		return nil, fmt.Errorf("contacts: %w", err)
 	}
 	oauthConfig := cred.OAuthConfig(
-		a.OAuthConfigForAlias(config["_clawvisor_alias"]),
+		a.OAuthConfigForAlias(alias),
 	)
 	ts := oauthConfig.TokenSource(ctx, cred.ToOAuth2Token())
 	return oauth2.NewClient(ctx, ts), nil

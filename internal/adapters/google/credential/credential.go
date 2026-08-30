@@ -56,6 +56,18 @@ func Validate(data []byte) error {
 // actually granted (read from the token exchange response). When false, scopes
 // are what we requested — we can't verify the user granted all of them.
 func FromToken(token *oauth2.Token, scopes []string, scopesGranted bool) ([]byte, error) {
+	return FromTokenWithOAuthConfig(token, scopes, scopesGranted, nil)
+}
+
+// FromTokenWithOAuthConfig binds the issuing OAuth application to the stored
+// credential. Refresh tokens are client-bound, so selecting a client later
+// from a renamed account alias is not safe.
+func FromTokenWithOAuthConfig(
+	token *oauth2.Token,
+	scopes []string,
+	scopesGranted bool,
+	oauthConfig *oauth2.Config,
+) ([]byte, error) {
 	c := Stored{
 		Type:          "oauth2",
 		AccessToken:   token.AccessToken,
@@ -63,6 +75,10 @@ func FromToken(token *oauth2.Token, scopes []string, scopesGranted bool) ([]byte
 		Expiry:        token.Expiry,
 		Scopes:        scopes,
 		ScopesGranted: scopesGranted,
+	}
+	if oauthConfig != nil {
+		c.OAuthClientID = oauthConfig.ClientID
+		c.OAuthClientSecret = oauthConfig.ClientSecret
 	}
 	return json.Marshal(c)
 }
@@ -85,7 +101,7 @@ func (c *Stored) OAuthConfig(base *oauth2.Config) *oauth2.Config {
 		return nil
 	}
 	config := *base
-	if c.OAuthClientID != "" && c.OAuthClientSecret != "" {
+	if c.OAuthClientID != "" {
 		config.ClientID = c.OAuthClientID
 		config.ClientSecret = c.OAuthClientSecret
 	}
@@ -99,30 +115,29 @@ func (c *Stored) OAuthConfig(base *oauth2.Config) *oauth2.Config {
 //	GOOGLE_CLIENT_ID__EC=...
 //	GOOGLE_CLIENT_SECRET__EC=...
 //
-// Unknown or incomplete mappings retain the default application.
+// Unknown or incomplete mappings retain the default application. When no
+// default application exists, a complete alias mapping still returns the
+// mapped credentials; the adapter supplies its provider endpoint and scopes.
 func OAuthConfigForAlias(base *oauth2.Config, alias string) *oauth2.Config {
-	if base == nil {
-		return nil
+	var config oauth2.Config
+	if base != nil {
+		config = *base
 	}
-	config := *base
-	if strings.EqualFold(
-		strings.TrimSpace(os.Getenv("GOOGLE_EC_ALIAS")),
-		strings.TrimSpace(alias),
-	) {
-		clientID := os.Getenv("GOOGLE_EC_CLIENT_ID")
-		clientSecret := os.Getenv("GOOGLE_EC_CLIENT_SECRET")
-		if clientID != "" && clientSecret != "" {
-			config.ClientID = clientID
-			config.ClientSecret = clientSecret
-			return &config
+	targetAlias := strings.TrimSpace(alias)
+	if targetAlias == "" {
+		if base == nil {
+			return nil
 		}
+		return &config
 	}
+	mapped := false
 	for _, entry := range os.Environ() {
 		name, mappedAlias, found := strings.Cut(entry, "=")
 		if !found || !strings.HasPrefix(name, "GOOGLE_OAUTH_ALIAS__") {
 			continue
 		}
-		if !strings.EqualFold(strings.TrimSpace(mappedAlias), strings.TrimSpace(alias)) {
+		mappedAlias = strings.TrimSpace(mappedAlias)
+		if mappedAlias == "" || !strings.EqualFold(mappedAlias, targetAlias) {
 			continue
 		}
 		suffix := strings.TrimPrefix(name, "GOOGLE_OAUTH_ALIAS__")
@@ -131,8 +146,12 @@ func OAuthConfigForAlias(base *oauth2.Config, alias string) *oauth2.Config {
 		if clientID != "" && clientSecret != "" {
 			config.ClientID = clientID
 			config.ClientSecret = clientSecret
+			mapped = true
 		}
 		break
+	}
+	if base == nil && !mapped {
+		return nil
 	}
 	return &config
 }

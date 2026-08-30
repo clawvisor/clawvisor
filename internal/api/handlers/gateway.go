@@ -2435,13 +2435,13 @@ func executeAdapterRequest(
 	if config == nil {
 		config = make(map[string]string)
 	}
-	config["_clawvisor_alias"] = alias
 
 	result, err := adapter.Execute(ctx, adapters.Request{
 		Action:     action,
 		Params:     params,
 		Credential: cred,
 		Config:     config,
+		Alias:      alias,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("adapter %s: %w", service, err)

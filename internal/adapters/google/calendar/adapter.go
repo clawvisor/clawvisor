@@ -61,7 +61,12 @@ func (a *CalendarAdapter) OAuthConfig() *oauth2.Config {
 }
 
 func (a *CalendarAdapter) OAuthConfigForAlias(alias string) *oauth2.Config {
-	return credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+	config := credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+	if config != nil {
+		config.Scopes = calendarScopes
+		config.Endpoint = google.Endpoint
+	}
+	return config
 }
 
 func (a *CalendarAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
@@ -74,7 +79,7 @@ func (a *CalendarAdapter) ValidateCredential(credBytes []byte) error {
 
 // FetchIdentity returns the Google account email for auto-alias detection.
 func (a *CalendarAdapter) FetchIdentity(ctx context.Context, credBytes []byte, config map[string]string) (string, error) {
-	client, err := a.httpClient(ctx, credBytes, config)
+	client, err := a.httpClient(ctx, credBytes, "")
 	if err != nil {
 		return "", err
 	}
@@ -82,7 +87,7 @@ func (a *CalendarAdapter) FetchIdentity(ctx context.Context, credBytes []byte, c
 }
 
 func (a *CalendarAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	client, err := a.httpClient(ctx, req.Credential, req.Config)
+	client, err := a.httpClient(ctx, req.Credential, req.Alias)
 	if err != nil {
 		return nil, err
 	}
@@ -106,13 +111,13 @@ func (a *CalendarAdapter) Execute(ctx context.Context, req adapters.Request) (*a
 	}
 }
 
-func (a *CalendarAdapter) httpClient(ctx context.Context, credBytes []byte, config map[string]string) (*http.Client, error) {
+func (a *CalendarAdapter) httpClient(ctx context.Context, credBytes []byte, alias string) (*http.Client, error) {
 	cred, err := credential.Parse(credBytes)
 	if err != nil {
 		return nil, fmt.Errorf("calendar: %w", err)
 	}
 	oauthConfig := cred.OAuthConfig(
-		a.OAuthConfigForAlias(config["_clawvisor_alias"]),
+		a.OAuthConfigForAlias(alias),
 	)
 	ts := oauthConfig.TokenSource(ctx, cred.ToOAuth2Token())
 	return oauth2.NewClient(ctx, ts), nil

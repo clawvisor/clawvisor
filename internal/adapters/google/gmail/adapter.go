@@ -76,7 +76,12 @@ func (a *GmailAdapter) OAuthConfig() *oauth2.Config {
 }
 
 func (a *GmailAdapter) OAuthConfigForAlias(alias string) *oauth2.Config {
-	return credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+	config := credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+	if config != nil {
+		config.Scopes = gmailScopes
+		config.Endpoint = google.Endpoint
+	}
+	return config
 }
 
 func (a *GmailAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
@@ -89,7 +94,7 @@ func (a *GmailAdapter) ValidateCredential(credBytes []byte) error {
 
 // FetchIdentity returns the Google account email for auto-alias detection.
 func (a *GmailAdapter) FetchIdentity(ctx context.Context, credBytes []byte, config map[string]string) (string, error) {
-	client, err := a.httpClient(ctx, credBytes, config)
+	client, err := a.httpClient(ctx, credBytes, "")
 	if err != nil {
 		return "", err
 	}
@@ -98,7 +103,7 @@ func (a *GmailAdapter) FetchIdentity(ctx context.Context, credBytes []byte, conf
 
 // Execute runs a Gmail action. Credential is injected by the gateway.
 func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	client, err := a.httpClient(ctx, req.Credential, req.Config)
+	client, err := a.httpClient(ctx, req.Credential, req.Alias)
 	if err != nil {
 		return nil, err
 	}
@@ -138,13 +143,13 @@ func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 
 // ── HTTP client from stored credential ───────────────────────────────────────
 
-func (a *GmailAdapter) httpClient(ctx context.Context, credBytes []byte, config map[string]string) (*http.Client, error) {
+func (a *GmailAdapter) httpClient(ctx context.Context, credBytes []byte, alias string) (*http.Client, error) {
 	cred, err := credential.Parse(credBytes)
 	if err != nil {
 		return nil, fmt.Errorf("gmail: %w", err)
 	}
 	oauthConfig := cred.OAuthConfig(
-		a.OAuthConfigForAlias(config["_clawvisor_alias"]),
+		a.OAuthConfigForAlias(alias),
 	)
 	ts := oauthConfig.TokenSource(ctx, cred.ToOAuth2Token())
 	return oauth2.NewClient(ctx, ts), nil

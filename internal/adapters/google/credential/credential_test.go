@@ -64,9 +64,9 @@ func TestHasAllScopes(t *testing.T) {
 }
 
 func TestOAuthConfigForAliasUsesExplicitMapping(t *testing.T) {
-	t.Setenv("GOOGLE_EC_ALIAS", "vijay@eightcapital.com")
-	t.Setenv("GOOGLE_EC_CLIENT_ID", "ec-client")
-	t.Setenv("GOOGLE_EC_CLIENT_SECRET", "ec-secret")
+	t.Setenv("GOOGLE_OAUTH_ALIAS__EC", "vijay@eightcapital.com")
+	t.Setenv("GOOGLE_CLIENT_ID__EC", "ec-client")
+	t.Setenv("GOOGLE_CLIENT_SECRET__EC", "ec-secret")
 	base := &oauth2.Config{
 		ClientID:     "default-client",
 		ClientSecret: "default-secret",
@@ -82,6 +82,38 @@ func TestOAuthConfigForAliasUsesExplicitMapping(t *testing.T) {
 	unmapped := OAuthConfigForAlias(base, "vijay@vantedgeai.com")
 	if unmapped.ClientID != "default-client" {
 		t.Fatalf("unmapped client = %q", unmapped.ClientID)
+	}
+}
+
+func TestOAuthConfigForAliasIgnoresEmptyMapping(t *testing.T) {
+	t.Setenv("GOOGLE_OAUTH_ALIAS__EC", "")
+	t.Setenv("GOOGLE_CLIENT_ID__EC", "ec-client")
+	t.Setenv("GOOGLE_CLIENT_SECRET__EC", "ec-secret")
+	base := &oauth2.Config{
+		ClientID:     "default-client",
+		ClientSecret: "default-secret",
+	}
+
+	mapped := OAuthConfigForAlias(base, "")
+	if mapped.ClientID != "default-client" ||
+		mapped.ClientSecret != "default-secret" {
+		t.Fatalf("empty alias selected mapped config: %#v", mapped)
+	}
+}
+
+func TestOAuthConfigForAliasSupportsAliasOnlyClient(t *testing.T) {
+	t.Setenv("GOOGLE_OAUTH_ALIAS__EC", "vijay@eightcapital.com")
+	t.Setenv("GOOGLE_CLIENT_ID__EC", "ec-client")
+	t.Setenv("GOOGLE_CLIENT_SECRET__EC", "ec-secret")
+
+	mapped := OAuthConfigForAlias(nil, "vijay@eightcapital.com")
+	if mapped == nil ||
+		mapped.ClientID != "ec-client" ||
+		mapped.ClientSecret != "ec-secret" {
+		t.Fatalf("alias-only config = %#v", mapped)
+	}
+	if unmapped := OAuthConfigForAlias(nil, "other@example.com"); unmapped != nil {
+		t.Fatalf("unexpected unmapped config = %#v", unmapped)
 	}
 }
 
@@ -101,5 +133,31 @@ func TestStoredOAuthConfigOverridesDefaultClient(t *testing.T) {
 	}
 	if base.ClientID != "default-client" {
 		t.Fatal("credential binding mutated the default OAuth config")
+	}
+}
+
+func TestFromTokenWithOAuthConfigBindsIssuingClient(t *testing.T) {
+	data, err := FromTokenWithOAuthConfig(
+		&oauth2.Token{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+		},
+		[]string{"scope"},
+		true,
+		&oauth2.Config{
+			ClientID:     "issuing-client",
+			ClientSecret: "issuing-secret",
+		},
+	)
+	if err != nil {
+		t.Fatalf("FromTokenWithOAuthConfig: %v", err)
+	}
+	stored, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if stored.OAuthClientID != "issuing-client" ||
+		stored.OAuthClientSecret != "issuing-secret" {
+		t.Fatalf("stored client binding = %#v", stored)
 	}
 }

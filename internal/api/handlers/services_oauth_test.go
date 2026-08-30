@@ -7,6 +7,28 @@ import (
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
 )
 
+func TestOAuthStatePreservesIssuingClientAlias(t *testing.T) {
+	entry := oauthStateEntry{
+		UserID:     "user-1",
+		ServiceID:  "google.gmail",
+		Alias:      "default",
+		OAuthAlias: "vijay@eightcapital.com",
+		ExpiresAt:  time.Now().Add(time.Minute),
+	}
+	data, err := marshalOAuthState(entry)
+	if err != nil {
+		t.Fatalf("marshalOAuthState: %v", err)
+	}
+	decoded, err := unmarshalOAuthState(data)
+	if err != nil {
+		t.Fatalf("unmarshalOAuthState: %v", err)
+	}
+	if decoded.Alias != "default" ||
+		decoded.OAuthAlias != "vijay@eightcapital.com" {
+		t.Fatalf("OAuth aliases were not preserved: %#v", decoded)
+	}
+}
+
 func TestCredentialFromTokenPathResponse_PreservesRotatedTokens(t *testing.T) {
 	now := time.Date(2026, 4, 13, 12, 0, 0, 0, time.UTC)
 	rawResp := map[string]any{

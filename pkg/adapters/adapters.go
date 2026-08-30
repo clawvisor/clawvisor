@@ -159,6 +159,7 @@ type Request struct {
 	Params     map[string]any
 	Credential []byte            // decrypted from vault
 	Config     map[string]string // resolved variable values from service_configs
+	Alias      string            // resolved service alias; never sourced from user config
 }
 
 // Result is the semantic output of an adapter action.

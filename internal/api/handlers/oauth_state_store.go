@@ -125,6 +125,7 @@ type oauthStateJSON struct {
 	UserID       string            `json:"user_id"`
 	ServiceID    string            `json:"service_id"`
 	Alias        string            `json:"alias"`
+	OAuthAlias   string            `json:"oauth_alias,omitempty"`
 	PendingReqID string            `json:"pending_req_id,omitempty"`
 	CLICallback  string            `json:"cli_callback,omitempty"`
 	Scopes       []string          `json:"scopes,omitempty"`
@@ -138,6 +139,7 @@ func marshalOAuthState(e oauthStateEntry) ([]byte, error) {
 		UserID:       e.UserID,
 		ServiceID:    e.ServiceID,
 		Alias:        e.Alias,
+		OAuthAlias:   e.OAuthAlias,
 		PendingReqID: e.PendingReqID,
 		CLICallback:  e.CLICallback,
 		Scopes:       e.Scopes,
@@ -156,6 +158,7 @@ func unmarshalOAuthState(data []byte) (oauthStateEntry, error) {
 		UserID:       j.UserID,
 		ServiceID:    j.ServiceID,
 		Alias:        j.Alias,
+		OAuthAlias:   j.OAuthAlias,
 		PendingReqID: j.PendingReqID,
 		CLICallback:  j.CLICallback,
 		Scopes:       j.Scopes,

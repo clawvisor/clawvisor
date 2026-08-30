@@ -56,6 +56,7 @@ type oauthStateEntry struct {
 	UserID       string
 	ServiceID    string
 	Alias        string            // "default" when not specified
+	OAuthAlias   string            // alias whose OAuth client issued the code
 	PendingReqID string            // pending_request_id query param (may be empty)
 	CLICallback  string            // TUI local server callback URL (may be empty)
 	Scopes       []string          // merged scopes for this OAuth flow
@@ -522,6 +523,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 	oauthCfg.RedirectURL = h.oauthRedirectURL()
 
 	newAccount := r.URL.Query().Get("new_account") == "true"
+	oauthAlias := alias
 
 	mergedScopes, alreadyAuthorized := h.resolveOAuthScopes(r.Context(), user.ID, serviceID, alias, adapter)
 	if alreadyAuthorized && !newAccount {
@@ -563,6 +565,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		UserID:       user.ID,
 		ServiceID:    serviceID,
 		Alias:        alias,
+		OAuthAlias:   oauthAlias,
 		PendingReqID: pendingReqID,
 		CLICallback:  validateCLICallback(r.URL.Query().Get("cli_callback")),
 		Config:       flowConfig,
@@ -646,6 +649,7 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		UserID:       user.ID,
 		ServiceID:    serviceID,
 		Alias:        alias,
+		OAuthAlias:   alias,
 		PendingReqID: pendingReqID,
 		Config:       flowConfig,
 		Scopes:       mergedScopes,
@@ -689,7 +693,15 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	oauthCfg := oauthConfigForAlias(adapter, entry.Alias)
+	oauthAlias := entry.OAuthAlias
+	if oauthAlias == "" {
+		oauthAlias = entry.Alias
+	}
+	oauthCfg := oauthConfigForAlias(adapter, oauthAlias)
+	if oauthCfg == nil {
+		oauthPopupClose(w, "OAuth client configuration is unavailable.", "", entry.OpenerOrigin)
+		return
+	}
 	oauthCfg.RedirectURL = h.oauthRedirectURL()
 	// Use the merged scopes stored during URL generation.
 	if len(entry.Scopes) > 0 {
@@ -804,7 +816,12 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		credBytes, err = credential.FromToken(token, scopes, scopesGranted)
+		credBytes, err = credential.FromTokenWithOAuthConfig(
+			token,
+			scopes,
+			scopesGranted,
+			oauthCfg,
+		)
 		if err != nil {
 			h.logger.WarnContext(r.Context(), "credential from token failed", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Failed to process credential.", "", entry.OpenerOrigin)
@@ -1000,6 +1017,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			UserID:       user.ID,
 			ServiceID:    serviceID,
 			Alias:        alias,
+			OAuthAlias:   alias,
 			PendingReqID: body.PendingRequestID,
 			OpenerOrigin: originFromRequest(r),
 			Config:       body.Config,
@@ -1008,6 +1026,10 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			ExpiresAt:    time.Now().Add(10 * time.Minute),
 		})
 		oauthCfg := oauthConfigForAlias(adapter, alias)
+		if oauthCfg == nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "OAuth client configuration is unavailable")
+			return
+		}
 		oauthCfg.RedirectURL = h.oauthRedirectURL()
 		oauthCfg.Scopes = mergedScopes
 		authURL := oauthAuthURL(oauthCfg, stateToken, alias != "" && alias != "default", adapterScopeParam(adapter))

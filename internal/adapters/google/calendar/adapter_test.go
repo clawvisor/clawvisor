@@ -76,6 +76,24 @@ func requireFailure(t *testing.T, err error, kind adapters.ExecutionFailureKind)
 	return failure
 }
 
+func TestOAuthConfigForAliasWorksWithoutDefaultClient(t *testing.T) {
+	t.Setenv("GOOGLE_OAUTH_ALIAS__EC", "vijay@eightcapital.com")
+	t.Setenv("GOOGLE_CLIENT_ID__EC", "ec-client")
+	t.Setenv("GOOGLE_CLIENT_SECRET__EC", "ec-secret")
+
+	config := New(adapters.NoopOAuthProvider{}).
+		OAuthConfigForAlias("vijay@eightcapital.com")
+	if config == nil {
+		t.Fatal("expected alias-only OAuth config")
+	}
+	if config.ClientID != "ec-client" ||
+		config.ClientSecret != "ec-secret" ||
+		config.Endpoint.AuthURL == "" ||
+		len(config.Scopes) != len(calendarScopes) {
+		t.Fatalf("alias-only config = %#v", config)
+	}
+}
+
 func TestCalendarAttendeePatchAcceptsEmailObjects(t *testing.T) {
 	attendees, err := calendarAttendeePatch([]any{
 		"first@example.com",

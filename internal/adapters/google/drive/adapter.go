@@ -63,7 +63,12 @@ func (a *DriveAdapter) OAuthConfig() *oauth2.Config {
 }
 
 func (a *DriveAdapter) OAuthConfigForAlias(alias string) *oauth2.Config {
-	return credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+	config := credential.OAuthConfigForAlias(a.OAuthConfig(), alias)
+	if config != nil {
+		config.Scopes = driveScopes
+		config.Endpoint = google.Endpoint
+	}
+	return config
 }
 
 func (a *DriveAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
@@ -76,7 +81,7 @@ func (a *DriveAdapter) ValidateCredential(credBytes []byte) error {
 
 // FetchIdentity returns the Google account email for auto-alias detection.
 func (a *DriveAdapter) FetchIdentity(ctx context.Context, credBytes []byte, config map[string]string) (string, error) {
-	client, err := a.httpClient(ctx, credBytes, config)
+	client, err := a.httpClient(ctx, credBytes, "")
 	if err != nil {
 		return "", err
 	}
@@ -84,7 +89,7 @@ func (a *DriveAdapter) FetchIdentity(ctx context.Context, credBytes []byte, conf
 }
 
 func (a *DriveAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	client, err := a.httpClient(ctx, req.Credential, req.Config)
+	client, err := a.httpClient(ctx, req.Credential, req.Alias)
 	if err != nil {
 		return nil, err
 	}
@@ -108,13 +113,13 @@ func (a *DriveAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 	}
 }
 
-func (a *DriveAdapter) httpClient(ctx context.Context, credBytes []byte, config map[string]string) (*http.Client, error) {
+func (a *DriveAdapter) httpClient(ctx context.Context, credBytes []byte, alias string) (*http.Client, error) {
 	cred, err := credential.Parse(credBytes)
 	if err != nil {
 		return nil, fmt.Errorf("drive: %w", err)
 	}
 	oauthConfig := cred.OAuthConfig(
-		a.OAuthConfigForAlias(config["_clawvisor_alias"]),
+		a.OAuthConfigForAlias(alias),
 	)
 	ts := oauthConfig.TokenSource(ctx, cred.ToOAuth2Token())
 	return oauth2.NewClient(ctx, ts), nil
