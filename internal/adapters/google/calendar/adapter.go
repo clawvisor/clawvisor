@@ -918,6 +918,7 @@ func apiConditionalWrite(
 	}
 	defer resp.Body.Close()
 	body, readErr := io.ReadAll(resp.Body)
+	readTimedOut := isTimeoutError(readErr)
 
 	switch {
 	case resp.StatusCode == http.StatusPreconditionFailed:
@@ -928,7 +929,7 @@ func apiConditionalWrite(
 	case resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= http.StatusInternalServerError:
 		return resp.Header.Clone(), &adapters.ExecutionFailure{
 			Kind:     adapters.ExecutionFailureAmbiguous,
-			TimedOut: resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusGatewayTimeout,
+			TimedOut: resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusGatewayTimeout || readTimedOut,
 			Err:      fmt.Errorf("provider mutation outcome is ambiguous (status %d): %s", resp.StatusCode, format.Truncate(string(body), 200)),
 		}
 	case resp.StatusCode >= http.StatusBadRequest:

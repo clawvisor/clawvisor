@@ -372,7 +372,6 @@ function ActivityChart({ data }: { data: ActivityBucket[] }) {
       'inline_task_auto_approved',
     ])
     const errorOutcomes = new Set([
-      'denied',
       'error',
       'http_error',
       'timeout',

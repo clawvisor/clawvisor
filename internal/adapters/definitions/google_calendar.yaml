@@ -171,8 +171,8 @@ actions:
     display_name: "Update event"
     risk: { category: write, sensitivity: medium, description: "Update a calendar event" }
     scopes: ["https://www.googleapis.com/auth/calendar.events"]
-    # The Go override sends expected_etag as If-Match on the PATCH and
-    # classifies stale and indeterminate provider outcomes.
+    # The Go override normalizes date/time and attendee fields, sends
+    # expected_etag as If-Match, and classifies indeterminate outcomes.
     override: go
     method: PATCH
     path: "/calendars/{{.calendar_id}}/events/{{.event_id}}"
@@ -195,15 +195,12 @@ actions:
       start:
         type: string
         location: body
-        transform: "isAllDay(start) ? {date: start} : {dateTime: rfc3339(start)}"
       end:
         type: string
         location: body
-        transform: "isAllDay(end) ? {date: end} : {dateTime: rfc3339(end)}"
       attendees:
         type: array
         location: body
-        transform: "emailList(attendees)"
       transparency:
         type: string
         location: body

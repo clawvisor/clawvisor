@@ -26,6 +26,14 @@ func (timeoutAfterCommitError) Error() string   { return "timed out reading prov
 func (timeoutAfterCommitError) Timeout() bool   { return true }
 func (timeoutAfterCommitError) Temporary() bool { return true }
 
+type timeoutReadCloser struct{}
+
+func (timeoutReadCloser) Read([]byte) (int, error) {
+	return 0, timeoutAfterCommitError{}
+}
+
+func (timeoutReadCloser) Close() error { return nil }
+
 func fixture(t *testing.T, name string) string {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join("testdata", name))
@@ -327,6 +335,30 @@ func TestUpdateEventTimeoutAfterProviderCommitIsAmbiguous(t *testing.T) {
 	}
 	if committed.Load() != 1 {
 		t.Fatalf("simulated provider commits = %d, want 1", committed.Load())
+	}
+}
+
+func TestProvider5xxWithBodyReadTimeoutIsClassifiedAsTimeout(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header:     make(http.Header),
+			Body:       timeoutReadCloser{},
+		}, nil
+	})}
+
+	_, err := apiConditionalWrite(
+		t.Context(),
+		client,
+		http.MethodPatch,
+		"https://www.googleapis.com/calendar/v3/calendars/primary/events/event-123",
+		`"event-v1"`,
+		map[string]string{"summary": "changed"},
+		nil,
+	)
+	failure := requireFailure(t, err, adapters.ExecutionFailureAmbiguous)
+	if !failure.TimedOut {
+		t.Fatal("5xx response with a body read timeout must set TimedOut")
 	}
 }
 
