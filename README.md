@@ -266,7 +266,7 @@ All three LLM subsystems (intent verification, chain context extraction, and tas
 | Service ID | Service | Actions |
 |---|---|---|
 | `google.gmail` | Gmail | `list_messages`, `get_message`, `send_message` |
-| `google.calendar` | Google Calendar | `list_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `list_calendars` |
+| `google.calendar` | Google Calendar | `list_events`, `get_event`, `create_event`, `update_event`, `respond_to_event`, `delete_event`, `list_calendars` |
 | `google.drive` | Google Drive | `list_files`, `get_file`, `create_file`, `update_file`, `search_files` |
 | `google.contacts` | Google Contacts | `list_contacts`, `get_contact`, `search_contacts` |
 | `microsoft.outlook` | Outlook | `list_messages`, `get_message`, `send_message`, `list_events`, `get_event`, `create_event` |

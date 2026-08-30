@@ -4,8 +4,10 @@ package calendar
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -40,7 +42,7 @@ func New(provider adapters.OAuthCredentialProvider) *CalendarAdapter {
 func (a *CalendarAdapter) ServiceID() string { return serviceID }
 
 func (a *CalendarAdapter) SupportedActions() []string {
-	return []string{"list_events", "get_event", "create_event", "update_event", "delete_event", "list_calendars"}
+	return []string{"list_events", "get_event", "create_event", "update_event", "respond_to_event", "delete_event", "list_calendars"}
 }
 
 func (a *CalendarAdapter) RequiredScopes() []string { return calendarScopes }
@@ -89,6 +91,8 @@ func (a *CalendarAdapter) Execute(ctx context.Context, req adapters.Request) (*a
 		return a.createEvent(ctx, client, req.Params)
 	case "update_event":
 		return a.updateEvent(ctx, client, req.Params)
+	case "respond_to_event":
+		return a.respondToEvent(ctx, client, req.Params)
 	case "delete_event":
 		return a.deleteEvent(ctx, client, req.Params)
 	case "list_calendars":
@@ -118,6 +122,50 @@ type calendarEvent struct {
 	Description string   `json:"description,omitempty"`
 	Attendees   []string `json:"attendees,omitempty"`
 	Status      string   `json:"status"`
+}
+
+type calendarAPIDateTime struct {
+	DateTime string `json:"dateTime"`
+	Date     string `json:"date"`
+	TimeZone string `json:"timeZone"`
+}
+
+type calendarAPIAttendee struct {
+	Email            string `json:"email"`
+	DisplayName      string `json:"displayName"`
+	ResponseStatus   string `json:"responseStatus"`
+	Comment          string `json:"comment"`
+	Self             bool   `json:"self"`
+	Organizer        bool   `json:"organizer"`
+	Optional         bool   `json:"optional"`
+	Resource         bool   `json:"resource"`
+	AdditionalGuests int    `json:"additionalGuests"`
+}
+
+type calendarAPIAttachment struct {
+	FileURL  string `json:"fileUrl"`
+	Title    string `json:"title"`
+	MimeType string `json:"mimeType"`
+	IconLink string `json:"iconLink"`
+	FileID   string `json:"fileId"`
+}
+
+type calendarAPIEvent struct {
+	ID             string                  `json:"id"`
+	ETag           string                  `json:"etag"`
+	Sequence       int64                   `json:"sequence"`
+	Summary        string                  `json:"summary"`
+	Location       string                  `json:"location"`
+	Description    string                  `json:"description"`
+	Status         string                  `json:"status"`
+	Transparency   string                  `json:"transparency"`
+	Visibility     string                  `json:"visibility"`
+	HangoutLink    string                  `json:"hangoutLink"`
+	Start          calendarAPIDateTime     `json:"start"`
+	End            calendarAPIDateTime     `json:"end"`
+	Attendees      []calendarAPIAttendee   `json:"attendees"`
+	Attachments    []calendarAPIAttachment `json:"attachments"`
+	RecurringEvent string                  `json:"recurringEventId"`
 }
 
 func (a *CalendarAdapter) listEvents(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
@@ -230,57 +278,23 @@ func (a *CalendarAdapter) getEvent(ctx context.Context, client *http.Client, par
 	apiURL := fmt.Sprintf("https://www.googleapis.com/calendar/v3/calendars/%s/events/%s",
 		url.PathEscape(calendarID), url.PathEscape(eventID))
 
-	var item struct {
-		ID          string `json:"id"`
-		Summary     string `json:"summary"`
-		Location    string `json:"location"`
-		Description string `json:"description"`
-		Status      string `json:"status"`
-		Start       struct {
-			DateTime string `json:"dateTime"`
-			Date     string `json:"date"`
-		} `json:"start"`
-		End struct {
-			DateTime string `json:"dateTime"`
-			Date     string `json:"date"`
-		} `json:"end"`
-		Attendees []struct {
-			Email       string `json:"email"`
-			DisplayName string `json:"displayName"`
-		} `json:"attendees"`
-	}
-	if err := apiGET(ctx, client, apiURL, &item); err != nil {
+	var item calendarAPIEvent
+	headers, err := apiGETWithHeaders(ctx, client, apiURL, &item)
+	if err != nil {
 		return nil, fmt.Errorf("calendar get_event: %w", err)
 	}
-
-	startStr := item.Start.DateTime
-	if startStr == "" {
-		startStr = item.Start.Date
-	}
-	endStr := item.End.DateTime
-	if endStr == "" {
-		endStr = item.End.Date
-	}
-	attendees := make([]string, 0, len(item.Attendees))
-	for _, att := range item.Attendees {
-		name := att.DisplayName
-		if name == "" {
-			name = att.Email
+	version := eventVersion(item.ETag, headers.Get("ETag"))
+	if version == "" {
+		return nil, &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("calendar get_event: provider returned no event etag/version"),
 		}
-		attendees = append(attendees, format.SanitizeText(name, format.MaxFieldLen))
 	}
-	event := calendarEvent{
-		ID:          item.ID,
-		Summary:     format.SanitizeText(item.Summary, format.MaxFieldLen),
-		Start:       startStr,
-		End:         endStr,
-		Location:    format.SanitizeText(item.Location, format.MaxFieldLen),
-		Description: format.SanitizeText(item.Description, format.MaxBodyLen),
-		Attendees:   attendees,
-		Status:      item.Status,
-	}
+
+	event := calendarEventData(item, version)
+	summary, _ := event["summary"].(string)
 	return &adapters.Result{
-		Summary: format.Summary("Event: %s on %s", event.Summary, event.Start),
+		Summary: format.Summary("Event: %s", summary),
 		Data:    event,
 	}, nil
 }
@@ -341,6 +355,14 @@ func (a *CalendarAdapter) updateEvent(ctx context.Context, client *http.Client, 
 	if eventID == "" {
 		return nil, fmt.Errorf("calendar update_event: event_id is required")
 	}
+	expectedVersion, err := expectedEventVersion(params)
+	if err != nil {
+		return nil, fmt.Errorf("calendar update_event: %w", err)
+	}
+	sendUpdates, err := calendarSendUpdates(params)
+	if err != nil {
+		return nil, fmt.Errorf("calendar update_event: %w", err)
+	}
 	calendarID := "primary"
 	if v, ok := params["calendar_id"].(string); ok && v != "" {
 		calendarID = v
@@ -353,25 +375,170 @@ func (a *CalendarAdapter) updateEvent(ctx context.Context, client *http.Client, 
 	if v, ok := params["description"].(string); ok {
 		patch["description"] = v
 	}
+	if v, ok := params["location"].(string); ok {
+		patch["location"] = v
+	}
 	if v, ok := params["start"].(string); ok {
 		patch["start"] = calendarDtField(v)
 	}
 	if v, ok := params["end"].(string); ok {
 		patch["end"] = calendarDtField(v)
 	}
+	if raw, ok := params["attendees"]; ok {
+		attendees, attendeeErr := calendarAttendeePatch(raw)
+		if attendeeErr != nil {
+			return nil, fmt.Errorf("calendar update_event: %w", attendeeErr)
+		}
+		patch["attendees"] = attendees
+	}
+	if v, ok := params["transparency"].(string); ok {
+		patch["transparency"] = v
+	}
+	if v, ok := params["visibility"].(string); ok {
+		patch["visibility"] = v
+	}
+	if len(patch) == 0 {
+		return nil, &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("at least one event field is required"),
+		}
+	}
 
 	apiURL := fmt.Sprintf("https://www.googleapis.com/calendar/v3/calendars/%s/events/%s",
 		url.PathEscape(calendarID), url.PathEscape(eventID))
-	var updated struct {
-		ID      string `json:"id"`
-		Summary string `json:"summary"`
-	}
-	if err := apiWrite(ctx, client, http.MethodPatch, apiURL, patch, &updated); err != nil {
+	q := url.Values{}
+	q.Set("sendUpdates", sendUpdates)
+	apiURL += "?" + q.Encode()
+
+	var updated calendarAPIEvent
+	headers, err := apiConditionalWrite(ctx, client, http.MethodPatch, apiURL, expectedVersion, patch, &updated)
+	if err != nil {
 		return nil, fmt.Errorf("calendar update_event: %w", err)
+	}
+	updatedVersion := eventVersion(updated.ETag, headers.Get("ETag"))
+	if updatedVersion == "" {
+		return nil, &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureAmbiguous,
+			Err:  fmt.Errorf("calendar update_event: provider confirmed the mutation but returned no event etag/version"),
+		}
+	}
+	if updated.ID == "" {
+		updated.ID = eventID
 	}
 	return &adapters.Result{
 		Summary: format.Summary("Updated event: %s", updated.Summary),
-		Data:    map[string]string{"event_id": updated.ID, "summary": updated.Summary},
+		Data: map[string]any{
+			"event_id":     updated.ID,
+			"summary":      format.SanitizeText(updated.Summary, format.MaxFieldLen),
+			"etag":         updatedVersion,
+			"version":      updatedVersion,
+			"send_updates": sendUpdates,
+		},
+	}, nil
+}
+
+// ── respond_to_event ──────────────────────────────────────────────────────────
+
+func (a *CalendarAdapter) respondToEvent(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	eventID, _ := params["event_id"].(string)
+	if eventID == "" {
+		return nil, fmt.Errorf("calendar respond_to_event: event_id is required")
+	}
+	responseStatus, _ := params["response_status"].(string)
+	switch responseStatus {
+	case "accepted", "declined", "tentative":
+	default:
+		return nil, &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("calendar RSVP must be accepted, declined, or tentative"),
+		}
+	}
+	expectedVersion, err := expectedEventVersion(params)
+	if err != nil {
+		return nil, fmt.Errorf("calendar respond_to_event: %w", err)
+	}
+	sendUpdates, err := calendarSendUpdates(params)
+	if err != nil {
+		return nil, fmt.Errorf("calendar respond_to_event: %w", err)
+	}
+
+	calendarID := "primary"
+	if v, ok := params["calendar_id"].(string); ok && v != "" {
+		calendarID = v
+	}
+	apiURL := fmt.Sprintf("https://www.googleapis.com/calendar/v3/calendars/%s/events/%s",
+		url.PathEscape(calendarID), url.PathEscape(eventID))
+
+	// Google identifies the attendee that represents this calendar with
+	// attendees[].self. Read that participant immediately before the write,
+	// then retain the caller's original ETag as an If-Match precondition on
+	// the PATCH below.
+	var current calendarAPIEvent
+	headers, err := apiGETWithHeaders(ctx, client, apiURL, &current)
+	if err != nil {
+		return nil, &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("calendar respond_to_event pre-read: %w", err),
+		}
+	}
+	currentVersion := eventVersion(current.ETag, headers.Get("ETag"))
+	if currentVersion == "" {
+		return nil, &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("calendar respond_to_event: provider returned no current event etag/version"),
+		}
+	}
+	if currentVersion != expectedVersion {
+		return nil, &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureStaleVersion,
+			Err:  fmt.Errorf("calendar respond_to_event: event version is stale"),
+		}
+	}
+	participant, ok := calendarSelfAttendee(current.Attendees)
+	if !ok || participant.Email == "" {
+		return nil, &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("calendar respond_to_event: authenticated calendar is not an attendee"),
+		}
+	}
+
+	payload := map[string]any{
+		"attendees": []map[string]any{{
+			"email":          participant.Email,
+			"responseStatus": responseStatus,
+		}},
+		// This Google event flag makes the partial attendee list update only
+		// this calendar participant's response instead of replacing guests.
+		"attendeesOmitted": true,
+	}
+	q := url.Values{}
+	q.Set("sendUpdates", sendUpdates)
+	mutationURL := apiURL + "?" + q.Encode()
+
+	var updated calendarAPIEvent
+	headers, err = apiConditionalWrite(ctx, client, http.MethodPatch, mutationURL, expectedVersion, payload, &updated)
+	if err != nil {
+		return nil, fmt.Errorf("calendar respond_to_event: %w", err)
+	}
+	updatedVersion := eventVersion(updated.ETag, headers.Get("ETag"))
+	if updatedVersion == "" {
+		return nil, &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureAmbiguous,
+			Err:  fmt.Errorf("calendar respond_to_event: provider confirmed the mutation but returned no event etag/version"),
+		}
+	}
+	if updated.ID == "" {
+		updated.ID = eventID
+	}
+	return &adapters.Result{
+		Summary: format.Summary("Responded %s to event %s", responseStatus, updated.ID),
+		Data: map[string]any{
+			"event_id":        updated.ID,
+			"response_status": responseStatus,
+			"etag":            updatedVersion,
+			"version":         updatedVersion,
+			"send_updates":    sendUpdates,
+		},
 	}, nil
 }
 
@@ -456,23 +623,243 @@ func (a *CalendarAdapter) listCalendars(ctx context.Context, client *http.Client
 	return result, nil
 }
 
+func calendarEventData(item calendarAPIEvent, version string) map[string]any {
+	start := item.Start.DateTime
+	if start == "" {
+		start = item.Start.Date
+	}
+	end := item.End.DateTime
+	if end == "" {
+		end = item.End.Date
+	}
+
+	attendees := make([]map[string]any, 0, len(item.Attendees))
+	for _, attendee := range item.Attendees {
+		entry := map[string]any{
+			"email":          format.SanitizeText(attendee.Email, format.MaxFieldLen),
+			"responseStatus": attendee.ResponseStatus,
+		}
+		if attendee.DisplayName != "" {
+			entry["displayName"] = format.SanitizeText(attendee.DisplayName, format.MaxFieldLen)
+		}
+		if attendee.Comment != "" {
+			entry["comment"] = format.SanitizeText(attendee.Comment, format.MaxSnippetLen)
+		}
+		if attendee.Self {
+			entry["self"] = true
+		}
+		if attendee.Organizer {
+			entry["organizer"] = true
+		}
+		if attendee.Optional {
+			entry["optional"] = true
+		}
+		if attendee.Resource {
+			entry["resource"] = true
+		}
+		if attendee.AdditionalGuests != 0 {
+			entry["additionalGuests"] = attendee.AdditionalGuests
+		}
+		attendees = append(attendees, entry)
+	}
+
+	attachments := make([]map[string]any, 0, len(item.Attachments))
+	for _, attachment := range item.Attachments {
+		attachments = append(attachments, map[string]any{
+			"fileUrl":  attachment.FileURL,
+			"title":    format.SanitizeText(attachment.Title, format.MaxFieldLen),
+			"mimeType": attachment.MimeType,
+			"iconLink": attachment.IconLink,
+			"fileId":   attachment.FileID,
+		})
+	}
+
+	transparency := item.Transparency
+	if transparency == "" {
+		transparency = "opaque"
+	}
+	visibility := item.Visibility
+	if visibility == "" {
+		visibility = "default"
+	}
+	data := map[string]any{
+		"id":           item.ID,
+		"summary":      format.SanitizeText(item.Summary, format.MaxFieldLen),
+		"start":        start,
+		"end":          end,
+		"location":     format.SanitizeText(item.Location, format.MaxFieldLen),
+		"description":  format.SanitizeText(item.Description, format.MaxBodyLen),
+		"attendees":    attendees,
+		"attachments":  attachments,
+		"hangoutLink":  item.HangoutLink,
+		"transparency": transparency,
+		"visibility":   visibility,
+		"status":       item.Status,
+		"etag":         version,
+		"version":      version,
+		"sequence":     item.Sequence,
+	}
+	if item.RecurringEvent != "" {
+		data["recurringEventId"] = item.RecurringEvent
+	}
+	for _, attendee := range item.Attendees {
+		if attendee.Self && attendee.ResponseStatus != "" {
+			data["response_status"] = attendee.ResponseStatus
+			data["responseStatus"] = attendee.ResponseStatus
+			break
+		}
+	}
+	return data
+}
+
+func eventVersion(bodyETag, headerETag string) string {
+	if version := strings.TrimSpace(bodyETag); version != "" && version != "*" {
+		return version
+	}
+	if version := strings.TrimSpace(headerETag); version != "" && version != "*" {
+		return version
+	}
+	return ""
+}
+
+func expectedEventVersion(params map[string]any) (string, error) {
+	var versions []string
+	for _, key := range []string{"expected_etag", "expected_version"} {
+		raw, exists := params[key]
+		if !exists {
+			continue
+		}
+		version, ok := raw.(string)
+		if !ok {
+			return "", &adapters.ExecutionFailure{
+				Kind: adapters.ExecutionFailureDefinite,
+				Err:  fmt.Errorf("%s must be a string", key),
+			}
+		}
+		version = strings.TrimSpace(version)
+		if version == "" || version == "*" || strings.ContainsAny(version, "\r\n") {
+			return "", &adapters.ExecutionFailure{
+				Kind: adapters.ExecutionFailureDefinite,
+				Err:  fmt.Errorf("%s must contain a concrete provider version", key),
+			}
+		}
+		versions = append(versions, version)
+	}
+	if len(versions) == 0 {
+		return "", &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("expected_etag (or expected_version) is required"),
+		}
+	}
+	if len(versions) == 2 && versions[0] != versions[1] {
+		return "", &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("expected_etag and expected_version disagree"),
+		}
+	}
+	return versions[0], nil
+}
+
+func calendarSendUpdates(params map[string]any) (string, error) {
+	raw, exists := params["send_updates"]
+	if !exists {
+		return "none", nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("send_updates must be a string"),
+		}
+	}
+	value = strings.TrimSpace(value)
+	switch value {
+	case "all", "externalOnly", "none":
+		return value, nil
+	default:
+		return "", &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("send_updates must be all, externalOnly, or none"),
+		}
+	}
+}
+
+func calendarAttendeePatch(raw any) ([]map[string]string, error) {
+	var values []any
+	switch typed := raw.(type) {
+	case []any:
+		values = typed
+	case []string:
+		values = make([]any, len(typed))
+		for i, value := range typed {
+			values[i] = value
+		}
+	default:
+		return nil, &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("attendees must be an array of email strings"),
+		}
+	}
+	attendees := make([]map[string]string, 0, len(values))
+	for _, rawValue := range values {
+		var email string
+		switch attendee := rawValue.(type) {
+		case string:
+			email = attendee
+		case map[string]any:
+			email, _ = attendee["email"].(string)
+		case map[string]string:
+			email = attendee["email"]
+		}
+		email = strings.TrimSpace(email)
+		if email == "" {
+			return nil, &adapters.ExecutionFailure{
+				Kind: adapters.ExecutionFailureDefinite,
+				Err:  fmt.Errorf("attendees must contain non-empty email strings or email objects"),
+			}
+		}
+		attendees = append(attendees, map[string]string{"email": email})
+	}
+	return attendees, nil
+}
+
+func calendarSelfAttendee(attendees []calendarAPIAttendee) (calendarAPIAttendee, bool) {
+	for _, attendee := range attendees {
+		if attendee.Self {
+			return attendee, true
+		}
+	}
+	return calendarAPIAttendee{}, false
+}
+
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 func apiGET(ctx context.Context, client *http.Client, apiURL string, out any) error {
+	_, err := apiGETWithHeaders(ctx, client, apiURL, out)
+	return err
+}
+
+func apiGETWithHeaders(ctx context.Context, client *http.Client, apiURL string, out any) (http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
+		return resp.Header.Clone(), fmt.Errorf("status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
 	}
-	return json.Unmarshal(body, out)
+	if readErr != nil {
+		return resp.Header.Clone(), readErr
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return resp.Header.Clone(), err
+	}
+	return resp.Header.Clone(), nil
 }
 
 func apiWrite(ctx context.Context, client *http.Client, method, apiURL string, payload any, out any) error {
@@ -498,6 +885,82 @@ func apiWrite(ctx context.Context, client *http.Client, method, apiURL string, p
 		return json.Unmarshal(body, out)
 	}
 	return nil
+}
+
+func apiConditionalWrite(
+	ctx context.Context,
+	client *http.Client,
+	method, apiURL, expectedVersion string,
+	payload any,
+	out any,
+) (http.Header, error) {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, &adapters.ExecutionFailure{Kind: adapters.ExecutionFailureDefinite, Err: err}
+	}
+	req, err := http.NewRequestWithContext(ctx, method, apiURL, strings.NewReader(string(b)))
+	if err != nil {
+		return nil, &adapters.ExecutionFailure{Kind: adapters.ExecutionFailureDefinite, Err: err}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", expectedVersion)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		return nil, &adapters.ExecutionFailure{
+			Kind:     adapters.ExecutionFailureAmbiguous,
+			TimedOut: isTimeoutError(err),
+			Err:      fmt.Errorf("provider mutation transport failed: %w", err),
+		}
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(resp.Body)
+
+	switch {
+	case resp.StatusCode == http.StatusPreconditionFailed:
+		return resp.Header.Clone(), &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureStaleVersion,
+			Err:  fmt.Errorf("provider rejected stale event version (status %d): %s", resp.StatusCode, format.Truncate(string(body), 200)),
+		}
+	case resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= http.StatusInternalServerError:
+		return resp.Header.Clone(), &adapters.ExecutionFailure{
+			Kind:     adapters.ExecutionFailureAmbiguous,
+			TimedOut: resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusGatewayTimeout,
+			Err:      fmt.Errorf("provider mutation outcome is ambiguous (status %d): %s", resp.StatusCode, format.Truncate(string(body), 200)),
+		}
+	case resp.StatusCode >= http.StatusBadRequest:
+		return resp.Header.Clone(), &adapters.ExecutionFailure{
+			Kind: adapters.ExecutionFailureDefinite,
+			Err:  fmt.Errorf("provider rejected mutation (status %d): %s", resp.StatusCode, format.Truncate(string(body), 200)),
+		}
+	case readErr != nil:
+		return resp.Header.Clone(), &adapters.ExecutionFailure{
+			Kind:     adapters.ExecutionFailureAmbiguous,
+			TimedOut: isTimeoutError(readErr),
+			Err:      fmt.Errorf("provider mutation response was incomplete: %w", readErr),
+		}
+	}
+
+	if out != nil && len(body) > 0 {
+		if err := json.Unmarshal(body, out); err != nil {
+			return resp.Header.Clone(), &adapters.ExecutionFailure{
+				Kind: adapters.ExecutionFailureAmbiguous,
+				Err:  fmt.Errorf("provider confirmed mutation but returned an invalid response: %w", err),
+			}
+		}
+	}
+	return resp.Header.Clone(), nil
+}
+
+func isTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func paramInt(params map[string]any, key string) (int, bool) {

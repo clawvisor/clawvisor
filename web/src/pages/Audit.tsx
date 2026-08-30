@@ -45,7 +45,20 @@ function downloadCsv(csv: string, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-const OUTCOMES = ['', 'executed', 'blocked', 'restricted', 'pending', 'denied', 'error', 'timeout']
+const OUTCOMES = [
+  '',
+  'executed',
+  'blocked',
+  'restricted',
+  'pending',
+  'denied',
+  'error',
+  'timeout',
+  'provider_definite_failure',
+  'provider_stale_version',
+  'provider_ambiguous',
+  'provider_timeout',
+]
 const ACTIVITY_TYPES = [
   { value: '', label: 'All activity types' },
   { value: 'runtime_egress', label: 'Runtime egress' },
@@ -62,6 +75,10 @@ const OUTCOME_STYLE: Record<string, string> = {
   denied: 'bg-surface-2 text-text-tertiary',
   error: 'bg-danger/15 text-danger',
   timeout: 'bg-surface-2 text-text-tertiary',
+  provider_definite_failure: 'bg-danger/15 text-danger',
+  provider_stale_version: 'bg-warning/15 text-warning',
+  provider_ambiguous: 'bg-danger/15 text-danger',
+  provider_timeout: 'bg-surface-2 text-text-tertiary',
 }
 
 type ActivityTypeFilter = '' | 'runtime_egress' | 'runtime_tool_use' | 'runtime' | 'service'
