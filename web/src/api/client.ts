@@ -1793,6 +1793,10 @@ export const api = {
   },
   notifications: {
     list: () => get<NotificationConfig[]>('/api/notifications'),
+    upsertSlack: (botToken: string, channelId: string, signingSecret: string, mode: 'direct' | 'openclaw_agent') =>
+      put<NotificationConfig>('/api/notifications/slack', { bot_token: botToken, channel_id: channelId, signing_secret: signingSecret, mode }),
+    deleteSlack: () => del<void>('/api/notifications/slack'),
+    testSlack: () => post<{ status: string }>('/api/notifications/slack/test', {}),
     upsertTelegram: (botToken: string, chatId: string) =>
       put<NotificationConfig>('/api/notifications/telegram', { bot_token: botToken, chat_id: chatId }),
     deleteTelegram: () => del<void>('/api/notifications/telegram'),

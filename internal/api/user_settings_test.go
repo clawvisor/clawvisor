@@ -50,6 +50,44 @@ func TestNotifications_UpsertAndList_Telegram(t *testing.T) {
 	}
 }
 
+func TestNotifications_UpsertAndList_Slack(t *testing.T) {
+	env := newTestEnv(t)
+	s := newSession(t, env)
+
+	resp := s.do("PUT", "/api/notifications/slack", map[string]any{
+		"bot_token":      "xoxb-secret-token",
+		"channel_id":     "C1234567890",
+		"signing_secret": "slack-signing-secret",
+		"mode":           "openclaw_agent",
+	})
+	body := mustStatus(t, resp, http.StatusOK)
+	if body["channel"] != "slack" {
+		t.Errorf("upsert slack: expected channel=slack, got %v", body["channel"])
+	}
+
+	cfg, _ := body["config"].(map[string]any)
+	if cfg["channel_id"] != "C1234567890" {
+		t.Errorf("channel_id = %v", cfg["channel_id"])
+	}
+	if tok, _ := cfg["bot_token"].(string); tok == "xoxb-secret-token" {
+		t.Fatal("bot token was not redacted")
+	}
+	if secret, _ := cfg["signing_secret"].(string); secret == "slack-signing-secret" {
+		t.Fatal("signing secret was not redacted")
+	}
+
+	resp = s.do("GET", "/api/notifications", nil)
+	var configs []any
+	decode(t, resp, &configs)
+	if len(configs) != 1 {
+		t.Fatalf("after upsert: expected 1 config, got %d", len(configs))
+	}
+	listed := configs[0].(map[string]any)
+	if listed["channel"] != "slack" {
+		t.Errorf("list: expected channel=slack, got %v", listed["channel"])
+	}
+}
+
 func TestNotifications_Upsert_MissingFields(t *testing.T) {
 	env := newTestEnv(t)
 	s := newSession(t, env)
@@ -57,6 +95,11 @@ func TestNotifications_Upsert_MissingFields(t *testing.T) {
 	resp := s.do("PUT", "/api/notifications/telegram", map[string]any{
 		"bot_token": "1234:ABCDEF",
 		// missing chat_id
+	})
+	mustStatus(t, resp, http.StatusBadRequest)
+
+	resp = s.do("PUT", "/api/notifications/slack", map[string]any{
+		"bot_token": "xoxb-secret-token",
 	})
 	mustStatus(t, resp, http.StatusBadRequest)
 }
@@ -76,6 +119,31 @@ func TestNotifications_Delete_Telegram(t *testing.T) {
 		t.Errorf("delete telegram: expected 204, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+func TestNotifications_Delete_Slack(t *testing.T) {
+	env := newTestEnv(t)
+	s := newSession(t, env)
+
+	s.do("PUT", "/api/notifications/slack", map[string]any{
+		"bot_token": "tok", "channel_id": "C123",
+	})
+
+	resp := s.do("DELETE", "/api/notifications/slack", nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("delete slack: expected 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestNotifications_SlackModeValidation(t *testing.T) {
+	env := newTestEnv(t)
+	s := newSession(t, env)
+
+	resp := s.do("PUT", "/api/notifications/slack", map[string]any{
+		"bot_token": "tok", "channel_id": "C123", "mode": "other",
+	})
+	mustStatus(t, resp, http.StatusBadRequest)
 }
 
 func TestNotifications_IsolatedByUser(t *testing.T) {

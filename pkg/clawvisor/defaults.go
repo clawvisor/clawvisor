@@ -43,6 +43,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/intent"
 	intnotify "github.com/clawvisor/clawvisor/internal/notify"
 	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
+	slacknotify "github.com/clawvisor/clawvisor/internal/notify/slack"
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
 	intredis "github.com/clawvisor/clawvisor/internal/redis"
 	"github.com/clawvisor/clawvisor/internal/relay"
@@ -69,7 +70,7 @@ import (
 
 // DefaultOptions loads config and builds a fully-wired ServerOptions with the
 // standard open-source defaults (SQLite or Postgres, local or GCP vault,
-// all enabled adapters, Telegram notifier, magic-link auth for local mode).
+// all enabled adapters, notification notifiers, magic-link auth for local mode).
 //
 // Cloud/enterprise builds call this, then selectively override fields:
 //
@@ -427,6 +428,8 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	telegramN := telegramnotify.New(st, ctx)
 	telegramN.SetMessageBuffer(msgBuffer)
 	telegramN.SetVault(v)
+	slackN := slacknotify.New(st, logger)
+	slackN.SetVault(v)
 
 	var pushN *pushnotify.Notifier
 	if cfg.Push.Enabled && ed25519Key != nil {
@@ -449,6 +452,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 
 	var notifiers []notify.Notifier
 	notifiers = append(notifiers, telegramN)
+	notifiers = append(notifiers, slackN)
 	if pushN != nil {
 		notifiers = append(notifiers, pushN)
 	}
@@ -541,6 +545,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 			telegramnotify.NewRedisGroupPairingStore(client),
 			telegramnotify.NewRedisPollingLock(client, instanceID),
 		)
+		slackN.SetCallbackTokenStore(slacknotify.NewRedisCallbackTokenStore(client))
 
 		logger.Info("redis connected", "addr", client.Options().Addr)
 	}

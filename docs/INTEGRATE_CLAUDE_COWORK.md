@@ -133,7 +133,7 @@ Explain how it works:
 - Claude has access to six MCP tools: `fetch_catalog`, `create_task`,
   `get_task`, `complete_task`, `expand_task`, and `gateway_request`
 - Claude creates tasks declaring what it needs, the user approves them in the
-  dashboard (or via Telegram), and Claude executes actions under the approved
+  dashboard or configured notification channel, and Claude executes actions under the approved
   scope
 - In-scope actions with `auto_execute` run immediately; others queue for
   per-request approval
@@ -142,5 +142,5 @@ Explain how it works:
 Remind the user to:
 - Connect services in the Clawvisor dashboard under the **Services** tab
   before asking Claude to use them
-- Approve tasks in the dashboard (or via Telegram) when Claude requests them
+- Approve tasks in the dashboard or a configured notification channel when Claude requests them
 - Optionally set restrictions in the dashboard to hard-block specific actions

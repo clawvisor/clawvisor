@@ -46,6 +46,8 @@ func New(st store.Store, pushURL, daemonID string, privateKey ed25519.PrivateKey
 	}
 }
 
+func (n *Notifier) NotificationChannel() string { return "push" }
+
 // DecisionChannel returns a read-only channel that emits callback decisions
 // from device action taps (approve/deny on push notifications).
 func (n *Notifier) DecisionChannel() <-chan notify.CallbackDecision {

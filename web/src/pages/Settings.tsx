@@ -20,6 +20,7 @@ export default function Settings() {
       {!features?.multi_tenant && <OAuthCredentialsSection />}
       {features?.mobile_pairing && <DevicePairing />}
       {features?.local_daemon && <LocalDaemonPairing />}
+      <SlackSetupSection />
       <TelegramSetupSection />
       {passwordAuth && <PasswordSection />}
       {passwordAuth && <DangerZone />}
@@ -746,6 +747,176 @@ function OAuthCredentialsSection() {
             </div>
           )
         })}
+      </div>
+    </section>
+  )
+}
+
+// ── Slack Setup ──────────────────────────────────────────────────────────────
+
+function SlackSetupSection() {
+  const qc = useQueryClient()
+  const [expanded, setExpanded] = useState(false)
+  const [botToken, setBotToken] = useState('')
+  const [channelId, setChannelId] = useState('')
+  const [signingSecret, setSigningSecret] = useState('')
+  const [mode, setMode] = useState<'direct' | 'openclaw_agent'>('direct')
+  const [error, setError] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<'success' | 'error' | null>(null)
+
+  const { data: configs } = useQuery({
+    queryKey: ['notifications'],
+    queryFn: (): Promise<NotificationConfig[]> => api.notifications.list(),
+  })
+
+  const slack = configs?.find((c: NotificationConfig) => c.channel === 'slack')
+  const configured = Boolean(slack)
+
+  useEffect(() => {
+    if (!configured) setExpanded(true)
+  }, [configured])
+
+  const saveMut = useMutation({
+    mutationFn: () => api.notifications.upsertSlack(botToken.trim(), channelId.trim(), signingSecret.trim(), mode),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] })
+      setBotToken('')
+      setChannelId('')
+      setSigningSecret('')
+      setError(null)
+      setExpanded(false)
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: () => api.notifications.deleteSlack(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] })
+      setExpanded(true)
+      setTestResult(null)
+    },
+  })
+
+  const testMut = useMutation({
+    mutationFn: () => api.notifications.testSlack(),
+    onSuccess: () => { setTestResult('success'); setTimeout(() => setTestResult(null), 5000) },
+    onError: () => { setTestResult('error'); setTimeout(() => setTestResult(null), 5000) },
+  })
+
+  const canSave = botToken.trim() && channelId.trim()
+
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Slack</h2>
+        <p className="text-sm text-text-tertiary mt-0.5">
+          Send approval requests to a Slack channel, directly or through the Slack Agent by OpenClaw.
+        </p>
+      </div>
+
+      {error && <div className="text-sm text-danger max-w-xl">{error}</div>}
+
+      <div className="max-w-xl bg-surface-1 border border-border-default rounded-md px-5 py-4 space-y-3">
+        <button
+          onClick={() => setExpanded(prev => !prev)}
+          className="flex items-center gap-3 w-full text-left group"
+        >
+          <span className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors ${
+            configured ? 'bg-green-500/15 border-green-500/40 text-green-500' : 'bg-brand/15 border-brand/40 text-brand'
+          }`}>
+            {configured ? '✓' : '1'}
+          </span>
+          <span className="text-sm font-medium text-text-primary">
+            {configured ? `Connected to ${slack?.config?.channel_id ?? 'Slack'}` : 'Connect Slack approvals'}
+          </span>
+        </button>
+
+        {expanded && (
+          <div className="ml-10 space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setMode('direct')}
+                className={`text-xs px-3 py-2 rounded border ${mode === 'direct' ? 'bg-brand text-surface-0 border-brand' : 'border-border-default text-text-secondary hover:bg-surface-0'}`}
+              >
+                Direct Slack
+              </button>
+              <button
+                onClick={() => setMode('openclaw_agent')}
+                className={`text-xs px-3 py-2 rounded border ${mode === 'openclaw_agent' ? 'bg-brand text-surface-0 border-brand' : 'border-border-default text-text-secondary hover:bg-surface-0'}`}
+              >
+                OpenClaw Agent
+              </button>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-text-tertiary">Bot Token</label>
+              <input
+                type="password"
+                value={botToken}
+                onChange={e => { setBotToken(e.target.value); setError(null) }}
+                placeholder="xoxb-..."
+                className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-text-tertiary">Channel ID</label>
+              <input
+                type="text"
+                value={channelId}
+                onChange={e => { setChannelId(e.target.value); setError(null) }}
+                placeholder="C0123456789"
+                className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+              />
+            </div>
+            {mode === 'direct' && (
+              <div>
+                <label className="text-xs font-medium text-text-tertiary">Signing Secret <span className="font-normal">(optional for link buttons)</span></label>
+                <input
+                  type="password"
+                  value={signingSecret}
+                  onChange={e => { setSigningSecret(e.target.value); setError(null) }}
+                  placeholder="Slack app signing secret"
+                  className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                />
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => saveMut.mutate()}
+                disabled={saveMut.isPending || !canSave}
+                className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+              >
+                {saveMut.isPending ? 'Saving…' : 'Save'}
+              </button>
+              {configured && (
+                <button
+                  onClick={() => { setExpanded(false); setError(null) }}
+                  className="text-sm text-text-tertiary hover:text-text-primary"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {configured && !expanded && (
+          <div className="ml-10 flex items-center gap-3 text-sm">
+            <span className="text-success">Configured</span>
+            <span className="text-text-tertiary">{slack?.config?.mode === 'openclaw_agent' ? 'OpenClaw Agent' : 'Direct Slack'}</span>
+            <button onClick={() => testMut.mutate()} disabled={testMut.isPending} className="text-brand hover:underline disabled:opacity-50">
+              Test
+            </button>
+            <button onClick={() => setExpanded(true)} className="text-text-tertiary hover:text-text-primary">
+              Edit
+            </button>
+            <button onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending} className="text-danger/70 hover:text-danger disabled:opacity-50">
+              Remove
+            </button>
+            {testResult === 'success' && <span className="text-success">Sent</span>}
+            {testResult === 'error' && <span className="text-danger">Failed</span>}
+          </div>
+        )}
       </div>
     </section>
   )

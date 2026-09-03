@@ -957,6 +957,10 @@ func (s *Server) routes() http.Handler {
 
 	// Notifications (user JWT)
 	mux.Handle("GET /api/notifications", user(notificationsHandler.List))
+	mux.Handle("PUT /api/notifications/slack", user(notificationsHandler.UpsertSlack))
+	mux.Handle("DELETE /api/notifications/slack", user(notificationsHandler.DeleteSlack))
+	mux.Handle("POST /api/notifications/slack/test", user(notificationsHandler.TestSlack))
+	mux.Handle("POST /api/notifications/slack/interactions", http.HandlerFunc(notificationsHandler.SlackInteractions))
 	mux.Handle("PUT /api/notifications/telegram", user(notificationsHandler.UpsertTelegram))
 	mux.Handle("DELETE /api/notifications/telegram", user(notificationsHandler.DeleteTelegram))
 	mux.Handle("POST /api/notifications/telegram/test", user(notificationsHandler.TestTelegram))

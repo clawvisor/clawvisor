@@ -166,5 +166,5 @@ Explain how it works:
 Remind the user to:
 - Connect services in the Clawvisor dashboard under the **Services** tab
   before asking Claude to use them
-- Approve tasks in the dashboard (or via Telegram) when Claude requests them
+- Approve tasks in the dashboard or a configured notification channel when Claude requests them
 - Optionally set restrictions in the dashboard to hard-block specific actions
