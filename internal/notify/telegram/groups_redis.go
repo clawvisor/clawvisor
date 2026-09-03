@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	redisPendingGroupsPrefix = "clawvisor:tgpg:"
-	redisGroupPairingsPrefix = "clawvisor:tggp:"
+	redisPendingGroupsPrefix  = "clawvisor:tgpg:"
+	redisGroupPairingsPrefix  = "clawvisor:tggp:"
 )
 
 // PendingGroupStore abstracts storage of detected Telegram groups awaiting

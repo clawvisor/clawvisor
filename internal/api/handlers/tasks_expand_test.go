@@ -207,10 +207,10 @@ func TestBuildExpansionApprovalUpdate_DedupReplacesActionRationale(t *testing.T)
 // colon as the service id (so account-aliased ids work).
 func TestParseToolNameAsServiceAction(t *testing.T) {
 	cases := []struct {
-		toolName    string
-		wantService string
-		wantAction  string
-		wantOK      bool
+		toolName        string
+		wantService     string
+		wantAction      string
+		wantOK          bool
 	}{
 		{"Bash", "", "", false},
 		{"", "", "", false},

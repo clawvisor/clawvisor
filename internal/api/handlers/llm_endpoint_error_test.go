@@ -202,3 +202,4 @@ data: {"type":"content_block_start","index":0,"content_block":{"type":"text","te
 		t.Fatalf("expected Clawvisor error message in output, got:\n%s", got)
 	}
 }
+

@@ -14,7 +14,7 @@ import (
 //
 //   - resolveAppURL -> {{.AppURL}} -> APP_URL='...' in the installer, a
 //     text/template (no escaping) that users run via `curl | sh`. Reflecting
-//     the header verbatim rendered APP_URL=”; echo MARKER; '://host', which
+//     the header verbatim rendered APP_URL=''; echo MARKER; '://host', which
 //     executes -- arbitrary command injection in the install path.
 //   - skillBaseURL -> the base URL baked into a served SKILL.md, i.e. into
 //     instructions an autonomous agent acts on.

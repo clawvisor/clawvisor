@@ -298,10 +298,10 @@ func TestChainExtraction_Gateway_BuiltinsOnlyMode_SkipsLLM(t *testing.T) {
 type approvalTestStore struct {
 	*localTestStore
 
-	paMu    sync.Mutex
-	pa      *store.PendingApproval
-	claimed bool
-	deleted bool
+	paMu     sync.Mutex
+	pa       *store.PendingApproval
+	claimed  bool
+	deleted  bool
 }
 
 func newApprovalTestStore() *approvalTestStore {
