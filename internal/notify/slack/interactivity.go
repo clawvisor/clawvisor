@@ -181,6 +181,14 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 		return
 	}
 
+	// Record who clicked so the resolved message can attribute it. Written
+	// before publishing: the decision is consumed asynchronously and may
+	// reach the update path immediately.
+	n.msgCtx.SetApprover(
+		contextKey(targetTypeForDecision(entry.Type), entry.TargetID),
+		mention(p.User.ID),
+	)
+
 	select {
 	case n.decisionCh <- notify.CallbackDecision{
 		Type:        entry.Type,

@@ -41,6 +41,11 @@ const notifyChannel = "slack"
 // Slack message long after the approval itself expired.
 const callbackTTL = 6 * time.Minute
 
+// messageContextTTL outlives callbackTTL: a request can be resolved from the
+// dashboard long after its Slack buttons expire, and the resolved message
+// should still carry its summary and detail thread.
+const messageContextTTL = 24 * time.Hour
+
 // Notifier posts approval prompts to a user's Slack channel and turns button
 // clicks back into notify.CallbackDecision values.
 type Notifier struct {
@@ -52,6 +57,7 @@ type Notifier struct {
 	signingSecret string
 	creds         AppCredentials
 	cbTokens      CallbackTokenStorer
+	msgCtx        MessageContextStorer
 	decisionCh    chan notify.CallbackDecision
 	replay        ReplayGuard
 }
@@ -67,6 +73,7 @@ func New(st store.Store, signingSecret string, creds AppCredentials, logger *slo
 		signingSecret: signingSecret,
 		creds:         creds,
 		cbTokens:      newCallbackTokenStore(),
+		msgCtx:        newMessageContextStore(),
 		decisionCh:    make(chan notify.CallbackDecision, 32),
 		replay:        noopReplayGuard{},
 	}
@@ -102,6 +109,7 @@ func (n *Notifier) RunCleanup(ctx context.Context) {
 			return
 		case <-t.C:
 			n.cbTokens.Cleanup()
+			n.msgCtx.Cleanup()
 		}
 	}
 }
@@ -114,8 +122,8 @@ func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalR
 		return "", err
 	}
 
-	blocks := approvalBlocks(req)
-	blocks = append(blocks, n.actionsFor(
+	detail := approvalBlocks(req)
+	blocks := append(append([]block{}, detail...), n.actionsFor(
 		"approval", approvalNotifyTargetID(req.RequestID, req.TaskID),
 		req.UserID, req.TaskID, cfg.ChannelID, "Deny", req.ApproveURL, req.DenyURL,
 	))
@@ -124,7 +132,8 @@ func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalR
 	if err != nil {
 		return "", fmt.Errorf("slack: send approval request: %w", err)
 	}
-	n.recordMessage(ctx, "approval", approvalNotifyTargetID(req.RequestID, req.TaskID), ref)
+	summary := summarise(req.AgentName, display.FormatServiceAction(req.Service, req.Action))
+	n.recordMessage(ctx, "approval", approvalNotifyTargetID(req.RequestID, req.TaskID), ref, summary, detail)
 	return ref, nil
 }
 
@@ -134,8 +143,8 @@ func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskA
 		return "", err
 	}
 
-	blocks := taskApprovalBlocks(req)
-	blocks = append(blocks, n.actionsFor(
+	detail := taskApprovalBlocks(req)
+	blocks := append(append([]block{}, detail...), n.actionsFor(
 		"task", req.TaskID, req.UserID, "", cfg.ChannelID, "Deny", req.ApproveURL, req.DenyURL,
 	))
 
@@ -143,7 +152,7 @@ func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskA
 	if err != nil {
 		return "", fmt.Errorf("slack: send task approval request: %w", err)
 	}
-	n.recordMessage(ctx, "task", req.TaskID, ref)
+	n.recordMessage(ctx, "task", req.TaskID, ref, summarise(req.AgentName, req.Purpose), detail)
 	return ref, nil
 }
 
@@ -153,8 +162,8 @@ func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.Sco
 		return "", err
 	}
 
-	blocks := scopeExpansionBlocks(req)
-	blocks = append(blocks, n.actionsFor(
+	detail := scopeExpansionBlocks(req)
+	blocks := append(append([]block{}, detail...), n.actionsFor(
 		"scope_expansion", req.TaskID, req.UserID, "", cfg.ChannelID,
 		"Deny expansion", req.ApproveURL, req.DenyURL,
 	))
@@ -165,7 +174,7 @@ func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.Sco
 	}
 	// Scope expansion resolves against the parent task, so it shares the
 	// "task" target namespace with the original approval prompt.
-	n.recordMessage(ctx, "task", req.TaskID, ref)
+	n.recordMessage(ctx, "task", req.TaskID, ref, summarise(req.AgentName, "scope expansion", req.Purpose), detail)
 	return ref, nil
 }
 
@@ -175,8 +184,8 @@ func (n *Notifier) SendConnectionRequest(ctx context.Context, req notify.Connect
 		return "", err
 	}
 
-	blocks := connectionBlocks(req)
-	blocks = append(blocks, n.actionsFor(
+	detail := connectionBlocks(req)
+	blocks := append(append([]block{}, detail...), n.actionsFor(
 		"connection", req.ConnectionID, req.UserID, "", cfg.ChannelID, "Deny", req.ApproveURL, req.DenyURL,
 	))
 
@@ -184,7 +193,7 @@ func (n *Notifier) SendConnectionRequest(ctx context.Context, req notify.Connect
 	if err != nil {
 		return "", fmt.Errorf("slack: send connection request: %w", err)
 	}
-	n.recordMessage(ctx, "connection", req.ConnectionID, ref)
+	n.recordMessage(ctx, "connection", req.ConnectionID, ref, summarise(req.AgentName, req.IPAddress), detail)
 	return ref, nil
 }
 
@@ -257,7 +266,26 @@ func (n *Notifier) UpdateMessageForTarget(ctx context.Context, userID, targetTyp
 	if err != nil {
 		return nil
 	}
-	return n.update(ctx, cfg, ref, text)
+
+	channelID, ts, ok := splitMessageRef(ref)
+	if !ok {
+		return fmt.Errorf("slack: malformed message reference %q", ref)
+	}
+
+	// Absent context (a replica that did not post the prompt, or an expired
+	// entry) degrades to the outcome line alone rather than failing.
+	mc, haveCtx := n.msgCtx.TakeForResolve(contextKey(targetType, targetID))
+
+	// Move the detail into a thread reply before collapsing the parent, so
+	// the record of what was approved survives the edit. Best-effort: if
+	// the reply fails we still want the buttons cleared.
+	if haveCtx && len(mc.Detail) > 0 {
+		if err := n.postThreadReply(ctx, cfg, channelID, ts, mc.Detail); err != nil {
+			n.logger.WarnContext(ctx, "slack: could not post detail thread", "err", err)
+		}
+	}
+
+	return n.update(ctx, cfg, channelID, ts, text, mc)
 }
 
 // ── Message plumbing ──────────────────────────────────────────────────────────
@@ -277,11 +305,17 @@ func (n *Notifier) actionsFor(entryType, targetID, userID, taskID, channelID, de
 // recordMessage stores the Slack message reference so the resolve path can
 // edit it later. Failures are logged, not returned: the prompt is already
 // delivered and losing the ability to edit it must not fail the send.
-func (n *Notifier) recordMessage(ctx context.Context, targetType, targetID, ref string) {
+func (n *Notifier) recordMessage(ctx context.Context, targetType, targetID, ref string, summary string, detail []block) {
 	if err := n.store.SaveNotificationMessage(ctx, targetType, targetID, notifyChannel, ref); err != nil {
 		n.logger.WarnContext(ctx, "slack: could not record message reference",
 			"err", err, "target_type", targetType, "target_id", targetID)
 	}
+	// Kept so the resolved message can still say what was approved and move
+	// the detail into a thread instead of deleting it.
+	n.msgCtx.Put(contextKey(targetType, targetID), messageContext{
+		Summary: summary,
+		Detail:  detail,
+	}, messageContextTTL)
 }
 
 // messageRef packs the channel and timestamp Slack needs to address a
@@ -323,22 +357,58 @@ func (n *Notifier) post(ctx context.Context, cfg notify.SlackConfig, text string
 	return messageRef(ch, out.TS), nil
 }
 
-func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, ref, text string) error {
-	channelID, ts, ok := splitMessageRef(ref)
-	if !ok {
-		return fmt.Errorf("slack: malformed message reference %q", ref)
+// update collapses a resolved prompt to its outcome. Blocks are replaced
+// wholesale, which is also what clears the buttons; the detail has already
+// been moved to a thread reply by the caller.
+func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, channelID, ts, text string, mc messageContext) error {
+	// The incoming text is Telegram-flavoured HTML, so it needs translating
+	// rather than escaping — escaping renders "<b>Approved</b>" literally.
+	blocks := []block{sectionRaw(telegramHTMLToMrkdwn(text))}
+
+	// Attribution and summary go in a context line rather than the section,
+	// so the outcome stays the visually dominant part of the message.
+	if line := resolutionContext(mc); line != "" {
+		blocks = append(blocks, contextBlock(line))
 	}
-	// Blocks are replaced wholesale with a single resolved section, which
-	// is also what clears the original buttons. The incoming text is
-	// Telegram-flavoured HTML, so it needs translating rather than
-	// escaping — escaping renders "<b>Approved</b>" literally.
+
 	payload := map[string]any{
 		"channel": channelID,
 		"ts":      ts,
 		"text":    plainText(text),
-		"blocks":  []block{sectionRaw(telegramHTMLToMrkdwn(text))},
+		"blocks":  blocks,
 	}
 	return n.call(ctx, cfg.BotToken, "chat.update", payload, nil)
+}
+
+// resolutionContext renders the "by whom / of what" line under the outcome.
+// The mention is inserted raw — Slack only resolves `<@U…>` when it is not
+// escaped — so it must never be passed through escapeMrkdwn.
+func resolutionContext(mc messageContext) string {
+	var parts []string
+	if mc.Approver != "" {
+		parts = append(parts, "Resolved by "+mc.Approver)
+	}
+	if mc.Summary != "" {
+		parts = append(parts, escapeMrkdwn(mc.Summary))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// postThreadReply posts the original detail as a reply on the prompt's
+// thread. Slack collapses threads in the channel view behind a reply count,
+// which is the only genuine collapse primitive messages have — so the detail
+// stays available without dominating the channel.
+func (n *Notifier) postThreadReply(ctx context.Context, cfg notify.SlackConfig, channelID, ts string, detail []block) error {
+	payload := map[string]any{
+		"channel":   channelID,
+		"thread_ts": ts,
+		"text":      "Request details",
+		"blocks":    clamp(detail),
+		// Keep the reply inside the thread; broadcasting would defeat the
+		// point of collapsing it.
+		"reply_broadcast": false,
+	}
+	return n.call(ctx, cfg.BotToken, "chat.postMessage", payload, nil)
 }
 
 // doJSON executes a prepared request and decodes the JSON body into out.
