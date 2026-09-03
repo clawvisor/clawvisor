@@ -41,6 +41,17 @@ func truncate(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
+// sectionRaw builds a section from text that is already mrkdwn. section()
+// callers pass content they built with esc() applied to the dynamic parts;
+// this one is for text that has been through telegramHTMLToMrkdwn, which
+// does its own escaping.
+func sectionRaw(md string) block {
+	return block{
+		"type": "section",
+		"text": map[string]any{"type": "mrkdwn", "text": truncate(md, maxSectionText)},
+	}
+}
+
 func section(md string) block {
 	return block{
 		"type": "section",

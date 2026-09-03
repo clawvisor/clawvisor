@@ -328,13 +328,15 @@ func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, ref, text
 	if !ok {
 		return fmt.Errorf("slack: malformed message reference %q", ref)
 	}
-	// Blocks are replaced wholesale with a single resolved section; passing
-	// an empty blocks array is what clears the original buttons.
+	// Blocks are replaced wholesale with a single resolved section, which
+	// is also what clears the original buttons. The incoming text is
+	// Telegram-flavoured HTML, so it needs translating rather than
+	// escaping — escaping renders "<b>Approved</b>" literally.
 	payload := map[string]any{
 		"channel": channelID,
 		"ts":      ts,
-		"text":    text,
-		"blocks":  []block{section(esc(text))},
+		"text":    plainText(text),
+		"blocks":  []block{sectionRaw(telegramHTMLToMrkdwn(text))},
 	}
 	return n.call(ctx, cfg.BotToken, "chat.update", payload, nil)
 }
