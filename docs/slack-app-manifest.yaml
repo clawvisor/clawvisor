@@ -1,0 +1,60 @@
+# Slack app manifest for Clawvisor approval notifications.
+#
+# Create the app at https://api.slack.com/apps → "Create New App" → "From an
+# app manifest", then paste this in. Afterwards copy the Client ID, Client
+# Secret and Signing Secret from Basic Information → App Credentials into
+# CLAWVISOR_SLACK_CLIENT_ID / _CLIENT_SECRET / _SIGNING_SECRET.
+#
+# Replace REPLACE_WITH_PUBLIC_HOST with the origin Slack can reach:
+#   - production: your public hostname
+#   - local dev:  the tunnel host (Tailscale Funnel, ngrok), which is what
+#                 CLAWVISOR_SLACK_PUBLIC_URL should also be set to.
+# Slack reaches both URLs below from the public internet, so neither can
+# point at localhost or a hosts-file-only domain.
+#
+# Use a separate app per environment — one app has one interactivity URL,
+# so a shared app would send every workspace's button clicks to whichever
+# environment was configured last.
+
+display_information:
+  name: Clawvisor
+  description: Approve agent actions from Slack
+  background_color: "#1a1a1a"
+
+features:
+  bot_user:
+    display_name: Clawvisor
+    always_online: false
+
+oauth_config:
+  redirect_urls:
+    - https://REPLACE_WITH_PUBLIC_HOST/api/notifications/slack/callback
+  scopes:
+    bot:
+      # Post approval prompts.
+      - chat:write
+      # Post to a public channel without joining it first.
+      - chat:write.public
+      # List public channels for the destination picker.
+      - channels:read
+      # List private channels the bot has been invited to.
+      - groups:read
+      # Resolve Slack user IDs to names for the approver allowlist.
+      - users:read
+      #
+      # Deliberately absent: any scope granting read access to message
+      # content. Clawvisor never reads the channel, and requesting it would
+      # make the install prompt far more alarming than the feature warrants.
+
+settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://REPLACE_WITH_PUBLIC_HOST/api/notifications/slack/interactions
+  org_deploy_enabled: false
+  # Socket Mode is the alternative transport (no public URL, but each user
+  # must create their own app). Clawvisor uses the interactivity webhook.
+  socket_mode_enabled: false
+  # Must stay false. Rotation expires bot tokens after 12 hours and returns
+  # a refresh_token that the notifier does not read or store, so approvals
+  # would silently stop working half a day after install.
+  token_rotation_enabled: false

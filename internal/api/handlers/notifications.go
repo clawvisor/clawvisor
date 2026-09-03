@@ -80,16 +80,23 @@ func sanitizeNotificationConfig(raw json.RawMessage) json.RawMessage {
 type NotificationsHandler struct {
 	st             store.Store
 	notifier       notify.Notifier                 // may be nil
-	pairer         notify.TelegramPairer            // may be nil
-	groupObs       notify.GroupObserver             // may be nil
-	groupDetector  notify.GroupDetector             // may be nil
-	agentPairer    notify.AgentGroupPairer          // may be nil
-	groupValidator notify.GroupMembershipValidator  // may be nil
+	pairer         notify.TelegramPairer           // may be nil
+	groupObs       notify.GroupObserver            // may be nil
+	groupDetector  notify.GroupDetector            // may be nil
+	agentPairer    notify.AgentGroupPairer         // may be nil
+	groupValidator notify.GroupMembershipValidator // may be nil
 	baseURL        string
+
+	// Slack dependencies, wired via SetSlack. slackCfg/slackInstaller are
+	// nil when the deployment has no Slack app configured; oauthState
+	// always has an in-memory default.
+	slackCfg       notify.SlackConfigStore
+	slackInstaller notify.SlackInstaller
+	oauthState     OAuthStateStore
 }
 
 func NewNotificationsHandler(st store.Store, notifier notify.Notifier, pairer notify.TelegramPairer, groupObs notify.GroupObserver, groupDetector notify.GroupDetector, agentPairer notify.AgentGroupPairer, groupValidator notify.GroupMembershipValidator, baseURL string) *NotificationsHandler {
-	return &NotificationsHandler{st: st, notifier: notifier, pairer: pairer, groupObs: groupObs, groupDetector: groupDetector, agentPairer: agentPairer, groupValidator: groupValidator, baseURL: baseURL}
+	return &NotificationsHandler{st: st, notifier: notifier, pairer: pairer, groupObs: groupObs, groupDetector: groupDetector, agentPairer: agentPairer, groupValidator: groupValidator, baseURL: baseURL, oauthState: newMemoryOAuthStateStore()}
 }
 
 // List returns all notification configs for the authenticated user.
@@ -103,9 +110,9 @@ func (h *NotificationsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch the two currently-supported channels; omit missing ones gracefully.
+	// Fetch the supported channels; omit missing ones gracefully.
 	var configs []map[string]any
-	for _, channel := range []string{"telegram"} {
+	for _, channel := range []string{"telegram", "slack"} {
 		cfg, err := h.st.GetNotificationConfig(r.Context(), user.ID, channel)
 		if err != nil {
 			continue // not configured — skip
@@ -199,7 +206,16 @@ func (h *NotificationsHandler) TestTelegram(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.notifier.SendTestMessage(r.Context(), user.ID); err != nil {
+	// Telegram-scoped send. Notifier.SendTestMessage fans out to every
+	// channel and joins the errors, so a configured Telegram would report
+	// failure whenever an unconfigured sibling channel (Slack, push) also
+	// ran.
+	if tester, ok := h.notifier.(notify.TelegramTester); ok {
+		if err := tester.SendTelegramTestMessage(r.Context(), user.ID); err != nil {
+			writeError(w, http.StatusBadRequest, "TEST_FAILED", err.Error())
+			return
+		}
+	} else if err := h.notifier.SendTestMessage(r.Context(), user.ID); err != nil {
 		writeError(w, http.StatusBadRequest, "TEST_FAILED", err.Error())
 		return
 	}

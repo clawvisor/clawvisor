@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -208,6 +209,133 @@ type TelegramConfigStore interface {
 	DeleteTelegramConfig(ctx context.Context, userID string) error
 }
 
+// TargetMessageUpdater is implemented by notifiers that can update a
+// previously-sent message addressed by the approval target rather than by an
+// opaque channel-specific message ID.
+//
+// The base Notifier.UpdateMessage takes a single messageID, but call sites
+// read that ID from notification_messages with a hardcoded channel of
+// "telegram" and MultiNotifier then broadcasts it to every notifier. That is
+// harmless for Telegram (its own ID) and for push (which ignores updates
+// entirely), but a second editing channel cannot resolve a Telegram message
+// ID to one of its own messages. Notifiers implementing this interface look
+// up their own message reference from (targetType, targetID) instead.
+//
+// Implementations MUST be no-ops when they have no message recorded for the
+// target — a resolve path calls this for every configured channel.
+type TargetMessageUpdater interface {
+	UpdateMessageForTarget(ctx context.Context, userID, targetType, targetID, text string) error
+}
+
+// SlackConfigStore persists and retrieves a user's Slack workspace
+// configuration. Implementations are expected to encrypt the bot token at
+// rest (e.g. via the credential vault) — the token never appears in any API
+// response and should never be written into a plaintext database column.
+type SlackConfigStore interface {
+	SaveSlackConfig(ctx context.Context, userID string, cfg SlackConfig) error
+	SlackConfig(ctx context.Context, userID string) (SlackConfig, error)
+	DeleteSlackConfig(ctx context.Context, userID string) error
+}
+
+// SlackConfig is a user's connected Slack workspace and approval channel.
+// BotToken is only ever populated on reads that need it for an API call; it
+// is stripped before the config crosses the API boundary.
+type SlackConfig struct {
+	BotToken    string `json:"-"`
+	TeamID      string `json:"team_id"`
+	TeamName    string `json:"team_name"`
+	ChannelID   string `json:"channel_id"`
+	ChannelName string `json:"channel_name"`
+	// InstallerSlackUserID is the Slack user who ran the OAuth install. They
+	// are implicitly allowed to approve; Approvers extends that set.
+	InstallerSlackUserID string `json:"installer_slack_user_id"`
+	// Approvers is the allowlist of additional Slack user IDs permitted to
+	// resolve approvals in ChannelID. Anyone else in the channel can read
+	// the request but their button clicks are rejected — channel membership
+	// alone must not confer approval rights.
+	Approvers []SlackApprover `json:"approvers"`
+}
+
+// SlackApprover is one entry on the approval allowlist.
+type SlackApprover struct {
+	SlackUserID string `json:"slack_user_id"`
+	DisplayName string `json:"display_name"`
+}
+
+// CanApprove reports whether a Slack user ID may resolve approvals.
+func (c SlackConfig) CanApprove(slackUserID string) bool {
+	if slackUserID == "" {
+		return false
+	}
+	if slackUserID == c.InstallerSlackUserID {
+		return true
+	}
+	for _, a := range c.Approvers {
+		if a.SlackUserID == slackUserID {
+			return true
+		}
+	}
+	return false
+}
+
+// SlackInstaller runs the Slack app install flow and the workspace lookups
+// the settings UI needs. Kept separate from SlackConfigStore so the handler
+// can depend on installation without depending on credential storage.
+type SlackInstaller interface {
+	// SlackInstallURL returns the Slack authorize URL for the given
+	// single-use state value.
+	SlackInstallURL(state string) (string, error)
+	// CompleteSlackInstall exchanges an OAuth code and returns the
+	// resulting workspace identity. It does not persist anything — the
+	// caller decides whether to keep the install.
+	CompleteSlackInstall(ctx context.Context, code string) (SlackInstall, error)
+	// ListSlackChannels enumerates channels the app can post to, for the
+	// destination picker.
+	ListSlackChannels(ctx context.Context, userID string) ([]SlackChannel, error)
+	// LookupSlackUser resolves a Slack user ID to a display name for the
+	// approver allowlist UI.
+	LookupSlackUser(ctx context.Context, userID, slackUserID string) (string, error)
+}
+
+// TelegramTester and SlackTester scope a test message to a single channel.
+//
+// Notifier.SendTestMessage deliberately fans out across every configured
+// channel, which is wrong for a per-channel "send test" button: an
+// unconfigured sibling channel returns an error, MultiNotifier joins it, and
+// the UI reports failure for a message that was actually delivered. Handlers
+// backing a channel-specific test button must use these instead.
+type TelegramTester interface {
+	SendTelegramTestMessage(ctx context.Context, userID string) error
+}
+
+type SlackTester interface {
+	SendSlackTestMessage(ctx context.Context, userID string) error
+}
+
+// SlackInteractionReceiver handles Slack's Interactivity Request URL. It is
+// mounted unauthenticated — the Slack request signature is the only
+// credential — so implementations must verify every request themselves.
+type SlackInteractionReceiver interface {
+	HandleInteraction(w http.ResponseWriter, r *http.Request)
+}
+
+// SlackInstall is the outcome of a completed OAuth exchange.
+type SlackInstall struct {
+	BotToken        string `json:"-"`
+	TeamID          string `json:"team_id"`
+	TeamName        string `json:"team_name"`
+	InstallerUserID string `json:"installer_user_id"`
+}
+
+// SlackChannel is one selectable approval destination.
+type SlackChannel struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	IsPrivate  bool   `json:"is_private"`
+	IsMember   bool   `json:"is_member"`
+	NumMembers int    `json:"num_members"`
+}
+
 // CallbackDecision is sent by the Telegram notifier when a user taps an
 // inline Approve/Deny button. The server routes this to the appropriate handler.
 type CallbackDecision struct {
@@ -219,6 +347,21 @@ type CallbackDecision struct {
 	// pre-task scope and for non-"approval" decision types.
 	TaskID string
 	UserID string
+	// ApproverRef identifies the human who actually made the decision when
+	// that is not necessarily the account owner. Telegram DMs are 1:1 so the
+	// clicker is always UserID and this stays empty; a Slack channel is
+	// shared, so an allowlisted teammate can resolve a request the owner
+	// never saw. Carries a channel-qualified handle, e.g.
+	// "slack:U012ABC (jane)".
+	//
+	// NOT YET CONSUMED. The decision consumer does not read this and
+	// AuditEntry has no approver column, so a teammate's approval is still
+	// recorded against the account owner. The Slack notifier attributes its
+	// own message separately, which means Slack and the audit log can
+	// disagree about who approved. Wiring this through to the audit entry
+	// needs a store migration; until then treat the audit log's attribution
+	// as the account, not the person.
+	ApproverRef string
 }
 
 // PollingDecrementer is implemented by notifiers that run callback polling

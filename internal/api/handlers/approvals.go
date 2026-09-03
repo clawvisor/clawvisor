@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -378,7 +379,7 @@ func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingAp
 			notifyText = "✅ <b>Approved</b> — session task created and waiting for agent execution."
 		}
 	}
-	h.updateNotificationMsg(ctx, "approval", approvalNotifyTargetID(pa.RequestID, paTaskID(pa)), pa.UserID, notifyText)
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "approval", approvalNotifyTargetID(pa.RequestID, paTaskID(pa)), pa.UserID, notifyText)
 	h.decrementNotifierPolling(pa.UserID)
 
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
@@ -461,7 +462,7 @@ func (h *ApprovalsHandler) denyLoadedApproval(ctx context.Context, pa *store.Pen
 		h.logger.ErrorContext(ctx, "failed to delete pending approval", "request_id", requestID, "err", err)
 	}
 
-	h.updateNotificationMsg(ctx, "approval", approvalNotifyTargetID(requestID, taskID), pa.UserID, "❌ <b>Denied</b> — request rejected.")
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "approval", approvalNotifyTargetID(requestID, taskID), pa.UserID, "❌ <b>Denied</b> — request rejected.")
 	h.decrementNotifierPolling(pa.UserID)
 	h.publishQueueAndAudit(userID, pa.AuditID)
 
@@ -531,7 +532,7 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "failed to delete pending approval", "request_id", requestID, "err", err)
 	}
 
-	h.updateNotificationMsg(r.Context(), "approval", approvalNotifyTargetID(requestID, taskID), pa.UserID, "❌ <b>Denied</b> — request rejected.")
+	updateNotificationMessage(r.Context(), h.st, h.notifier, h.logger, "approval", approvalNotifyTargetID(requestID, taskID), pa.UserID, "❌ <b>Denied</b> — request rejected.")
 	h.decrementNotifierPolling(pa.UserID)
 	h.publishQueueAndAudit(user.ID, pa.AuditID)
 
@@ -584,9 +585,13 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 
 	notifyText := "✅ <b>Approved</b> — request executed."
 	if errMsg != "" {
-		notifyText = "✅ <b>Approved</b> — execution failed: " + errMsg
+		// The adapter error is rendered as Telegram HTML and converted to
+		// Slack mrkdwn, so an error containing angle brackets would be read
+		// as markup — mis-rendered by Telegram and silently stripped by the
+		// mrkdwn converter, losing the very text the user needs.
+		notifyText = "✅ <b>Approved</b> — execution failed: " + html.EscapeString(errMsg)
 	}
-	h.updateNotificationMsg(ctx, "approval", approvalNotifyTargetID(pa.RequestID, paTaskID(pa)), pa.UserID, notifyText)
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "approval", approvalNotifyTargetID(pa.RequestID, paTaskID(pa)), pa.UserID, notifyText)
 
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
 		var cbResult *adapters.Result
@@ -648,7 +653,7 @@ func (h *ApprovalsHandler) RunExpiryCleanup(ctx context.Context) {
 //     pending-only guard, paging on every recovery sweep.
 func (h *ApprovalsHandler) processExpiredApproval(ctx context.Context, pa *store.PendingApproval, reason, telegramMsg string) {
 	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "timeout", "", 0)
-	h.updateNotificationMsg(ctx, "approval", approvalNotifyTargetID(pa.RequestID, paTaskID(pa)), pa.UserID, telegramMsg)
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "approval", approvalNotifyTargetID(pa.RequestID, paTaskID(pa)), pa.UserID, telegramMsg)
 	// For the regular expired path the caller relies on us to delete the
 	// row; for the stranded path the CAS DELETE already happened, so the
 	// best-effort DELETE here is a no-op (zero rows affected).
@@ -724,7 +729,7 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 	for _, task := range expiredTasks {
 		_ = h.st.UpdateTaskStatus(ctx, task.ID, "expired")
 
-		h.updateNotificationMsg(ctx, "task", task.ID, task.UserID, "⏰ <b>Task expired</b>")
+		updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "task", task.ID, task.UserID, "⏰ <b>Task expired</b>")
 
 		if task.CallbackURL != nil && *task.CallbackURL != "" {
 			cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
@@ -1030,20 +1035,5 @@ func (h *ApprovalsHandler) decrementNotifierPolling(userID string) {
 	}
 	if pd, ok := h.notifier.(notify.PollingDecrementer); ok {
 		pd.DecrementPolling(userID)
-	}
-}
-
-// updateNotificationMsg updates the Telegram message for a target
-// using the notification_messages table.
-func (h *ApprovalsHandler) updateNotificationMsg(ctx context.Context, targetType, targetID, userID, text string) {
-	if h.notifier == nil {
-		return
-	}
-	msgID, err := h.st.GetNotificationMessage(ctx, targetType, targetID, "telegram")
-	if err != nil {
-		return
-	}
-	if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
-		h.logger.WarnContext(ctx, "telegram message update failed", "err", err, "target_type", targetType, "target_id", targetID)
 	}
 }

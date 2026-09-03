@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"sync"
 )
 
@@ -21,6 +22,11 @@ type MultiNotifier struct {
 	groupDetector  GroupDetector
 	agentPairer    AgentGroupPairer
 	groupValidator GroupMembershipValidator
+	slackCfg       SlackConfigStore
+	slackInstaller SlackInstaller
+	slackRecv      SlackInteractionReceiver
+	telegramTester TelegramTester
+	slackTester    SlackTester
 }
 
 // NewMultiNotifier creates a MultiNotifier that delegates to the given notifiers.
@@ -51,6 +57,21 @@ func NewMultiNotifier(ctx context.Context, logger *slog.Logger, notifiers ...Not
 		}
 		if gv, ok := n.(GroupMembershipValidator); ok && m.groupValidator == nil {
 			m.groupValidator = gv
+		}
+		if sc, ok := n.(SlackConfigStore); ok && m.slackCfg == nil {
+			m.slackCfg = sc
+		}
+		if si, ok := n.(SlackInstaller); ok && m.slackInstaller == nil {
+			m.slackInstaller = si
+		}
+		if sr, ok := n.(SlackInteractionReceiver); ok && m.slackRecv == nil {
+			m.slackRecv = sr
+		}
+		if tt, ok := n.(TelegramTester); ok && m.telegramTester == nil {
+			m.telegramTester = tt
+		}
+		if st, ok := n.(SlackTester); ok && m.slackTester == nil {
+			m.slackTester = st
 		}
 	}
 
@@ -91,14 +112,110 @@ func NewMultiNotifier(ctx context.Context, logger *slog.Logger, notifiers ...Not
 
 // Compile-time interface checks.
 var (
-	_ Notifier           = (*MultiNotifier)(nil)
-	_ TelegramPairer     = (*MultiNotifier)(nil)
-	_ PollingDecrementer = (*MultiNotifier)(nil)
-	_ GroupObserver      = (*MultiNotifier)(nil)
-	_ GroupDetector      = (*MultiNotifier)(nil)
-	_ AgentGroupPairer        = (*MultiNotifier)(nil)
+	_ Notifier                 = (*MultiNotifier)(nil)
+	_ TelegramPairer           = (*MultiNotifier)(nil)
+	_ PollingDecrementer       = (*MultiNotifier)(nil)
+	_ GroupObserver            = (*MultiNotifier)(nil)
+	_ GroupDetector            = (*MultiNotifier)(nil)
+	_ AgentGroupPairer         = (*MultiNotifier)(nil)
 	_ GroupMembershipValidator = (*MultiNotifier)(nil)
+	_ TargetMessageUpdater     = (*MultiNotifier)(nil)
 )
+
+// SlackConfigStore / SlackInstaller delegates. Each returns an error rather
+// than panicking when no inner notifier provides Slack, so a deployment with
+// Slack disabled degrades to a clear API error instead of a crash.
+
+var errNoSlack = errors.New("slack notifications are not enabled on this deployment")
+
+// SlackEnabled reports whether any inner notifier actually provides Slack.
+//
+// MultiNotifier satisfies SlackConfigStore and SlackInstaller unconditionally
+// so it can return a clear error rather than panicking, which means a type
+// assertion against it always succeeds and cannot be used to detect whether
+// Slack is configured. Callers wiring Slack-specific routes must ask this
+// instead, or a deployment with no Slack app advertises the feature and then
+// fails every call.
+func (m *MultiNotifier) SlackEnabled() bool {
+	return m.slackCfg != nil && m.slackInstaller != nil
+}
+
+func (m *MultiNotifier) SaveSlackConfig(ctx context.Context, userID string, cfg SlackConfig) error {
+	if m.slackCfg == nil {
+		return errNoSlack
+	}
+	return m.slackCfg.SaveSlackConfig(ctx, userID, cfg)
+}
+
+func (m *MultiNotifier) SlackConfig(ctx context.Context, userID string) (SlackConfig, error) {
+	if m.slackCfg == nil {
+		return SlackConfig{}, errNoSlack
+	}
+	return m.slackCfg.SlackConfig(ctx, userID)
+}
+
+func (m *MultiNotifier) DeleteSlackConfig(ctx context.Context, userID string) error {
+	if m.slackCfg == nil {
+		return errNoSlack
+	}
+	return m.slackCfg.DeleteSlackConfig(ctx, userID)
+}
+
+// SendTelegramTestMessage sends only via Telegram, so an unconfigured Slack
+// (or push) cannot make a delivered Telegram message report as failed.
+func (m *MultiNotifier) SendTelegramTestMessage(ctx context.Context, userID string) error {
+	if m.telegramTester == nil {
+		return errors.New("telegram notifications are not enabled on this deployment")
+	}
+	return m.telegramTester.SendTelegramTestMessage(ctx, userID)
+}
+
+// SendSlackTestMessage sends only via Slack, for the same reason.
+func (m *MultiNotifier) SendSlackTestMessage(ctx context.Context, userID string) error {
+	if m.slackTester == nil {
+		return errNoSlack
+	}
+	return m.slackTester.SendSlackTestMessage(ctx, userID)
+}
+
+func (m *MultiNotifier) SlackInstallURL(state string) (string, error) {
+	if m.slackInstaller == nil {
+		return "", errNoSlack
+	}
+	return m.slackInstaller.SlackInstallURL(state)
+}
+
+func (m *MultiNotifier) CompleteSlackInstall(ctx context.Context, code string) (SlackInstall, error) {
+	if m.slackInstaller == nil {
+		return SlackInstall{}, errNoSlack
+	}
+	return m.slackInstaller.CompleteSlackInstall(ctx, code)
+}
+
+func (m *MultiNotifier) ListSlackChannels(ctx context.Context, userID string) ([]SlackChannel, error) {
+	if m.slackInstaller == nil {
+		return nil, errNoSlack
+	}
+	return m.slackInstaller.ListSlackChannels(ctx, userID)
+}
+
+// HandleInteraction delegates to the Slack notifier. With Slack disabled it
+// answers 501 rather than 404 so an operator sees a configuration problem
+// rather than a routing one.
+func (m *MultiNotifier) HandleInteraction(w http.ResponseWriter, r *http.Request) {
+	if m.slackRecv == nil {
+		http.Error(w, "Slack notifications are not enabled", http.StatusNotImplemented)
+		return
+	}
+	m.slackRecv.HandleInteraction(w, r)
+}
+
+func (m *MultiNotifier) LookupSlackUser(ctx context.Context, userID, slackUserID string) (string, error) {
+	if m.slackInstaller == nil {
+		return "", errNoSlack
+	}
+	return m.slackInstaller.LookupSlackUser(ctx, userID, slackUserID)
+}
 
 // ── Notifier interface ────────────────────────────────────────────────────────
 
@@ -108,7 +225,7 @@ func (m *MultiNotifier) SendApprovalRequest(ctx context.Context, req ApprovalReq
 	for _, n := range m.notifiers {
 		id, err := n.SendApprovalRequest(ctx, req)
 		if err != nil {
-			m.logger.WarnContext(ctx,"notifier: SendApprovalRequest failed", "err", err)
+			m.logger.WarnContext(ctx, "notifier: SendApprovalRequest failed", "err", err)
 			errs = append(errs, err)
 		} else if messageID == "" && id != "" {
 			messageID = id
@@ -121,7 +238,7 @@ func (m *MultiNotifier) SendActivationRequest(ctx context.Context, req Activatio
 	var errs []error
 	for _, n := range m.notifiers {
 		if err := n.SendActivationRequest(ctx, req); err != nil {
-			m.logger.WarnContext(ctx,"notifier: SendActivationRequest failed", "err", err)
+			m.logger.WarnContext(ctx, "notifier: SendActivationRequest failed", "err", err)
 			errs = append(errs, err)
 		}
 	}
@@ -134,7 +251,7 @@ func (m *MultiNotifier) SendTaskApprovalRequest(ctx context.Context, req TaskApp
 	for _, n := range m.notifiers {
 		id, err := n.SendTaskApprovalRequest(ctx, req)
 		if err != nil {
-			m.logger.WarnContext(ctx,"notifier: SendTaskApprovalRequest failed", "err", err)
+			m.logger.WarnContext(ctx, "notifier: SendTaskApprovalRequest failed", "err", err)
 			errs = append(errs, err)
 		} else if messageID == "" && id != "" {
 			messageID = id
@@ -149,7 +266,7 @@ func (m *MultiNotifier) SendScopeExpansionRequest(ctx context.Context, req Scope
 	for _, n := range m.notifiers {
 		id, err := n.SendScopeExpansionRequest(ctx, req)
 		if err != nil {
-			m.logger.WarnContext(ctx,"notifier: SendScopeExpansionRequest failed", "err", err)
+			m.logger.WarnContext(ctx, "notifier: SendScopeExpansionRequest failed", "err", err)
 			errs = append(errs, err)
 		} else if messageID == "" && id != "" {
 			messageID = id
@@ -164,7 +281,7 @@ func (m *MultiNotifier) SendConnectionRequest(ctx context.Context, req Connectio
 	for _, n := range m.notifiers {
 		id, err := n.SendConnectionRequest(ctx, req)
 		if err != nil {
-			m.logger.WarnContext(ctx,"notifier: SendConnectionRequest failed", "err", err)
+			m.logger.WarnContext(ctx, "notifier: SendConnectionRequest failed", "err", err)
 			errs = append(errs, err)
 		} else if messageID == "" && id != "" {
 			messageID = id
@@ -177,7 +294,26 @@ func (m *MultiNotifier) UpdateMessage(ctx context.Context, userID, messageID, te
 	var errs []error
 	for _, n := range m.notifiers {
 		if err := n.UpdateMessage(ctx, userID, messageID, text); err != nil {
-			m.logger.WarnContext(ctx,"notifier: UpdateMessage failed", "err", err)
+			m.logger.WarnContext(ctx, "notifier: UpdateMessage failed", "err", err)
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// UpdateMessageForTarget delegates to every inner notifier that resolves
+// messages by approval target rather than by an opaque message ID. Notifiers
+// that do not implement TargetMessageUpdater are skipped — they are served by
+// the messageID-based UpdateMessage above.
+func (m *MultiNotifier) UpdateMessageForTarget(ctx context.Context, userID, targetType, targetID, text string) error {
+	var errs []error
+	for _, n := range m.notifiers {
+		tu, ok := n.(TargetMessageUpdater)
+		if !ok {
+			continue
+		}
+		if err := tu.UpdateMessageForTarget(ctx, userID, targetType, targetID, text); err != nil {
+			m.logger.WarnContext(ctx, "notifier: UpdateMessageForTarget failed", "err", err)
 			errs = append(errs, err)
 		}
 	}
@@ -188,7 +324,7 @@ func (m *MultiNotifier) SendTestMessage(ctx context.Context, userID string) erro
 	var errs []error
 	for _, n := range m.notifiers {
 		if err := n.SendTestMessage(ctx, userID); err != nil {
-			m.logger.WarnContext(ctx,"notifier: SendTestMessage failed", "err", err)
+			m.logger.WarnContext(ctx, "notifier: SendTestMessage failed", "err", err)
 			errs = append(errs, err)
 		}
 	}
@@ -199,7 +335,7 @@ func (m *MultiNotifier) SendAlert(ctx context.Context, userID, text string) erro
 	var errs []error
 	for _, n := range m.notifiers {
 		if err := n.SendAlert(ctx, userID, text); err != nil {
-			m.logger.WarnContext(ctx,"notifier: SendAlert failed", "err", err)
+			m.logger.WarnContext(ctx, "notifier: SendAlert failed", "err", err)
 			errs = append(errs, err)
 		}
 	}

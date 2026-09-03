@@ -43,6 +43,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/intent"
 	intnotify "github.com/clawvisor/clawvisor/internal/notify"
 	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
+	slacknotify "github.com/clawvisor/clawvisor/internal/notify/slack"
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
 	intredis "github.com/clawvisor/clawvisor/internal/redis"
 	"github.com/clawvisor/clawvisor/internal/relay"
@@ -447,10 +448,36 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		}
 	}
 
+	// Slack approvals need a publicly reachable, signature-verified callback
+	// URL for button clicks (Slack has no polling equivalent of Telegram's
+	// getUpdates), so they stay off unless the app credentials and a public
+	// URL are both configured.
+	var slackN *slacknotify.Notifier
+	slackCallbackBase := cfg.Slack.CallbackBaseURL(cfg.Server.PublicURL)
+	if cfg.Slack.Enabled() && slackCallbackBase != "" {
+		slackN = slacknotify.New(st, cfg.Slack.SigningSecret, slacknotify.AppCredentials{
+			ClientID:     cfg.Slack.ClientID,
+			ClientSecret: cfg.Slack.ClientSecret,
+			RedirectURL:  slackCallbackBase + "/api/notifications/slack/callback",
+		}, logger)
+		slackN.SetVault(v)
+		// Callback-token cleanup is deliberately not started here: the server
+		// discovers RunCleanup on the notifier and runs it with the server's
+		// context, which MultiNotifier fans out to this notifier. Starting it
+		// here too would run cleanup twice, and the copy started here would
+		// hold ctx (context.Background()) and so never stop on shutdown.
+		logger.Info("slack approvals enabled", "callback_base", slackCallbackBase)
+	} else if cfg.Slack.Enabled() {
+		logger.Warn("slack approvals disabled: set slack.public_url (CLAWVISOR_SLACK_PUBLIC_URL) or server.public_url — Slack calls the interaction endpoint from the public internet")
+	}
+
 	var notifiers []notify.Notifier
 	notifiers = append(notifiers, telegramN)
 	if pushN != nil {
 		notifiers = append(notifiers, pushN)
+	}
+	if slackN != nil {
+		notifiers = append(notifiers, slackN)
 	}
 	var notifier notify.Notifier = notify.NewMultiNotifier(ctx, logger, notifiers...)
 
@@ -541,6 +568,17 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 			telegramnotify.NewRedisGroupPairingStore(client),
 			telegramnotify.NewRedisPollingLock(client, instanceID),
 		)
+
+		// Slack multi-instance stores. Slack posts an interaction to
+		// whichever replica the load balancer picks, which is generally not
+		// the one that posted the prompt — without shared state the click
+		// finds no token and the user is told the request is unavailable.
+		if slackN != nil {
+			slackN.SetRedisStores(
+				slacknotify.NewRedisCallbackTokenStore(client),
+				slacknotify.NewRedisReplayGuard(client),
+			)
+		}
 
 		logger.Info("redis connected", "addr", client.Options().Addr)
 	}

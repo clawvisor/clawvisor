@@ -430,14 +430,23 @@ When `code` is `REASON_TOO_VAGUE`, rewrite your `reason` to be more specific (se
 simplest and most efficient pattern — the server holds the connection until the
 user decides, then returns the resolved result in a single round-trip.
 
+> **Set `timeout` below your own timeouts.** The long-poll holds the connection
+> open for the full `timeout` (default & max 120s). If your shell/tool timeout
+> or curl's `--max-time` is shorter, whichever is shortest kills the connection
+> first and you lose the answer — the approval is unaffected and may well be
+> granted, but you never see it, and you cannot tell that apart from a denial.
+> Pick a `timeout` comfortably under the smallest of them and repeat the
+> long-poll; each round-trip is cheap. The default 120s matches or exceeds many
+> default tool timeouts, so **do not rely on the default** — set it explicitly.
+
 ### Tasks
 
 Use `?wait=true` on `POST /api/tasks` and `POST /api/tasks/{id}/expand`. The
 request blocks until the task is approved or denied. Add `&timeout=N` to control
-the wait (default & max 120 seconds).
+the wait (default & max 120 seconds) — keep it under your own tool/curl timeout.
 
 ```
-POST /api/tasks?wait=true&timeout=120
+POST /api/tasks?wait=true&timeout=90
 ```
 
 If the timeout elapses and the task is still in a pending state, re-initiate a
@@ -451,7 +460,7 @@ request blocks until the user approves, then executes and returns the result —
 all in one round-trip.
 
 ```
-POST /api/gateway/request?wait=true&timeout=120
+POST /api/gateway/request?wait=true&timeout=90
 # → blocks until approved → {"status": "executed", "request_id": "...", "result": {...}}
 ```
 
@@ -472,6 +481,12 @@ These are available if you didn't use `?wait=true` on the original POST:
 **Tasks (preferred — long-poll):** `get_task` with `wait: true` blocks
 server-side until the task leaves `pending_approval` / `pending_scope_expansion`.
 Set `timeout` to control the wait (default & max 120 seconds).
+
+**Set `timeout` below your client's tool-call timeout.** The call blocks for the
+full `timeout`; if your client gives up first you lose the answer, even though
+the approval itself is unaffected and may well be granted. A timed-out tool call
+is indistinguishable from a denial, so pick a value comfortably under your
+client's limit rather than relying on the 120s default.
 
 If the timeout elapses while still pending, the response is a normal pending
 status — just call again to keep waiting.

@@ -100,3 +100,34 @@ func TestNonCurlTargetsGetNoCurlInstructions(t *testing.T) {
 		}
 	}
 }
+
+// Every target must warn that the long-poll timeout has to sit under the
+// caller's own timeout. The server default (120s) meets or exceeds common
+// tool-call timeouts, so an agent that trusts the default can have the
+// connection killed mid-wait and read a granted approval as a failure.
+func TestRender_WarnsTimeoutMustBeUnderCallerTimeout(t *testing.T) {
+	for _, target := range []Target{TargetClaudeCode, TargetCodex, TargetCowork} {
+		got, err := Render(target)
+		if err != nil {
+			t.Fatalf("Render(%q): %v", target, err)
+		}
+		if !strings.Contains(got, "tool-call timeout") && !strings.Contains(got, "tool/curl timeout") &&
+			!strings.Contains(got, "below your own timeouts") {
+			t.Errorf("Render(%q) does not warn about the caller's timeout bound", target)
+		}
+	}
+}
+
+// The examples must not suggest the maximum, which equals or exceeds common
+// default tool timeouts and races with them.
+func TestRender_ExamplesDoNotUseMaxTimeout(t *testing.T) {
+	for _, target := range []Target{TargetClaudeCode, TargetCodex} {
+		got, err := Render(target)
+		if err != nil {
+			t.Fatalf("Render(%q): %v", target, err)
+		}
+		if strings.Contains(got, "timeout=120") {
+			t.Errorf("Render(%q) shows timeout=120 in an example; use a value with headroom", target)
+		}
+	}
+}
