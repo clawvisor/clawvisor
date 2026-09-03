@@ -453,16 +453,18 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// getUpdates), so they stay off unless the app credentials and a public
 	// URL are both configured.
 	var slackN *slacknotify.Notifier
-	if cfg.Slack.Enabled() && cfg.Server.PublicURL != "" {
+	slackCallbackBase := cfg.Slack.CallbackBaseURL(cfg.Server.PublicURL)
+	if cfg.Slack.Enabled() && slackCallbackBase != "" {
 		slackN = slacknotify.New(st, cfg.Slack.SigningSecret, slacknotify.AppCredentials{
 			ClientID:     cfg.Slack.ClientID,
 			ClientSecret: cfg.Slack.ClientSecret,
-			RedirectURL:  strings.TrimRight(cfg.Server.PublicURL, "/") + "/api/notifications/slack/callback",
+			RedirectURL:  slackCallbackBase + "/api/notifications/slack/callback",
 		}, logger)
 		slackN.SetVault(v)
 		go slackN.RunCleanup(ctx)
+		logger.Info("slack approvals enabled", "callback_base", slackCallbackBase)
 	} else if cfg.Slack.Enabled() {
-		logger.Warn("slack approvals disabled: server.public_url is required for the interaction callback")
+		logger.Warn("slack approvals disabled: set slack.public_url (CLAWVISOR_SLACK_PUBLIC_URL) or server.public_url — Slack calls the interaction endpoint from the public internet")
 	}
 
 	var notifiers []notify.Notifier

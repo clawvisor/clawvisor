@@ -137,11 +137,33 @@ type SlackConfig struct {
 	// is the only credential on the callback endpoint, so approvals stay
 	// disabled while it is unset rather than accepting unsigned requests.
 	SigningSecret string `yaml:"signing_secret"`
+	// PublicURL overrides server.public_url as the origin Slack calls back
+	// to. Slack reaches the OAuth callback and the interaction endpoint
+	// from the public internet, which in local development means a tunnel
+	// (Tailscale Funnel, ngrok) rather than the dev origin. Setting this
+	// lets the tunnel serve only the Slack callbacks while server.public_url
+	// keeps addressing the dashboard, so notification deep links and the
+	// post-install redirect still point somewhere the browser can use.
+	//
+	// Leave empty in production, where server.public_url is already the
+	// public origin.
+	PublicURL string `yaml:"public_url"`
 }
 
-// Enabled reports whether Slack approvals can run.
+// Enabled reports whether the Slack app credentials are present. A caller
+// also needs a non-empty CallbackBaseURL before approvals can run.
 func (c SlackConfig) Enabled() bool {
 	return c.ClientID != "" && c.ClientSecret != "" && c.SigningSecret != ""
+}
+
+// CallbackBaseURL returns the origin Slack should call back to, preferring
+// the Slack-specific override and falling back to the server's public URL.
+// Returns "" when neither is set, which disables Slack approvals.
+func (c SlackConfig) CallbackBaseURL(serverPublicURL string) string {
+	if c.PublicURL != "" {
+		return strings.TrimRight(strings.TrimSpace(c.PublicURL), "/")
+	}
+	return strings.TrimRight(strings.TrimSpace(serverPublicURL), "/")
 }
 
 // AutoUpdateConfig holds settings for automatic binary updates.
@@ -1195,6 +1217,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_SLACK_SIGNING_SECRET"); v != "" {
 		cfg.Slack.SigningSecret = v
+	}
+	if v := os.Getenv("CLAWVISOR_SLACK_PUBLIC_URL"); v != "" {
+		cfg.Slack.PublicURL = v
 	}
 
 	if v := os.Getenv("REDIS_URL"); v != "" {
