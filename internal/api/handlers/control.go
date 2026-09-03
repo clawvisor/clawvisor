@@ -148,17 +148,17 @@ func (h *LLMControlHandler) Failure(w http.ResponseWriter, r *http.Request) {
 }
 
 type controlTaskSummary struct {
-	ID                string                     `json:"id"`
-	Purpose           string                     `json:"purpose"`
-	Status            string                     `json:"status"`
-	Lifetime          string                     `json:"lifetime,omitempty"`
-	ExpiresAt         *time.Time                 `json:"expires_at,omitempty"`
-	AuthorizedActions []store.TaskAction         `json:"authorized_actions,omitempty"`
-	PlannedCalls      []store.PlannedCall        `json:"planned_calls,omitempty"`
-	ExpectedTools     json.RawMessage            `json:"expected_tools,omitempty"`
-	ExpectedEgress    json.RawMessage            `json:"expected_egress,omitempty"`
-	Placeholders      []controlTaskPlaceholder   `json:"placeholders,omitempty"`
-	CheckedOut        bool                       `json:"checked_out"`
+	ID                string                   `json:"id"`
+	Purpose           string                   `json:"purpose"`
+	Status            string                   `json:"status"`
+	Lifetime          string                   `json:"lifetime,omitempty"`
+	ExpiresAt         *time.Time               `json:"expires_at,omitempty"`
+	AuthorizedActions []store.TaskAction       `json:"authorized_actions,omitempty"`
+	PlannedCalls      []store.PlannedCall      `json:"planned_calls,omitempty"`
+	ExpectedTools     json.RawMessage          `json:"expected_tools,omitempty"`
+	ExpectedEgress    json.RawMessage          `json:"expected_egress,omitempty"`
+	Placeholders      []controlTaskPlaceholder `json:"placeholders,omitempty"`
+	CheckedOut        bool                     `json:"checked_out"`
 }
 
 // controlTaskPlaceholder is the per-task autovault_* handle list returned

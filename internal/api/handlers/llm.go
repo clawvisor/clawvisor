@@ -25,11 +25,11 @@ func NewLLMHandler(health *llm.Health, configPath string) *LLMHandler {
 
 // LLMStatus is the JSON response for GET /api/llm/status.
 type LLMStatus struct {
-	Status            string   `json:"status"` // "ok" | "spend_cap_exhausted"
-	IsHaikuProxy      bool     `json:"is_haiku_proxy"`
-	SpendCapExhausted bool     `json:"spend_cap_exhausted"`
-	Provider          string   `json:"provider"`
-	Model             string   `json:"model"`
+	Status            string    `json:"status"` // "ok" | "spend_cap_exhausted"
+	IsHaikuProxy      bool      `json:"is_haiku_proxy"`
+	SpendCapExhausted bool      `json:"spend_cap_exhausted"`
+	Provider          string    `json:"provider"`
+	Model             string    `json:"model"`
 	Usage             *LLMUsage `json:"usage,omitempty"` // only for haiku proxy keys
 }
 

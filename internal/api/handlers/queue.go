@@ -34,12 +34,12 @@ type queueApproval struct {
 }
 
 type queueItem struct {
-	Type       string                `json:"type"` // "approval", "task", or "connection"
-	ID         string                `json:"id"`
-	CreatedAt  time.Time             `json:"created_at"`
-	ExpiresAt  *time.Time            `json:"expires_at"`
-	Approval   *queueApproval        `json:"approval,omitempty"`
-	Task       *store.Task           `json:"task,omitempty"`
+	Type       string                   `json:"type"` // "approval", "task", or "connection"
+	ID         string                   `json:"id"`
+	CreatedAt  time.Time                `json:"created_at"`
+	ExpiresAt  *time.Time               `json:"expires_at"`
+	Approval   *queueApproval           `json:"approval,omitempty"`
+	Task       *store.Task              `json:"task,omitempty"`
 	Connection *store.ConnectionRequest `json:"connection,omitempty"`
 }
 

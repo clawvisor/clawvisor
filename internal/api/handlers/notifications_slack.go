@@ -22,13 +22,20 @@ const slackInstallService = "__slack_notify_install__"
 // slackInstallStateTTL bounds how long an install may sit half-finished.
 const slackInstallStateTTL = 10 * time.Minute
 
-// SetSlack wires the Slack dependencies. They are optional — a deployment
-// without Slack app credentials leaves them nil and every Slack route
-// answers 501.
+// SetSlack wires the Slack dependencies. cfgStore and installer are optional
+// — a deployment without Slack app credentials leaves them nil and every
+// Slack route answers 501.
+//
+// state overrides the in-memory OAuth state store set up in the constructor.
+// Pass nil to keep the default, which is correct for single-instance
+// deployments; multi-instance ones must pass the Redis-backed store, or an
+// install started on one replica cannot be completed on another.
 func (h *NotificationsHandler) SetSlack(cfgStore notify.SlackConfigStore, installer notify.SlackInstaller, state OAuthStateStore) {
 	h.slackCfg = cfgStore
 	h.slackInstaller = installer
-	h.oauthState = state
+	if state != nil {
+		h.oauthState = state
+	}
 }
 
 func (h *NotificationsHandler) slackReady(w http.ResponseWriter) bool {

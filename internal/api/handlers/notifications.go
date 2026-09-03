@@ -87,15 +87,16 @@ type NotificationsHandler struct {
 	groupValidator notify.GroupMembershipValidator // may be nil
 	baseURL        string
 
-	// Slack dependencies, wired via SetSlack. Nil when the deployment has
-	// no Slack app configured.
+	// Slack dependencies, wired via SetSlack. slackCfg/slackInstaller are
+	// nil when the deployment has no Slack app configured; oauthState
+	// always has an in-memory default.
 	slackCfg       notify.SlackConfigStore
 	slackInstaller notify.SlackInstaller
 	oauthState     OAuthStateStore
 }
 
 func NewNotificationsHandler(st store.Store, notifier notify.Notifier, pairer notify.TelegramPairer, groupObs notify.GroupObserver, groupDetector notify.GroupDetector, agentPairer notify.AgentGroupPairer, groupValidator notify.GroupMembershipValidator, baseURL string) *NotificationsHandler {
-	return &NotificationsHandler{st: st, notifier: notifier, pairer: pairer, groupObs: groupObs, groupDetector: groupDetector, agentPairer: agentPairer, groupValidator: groupValidator, baseURL: baseURL}
+	return &NotificationsHandler{st: st, notifier: notifier, pairer: pairer, groupObs: groupObs, groupDetector: groupDetector, agentPairer: agentPairer, groupValidator: groupValidator, baseURL: baseURL, oauthState: newMemoryOAuthStateStore()}
 }
 
 // List returns all notification configs for the authenticated user.
