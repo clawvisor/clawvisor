@@ -342,7 +342,7 @@ func (h *NotificationsHandler) SlackSetApprovers(w http.ResponseWriter, r *http.
 //
 // POST /api/notifications/slack/test
 func (h *NotificationsHandler) SlackTest(w http.ResponseWriter, r *http.Request) {
-	if !h.slackReady(w) || h.notifier == nil {
+	if !h.slackReady(w) {
 		return
 	}
 	user := middleware.UserFromContext(r.Context())
@@ -350,7 +350,15 @@ func (h *NotificationsHandler) SlackTest(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 		return
 	}
-	if err := h.notifier.SendTestMessage(r.Context(), user.ID); err != nil {
+	// Must be the Slack-scoped send, not Notifier.SendTestMessage: that
+	// fans out across every channel, so an unconfigured Telegram would
+	// report failure for a Slack message that was delivered.
+	tester, ok := h.notifier.(notify.SlackTester)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "SLACK_DISABLED", "Slack notifications are not enabled")
+		return
+	}
+	if err := tester.SendSlackTestMessage(r.Context(), user.ID); err != nil {
 		writeError(w, http.StatusBadGateway, "SLACK_ERROR", "could not post to the channel")
 		return
 	}

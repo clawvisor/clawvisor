@@ -297,6 +297,21 @@ type SlackInstaller interface {
 	LookupSlackUser(ctx context.Context, userID, slackUserID string) (string, error)
 }
 
+// TelegramTester and SlackTester scope a test message to a single channel.
+//
+// Notifier.SendTestMessage deliberately fans out across every configured
+// channel, which is wrong for a per-channel "send test" button: an
+// unconfigured sibling channel returns an error, MultiNotifier joins it, and
+// the UI reports failure for a message that was actually delivered. Handlers
+// backing a channel-specific test button must use these instead.
+type TelegramTester interface {
+	SendTelegramTestMessage(ctx context.Context, userID string) error
+}
+
+type SlackTester interface {
+	SendSlackTestMessage(ctx context.Context, userID string) error
+}
+
 // SlackInteractionReceiver handles Slack's Interactivity Request URL. It is
 // mounted unauthenticated — the Slack request signature is the only
 // credential — so implementations must verify every request themselves.

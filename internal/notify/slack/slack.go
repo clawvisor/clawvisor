@@ -228,6 +228,12 @@ func (n *Notifier) SendTestMessage(ctx context.Context, userID string) error {
 	return err
 }
 
+// SendSlackTestMessage sends a test message via Slack only.
+// Implements notify.SlackTester.
+func (n *Notifier) SendSlackTestMessage(ctx context.Context, userID string) error {
+	return n.SendTestMessage(ctx, userID)
+}
+
 // UpdateMessage satisfies notify.Notifier but is intentionally inert.
 //
 // Call sites read the message ID from notification_messages with a hardcoded

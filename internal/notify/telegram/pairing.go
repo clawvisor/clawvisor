@@ -72,10 +72,10 @@ type chatMemberStatus struct {
 
 // callbackQuery represents a Telegram callback_query from an inline button tap.
 type callbackQuery struct {
-	ID      string          `json:"id"`
-	From    telegramUser    `json:"from"`
+	ID      string           `json:"id"`
+	From    telegramUser     `json:"from"`
 	Message *callbackMessage `json:"message"`
-	Data    string          `json:"data"`
+	Data    string           `json:"data"`
 }
 
 type telegramUser struct {
@@ -346,9 +346,9 @@ func (n *Notifier) getUpdates(ctx context.Context, botToken string, offset, time
 	respBody, _ := io.ReadAll(resp.Body)
 
 	var r struct {
-		OK     bool             `json:"ok"`
-		Result []telegramUpdate `json:"result"`
-		Description string      `json:"description"`
+		OK          bool             `json:"ok"`
+		Result      []telegramUpdate `json:"result"`
+		Description string           `json:"description"`
 	}
 	if err := json.Unmarshal(respBody, &r); err != nil {
 		return nil, fmt.Errorf("parse getUpdates response: %w", err)

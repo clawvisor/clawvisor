@@ -25,6 +25,8 @@ type MultiNotifier struct {
 	slackCfg       SlackConfigStore
 	slackInstaller SlackInstaller
 	slackRecv      SlackInteractionReceiver
+	telegramTester TelegramTester
+	slackTester    SlackTester
 }
 
 // NewMultiNotifier creates a MultiNotifier that delegates to the given notifiers.
@@ -64,6 +66,12 @@ func NewMultiNotifier(ctx context.Context, logger *slog.Logger, notifiers ...Not
 		}
 		if sr, ok := n.(SlackInteractionReceiver); ok && m.slackRecv == nil {
 			m.slackRecv = sr
+		}
+		if tt, ok := n.(TelegramTester); ok && m.telegramTester == nil {
+			m.telegramTester = tt
+		}
+		if st, ok := n.(SlackTester); ok && m.slackTester == nil {
+			m.slackTester = st
 		}
 	}
 
@@ -139,6 +147,23 @@ func (m *MultiNotifier) DeleteSlackConfig(ctx context.Context, userID string) er
 		return errNoSlack
 	}
 	return m.slackCfg.DeleteSlackConfig(ctx, userID)
+}
+
+// SendTelegramTestMessage sends only via Telegram, so an unconfigured Slack
+// (or push) cannot make a delivered Telegram message report as failed.
+func (m *MultiNotifier) SendTelegramTestMessage(ctx context.Context, userID string) error {
+	if m.telegramTester == nil {
+		return errors.New("telegram notifications are not enabled on this deployment")
+	}
+	return m.telegramTester.SendTelegramTestMessage(ctx, userID)
+}
+
+// SendSlackTestMessage sends only via Slack, for the same reason.
+func (m *MultiNotifier) SendSlackTestMessage(ctx context.Context, userID string) error {
+	if m.slackTester == nil {
+		return errNoSlack
+	}
+	return m.slackTester.SendSlackTestMessage(ctx, userID)
 }
 
 func (m *MultiNotifier) SlackInstallURL(state string) (string, error) {

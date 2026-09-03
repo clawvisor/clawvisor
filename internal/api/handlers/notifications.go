@@ -206,7 +206,16 @@ func (h *NotificationsHandler) TestTelegram(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.notifier.SendTestMessage(r.Context(), user.ID); err != nil {
+	// Telegram-scoped send. Notifier.SendTestMessage fans out to every
+	// channel and joins the errors, so a configured Telegram would report
+	// failure whenever an unconfigured sibling channel (Slack, push) also
+	// ran.
+	if tester, ok := h.notifier.(notify.TelegramTester); ok {
+		if err := tester.SendTelegramTestMessage(r.Context(), user.ID); err != nil {
+			writeError(w, http.StatusBadRequest, "TEST_FAILED", err.Error())
+			return
+		}
+	} else if err := h.notifier.SendTestMessage(r.Context(), user.ID); err != nil {
 		writeError(w, http.StatusBadRequest, "TEST_FAILED", err.Error())
 		return
 	}
