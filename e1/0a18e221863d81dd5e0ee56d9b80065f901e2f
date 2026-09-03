@@ -1,0 +1,207 @@
+internal/adaptergen/store_db.go
+  s_20c7cd26d72652::t_ed814272a80870 40
+internal/api/gateway_test.go
+  s_20c7cd26d72652::t_b6f471d43ea274 1183,1186-1187
+internal/api/handlers/chain_extraction_wiring_test.go
+  s_20c7cd26d72652::t_0c898740b8ae22 301-304
+internal/api/handlers/chain_fallback_test.go
+  s_20c7cd26d72652::t_d829a35ae63f26 43-44
+internal/api/handlers/control.go
+  s_20c7cd26d72652::t_67333c86ba4c7e 151-161
+internal/api/handlers/control_autovault_script.go
+  s_20c7cd26d72652::t_3623e89ed2b92c 26-27,36-37,328,386,421-422,426-431,463,465
+internal/api/handlers/forwarded_scheme_test.go
+  s_20c7cd26d72652::t_991335edde341b 17
+internal/api/handlers/gateway_batch.go
+  s_20c7cd26d72652::t_306d49bb66123f 186
+internal/api/handlers/installer.go
+  s_20c7cd26d72652::t_7aebd146e4e790 173-175,1435
+internal/api/handlers/llm.go
+  s_20c7cd26d72652::t_7d7d997989b18e 28-32
+internal/api/handlers/llm_characterization_test.go
+  s_20c7cd26d72652::t_2540ef0fd7c0ea 31,97-112,120-133
+internal/api/handlers/llm_endpoint_error_test.go
+  s_20c7cd26d72652::t_974f13d234c4c0 205
+internal/api/handlers/mcp_oauth_settings_test.go
+  s_20c7cd26d72652::t_ee75e40469fc52 135-138
+internal/api/handlers/mobileconfig.go
+  s_20c7cd26d72652::t_bdc72ecbac22b8 150-153
+internal/api/handlers/oauth_state_redis.go
+  s_20c7cd26d72652::t_27a2831df5c420 13-16
+internal/api/handlers/pairing_store.go
+  s_20c7cd26d72652::t_e6531d4aa4e036 19-23
+internal/api/handlers/queue.go
+  s_20c7cd26d72652::t_fa027c0bd53456 37-42
+internal/api/handlers/tasks_expand_test.go
+  s_20c7cd26d72652::t_fb00ace099c57d 210-213
+internal/api/handlers/tasks_inline_pending_test.go
+  s_20c7cd26d72652::t_ee085e2a76108b 17,255-256,259,263,313-314,317,321,325
+internal/api/middleware/auth.go
+  s_20c7cd26d72652::t_3281e5efe634a1 12
+internal/api/org_test.go
+  s_20c7cd26d72652::t_00089c4c5f0155 16-17
+internal/e2e/doc.go
+  s_20c7cd26d72652::t_5f89cd2f03c4bd 12,14-15,17
+internal/e2e/harness/server.go
+  s_20c7cd26d72652::t_0f454d13efdcd6 34-35
+internal/e2e/harness/smoke_test.go
+  s_20c7cd26d72652::t_a13cf8dbaedb66 288,438,511,612
+internal/e2e/lite/recorder.go
+  s_20c7cd26d72652::t_5a307b306e5ba3 26-27,30-31
+internal/e2e/lite/scenario.go
+  s_20c7cd26d72652::t_288cb98568b017 20-21,28,63-69,114-117,124-125,127,166-168
+internal/e2e/scenario/approver_test.go
+  s_20c7cd26d72652::t_8b0dfed478addc 68
+internal/e2e/scenario/scenario_test.go
+  s_20c7cd26d72652::t_ee3b02084193f4 132-134
+internal/events/redis_hub.go
+  s_20c7cd26d72652::t_b9e4609c4962a6 25-26
+internal/feedback/reviewer.go
+  s_20c7cd26d72652::t_dc4b82f18967c7 19-22,27-33
+internal/intent/eval_test.go
+  s_20c7cd26d72652::t_7c176395304eac 21
+internal/intent/extract_eval_test.go
+  s_20c7cd26d72652::t_5c703e4e4be680 34-37
+internal/intent/extractor_test.go
+  s_20c7cd26d72652::t_daea6ee781be6a 472-473,650
+internal/llm/cache_live_test.go
+  s_20c7cd26d72652::t_efaf112403e12b 104
+internal/llm/client.go
+  s_20c7cd26d72652::t_f9fd78f6088a09 33,65,88-91
+internal/llm/gemini_cache.go
+  s_20c7cd26d72652::t_ab9ca0d3f7dd93 30-33,55-56
+internal/local/executor/dispatch.go
+  s_20c7cd26d72652::t_9558c07468be5a 14-17
+internal/local/executor/exec.go
+  s_20c7cd26d72652::t_3d5e3e06502584 19-21,26-31
+internal/local/executor/server.go
+  s_20c7cd26d72652::t_cf0fe6b537625f 26-30,50-52,499-502
+internal/local/pairing/server.go
+  s_20c7cd26d72652::t_59c8d7f4054ce0 15-24,29-35
+internal/local/tunnel/frames.go
+  s_20c7cd26d72652::t_77d692f496f5c6 31-32,47-49
+internal/mcp/oauth/metadata.go
+  s_20c7cd26d72652::t_f37c8b022abb2b 29
+internal/mcp/oauth/provider.go
+  s_20c7cd26d72652::t_a614ed9166f587 27,29
+internal/mcp/tools_exec_test.go
+  s_20c7cd26d72652::t_719be36ea3f11e 78-80,103-105,110-112
+internal/notify/telegram/groups_redis.go
+  s_20c7cd26d72652::t_65de12dbd7fc18 15-16
+internal/notify/telegram/pairing.go
+  s_20c7cd26d72652::t_e99b9d80f463d2 75-76,78,349-351
+internal/notify/telegram/polling.go
+  s_20c7cd26d72652::t_737b70fbe3e3bc 28-30
+internal/notify/telegram/polling_lock.go
+  s_20c7cd26d72652::t_9b32862805f557 44
+internal/relay/client.go
+  s_20c7cd26d72652::t_79d32a47973349 54-56
+internal/relay/client_test.go
+  s_20c7cd26d72652::t_7cdf273bb2366d 26-33
+internal/runtime/isolation/assets.go
+  s_20c7cd26d72652::t_eba60178c7f8c3 18-23
+internal/runtime/isolation/integration_test.go
+  s_20c7cd26d72652::t_83f4ad110b609d 33-38
+internal/runtime/isolation/network.go
+  s_20c7cd26d72652::t_0ddbc465678a7c 18
+internal/runtime/isolation/prune.go
+  s_20c7cd26d72652::t_85b76e6d89cd52 65,173
+internal/runtime/llmproxy/catalog.go
+  s_20c7cd26d72652::t_76702705d07841 320-323
+internal/runtime/llmproxy/catalog_test.go
+  s_20c7cd26d72652::t_4edb78df82c04b 14-15,17
+internal/runtime/llmproxy/circuitbreaker_test.go
+  s_20c7cd26d72652::t_63a80c3bc97d20 277
+internal/runtime/llmproxy/config.go
+  s_20c7cd26d72652::t_1ce6186ad566dd 44-46
+internal/runtime/llmproxy/inline_approval_recovery_test.go
+  s_20c7cd26d72652::t_11be651a62ab23 17-19
+internal/runtime/llmproxy/inline_task_prompt_test.go
+  s_20c7cd26d72652::t_3151e91cec09cb 130-131
+internal/runtime/llmproxy/inspector/parser_flags_test.go
+  s_20c7cd26d72652::t_b159fc5d1fd7b7 280-282
+internal/runtime/llmproxy/pipeline/policy.go
+  s_20c7cd26d72652::t_d06aaee6d36127 149
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator.go
+  s_20c7cd26d72652::t_4e3dee1b115843 136
+internal/runtime/llmproxy/pipeline/tool_use_runner_test.go
+  s_20c7cd26d72652::t_a48a65818aee2e 161
+internal/runtime/llmproxy/pipelineeval/scope_drift.go
+  s_20c7cd26d72652::t_265e09379a0a1d 26-29,95-102
+internal/runtime/llmproxy/policies/control_notice.go
+  s_20c7cd26d72652::t_16c884c07e63dc 31-34
+internal/runtime/llmproxy/policies/inspector_chain_test.go
+  s_20c7cd26d72652::t_a58ca24b8b4af4 231-232
+internal/runtime/llmproxy/policies/inspector_evaluator_test.go
+  s_20c7cd26d72652::t_811494161f9464 126-127
+internal/runtime/llmproxy/policies/org_content_policy.go
+  s_20c7cd26d72652::t_9f7ac5e709a8fb 110
+internal/runtime/llmproxy/policies/org_model_policy.go
+  s_20c7cd26d72652::t_7c4b8697147921 167
+internal/runtime/llmproxy/policies/org_model_policy_test.go
+  s_20c7cd26d72652::t_2df92d70ebfe7e 22-31
+internal/runtime/llmproxy/policies/script_session_evaluator_test.go
+  s_20c7cd26d72652::t_7192dbdf85f74d 104-105
+internal/runtime/llmproxy/postproc/eviction_cleanup_test.go
+  s_20c7cd26d72652::t_7f4a13a741e241 81
+internal/runtime/llmproxy/postproc/recoverable_deny.go
+  s_20c7cd26d72652::t_b0ff8babfd775a 66
+internal/runtime/llmproxy/pricing/pricing.go
+  s_20c7cd26d72652::t_2da25d150c8044 74-81,86-87,93-101
+internal/runtime/llmproxy/pricing/pricing_test.go
+  s_20c7cd26d72652::t_ae0a4157803a6f 63
+internal/runtime/llmproxy/scope_drift_prompt.go
+  s_20c7cd26d72652::t_a69a5f129dd78b 19-21
+internal/runtime/llmproxy/scope_drift_registry.go
+  s_20c7cd26d72652::t_e67e37b4bafcda 256-258
+internal/runtime/llmproxy/scope_drift_registry_redis.go
+  s_20c7cd26d72652::t_c5b956d9267169 61-78
+internal/runtime/llmproxy/scriptjudge/llmjudge/llmjudge_test.go
+  s_20c7cd26d72652::t_0e45e7b57c785d 69-71
+internal/runtime/llmproxy/scriptrecognition/helpers.go
+  s_20c7cd26d72652::t_79a004ff9d6755 68
+internal/runtime/llmproxy/usage.go
+  s_20c7cd26d72652::t_9f601cb8e2d068 31,33,35-36
+internal/taskrisk/assessor.go
+  s_20c7cd26d72652::t_111fdab5ef8fe6 84-87,103
+internal/tui/client/types.go
+  s_20c7cd26d72652::t_c925e33c342cd0 201-221
+internal/tui/components/statusbar.go
+  s_20c7cd26d72652::t_aca5874f10e71c 12-14
+internal/tui/keys.go
+  s_20c7cd26d72652::t_6e605bae84066f 7-9,11
+internal/tui/screens/activity.go
+  s_20c7cd26d72652::t_e65176af19692d 154
+internal/tui/screens/agents.go
+  s_20c7cd26d72652::t_c45a989bb29aef 224
+internal/tui/screens/dashboard.go
+  s_20c7cd26d72652::t_160131d9abbae6 572
+internal/tui/screens/help.go
+  s_20c7cd26d72652::t_4e482998b14e1b 23-25
+internal/tui/screens/helpers_test.go
+  s_20c7cd26d72652::t_9b2aeeb5879310 48-60
+internal/tui/screens/restrictions.go
+  s_20c7cd26d72652::t_4f45ac0eb16953 186
+internal/tui/screens/services.go
+  s_20c7cd26d72652::t_475b8c821e9028 61-70,101,596
+internal/tui/screens/tasks.go
+  s_20c7cd26d72652::t_addeb4b6100e41 219
+internal/tui/theme.go
+  s_20c7cd26d72652::t_66200cc0192dab 21-24,28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "e10a18e221863d81dd5e0ee56d9b80065f901e2f",
+  "prompts": {},
+  "sessions": {
+    "s_20c7cd26d72652": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51f12a99-8a7d-4eaf-b0b7-4a4c8fe6113d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
