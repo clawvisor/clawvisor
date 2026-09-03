@@ -1007,7 +1007,7 @@ func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string)
 
 	h.tokenCache.Store(id, rawToken)
 	h.decrementNotifierPolling(userID)
-	h.updateNotificationMsg(ctx, id, userID, "✅ <b>Approved</b> — agent connected.")
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "connection", id, userID, "✅ <b>Approved</b> — agent connected.")
 
 	if h.eventHub != nil {
 		h.eventHub.Publish(userID, events.Event{Type: "queue"})
@@ -1061,7 +1061,7 @@ func (h *ConnectionsHandler) DenyByID(ctx context.Context, id, userID string) er
 	}
 
 	h.decrementNotifierPolling(userID)
-	h.updateNotificationMsg(ctx, id, userID, "❌ <b>Denied</b> — connection rejected.")
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "connection", id, userID, "❌ <b>Denied</b> — connection rejected.")
 
 	if h.eventHub != nil {
 		h.eventHub.Publish(userID, events.Event{Type: "queue"})
@@ -1085,7 +1085,7 @@ func (h *ConnectionsHandler) expireByID(ctx context.Context, id, userID string) 
 		return false, nil
 	}
 	h.decrementNotifierPolling(userID)
-	h.updateNotificationMsg(ctx, id, userID, "⏰ <b>Expired</b> — connection request timed out.")
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "connection", id, userID, "⏰ <b>Expired</b> — connection request timed out.")
 	if h.eventHub != nil {
 		h.eventHub.Publish(userID, events.Event{Type: "queue"})
 	}
@@ -1098,26 +1098,6 @@ func (h *ConnectionsHandler) decrementNotifierPolling(userID string) {
 	}
 	if pd, ok := h.notifier.(notify.PollingDecrementer); ok {
 		pd.DecrementPolling(userID)
-	}
-}
-
-func (h *ConnectionsHandler) updateNotificationMsg(ctx context.Context, targetID, userID, text string) {
-	if h.notifier == nil {
-		return
-	}
-	if msgID, err := h.st.GetNotificationMessage(ctx, "connection", targetID, "telegram"); err == nil {
-		if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
-			h.logger.WarnContext(ctx, "telegram message update failed", "err", err, "target_type", "connection", "target_id", targetID)
-		}
-	}
-	// Channels that address messages by approval target rather than by an
-	// opaque message ID (Slack) resolve their own reference — the ID above
-	// is Telegram's and means nothing to them. No-op when no such channel
-	// is configured.
-	if tu, ok := h.notifier.(notify.TargetMessageUpdater); ok {
-		if err := tu.UpdateMessageForTarget(ctx, userID, "connection", targetID, text); err != nil {
-			h.logger.WarnContext(ctx, "target-addressed message update failed", "err", err, "target_type", "connection", "target_id", targetID)
-		}
 	}
 }
 

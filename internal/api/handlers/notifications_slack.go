@@ -4,13 +4,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/notify/slack"
 	"github.com/clawvisor/clawvisor/pkg/notify"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // slackInstallService is the reserved ServiceID marking an OAuth state entry
@@ -142,7 +145,17 @@ func (h *NotificationsHandler) SlackCallback(w http.ResponseWriter, r *http.Requ
 	// with an empty ChannelID would fail validation, so carry the install
 	// forward by writing it against a placeholder the UI immediately
 	// replaces via SlackSetChannel.
-	existing, _ := h.slackCfg.SlackConfig(r.Context(), entry.UserID)
+	// Distinguish "not connected yet" from "connected but unreadable". Both
+	// return an error, but only the first is safe to treat as a fresh
+	// install: swallowing the second would carry nothing forward and
+	// silently discard the user's channel and approver allowlist on a
+	// transient store or vault failure — a data loss they would not notice
+	// until an approval failed to arrive.
+	existing, err := h.slackCfg.SlackConfig(r.Context(), entry.UserID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		h.redirectToSlackSettings(w, r, "error", "config_unreadable")
+		return
+	}
 	cfg := notify.SlackConfig{
 		BotToken:             install.BotToken,
 		TeamID:               install.TeamID,
@@ -172,8 +185,11 @@ func (h *NotificationsHandler) SlackCallback(w http.ResponseWriter, r *http.Requ
 }
 
 // slackPendingChannel marks a workspace that is installed but has no channel
-// selected yet.
-const slackPendingChannel = "__pending__"
+// selected yet. The value is defined by the notifier package, which refuses to
+// post to it: a second literal here would let the API view and the send path
+// disagree about what "pending" spells, and the send path is the one that
+// keeps this sentinel from becoming a real destination.
+const slackPendingChannel = slack.PendingChannel
 
 // slackSettingsPath is where the dashboard renders the Slack section. The
 // settings page lives under the /dashboard/* route, so a bare "/settings"

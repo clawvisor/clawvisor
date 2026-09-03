@@ -21,8 +21,11 @@ var (
 	emRe     = regexp.MustCompile(`(?is)<em\b[^>]*>(.*?)</em>`)
 	preRe    = regexp.MustCompile(`(?is)<pre\b[^>]*>(.*?)</pre>`)
 	codeRe   = regexp.MustCompile(`(?is)<code\b[^>]*>(.*?)</code>`)
-	brRe     = regexp.MustCompile(`(?i)<br\s*/?>`)
-	anyTagRe = regexp.MustCompile(`(?s)<[^>]*>`)
+	// Matches a <code> open or close tag on its own, for stripping the inner
+	// tags of a <pre><code> pair without touching the text between them.
+	codeTagRe = regexp.MustCompile(`(?is)</?code\b[^>]*>`)
+	brRe      = regexp.MustCompile(`(?i)<br\s*/?>`)
+	anyTagRe  = regexp.MustCompile(`(?s)<[^>]*>`)
 )
 
 // telegramHTMLToMrkdwn converts the Telegram-flavoured HTML used in
@@ -32,12 +35,18 @@ var (
 // _underscores_. Any tag without a mrkdwn equivalent is dropped rather than
 // left to render literally.
 func telegramHTMLToMrkdwn(s string) string {
-	// <pre> before <code> so a <pre><code> block becomes one fenced block
-	// rather than a fence wrapped around inline code.
+	// Telegram writes fenced blocks as <pre><code>…</code></pre>, but Slack has
+	// no nested equivalent: leaving the inner <code> for codeRe would put a
+	// pair of literal backticks *inside* the fence. So the <code> tags are
+	// stripped as part of fencing the <pre> body, before codeRe runs, which
+	// collapses the pair into the single fenced block Slack expects.
+	s = preRe.ReplaceAllStringFunc(s, func(m string) string {
+		body := preRe.FindStringSubmatch(m)[1]
+		return "```" + codeTagRe.ReplaceAllString(body, "") + "```"
+	})
 	// ${1} rather than $1: Go parses "$1_" as a capture group *named* "1_",
 	// which does not exist and expands to empty. Braces everywhere so the
 	// next marker added here cannot reintroduce that.
-	s = preRe.ReplaceAllString(s, "```${1}```")
 	s = codeRe.ReplaceAllString(s, "`${1}`")
 	s = boldRe.ReplaceAllString(s, "*${1}*")
 	s = strongRe.ReplaceAllString(s, "*${1}*")

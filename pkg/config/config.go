@@ -160,8 +160,11 @@ func (c SlackConfig) Enabled() bool {
 // the Slack-specific override and falling back to the server's public URL.
 // Returns "" when neither is set, which disables Slack approvals.
 func (c SlackConfig) CallbackBaseURL(serverPublicURL string) string {
-	if c.PublicURL != "" {
-		return strings.TrimRight(strings.TrimSpace(c.PublicURL), "/")
+	// Trim before deciding whether the override is present: a whitespace-only
+	// value is not an override, and treating it as one would return "" and
+	// disable Slack even though server.public_url is perfectly usable.
+	if override := strings.TrimRight(strings.TrimSpace(c.PublicURL), "/"); override != "" {
+		return override
 	}
 	return strings.TrimRight(strings.TrimSpace(serverPublicURL), "/")
 }

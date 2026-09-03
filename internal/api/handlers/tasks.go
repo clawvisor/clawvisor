@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -735,11 +736,15 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if preApproved {
 		// Send confirmation DM (if notifications enabled).
 		if h.notifier != nil && autoApprovalNotify {
+			// Agent name, purpose and risk level are caller-supplied and land
+			// in text rendered as Telegram HTML (and converted to Slack
+			// mrkdwn), so angle brackets in them would be read as markup
+			// rather than shown.
 			text := fmt.Sprintf("✅ <b>Task auto-approved</b> (group chat observation)\n\n"+
 				"<b>Agent:</b> %s\n<b>Purpose:</b> %s",
-				agent.Name, req.Purpose)
+				html.EscapeString(agent.Name), html.EscapeString(req.Purpose))
 			if task.RiskLevel != "" {
-				text += fmt.Sprintf("\n<b>Risk:</b> %s", task.RiskLevel)
+				text += fmt.Sprintf("\n<b>Risk:</b> %s", html.EscapeString(task.RiskLevel))
 			}
 			_ = h.notifier.SendAlert(ctx, agent.UserID, text)
 		}
@@ -3294,7 +3299,7 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 					return ensureErr
 				}
 				h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
-				h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Approved</b> — task activated.")
+				updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "task", taskID, userID, "✅ <b>Approved</b> — task activated.")
 				h.publishTasksAndQueue(userID)
 				return nil
 			}
@@ -3322,7 +3327,7 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
 
-	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Approved</b> — task activated.")
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "task", taskID, userID, "✅ <b>Approved</b> — task activated.")
 	h.publishTasksAndQueue(userID)
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
@@ -3366,7 +3371,7 @@ func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) 
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, canonicalTaskApprovalKind(task), "deny", "denied")
 
-	h.updateNotificationMsg(ctx, "task", taskID, userID, "❌ <b>Denied</b> — task rejected.")
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "task", taskID, userID, "❌ <b>Denied</b> — task rejected.")
 	h.decrementNotifierPolling(userID)
 	h.publishTasksAndQueue(userID)
 
@@ -3430,7 +3435,7 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", taskApprovalResolution(task), "approved")
 
-	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Scope expanded</b>")
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "task", taskID, userID, "✅ <b>Scope expanded</b>")
 	h.publishTasksAndQueue(userID)
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
@@ -3472,7 +3477,7 @@ func (h *TasksHandler) ExpandDenyByTaskID(ctx context.Context, taskID, userID st
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "denied")
 
-	h.updateNotificationMsg(ctx, "task", taskID, userID, "❌ <b>Scope expansion denied</b>")
+	updateNotificationMessage(ctx, h.st, h.notifier, h.logger, "task", taskID, userID, "❌ <b>Scope expansion denied</b>")
 	h.decrementNotifierPolling(userID)
 	h.publishTasksAndQueue(userID)
 
@@ -3668,28 +3673,6 @@ func (h *TasksHandler) findPendingTaskApprovalRecord(ctx context.Context, userID
 		return nil, store.ErrNotFound
 	}
 	return latest, nil
-}
-
-// updateNotificationMsg updates the Telegram message for a target
-// using the notification_messages table.
-func (h *TasksHandler) updateNotificationMsg(ctx context.Context, targetType, targetID, userID, text string) {
-	if h.notifier == nil {
-		return
-	}
-	if msgID, err := h.st.GetNotificationMessage(ctx, targetType, targetID, "telegram"); err == nil {
-		if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
-			h.logger.WarnContext(ctx, "telegram message update failed", "err", err, "target_type", targetType, "target_id", targetID)
-		}
-	}
-	// Channels that address messages by approval target rather than by an
-	// opaque message ID (Slack) resolve their own reference — the ID above
-	// is Telegram's and means nothing to them. No-op when no such channel
-	// is configured.
-	if tu, ok := h.notifier.(notify.TargetMessageUpdater); ok {
-		if err := tu.UpdateMessageForTarget(ctx, userID, targetType, targetID, text); err != nil {
-			h.logger.WarnContext(ctx, "target-addressed message update failed", "err", err, "target_type", targetType, "target_id", targetID)
-		}
-	}
 }
 
 // publishTasksAndQueue publishes SSE events for tasks and queue changes.

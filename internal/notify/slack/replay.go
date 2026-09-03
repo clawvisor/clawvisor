@@ -65,9 +65,10 @@ func (g *redisReplayGuard) SeenBefore(ctx context.Context, sig string, ttl time.
 	// SetNX is atomic across replicas: exactly one caller sees "not seen".
 	ok, err := g.rdb.SetNX(ctx, redisReplayPrefix+sig, "1", ttl).Result()
 	if err != nil {
-		// Fail open rather than dropping a legitimate approval — the
-		// signature and its timestamp window still bound the exposure, and
-		// the caller logs the degradation.
+		// Surface the error rather than guessing. Reporting "not seen"
+		// would void replay protection precisely when the shared guard
+		// matters most, and the handler fails the interaction closed on a
+		// non-nil error.
 		return false, err
 	}
 	return !ok, nil

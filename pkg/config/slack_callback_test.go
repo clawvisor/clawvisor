@@ -35,6 +35,21 @@ func TestSlackCallbackBaseURL(t *testing.T) {
 			want:   "https://dev-box.tailnet.ts.net",
 		},
 		{
+			// A whitespace-only override is not an override. Treating it as
+			// one would disable Slack entirely despite a valid
+			// server.public_url.
+			name:   "whitespace-only override falls back to the server public URL",
+			slack:  "   ",
+			server: "https://app.clawvisor.com",
+			want:   "https://app.clawvisor.com",
+		},
+		{
+			name:   "whitespace-only server public URL is not a callback origin",
+			slack:  "",
+			server: "  \t ",
+			want:   "",
+		},
+		{
 			// Neither set must disable Slack rather than build a relative
 			// redirect URI that Slack would reject at install time.
 			name: "empty when neither is set",

@@ -41,17 +41,12 @@ func truncate(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-// sectionRaw builds a section from text that is already mrkdwn. section()
-// callers pass content they built with esc() applied to the dynamic parts;
-// this one is for text that has been through telegramHTMLToMrkdwn, which
-// does its own escaping.
-func sectionRaw(md string) block {
-	return block{
-		"type": "section",
-		"text": map[string]any{"type": "mrkdwn", "text": truncate(md, maxSectionText)},
-	}
-}
-
+// section builds a mrkdwn section.
+//
+// It does NOT escape: callers own escaping, because most build their text by
+// interpolating already-escaped fragments (see esc) and escaping again here
+// would double-encode them. Text arriving from telegramHTMLToMrkdwn is
+// likewise already escaped.
 func section(md string) block {
 	return block{
 		"type": "section",
@@ -201,21 +196,32 @@ func approvalBlocks(req notify.ApprovalRequest) []block {
 	return b
 }
 
+// verificationLines renders the verifier's verdicts. Every non-empty verdict
+// gets a line, including ones this renderer does not recognise ("n/a" and
+// anything a future verifier adds): a warning section that names no finding
+// tells the reviewer nothing, and silently dropping a verdict would hide the
+// very fact that raised the warning.
 func verificationLines(req notify.ApprovalRequest) string {
 	var sb strings.Builder
 	switch req.VerifyParamScope {
+	case "":
 	case "violation":
 		sb.WriteString("• :x: *param_scope:* violation\n")
 	case "ok":
 		sb.WriteString("• :white_check_mark: param_scope: ok\n")
+	default:
+		sb.WriteString("• :warning: *param_scope:* " + esc(req.VerifyParamScope) + "\n")
 	}
 	switch req.VerifyReasonCoherence {
+	case "":
 	case "incoherent":
 		sb.WriteString("• :x: *reason:* incoherent\n")
 	case "insufficient":
 		sb.WriteString("• :warning: *reason:* insufficient\n")
 	case "ok":
 		sb.WriteString("• :white_check_mark: reason: ok\n")
+	default:
+		sb.WriteString("• :warning: *reason:* " + esc(req.VerifyReasonCoherence) + "\n")
 	}
 	if req.VerifyExplanation != "" {
 		sb.WriteString("• :speech_balloon: " + esc(req.VerifyExplanation))
@@ -223,10 +229,16 @@ func verificationLines(req notify.ApprovalRequest) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
+// hasVerificationWarning mirrors the Telegram renderer's predicate exactly:
+// anything other than a clean "ok" on both axes is surfaced. Enumerating the
+// known-bad verdicts instead would drop new or inconclusive ones such as
+// "n/a" — and on an approval prompt, under-reporting a verification result is
+// the dangerous direction to be wrong in.
 func hasVerificationWarning(req notify.ApprovalRequest) bool {
-	return req.VerifyParamScope == "violation" ||
-		req.VerifyReasonCoherence == "incoherent" ||
-		req.VerifyReasonCoherence == "insufficient"
+	if req.VerifyParamScope == "" && req.VerifyReasonCoherence == "" {
+		return false // verification did not run
+	}
+	return req.VerifyParamScope != "ok" || req.VerifyReasonCoherence != "ok"
 }
 
 // ── Task approval ─────────────────────────────────────────────────────────────

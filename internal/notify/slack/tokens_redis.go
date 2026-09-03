@@ -12,6 +12,7 @@ import (
 const (
 	redisTokenPrefix     = "clawvisor:slackcb:"
 	redisTombstonePrefix = "clawvisor:slackcbt:"
+	redisGuardPrefix     = "clawvisor:slackcbg:"
 	redisOpTimeout       = 5 * time.Second
 )
 
@@ -31,6 +32,9 @@ type redisCallbackEntry struct {
 	ChannelID string `json:"channel_id"`
 	ExpiresAt int64  `json:"expires_at"`
 	SiblingID string `json:"sibling_id"`
+	// GuardID names the one key the approve/deny pair shares. It is what
+	// makes first-responder-wins enforceable across replicas; see Consume.
+	GuardID string `json:"guard_id,omitempty"`
 }
 
 // redisCallbackTokenStore shares Slack callback tokens across replicas.
@@ -58,13 +62,17 @@ func (s *redisCallbackTokenStore) Generate(entryType, targetID, userID, taskID, 
 	if err != nil {
 		return "", "", err
 	}
+	guardID, err := randomShortID()
+	if err != nil {
+		return "", "", err
+	}
 
 	expiresAt := time.Now().Add(ttl).UnixMilli()
 	mk := func(sibling string) ([]byte, error) {
 		return json.Marshal(redisCallbackEntry{
 			Type: entryType, TargetID: targetID, TaskID: taskID,
 			UserID: userID, ChannelID: channelID,
-			ExpiresAt: expiresAt, SiblingID: sibling,
+			ExpiresAt: expiresAt, SiblingID: sibling, GuardID: guardID,
 		})
 	}
 	approveData, err := mk(denyID)
@@ -82,9 +90,14 @@ func (s *redisCallbackTokenStore) Generate(entryType, targetID, userID, taskID, 
 	// Key TTL covers the tombstone window too, so an expired token is still
 	// readable and can report itself as expired rather than unknown.
 	keyTTL := ttl + tombstoneGrace
-	pipe := s.rdb.Pipeline()
+	// Transactional, not a plain pipeline: a pair written without its guard
+	// would be unusable rather than merely unshared, because Consume reads a
+	// missing guard as "someone already won". The three keys have to land
+	// together or not at all.
+	pipe := s.rdb.TxPipeline()
 	pipe.Set(ctx, redisTokenPrefix+approveID, approveData, keyTTL)
 	pipe.Set(ctx, redisTokenPrefix+denyID, denyData, keyTTL)
+	pipe.Set(ctx, redisGuardPrefix+guardID, "1", keyTTL)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return "", "", err
 	}
@@ -116,13 +129,24 @@ func (s *redisCallbackTokenStore) Peek(shortID string) (*callbackEntry, error) {
 	return j.entry(), nil
 }
 
+// Consume retires a whole approve/deny pair and returns its entry, or reports
+// why the token can no longer be used.
+//
+// The invariant is first-responder-wins: a request must never come back both
+// approved and denied. Approve and deny live under separate keys, so a
+// per-key GetDel cannot establish it — two replicas handling the two halves
+// of one pair concurrently would each win their own key and each retire the
+// other's, and the decision consumer would see both outcomes. Arbitration
+// therefore happens on the single key the pair shares, the guard: exactly one
+// caller can take its value, and everyone else is a late click no matter
+// which button they pressed.
 func (s *redisCallbackTokenStore) Consume(shortID string) (*callbackEntry, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
 	defer cancel()
 
-	// GetDel is what makes first-responder-wins atomic across replicas:
-	// only one caller can receive the value.
-	data, err := s.rdb.GetDel(ctx, redisTokenPrefix+shortID).Bytes()
+	// Read without retiring. The token has to outlive a losing attempt, or a
+	// loser would delete state the eventual winner still needs to resolve.
+	data, err := s.rdb.Get(ctx, redisTokenPrefix+shortID).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, s.tombstoneReason(ctx, shortID)
 	}
@@ -139,14 +163,54 @@ func (s *redisCallbackTokenStore) Consume(shortID string) (*callbackEntry, error
 		return nil, errTokenExpired
 	}
 
-	// Retire the sibling so a request cannot be approved and also denied.
-	if j.SiblingID != "" {
-		s.rdb.Del(ctx, redisTokenPrefix+j.SiblingID)
-		s.markTombstone(ctx, j.SiblingID, tombstoneUsed)
+	if j.GuardID == "" {
+		return s.consumeUnguarded(ctx, shortID, j)
 	}
-	s.markTombstone(ctx, shortID, tombstoneUsed)
 
+	// The guard and the token keys share a TTL, so having read a live entry
+	// above, an absent guard can only mean it was taken — never that it
+	// lapsed on its own.
+	if _, err := s.rdb.GetDel(ctx, redisGuardPrefix+j.GuardID).Result(); err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, errTokenUsed
+		}
+		return nil, err
+	}
+
+	s.retirePair(ctx, shortID, j.SiblingID)
 	return j.entry(), nil
+}
+
+// consumeUnguarded resolves a token minted before pairs carried a guard.
+//
+// Callback tokens live for a day, so a deploy of the guard leaves prompts in
+// channels whose tokens predate it. Reading their absent guard as "already
+// won" would wedge every one of them; falling back to the old per-key GetDel
+// keeps them clickable, and is no weaker than the behaviour they were posted
+// under. Removable once one callback TTL has passed since rollout.
+func (s *redisCallbackTokenStore) consumeUnguarded(ctx context.Context, shortID string, j redisCallbackEntry) (*callbackEntry, error) {
+	if _, err := s.rdb.GetDel(ctx, redisTokenPrefix+shortID).Result(); err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, s.tombstoneReason(ctx, shortID)
+		}
+		return nil, err
+	}
+	s.retirePair(ctx, shortID, j.SiblingID)
+	return j.entry(), nil
+}
+
+// retirePair deletes both halves of a pair and tombstones them, so a later
+// click on either button is told the request was resolved rather than that
+// its token never existed.
+func (s *redisCallbackTokenStore) retirePair(ctx context.Context, shortID, siblingID string) {
+	pipe := s.rdb.Pipeline()
+	pipe.Del(ctx, redisTokenPrefix+shortID)
+	pipe.Set(ctx, redisTombstonePrefix+shortID, tombstoneUsed, tombstoneGrace)
+	if siblingID != "" {
+		pipe.Del(ctx, redisTokenPrefix+siblingID)
+		pipe.Set(ctx, redisTombstonePrefix+siblingID, tombstoneUsed, tombstoneGrace)
+	}
+	_, _ = pipe.Exec(ctx)
 }
 
 // tombstoneReason maps an absent token onto why it went away.

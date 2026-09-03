@@ -461,7 +461,11 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 			RedirectURL:  slackCallbackBase + "/api/notifications/slack/callback",
 		}, logger)
 		slackN.SetVault(v)
-		go slackN.RunCleanup(ctx)
+		// Callback-token cleanup is deliberately not started here: the server
+		// discovers RunCleanup on the notifier and runs it with the server's
+		// context, which MultiNotifier fans out to this notifier. Starting it
+		// here too would run cleanup twice, and the copy started here would
+		// hold ctx (context.Background()) and so never stop on shutdown.
 		logger.Info("slack approvals enabled", "callback_base", slackCallbackBase)
 	} else if cfg.Slack.Enabled() {
 		logger.Warn("slack approvals disabled: set slack.public_url (CLAWVISOR_SLACK_PUBLIC_URL) or server.public_url — Slack calls the interaction endpoint from the public internet")

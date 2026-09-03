@@ -773,7 +773,12 @@ function SlackSetupSection() {
   const hasChannel = !!cfg?.channel_id
 
   // Only fetch the (potentially large) channel list once the picker is open.
-  const { data: channels, isFetching: loadingChannels } = useQuery({
+  const {
+    data: channels,
+    isFetching: loadingChannels,
+    isError: channelsFailed,
+    refetch: refetchChannels,
+  } = useQuery({
     queryKey: ['slack-channels'],
     queryFn: () => api.notifications.slackChannels(),
     enabled: connected && picking,
@@ -815,7 +820,13 @@ function SlackSetupSection() {
       qc.invalidateQueries({ queryKey: ['slack-config'] })
       qc.invalidateQueries({ queryKey: ['notifications'] })
     },
+    onError: (e: unknown) => setError(e instanceof APIError ? e.message : 'Could not disconnect Slack'),
   })
+
+  // A test result only vouches for the channel it was sent to, so drop it as
+  // soon as the configured channel changes.
+  const channelId = cfg?.channel_id
+  useEffect(() => { testMut.reset() }, [channelId])
 
   // Slack unavailable on this deployment — the query failed and there is no
   // config to show.
@@ -826,6 +837,9 @@ function SlackSetupSection() {
   )
 
   const addApprover = () => {
+    // Each write replaces the whole allowlist, so a second submit built from
+    // the same (now stale) cfg.approvers would erase the first addition.
+    if (approversMut.isPending) return
     const id = approverInput.trim()
     if (!id) return
     const existing = (cfg.approvers ?? []).map(a => a.slack_user_id)
@@ -958,7 +972,18 @@ function SlackSetupSection() {
                     {loadingChannels && (
                       <p className="px-3 py-2 text-xs text-text-tertiary">Loading channels...</p>
                     )}
-                    {!loadingChannels && filtered.length === 0 && (
+                    {!loadingChannels && channelsFailed && (
+                      <div className="px-3 py-2 space-y-2">
+                        <p className="text-xs text-danger">Could not load channels from Slack.</p>
+                        <button
+                          onClick={() => { void refetchChannels() }}
+                          className="px-3 py-1 text-xs rounded border border-border-default text-text-secondary hover:text-text-primary hover:border-border-hover"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    )}
+                    {!loadingChannels && !channelsFailed && filtered.length === 0 && (
                       <p className="px-3 py-2 text-xs text-text-tertiary">No matching channels.</p>
                     )}
                     {filtered.map(c => (

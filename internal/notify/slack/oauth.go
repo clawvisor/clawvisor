@@ -116,6 +116,22 @@ func (n *Notifier) CompleteSlackInstall(ctx context.Context, code string) (notif
 	if out.AccessToken == "" {
 		return notify.SlackInstall{}, errors.New("slack: oauth exchange returned no bot token")
 	}
+	// ok:true does not guarantee the identity fields are populated, and an
+	// empty one fails silently rather than loudly. authed_user.id becomes
+	// InstallerSlackUserID, and SlackConfig.CanApprove admits only the
+	// installer plus the allowlist — so an empty value locks the person who
+	// ran the install out of their own approvals, with the click simply
+	// rejected and nothing to point at. team.id fails one step later: the
+	// callback compares it against the stored team to decide whether a
+	// re-install may keep the existing channel and allowlist, and an empty
+	// value never matches, so the user silently loses both. Both are cheap to
+	// assert here, where the failure is attributable to the exchange.
+	if out.AuthedUser.ID == "" {
+		return notify.SlackInstall{}, errors.New("slack: oauth exchange returned no authed_user.id")
+	}
+	if out.Team.ID == "" {
+		return notify.SlackInstall{}, errors.New("slack: oauth exchange returned no team.id")
+	}
 
 	return notify.SlackInstall{
 		BotToken:        out.AccessToken,

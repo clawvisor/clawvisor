@@ -92,9 +92,22 @@ func (n *Notifier) HandleInteraction(w http.ResponseWriter, r *http.Request) {
 
 	// The signature is a deterministic function of (secret, timestamp, body),
 	// so it doubles as a replay key for the duration of the skew window.
-	if seen, err := n.replay.SeenBefore(r.Context(), sig, slackTimestampSkew); err != nil {
-		n.logger.WarnContext(r.Context(), "slack: replay guard unavailable", "err", err)
-	} else if seen {
+	//
+	// An unavailable guard fails closed. Proceeding would leave a captured,
+	// still-in-window payload free to be resubmitted until it lands on a
+	// replica that has not seen it — silently voiding replay protection on
+	// exactly the multi-instance deployments the shared guard exists for.
+	// Refusing costs nothing: the guard is unavailable because Redis is, and
+	// the Redis token store's lookup two steps down would fail anyway.
+	seen, err := n.replay.SeenBefore(r.Context(), sig, slackTimestampSkew)
+	if err != nil {
+		n.logger.WarnContext(r.Context(), "slack: replay guard unavailable, dropping interaction", "err", err)
+		// Unlike a decision failure, nothing has been consumed here, so a
+		// Slack retry is safe and may well succeed once Redis recovers.
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if seen {
 		n.logger.WarnContext(r.Context(), "slack: dropped replayed interaction")
 		w.WriteHeader(http.StatusOK)
 		return
@@ -152,13 +165,10 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 
 	// Channel membership must not confer approval rights — check the
 	// allowlist, and confirm the click came from the channel and workspace
-	// the token was minted for.
-	if cfg.TeamID != "" && p.Team.ID != "" && cfg.TeamID != p.Team.ID {
-		n.ephemeral(ctx, p.ResponseURL, ":no_entry: This request belongs to a different workspace.")
-		return
-	}
-	if entry.ChannelID != "" && p.Channel.ID != "" && entry.ChannelID != p.Channel.ID {
-		n.ephemeral(ctx, p.ResponseURL, ":no_entry: This request cannot be resolved from this channel.")
+	// the token was minted for. Both run before Consume, so a click that
+	// fails either one cannot burn the token.
+	if msg := identityMismatch(cfg, entry, p); msg != "" {
+		n.ephemeral(ctx, p.ResponseURL, msg)
 		return
 	}
 	if !cfg.CanApprove(p.User.ID) {
@@ -179,10 +189,7 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// Record who clicked so the resolved message can attribute it. Written
 	// before publishing: the decision is consumed asynchronously and may
 	// reach the update path immediately.
-	n.msgCtx.SetApprover(
-		contextKey(targetTypeForDecision(entry.Type), entry.TargetID),
-		mention(p.User.ID),
-	)
+	n.msgCtx.SetApprover(messageContextKey(entry), mention(p.User.ID))
 
 	select {
 	case n.decisionCh <- notify.CallbackDecision{
@@ -195,6 +202,43 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	}:
 	case <-ctx.Done():
 	}
+}
+
+// identityMismatch reports why a click may not resolve the token it carries,
+// or "" when it came from the workspace and channel the token was minted for.
+//
+// A payload that omits an identifier is rejected exactly like one that
+// contradicts it. Treating absent as matching made the isolation checks
+// opt-out: an interaction with no team or channel object skipped them
+// entirely and could resolve another workspace's request. Only an identifier
+// we never recorded (an install predating TeamID, a prompt minted without a
+// channel) leaves nothing to compare, and those cases fall through to the
+// approver allowlist.
+func identityMismatch(cfg notify.SlackConfig, entry *callbackEntry, p interactionPayload) string {
+	if cfg.TeamID != "" && cfg.TeamID != p.Team.ID {
+		return ":no_entry: This request belongs to a different workspace."
+	}
+	if entry.ChannelID != "" && entry.ChannelID != p.Channel.ID {
+		return ":no_entry: This request cannot be resolved from this channel."
+	}
+	return ""
+}
+
+// messageContextKey addresses the message context stored when the prompt was
+// posted, so the resolve path reads back what the send path wrote.
+//
+// Approval prompts are recorded under the composite request|task key that
+// disambiguates sibling approvals under symmetric dedup, while the callback
+// token deliberately carries only the bare RequestID. Rebuilding the
+// composite here is what keeps the two in agreement: keying on TargetID alone
+// missed for every task-scoped approval, and a miss is silent — the resolved
+// message simply loses its "Resolved by @X" attribution and detail thread.
+func messageContextKey(entry *callbackEntry) string {
+	targetType := targetTypeForDecision(entry.Type)
+	if targetType == "approval" {
+		return contextKey(targetType, approvalNotifyTargetID(entry.TargetID, entry.TaskID))
+	}
+	return contextKey(targetType, entry.TargetID)
 }
 
 // approverRef renders the clicking Slack user for the audit trail. The
@@ -227,7 +271,7 @@ func (n *Notifier) reportStaleToken(ctx context.Context, responseURL string, err
 		n.replaceOriginal(ctx, responseURL,
 			":hourglass: *Expired* — this request timed out and can no longer be approved.",
 			[]block{
-				sectionRaw(":hourglass: *Expired* — this request timed out and can no longer be approved."),
+				section(":hourglass: *Expired* — this request timed out and can no longer be approved."),
 				contextBlock("Ask the agent to retry if it is still needed."),
 			})
 	case errors.Is(err, errTokenUsed):

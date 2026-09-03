@@ -36,6 +36,20 @@ const vaultBotTokenKey = "notify.slack.bot_token"
 // notifyChannel is the notification_configs.channel discriminator.
 const notifyChannel = "slack"
 
+// PendingChannel is the ChannelID written for a workspace that has completed
+// OAuth but has not yet had a channel picked. SaveSlackConfig requires a
+// non-empty channel, so the install is carried forward under this sentinel
+// until SlackSetChannel replaces it.
+//
+// It is exported because the API layer stores it and the send path has to
+// refuse it; two independent spellings of the same magic string is exactly
+// how a sentinel becomes a real destination.
+const PendingChannel = "__pending__"
+
+// ErrNoChannelConfigured is returned by every send path when the user's
+// workspace is installed but no channel has been chosen yet.
+var ErrNoChannelConfigured = errors.New("slack: no approval channel selected")
+
 // defaultAPIBase is the Slack Web API root.
 const defaultAPIBase = "https://slack.com/api/"
 
@@ -362,6 +376,15 @@ func fallbackText(kind, agent string) string {
 }
 
 func (n *Notifier) post(ctx context.Context, cfg notify.SlackConfig, text string, blocks []block) (string, error) {
+	// PendingChannel is not a channel — posting to it fails at Slack with
+	// channel_not_found. The guard lives here rather than in userConfig
+	// because the pending state is exactly when the channel picker, the
+	// settings view and SlackSetChannel all need to read the config; making
+	// userConfig reject it would break the flow that resolves it. Every
+	// outbound message funnels through post, so no send path can miss this.
+	if cfg.ChannelID == "" || cfg.ChannelID == PendingChannel {
+		return "", ErrNoChannelConfigured
+	}
 	payload := map[string]any{
 		"channel": cfg.ChannelID,
 		"text":    text,
@@ -387,7 +410,7 @@ func (n *Notifier) post(ctx context.Context, cfg notify.SlackConfig, text string
 func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, channelID, ts, text string, mc messageContext) error {
 	// The incoming text is Telegram-flavoured HTML, so it needs translating
 	// rather than escaping — escaping renders "<b>Approved</b>" literally.
-	blocks := []block{sectionRaw(telegramHTMLToMrkdwn(text))}
+	blocks := []block{section(telegramHTMLToMrkdwn(text))}
 
 	// Attribution and summary go in a context line rather than the section,
 	// so the outcome stays the visually dominant part of the message.
@@ -521,7 +544,15 @@ func (n *Notifier) SaveSlackConfig(ctx context.Context, userID string, cfg notif
 	}
 
 	jsonToken := cfg.BotToken
+	// prior is the token this write is about to overwrite, captured before
+	// the overwrite so a failed config upsert can put it back. A missing or
+	// unreadable entry leaves it nil, which the rollback reads as "there was
+	// nothing here" and deletes instead of restoring.
+	var prior []byte
 	if n.vault != nil {
+		if b, gerr := n.vault.Get(ctx, userID, vaultBotTokenKey); gerr == nil {
+			prior = b
+		}
 		if err := n.vault.Set(ctx, userID, vaultBotTokenKey, []byte(cfg.BotToken)); err != nil {
 			return fmt.Errorf("slack: persist bot_token: %w", err)
 		}
@@ -542,14 +573,39 @@ func (n *Notifier) SaveSlackConfig(ctx context.Context, userID string, cfg notif
 	}
 
 	if err := n.store.UpsertNotificationConfig(ctx, userID, notifyChannel, cfgBytes); err != nil {
-		// Roll the vault write back so we never leave a token behind
-		// without a row pointing at it.
-		if n.vault != nil {
-			_ = n.vault.Delete(ctx, userID, vaultBotTokenKey)
-		}
+		n.rollbackBotToken(ctx, userID, prior)
 		return fmt.Errorf("slack: save notification config: %w", err)
 	}
 	return nil
+}
+
+// rollbackBotToken undoes the vault write of a SaveSlackConfig whose config
+// upsert then failed.
+//
+// Deleting unconditionally — the old behaviour — was only correct for a first
+// install. On an update (a re-install, a channel change, an approver edit) the
+// previous config row survives the failed upsert and still references the
+// vault key, so deleting it left that row permanently unusable: userConfig
+// finds no token and every send fails with "no bot token configured". A
+// non-empty prior value is therefore restored; only a genuinely absent one is
+// deleted, so a first install still leaves no unreferenced secret behind.
+func (n *Notifier) rollbackBotToken(ctx context.Context, userID string, prior []byte) {
+	if n.vault == nil {
+		return
+	}
+	var err error
+	if len(prior) > 0 {
+		err = n.vault.Set(ctx, userID, vaultBotTokenKey, prior)
+	} else {
+		err = n.vault.Delete(ctx, userID, vaultBotTokenKey)
+	}
+	if err != nil {
+		// Nothing left to try: the config write already failed, and failing
+		// louder cannot repair the vault. Log so the inconsistency is
+		// recoverable by hand.
+		n.logger.ErrorContext(ctx, "slack: could not roll back bot token after failed config save",
+			"err", err, "user_id", userID, "vault_key", vaultBotTokenKey, "restored", len(prior) > 0)
+	}
 }
 
 // SlackConfig returns the user's workspace configuration, bot token included.
@@ -561,10 +617,31 @@ func (n *Notifier) SlackConfig(ctx context.Context, userID string) (notify.Slack
 // DeleteSlackConfig removes the workspace connection and its vaulted token.
 // Implements notify.SlackConfigStore.
 func (n *Notifier) DeleteSlackConfig(ctx context.Context, userID string) error {
-	if n.vault != nil {
-		_ = n.vault.Delete(ctx, userID, vaultBotTokenKey)
+	// The config row goes first, deliberately. It is the only reference that
+	// makes the token reachable, so dropping it is the half of a disconnect
+	// that actually revokes access. The old vault-first order inverted the
+	// failure mode: a store error after a successful vault delete left a
+	// config row pointing at nothing, so the user still looked connected but
+	// every send failed and reconnecting was the only repair.
+	if err := n.store.DeleteNotificationConfig(ctx, userID, notifyChannel); err != nil {
+		return err
 	}
-	return n.store.DeleteNotificationConfig(ctx, userID, notifyChannel)
+	if n.vault == nil {
+		return nil
+	}
+	if err := n.vault.Delete(ctx, userID, vaultBotTokenKey); err != nil {
+		// Reported as success on purpose. The disconnect has already taken
+		// effect — nothing can load this token again — so returning an error
+		// would tell the user they are still connected when they are not, and
+		// a retry could never clear it because the row it keys off is gone.
+		// Completing quietly is what the old `_ =` did; the difference is
+		// that this is now the only record that an encrypted blob is left in
+		// the vault, so it is logged at error level with the exact
+		// (user, key) pair an operator needs to sweep it.
+		n.logger.ErrorContext(ctx, "slack: orphaned bot token left in vault after disconnect",
+			"err", err, "user_id", userID, "vault_key", vaultBotTokenKey)
+	}
+	return nil
 }
 
 func (n *Notifier) userConfig(ctx context.Context, userID string) (notify.SlackConfig, error) {
