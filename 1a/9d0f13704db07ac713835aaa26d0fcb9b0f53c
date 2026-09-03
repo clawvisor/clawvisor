@@ -1,0 +1,65 @@
+internal/testharness/llm/cassette.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-323
+internal/testharness/llm/cassette_test.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-11,13-90
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 12
+internal/testharness/google/google.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-488
+internal/testharness/httpmock/mock_test.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-8,10-50
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 9
+internal/testharness/email/email.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-142
+internal/testharness/email/server.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-128
+internal/testharness/httpmock/mock.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-181
+internal/testharness/notion/notion.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-6,8-27
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 7
+internal/testharness/slack/slack.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-6,8-40
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 7
+internal/testharness/github/github.go
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 8
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-7,9-38
+internal/testharness/microsoft/microsoft.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-7,9-32
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 8
+internal/testharness/telegram/telegram.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-104
+internal/testharness/twilio/twilio.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-6,8-30
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 7
+internal/testharness/llm/server.go
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-79
+internal/testharness/google/google_test.go
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 11
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-10,12-162
+internal/testharness/email/email_test.go
+  s_8b1f6f8ddc53d3::t_310208d582f75a 11-20,22-23,25
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-7,9-10,21,24,26-75
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 8
+internal/testharness/llm/anthropic_live_test.go
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 13
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-12,14-88
+internal/testharness/linear/linear.go
+  s_8b1f6f8ddc53d3::t_867eb1e079ea0c 9
+  s_8b1f6f8ddc53d3::t_20905eceb0ec72 1-8,10-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "1a9d0f13704db07ac713835aaa26d0fcb9b0f53c",
+  "prompts": {},
+  "sessions": {
+    "s_8b1f6f8ddc53d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2217843-2b00-445d-88f2-f33b3fb654b2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

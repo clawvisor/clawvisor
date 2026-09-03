@@ -1,0 +1,23 @@
+internal/api/handlers/installer_scripts/codex_skill_only.sh.tmpl
+  s_fa4712eda9c001::t_39801e3b8ccba3 6-10,12-15,17
+internal/api/handlers/installer_scripts/claude_code_skill_only.sh.tmpl
+  s_fa4712eda9c001::t_7a5c4cdd2c2bb0 6-10,12-15,17
+internal/api/handlers/installer.go
+  s_fa4712eda9c001::t_184c412a1b2f78 141-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "7fd0c3fade10ebfb2b1a8ee8a7952ee2cf298722",
+  "prompts": {},
+  "sessions": {
+    "s_fa4712eda9c001": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "43e64dce-c215-4362-86de-13c0bc757714",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+LICENSE
+  s_3f3a0e56d60dbc::t_85984e780160cc 1-21
+CONTRIBUTING.md
+  s_3f3a0e56d60dbc::t_d0a189edf3939a 17
+coworkplugin/plugin/LICENSE
+  s_3f3a0e56d60dbc::t_ac2ab54d5a580a 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "acfff72c4592d95b7ddeae7317be0150e2a1f7b2",
+  "prompts": {},
+  "sessions": {
+    "s_3f3a0e56d60dbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "978ff394-9ef9-4a60-acbd-f2fd4408d6fd",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

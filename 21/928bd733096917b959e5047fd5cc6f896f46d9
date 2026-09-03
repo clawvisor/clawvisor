@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/scope_drift_registry.go
+  s_d3d7c0f1cab464::t_2bb27a4f1ebb19 424-428
+internal/runtime/llmproxy/scope_drift_registry_redis.go
+  s_d3d7c0f1cab464::t_eb6adff9a7b096 357-362
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "21928bd733096917b959e5047fd5cc6f896f46d9",
+  "prompts": {},
+  "sessions": {
+    "s_d3d7c0f1cab464": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e5497df-a0c6-46e3-b49b-902ec0c4b408",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

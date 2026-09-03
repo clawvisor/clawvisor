@@ -1,0 +1,9 @@
+web/src/pages/Agents.tsx
+  8de9dcae61d3e38a 1343-1355
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "307d2f522f369127c30824a01dd7a4e767be3518",
+  "prompts": {}
+}

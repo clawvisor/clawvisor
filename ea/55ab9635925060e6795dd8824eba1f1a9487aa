@@ -1,0 +1,23 @@
+internal/runtime/conversation/stream/openai_responses_roundtrip_test.go
+  s_813cf813d8b1d0::t_6dc84367e3077d 1-160
+internal/runtime/conversation/stream/openai_responses_decoder.go
+  s_813cf813d8b1d0::t_380ccd3b8e5858 1-168
+internal/runtime/conversation/stream/openai_responses_encoder.go
+  s_813cf813d8b1d0::t_b00e3435fd84f2 1-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "ea55ab9635925060e6795dd8824eba1f1a9487aa",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

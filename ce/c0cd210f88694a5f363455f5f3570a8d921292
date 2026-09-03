@@ -1,0 +1,37 @@
+provider/docs/resources/sso_connection.md
+  s_55f7a841d7c10e::t_783cf3acecab3c 1-67
+provider/internal/client/client.go
+  s_55f7a841d7c10e::t_9390891e52bb90 54-60
+provider/internal/client/sso.go
+  s_55f7a841d7c10e::t_016d224f718258 1-44
+provider/internal/provider/resource_sso_connection.go
+  s_55f7a841d7c10e::t_84302f25be22d2 1-302
+provider/internal/provider/testacc/provider_test.go
+  s_55f7a841d7c10e::t_6b88fbb2be7d56 199
+  s_55f7a841d7c10e::t_0fc6a3e9d36056 37
+provider/internal/provider/provider.go
+  s_55f7a841d7c10e::t_2d919bb5f6a233 163
+provider/internal/provider/testacc/sso_connection_test.go
+  s_55f7a841d7c10e::t_dadc6b955e4d0d 48-53,60-61,68-73
+  s_55f7a841d7c10e::t_7fb315e8714b8b 1-47,54-59,62-67,74-118
+provider/examples/resources/clawvisor_sso_connection/resource.tf
+  s_55f7a841d7c10e::t_bc4b2e720d7dac 1-31
+provider/internal/client/client_test.go
+  s_55f7a841d7c10e::t_001857e1f0c776 120-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cec0cd210f88694a5f363455f5f3570a8d921292",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

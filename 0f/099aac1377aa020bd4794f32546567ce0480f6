@@ -1,0 +1,24 @@
+internal/runtime/llmproxy/continuation.go
+  s_a5f33eee989c6d::t_3bd42c2aa9895f 36-42,56-65,71-96
+  s_a5f33eee989c6d::t_5ca60869ed8eb4 99-259
+internal/runtime/conversation/openai_continuation.go
+  s_a5f33eee989c6d::t_abab46954de096 1-256
+internal/runtime/llmproxy/continuation_test.go
+  s_a5f33eee989c6d::t_e6a5ee847ac589 19-22,24-294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "0f099aac1377aa020bd4794f32546567ce0480f6",
+  "prompts": {},
+  "sessions": {
+    "s_a5f33eee989c6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37aa2c5f-2455-40a0-84dc-0b1a4ce1fdcd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+pkg/store/store.go
+  s_55f7a841d7c10e::t_f28093c0ca3b72 473,478-479
+  s_55f7a841d7c10e::t_1937753bcf244f 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "007e9b43a46acb6e80ee19f2da8318513e4ec62e",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,55 @@
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_813cf813d8b1d0::t_ac66b992dcec86 1,7,20-24,26-33,35-42,45,95,183-184,186-193,196-199,202-203,205-208,212-214,219-227,372-373,375-379,382-383,388-396,321-322,337,343,351-353,297,330,349,116,137,172-173,177,180,117,136,147,159,291,360-361,366-369
+  s_522af339bc956c::t_5bf0006658b0e5 58
+  s_813cf813d8b1d0::t_3c708c1fe011ba 67,93,107-115,118-119,122,134-135,141-142,149
+  s_813cf813d8b1d0::t_f708ea38e1ee37 74,106,163,165,167-169,171,174-176,179
+  s_813cf813d8b1d0::t_8481c02f44c47b 84,88,94,43,144
+  s_813cf813d8b1d0::t_185ab7ff71f3f5 228-229
+  s_813cf813d8b1d0::t_721c1314bd6a75 237,243,245-246
+  s_813cf813d8b1d0::t_1f13ee1748cb38 241,304-306,310-312,314-318,326,345-348,350
+  s_522af339bc956c::t_81987adf38be61 254-255,44
+  s_813cf813d8b1d0::t_865879a86dbc2f 271-272,277,132
+  s_813cf813d8b1d0::t_07505de54700ee 279-283,300,302-303,170,121,161
+  s_813cf813d8b1d0::t_e84f90ddd48919 25
+  s_813cf813d8b1d0::t_c8fb80cc30a8e9 313
+  s_813cf813d8b1d0::t_9c24b789e695a1 278,288,292-293
+  s_522af339bc956c::t_8393b91f2d90bc 295
+  s_522af339bc956c::t_e228a597b62c17 336,342,158
+  s_813cf813d8b1d0::t_bbdc5e655b5c59 120,166
+  s_813cf813d8b1d0::t_c3702c4db87db9 289-290,294,296,298,301
+  s_813cf813d8b1d0::t_5b97cefad62afd 267-270
+  s_813cf813d8b1d0::t_11969cc8f15fbf 266
+  s_813cf813d8b1d0::t_fe238f3bc29484 156
+internal/runtime/llmproxy/policies/emitter_equivalence_test.go
+  s_813cf813d8b1d0::t_b62fa56715baab 1-74,78-105,109-131,133-138,141-155,157-178,180-205,210-238,242-245,250-356
+  s_813cf813d8b1d0::t_19787034d11c37 75-76
+  s_813cf813d8b1d0::t_63a75c9b85a9e6 77,206-209
+  s_813cf813d8b1d0::t_974a02da5848d5 106-108
+  s_813cf813d8b1d0::t_9548fd14438bac 132
+  s_813cf813d8b1d0::t_2883e697fec99a 156
+  s_813cf813d8b1d0::t_85081fc434b491 179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "7d4fc07f386f80cdc4e2227b0bd2d8dc9444ec26",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

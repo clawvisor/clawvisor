@@ -1,0 +1,26 @@
+internal/runtime/llmproxy/postproc/postproc.go
+  s_55f7a841d7c10e::t_167926ae6c17a1 163
+  s_55f7a841d7c10e::t_7d0a5d38b071cb 23,32,54-64,69-82
+  s_55f7a841d7c10e::t_9220844fcb2dbd 83-84
+internal/runtime/llmproxy/postproc/postprocess_test.go
+  s_55f7a841d7c10e::t_1fbb0f19891f8a 1696-1717,1724-1769
+  s_55f7a841d7c10e::t_aa4758beb8f905 1718-1723
+internal/runtime/llmproxy/postproc/stream.go
+  s_55f7a841d7c10e::t_f86fa12eea2949 123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0cf759869703c41e2c234b5ca4da68122c7aca2d",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

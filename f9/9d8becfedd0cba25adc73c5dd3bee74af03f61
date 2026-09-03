@@ -1,0 +1,25 @@
+pkg/store/sqlite/store.go
+  s_55f7a841d7c10e::t_3fe57fc194ccac 171,173-174,177-182
+  s_55f7a841d7c10e::t_11422e4aa43f34 183
+pkg/store/postgres/store.go
+  s_55f7a841d7c10e::t_2cf8423aa58a11 159-161,164-169
+  s_55f7a841d7c10e::t_f06854bb71e9ad 170
+pkg/store/sqlite/store_apitokens_test.go
+  s_55f7a841d7c10e::t_211b8f2563f073 178-193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f99d8becfedd0cba25adc73c5dd3bee74af03f61",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

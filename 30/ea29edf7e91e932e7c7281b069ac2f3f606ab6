@@ -1,0 +1,19 @@
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_8f3d790934e389::t_66d4eeef161988 311-315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "30ea29edf7e91e932e7c7281b069ac2f3f606ab6",
+  "prompts": {},
+  "sessions": {
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+internal/api/handlers/llm_credentials_test.go
+  s_55f7a841d7c10e::t_4452beced496fe 35-38,47
+  s_55f7a841d7c10e::t_71d879bcbfae6f 178-179,183
+  s_55f7a841d7c10e::t_132ee7be9d4fe5 3-5,7-34,39-46,48-99,102-125,128-146,148-177,180-182,184-196,199-218
+  s_55f7a841d7c10e::t_345c796abe37c8 6
+  s_55f7a841d7c10e::t_d4a7cf47c69e48 100-101
+  s_55f7a841d7c10e::t_a83bd844559912 126-127
+  s_55f7a841d7c10e::t_2c8ec21c1214ec 147
+  s_55f7a841d7c10e::t_f53d4420067b45 197-198
+internal/api/server.go
+  s_55f7a841d7c10e::t_b437043c4df3c3 1700-1716
+internal/api/handlers/llm_credentials.go
+  s_55f7a841d7c10e::t_659537c531f320 87-93,96-128
+  s_55f7a841d7c10e::t_ac41597bfbfb50 35-36,39-53,58
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_570c22817cd056 190-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "bbc6c836617d8895343444994a6ccf21b61e5b4a",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

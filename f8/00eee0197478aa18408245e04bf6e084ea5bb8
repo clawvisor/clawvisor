@@ -1,0 +1,64 @@
+pkg/clawvisor/defaults.go
+  s_a5f208ad60cc21::t_23180e5264862d 47
+  s_a5f208ad60cc21::t_1bf0e8e669642c 419,459,509
+  s_8de9dcae61d3e3::t_9681258530fd53 480
+  s_8de9dcae61d3e3::t_bb6843108bd260 631,633-656,659
+docs/LITE_PROXY.md
+  s_8de9dcae61d3e3::t_da1b424059fd3d 1-9,11-66,99-112,115,124-129,132-206,208-222,224-255,257-261,264-335
+  s_a5f208ad60cc21::t_e540b9c99b3aa7 67-98
+pkg/config/config.go
+  s_a5f208ad60cc21::t_62f28b2a95c21c 122,970,972
+  s_8de9dcae61d3e3::t_4f427a59f87d6d 286,290,294,299,303-309,311
+  s_a5f208ad60cc21::t_75374b818c8896 541-543,788-808,885-894,969,971,973-975
+pkg/clawvisor/options.go
+  s_a5f208ad60cc21::t_23180e5264862d 20
+  s_a5f208ad60cc21::t_c72c69975bd0ae 152
+pkg/config/config_test.go
+  s_a5f208ad60cc21::t_ffd8a97a2cfd51 32-82
+pkg/clawvisor/run.go
+  s_a5f208ad60cc21::t_dae4a44dbd0bda 336-338
+internal/api/server.go
+  s_a5f208ad60cc21::t_53136521bccb91 110,344-348
+  s_8f3d790934e389::t_fa390b916ed2db 343
+  s_a5f208ad60cc21::t_2d1255241e1254 612-618,643-644,650-655
+  s_a5f208ad60cc21::t_d3b9a43512aa9d 931-935
+  s_a5f208ad60cc21::t_38198e221fd913 1146-1150,1152-1153,1158-1173,1175-1228,1232-1241,1247-1248,1253-1256,1258-1260,1264-1275
+  s_a5f208ad60cc21::t_65562c38cfe68c 1335-1337
+internal/api/proxy_lite_routes_test.go
+  s_a5f208ad60cc21::t_2f3b6da162a994 1-96
+internal/runtime/llmproxy/pending_approval_cache_redis.go
+  s_a5f208ad60cc21::t_98146f154efd2e 1-9,11-180,183-186
+  s_a5f208ad60cc21::t_17bcf27dcaf2ba 10,181-182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "f800eee0197478aa18408245e04bf6e084ea5bb8",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_a5f208ad60cc21": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2a03-2bf5-7d62-80b1-67fd5e44976e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

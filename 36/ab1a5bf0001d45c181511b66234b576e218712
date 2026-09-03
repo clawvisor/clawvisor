@@ -1,0 +1,24 @@
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_522af339bc956c::t_e11b951a2de9d0 518-526,529,531-533,537,540,543-544,548-554,571,575,583,596-598,603,607-609,611,622
+  s_522af339bc956c::t_5dd41f9a575665 48-56,59,64,105,190-191,194,203-204,209-210,213,218-220,224-227
+  s_522af339bc956c::t_d7fd66ee99510a 412
+  s_522af339bc956c::t_bb56736852cc64 187,315-318
+  s_522af339bc956c::t_35dd0236f447b1 244-254,257-266,282
+  s_522af339bc956c::t_81987adf38be61 376-389,391,414-415,419-421,425-429,442-443,455-458,460,472,486-488,496,504-505
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "36ab1a5bf0001d45c181511b66234b576e218712",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

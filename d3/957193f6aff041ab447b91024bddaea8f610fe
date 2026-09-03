@@ -1,0 +1,45 @@
+internal/runtime/conversation/approval_release.go
+  s_068454be9023ad::t_e310b05091bc25 48,51-52,54-60,63-64,67
+internal/runtime/llmproxy/askuserquestion_reply_test.go
+  s_068454be9023ad::t_2fc82f9a0c7013 1-223
+internal/api/handlers/llm_endpoint.go
+  s_068454be9023ad::t_cb3a30f4de7b3f 1607
+  s_068454be9023ad::t_324e3710783af0 1197,1678
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_068454be9023ad::t_f813486220df5e 445-448,450
+internal/runtime/llmproxy/historystrip/synthetic_history_strip.go
+  s_068454be9023ad::t_40f7adcfe35dd6 106
+  s_068454be9023ad::t_39e2009e0325d4 259-272,285
+internal/runtime/conversation/approval_release_test.go
+  s_068454be9023ad::t_c60f7cde200160 232-237
+internal/runtime/llmproxy/config.go
+  s_068454be9023ad::t_a8413f8c78dbd5 195-204
+internal/runtime/llmproxy/historystrip.go
+  s_068454be9023ad::t_ad15bcbcf74d80 19-25
+internal/runtime/llmproxy/askuserquestion_reply.go
+  s_068454be9023ad::t_b959b5ae167a9d 42-67,69-70,76,78,80,82,84,106-108,115-120,122
+  s_068454be9023ad::t_b922bd6a1be160 1-41,68,71-75,77,79,81,83,85-105,109-114,121,123-297
+internal/runtime/llmproxy/approval_body_editor.go
+  s_068454be9023ad::t_cfd56dc6902de7 44-53
+  s_068454be9023ad::t_cc40f4b65f86ae 133-135
+  s_068454be9023ad::t_5613488f811705 156-163,165-171,173-178,180-182,184-185,187,189,191-192,194-195,197-199,201-204,206-208,211-219
+  s_068454be9023ad::t_1e65e63dd78060 130-132
+internal/runtime/llmproxy/historystrip/text.go
+  s_068454be9023ad::t_2fb569a334107c 13-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "d3957193f6aff041ab447b91024bddaea8f610fe",
+  "prompts": {},
+  "sessions": {
+    "s_068454be9023ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6c43e544-5845-4973-a64b-7695becd7168",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

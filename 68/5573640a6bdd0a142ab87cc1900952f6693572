@@ -1,0 +1,25 @@
+internal/api/handlers/llm_endpoint_test.go
+  s_8de9dcae61d3e3::t_6e32f2c1a8683c 205-231
+internal/runtime/policy/task_match.go
+  s_8de9dcae61d3e3::t_46157674c37ce7 42-48
+pkg/runtime/decision/decision.go
+  s_8de9dcae61d3e3::t_b21579311993da 164-192
+pkg/runtime/decision/decision_test.go
+  s_8de9dcae61d3e3::t_8621afa44c64a4 301-352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "685573640a6bdd0a142ab87cc1900952f6693572",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

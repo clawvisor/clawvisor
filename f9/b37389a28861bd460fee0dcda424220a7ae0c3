@@ -1,0 +1,63 @@
+internal/runtime/llmproxy/pipeline/facts.go
+  s_813cf813d8b1d0::t_d765f7ac8fb226 1-2
+  s_813cf813d8b1d0::t_fa710725cb3e30 118-119,129-130
+internal/runtime/llmproxy/policies/compose_tool_use_chain.go
+  s_813cf813d8b1d0::t_e6dbce3f6d0124 1-8,11-37,43-54,57-61,63,67-72,79-80,82-86
+  s_813cf813d8b1d0::t_8d69eea78e2d96 38-42
+  s_813cf813d8b1d0::t_0aecd7b67ec570 73-77,81
+internal/runtime/llmproxy/policies/inspector_chain.go
+  s_813cf813d8b1d0::t_c567306b7a34fa 1-16,21-34,37-38,49,54-55,58,79-83,85-93,112,117,130,134-139,146-148,151-152,156-158,168,172-174,192,197-199,202,206-208,251,48,77-78,109,223-224,68-69
+  s_813cf813d8b1d0::t_b3bb1faa46fcf0 94,102,107,113-116,118-119,128-129
+  s_813cf813d8b1d0::t_e01e676f2ab32a 179,247,108,111,127,180-184,188-190,209-213,215-222
+  s_813cf813d8b1d0::t_75c879a2965564 36,39-47,70-76,67
+  s_813cf813d8b1d0::t_a762b4d80f6ee9 84
+  s_813cf813d8b1d0::t_768b7a7f558a65 159-162,200-201
+  s_813cf813d8b1d0::t_5acf9ae2da2206 35
+  s_813cf813d8b1d0::t_ab020996f8cff1 50-53,56-57,61-66
+  s_813cf813d8b1d0::t_c2e28f2fd2ab66 163,175,185-187,191
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_813cf813d8b1d0::t_ac66b992dcec86 1,7,20-24,26-33,35-42,44,94,143-144,146-153,156-159,162-163,165-168,172-174,179-187,333-334,336-340,343-344,349-357,298-299,314,320,328-330,267,307,326
+  s_522af339bc956c::t_5bf0006658b0e5 57
+  s_813cf813d8b1d0::t_3c708c1fe011ba 66,92
+  s_813cf813d8b1d0::t_f708ea38e1ee37 73,104,139
+  s_813cf813d8b1d0::t_8481c02f44c47b 83,87,93
+  s_813cf813d8b1d0::t_185ab7ff71f3f5 188-189
+  s_813cf813d8b1d0::t_721c1314bd6a75 197,203,205-206
+  s_813cf813d8b1d0::t_1f13ee1748cb38 201,281-283,287-289,291-295,303,322-325,327
+  s_522af339bc956c::t_81987adf38be61 223-224
+  s_813cf813d8b1d0::t_865879a86dbc2f 240-241,246
+  s_813cf813d8b1d0::t_07505de54700ee 248-252,268,278-280
+  s_813cf813d8b1d0::t_e84f90ddd48919 25
+  s_813cf813d8b1d0::t_c8fb80cc30a8e9 290
+  s_813cf813d8b1d0::t_9c24b789e695a1 247,260,262-263
+  s_522af339bc956c::t_8393b91f2d90bc 265
+  s_522af339bc956c::t_e228a597b62c17 313,319
+internal/runtime/llmproxy/policies/boundary_check_evaluator.go
+  s_813cf813d8b1d0::t_f9e1c7e34d8b80 1-12,14-33,40,85-93,108,120-130,147-148,152-154,159-162,140,146,51,60-61,69,74,80,82-84
+  s_813cf813d8b1d0::t_559fa6dfbc5e79 133,136,137-139,141-145
+  s_813cf813d8b1d0::t_041e7b5616c0f2 34-39,42-50,52-59,62-68,70-73,75-79,81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "f9b37389a28861bd460fee0dcda424220a7ae0c3",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

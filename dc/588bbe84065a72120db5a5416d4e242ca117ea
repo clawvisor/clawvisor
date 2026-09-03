@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/control.go
+  s_5690062ed6cda8::t_31e33460c7b753 57,63-64
+internal/runtime/llmproxy/control_test.go
+  s_5690062ed6cda8::t_0c802010b623cb 29-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "dc588bbe84065a72120db5a5416d4e242ca117ea",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

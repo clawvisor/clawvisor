@@ -1,0 +1,20 @@
+internal/runtime/llmproxy/bodytransform/roundtrip_test.go
+  s_2bfa8e580c8b9a::t_6c50dfc3c244a1 1-244,248-249,252-260,269-293
+  s_2bfa8e580c8b9a::t_6d7153220e7081 245-247,250-251,261-268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "33932bb5aeaeb5a517e3aadf42ec0fdc57ba0940",
+  "prompts": {},
+  "sessions": {
+    "s_2bfa8e580c8b9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90ab0a12-b6ce-4890-905f-937f6f148695",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

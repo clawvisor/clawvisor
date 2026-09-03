@@ -1,0 +1,28 @@
+internal/api/middleware/trust_split_test.go
+  s_55f7a841d7c10e::t_d8f29a4f01ed07 110-138
+e2e/scenarios/api_tokens_test.go
+  s_55f7a841d7c10e::t_cef23ae9280e39 120-147
+internal/api/server.go
+  s_55f7a841d7c10e::t_05d60d035a00bb 757-762
+  s_55f7a841d7c10e::t_2fd74188216a35 1038,1040-1041
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_10ea3d951294f5 178-198
+internal/api/handlers/apitokens.go
+  s_55f7a841d7c10e::t_9725d2a4306b6a 50-53,58-60,62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "85dfcd48f7648475eeb7c44e267b23c7b192fd71",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

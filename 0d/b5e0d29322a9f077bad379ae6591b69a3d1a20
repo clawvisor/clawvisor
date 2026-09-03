@@ -1,0 +1,19 @@
+web/src/hooks/useAuth.tsx
+  s_35af8c84ac2d35::t_fa7fbfe2509e64 137-143,150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0db5e0d29322a9f077bad379ae6591b69a3d1a20",
+  "prompts": {},
+  "sessions": {
+    "s_35af8c84ac2d35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c3bca568-1830-4b5d-82a7-10f3623e4752",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

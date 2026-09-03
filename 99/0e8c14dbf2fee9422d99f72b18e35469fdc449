@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_46c34c60ed93cf::t_9c6e2510f8ce8e 376-383
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_46c34c60ed93cf::t_93d65bb3798f85 314-369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "990e8c14dbf2fee9422d99f72b18e35469fdc449",
+  "prompts": {},
+  "sessions": {
+    "s_46c34c60ed93cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e7053-1949-72c1-bb35-43fe5c7d1e75",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

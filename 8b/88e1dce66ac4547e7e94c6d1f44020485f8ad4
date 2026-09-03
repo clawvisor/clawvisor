@@ -1,0 +1,23 @@
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_8489ed8e913132 1-158
+internal/api/middleware/apitoken_test.go
+  s_55f7a841d7c10e::t_93d9edf635cabe 1-68,70-234,252-263
+  s_55f7a841d7c10e::t_17d8aee83e71b9 235-251
+  s_55f7a841d7c10e::t_83f5c58c5d6785 69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8b88e1dce66ac4547e7e94c6d1f44020485f8ad4",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

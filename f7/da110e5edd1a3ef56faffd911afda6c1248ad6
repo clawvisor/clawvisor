@@ -1,0 +1,91 @@
+web/src/pages/MFAVerify.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/SSOLogin.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Waitlist.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Welcome.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 1
+web/src/pages/MagicLink.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Settings.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 4
+web/src/pages/TOTPVerify.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Tasks.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 3
+web/src/pages/OAuthAuthorize.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/KeyVault.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Overview.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 3
+web/src/main.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 3
+web/src/pages/Pricing.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 1
+web/src/pages/CheckEmail.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/AcceptInvite.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Audit.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Register.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/components/OnboardingBanner.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/ForgotPassword.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/App.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/components/PlanGrid.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/ResetPassword.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/SSOComplete.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Restrictions.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 3
+web/src/pages/Services.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 3
+web/src/pages/SetupAuth.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/SecuritySetup.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Billing.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/GetStarted.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 3
+web/package.json
+  s_f4ff4894e57428::t_d0727b909b3e4f 21
+web/src/pages/VerifyEmail.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Login.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Agents.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/Dashboard.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/pages/OAuthCallback.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/src/components/QuotaBanner.tsx
+  s_f4ff4894e57428::t_0a9d63ea2b225d 2
+web/package-lock.json
+  s_f4ff4894e57428::t_ffac229a3427b2 19,1383-1395,2602-2604,2607-2608,2611,2614-2615,2617-2620,2813-2818
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "f7da110e5edd1a3ef56faffd911afda6c1248ad6",
+  "prompts": {},
+  "sessions": {
+    "s_f4ff4894e57428": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2bf5b2d1-0132-40cd-a831-cdbf1e9ef5fc",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
