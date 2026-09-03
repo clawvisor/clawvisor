@@ -127,3 +127,57 @@ func TestTokenStore_GeneratesDistinctTokens(t *testing.T) {
 		}
 	}
 }
+
+// A timed-out request must stay distinguishable from an unknown one. Cleanup
+// used to delete on expiry, so a late click reported the generic "no longer
+// available" instead of saying the request had expired.
+func TestTokenStore_ExpiredEntrySurvivesCleanup(t *testing.T) {
+	s := newCallbackTokenStore()
+	approve, deny, err := s.Generate("approval", "req-1", "user-1", "", "C123", -time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.Cleanup()
+
+	for _, tok := range []string{approve, deny} {
+		if _, err := s.Peek(tok); err != errTokenExpired {
+			t.Fatalf("after cleanup: got %v, want %v", err, errTokenExpired)
+		}
+	}
+}
+
+// A resolved request must keep reporting as resolved rather than decaying
+// into "unknown", or the message would be replaced with an expiry notice
+// that overwrites its real outcome.
+func TestTokenStore_UsedEntrySurvivesCleanup(t *testing.T) {
+	s := newCallbackTokenStore()
+	approve, _, err := s.Generate("approval", "req-1", "user-1", "", "C123", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Consume(approve); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Cleanup()
+
+	if _, err := s.Peek(approve); err != errTokenUsed {
+		t.Fatalf("after cleanup: got %v, want %v", err, errTokenUsed)
+	}
+}
+
+// Tombstones must not accumulate forever.
+func TestTokenStore_CleanupDropsEntriesPastGrace(t *testing.T) {
+	s := newCallbackTokenStore()
+	approve, _, err := s.Generate("approval", "req-1", "user-1", "", "C123", -(tombstoneGrace + time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.Cleanup()
+
+	if _, err := s.Peek(approve); err != errTokenNotFound {
+		t.Fatalf("past grace: got %v, want %v", err, errTokenNotFound)
+	}
+}

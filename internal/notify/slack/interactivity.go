@@ -144,7 +144,7 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// or anyone in the channel could disable approvals by clicking first.
 	entry, err := n.cbTokens.Peek(act.Value)
 	if err != nil {
-		n.ephemeral(ctx, p.ResponseURL, tokenErrorMessage(err))
+		n.reportStaleToken(ctx, p.ResponseURL, err)
 		return
 	}
 
@@ -177,7 +177,7 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// Authorized — now retire the token. Losing this race means someone
 	// else resolved it first.
 	if _, err := n.cbTokens.Consume(act.Value); err != nil {
-		n.ephemeral(ctx, p.ResponseURL, tokenErrorMessage(err))
+		n.reportStaleToken(ctx, p.ResponseURL, err)
 		return
 	}
 
@@ -216,15 +216,58 @@ func approverRef(p interactionPayload) string {
 	return fmt.Sprintf("slack:%s (%s)", p.User.ID, name)
 }
 
-func tokenErrorMessage(err error) string {
+// reportStaleToken explains why a click did nothing, and repairs the message
+// when it is safe to do so.
+//
+// An expired request was never resolved, so its message is stale and still
+// showing live-looking buttons — replacing it in place clears them and
+// leaves a permanent record, rather than an ephemeral notice the user cannot
+// dismiss. The other two cases must not replace anything: an already-resolved
+// message already shows its outcome ("Approved by @jane"), and an unknown
+// token could belong to a message resolved long ago, so overwriting either
+// would destroy accurate history.
+func (n *Notifier) reportStaleToken(ctx context.Context, responseURL string, err error) {
 	switch {
-	case errors.Is(err, errTokenUsed):
-		return ":information_source: This request has already been resolved."
 	case errors.Is(err, errTokenExpired):
-		return ":hourglass: This request has expired. Ask the agent to try again."
+		n.replaceOriginal(ctx, responseURL,
+			":hourglass: *Expired* — this request timed out and can no longer be approved.",
+			[]block{
+				sectionRaw(":hourglass: *Expired* — this request timed out and can no longer be approved."),
+				contextBlock("Ask the agent to retry if it is still needed."),
+			})
+	case errors.Is(err, errTokenUsed):
+		n.ephemeral(ctx, responseURL, ":information_source: This request has already been resolved.")
 	default:
-		return ":warning: This request is no longer available."
+		n.ephemeral(ctx, responseURL, ":warning: This request is no longer available.")
 	}
+}
+
+// replaceOriginal rewrites the message the button was attached to, via the
+// interaction's response_url. This needs no channel/ts and no extra scope,
+// and clearing the blocks is what removes the buttons.
+func (n *Notifier) replaceOriginal(ctx context.Context, responseURL, text string, blocks []block) {
+	if responseURL == "" {
+		return
+	}
+	body, err := json.Marshal(map[string]any{
+		"replace_original": true,
+		"text":             plainText(text),
+		"blocks":           blocks,
+	})
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, responseURL, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := n.client.Do(req)
+	if err != nil {
+		n.logger.WarnContext(ctx, "slack: could not replace stale message", "err", err)
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // ephemeral posts a message visible only to the clicker, via the payload's

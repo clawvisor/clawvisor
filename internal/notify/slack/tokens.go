@@ -137,14 +137,24 @@ func (s *callbackTokenStore) Consume(shortID string) (*callbackEntry, error) {
 	return entry, nil
 }
 
-// Cleanup removes expired and used entries.
+// tombstoneGrace is how long a spent or expired entry is retained after it
+// stops being usable.
+//
+// Deleting on expiry made a late click indistinguishable from a click on a
+// token that never existed, so a timed-out request reported the generic
+// "no longer available" instead of saying it had expired. Retaining the
+// entry keeps the reason knowable for as long as anyone is plausibly still
+// looking at the message.
+const tombstoneGrace = 24 * time.Hour
+
+// Cleanup removes entries that are past their tombstone grace period.
 func (s *callbackTokenStore) Cleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now()
 	for id, entry := range s.tokens {
-		if entry.Used || now.After(entry.ExpiresAt) {
+		if now.After(entry.ExpiresAt.Add(tombstoneGrace)) {
 			delete(s.tokens, id)
 		}
 	}
