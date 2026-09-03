@@ -1,0 +1,217 @@
+internal/events/redis_hub.go
+  s_20c7cd26d72652::t_f76f128625e4a8 25-26
+internal/e2e/lite/recorder.go
+  s_20c7cd26d72652::t_f76f128625e4a8 26-27,30-31
+internal/e2e/scenario/approver_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 68
+internal/api/handlers/chain_extraction_wiring_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 301-304
+internal/api/gateway_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 1183-1185,1188-1191
+internal/mcp/tools_exec_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 78-80,103-105,110-112
+internal/runtime/isolation/assets.go
+  s_20c7cd26d72652::t_f76f128625e4a8 18-23
+internal/runtime/llmproxy/pipelineeval/scope_drift.go
+  s_20c7cd26d72652::t_f76f128625e4a8 26-29,95-103
+internal/runtime/llmproxy/pricing/pricing_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 63
+internal/feedback/reviewer.go
+  s_20c7cd26d72652::t_f76f128625e4a8 19-22,27-33
+internal/api/middleware/auth.go
+  s_20c7cd26d72652::t_f76f128625e4a8 12
+internal/e2e/doc.go
+  s_20c7cd26d72652::t_f76f128625e4a8 12,14-15,17
+internal/api/handlers/queue.go
+  s_20c7cd26d72652::t_f76f128625e4a8 37-42
+internal/api/handlers/mcp_oauth_settings_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 135-138
+internal/e2e/lite/scenario.go
+  s_20c7cd26d72652::t_f76f128625e4a8 20-21,28,63-69,114-117,124-125,127,166-168
+internal/notify/telegram/pairing.go
+  s_20c7cd26d72652::t_f76f128625e4a8 75-76,78,349-351
+internal/notify/telegram/polling_lock.go
+  s_20c7cd26d72652::t_f76f128625e4a8 44
+internal/runtime/llmproxy/scope_drift_registry.go
+  s_20c7cd26d72652::t_f76f128625e4a8 256-258
+internal/notify/slack/slack.go
+  s_20c7cd26d72652::t_e20196f665cefe 92
+  s_20c7cd26d72652::t_0b5afc0562a0d7 39-41,69-75,88,460
+  s_20c7cd26d72652::t_6960b6e2eff07e 42-52,140-145,147
+internal/api/handlers/chain_fallback_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 43-44
+internal/runtime/isolation/integration_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 33-38
+internal/tui/keys.go
+  s_20c7cd26d72652::t_f76f128625e4a8 7-9,11
+internal/api/handlers/mobileconfig.go
+  s_20c7cd26d72652::t_f76f128625e4a8 150-153
+internal/api/server.go
+  s_20c7cd26d72652::t_290c2205b464b0 646-650,653-658
+internal/api/handlers/notifications_slack.go
+  s_20c7cd26d72652::t_c59bbbeb7939cb 76-82
+  s_20c7cd26d72652::t_f76f128625e4a8 151-159
+internal/taskrisk/assessor.go
+  s_20c7cd26d72652::t_f76f128625e4a8 84-87,103
+internal/runtime/isolation/prune.go
+  s_20c7cd26d72652::t_f76f128625e4a8 65
+internal/runtime/llmproxy/pricing/pricing.go
+  s_20c7cd26d72652::t_f76f128625e4a8 74-81,86-87,93-101
+internal/tui/screens/help.go
+  s_20c7cd26d72652::t_f76f128625e4a8 23-25
+internal/runtime/llmproxy/policies/control_notice.go
+  s_20c7cd26d72652::t_f76f128625e4a8 31-34
+internal/runtime/llmproxy/policies/script_session_evaluator_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 104-105
+internal/tui/screens/agents.go
+  s_20c7cd26d72652::t_f76f128625e4a8 224
+internal/tui/components/statusbar.go
+  s_20c7cd26d72652::t_f76f128625e4a8 12-14
+internal/api/handlers/control_autovault_script.go
+  s_20c7cd26d72652::t_f76f128625e4a8 26-27,36-37,328,386,421-422,426-431,463,465
+internal/runtime/llmproxy/circuitbreaker_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 277
+internal/tui/screens/restrictions.go
+  s_20c7cd26d72652::t_f76f128625e4a8 186
+internal/llm/client.go
+  s_20c7cd26d72652::t_f76f128625e4a8 33,65,88-91
+internal/runtime/isolation/network.go
+  s_20c7cd26d72652::t_f76f128625e4a8 18
+internal/runtime/llmproxy/scriptrecognition/helpers.go
+  s_20c7cd26d72652::t_f76f128625e4a8 68
+pkg/notify/multi.go
+  s_20c7cd26d72652::t_290c2205b464b0 131-142
+internal/local/tunnel/frames.go
+  s_20c7cd26d72652::t_f76f128625e4a8 31-32,47-49
+internal/notify/slack/oauth.go
+  s_20c7cd26d72652::t_0b5afc0562a0d7 92,158,201
+internal/runtime/llmproxy/postproc/eviction_cleanup_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 81
+internal/local/executor/dispatch.go
+  s_20c7cd26d72652::t_f76f128625e4a8 14-17
+internal/api/handlers/llm_characterization_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 31,97-112,120-133
+internal/runtime/llmproxy/usage.go
+  s_20c7cd26d72652::t_f76f128625e4a8 31,33,35-36
+internal/runtime/llmproxy/config.go
+  s_20c7cd26d72652::t_f76f128625e4a8 44-46
+internal/api/handlers/llm.go
+  s_20c7cd26d72652::t_f76f128625e4a8 28-32
+internal/e2e/harness/smoke_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 288-290,440-442,515-517,618-620
+internal/runtime/llmproxy/scriptjudge/llmjudge/llmjudge_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 69-71
+internal/relay/client.go
+  s_20c7cd26d72652::t_f76f128625e4a8 54-56
+internal/local/pairing/server.go
+  s_20c7cd26d72652::t_f76f128625e4a8 15-24,29-35
+internal/runtime/llmproxy/scope_drift_prompt.go
+  s_20c7cd26d72652::t_f76f128625e4a8 19-22
+internal/api/handlers/control.go
+  s_20c7cd26d72652::t_f76f128625e4a8 151-161
+internal/e2e/harness/server.go
+  s_20c7cd26d72652::t_f76f128625e4a8 30,33
+internal/tui/screens/activity.go
+  s_20c7cd26d72652::t_f76f128625e4a8 154
+internal/local/executor/exec.go
+  s_20c7cd26d72652::t_f76f128625e4a8 19-21,26-31
+internal/local/executor/server.go
+  s_20c7cd26d72652::t_f76f128625e4a8 26-30,50-52,499-502
+internal/mcp/oauth/metadata.go
+  s_20c7cd26d72652::t_f76f128625e4a8 29
+internal/notify/slack/target_id_test.go
+  s_20c7cd26d72652::t_0b5afc0562a0d7 41,74
+  s_20c7cd26d72652::t_e5d66f4f687868 1-40,42-73,75-105
+internal/llm/cache_live_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 104
+internal/notify/slack/tokens_redis.go
+  s_20c7cd26d72652::t_6945d94a6cdd2f 1-186
+internal/runtime/llmproxy/policies/org_content_policy.go
+  s_20c7cd26d72652::t_f76f128625e4a8 110
+internal/api/handlers/forwarded_scheme_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 17
+internal/api/handlers/oauth_state_redis.go
+  s_20c7cd26d72652::t_f76f128625e4a8 13-16
+internal/api/handlers/pairing_store.go
+  s_20c7cd26d72652::t_f76f128625e4a8 19-23
+internal/llm/gemini_cache.go
+  s_20c7cd26d72652::t_f76f128625e4a8 30-33,55-56
+internal/notify/telegram/groups_redis.go
+  s_20c7cd26d72652::t_f76f128625e4a8 15-16
+internal/runtime/llmproxy/inspector/parser_flags_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 280-282
+internal/tui/screens/dashboard.go
+  s_20c7cd26d72652::t_f76f128625e4a8 572
+internal/tui/screens/helpers_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 48-60
+internal/tui/screens/tasks.go
+  s_20c7cd26d72652::t_f76f128625e4a8 219
+internal/runtime/llmproxy/inline_approval_recovery_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 17-19
+internal/notify/slack/replay.go
+  s_20c7cd26d72652::t_e20196f665cefe 1-79
+internal/runtime/llmproxy/scope_drift_registry_redis.go
+  s_20c7cd26d72652::t_f76f128625e4a8 61-78
+internal/runtime/llmproxy/policies/inspector_chain_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 231-232
+internal/intent/extractor_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 472-473
+internal/runtime/llmproxy/policies/org_model_policy_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 22-31
+internal/intent/eval_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 19
+internal/api/org_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 14,17
+internal/intent/extract_eval_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 34-37
+pkg/clawvisor/defaults.go
+  s_20c7cd26d72652::t_b6b4429c21e4cc 568-578
+internal/runtime/llmproxy/policies/inspector_evaluator_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 126-127
+internal/runtime/llmproxy/catalog.go
+  s_20c7cd26d72652::t_f76f128625e4a8 320-323
+internal/tui/screens/services.go
+  s_20c7cd26d72652::t_f76f128625e4a8 61-70,101,596
+internal/tui/theme.go
+  s_20c7cd26d72652::t_f76f128625e4a8 21-24,28
+internal/e2e/scenario/scenario_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 132-134
+internal/api/handlers/installer.go
+  s_20c7cd26d72652::t_f76f128625e4a8 173-175
+internal/api/handlers/tasks_expand_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 210-213
+internal/mcp/oauth/provider.go
+  s_20c7cd26d72652::t_f76f128625e4a8 27,29
+internal/tui/client/types.go
+  s_20c7cd26d72652::t_f76f128625e4a8 201-221
+internal/relay/client_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 26-33
+internal/api/handlers/tasks_inline_pending_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 17,255-256,259,263,313-314,317,321,325
+pkg/notify/notify.go
+  s_20c7cd26d72652::t_290c2205b464b0 354-363
+internal/notify/telegram/polling.go
+  s_20c7cd26d72652::t_f76f128625e4a8 28-30
+internal/notify/telegram/telegram.go
+  s_20c7cd26d72652::t_f76f128625e4a8 534-535
+internal/runtime/llmproxy/catalog_test.go
+  s_20c7cd26d72652::t_f76f128625e4a8 14-15,17
+internal/notify/slack/replay_test.go
+  s_20c7cd26d72652::t_0fd03d8ed3b67b 1-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "3010c84d3c11a8f083874284fca2b9091bfc89f6",
+  "prompts": {},
+  "sessions": {
+    "s_20c7cd26d72652": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51f12a99-8a7d-4eaf-b0b7-4a4c8fe6113d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
