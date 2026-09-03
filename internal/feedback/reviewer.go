@@ -16,21 +16,21 @@ import (
 
 // ReviewRequest contains the agent's bug report plus contextual data.
 type ReviewRequest struct {
-	Description string              // The agent's free-form description of the issue
-	AuditEntry  *store.AuditEntry   // The referenced gateway request (nil if not found)
-	Task        *store.Task         // The referenced task (nil if not found)
-	AgentName   string              // Name of the reporting agent
+	Description string            // The agent's free-form description of the issue
+	AuditEntry  *store.AuditEntry // The referenced gateway request (nil if not found)
+	Task        *store.Task       // The referenced task (nil if not found)
+	AgentName   string            // Name of the reporting agent
 }
 
 // ReviewResult is the LLM's assessment of the bug report.
 type ReviewResult struct {
-	Category    string `json:"category"`    // wrong_block | wrong_deny | slow_approval | scope_too_narrow | unclear_error | misunderstanding | feature_request | other
-	Severity    string `json:"severity"`    // low | medium | high | critical
-	IsValid     bool   `json:"is_valid"`    // whether the report describes a genuine issue vs. user confusion
-	Response    string `json:"response"`    // empathetic, actionable response for the agent
-	Summary     string `json:"summary"`     // one-line summary for internal tracking
-	Model       string `json:"-"`
-	LatencyMS   int    `json:"-"`
+	Category  string `json:"category"` // wrong_block | wrong_deny | slow_approval | scope_too_narrow | unclear_error | misunderstanding | feature_request | other
+	Severity  string `json:"severity"` // low | medium | high | critical
+	IsValid   bool   `json:"is_valid"` // whether the report describes a genuine issue vs. user confusion
+	Response  string `json:"response"` // empathetic, actionable response for the agent
+	Summary   string `json:"summary"`  // one-line summary for internal tracking
+	Model     string `json:"-"`
+	LatencyMS int    `json:"-"`
 }
 
 // Reviewer reviews agent feedback reports.

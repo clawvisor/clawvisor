@@ -129,9 +129,9 @@ func TestEvaluateSeriesAndEventHas(t *testing.T) {
 	}
 
 	bad := Expectations{Hard: []HardExpect{
-		{Count: &CountExpect{Series: "events.deny", EQ: &two}},                   // there is 1
-		{EventHas: &EventExpect{EventType: "runtime.observe.would_block"}},       // missing
-		{FinalAssistantContains: "rolled back"},                                  // missing
+		{Count: &CountExpect{Series: "events.deny", EQ: &two}},                     // there is 1
+		{EventHas: &EventExpect{EventType: "runtime.observe.would_block"}},         // missing
+		{FinalAssistantContains: "rolled back"},                                    // missing
 		{Count: &CountExpect{Series: "upstream.unregistered.test.hits", EQ: &one}}, // missing host
 	}}
 	fails := Evaluate(bad, snap)

@@ -274,7 +274,7 @@ func TestCircuitBreaker_RequiresAllProbesToClose(t *testing.T) {
 		HalfOpenMaxCalls: 3,
 		Now:              clock,
 	})
-	_, _ = cb.Verify(context.Background(), IntentVerifyRequest{})  // trip
+	_, _ = cb.Verify(context.Background(), IntentVerifyRequest{}) // trip
 	now = now.Add(11 * time.Second)
 
 	v.err = nil

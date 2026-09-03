@@ -643,9 +643,19 @@ func (s *Server) routes() http.Handler {
 	if si, ok := s.notifier.(notify.SlackInstaller); ok {
 		slackInstaller = si
 	}
+	// A type assertion is not enough: MultiNotifier implements the Slack
+	// interfaces unconditionally so it can return a clear error, so it
+	// always asserts true. Ask whether Slack is actually present, or the
+	// settings UI offers a workspace connection the deployment cannot make.
+	//
 	// s.oauthStateStore is nil without Redis; SetSlack keeps its in-memory
 	// default in that case rather than leaving Slack disabled.
-	if slackCfgStore != nil && slackInstaller != nil {
+	type slackAvailabler interface{ SlackEnabled() bool }
+	slackAvailable := slackCfgStore != nil && slackInstaller != nil
+	if sa, ok := s.notifier.(slackAvailabler); ok {
+		slackAvailable = sa.SlackEnabled()
+	}
+	if slackAvailable {
 		notificationsHandler.SetSlack(slackCfgStore, slackInstaller, s.oauthStateStore)
 	}
 	// Construct intent verifier (noop if disabled).

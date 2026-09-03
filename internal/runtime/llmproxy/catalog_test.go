@@ -11,10 +11,10 @@ func githubDef() yamldef.ServiceDef {
 		Service: yamldef.ServiceInfo{ID: "github"},
 		API:     yamldef.APIDef{BaseURL: "https://api.github.com", Type: "rest"},
 		Actions: map[string]yamldef.Action{
-			"list_issues": {Method: "GET", Path: "/repos/{{.owner}}/{{.repo}}/issues"},
-			"get_issue":   {Method: "GET", Path: "/repos/{{.owner}}/{{.repo}}/issues/{{.number}}"},
+			"list_issues":  {Method: "GET", Path: "/repos/{{.owner}}/{{.repo}}/issues"},
+			"get_issue":    {Method: "GET", Path: "/repos/{{.owner}}/{{.repo}}/issues/{{.number}}"},
 			"create_issue": {Method: "POST", Path: "/repos/{{.owner}}/{{.repo}}/issues"},
-			"get_user":    {Method: "GET", Path: "/user"},
+			"get_user":     {Method: "GET", Path: "/user"},
 		},
 	}
 }

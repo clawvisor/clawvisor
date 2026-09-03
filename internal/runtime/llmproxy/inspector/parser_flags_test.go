@@ -277,9 +277,9 @@ func TestParseBashCurl_AmbiguousSitesAreAgentRecoverable(t *testing.T) {
 		}
 	}
 	cases := []struct {
-		name        string
-		tu          ToolUse
-		wantReason  string
+		name       string
+		tu         ToolUse
+		wantReason string
 	}{
 		{
 			name:       "bash_trailing_dash_X",

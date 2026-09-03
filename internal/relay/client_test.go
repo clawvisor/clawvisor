@@ -23,14 +23,14 @@ import (
 // mockRelay is a test WebSocket server that mimics the relay's auth handshake
 // and can be configured to drop connections after a set number of frames.
 type mockRelay struct {
-	pub           ed25519.PublicKey
-	connectCount  atomic.Int32
-	mu            sync.Mutex
-	dropAfter     int           // close conn after this many reads (0 = never auto-drop)
-	holdDuration  time.Duration // keep conn alive this long before closing (0 = use dropAfter)
-	rejectAuth    bool          // reject the auth handshake
-	stallAuth     bool          // never send challenge (to test auth timeout)
-	onConnect     func()        // called after successful auth
+	pub          ed25519.PublicKey
+	connectCount atomic.Int32
+	mu           sync.Mutex
+	dropAfter    int           // close conn after this many reads (0 = never auto-drop)
+	holdDuration time.Duration // keep conn alive this long before closing (0 = use dropAfter)
+	rejectAuth   bool          // reject the auth handshake
+	stallAuth    bool          // never send challenge (to test auth timeout)
+	onConnect    func()        // called after successful auth
 }
 
 func (m *mockRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {

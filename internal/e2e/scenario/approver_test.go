@@ -65,7 +65,7 @@ func TestProbabilisticDeciderFallsBackToDefault(t *testing.T) {
 		Policy: "probabilistic",
 		Seed:   1,
 		Rules: []ApprovalRule{{
-			Match: ApprovalMatch{Host: "other.test"},
+			Match:   ApprovalMatch{Host: "other.test"},
 			Weights: map[string]float64{"allow_once": 1},
 		}},
 		Default: "allow_session",

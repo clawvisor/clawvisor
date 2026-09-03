@@ -45,12 +45,6 @@ type ReplayGuard interface {
 	SeenBefore(ctx context.Context, sig string, ttl time.Duration) (bool, error)
 }
 
-type noopReplayGuard struct{}
-
-func (noopReplayGuard) SeenBefore(context.Context, string, time.Duration) (bool, error) {
-	return false, nil
-}
-
 // interactionPayload is the subset of Slack's block_actions payload we use.
 type interactionPayload struct {
 	Type string `json:"type"`

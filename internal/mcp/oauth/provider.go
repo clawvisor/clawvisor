@@ -24,9 +24,9 @@ type Provider struct {
 	st              store.Store
 	jwtSvc          pkgauth.TokenService
 	baseURL         string
-	daemonID        string              // relay daemon ID, included in token responses
+	daemonID        string // relay daemon ID, included in token responses
 	logger          *slog.Logger
-	pairingVerifier func(string) bool   // verifies pairing code for relay_pairing grant
+	pairingVerifier func(string) bool // verifies pairing code for relay_pairing grant
 }
 
 // NewProvider creates an OAuth provider.

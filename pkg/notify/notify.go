@@ -351,10 +351,16 @@ type CallbackDecision struct {
 	// that is not necessarily the account owner. Telegram DMs are 1:1 so the
 	// clicker is always UserID and this stays empty; a Slack channel is
 	// shared, so an allowlisted teammate can resolve a request the owner
-	// never saw. Carries a channel-qualified handle
-	// (e.g. "slack:U012ABC (jane)") that the resolver records on the audit
-	// entry. Without it the audit log would attribute every channel
-	// approval to the account owner.
+	// never saw. Carries a channel-qualified handle, e.g.
+	// "slack:U012ABC (jane)".
+	//
+	// NOT YET CONSUMED. The decision consumer does not read this and
+	// AuditEntry has no approver column, so a teammate's approval is still
+	// recorded against the account owner. The Slack notifier attributes its
+	// own message separately, which means Slack and the audit log can
+	// disagree about who approved. Wiring this through to the audit entry
+	// needs a store migration; until then treat the audit log's attribution
+	// as the account, not the person.
 	ApproverRef string
 }
 

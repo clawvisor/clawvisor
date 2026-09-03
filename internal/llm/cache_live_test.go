@@ -101,7 +101,7 @@ func TestLive_AnthropicPromptCaching(t *testing.T) {
 			"or the system field isn't being sent as a cacheable content block.", model)
 	}
 	if usage2.CacheReadInputTokens == 0 {
-		t.Errorf("call 2: cache_read_input_tokens=0 — cache write succeeded but cache hit didn't fire. "+
+		t.Errorf("call 2: cache_read_input_tokens=0 — cache write succeeded but cache hit didn't fire. " +
 			"Likely cause: prefix differs between calls (something dynamic snuck into the system prompt).")
 	}
 	if usage1.CacheCreationInputTokens > 0 && usage2.CacheReadInputTokens > 0 {

@@ -569,7 +569,7 @@ func (s *DashboardScreen) renderTaskAuditView() string {
 	cw := s.contentWidth()
 
 	header := lipgloss.NewStyle().Foreground(tui.ColorWhite).Bold(true)
-	b.WriteString(header.Render("TASK: "+s.drillTask.Purpose))
+	b.WriteString(header.Render("TASK: " + s.drillTask.Purpose))
 	b.WriteString("\n")
 	b.WriteString(tui.StyleDim.Render(strings.Repeat("─", min(60, cw))))
 	b.WriteString("\n")

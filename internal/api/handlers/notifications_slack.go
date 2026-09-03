@@ -73,6 +73,13 @@ func (h *NotificationsHandler) SlackInstallURL(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Sweep before minting. Expiry is only enforced on LoadAndDeleteOAuth,
+	// which an abandoned install never reaches, so without this every
+	// half-finished install leaks an entry for the process lifetime.
+	if c, ok := h.oauthState.(interface{ Cleanup() }); ok {
+		c.Cleanup()
+	}
+
 	state, err := randomState()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "could not start install")
@@ -140,10 +147,16 @@ func (h *NotificationsHandler) SlackCallback(w http.ResponseWriter, r *http.Requ
 		BotToken:             install.BotToken,
 		TeamID:               install.TeamID,
 		TeamName:             install.TeamName,
-		ChannelID:            existing.ChannelID,
-		ChannelName:          existing.ChannelName,
 		InstallerSlackUserID: install.InstallerUserID,
-		Approvers:            existing.Approvers,
+	}
+	// Carry the channel and allowlist forward only when re-installing into
+	// the same workspace. A channel ID from another workspace would look
+	// configured in the UI while every post failed with channel_not_found,
+	// and the old allowlist would name people who are not members here.
+	if existing.TeamID != "" && existing.TeamID == install.TeamID {
+		cfg.ChannelID = existing.ChannelID
+		cfg.ChannelName = existing.ChannelName
+		cfg.Approvers = existing.Approvers
 	}
 	if cfg.ChannelID == "" {
 		// SaveSlackConfig requires a channel; use a sentinel that the

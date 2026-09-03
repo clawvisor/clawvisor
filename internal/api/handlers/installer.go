@@ -170,9 +170,9 @@ func shellRenderer(f func(installerCtx) (string, error)) installerRenderer {
 // disk uninstall doc lands (empty string = no per-target doc; the install
 // flow for this target doesn't write one).
 type installerSpec struct {
-	canonicalExt     string
-	contentType      string
-	render           installerRenderer
+	canonicalExt      string
+	contentType       string
+	render            installerRenderer
 	localUninstallDoc string // e.g. "~/.clawvisor/uninstall-claude-code.md", or "" if none
 }
 
@@ -1432,4 +1432,3 @@ func renderOpenClawInstaller(ctx installerCtx) string {
 
 	return b.String()
 }
-

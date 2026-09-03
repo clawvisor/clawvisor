@@ -132,10 +132,10 @@ func TestMCPOAuthSettings_RejectsMissingFields(t *testing.T) {
 	h, _, _ := newServicesHandlerForOAuth(t)
 
 	cases := []string{
-		`{"client_id":"x","client_secret":"y"}`,                    // missing service_id
-		`{"service_id":"notion-mcp","client_secret":"y"}`,          // missing client_id
-		`{"service_id":"notion-mcp","client_id":"x"}`,              // missing client_secret
-		`{}`,                                                        // all missing
+		`{"client_id":"x","client_secret":"y"}`,           // missing service_id
+		`{"service_id":"notion-mcp","client_secret":"y"}`, // missing client_id
+		`{"service_id":"notion-mcp","client_id":"x"}`,     // missing client_secret
+		`{}`, // all missing
 	}
 	for _, b := range cases {
 		req := asAdmin(httptest.NewRequest("POST", "/api/system/mcp-oauth", bytes.NewBufferString(b)))

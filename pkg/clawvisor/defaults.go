@@ -565,6 +565,17 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 			telegramnotify.NewRedisPollingLock(client, instanceID),
 		)
 
+		// Slack multi-instance stores. Slack posts an interaction to
+		// whichever replica the load balancer picks, which is generally not
+		// the one that posted the prompt — without shared state the click
+		// finds no token and the user is told the request is unavailable.
+		if slackN != nil {
+			slackN.SetRedisStores(
+				slacknotify.NewRedisCallbackTokenStore(client),
+				slacknotify.NewRedisReplayGuard(client),
+			)
+		}
+
 		logger.Info("redis connected", "addr", client.Options().Addr)
 	}
 

@@ -523,8 +523,6 @@ func (n *Notifier) SendTestMessage(ctx context.Context, userID string) error {
 	return nil
 }
 
-// ValidateGroupMembership checks that the bot is a member of the given group
-// using the Telegram getChat and getChatMember APIs. Returns group info on success.
 // SendTelegramTestMessage sends a test message via Telegram only, so a
 // sibling channel that the user has not configured cannot make a delivered
 // Telegram message report as failed.
@@ -533,6 +531,8 @@ func (n *Notifier) SendTelegramTestMessage(ctx context.Context, userID string) e
 	return n.SendTestMessage(ctx, userID)
 }
 
+// ValidateGroupMembership checks that the bot is a member of the given group
+// using the Telegram getChat and getChatMember APIs. Returns group info on success.
 func (n *Notifier) ValidateGroupMembership(ctx context.Context, userID, groupChatID string) (*notify.GroupInfo, error) {
 	botToken, _, err := n.userConfig(ctx, userID)
 	if err != nil {

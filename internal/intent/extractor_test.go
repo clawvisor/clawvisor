@@ -469,8 +469,8 @@ func TestMergeExtractionResults_SubstringValidationDrops(t *testing.T) {
 	// invented from thin air.
 	result := `{"messages":[{"id":"aabbccddee112233"}]}`
 	direct := []extractedFact{
-		{FactType: "message_id", FactValue: "aabbccddee112233"},  // legit
-		{FactType: "message_id", FactValue: "deadbeefdeadbeef"},  // hallucinated
+		{FactType: "message_id", FactValue: "aabbccddee112233"}, // legit
+		{FactType: "message_id", FactValue: "deadbeefdeadbeef"}, // hallucinated
 	}
 
 	facts, dropped := mergeExtractionResults(direct, nil, nil, makeMergeReq(result), slog.Default())
@@ -647,4 +647,3 @@ func TestExtractBuiltins_RunsWithoutLLM(t *testing.T) {
 		t.Errorf("expected message_id from gmail builtin, got %v", facts)
 	}
 }
-

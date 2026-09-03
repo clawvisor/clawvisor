@@ -146,4 +146,3 @@ type ByteSpan struct {
 	Start int
 	End   int
 }
-

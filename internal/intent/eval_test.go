@@ -16,9 +16,9 @@ import (
 	"github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
+	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlloader"
-	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )

@@ -22,8 +22,8 @@ type RedisHub struct {
 	// Per-user Redis subscription ref-counting. When the first local subscriber
 	// for a user appears, we create a Redis subscription; when the last
 	// unsubscribes, we tear it down.
-	mu    sync.Mutex
-	subs  map[string]*userSub // userID → subscription state
+	mu   sync.Mutex
+	subs map[string]*userSub // userID → subscription state
 }
 
 type userSub struct {

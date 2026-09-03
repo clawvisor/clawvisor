@@ -128,6 +128,18 @@ var (
 
 var errNoSlack = errors.New("slack notifications are not enabled on this deployment")
 
+// SlackEnabled reports whether any inner notifier actually provides Slack.
+//
+// MultiNotifier satisfies SlackConfigStore and SlackInstaller unconditionally
+// so it can return a clear error rather than panicking, which means a type
+// assertion against it always succeeds and cannot be used to detect whether
+// Slack is configured. Callers wiring Slack-specific routes must ask this
+// instead, or a deployment with no Slack app advertises the feature and then
+// fails every call.
+func (m *MultiNotifier) SlackEnabled() bool {
+	return m.slackCfg != nil && m.slackInstaller != nil
+}
+
 func (m *MultiNotifier) SaveSlackConfig(ctx context.Context, userID string, cfg SlackConfig) error {
 	if m.slackCfg == nil {
 		return errNoSlack

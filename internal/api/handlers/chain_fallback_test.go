@@ -40,8 +40,8 @@ type fakeTracker struct {
 	calls      int32
 }
 
-func (t *fakeTracker) MarkPending(_ context.Context, _, _, _ string)   {}
-func (t *fakeTracker) MarkDone(_ context.Context, _, _, _ string)      {}
+func (t *fakeTracker) MarkPending(_ context.Context, _, _, _ string) {}
+func (t *fakeTracker) MarkDone(_ context.Context, _, _, _ string)    {}
 func (t *fakeTracker) HasPending(_ context.Context, _, _ string) bool {
 	n := atomic.AddInt32(&t.calls, 1)
 	if t.drainAfter > 0 && n > t.drainAfter {

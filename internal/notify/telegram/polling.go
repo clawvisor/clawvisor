@@ -25,9 +25,9 @@ type pollingSession struct {
 	cancel   context.CancelFunc
 	pending  int32 // number of pending callback tokens
 
-	mu           sync.Mutex        // protects groupChatIDs and persistent
-	groupChatIDs map[string]bool   // set of group chat IDs being observed; nil if none
-	persistent   bool              // true when any group observation is active (don't stop on pending=0)
+	mu           sync.Mutex      // protects groupChatIDs and persistent
+	groupChatIDs map[string]bool // set of group chat IDs being observed; nil if none
+	persistent   bool            // true when any group observation is active (don't stop on pending=0)
 }
 
 // ensurePolling starts a polling goroutine for the user if one isn't running,

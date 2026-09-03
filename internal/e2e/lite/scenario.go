@@ -17,15 +17,15 @@ type Scenario struct {
 	// SetupShell runs in the workspace tempdir after the workspace
 	// fixture is copied but before the script starts. Use this for
 	// shape that can't live in tracked files (e.g. `git init && commit`).
-	SetupShell string       `yaml:"setup_shell,omitempty"`
-	VaultItems []VaultItem  `yaml:"vault_items,omitempty"`
+	SetupShell string      `yaml:"setup_shell,omitempty"`
+	VaultItems []VaultItem `yaml:"vault_items,omitempty"`
 	// MCPStub, when true, asks the harness to launch a stub MCP server
 	// (see internal/e2e/lite/drivers/mcpstub) and write a workspace-local
 	// .mcp.json that Claude Code is pointed at via --mcp-config. The
 	// stub exposes one tool whose name contains "authenticate" and
 	// touches a marker file when invoked, so scenarios can assert via
 	// FilesAbsent that the agent did not reach for harness-side auth.
-	MCPStub    bool         `yaml:"mcp_stub,omitempty"`
+	MCPStub bool `yaml:"mcp_stub,omitempty"`
 	// PreseededTasks are inserted into the store as active tasks
 	// owned by the scenario's user+agent BEFORE the agent boots, so
 	// scenarios can model "the user already approved this task in a
@@ -60,13 +60,13 @@ type VaultItem struct {
 // conversation. Only the fields scenarios actually need to set are
 // exposed; the harness fills in id/user/agent/status/timestamps.
 type PreseededTask struct {
-	Purpose                string                   `yaml:"purpose"`
-	Lifetime               string                   `yaml:"lifetime,omitempty"`
-	SchemaVersion          int                      `yaml:"schema_version,omitempty"`
-	IntentVerificationMode string                   `yaml:"intent_verification_mode,omitempty"`
-	ExpectedUse            string                   `yaml:"expected_use,omitempty"`
-	ExpectedTools          []PreseededExpectedTool  `yaml:"expected_tools,omitempty"`
-	ExpectedEgress         []PreseededEgress        `yaml:"expected_egress,omitempty"`
+	Purpose                string                  `yaml:"purpose"`
+	Lifetime               string                  `yaml:"lifetime,omitempty"`
+	SchemaVersion          int                     `yaml:"schema_version,omitempty"`
+	IntentVerificationMode string                  `yaml:"intent_verification_mode,omitempty"`
+	ExpectedUse            string                  `yaml:"expected_use,omitempty"`
+	ExpectedTools          []PreseededExpectedTool `yaml:"expected_tools,omitempty"`
+	ExpectedEgress         []PreseededEgress       `yaml:"expected_egress,omitempty"`
 	// Placeholders are autovault_* handles bound to this task — the
 	// minted handles a prior conversation would have produced. Seed
 	// these alongside a credentialed standing task so an agent that
@@ -111,20 +111,20 @@ type AgentSpec struct {
 
 // Step is one scripted user turn plus the assertions that gate progress.
 type Step struct {
-	Say            string     `yaml:"say"`
-	Expect         StepExpect `yaml:"expect"`
-	ApprovalFloor  int        `yaml:"approval_floor"`
-	MaxTurns       int        `yaml:"max_turns,omitempty"`
+	Say           string     `yaml:"say"`
+	Expect        StepExpect `yaml:"expect"`
+	ApprovalFloor int        `yaml:"approval_floor"`
+	MaxTurns      int        `yaml:"max_turns,omitempty"`
 }
 
 // StepExpect is evaluated by the harness after the agent produces a
 // plain-text turn (no tool_use). Failure ends the scenario; no further
 // script steps are delivered.
 type StepExpect struct {
-	FilesAbsent  []string          `yaml:"files_absent"`
-	FilesPresent []string          `yaml:"files_present"`
+	FilesAbsent  []string             `yaml:"files_absent"`
+	FilesPresent []string             `yaml:"files_present"`
 	FileContains []FileContainsExpect `yaml:"file_contains"`
-	Shell        []ShellExpect     `yaml:"shell"`
+	Shell        []ShellExpect        `yaml:"shell"`
 }
 
 // FileContainsExpect asserts that the file at Path contains Needle as
@@ -163,9 +163,9 @@ type ApprovalMatch struct {
 
 // Budget limits a single scenario run.
 type Budget struct {
-	MaxTurnsPerStep    int `yaml:"max_turns_per_step"`
-	MaxToolCallsTotal  int `yaml:"max_tool_calls_total"`
-	WallClockSeconds   int `yaml:"wall_clock_seconds"`
+	MaxTurnsPerStep   int `yaml:"max_turns_per_step"`
+	MaxToolCallsTotal int `yaml:"max_tool_calls_total"`
+	WallClockSeconds  int `yaml:"wall_clock_seconds"`
 }
 
 // Expectations is the scenario-level rollup checked after all steps run.

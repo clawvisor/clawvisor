@@ -164,4 +164,3 @@ func extractModelFromPath(req pipeline.ReadOnlyRequest) string {
 	}
 	return ""
 }
-

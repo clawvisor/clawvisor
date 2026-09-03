@@ -23,8 +23,8 @@ import (
 // plan. Exposed so tests can inspect them; not configurable at runtime
 // to avoid silently widening blast radius on cap drift.
 const (
-	scriptSessionMaxTTLSeconds     = 120
-	scriptSessionMaxUses           = 200
+	scriptSessionMaxTTLSeconds   = 120
+	scriptSessionMaxUses         = 200
 	scriptSessionMaxRequestBytes = 1 << 20 // 1 MiB per response
 	// scriptSessionMinTotalBytes is the floor for the aggregate byte
 	// cap. We scale MaxTotalBytes with MaxUses (= max_uses * per-
@@ -33,8 +33,8 @@ const (
 	// arbitrarily. The floor keeps small sessions (max_uses = 3) from
 	// being trivially throttled — even a tiny session gets at least
 	// 10 MiB of aggregate headroom, which covers any reasonable workflow.
-	scriptSessionMinTotalBytes = 10 << 20 // 10 MiB
-	scriptSessionMaxPathPrefixes   = 5
+	scriptSessionMinTotalBytes   = 10 << 20 // 10 MiB
+	scriptSessionMaxPathPrefixes = 5
 )
 
 // AllowedScriptSessionMethods lists the HTTP methods a script session
@@ -325,7 +325,7 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 		AgentID:         agent.ID,
 		TaskID:          ph.TaskID,
 		Placeholder:     body.Placeholder,
-		ServiceID:      ph.ServiceID,
+		ServiceID:       ph.ServiceID,
 		TargetHost:      body.TargetHost,
 		Methods:         methods,
 		PathPrefixes:    prefixes,
@@ -383,7 +383,7 @@ func (h *LLMControlHandler) MintScriptSession(w http.ResponseWriter, r *http.Req
 		"max_request_bytes":  scriptSessionMaxRequestBytes,
 		"max_total_bytes":    scriptSessionTotalBytesFor(maxUses),
 		"example_request":    exampleCurl,
-		"next_step": "Any script shape works (bash loops, xargs, Python, pipelines, parallel curls) — what matters is that every credentialed request inside matches `example_request`'s shape: route through " + resolverBase + " with all three headers. Calling the upstream URL directly with just the placeholder bypasses this session and falls back to the shape-restricted one-shot rewrite path. Path-prefix scope is enforced per-request: list EVERY path your fan-out will hit in `path_prefixes`, or use a parent prefix that covers all of them — a mid-fan-out scope mismatch forces a re-mint and burns turns. See GET /api/control/autovault/script for full schema.",
+		"next_step":          "Any script shape works (bash loops, xargs, Python, pipelines, parallel curls) — what matters is that every credentialed request inside matches `example_request`'s shape: route through " + resolverBase + " with all three headers. Calling the upstream URL directly with just the placeholder bypasses this session and falls back to the shape-restricted one-shot rewrite path. Path-prefix scope is enforced per-request: list EVERY path your fan-out will hit in `path_prefixes`, or use a parent prefix that covers all of them — a mid-fan-out scope mismatch forces a re-mint and burns turns. See GET /api/control/autovault/script for full schema.",
 	}
 	// Surface the task's approved tool surface so the agent stays
 	// within it when executing the fan-out. Without this hint, agents
@@ -418,17 +418,17 @@ func (h *LLMControlHandler) AutovaultScriptDocs(w http.ResponseWriter, r *http.R
 			"6. Send `X-Clawvisor-Target-Host: <target_host>` on every follow-up request so the resolver knows which upstream to dial.",
 		},
 		"sizing_guidance": map[string]string{
-			"too_small": "Mid-flight `SCRIPT_SESSION_EXHAUSTED`. You'll have to mint a fresh session, which costs another verifier round-trip and may surface another approval prompt to the user.",
-			"too_large": "The verifier evaluates `max_uses` against the task's stated workflow and the count you state in `why`. Asking for many more than your workflow needs — or asking for >50 without naming a discovered N in `why` — triggers `scope_denied`. Match the request to the discovered N (plus a small retry buffer).",
+			"too_small":  "Mid-flight `SCRIPT_SESSION_EXHAUSTED`. You'll have to mint a fresh session, which costs another verifier round-trip and may surface another approval prompt to the user.",
+			"too_large":  "The verifier evaluates `max_uses` against the task's stated workflow and the count you state in `why`. Asking for many more than your workflow needs — or asking for >50 without naming a discovered N in `why` — triggers `scope_denied`. Match the request to the discovered N (plus a small retry buffer).",
 			"right_size": "N (the count from the discovery call) plus 2-3 for retries. If you don't know N, you're not ready to mint yet.",
 		},
 		"hard_limits": map[string]any{
-			"ttl_seconds":       scriptSessionMaxTTLSeconds,
-			"max_uses":          scriptSessionMaxUses,
-			"max_request_bytes": scriptSessionMaxRequestBytes,
-			"max_total_bytes_formula": "max(" + strconv.Itoa(scriptSessionMinTotalBytes) + ", max_uses × max_request_bytes) — aggregate cap scales with your requested fan-out so a 200-call session isn't artificially throttled by a small static ceiling.",
-			"max_total_bytes_floor": scriptSessionMinTotalBytes,
-			"methods":           AllowedScriptSessionMethods,
+			"ttl_seconds":              scriptSessionMaxTTLSeconds,
+			"max_uses":                 scriptSessionMaxUses,
+			"max_request_bytes":        scriptSessionMaxRequestBytes,
+			"max_total_bytes_formula":  "max(" + strconv.Itoa(scriptSessionMinTotalBytes) + ", max_uses × max_request_bytes) — aggregate cap scales with your requested fan-out so a 200-call session isn't artificially throttled by a small static ceiling.",
+			"max_total_bytes_floor":    scriptSessionMinTotalBytes,
+			"methods":                  AllowedScriptSessionMethods,
 			"target_hosts_per_session": 1,
 			"placeholders_per_session": 1,
 		},
@@ -460,9 +460,9 @@ func (h *LLMControlHandler) AutovaultScriptDocs(w http.ResponseWriter, r *http.R
 			"url":    resolverBase + "/gmail/v1/users/me/messages/<id>?format=metadata",
 			"method": "GET",
 			"headers": map[string]string{
-				"Authorization":          "Bearer autovault_google_gmail_eric_clawvisor_com_xxxxx",
+				"Authorization":           "Bearer autovault_google_gmail_eric_clawvisor_com_xxxxx",
 				"X-Clawvisor-Target-Host": "gmail.googleapis.com",
-				"X-Clawvisor-Caller":     "Bearer cv-script-…",
+				"X-Clawvisor-Caller":      "Bearer cv-script-…",
 			},
 		},
 		"error_recovery": map[string]string{

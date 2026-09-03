@@ -41,7 +41,7 @@ func (noopPollingLock) Release(context.Context, string)      {}
 
 // redisPollingLock uses SET NX with TTL for distributed mutual exclusion.
 type redisPollingLock struct {
-	rdb      *redis.Client
+	rdb        *redis.Client
 	instanceID string
 }
 

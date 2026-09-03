@@ -62,7 +62,7 @@ func pruneIdleNetworks(ctx context.Context, dockerBin string) {
 }
 
 type pruneNetworkInspect struct {
-	Containers map[string]any   `json:"Containers"`
+	Containers map[string]any    `json:"Containers"`
 	Labels     map[string]string `json:"Labels"`
 }
 
@@ -170,4 +170,3 @@ func removeContainer(ctx context.Context, dockerBin, id string) error {
 	cmd.Stderr = nil
 	return cmd.Run()
 }
-

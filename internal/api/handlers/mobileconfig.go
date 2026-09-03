@@ -147,10 +147,10 @@ func (h *MobileConfigHandler) resolveURL(r *http.Request) string {
 // Key shape comes from Anthropic's published payload type
 // com.anthropic.claudefordesktop:
 //
-//   inferenceProvider          = "gateway"
-//   inferenceCredentialKind    = "static"
-//   inferenceGatewayBaseUrl    = <Clawvisor /api root>
-//   inferenceGatewayApiKey     = <agent token>
+//	inferenceProvider          = "gateway"
+//	inferenceCredentialKind    = "static"
+//	inferenceGatewayBaseUrl    = <Clawvisor /api root>
+//	inferenceGatewayApiKey     = <agent token>
 //
 // Two UUIDs are minted: one identifies this specific payload (so the user
 // can re-install over an older profile cleanly), one identifies the outer

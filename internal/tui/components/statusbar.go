@@ -9,9 +9,9 @@ import (
 
 // StatusBar renders key binding hints at the bottom of the screen.
 type StatusBar struct {
-	Width    int
-	Hints    []string // e.g. ["[a] Approve", "[d] Deny"]
-	Status   string   // transient status message
+	Width  int
+	Hints  []string // e.g. ["[a] Approve", "[d] Deny"]
+	Status string   // transient status message
 }
 
 var (

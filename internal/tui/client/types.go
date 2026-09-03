@@ -198,27 +198,27 @@ type RequiredCredential struct {
 }
 
 type Task struct {
-	ID                     string           `json:"id"`
-	UserID                 string           `json:"user_id"`
-	AgentID                string           `json:"agent_id"`
-	AgentName              string           `json:"agent_name,omitempty"`
-	Purpose                string           `json:"purpose"`
-	Lifetime               string           `json:"lifetime"` // "session", "sliding", or "standing"
-	Status                 string           `json:"status"`
-	AuthorizedActions      []TaskAction     `json:"authorized_actions"`
-	PlannedCalls           []PlannedCall    `json:"planned_calls,omitempty"`
-	ExpectedTools          []ExpectedTool       `json:"expected_tools,omitempty"`
-	ExpectedEgress         []ExpectedEgress     `json:"expected_egress,omitempty"`
-	RequiredCredentials    []RequiredCredential `json:"required_credentials,omitempty"`
-	IntentVerificationMode string               `json:"intent_verification_mode,omitempty"`
-	ExpectedUse            string           `json:"expected_use,omitempty"`
-	SchemaVersion          int              `json:"schema_version,omitempty"`
-	CallbackURL            string           `json:"callback_url,omitempty"`
-	CreatedAt              time.Time        `json:"created_at"`
-	ApprovedAt             *time.Time       `json:"approved_at,omitempty"`
-	ExpiresAt              *time.Time       `json:"expires_at,omitempty"`
-	ExpiresInSeconds       int              `json:"expires_in_seconds"`
-	RequestCount           int              `json:"request_count"`
+	ID                     string                `json:"id"`
+	UserID                 string                `json:"user_id"`
+	AgentID                string                `json:"agent_id"`
+	AgentName              string                `json:"agent_name,omitempty"`
+	Purpose                string                `json:"purpose"`
+	Lifetime               string                `json:"lifetime"` // "session", "sliding", or "standing"
+	Status                 string                `json:"status"`
+	AuthorizedActions      []TaskAction          `json:"authorized_actions"`
+	PlannedCalls           []PlannedCall         `json:"planned_calls,omitempty"`
+	ExpectedTools          []ExpectedTool        `json:"expected_tools,omitempty"`
+	ExpectedEgress         []ExpectedEgress      `json:"expected_egress,omitempty"`
+	RequiredCredentials    []RequiredCredential  `json:"required_credentials,omitempty"`
+	IntentVerificationMode string                `json:"intent_verification_mode,omitempty"`
+	ExpectedUse            string                `json:"expected_use,omitempty"`
+	SchemaVersion          int                   `json:"schema_version,omitempty"`
+	CallbackURL            string                `json:"callback_url,omitempty"`
+	CreatedAt              time.Time             `json:"created_at"`
+	ApprovedAt             *time.Time            `json:"approved_at,omitempty"`
+	ExpiresAt              *time.Time            `json:"expires_at,omitempty"`
+	ExpiresInSeconds       int                   `json:"expires_in_seconds"`
+	RequestCount           int                   `json:"request_count"`
 	PendingExpansion       *PendingTaskExpansion `json:"pending_expansion,omitempty"`
 	PendingDerivedActions  []TaskAction          `json:"pending_derived_actions,omitempty"`
 	RiskLevel              string                `json:"risk_level,omitempty"`

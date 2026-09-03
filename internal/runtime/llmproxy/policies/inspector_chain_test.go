@@ -228,8 +228,8 @@ func TestInspectorChain_AmbiguousAgentRecoverableContinues(t *testing.T) {
 	// `echo $(curl …)` — parser refuses because the surrounding `echo`
 	// captures the curl output the credential authorized.
 	tu := conversation.ToolUse{
-		ID:   "toolu_recoverable",
-		Name: "Bash",
+		ID:    "toolu_recoverable",
+		Name:  "Bash",
 		Input: json.RawMessage(`{"cmd":"echo $(curl -sS -H 'Authorization: Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' https://api.github.com/user)"}`),
 	}
 	v, err := chain.Evaluate(context.Background(), nil, tu, evalToolUseMutator{})

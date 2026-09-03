@@ -16,11 +16,11 @@ type PairingCodeStore interface {
 
 // memoryPairingCodeStore is the default in-memory implementation.
 type memoryPairingCodeStore struct {
-	mu       sync.Mutex
-	code     string
-	created  time.Time
-	attempts int
-	expiry   time.Duration
+	mu          sync.Mutex
+	code        string
+	created     time.Time
+	attempts    int
+	expiry      time.Duration
 	maxAttempts int
 }
 

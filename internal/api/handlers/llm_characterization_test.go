@@ -27,8 +27,8 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -94,22 +94,22 @@ func runCharacterizationScenario(t *testing.T, sc characterizationScenario) []no
 // upstream URL length, durations) are dropped or replaced with stable
 // placeholders. Params keys are sorted at JSON serialization time.
 type normalizedAuditRow struct {
-	Service              string                 `json:"service"`
-	Action               string                 `json:"action"`
-	Decision             string                 `json:"decision"`
-	Outcome              string                 `json:"outcome"`
-	UsedActiveTaskContext bool                  `json:"used_active_task_context"`
-	UsedLeaseBias        bool                   `json:"used_lease_bias"`
-	HasApprovalID        bool                   `json:"has_approval_id,omitempty"`
-	HasTaskID            bool                   `json:"has_task_id,omitempty"`
-	HasLeaseID           bool                   `json:"has_lease_id,omitempty"`
-	HasMatchedTaskID     bool                   `json:"has_matched_task_id,omitempty"`
-	HasToolUseID         bool                   `json:"has_tool_use_id,omitempty"`
-	HasIntentVerdict     bool                   `json:"has_intent_verdict,omitempty"`
-	HasPolicyID          bool                   `json:"has_policy_id,omitempty"`
-	HasRuleID            bool                   `json:"has_rule_id,omitempty"`
-	HasResolutionConfidence bool                `json:"has_resolution_confidence,omitempty"`
-	Params               map[string]any         `json:"params"`
+	Service                 string         `json:"service"`
+	Action                  string         `json:"action"`
+	Decision                string         `json:"decision"`
+	Outcome                 string         `json:"outcome"`
+	UsedActiveTaskContext   bool           `json:"used_active_task_context"`
+	UsedLeaseBias           bool           `json:"used_lease_bias"`
+	HasApprovalID           bool           `json:"has_approval_id,omitempty"`
+	HasTaskID               bool           `json:"has_task_id,omitempty"`
+	HasLeaseID              bool           `json:"has_lease_id,omitempty"`
+	HasMatchedTaskID        bool           `json:"has_matched_task_id,omitempty"`
+	HasToolUseID            bool           `json:"has_tool_use_id,omitempty"`
+	HasIntentVerdict        bool           `json:"has_intent_verdict,omitempty"`
+	HasPolicyID             bool           `json:"has_policy_id,omitempty"`
+	HasRuleID               bool           `json:"has_rule_id,omitempty"`
+	HasResolutionConfidence bool           `json:"has_resolution_confidence,omitempty"`
+	Params                  map[string]any `json:"params"`
 }
 
 // normalizeAuditRow strips fields whose values can't be reproduced across
@@ -117,20 +117,20 @@ type normalizedAuditRow struct {
 // policy behavior.
 func normalizeAuditRow(row store.AuditEntry) normalizedAuditRow {
 	out := normalizedAuditRow{
-		Service:               row.Service,
-		Action:                row.Action,
-		Decision:              row.Decision,
-		Outcome:               row.Outcome,
-		UsedActiveTaskContext: row.UsedActiveTaskContext,
-		UsedLeaseBias:         row.UsedLeaseBias,
-		HasApprovalID:         row.ApprovalID != nil,
-		HasTaskID:             row.TaskID != nil,
-		HasLeaseID:            row.LeaseID != nil,
-		HasMatchedTaskID:      row.MatchedTaskID != nil,
-		HasToolUseID:          row.ToolUseID != nil,
-		HasIntentVerdict:      row.IntentVerdict != nil,
-		HasPolicyID:           row.PolicyID != nil,
-		HasRuleID:             row.RuleID != nil,
+		Service:                 row.Service,
+		Action:                  row.Action,
+		Decision:                row.Decision,
+		Outcome:                 row.Outcome,
+		UsedActiveTaskContext:   row.UsedActiveTaskContext,
+		UsedLeaseBias:           row.UsedLeaseBias,
+		HasApprovalID:           row.ApprovalID != nil,
+		HasTaskID:               row.TaskID != nil,
+		HasLeaseID:              row.LeaseID != nil,
+		HasMatchedTaskID:        row.MatchedTaskID != nil,
+		HasToolUseID:            row.ToolUseID != nil,
+		HasIntentVerdict:        row.IntentVerdict != nil,
+		HasPolicyID:             row.PolicyID != nil,
+		HasRuleID:               row.RuleID != nil,
 		HasResolutionConfidence: row.ResolutionConfidence != nil,
 	}
 

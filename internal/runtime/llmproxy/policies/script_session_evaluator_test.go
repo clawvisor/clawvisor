@@ -101,8 +101,8 @@ func TestScriptSessionEvaluator_AllowWhenScriptSession(t *testing.T) {
 // literal-prefix recognizer can't see it.
 func urlUnrecognizedToolUse() conversation.ToolUse {
 	return conversation.ToolUse{
-		ID:   "toolu_unr",
-		Name: "Bash",
+		ID:    "toolu_unr",
+		Name:  "Bash",
 		Input: json.RawMessage(`{"command":"B='http://localhost:25297/api/proxy/x'\nC='X-Clawvisor-Caller: Bearer cv-script-abc'\nA='Authorization: Bearer autovault_y'\ncurl \"$B\" -H \"$C\" -H \"$A\""}`),
 	}
 }

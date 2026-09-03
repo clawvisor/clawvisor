@@ -123,8 +123,8 @@ func TestInspectorEvaluator_AmbiguousAgentRecoverableContinues(t *testing.T) {
 	e := policies.NewInspectorEvaluator(insp)
 
 	tu := conversation.ToolUse{
-		ID:   "toolu_evaluator_recoverable",
-		Name: "Bash",
+		ID:    "toolu_evaluator_recoverable",
+		Name:  "Bash",
 		Input: json.RawMessage(`{"cmd":"echo $(curl -sS -H 'Authorization: Bearer autovault_github_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' https://api.github.com/user)"}`),
 	}
 	v, err := e.Evaluate(context.Background(), nil, tu, evalToolUseMutator{})

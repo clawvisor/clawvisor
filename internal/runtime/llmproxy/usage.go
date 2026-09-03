@@ -28,12 +28,12 @@ type ExtractUsageResult struct {
 //
 //   - Anthropic JSON:  body is a single `{"usage":{...}}` envelope.
 //   - Anthropic SSE:   input tokens land in the `message_start` event,
-//                      output tokens in the final `message_delta`.
+//     output tokens in the final `message_delta`.
 //   - OpenAI JSON:     body has `usage:{prompt_tokens, completion_tokens,
-//                      prompt_tokens_details.cached_tokens}`.
+//     prompt_tokens_details.cached_tokens}`.
 //   - OpenAI SSE:      usage appears in the final chunk only when the
-//                      caller set `stream_options.include_usage=true`.
-//                      Returns Found=false otherwise (no fabrication).
+//     caller set `stream_options.include_usage=true`.
+//     Returns Found=false otherwise (no fabrication).
 //
 // requestModel falls back when the upstream body omits the model field
 // (rare; happens on some error envelopes). Pass the model the caller

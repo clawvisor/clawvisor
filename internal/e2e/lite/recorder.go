@@ -23,12 +23,12 @@ import (
 // type-asserts in inline_task_intercept.go continue to find them and the
 // production code paths run unchanged.
 type recordingInlineCreator struct {
-	inner        llmproxy.InlineTaskCreator
-	counters     *Counters
+	inner         llmproxy.InlineTaskCreator
+	counters      *Counters
 	knownVaultIDs map[string]struct{}
 
-	mu                  sync.Mutex
-	mintedPlaceholders  []string
+	mu                 sync.Mutex
+	mintedPlaceholders []string
 }
 
 // newRecordingInlineCreator builds the wrapper. knownVaultIDs is the

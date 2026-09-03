@@ -28,8 +28,8 @@ type AuthPayload struct {
 
 // CapabilitiesPayload declares the daemon's available services.
 type CapabilitiesPayload struct {
-	Version  string            `json:"version"`
-	Name     string            `json:"name"`
+	Version  string              `json:"version"`
+	Name     string              `json:"name"`
 	Services []ServiceCapability `json:"services"`
 }
 
@@ -44,9 +44,9 @@ type ServiceCapability struct {
 
 // ActionCapability describes an action for the cloud.
 type ActionCapability struct {
-	ID          string           `json:"id"`
-	Name        string           `json:"name"`
-	Description string           `json:"description,omitempty"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
 	Params      []ParamCapability `json:"params"`
 }
 

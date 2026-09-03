@@ -183,7 +183,7 @@ func (s *RestrictionsScreen) View() string {
 	b.WriteString("\n\n")
 
 	if s.err != nil {
-		b.WriteString(tui.StyleRed.Render("Error: " + s.err.Error()) + "\n")
+		b.WriteString(tui.StyleRed.Render("Error: "+s.err.Error()) + "\n")
 	}
 
 	if s.loading && len(s.restrictions) == 0 {

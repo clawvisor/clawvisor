@@ -45,19 +45,19 @@ func TestWritePendingExpansionSummary_RendersDiff(t *testing.T) {
 	out := b.String()
 
 	wantContains := []string{
-		"+ Edit",                       // genuinely new tool
-		"Apply fixes to processing",    // new tool's why
-		"~ Bash",                       // replaced tool — was/now diff
-		"was: Run a single curl",       // prior why surfaced for tool
-		"now: List emails AND run",     // new why surfaced for tool
-		"+ api.openai.com",             // new egress
-		"Summarize the email text",     // new egress's why
-		"~ github:foo",                 // credential replaced
-		"was: List issues",             // prior credential why
-		"now: Comment on issues",       // new credential why
-		"+ openai:personal",            // new credential by handle
-		"Authorize the new LLM call",   // new credential's why
-		"Reason: downstream summary",   // top-level reason line
+		"+ Edit",                     // genuinely new tool
+		"Apply fixes to processing",  // new tool's why
+		"~ Bash",                     // replaced tool — was/now diff
+		"was: Run a single curl",     // prior why surfaced for tool
+		"now: List emails AND run",   // new why surfaced for tool
+		"+ api.openai.com",           // new egress
+		"Summarize the email text",   // new egress's why
+		"~ github:foo",               // credential replaced
+		"was: List issues",           // prior credential why
+		"now: Comment on issues",     // new credential why
+		"+ openai:personal",          // new credential by handle
+		"Authorize the new LLM call", // new credential's why
+		"Reason: downstream summary", // top-level reason line
 	}
 	for _, want := range wantContains {
 		if !strings.Contains(out, want) {

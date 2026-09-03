@@ -127,8 +127,6 @@ func TestRenderTaskApprovalPromptWrapsLongPurpose(t *testing.T) {
 	}
 }
 
-
-
 func TestBuildAskUserQuestionToolCallShape(t *testing.T) {
 	const approvalID = "cv-abc123def456"
 	call := buildAskUserQuestionToolCall(approvalID)

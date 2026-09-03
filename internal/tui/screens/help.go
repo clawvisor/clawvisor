@@ -20,9 +20,9 @@ func NewHelp() Help {
 	return Help{}
 }
 
-func (h *Help) Show()       { h.visible = true }
-func (h *Help) Hide()       { h.visible = false }
-func (h *Help) Toggle()     { h.visible = !h.visible }
+func (h *Help) Show()        { h.visible = true }
+func (h *Help) Hide()        { h.visible = false }
+func (h *Help) Toggle()      { h.visible = !h.visible }
 func (h Help) Visible() bool { return h.visible }
 
 func (h Help) Update(msg tea.Msg) (Help, tea.Cmd) {

@@ -18,14 +18,14 @@ var (
 
 // Shared styles.
 var (
-	StyleBrand = lipgloss.NewStyle().Foreground(ColorBrand).Bold(true)
-	StyleDim   = lipgloss.NewStyle().Foreground(ColorDim)
-	StyleGreen = lipgloss.NewStyle().Foreground(ColorGreen)
-	StyleRed   = lipgloss.NewStyle().Foreground(ColorRed)
+	StyleBrand  = lipgloss.NewStyle().Foreground(ColorBrand).Bold(true)
+	StyleDim    = lipgloss.NewStyle().Foreground(ColorDim)
+	StyleGreen  = lipgloss.NewStyle().Foreground(ColorGreen)
+	StyleRed    = lipgloss.NewStyle().Foreground(ColorRed)
 	StyleAmber  = lipgloss.NewStyle().Foreground(ColorAccent)
 	StyleOrange = lipgloss.NewStyle().Foreground(ColorOrange)
 	StyleBold   = lipgloss.NewStyle().Bold(true)
-	StyleWhite = lipgloss.NewStyle().Foreground(ColorWhite)
+	StyleWhite  = lipgloss.NewStyle().Foreground(ColorWhite)
 
 	// Sidebar
 	StyleSidebarActive   = lipgloss.NewStyle().Foreground(ColorBrand).Bold(true)

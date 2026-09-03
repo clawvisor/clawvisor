@@ -89,7 +89,7 @@ func (n *Notifier) CompleteSlackInstall(ctx context.Context, code string) (notif
 		"redirect_uri":  {creds.RedirectURL},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://slack.com/api/oauth.v2.access", strings.NewReader(form.Encode()))
+		n.apiBase+"oauth.v2.access", strings.NewReader(form.Encode()))
 	if err != nil {
 		return notify.SlackInstall{}, err
 	}
@@ -155,7 +155,7 @@ func (n *Notifier) ListSlackChannels(ctx context.Context, userID string) ([]noti
 			q.Set("cursor", cursor)
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			"https://slack.com/api/conversations.list?"+q.Encode(), nil)
+			n.apiBase+"conversations.list?"+q.Encode(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +198,7 @@ func (n *Notifier) LookupSlackUser(ctx context.Context, userID, slackUserID stri
 
 	q := url.Values{"user": {slackUserID}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://slack.com/api/users.info?"+q.Encode(), nil)
+		n.apiBase+"users.info?"+q.Encode(), nil)
 	if err != nil {
 		return "", err
 	}

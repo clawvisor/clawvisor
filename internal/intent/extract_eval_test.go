@@ -31,10 +31,10 @@ type extractEvalRequest struct {
 
 type extractEvalExpect struct {
 	MinFacts          int      `json:"min_facts"`
-	MaxFacts          int      `json:"max_facts,omitempty"`        // 0 = no upper bound
-	MustIncludeTypes  []string `json:"must_include_types"`         // e.g. ["email_address", "message_id"]
-	MustIncludeValues []string `json:"must_include_values"`        // exact values that must appear
-	MustExcludeValues []string `json:"must_exclude_values"`        // values that must NOT appear (secrets)
+	MaxFacts          int      `json:"max_facts,omitempty"` // 0 = no upper bound
+	MustIncludeTypes  []string `json:"must_include_types"`  // e.g. ["email_address", "message_id"]
+	MustIncludeValues []string `json:"must_include_values"` // exact values that must appear
+	MustExcludeValues []string `json:"must_exclude_values"` // values that must NOT appear (secrets)
 }
 
 type extractEvalResult struct {

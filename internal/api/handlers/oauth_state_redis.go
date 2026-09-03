@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	redisOAuthStatePrefix  = "clawvisor:oauth:"
-	redisDeviceFlowPrefix  = "clawvisor:deviceflow:"
-	redisPKCEFlowPrefix    = "clawvisor:pkceflow:"
-	defaultOAuthStateTTL   = 15 * time.Minute
+	redisOAuthStatePrefix = "clawvisor:oauth:"
+	redisDeviceFlowPrefix = "clawvisor:deviceflow:"
+	redisPKCEFlowPrefix   = "clawvisor:pkceflow:"
+	defaultOAuthStateTTL  = 15 * time.Minute
 )
 
 // RedisOAuthStateStore stores OAuth flow state in Redis for cross-instance access.

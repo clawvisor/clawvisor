@@ -41,9 +41,9 @@ type TaskRiskAssessor interface {
 // adapter is responsible for translating between the two so this
 // package can stay independent of the taskrisk package.
 type TaskRiskAssessRequest struct {
-	Purpose                string
-	AgentName              string
-	UserID                 string
+	Purpose   string
+	AgentName string
+	UserID    string
 	// OrgID identifies the org context. Forwarded to taskrisk.AssessRequest
 	// so the upstream assessor can resolve per-org prompt overrides.
 	OrgID                  string

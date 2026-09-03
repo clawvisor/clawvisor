@@ -36,10 +36,20 @@ const vaultBotTokenKey = "notify.slack.bot_token"
 // notifyChannel is the notification_configs.channel discriminator.
 const notifyChannel = "slack"
 
-// callbackTTL bounds how long a posted button stays live. It matches the
-// Telegram notifier's 6 minutes so a request cannot be resolved from a stale
-// Slack message long after the approval itself expired.
-const callbackTTL = 6 * time.Minute
+// defaultAPIBase is the Slack Web API root.
+const defaultAPIBase = "https://slack.com/api/"
+
+// callbackTTL bounds how long a posted button stays live.
+//
+// This is deliberately long rather than matching a gateway approval's own
+// expiry. The server is the authority on whether a request is still
+// actionable — ApproveByRequestID re-checks ExpiresAt, and the expiry sweeper
+// rewrites the message — so a short token TTL adds no safety and actively
+// misleads: a task in pending_approval has no ExpiresAt at all and stays
+// approvable indefinitely, so a 6-minute token made a still-valid prompt
+// report itself expired. The token is an unguessable single-use capability,
+// not an expiry mechanism.
+const callbackTTL = messageContextTTL
 
 // messageContextTTL outlives callbackTTL: a request can be resolved from the
 // dashboard long after its Slack buttons expire, and the resolved message
@@ -56,10 +66,13 @@ type Notifier struct {
 
 	signingSecret string
 	creds         AppCredentials
-	cbTokens      CallbackTokenStorer
-	msgCtx        MessageContextStorer
-	decisionCh    chan notify.CallbackDecision
-	replay        ReplayGuard
+	// apiBase is the Slack Web API root. Overridden in tests; there is no
+	// production reason to change it.
+	apiBase    string
+	cbTokens   CallbackTokenStorer
+	msgCtx     MessageContextStorer
+	decisionCh chan notify.CallbackDecision
+	replay     ReplayGuard
 }
 
 // New creates a Slack notifier. signingSecret verifies that interaction
@@ -72,10 +85,11 @@ func New(st store.Store, signingSecret string, creds AppCredentials, logger *slo
 		logger:        logger,
 		signingSecret: signingSecret,
 		creds:         creds,
+		apiBase:       defaultAPIBase,
 		cbTokens:      newCallbackTokenStore(),
 		msgCtx:        newMessageContextStore(),
 		decisionCh:    make(chan notify.CallbackDecision, 32),
-		replay:        noopReplayGuard{},
+		replay:        newMemoryReplayGuard(),
 	}
 }
 
@@ -123,8 +137,14 @@ func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalR
 	}
 
 	detail := approvalBlocks(req)
+	// The callback token carries the bare RequestID, not the composite
+	// notification key: the decision consumer passes TargetID straight to
+	// ApproveByRequestID, which looks up by request_id. TaskID travels
+	// separately and is what disambiguates sibling approvals under
+	// symmetric dedup. The composite below is only a notification_messages
+	// key — conflating the two makes every task-scoped approval a no-op.
 	blocks := append(append([]block{}, detail...), n.actionsFor(
-		"approval", approvalNotifyTargetID(req.RequestID, req.TaskID),
+		"approval", req.RequestID,
 		req.UserID, req.TaskID, cfg.ChannelID, "Deny", req.ApproveURL, req.DenyURL,
 	))
 
@@ -437,7 +457,7 @@ func (n *Notifier) call(ctx context.Context, botToken, method string, payload an
 		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://slack.com/api/"+method, bytes.NewReader(body))
+		n.apiBase+method, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

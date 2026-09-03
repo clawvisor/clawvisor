@@ -65,7 +65,7 @@ const (
 //   - a cv-script-prefixed token at the X-Clawvisor-Caller header
 //     position (NOT a substring-anywhere match), AND
 //   - a URL literal prefix that targets our resolver mount (host:port
-//     + path-prefix, with traversal rejection).
+//   - path-prefix, with traversal rejection).
 //
 // URLUnrecognized recognition fires when the agent clearly intended a
 // script-session call but the passthrough recognizer can't see the

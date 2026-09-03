@@ -58,24 +58,24 @@ func NewRedisScopeDriftRegistry(rdb *redis.Client, ttl time.Duration) *RedisScop
 // stable even if someone adds more mutable fields to ScopeDrift later
 // — the immutable side here would still round-trip correctly.
 type scopeDriftImmutable struct {
-	ID             string                `json:"id"`
-	UserID         string                `json:"user_id"`
-	AgentID        string                `json:"agent_id"`
-	ConversationID string                `json:"conversation_id"`
-	Provider       string                `json:"provider"`
-	ToolUse        json.RawMessage       `json:"tool_use"`
-	Service        string                `json:"service"`
-	Action         string                `json:"action"`
-	Host           string                `json:"host"`
-	Method         string                `json:"method"`
-	Path           string                `json:"path"`
-	TaskID         string                `json:"task_id"`
-	TaskPurpose    string                `json:"task_purpose"`
-	ExpectedUse    string                `json:"expected_use"`
-	Source         ScopeDriftSource      `json:"source"`
-	ReasonText     string                `json:"reason_text"`
-	CreatedAt      time.Time             `json:"created_at"`
-	ExpiresAt      time.Time             `json:"expires_at"`
+	ID             string           `json:"id"`
+	UserID         string           `json:"user_id"`
+	AgentID        string           `json:"agent_id"`
+	ConversationID string           `json:"conversation_id"`
+	Provider       string           `json:"provider"`
+	ToolUse        json.RawMessage  `json:"tool_use"`
+	Service        string           `json:"service"`
+	Action         string           `json:"action"`
+	Host           string           `json:"host"`
+	Method         string           `json:"method"`
+	Path           string           `json:"path"`
+	TaskID         string           `json:"task_id"`
+	TaskPurpose    string           `json:"task_purpose"`
+	ExpectedUse    string           `json:"expected_use"`
+	Source         ScopeDriftSource `json:"source"`
+	ReasonText     string           `json:"reason_text"`
+	CreatedAt      time.Time        `json:"created_at"`
+	ExpiresAt      time.Time        `json:"expires_at"`
 }
 
 func encodeDriftImmutable(d ScopeDrift) ([]byte, error) {

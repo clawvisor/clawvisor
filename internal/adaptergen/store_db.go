@@ -37,4 +37,3 @@ func (s *DBStore) Load(ctx context.Context) (map[string]string, error) {
 func (s *DBStore) Delete(ctx context.Context, serviceID string) error {
 	return s.store.DeleteGeneratedAdapter(ctx, s.userID, serviceID)
 }
-
