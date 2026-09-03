@@ -241,7 +241,8 @@ func (n *Notifier) reportStaleToken(ctx context.Context, responseURL string, err
 // interaction's response_url. This needs no channel/ts and no extra scope,
 // and clearing the blocks is what removes the buttons.
 func (n *Notifier) replaceOriginal(ctx context.Context, responseURL, text string, blocks []block) {
-	if !validResponseURL(responseURL) {
+	target := sanitizedResponseURL(responseURL)
+	if target == "" {
 		n.logger.WarnContext(ctx, "slack: refusing to use a non-Slack response_url")
 		return
 	}
@@ -253,12 +254,12 @@ func (n *Notifier) replaceOriginal(ctx context.Context, responseURL, text string
 	if err != nil {
 		return
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, responseURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := n.client.Do(req)
+	resp, err := n.responseClient.Do(req)
 	if err != nil {
 		n.logger.WarnContext(ctx, "slack: could not replace stale message", "err", err)
 		return
@@ -266,40 +267,80 @@ func (n *Notifier) replaceOriginal(ctx context.Context, responseURL, text string
 	_ = resp.Body.Close()
 }
 
+// errRedirectRefused is returned when a response_url tries to redirect.
+var errRedirectRefused = errors.New("slack: refusing to follow a redirect from response_url")
+
+// newResponseClient builds the client used for response_url posts.
+//
+// It refuses redirects. validResponseURL only constrains the URL we are
+// handed, and Go's default client follows up to 10 hops — so a permitted
+// hooks.slack.com URL answering 302 would carry the request to an arbitrary
+// host and step straight past the hostname lock. An allowlist has to hold
+// for every hop of the request, not just the first, or it is not an
+// allowlist at all.
+//
+// 307/308 also preserve the method and body, so following would be an egress
+// path as well as a reachability one. Slack answers response_url directly, so
+// a redirect here is always unexpected and refusing it loses nothing.
+func newResponseClient() *http.Client {
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errRedirectRefused
+		},
+	}
+}
+
 // responseURLHost is the only host Slack serves interaction response_urls
 // from. Slack's format is https://hooks.slack.com/actions/T…/…/….
 const responseURLHost = "hooks.slack.com"
 
-// validResponseURL hostname-locks the response_url before we make a request
-// to it.
+// sanitizedResponseURL validates an interaction response_url and rebuilds it
+// on a constant host, returning "" if it is not a Slack response_url.
 //
 // The URL arrives inside the interaction payload, so it is attacker-chosen
 // input to an outbound request from inside the deployment's network — a
 // classic SSRF sink. The v0 signature check normally proves the payload came
 // from Slack, but that is a single control over a shared secret: if it ever
 // leaks, an unvalidated response_url turns this endpoint into a pivot at
-// cloud-metadata and internal services. Locking the host means a forged
-// payload can at worst talk to Slack.
+// cloud metadata and internal services.
+//
+// It rebuilds rather than merely checking the input. Returning the original
+// string would leave the request target derived from attacker input even
+// after validation — and would carry along userinfo, port and fragment,
+// which are exactly the parts that make a hostile URL read as Slack's.
+// Reconstructing from a constant scheme and host means only the path and
+// query survive, and the host cannot be input-derived at all.
 //
 // Mirrors the hostname lock the cloud governance webhooks already apply.
-func validResponseURL(raw string) bool {
+func sanitizedResponseURL(raw string) string {
 	if raw == "" {
-		return false
+		return ""
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" {
-		return false
+		return ""
 	}
-	// EqualFold, and compare Hostname() not Host, so neither casing nor an
-	// appended port slips a different origin through.
-	return strings.EqualFold(u.Hostname(), responseURLHost)
+	// EqualFold, and Hostname() not Host, so neither casing nor an appended
+	// port slips a different origin through.
+	if !strings.EqualFold(u.Hostname(), responseURLHost) {
+		return ""
+	}
+	safe := &url.URL{
+		Scheme:   "https",
+		Host:     responseURLHost,
+		Path:     u.Path,
+		RawQuery: u.RawQuery,
+	}
+	return safe.String()
 }
 
 // ephemeral posts a message visible only to the clicker, via the payload's
 // response_url. Best-effort: failure to explain a rejection must not affect
 // the rejection itself.
 func (n *Notifier) ephemeral(ctx context.Context, responseURL, text string) {
-	if !validResponseURL(responseURL) {
+	target := sanitizedResponseURL(responseURL)
+	if target == "" {
 		n.logger.WarnContext(ctx, "slack: refusing to use a non-Slack response_url")
 		return
 	}
@@ -311,12 +352,12 @@ func (n *Notifier) ephemeral(ctx context.Context, responseURL, text string) {
 	if err != nil {
 		return
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, responseURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := n.client.Do(req)
+	resp, err := n.responseClient.Do(req)
 	if err != nil {
 		n.logger.WarnContext(ctx, "slack: ephemeral reply failed", "err", err)
 		return

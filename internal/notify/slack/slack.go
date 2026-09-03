@@ -62,7 +62,10 @@ type Notifier struct {
 	store  store.Store
 	vault  vault.Vault // optional; when set, bot tokens are encrypted at rest
 	client *http.Client
-	logger *slog.Logger
+	// responseClient posts to the interaction response_url. It refuses
+	// redirects: see newResponseClient.
+	responseClient *http.Client
+	logger         *slog.Logger
 
 	signingSecret string
 	creds         AppCredentials
@@ -80,16 +83,17 @@ type Notifier struct {
 // during the OAuth install.
 func New(st store.Store, signingSecret string, creds AppCredentials, logger *slog.Logger) *Notifier {
 	return &Notifier{
-		store:         st,
-		client:        &http.Client{Timeout: 10 * time.Second},
-		logger:        logger,
-		signingSecret: signingSecret,
-		creds:         creds,
-		apiBase:       defaultAPIBase,
-		cbTokens:      newCallbackTokenStore(),
-		msgCtx:        newMessageContextStore(),
-		decisionCh:    make(chan notify.CallbackDecision, 32),
-		replay:        newMemoryReplayGuard(),
+		store:          st,
+		client:         &http.Client{Timeout: 10 * time.Second},
+		responseClient: newResponseClient(),
+		logger:         logger,
+		signingSecret:  signingSecret,
+		creds:          creds,
+		apiBase:        defaultAPIBase,
+		cbTokens:       newCallbackTokenStore(),
+		msgCtx:         newMessageContextStore(),
+		decisionCh:     make(chan notify.CallbackDecision, 32),
+		replay:         newMemoryReplayGuard(),
 	}
 }
 
