@@ -550,8 +550,20 @@ func (n *Notifier) SaveSlackConfig(ctx context.Context, userID string, cfg notif
 	// nothing here" and deletes instead of restoring.
 	var prior []byte
 	if n.vault != nil {
-		if b, gerr := n.vault.Get(ctx, userID, vaultBotTokenKey); gerr == nil {
+		b, gerr := n.vault.Get(ctx, userID, vaultBotTokenKey)
+		switch {
+		case gerr == nil:
 			prior = b
+		case errors.Is(gerr, vault.ErrNotFound):
+			// Genuinely absent: a rollback should delete, not restore.
+		default:
+			// Transient or decryption failure. We cannot tell an absent
+			// token from an unreadable one, and guessing "absent" is
+			// unsafe: a later upsert failure would roll back by DELETING a
+			// token the surviving config still references, bricking a
+			// working connection. Refuse before overwriting anything —
+			// nothing has changed yet, so the caller can simply retry.
+			return fmt.Errorf("slack: cannot read existing bot_token, refusing to overwrite it: %w", gerr)
 		}
 		if err := n.vault.Set(ctx, userID, vaultBotTokenKey, []byte(cfg.BotToken)); err != nil {
 			return fmt.Errorf("slack: persist bot_token: %w", err)

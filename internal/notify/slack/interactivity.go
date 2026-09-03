@@ -316,7 +316,7 @@ var errRedirectRefused = errors.New("slack: refusing to follow a redirect from r
 
 // newResponseClient builds the client used for response_url posts.
 //
-// It refuses redirects. validResponseURL only constrains the URL we are
+// It refuses redirects. sanitizedResponseURL only constrains the URL we are
 // handed, and Go's default client follows up to 10 hops — so a permitted
 // hooks.slack.com URL answering 302 would carry the request to an arbitrary
 // host and step straight past the hostname lock. An allowlist has to hold
@@ -370,10 +370,16 @@ func sanitizedResponseURL(raw string) string {
 	if !strings.EqualFold(u.Hostname(), responseURLHost) {
 		return ""
 	}
+	// RawPath as well as Path: url.Parse stores the decoded path in Path and
+	// keeps the original encoding in RawPath, and URL.String() only uses
+	// RawPath when it is set. Copying Path alone would silently re-encode a
+	// percent-escaped segment (%2F becoming /), changing the path Slack
+	// gave us into a different one.
 	safe := &url.URL{
 		Scheme:   "https",
 		Host:     responseURLHost,
 		Path:     u.Path,
+		RawPath:  u.RawPath,
 		RawQuery: u.RawQuery,
 	}
 	return safe.String()

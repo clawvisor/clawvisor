@@ -163,8 +163,13 @@ func (s *redisCallbackTokenStore) Consume(shortID string) (*callbackEntry, error
 		return nil, errTokenExpired
 	}
 
+	// Every pair carries a guard. Slack approvals ship with this scheme in
+	// place — no released version ever minted an unguarded token — so an
+	// entry without one is malformed rather than legacy, and MUST NOT fall
+	// back to a per-key consume: that path is precisely the one that lets a
+	// concurrent approve and deny both win.
 	if j.GuardID == "" {
-		return s.consumeUnguarded(ctx, shortID, j)
+		return nil, errTokenNotFound
 	}
 
 	// The guard and the token keys share a TTL, so having read a live entry
@@ -177,24 +182,6 @@ func (s *redisCallbackTokenStore) Consume(shortID string) (*callbackEntry, error
 		return nil, err
 	}
 
-	s.retirePair(ctx, shortID, j.SiblingID)
-	return j.entry(), nil
-}
-
-// consumeUnguarded resolves a token minted before pairs carried a guard.
-//
-// Callback tokens live for a day, so a deploy of the guard leaves prompts in
-// channels whose tokens predate it. Reading their absent guard as "already
-// won" would wedge every one of them; falling back to the old per-key GetDel
-// keeps them clickable, and is no weaker than the behaviour they were posted
-// under. Removable once one callback TTL has passed since rollout.
-func (s *redisCallbackTokenStore) consumeUnguarded(ctx context.Context, shortID string, j redisCallbackEntry) (*callbackEntry, error) {
-	if _, err := s.rdb.GetDel(ctx, redisTokenPrefix+shortID).Result(); err != nil {
-		if errors.Is(err, redis.Nil) {
-			return nil, s.tombstoneReason(ctx, shortID)
-		}
-		return nil, err
-	}
 	s.retirePair(ctx, shortID, j.SiblingID)
 	return j.entry(), nil
 }

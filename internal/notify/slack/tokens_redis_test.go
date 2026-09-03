@@ -203,36 +203,30 @@ func TestRedisTokenStore_PeekDoesNotRetireToken(t *testing.T) {
 	}
 }
 
-// Callback tokens live for a day, so a deploy of the guard finds live prompts
-// whose tokens predate it. Those must stay clickable rather than reading as
-// already resolved.
-func TestRedisTokenStore_ConsumesTokensMintedBeforeTheGuard(t *testing.T) {
+// A pair without a guard must be rejected, not consumed by a per-key
+// fallback. Slack approvals ship with the guard scheme — no released version
+// ever minted an unguarded token — so such an entry is malformed, and the
+// fallback would reinstate exactly the race the guard exists to close:
+// concurrent approve and deny each winning their own key.
+func TestRedisTokenStore_GuardlessEntryIsRejected(t *testing.T) {
 	s, mr := newTestRedisStore(t)
 
-	legacy := func(sibling string) string {
-		b, err := json.Marshal(redisCallbackEntry{
-			Type: "approval", TargetID: "req-1", UserID: "user-1", ChannelID: "C123",
-			ExpiresAt: time.Now().Add(time.Minute).UnixMilli(), SiblingID: sibling,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(b)
-	}
-	if err := mr.Set(redisTokenPrefix+"old-approve", legacy("old-deny")); err != nil {
+	// Hand-write an entry with no guard_id, as a malformed or foreign
+	// writer would.
+	raw, err := json.Marshal(redisCallbackEntry{
+		Type: "approval", TargetID: "req-1", UserID: "user-1",
+		ChannelID: "C1", ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
+		SiblingID: "sib",
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := mr.Set(redisTokenPrefix+"old-deny", legacy("old-approve")); err != nil {
+	if err := mr.Set(redisTokenPrefix+"tok", string(raw)); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := s.Consume("old-approve"); err != nil {
-		t.Fatalf("guardless token was not consumable: %v", err)
-	}
-	// Retiring the sibling still has to hold, or the pre-guard prompt could
-	// be approved and then also denied.
-	if _, err := s.Consume("old-deny"); !errors.Is(err, errTokenUsed) {
-		t.Fatalf("sibling err = %v, want errTokenUsed", err)
+	if _, err := s.Consume("tok"); !errors.Is(err, errTokenNotFound) {
+		t.Fatalf("guardless entry: got %v, want errTokenNotFound", err)
 	}
 }
 

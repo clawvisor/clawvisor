@@ -101,3 +101,13 @@ func TestResponseClient_AllowsDirectResponse(t *testing.T) {
 		t.Fatalf("status %d, want 200", resp.StatusCode)
 	}
 }
+
+// url.Parse keeps a percent-escaped path in RawPath and the decoded form in
+// Path; rebuilding from Path alone would re-encode %2F as a real separator
+// and send Slack a different path than it handed us.
+func TestSanitizedResponseURL_PreservesPathEncoding(t *testing.T) {
+	in := "https://hooks.slack.com/actions/T1/a%2Fb/c"
+	if got := sanitizedResponseURL(in); got != in {
+		t.Fatalf("sanitizedResponseURL(%q) = %q, want the encoding preserved", in, got)
+	}
+}

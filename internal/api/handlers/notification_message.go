@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/clawvisor/clawvisor/pkg/notify"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // notificationMessageLookup is the slice of store.Store that
@@ -31,10 +33,21 @@ func updateNotificationMessage(
 	if notifier == nil {
 		return
 	}
-	if msgID, err := st.GetNotificationMessage(ctx, targetType, targetID, "telegram"); err == nil {
+	msgID, err := st.GetNotificationMessage(ctx, targetType, targetID, "telegram")
+	switch {
+	case err == nil:
 		if err := notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
 			logger.WarnContext(ctx, "telegram message update failed", "err", err, "target_type", targetType, "target_id", targetID)
 		}
+	case errors.Is(err, store.ErrNotFound):
+		// No Telegram message for this target — nothing to edit. Expected
+		// whenever Telegram is not a configured channel.
+	default:
+		// A storage failure is not the same as "nothing to edit": staying
+		// silent here leaves a resolved request still showing live buttons
+		// with no trace of why, which during a database outage is exactly
+		// when someone would be trying to work out what happened.
+		logger.WarnContext(ctx, "notification message lookup failed", "err", err, "target_type", targetType, "target_id", targetID)
 	}
 	// Channels that address messages by approval target rather than by an
 	// opaque message ID (Slack) resolve their own reference — the ID above
