@@ -1,0 +1,23 @@
+internal/notify/slack/interactivity.go
+  s_20c7cd26d72652::t_a9ab57fc2306fe 147,180,219-229,232-239,241-250,252-270
+internal/notify/slack/tokens.go
+  s_20c7cd26d72652::t_2f63e310bea554 140-150,157
+internal/notify/slack/authz_test.go
+  s_20c7cd26d72652::t_d58ebffe1fafcf 130-183
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "c34ffcbd41b9bc8e9c44a5415d1a0c2a8e071e16",
+  "prompts": {},
+  "sessions": {
+    "s_20c7cd26d72652": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51f12a99-8a7d-4eaf-b0b7-4a4c8fe6113d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
