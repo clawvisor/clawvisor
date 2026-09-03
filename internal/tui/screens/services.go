@@ -58,16 +58,16 @@ type pkceFlowStartedMsg struct {
 // ── Input steps ─────────────────────────────────────────────────────────────
 
 const (
-	stepNone              = 0
-	stepAlias             = 1
-	stepKeyEntry          = 2
-	stepOAuthConfirm      = 3
-	stepOAuthWaiting      = 4
-	stepDeviceFlowChoice  = 5
-	stepDeviceFlowWaiting = 6
-	stepPKCEFlowChoice    = 7
-	stepPKCEFlowWaiting   = 8
-	stepVariables         = 9
+	stepNone               = 0
+	stepAlias              = 1
+	stepKeyEntry           = 2
+	stepOAuthConfirm       = 3
+	stepOAuthWaiting       = 4
+	stepDeviceFlowChoice   = 5
+	stepDeviceFlowWaiting  = 6
+	stepPKCEFlowChoice     = 7
+	stepPKCEFlowWaiting    = 8
+	stepVariables          = 9
 )
 
 // ── Model ───────────────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ type ServicesScreen struct {
 	confirm *components.Confirm
 
 	// OAuth completion listener.
-	oauthDoneCh  chan struct{}
+	oauthDoneCh chan struct{}
 	oauthCleanup func()
 
 	// Device flow state.
@@ -593,7 +593,7 @@ func (s *ServicesScreen) View() string {
 	b.WriteString("\n\n")
 
 	if s.err != nil {
-		b.WriteString(tui.StyleRed.Render("Error: "+s.err.Error()) + "\n")
+		b.WriteString(tui.StyleRed.Render("Error: " + s.err.Error()) + "\n")
 	}
 
 	if s.loading && len(s.services) == 0 {

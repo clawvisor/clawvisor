@@ -63,3 +63,4 @@ func transformRecoverableDenyToPlaceholder(v conversation.ToolUseVerdict, tu con
 	}
 	return v
 }
+

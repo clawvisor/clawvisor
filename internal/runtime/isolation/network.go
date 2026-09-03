@@ -15,7 +15,7 @@ import (
 
 // Network labels used to identify clawvisor-managed networks for pruning + GC.
 const (
-	LabelIsolation   = "clawvisor.isolation=1"
+	LabelIsolation  = "clawvisor.isolation=1"
 	LabelKeyOwnerPID = "clawvisor.owner-pid"
 	LabelKeyCreated  = "clawvisor.created-at"
 	LabelKeySession  = "clawvisor.session"

@@ -60,7 +60,7 @@ func TestNormalize_DatedAndAliasedCollapse(t *testing.T) {
 		"claude-3-7-sonnet-latest":   "claude-3-7-sonnet",
 		"claude-3-5-haiku-20241022":  "claude-3-5-haiku",
 		// OpenAI YYYY-MM-DD snapshot folds to the same shape.
-		"gpt-4o-2024-08-06":      "gpt-4o",
+		"gpt-4o-2024-08-06": "gpt-4o",
 		"gpt-4o-mini-2024-07-18": "gpt-4o-mini",
 		// Vendor prefix + casing.
 		"Anthropic/Claude-Opus-4-7": "claude-opus-4-7",

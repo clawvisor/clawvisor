@@ -28,10 +28,10 @@ import (
 //     callbacks provided at construction. The handler owns the loaders
 //     so the policy stays decoupled from the Store.
 type ControlNotice struct {
-	controlBaseURL  string
-	availableTools  AvailableToolsFn
-	loadToolRules   ToolRulesLoader
-	loadActiveTasks ActiveTasksSnapshotLoader
+	controlBaseURL   string
+	availableTools   AvailableToolsFn
+	loadToolRules    ToolRulesLoader
+	loadActiveTasks  ActiveTasksSnapshotLoader
 }
 
 // AvailableToolsFn extracts the declared tool names from a request.

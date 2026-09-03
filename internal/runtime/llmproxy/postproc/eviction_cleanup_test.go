@@ -78,7 +78,7 @@ func TestCleanupEvictedInlineTask_TracesExpireFailure(t *testing.T) {
 	llmproxy.CleanupEvictedInlineTask(ctx, llmproxy.PostprocessConfig{
 		AuditContext: llmproxy.AuditContext{
 			RequestID: "req-evict-trace",
-			Trace:     llmproxy.NewTraceLogger(&buf),
+			Trace: llmproxy.NewTraceLogger(&buf),
 		},
 		ApprovalContext: llmproxy.ApprovalContext{
 			InlineTaskCreator: creator,

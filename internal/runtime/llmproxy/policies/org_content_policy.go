@@ -107,7 +107,7 @@ func extractScanContent(req pipeline.ReadOnlyRequest) string {
 	}
 	var probe struct {
 		Messages     []json.RawMessage `json:"messages"`
-		Prompt       string            `json:"prompt"`       // legacy completions API
+		Prompt       string            `json:"prompt"` // legacy completions API
 		Input        json.RawMessage   `json:"input"`        // OpenAI Responses
 		Instructions string            `json:"instructions"` // OpenAI Responses (system-equivalent)
 	}

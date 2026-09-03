@@ -285,9 +285,7 @@ func TestHarnessSmokeGatewayFetchesUpstream(t *testing.T) {
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", resp.StatusCode, string(createBytes))
 	}
-	var created struct {
-		TaskID string `json:"task_id"`
-	}
+	var created struct{ TaskID string `json:"task_id"` }
 	_ = json.Unmarshal(createBytes, &created)
 	if created.TaskID == "" {
 		t.Fatalf("no task_id: %s", string(createBytes))
@@ -437,9 +435,7 @@ func TestHarnessSmokeTaskRevoke(t *testing.T) {
 	resp, _ := sess.Client.Post("https://"+APIHost+"/api/tasks", "application/json", bytes.NewBufferString(createBody))
 	cb, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	var created struct {
-		TaskID string `json:"task_id"`
-	}
+	var created struct{ TaskID string `json:"task_id"` }
 	_ = json.Unmarshal(cb, &created)
 	pendings, _ := srv.PendingApprovals(ctx, p.User.ID)
 	if status, _, _ := srv.ResolveApproval(ctx, p.User, pendings[0].ID, "allow_session"); status != http.StatusOK {
@@ -512,9 +508,7 @@ func TestHarnessSmokePerCallReview(t *testing.T) {
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("create status=%d body=%s", resp.StatusCode, string(cb))
 	}
-	var created struct {
-		TaskID string `json:"task_id"`
-	}
+	var created struct{ TaskID string `json:"task_id"` }
 	_ = json.Unmarshal(cb, &created)
 	pending, _ := srv.PendingApprovals(ctx, p.User.ID)
 	if len(pending) != 1 || pending[0].Kind != "task_create" {
@@ -615,9 +609,7 @@ func TestHarnessSmokeTaskExpand(t *testing.T) {
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("create status=%d body=%s", resp.StatusCode, string(cb))
 	}
-	var created struct {
-		TaskID string `json:"task_id"`
-	}
+	var created struct{ TaskID string `json:"task_id"` }
 	_ = json.Unmarshal(cb, &created)
 	pending, _ := srv.PendingApprovals(ctx, p.User.ID)
 	if len(pending) != 1 || pending[0].Kind != "task_create" {

@@ -11,10 +11,10 @@ import (
 
 // Dispatcher routes incoming requests to the appropriate executor.
 type Dispatcher struct {
-	registry      *services.Registry
-	serverMgr     *ServerManager
-	globalEnv     map[string]string
-	maxOutputSize int64
+	registry       *services.Registry
+	serverMgr      *ServerManager
+	globalEnv      map[string]string
+	maxOutputSize  int64
 
 	// Concurrency control.
 	semaphore    chan struct{}

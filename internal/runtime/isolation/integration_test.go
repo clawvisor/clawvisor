@@ -30,12 +30,12 @@ func dockerOrSkip(t *testing.T) string {
 }
 
 type testHarness struct {
-	t         *testing.T
-	dockerBin string
-	apiSrv    *httptest.Server
-	proxySrv  *httptest.Server
-	plan      Plan
-	handle    *Handle
+	t          *testing.T
+	dockerBin  string
+	apiSrv     *httptest.Server
+	proxySrv   *httptest.Server
+	plan       Plan
+	handle     *Handle
 }
 
 func newHarness(t *testing.T, opts ...func(*Plan)) *testHarness {

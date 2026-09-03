@@ -4,11 +4,11 @@ import "github.com/charmbracelet/bubbles/key"
 
 // GlobalKeys are available on all screens.
 type GlobalKeys struct {
-	Quit     key.Binding
-	Help     key.Binding
-	Tab      key.Binding
+	Quit    key.Binding
+	Help    key.Binding
+	Tab     key.Binding
 	ShiftTab key.Binding
-	Refresh  key.Binding
+	Refresh key.Binding
 }
 
 var Keys = GlobalKeys{

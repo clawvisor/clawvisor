@@ -11,10 +11,10 @@ import (
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
-	"github.com/clawvisor/clawvisor/pkg/store"
 	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
-	"github.com/clawvisor/clawvisor/pkg/vault"
 	intvault "github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // ── Test environment with hooks ──────────────────────────────────────────────

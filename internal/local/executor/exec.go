@@ -16,19 +16,19 @@ import (
 
 // ExecResult holds the result of an exec-mode action invocation.
 type ExecResult struct {
-	Success bool      `json:"success"`
-	Data    *ExecData `json:"data,omitempty"`
-	Error   string    `json:"error,omitempty"`
+	Success  bool              `json:"success"`
+	Data     *ExecData         `json:"data,omitempty"`
+	Error    string            `json:"error,omitempty"`
 }
 
 // ExecData holds the output data from an exec-mode action.
 type ExecData struct {
-	Stdout         string          `json:"stdout"`
-	StdoutEncoding string          `json:"stdout_encoding,omitempty"`
-	Stderr         string          `json:"stderr"`
-	StderrEncoding string          `json:"stderr_encoding,omitempty"`
-	ExitCode       int             `json:"exit_code"`
-	Truncated      map[string]bool `json:"truncated,omitempty"`
+	Stdout         string            `json:"stdout"`
+	StdoutEncoding string            `json:"stdout_encoding,omitempty"`
+	Stderr         string            `json:"stderr"`
+	StderrEncoding string            `json:"stderr_encoding,omitempty"`
+	ExitCode       int               `json:"exit_code"`
+	Truncated      map[string]bool   `json:"truncated,omitempty"`
 }
 
 // RunExec executes an exec-mode action and returns the result.

@@ -81,10 +81,10 @@ func (r AssessRequest) HasEnvelope() bool {
 
 // RiskAssessment is the result of a task risk evaluation.
 type RiskAssessment struct {
-	RiskLevel   string           `json:"risk_level"`  // "low" | "medium" | "high" | "critical"
-	Explanation string           `json:"explanation"` // 1-2 sentence summary
-	Factors     []string         `json:"factors"`     // individual risk signals
-	Conflicts   []ConflictDetail `json:"conflicts"`   // internal inconsistencies within the task
+	RiskLevel   string           `json:"risk_level"`   // "low" | "medium" | "high" | "critical"
+	Explanation string           `json:"explanation"`   // 1-2 sentence summary
+	Factors     []string         `json:"factors"`       // individual risk signals
+	Conflicts   []ConflictDetail `json:"conflicts"`     // internal inconsistencies within the task
 	Model       string           `json:"model"`
 	LatencyMS   int              `json:"latency_ms"`
 
@@ -100,7 +100,7 @@ type RiskAssessment struct {
 
 // ConflictDetail describes an internal inconsistency within a task.
 type ConflictDetail struct {
-	Field       string `json:"field"` // "purpose", "expected_use", "action"
+	Field       string `json:"field"`       // "purpose", "expected_use", "action"
 	Description string `json:"description"`
 	Severity    string `json:"severity"` // "info" | "warning" | "error"
 }

@@ -66,9 +66,9 @@ func TestParseJSON(t *testing.T) {
 		{name: "unknown verdict word", raw: `{"verdict":"maybe","reason":"unsure","agent_guidance":""}`, wantErr: true},
 		{name: "malformed JSON", raw: `not json`, wantErr: true},
 		{
-			name:       "over-length agent_guidance gets truncated with marker",
-			raw:        `{"verdict":"block","reason":"r","agent_guidance":"` + longGuidance + `"}`,
-			wantAllow:  false,
+			name:      "over-length agent_guidance gets truncated with marker",
+			raw:       `{"verdict":"block","reason":"r","agent_guidance":"` + longGuidance + `"}`,
+			wantAllow: false,
 			wantReason: "r",
 			// Don't pin exact contents; assert truncation properties below.
 		},

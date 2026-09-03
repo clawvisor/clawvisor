@@ -216,7 +216,7 @@ func (s *TasksScreen) View() string {
 	b.WriteString("\n")
 
 	if s.err != nil {
-		b.WriteString(tui.StyleRed.Render("Error: "+s.err.Error()) + "\n")
+		b.WriteString(tui.StyleRed.Render("Error: " + s.err.Error()) + "\n")
 	}
 
 	if s.loading && len(s.tasks) == 0 {

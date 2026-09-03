@@ -19,16 +19,16 @@ type stubReq struct {
 	agentID  string
 }
 
-func (s *stubReq) Provider() conversation.Provider       { return s.provider }
-func (s *stubReq) StreamShape() conversation.StreamShape { return 0 }
-func (s *stubReq) Turns() []conversation.Turn            { return nil }
-func (s *stubReq) HTTPRequest() *http.Request            { return nil }
-func (s *stubReq) RawBody() []byte                       { return s.body }
-func (s *stubReq) IsFirstTurn() bool                     { return true }
-func (s *stubReq) ConversationID() string                { return "" }
-func (s *stubReq) UserID() string                        { return s.userID }
-func (s *stubReq) AgentID() string                       { return s.agentID }
-func (s *stubReq) ValidateReplacementBody([]byte) error  { return nil }
+func (s *stubReq) Provider() conversation.Provider                { return s.provider }
+func (s *stubReq) StreamShape() conversation.StreamShape          { return 0 }
+func (s *stubReq) Turns() []conversation.Turn                     { return nil }
+func (s *stubReq) HTTPRequest() *http.Request                     { return nil }
+func (s *stubReq) RawBody() []byte                                { return s.body }
+func (s *stubReq) IsFirstTurn() bool                              { return true }
+func (s *stubReq) ConversationID() string                         { return "" }
+func (s *stubReq) UserID() string                                 { return s.userID }
+func (s *stubReq) AgentID() string                                { return s.agentID }
+func (s *stubReq) ValidateReplacementBody([]byte) error           { return nil }
 
 // OrgModelPolicy.Preprocess doesn't call any mutator methods, so all
 // tests pass nil directly — no stub mutator needed.

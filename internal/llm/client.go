@@ -30,7 +30,7 @@ var ErrSpendCapExhausted = errors.New("haiku proxy spend cap exhausted")
 // (HTTP 529 or 503). Callers can check with errors.Is to apply back-off.
 var ErrOverloaded = errors.New("llm provider overloaded")
 
-const anthropicVersion = "2023-06-01"
+const anthropicVersion       = "2023-06-01"
 const vertexAnthropicVersion = "vertex-2023-10-16"
 
 // defaultMaxTokens is the upper bound sent on every request when no per-client override is set.
@@ -62,7 +62,7 @@ func buildSystemField(system string, cache bool) any {
 
 // ChatMessage is one turn in a chat completion request.
 type ChatMessage struct {
-	Role    string `json:"role"` // "system" | "user" | "assistant"
+	Role    string `json:"role"`    // "system" | "user" | "assistant"
 	Content string `json:"content"`
 	// CacheControl marks this message as a prompt-cache breakpoint. Only honored
 	// on Anthropic and Vertex providers, and only for system messages. Ignored
@@ -85,10 +85,10 @@ type Client struct {
 	hedgeDelay        time.Duration      // 0 → no hedge; otherwise fire a second request after this delay
 
 	// Gemini-specific settings.
-	geminiThinkingLevel    string            // "MINIMAL" | "LOW" | "MEDIUM" | "HIGH"; "" → MINIMAL
-	geminiCacheNameFn      func() string     // returns current Gemini cachedContents resource name; "" = uncached path
-	geminiCacheInvalidator func(name string) // called when a cache reference fails server-side; manager drops the matching name and refreshes
-	slogger                *slog.Logger      // optional; defaults to slog.Default() via logger()
+	geminiThinkingLevel    string             // "MINIMAL" | "LOW" | "MEDIUM" | "HIGH"; "" → MINIMAL
+	geminiCacheNameFn      func() string      // returns current Gemini cachedContents resource name; "" = uncached path
+	geminiCacheInvalidator func(name string)  // called when a cache reference fails server-side; manager drops the matching name and refreshes
+	slogger                *slog.Logger       // optional; defaults to slog.Default() via logger()
 }
 
 // logger returns the client's structured logger, defaulting to slog.Default()

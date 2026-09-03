@@ -253,9 +253,9 @@ const substitutionTTL = 24 * time.Hour
 // to splice the model's original tool_use back into the assistant turn
 // and replace the harness-supplied tool_result content with the menu.
 type PendingSubstitution struct {
-	DriftID           string
-	MenuText          string
-	OriginalToolName  string
+	DriftID          string
+	MenuText         string
+	OriginalToolName string
 	OriginalToolInput []byte
 }
 

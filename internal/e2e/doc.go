@@ -9,12 +9,12 @@
 //
 //   - user-sim   — pursues the goal, terminates on <DONE>
 //   - responder  — real Claude with a single http_request tool that goes
-//     through the proxy under test
+//                  through the proxy under test
 //   - approver   — watches for pending runtime approvals and resolves each
-//     according to the scenario's script (allow_once,
-//     allow_session, allow_always, deny)
+//                  according to the scenario's script (allow_once,
+//                  allow_session, allow_always, deny)
 //   - judge      — grades soft expectations against the transcript and a
-//     snapshot of runtime_events / approvals
+//                  snapshot of runtime_events / approvals
 //
 // Run with: go test ./internal/e2e -run TestE2E
 // Requires: CLAWVISOR_E2E_ANTHROPIC_KEY (else the LLM tests skip).

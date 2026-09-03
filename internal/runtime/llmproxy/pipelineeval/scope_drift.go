@@ -23,10 +23,10 @@ import (
 // (legacy tests, unconfigured deployments) keep behaving exactly the
 // way they did before scope drift existed.
 type scopeDriftCoordinator struct {
-	agent    llmproxy.AgentContext
-	audit    llmproxy.AuditContext
-	registry llmproxy.ScopeDriftRegistry
-	catalog  interface {
+	agent          llmproxy.AgentContext
+	audit          llmproxy.AuditContext
+	registry       llmproxy.ScopeDriftRegistry
+	catalog        interface {
 		Resolve(host, method, path string) (llmproxy.ResolvedAction, bool)
 	}
 	provider       conversation.Provider
@@ -92,15 +92,14 @@ func driftSourceFor(source runtimedecision.DecisionSource) llmproxy.ScopeDriftSo
 
 // MintResult is the coordinator's signal to its caller. MenuText is
 // the rendered menu; the caller surfaces it to the agent by:
-//  1. Rewriting the blocked tool_use into Sentinel (a canonical Bash
-//     no-op encoding the original call) so the harness's local
-//     execution is harmless.
-//  2. Attaching Spec to the resulting verdict so the postprocess
-//     layer registers the inbound substitution after the verdict is
-//     finalized. The coordinator no longer writes to the registry
-//     itself — that side-effecting step is owned by postprocess,
-//     keeping the verdict pure data.
-//
+//   1. Rewriting the blocked tool_use into Sentinel (a canonical Bash
+//      no-op encoding the original call) so the harness's local
+//      execution is harmless.
+//   2. Attaching Spec to the resulting verdict so the postprocess
+//      layer registers the inbound substitution after the verdict is
+//      finalized. The coordinator no longer writes to the registry
+//      itself — that side-effecting step is owned by postprocess,
+//      keeping the verdict pure data.
 // driftID is the registered drift's id, for audit linkage. OK reports
 // whether the mint actually landed — a false return tells the caller
 // to fall through to its legacy approval-prompt path.

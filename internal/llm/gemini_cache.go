@@ -27,10 +27,10 @@ import (
 // until it expires server-side, at which point the client gracefully
 // degrades to uncached calls.
 type GeminiCacheManager struct {
-	cfg         GeminiCacheManagerConfig
-	httpClient  *http.Client
-	tokenSource oauth2.TokenSource
-	logger      *slog.Logger
+	cfg          GeminiCacheManagerConfig
+	httpClient   *http.Client
+	tokenSource  oauth2.TokenSource
+	logger       *slog.Logger
 
 	// cacheName is updated atomically so reads from CacheName() never lock.
 	cacheName atomic.Value // string
@@ -52,8 +52,8 @@ type GeminiCacheManagerConfig struct {
 	Region       string // "global" allowed
 	Model        string // bare model name, e.g. "gemini-3.1-flash-lite-preview"
 	SystemPrompt string
-	TTL          time.Duration      // default 30m
-	HTTPClient   *http.Client       // optional; defaults to a 30s-timeout client
+	TTL          time.Duration // default 30m
+	HTTPClient   *http.Client  // optional; defaults to a 30s-timeout client
 	TokenSource  oauth2.TokenSource // optional; defaults to ADC
 	Logger       *slog.Logger
 }

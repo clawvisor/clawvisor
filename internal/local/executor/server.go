@@ -23,11 +23,11 @@ import (
 type ServerState string
 
 const (
-	ServerStopped     ServerState = "stopped"
-	ServerStarting    ServerState = "starting"
-	ServerHealthy     ServerState = "healthy"
-	ServerStartFailed ServerState = "starting_failed"
-	ServerUnhealthy   ServerState = "unhealthy"
+	ServerStopped       ServerState = "stopped"
+	ServerStarting      ServerState = "starting"
+	ServerHealthy       ServerState = "healthy"
+	ServerStartFailed   ServerState = "starting_failed"
+	ServerUnhealthy     ServerState = "unhealthy"
 )
 
 // ServerProcess manages a long-running server-mode service process.
@@ -47,9 +47,9 @@ type ServerProcess struct {
 
 // ServerManager manages all server-mode service processes.
 type ServerManager struct {
-	mu      sync.RWMutex
-	servers map[string]*ServerProcess
-	runDir  string
+	mu        sync.RWMutex
+	servers   map[string]*ServerProcess
+	runDir    string
 }
 
 // NewServerManager creates a new server process manager.
@@ -496,9 +496,9 @@ type ServerResult struct {
 
 // ServerData holds the output data from a server-mode action.
 type ServerData struct {
-	Status       int               `json:"status"`
-	Body         string            `json:"body"`
-	BodyEncoding string            `json:"body_encoding,omitempty"`
-	ContentType  string            `json:"content_type"`
+	Status       int    `json:"status"`
+	Body         string `json:"body"`
+	BodyEncoding string `json:"body_encoding,omitempty"`
+	ContentType  string `json:"content_type"`
 	Headers      map[string]string `json:"headers,omitempty"`
 }

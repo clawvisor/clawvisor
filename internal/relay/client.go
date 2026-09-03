@@ -51,9 +51,9 @@ type Client struct {
 	handler    http.Handler
 	logger     *slog.Logger
 
-	baseDelay   time.Duration
-	maxDelay    time.Duration
-	authTimeout time.Duration // overridable for tests; defaults to authTimeout const
+	baseDelay    time.Duration
+	maxDelay     time.Duration
+	authTimeout  time.Duration // overridable for tests; defaults to authTimeout const
 
 	mu         sync.Mutex
 	conn       *websocket.Conn

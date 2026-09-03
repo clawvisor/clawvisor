@@ -12,27 +12,27 @@ import (
 
 // Server is the localhost HTTP server for pairing and status.
 type Server struct {
-	port           int
-	daemonID       string
-	daemonName     string
-	allowedOrigins []string
-	codeMgr        *CodeManager
-	onPairComplete func(token, origin string) error
-	statusHandler  func() interface{}
-	reloadHandler  func() interface{}
-	mux            *http.ServeMux
-	server         *http.Server
+	port            int
+	daemonID        string
+	daemonName      string
+	allowedOrigins  []string
+	codeMgr         *CodeManager
+	onPairComplete  func(token, origin string) error
+	statusHandler   func() interface{}
+	reloadHandler   func() interface{}
+	mux             *http.ServeMux
+	server          *http.Server
 }
 
 // ServerConfig holds configuration for the pairing server.
 type ServerConfig struct {
-	Port           int
-	DaemonID       string
-	DaemonName     string
-	AllowedOrigins []string
-	OnPairComplete func(token, origin string) error
-	StatusHandler  func() interface{}
-	ReloadHandler  func() interface{}
+	Port            int
+	DaemonID        string
+	DaemonName      string
+	AllowedOrigins  []string
+	OnPairComplete  func(token, origin string) error
+	StatusHandler   func() interface{}
+	ReloadHandler   func() interface{}
 }
 
 // NewServer creates a new pairing HTTP server.

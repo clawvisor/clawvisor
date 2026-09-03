@@ -27,12 +27,12 @@ import (
 	"sync"
 
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
-	"github.com/clawvisor/clawvisor/pkg/config"
 	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
-	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // Server is the booted harness state. Tests get one Server per scenario.

@@ -16,10 +16,9 @@ import (
 // answered by the menu — faithful history, helpful result.
 //
 // All three options reuse the same control-plane POST shape:
-//
-//	(a) expand:     POST /api/control/tasks/<task_id>/expand?surface=inline
-//	(b) new_task:   POST /api/control/tasks?surface=inline
-//	(c) one_off:    POST /api/control/scope-drifts/<drift_id>/one-off?surface=inline
+//   (a) expand:     POST /api/control/tasks/<task_id>/expand?surface=inline
+//   (b) new_task:   POST /api/control/tasks?surface=inline
+//   (c) one_off:    POST /api/control/scope-drifts/<drift_id>/one-off?surface=inline
 //
 // The agent emits any of these as a normal POST tool call; the
 // respective intercept opens an inline approval hold and the user's

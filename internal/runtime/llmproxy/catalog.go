@@ -317,10 +317,10 @@ func NewServiceCatalogFromRegistry(reg *adapters.Registry) *ServiceCatalog {
 // that should not pay the build cost until first use, and wants to swap
 // in updated definitions without restarting.
 type LazyServiceCatalog struct {
-	mu    sync.RWMutex
-	defs  []yamldef.ServiceDef
-	built *ServiceCatalog
-	dirty bool
+	mu      sync.RWMutex
+	defs    []yamldef.ServiceDef
+	built   *ServiceCatalog
+	dirty   bool
 }
 
 // NewLazyServiceCatalog returns a lazy catalog seeded with defs.

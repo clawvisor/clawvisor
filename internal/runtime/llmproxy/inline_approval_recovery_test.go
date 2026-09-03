@@ -14,9 +14,9 @@ import (
 // the two TaskLifecycleEvent methods recovery uses. Other Store
 // methods panic — tests targeting recovery should never touch them.
 type fakeLifecycleStore struct {
-	store.Store                                           // embed so unused methods compile; nil receiver panics if called
-	byApproval     map[string]*store.TaskLifecycleEvent   // most-recent event per approval (Get lookups)
-	byApprovalList map[string][]*store.TaskLifecycleEvent // all events per approval (List lookups)
+	store.Store                                            // embed so unused methods compile; nil receiver panics if called
+	byApproval     map[string]*store.TaskLifecycleEvent    // most-recent event per approval (Get lookups)
+	byApprovalList map[string][]*store.TaskLifecycleEvent  // all events per approval (List lookups)
 	listErr        error
 	getErr         error
 }

@@ -15,12 +15,12 @@ import (
 var assetsFS embed.FS
 
 const (
-	assetDir         = "assets"
-	dockerfileName   = "Dockerfile"
-	initFirewallName = "init-firewall.sh"
-	entrypointName   = "entrypoint-holder.sh"
-	executablePerm   = 0o755
-	regularFilePerm  = 0o644
+	assetDir          = "assets"
+	dockerfileName    = "Dockerfile"
+	initFirewallName  = "init-firewall.sh"
+	entrypointName    = "entrypoint-holder.sh"
+	executablePerm    = 0o755
+	regularFilePerm   = 0o644
 )
 
 // assetFiles returns the embedded asset files in deterministic order.

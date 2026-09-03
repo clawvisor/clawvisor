@@ -75,9 +75,9 @@ func TestBuildInternalRequest_FetchCatalog_ServiceParam(t *testing.T) {
 
 func TestBuildInternalRequest_TimeoutParam(t *testing.T) {
 	tests := []struct {
-		name         string
-		toolName     string
-		extraArgs    map[string]any
+		name        string
+		toolName    string
+		extraArgs   map[string]any
 		wantContains string
 		wantMissing  string
 	}{
@@ -100,16 +100,16 @@ func TestBuildInternalRequest_TimeoutParam(t *testing.T) {
 			wantContains: "timeout=45",
 		},
 		{
-			name:         "injection via ampersand in timeout",
-			toolName:     "gateway_request",
-			extraArgs:    map[string]any{"wait": true, "timeout": "120&admin=true"},
+			name:        "injection via ampersand in timeout",
+			toolName:    "gateway_request",
+			extraArgs:   map[string]any{"wait": true, "timeout": "120&admin=true"},
 			wantContains: "timeout=120%26admin%3Dtrue",
 			wantMissing:  "&admin=true",
 		},
 		{
-			name:         "injection via equals in timeout",
-			toolName:     "gateway_request",
-			extraArgs:    map[string]any{"wait": true, "timeout": "120=foo"},
+			name:        "injection via equals in timeout",
+			toolName:    "gateway_request",
+			extraArgs:   map[string]any{"wait": true, "timeout": "120=foo"},
 			wantContains: "timeout=120%3Dfoo",
 			wantMissing:  "=foo&",
 		},

@@ -1180,15 +1180,11 @@ func TestExpand_ConcurrentApproveAndDenyRace(t *testing.T) {
 // (1) agent expands → pending #A;
 // (2) approve handler reads task with pending #A;
 // (3) before the approve writes, a different caller denies (clearing
-//
-//	pending);
-//
+//     pending);
 // (4) agent expands again → pending #B;
 // (5) the original approve from (2) finally writes — its CAS must
-//
-//	LOSE because pending_expansion_json no longer matches snapshot
-//	#A, even though status is again 'pending_scope_expansion'.
-//
+//     LOSE because pending_expansion_json no longer matches snapshot
+//     #A, even though status is again 'pending_scope_expansion'.
 // Without the snapshot guard, the stale approve would grant scope
 // #A that the user already denied. The store-layer test goes
 // directly through UpdateTaskEnvelopeFrom so we exercise the SQL
