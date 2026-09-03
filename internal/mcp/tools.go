@@ -103,7 +103,7 @@ func toolDefs() []Tool {
 					"expires_in_seconds": {"type": "integer", "description": "Session task expiry in seconds (default 1800)"},
 					"lifetime": {"type": "string", "enum": ["session", "sliding", "standing"], "description": "Task lifetime: session (fixed expiry), sliding (expiry auto-extends 10 min on each authorized tool_use), or standing (no expiry)"},
 					"wait": {"type": "boolean", "description": "Block until the task is approved or denied (default true)"},
-					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120). Set this below your own tool-call timeout — the call blocks for the full duration, and if your client gives up first you lose the answer while the approval still stands."}
 				},
 				"required": ["purpose"]
 			}`),
@@ -116,7 +116,7 @@ func toolDefs() []Tool {
 				"properties": {
 					"task_id": {"type": "string", "description": "The task ID to look up"},
 					"wait": {"type": "boolean", "description": "Long-poll until the task leaves pending state (default false)"},
-					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120). Set this below your own tool-call timeout — the call blocks for the full duration, and if your client gives up first you lose the answer while the approval still stands."}
 				},
 				"required": ["task_id"]
 			}`),
@@ -187,7 +187,7 @@ func toolDefs() []Tool {
 					},
 					"reason": {"type": "string", "description": "One-line summary of why this expansion is needed. If you are revising the why of an existing entry, write it so it covers BOTH the prior approved purpose AND the new capability — replace-by-name overwrites the old why wholesale."},
 					"wait": {"type": "boolean", "description": "Block until the expansion is approved or denied (default true)"},
-					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120). Set this below your own tool-call timeout — the call blocks for the full duration, and if your client gives up first you lose the answer while the approval still stands."}
 				},
 				"required": ["task_id", "reason"]
 			}`),
@@ -207,7 +207,7 @@ func toolDefs() []Tool {
 					"context": {"type": "object", "description": "Optional context (source, data_origin, callback_url)"},
 					"session_id": {"type": "string", "description": "Consistent UUID for chain context on standing tasks"},
 					"wait": {"type": "boolean", "description": "Block until approved and return executed result (default true)"},
-					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120). Set this below your own tool-call timeout — the call blocks for the full duration, and if your client gives up first you lose the answer while the approval still stands."}
 				},
 				"required": ["service", "action", "params", "reason", "request_id", "task_id"]
 			}`),
@@ -239,7 +239,7 @@ func toolDefs() []Tool {
 						"description": "Array of gateway sub-requests. Each sub-request has the same schema as gateway_request."
 					},
 					"wait": {"type": "boolean", "description": "If true, each sub-request long-polls for approval before returning (default true)"},
-					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds applied to each sub-request (default 120, max 120)"}
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds applied to each sub-request (default 120, max 120). Set this below your own tool-call timeout — the call blocks for the full duration, and if your client gives up first you lose the answer while the approval still stands."}
 				},
 				"required": ["requests"]
 			}`),
@@ -252,7 +252,7 @@ func toolDefs() []Tool {
 				"properties": {
 					"request_id": {"type": "string", "description": "The request ID from the original gateway_request"},
 					"wait": {"type": "boolean", "description": "Block until the request is approved, then execute (default true)"},
-					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120). Set this below your own tool-call timeout — the call blocks for the full duration, and if your client gives up first you lose the answer while the approval still stands."}
 				},
 				"required": ["request_id"]
 			}`),
