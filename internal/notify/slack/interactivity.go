@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/notify"
@@ -240,7 +241,8 @@ func (n *Notifier) reportStaleToken(ctx context.Context, responseURL string, err
 // interaction's response_url. This needs no channel/ts and no extra scope,
 // and clearing the blocks is what removes the buttons.
 func (n *Notifier) replaceOriginal(ctx context.Context, responseURL, text string, blocks []block) {
-	if responseURL == "" {
+	if !validResponseURL(responseURL) {
+		n.logger.WarnContext(ctx, "slack: refusing to use a non-Slack response_url")
 		return
 	}
 	body, err := json.Marshal(map[string]any{
@@ -264,11 +266,41 @@ func (n *Notifier) replaceOriginal(ctx context.Context, responseURL, text string
 	_ = resp.Body.Close()
 }
 
+// responseURLHost is the only host Slack serves interaction response_urls
+// from. Slack's format is https://hooks.slack.com/actions/T…/…/….
+const responseURLHost = "hooks.slack.com"
+
+// validResponseURL hostname-locks the response_url before we make a request
+// to it.
+//
+// The URL arrives inside the interaction payload, so it is attacker-chosen
+// input to an outbound request from inside the deployment's network — a
+// classic SSRF sink. The v0 signature check normally proves the payload came
+// from Slack, but that is a single control over a shared secret: if it ever
+// leaks, an unvalidated response_url turns this endpoint into a pivot at
+// cloud-metadata and internal services. Locking the host means a forged
+// payload can at worst talk to Slack.
+//
+// Mirrors the hostname lock the cloud governance webhooks already apply.
+func validResponseURL(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" {
+		return false
+	}
+	// EqualFold, and compare Hostname() not Host, so neither casing nor an
+	// appended port slips a different origin through.
+	return strings.EqualFold(u.Hostname(), responseURLHost)
+}
+
 // ephemeral posts a message visible only to the clicker, via the payload's
 // response_url. Best-effort: failure to explain a rejection must not affect
 // the rejection itself.
 func (n *Notifier) ephemeral(ctx context.Context, responseURL, text string) {
-	if responseURL == "" {
+	if !validResponseURL(responseURL) {
+		n.logger.WarnContext(ctx, "slack: refusing to use a non-Slack response_url")
 		return
 	}
 	body, err := json.Marshal(map[string]any{
