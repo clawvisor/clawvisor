@@ -633,6 +633,19 @@ func (s *Server) routes() http.Handler {
 		groupValidator = gv
 	}
 	notificationsHandler := handlers.NewNotificationsHandler(s.store, s.notifier, pairer, groupObs, groupDetector, agentPairer, groupValidator, baseURL)
+	// Slack is optional: present only when the deployment configured the
+	// Slack app and the notifier chain actually carries a Slack notifier.
+	var slackCfgStore notify.SlackConfigStore
+	if sc, ok := s.notifier.(notify.SlackConfigStore); ok {
+		slackCfgStore = sc
+	}
+	var slackInstaller notify.SlackInstaller
+	if si, ok := s.notifier.(notify.SlackInstaller); ok {
+		slackInstaller = si
+	}
+	if slackCfgStore != nil && slackInstaller != nil && s.oauthStateStore != nil {
+		notificationsHandler.SetSlack(slackCfgStore, slackInstaller, s.oauthStateStore)
+	}
 	// Construct intent verifier (noop if disabled).
 	var verifier intent.Verifier = intent.NoopVerifier{}
 	if s.llmCfg.Verification.Enabled {
@@ -957,6 +970,21 @@ func (s *Server) routes() http.Handler {
 
 	// Notifications (user JWT)
 	mux.Handle("GET /api/notifications", user(notificationsHandler.List))
+	mux.Handle("GET /api/notifications/slack", user(notificationsHandler.SlackConfig))
+	mux.Handle("DELETE /api/notifications/slack", user(notificationsHandler.SlackDisconnect))
+	mux.Handle("GET /api/notifications/slack/install", user(notificationsHandler.SlackInstallURL))
+	mux.Handle("GET /api/notifications/slack/channels", user(notificationsHandler.SlackChannels))
+	mux.Handle("PUT /api/notifications/slack/channel", user(notificationsHandler.SlackSetChannel))
+	mux.Handle("PUT /api/notifications/slack/approvers", user(notificationsHandler.SlackSetApprovers))
+	mux.Handle("POST /api/notifications/slack/test", user(notificationsHandler.SlackTest))
+	// Slack OAuth callback and interaction endpoint are unauthenticated:
+	// the browser arrives from Slack without a session cookie, and Slack
+	// itself posts interactions server-to-server. Authorization comes from
+	// the single-use state parameter and the request signature respectively.
+	mux.HandleFunc("GET /api/notifications/slack/callback", notificationsHandler.SlackCallback)
+	if recv, ok := s.notifier.(notify.SlackInteractionReceiver); ok {
+		mux.HandleFunc("POST /api/notifications/slack/interactions", recv.HandleInteraction)
+	}
 	mux.Handle("PUT /api/notifications/telegram", user(notificationsHandler.UpsertTelegram))
 	mux.Handle("DELETE /api/notifications/telegram", user(notificationsHandler.DeleteTelegram))
 	mux.Handle("POST /api/notifications/telegram/test", user(notificationsHandler.TestTelegram))

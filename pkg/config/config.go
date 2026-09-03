@@ -73,6 +73,7 @@ type Config struct {
 	Observability ObservabilityConfig `yaml:"observability"`
 	Daemon        DaemonConfig        `yaml:"daemon"`
 	Push          PushConfig          `yaml:"push"`
+	Slack         SlackConfig         `yaml:"slack"`
 	AutoUpdate    AutoUpdateConfig    `yaml:"auto_update"`
 	Redis         RedisConfig         `yaml:"redis"`
 
@@ -120,6 +121,27 @@ type DaemonConfig struct {
 type PushConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	URL     string `yaml:"url"`
+}
+
+// SlackConfig holds the deployment's Slack app identity, used to install
+// Clawvisor into a user's workspace and to verify the interaction callbacks
+// Slack sends back.
+//
+// A single app serves every workspace, so these are deployment-wide secrets,
+// not per-user. Slack approvals require a publicly reachable callback URL and
+// are therefore only enabled where PublicURL is set.
+type SlackConfig struct {
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	// SigningSecret verifies that interaction payloads came from Slack. It
+	// is the only credential on the callback endpoint, so approvals stay
+	// disabled while it is unset rather than accepting unsigned requests.
+	SigningSecret string `yaml:"signing_secret"`
+}
+
+// Enabled reports whether Slack approvals can run.
+func (c SlackConfig) Enabled() bool {
+	return c.ClientID != "" && c.ClientSecret != "" && c.SigningSecret != ""
 }
 
 // AutoUpdateConfig holds settings for automatic binary updates.
@@ -1163,6 +1185,16 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_PUSH_URL"); v != "" {
 		cfg.Push.URL = v
+	}
+
+	if v := os.Getenv("CLAWVISOR_SLACK_CLIENT_ID"); v != "" {
+		cfg.Slack.ClientID = v
+	}
+	if v := os.Getenv("CLAWVISOR_SLACK_CLIENT_SECRET"); v != "" {
+		cfg.Slack.ClientSecret = v
+	}
+	if v := os.Getenv("CLAWVISOR_SLACK_SIGNING_SECRET"); v != "" {
+		cfg.Slack.SigningSecret = v
 	}
 
 	if v := os.Getenv("REDIS_URL"); v != "" {

@@ -43,6 +43,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/intent"
 	intnotify "github.com/clawvisor/clawvisor/internal/notify"
 	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
+	slacknotify "github.com/clawvisor/clawvisor/internal/notify/slack"
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
 	intredis "github.com/clawvisor/clawvisor/internal/redis"
 	"github.com/clawvisor/clawvisor/internal/relay"
@@ -447,10 +448,30 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		}
 	}
 
+	// Slack approvals need a publicly reachable, signature-verified callback
+	// URL for button clicks (Slack has no polling equivalent of Telegram's
+	// getUpdates), so they stay off unless the app credentials and a public
+	// URL are both configured.
+	var slackN *slacknotify.Notifier
+	if cfg.Slack.Enabled() && cfg.Server.PublicURL != "" {
+		slackN = slacknotify.New(st, cfg.Slack.SigningSecret, slacknotify.AppCredentials{
+			ClientID:     cfg.Slack.ClientID,
+			ClientSecret: cfg.Slack.ClientSecret,
+			RedirectURL:  strings.TrimRight(cfg.Server.PublicURL, "/") + "/api/notifications/slack/callback",
+		}, logger)
+		slackN.SetVault(v)
+		go slackN.RunCleanup(ctx)
+	} else if cfg.Slack.Enabled() {
+		logger.Warn("slack approvals disabled: server.public_url is required for the interaction callback")
+	}
+
 	var notifiers []notify.Notifier
 	notifiers = append(notifiers, telegramN)
 	if pushN != nil {
 		notifiers = append(notifiers, pushN)
+	}
+	if slackN != nil {
+		notifiers = append(notifiers, slackN)
 	}
 	var notifier notify.Notifier = notify.NewMultiNotifier(ctx, logger, notifiers...)
 

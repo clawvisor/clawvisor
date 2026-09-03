@@ -1105,12 +1105,19 @@ func (h *ConnectionsHandler) updateNotificationMsg(ctx context.Context, targetID
 	if h.notifier == nil {
 		return
 	}
-	msgID, err := h.st.GetNotificationMessage(ctx, "connection", targetID, "telegram")
-	if err != nil {
-		return
+	if msgID, err := h.st.GetNotificationMessage(ctx, "connection", targetID, "telegram"); err == nil {
+		if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
+			h.logger.WarnContext(ctx, "telegram message update failed", "err", err, "target_type", "connection", "target_id", targetID)
+		}
 	}
-	if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
-		h.logger.WarnContext(ctx, "telegram message update failed", "err", err, "target_type", "connection", "target_id", targetID)
+	// Channels that address messages by approval target rather than by an
+	// opaque message ID (Slack) resolve their own reference — the ID above
+	// is Telegram's and means nothing to them. No-op when no such channel
+	// is configured.
+	if tu, ok := h.notifier.(notify.TargetMessageUpdater); ok {
+		if err := tu.UpdateMessageForTarget(ctx, userID, "connection", targetID, text); err != nil {
+			h.logger.WarnContext(ctx, "target-addressed message update failed", "err", err, "target_type", "connection", "target_id", targetID)
+		}
 	}
 }
 

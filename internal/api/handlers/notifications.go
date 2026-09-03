@@ -80,12 +80,18 @@ func sanitizeNotificationConfig(raw json.RawMessage) json.RawMessage {
 type NotificationsHandler struct {
 	st             store.Store
 	notifier       notify.Notifier                 // may be nil
-	pairer         notify.TelegramPairer            // may be nil
-	groupObs       notify.GroupObserver             // may be nil
-	groupDetector  notify.GroupDetector             // may be nil
-	agentPairer    notify.AgentGroupPairer          // may be nil
-	groupValidator notify.GroupMembershipValidator  // may be nil
+	pairer         notify.TelegramPairer           // may be nil
+	groupObs       notify.GroupObserver            // may be nil
+	groupDetector  notify.GroupDetector            // may be nil
+	agentPairer    notify.AgentGroupPairer         // may be nil
+	groupValidator notify.GroupMembershipValidator // may be nil
 	baseURL        string
+
+	// Slack dependencies, wired via SetSlack. Nil when the deployment has
+	// no Slack app configured.
+	slackCfg       notify.SlackConfigStore
+	slackInstaller notify.SlackInstaller
+	oauthState     OAuthStateStore
 }
 
 func NewNotificationsHandler(st store.Store, notifier notify.Notifier, pairer notify.TelegramPairer, groupObs notify.GroupObserver, groupDetector notify.GroupDetector, agentPairer notify.AgentGroupPairer, groupValidator notify.GroupMembershipValidator, baseURL string) *NotificationsHandler {
@@ -103,9 +109,9 @@ func (h *NotificationsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch the two currently-supported channels; omit missing ones gracefully.
+	// Fetch the supported channels; omit missing ones gracefully.
 	var configs []map[string]any
-	for _, channel := range []string{"telegram"} {
+	for _, channel := range []string{"telegram", "slack"} {
 		cfg, err := h.st.GetNotificationConfig(r.Context(), user.ID, channel)
 		if err != nil {
 			continue // not configured — skip

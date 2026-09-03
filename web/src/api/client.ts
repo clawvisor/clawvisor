@@ -627,6 +627,32 @@ export interface PendingGroup {
   detected_at: string
 }
 
+export interface SlackApprover {
+  slack_user_id: string
+  display_name: string
+}
+
+export interface SlackConfig {
+  connected: boolean
+  team_id: string
+  team_name: string
+  /** Empty until a destination channel has been chosen. */
+  channel_id: string
+  channel_name: string
+  installer_slack_user_id: string
+  /** Additional Slack users allowed to resolve approvals. The installer is
+   *  always allowed and is not repeated here. */
+  approvers: SlackApprover[]
+}
+
+export interface SlackChannel {
+  id: string
+  name: string
+  is_private: boolean
+  is_member: boolean
+  num_members: number
+}
+
 export interface TelegramGroup {
   id: string
   user_id: string
@@ -1806,6 +1832,16 @@ export const api = {
     confirmPairing: (pairingId: string, code: string) =>
       post<NotificationConfig>(
         `/api/notifications/telegram/pair/${pairingId}/confirm`, { code }),
+    // Slack
+    slackConfig: () => get<SlackConfig>('/api/notifications/slack'),
+    slackInstallUrl: () => get<{ url: string }>('/api/notifications/slack/install'),
+    slackChannels: () => get<SlackChannel[]>('/api/notifications/slack/channels'),
+    setSlackChannel: (channelId: string, channelName: string) =>
+      put<SlackConfig>('/api/notifications/slack/channel', { channel_id: channelId, channel_name: channelName }),
+    setSlackApprovers: (slackUserIds: string[]) =>
+      put<SlackConfig>('/api/notifications/slack/approvers', { slack_user_ids: slackUserIds }),
+    testSlack: () => post<{ status: string }>('/api/notifications/slack/test', {}),
+    disconnectSlack: () => del<void>('/api/notifications/slack'),
     // Group observation
     upsertTelegramGroup: (groupChatId: string, title?: string) =>
       post<TelegramGroup>('/api/notifications/telegram/group', { group_chat_id: groupChatId, title: title ?? '' }),

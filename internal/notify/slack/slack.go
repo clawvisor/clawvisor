@@ -1,0 +1,513 @@
+// Package slack implements notify.Notifier on top of the Slack Web API.
+//
+// Unlike the Telegram notifier, where each user brings their own bot token
+// and the server long-polls getUpdates, Slack has no polling equivalent for
+// button clicks. A single Clawvisor-owned Slack app is installed into the
+// user's workspace via OAuth, and Slack POSTs interactions back to a public
+// endpoint (see interactivity.go). That makes this notifier cloud-only: it
+// needs a publicly reachable, signature-verified callback URL.
+//
+// Per-user state lives in notification_configs (channel = "slack"); the bot
+// token is held in the credential vault, never in the JSON column.
+package slack
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/clawvisor/clawvisor/internal/display"
+	"github.com/clawvisor/clawvisor/pkg/notify"
+	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/vault"
+)
+
+// vaultBotTokenKey is the key under which a workspace bot token is encrypted
+// in the credential vault.
+const vaultBotTokenKey = "notify.slack.bot_token"
+
+// notifyChannel is the notification_configs.channel discriminator.
+const notifyChannel = "slack"
+
+// callbackTTL bounds how long a posted button stays live. It matches the
+// Telegram notifier's 6 minutes so a request cannot be resolved from a stale
+// Slack message long after the approval itself expired.
+const callbackTTL = 6 * time.Minute
+
+// Notifier posts approval prompts to a user's Slack channel and turns button
+// clicks back into notify.CallbackDecision values.
+type Notifier struct {
+	store  store.Store
+	vault  vault.Vault // optional; when set, bot tokens are encrypted at rest
+	client *http.Client
+	logger *slog.Logger
+
+	signingSecret string
+	creds         AppCredentials
+	cbTokens      CallbackTokenStorer
+	decisionCh    chan notify.CallbackDecision
+	replay        ReplayGuard
+}
+
+// New creates a Slack notifier. signingSecret verifies that interaction
+// payloads really came from Slack; creds identify the Clawvisor Slack app
+// during the OAuth install.
+func New(st store.Store, signingSecret string, creds AppCredentials, logger *slog.Logger) *Notifier {
+	return &Notifier{
+		store:         st,
+		client:        &http.Client{Timeout: 10 * time.Second},
+		logger:        logger,
+		signingSecret: signingSecret,
+		creds:         creds,
+		cbTokens:      newCallbackTokenStore(),
+		decisionCh:    make(chan notify.CallbackDecision, 32),
+		replay:        noopReplayGuard{},
+	}
+}
+
+// SetVault wires the credential vault in. Call before serving traffic.
+func (n *Notifier) SetVault(v vault.Vault) { n.vault = v }
+
+// SetRedisStores configures cross-instance stores. A Slack interaction can
+// land on any replica, so both the callback tokens and the replay guard must
+// be shared state in multi-instance deployments — the in-memory defaults
+// would let a click on replica B fail to find a token minted on replica A.
+func (n *Notifier) SetRedisStores(cbTokens CallbackTokenStorer, replay ReplayGuard) {
+	if cbTokens != nil {
+		n.cbTokens = cbTokens
+	}
+	if replay != nil {
+		n.replay = replay
+	}
+}
+
+// DecisionChannel exposes resolved button clicks to the server's decision
+// consumer. Discovered by MultiNotifier via type assertion.
+func (n *Notifier) DecisionChannel() <-chan notify.CallbackDecision { return n.decisionCh }
+
+// RunCleanup evicts expired callback tokens until ctx is cancelled.
+func (n *Notifier) RunCleanup(ctx context.Context) {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			n.cbTokens.Cleanup()
+		}
+	}
+}
+
+// ── notify.Notifier implementation ───────────────────────────────────────────
+
+func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalRequest) (string, error) {
+	cfg, err := n.userConfig(ctx, req.UserID)
+	if err != nil {
+		return "", err
+	}
+
+	blocks := approvalBlocks(req)
+	blocks = append(blocks, n.actionsFor(
+		"approval", approvalNotifyTargetID(req.RequestID, req.TaskID),
+		req.UserID, req.TaskID, cfg.ChannelID, "Deny", req.ApproveURL, req.DenyURL,
+	))
+
+	ref, err := n.post(ctx, cfg, fallbackText("Approval request", req.AgentName), blocks)
+	if err != nil {
+		return "", fmt.Errorf("slack: send approval request: %w", err)
+	}
+	n.recordMessage(ctx, "approval", approvalNotifyTargetID(req.RequestID, req.TaskID), ref)
+	return ref, nil
+}
+
+func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskApprovalRequest) (string, error) {
+	cfg, err := n.userConfig(ctx, req.UserID)
+	if err != nil {
+		return "", err
+	}
+
+	blocks := taskApprovalBlocks(req)
+	blocks = append(blocks, n.actionsFor(
+		"task", req.TaskID, req.UserID, "", cfg.ChannelID, "Deny", req.ApproveURL, req.DenyURL,
+	))
+
+	ref, err := n.post(ctx, cfg, fallbackText("Task approval request", req.AgentName), blocks)
+	if err != nil {
+		return "", fmt.Errorf("slack: send task approval request: %w", err)
+	}
+	n.recordMessage(ctx, "task", req.TaskID, ref)
+	return ref, nil
+}
+
+func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.ScopeExpansionRequest) (string, error) {
+	cfg, err := n.userConfig(ctx, req.UserID)
+	if err != nil {
+		return "", err
+	}
+
+	blocks := scopeExpansionBlocks(req)
+	blocks = append(blocks, n.actionsFor(
+		"scope_expansion", req.TaskID, req.UserID, "", cfg.ChannelID,
+		"Deny expansion", req.ApproveURL, req.DenyURL,
+	))
+
+	ref, err := n.post(ctx, cfg, fallbackText("Scope expansion request", req.AgentName), blocks)
+	if err != nil {
+		return "", fmt.Errorf("slack: send scope expansion request: %w", err)
+	}
+	// Scope expansion resolves against the parent task, so it shares the
+	// "task" target namespace with the original approval prompt.
+	n.recordMessage(ctx, "task", req.TaskID, ref)
+	return ref, nil
+}
+
+func (n *Notifier) SendConnectionRequest(ctx context.Context, req notify.ConnectionRequest) (string, error) {
+	cfg, err := n.userConfig(ctx, req.UserID)
+	if err != nil {
+		return "", err
+	}
+
+	blocks := connectionBlocks(req)
+	blocks = append(blocks, n.actionsFor(
+		"connection", req.ConnectionID, req.UserID, "", cfg.ChannelID, "Deny", req.ApproveURL, req.DenyURL,
+	))
+
+	ref, err := n.post(ctx, cfg, fallbackText("Agent connection request", req.AgentName), blocks)
+	if err != nil {
+		return "", fmt.Errorf("slack: send connection request: %w", err)
+	}
+	n.recordMessage(ctx, "connection", req.ConnectionID, ref)
+	return ref, nil
+}
+
+// SendActivationRequest posts a service-activation prompt. Activation is
+// completed in the dashboard (it needs an OAuth round trip), so this carries
+// link buttons rather than callback tokens.
+func (n *Notifier) SendActivationRequest(ctx context.Context, req notify.ActivationRequest) error {
+	cfg, err := n.userConfig(ctx, req.UserID)
+	if err != nil {
+		return err
+	}
+	svc := display.ServiceName(req.Service)
+	blocks := []block{
+		header("🔔 Service Activation Required"),
+		section(fmt.Sprintf("*%s* wants to use *%s*, which isn't connected yet.", esc(req.AgentName), esc(svc))),
+		linkActions(req.ActivateURL, req.DenyURL),
+	}
+	if _, err := n.post(ctx, cfg, fallbackText("Service activation required", req.AgentName), blocks); err != nil {
+		return fmt.Errorf("slack: send activation request: %w", err)
+	}
+	return nil
+}
+
+func (n *Notifier) SendAlert(ctx context.Context, userID, text string) error {
+	cfg, err := n.userConfig(ctx, userID)
+	if err != nil {
+		return err
+	}
+	_, err = n.post(ctx, cfg, text, []block{section(":bell: " + esc(text))})
+	return err
+}
+
+func (n *Notifier) SendTestMessage(ctx context.Context, userID string) error {
+	cfg, err := n.userConfig(ctx, userID)
+	if err != nil {
+		return err
+	}
+	_, err = n.post(ctx, cfg, "Clawvisor test message", []block{
+		section(":white_check_mark: *Clawvisor is connected.* Approval requests will appear in this channel."),
+	})
+	return err
+}
+
+// UpdateMessage satisfies notify.Notifier but is intentionally inert.
+//
+// Call sites read the message ID from notification_messages with a hardcoded
+// channel of "telegram" and MultiNotifier fans that one ID out to every
+// notifier — so the ID arriving here addresses a Telegram message, not a
+// Slack one. Editing Slack messages goes through UpdateMessageForTarget,
+// which resolves this notifier's own message reference.
+func (n *Notifier) UpdateMessage(_ context.Context, _, _, _ string) error { return nil }
+
+// UpdateMessageForTarget rewrites the prompt for a resolved target, dropping
+// its buttons so a settled request cannot be clicked again. Implements
+// notify.TargetMessageUpdater.
+func (n *Notifier) UpdateMessageForTarget(ctx context.Context, userID, targetType, targetID, text string) error {
+	ref, err := n.store.GetNotificationMessage(ctx, targetType, targetID, notifyChannel)
+	if err != nil || ref == "" {
+		// No Slack message for this target — the user resolved it from a
+		// channel that isn't configured. Not an error.
+		return nil
+	}
+	cfg, err := n.userConfig(ctx, userID)
+	if err != nil {
+		return nil
+	}
+	return n.update(ctx, cfg, ref, text)
+}
+
+// ── Message plumbing ──────────────────────────────────────────────────────────
+
+// actionsFor mints callback tokens and returns the button row, falling back
+// to dashboard deep links when token generation fails so the prompt is still
+// actionable.
+func (n *Notifier) actionsFor(entryType, targetID, userID, taskID, channelID, denyLabel, approveURL, denyURL string) block {
+	approveTok, denyTok, err := n.cbTokens.Generate(entryType, targetID, userID, taskID, channelID, callbackTTL)
+	if err != nil {
+		n.logger.Warn("slack: callback token generation failed, falling back to link buttons", "err", err)
+		return linkActions(approveURL, denyURL)
+	}
+	return approveDenyActions(approveTok, denyTok, denyLabel)
+}
+
+// recordMessage stores the Slack message reference so the resolve path can
+// edit it later. Failures are logged, not returned: the prompt is already
+// delivered and losing the ability to edit it must not fail the send.
+func (n *Notifier) recordMessage(ctx context.Context, targetType, targetID, ref string) {
+	if err := n.store.SaveNotificationMessage(ctx, targetType, targetID, notifyChannel, ref); err != nil {
+		n.logger.WarnContext(ctx, "slack: could not record message reference",
+			"err", err, "target_type", targetType, "target_id", targetID)
+	}
+}
+
+// messageRef packs the channel and timestamp Slack needs to address a
+// message. chat.update requires both, but notification_messages stores a
+// single opaque string per channel.
+func messageRef(channelID, ts string) string { return channelID + ":" + ts }
+
+func splitMessageRef(ref string) (channelID, ts string, ok bool) {
+	i := strings.LastIndex(ref, ":")
+	if i <= 0 || i == len(ref)-1 {
+		return "", "", false
+	}
+	return ref[:i], ref[i+1:], true
+}
+
+// fallbackText is the notification/preview string shown where blocks cannot
+// render (mobile push, notification centre, screen readers).
+func fallbackText(kind, agent string) string {
+	return fmt.Sprintf("%s from %s", kind, agent)
+}
+
+func (n *Notifier) post(ctx context.Context, cfg notify.SlackConfig, text string, blocks []block) (string, error) {
+	payload := map[string]any{
+		"channel": cfg.ChannelID,
+		"text":    text,
+		"blocks":  clamp(blocks),
+	}
+	var out struct {
+		TS      string `json:"ts"`
+		Channel string `json:"channel"`
+	}
+	if err := n.call(ctx, cfg.BotToken, "chat.postMessage", payload, &out); err != nil {
+		return "", err
+	}
+	ch := out.Channel
+	if ch == "" {
+		ch = cfg.ChannelID
+	}
+	return messageRef(ch, out.TS), nil
+}
+
+func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, ref, text string) error {
+	channelID, ts, ok := splitMessageRef(ref)
+	if !ok {
+		return fmt.Errorf("slack: malformed message reference %q", ref)
+	}
+	// Blocks are replaced wholesale with a single resolved section; passing
+	// an empty blocks array is what clears the original buttons.
+	payload := map[string]any{
+		"channel": channelID,
+		"ts":      ts,
+		"text":    text,
+		"blocks":  []block{section(esc(text))},
+	}
+	return n.call(ctx, cfg.BotToken, "chat.update", payload, nil)
+}
+
+// doJSON executes a prepared request and decodes the JSON body into out.
+// Shared by the OAuth and lookup paths, which build their own requests.
+func (n *Notifier) doJSON(req *http.Request, out any) error {
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("slack: malformed response: %w", err)
+	}
+	return nil
+}
+
+// call performs a Slack Web API request. Slack signals failure with HTTP 200
+// and {"ok":false,"error":"..."}, so the status code alone proves nothing.
+func (n *Notifier) call(ctx context.Context, botToken, method string, payload any, out any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"https://slack.com/api/"+method, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Authorization", "Bearer "+botToken)
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	var env struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return fmt.Errorf("slack: %s: malformed response: %w", method, err)
+	}
+	if !env.OK {
+		return fmt.Errorf("slack: %s: %s", method, env.Error)
+	}
+	if out != nil {
+		if err := json.Unmarshal(raw, out); err != nil {
+			return fmt.Errorf("slack: %s: decode result: %w", method, err)
+		}
+	}
+	return nil
+}
+
+// ── Config storage ────────────────────────────────────────────────────────────
+
+// slackCfgJSON is the shape persisted in notification_configs.config. The bot
+// token is deliberately absent — it lives in the vault.
+type slackCfgJSON struct {
+	BotToken             string                 `json:"bot_token,omitempty"` // legacy rows only
+	TeamID               string                 `json:"team_id"`
+	TeamName             string                 `json:"team_name"`
+	ChannelID            string                 `json:"channel_id"`
+	ChannelName          string                 `json:"channel_name"`
+	InstallerSlackUserID string                 `json:"installer_slack_user_id"`
+	Approvers            []notify.SlackApprover `json:"approvers"`
+}
+
+// SaveSlackConfig persists a workspace connection. Implements
+// notify.SlackConfigStore.
+func (n *Notifier) SaveSlackConfig(ctx context.Context, userID string, cfg notify.SlackConfig) error {
+	if userID == "" {
+		return errors.New("slack: user_id is required")
+	}
+	if cfg.BotToken == "" {
+		return errors.New("slack: bot_token is required")
+	}
+	if cfg.ChannelID == "" {
+		return errors.New("slack: channel_id is required")
+	}
+
+	jsonToken := cfg.BotToken
+	if n.vault != nil {
+		if err := n.vault.Set(ctx, userID, vaultBotTokenKey, []byte(cfg.BotToken)); err != nil {
+			return fmt.Errorf("slack: persist bot_token: %w", err)
+		}
+		jsonToken = "" // never duplicate the secret into the JSON column
+	}
+
+	cfgBytes, err := json.Marshal(slackCfgJSON{
+		BotToken:             jsonToken,
+		TeamID:               cfg.TeamID,
+		TeamName:             cfg.TeamName,
+		ChannelID:            cfg.ChannelID,
+		ChannelName:          cfg.ChannelName,
+		InstallerSlackUserID: cfg.InstallerSlackUserID,
+		Approvers:            cfg.Approvers,
+	})
+	if err != nil {
+		return fmt.Errorf("slack: marshal config: %w", err)
+	}
+
+	if err := n.store.UpsertNotificationConfig(ctx, userID, notifyChannel, cfgBytes); err != nil {
+		// Roll the vault write back so we never leave a token behind
+		// without a row pointing at it.
+		if n.vault != nil {
+			_ = n.vault.Delete(ctx, userID, vaultBotTokenKey)
+		}
+		return fmt.Errorf("slack: save notification config: %w", err)
+	}
+	return nil
+}
+
+// SlackConfig returns the user's workspace configuration, bot token included.
+// Implements notify.SlackConfigStore.
+func (n *Notifier) SlackConfig(ctx context.Context, userID string) (notify.SlackConfig, error) {
+	return n.userConfig(ctx, userID)
+}
+
+// DeleteSlackConfig removes the workspace connection and its vaulted token.
+// Implements notify.SlackConfigStore.
+func (n *Notifier) DeleteSlackConfig(ctx context.Context, userID string) error {
+	if n.vault != nil {
+		_ = n.vault.Delete(ctx, userID, vaultBotTokenKey)
+	}
+	return n.store.DeleteNotificationConfig(ctx, userID, notifyChannel)
+}
+
+func (n *Notifier) userConfig(ctx context.Context, userID string) (notify.SlackConfig, error) {
+	rec, err := n.store.GetNotificationConfig(ctx, userID, notifyChannel)
+	if err != nil {
+		return notify.SlackConfig{}, err
+	}
+	var raw slackCfgJSON
+	if err := json.Unmarshal(rec.Config, &raw); err != nil {
+		return notify.SlackConfig{}, fmt.Errorf("slack: parse config: %w", err)
+	}
+
+	token := raw.BotToken // legacy plaintext rows
+	if n.vault != nil {
+		if b, verr := n.vault.Get(ctx, userID, vaultBotTokenKey); verr == nil && len(b) > 0 {
+			token = string(b)
+		}
+	}
+	if token == "" {
+		return notify.SlackConfig{}, errors.New("slack: no bot token configured")
+	}
+
+	return notify.SlackConfig{
+		BotToken:             token,
+		TeamID:               raw.TeamID,
+		TeamName:             raw.TeamName,
+		ChannelID:            raw.ChannelID,
+		ChannelName:          raw.ChannelName,
+		InstallerSlackUserID: raw.InstallerSlackUserID,
+		Approvers:            raw.Approvers,
+	}, nil
+}
+
+// approvalNotifyTargetID mirrors the gateway handler's composition so both
+// channels address the same notification_messages row.
+func approvalNotifyTargetID(requestID, taskID string) string {
+	if taskID == "" {
+		return requestID
+	}
+	return requestID + "|" + taskID
+}
+
+// Compile-time interface checks.
+var (
+	_ notify.Notifier             = (*Notifier)(nil)
+	_ notify.SlackConfigStore     = (*Notifier)(nil)
+	_ notify.TargetMessageUpdater = (*Notifier)(nil)
+)
