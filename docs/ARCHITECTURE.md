@@ -90,7 +90,7 @@ If no task covers the request — or no `task_id` was provided — the request e
 1. **Adapter existence**: Is the service recognized? If not, the agent gets an error.
 2. **Service activation**: Does the user have a credential in the vault for this service? If not, the agent gets `status: "pending_activation"` with an `activate_url` they can show the user.
 
-If both pass, the request is serialized into a `pending_approvals` record with a 5-minute TTL (configurable). The human is notified via Telegram. The agent receives `status: "pending"`.
+If both pass, the request is serialized into a `pending_approvals` record with a 5-minute TTL (configurable). The human is notified via the configured approval channels. The agent receives `status: "pending"`.
 
 ### 2.6 Execution Path
 
@@ -112,13 +112,13 @@ When a request is authorized (either via task auto-execute or human approval), e
 
 When a request is pending approval, it can be resolved three ways:
 
-1. **Human approves** (via dashboard or Telegram): The pending approval is marked as `"approved"`. The agent is expected to call `POST /api/gateway/request/{request_id}/execute` to claim the result — the original params are loaded from the stored request blob (immutable). If the agent registered a callback URL, it receives a notification with `status: "approved"` so it knows to call the execute endpoint.
+1. **Human approves** (via dashboard or a configured notification channel): The pending approval is marked as `"approved"`. The agent is expected to call `POST /api/gateway/request/{request_id}/execute` to claim the result — the original params are loaded from the stored request blob (immutable). If the agent registered a callback URL, it receives a notification with `status: "approved"` so it knows to call the execute endpoint.
 2. **Human denies**: The pending approval is deleted and the audit entry updated. If a callback URL is registered, the agent receives `status: "denied"`.
 3. **Timeout** (default 5 minutes): A background goroutine runs every 60 seconds, finds expired pending approvals, marks them as timed out, and delivers `status: "timeout"` callbacks.
 
 The agent can long-poll `GET /api/gateway/request/{request_id}?wait=true` to check status, or use `POST /api/gateway/request?wait=true` to block until the result is ready in a single round-trip. Agents that prefer explicit control can call `POST /api/gateway/request/{request_id}/execute` after approval.
 
-The Telegram message is updated in-place to reflect the outcome (green checkmark for approved, red X for denied, clock for timeout).
+Out-of-band approval messages are updated in-place when the channel supports updates.
 
 ---
 
@@ -158,7 +158,7 @@ The agent calls `POST /api/tasks` with:
 }
 ```
 
-Every task starts as `pending_approval`. The human is notified via Telegram with the purpose and action list. The `auto_execute` flag per action controls whether matching requests run immediately or still require per-request approval. In the example above, reading emails is automatic but sending requires a human check each time.
+Every task starts as `pending_approval`. The human is notified through the configured approval channels with the purpose and action list. The `auto_execute` flag per action controls whether matching requests run immediately or still require per-request approval. In the example above, reading emails is automatic but sending requires a human check each time.
 
 ### 3.2.1 Task Risk Assessment
 
@@ -303,9 +303,15 @@ Verification results are cached in memory (keyed by a hash of task ID, service, 
 
 ## 8. Notification System
 
-### 8.1 Telegram Integration
+### 8.1 Approval Notification Channels
 
-Clawvisor uses Telegram for mobile approval notifications. Each user pairs their own Telegram bot — there is no shared bot. Bot tokens and chat IDs are stored per-user in the `notification_configs` table.
+Clawvisor can send approval notifications through Telegram, Slack, and mobile push. Notification settings are stored per-user in the `notification_configs` table; channel secrets are kept in the vault when a vault backend is configured.
+
+**Slack approval modes**: Direct Slack mode posts approval prompts to a configured channel using a Slack bot token. If the user also configures a Slack app signing secret and points Slack interactivity at `POST /api/notifications/slack/interactions`, Clawvisor renders native Approve/Deny buttons and validates Slack signatures before routing decisions. Without a signing secret, Slack messages use dashboard deep-link buttons. The `openclaw_agent` Slack mode posts the same approval prompt in a Slack Agent by OpenClaw channel with deep-link buttons, so the Slack Agent can be the user-facing conversation surface while Clawvisor remains the approval authority.
+
+### 8.2 Telegram Integration
+
+Each user pairs their own Telegram bot — there is no shared bot. Bot tokens and chat IDs are stored per-user in the `notification_configs` table.
 
 **Pairing flow**: The user creates a Telegram bot via @BotFather, enters the bot token in the dashboard, and Clawvisor starts a pairing session. The user sends `/start` to their bot, which confirms the chat ID. The pairing is verified and stored.
 
@@ -321,7 +327,7 @@ Clawvisor uses Telegram for mobile approval notifications. Each user pairs their
 
 **Message updates**: After a request is resolved (approved, denied, or timed out), the original Telegram message is edited to replace the buttons with a status line (checkmark, X, or clock icon).
 
-### 8.2 Callback Delivery
+### 8.3 Callback Delivery
 
 When a pending request resolves, the result is POSTed to the agent's `callback_url`:
 
@@ -399,7 +405,7 @@ Migrations are embedded in the binary and run automatically on startup. Each mig
 - `audit_log` — every gateway request. Includes service, action, sanitized params, decision, outcome, verification verdict, duration, and error messages. Legacy columns (`safety_flagged`, `safety_reason`, `filters_applied`) are retained for backward compatibility but no longer populated. `request_id` has a UNIQUE constraint. Indexed on `(user_id, timestamp)`, `(user_id, outcome)`, `(user_id, service)`.
 
 **Notifications:**
-- `notification_configs` — per-user channel configs (e.g., Telegram bot token + chat ID). Unique on `(user_id, channel)`.
+- `notification_configs` — per-user channel configs (e.g., Telegram bot token + chat ID, Slack channel ID). Unique on `(user_id, channel)`.
 - `notification_messages` — maps `(target_type, target_id, channel)` to a message ID for in-place updates.
 
 ### 10.2 Migration History
@@ -432,7 +438,7 @@ The frontend is a React 18 SPA built with Vite, TypeScript, Tailwind CSS, and sh
 - **Restrictions**: Create and manage hard blocks on service/action pairs
 - **Agents**: Create agent tokens (shown once), delete agents
 - **Audit Log**: Searchable, filterable history of every gateway request
-- **Settings**: Telegram bot pairing, account management
+- **Settings**: notification setup, account management
 
 ### 11.2 Auth Flow
 
@@ -460,7 +466,7 @@ Configuration is loaded in three layers, each overriding the previous:
 |---|---|---|---|
 | Server port | 25297 | `PORT` | |
 | Server host | 127.0.0.1 | `SERVER_HOST` | Set to `0.0.0.0` for Cloud Run |
-| Public URL | (empty) | `PUBLIC_URL` | Used in Telegram notification links |
+| Public URL | (empty) | `PUBLIC_URL` | Used in notification deep links |
 | Database driver | postgres | `DATABASE_DRIVER` | `postgres` or `sqlite` |
 | Postgres URL | (empty) | `DATABASE_URL` | Required for postgres |
 | SQLite path | ./clawvisor.db | | |
@@ -497,13 +503,13 @@ When the server starts (`cmd/server/main.go`):
 5. Initialize vault (load or generate `vault.key`, connect to DB or GCP)
 6. Initialize JWT service
 7. Register adapters (Google if OAuth configured, GitHub/Slack/Notion/Linear/Stripe/Twilio if enabled, iMessage if macOS)
-8. Create Telegram notifier (always; reads per-user config lazily)
+8. Create notification notifiers (always; read per-user config lazily)
 9. If local mode: create `admin@local` user, generate magic link, print to terminal
 10. Create HTTP server, register routes, wire middleware
 11. Start background goroutines:
     - Approval expiry cleanup (every 60 seconds)
-    - Telegram decision consumer (routes inline button taps to handlers)
-    - Telegram token cleanup (removes expired callback tokens)
+    - Notification decision consumer (routes inline button taps to handlers)
+    - Notification token cleanup (removes expired callback tokens)
     - Magic link cleanup (every 5 minutes, if local mode)
 13. Listen on configured address; graceful shutdown on SIGINT/SIGTERM (30-second drain)
 
@@ -526,7 +532,7 @@ This starts with SQLite (no Docker needed), auto-generates `vault.key`, creates 
 ### 14.3 Google Cloud Run
 
 `deploy/cloudrun.yaml` defines the Cloud Run service:
-- `minScale: 1` — required so approval callbacks and Telegram polling have a live process
+- `minScale: 1` — required so approval callbacks and notification polling have a live process
 - `timeoutSeconds: 360` — buffer above the approval timeout (300s) and MCP timeout (240s)
 - Secrets (`JWT_SECRET`, `DATABASE_URL`) loaded from GCP Secret Manager
 - Cloud SQL connection via sidecar proxy

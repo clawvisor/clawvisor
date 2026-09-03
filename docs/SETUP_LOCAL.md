@@ -97,7 +97,7 @@ This covers:
 | GPT-4o Mini | `openai` | `https://api.openai.com/v1` | `gpt-4o-mini` |
 
 - **Relay** — enabled by default; connects to clawvisor.com for remote
-  approvals and Telegram notifications. Can be disabled in
+  approvals and out-of-band notifications. Can be disabled in
   `~/.clawvisor/config.yaml` after setup.
 - **Telemetry** — opt-in anonymous usage stats
 - **iMessage** — auto-enabled on macOS, disabled elsewhere (no prompt needed)
@@ -237,7 +237,7 @@ Clawvisor loads `config.yaml` from the working directory (override with
 | `JWT_SECRET` | auto-generated locally | HMAC signing key for JWTs |
 | `PORT` | `25297` | Server listen port |
 | `SERVER_HOST` | `127.0.0.1` | Server bind address |
-| `PUBLIC_URL` | — | Base URL for magic links, OAuth callbacks, and Telegram notifications |
+| `PUBLIC_URL` | — | Base URL for magic links, OAuth callbacks, and notification deep links |
 | `SQLITE_PATH` | `./clawvisor.db` | Path to the SQLite database file |
 | `VAULT_BACKEND` | `local` | `local` (AES-256-GCM) or `gcp` (Secret Manager) |
 | `VAULT_KEY` | — | Base64-encoded 32-byte vault master key (alternative to key file) |

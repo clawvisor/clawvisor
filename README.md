@@ -182,7 +182,7 @@ Clawvisor loads `config.yaml` from the working directory (override with `CONFIG_
 | Auth mode | `AUTH_MODE` | `magic_link` (default locally) or `password` |
 | Allowed emails | `ALLOWED_EMAILS` | Comma-separated emails allowed to register |
 | Google OAuth | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Needed for Google services |
-| Public URL | `PUBLIC_URL` | Used in Telegram notification links |
+| Public URL | `PUBLIC_URL` | Used in notification deep links |
 | LLM config | `CLAWVISOR_LLM_*` | Shared provider, model, API key for all LLM features |
 | Intent verification | `CLAWVISOR_LLM_VERIFICATION_*` | Optional LLM check that request params match task purpose |
 | Task risk assessment | `CLAWVISOR_LLM_TASK_RISK_*` | Optional LLM risk assessment when tasks are created |
@@ -253,7 +253,7 @@ Every gateway request passes through three authorization layers, checked in orde
 
 1. **Restrictions** — hard blocks you configure on specific service/action pairs. If a restriction matches, the request is denied immediately. Use these for actions you never want any agent to take (e.g. "no agent can delete calendar events").
 2. **Task scopes** — the primary mechanism. When an agent needs to do something, it creates a task declaring the purpose and which service/action pairs it needs. You review and approve the scope once. After that, requests under that task execute without further interruption — you approved the purpose, not each individual call. Tasks can be session-scoped (expire after a TTL) or standing (persist until you revoke them).
-3. **Per-request approval** — the fallback. Any request that isn't covered by a task scope goes to the approval queue, and you're notified via the dashboard, Telegram, or push notification to your phone. This is the default for actions the agent didn't declare upfront, or for task actions marked `auto_execute: false` (e.g. sending emails).
+3. **Per-request approval** — the fallback. Any request that isn't covered by a task scope goes to the approval queue, and you're notified via the dashboard, Slack, Telegram, or push notification to your phone. This is the default for actions the agent didn't declare upfront, or for task actions marked `auto_execute: false` (e.g. sending emails).
 
 When a task is created, Clawvisor can optionally run an **LLM-powered risk assessment** that evaluates the scope breadth, purpose-scope coherence, and internal consistency of the task. The assessment produces a risk level (low, medium, high, critical) shown in the dashboard to help inform your approval decision. High and critical risk tasks require a confirmation step before approval.
 
@@ -311,7 +311,7 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
   }'
 ```
 
-The task starts as `pending_approval`. The user approves it via the dashboard, Telegram, or a push notification on their phone. Include a `callback_url` to receive a callback when the task is approved or denied — otherwise poll `GET /api/tasks/{id}` (supports long-polling).
+The task starts as `pending_approval`. The user approves it via the dashboard, Slack, Telegram, or a push notification on their phone. Include a `callback_url` to receive a callback when the task is approved or denied — otherwise poll `GET /api/tasks/{id}` (supports long-polling).
 
 Key fields:
 
@@ -445,7 +445,7 @@ The web UI provides:
 - **Restrictions** — toggle hard blocks on service/action pairs
 - **Agents** — create agent tokens, manage connection requests
 - **Gateway log** — searchable audit trail of every gateway request with outcomes and verification results
-- **Settings** — device pairing (QR code for mobile), Telegram notification setup, password management, account settings
+- **Settings** — Slack/Telegram notification setup, device pairing, password management, account settings
 - **Onboarding** — guided first-run flow for connecting services, creating agents, and setting up notifications
 - **Light/dark mode** — toggle in the sidebar; persists across sessions
 
@@ -553,7 +553,7 @@ subscription seat on the instance at once.
 | Vault | AES-256-GCM with master key (env var or keyfile) or GCP Secret Manager, behind `Vault` interface |
 | Auth | JWT (HS256), magic links (local), bcrypt passwords (prod) |
 | Real-time | SSE event stream for instant dashboard updates |
-| Notifications | Telegram (per-user bot tokens), push notifications (APNs via external push service) |
+| Notifications | Slack, Telegram (per-user bot tokens), push notifications (APNs via external push service) |
 | Relay | WebSocket reverse tunnel for NAT traversal (connects to external relay service) |
 | MCP | Model Context Protocol server with OAuth 2.1 for Claude Desktop integration |
 | Telemetry | Opt-in anonymous product usage telemetry |

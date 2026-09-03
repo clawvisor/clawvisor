@@ -208,8 +208,25 @@ type TelegramConfigStore interface {
 	DeleteTelegramConfig(ctx context.Context, userID string) error
 }
 
-// CallbackDecision is sent by the Telegram notifier when a user taps an
-// inline Approve/Deny button. The server routes this to the appropriate handler.
+// SlackConfig is the non-secret public shape stored for a Slack approval
+// channel. BotToken and SigningSecret are written only for legacy/no-vault
+// setups; vault-backed implementations leave them empty in the JSON row.
+type SlackConfig struct {
+	BotToken      string `json:"bot_token,omitempty"`
+	ChannelID     string `json:"channel_id"`
+	SigningSecret string `json:"signing_secret,omitempty"`
+	Mode          string `json:"mode,omitempty"` // "direct" | "openclaw_agent"
+}
+
+// SlackConfigStore persists and retrieves a user's Slack approval config.
+type SlackConfigStore interface {
+	SaveSlackConfig(ctx context.Context, userID string, cfg SlackConfig) error
+	SlackConfig(ctx context.Context, userID string) (SlackConfig, error)
+	DeleteSlackConfig(ctx context.Context, userID string) error
+}
+
+// CallbackDecision is sent by notifiers when a user taps an inline
+// Approve/Deny button. The server routes this to the appropriate handler.
 type CallbackDecision struct {
 	Type     string // "approval", "task", "scope_expansion", "connection"
 	Action   string // "approve" or "deny"

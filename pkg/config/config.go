@@ -203,7 +203,7 @@ type ServerConfig struct {
 	Port        int    `yaml:"port"`
 	Host        string `yaml:"host"`
 	FrontendDir string `yaml:"frontend_dir"`
-	PublicURL   string `yaml:"public_url"` // e.g. "http://192.168.4.247:5173" — used in Telegram notification links
+	PublicURL   string `yaml:"public_url"` // e.g. "http://192.168.4.247:5173" — used in notification deep links
 	AuthMode    string `yaml:"auth_mode"`  // "magic_link", "password", or "" (auto-detect from IsLocal)
 	LogFormat   string `yaml:"log_format"` // "json", "text", or "" (auto: json in prod, text in dev)
 	LogLevel    string `yaml:"log_level"`  // "debug", "info", "warn", "error" (default: "info")

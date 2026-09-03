@@ -68,6 +68,8 @@ func New(st store.Store, serverCtx context.Context) *Notifier {
 	return n
 }
 
+func (n *Notifier) NotificationChannel() string { return "telegram" }
+
 // SetMessageBuffer sets the message buffer used for group chat observation.
 func (n *Notifier) SetMessageBuffer(buf groupchat.Buffer) {
 	n.msgBuffer = buf

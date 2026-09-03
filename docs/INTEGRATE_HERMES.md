@@ -177,7 +177,7 @@ Explain how it works:
 - Hermes has access to Clawvisor MCP tools: `fetch_catalog`, `create_task`,
   `get_task`, `complete_task`, `expand_task`, and `gateway_request`
 - Hermes creates tasks declaring what it needs, the user approves them in the
-  dashboard (or via Telegram), and Hermes executes actions under the approved
+  dashboard or configured notification channel, and Hermes executes actions under the approved
   scope
 - In-scope actions with `auto_execute` run immediately; others queue for
   per-request approval
@@ -187,5 +187,5 @@ Remind the user to:
 
 - Connect services in the Clawvisor dashboard under the **Services** tab before
   asking Hermes to use them
-- Approve tasks in the dashboard (or via Telegram) when Hermes requests them
+- Approve tasks in the dashboard or a configured notification channel when Hermes requests them
 - Optionally set restrictions in the dashboard to hard-block specific actions

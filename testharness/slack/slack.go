@@ -27,6 +27,9 @@ func NewMock(t *testing.T) *Mock {
 			"ts":      "1700000000.000100",
 			"channel": "C-MOCK",
 		}},
+		"POST /api/chat.update": {Body: map[string]any{
+			"ok": true,
+		}},
 		"GET /api/users.list": {Body: map[string]any{
 			"ok":      true,
 			"members": []map[string]any{},

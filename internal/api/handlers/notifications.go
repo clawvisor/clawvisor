@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/pkg/notify"
@@ -47,6 +48,34 @@ func (f *fallbackTelegramConfigStore) DeleteTelegramConfig(ctx context.Context, 
 	return f.st.DeleteNotificationConfig(ctx, userID, "telegram")
 }
 
+type fallbackSlackConfigStore struct {
+	st store.Store
+}
+
+func (f *fallbackSlackConfigStore) SaveSlackConfig(ctx context.Context, userID string, cfg notify.SlackConfig) error {
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return f.st.UpsertNotificationConfig(ctx, userID, "slack", raw)
+}
+
+func (f *fallbackSlackConfigStore) SlackConfig(ctx context.Context, userID string) (notify.SlackConfig, error) {
+	nc, err := f.st.GetNotificationConfig(ctx, userID, "slack")
+	if err != nil {
+		return notify.SlackConfig{}, err
+	}
+	var cfg notify.SlackConfig
+	if err := json.Unmarshal(nc.Config, &cfg); err != nil {
+		return notify.SlackConfig{}, err
+	}
+	return cfg, nil
+}
+
+func (f *fallbackSlackConfigStore) DeleteSlackConfig(ctx context.Context, userID string) error {
+	return f.st.DeleteNotificationConfig(ctx, userID, "slack")
+}
+
 // telegramConfigStore returns the active TelegramConfigStore: the notifier's
 // vault-backed implementation when available, or a plaintext fallback for
 // test setups that pass notifier=nil.
@@ -57,8 +86,15 @@ func (h *NotificationsHandler) telegramConfigStore() notify.TelegramConfigStore 
 	return &fallbackTelegramConfigStore{st: h.st}
 }
 
-// sanitizeNotificationConfig redacts secret fields (bot_token) from a
-// notification config before returning it to the browser.
+func (h *NotificationsHandler) slackConfigStore() notify.SlackConfigStore {
+	if cs, ok := h.notifier.(notify.SlackConfigStore); ok {
+		return cs
+	}
+	return &fallbackSlackConfigStore{st: h.st}
+}
+
+// sanitizeNotificationConfig redacts secret fields from a notification config
+// before returning it to the browser.
 func sanitizeNotificationConfig(raw json.RawMessage) json.RawMessage {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -68,6 +104,11 @@ func sanitizeNotificationConfig(raw json.RawMessage) json.RawMessage {
 		m["bot_token"] = "***" + tok[len(tok)-4:]
 	} else if ok {
 		m["bot_token"] = "***"
+	}
+	if secret, ok := m["signing_secret"].(string); ok && len(secret) > 4 {
+		m["signing_secret"] = "***" + secret[len(secret)-4:]
+	} else if ok {
+		m["signing_secret"] = "***"
 	}
 	out, err := json.Marshal(m)
 	if err != nil {
@@ -103,9 +144,9 @@ func (h *NotificationsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch the two currently-supported channels; omit missing ones gracefully.
+	// Fetch currently-supported channels; omit missing ones gracefully.
 	var configs []map[string]any
-	for _, channel := range []string{"telegram"} {
+	for _, channel := range []string{"telegram", "slack"} {
 		cfg, err := h.st.GetNotificationConfig(r.Context(), user.ID, channel)
 		if err != nil {
 			continue // not configured — skip
@@ -121,6 +162,125 @@ func (h *NotificationsHandler) List(w http.ResponseWriter, r *http.Request) {
 		configs = []map[string]any{}
 	}
 	writeJSON(w, http.StatusOK, configs)
+}
+
+// UpsertSlack saves (or replaces) the Slack notification config.
+//
+// PUT /api/notifications/slack
+// Auth: user JWT
+// Body: {"bot_token": "...", "channel_id": "...", "signing_secret": "...", "mode": "direct"}
+func (h *NotificationsHandler) UpsertSlack(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	var body notify.SlackConfig
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	body.BotToken = strings.TrimSpace(body.BotToken)
+	body.ChannelID = strings.TrimSpace(body.ChannelID)
+	body.SigningSecret = strings.TrimSpace(body.SigningSecret)
+	body.Mode = strings.ToLower(strings.TrimSpace(body.Mode))
+	if body.BotToken == "" || body.ChannelID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "bot_token and channel_id are required")
+		return
+	}
+	if body.Mode == "" {
+		body.Mode = "direct"
+	}
+	if body.Mode != "direct" && body.Mode != "openclaw_agent" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "mode must be direct or openclaw_agent")
+		return
+	}
+
+	if err := h.slackConfigStore().SaveSlackConfig(r.Context(), user.ID, body); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save Slack notification config")
+		return
+	}
+
+	cfg, err := h.st.GetNotificationConfig(r.Context(), user.ID, "slack")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not retrieve saved config")
+		return
+	}
+	cfg.Config = sanitizeNotificationConfig(cfg.Config)
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// DeleteSlack removes the Slack notification config.
+//
+// DELETE /api/notifications/slack
+// Auth: user JWT
+func (h *NotificationsHandler) DeleteSlack(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	if err := h.slackConfigStore().DeleteSlackConfig(r.Context(), user.ID); err != nil {
+		if err == store.ErrNotFound {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not delete Slack notification config")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// TestSlack sends a test message using the user's saved config.
+//
+// POST /api/notifications/slack/test
+// Auth: user JWT
+func (h *NotificationsHandler) TestSlack(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	if h.notifier == nil {
+		writeError(w, http.StatusServiceUnavailable, "NOTIFIER_UNAVAILABLE", "notification service not available")
+		return
+	}
+	if _, err := h.slackConfigStore().SlackConfig(r.Context(), user.ID); err != nil {
+		writeError(w, http.StatusBadRequest, "NOT_CONFIGURED", "Slack notifications must be configured first")
+		return
+	}
+	type slackTester interface {
+		SendSlackTestMessage(context.Context, string) error
+	}
+	if st, ok := h.notifier.(slackTester); ok {
+		if err := st.SendSlackTestMessage(r.Context(), user.ID); err != nil {
+			writeError(w, http.StatusBadRequest, "TEST_FAILED", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+		return
+	}
+	if err := h.notifier.SendTestMessage(r.Context(), user.ID); err != nil {
+		writeError(w, http.StatusBadRequest, "TEST_FAILED", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+// SlackInteractions handles Slack Block Kit button callbacks.
+//
+// POST /api/notifications/slack/interactions
+// Auth: Slack signing secret
+func (h *NotificationsHandler) SlackInteractions(w http.ResponseWriter, r *http.Request) {
+	type slackInteractionHandler interface {
+		HandleInteraction(http.ResponseWriter, *http.Request)
+	}
+	if ih, ok := h.notifier.(slackInteractionHandler); ok {
+		ih.HandleInteraction(w, r)
+		return
+	}
+	writeError(w, http.StatusServiceUnavailable, "SLACK_UNAVAILABLE", "Slack notification service not available")
 }
 
 // UpsertTelegram saves (or replaces) the Telegram notification config.

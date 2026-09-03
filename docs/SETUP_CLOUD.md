@@ -219,7 +219,7 @@ The user has a domain name and can set up TLS. Ask how:
   automatically
 - **Load balancer** — cloud provider ALB/NLB with TLS termination
 
-Ensure `PUBLIC_URL` is set to the HTTPS URL so Telegram notification links
+Ensure `PUBLIC_URL` is set to the HTTPS URL so notification links
 and OAuth redirects work correctly.
 
 ### Option B: SSH tunnel (no domain required)
@@ -340,7 +340,7 @@ Remind the user to:
     all four
   - GitHub, Slack, Notion, Linear, Stripe, Twilio — activate with API
     keys/tokens
-- Set up Telegram notifications for mobile approvals (optional)
+- Set up Slack, Slack Agent by OpenClaw, Telegram, or mobile push notifications for out-of-band approvals (optional)
 
 **Next:** Connect your agent — see [SETUP.md](SETUP.md#2-connect-your-agent)
 for integration guides.
