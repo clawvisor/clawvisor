@@ -790,6 +790,7 @@ function SlackSetupSection() {
     onSuccess: () => {
       setPicking(false)
       setChannelFilter('')
+      setError(null)
       qc.invalidateQueries({ queryKey: ['slack-config'] })
       qc.invalidateQueries({ queryKey: ['notifications'] })
     },
@@ -816,213 +817,237 @@ function SlackSetupSection() {
     },
   })
 
-  if (isLoading) return null
   // Slack unavailable on this deployment — the query failed and there is no
   // config to show.
-  if (!cfg) return null
+  if (isLoading || !cfg) return null
 
-  const filtered = (channels ?? []).filter((c) =>
+  const filtered = (channels ?? []).filter(c =>
     c.name.toLowerCase().includes(channelFilter.toLowerCase()),
   )
 
   const addApprover = () => {
     const id = approverInput.trim()
     if (!id) return
-    const existing = (cfg.approvers ?? []).map((a) => a.slack_user_id)
+    const existing = (cfg.approvers ?? []).map(a => a.slack_user_id)
     if (existing.includes(id)) { setApproverInput(''); return }
     approversMut.mutate([...existing, id])
   }
 
   const removeApprover = (id: string) => {
-    approversMut.mutate((cfg.approvers ?? []).map((a) => a.slack_user_id).filter((x) => x !== id))
+    approversMut.mutate((cfg.approvers ?? []).map(a => a.slack_user_id).filter(x => x !== id))
   }
 
   return (
     <section className="space-y-4">
       <div>
         <h2 className="text-lg font-semibold text-text-primary">Slack</h2>
-        <p className="text-sm text-text-secondary">
+        <p className="text-sm text-text-tertiary mt-0.5">
           Send approval requests to a Slack channel and approve them inline with buttons.
         </p>
       </div>
 
-      {error && (
-        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
-          {error}
-        </div>
-      )}
+      {error && <div className="text-sm text-danger max-w-xl">{error}</div>}
 
-      {!connected ? (
-        <div className="rounded-lg border border-border bg-surface-1 p-4 space-y-3">
-          <p className="text-sm text-text-secondary">
-            Connect your Slack workspace to receive approval requests as messages with
-            Approve and Deny buttons.
-          </p>
-          <button
-            onClick={() => installMut.mutate()}
-            disabled={installMut.isPending}
-            className="rounded-md bg-brand px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-          >
-            {installMut.isPending ? 'Redirecting…' : 'Add to Slack'}
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {/* Workspace */}
-          <div className="flex items-center justify-between rounded-lg border border-border bg-surface-1 p-4">
-            <div>
-              <p className="text-sm font-medium text-text-primary">
-                {cfg.team_name || 'Slack workspace'}
-              </p>
-              <p className="text-xs text-text-secondary">Connected</p>
+      <div className="max-w-xl space-y-3">
+        {!connected ? (
+          <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <span className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 bg-brand/15 border-brand/40 text-brand">
+                1
+              </span>
+              <span className="text-sm font-medium text-text-primary">Connect your Slack workspace</span>
             </div>
-            <button
-              onClick={() => {
-                if (confirm('Disconnect Slack? Approval requests will stop being posted there.')) {
-                  disconnectMut.mutate()
-                }
-              }}
-              className="text-sm text-danger hover:underline"
-            >
-              Disconnect
-            </button>
+            <div className="ml-10 space-y-3">
+              <p className="text-xs text-text-secondary">
+                Approval requests are posted to a channel you choose, with Approve and Deny
+                buttons. Clawvisor never reads messages in the channel.
+              </p>
+              <button
+                onClick={() => installMut.mutate()}
+                disabled={installMut.isPending}
+                className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+              >
+                {installMut.isPending ? 'Redirecting...' : 'Add to Slack'}
+              </button>
+            </div>
           </div>
-
-          {/* Channel */}
-          <div className="rounded-lg border border-border bg-surface-1 p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-text-primary">Approval channel</h3>
-              {hasChannel && !picking && (
-                <button onClick={() => setPicking(true)} className="text-sm text-brand hover:underline">
-                  Change
+        ) : (
+          <>
+            {/* ── Workspace ─────────────────────────────────────── */}
+            <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center border-2 bg-green-500/15 border-green-500/40 text-green-500">
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-text-primary truncate">
+                      {cfg.team_name || 'Slack workspace'}
+                    </p>
+                    <p className="text-xs text-text-tertiary">Connected</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (confirm('Disconnect Slack? Approval requests will stop being posted there.')) {
+                      disconnectMut.mutate()
+                    }
+                  }}
+                  className="text-xs text-danger hover:text-red-400 flex-shrink-0"
+                >
+                  Disconnect
                 </button>
+              </div>
+            </div>
+
+            {/* ── Channel ───────────────────────────────────────── */}
+            <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-medium text-text-primary">Approval channel</h3>
+                {hasChannel && !picking && (
+                  <button
+                    onClick={() => setPicking(true)}
+                    className="px-3 py-1 text-xs rounded border border-border-default text-text-secondary hover:text-text-primary hover:border-border-hover"
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+
+              {hasChannel && !picking ? (
+                <div className="flex items-center gap-3 flex-wrap">
+                  <code className="text-sm bg-surface-2 border border-border-default rounded px-2 py-0.5 text-text-primary">
+                    #{cfg.channel_name || cfg.channel_id}
+                  </code>
+                  <button
+                    onClick={() => testMut.mutate()}
+                    disabled={testMut.isPending}
+                    className="px-3 py-1 text-xs rounded border border-brand/30 text-brand hover:bg-brand/10 disabled:opacity-50"
+                  >
+                    {testMut.isPending ? 'Sending...' : 'Send test message'}
+                  </button>
+                  {testMut.isSuccess && <span className="text-xs text-green-500">Sent</span>}
+                  {testMut.isError && (
+                    <span className="text-xs text-danger">Failed — is the bot in the channel?</span>
+                  )}
+                </div>
+              ) : !picking ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-text-secondary">
+                    Pick the channel approval requests should go to.
+                  </p>
+                  <button
+                    onClick={() => setPicking(true)}
+                    className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong"
+                  >
+                    Choose a channel
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={channelFilter}
+                    onChange={e => setChannelFilter(e.target.value)}
+                    placeholder="Filter channels..."
+                    className="block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                  />
+                  <div className="max-h-56 overflow-y-auto rounded border border-border-default divide-y divide-border-subtle">
+                    {loadingChannels && (
+                      <p className="px-3 py-2 text-xs text-text-tertiary">Loading channels...</p>
+                    )}
+                    {!loadingChannels && filtered.length === 0 && (
+                      <p className="px-3 py-2 text-xs text-text-tertiary">No matching channels.</p>
+                    )}
+                    {filtered.map(c => (
+                      <button
+                        key={c.id}
+                        onClick={() => setChannelMut.mutate(c)}
+                        disabled={setChannelMut.isPending}
+                        className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-sm text-text-primary hover:bg-surface-2 disabled:opacity-50"
+                      >
+                        <span className="truncate">{c.is_private ? '🔒' : '#'} {c.name}</span>
+                        {c.is_private && !c.is_member && (
+                          <span className="text-xs text-text-tertiary flex-shrink-0">invite the bot first</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => { setPicking(false); setChannelFilter('') }}
+                    className="px-3 py-1 text-xs rounded border border-border-default text-text-secondary hover:text-text-primary hover:border-border-hover"
+                  >
+                    Cancel
+                  </button>
+                </div>
               )}
             </div>
 
-            {hasChannel && !picking ? (
-              <div className="flex items-center gap-2">
-                <span className="rounded bg-surface-2 px-2 py-1 text-sm text-text-primary">
-                  #{cfg.channel_name || cfg.channel_id}
-                </span>
-                <button
-                  onClick={() => testMut.mutate()}
-                  disabled={testMut.isPending}
-                  className="text-sm text-brand hover:underline disabled:opacity-50"
-                >
-                  {testMut.isPending ? 'Sending…' : 'Send test message'}
-                </button>
-                {testMut.isSuccess && <span className="text-sm text-green-500">Sent</span>}
-                {testMut.isError && <span className="text-sm text-danger">Failed — is the bot in the channel?</span>}
+            {/* ── Approvers ─────────────────────────────────────── */}
+            <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-medium text-text-primary">Who can approve</h3>
+                <p className="text-xs text-text-tertiary mt-0.5">
+                  Anyone in the channel can read requests, but only these people can resolve
+                  them. Everyone else gets a private &ldquo;not authorized&rdquo; reply.
+                </p>
               </div>
-            ) : (
-              <>
-                {!hasChannel && (
-                  <p className="text-sm text-text-secondary">
-                    Pick the channel approval requests should go to.
-                  </p>
-                )}
-                <button
-                  onClick={() => setPicking(true)}
-                  className="rounded-md border border-border px-3 py-1.5 text-sm text-text-primary hover:bg-surface-2"
-                  hidden={picking}
-                >
-                  Choose a channel
-                </button>
-                {picking && (
-                  <div className="space-y-2">
-                    <input
-                      value={channelFilter}
-                      onChange={(e) => setChannelFilter(e.target.value)}
-                      placeholder="Filter channels…"
-                      className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary"
-                    />
-                    <div className="max-h-56 overflow-y-auto rounded-md border border-border">
-                      {loadingChannels && (
-                        <p className="px-3 py-2 text-sm text-text-secondary">Loading channels…</p>
-                      )}
-                      {!loadingChannels && filtered.length === 0 && (
-                        <p className="px-3 py-2 text-sm text-text-secondary">No matching channels.</p>
-                      )}
-                      {filtered.map((c) => (
-                        <button
-                          key={c.id}
-                          onClick={() => setChannelMut.mutate(c)}
-                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-2"
-                        >
-                          <span>{c.is_private ? '🔒' : '#'} {c.name}</span>
-                          {c.is_private && !c.is_member && (
-                            <span className="text-xs text-text-secondary">invite the bot first</span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      onClick={() => { setPicking(false); setChannelFilter('') }}
-                      className="text-sm text-text-secondary hover:underline"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
 
-          {/* Approvers */}
-          <div className="rounded-lg border border-border bg-surface-1 p-4 space-y-3">
-            <div>
-              <h3 className="text-sm font-semibold text-text-primary">Who can approve</h3>
-              <p className="text-xs text-text-secondary">
-                Anyone in the channel can read requests, but only these people can resolve
-                them. Everyone else sees a private &ldquo;not authorized&rdquo; reply.
+              <ul className="space-y-1">
+                <li className="flex items-center justify-between gap-3 rounded bg-surface-2 px-3 py-1.5">
+                  <span className="text-sm text-text-primary truncate">
+                    {cfg.installer_slack_user_id || 'You'}
+                  </span>
+                  <span className="text-xs text-text-tertiary flex-shrink-0">
+                    installed the app — always allowed
+                  </span>
+                </li>
+                {(cfg.approvers ?? []).map(a => (
+                  <li
+                    key={a.slack_user_id}
+                    className="flex items-center justify-between gap-3 rounded bg-surface-2 px-3 py-1.5"
+                  >
+                    <span className="text-sm text-text-primary truncate">
+                      {a.display_name}{' '}
+                      <span className="text-text-tertiary">({a.slack_user_id})</span>
+                    </span>
+                    <button
+                      onClick={() => removeApprover(a.slack_user_id)}
+                      disabled={approversMut.isPending}
+                      className="text-xs text-danger hover:text-red-400 disabled:opacity-50 flex-shrink-0"
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={approverInput}
+                  onChange={e => setApproverInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addApprover() } }}
+                  placeholder="Slack member ID (e.g. U012ABCDEF)"
+                  className="flex-1 min-w-0 text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                />
+                <button
+                  onClick={addApprover}
+                  disabled={approversMut.isPending || !approverInput.trim()}
+                  className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50 flex-shrink-0"
+                >
+                  Add
+                </button>
+              </div>
+              <p className="text-xs text-text-tertiary">
+                Find a member ID in Slack under the person&rsquo;s profile &rarr; More &rarr; Copy member ID.
               </p>
             </div>
-
-            <ul className="space-y-1">
-              <li className="flex items-center justify-between rounded bg-surface-2 px-3 py-1.5 text-sm">
-                <span className="text-text-primary">
-                  {cfg.installer_slack_user_id || 'You'}
-                </span>
-                <span className="text-xs text-text-secondary">installed the app — always allowed</span>
-              </li>
-              {(cfg.approvers ?? []).map((a) => (
-                <li key={a.slack_user_id} className="flex items-center justify-between rounded bg-surface-2 px-3 py-1.5 text-sm">
-                  <span className="text-text-primary">
-                    {a.display_name} <span className="text-text-secondary">({a.slack_user_id})</span>
-                  </span>
-                  <button
-                    onClick={() => removeApprover(a.slack_user_id)}
-                    disabled={approversMut.isPending}
-                    className="text-xs text-danger hover:underline disabled:opacity-50"
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ul>
-
-            <div className="flex gap-2">
-              <input
-                value={approverInput}
-                onChange={(e) => setApproverInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addApprover() } }}
-                placeholder="Slack member ID (e.g. U012ABCDEF)"
-                className="flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary"
-              />
-              <button
-                onClick={addApprover}
-                disabled={approversMut.isPending || !approverInput.trim()}
-                className="rounded-md bg-brand px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-              >
-                Add
-              </button>
-            </div>
-            <p className="text-xs text-text-secondary">
-              Find a member ID in Slack under the person&rsquo;s profile → More → Copy member ID.
-            </p>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </section>
   )
 }

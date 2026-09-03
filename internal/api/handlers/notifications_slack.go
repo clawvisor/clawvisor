@@ -162,9 +162,14 @@ func (h *NotificationsHandler) SlackCallback(w http.ResponseWriter, r *http.Requ
 // selected yet.
 const slackPendingChannel = "__pending__"
 
+// slackSettingsPath is where the dashboard renders the Slack section. The
+// settings page lives under the /dashboard/* route, so a bare "/settings"
+// lands on the SPA's not-found route instead.
+const slackSettingsPath = "/dashboard/settings"
+
 func (h *NotificationsHandler) redirectToSlackSettings(w http.ResponseWriter, r *http.Request, key, val string) {
 	base := strings.TrimRight(h.baseURL, "/")
-	http.Redirect(w, r, base+"/settings?"+url.Values{key: {val}}.Encode(), http.StatusFound)
+	http.Redirect(w, r, base+slackSettingsPath+"?"+url.Values{key: {val}}.Encode(), http.StatusFound)
 }
 
 // SlackConfig returns the current connection.
