@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func TestMessageContext_ResolveIsOnceOnly(t *testing.T) {
@@ -125,5 +127,54 @@ func TestApproverDisplay_NeverProducesAMention(t *testing.T) {
 				t.Fatalf("approverDisplay = %q, which Slack would render as a mention", got)
 			}
 		})
+	}
+}
+
+// The Redis store is what makes attribution and the detail button survive a
+// resolve on a different replica than the one that posted the prompt — which
+// the LPUSH/BRPOP decision queue makes the normal case, not an edge case.
+func TestRedisMessageContext_SurvivesAcrossInstances(t *testing.T) {
+	_, mr := newTestRedisStore(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	// Two stores over one Redis stand in for two replicas.
+	poster := NewRedisMessageContextStore(rdb)
+	resolver := NewRedisMessageContextStore(rdb)
+
+	key := contextKey("task", "task-1")
+	poster.Put(key, messageContext{
+		Summary: "agent · purpose",
+		Detail:  []block{section("what was approved")},
+	}, time.Minute)
+	poster.SetApprover(key, "jane")
+
+	mc, ok := resolver.TakeForResolve(key)
+	if !ok {
+		t.Fatal("the resolving replica found no context; attribution and the detail button would be lost")
+	}
+	if mc.Approver != "jane" || mc.Summary != "agent · purpose" || len(mc.Detail) != 1 {
+		t.Fatalf("context did not survive the hop: %+v", mc)
+	}
+
+	// Once-only must hold across replicas, or a duplicate resolution renders
+	// the detail twice.
+	if _, ok := poster.TakeForResolve(key); ok {
+		t.Fatal("a second replica also took the context; resolve is not once-only")
+	}
+}
+
+// SetApprover must not extend the entry's life past the prompt it belongs to.
+func TestRedisMessageContext_SetApproverKeepsTTL(t *testing.T) {
+	_, mr := newTestRedisStore(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	s := NewRedisMessageContextStore(rdb)
+
+	key := contextKey("task", "task-1")
+	s.Put(key, messageContext{Summary: "x"}, time.Minute)
+	s.SetApprover(key, "jane")
+
+	ttl := mr.TTL(redisMsgCtxPrefix + key)
+	if ttl <= 0 || ttl > time.Minute {
+		t.Fatalf("ttl = %v, want the original bound preserved", ttl)
 	}
 }

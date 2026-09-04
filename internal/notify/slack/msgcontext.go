@@ -33,12 +33,13 @@ type messageContext struct {
 // MessageContextStorer holds per-target message context between sending a
 // prompt and resolving it.
 //
-// The in-memory implementation is correct for single-instance deployments.
-// Across replicas a decision can be consumed on a different instance than
-// the one that posted or received the click, in which case the lookup misses
-// and the resolved message degrades gracefully — it keeps the outcome and
-// drops the summary, thread reply, and attribution. A Redis-backed
-// implementation would close that gap.
+// The in-memory implementation is correct only for single-instance
+// deployments. Decisions travel on a durable LPUSH/BRPOP queue, so whichever
+// replica pops one resolves it — routinely not the replica that posted the
+// prompt. With an in-memory store that replica finds nothing and the resolved
+// message silently loses its attribution and its "View request details"
+// button, because the detail it would stash lives in the context that just
+// missed. Multi-instance deployments must use NewRedisMessageContextStore.
 type MessageContextStorer interface {
 	Put(key string, mc messageContext, ttl time.Duration)
 	SetApprover(key, approver string)

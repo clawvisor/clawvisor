@@ -120,7 +120,7 @@ func (n *Notifier) SetVault(v vault.Vault) { n.vault = v }
 // land on any replica, so both the callback tokens and the replay guard must
 // be shared state in multi-instance deployments — the in-memory defaults
 // would let a click on replica B fail to find a token minted on replica A.
-func (n *Notifier) SetRedisStores(cbTokens CallbackTokenStorer, replay ReplayGuard, details DetailStorer) {
+func (n *Notifier) SetRedisStores(cbTokens CallbackTokenStorer, replay ReplayGuard, details DetailStorer, msgCtx MessageContextStorer) {
 	if cbTokens != nil {
 		n.cbTokens = cbTokens
 	}
@@ -129,6 +129,9 @@ func (n *Notifier) SetRedisStores(cbTokens CallbackTokenStorer, replay ReplayGua
 	}
 	if details != nil {
 		n.details = details
+	}
+	if msgCtx != nil {
+		n.msgCtx = msgCtx
 	}
 }
 

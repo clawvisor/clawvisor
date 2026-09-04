@@ -578,6 +578,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 				slacknotify.NewRedisCallbackTokenStore(client),
 				slacknotify.NewRedisReplayGuard(client),
 				slacknotify.NewRedisDetailStore(client),
+				slacknotify.NewRedisMessageContextStore(client),
 			)
 		}
 
