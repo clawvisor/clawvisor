@@ -328,6 +328,14 @@ func (n *Notifier) UpdateMessageForTarget(ctx context.Context, userID, targetTyp
 		return nil
 	}
 
+	// Success is logged as well as failure. Only logging failure means a
+	// silent path and a successful edit of the WRONG message are
+	// indistinguishable in the logs — which is exactly the ambiguity that
+	// made a prompt visibly keeping its buttons impossible to diagnose.
+	// Recording the resolved reference makes a wrong-target edit obvious.
+	n.logger.InfoContext(ctx, "slack: updating resolved prompt",
+		"target_type", targetType, "target_id", targetID, "message_ref", ref)
+
 	channelID, ts, ok := splitMessageRef(ref)
 	if !ok {
 		return fmt.Errorf("slack: malformed message reference %q", ref)
@@ -462,7 +470,20 @@ func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, userID, c
 		"text":    plainText(text),
 		"blocks":  clamp(blocks),
 	}
-	return n.call(ctx, cfg.BotToken, "chat.update", payload, nil)
+	var out struct {
+		Channel string `json:"channel"`
+		TS      string `json:"ts"`
+	}
+	if err := n.call(ctx, cfg.BotToken, "chat.update", payload, &out); err != nil {
+		return err
+	}
+	// Slack echoes back what it actually edited. Comparing it to what we
+	// asked for turns "the API said ok but the message did not change" from
+	// an unfalsifiable report into a visible mismatch.
+	n.logger.InfoContext(ctx, "slack: prompt updated",
+		"requested_channel", channelID, "requested_ts", ts,
+		"edited_channel", out.Channel, "edited_ts", out.TS)
+	return nil
 }
 
 // stashDetail stores the request detail under an unguessable token for the
