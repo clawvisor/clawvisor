@@ -219,19 +219,66 @@ func (m *MultiNotifier) LookupSlackUser(ctx context.Context, userID, slackUserID
 
 // ── Notifier interface ────────────────────────────────────────────────────────
 
-func (m *MultiNotifier) SendApprovalRequest(ctx context.Context, req ApprovalRequest) (string, error) {
+// fanOutSend runs one send across every notifier and reduces the results the
+// way callers actually need.
+//
+// Two things were wrong with returning "first non-empty ID" plus every error.
+//
+// The error made a partial success look like a total one. A user with only
+// Slack configured gets an error from the unconfigured Telegram notifier on
+// every send, so callers logged "failed to send" for a prompt that was
+// delivered. An error is only meaningful here if NO channel reached the user.
+//
+// The ID leaked across channels. Callers persist the returned ID against a
+// hardcoded "telegram" channel, so when Telegram failed and Slack succeeded,
+// Slack's "channel:ts" reference would be written into Telegram's row. Only
+// notifiers that do NOT record their own message reference can supply it —
+// a TargetMessageUpdater addresses its messages by target and has already
+// stored what it needs.
+func (m *MultiNotifier) fanOutSend(ctx context.Context, op string, send func(Notifier) (string, error)) (string, error) {
 	var messageID string
 	var errs []error
+	delivered := 0
+
 	for _, n := range m.notifiers {
-		id, err := n.SendApprovalRequest(ctx, req)
+		id, err := send(n)
 		if err != nil {
-			m.logger.WarnContext(ctx, "notifier: SendApprovalRequest failed", "err", err)
+			m.logger.WarnContext(ctx, "notifier: send failed", "op", op, "err", err)
 			errs = append(errs, err)
-		} else if messageID == "" && id != "" {
+			continue
+		}
+		// A nil error is not proof anyone was reached. Push returns
+		// ("", nil) when the user has no paired devices, so counting it
+		// would let a genuine Telegram failure report success and nobody
+		// would learn the prompt never arrived. Treat delivery as proven
+		// only by a message reference, or by a channel that records its
+		// own (Slack), which returns one it has already stored.
+		_, selfRecording := n.(TargetMessageUpdater)
+		if id == "" && !selfRecording {
+			m.logger.WarnContext(ctx, "notifier: send reported success but delivered nothing", "op", op)
+			continue
+		}
+		delivered++
+
+		// Only Telegram's reference may be returned. Callers persist it
+		// against a hardcoded "telegram" channel, so handing back push's
+		// "push:<daemonID>" would point later Telegram edits at a message
+		// that never existed. Self-recording channels store their own.
+		if _, isTelegram := n.(TelegramTester); isTelegram && messageID == "" {
 			messageID = id
 		}
 	}
-	return messageID, errors.Join(errs...)
+
+	if delivered > 0 {
+		return messageID, nil
+	}
+	return "", errors.Join(errs...)
+}
+
+func (m *MultiNotifier) SendApprovalRequest(ctx context.Context, req ApprovalRequest) (string, error) {
+	return m.fanOutSend(ctx, "SendApprovalRequest", func(n Notifier) (string, error) {
+		return n.SendApprovalRequest(ctx, req)
+	})
 }
 
 func (m *MultiNotifier) SendActivationRequest(ctx context.Context, req ActivationRequest) error {
@@ -246,48 +293,21 @@ func (m *MultiNotifier) SendActivationRequest(ctx context.Context, req Activatio
 }
 
 func (m *MultiNotifier) SendTaskApprovalRequest(ctx context.Context, req TaskApprovalRequest) (string, error) {
-	var messageID string
-	var errs []error
-	for _, n := range m.notifiers {
-		id, err := n.SendTaskApprovalRequest(ctx, req)
-		if err != nil {
-			m.logger.WarnContext(ctx, "notifier: SendTaskApprovalRequest failed", "err", err)
-			errs = append(errs, err)
-		} else if messageID == "" && id != "" {
-			messageID = id
-		}
-	}
-	return messageID, errors.Join(errs...)
+	return m.fanOutSend(ctx, "SendTaskApprovalRequest", func(n Notifier) (string, error) {
+		return n.SendTaskApprovalRequest(ctx, req)
+	})
 }
 
 func (m *MultiNotifier) SendScopeExpansionRequest(ctx context.Context, req ScopeExpansionRequest) (string, error) {
-	var messageID string
-	var errs []error
-	for _, n := range m.notifiers {
-		id, err := n.SendScopeExpansionRequest(ctx, req)
-		if err != nil {
-			m.logger.WarnContext(ctx, "notifier: SendScopeExpansionRequest failed", "err", err)
-			errs = append(errs, err)
-		} else if messageID == "" && id != "" {
-			messageID = id
-		}
-	}
-	return messageID, errors.Join(errs...)
+	return m.fanOutSend(ctx, "SendScopeExpansionRequest", func(n Notifier) (string, error) {
+		return n.SendScopeExpansionRequest(ctx, req)
+	})
 }
 
 func (m *MultiNotifier) SendConnectionRequest(ctx context.Context, req ConnectionRequest) (string, error) {
-	var messageID string
-	var errs []error
-	for _, n := range m.notifiers {
-		id, err := n.SendConnectionRequest(ctx, req)
-		if err != nil {
-			m.logger.WarnContext(ctx, "notifier: SendConnectionRequest failed", "err", err)
-			errs = append(errs, err)
-		} else if messageID == "" && id != "" {
-			messageID = id
-		}
-	}
-	return messageID, errors.Join(errs...)
+	return m.fanOutSend(ctx, "SendConnectionRequest", func(n Notifier) (string, error) {
+		return n.SendConnectionRequest(ctx, req)
+	})
 }
 
 func (m *MultiNotifier) UpdateMessage(ctx context.Context, userID, messageID, text string) error {

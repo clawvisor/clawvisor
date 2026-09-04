@@ -220,13 +220,13 @@ func TestMessageContextKey_TaskScopedApprovalResolves(t *testing.T) {
 
 	// What the interaction knows: the bare request ID plus the task ID.
 	entry := &callbackEntry{Type: "approval", TargetID: "req-1", TaskID: "task-1"}
-	s.SetApprover(messageContextKey(entry), mention("U012ABC"))
+	s.SetApprover(messageContextKey(entry), "jane")
 
 	mc, ok := s.TakeForResolve(sendKey)
 	if !ok {
 		t.Fatal("send-path context not found")
 	}
-	if mc.Approver != "<@U012ABC>" {
-		t.Fatalf("approver = %q, want the clicker's mention — attribution was lost", mc.Approver)
+	if mc.Approver != "jane" {
+		t.Fatalf("approver = %q, want the clicker's display name — attribution was lost", mc.Approver)
 	}
 }

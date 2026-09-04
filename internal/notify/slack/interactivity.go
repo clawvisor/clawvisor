@@ -27,6 +27,7 @@ const (
 	actionDeny        = "clawvisor_deny"
 	actionNoopApprove = "clawvisor_link_approve"
 	actionNoopDeny    = "clawvisor_link_deny"
+	actionViewDetails = "clawvisor_view_details"
 )
 
 // maxInteractionBody bounds how much of an interaction payload we will read.
@@ -61,6 +62,7 @@ type interactionPayload struct {
 		ID string `json:"id"`
 	} `json:"channel"`
 	ResponseURL string `json:"response_url"`
+	TriggerID   string `json:"trigger_id"`
 	Actions     []struct {
 		ActionID string `json:"action_id"`
 		Value    string `json:"value"`
@@ -132,9 +134,15 @@ func (n *Notifier) HandleInteraction(w http.ResponseWriter, r *http.Request) {
 
 func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload) {
 	if p.Type != "block_actions" || len(p.Actions) == 0 {
+		n.logger.InfoContext(ctx, "slack: ignoring non-action interaction", "type", p.Type)
 		return
 	}
 	act := p.Actions[0]
+	// Entry is logged because every exit below is silent to the channel: the
+	// user sees a click that did nothing, and until now the logs could not
+	// say which of six exits it took.
+	n.logger.InfoContext(ctx, "slack: interaction received",
+		"action_id", act.ActionID, "slack_user_id", p.User.ID, "channel", p.Channel.ID)
 
 	var action string
 	switch act.ActionID {
@@ -142,9 +150,15 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 		action = "approve"
 	case actionDeny:
 		action = "deny"
+	case actionViewDetails:
+		// Read-only: opens a modal showing what the message already
+		// represents, so it resolves nothing and consumes no token.
+		n.openDetailModal(ctx, p, act.Value)
+		return
 	case actionNoopApprove, actionNoopDeny:
 		return // link buttons resolve in the dashboard
 	default:
+		n.logger.InfoContext(ctx, "slack: unrecognised action_id", "action_id", act.ActionID)
 		return
 	}
 
@@ -152,6 +166,7 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// or anyone in the channel could disable approvals by clicking first.
 	entry, err := n.cbTokens.Peek(act.Value)
 	if err != nil {
+		n.logger.WarnContext(ctx, "slack: interaction token not usable", "err", err, "action", action)
 		n.reportStaleToken(ctx, p.ResponseURL, err)
 		return
 	}
@@ -168,6 +183,9 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// the token was minted for. Both run before Consume, so a click that
 	// fails either one cannot burn the token.
 	if msg := identityMismatch(cfg, entry, p); msg != "" {
+		n.logger.WarnContext(ctx, "slack: interaction rejected on workspace/channel identity",
+			"payload_team", p.Team.ID, "config_team", cfg.TeamID,
+			"payload_channel", p.Channel.ID, "token_channel", entry.ChannelID)
 		n.ephemeral(ctx, p.ResponseURL, msg)
 		return
 	}
@@ -182,6 +200,7 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// Authorized — now retire the token. Losing this race means someone
 	// else resolved it first.
 	if _, err := n.cbTokens.Consume(act.Value); err != nil {
+		n.logger.WarnContext(ctx, "slack: token consume lost the race", "err", err, "action", action)
 		n.reportStaleToken(ctx, p.ResponseURL, err)
 		return
 	}
@@ -189,18 +208,34 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// Record who clicked so the resolved message can attribute it. Written
 	// before publishing: the decision is consumed asynchronously and may
 	// reach the update path immediately.
-	n.msgCtx.SetApprover(messageContextKey(entry), mention(p.User.ID))
+	n.msgCtx.SetApprover(messageContextKey(entry), approverDisplay(p))
 
-	select {
-	case n.decisionCh <- notify.CallbackDecision{
+	// Publishing is logged either way. A send that blocks on a full channel
+	// would otherwise look identical to one that was never attempted, and
+	// the decision never arriving at the consumer is exactly the symptom
+	// being chased.
+	decision := notify.CallbackDecision{
 		Type:        entry.Type,
 		Action:      action,
 		TargetID:    entry.TargetID,
 		TaskID:      entry.TaskID,
 		UserID:      entry.UserID,
 		ApproverRef: approverRef(p),
-	}:
-	case <-ctx.Done():
+	}
+
+	// Bounded rather than waiting on ctx: this runs under
+	// context.WithoutCancel, so a ctx.Done() arm could never fire and a full
+	// channel would hang this goroutine for the life of the process. The
+	// timeout turns that into a logged loss instead of a silent leak.
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+	select {
+	case n.decisionCh <- decision:
+		n.logger.InfoContext(ctx, "slack: decision published",
+			"type", decision.Type, "action", decision.Action, "target_id", decision.TargetID)
+	case <-timeout.C:
+		n.logger.ErrorContext(ctx, "slack: decision dropped, consumer not keeping up",
+			"type", decision.Type, "action", decision.Action, "target_id", decision.TargetID)
 	}
 }
 
@@ -239,6 +274,21 @@ func messageContextKey(entry *callbackEntry) string {
 		return contextKey(targetType, approvalNotifyTargetID(entry.TargetID, entry.TaskID))
 	}
 	return contextKey(targetType, entry.TargetID)
+}
+
+// approverDisplay names the clicking user for the resolved message.
+//
+// Plain text, not a `<@U…>` mention: a mention would notify them about an
+// action they just took themselves. Falls back to the raw ID rather than
+// emitting a mention, so no path can reintroduce the ping.
+func approverDisplay(p interactionPayload) string {
+	if p.User.Username != "" {
+		return p.User.Username
+	}
+	if p.User.Name != "" {
+		return p.User.Name
+	}
+	return p.User.ID
 }
 
 // approverRef renders the clicking Slack user for the audit trail. The
@@ -445,4 +495,52 @@ func (n *Notifier) verifySignature(timestamp, signature string, body []byte) err
 		return errors.New("signature mismatch")
 	}
 	return nil
+}
+
+// openDetailModal shows the stashed request detail for a resolved prompt.
+//
+// Slack's trigger_id is valid for three seconds, so this runs on the path
+// that has already acked the request rather than doing any further work
+// first. A failure is reported to the clicker only — nobody else needs to
+// know their modal did not open.
+func (n *Notifier) openDetailModal(ctx context.Context, p interactionPayload, token string) {
+	if p.TriggerID == "" {
+		n.logger.WarnContext(ctx, "slack: view-details interaction carried no trigger_id")
+		return
+	}
+
+	entry, ok := n.details.GetDetail(ctx, token)
+	if !ok || len(entry.Blocks) == 0 {
+		n.ephemeral(ctx, p.ResponseURL,
+			":hourglass: These request details are no longer available. The dashboard has the full record.")
+		return
+	}
+
+	// A token minted for one workspace must not open in another, even though
+	// only Slack can sign an interaction.
+	// Missing identity is rejected like mismatched identity: making the
+	// check conditional on p.Team.ID being present turns workspace
+	// isolation into something a payload can opt out of by omission. Only
+	// a token we never recorded a workspace for has nothing to compare.
+	if entry.TeamID != "" && entry.TeamID != p.Team.ID {
+		n.logger.WarnContext(ctx, "slack: detail token presented from a different workspace")
+		n.ephemeral(ctx, p.ResponseURL, ":no_entry: These details belong to a different workspace.")
+		return
+	}
+
+	cfg, err := n.userConfig(ctx, entry.UserID)
+	if err != nil {
+		n.logger.WarnContext(ctx, "slack: cannot open detail modal, config unavailable", "err", err)
+		n.ephemeral(ctx, p.ResponseURL, ":warning: Could not open the request details.")
+		return
+	}
+
+	payload := map[string]any{
+		"trigger_id": p.TriggerID,
+		"view":       detailModal(entry.Blocks),
+	}
+	if err := n.call(ctx, cfg.BotToken, "views.open", payload, nil); err != nil {
+		n.logger.WarnContext(ctx, "slack: views.open failed", "err", err)
+		n.ephemeral(ctx, p.ResponseURL, ":warning: Could not open the request details.")
+	}
 }

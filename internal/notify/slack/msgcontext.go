@@ -21,8 +21,8 @@ type messageContext struct {
 	// resolve it moves into a thread reply, which is Slack's only real
 	// collapse primitive.
 	Detail []block
-	// Approver is a Slack mention (`<@U012ABC>`) for whoever clicked, set
-	// at interaction time. Empty when the request was resolved from the
+	// Approver is the display name of whoever clicked, set at interaction
+	// time. Deliberately not a mention — see approverDisplay. Empty when the request was resolved from the
 	// dashboard or by expiry, in which case the resolved message simply
 	// omits attribution rather than guessing.
 	Approver  string
@@ -33,12 +33,13 @@ type messageContext struct {
 // MessageContextStorer holds per-target message context between sending a
 // prompt and resolving it.
 //
-// The in-memory implementation is correct for single-instance deployments.
-// Across replicas a decision can be consumed on a different instance than
-// the one that posted or received the click, in which case the lookup misses
-// and the resolved message degrades gracefully — it keeps the outcome and
-// drops the summary, thread reply, and attribution. A Redis-backed
-// implementation would close that gap.
+// The in-memory implementation is correct only for single-instance
+// deployments. Decisions travel on a durable LPUSH/BRPOP queue, so whichever
+// replica pops one resolves it — routinely not the replica that posted the
+// prompt. With an in-memory store that replica finds nothing and the resolved
+// message silently loses its attribution and its "View request details"
+// button, because the detail it would stash lives in the context that just
+// missed. Multi-instance deployments must use NewRedisMessageContextStore.
 type MessageContextStorer interface {
 	Put(key string, mc messageContext, ttl time.Duration)
 	SetApprover(key, approver string)
@@ -113,16 +114,6 @@ func targetTypeForDecision(entryType string) string {
 	default:
 		return "approval"
 	}
-}
-
-// mention renders a Slack user ID as a clickable mention. Slack resolves
-// `<@U012ABC>` to the member's display name at render time, so it stays
-// correct if they change their name.
-func mention(slackUserID string) string {
-	if slackUserID == "" {
-		return ""
-	}
-	return "<@" + slackUserID + ">"
 }
 
 // summarise builds the compact one-liner kept on a resolved message.

@@ -88,6 +88,7 @@ type Notifier struct {
 	apiBase    string
 	cbTokens   CallbackTokenStorer
 	msgCtx     MessageContextStorer
+	details    DetailStorer
 	decisionCh chan notify.CallbackDecision
 	replay     ReplayGuard
 }
@@ -106,6 +107,7 @@ func New(st store.Store, signingSecret string, creds AppCredentials, logger *slo
 		apiBase:        defaultAPIBase,
 		cbTokens:       newCallbackTokenStore(),
 		msgCtx:         newMessageContextStore(),
+		details:        newMemoryDetailStore(),
 		decisionCh:     make(chan notify.CallbackDecision, 32),
 		replay:         newMemoryReplayGuard(),
 	}
@@ -118,12 +120,18 @@ func (n *Notifier) SetVault(v vault.Vault) { n.vault = v }
 // land on any replica, so both the callback tokens and the replay guard must
 // be shared state in multi-instance deployments — the in-memory defaults
 // would let a click on replica B fail to find a token minted on replica A.
-func (n *Notifier) SetRedisStores(cbTokens CallbackTokenStorer, replay ReplayGuard) {
+func (n *Notifier) SetRedisStores(cbTokens CallbackTokenStorer, replay ReplayGuard, details DetailStorer, msgCtx MessageContextStorer) {
 	if cbTokens != nil {
 		n.cbTokens = cbTokens
 	}
 	if replay != nil {
 		n.replay = replay
+	}
+	if details != nil {
+		n.details = details
+	}
+	if msgCtx != nil {
+		n.msgCtx = msgCtx
 	}
 }
 
@@ -142,6 +150,7 @@ func (n *Notifier) RunCleanup(ctx context.Context) {
 		case <-t.C:
 			n.cbTokens.Cleanup()
 			n.msgCtx.Cleanup()
+			n.details.Cleanup()
 		}
 	}
 }
@@ -294,16 +303,41 @@ func (n *Notifier) UpdateMessage(_ context.Context, _, _, _ string) error { retu
 // its buttons so a settled request cannot be clicked again. Implements
 // notify.TargetMessageUpdater.
 func (n *Notifier) UpdateMessageForTarget(ctx context.Context, userID, targetType, targetID, text string) error {
+	// Every early return below is a no-op by design — a resolve must not fail
+	// because a chat message could not be edited — but they must not be
+	// silent. A resolved request whose Slack prompt still shows live buttons
+	// is exactly the symptom someone reports, and without these lines the
+	// logs cannot distinguish "no message recorded" from "config unreadable".
 	ref, err := n.store.GetNotificationMessage(ctx, targetType, targetID, notifyChannel)
-	if err != nil || ref == "" {
-		// No Slack message for this target — the user resolved it from a
-		// channel that isn't configured. Not an error.
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		n.logger.WarnContext(ctx, "slack: no message recorded for target, cannot update prompt",
+			"target_type", targetType, "target_id", targetID)
+		return nil
+	case err != nil:
+		n.logger.WarnContext(ctx, "slack: message lookup failed, cannot update prompt",
+			"err", err, "target_type", targetType, "target_id", targetID)
+		return nil
+	case ref == "":
+		n.logger.WarnContext(ctx, "slack: empty message reference recorded for target",
+			"target_type", targetType, "target_id", targetID)
 		return nil
 	}
+
 	cfg, err := n.userConfig(ctx, userID)
 	if err != nil {
+		n.logger.WarnContext(ctx, "slack: config unavailable, cannot update prompt",
+			"err", err, "user_id", userID, "target_type", targetType, "target_id", targetID)
 		return nil
 	}
+
+	// Success is logged as well as failure. Only logging failure means a
+	// silent path and a successful edit of the WRONG message are
+	// indistinguishable in the logs — which is exactly the ambiguity that
+	// made a prompt visibly keeping its buttons impossible to diagnose.
+	// Recording the resolved reference makes a wrong-target edit obvious.
+	n.logger.InfoContext(ctx, "slack: updating resolved prompt",
+		"target_type", targetType, "target_id", targetID, "message_ref", ref)
 
 	channelID, ts, ok := splitMessageRef(ref)
 	if !ok {
@@ -313,17 +347,16 @@ func (n *Notifier) UpdateMessageForTarget(ctx context.Context, userID, targetTyp
 	// Absent context (a replica that did not post the prompt, or an expired
 	// entry) degrades to the outcome line alone rather than failing.
 	mc, haveCtx := n.msgCtx.TakeForResolve(contextKey(targetType, targetID))
-
-	// Move the detail into a thread reply before collapsing the parent, so
-	// the record of what was approved survives the edit. Best-effort: if
-	// the reply fails we still want the buttons cleared.
-	if haveCtx && len(mc.Detail) > 0 {
-		if err := n.postThreadReply(ctx, cfg, channelID, ts, mc.Detail); err != nil {
-			n.logger.WarnContext(ctx, "slack: could not post detail thread", "err", err)
-		}
+	if !haveCtx {
+		// In-memory store: a decision consumed on a different replica than
+		// the one that posted the prompt misses here. The outcome still gets
+		// written, but without attribution or the detail thread — worth
+		// seeing, because it looks like a partial failure to the user.
+		n.logger.InfoContext(ctx, "slack: no message context for target, updating without attribution",
+			"target_type", targetType, "target_id", targetID)
 	}
 
-	return n.update(ctx, cfg, channelID, ts, text, mc)
+	return n.update(ctx, cfg, userID, channelID, ts, text, mc)
 }
 
 // ── Message plumbing ──────────────────────────────────────────────────────────
@@ -407,7 +440,7 @@ func (n *Notifier) post(ctx context.Context, cfg notify.SlackConfig, text string
 // update collapses a resolved prompt to its outcome. Blocks are replaced
 // wholesale, which is also what clears the buttons; the detail has already
 // been moved to a thread reply by the caller.
-func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, channelID, ts, text string, mc messageContext) error {
+func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, userID, channelID, ts, text string, mc messageContext) error {
 	// The incoming text is Telegram-flavoured HTML, so it needs translating
 	// rather than escaping — escaping renders "<b>Approved</b>" literally.
 	blocks := []block{section(telegramHTMLToMrkdwn(text))}
@@ -418,44 +451,76 @@ func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, channelID
 		blocks = append(blocks, contextBlock(line))
 	}
 
+	// The detail goes behind a button that opens a modal, rather than into
+	// the message or a thread reply.
+	//
+	// A thread reply is a new message, so it notifies the channel again right
+	// after someone acted. Inlining it avoids the notification but leaves a
+	// wall of text: Slack renders every block, and has no collapsible block —
+	// its "Show more" applies to long text, not to Block Kit. A modal is the
+	// only real collapse, and opening one notifies nobody.
+	if len(mc.Detail) > 0 {
+		if token, err := n.stashDetail(ctx, userID, cfg.TeamID, mc.Detail); err != nil {
+			n.logger.WarnContext(ctx, "slack: could not stash request detail, omitting the button", "err", err)
+		} else {
+			blocks = append(blocks, viewDetailsAction(token))
+		}
+	}
+
 	payload := map[string]any{
 		"channel": channelID,
 		"ts":      ts,
 		"text":    plainText(text),
-		"blocks":  blocks,
+		"blocks":  clamp(blocks),
 	}
-	return n.call(ctx, cfg.BotToken, "chat.update", payload, nil)
+	var out struct {
+		Channel string `json:"channel"`
+		TS      string `json:"ts"`
+	}
+	if err := n.call(ctx, cfg.BotToken, "chat.update", payload, &out); err != nil {
+		return err
+	}
+	// Slack echoes back what it actually edited. Comparing it to what we
+	// asked for turns "the API said ok but the message did not change" from
+	// an unfalsifiable report into a visible mismatch.
+	n.logger.InfoContext(ctx, "slack: prompt updated",
+		"requested_channel", channelID, "requested_ts", ts,
+		"edited_channel", out.Channel, "edited_ts", out.TS)
+	return nil
+}
+
+// stashDetail stores the request detail under an unguessable token for the
+// modal to read back. The token is what the button carries: keying the button
+// on the target ID directly would let anyone able to forge an interaction
+// enumerate other requests' detail.
+func (n *Notifier) stashDetail(ctx context.Context, userID, teamID string, detail []block) (string, error) {
+	token, err := randomShortID()
+	if err != nil {
+		return "", err
+	}
+	entry := DetailEntry{UserID: userID, TeamID: teamID, Blocks: detail}
+	if err := n.details.PutDetail(ctx, token, entry, detailTTL); err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 // resolutionContext renders the "by whom / of what" line under the outcome.
-// The mention is inserted raw — Slack only resolves `<@U…>` when it is not
-// escaped — so it must never be passed through escapeMrkdwn.
+//
+// The approver is plain text, deliberately not a `<@U…>` mention. A mention
+// notifies that person, and the only time this renders is the instant after
+// they pressed the button — so the mention's entire effect is to ping someone
+// about something they just did themselves. It is also user-controlled text
+// once it is a display name, so it must be escaped.
 func resolutionContext(mc messageContext) string {
 	var parts []string
 	if mc.Approver != "" {
-		parts = append(parts, "Resolved by "+mc.Approver)
+		parts = append(parts, "Resolved by "+escapeMrkdwn(mc.Approver))
 	}
 	if mc.Summary != "" {
 		parts = append(parts, escapeMrkdwn(mc.Summary))
 	}
 	return strings.Join(parts, " · ")
-}
-
-// postThreadReply posts the original detail as a reply on the prompt's
-// thread. Slack collapses threads in the channel view behind a reply count,
-// which is the only genuine collapse primitive messages have — so the detail
-// stays available without dominating the channel.
-func (n *Notifier) postThreadReply(ctx context.Context, cfg notify.SlackConfig, channelID, ts string, detail []block) error {
-	payload := map[string]any{
-		"channel":   channelID,
-		"thread_ts": ts,
-		"text":      "Request details",
-		"blocks":    clamp(detail),
-		// Keep the reply inside the thread; broadcasting would defeat the
-		// point of collapsing it.
-		"reply_broadcast": false,
-	}
-	return n.call(ctx, cfg.BotToken, "chat.postMessage", payload, nil)
 }
 
 // doJSON executes a prepared request and decodes the JSON body into out.

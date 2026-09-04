@@ -106,17 +106,18 @@ type Server struct {
 	claimCodeCache     handlers.ClaimCodeCache
 	devicePairingStore handlers.DevicePairingStore
 	oauthStateStore    handlers.OAuthStateStore
-	pairingCodeStore   handlers.PairingCodeStore
-	dedupCache         handlers.DedupCache
-	verdictCache       intent.VerdictCacher
-	extractionTracker  handlers.ExtractionTracker
-	callerNonces       llmproxy.CallerNonceCache
-	scriptSessions     llmproxy.ScriptSessionCache
-	pendingSecrets     llmproxy.PendingSecretDecisionCache
-	liteApprovals      llmproxy.PendingApprovalCache
-	liteOutcomes       llmproxy.InlineApprovalOutcomeStore
-	taskCheckouts      llmproxy.TaskCheckoutStore
-	scopeDrifts        llmproxy.ScopeDriftRegistry
+
+	pairingCodeStore  handlers.PairingCodeStore
+	dedupCache        handlers.DedupCache
+	verdictCache      intent.VerdictCacher
+	extractionTracker handlers.ExtractionTracker
+	callerNonces      llmproxy.CallerNonceCache
+	scriptSessions    llmproxy.ScriptSessionCache
+	pendingSecrets    llmproxy.PendingSecretDecisionCache
+	liteApprovals     llmproxy.PendingApprovalCache
+	liteOutcomes      llmproxy.InlineApprovalOutcomeStore
+	taskCheckouts     llmproxy.TaskCheckoutStore
+	scopeDrifts       llmproxy.ScopeDriftRegistry
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 
@@ -1841,6 +1842,12 @@ func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.
 			if !ok {
 				return
 			}
+			// Logged on arrival: if a decision never reaches here, the
+			// prompt is resolved by some other route and no amount of
+			// instrumentation further down will show why.
+			s.logger.InfoContext(ctx, "notifier decision received",
+				"type", d.Type, "action", d.Action, "target_id", d.TargetID, "task_id", d.TaskID)
+
 			var err error
 			switch d.Type {
 			case "approval":
@@ -1880,6 +1887,7 @@ func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.
 					"type", d.Type, "action", d.Action,
 					"target_id", d.TargetID, "err", err)
 			}
+
 		}
 	}
 }
@@ -2003,6 +2011,11 @@ func (s *Server) Run(ctx context.Context) error {
 		if s.cbDispatcher != nil {
 			s.cbDispatcher.Stop()
 		}
+		// A decision popped from the bus but not yet handed to a consumer
+		// exists only in memory — the queue read is destructive and has no
+		// redelivery. The subscriber returns it on cancellation, but that
+		// write has to land before the process exits or the approval is
+		// lost exactly as it was before.
 		s.store.Close()
 		if !s.cfg.Server.IsLocal() {
 			s.logger.Info("server stopped")
