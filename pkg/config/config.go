@@ -150,10 +150,33 @@ type SlackConfig struct {
 	PublicURL string `yaml:"public_url"`
 }
 
-// Enabled reports whether the Slack app credentials are present. A caller
-// also needs a non-empty CallbackBaseURL before approvals can run.
+// terraformPlaceholder is the body Terraform writes into a Secret Manager slot
+// it provisions but cannot populate.
+//
+// Cloud Run has to be able to resolve a secret reference before anyone has
+// pasted the real value, so the slot is created with this stand-in. Treating
+// it as a configured value is worse than treating it as absent: Slack would be
+// advertised in the settings UI, the install would fail against a bogus client
+// secret, and — because the signing secret is the only credential on the
+// unauthenticated interaction endpoint — every button click would be rejected
+// as an invalid signature, with no indication that the cause was unfinished
+// setup. Mirrors the same guard on the Google Ads credentials.
+const terraformPlaceholder = "REPLACE_ME"
+
+func isPlaceholder(v string) bool {
+	return strings.EqualFold(strings.TrimSpace(v), terraformPlaceholder)
+}
+
+// configured reports whether a value is present and is not Terraform's
+// placeholder.
+func configured(v string) bool {
+	return strings.TrimSpace(v) != "" && !isPlaceholder(v)
+}
+
+// Enabled reports whether the Slack app credentials are present and real. A
+// caller also needs a non-empty CallbackBaseURL before approvals can run.
 func (c SlackConfig) Enabled() bool {
-	return c.ClientID != "" && c.ClientSecret != "" && c.SigningSecret != ""
+	return configured(c.ClientID) && configured(c.ClientSecret) && configured(c.SigningSecret)
 }
 
 // CallbackBaseURL returns the origin Slack should call back to, preferring
