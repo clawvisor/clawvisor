@@ -1884,17 +1884,22 @@ func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.
 				}
 			}
 			if err != nil {
-				s.logger.WarnContext(ctx, "notifier decision failed",
+				// Deliberately not acked. A handler error does not
+				// distinguish "delivered and rejected" — an expired
+				// approval, a lost CAS — from "transiently failed": a
+				// database outage, or this context being cancelled
+				// mid-handle during a rolling deploy. Acking here would
+				// discard the second kind, which is the loss this bus
+				// exists to prevent. Redelivery is bounded by
+				// maxDeliveryAttempts, so a decision that genuinely
+				// cannot be handled is dropped loudly rather than
+				// retried forever.
+				s.logger.WarnContext(ctx, "notifier decision failed, will be redelivered",
 					"type", d.Type, "action", d.Action,
 					"target_id", d.TargetID, "err", err)
+				continue
 			}
 
-			// Acked either way. A handler error is a decision that was
-			// delivered and rejected — an expired approval, a lost CAS —
-			// not one that went missing, and redelivering it would just
-			// fail again on a loop. Only an unfinished handler should be
-			// retried, and that is the case where this line is never
-			// reached.
 			delivery.Ack()
 
 		}
