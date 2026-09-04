@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -28,16 +29,16 @@ func TestMessageContext_ApproverIsRecordedForResolve(t *testing.T) {
 	s := newMessageContextStore()
 	key := contextKey("task", "task-1")
 	s.Put(key, messageContext{Summary: "agent · purpose"}, time.Minute)
-	s.SetApprover(key, mention("U012ABC"))
+	s.SetApprover(key, "jane")
 
 	mc, ok := s.TakeForResolve(key)
 	if !ok {
 		t.Fatal("context missing")
 	}
-	if mc.Approver != "<@U012ABC>" {
-		t.Fatalf("approver = %q, want a Slack mention", mc.Approver)
+	if mc.Approver != "jane" {
+		t.Fatalf("approver = %q, want the display name", mc.Approver)
 	}
-	if got := resolutionContext(mc); got != "Resolved by <@U012ABC> · agent · purpose" {
+	if got := resolutionContext(mc); got != "Resolved by jane · agent · purpose" {
 		t.Fatalf("resolutionContext = %q", got)
 	}
 }
@@ -53,13 +54,17 @@ func TestResolutionContext_OmitsUnknownApprover(t *testing.T) {
 	}
 }
 
-// The mention must survive un-escaped or Slack renders "<@U012ABC>" as text
-// instead of resolving it to the member's name.
-func TestResolutionContext_MentionIsNotEscaped(t *testing.T) {
-	mc := messageContext{Approver: mention("U012ABC"), Summary: "a & b"}
+// The approver must never render as a `<@U…>` mention: it would notify the
+// person about an action they just took themselves. Display names are also
+// user-controlled, so they must be escaped like any other dynamic text.
+func TestResolutionContext_ApproverIsEscapedAndNotAMention(t *testing.T) {
+	mc := messageContext{Approver: "a<b&c", Summary: "x & y"}
 	got := resolutionContext(mc)
-	if got != "Resolved by <@U012ABC> · a &amp; b" {
-		t.Fatalf("got %q: mention must stay raw while the summary is escaped", got)
+	if got != "Resolved by a&lt;b&amp;c · x &amp; y" {
+		t.Fatalf("got %q: the approver must be escaped plain text", got)
+	}
+	if strings.Contains(got, "<@") {
+		t.Fatalf("got %q: rendered a mention, which would notify the approver", got)
 	}
 }
 
@@ -93,5 +98,32 @@ func TestSummarise_SkipsEmptyParts(t *testing.T) {
 	}
 	if got := summarise("", ""); got != "" {
 		t.Fatalf("got %q, want empty", got)
+	}
+}
+
+// The resolved message must not gain a mention by any route — a mention is
+// the whole reason the old thread reply pinged people after they had already
+// acted.
+func TestApproverDisplay_NeverProducesAMention(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		username, real, id string
+		want               string
+	}{
+		{"prefers username", "jane", "Jane Doe", "U1", "jane"},
+		{"falls back to real name", "", "Jane Doe", "U1", "Jane Doe"},
+		{"falls back to the raw id, not a mention", "", "", "U012ABC", "U012ABC"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var p interactionPayload
+			p.User.Username, p.User.Name, p.User.ID = tc.username, tc.real, tc.id
+			got := approverDisplay(p)
+			if got != tc.want {
+				t.Fatalf("approverDisplay = %q, want %q", got, tc.want)
+			}
+			if strings.HasPrefix(got, "<@") {
+				t.Fatalf("approverDisplay = %q, which Slack would render as a mention", got)
+			}
+		})
 	}
 }

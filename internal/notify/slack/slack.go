@@ -339,15 +339,6 @@ func (n *Notifier) UpdateMessageForTarget(ctx context.Context, userID, targetTyp
 			"target_type", targetType, "target_id", targetID)
 	}
 
-	// Move the detail into a thread reply before collapsing the parent, so
-	// the record of what was approved survives the edit. Best-effort: if
-	// the reply fails we still want the buttons cleared.
-	if haveCtx && len(mc.Detail) > 0 {
-		if err := n.postThreadReply(ctx, cfg, channelID, ts, mc.Detail); err != nil {
-			n.logger.WarnContext(ctx, "slack: could not post detail thread", "err", err)
-		}
-	}
-
 	return n.update(ctx, cfg, channelID, ts, text, mc)
 }
 
@@ -443,44 +434,42 @@ func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, channelID
 		blocks = append(blocks, contextBlock(line))
 	}
 
+	// The original request detail stays in this same message rather than
+	// moving to a thread reply. A reply is a new message, so it notifies the
+	// channel a second time — immediately after someone has just acted, which
+	// is the moment they least want pinging. Editing in place notifies nobody,
+	// and Slack collapses the result behind "Show more" on its own, which is
+	// the collapsed-but-present behaviour the thread was reaching for.
+	if len(mc.Detail) > 0 {
+		blocks = append(blocks, divider())
+		blocks = append(blocks, mc.Detail...)
+	}
+
 	payload := map[string]any{
 		"channel": channelID,
 		"ts":      ts,
 		"text":    plainText(text),
-		"blocks":  blocks,
+		"blocks":  clamp(blocks),
 	}
 	return n.call(ctx, cfg.BotToken, "chat.update", payload, nil)
 }
 
 // resolutionContext renders the "by whom / of what" line under the outcome.
-// The mention is inserted raw — Slack only resolves `<@U…>` when it is not
-// escaped — so it must never be passed through escapeMrkdwn.
+//
+// The approver is plain text, deliberately not a `<@U…>` mention. A mention
+// notifies that person, and the only time this renders is the instant after
+// they pressed the button — so the mention's entire effect is to ping someone
+// about something they just did themselves. It is also user-controlled text
+// once it is a display name, so it must be escaped.
 func resolutionContext(mc messageContext) string {
 	var parts []string
 	if mc.Approver != "" {
-		parts = append(parts, "Resolved by "+mc.Approver)
+		parts = append(parts, "Resolved by "+escapeMrkdwn(mc.Approver))
 	}
 	if mc.Summary != "" {
 		parts = append(parts, escapeMrkdwn(mc.Summary))
 	}
 	return strings.Join(parts, " · ")
-}
-
-// postThreadReply posts the original detail as a reply on the prompt's
-// thread. Slack collapses threads in the channel view behind a reply count,
-// which is the only genuine collapse primitive messages have — so the detail
-// stays available without dominating the channel.
-func (n *Notifier) postThreadReply(ctx context.Context, cfg notify.SlackConfig, channelID, ts string, detail []block) error {
-	payload := map[string]any{
-		"channel":   channelID,
-		"thread_ts": ts,
-		"text":      "Request details",
-		"blocks":    clamp(detail),
-		// Keep the reply inside the thread; broadcasting would defeat the
-		// point of collapsing it.
-		"reply_broadcast": false,
-	}
-	return n.call(ctx, cfg.BotToken, "chat.postMessage", payload, nil)
 }
 
 // doJSON executes a prepared request and decodes the JSON body into out.

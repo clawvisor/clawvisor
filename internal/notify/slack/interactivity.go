@@ -189,7 +189,7 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// Record who clicked so the resolved message can attribute it. Written
 	// before publishing: the decision is consumed asynchronously and may
 	// reach the update path immediately.
-	n.msgCtx.SetApprover(messageContextKey(entry), mention(p.User.ID))
+	n.msgCtx.SetApprover(messageContextKey(entry), approverDisplay(p))
 
 	select {
 	case n.decisionCh <- notify.CallbackDecision{
@@ -239,6 +239,21 @@ func messageContextKey(entry *callbackEntry) string {
 		return contextKey(targetType, approvalNotifyTargetID(entry.TargetID, entry.TaskID))
 	}
 	return contextKey(targetType, entry.TargetID)
+}
+
+// approverDisplay names the clicking user for the resolved message.
+//
+// Plain text, not a `<@U…>` mention: a mention would notify them about an
+// action they just took themselves. Falls back to the raw ID rather than
+// emitting a mention, so no path can reintroduce the ping.
+func approverDisplay(p interactionPayload) string {
+	if p.User.Username != "" {
+		return p.User.Username
+	}
+	if p.User.Name != "" {
+		return p.User.Name
+	}
+	return p.User.ID
 }
 
 // approverRef renders the clicking Slack user for the audit trail. The
