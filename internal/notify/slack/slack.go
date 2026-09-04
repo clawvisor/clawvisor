@@ -294,14 +294,31 @@ func (n *Notifier) UpdateMessage(_ context.Context, _, _, _ string) error { retu
 // its buttons so a settled request cannot be clicked again. Implements
 // notify.TargetMessageUpdater.
 func (n *Notifier) UpdateMessageForTarget(ctx context.Context, userID, targetType, targetID, text string) error {
+	// Every early return below is a no-op by design — a resolve must not fail
+	// because a chat message could not be edited — but they must not be
+	// silent. A resolved request whose Slack prompt still shows live buttons
+	// is exactly the symptom someone reports, and without these lines the
+	// logs cannot distinguish "no message recorded" from "config unreadable".
 	ref, err := n.store.GetNotificationMessage(ctx, targetType, targetID, notifyChannel)
-	if err != nil || ref == "" {
-		// No Slack message for this target — the user resolved it from a
-		// channel that isn't configured. Not an error.
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		n.logger.WarnContext(ctx, "slack: no message recorded for target, cannot update prompt",
+			"target_type", targetType, "target_id", targetID)
+		return nil
+	case err != nil:
+		n.logger.WarnContext(ctx, "slack: message lookup failed, cannot update prompt",
+			"err", err, "target_type", targetType, "target_id", targetID)
+		return nil
+	case ref == "":
+		n.logger.WarnContext(ctx, "slack: empty message reference recorded for target",
+			"target_type", targetType, "target_id", targetID)
 		return nil
 	}
+
 	cfg, err := n.userConfig(ctx, userID)
 	if err != nil {
+		n.logger.WarnContext(ctx, "slack: config unavailable, cannot update prompt",
+			"err", err, "user_id", userID, "target_type", targetType, "target_id", targetID)
 		return nil
 	}
 
@@ -313,6 +330,14 @@ func (n *Notifier) UpdateMessageForTarget(ctx context.Context, userID, targetTyp
 	// Absent context (a replica that did not post the prompt, or an expired
 	// entry) degrades to the outcome line alone rather than failing.
 	mc, haveCtx := n.msgCtx.TakeForResolve(contextKey(targetType, targetID))
+	if !haveCtx {
+		// In-memory store: a decision consumed on a different replica than
+		// the one that posted the prompt misses here. The outcome still gets
+		// written, but without attribution or the detail thread — worth
+		// seeing, because it looks like a partial failure to the user.
+		n.logger.InfoContext(ctx, "slack: no message context for target, updating without attribution",
+			"target_type", targetType, "target_id", targetID)
+	}
 
 	// Move the detail into a thread reply before collapsing the parent, so
 	// the record of what was approved survives the edit. Best-effort: if
