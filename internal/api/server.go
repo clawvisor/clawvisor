@@ -1841,6 +1841,12 @@ func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.
 			if !ok {
 				return
 			}
+			// Logged on arrival: if a decision never reaches here, the
+			// prompt is resolved by some other route and no amount of
+			// instrumentation further down will show why.
+			s.logger.InfoContext(ctx, "notifier decision received",
+				"type", d.Type, "action", d.Action, "target_id", d.TargetID, "task_id", d.TaskID)
+
 			var err error
 			switch d.Type {
 			case "approval":

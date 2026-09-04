@@ -30,7 +30,24 @@ func updateNotificationMessage(
 	logger *slog.Logger,
 	targetType, targetID, userID, text string,
 ) {
+	// This helper exists to be called on paths that must not fail, including
+	// from test harnesses that supply no logger. Before entry logging was
+	// added the first statement was the nil-notifier guard, so a nil logger
+	// was never dereferenced; it is now, so it has to be tolerated.
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+
+	// Entry is logged because every exit from here is a deliberate no-op.
+	// With only the failure paths instrumented, "never called" and "called
+	// and did nothing" produce identical logs — which is what made a prompt
+	// keeping its buttons after approval impossible to place.
+	logger.InfoContext(ctx, "resolving notification message",
+		"target_type", targetType, "target_id", targetID)
+
 	if notifier == nil {
+		logger.WarnContext(ctx, "no notifier configured, cannot update prompt",
+			"target_type", targetType, "target_id", targetID)
 		return
 	}
 	msgID, err := st.GetNotificationMessage(ctx, targetType, targetID, "telegram")
@@ -54,7 +71,14 @@ func updateNotificationMessage(
 	// is Telegram's and means nothing to them. This must stay outside the
 	// lookup above: a missing Telegram message must not skip the
 	// target-addressed update. No-op when no such channel is configured.
-	if tu, ok := notifier.(notify.TargetMessageUpdater); ok {
+	tu, ok := notifier.(notify.TargetMessageUpdater)
+	if !ok {
+		// The notifier chain carries no channel that addresses messages by
+		// target. Expected with Telegram alone; a bug if Slack is enabled.
+		logger.InfoContext(ctx, "notifier has no target-addressed channel",
+			"target_type", targetType, "target_id", targetID)
+	}
+	if ok {
 		if err := tu.UpdateMessageForTarget(ctx, userID, targetType, targetID, text); err != nil {
 			logger.WarnContext(ctx, "target-addressed message update failed", "err", err, "target_type", targetType, "target_id", targetID)
 		}
