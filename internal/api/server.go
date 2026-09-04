@@ -1833,15 +1833,16 @@ func (s *Server) handleClawvisorKeys(w http.ResponseWriter, r *http.Request) {
 
 // consumeNotifierDecisions reads from the notifier's decision channel
 // and routes approve/deny decisions to the appropriate handler.
-func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.CallbackDecision) {
+func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.Delivery) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case d, ok := <-ch:
+		case delivery, ok := <-ch:
 			if !ok {
 				return
 			}
+			d := delivery.Decision
 			// Logged on arrival: if a decision never reaches here, the
 			// prompt is resolved by some other route and no amount of
 			// instrumentation further down will show why.
@@ -1883,10 +1884,23 @@ func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.
 				}
 			}
 			if err != nil {
-				s.logger.WarnContext(ctx, "notifier decision failed",
+				// Deliberately not acked. A handler error does not
+				// distinguish "delivered and rejected" — an expired
+				// approval, a lost CAS — from "transiently failed": a
+				// database outage, or this context being cancelled
+				// mid-handle during a rolling deploy. Acking here would
+				// discard the second kind, which is the loss this bus
+				// exists to prevent. Redelivery is bounded by
+				// maxDeliveryAttempts, so a decision that genuinely
+				// cannot be handled is dropped loudly rather than
+				// retried forever.
+				s.logger.WarnContext(ctx, "notifier decision failed, will be redelivered",
 					"type", d.Type, "action", d.Action,
 					"target_id", d.TargetID, "err", err)
+				continue
 			}
+
+			delivery.Ack()
 
 		}
 	}
@@ -1959,8 +1973,30 @@ func (s *Server) Run(ctx context.Context) error {
 			// Consume decisions from the bus (receives from all instances).
 			go s.consumeNotifierDecisions(ctx, s.decisionBus.Subscribe(ctx))
 		} else {
-			// Single-instance: consume directly from the local channel.
-			go s.consumeNotifierDecisions(ctx, dc.DecisionChannel())
+			// Single-instance: wrap the notifier's raw channel as
+			// deliveries. Acks are no-ops — with one process there is
+			// nothing to redeliver from.
+			raw := dc.DecisionChannel()
+			local := make(chan notify.Delivery)
+			go func() {
+				defer close(local)
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case d, ok := <-raw:
+						if !ok {
+							return
+						}
+						select {
+						case local <- notify.Delivery{Decision: d, Ack: func() {}}:
+						case <-ctx.Done():
+							return
+						}
+					}
+				}
+			}()
+			go s.consumeNotifierDecisions(ctx, local)
 		}
 	}
 
