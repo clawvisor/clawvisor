@@ -223,12 +223,18 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 		ApproverRef: approverRef(p),
 	}
 
+	// Bounded rather than waiting on ctx: this runs under
+	// context.WithoutCancel, so a ctx.Done() arm could never fire and a full
+	// channel would hang this goroutine for the life of the process. The
+	// timeout turns that into a logged loss instead of a silent leak.
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
 	select {
 	case n.decisionCh <- decision:
 		n.logger.InfoContext(ctx, "slack: decision published",
 			"type", decision.Type, "action", decision.Action, "target_id", decision.TargetID)
-	case <-ctx.Done():
-		n.logger.WarnContext(ctx, "slack: decision dropped before publish",
+	case <-timeout.C:
+		n.logger.ErrorContext(ctx, "slack: decision dropped, consumer not keeping up",
 			"type", decision.Type, "action", decision.Action, "target_id", decision.TargetID)
 	}
 }
