@@ -19,6 +19,12 @@ func (s sendStub) SendTaskApprovalRequest(context.Context, TaskApprovalRequest) 
 	return s.id, s.err
 }
 
+// telegramStub implements TelegramTester, which is how the fan-out
+// identifies the channel whose message ID callers persist.
+type telegramStub struct{ sendStub }
+
+func (telegramStub) SendTelegramTestMessage(context.Context, string) error { return nil }
+
 // selfRecordingStub also implements TargetMessageUpdater, marking it as a
 // channel that stores its own message reference (Slack).
 type selfRecordingStub struct{ sendStub }
@@ -64,7 +70,7 @@ func TestFanOutSend_DoesNotLeakSelfRecordingMessageID(t *testing.T) {
 
 // When Telegram succeeds its ID is still what callers get.
 func TestFanOutSend_ReturnsTelegramMessageID(t *testing.T) {
-	tg := sendStub{id: "12345"}
+	tg := telegramStub{sendStub{id: "12345"}}
 	slack := selfRecordingStub{sendStub{id: "C1:1700000000.1"}}
 
 	id, err := multi(t, tg, slack).SendTaskApprovalRequest(context.Background(), TaskApprovalRequest{})
@@ -87,5 +93,48 @@ func TestFanOutSend_AllFailingSurfacesError(t *testing.T) {
 	}
 	if id != "" {
 		t.Fatalf("id = %q, want empty when nothing was delivered", id)
+	}
+}
+
+// Push returns ("", nil) when the user has no paired devices. Counting that
+// as delivery let a genuine Telegram failure report success, so nobody
+// learned the prompt never arrived.
+func TestFanOutSend_NoOpDeliveryIsNotSuccess(t *testing.T) {
+	tg := sendStub{err: errors.New("telegram: no notification configured")}
+	push := sendStub{id: "", err: nil} // succeeded, reached nobody
+
+	id, err := multi(t, tg, push).SendTaskApprovalRequest(context.Background(), TaskApprovalRequest{})
+	if err == nil {
+		t.Fatal("nothing reached the user, but the send reported success")
+	}
+	if id != "" {
+		t.Fatalf("id = %q, want empty", id)
+	}
+}
+
+// A self-recording channel proves delivery without returning an ID to the
+// caller, so it must still count.
+func TestFanOutSend_SelfRecordingCountsAsDelivery(t *testing.T) {
+	tg := sendStub{err: errors.New("telegram: no notification configured")}
+	slack := selfRecordingStub{sendStub{id: "C1:1700000000.1"}}
+
+	if _, err := multi(t, tg, slack).SendTaskApprovalRequest(context.Background(), TaskApprovalRequest{}); err != nil {
+		t.Fatalf("Slack delivered but the send reported failure: %v", err)
+	}
+}
+
+// Push succeeds with its own reference, but callers persist whatever comes
+// back under "telegram" — so returning push's would point later Telegram
+// edits at a message that never existed.
+func TestFanOutSend_DoesNotReturnPushMessageID(t *testing.T) {
+	tg := telegramStub{sendStub{err: errors.New("telegram: no notification configured")}}
+	push := sendStub{id: "push:daemon-1"}
+
+	id, err := multi(t, tg, push).SendTaskApprovalRequest(context.Background(), TaskApprovalRequest{})
+	if err != nil {
+		t.Fatalf("push delivered, so the send should not report failure: %v", err)
+	}
+	if id != "" {
+		t.Fatalf("id = %q; push's reference would be stored as a Telegram message ID", id)
 	}
 }

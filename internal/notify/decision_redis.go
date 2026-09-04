@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -19,6 +20,12 @@ const redisDecisionQueue = "clawvisor:decisions"
 type RedisDecisionBus struct {
 	rdb    *redis.Client
 	logger *slog.Logger
+
+	// inflight tracks subscriber goroutines so shutdown can wait for a
+	// decision that was popped but not yet handed to a consumer. Without
+	// it the requeue below races process exit, and the approval it was
+	// protecting is lost anyway.
+	inflight sync.WaitGroup
 }
 
 // NewRedisDecisionBus creates a Redis-backed decision bus.
@@ -38,6 +45,26 @@ func (b *RedisDecisionBus) Publish(ctx context.Context, d notify.CallbackDecisio
 // Subscribe returns a channel that receives decisions. Uses BRPOP for
 // blocking, exactly-once consumption — only one instance processes each
 // decision even when multiple instances are subscribed.
+// Drain waits for subscriber goroutines to finish returning any popped
+// decision to the queue.
+//
+// Call this during shutdown, after cancelling the subscription context and
+// before the process exits. BRPOP is a destructive read, so a decision
+// caught mid-handoff exists only in memory; requeueing it is pointless if
+// nothing waits for that write to land.
+func (b *RedisDecisionBus) Drain(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		b.inflight.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		b.logger.Warn("redis decision bus: drain timed out; a popped decision may be lost")
+	}
+}
+
 // requeue returns an already-popped decision to the queue.
 //
 // Uses a fresh context: the only caller runs because the subscription's
@@ -64,8 +91,10 @@ func (b *RedisDecisionBus) Subscribe(ctx context.Context) <-chan notify.Callback
 	// consumer is ready to take it, so a cancelled context finds the send
 	// still blocked and can put it back.
 	ch := make(chan notify.CallbackDecision)
+	b.inflight.Add(1)
 
 	go func() {
+		defer b.inflight.Done()
 		defer close(ch)
 
 		for {

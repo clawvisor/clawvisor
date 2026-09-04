@@ -227,6 +227,6 @@ func TestMessageContextKey_TaskScopedApprovalResolves(t *testing.T) {
 		t.Fatal("send-path context not found")
 	}
 	if mc.Approver != "jane" {
-		t.Fatalf("approver = %q, want the clicker's mention — attribution was lost", mc.Approver)
+		t.Fatalf("approver = %q, want the clicker's display name — attribution was lost", mc.Approver)
 	}
 }

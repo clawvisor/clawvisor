@@ -3,7 +3,6 @@ package slack
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sync"
 	"time"
 
@@ -17,6 +16,13 @@ import (
 const detailTTL = 30 * 24 * time.Hour
 
 const redisDetailPrefix = "clawvisor:slackdt:"
+
+// detailOpTimeout is deliberately shorter than redisOpTimeout. A detail read
+// happens on the trigger_id path, and Slack invalidates a trigger_id after
+// three seconds — a read that outlived it would succeed and then have the
+// modal rejected anyway, so failing fast leaves room for the config read
+// that follows.
+const detailOpTimeout = 1500 * time.Millisecond
 
 // DetailStorer holds the request detail behind a resolved prompt's
 // "View request details" button.
@@ -109,15 +115,12 @@ func (s *redisDetailStore) PutDetail(ctx context.Context, token string, d Detail
 }
 
 func (s *redisDetailStore) GetDetail(ctx context.Context, token string) (DetailEntry, bool) {
-	ctx, cancel := context.WithTimeout(ctx, redisOpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, detailOpTimeout)
 	defer cancel()
 	data, err := s.rdb.Get(ctx, redisDetailPrefix+token).Bytes()
 	if err != nil {
-		// A backend error and an expired key look the same to the caller,
-		// which shows the same "no longer available" either way.
-		if !errors.Is(err, redis.Nil) {
-			return DetailEntry{}, false
-		}
+		// A backend error and an expired key are both "no longer
+		// available" to the caller, so they are not distinguished here.
 		return DetailEntry{}, false
 	}
 	var d DetailEntry

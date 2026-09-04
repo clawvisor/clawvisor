@@ -2009,6 +2009,14 @@ func (s *Server) Run(ctx context.Context) error {
 		if s.cbDispatcher != nil {
 			s.cbDispatcher.Stop()
 		}
+		// A decision popped from the bus but not yet handed to a consumer
+		// exists only in memory — the queue read is destructive and has no
+		// redelivery. The subscriber returns it on cancellation, but that
+		// write has to land before the process exits or the approval is
+		// lost exactly as it was before.
+		if d, ok := s.decisionBus.(interface{ Drain(time.Duration) }); ok {
+			d.Drain(5 * time.Second)
+		}
 		s.store.Close()
 		if !s.cfg.Server.IsLocal() {
 			s.logger.Info("server stopped")

@@ -512,7 +512,11 @@ func (n *Notifier) openDetailModal(ctx context.Context, p interactionPayload, to
 
 	// A token minted for one workspace must not open in another, even though
 	// only Slack can sign an interaction.
-	if entry.TeamID != "" && p.Team.ID != "" && entry.TeamID != p.Team.ID {
+	// Missing identity is rejected like mismatched identity: making the
+	// check conditional on p.Team.ID being present turns workspace
+	// isolation into something a payload can opt out of by omission. Only
+	// a token we never recorded a workspace for has nothing to compare.
+	if entry.TeamID != "" && entry.TeamID != p.Team.ID {
 		n.logger.WarnContext(ctx, "slack: detail token presented from a different workspace")
 		n.ephemeral(ctx, p.ResponseURL, ":no_entry: These details belong to a different workspace.")
 		return

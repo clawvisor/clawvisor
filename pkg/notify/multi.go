@@ -247,11 +247,24 @@ func (m *MultiNotifier) fanOutSend(ctx context.Context, op string, send func(Not
 			errs = append(errs, err)
 			continue
 		}
-		delivered++
-		if _, selfRecording := n.(TargetMessageUpdater); selfRecording {
+		// A nil error is not proof anyone was reached. Push returns
+		// ("", nil) when the user has no paired devices, so counting it
+		// would let a genuine Telegram failure report success and nobody
+		// would learn the prompt never arrived. Treat delivery as proven
+		// only by a message reference, or by a channel that records its
+		// own (Slack), which returns one it has already stored.
+		_, selfRecording := n.(TargetMessageUpdater)
+		if id == "" && !selfRecording {
+			m.logger.WarnContext(ctx, "notifier: send reported success but delivered nothing", "op", op)
 			continue
 		}
-		if messageID == "" && id != "" {
+		delivered++
+
+		// Only Telegram's reference may be returned. Callers persist it
+		// against a hardcoded "telegram" channel, so handing back push's
+		// "push:<daemonID>" would point later Telegram edits at a message
+		// that never existed. Self-recording channels store their own.
+		if _, isTelegram := n.(TelegramTester); isTelegram && messageID == "" {
 			messageID = id
 		}
 	}
