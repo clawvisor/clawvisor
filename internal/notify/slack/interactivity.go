@@ -27,6 +27,7 @@ const (
 	actionDeny        = "clawvisor_deny"
 	actionNoopApprove = "clawvisor_link_approve"
 	actionNoopDeny    = "clawvisor_link_deny"
+	actionViewDetails = "clawvisor_view_details"
 )
 
 // maxInteractionBody bounds how much of an interaction payload we will read.
@@ -61,6 +62,7 @@ type interactionPayload struct {
 		ID string `json:"id"`
 	} `json:"channel"`
 	ResponseURL string `json:"response_url"`
+	TriggerID   string `json:"trigger_id"`
 	Actions     []struct {
 		ActionID string `json:"action_id"`
 		Value    string `json:"value"`
@@ -142,6 +144,11 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 		action = "approve"
 	case actionDeny:
 		action = "deny"
+	case actionViewDetails:
+		// Read-only: opens a modal showing what the message already
+		// represents, so it resolves nothing and consumes no token.
+		n.openDetailModal(ctx, p, act.Value)
+		return
 	case actionNoopApprove, actionNoopDeny:
 		return // link buttons resolve in the dashboard
 	default:
@@ -460,4 +467,48 @@ func (n *Notifier) verifySignature(timestamp, signature string, body []byte) err
 		return errors.New("signature mismatch")
 	}
 	return nil
+}
+
+// openDetailModal shows the stashed request detail for a resolved prompt.
+//
+// Slack's trigger_id is valid for three seconds, so this runs on the path
+// that has already acked the request rather than doing any further work
+// first. A failure is reported to the clicker only — nobody else needs to
+// know their modal did not open.
+func (n *Notifier) openDetailModal(ctx context.Context, p interactionPayload, token string) {
+	if p.TriggerID == "" {
+		n.logger.WarnContext(ctx, "slack: view-details interaction carried no trigger_id")
+		return
+	}
+
+	entry, ok := n.details.GetDetail(ctx, token)
+	if !ok || len(entry.Blocks) == 0 {
+		n.ephemeral(ctx, p.ResponseURL,
+			":hourglass: These request details are no longer available. The dashboard has the full record.")
+		return
+	}
+
+	// A token minted for one workspace must not open in another, even though
+	// only Slack can sign an interaction.
+	if entry.TeamID != "" && p.Team.ID != "" && entry.TeamID != p.Team.ID {
+		n.logger.WarnContext(ctx, "slack: detail token presented from a different workspace")
+		n.ephemeral(ctx, p.ResponseURL, ":no_entry: These details belong to a different workspace.")
+		return
+	}
+
+	cfg, err := n.userConfig(ctx, entry.UserID)
+	if err != nil {
+		n.logger.WarnContext(ctx, "slack: cannot open detail modal, config unavailable", "err", err)
+		n.ephemeral(ctx, p.ResponseURL, ":warning: Could not open the request details.")
+		return
+	}
+
+	payload := map[string]any{
+		"trigger_id": p.TriggerID,
+		"view":       detailModal(entry.Blocks),
+	}
+	if err := n.call(ctx, cfg.BotToken, "views.open", payload, nil); err != nil {
+		n.logger.WarnContext(ctx, "slack: views.open failed", "err", err)
+		n.ephemeral(ctx, p.ResponseURL, ":warning: Could not open the request details.")
+	}
 }

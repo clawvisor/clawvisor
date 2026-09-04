@@ -448,3 +448,38 @@ func paramValue(v any) string {
 		return truncate(fmt.Sprintf("%v", t), 300)
 	}
 }
+
+// viewDetailsAction is the button left on a resolved prompt. It carries an
+// opaque token rather than the target ID — see Notifier.stashDetail.
+func viewDetailsAction(token string) block {
+	return block{
+		"type": "actions",
+		"elements": []any{
+			map[string]any{
+				"type":      "button",
+				"action_id": actionViewDetails,
+				"text":      map[string]any{"type": "plain_text", "text": "View request details", "emoji": true},
+				"value":     token,
+			},
+		},
+	}
+}
+
+// detailModal wraps detail blocks in a modal view.
+//
+// Modals cap at 100 blocks and titles at 24 characters; exceeding either
+// makes views.open reject the whole view, so both are clamped rather than
+// risking a button that silently does nothing.
+func detailModal(detail []block) map[string]any {
+	const maxModalBlocks = 100
+	if len(detail) > maxModalBlocks {
+		detail = append(detail[:maxModalBlocks-1],
+			contextBlock(":warning: _Some detail was omitted — open the dashboard for the full request._"))
+	}
+	return map[string]any{
+		"type":   "modal",
+		"title":  map[string]any{"type": "plain_text", "text": "Request details"},
+		"close":  map[string]any{"type": "plain_text", "text": "Close"},
+		"blocks": detail,
+	}
+}

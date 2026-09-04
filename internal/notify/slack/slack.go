@@ -88,6 +88,7 @@ type Notifier struct {
 	apiBase    string
 	cbTokens   CallbackTokenStorer
 	msgCtx     MessageContextStorer
+	details    DetailStorer
 	decisionCh chan notify.CallbackDecision
 	replay     ReplayGuard
 }
@@ -106,6 +107,7 @@ func New(st store.Store, signingSecret string, creds AppCredentials, logger *slo
 		apiBase:        defaultAPIBase,
 		cbTokens:       newCallbackTokenStore(),
 		msgCtx:         newMessageContextStore(),
+		details:        newMemoryDetailStore(),
 		decisionCh:     make(chan notify.CallbackDecision, 32),
 		replay:         newMemoryReplayGuard(),
 	}
@@ -118,12 +120,15 @@ func (n *Notifier) SetVault(v vault.Vault) { n.vault = v }
 // land on any replica, so both the callback tokens and the replay guard must
 // be shared state in multi-instance deployments — the in-memory defaults
 // would let a click on replica B fail to find a token minted on replica A.
-func (n *Notifier) SetRedisStores(cbTokens CallbackTokenStorer, replay ReplayGuard) {
+func (n *Notifier) SetRedisStores(cbTokens CallbackTokenStorer, replay ReplayGuard, details DetailStorer) {
 	if cbTokens != nil {
 		n.cbTokens = cbTokens
 	}
 	if replay != nil {
 		n.replay = replay
+	}
+	if details != nil {
+		n.details = details
 	}
 }
 
@@ -142,6 +147,7 @@ func (n *Notifier) RunCleanup(ctx context.Context) {
 		case <-t.C:
 			n.cbTokens.Cleanup()
 			n.msgCtx.Cleanup()
+			n.details.Cleanup()
 		}
 	}
 }
@@ -339,7 +345,7 @@ func (n *Notifier) UpdateMessageForTarget(ctx context.Context, userID, targetTyp
 			"target_type", targetType, "target_id", targetID)
 	}
 
-	return n.update(ctx, cfg, channelID, ts, text, mc)
+	return n.update(ctx, cfg, userID, channelID, ts, text, mc)
 }
 
 // ── Message plumbing ──────────────────────────────────────────────────────────
@@ -423,7 +429,7 @@ func (n *Notifier) post(ctx context.Context, cfg notify.SlackConfig, text string
 // update collapses a resolved prompt to its outcome. Blocks are replaced
 // wholesale, which is also what clears the buttons; the detail has already
 // been moved to a thread reply by the caller.
-func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, channelID, ts, text string, mc messageContext) error {
+func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, userID, channelID, ts, text string, mc messageContext) error {
 	// The incoming text is Telegram-flavoured HTML, so it needs translating
 	// rather than escaping — escaping renders "<b>Approved</b>" literally.
 	blocks := []block{section(telegramHTMLToMrkdwn(text))}
@@ -434,15 +440,20 @@ func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, channelID
 		blocks = append(blocks, contextBlock(line))
 	}
 
-	// The original request detail stays in this same message rather than
-	// moving to a thread reply. A reply is a new message, so it notifies the
-	// channel a second time — immediately after someone has just acted, which
-	// is the moment they least want pinging. Editing in place notifies nobody,
-	// and Slack collapses the result behind "Show more" on its own, which is
-	// the collapsed-but-present behaviour the thread was reaching for.
+	// The detail goes behind a button that opens a modal, rather than into
+	// the message or a thread reply.
+	//
+	// A thread reply is a new message, so it notifies the channel again right
+	// after someone acted. Inlining it avoids the notification but leaves a
+	// wall of text: Slack renders every block, and has no collapsible block —
+	// its "Show more" applies to long text, not to Block Kit. A modal is the
+	// only real collapse, and opening one notifies nobody.
 	if len(mc.Detail) > 0 {
-		blocks = append(blocks, divider())
-		blocks = append(blocks, mc.Detail...)
+		if token, err := n.stashDetail(ctx, userID, cfg.TeamID, mc.Detail); err != nil {
+			n.logger.WarnContext(ctx, "slack: could not stash request detail, omitting the button", "err", err)
+		} else {
+			blocks = append(blocks, viewDetailsAction(token))
+		}
 	}
 
 	payload := map[string]any{
@@ -452,6 +463,22 @@ func (n *Notifier) update(ctx context.Context, cfg notify.SlackConfig, channelID
 		"blocks":  clamp(blocks),
 	}
 	return n.call(ctx, cfg.BotToken, "chat.update", payload, nil)
+}
+
+// stashDetail stores the request detail under an unguessable token for the
+// modal to read back. The token is what the button carries: keying the button
+// on the target ID directly would let anyone able to forge an interaction
+// enumerate other requests' detail.
+func (n *Notifier) stashDetail(ctx context.Context, userID, teamID string, detail []block) (string, error) {
+	token, err := randomShortID()
+	if err != nil {
+		return "", err
+	}
+	entry := DetailEntry{UserID: userID, TeamID: teamID, Blocks: detail}
+	if err := n.details.PutDetail(ctx, token, entry, detailTTL); err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 // resolutionContext renders the "by whom / of what" line under the outcome.
