@@ -20,6 +20,13 @@ const (
 	// was taken, so the reclaimer can tell a decision still being handled
 	// from one whose handler died.
 	redisDecisionStarted = "clawvisor:decisions:started"
+	// redisDecisionDeadLetter holds deliveries that could not be handled.
+	// Retiring one destroys a human's decision, so they are kept here for
+	// inspection and manual replay instead of being deleted.
+	redisDecisionDeadLetter = "clawvisor:decisions:dead"
+	// deadLetterMaxLen bounds that list; it should normally be empty, and an
+	// unbounded one would grow forever if something started failing in a loop.
+	deadLetterMaxLen = 1000
 
 	// visibilityTimeout is how long a taken decision may go unacked before
 	// another instance may reclaim it. Comfortably longer than a handler,
@@ -44,13 +51,24 @@ const (
 // first ack would remove that shared marker and strand the other delivery on
 // the processing list, unreclaimable — lost exactly like the design this
 // replaced. A UUID per publish makes every entry distinct.
+//
+// The decision is embedded rather than nested so the envelope stays wire
+// compatible with the flat payload this replaces, in both directions. A
+// rolling deploy runs both formats against one queue: an old instance
+// decoding this envelope still sees every decision field and ignores the
+// underscored ones, and a new instance decoding a flat payload fills the
+// embedded struct and simply has no ID. Nested under a "decision" key,
+// neither could read the other's payload — it would unmarshal cleanly into a
+// zero-valued decision, match no case in the consumer, and be acked as
+// handled. That is a silent loss of exactly the kind this bus exists to
+// prevent, and a mixed fleet is guaranteed during every deploy.
 type decisionEnvelope struct {
-	ID       string                  `json:"id"`
-	Decision notify.CallbackDecision `json:"decision"`
+	notify.CallbackDecision
+	ID string `json:"_delivery_id,omitempty"`
 	// Attempts counts deliveries already made. Carried in the payload
 	// rather than a side table so it cannot be orphaned by a failed
 	// cleanup.
-	Attempts int `json:"attempts,omitempty"`
+	Attempts int `json:"_attempts,omitempty"`
 }
 
 // reclaimScript returns one stale delivery to the queue.
@@ -62,13 +80,21 @@ type decisionEnvelope struct {
 // the removal makes the ack and the reclaim mutually exclusive — whichever
 // gets there first wins, and the loser is a no-op.
 //
-// KEYS: processing list, queue, started set. ARGV: stored member, replacement
-// member ("" to drop it permanently).
+// A delivery that is out of attempts is moved to the dead-letter list rather
+// than deleted, in the same atomic step, so giving up never destroys it.
+//
+// KEYS: processing list, queue, started set, dead-letter list. ARGV: stored
+// member, replacement member ("" to dead-letter instead), dead-letter bound.
 var reclaimScript = redis.NewScript(`
 local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])
 redis.call('ZREM', KEYS[3], ARGV[1])
-if removed > 0 and ARGV[2] ~= '' then
-  redis.call('LPUSH', KEYS[2], ARGV[2])
+if removed > 0 then
+  if ARGV[2] ~= '' then
+    redis.call('LPUSH', KEYS[2], ARGV[2])
+  else
+    redis.call('LPUSH', KEYS[4], ARGV[1])
+    redis.call('LTRIM', KEYS[4], 0, ARGV[3])
+  end
 end
 return removed
 `)
@@ -99,7 +125,7 @@ func NewRedisDecisionBus(rdb *redis.Client, logger *slog.Logger) *RedisDecisionB
 
 // Publish enqueues a decision for whichever instance takes it next.
 func (b *RedisDecisionBus) Publish(ctx context.Context, d notify.CallbackDecision) error {
-	data, err := json.Marshal(decisionEnvelope{ID: uuid.NewString(), Decision: d})
+	data, err := json.Marshal(decisionEnvelope{CallbackDecision: d, ID: uuid.NewString()})
 	if err != nil {
 		return err
 	}
@@ -148,15 +174,25 @@ func (b *RedisDecisionBus) Subscribe(ctx context.Context) <-chan notify.Delivery
 
 			var env decisionEnvelope
 			if err := json.Unmarshal([]byte(raw), &env); err != nil {
-				// Unparseable: acking is the only way to stop it being
-				// reclaimed forever.
+				// Set aside rather than acked: acking would delete a
+				// payload nobody has looked at, and this build being
+				// unable to read it does not make it worthless.
 				b.logger.WarnContext(ctx, "redis decision bus: unmarshal", "err", err)
-				b.ack(raw)
+				b.deadLetter(raw)
+				continue
+			}
+			if env.Type == "" {
+				// Decodes, but names no decision — a payload from a
+				// format this build does not know. Delivering it would
+				// match no case in the consumer, which would then ack it
+				// as handled and destroy it silently.
+				b.logger.WarnContext(ctx, "redis decision bus: payload carries no decision type")
+				b.deadLetter(raw)
 				continue
 			}
 
 			select {
-			case ch <- notify.Delivery{Decision: env.Decision, Ack: func() { b.ack(raw) }}:
+			case ch <- notify.Delivery{Decision: env.CallbackDecision, Ack: func() { b.ack(raw) }}:
 			case <-ctx.Done():
 				// Deliberately not acked. The decision stays on the
 				// processing list and the reclaimer returns it, which is
@@ -185,6 +221,25 @@ func (b *RedisDecisionBus) ack(raw string) {
 		// and a handler will run again. Idempotent handling is what makes
 		// that safe.
 		b.logger.WarnContext(ctx, "redis decision bus: ack failed, decision will be redelivered", "err", err)
+	}
+}
+
+// deadLetter sets aside a payload this build cannot act on.
+//
+// Deliberately not an ack: an ack deletes, and a decision a human made is
+// not something to delete because the process could not read it. Keeping it
+// on a bounded list costs nothing and leaves it recoverable.
+func (b *RedisDecisionBus) deadLetter(raw string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pipe := b.rdb.Pipeline()
+	pipe.LRem(ctx, redisDecisionProcessing, 1, raw)
+	pipe.ZRem(ctx, redisDecisionStarted, raw)
+	pipe.LPush(ctx, redisDecisionDeadLetter, raw)
+	pipe.LTrim(ctx, redisDecisionDeadLetter, 0, deadLetterMaxLen-1)
+	if _, err := pipe.Exec(ctx); err != nil {
+		b.logger.WarnContext(ctx, "redis decision bus: could not dead-letter a decision", "err", err)
 	}
 }
 
@@ -279,12 +334,17 @@ func (b *RedisDecisionBus) requeue(ctx context.Context, raw string) {
 	drop := true
 
 	if err := json.Unmarshal([]byte(raw), &env); err != nil {
-		// Nothing can handle it, so redelivering it forever helps no one.
-		b.logger.WarnContext(ctx, "redis decision bus: dropping unparseable in-flight decision", "err", err)
+		// Redelivering something nothing can parse helps no one, but it
+		// still goes to the dead-letter list rather than being deleted.
+		b.logger.WarnContext(ctx, "redis decision bus: dead-lettering unparseable in-flight decision", "err", err)
 	} else if env.Attempts+1 >= maxDeliveryAttempts {
-		b.logger.ErrorContext(ctx, "redis decision bus: giving up on a decision after repeated failures",
-			"id", env.ID, "type", env.Decision.Type, "action", env.Decision.Action,
-			"target_id", env.Decision.TargetID, "attempts", env.Attempts+1)
+		// Out of attempts. Handler errors cannot tell a permanently
+		// unhandleable decision from a long outage, so this is not
+		// allowed to destroy it: it moves to the dead-letter list, where
+		// it can be inspected and replayed.
+		b.logger.ErrorContext(ctx, "redis decision bus: dead-lettering a decision after repeated failures",
+			"id", env.ID, "type", env.Type, "action", env.Action,
+			"target_id", env.TargetID, "attempts", env.Attempts+1)
 	} else {
 		env.Attempts++
 		next, err := json.Marshal(env)
@@ -297,8 +357,8 @@ func (b *RedisDecisionBus) requeue(ctx context.Context, raw string) {
 	}
 
 	removed, err := reclaimScript.Run(ctx, b.rdb,
-		[]string{redisDecisionProcessing, redisDecisionQueue, redisDecisionStarted},
-		raw, replacement).Int64()
+		[]string{redisDecisionProcessing, redisDecisionQueue, redisDecisionStarted, redisDecisionDeadLetter},
+		raw, replacement, deadLetterMaxLen-1).Int64()
 	if err != nil {
 		if ctx.Err() == nil {
 			b.logger.WarnContext(ctx, "redis decision bus: reclaim failed", "err", err)
@@ -312,7 +372,7 @@ func (b *RedisDecisionBus) requeue(ctx context.Context, raw string) {
 		return
 	}
 	if drop {
-		return
+		return // already logged, and now on the dead-letter list
 	}
 	b.logger.InfoContext(ctx, "redis decision bus: reclaimed an unacked decision",
 		"id", env.ID, "attempt", env.Attempts)

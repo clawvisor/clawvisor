@@ -2,8 +2,10 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -256,7 +258,7 @@ func TestDecisionBus_StaleMarkerDoesNotResurrectAnAckedDecision(t *testing.T) {
 	bus, mr := newTestBus(t)
 	ctx := context.Background()
 
-	raw := `{"id":"already-acked","decision":{"type":"task","action":"approve","target_id":"task-1"}}`
+	raw := `{"Type":"task","Action":"approve","TargetID":"task-1","_delivery_id":"already-acked"}`
 	if err := bus.rdb.ZAdd(ctx, redisDecisionStarted, redis.Z{
 		Score: float64(time.Now().Add(-2 * visibilityTimeout).Unix()), Member: raw,
 	}).Err(); err != nil {
@@ -317,5 +319,93 @@ func TestDecisionBus_GivesUpAfterRepeatedRedelivery(t *testing.T) {
 	}
 	if p, _ := mr.List(redisDecisionProcessing); len(p) != 0 {
 		t.Fatalf("a decision past its attempt cap is still in flight (%d)", len(p))
+	}
+	// Given up on, but not destroyed: a human made this decision, and
+	// handler errors cannot prove it was unhandleable rather than unlucky.
+	dead, _ := mr.List(redisDecisionDeadLetter)
+	if len(dead) != 1 {
+		t.Fatalf("a decision past its attempt cap was deleted rather than dead-lettered (%d held)", len(dead))
+	}
+	if !strings.Contains(dead[0], "task-1") {
+		t.Fatalf("dead-lettered the wrong payload: %s", dead[0])
+	}
+}
+
+// A rolling deploy runs both payload formats against one queue. A decision
+// published by an instance on the previous flat format has to survive being
+// taken by an instance on this one: nested under a "decision" key it would
+// unmarshal into a zero-valued decision, match no case in the consumer, and
+// be acked as handled — losing it silently.
+func TestDecisionBus_LegacyFlatPayloadIsStillDelivered(t *testing.T) {
+	bus, _ := newTestBus(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Exactly what the previous build wrote: a bare CallbackDecision.
+	legacy, err := json.Marshal(notify.CallbackDecision{
+		Type: "task", Action: "approve", TargetID: "task-legacy", UserID: "user-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.rdb.LPush(ctx, redisDecisionQueue, legacy).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	ch := bus.Subscribe(ctx)
+	select {
+	case d := <-ch:
+		if d.Decision.TargetID != "task-legacy" || d.Decision.Action != "approve" {
+			t.Fatalf("a decision published before this format was lost in translation: %+v", d.Decision)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a decision from the previous payload format was never delivered")
+	}
+}
+
+// The other direction of the same deploy: an instance still on the previous
+// build decodes what this one publishes. The envelope embeds the decision so
+// its fields stay at the top level, where a plain CallbackDecision decoder
+// still finds them.
+func TestDecisionBus_PublishedPayloadIsReadableByThePreviousFormat(t *testing.T) {
+	bus, mr := newTestBus(t)
+	publish(t, bus, "task-1")
+
+	queued, _ := mr.List(redisDecisionQueue)
+	if len(queued) != 1 {
+		t.Fatalf("expected one queued decision, got %d", len(queued))
+	}
+
+	var asOldBuildWouldSeeIt notify.CallbackDecision
+	if err := json.Unmarshal([]byte(queued[0]), &asOldBuildWouldSeeIt); err != nil {
+		t.Fatalf("an instance on the previous build cannot parse this payload: %v", err)
+	}
+	if asOldBuildWouldSeeIt.TargetID != "task-1" || asOldBuildWouldSeeIt.Action != "approve" {
+		t.Fatalf("an instance on the previous build would read an empty decision and ack it away: %+v",
+			asOldBuildWouldSeeIt)
+	}
+}
+
+// A payload naming no decision must not be delivered: the consumer matches no
+// case, treats it as handled, and acks it out of existence.
+func TestDecisionBus_UnrecognisedPayloadIsDeadLetteredNotAcked(t *testing.T) {
+	bus, mr := newTestBus(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := bus.rdb.LPush(ctx, redisDecisionQueue, `{"something":"else"}`).Err(); err != nil {
+		t.Fatal(err)
+	}
+	ch := bus.Subscribe(ctx)
+
+	select {
+	case d := <-ch:
+		t.Fatalf("delivered a payload carrying no decision; the consumer would ack it away: %+v", d.Decision)
+	case <-time.After(1500 * time.Millisecond):
+	}
+
+	dead, _ := mr.List(redisDecisionDeadLetter)
+	if len(dead) != 1 {
+		t.Fatalf("an unreadable payload was deleted rather than kept for inspection (%d held)", len(dead))
 	}
 }
