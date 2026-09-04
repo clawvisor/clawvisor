@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -20,12 +19,6 @@ const redisDecisionQueue = "clawvisor:decisions"
 type RedisDecisionBus struct {
 	rdb    *redis.Client
 	logger *slog.Logger
-
-	// inflight tracks subscriber goroutines so shutdown can wait for a
-	// decision that was popped but not yet handed to a consumer. Without
-	// it the requeue below races process exit, and the approval it was
-	// protecting is lost anyway.
-	inflight sync.WaitGroup
 }
 
 // NewRedisDecisionBus creates a Redis-backed decision bus.
@@ -45,44 +38,6 @@ func (b *RedisDecisionBus) Publish(ctx context.Context, d notify.CallbackDecisio
 // Subscribe returns a channel that receives decisions. Uses BRPOP for
 // blocking, exactly-once consumption — only one instance processes each
 // decision even when multiple instances are subscribed.
-// Drain waits for subscriber goroutines to finish returning any popped
-// decision to the queue.
-//
-// Call this during shutdown, after cancelling the subscription context and
-// before the process exits. BRPOP is a destructive read, so a decision
-// caught mid-handoff exists only in memory; requeueing it is pointless if
-// nothing waits for that write to land.
-func (b *RedisDecisionBus) Drain(timeout time.Duration) {
-	done := make(chan struct{})
-	go func() {
-		b.inflight.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		b.logger.Warn("redis decision bus: drain timed out; a popped decision may be lost")
-	}
-}
-
-// requeue returns an already-popped decision to the queue.
-//
-// Uses a fresh context: the only caller runs because the subscription's
-// context was cancelled, so reusing it would fail the write for the same
-// reason it is needed.
-func (b *RedisDecisionBus) requeue(raw string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := b.rdb.RPush(ctx, redisDecisionQueue, raw).Err(); err != nil {
-		// Nothing further to try: the decision is lost, and saying so is
-		// the only thing that separates this from a silent drop.
-		b.logger.ErrorContext(ctx, "redis decision bus: lost a decision on shutdown", "err", err)
-		return
-	}
-	b.logger.InfoContext(ctx, "redis decision bus: returned a decision to the queue on shutdown")
-}
-
 func (b *RedisDecisionBus) Subscribe(ctx context.Context) <-chan notify.CallbackDecision {
 	// Unbuffered on purpose. A buffer here is not a throughput win, it is a
 	// loss window: BRPOP is a destructive read, so anything sitting in the
@@ -91,10 +46,8 @@ func (b *RedisDecisionBus) Subscribe(ctx context.Context) <-chan notify.Callback
 	// consumer is ready to take it, so a cancelled context finds the send
 	// still blocked and can put it back.
 	ch := make(chan notify.CallbackDecision)
-	b.inflight.Add(1)
 
 	go func() {
-		defer b.inflight.Done()
 		defer close(ch)
 
 		for {
@@ -132,7 +85,6 @@ func (b *RedisDecisionBus) Subscribe(ctx context.Context) <-chan notify.Callback
 				//
 				// Put it back on the tail, which is where BRPOP takes
 				// from, so the next instance to poll picks it up.
-				b.requeue(result[1])
 				return
 			}
 		}

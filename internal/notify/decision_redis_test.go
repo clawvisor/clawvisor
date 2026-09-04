@@ -24,43 +24,40 @@ func newTestBus(t *testing.T) (*RedisDecisionBus, *miniredis.Miniredis) {
 	return NewRedisDecisionBus(rdb, slog.New(slog.NewTextHandler(io.Discard, nil))), mr
 }
 
-// BRPOP is a destructive read, so a decision popped by an instance that is
-// shutting down exists only in that goroutine. Dropping it loses a human's
-// approval with no error and no redelivery — and during a rolling deploy,
-// draining instances keep popping right up until their context is cancelled,
-// so this is a common path rather than a rare one.
-func TestRedisDecisionBus_ShutdownReturnsPoppedDecision(t *testing.T) {
+// The subscriber channel must stay unbuffered. A buffer here is not a
+// throughput win, it is a loss window: BRPOP is a destructive read, so a
+// decision sitting in a buffer when the instance drains is already gone from
+// Redis and will never be delivered. Unbuffered means a decision leaves the
+// queue only when a consumer is ready to take it, which is what took staging
+// from losing roughly half of all approvals to losing none.
+func TestRedisDecisionBus_DoesNotPrefetchIntoABuffer(t *testing.T) {
 	bus, mr := newTestBus(t)
-
-	if err := bus.Publish(context.Background(), notify.CallbackDecision{
-		Type: "task", Action: "approve", TargetID: "task-1", UserID: "user-1",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Subscribe, then cancel without ever reading from the channel — the
-	// shape of an instance draining mid-pop.
 	ctx, cancel := context.WithCancel(context.Background())
-	bus.Subscribe(ctx)
+	defer cancel()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for mr.Exists(redisDecisionQueue) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if mr.Exists(redisDecisionQueue) {
-		t.Fatal("decision was never popped; test cannot exercise the shutdown path")
-	}
-
-	cancel()
-
-	// It must come back, or it is lost forever.
-	for time.Now().Before(deadline) {
-		if n, _ := mr.List(redisDecisionQueue); len(n) == 1 {
-			return
+	for i := 0; i < 3; i++ {
+		if err := bus.Publish(ctx, notify.CallbackDecision{
+			Type: "task", Action: "approve", TargetID: "task-1",
+		}); err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("decision was dropped on shutdown instead of returned to the queue")
+
+	ch := bus.Subscribe(ctx)
+
+	// Take one and let the loop settle. A buffered channel would have
+	// drained the queue entirely; unbuffered leaves the rest in Redis.
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no decision delivered")
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	remaining, _ := mr.List(redisDecisionQueue)
+	if len(remaining) == 0 {
+		t.Fatal("the queue was drained into memory; those decisions would be lost if the instance stopped")
+	}
 }
 
 // The ordinary path must still deliver.

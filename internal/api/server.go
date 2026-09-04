@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
@@ -108,10 +107,6 @@ type Server struct {
 	devicePairingStore handlers.DevicePairingStore
 	oauthStateStore    handlers.OAuthStateStore
 
-	// inflightDecisions counts decisions taken off the bus and not yet
-	// resolved, so shutdown can wait for them. A decision in flight here is
-	// already gone from the queue and has no redelivery.
-	inflightDecisions sync.WaitGroup
 	pairingCodeStore  handlers.PairingCodeStore
 	dedupCache        handlers.DedupCache
 	verdictCache      intent.VerdictCacher
@@ -1838,25 +1833,6 @@ func (s *Server) handleClawvisorKeys(w http.ResponseWriter, r *http.Request) {
 
 // consumeNotifierDecisions reads from the notifier's decision channel
 // and routes approve/deny decisions to the appropriate handler.
-// waitForInflightDecisions blocks until decisions already taken off the bus
-// have been resolved, or the timeout expires.
-//
-// These cannot be recovered by requeueing: the queue read is destructive and
-// they are already gone from it, so the only way not to lose them is to
-// finish the work before the process exits.
-func (s *Server) waitForInflightDecisions(timeout time.Duration) {
-	done := make(chan struct{})
-	go func() {
-		s.inflightDecisions.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		s.logger.Warn("shutdown: timed out waiting for in-flight notifier decisions")
-	}
-}
-
 func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.CallbackDecision) {
 	for {
 		select {
@@ -1872,20 +1848,6 @@ func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.
 			s.logger.InfoContext(ctx, "notifier decision received",
 				"type", d.Type, "action", d.Action, "target_id", d.TargetID, "task_id", d.TaskID)
 
-			// Resolve on a context detached from shutdown. The decision has
-			// already been taken off the queue, so aborting here on a
-			// cancelled context would fail the approval with "context
-			// canceled" and leave nothing to redeliver — the same loss the
-			// requeue exists to prevent, moved one step later. The timeout
-			// bounds how long shutdown can be held up.
-			//
-			// s.inflightDecisions lets shutdown wait for this to finish;
-			// draining the subscriber alone is not enough, because a
-			// decision it successfully handed over is already gone from
-			// Redis.
-			s.inflightDecisions.Add(1)
-			dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
-
 			var err error
 			switch d.Type {
 			case "approval":
@@ -1895,38 +1857,37 @@ func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.
 				// case the handlers fall back to the request_id-only lookup
 				// and surface ErrAmbiguous if more than one row matches.
 				if d.Action == "approve" {
-					err = s.approvalsHandler.ApproveByRequestID(dctx, d.TargetID, d.UserID, d.TaskID)
+					err = s.approvalsHandler.ApproveByRequestID(ctx, d.TargetID, d.UserID, d.TaskID)
 				} else {
-					err = s.approvalsHandler.DenyByRequestID(dctx, d.TargetID, d.UserID, d.TaskID)
+					err = s.approvalsHandler.DenyByRequestID(ctx, d.TargetID, d.UserID, d.TaskID)
 				}
 			case "task":
 				if d.Action == "approve" {
-					err = s.tasksHandler.ApproveByTaskID(dctx, d.TargetID, d.UserID)
+					err = s.tasksHandler.ApproveByTaskID(ctx, d.TargetID, d.UserID)
 				} else {
-					err = s.tasksHandler.DenyByTaskID(dctx, d.TargetID, d.UserID)
+					err = s.tasksHandler.DenyByTaskID(ctx, d.TargetID, d.UserID)
 				}
 			case "scope_expansion":
 				if d.Action == "approve" {
-					err = s.tasksHandler.ExpandApproveByTaskID(dctx, d.TargetID, d.UserID)
+					err = s.tasksHandler.ExpandApproveByTaskID(ctx, d.TargetID, d.UserID)
 				} else {
-					err = s.tasksHandler.ExpandDenyByTaskID(dctx, d.TargetID, d.UserID)
+					err = s.tasksHandler.ExpandDenyByTaskID(ctx, d.TargetID, d.UserID)
 				}
 			case "connection":
 				if s.connectionsHandler == nil {
 					err = fmt.Errorf("connection decisions are unavailable in route_set=%q", s.cfg.Server.RouteSet)
 				} else if d.Action == "approve" {
-					_, err = s.connectionsHandler.ApproveByID(dctx, d.TargetID, d.UserID)
+					_, err = s.connectionsHandler.ApproveByID(ctx, d.TargetID, d.UserID)
 				} else {
-					err = s.connectionsHandler.DenyByID(dctx, d.TargetID, d.UserID)
+					err = s.connectionsHandler.DenyByID(ctx, d.TargetID, d.UserID)
 				}
 			}
 			if err != nil {
-				s.logger.WarnContext(dctx, "notifier decision failed",
+				s.logger.WarnContext(ctx, "notifier decision failed",
 					"type", d.Type, "action", d.Action,
 					"target_id", d.TargetID, "err", err)
 			}
-			dcancel()
-			s.inflightDecisions.Done()
+
 		}
 	}
 }
@@ -2055,12 +2016,6 @@ func (s *Server) Run(ctx context.Context) error {
 		// redelivery. The subscriber returns it on cancellation, but that
 		// write has to land before the process exits or the approval is
 		// lost exactly as it was before.
-		if d, ok := s.decisionBus.(interface{ Drain(time.Duration) }); ok {
-			d.Drain(5 * time.Second)
-		}
-		// Then wait for decisions already handed to the consumer: the
-		// subscriber drain only covers ones still mid-handoff.
-		s.waitForInflightDecisions(25 * time.Second)
 		s.store.Close()
 		if !s.cfg.Server.IsLocal() {
 			s.logger.Info("server stopped")
