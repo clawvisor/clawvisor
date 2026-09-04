@@ -87,3 +87,35 @@ func TestSlackEnabledIgnoresCallbackURL(t *testing.T) {
 		}
 	}
 }
+
+// Terraform provisions the Secret Manager slots with a "REPLACE_ME" body so
+// Cloud Run can resolve the reference before anyone pastes real values.
+// Treating that as configured would advertise Slack in the UI and then reject
+// every interaction as an invalid signature, with nothing pointing at
+// unfinished setup as the cause.
+func TestSlackEnabled_RejectsTerraformPlaceholder(t *testing.T) {
+	real := SlackConfig{ClientID: "id", ClientSecret: "secret", SigningSecret: "sign"}
+	if !real.Enabled() {
+		t.Fatal("fully-configured Slack reported disabled")
+	}
+
+	for _, tc := range []struct {
+		name string
+		cfg  SlackConfig
+	}{
+		{"client id is the placeholder", SlackConfig{ClientID: "REPLACE_ME", ClientSecret: "s", SigningSecret: "g"}},
+		{"client secret is the placeholder", SlackConfig{ClientID: "i", ClientSecret: "REPLACE_ME", SigningSecret: "g"}},
+		{"signing secret is the placeholder", SlackConfig{ClientID: "i", ClientSecret: "s", SigningSecret: "REPLACE_ME"}},
+		{"all three", SlackConfig{ClientID: "REPLACE_ME", ClientSecret: "REPLACE_ME", SigningSecret: "REPLACE_ME"}},
+		// Casing and stray whitespace must not smuggle it past the guard.
+		{"lowercase", SlackConfig{ClientID: "i", ClientSecret: "s", SigningSecret: "replace_me"}},
+		{"padded", SlackConfig{ClientID: "i", ClientSecret: "s", SigningSecret: "  REPLACE_ME  "}},
+		{"whitespace-only value", SlackConfig{ClientID: "i", ClientSecret: "   ", SigningSecret: "g"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cfg.Enabled() {
+				t.Fatal("placeholder or blank credential reported as enabled")
+			}
+		})
+	}
+}
