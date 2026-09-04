@@ -134,9 +134,15 @@ func (n *Notifier) HandleInteraction(w http.ResponseWriter, r *http.Request) {
 
 func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload) {
 	if p.Type != "block_actions" || len(p.Actions) == 0 {
+		n.logger.InfoContext(ctx, "slack: ignoring non-action interaction", "type", p.Type)
 		return
 	}
 	act := p.Actions[0]
+	// Entry is logged because every exit below is silent to the channel: the
+	// user sees a click that did nothing, and until now the logs could not
+	// say which of six exits it took.
+	n.logger.InfoContext(ctx, "slack: interaction received",
+		"action_id", act.ActionID, "slack_user_id", p.User.ID, "channel", p.Channel.ID)
 
 	var action string
 	switch act.ActionID {
@@ -152,6 +158,7 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	case actionNoopApprove, actionNoopDeny:
 		return // link buttons resolve in the dashboard
 	default:
+		n.logger.InfoContext(ctx, "slack: unrecognised action_id", "action_id", act.ActionID)
 		return
 	}
 
@@ -159,6 +166,7 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// or anyone in the channel could disable approvals by clicking first.
 	entry, err := n.cbTokens.Peek(act.Value)
 	if err != nil {
+		n.logger.WarnContext(ctx, "slack: interaction token not usable", "err", err, "action", action)
 		n.reportStaleToken(ctx, p.ResponseURL, err)
 		return
 	}
@@ -175,6 +183,9 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// the token was minted for. Both run before Consume, so a click that
 	// fails either one cannot burn the token.
 	if msg := identityMismatch(cfg, entry, p); msg != "" {
+		n.logger.WarnContext(ctx, "slack: interaction rejected on workspace/channel identity",
+			"payload_team", p.Team.ID, "config_team", cfg.TeamID,
+			"payload_channel", p.Channel.ID, "token_channel", entry.ChannelID)
 		n.ephemeral(ctx, p.ResponseURL, msg)
 		return
 	}
@@ -189,6 +200,7 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// Authorized — now retire the token. Losing this race means someone
 	// else resolved it first.
 	if _, err := n.cbTokens.Consume(act.Value); err != nil {
+		n.logger.WarnContext(ctx, "slack: token consume lost the race", "err", err, "action", action)
 		n.reportStaleToken(ctx, p.ResponseURL, err)
 		return
 	}
@@ -198,16 +210,26 @@ func (n *Notifier) processInteraction(ctx context.Context, p interactionPayload)
 	// reach the update path immediately.
 	n.msgCtx.SetApprover(messageContextKey(entry), approverDisplay(p))
 
-	select {
-	case n.decisionCh <- notify.CallbackDecision{
+	// Publishing is logged either way. A send that blocks on a full channel
+	// would otherwise look identical to one that was never attempted, and
+	// the decision never arriving at the consumer is exactly the symptom
+	// being chased.
+	decision := notify.CallbackDecision{
 		Type:        entry.Type,
 		Action:      action,
 		TargetID:    entry.TargetID,
 		TaskID:      entry.TaskID,
 		UserID:      entry.UserID,
 		ApproverRef: approverRef(p),
-	}:
+	}
+
+	select {
+	case n.decisionCh <- decision:
+		n.logger.InfoContext(ctx, "slack: decision published",
+			"type", decision.Type, "action", decision.Action, "target_id", decision.TargetID)
 	case <-ctx.Done():
+		n.logger.WarnContext(ctx, "slack: decision dropped before publish",
+			"type", decision.Type, "action", decision.Action, "target_id", decision.TargetID)
 	}
 }
 
