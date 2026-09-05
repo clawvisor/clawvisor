@@ -90,12 +90,14 @@ actions:
     display_name: "Get event"
     risk: { category: read, sensitivity: low, description: "Read a specific calendar event" }
     scopes: ["https://www.googleapis.com/auth/calendar.readonly"]
+    # The Go override captures the provider ETag from both the event resource
+    # and HTTP response headers, and fails closed when neither is present.
+    override: go
     method: GET
     path: "/calendars/{{.calendar_id}}/events/{{.event_id}}"
     params:
       event_id: { type: string, required: true, location: path }
       calendar_id: { type: string, default: "primary", location: path }
-      supports_attachments: { type: bool, default: true, map_to: supportsAttachments, location: query }
     response:
       fields:
         - { name: id }
@@ -118,6 +120,10 @@ actions:
         - name: visibility
           expr: "visibility ?? 'default'"
         - { name: status }
+        - { name: etag }
+        - { name: version }
+        - { name: sequence }
+        - { name: response_status, optional: true }
       summary: "Event: {{.summary}}"
 
   create_event:
@@ -165,28 +171,36 @@ actions:
     display_name: "Update event"
     risk: { category: write, sensitivity: medium, description: "Update a calendar event" }
     scopes: ["https://www.googleapis.com/auth/calendar.events"]
+    # The Go override normalizes date/time and attendee fields, sends
+    # expected_etag as If-Match, and classifies indeterminate outcomes.
+    override: go
     method: PATCH
     path: "/calendars/{{.calendar_id}}/events/{{.event_id}}"
     body_mode: sparse
     params:
       event_id: { type: string, required: true, location: path }
       calendar_id: { type: string, default: "primary", location: path }
-      send_updates: { type: string, default: "none", location: query, map_to: sendUpdates }
+      expected_etag:
+        type: string
+        required: true
+        aliases: [expected_version]
+        description: "Exact provider etag/version returned by get_event; used as an If-Match precondition"
+      send_updates:
+        type: string
+        default: "none"
+        description: "Google notification mode: all, externalOnly, or none"
       summary: { type: string, location: body }
       description: { type: string, location: body }
       location: { type: string, location: body }
       start:
         type: string
         location: body
-        transform: "isAllDay(start) ? {date: start} : {dateTime: rfc3339(start)}"
       end:
         type: string
         location: body
-        transform: "isAllDay(end) ? {date: end} : {dateTime: rfc3339(end)}"
       attendees:
         type: array
         location: body
-        transform: "emailList(attendees)"
       transparency:
         type: string
         location: body
@@ -199,7 +213,45 @@ actions:
       fields:
         - { name: id, rename: event_id }
         - { name: summary }
+        - { name: etag }
+        - { name: version }
+        - { name: send_updates }
       summary: "Updated event: {{.summary}}"
+
+  respond_to_event:
+    display_name: "Respond to event"
+    risk: { category: write, sensitivity: medium, description: "Accept, decline, or tentatively accept a calendar invitation" }
+    scopes: ["https://www.googleapis.com/auth/calendar.events"]
+    # Google requires a pre-read to identify attendees[].self. The Go
+    # override then PATCHes only that attendee with attendeesOmitted=true and
+    # retains the approved version as an If-Match precondition.
+    override: go
+    method: PATCH
+    path: "/calendars/{{.calendar_id}}/events/{{.event_id}}"
+    params:
+      event_id: { type: string, required: true, location: path }
+      calendar_id: { type: string, default: "primary", location: path }
+      expected_etag:
+        type: string
+        required: true
+        aliases: [expected_version]
+        description: "Exact provider etag/version returned by get_event; used as an If-Match precondition"
+      response_status:
+        type: string
+        required: true
+        description: "RSVP response: accepted, declined, or tentative"
+      send_updates:
+        type: string
+        default: "none"
+        description: "Google notification mode: all, externalOnly, or none"
+    response:
+      fields:
+        - { name: id, rename: event_id }
+        - { name: response_status }
+        - { name: etag }
+        - { name: version }
+        - { name: send_updates }
+      summary: "Responded {{.response_status}} to event {{.event_id}}"
 
   delete_event:
     display_name: "Delete event"

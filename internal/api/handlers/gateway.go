@@ -1154,16 +1154,27 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 			if execErr != nil {
 				errMsg := execErr.Error()
-				if updErr := h.store.UpdateAuditOutcome(finalizeCtx, auditID, "error", errMsg, dur); updErr != nil {
+				auditOutcome := "error"
+				failure, classified := describeAdapterExecutionFailure(execErr)
+				if classified {
+					auditOutcome = failure.AuditOutcome
+				}
+				if updErr := h.store.UpdateAuditOutcome(finalizeCtx, auditID, auditOutcome, errMsg, dur); updErr != nil {
 					h.logger.WarnContext(ctx, "audit outcome update failed", "err", updErr)
 				}
-				outDecision, outOutcome = "execute", "error"
+				outDecision, outOutcome = "execute", auditOutcome
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
 				if req.Context.CallbackURL != "" {
 					cbKey, _ := h.store.GetAgentCallbackSecret(finalizeCtx, agent.ID)
-					h.dispatchCallback(req.Context.CallbackURL, &callback.Payload{
+					payload := &callback.Payload{
 						Type: "request", RequestID: req.RequestID, Status: "error", Error: errMsg, AuditID: auditID,
-					}, cbKey)
+					}
+					if classified {
+						payload.Code = failure.Code
+						payload.FailureKind = string(failure.Kind)
+						payload.TimedOut = failure.TimedOut
+					}
+					h.dispatchCallback(req.Context.CallbackURL, payload, cbKey)
 				}
 				resp := map[string]any{
 					"status":     "error",
@@ -1171,6 +1182,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					"audit_id":   auditID,
 					"error":      errMsg,
 					"code":       gateway.CodeAdapterError,
+				}
+				if classified {
+					addAdapterExecutionFailureFields(resp, failure)
 				}
 				h.maybeInjectNPS(ctx, resp, agent.ID)
 				writeJSON(w, http.StatusOK, resp)
@@ -1624,15 +1638,33 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 	}
 	dur := int(time.Since(start).Milliseconds())
 
-	outcome := "executed"
+	status := "executed"
+	auditOutcome := "executed"
 	errMsg := ""
+	var failure adapterExecutionFailureDescription
+	var classified bool
 	if execErr != nil {
-		outcome = "error"
+		status = "error"
+		auditOutcome = "error"
 		errMsg = execErr.Error()
+		failure, classified = describeAdapterExecutionFailure(execErr)
+		if classified {
+			auditOutcome = failure.AuditOutcome
+		}
 	}
 
-	_ = h.store.UpdateAuditOutcome(ctx, pa.AuditID, outcome, errMsg, dur)
-	_ = h.store.DeletePendingApproval(ctx, pa.RequestID, pa.UserID, paTask)
+	// The adapter may return because the request deadline elapsed after the
+	// provider accepted a mutation. Finalize the canonical row with a fresh
+	// context so duplicate request_ids observe the classified result instead
+	// of a permanently in-flight reservation.
+	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer finalizeCancel()
+	if err := h.store.UpdateAuditOutcome(finalizeCtx, pa.AuditID, auditOutcome, errMsg, dur); err != nil {
+		h.logger.WarnContext(ctx, "audit outcome update failed", "err", err)
+	}
+	if err := h.store.DeletePendingApproval(finalizeCtx, pa.RequestID, pa.UserID, paTask); err != nil {
+		h.logger.WarnContext(ctx, "pending approval cleanup failed", "err", err)
+	}
 	h.publishAuditAndQueue(pa.UserID, blob.TaskID)
 
 	// On successful execution, seed chain_facts with anything the new result
@@ -1651,12 +1683,16 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 	}
 
 	resp := map[string]any{
-		"status":     outcome,
+		"status":     status,
 		"request_id": pa.RequestID,
 		"audit_id":   pa.AuditID,
 	}
 	if execErr != nil {
 		resp["error"] = errMsg
+		resp["code"] = gateway.CodeAdapterError
+		if classified {
+			addAdapterExecutionFailureFields(resp, failure)
+		}
 	} else {
 		resp["result"] = result
 	}
@@ -1822,10 +1858,20 @@ type gatewayStatusResponseOptions struct {
 }
 
 func writeGatewayStatusResponse(w http.ResponseWriter, e *store.AuditEntry, opts ...gatewayStatusResponseOptions) {
+	status := e.Outcome
+	failure, classified := describeAuditExecutionFailure(e.Outcome)
+	if classified {
+		status = "error"
+	}
 	resp := map[string]any{
-		"status":     e.Outcome,
+		"status":     status,
 		"request_id": e.RequestID,
 		"audit_id":   e.ID,
+	}
+	if classified {
+		addAdapterExecutionFailureFields(resp, failure)
+	} else if e.Outcome == "error" {
+		resp["code"] = gateway.CodeAdapterError
 	}
 	if len(opts) > 0 {
 		if opts[0].Deduped {
