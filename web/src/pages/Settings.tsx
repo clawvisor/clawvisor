@@ -1755,7 +1755,7 @@ function PasskeysCard() {
             <button onClick={() => addMut.mutate()} disabled={addMut.isPending} className={primaryButtonClass}>
               {addMut.isPending ? 'Waiting for device…' : 'Continue'}
             </button>
-            <button onClick={() => { setAdding(false); setName(''); setError(null) }} className={secondaryButtonClass}>
+            <button onClick={() => { setAdding(false); setName(''); setError(null) }} disabled={addMut.isPending} className={secondaryButtonClass}>
               Cancel
             </button>
           </div>
@@ -1785,6 +1785,9 @@ function AuthenticatorAppsCard() {
   // cancel abandons an in-progress setup. The unconfirmed authenticator is
   // deleted so it doesn't linger server-side; it never counts as a factor
   // and the next setup clears it anyway, so a failure here is ignored.
+  // Cancel is disabled while setup or confirm is in flight: a late setup
+  // would reopen the form, and a delete racing a confirm could remove the
+  // authenticator the user just added.
   function cancel() {
     if (pending) api.auth.totp.delete(pending.id).catch(() => {})
     close()
@@ -1868,7 +1871,7 @@ function AuthenticatorAppsCard() {
             <button onClick={() => setupMut.mutate()} disabled={setupMut.isPending} className={primaryButtonClass}>
               {setupMut.isPending ? 'Generating…' : 'Continue'}
             </button>
-            <button onClick={cancel} className={secondaryButtonClass}>Cancel</button>
+            <button onClick={cancel} disabled={setupMut.isPending} className={secondaryButtonClass}>Cancel</button>
           </div>
         </div>
       )}
@@ -1905,7 +1908,7 @@ function AuthenticatorAppsCard() {
             <button type="submit" disabled={confirmMut.isPending || code.length !== 6} className={primaryButtonClass}>
               {confirmMut.isPending ? 'Verifying…' : 'Verify and add'}
             </button>
-            <button type="button" onClick={cancel} className={secondaryButtonClass}>Cancel</button>
+            <button type="button" onClick={cancel} disabled={confirmMut.isPending} className={secondaryButtonClass}>Cancel</button>
           </div>
         </form>
       )}
