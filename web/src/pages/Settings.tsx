@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useId } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { LocalDaemon, NotificationConfig, PendingGroup, SlackChannel, TelegramGroup } from '../api/client'
 import { useNavigate } from 'react-router'
@@ -1684,7 +1684,8 @@ function PasskeysCard() {
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const { data: passkeys, isLoading } = useQuery({
+  const nameId = useId()
+  const { data: passkeys, isLoading, isError, refetch } = useQuery({
     queryKey: ['passkeys'],
     queryFn: () => api.auth.passkey.list(),
   })
@@ -1713,6 +1714,8 @@ function PasskeysCard() {
       {error && <div className="text-xs text-danger">{error}</div>}
       {isLoading ? (
         <p className="text-xs text-text-tertiary">Loading…</p>
+      ) : isError ? (
+        <LoadError onRetry={() => refetch()} />
       ) : passkeys && passkeys.length > 0 ? (
         <ul className="divide-y divide-border-default border-y border-border-default">
           {passkeys.map(pk => (
@@ -1738,8 +1741,9 @@ function PasskeysCard() {
         </button>
       ) : (
         <div className="space-y-2">
-          <label className="text-xs font-medium text-text-tertiary">Name (optional)</label>
+          <label htmlFor={nameId} className="text-xs font-medium text-text-tertiary">Name (optional)</label>
           <input
+            id={nameId}
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="e.g. MacBook, YubiKey"
@@ -1771,13 +1775,22 @@ function AuthenticatorAppsCard() {
   const [pending, setPending] = useState<{ id: string; secret: string; qr_data_url: string } | null>(null)
   const [code, setCode] = useState('')
 
-  const { data, isLoading } = useQuery({
+  const nameId = useId()
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['totp-authenticators'],
     queryFn: () => api.auth.totp.status(),
   })
   const authenticators = data?.authenticators ?? []
 
-  function reset() {
+  // cancel abandons an in-progress setup. The unconfirmed authenticator is
+  // deleted so it doesn't linger server-side; it never counts as a factor
+  // and the next setup clears it anyway, so a failure here is ignored.
+  function cancel() {
+    if (pending) api.auth.totp.delete(pending.id).catch(() => {})
+    close()
+  }
+
+  function close() {
     setStage('idle')
     setName('')
     setPending(null)
@@ -1798,7 +1811,7 @@ function AuthenticatorAppsCard() {
   const confirmMut = useMutation({
     mutationFn: () => api.auth.totp.confirm(code, pending?.id),
     onSuccess: () => {
-      reset()
+      close()
       qc.invalidateQueries({ queryKey: ['totp-authenticators'] })
     },
     onError: (err: Error) => setError(errorMessage(err, 'Invalid code')),
@@ -1813,6 +1826,8 @@ function AuthenticatorAppsCard() {
       {error && <div className="text-xs text-danger">{error}</div>}
       {isLoading ? (
         <p className="text-xs text-text-tertiary">Loading…</p>
+      ) : isError ? (
+        <LoadError onRetry={() => refetch()} />
       ) : authenticators.length > 0 ? (
         <ul className="divide-y divide-border-default border-y border-border-default">
           {authenticators.map(a => (
@@ -1839,8 +1854,9 @@ function AuthenticatorAppsCard() {
 
       {stage === 'name' && (
         <div className="space-y-2">
-          <label className="text-xs font-medium text-text-tertiary">Name (optional)</label>
+          <label htmlFor={nameId} className="text-xs font-medium text-text-tertiary">Name (optional)</label>
           <input
+            id={nameId}
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="e.g. Work phone"
@@ -1852,7 +1868,7 @@ function AuthenticatorAppsCard() {
             <button onClick={() => setupMut.mutate()} disabled={setupMut.isPending} className={primaryButtonClass}>
               {setupMut.isPending ? 'Generating…' : 'Continue'}
             </button>
-            <button onClick={reset} className={secondaryButtonClass}>Cancel</button>
+            <button onClick={cancel} className={secondaryButtonClass}>Cancel</button>
           </div>
         </div>
       )}
@@ -1889,11 +1905,20 @@ function AuthenticatorAppsCard() {
             <button type="submit" disabled={confirmMut.isPending || code.length !== 6} className={primaryButtonClass}>
               {confirmMut.isPending ? 'Verifying…' : 'Verify and add'}
             </button>
-            <button type="button" onClick={reset} className={secondaryButtonClass}>Cancel</button>
+            <button type="button" onClick={cancel} className={secondaryButtonClass}>Cancel</button>
           </div>
         </form>
       )}
     </div>
+  )
+}
+
+function LoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <p className="text-xs text-danger">
+      Couldn&apos;t load this list.{' '}
+      <button onClick={onRetry} className="underline hover:no-underline">Retry</button>
+    </p>
   )
 }
 
