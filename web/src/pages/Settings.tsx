@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useId } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { LocalDaemon, NotificationConfig, PendingGroup, SlackChannel, TelegramGroup } from '../api/client'
 import { useNavigate } from 'react-router'
@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth'
 import { QRCodeSVG } from 'qrcode.react'
 import CountdownTimer from '../components/CountdownTimer'
 import { formatDistanceToNow } from 'date-fns'
+import { isWebAuthnAvailable, startRegistration } from '../lib/webauthn'
 
 export default function Settings() {
   const { features } = useAuth()
@@ -22,6 +23,7 @@ export default function Settings() {
       {features?.local_daemon && <LocalDaemonPairing />}
       <TelegramSetupSection />
       <SlackSetupSection />
+      {features?.passkeys && <SecuritySection />}
       {passwordAuth && <PasswordSection />}
       {passwordAuth && <DangerZone />}
     </div>
@@ -1644,6 +1646,356 @@ function TelegramGroupCard({ group, onDisconnect }: { group: TelegramGroup; onDi
         </div>
       )}
     </div>
+  )
+}
+
+// ── Passkeys & authenticator apps ─────────────────────────────────────────────
+
+const inputClass = 'block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand'
+const secondaryButtonClass = 'text-sm px-3 py-1.5 rounded border border-border-strong text-text-primary hover:bg-surface-2 disabled:opacity-50'
+const primaryButtonClass = 'text-sm px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50'
+
+function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof APIError) return err.message
+  if ((err as { name?: string })?.name === 'NotAllowedError') return 'Passkey registration was cancelled'
+  return fallback
+}
+
+function SecuritySection() {
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Sign-in Methods</h2>
+        <p className="text-xs text-text-tertiary mt-0.5">
+          Add a passkey or authenticator app for each device you use, and remove ones you no longer have.
+        </p>
+      </div>
+      <div className="space-y-4 max-w-lg">
+        <PasskeysCard />
+        <AuthenticatorAppsCard />
+      </div>
+    </section>
+  )
+}
+
+function PasskeysCard() {
+  const qc = useQueryClient()
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const nameId = useId()
+  const { data: passkeys, isLoading, isError, refetch } = useQuery({
+    queryKey: ['passkeys'],
+    queryFn: () => api.auth.passkey.list(),
+  })
+
+  const addMut = useMutation({
+    mutationFn: async () => {
+      const begin = await api.auth.passkey.addBegin()
+      const credential = await startRegistration(begin.options)
+      return api.auth.passkey.addFinish(begin.challenge_id, credential, name.trim() || undefined)
+    },
+    onSuccess: () => {
+      setAdding(false)
+      setName('')
+      setError(null)
+      qc.invalidateQueries({ queryKey: ['passkeys'] })
+    },
+    onError: (err: Error) => setError(errorMessage(err, 'Failed to add passkey')),
+  })
+
+  return (
+    <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3">
+      <div>
+        <p className="text-sm font-medium text-text-primary">Passkeys</p>
+        <p className="text-xs text-text-tertiary mt-0.5">Sign in with Face ID, Touch ID, or a security key.</p>
+      </div>
+      {error && <div className="text-xs text-danger">{error}</div>}
+      {isLoading ? (
+        <p className="text-xs text-text-tertiary">Loading…</p>
+      ) : isError ? (
+        <LoadError onRetry={() => refetch()} />
+      ) : passkeys && passkeys.length > 0 ? (
+        <ul className="divide-y divide-border-default border-y border-border-default">
+          {passkeys.map(pk => (
+            <FactorRow
+              key={pk.id}
+              name={pk.name}
+              createdAt={pk.created_at}
+              onRename={newName => api.auth.passkey.rename(pk.id, newName)}
+              onRemove={() => api.auth.passkey.delete(pk.id)}
+              onChanged={() => { setError(null); qc.invalidateQueries({ queryKey: ['passkeys'] }) }}
+              onError={setError}
+            />
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-text-tertiary">No passkeys yet.</p>
+      )}
+      {!isWebAuthnAvailable() ? (
+        <p className="text-xs text-text-tertiary">This browser doesn&apos;t support passkeys.</p>
+      ) : !adding ? (
+        <button onClick={() => { setAdding(true); setError(null) }} className={secondaryButtonClass}>
+          Add passkey
+        </button>
+      ) : (
+        <div className="space-y-2">
+          <label htmlFor={nameId} className="text-xs font-medium text-text-tertiary">Name (optional)</label>
+          <input
+            id={nameId}
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="e.g. MacBook, YubiKey"
+            autoFocus
+            maxLength={64}
+            className={inputClass}
+          />
+          <div className="flex gap-2">
+            <button onClick={() => addMut.mutate()} disabled={addMut.isPending} className={primaryButtonClass}>
+              {addMut.isPending ? 'Waiting for device…' : 'Continue'}
+            </button>
+            <button onClick={() => { setAdding(false); setName(''); setError(null) }} disabled={addMut.isPending} className={secondaryButtonClass}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AuthenticatorAppsCard() {
+  const qc = useQueryClient()
+  const [error, setError] = useState<string | null>(null)
+  // Enrollment: 'name' collects an optional name, 'scan' shows the QR code
+  // and collects the confirmation code.
+  const [stage, setStage] = useState<'idle' | 'name' | 'scan'>('idle')
+  const [name, setName] = useState('')
+  const [pending, setPending] = useState<{ id: string; secret: string; qr_data_url: string } | null>(null)
+  const [code, setCode] = useState('')
+
+  const nameId = useId()
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['totp-authenticators'],
+    queryFn: () => api.auth.totp.status(),
+  })
+  const authenticators = data?.authenticators ?? []
+
+  // cancel abandons an in-progress setup. The unconfirmed authenticator is
+  // deleted so it doesn't linger server-side; it never counts as a factor
+  // and the next setup clears it anyway, so a failure here is ignored.
+  // Cancel is disabled while setup or confirm is in flight: a late setup
+  // would reopen the form, and a delete racing a confirm could remove the
+  // authenticator the user just added.
+  function cancel() {
+    if (pending) api.auth.totp.delete(pending.id).catch(() => {})
+    close()
+  }
+
+  function close() {
+    setStage('idle')
+    setName('')
+    setPending(null)
+    setCode('')
+    setError(null)
+  }
+
+  const setupMut = useMutation({
+    mutationFn: () => api.auth.totp.setup(name.trim() || undefined),
+    onSuccess: resp => {
+      setPending(resp)
+      setStage('scan')
+      setError(null)
+    },
+    onError: (err: Error) => setError(errorMessage(err, 'Failed to start setup')),
+  })
+
+  const confirmMut = useMutation({
+    mutationFn: () => api.auth.totp.confirm(code, pending?.id),
+    onSuccess: () => {
+      close()
+      qc.invalidateQueries({ queryKey: ['totp-authenticators'] })
+    },
+    onError: (err: Error) => setError(errorMessage(err, 'Invalid code')),
+  })
+
+  return (
+    <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3">
+      <div>
+        <p className="text-sm font-medium text-text-primary">Authenticator apps</p>
+        <p className="text-xs text-text-tertiary mt-0.5">6-digit codes from Google Authenticator, 1Password, or similar.</p>
+      </div>
+      {error && <div className="text-xs text-danger">{error}</div>}
+      {isLoading ? (
+        <p className="text-xs text-text-tertiary">Loading…</p>
+      ) : isError ? (
+        <LoadError onRetry={() => refetch()} />
+      ) : authenticators.length > 0 ? (
+        <ul className="divide-y divide-border-default border-y border-border-default">
+          {authenticators.map(a => (
+            <FactorRow
+              key={a.id}
+              name={a.name}
+              createdAt={a.created_at}
+              onRename={newName => api.auth.totp.rename(a.id, newName)}
+              onRemove={() => api.auth.totp.delete(a.id)}
+              onChanged={() => { setError(null); qc.invalidateQueries({ queryKey: ['totp-authenticators'] }) }}
+              onError={setError}
+            />
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-text-tertiary">No authenticator apps yet.</p>
+      )}
+
+      {stage === 'idle' && (
+        <button onClick={() => { setStage('name'); setError(null) }} className={secondaryButtonClass}>
+          Add authenticator app
+        </button>
+      )}
+
+      {stage === 'name' && (
+        <div className="space-y-2">
+          <label htmlFor={nameId} className="text-xs font-medium text-text-tertiary">Name (optional)</label>
+          <input
+            id={nameId}
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="e.g. Work phone"
+            autoFocus
+            maxLength={64}
+            className={inputClass}
+          />
+          <div className="flex gap-2">
+            <button onClick={() => setupMut.mutate()} disabled={setupMut.isPending} className={primaryButtonClass}>
+              {setupMut.isPending ? 'Generating…' : 'Continue'}
+            </button>
+            <button onClick={cancel} disabled={setupMut.isPending} className={secondaryButtonClass}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {stage === 'scan' && pending && (
+        <form
+          className="space-y-3"
+          onSubmit={e => { e.preventDefault(); confirmMut.mutate() }}
+        >
+          <p className="text-xs text-text-secondary">Scan this QR code with your authenticator app, then enter the code it shows.</p>
+          {pending.qr_data_url && (
+            <div className="flex justify-center">
+              <img src={pending.qr_data_url} alt="Authenticator QR code" className="w-40 h-40 bg-white rounded" />
+            </div>
+          )}
+          <div className="text-center">
+            <p className="text-xs text-text-tertiary mb-1">Or enter this key manually:</p>
+            <code className="text-xs bg-surface-2 px-2 py-1 rounded font-mono select-all break-all">{pending.secret}</code>
+          </div>
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]{6}"
+            maxLength={6}
+            required
+            value={code}
+            onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
+            placeholder="123456"
+            autoComplete="one-time-code"
+            aria-label="6-digit code"
+            className={`${inputClass} text-center tracking-widest font-mono`}
+          />
+          <div className="flex gap-2">
+            <button type="submit" disabled={confirmMut.isPending || code.length !== 6} className={primaryButtonClass}>
+              {confirmMut.isPending ? 'Verifying…' : 'Verify and add'}
+            </button>
+            <button type="button" onClick={cancel} disabled={confirmMut.isPending} className={secondaryButtonClass}>Cancel</button>
+          </div>
+        </form>
+      )}
+    </div>
+  )
+}
+
+function LoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <p className="text-xs text-danger">
+      Couldn&apos;t load this list.{' '}
+      <button onClick={onRetry} className="underline hover:no-underline">Retry</button>
+    </p>
+  )
+}
+
+// FactorRow is one passkey or authenticator app, with inline rename and a
+// confirm step before removal. Errors go to the card, so the server's
+// refusal to remove the last way into the account is cleared once the user
+// adds another factor.
+function FactorRow({ name, createdAt, onRename, onRemove, onChanged, onError }: {
+  name: string
+  createdAt: string
+  onRename: (name: string) => Promise<void>
+  onRemove: () => Promise<void>
+  onChanged: () => void
+  onError: (message: string) => void
+}) {
+  const [mode, setMode] = useState<'view' | 'rename' | 'confirm-remove'>('view')
+  const [draft, setDraft] = useState(name)
+
+  const renameMut = useMutation({
+    mutationFn: () => onRename(draft.trim()),
+    onSuccess: () => { setMode('view'); onChanged() },
+    onError: (err: Error) => onError(errorMessage(err, 'Failed to rename')),
+  })
+  const removeMut = useMutation({
+    mutationFn: onRemove,
+    onSuccess: onChanged,
+    onError: (err: Error) => { setMode('view'); onError(errorMessage(err, 'Failed to remove')) },
+  })
+
+  const added = createdAt ? `Added ${formatDistanceToNow(new Date(createdAt), { addSuffix: true })}` : ''
+
+  return (
+    <li className="py-2.5 space-y-2">
+      {mode === 'rename' ? (
+        <form
+          className="flex gap-2"
+          onSubmit={e => { e.preventDefault(); if (draft.trim()) renameMut.mutate() }}
+        >
+          <input value={draft} onChange={e => setDraft(e.target.value)} maxLength={64} autoFocus className={inputClass} />
+          <button type="submit" disabled={renameMut.isPending || !draft.trim()} className={primaryButtonClass}>Save</button>
+          <button type="button" onClick={() => { setMode('view'); setDraft(name) }} className={secondaryButtonClass}>Cancel</button>
+        </form>
+      ) : (
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm text-text-primary truncate">{name}</p>
+            {added && <p className="text-xs text-text-tertiary">{added}</p>}
+          </div>
+          {mode === 'confirm-remove' ? (
+            <div className="flex gap-2 flex-shrink-0">
+              <button
+                onClick={() => removeMut.mutate()}
+                disabled={removeMut.isPending}
+                className="text-xs px-2.5 py-1 rounded bg-danger text-surface-0 hover:bg-red-500 disabled:opacity-50"
+              >
+                {removeMut.isPending ? 'Removing…' : 'Remove'}
+              </button>
+              <button onClick={() => setMode('view')} className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2">
+                Keep
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-3 flex-shrink-0 text-xs">
+              <button onClick={() => { setMode('rename'); setDraft(name) }} className="text-text-secondary hover:text-text-primary">
+                Rename
+              </button>
+              <button onClick={() => setMode('confirm-remove')} className="text-danger hover:underline">
+                Remove
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </li>
   )
 }
 

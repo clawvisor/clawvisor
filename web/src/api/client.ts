@@ -326,6 +326,12 @@ export interface WebAuthnCredential {
   created_at: string
 }
 
+export interface TOTPAuthenticator {
+  id: string
+  name: string
+  created_at: string
+}
+
 export interface ResetMethods {
   has_totp: boolean
   has_backup_codes: boolean
@@ -335,6 +341,7 @@ export interface ResetMethods {
 export interface UserAuthMethods {
   has_password: boolean
   has_totp: boolean
+  totp_count: number
   has_google: boolean
   has_backup_codes: boolean
   passkey_count: number
@@ -1590,12 +1597,15 @@ export const api = {
       rename: (id: string, name: string) => put<void>(`/api/auth/passkeys/${id}`, { name }),
     },
     totp: {
-      setup: () => post<{ secret: string; uri: string; qr_data_url: string }>('/api/auth/totp/setup', {}),
-      confirm: (code: string) => post<{ enabled: boolean }>('/api/auth/totp/confirm', { code }),
+      setup: (name?: string) =>
+        post<{ id: string; secret: string; uri: string; qr_data_url: string }>('/api/auth/totp/setup', { name }),
+      confirm: (code: string, id?: string) =>
+        post<{ enabled: boolean; authenticator: TOTPAuthenticator }>('/api/auth/totp/confirm', { code, id }),
       verify: (pendingToken: string, code: string) =>
         requestWithToken<AuthResponse>('POST', '/api/auth/totp/verify', pendingToken, { code }),
-      status: () => get<{ enabled: boolean }>('/api/auth/totp'),
-      disable: (password: string) => del<void>('/api/auth/totp', { password }),
+      status: () => get<{ enabled: boolean; authenticators: TOTPAuthenticator[] }>('/api/auth/totp'),
+      rename: (id: string, name: string) => put<void>(`/api/auth/totp/${id}`, { name }),
+      delete: (id: string) => del<void>(`/api/auth/totp/${id}`),
     },
     google: {
       exchange: (code: string, redirectUri: string) =>
