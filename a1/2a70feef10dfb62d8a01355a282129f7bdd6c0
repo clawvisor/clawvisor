@@ -1,0 +1,23 @@
+web/src/pages/Agents.tsx
+  s_fa4712eda9c001::t_0f8c94ec730e03 2341
+  s_fa4712eda9c001::t_c7e6bb5646e3a4 2229,2235-2241
+  s_fa4712eda9c001::t_111f692d4b0b93 883-887
+  s_fa4712eda9c001::t_4c2e33a0b8effd 1045-1057,1060,1063-1067
+  s_fa4712eda9c001::t_6c900c09acec64 1058-1059,1068-1069
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "a12a70feef10dfb62d8a01355a282129f7bdd6c0",
+  "prompts": {},
+  "sessions": {
+    "s_fa4712eda9c001": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "43e64dce-c215-4362-86de-13c0bc757714",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

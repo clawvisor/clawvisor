@@ -1,0 +1,61 @@
+internal/runtime/llmproxy/policies/intent_verify_evaluator_test.go
+  s_813cf813d8b1d0::t_2639d8699ff2e1 37-45
+internal/runtime/llmproxy/policies/script_session_evaluator_test.go
+  s_813cf813d8b1d0::t_c0d5c1ef7ac2a5 82-90
+internal/runtime/llmproxy/policies/inspector_chain_test.go
+  s_813cf813d8b1d0::t_6e929f4ca0518b 213-222
+  s_813cf813d8b1d0::t_650547022ead23 180-182
+  s_813cf813d8b1d0::t_62f77d2deb5a7b 74,76-77,81-87
+  s_813cf813d8b1d0::t_8a80633c52efbd 40,42-43,45-46
+internal/runtime/llmproxy/policies/inspector_evaluator_test.go
+  s_813cf813d8b1d0::t_e1dcc33408a803 51-52,56-80
+  s_813cf813d8b1d0::t_08046715a94083 134,136-137,139-140,142-143
+internal/runtime/llmproxy/policies/control_tool_use_evaluator_test.go
+  s_813cf813d8b1d0::t_2b832234cbd1b1 179-180,184-190
+  s_813cf813d8b1d0::t_a07ca067f012e6 151-152
+internal/runtime/llmproxy/policies/task_scope_evaluator_test.go
+  s_813cf813d8b1d0::t_0bf7f8ffe82f26 45-53,55-56
+internal/runtime/llmproxy/policies/inspector_chain.go
+  s_813cf813d8b1d0::t_02330eb253bc40 123-124,131-133,135,143-144,154-155,173-175,182-183
+internal/runtime/llmproxy/policies/boundary_check_evaluator.go
+  s_813cf813d8b1d0::t_a519ae1f6ac8d0 143-144,148-150
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_813cf813d8b1d0::t_4ca2340e6a251e 93-94,102-104,106
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator_test.go
+  s_813cf813d8b1d0::t_9f9877c5302106 29,38-39
+  s_813cf813d8b1d0::t_e3d1ca5b949bf2 113-114
+internal/runtime/llmproxy/policies/script_session_evaluator.go
+  s_813cf813d8b1d0::t_80c5f58d4f6a14 61
+internal/runtime/llmproxy/policies/intent_verify_evaluator.go
+  s_813cf813d8b1d0::t_64317faffeb74a 59,71-72,76-78
+internal/runtime/llmproxy/policies/boundary_check_evaluator_test.go
+  s_813cf813d8b1d0::t_20c53e37870d14 52-53,57-63
+  s_813cf813d8b1d0::t_aeb28b003af81f 29-30
+internal/runtime/llmproxy/policies/inspector_chain_integration_test.go
+  s_813cf813d8b1d0::t_955945911bc82d 151-152
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator_test.go
+  s_813cf813d8b1d0::t_377bf51e791d99 164-165,168-184
+  s_813cf813d8b1d0::t_c784f693c58767 93-94
+  s_813cf813d8b1d0::t_0897ea3b13741d 125-126
+internal/runtime/llmproxy/policies/inspector_evaluator.go
+  s_813cf813d8b1d0::t_21e12eb7e73177 42-44,63-65,67,74-75,79,81-82
+internal/runtime/llmproxy/policies/control_tool_use_evaluator.go
+  s_813cf813d8b1d0::t_3739a31e7717ed 106,118,126,133
+  s_813cf813d8b1d0::t_230501334ec3f5 158,170,178,185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "ca2f3869d9e521a558acb30f4a23259e2aa2b08c",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/policies/compose_tool_use_chain_test.go
+  s_813cf813d8b1d0::t_ae9888813ea54e 1-13,15-16,18-38,41-53,55-60,62-65,67-110,112-117,119-133
+internal/runtime/llmproxy/policies/compose_tool_use_chain.go
+  s_813cf813d8b1d0::t_e6dbce3f6d0124 1-8,11-49,52-56,58,62-67,69-70,72-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "7b3e983359ae52d17c27911d574f5a82516c346b",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

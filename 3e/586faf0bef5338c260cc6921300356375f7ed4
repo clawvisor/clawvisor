@@ -1,0 +1,26 @@
+web/src/pages/Dashboard.tsx
+  s_55f7a841d7c10e::t_ce33d199c0cee1 52-56
+web/src/hooks/useAuth.tsx
+  s_55f7a841d7c10e::t_c0d86f19f31329 159-169,178-179
+  s_55f7a841d7c10e::t_099b0cfd18543f 8-10
+web/src/App.tsx
+  s_55f7a841d7c10e::t_45bc073695694b 60-64,68-72
+web/tsconfig.tsbuildinfo
+  s_55f7a841d7c10e::t_38ddfe79283012 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3e586faf0bef5338c260cc6921300356375f7ed4",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

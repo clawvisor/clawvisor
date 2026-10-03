@@ -1,0 +1,20 @@
+web/src/pages/Agents.tsx
+  s_60434a1c202264::t_233ffdb4d8d6dc 4376-4379,4381-4382,4404-4407,4411-4452,4454-4455,4458,4460-4461,4463-4516,4550-4572
+  s_60434a1c202264::t_58a7cb6b08e6f6 423
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "30f34e6c611a8496665b9da441565bb92489ffba",
+  "prompts": {},
+  "sessions": {
+    "s_60434a1c202264": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e8442-5291-77e3-8941-ca38a65a0bb8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

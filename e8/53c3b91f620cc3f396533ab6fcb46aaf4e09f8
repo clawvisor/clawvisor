@@ -1,0 +1,37 @@
+provider/internal/client/client.go
+  s_55f7a841d7c10e::t_8281d01b3928d1 58-61
+provider/docs/resources/org_settings.md
+  s_55f7a841d7c10e::t_0ec34ae65134c7 1-42
+provider/internal/provider/resource_org_settings.go
+  s_55f7a841d7c10e::t_0f5b9e19d95efa 1-166
+provider/internal/provider/provider.go
+  s_55f7a841d7c10e::t_2102512e282eeb 164
+web/src/pages/Agents.tsx
+  s_55f7a841d7c10e::t_26b1c94805d1fb 19-28
+  s_55f7a841d7c10e::t_b65098044207a4 37,52,89,156,162
+provider/internal/client/org_settings.go
+  s_55f7a841d7c10e::t_35901e8b719893 1-31
+web/src/api/client.ts
+  s_55f7a841d7c10e::t_fd0090d82f40f0 1233-1238
+  s_55f7a841d7c10e::t_2dd304047064b9 1853-1857
+provider/internal/client/client_test.go
+  s_55f7a841d7c10e::t_d6b6d148d8bf21 38-47
+provider/examples/resources/clawvisor_org_settings/resource.tf
+  s_55f7a841d7c10e::t_f029e146b7e831 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e853c3b91f620cc3f396533ab6fcb46aaf4e09f8",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

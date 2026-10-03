@@ -1,0 +1,21 @@
+internal/setup/setup.go
+  s_55f7a841d7c10e::t_dc3b3901fdec64 513-527,532-533,539-540,542
+internal/setup/setup_test.go
+  s_55f7a841d7c10e::t_ed6d347d95871c 12-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "997c6660e6adc90e5723e0c00734d12d86800ca5",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

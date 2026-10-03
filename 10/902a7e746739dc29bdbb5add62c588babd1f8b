@@ -1,0 +1,21 @@
+pkg/runtime/decision/decision_test.go
+  s_4fdc37e67beaf2::t_ab538b633e3a3c 119-142
+internal/api/middleware/agent_llm_test.go
+  s_4fdc37e67beaf2::t_60506becf17c24 9,42-66,140-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "10902a7e746739dc29bdbb5add62c588babd1f8b",
+  "prompts": {},
+  "sessions": {
+    "s_4fdc37e67beaf2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e40d7-d8c4-7f80-b673-ed53b4db8d56",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

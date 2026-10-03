@@ -1,0 +1,27 @@
+internal/api/handlers/installer_test.go
+  s_fa4712eda9c001::t_95c0dfdfe5e1b5 1085-1314
+  s_fa4712eda9c001::t_0aa881dc92e8a3 326,328
+  s_fa4712eda9c001::t_09f384da89b072 8-9
+  s_fa4712eda9c001::t_3bc461ec165731 197-199,202
+  s_fa4712eda9c001::t_24137894bbe701 85-88,91
+web/src/pages/Agents.tsx
+  s_fa4712eda9c001::t_befe0324bac7bc 2333-2338
+internal/api/handlers/installer.go
+  s_fa4712eda9c001::t_b0193425bfec9c 142-152,541-544,554-568,590-595,606-619,922-1004,1166-1172,1362-1398,1404-1408,1575-1613
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "ca2058fba1df9c807647fa59cb4c0859d5cd702e",
+  "prompts": {},
+  "sessions": {
+    "s_fa4712eda9c001": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "43e64dce-c215-4362-86de-13c0bc757714",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

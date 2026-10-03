@@ -1,0 +1,42 @@
+internal/runtime/llmproxy/pipeline/tool_use_bridge.go
+  s_813cf813d8b1d0::t_b11c8ad6809a84 78-80
+internal/runtime/llmproxy/policies/inspector_evaluator.go
+  s_813cf813d8b1d0::t_b3f16e6a31e4bf 86
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_813cf813d8b1d0::t_60224b38dea0dc 108
+internal/runtime/llmproxy/policies/inspector_chain.go
+  s_813cf813d8b1d0::t_edb1a42d794a0d 135
+internal/runtime/conversation/response.go
+  s_813cf813d8b1d0::t_516c4c26f31282 55-61
+internal/runtime/llmproxy/credentialed_authorization.go
+  s_813cf813d8b1d0::t_1a25c83cfc7f48 149
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_813cf813d8b1d0::t_f65c6bf0bb8405 67-72
+  s_813cf813d8b1d0::t_4b0637d0edf2d8 122
+  s_813cf813d8b1d0::t_c5e299e75ccc32 206-210,218
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_813cf813d8b1d0::t_2fbd78497bd640 401
+internal/runtime/llmproxy/trigger_miss_authorization.go
+  s_813cf813d8b1d0::t_1e6a60d276ed58 158
+internal/runtime/llmproxy/postproc/coalesce.go
+  s_813cf813d8b1d0::t_8c51df288f0f25 217-220,222-231
+internal/runtime/llmproxy/pipeline/policy.go
+  s_813cf813d8b1d0::t_2cb37a7cea1ad5 150-157
+  s_813cf813d8b1d0::t_22c7d85a0f0aca 158-162,165-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "ed806e65f96dfdd83ef1e56e2ea756e0fb911522",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

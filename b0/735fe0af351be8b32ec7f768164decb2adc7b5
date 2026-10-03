@@ -1,0 +1,52 @@
+internal/runtime/llmproxy/finalizer_adapter.go
+  s_522af339bc956c::t_5101900c81e66b 159,176
+internal/runtime/conversation/stream/openai_chat_prepend.go
+  s_522af339bc956c::t_9f0b719c43eac4 66-67
+  s_522af339bc956c::t_19185fedc8a419 64-65
+internal/runtime/llmproxy/pipeline/tool_use_runner_test.go
+  s_522af339bc956c::t_1a85fe9c5d5604 147
+internal/runtime/llmproxy/postproc/session.go
+  s_522af339bc956c::t_3828735e891b30 79,83
+internal/runtime/conversation/stream/anthropic_prepend.go
+  s_522af339bc956c::t_680409b16eb0f4 9
+  s_522af339bc956c::t_9f0b719c43eac4 85,87-89,101-105,159,163-164,166,169
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_522af339bc956c::t_e228a597b62c17 431,446-448,465,475,484-499,501-507,510-513,590-593
+internal/runtime/conversation/stream/openai_responses_prepend.go
+  s_522af339bc956c::t_019b80be040d1b 4,180,184-186,200-268
+  s_522af339bc956c::t_9f0b719c43eac4 79-83
+internal/runtime/llmproxy/postproc/postproc.go
+  s_522af339bc956c::t_56de452af1824c 5,223
+  s_522af339bc956c::t_3828735e891b30 42,44,67
+internal/runtime/llmproxy/postproc/stream.go
+  s_522af339bc956c::t_3828735e891b30 120-121
+internal/runtime/llmproxy/pipeline/tool_use_runner.go
+  s_522af339bc956c::t_715577d3da7055 47-52,96-98,100,107-133
+  s_522af339bc956c::t_61de12aadf6788 6
+internal/runtime/conversation/stream/openai_responses_prepend_test.go
+  s_522af339bc956c::t_1a85fe9c5d5604 35
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_522af339bc956c::t_758b9c7bec2d8f 42,52-63,104,117-129,134-137
+internal/runtime/llmproxy/policies/authorization_policy.go
+  s_522af339bc956c::t_9c30e2552d8179 167-174
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator.go
+  s_522af339bc956c::t_15c969b584fe59 101-105
+internal/runtime/conversation/stream/anthropic_substitute.go
+  s_522af339bc956c::t_2a14528498795a 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "b0735fe0af351be8b32ec7f768164decb2adc7b5",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

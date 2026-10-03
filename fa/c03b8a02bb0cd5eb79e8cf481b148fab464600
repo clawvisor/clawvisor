@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/pipeline/orchestrator_test.go
+  s_55f7a841d7c10e::t_af1a67717fe076 276-311
+internal/runtime/llmproxy/pipeline/orchestrator.go
+  s_55f7a841d7c10e::t_02aa5d2b907870 177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "fac03b8a02bb0cd5eb79e8cf481b148fab464600",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+internal/runtime/conversation/assistant_prepend.go
+  s_a5f33eee989c6d::t_a417076be9718d 403-414,420-423,428-436,438-460,469
+internal/runtime/conversation/assistant_prepend_test.go
+  s_a5f33eee989c6d::t_f08a3b40068f48 308-331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "5b05ad4bcd6cda3763fb462fadbd643ccccd9086",
+  "prompts": {},
+  "sessions": {
+    "s_a5f33eee989c6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37aa2c5f-2455-40a0-84dc-0b1a4ce1fdcd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

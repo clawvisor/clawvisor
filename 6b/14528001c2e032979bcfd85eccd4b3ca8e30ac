@@ -1,0 +1,25 @@
+internal/runtime/llmproxy/anthropic_sanitize.go
+  s_4c4a32022426f9::t_5e19d8207990a1 58-59
+  s_4c4a32022426f9::t_fd78665e6826a5 19-25
+internal/runtime/llmproxy/byte_fidelity_test.go
+  s_4c4a32022426f9::t_d38d6f2bc4743a 124
+internal/runtime/llmproxy/secret_decision_history.go
+  s_4c4a32022426f9::t_ca33906ecc4264 118-119
+  s_4c4a32022426f9::t_75e0374f643a87 46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6b14528001c2e032979bcfd85eccd4b3ca8e30ac",
+  "prompts": {},
+  "sessions": {
+    "s_4c4a32022426f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "064ca6c4-1275-4b5f-ac62-2f39b7e5f939",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+internal/runtime/conversation/openai_response.go
+  s_bbe778adcf6f02::t_29521bd52a32e4 86,88,98-101,105,111
+  s_bbe778adcf6f02::t_56b60d3d1d3d15 87,102-103,112,25-26,28,31,35-42,44-48,50-63,65-67,69-70,72-73,75-85,89,92-97,104,106-110,113-136,138
+  s_bbe778adcf6f02::t_fc8e25fe2e4c60 201-233
+  s_bbe778adcf6f02::t_9b151139bd7103 234-252
+  s_bbe778adcf6f02::t_e80663b80075e8 253-280,137,139-140,32-34,43,49,64,68,71,74
+  s_bbe778adcf6f02::t_67ea97b2317048 351-353
+  s_bbe778adcf6f02::t_68db3bf1680e63 633-635
+  s_bbe778adcf6f02::t_f3682d30800289 1044,1046-1050,1054-1056
+  s_bbe778adcf6f02::t_70abe3fd111873 1057
+internal/runtime/llmproxy/assistant_notice_prepend.go
+  s_bbe778adcf6f02::t_7fda4325829eaa 1-3,5-30,40-54,57,59-66
+  s_bbe778adcf6f02::t_057cd2df1b2b89 4
+  s_bbe778adcf6f02::t_1f187f372d8066 31-39
+  s_bbe778adcf6f02::t_6beac4dc7b0e2f 55-56,58
+internal/runtime/llmproxy/postproc/recoverable_deny.go
+  s_bbe778adcf6f02::t_46105605e09885 10-14,19-20,22,44,69
+  s_bbe778adcf6f02::t_c31d28d0c4b523 34-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "c00148276d5559d4e4f6b0cc5dd4df7271c663a8",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

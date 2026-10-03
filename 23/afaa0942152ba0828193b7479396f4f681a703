@@ -1,0 +1,26 @@
+provider/internal/provider/resource_vault_reference.go
+  s_55f7a841d7c10e::t_611fd2970e719e 142
+  s_55f7a841d7c10e::t_a570527cbb1eff 166
+  s_55f7a841d7c10e::t_4878e9eae95602 72
+  s_55f7a841d7c10e::t_ace5e762d20b04 25
+  s_55f7a841d7c10e::t_29e4bf12d55652 123
+  s_55f7a841d7c10e::t_d89dd4e3b5a668 97
+provider/internal/provider/testacc/vault_reference_test.go
+  s_55f7a841d7c10e::t_d4a7c63a32103f 15,29,37,53,56,62,65,79,87,90,104,133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "23afaa0942152ba0828193b7479396f4f681a703",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

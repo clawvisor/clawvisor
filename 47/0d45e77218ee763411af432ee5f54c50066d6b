@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/secret_detection_test.go
+  s_5690062ed6cda8::t_a31c08659c2e7a 213,239,577,579,581,583
+internal/api/handlers/llm_endpoint_test.go
+  s_5690062ed6cda8::t_a31c08659c2e7a 488
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "470d45e77218ee763411af432ee5f54c50066d6b",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

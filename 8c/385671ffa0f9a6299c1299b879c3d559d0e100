@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/redis_stores_test.go
+  s_d3d7c0f1cab464::t_15f4544b169c17 582-618
+internal/runtime/llmproxy/scope_drift_registry_redis.go
+  s_d3d7c0f1cab464::t_0d4d9f2f0c937c 175-179,188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "8c385671ffa0f9a6299c1299b879c3d559d0e100",
+  "prompts": {},
+  "sessions": {
+    "s_d3d7c0f1cab464": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e5497df-a0c6-46e3-b49b-902ec0c4b408",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

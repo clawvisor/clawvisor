@@ -1,0 +1,23 @@
+pkg/runtime/proxy/auth_test.go
+  s_55f7a841d7c10e::t_997fe999a81d35 191
+  s_55f7a841d7c10e::t_5d80396570cbe3 177-190,192-235
+pkg/runtime/proxy/auth.go
+  s_55f7a841d7c10e::t_b520ffaca9f891 189
+  s_55f7a841d7c10e::t_6ade0d0e535c09 262
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "40bfe97b8ce90df964b31d77db379ecf32a565d3",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    }
+  }
+}

@@ -1,0 +1,41 @@
+internal/api/server.go
+  s_a5f208ad60cc21::t_cefdbce404b696 454-455,649
+pkg/config/config_test.go
+  s_a5f208ad60cc21::t_bf1cfd9945d4ff 35,53-54
+internal/api/handlers/health.go
+  s_a5f208ad60cc21::t_74ed559af6d663 17-18,21-22
+web/src/pages/Agents.tsx
+  s_a5f208ad60cc21::t_81d5d5fdbcf775 1567,1569,1586,1592,1599
+  s_a5f208ad60cc21::t_a915b5585eec8b 708-711,737-739,800-805
+  s_a5f208ad60cc21::t_f321931048d540 1752,1754,1776
+  s_a5f208ad60cc21::t_9113fd7ccf220b 1905,1907,2013,2015
+  s_a5f208ad60cc21::t_a2edc80a195714 3029-3032,3035-3037,3040-3044
+  s_a5f208ad60cc21::t_eff6e7018f83d5 2529,2532,2559,2566,2569,2577,2582
+  s_a5f208ad60cc21::t_a748ed640b4f01 1200-1204
+  s_a5f208ad60cc21::t_a037f5ea6fb11f 2178,2181,2207,2214
+  s_a5f208ad60cc21::t_17e28b90062085 2379,2381,2403,2409,2413
+web/src/api/client.ts
+  s_a5f208ad60cc21::t_3b2079d8ea12f1 1384
+internal/api/handlers/config.go
+  s_a5f208ad60cc21::t_24d3e9983127ca 1-27
+internal/api/handlers/config_test.go
+  s_a5f208ad60cc21::t_116a3ad01ae146 1-33
+pkg/config/config.go
+  s_a5f208ad60cc21::t_a054c1eb943672 287-290,795-796
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "a07ca27f399aefbf022d2a72b06f48e86070eb65",
+  "prompts": {},
+  "sessions": {
+    "s_a5f208ad60cc21": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2a03-2bf5-7d62-80b1-67fd5e44976e",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    }
+  }
+}

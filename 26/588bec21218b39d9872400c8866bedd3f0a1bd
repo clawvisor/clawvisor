@@ -1,0 +1,27 @@
+pkg/runtime/decision/decision.go
+  s_37d636f1a7f2f0::t_84320716b56ab4 492-497
+  s_37d636f1a7f2f0::t_23fa57e9e18b2a 601-604,606-612,614,616
+  s_37d636f1a7f2f0::t_6eb1707e46437e 637-640,642-648,654-658,663
+internal/api/handlers/guard.go
+  s_37d636f1a7f2f0::t_6a7658ca8a6e0a 282-286
+pkg/runtime/decision/decision_test.go
+  s_37d636f1a7f2f0::t_03906c67d63784 517-523,537-538,542-544,548-549,558-559,563-565,570-572
+internal/intent/prompts.go
+  s_37d636f1a7f2f0::t_cc9ca07090c0da 374
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "26588bec21218b39d9872400c8866bedd3f0a1bd",
+  "prompts": {},
+  "sessions": {
+    "s_37d636f1a7f2f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4495c936-44c6-4e18-a793-3cdbab9ba816",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

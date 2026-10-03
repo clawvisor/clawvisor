@@ -1,0 +1,19 @@
+deploy/terraform/examples/local-docker/render.tf
+  s_55f7a841d7c10e::t_1f3d473f6c774f 54-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2ab4da723137ebbc8477104b4b0339fc56c00cc1",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

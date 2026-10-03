@@ -1,0 +1,26 @@
+internal/runtime/conversation/types.go
+  s_813cf813d8b1d0::t_e6bbe1c0bc2969 34
+internal/runtime/conversation/parser.go
+  s_813cf813d8b1d0::t_5bea5a5643bd9c 24
+internal/runtime/conversation/google_parser_test.go
+  s_813cf813d8b1d0::t_97f9441a7a2870 1-86
+internal/runtime/conversation/google_parser.go
+  s_813cf813d8b1d0::t_767d8c89b6f461 1-8,13-22,26-30,38-46,48-51,54-138
+  s_813cf813d8b1d0::t_744fc27607c966 23-25,31-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "540b7e646977db624a64ff5e2ad65b7002925293",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

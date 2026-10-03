@@ -1,0 +1,53 @@
+internal/runtime/llmproxy/postprocess.go
+  s_8de9dcae61d3e3::t_c8d6539b844837 9
+  s_8de9dcae61d3e3::t_f1d142e52587c0 125-130
+  8de9dcae61d3e38a 190-193,494-499,501
+  s_8de9dcae61d3e3::t_141061136151e3 194-221
+  s_8de9dcae61d3e3::t_e7238dd54483c3 279-281,295-298
+  s_8de9dcae61d3e3::t_b72689bd49ecad 282-288
+  s_8de9dcae61d3e3::t_b2df66568f746d 300-309
+  s_8de9dcae61d3e3::t_8e54f4dcd74d91 331-337
+  s_8de9dcae61d3e3::t_a5dc36ba6dd641 356-365,377
+  s_8de9dcae61d3e3::t_88595a6ca71d4d 366-370
+  s_8de9dcae61d3e3::t_6d234370246075 405-413,416
+  s_8de9dcae61d3e3::t_0203d2b31709b7 447-455
+  s_8de9dcae61d3e3::t_0eeb94982ea0a9 526-563
+  s_8de9dcae61d3e3::t_0aa74380bb70b6 573-580,239
+  s_8de9dcae61d3e3::t_ff203cd1b5c8c7 685-697
+  s_8de9dcae61d3e3::t_2fc17b589bb78c 716,721
+  s_8de9dcae61d3e3::t_3b11dba8e97c1c 767-775
+  s_8de9dcae61d3e3::t_991ad7cc8552ed 780-802
+  s_8de9dcae61d3e3::t_01249af48a3637 803-826
+  s_8f3d790934e389::t_6ab76310d1131b 225-238
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_8f3d790934e389::t_3e135c6a820012 1-19,26-83,112-194,197-232
+  s_8f3d790934e389::t_1e8ad9c9924a9c 20-25
+  s_8f3d790934e389::t_e39452c8c9eb36 84-111
+  s_8f3d790934e389::t_fb1e63d0904500 195-196
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_8f3d790934e389::t_c6c75d5eb587af 1-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "0ed5b2ae685bfcb2b1396f14cf3a0b9ea45ab527",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

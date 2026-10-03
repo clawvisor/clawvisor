@@ -1,0 +1,26 @@
+internal/api/handlers/tasks_inline.go
+  s_8f3d790934e389::t_f231431a09eebb 1-233
+internal/api/handlers/llm_endpoint.go
+  s_8f3d790934e389::t_c5896cb7753bab 76-83
+  s_8f3d790934e389::t_0312a0db23a222 698-699
+internal/api/server.go
+  s_8f3d790934e389::t_fa390b916ed2db 917-924
+internal/api/handlers/tasks_inline_test.go
+  s_8f3d790934e389::t_26aaabb53f55a7 1-192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "2988edf298e4caf526299e0bef89df5da8365742",
+  "prompts": {},
+  "sessions": {
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

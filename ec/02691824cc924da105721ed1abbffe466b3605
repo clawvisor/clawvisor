@@ -1,0 +1,19 @@
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator.go
+  s_522af339bc956c::t_3a7f4307a51c97 129-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "ec02691824cc924da105721ed1abbffe466b3605",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

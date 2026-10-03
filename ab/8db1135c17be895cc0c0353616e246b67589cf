@@ -1,0 +1,35 @@
+web/src/pages/Pricing.tsx
+  s_22de147f45dbe8::t_23bad3946e7640 20-21,23-24,26
+  s_22de147f45dbe8::t_bdbc51ba542c0a 1-2,18
+web/src/pages/Billing.tsx
+  s_22de147f45dbe8::t_57c53c28d90820 32-35,39,350-353,357
+  s_22de147f45dbe8::t_ac2c9e56922e29 355
+  s_22de147f45dbe8::t_b8db84b8842222 4,115-125,127-129,131,200
+  s_22de147f45dbe8::t_077f9e573b2ace 185-188,193
+  s_22de147f45dbe8::t_0d167229eec515 126
+web/src/components/PlanGrid.tsx
+  s_22de147f45dbe8::t_83b0e393a57e41 236-237
+  s_22de147f45dbe8::t_ada9e85a4a786e 245-259,261-263,265
+  s_22de147f45dbe8::t_c5c8c9a5b3ae0d 41-53,75-77
+  s_22de147f45dbe8::t_23bad3946e7640 18,25,32-36,121,123,132-135,153-155,186,206-209,278
+  s_22de147f45dbe8::t_c5adf712a18c00 1-17,19-24,26-27,37-40,54-74,78-120,122,124-129,137-152,156-185,187-205,210-235,260,264,266-268,270,272-277,279-281,285-293
+  s_22de147f45dbe8::t_26677d210d5123 269,271,282-284
+  s_22de147f45dbe8::t_1f0c433dd3b558 238-244
+  s_22de147f45dbe8::t_e20b9e8c840bdd 28-31,130-131,136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "ab8db1135c17be895cc0c0353616e246b67589cf",
+  "prompts": {},
+  "sessions": {
+    "s_22de147f45dbe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86220531-c32b-4dde-b5bc-a6525a733059",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

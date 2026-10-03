@@ -1,0 +1,22 @@
+internal/intent/prompts.go
+  s_1ebb3e9ec57238::t_f7ee2e1366f0f1 316,325-328,330,336-340,342
+  s_1ebb3e9ec57238::t_338aef82520cae 289,301,311-314
+  s_1ebb3e9ec57238::t_8c90507511e9ee 46,48
+  s_1ebb3e9ec57238::t_a7998bdc86acbd 51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "27ddc5f0379c23770806a4794fbc7db900432d8a",
+  "prompts": {},
+  "sessions": {
+    "s_1ebb3e9ec57238": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c51e4117-d0f1-4fba-bfbb-836f409d16ac",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

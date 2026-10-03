@@ -1,0 +1,36 @@
+pkg/notify/expansion_render_test.go
+  s_fd6d9b102e043d::t_6f931b58b0ff30 26-30
+pkg/notify/expansion_render.go
+  s_fd6d9b102e043d::t_e2e98ba724fcf7 88-93,105-113
+internal/notify/telegram/scope_expansion_format_test.go
+  s_fd6d9b102e043d::t_a43302bd78846e 54-55
+  s_fd6d9b102e043d::t_1e1bfa7bed79c8 33-34
+pkg/store/store.go
+  s_fd6d9b102e043d::t_b3f312ee39d07d 220-226
+  s_fd6d9b102e043d::t_330c319f9018ab 935-940
+internal/tui/screens/helpers_test.go
+  s_fd6d9b102e043d::t_129576d08b9e7c 75-151
+web/src/components/TaskCard.tsx
+  s_fd6d9b102e043d::t_67dc5dc8b74985 996-998,1019-1021
+  s_fd6d9b102e043d::t_2c7b650f8a0574 852-858,861-864,866,869-920
+internal/tui/screens/helpers.go
+  s_fd6d9b102e043d::t_246ac6b9c094f8 6
+  s_fd6d9b102e043d::t_be7ec0f89b9618 130,133,135,143-144,153,156,158,162-163
+  s_fd6d9b102e043d::t_3a4b7226041ec5 200-208,214,219-220,226,231-283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "2ce70580fff36fca1aa7111876f348fdc13c5326",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

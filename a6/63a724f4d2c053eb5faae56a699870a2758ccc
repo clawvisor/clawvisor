@@ -1,0 +1,29 @@
+internal/api/handlers/runtime_passthrough.go
+  s_5690062ed6cda8::t_8b005a07369368 1-3,5-200
+  s_5690062ed6cda8::t_ec8aa9b446b6aa 4
+internal/api/handlers/llm_endpoint.go
+  s_5690062ed6cda8::t_a4b9599d3182bc 903-1033
+  s_5690062ed6cda8::t_314da4f2e94c12 241-249,288-296
+internal/api/handlers/llm_endpoint_test.go
+  s_5690062ed6cda8::t_52528934340433 248-308
+pkg/clawvisor/run.go
+  s_5690062ed6cda8::t_b35615a1aa88c1 170-173
+internal/api/handlers/runtime.go
+  s_5690062ed6cda8::t_a1e7f8e8a888ab 414
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "a663a724f4d2c053eb5faae56a699870a2758ccc",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

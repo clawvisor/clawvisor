@@ -1,0 +1,25 @@
+internal/runtime/conversation/openai_request.go
+  s_dda81db3a92871::t_808fc09ef5f715 67-68,81-86,90
+  s_dda81db3a92871::t_9a0b5b20275a8b 69-80,89,91-97
+internal/runtime/conversation/approval_release_test.go
+  s_dda81db3a92871::t_cf1f42229a30cc 147-165
+  s_dda81db3a92871::t_c9a969d996b535 106-146,166-184
+internal/runtime/conversation/response_test.go
+  s_dda81db3a92871::t_cd16bfeeac77d9 286-290,293-294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0f3ca50e8672c4acee91e250c4377942e3812b5f",
+  "prompts": {},
+  "sessions": {
+    "s_dda81db3a92871": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8b46cab4-2443-43a5-b1eb-1a20ba72a3a5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

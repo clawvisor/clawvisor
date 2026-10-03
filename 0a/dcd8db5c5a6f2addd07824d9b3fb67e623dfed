@@ -1,0 +1,28 @@
+internal/runtime/llmproxy/policies/control_notice.go
+  s_392c378a08ddad::t_10f4e53a04bad6 87-94
+internal/api/handlers/llm_endpoint_active_tasks_snapshot_test.go
+  s_392c378a08ddad::t_9f00ab0a3e838e 1-116
+internal/runtime/llmproxy/controltool/control.go
+  s_392c378a08ddad::t_6e76966103c4b2 431-440
+  s_392c378a08ddad::t_890254aca14131 159-165,171
+internal/api/handlers/llm_endpoint.go
+  s_392c378a08ddad::t_348bf7f7a8f423 2805-2822,2847,2856,2865-2927
+internal/runtime/llmproxy/policies/control_notice_test.go
+  s_392c378a08ddad::t_aa686278c8c043 84-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "0adcd8db5c5a6f2addd07824d9b3fb67e623dfed",
+  "prompts": {},
+  "sessions": {
+    "s_392c378a08ddad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e042dbd7-88e2-4c8d-b7d9-a5f55befb2e5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

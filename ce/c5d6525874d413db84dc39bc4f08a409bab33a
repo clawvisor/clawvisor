@@ -1,0 +1,40 @@
+e2e/scenarios/flip_test.go
+  s_fa4712eda9c001::t_8d0655fd990f41 35-43
+web/src/pages/Agents.tsx
+  s_fa4712eda9c001::t_92a3bb06d9004f 2333-2336
+  s_fa4712eda9c001::t_dd7254ead03377 2275-2279
+internal/api/handlers/installer.go
+  s_fa4712eda9c001::t_e833c376ff571d 378-386,388
+  s_fa4712eda9c001::t_31e8d08f58a268 130-139
+internal/setup/setup_test.go
+  s_fa4712eda9c001::t_61ba56fedcb4b4 15-22
+internal/setup/setup.go
+  s_fa4712eda9c001::t_430cdcdf363a54 655-656,663-664,671
+  s_fa4712eda9c001::t_4c3e418e18d9e8 646-650
+  s_fa4712eda9c001::t_a16cde599ba85d 637-644
+  s_fa4712eda9c001::t_ada37082a7c8e8 645
+internal/api/handlers/installer_test.go
+  s_fa4712eda9c001::t_1ae085db36c68d 681-684
+  s_fa4712eda9c001::t_988ccec0c6fc1c 581-583
+  s_fa4712eda9c001::t_a86d055d95d72c 725-729
+  s_fa4712eda9c001::t_cccda586295b0c 499-502
+  s_fa4712eda9c001::t_310a017a57ad0d 1007-1012,1014,1016-1017,1019-1020,1022-1039,1041
+pkg/store/postgres/zz_tmp_integration_test.go
+  s_fa4712eda9c001::t_dd92f37809ed9e 1-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "cec5d6525874d413db84dc39bc4f08a409bab33a",
+  "prompts": {},
+  "sessions": {
+    "s_fa4712eda9c001": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "43e64dce-c215-4362-86de-13c0bc757714",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

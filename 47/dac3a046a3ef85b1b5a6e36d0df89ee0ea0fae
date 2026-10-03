@@ -1,0 +1,76 @@
+internal/runtime/llmproxy/postproc/stream.go
+  s_55f7a841d7c10e::t_70fbda1682e04c 120-129
+  s_55f7a841d7c10e::t_3e2c4034b61e90 243-246
+internal/api/handlers/llm_endpoint.go
+  s_55f7a841d7c10e::t_809654e2f012bb 2046-2047
+  s_55f7a841d7c10e::t_6a879ad01118b5 28
+  s_55f7a841d7c10e::t_1cc13a9bb55363 571-581
+  s_55f7a841d7c10e::t_999ce1081a4325 278-297
+  s_55f7a841d7c10e::t_f6d47d62ef51f0 1739-1740
+  s_ac52bb15853720::t_2b3d317239f699 1635,1988
+internal/runtime/llmproxy/byte_fidelity_test.go
+  s_55f7a841d7c10e::t_728787165f2a30 192-194,198,208,211-213,217,221-264,266-267
+  s_55f7a841d7c10e::t_55032dd313c881 132-191,195-197,199-207,209-210,214-216,218-220,265,268-270
+  s_55f7a841d7c10e::t_a2f583eaf6b518 4-5,10
+internal/runtime/llmproxy/config.go
+  s_55f7a841d7c10e::t_2f9c785c787e69 245-250
+  s_55f7a841d7c10e::t_c07935c09c999a 226-233
+  s_55f7a841d7c10e::t_7b8deba1c5e5e6 263-271
+internal/observability/emit.go
+  s_55f7a841d7c10e::t_a61ddfefdff2e3 154-175
+  s_55f7a841d7c10e::t_1da80e7ca76c55 27-31
+  s_55f7a841d7c10e::t_72b03883900138 136-142,150
+  s_55f7a841d7c10e::t_c99e991880a4e3 253-262,268
+internal/runtime/llmproxy/pipeline/orchestrator.go
+  s_55f7a841d7c10e::t_988dded2d26f0a 92-97,99,120-135,141-143,145-147,149,158-162,164-165,171-178,191-201
+  s_55f7a841d7c10e::t_f5c83e1033fbe5 144,148
+  s_55f7a841d7c10e::t_ca4eb56fb3be08 46-52
+  s_55f7a841d7c10e::t_a871332c37f71a 163
+  s_55f7a841d7c10e::t_12297da5017c29 150
+  s_55f7a841d7c10e::t_72f15164946bf3 202-203
+e2e/scenarios/llm_proxy_observe_test.go
+  s_55f7a841d7c10e::t_2a7c2c829ddf93 1-248
+internal/runtime/llmproxy/postproc/postproc.go
+  s_55f7a841d7c10e::t_2069cbf2d602db 181-185
+  s_55f7a841d7c10e::t_dd8ed3666adeab 8,13-30,32-33,38-55
+  s_55f7a841d7c10e::t_b32d02eafe515e 133-136
+  s_55f7a841d7c10e::t_b1542abb11a738 31,34-37
+  s_55f7a841d7c10e::t_1af62751a746fd 197-201
+  s_55f7a841d7c10e::t_8898cef2fe9801 56
+e2e/testapp/server.go
+  s_55f7a841d7c10e::t_8702673623e925 189-191
+  s_55f7a841d7c10e::t_c69d07cedd84d8 130
+  s_55f7a841d7c10e::t_9331b48ea2511d 60-69,74
+e2e/scenarios/llm_proxy_security_test.go
+  s_55f7a841d7c10e::t_817bcf788101b6 24-28
+internal/runtime/llmproxy/pipeline/observe.go
+  s_55f7a841d7c10e::t_82f35a715ba982 1-94
+e2e/scenarios/llm_proxy_openai_test.go
+  s_55f7a841d7c10e::t_e0777fb5a69e0e 24-27,68-71,126-129
+e2e/testapp/server_internal_test.go
+  s_55f7a841d7c10e::t_53d885e6e9cdf8 30,52,87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "47dac3a046a3ef85b1b5a6e36d0df89ee0ea0fae",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_ac52bb15853720": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ae2d6064ad5e14872",
+        "model": "unknown"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

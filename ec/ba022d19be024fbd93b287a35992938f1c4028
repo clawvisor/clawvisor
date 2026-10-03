@@ -1,0 +1,21 @@
+internal/runtime/conversation/stream/anthropic_prepend.go
+  s_813cf813d8b1d0::t_71757d7af82db2 1-115
+internal/runtime/conversation/stream/anthropic_prepend_test.go
+  s_813cf813d8b1d0::t_ea88bf2aec0957 1-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "ecba022d19be024fbd93b287a35992938f1c4028",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

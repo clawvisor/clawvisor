@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/pipeline/post_orchestrator.go
+  s_813cf813d8b1d0::t_1aea9503c27c7e 1-14,16,18-33,40-41,43-46,48-63,65-70,72-73,76-86,88-91,98-101
+internal/runtime/llmproxy/pipeline/post_orchestrator_test.go
+  s_813cf813d8b1d0::t_16a936e70d897a 1-40,42-97,99-112,115-145,147-166,168-170,172-176,178-192,194-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "10ac26481feac8d58a70c2f441546c6c68ef7f2e",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

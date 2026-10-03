@@ -1,0 +1,34 @@
+internal/runtime/conversation/assistant_prepend.go
+  s_a5f33eee989c6d::t_7121516aaeb367 1-50,54-168,559-588
+  s_a5f33eee989c6d::t_1e0c999a460ae7 169-263,314-402,415-419,424-427,437,461-468,470-500,503-525,528-558,420,422,434-435,443-444,452-453
+  ai_agent 273,277,280,283
+  s_a5f33eee989c6d::t_603dfafbd60984 286
+  s_a5f33eee989c6d::t_5f5bf56a732c02 289
+  s_a5f33eee989c6d::t_39d22e40499c35 501-502
+  s_a5f33eee989c6d::t_e393d9a50325e2 526-527,436,445,454
+  s_a5f33eee989c6d::t_a417076be9718d 403-414,421,423,428-433,438-442,446-451,455-460,469
+internal/runtime/conversation/assistant_prepend_test.go
+  s_a5f33eee989c6d::t_aed24f4c52a472 1-127,335-350,324,329,332
+  s_a5f33eee989c6d::t_115d03132dfb2d 128-211,214,221,229-277,279-306,333-334
+  s_a5f33eee989c6d::t_d4a0467375a760 212
+  s_a5f33eee989c6d::t_6b1a0e459b3f89 223,228
+  s_a5f33eee989c6d::t_433a081a7ac346 278
+  ai_agent 307
+  s_a5f33eee989c6d::t_f08a3b40068f48 308-323,325-328,330-331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "c49386ab867606454fe091238f26b72b28e1c493",
+  "prompts": {},
+  "sessions": {
+    "s_a5f33eee989c6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37aa2c5f-2455-40a0-84dc-0b1a4ce1fdcd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

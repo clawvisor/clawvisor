@@ -1,0 +1,20 @@
+config.example.yaml
+  s_55f7a841d7c10e::t_117da778f59c70 163-168
+  s_55f7a841d7c10e::t_762eec99118d13 163-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "01f442cb3c0c367877d700611c62a91a47fc70bd",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+internal/runtime/llmproxy/scriptjudge/llmjudge/llmjudge_test.go
+  s_12b031c84469bf::t_facc7a9a9f8965 3-6,10,12-22,24-29,32-43,46-50,53-57,60-64,68-74,94-108
+internal/runtime/placeholdershape/placeholdershape.go
+  s_12b031c84469bf::t_0837194dbabf75 17-21,23-25,37
+  s_12b031c84469bf::t_edcd5134610f43 26-36
+internal/runtime/placeholdershape/placeholdershape_test.go
+  s_12b031c84469bf::t_5d26a82c0874b8 1-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "adf5d08fafc214e0c772329b1dad2eeda4f5b370",
+  "prompts": {},
+  "sessions": {
+    "s_12b031c84469bf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "13cb3dc6-467a-45cc-a644-845714de2cb2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

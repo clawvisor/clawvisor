@@ -1,0 +1,30 @@
+pkg/store/postgres/migrations/052_llm_request_cost.sql
+  s_b47422c857896c::t_82412b58bed04f 12-18
+internal/runtime/llmproxy/audit.go
+  s_b47422c857896c::t_247364415f2315 229-242
+pkg/store/postgres/store.go
+  s_b47422c857896c::t_091fc007e84ab8 808-814,825
+internal/api/handlers/llm_endpoint.go
+  s_b47422c857896c::t_b628f398eaa56e 1043-1045,1047-1059
+  s_b47422c857896c::t_cae702c10172ac 1640-1644,1647
+pkg/store/sqlite/store.go
+  s_b47422c857896c::t_e80c6df8bd990a 961-964,975
+pkg/store/sqlite/migrations/052_llm_request_cost.sql
+  s_b47422c857896c::t_a0d52f45538d20 23-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7317552f83bf8bd74e3fefc51e06f9feb4f92f60",
+  "prompts": {},
+  "sessions": {
+    "s_b47422c857896c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0dfb7a51-803f-47d4-9fe1-8735c83fb1ce",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

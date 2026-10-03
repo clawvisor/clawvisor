@@ -1,0 +1,33 @@
+internal/api/ratelimit_factory_test.go
+  s_55f7a841d7c10e::t_3e2f459e452137 1-91
+pkg/clawvisor/run.go
+  s_55f7a841d7c10e::t_a03c480605bd25 405-407
+internal/api/server.go
+  s_55f7a841d7c10e::t_4efd99fcb060f8 998
+  s_55f7a841d7c10e::t_64f13a3dd94a17 1042
+  s_55f7a841d7c10e::t_662a12db49a7f3 744-747
+  s_55f7a841d7c10e::t_dfd394194a72bc 1948
+  s_55f7a841d7c10e::t_01cab5d77518f4 978
+  s_55f7a841d7c10e::t_b25df7c8cd6926 1932,1934-1941,1945-1947,1949-1951
+  s_55f7a841d7c10e::t_1e714b09b727d0 50
+  s_55f7a841d7c10e::t_6ab2345f5bf189 153-158
+  s_55f7a841d7c10e::t_bc229117e5a052 989
+  s_55f7a841d7c10e::t_b3b69d8304413e 441-447
+  s_55f7a841d7c10e::t_3eb1aa2b18686c 1952
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c574e448a66bbfe93a8333828c3e2b9ccb22fa30",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

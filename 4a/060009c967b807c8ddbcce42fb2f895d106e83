@@ -1,0 +1,27 @@
+web/src/api/client.ts
+  s_fd6d9b102e043d::t_962bd94dfcbc75 595-599
+internal/tui/client/types.go
+  s_fd6d9b102e043d::t_55895d349a8ba3 240-244
+internal/api/handlers/tasks.go
+  s_fd6d9b102e043d::t_3ff47520718155 1210,1212-1242,1244-1255
+pkg/store/store.go
+  s_fd6d9b102e043d::t_e95706947a6f01 796-804
+internal/api/handlers/tasks_expand_test.go
+  s_fd6d9b102e043d::t_bef5eec7a1bf0f 428-472
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "4a060009c967b807c8ddbcce42fb2f895d106e83",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+internal/runtime/llmproxy/policies/org_model_policy_test.go
+  s_5968b5a9192332::t_9ce01f6e34028e 33-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "f68de67a2ec7d8cc5e3ba94b64c9e30ec603d2ef",
+  "prompts": {},
+  "sessions": {
+    "s_5968b5a9192332": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a904c4d-ba8e-4c28-baa2-feb0913c70b6",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

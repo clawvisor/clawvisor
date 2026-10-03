@@ -1,0 +1,127 @@
+internal/e2e/lite/library/scope_drift_followup/workspace/go.mod
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-3
+internal/e2e/lite/drivers/claude.go
+  s_f042968e76e3c1::t_d2508a55c2d42f 133-137,140-145
+  s_f042968e76e3c1::t_ab87b5ec911f30 23-25,27-33,36,39-48,50
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-22,26,34-35,37-38,49,51-132,138-139,146-256
+internal/e2e/lite/scenario.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-148
+internal/e2e/lite/expectations.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-89
+internal/e2e/lite/library/denied_then_explain/workspace/important.txt
+  s_f042968e76e3c1::t_d6814d0158a9b5 1-3
+internal/e2e/lite/library/clarification_then_task/scenario.yaml
+  s_f042968e76e3c1::t_da8cbfdf55df2f 1-67
+internal/e2e/lite/library/broad_single_scope/workspace/src/foo.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-15
+internal/e2e/lite/counters.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-38
+docs/LITE_PROXY.md
+  s_f042968e76e3c1::t_f4efed5517b1c0 207
+internal/runtime/llmproxy/control.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 56,58,60,65
+  s_f042968e76e3c1::t_c03be8ebb1f7e6 68
+internal/e2e/lite/library/broad_single_scope/workspace/go.mod
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-3
+internal/e2e/lite/library/scope_drift_followup/scenario.yaml
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-56,58-59
+  s_f042968e76e3c1::t_f6725aaee498e5 57
+internal/e2e/lite/library/scope_drift_followup/workspace/src/foo.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-15
+internal/e2e/lite/library/bug_fix_workflow/workspace/src/foo.go
+  s_f042968e76e3c1::t_1e933dfb2227c8 1-19
+internal/e2e/lite/library/cross_file_inspection/workspace/src/foo.go
+  s_f042968e76e3c1::t_67979854040112 1-22
+internal/e2e/lite/library/scope_drift_followup/workspace/src/helpers.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-8
+internal/e2e/lite/library/non_default_cli/scenario.yaml
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-56
+internal/e2e/lite/library/non_default_cli/workspace/README.md
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-5
+internal/e2e/lite/library/bug_fix_workflow/scenario.yaml
+  s_f042968e76e3c1::t_bfff0f73d2ebdc 1-56
+internal/e2e/lite/library/clarification_then_task/workspace/go.mod
+  s_f042968e76e3c1::t_decbe15583c80b 1-3
+internal/e2e/lite/library/cross_file_inspection/workspace/src/main.go
+  s_f042968e76e3c1::t_e2cf6b23b07b95 1-15
+internal/e2e/lite/library/pivot_mid_execution/workspace/go.mod
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-3
+internal/e2e/lite/library/cross_file_inspection/workspace/src/helpers.go
+  s_f042968e76e3c1::t_34bebfd81af8c3 1-22
+internal/runtime/llmproxy/control_test.go
+  s_f042968e76e3c1::t_444a0dae3ef74c 57-60
+  s_f042968e76e3c1::t_f4efed5517b1c0 36-43,46,51-56
+internal/e2e/lite/library/cross_file_inspection/scenario.yaml
+  s_f042968e76e3c1::t_21dc74b053d302 1-62
+internal/e2e/lite/library/pivot_mid_execution/workspace/src/foo.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-18
+internal/e2e/lite/library/incremental_within_scope/scenario.yaml
+  s_f042968e76e3c1::t_3c9e1910e58e43 21-23,28-31,35-37,40-42,44
+  s_f042968e76e3c1::t_eaa184370d4d32 1-20,24-27,32-34,38-39,43,45-68
+internal/e2e/lite/library/cross_file_inspection/workspace/go.mod
+  s_f042968e76e3c1::t_518130c9c849ec 1-3
+internal/e2e/lite/library/broad_single_scope/workspace/src/foo_test.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-10
+internal/e2e/lite/vault.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-72
+internal/e2e/lite/workspace.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-67
+internal/e2e/lite/drivers/codex.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-69,75-76,83-259
+  s_f042968e76e3c1::t_e9c88fe6f1a5a1 70-74,77-82
+internal/e2e/lite/library/incremental_within_scope/workspace/src/foo.go
+  s_f042968e76e3c1::t_298ebd859aad0c 17
+  s_f042968e76e3c1::t_ea34d083673742 1-16,18-20
+internal/e2e/lite/approver.go
+  s_f042968e76e3c1::t_954ecd5abd88df 1-74
+internal/e2e/lite/drivers/driver.go
+  s_f042968e76e3c1::t_45cec074f17535 38-43,46-75
+  s_f042968e76e3c1::t_955143093313f5 99-104,107-108
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-37,44-45,76-98,105-106,109-150
+internal/e2e/lite/harness.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-197
+internal/e2e/lite/library/clarification_then_task/workspace/src/foo.go
+  s_f042968e76e3c1::t_5c666bf86e4b91 1-22
+internal/e2e/lite/library/pivot_mid_execution/scenario.yaml
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-54
+internal/e2e/lite/library/pure_inspection/scenario.yaml
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-42
+internal/api/handlers/llm_endpoint_test.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 290
+internal/e2e/lite/lite_test.go
+  s_f042968e76e3c1::t_13f5356796f5d4 129-132,136,138-140
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-22,34-109,111-128,133-135,137,141-197
+  s_f042968e76e3c1::t_45952d940bac57 23,31-33
+  s_f042968e76e3c1::t_7d026f88dbba87 24-30
+  s_f042968e76e3c1::t_dd6ff9d0dd244a 110
+internal/e2e/lite/library/denied_then_explain/scenario.yaml
+  s_f042968e76e3c1::t_adb5fc62ca7d9e 1-46
+internal/e2e/lite/library/bug_fix_workflow/workspace/go.mod
+  s_f042968e76e3c1::t_31f335ab7c46f5 1-3
+internal/e2e/lite/library/pure_inspection/workspace/README.md
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-17
+internal/e2e/lite/doc.go
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-21
+internal/e2e/lite/library/broad_single_scope/scenario.yaml
+  s_f042968e76e3c1::t_f4efed5517b1c0 1-55
+internal/e2e/lite/library/incremental_within_scope/workspace/go.mod
+  s_f042968e76e3c1::t_d98c0e8499a491 1-3
+internal/e2e/lite/library/bug_fix_workflow/workspace/src/foo_test.go
+  s_f042968e76e3c1::t_25e8a41a858043 1-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f30cfc861239a68c8e4847e924a7fa2a42e457b5",
+  "prompts": {},
+  "sessions": {
+    "s_f042968e76e3c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8881c191-a906-418b-b0d9-3cc944cc26b1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

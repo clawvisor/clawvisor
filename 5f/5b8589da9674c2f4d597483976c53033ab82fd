@@ -1,0 +1,28 @@
+web/src/pages/Governance.tsx
+  s_5968b5a9192332::t_a0c77f6ccdeecb 69-79
+  s_5968b5a9192332::t_934bcd8fe7ec97 1328-1332
+internal/runtime/llmproxy/policies/org_model_policy.go
+  s_5968b5a9192332::t_e00b82802eee5b 85-92,94-100,114-116,120,122-126,132-146,148
+web/src/pages/OrgNotifications.tsx
+  s_5968b5a9192332::t_4cadc537e570ca 1
+  s_5968b5a9192332::t_233f13468562eb 611-623,627-631,635-639
+  s_5968b5a9192332::t_c27de8b2ae760a 717
+web/src/pages/OrgSSO.tsx
+  s_5968b5a9192332::t_a4bb49aa492875 113-115,117,124-126,132-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "5f5b8589da9674c2f4d597483976c53033ab82fd",
+  "prompts": {},
+  "sessions": {
+    "s_5968b5a9192332": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a904c4d-ba8e-4c28-baa2-feb0913c70b6",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

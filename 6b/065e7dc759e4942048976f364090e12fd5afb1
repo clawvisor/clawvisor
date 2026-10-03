@@ -1,0 +1,30 @@
+web/src/api/client.ts
+  s_55f7a841d7c10e::t_3cd76f1f36d645 213,218-268
+  s_55f7a841d7c10e::t_4ae5f021316e94 1526-1542
+  s_55f7a841d7c10e::t_a3cf8441451821 269,1543
+web/src/pages/Dashboard.tsx
+  s_55f7a841d7c10e::t_49798196a7c27d 45-50
+  s_55f7a841d7c10e::t_1f066807211b84 431-434
+  s_55f7a841d7c10e::t_0492a478246bff 23
+  s_55f7a841d7c10e::t_ea781a256a5498 226
+web/src/pages/Admin.tsx
+  s_55f7a841d7c10e::t_92e9cae94c014d 17
+  s_55f7a841d7c10e::t_2d9b95ed3c9907 2-16,18-218
+  s_55f7a841d7c10e::t_d8fc9fa8ceead3 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6b065e7dc759e4942048976f364090e12fd5afb1",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}

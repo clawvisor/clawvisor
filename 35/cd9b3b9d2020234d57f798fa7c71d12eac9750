@@ -1,0 +1,30 @@
+internal/api/handlers/connections.go
+  s_55f7a841d7c10e::t_1afb37a5a45320 64-80
+  s_55f7a841d7c10e::t_c01143a56437a2 431-625
+  s_55f7a841d7c10e::t_04987fcf0afd81 12
+internal/api/server.go
+  s_55f7a841d7c10e::t_949916e9c87754 921-930
+e2e/scenarios/enroll_invite_test.go
+  s_55f7a841d7c10e::t_326bfeeaadf4af 1-85,88-208
+  s_55f7a841d7c10e::t_d472521417be2c 86-87
+internal/api/handlers/auth.go
+  s_55f7a841d7c10e::t_d1ab0868ef20f3 4
+  s_55f7a841d7c10e::t_4ce74db9050722 190-201
+  s_55f7a841d7c10e::t_79615badb5ba60 211-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "35cd9b3b9d2020234d57f798fa7c71d12eac9750",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}

@@ -1,0 +1,21 @@
+internal/api/connections_test.go
+  s_c55c88f9f7074a::t_ae98f8928c7468 492-587
+internal/api/handlers/connections.go
+  s_c55c88f9f7074a::t_dac55a996a621a 235-238,249-251,255-263,265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "a6cc66c04d52c13bba584bdf083b2d98e4007801",
+  "prompts": {},
+  "sessions": {
+    "s_c55c88f9f7074a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e8958da-493e-4cef-9029-07eb2d87ba12",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

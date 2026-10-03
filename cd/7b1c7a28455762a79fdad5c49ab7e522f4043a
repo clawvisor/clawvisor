@@ -1,0 +1,25 @@
+.github/workflows/terraform-ci.yml
+  s_55f7a841d7c10e::t_ac8ed954f7823f 1-120
+scripts/mirror-terraform.sh
+  s_55f7a841d7c10e::t_bdf22e9eee9411 1-30
+scripts/terraform-real-aws-lane.sh
+  s_55f7a841d7c10e::t_1cc332062b3885 1-84
+scripts/terraform-plan-secret-scan.sh
+  s_55f7a841d7c10e::t_f2db86ac80a225 1-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cd7b1c7a28455762a79fdad5c49ab7e522f4043a",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_813cf813d8b1d0::t_fe238f3bc29484 154-157,160
+internal/runtime/llmproxy/policies/tool_use_audit_emitter_test.go
+  s_813cf813d8b1d0::t_06457ad0070669 17,47-48,87-88,120-121,150-151,182-183
+  s_813cf813d8b1d0::t_ac5c22e4786b74 58,97,127,157
+  s_813cf813d8b1d0::t_514438c3f5db24 186-187,189
+internal/runtime/llmproxy/policies/tool_use_audit_emitter.go
+  s_813cf813d8b1d0::t_bfb187e1252737 58,60-67,69-70,73,79-81
+  s_813cf813d8b1d0::t_286f023232a051 11-13,16-18
+internal/runtime/llmproxy/policies/emitter_equivalence_test.go
+  s_813cf813d8b1d0::t_05e8f4873536ff 246-248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "5a7874df52ca1f34294559ec580eb64593ae70bf",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

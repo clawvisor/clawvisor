@@ -1,0 +1,23 @@
+internal/api/handlers/connections.go
+  s_55f7a841d7c10e::t_bc80d2a7fa5e4d 543-555
+  s_55f7a841d7c10e::t_8604d0ffa64248 529-540
+  s_55f7a841d7c10e::t_d02e85a994f710 541-542
+e2e/scenarios/enroll_invite_test.go
+  s_55f7a841d7c10e::t_99fbb1afffbe3b 195-244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8afb6e527c390de442f322ed73c27a442316b679",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

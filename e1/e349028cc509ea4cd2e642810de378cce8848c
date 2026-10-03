@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/policies/shell_poll_policy.go
+  s_813cf813d8b1d0::t_eecd5fb198dae7 1-4,7-66,83
+  s_813cf813d8b1d0::t_2425c107d289e9 67-82
+  s_813cf813d8b1d0::t_68daeb6f8c9f52 5-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "e1e349028cc509ea4cd2e642810de378cce8848c",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

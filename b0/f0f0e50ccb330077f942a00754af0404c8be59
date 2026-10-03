@@ -1,0 +1,31 @@
+web/src/pages/Restrictions.tsx
+  s_9f49afcf471aa6::t_d319fdbd8cfe57 1734,1746-1760,1762
+  s_9f49afcf471aa6::t_c36a4d28520c3a 395
+  s_9f49afcf471aa6::t_49aa781a7081fc 918-922
+  s_9f49afcf471aa6::t_330cc5d7cdd6eb 197
+  s_9f49afcf471aa6::t_afa7b4d9b3c7d5 1072-1075,1081,1083,1085-1090,1093,1097,1114-1116
+  s_9f49afcf471aa6::t_55eb89ad9ff515 626
+  s_9f49afcf471aa6::t_f2dd87b337dc41 857-864,871-874
+  s_9f49afcf471aa6::t_6fa5cc2efb3e60 764
+  s_9f49afcf471aa6::t_b507ee8c2b0b29 944-948
+  s_9f49afcf471aa6::t_1b6e679cb660d0 99-102
+  s_9f49afcf471aa6::t_1c8912482a045d 832
+web/src/api/client.ts
+  s_9f49afcf471aa6::t_be22ed63b1f090 1409
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "b0f0f0e50ccb330077f942a00754af0404c8be59",
+  "prompts": {},
+  "sessions": {
+    "s_9f49afcf471aa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d96073c8-3eed-4ff9-bf1e-71697a8dbed3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

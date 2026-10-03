@@ -1,0 +1,31 @@
+web/src/pages/Quickstart.tsx
+  s_9f49afcf471aa6::t_2a51424af05ff3 1-10
+web/src/pages/DashboardIndex.tsx
+  s_9f49afcf471aa6::t_54b19e4cf39e42 1-52
+web/src/pages/Dashboard.tsx
+  s_9f49afcf471aa6::t_bd458c6a174a9e 66-69
+  s_9f49afcf471aa6::t_568ac3e77ee041 324-326,331,334-335
+  s_9f49afcf471aa6::t_37f52054b038ab 30-31,33-35
+  s_9f49afcf471aa6::t_6502cc856c5f8a 370-382
+  s_9f49afcf471aa6::t_e99cd26e460db0 5,15,18
+  s_9f49afcf471aa6::t_38322cedd244a8 115,117,120
+  s_9f49afcf471aa6::t_ebd05b8a6ae883 327-330,333
+  s_9f49afcf471aa6::t_35649781a1e979 44
+  s_9f49afcf471aa6::t_25a2d518e580c9 143,145,161,163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "f8ceda546f911dd19e950a9a36ca837bb22cd26d",
+  "prompts": {},
+  "sessions": {
+    "s_9f49afcf471aa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d96073c8-3eed-4ff9-bf1e-71697a8dbed3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

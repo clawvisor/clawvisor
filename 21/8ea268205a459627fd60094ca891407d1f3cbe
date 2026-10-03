@@ -1,0 +1,21 @@
+internal/runtime/conversation/openai_response.go
+  s_bbe778adcf6f02::t_7dfd11765ae556 870,881,884-886,895-903,905
+  s_bbe778adcf6f02::t_79423d9ba43ba3 452,464,467-469,478-488,490-494
+  s_bbe778adcf6f02::t_23c00c299a1f38 169,174,177-179,188-202,204-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "218ea268205a459627fd60094ca891407d1f3cbe",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,47 @@
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 131-136
+internal/runtime/llmproxy/policies/script_session_evaluator.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 159-166
+internal/runtime/llmproxy/policies/inspector_chain_integration_test.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 160-168
+internal/runtime/llmproxy/postproc/postprocess_test.go
+  s_8ba93f65c57fe8::t_c8a6cdfd31d444 415-420,422-425
+  s_8ba93f65c57fe8::t_47647c216e8b09 249-338
+  s_8ba93f65c57fe8::t_8cf1e48285b40e 339-414,421,426-428
+internal/runtime/conversation/verdict.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 4-5,66-98
+internal/runtime/llmproxy/postproc/stream.go
+  s_8ba93f65c57fe8::t_30e122a1f1a91e 161-172
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator_test.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 236-314
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 96-110,112,114-128,163-174
+internal/runtime/llmproxy/policies/control_tool_use_evaluator.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 159,161,179
+internal/runtime/llmproxy/policies/boundary_check_evaluator_test.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 57-65
+internal/runtime/llmproxy/policies/script_session_evaluator_test.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 213-221
+internal/runtime/llmproxy/policies/inspector_chain_test.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 153-161,288-295
+internal/runtime/llmproxy/policies/inspector_chain.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 105-106,172
+internal/runtime/llmproxy/policies/boundary_check_evaluator.go
+  s_8ba93f65c57fe8::t_47647c216e8b09 128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "b3567b5c504b86404bc89448ad1559b8cc1c5603",
+  "prompts": {},
+  "sessions": {
+    "s_8ba93f65c57fe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a121113-3400-4bef-b3c6-c4c60b73c1b1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

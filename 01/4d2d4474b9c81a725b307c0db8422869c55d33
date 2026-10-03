@@ -1,0 +1,36 @@
+pkg/clawvisor/defaults.go
+  s_d3d7c0f1cab464::t_0ea226307cc9b8 508-511
+  s_d3d7c0f1cab464::t_0f3e7af74f105c 565
+  s_d3d7c0f1cab464::t_31b915f6bad791 464
+internal/runtime/llmproxy/redis_stores_test.go
+  s_d3d7c0f1cab464::t_7a4ad525fdb66a 392-603
+pkg/clawvisor/run.go
+  s_d3d7c0f1cab464::t_776cf27d514672 359-361
+internal/runtime/llmproxy/scope_drift_registry_redis.go
+  s_d3d7c0f1cab464::t_b6de704df755c2 10
+  s_d3d7c0f1cab464::t_f223e57179908e 131
+  s_d3d7c0f1cab464::t_a347555ebef978 19-28,34-36,46,54-110,113-130,132-135,137,171,175-184,191-192,197-207,210-216,218,220,222-230,232-233,236,239-243,249,254-257,262-265,273-276,281,285,291,295,303-306,311,315,317,319,329-332,338,342,346,360,369,378-379,394-401,407,410-412,414-415,418-420,427,430,432-433,442-445,449,452
+  s_d3d7c0f1cab464::t_beb3b3a6f0c689 1-9,11-18,29-33,37-45,47-53,111-112,136,138-170,172-174,185-190,193-196,208-209,217,219,221,231,234-235,237-238,244-248,250-253,258-261,266-272,277-280,282-284,286-290,292-294,296-302,307-310,312-314,316,318,320-328,333-337,339-341,343-345,347-359,361-368,370-377,380-393,402-406,408-409,413,416-417,421-426,428-429,431,434-441,446-448,450-451,453-457
+internal/api/server.go
+  s_d3d7c0f1cab464::t_0bd1d8ce2cd430 115
+  s_d3d7c0f1cab464::t_e313698ea8f401 393-403
+  s_d3d7c0f1cab464::t_02150fe42cf3a6 1392-1396
+pkg/clawvisor/options.go
+  s_d3d7c0f1cab464::t_3543ef6cdbc053 156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "014d2d4474b9c81a725b307c0db8422869c55d33",
+  "prompts": {},
+  "sessions": {
+    "s_d3d7c0f1cab464": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e5497df-a0c6-46e3-b49b-902ec0c4b408",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

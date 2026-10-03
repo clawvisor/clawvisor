@@ -1,0 +1,22 @@
+pkg/vault/reference.go
+  s_55f7a841d7c10e::t_d58df6ef8ab17e 42-47
+  s_55f7a841d7c10e::t_cd559ee9e33894 112-117,119-124
+pkg/vault/reference_test.go
+  s_55f7a841d7c10e::t_7e8cdbc03bf926 393-403
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b2d4d80151a1e925d87a74babc42293a61efc13a",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

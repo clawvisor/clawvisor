@@ -1,0 +1,21 @@
+internal/runtime/autovault/adjudicator.go
+  s_b7635082fff64b::t_9a290f7d65ac2f 88-94
+internal/runtime/autovault/adjudicator_test.go
+  s_b7635082fff64b::t_bc7cddc9c2f3f3 6-7,28-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "0e205b08222ec811fa78c24d42c6f11a1ca583a5",
+  "prompts": {},
+  "sessions": {
+    "s_b7635082fff64b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e32a6-368e-7c40-a4de-d67d7171c8f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+internal/api/handlers/proxy_resolver.go
+  s_5690062ed6cda8::t_caa4d8e7484687 384,392-400,403-405
+internal/runtime/llmproxy/placeholder_validation.go
+  s_5690062ed6cda8::t_9225e059a9765a 1-87
+internal/runtime/llmproxy/placeholder_validation_test.go
+  s_5690062ed6cda8::t_7cfe37e7b28bff 1-83
+internal/runtime/llmproxy/postprocess.go
+  s_5690062ed6cda8::t_0f1397d6e54073 11
+  s_5690062ed6cda8::t_685b458aaeb424 915-916
+pkg/runtime/proxy/placeholder_runtime.go
+  s_5690062ed6cda8::t_189199a6d6ea44 17,76
+internal/runtime/llmproxy/release.go
+  s_5690062ed6cda8::t_022dd48606e900 8
+  s_5690062ed6cda8::t_5921096e7ffdd1 300-301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "59a58765bac73245d2d5f47dbee29ebdee866ace",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

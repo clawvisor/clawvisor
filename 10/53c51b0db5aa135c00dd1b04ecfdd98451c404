@@ -1,0 +1,20 @@
+internal/adapters/google/gmail/adapter_test.go
+  s_d9461fbada5c39::t_8656130b0ae81e 11-14,17,26-34,44-70
+  s_d9461fbada5c39::t_b986c2c348e362 35-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "1053c51b0db5aa135c00dd1b04ecfdd98451c404",
+  "prompts": {},
+  "sessions": {
+    "s_d9461fbada5c39": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e332e-8800-70e0-918c-d90279912286",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

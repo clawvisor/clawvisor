@@ -1,0 +1,21 @@
+pkg/config/config.go
+  s_20c7cd26d72652::t_93c1b312e919e3 153-177,179
+pkg/config/slack_callback_test.go
+  s_20c7cd26d72652::t_93c1b312e919e3 90-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "b6d0b376b9bc400729aa6ae1f99700522c4b4298",
+  "prompts": {},
+  "sessions": {
+    "s_20c7cd26d72652": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51f12a99-8a7d-4eaf-b0b7-4a4c8fe6113d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

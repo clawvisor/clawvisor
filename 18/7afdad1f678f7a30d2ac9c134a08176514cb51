@@ -1,0 +1,25 @@
+internal/api/handlers/auth.go
+  s_55f7a841d7c10e::t_459cae29f0018b 218,220-223
+  s_55f7a841d7c10e::t_63317bbe9de84d 191-196
+internal/api/handlers/flat_team_test.go
+  s_55f7a841d7c10e::t_5aff3d8b7fdb23 163-171
+  s_55f7a841d7c10e::t_a08d1b13cd5c66 6,22-32,173
+  s_55f7a841d7c10e::t_835f48cd55211a 141-146
+  s_55f7a841d7c10e::t_1b88b9399f8b2c 33,172,174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "187afdad1f678f7a30d2ac9c134a08176514cb51",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

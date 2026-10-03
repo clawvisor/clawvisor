@@ -1,0 +1,19 @@
+web/src/hooks/useAuth.tsx
+  s_22de147f45dbe8::t_7e2414a129650e 2,42,205-211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "53265b2efe780d1fdcd7cb52ebf6b06eb13b486e",
+  "prompts": {},
+  "sessions": {
+    "s_22de147f45dbe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86220531-c32b-4dde-b5bc-a6525a733059",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

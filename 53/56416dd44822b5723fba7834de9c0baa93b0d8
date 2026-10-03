@@ -1,0 +1,22 @@
+web/src/hooks/useAuth.tsx
+  s_2c19c5e2d5ba9b::t_c6210e74b1d871 2,6-7,14-19
+  s_2c19c5e2d5ba9b::t_fb1a13145981e7 102-106,108-118,126-143,146
+  s_2c19c5e2d5ba9b::t_50e72c228ae732 174-180
+  s_2c19c5e2d5ba9b::t_4028345978c845 8,107,121-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "5356416dd44822b5723fba7834de9c0baa93b0d8",
+  "prompts": {},
+  "sessions": {
+    "s_2c19c5e2d5ba9b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3e56-932c-7de2-8478-15e7d7fca784",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

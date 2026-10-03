@@ -1,0 +1,23 @@
+internal/local/executor/dispatch.go
+  s_71f34d4bf2c277::t_ea6d8fc5323e15 30-36,38-58
+  s_71f34d4bf2c277::t_12bba64d30866e 63-65,94,180
+internal/local/executor/dispatch_test.go
+  s_71f34d4bf2c277::t_cada069aad4fd3 12-15,18-20,27,30,34,38-68,77-84,87-89,92-96,108-122,124-130,132-136,138,140,202-222
+  s_71f34d4bf2c277::t_a446378315ab1c 223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "97380e9a72a9f58af157ed973747e9a8618fd3c1",
+  "prompts": {},
+  "sessions": {
+    "s_71f34d4bf2c277": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c96edf9e-9cb7-432a-b310-ebd9a63e9781",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

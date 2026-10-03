@@ -1,0 +1,21 @@
+pkg/vault/refaws/refaws_localstack_test.go
+  s_55f7a841d7c10e::t_3ba585207e328f 1-50
+pkg/vault/reference_test.go
+  s_55f7a841d7c10e::t_924849f0c1fe77 66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2930678c3313373f5d2afad096d1a907c260a2fb",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

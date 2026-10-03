@@ -1,0 +1,45 @@
+pkg/runtime/proxy/session_settings.go
+  s_55f7a841d7c10e::t_60b4364913d918 102-104,108-118
+  s_55f7a841d7c10e::t_15caeca2bf68b9 55-57
+  s_55f7a841d7c10e::t_d580a0205adf07 34-41
+  s_55f7a841d7c10e::t_2edd737fadb7fd 119-120
+internal/clawvisorcli/cmd_agent_docker.go
+  s_55f7a841d7c10e::t_72347e17bf67a1 29
+  s_55f7a841d7c10e::t_68c67a185b54ed 230-234
+  s_55f7a841d7c10e::t_32bcfbd4d107f3 54-59
+  s_55f7a841d7c10e::t_1c685039750e77 245-254,256
+  s_55f7a841d7c10e::t_550ce19d682485 277-286
+  s_55f7a841d7c10e::t_1719ecb830868b 794
+  s_55f7a841d7c10e::t_b6153c9b882b06 226-229
+pkg/runtime/proxy/manager.go
+  s_55f7a841d7c10e::t_79b61819cd2131 40-45
+  s_55f7a841d7c10e::t_7b058c06b76dc8 97
+  s_55f7a841d7c10e::t_e5cb83961f8658 11
+internal/clawvisorcli/cmd_agent_runtime.go
+  s_55f7a841d7c10e::t_a6ccc566513856 247,318-338
+  s_55f7a841d7c10e::t_d985e71f1ebb99 6
+  s_55f7a841d7c10e::t_34e51e23931e32 208-221,238-246
+internal/api/handlers/runtime.go
+  s_55f7a841d7c10e::t_bf42e9a59e6cd0 444-449
+  s_55f7a841d7c10e::t_3da3c63001e9b8 75-80
+internal/tui/client/types.go
+  s_55f7a841d7c10e::t_d0d15a7bd3d19c 53-57
+internal/clawvisorcli/cmd_agent_runtime_test.go
+  s_55f7a841d7c10e::t_6d60019077ea60 106-182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1b12f2234f64bcbdec3127f73d780b17e2b8ab35",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

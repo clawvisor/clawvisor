@@ -1,0 +1,36 @@
+internal/runtime/llmproxy/audit.go
+  s_157d942b7cd3df::t_622d0b167c44f4 95-104
+  s_157d942b7cd3df::t_afffd311148011 148
+internal/runtime/llmproxy/coalesce.go
+  s_157d942b7cd3df::t_823e7545e3ec89 203
+  s_157d942b7cd3df::t_41bfee13c0d6eb 239
+  s_157d942b7cd3df::t_8e6d5f27af5284 132
+  s_157d942b7cd3df::t_c1db4fb321664d 23-30
+  s_157d942b7cd3df::t_9a9b7df3ce3a2c 181,189
+internal/runtime/llmproxy/audit_test.go
+  s_157d942b7cd3df::t_8012dc9ced312f 120-122
+  s_157d942b7cd3df::t_2fc134fcba843e 144-168
+  s_157d942b7cd3df::t_587aec7265306d 104
+internal/runtime/llmproxy/postprocess.go
+  s_157d942b7cd3df::t_a4636fae50f40f 331-340,358
+  s_157d942b7cd3df::t_f9af7e49c71c44 867-876
+  s_157d942b7cd3df::t_37d35d0c83ef2b 751
+  s_157d942b7cd3df::t_c1718ac960f887 551
+  s_157d942b7cd3df::t_5b2bcbaf00b707 679
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "84590c324da671793de2082935b7e1b2eb0b7685",
+  "prompts": {},
+  "sessions": {
+    "s_157d942b7cd3df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5be30122-15a8-48fd-ad6b-8e2d1838a058",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

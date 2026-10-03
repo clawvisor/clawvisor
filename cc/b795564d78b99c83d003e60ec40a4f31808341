@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/forward.go
+  s_8b1f6f8ddc53d3::t_692a023e4934a7 121-129,133-142,146
+  s_8b1f6f8ddc53d3::t_839276960fc038 18
+  s_8b1f6f8ddc53d3::t_ca1de4000acfa3 368-373,375-376
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "ccb795564d78b99c83d003e60ec40a4f31808341",
+  "prompts": {},
+  "sessions": {
+    "s_8b1f6f8ddc53d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2217843-2b00-445d-88f2-f33b3fb654b2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

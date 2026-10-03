@@ -1,0 +1,98 @@
+internal/api/handlers/tasks.go
+  s_fd6d9b102e043d::t_91d60cdf3abeba 2235-2248,2254
+  s_fd6d9b102e043d::t_e7f54c7fa988c0 2605,3188
+internal/api/handlers/tasks_inline.go
+  s_fd6d9b102e043d::t_073a1cf9874007 931,933-947
+  s_fd6d9b102e043d::t_abdef64454227a 1038,1048-1052,1054,1057-1061
+  s_fd6d9b102e043d::t_60b3be770dcc68 852-863,869
+  s_fd6d9b102e043d::t_1867371d418685 1087
+  s_fd6d9b102e043d::t_e7f54c7fa988c0 1065
+internal/runtime/llmproxy/historystrip/synthetic_history_strip.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 256
+pkg/store/store.go
+  s_fd6d9b102e043d::t_e5d8686effd38b 1292
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 326-344,1240-1291
+internal/runtime/llmproxy/approval_body_editor_test.go
+  s_fd6d9b102e043d::t_14660829cbd758 501-502
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 100,185,199,254,297,347,383-500
+internal/runtime/llmproxy/inline_task_transitions.go
+  s_fd6d9b102e043d::t_2119be5148ae8b 243,248-249,252-257
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 11-34,65,134-137,162-164,258-260,288-290
+  s_fd6d9b102e043d::t_0ac8d5a3e626b2 114,125-126,129-133
+  s_fd6d9b102e043d::t_1c840967d11e99 261
+  s_fd6d9b102e043d::t_2288a2d969f5e9 325-327
+internal/runtime/llmproxy/release.go
+  s_fd6d9b102e043d::t_ad043091b39881 159-168
+pkg/store/sqlite/migrations/056_task_lifecycle_events.sql
+  s_fd6d9b102e043d::t_5e52fd308b1879 1-29
+internal/runtime/llmproxy/inline_expansion_intercept.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 212-232
+internal/e2e/scenario/library/expand_task.yaml
+  s_fd6d9b102e043d::t_832de88d3e863d 32-38
+  s_fd6d9b102e043d::t_982c81cf25286f 98-106
+  s_fd6d9b102e043d::t_80cefc8585b780 39-42,48-54
+  s_fd6d9b102e043d::t_251b3856ee0344 59-73
+internal/runtime/llmproxy/inline_approval_outcome.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 4,53-76
+pkg/store/postgres/migrations/056_task_lifecycle_events.sql
+  s_fd6d9b102e043d::t_31ef093e80f0f2 1-68
+internal/runtime/llmproxy/expand_capability_live_test.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 344-597
+internal/runtime/llmproxy/historystrip/text.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 11-23
+internal/runtime/llmproxy/approval_body_editor.go
+  s_fd6d9b102e043d::t_2f9daff9055e59 258
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 20-31,63-64,80-82,109-112,120,146,184-192,196,228-257,259,274-348,561-562
+internal/runtime/llmproxy/inline_approval_recovery_test.go
+  s_fd6d9b102e043d::t_34a8ef92bfaaa7 1-211
+  s_fd6d9b102e043d::t_a1abf956a6fd80 212-223,225-272
+  s_fd6d9b102e043d::t_7bb052e9bc421a 224
+internal/runtime/llmproxy/historystrip.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 16
+internal/runtime/llmproxy/secret_detection.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 466
+pkg/store/sqlite/store.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 2643-2766
+  s_fd6d9b102e043d::t_76411318410976 1817-1820,1822
+internal/runtime/llmproxy/inline_expansion_prompt.go
+  s_fd6d9b102e043d::t_f1bb361b83894c 208
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 30-35
+  s_fd6d9b102e043d::t_2ba68b690abbf1 155-167,169-172
+internal/api/handlers/llm_endpoint.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 630-631,2812,2819-2825,2866
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 394-411
+internal/runtime/llmproxy/inline_approval_recovery.go
+  s_fd6d9b102e043d::t_9bedb57fb80427 1-102,188-215
+  s_fd6d9b102e043d::t_8057107d358144 103-187
+pkg/store/sqlite/store_task_lifecycle_test.go
+  s_fd6d9b102e043d::t_8493202ee044a7 1-147
+internal/runtime/llmproxy/synthetic_history_strip_test.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 107-208
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 5,42-52,139-150,172,219,226-244,259,270-287,300
+internal/runtime/llmproxy/trace.go
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 74-96
+pkg/store/postgres/store.go
+  s_fd6d9b102e043d::t_15c4ac8eb25d86 1559-1564,1566
+  s_fd6d9b102e043d::t_5a5057f0e53ac3 2380-2514
+internal/runtime/llmproxy/task_lifecycle_audit.go
+  s_fd6d9b102e043d::t_1588774c3f2e29 1-23,25-113
+  s_fd6d9b102e043d::t_67edd66d7d3419 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "656f0c2717ec267bed4e6d8520404d77caa35606",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+pkg/vault/instance_aware_test.go
+  s_55f7a841d7c10e::t_561c3cd1f0d2c2 7,13-46
+  s_55f7a841d7c10e::t_84bdaf8bbce3c1 47
+pkg/vault/instance_aware.go
+  s_55f7a841d7c10e::t_b70289e0c39f62 45
+  s_55f7a841d7c10e::t_bf2f22c2c0eb82 3-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2d3cb2853e76dd1f31d36bcf3c369c6b1858de5d",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

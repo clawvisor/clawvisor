@@ -1,0 +1,36 @@
+internal/runtime/llmproxy/transient_budget.go
+  s_a5c5f722ecfc61::t_2d3b79934bb4bb 20-26,29-32,39-41,43-48,50-55,70,74-78,80-84,87,89,95,97-103,106,112-115,121-122
+internal/runtime/llmproxy/transient_budget_test.go
+  s_a5c5f722ecfc61::t_3270eb965aba8b 15-21,26,29,44,49,63,66,76,80,83,87,100-101,104,107-108,119,121,124,129-172,188,202,205
+internal/runtime/llmproxy/postproc/transient_deny_test.go
+  s_a5c5f722ecfc61::t_8085eea5d2f8f2 288,293,300
+  s_a5c5f722ecfc61::t_7c550ecf4c4fab 110-113,115,125,130-137
+  s_a5c5f722ecfc61::t_db53ccf6a604a2 221,226-230
+  s_a5c5f722ecfc61::t_453d80c1af9292 240,244-246
+internal/runtime/llmproxy/postproc/stream.go
+  s_a5c5f722ecfc61::t_45cc33956b3ff3 103-111,113,116,127-134,139-143
+internal/runtime/conversation/response.go
+  s_a5c5f722ecfc61::t_fd1ab69888b0ff 83-87,91-92
+internal/runtime/llmproxy/postproc/transient_deny.go
+  s_a5c5f722ecfc61::t_a63abdcea56cfb 10-19,23-24,27-29,31,46,65-66,71
+internal/runtime/llmproxy/postproc/session.go
+  s_a5c5f722ecfc61::t_65a1245c8dd097 325-326
+  s_a5c5f722ecfc61::t_81f3452f2b51f2 47-55
+  s_a5c5f722ecfc61::t_abaf97fb3a9dc4 81-82,92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "6bbb36085948f5727dbc996bf3056da4fcc32438",
+  "prompts": {},
+  "sessions": {
+    "s_a5c5f722ecfc61": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf8404af-e2fb-463e-82d2-a637ab03a34b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

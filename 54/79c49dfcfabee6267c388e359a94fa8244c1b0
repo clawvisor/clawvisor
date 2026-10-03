@@ -1,0 +1,38 @@
+internal/api/handlers/tasks_inline.go
+  s_a5f33eee989c6d::t_5a885e1b81337c 44-59
+  s_a5f33eee989c6d::t_e99d0db5c8ab57 176-184,187-190
+internal/runtime/conversation/assistant_prepend.go
+  s_a5f33eee989c6d::t_5f5bf56a732c02 376-380
+  s_a5f33eee989c6d::t_603dfafbd60984 268-281,283-284,286-298,300-301,303-315,320-375
+internal/runtime/conversation/assistant_prepend_test.go
+  s_a5f33eee989c6d::t_d4a0467375a760 209,214-224,226-233,235,237-241,243-256
+internal/runtime/llmproxy/audit.go
+  ai_agent 325-385
+internal/api/handlers/llm_endpoint.go
+  s_a5f33eee989c6d::t_72cc854f24876d 1232-1245,1247-1257,1261-1262
+  s_a5f33eee989c6d::t_80ed473ea3d503 1115-1131,1137,1139-1141
+internal/runtime/llmproxy/release.go
+  s_a5f33eee989c6d::t_8029fc2003f2da 14
+  s_a5f33eee989c6d::t_16b24edde3b527 35-54
+internal/api/handlers/tasks_inline_test.go
+  s_a5f33eee989c6d::t_9c676f7a2525ba 17
+  s_a5f33eee989c6d::t_4a7fe1ff70fbed 55-120
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_a5f33eee989c6d::t_d7806ddd98c3e8 177-193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "5479c49dfcfabee6267c388e359a94fa8244c1b0",
+  "prompts": {},
+  "sessions": {
+    "s_a5f33eee989c6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37aa2c5f-2455-40a0-84dc-0b1a4ce1fdcd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

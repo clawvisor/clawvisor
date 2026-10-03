@@ -1,0 +1,27 @@
+docs/SETUP.md
+  s_55f7a841d7c10e::t_669d65cc1c17f8 37-43
+docs/LITE_PROXY.md
+  s_55f7a841d7c10e::t_4a1c39c3301144 27
+README.md
+  s_55f7a841d7c10e::t_ba89029e074be3 499-500
+config.example.yaml
+  s_55f7a841d7c10e::t_de6f5d53539dea 123-127
+docs/INTEGRATE_CLAUDE_CODE.md
+  s_55f7a841d7c10e::t_11c017824d7dda 9-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6304845dec6fb28a5dbcd99ea676421592b83db6",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

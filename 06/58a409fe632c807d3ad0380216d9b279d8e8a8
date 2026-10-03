@@ -1,0 +1,75 @@
+pkg/notify/expansion_render_test.go
+  s_fd6d9b102e043d::t_e50fe69ce72e26 1-25,31-33,51-91,48-50
+  s_fd6d9b102e043d::t_99962e3e5fe95e 34-36,37-47
+  s_fd6d9b102e043d::t_6f931b58b0ff30 27-30
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_fd6d9b102e043d::t_5c874a51fcf13e 114-123
+  s_fd6d9b102e043d::t_535a1f8304c0d6 178-184
+  s_fd6d9b102e043d::t_1ec007c19eb33b 218-227,239
+  s_fd6d9b102e043d::t_da3fc25a3e185d 309-316
+internal/runtime/llmproxy/inline_approval_outcome.go
+  s_fd6d9b102e043d::t_7cd34ca36e06cf 45-51,54-58
+internal/runtime/llmproxy/inline_expansion_prompt.go
+  s_fd6d9b102e043d::t_73c59657f947f1 1-25,27-45,54-166,182-199,53,180
+  s_fd6d9b102e043d::t_cd5b7af43f2053 167-168,169-179,181
+  s_fd6d9b102e043d::t_1cc84c02973b26 26,46-52
+internal/runtime/llmproxy/inline_task_transitions.go
+  s_fd6d9b102e043d::t_1e2aa58bbb6ebb 184-217,219-222,224-227,229-232,234-247,249-264
+  s_fd6d9b102e043d::t_7ac00321b46220 218
+  s_fd6d9b102e043d::t_af8ff53cfefe98 223,228,233,248
+web/src/components/TaskCard.tsx
+  s_f24d8a6cdaa62a::t_64bb0097541e00 958-966
+  s_fd6d9b102e043d::t_43607da2bc71fb 975,978-980,937,942,947-955,967-974,976-977,981-993,873,890,896,898,911
+  s_fd6d9b102e043d::t_cf08d611e44084 1039-1043,1004,1027,1044-1065
+  s_fd6d9b102e043d::t_1b2ac42f82c912 3
+  s_fd6d9b102e043d::t_167a5793682508 413-420
+  s_fd6d9b102e043d::t_661ff77c18256d 446
+  s_fd6d9b102e043d::t_c43125ccb96a28 648-649
+  s_fd6d9b102e043d::t_cb609784c96a3b 775-776
+  s_fd6d9b102e043d::t_014505e959a92d 791,809
+  s_fd6d9b102e043d::t_e53f004935612c 833,840,926-936,938-941
+  s_fd6d9b102e043d::t_62271542fca0b3 1209,1213
+  s_fd6d9b102e043d::t_a7a3c070ef862c 1223
+  s_fd6d9b102e043d::t_b76778098c9f13 447
+  s_fd6d9b102e043d::t_ed7cee0111ceea 834,841
+  s_fd6d9b102e043d::t_2c7b650f8a0574 852-858,861-864,866,869-872,874-878,884-889,891-895,897,899-910,912-924
+  s_fd6d9b102e043d::t_67dc5dc8b74985 1000-1002,1023-1025
+  s_fd6d9b102e043d::t_441bf2cf3d9562 879-883
+internal/api/handlers/tasks_inline.go
+  s_fd6d9b102e043d::t_273cbe2a86d11e 159-165,167-169
+  s_fd6d9b102e043d::t_fbaf4f1cb168ce 443-449,451-453
+  s_fd6d9b102e043d::t_44a347234bcd68 783-792,794-799,801-907,918,920,922-961,963-981,991,1006-1037,1043-1068,1072,1074-1090,1102-1112,1121-1126,1128-1185,917,1005,1119
+  s_fd6d9b102e043d::t_3527610d7c688e 793,800,1069-1071,1073,1091-1101,1113-1118,1120,1127
+  s_fd6d9b102e043d::t_2ae117669355fc 962
+  s_fd6d9b102e043d::t_35ccbc4061a50d 1038-1042
+  s_fd6d9b102e043d::t_0d1632cc3c7b3b 908-916,919,921
+  s_fd6d9b102e043d::t_1c844830481a9d 982-990,992-1004
+pkg/notify/expansion_render.go
+  s_fd6d9b102e043d::t_49a8944670362c 1-84,102-105,138-154
+  s_fd6d9b102e043d::t_7e5966f3b17c3c 131
+  s_fd6d9b102e043d::t_e2e98ba724fcf7 100-101,113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "0658a409fe632c807d3ad0380216d9b279d8e8a8",
+  "prompts": {},
+  "sessions": {
+    "s_f24d8a6cdaa62a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3ceed6ee-edc3-4484-bea4-8d25bf23cdfe",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+e2e/browser/playwright.config.ts
+  s_43730515fda43f::t_5816a3a25856a9 9-10
+e2e/README.md
+  s_43730515fda43f::t_5f41e693ebad1b 50
+  s_43730515fda43f::t_78753377c0c3ee 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "1af0dee93c6990dd53337476e6795b1c2bc172db",
+  "prompts": {},
+  "sessions": {
+    "s_43730515fda43f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5fca92d-fd1c-4016-ad56-4041a99b3020",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

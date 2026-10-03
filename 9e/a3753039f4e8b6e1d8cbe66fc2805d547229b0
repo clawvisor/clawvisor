@@ -1,0 +1,44 @@
+pkg/vault/reference.go
+  s_43730515fda43f::t_6124109e90c6e5 480
+  s_43730515fda43f::t_23f98aab316929 5,10
+  s_43730515fda43f::t_28d20d3664daae 151-153
+  s_43730515fda43f::t_3b0d19148e1845 270-272
+  s_43730515fda43f::t_a8ce0e8132d887 260-262
+  s_43730515fda43f::t_ff177fb6064e76 490-499
+  s_43730515fda43f::t_5e7c3a110bc278 248-250
+  s_43730515fda43f::t_6f5a073e3a1b9c 170-172
+  s_43730515fda43f::t_0f736ae8237cb9 136-144,500
+  s_43730515fda43f::t_4ffacc0bb1b2e3 501
+e2e/browser/serve/main.go
+  s_43730515fda43f::t_fe0940801484e5 300-307
+testharness/llm/cassette.go
+  s_43730515fda43f::t_1236efe777e02b 106
+  s_43730515fda43f::t_42592e4d0a8a9c 341,347-353
+  s_43730515fda43f::t_65fe862629746c 300
+e2e/testapp/build.go
+  s_43730515fda43f::t_9d67ca2e2937cd 14,19
+  s_43730515fda43f::t_ae8e3ea501510d 46-56,58,66
+pkg/store/sqlite/store.go
+  s_43730515fda43f::t_49602847191b05 1942-1948,1950,1955
+  s_43730515fda43f::t_22f528180be218 2865-2871,2876,2878-2879
+  s_43730515fda43f::t_3205c45f38970d 2899-2901
+scripts/terraform-real-aws-lane.sh
+  s_43730515fda43f::t_90bc48b94b3a70 101
+  s_43730515fda43f::t_8897b1f64fee14 51-52,54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "9ea3753039f4e8b6e1d8cbe66fc2805d547229b0",
+  "prompts": {},
+  "sessions": {
+    "s_43730515fda43f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5fca92d-fd1c-4016-ad56-4041a99b3020",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+web/src/pages/Dashboard.tsx
+  s_55f7a841d7c10e::t_5375345fbcf9b3 52-56
+  s_55f7a841d7c10e::t_91ff52618f8fb6 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "79cdb9637295636205f776438d2540998e4383ef",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

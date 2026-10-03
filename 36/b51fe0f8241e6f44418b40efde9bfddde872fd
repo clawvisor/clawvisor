@@ -1,0 +1,24 @@
+pkg/store/sqlite/migrations/063_audit_actor_retain.sql
+  s_55f7a841d7c10e::t_17469e9d5791be 25-26,28
+  s_55f7a841d7c10e::t_d71b9147dfc3fd 9-16
+  s_55f7a841d7c10e::t_2bb3f309e48605 96-97,100-101
+pkg/store/sqlite/flat_team_migration_test.go
+  s_55f7a841d7c10e::t_c24fbd70e785f5 85-182
+  s_55f7a841d7c10e::t_628b5acefa72c4 8,10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "36b51fe0f8241e6f44418b40efde9bfddde872fd",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

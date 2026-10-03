@@ -1,0 +1,104 @@
+config.example.yaml
+  s_55f7a841d7c10e::t_7c2ed47852b3fb 41-45
+  s_55f7a841d7c10e::t_8443515d2c95c5 41-45
+internal/api/api_tokens_disabled_test.go
+  s_55f7a841d7c10e::t_97d0ff1b147ceb 1-128
+  s_55f7a841d7c10e::t_c5942d8fc33c41 1-65,85-91,102,106-128
+  s_55f7a841d7c10e::t_8074e04d221a87 66-84
+  s_55f7a841d7c10e::t_552a5f38f1f4e9 92-101,103-105
+internal/api/handlers/apitokens_test.go
+  s_55f7a841d7c10e::t_00af871577a3c5 142
+  s_55f7a841d7c10e::t_539c5c5edca526 142
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_aa1f011720b6eb 117-125,134-140,201-202
+  s_55f7a841d7c10e::t_c87f8438f34abc 117-125,134-138
+  s_55f7a841d7c10e::t_efeaecb27ca2e4 201-202
+  s_2272b9604c80ae::t_1f231378450e8f 139-140
+internal/api/middleware/apitoken_test.go
+  s_55f7a841d7c10e::t_099ea5e183f9fc 103,143,160,174,187,202,225,242,252-276
+  s_55f7a841d7c10e::t_3df8c567d0e88a 252-276
+  s_55f7a841d7c10e::t_bc88899cf8ef21 103,143,160,174,187,202,225,242
+internal/api/middleware/trust_split_test.go
+  s_55f7a841d7c10e::t_fa8cc912cb4a91 50-52,90,122
+  s_55f7a841d7c10e::t_9071a2118330d7 50-52,90,122
+internal/api/ratelimit_factory_test.go
+  s_55f7a841d7c10e::t_e10f0894c4e80e 1-91
+  s_55f7a841d7c10e::t_3e2f459e452137 1-91
+internal/api/server.go
+  s_55f7a841d7c10e::t_d46fe49aad5d66 50,153-158,441-447,744-747,803,805,816,911-920,978,989,998,1042,1718-1722,1932,1934-1941,1945-1952
+  s_55f7a841d7c10e::t_5409b5bff33e41 1718-1722
+  s_55f7a841d7c10e::t_4546292d9233ed 911-920
+  s_55f7a841d7c10e::t_d590d7d82aa5ef 816
+  s_55f7a841d7c10e::t_b1229564fe5e1f 803,805
+  s_55f7a841d7c10e::t_4efd99fcb060f8 998
+  s_55f7a841d7c10e::t_64f13a3dd94a17 1042
+  s_55f7a841d7c10e::t_662a12db49a7f3 744-747
+  s_55f7a841d7c10e::t_dfd394194a72bc 1948
+  s_55f7a841d7c10e::t_01cab5d77518f4 978
+  s_55f7a841d7c10e::t_b25df7c8cd6926 1932,1934-1941,1945-1947,1949-1951
+  s_55f7a841d7c10e::t_1e714b09b727d0 50
+  s_55f7a841d7c10e::t_6ab2345f5bf189 153-158
+  s_55f7a841d7c10e::t_bc229117e5a052 989
+  s_55f7a841d7c10e::t_b3b69d8304413e 441-447
+  s_55f7a841d7c10e::t_3eb1aa2b18686c 1952
+internal/api/testutil_test.go
+  s_55f7a841d7c10e::t_a0f07c934f4193 110-111,113,176
+  s_55f7a841d7c10e::t_40bddda4369e82 110-111,113
+  s_55f7a841d7c10e::t_652213d006a329 176
+internal/govlocal/store.go
+  s_55f7a841d7c10e::t_f7b89503fab8a8 30-36
+  s_55f7a841d7c10e::t_2bd6129b74eeae 30-36
+pkg/clawvisor/bootstrap.go
+  s_55f7a841d7c10e::t_38c61620ff11d0 13,28-39
+  s_55f7a841d7c10e::t_33c546ad739748 13
+  s_55f7a841d7c10e::t_4414f4b152a994 28-39
+pkg/clawvisor/bootstrap_test.go
+  s_55f7a841d7c10e::t_06fdf466fadea7 12,157-196
+  s_55f7a841d7c10e::t_28b9f651567e19 12
+  s_55f7a841d7c10e::t_170e398db16570 157-196
+pkg/clawvisor/defaults.go
+  s_55f7a841d7c10e::t_e673376573be45 149-152,763-767
+  s_55f7a841d7c10e::t_d5871d45e8a87c 149-151
+  s_55f7a841d7c10e::t_347f7d21d35831 152
+  s_55f7a841d7c10e::t_43f7381da99024 763-767
+pkg/clawvisor/defaults_test.go
+  s_55f7a841d7c10e::t_450231366a5d02 101-126
+  s_55f7a841d7c10e::t_1f90cf6419f72b 101-126
+pkg/clawvisor/options.go
+  s_55f7a841d7c10e::t_d96945417c7dc4 293-298
+  s_55f7a841d7c10e::t_560278ab0c277a 293-298
+pkg/clawvisor/run.go
+  s_55f7a841d7c10e::t_48a145d12fbc27 159,321,339,405-407
+  s_55f7a841d7c10e::t_af4768eb7b950e 339
+  s_55f7a841d7c10e::t_aa7dd03dfce170 321
+  s_55f7a841d7c10e::t_d8f3b65dc37ae9 159
+  s_55f7a841d7c10e::t_a03c480605bd25 405-407
+pkg/config/config.go
+  s_55f7a841d7c10e::t_4c1a8bef7e9818 258-267,799-801
+  s_55f7a841d7c10e::t_ad374fb0e066e4 258-267
+  s_55f7a841d7c10e::t_645e89e4bac11d 799-801
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "378ca826a04ce926d79013e51d7c52b691e70b01",
+  "prompts": {},
+  "sessions": {
+    "s_2272b9604c80ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01bd258c-cdde-4b3f-afd2-10b73065bcd5",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

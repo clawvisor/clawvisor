@@ -1,0 +1,35 @@
+internal/runtime/jsonpatch/jsonpatch_test.go
+  s_813cf813d8b1d0::t_6b74c83d519396 1-79
+internal/runtime/conversation/stream/anthropic_encoder.go
+  s_813cf813d8b1d0::t_f9174756d4ba84 1-7,9-81,83-88,90-113,118-121,127-128,130-161,165-187
+  s_813cf813d8b1d0::t_803f2dbbad241f 8
+  s_813cf813d8b1d0::t_380e9336ebc06b 129
+internal/runtime/jsonpatch/jsonpatch.go
+  s_813cf813d8b1d0::t_f3995029592dc5 1,11-20,22-31,33-35,39-41,43-44,46-49,51-53,55,70,80,82-125
+  s_522af339bc956c::t_631766171db955 21,36-37,79
+  s_813cf813d8b1d0::t_d950247ed57355 56,73,77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "5ef1a5c2be1f142dee512a9914ebf21865b5375f",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

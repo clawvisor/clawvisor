@@ -1,0 +1,19 @@
+pkg/version/version.go
+  s_23a730a6299a8e::t_dcab42f35cb60e 51,54,56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "82c01a85376625e1210a982ce442b8a67b1dea4c",
+  "prompts": {},
+  "sessions": {
+    "s_23a730a6299a8e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3f451fd9-e231-4f6e-9c0e-fedd7cdf7250",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

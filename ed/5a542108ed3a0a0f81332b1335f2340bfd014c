@@ -1,0 +1,33 @@
+internal/api/handlers/gateway.go
+  s_271c1c1ec30ce4::t_3a6361675ea9ec 2603,2607-2609,2612,2618-2628
+pkg/adapters/adapters.go
+  s_271c1c1ec30ce4::t_21aa5799beacbc 253-256
+pkg/adapters/yamlruntime/adapter_test.go
+  s_271c1c1ec30ce4::t_57f74826db1f03 866-930
+pkg/adapters/yamlruntime/rest.go
+  s_271c1c1ec30ce4::t_8ed785bd557397 178-191
+pkg/adapters/yamldef/schema.go
+  s_271c1c1ec30ce4::t_dede254baa6614 165-170
+pkg/adapters/yamlruntime/adapter.go
+  s_271c1c1ec30ce4::t_17c3ce820ef3a3 87
+internal/adapters/definitions/google_calendar.yaml
+  s_271c1c1ec30ce4::t_4d47bc0b5cf7ed 134
+  s_271c1c1ec30ce4::t_d7df7265122e43 47,54,58-59
+  s_271c1c1ec30ce4::t_c30c3adb78290c 177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "ed5a542108ed3a0a0f81332b1335f2340bfd014c",
+  "prompts": {},
+  "sessions": {
+    "s_271c1c1ec30ce4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3a4ddb94-88f6-4a94-8fce-581c46e95448",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

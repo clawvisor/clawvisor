@@ -1,0 +1,54 @@
+internal/api/handlers/llm_endpoint_test.go
+  s_48544d04b3a3f6::t_0f0019cdb78166 1865-1873
+internal/runtime/llmproxy/scope_drift_resolve_test.go
+  s_48544d04b3a3f6::t_d5dfe61d338c43 402,407
+  s_48544d04b3a3f6::t_6feac8fa204074 311,317-318
+  s_48544d04b3a3f6::t_e9b31e3aa51e8b 148,194,227,256,288,335,423,437,446
+  s_48544d04b3a3f6::t_9083fa81b9313e 346-398
+internal/runtime/llmproxy/scope_drift_streaming_test.go
+  s_48544d04b3a3f6::t_2565c1ccdc138a 1-5,7-51,65-72,74-87,89-122
+  s_48544d04b3a3f6::t_38ef9f0628e2be 6
+  s_48544d04b3a3f6::t_3d2beb9c14745b 52-64,73
+  s_48544d04b3a3f6::t_28160eea647d92 88
+internal/runtime/llmproxy/postprocess.go
+  s_48544d04b3a3f6::t_5f05d99cf9ce03 2154-2159,2161-2162,2164
+  s_48544d04b3a3f6::t_3aec9968d79f4f 904-916
+  s_48544d04b3a3f6::t_8390f0f8f2d2d0 2267-2276,2278-2284
+  s_48544d04b3a3f6::t_0e534784922afe 2136-2142,2144,2151-2153,2168
+  s_48544d04b3a3f6::t_7fe35cca934da3 1811-1822,1824-1832,1834-1840
+  s_48544d04b3a3f6::t_f459a7b9b5c206 2160,2163
+  s_48544d04b3a3f6::t_3eddb107434823 2143,2277
+  s_48544d04b3a3f6::t_1e39a35b54a508 1690-1725,1841-1865,1868,1871-1874
+  s_48544d04b3a3f6::t_d44a5cf034893d 4
+  s_48544d04b3a3f6::t_2f0ca4900d887c 1823,1833
+  s_48544d04b3a3f6::t_0181635846b257 1054-1067
+  s_48544d04b3a3f6::t_3b1c433e5379bc 1866-1867,1869-1870
+  s_48544d04b3a3f6::t_59c90fdf5e891a 2131
+  s_48544d04b3a3f6::t_304715bb43edff 2304-2365
+  s_48544d04b3a3f6::t_fca6544032cb13 1726-1810
+  s_48544d04b3a3f6::t_516bd4920405d2 1888,1892,1894,1896
+  s_48544d04b3a3f6::t_670693785571af 2145-2150
+  s_48544d04b3a3f6::t_237c8fcc047c64 576
+  s_48544d04b3a3f6::t_aba92f9370b775 2123-2130,2165-2167
+internal/runtime/llmproxy/scope_drift_resolve.go
+  s_48544d04b3a3f6::t_be2300088752d0 217,233
+  s_48544d04b3a3f6::t_a9c8d139974d62 195,207
+  s_48544d04b3a3f6::t_dbc0e0f0c89c76 8-9
+  s_48544d04b3a3f6::t_74f3c85a0ead6c 317,332
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1c64ee739f04d30d70d3a9a4ddee472917b64ff2",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

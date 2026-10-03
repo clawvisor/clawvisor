@@ -1,0 +1,31 @@
+internal/observability/metrics.go
+  s_55f7a841d7c10e::t_2d349806cf3006 4-5,11-18,47-51,53,56-63,66-68,70,72,74-77
+  s_55f7a841d7c10e::t_d408cd6358299d 1-3,6-10,19-46,52,54-55,64-65,69,71,73,78
+internal/observability/emit.go
+  s_55f7a841d7c10e::t_d3ab16e1d47222 1-230
+internal/observability/provider.go
+  s_55f7a841d7c10e::t_ce1ff78d932bb7 1-16,18-46,50-51,53-155,160-170
+  s_55f7a841d7c10e::t_9988095a4d794d 47-49,52
+internal/observability/provider_test.go
+  s_55f7a841d7c10e::t_a8139b8392753d 1-81
+go.mod
+  s_55f7a841d7c10e::t_d7b7a0026761a5 24-34,37,42-43,57,80,108-109
+go.sum
+  s_55f7a841d7c10e::t_305a747bd77602 31-32,63-64,80-83,131-132,213-222,225-226,233-234,237-238,248-249,266-267,272-279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c40bd625b12c634175ebabd9d14fd47e1fd5ed06",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,82 @@
+internal/e2e/lite/library/credential_not_needed_for_local/workspace/src/alpha.go
+  s_e6674cc59e6c34::t_573d52762de902 1-4
+internal/e2e/lite/library/no_invented_placeholder/scenario.yaml
+  s_e6674cc59e6c34::t_d3a6873b6e2077 1-35,37-59,65-69,78
+  s_e6674cc59e6c34::t_0ebf0e8bc983f2 60-64,70-77,79-84
+  s_e6674cc59e6c34::t_a7cfefa3638f25 36
+internal/e2e/lite/library/credential_handle_discovery/scenario.yaml
+  s_e6674cc59e6c34::t_b38dfea6ad52b5 40,42
+  s_e6674cc59e6c34::t_be29885db57106 1-39,41,43-83
+internal/e2e/lite/library/credential_handle_discovery_unaided/scenario.yaml
+  s_e6674cc59e6c34::t_754a6e3a85fda7 39-41
+  s_e6674cc59e6c34::t_52c2c61c44a0c5 1-38,42-82
+internal/runtime/llmproxy/control_test.go
+  s_e6674cc59e6c34::t_25bf4d5a950380 67-68,71,75-81
+  s_e6674cc59e6c34::t_623db08ccbbb0e 72-74
+internal/e2e/lite/library/credential_not_needed_for_local/workspace/src/beta.go
+  s_e6674cc59e6c34::t_0ca0b71a510572 1-4
+internal/e2e/lite/library/credential_not_needed_for_local/workspace/src/gamma.go
+  s_e6674cc59e6c34::t_cab04d3bece81f 1-4
+internal/e2e/lite/scenario.go
+  s_e6674cc59e6c34::t_f6bdb68d07ec28 130-143
+  s_e6674cc59e6c34::t_ffceb5f5d2079c 144-147
+  s_e6674cc59e6c34::t_6c7c4f7387e40c 14-16,20-25,33-41
+internal/e2e/lite/harness.go
+  s_e6674cc59e6c34::t_73203723fce230 9
+  s_e6674cc59e6c34::t_f9083e831c3518 12
+  s_e6674cc59e6c34::t_d1189c7ddb62b9 209-211,213
+  s_e6674cc59e6c34::t_a149c9d9fba427 281-282
+  s_e6674cc59e6c34::t_4292bca639cc5d 283-284,286-288,293-294
+  s_e6674cc59e6c34::t_a466b31ad00e1e 187-195,201-205
+  s_e6674cc59e6c34::t_9c68b6c645e3f2 155-157,161
+  s_e6674cc59e6c34::t_b7eb3c84ddb0e7 127,129-137,141
+  s_e6674cc59e6c34::t_05ebac450a553e 70-82
+  s_e6674cc59e6c34::t_9239bbfa91bf3d 244-254,257-259
+  s_e6674cc59e6c34::t_567815cd9666b5 171-186
+  s_e6674cc59e6c34::t_792d9f0ee475e4 229-238,242-243,255-256,260-268,285,289-292,295-300
+  s_e6674cc59e6c34::t_3708ea92fdea4b 128,138-140
+  s_e6674cc59e6c34::t_0f4987660ad3ef 199-200
+  s_e6674cc59e6c34::t_ab0ff2475bef11 269-280
+  s_e6674cc59e6c34::t_ca031e1c7e078c 196-198,206
+internal/e2e/lite/scenario_loader_test.go
+  s_e6674cc59e6c34::t_3b723706d28212 23,25-26
+  s_e6674cc59e6c34::t_5138b349d59d6c 24
+internal/e2e/lite/recorder.go
+  s_e6674cc59e6c34::t_8e84d03daeadd7 1-218,220-233
+  s_e6674cc59e6c34::t_9b11df604f3bdc 219
+internal/api/handlers/llm_endpoint_test.go
+  s_e6674cc59e6c34::t_a53292764160de 298-302
+  s_e6674cc59e6c34::t_66fa836e8d60ed 293-294,297
+internal/runtime/llmproxy/control.go
+  s_e6674cc59e6c34::t_7bd27b984e39c1 94-95,97-98,102
+  s_e6674cc59e6c34::t_64e47aff44392d 96
+  s_e6674cc59e6c34::t_b52aae3bf065c2 112
+internal/e2e/lite/resolver.go
+  s_e6674cc59e6c34::t_20f4563c20babb 1-9,11-33,43-51,53-54,67-68,70-168,173-197
+  s_e6674cc59e6c34::t_cb0a1193eb65bb 169-172
+  s_e6674cc59e6c34::t_2eec09d970f2c9 34-42,52,55-66,69
+  s_e6674cc59e6c34::t_45850fe7de7971 10
+internal/e2e/lite/library/credential_not_needed_for_local/scenario.yaml
+  s_e6674cc59e6c34::t_532f4456294365 58-63
+  s_e6674cc59e6c34::t_9362677e2ea33d 1-46,55-57,64-77
+  s_e6674cc59e6c34::t_6faf67327e418c 47-54
+internal/e2e/lite/lite_test.go
+  s_e6674cc59e6c34::t_6a7dc1cacd4b4f 34,36-37
+  s_e6674cc59e6c34::t_7550579a332c6b 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5b4ca4679767c411f7c7700a5f6994c1569b9061",
+  "prompts": {},
+  "sessions": {
+    "s_e6674cc59e6c34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7a6ef5a9-29f1-4eca-bc4b-0c4ab25ef0af",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

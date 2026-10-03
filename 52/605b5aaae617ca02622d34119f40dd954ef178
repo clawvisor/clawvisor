@@ -1,0 +1,32 @@
+internal/api/middleware/agent_llm_test.go
+  s_92296617a3e45c::t_54c664deb8da8c 117,121,140-199
+internal/runtime/llmproxy/auth_context.go
+  s_92296617a3e45c::t_84cf297dee9d98 3-6,25-61
+internal/api/middleware/agent_llm.go
+  s_92296617a3e45c::t_2786e2371498fd 193-195
+  s_92296617a3e45c::t_4f04f4a9b70604 85
+internal/api/handlers/llm_endpoint.go
+  s_92296617a3e45c::t_b22112c837a1e5 1124-1141
+  s_92296617a3e45c::t_459d2932130fec 1846-1848
+  s_92296617a3e45c::t_5c9e4eebd258dd 685-687
+  s_92296617a3e45c::t_6ae9f41428a943 230
+  s_92296617a3e45c::t_7fe3233b9312a7 280-286
+internal/api/handlers/llm_endpoint_test.go
+  s_92296617a3e45c::t_3d5ff6fc477eda 1463-1505
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "52605b5aaae617ca02622d34119f40dd954ef178",
+  "prompts": {},
+  "sessions": {
+    "s_92296617a3e45c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "05b1d49c-2346-48ef-9de2-7cc756ee2430",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

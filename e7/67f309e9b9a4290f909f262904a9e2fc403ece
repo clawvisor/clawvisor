@@ -1,0 +1,25 @@
+internal/runtime/conversation/conversation_id_test.go
+  s_ae08316ed37510::t_4d9e6381ab9770 59-63
+  s_ae08316ed37510::t_9f3ea728ad1876 134-202
+internal/runtime/conversation/conversation_id.go
+  s_ae08316ed37510::t_b61bc4cf67de37 236-242
+  s_ae08316ed37510::t_2f0866acf8f47a 166-191,197-198,215-217,226-235,243-245
+  s_ae08316ed37510::t_cf5f0f052d1bca 8
+  s_ae08316ed37510::t_3047921cefbf1e 246-247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "e767f309e9b9a4290f909f262904a9e2fc403ece",
+  "prompts": {},
+  "sessions": {
+    "s_ae08316ed37510": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5680719f-610d-40c6-91f4-3ca1c8c23b97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

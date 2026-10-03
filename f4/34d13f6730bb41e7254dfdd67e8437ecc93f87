@@ -1,0 +1,127 @@
+pkg/store/postgres/migrations/060_user_roles.sql
+  s_55f7a841d7c10e::t_36744a91fa44c7 1-17
+pkg/store/store.go
+  s_55f7a841d7c10e::t_2009260fed43d6 37-46,50-52,55-67
+  s_55f7a841d7c10e::t_3bbb2550922785 513-520,523-552
+pkg/store/postgres/migrations/061_user_invites.sql
+  s_55f7a841d7c10e::t_37e11a41ef21f9 1-14
+pkg/store/sqlite/migrations/063_audit_actor_retain.sql
+  s_55f7a841d7c10e::t_4c4f42cc4244ed 1-113
+pkg/store/sqlite/migrations/061_user_roles.sql
+  s_55f7a841d7c10e::t_577e1b0233fd42 1-29
+pkg/store/postgres/store.go
+  s_55f7a841d7c10e::t_c1863715312d99 1045-1047,1056-1057,1066
+  s_55f7a841d7c10e::t_e01950d33f9753 1079,1084-1085,1088
+  s_55f7a841d7c10e::t_a87c5ea092bb6d 40-56,59-61,68,71-73,75-83,91-92,113-141,144-150,154-262
+  s_2272b9604c80ae::t_50e380011540fa 263
+internal/server/run.go
+  s_55f7a841d7c10e::t_347384fed91a45 68-70
+pkg/store/sqlite/migrations/062_user_invites.sql
+  s_55f7a841d7c10e::t_fe8247cb70e16c 1-19
+pkg/store/postgres/migrations/062_audit_actor_retain.sql
+  s_55f7a841d7c10e::t_53834a38713355 1-34
+pkg/store/sqlite/store.go
+  s_55f7a841d7c10e::t_691710387e1b15 1248-1251,1260-1261,1269
+  s_55f7a841d7c10e::t_43e845016f9c07 1284,1289-1290,1294
+  s_55f7a841d7c10e::t_31ac6642789e25 202-217
+  s_55f7a841d7c10e::t_4f8c07626fca0f 218-308
+  s_55f7a841d7c10e::t_584c57a3451f8b 42-53,55-58,60-61,72,75-76,82-85,89-99,101-102,106-153,157-166
+internal/api/handlers/approvals_test.go
+  s_55f7a841d7c10e::t_4bbbe84ba362a6 36
+internal/api/handlers/audit_test.go
+  s_55f7a841d7c10e::t_39cc2e6094fc1a 26,117,184,310
+internal/api/handlers/auth.go
+  s_55f7a841d7c10e::t_2ee5bf9836445a 91
+internal/api/handlers/connections_test.go
+  s_55f7a841d7c10e::t_c9f5359c11f9a4 67,113,167
+internal/api/handlers/control_test.go
+  s_55f7a841d7c10e::t_f4d88ed2aa4e58 110
+internal/api/handlers/llm_endpoint_active_tasks_render_test.go
+  s_55f7a841d7c10e::t_52aab42ba54d32 32,95
+internal/api/handlers/llm_endpoint_test.go
+  s_55f7a841d7c10e::t_76eb892682ba1a 168
+internal/api/handlers/mcp_e2e_test.go
+  s_55f7a841d7c10e::t_0b633619be631c 301,398
+internal/api/handlers/mobileconfig_test.go
+  s_55f7a841d7c10e::t_7e3b37d74e2a3f 40,116,165
+internal/api/handlers/proxy_resolver_test.go
+  s_55f7a841d7c10e::t_ac1b0c8fecfbc4 38,487
+internal/api/handlers/runtime_controls_test.go
+  s_55f7a841d7c10e::t_e42e7b60aad0e1 28,137,165,204,285,510,641,779,828,879,963,1016,1090
+internal/api/handlers/runtime_test.go
+  s_55f7a841d7c10e::t_c8bdc5e655cd0a 37,106,203,268,326,457,553,625,731,820,894,982,1062
+internal/api/handlers/service_config_test.go
+  s_55f7a841d7c10e::t_5b35a9345f4d4e 29
+internal/api/handlers/services_pending_hijack_test.go
+  s_55f7a841d7c10e::t_591f4a3a573fd6 14,37,41,103-104
+internal/api/handlers/tasks_complete_test.go
+  s_55f7a841d7c10e::t_d3fe1786de8209 13,222
+internal/api/handlers/tasks_inline_test.go
+  s_55f7a841d7c10e::t_7c08314ad8a86f 37
+internal/api/handlers/tasks_runtime_start_test.go
+  s_55f7a841d7c10e::t_0fc15850c73e1c 27,98
+internal/api/handlers/vault_control_test.go
+  s_55f7a841d7c10e::t_c2ec11ea39ea1d 29,86,136
+internal/api/middleware/agent_llm_test.go
+  s_55f7a841d7c10e::t_6576756c5738b4 27,52
+internal/api/testutil_test.go
+  s_55f7a841d7c10e::t_ad4e5f4e1d5a8d 203
+internal/e2e/harness/principal.go
+  s_55f7a841d7c10e::t_b7b14aa6b06784 35
+internal/e2e/lite/harness.go
+  s_55f7a841d7c10e::t_e49f8168c880a0 121
+internal/notify/telegram/secret_test.go
+  s_55f7a841d7c10e::t_3530399af52664 27,109
+internal/notify/telegram/telegram_test.go
+  s_55f7a841d7c10e::t_e7ac5454ce5783 13,32
+internal/runtime/llmproxy/audit_test.go
+  s_55f7a841d7c10e::t_5fc7326e080e4a 28,381
+internal/runtime/llmproxy/policies/emitter_equivalence_test.go
+  s_55f7a841d7c10e::t_f079b8563c0ce7 316
+internal/runtime/llmproxy/postproc/postprocess_test.go
+  s_55f7a841d7c10e::t_37dca829cdad70 35,63
+internal/runtime/llmproxy/postproc/taskscope_test.go
+  s_55f7a841d7c10e::t_55a0799022d3c9 26,167,171-172,176-177,179,207,211-212,216-217,219,263,267-269,273-274,276,312,316-318,322-323,325,349,353-355,359-360,362,391,395-396,400-401,403,425,429-430,433-441,445-446,448
+internal/runtime/llmproxy/test_helpers_test.go
+  s_55f7a841d7c10e::t_4899210e32fbf7 30,74
+pkg/runtime/proxy/auth_test.go
+  s_55f7a841d7c10e::t_978076fbf1d7da 15,131,186,242,289,345
+pkg/runtime/proxy/manager_test.go
+  s_55f7a841d7c10e::t_66d06d90ab5217 14,25
+pkg/runtime/proxy/policy_hook_test.go
+  s_55f7a841d7c10e::t_7429fb5c4f535c 19,810
+pkg/store/sqlite/store_agent_threshold_test.go
+  s_55f7a841d7c10e::t_1c62aea3408a9a 27,110
+pkg/store/sqlite/store_apitokens_test.go
+  s_55f7a841d7c10e::t_ff266dfdb45070 122
+pkg/store/sqlite/store_inline_chat_expiry_test.go
+  s_55f7a841d7c10e::t_db57012f182ab6 31
+pkg/store/sqlite/store_runtime_test.go
+  s_55f7a841d7c10e::t_7e2f5db182e4e1 27,459,537,589,654,721,792,836,904,968
+pkg/store/sqlite/store_task_lifecycle_test.go
+  s_55f7a841d7c10e::t_341aae2f905e02 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f434d13f6730bb41e7254dfdd67e8437ecc93f87",
+  "prompts": {},
+  "sessions": {
+    "s_2272b9604c80ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01bd258c-cdde-4b3f-afd2-10b73065bcd5",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

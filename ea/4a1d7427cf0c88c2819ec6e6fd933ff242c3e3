@@ -1,0 +1,19 @@
+internal/e2e/lite/harness.go
+  s_e6674cc59e6c34::t_f77e2e0c4512db 170-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ea4a1d7427cf0c88c2819ec6e6fd933ff242c3e3",
+  "prompts": {},
+  "sessions": {
+    "s_e6674cc59e6c34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7a6ef5a9-29f1-4eca-bc4b-0c4ab25ef0af",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

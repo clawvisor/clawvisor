@@ -1,0 +1,52 @@
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_813cf813d8b1d0::t_07505de54700ee 413-420,422-461,463-464,466-467,469-472,474-517
+  s_813cf813d8b1d0::t_5ff05072675191 105
+  s_813cf813d8b1d0::t_1921d8ab6add5f 421
+  s_813cf813d8b1d0::t_cc16c7e871aaa8 33-34
+  s_813cf813d8b1d0::t_b8ec0ade22dca0 462,465,468,473
+internal/runtime/llmproxy/policies/sensitive_path_policy.go
+  s_813cf813d8b1d0::t_5be64445280535 69-76,78
+internal/runtime/llmproxy/policies/compose_tool_use_chain_test.go
+  s_813cf813d8b1d0::t_e2ea446515f520 22,25
+internal/runtime/llmproxy/credentialed_authorization.go
+  s_813cf813d8b1d0::t_a88c7ded2d16e6 97,183
+internal/runtime/llmproxy/task_slide_test.go
+  s_813cf813d8b1d0::t_a88c7ded2d16e6 88,128
+internal/runtime/llmproxy/pipeline/facts.go
+  s_813cf813d8b1d0::t_9cd280c99cc756 20
+internal/runtime/llmproxy/trigger_miss_authorization.go
+  s_813cf813d8b1d0::t_a88c7ded2d16e6 64-65,107,117
+internal/runtime/llmproxy/postprocess.go
+  s_813cf813d8b1d0::t_4351e5db4acc82 120-128
+internal/runtime/conversation/verdict.go
+  s_813cf813d8b1d0::t_b886745e56dc04 139-149
+  s_813cf813d8b1d0::t_d55128274a1dc2 241-244
+internal/runtime/llmproxy/task_slide.go
+  s_813cf813d8b1d0::t_a88c7ded2d16e6 26,38
+internal/runtime/llmproxy/policies/authorization_policy.go
+  s_813cf813d8b1d0::t_e7e5a7eaefa1ed 208
+  s_813cf813d8b1d0::t_be2faf16b75a2f 125-130
+  s_813cf813d8b1d0::t_e6161fd76fb220 152,161,167
+  s_813cf813d8b1d0::t_45e6ffe95246a8 34-45
+internal/runtime/llmproxy/policies/compose_tool_use_chain.go
+  s_813cf813d8b1d0::t_2d282ac81b6d93 49-54
+  s_813cf813d8b1d0::t_e3a6472435d469 100-106,109
+internal/runtime/llmproxy/shell_helpers.go
+  s_813cf813d8b1d0::t_a88c7ded2d16e6 16,39,45,63,66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "a9b6778c13f2ebaa36012c3468803e333a14cbe8",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,94 @@
+internal/tui/client/types.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 205-219,223-227
+pkg/store/postgres/migrations/055_task_pending_expansion_envelope.sql
+  s_f24d8a6cdaa62a::t_7fe2754c1eb212 34-49
+internal/tui/screens/dashboard.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 643,645
+docs/ARCHITECTURE.md
+  s_f24d8a6cdaa62a::t_e2611c4651d704 389
+internal/notify/telegram/scope_expansion_format_test.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 1-32,35-120
+internal/runtime/tasks/envelope.go
+  s_fd6d9b102e043d::t_6fb889135fd8c2 181,291-292
+  s_f24d8a6cdaa62a::t_90830265042781 196-200
+  s_f24d8a6cdaa62a::t_c2a73a101ae9cd 243-252
+pkg/store/sqlite/migrations/055_task_pending_expansion_envelope.sql
+  s_f24d8a6cdaa62a::t_e2611c4651d704 1-9,12,14-17,19-23
+pkg/store/sqlite/store.go
+  s_f24d8a6cdaa62a::t_264c6d598f2fad 1664-1667,1676
+internal/tui/screens/helpers.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 70,72,78-108,113-114,116,119-121,123-125,128-135,140-141,143,146-148,151-158,164-168,174-182,188-192,194-197,200-201,210-213,217-228,235
+  s_fd6d9b102e043d::t_f1f2d11b0cf496 169
+  s_fd6d9b102e043d::t_a1d45e3a081fdc 202-204,206-209
+internal/runtime/tasks/envelope_test.go
+  s_f24d8a6cdaa62a::t_a3fe1974a4b984 93-133,143-155,164-168,170-171,173-176,178,180-181
+  s_fd6d9b102e043d::t_73c800c4ab94cd 161-163
+web/src/components/TaskCard.tsx
+  s_f24d8a6cdaa62a::t_64bb0097541e00 856-864
+  s_fd6d9b102e043d::t_43607da2bc71fb 867,870-872
+  s_fd6d9b102e043d::t_cf08d611e44084 923-927
+internal/api/handlers/tasks_expand_test.go
+  s_f24d8a6cdaa62a::t_656cd13a16e094 110-111
+  s_f24d8a6cdaa62a::t_4ba65e22ab75d6 115-132,134-160,162-166
+internal/notify/telegram/telegram.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 779-836,846-856,858-861
+internal/runtime/policy/request_shape.go
+  s_f24d8a6cdaa62a::t_99708039da96d9 91-97,100
+internal/mcp/tools.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 137,142-143,145-148,150-155,157-160,162-179,183
+internal/e2e/harness/smoke_test.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 623-626
+internal/api/handlers/tasks.go
+  s_f24d8a6cdaa62a::t_5010b85718fb8a 1151-1154
+  s_f24d8a6cdaa62a::t_d1175b1be8fc57 1206-1210,1212-1214
+  s_fd6d9b102e043d::t_461d72f2b8b22d 1897-1898
+  s_fd6d9b102e043d::t_f9b08b32acac41 2076-2078
+  s_fd6d9b102e043d::t_050477c709b375 2336-2337
+  s_f24d8a6cdaa62a::t_4e388d984f9bf4 2348
+  s_fd6d9b102e043d::t_48b7df6378f3be 2488
+  s_f24d8a6cdaa62a::t_4b4ab054676513 2544-2556
+  s_f24d8a6cdaa62a::t_283a0168e77eff 2660-2669,2682-2713
+  s_f24d8a6cdaa62a::t_deccc2e923ba35 2671-2678
+  s_fd6d9b102e043d::t_351c899499cbc4 2978
+pkg/store/postgres/store.go
+  s_f24d8a6cdaa62a::t_556bf7d21dfc8a 1396-1402,1410
+pkg/store/store.go
+  s_f24d8a6cdaa62a::t_923bac8e796625 186-188
+internal/api/task_approval_records_test.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 83-86
+web/tsconfig.tsbuildinfo
+  s_f24d8a6cdaa62a::t_1f1cb42bb49bb1 1
+pkg/notify/notify.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 11-58,130-136,138-148
+internal/api/longpoll_test.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 260-263
+web/src/api/client.ts
+  s_f24d8a6cdaa62a::t_e2611c4651d704 594,630-648,669-670
+internal/api/gateway_test.go
+  s_f24d8a6cdaa62a::t_e2611c4651d704 722-725,782-789,798-801,810-813,815-816,820,822-823,828-1072,1076-1095
+  s_fd6d9b102e043d::t_87d872f85fdce6 1073-1075
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "f75ccf714b13b86d8f5881d3961da11f55b1f97a",
+  "prompts": {},
+  "sessions": {
+    "s_f24d8a6cdaa62a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3ceed6ee-edc3-4484-bea4-8d25bf23cdfe",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

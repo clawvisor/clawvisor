@@ -1,0 +1,72 @@
+internal/runtime/llmproxy/audit_cvreason_test.go
+  s_d376867ed9f630::t_5daccf536db97c 1-75
+internal/runtime/conversation/anthropic_response.go
+  s_d376867ed9f630::t_407d6b29b40710 169
+  s_d376867ed9f630::t_64f2fede4919d7 60
+  s_d376867ed9f630::t_6ae23463daa3cf 71,76
+  s_d376867ed9f630::t_6b8c219d80b4ae 275,283,288-294
+  s_d376867ed9f630::t_85a9929b50ef27 124,145
+  s_d376867ed9f630::t_74b339ef4db0bf 1417,1422-1426
+  s_d376867ed9f630::t_51bd1a0442cf7d 333,368
+  s_d376867ed9f630::t_2c6a046477c4a7 77-79
+internal/runtime/conversation/types.go
+  s_d376867ed9f630::t_1963cb65870a29 41-46
+internal/runtime/llmproxy/intentverify/intentverify.go
+  s_d376867ed9f630::t_d6dab0f7c378f0 101-110,117
+internal/runtime/conversation/cvreason_test.go
+  s_d376867ed9f630::t_fc92b4d9c5fb08 1-112
+internal/runtime/conversation/cvreason_stream_test.go
+  s_d376867ed9f630::t_868ca013781de3 1-102
+internal/runtime/llmproxy/controltool/cvreason_test.go
+  s_d376867ed9f630::t_dfe7415dd22725 1-19
+internal/runtime/conversation/cvreason.go
+  s_d376867ed9f630::t_cb83fe98a54760 1-64
+internal/runtime/llmproxy/audit.go
+  s_d376867ed9f630::t_9941dfb329691b 275-277
+internal/runtime/llmproxy/controltool/control.go
+  s_d376867ed9f630::t_3ca460db64bed7 128-129
+internal/runtime/llmproxy/approvaltext/approval_prompt.go
+  s_d376867ed9f630::t_d023741a8836ae 31-34
+internal/runtime/conversation/openai_response.go
+  s_d376867ed9f630::t_ca312d66dcbd32 494,502
+  s_d376867ed9f630::t_f7a8e3bb05fc8f 2257-2261,2268
+  s_d376867ed9f630::t_817096e7da8ea2 809-812
+  s_d376867ed9f630::t_81c7d358317048 268
+  s_d376867ed9f630::t_2b55f73e434e41 225,242
+  s_d376867ed9f630::t_bb5bf20ac56fc0 2234,2236
+  s_d376867ed9f630::t_74a591a7e559dd 2036,2042,2046
+  s_d376867ed9f630::t_e2f7cb96bb07c6 183-184
+  s_d376867ed9f630::t_1374c0b29e560f 386
+  s_d376867ed9f630::t_ca68838681b18b 742-747,755,761-762,767-772
+  s_d376867ed9f630::t_fa9246d8c20327 181-182,185-186
+  s_d376867ed9f630::t_ceba02976d8ef1 2002,2007
+  s_d376867ed9f630::t_5b1319b088b73a 839,844
+  s_d376867ed9f630::t_d81e405b5c5403 2347,2353,2358,2367,2373,2378
+  s_d376867ed9f630::t_89c79395dfd517 107-112,126,131-134
+  s_d376867ed9f630::t_b0863426cf5d2d 435-440
+  s_d376867ed9f630::t_32eafa2ecde8a5 2222-2233,2235,2237,2246
+  s_d376867ed9f630::t_8d57dbbc598ae3 1003-1008
+  s_d376867ed9f630::t_38701626e5e633 376,381-385
+  s_d376867ed9f630::t_9386f1be4caa82 996,1001
+internal/runtime/llmproxy/approvaltext/cvreason_test.go
+  s_d376867ed9f630::t_c22529a2a286e5 1-32
+internal/runtime/llmproxy/intentverify/intentverify_test.go
+  s_d376867ed9f630::t_b76ea112dc7a01 15,18,20
+  s_d376867ed9f630::t_06702406d76ba1 60-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "b55b90bf8f816988d3466fb1870fa09c422373fc",
+  "prompts": {},
+  "sessions": {
+    "s_d376867ed9f630": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88ad9f92-c54d-4b4a-a66a-a9e176a40e90",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+web/src/pages/Agents.tsx
+  s_3922aef627aac4::t_0cdb87664de7ef 2324-2329,2334,2338
+internal/api/handlers/installer.go
+  s_3922aef627aac4::t_9354271d098927 752-810
+  s_3922aef627aac4::t_d3f4a2748905e1 853-856,860
+  s_3922aef627aac4::t_f19c49802e91da 1420-1423,1425
+  s_3922aef627aac4::t_e654a07a4d206f 1043-1046,1048,1050-1052,1064,1066
+  s_3922aef627aac4::t_8babab7168517b 1508-1510,1512
+  s_3922aef627aac4::t_a13294706edd95 146-151
+  s_3922aef627aac4::t_b95ccf3b631460 835-841,843-849,857-859,865-876
+  s_3922aef627aac4::t_3644566743fb65 48-56
+internal/api/handlers/installer_test.go
+  s_3922aef627aac4::t_e650fac4a52f54 555-562
+  s_3922aef627aac4::t_856a6f60d14a51 621-659
+  s_3922aef627aac4::t_49cf2356297d93 7
+  s_3922aef627aac4::t_d3367cdeca7605 158-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "3aa102a1cd59bf02afa3882e66305591a9a58939",
+  "prompts": {},
+  "sessions": {
+    "s_3922aef627aac4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "364c1207-10cf-4f92-9898-de6d359e3677",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

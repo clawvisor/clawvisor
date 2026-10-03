@@ -1,0 +1,24 @@
+pkg/store/postgres/migration_safety_general_test.go
+  s_fa4712eda9c001::t_59a5c8c9b5688a 109-112
+  s_fa4712eda9c001::t_12511a18302dae 65-68,71-72,76-78,82-84
+  s_fa4712eda9c001::t_87d4ad554d65eb 1-9,16-64,69-70,73-75,79-81,85-108,113-130
+  s_fa4712eda9c001::t_ef8e1f9c64dbcb 10-15
+pkg/store/postgres/migration_integration_test.go
+  s_fa4712eda9c001::t_42a8ea1f6d7bc2 1-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "bcea6c09a42c66134e42b861c39d4c46bafb355d",
+  "prompts": {},
+  "sessions": {
+    "s_fa4712eda9c001": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "43e64dce-c215-4362-86de-13c0bc757714",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

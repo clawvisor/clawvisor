@@ -1,0 +1,38 @@
+internal/runtime/llmproxy/approval_body_editor.go
+  s_068454be9023ad::t_b141b5c4ff68eb 43-47
+  s_068454be9023ad::t_59c39b1456023a 172-186,188-191,200
+internal/runtime/llmproxy/inline_task_prompt.go
+  s_068454be9023ad::t_2243d3fc4e0c24 7
+  s_068454be9023ad::t_d681e4ad38a4a5 45-51
+internal/runtime/llmproxy/postproc/stream.go
+  s_068454be9023ad::t_55ce0162691fa3 431-433,443
+internal/runtime/conversation/anthropic_response.go
+  s_068454be9023ad::t_8731a1c764f1e2 41-49,51,60
+internal/runtime/conversation/approval_release.go
+  s_068454be9023ad::t_81fe231d2dae0f 49-57
+internal/runtime/conversation/askuserquestion_reply.go
+  s_068454be9023ad::t_3525868d76ae66 32-33
+  s_068454be9023ad::t_cafe8b9595bc8b 1,10-24,26-31,42,49,52-56,63-78,87,91,95,105,122,126,133,164-165
+internal/runtime/conversation/askuserquestion_reply_test.go
+  s_068454be9023ad::t_61833145175391 5-9
+  s_068454be9023ad::t_31dc34d4a421b5 11-34
+  s_068454be9023ad::t_bc2efc6a74fee9 1,10,48,68,92,114,135,167,195,221,268,292
+internal/runtime/conversation/response_test.go
+  s_068454be9023ad::t_6d39baa78e64e6 314-352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "01a8fd95f2c5718fc1557534dad659fed58aa032",
+  "prompts": {},
+  "sessions": {
+    "s_068454be9023ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6c43e544-5845-4973-a64b-7695becd7168",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

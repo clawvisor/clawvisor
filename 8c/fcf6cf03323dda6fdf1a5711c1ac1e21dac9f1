@@ -1,0 +1,31 @@
+web/src/pages/Agents.tsx
+  s_7f68b5733f1191::t_fbdb4527dd9ca1 1861
+  s_7f68b5733f1191::t_e6bcda25e4a2f2 1902
+internal/api/handlers/connections_test.go
+  s_7f68b5733f1191::t_3f75cefb7c03c2 11
+pkg/store/store.go
+  s_7f68b5733f1191::t_3f75cefb7c03c2 1059
+internal/api/handlers/installer.go
+  s_7f68b5733f1191::t_e194bfd41778fc 433,456,474,498,505,507,532,559,579,585,587,615,642,656,663,665,700,705,707,784,814
+  s_7f68b5733f1191::t_9e9205040732bd 202-203,294,297-298,334,336,353,355,371,373,385,387
+  s_7f68b5733f1191::t_5dd596e83dc9d5 724
+internal/api/handlers/installer_test.go
+  s_7f68b5733f1191::t_4dee84eeef0e2d 91-92,95,97,105,107,110-111,115-117,130-131,133,144-146,158,170-172,206-208,220
+  s_7f68b5733f1191::t_4179b740d395cf 286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8cfcf6cf03323dda6fdf1a5711c1ac1e21dac9f1",
+  "prompts": {},
+  "sessions": {
+    "s_7f68b5733f1191": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e7060-b911-78f0-899d-d4e5c0c4e13b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

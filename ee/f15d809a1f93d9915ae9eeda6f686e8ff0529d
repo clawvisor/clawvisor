@@ -1,0 +1,19 @@
+scripts/raw-log-viewer.html
+  s_73ca1ca2d16c68::t_3366fd3546d449 864-877,879-892,894-903,906-909,912-914
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "eef15d809a1f93d9915ae9eeda6f686e8ff0529d",
+  "prompts": {},
+  "sessions": {
+    "s_73ca1ca2d16c68": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2fad2dad-1c30-4c8c-babe-53667033cbaa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

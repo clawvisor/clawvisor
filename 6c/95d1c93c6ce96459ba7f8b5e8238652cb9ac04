@@ -1,0 +1,22 @@
+internal/api/handlers/notification_message.go
+  s_20c7cd26d72652::t_762ad4a3d97a0c 41-47,49-50,74-81
+  s_20c7cd26d72652::t_f305857b2eea46 33-40
+internal/api/server.go
+  s_20c7cd26d72652::t_762ad4a3d97a0c 1844-1849
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "6c95d1c93c6ce96459ba7f8b5e8238652cb9ac04",
+  "prompts": {},
+  "sessions": {
+    "s_20c7cd26d72652": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51f12a99-8a7d-4eaf-b0b7-4a4c8fe6113d",
+        "model": "claude-opus-5"
+      },
+      "human_author": null
+    }
+  }
+}

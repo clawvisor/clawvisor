@@ -1,0 +1,83 @@
+internal/api/handlers/agents.go
+  s_e6ce99dbd88a86::t_4c0d55d5c091a9 221-231
+  s_e6ce99dbd88a86::t_b0e5cdcbffb179 182-187
+  s_e6ce99dbd88a86::t_53a2cb53fc1610 351-358
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_e6ce99dbd88a86::t_b015087d10e396 789
+  s_e6ce99dbd88a86::t_e6f40b9d0f4d49 804-821
+  s_e6ce99dbd88a86::t_4afbaf29967cb3 863-881
+  s_e6ce99dbd88a86::t_ed41822dd92614 615,636
+  s_e6ce99dbd88a86::t_ab0137a5afd939 618-621,629-635,637-646
+  s_e6ce99dbd88a86::t_3c41c7ac63cde0 779
+  s_e6ce99dbd88a86::t_a0fbb74efa63db 647,742-763
+internal/api/handlers/enforcement_mode.go
+  s_e6ce99dbd88a86::t_c69cdebef5d750 1-13,20-120
+  s_e6ce99dbd88a86::t_2204beb7993a55 14-19
+internal/runtime/llmproxy/audit.go
+  s_e6ce99dbd88a86::t_9388b2913d0300 278-291
+  s_e6ce99dbd88a86::t_a2ce8fd9beb378 653-708
+internal/runtime/llmproxy/config.go
+  s_e6ce99dbd88a86::t_564dafac4fa4e1 106-129
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_e6ce99dbd88a86::t_7df80a0ffc2131 65-72
+pkg/store/postgres/migrations/057_enforcement_mode.sql
+  s_e6ce99dbd88a86::t_0cc397d8003ebc 1-18
+internal/runtime/llmproxy/taskscope.go
+  s_e6ce99dbd88a86::t_675c9221cc5965 38-50
+pkg/store/sqlite/store_enforcement_mode_test.go
+  s_e6ce99dbd88a86::t_8af4135dc9c5c8 1-164
+pkg/store/enforcement_mode_test.go
+  s_e6ce99dbd88a86::t_56f33e124c5a62 1-100
+pkg/store/sqlite/migrations/057_enforcement_mode.sql
+  s_e6ce99dbd88a86::t_ad374be30e0bea 1-22
+pkg/store/postgres/store.go
+  s_e6ce99dbd88a86::t_2e6d1482997cdb 3691,3698,3735-3736
+  s_e6ce99dbd88a86::t_4dd6c41782143f 62,64,74,76,97-104,106-107
+  s_e6ce99dbd88a86::t_82c4235295c7c7 108,111,303,322,327,330,335-337,349-356,360-361,370,374
+internal/api/server.go
+  s_e6ce99dbd88a86::t_d6e926225c5328 767-768
+  s_e6ce99dbd88a86::t_e1a5c2582d7aee 493-495
+pkg/store/store.go
+  s_e6ce99dbd88a86::t_4abaa7021c4129 484-526,528-560
+  s_e6ce99dbd88a86::t_871ee4afeae2fe 33-38
+  s_e6ce99dbd88a86::t_2204beb7993a55 527,1023-1026
+  s_e6ce99dbd88a86::t_f3781ce4e83fc8 720-728
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_e6ce99dbd88a86::t_25620831e8b361 195-211
+  s_e6ce99dbd88a86::t_8722e943792f9c 328-332,336-341,344-364
+internal/runtime/llmproxy/observe.go
+  s_e6ce99dbd88a86::t_60ef5e3436148f 1-130
+internal/runtime/llmproxy/observe_test.go
+  s_e6ce99dbd88a86::t_347c5cb5ea3b45 1-168
+internal/api/enforcement_mode_test.go
+  s_e6ce99dbd88a86::t_72e391c773c3d3 1-91
+internal/runtime/conversation/verdict.go
+  s_e6ce99dbd88a86::t_401cf7c3858b13 117-135
+internal/api/handlers/llm_endpoint.go
+  s_e6ce99dbd88a86::t_65f0eb1465a194 1636-1639
+  s_e6ce99dbd88a86::t_c1460bdea12da5 1287-1290
+  s_e6ce99dbd88a86::t_2204beb7993a55 28,1307
+  s_e6ce99dbd88a86::t_0f80cd1dfce031 3006-3024
+pkg/store/sqlite/store.go
+  s_e6ce99dbd88a86::t_4a0089aa257d68 123,127,401,409,413,423-425,4160
+  s_e6ce99dbd88a86::t_9ef2e60f5fb99c 61,63,79,81,108-119,121-122
+  s_e6ce99dbd88a86::t_50fbb7a6a0cc04 326,354,360,376
+  s_e6ce99dbd88a86::t_4bcd46882bcb46 4130,4158-4159
+  s_e6ce99dbd88a86::t_95bf81a1e860cc 440-445,449-450,459,463
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "368054b4a789b03233011df4139f840ca8189bc8",
+  "prompts": {},
+  "sessions": {
+    "s_e6ce99dbd88a86": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d8f54215-59b6-4fa0-8853-7dbf71fbb95c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

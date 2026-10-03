@@ -1,0 +1,59 @@
+internal/runtime/llmproxy/postproc/postproc.go
+  s_bbe778adcf6f02::t_6da31f60c1abf1 95-96
+internal/runtime/llmproxy/postproc/stream.go
+  s_bbe778adcf6f02::t_2cd06c6111a4a4 128
+internal/runtime/llmproxy/assistant_notice_prepend.go
+  s_bbe778adcf6f02::t_b7632dcf79c001 51-52,55
+internal/runtime/llmproxy/secret_detection.go
+  s_bbe778adcf6f02::t_49c0b41eb66a91 634-638,640,643-644
+  s_bbe778adcf6f02::t_c1b84581fb2eca 651-653,655
+internal/runtime/conversation/response.go
+  s_bbe778adcf6f02::t_1bee9ea6489283 354-365
+  s_bbe778adcf6f02::t_68ef3e971fa1b7 95-103
+  s_bbe778adcf6f02::t_b6f81cabdd6544 161-176
+  s_bbe778adcf6f02::t_e55f36d68fecf0 337-353,366-397
+internal/runtime/llmproxy/human_turns.go
+  s_bbe778adcf6f02::t_9a2109af306734 45-46,49
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_bbe778adcf6f02::t_0e475ea2aa56c7 219-233,239-245
+internal/runtime/llmproxy/postproc/session.go
+  s_bbe778adcf6f02::t_6bfb47febc3079 103
+  s_bbe778adcf6f02::t_8b50787c9fdb79 141-147
+  s_bbe778adcf6f02::t_d488f5dd5f2705 18-27,39
+  s_bbe778adcf6f02::t_4edb097a766177 225-232,238,245-253
+  s_bbe778adcf6f02::t_af4ac32940ade6 106-111,113-119,121-124,136-140,148-155,180-181
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_bbe778adcf6f02::t_b18df177c6db1d 285-293
+  s_bbe778adcf6f02::t_6688ab250b4423 556-570
+  s_bbe778adcf6f02::t_5910084da21d43 410-416
+internal/runtime/llmproxy/postproc/session_commit_test.go
+  s_bbe778adcf6f02::t_bfb4a3b4305980 84
+  s_bbe778adcf6f02::t_81f3fc01f07953 149-244
+  s_bbe778adcf6f02::t_50a40805780270 55-56
+  s_bbe778adcf6f02::t_58a7d7f2950505 130
+  s_bbe778adcf6f02::t_4a23ccc059ce79 245-339
+internal/runtime/llmproxy/scope_drift_e2e_test.go
+  s_bbe778adcf6f02::t_07928cbd9e59df 1336-1341
+  s_bbe778adcf6f02::t_40d213a3f0f978 1405-1415,1420-1424
+  s_bbe778adcf6f02::t_080d2a3846ab13 1585-1592
+internal/runtime/llmproxy/inbound_shape.go
+  s_bbe778adcf6f02::t_430e06e22087a1 1-186
+internal/runtime/llmproxy/agent_notice.go
+  s_bbe778adcf6f02::t_7615e96d3eee77 71-72,75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "4da35848df1bc04a9f296152ed7c5bb01664d7c1",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

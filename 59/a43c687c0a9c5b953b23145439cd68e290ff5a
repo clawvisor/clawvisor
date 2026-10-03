@@ -1,0 +1,21 @@
+internal/api/handlers/tasks_inline.go
+  s_98743970e8b00b::t_eca1141fb00c14 609,611-616,618-624,627,629-641
+internal/runtime/llmproxy/inline_task_transitions.go
+  s_98743970e8b00b::t_7053be76756c21 156-161,164-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "59a43c687c0a9c5b953b23145439cd68e290ff5a",
+  "prompts": {},
+  "sessions": {
+    "s_98743970e8b00b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9e29f8b-93f1-4e36-852b-34ec8729e599",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

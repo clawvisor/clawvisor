@@ -1,0 +1,21 @@
+internal/runtime/conversation/anthropic_response.go
+  s_4c4a32022426f9::t_2b62bc587b4d93 1262-1276
+internal/runtime/conversation/response_test.go
+  s_4c4a32022426f9::t_c5c09bec384c07 641-697
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d6a7b895074e1ad55fcce15b7a5015957c440238",
+  "prompts": {},
+  "sessions": {
+    "s_4c4a32022426f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "064ca6c4-1275-4b5f-ac62-2f39b7e5f939",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

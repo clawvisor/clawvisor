@@ -1,0 +1,56 @@
+internal/api/handlers/control.go
+  s_48544d04b3a3f6::t_7c256b369455c2 103,105,110
+internal/api/handlers/llm_endpoint.go
+  s_48544d04b3a3f6::t_9a067e104e9de9 94-101
+  s_48544d04b3a3f6::t_9b04b928df1386 199
+  s_48544d04b3a3f6::t_4c7bb4f1f132c7 859,1295
+  s_48544d04b3a3f6::t_271dbca4b5454d 1237
+internal/runtime/llmproxy/scope_drift_prompt.go
+  s_48544d04b3a3f6::t_9ba6d3b9a146cc 1-13,19-21,24-63,65-72,75-81,95-97
+internal/runtime/llmproxy/intentadapter.go
+  s_48544d04b3a3f6::t_2323f0fab96003 31-40
+internal/runtime/llmproxy/scope_drift_registry.go
+  s_48544d04b3a3f6::t_e94fae65e561c8 1-110,112,114-387
+internal/api/server.go
+  s_48544d04b3a3f6::t_74f8e56071bfe7 113
+  s_48544d04b3a3f6::t_4e58c308d3b180 1307-1316
+  s_48544d04b3a3f6::t_daef465ba455b5 1367,1376
+internal/runtime/llmproxy/postprocess.go
+  s_48544d04b3a3f6::t_a6cf0a14eeedff 103-107
+  s_48544d04b3a3f6::t_f65e65f8b51d51 202-210
+  s_48544d04b3a3f6::t_6c116a9d495154 987
+  s_48544d04b3a3f6::t_9a30951b875d19 1077-1086,1088-1090,1093-1115
+  s_48544d04b3a3f6::t_65b686388afd48 1662,1670-1679,1692-1732
+  s_48544d04b3a3f6::t_1e39a35b54a508 1668-1669
+  s_48544d04b3a3f6::t_067fadbbedda88 1680-1685,1687,1689,1691
+  s_48544d04b3a3f6::t_8390f0f8f2d2d0 2019
+  s_48544d04b3a3f6::t_76b13e16ee749c 2030-2031
+  s_48544d04b3a3f6::t_304715bb43edff 2037-2038
+internal/intent/prompts.go
+  s_48544d04b3a3f6::t_dcf5f4f60036ed 33-39
+  s_48544d04b3a3f6::t_2cea0b823bba5d 479-487
+  s_48544d04b3a3f6::t_517b542d264616 525
+internal/intent/verifier.go
+  s_48544d04b3a3f6::t_acaf36fe8afc4a 49-57
+internal/runtime/llmproxy/scope_drift_test.go
+  s_48544d04b3a3f6::t_0077927462a5aa 1-113,115-128,130-132,135-138,153-172
+  s_48544d04b3a3f6::t_2b4b019f13c916 139-140,146,148-151
+internal/intent/cache.go
+  s_48544d04b3a3f6::t_1077f15341fc40 74-80,98-103,107-108,111-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0bb68c804a973d983aa0d0882c0158d852988797",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

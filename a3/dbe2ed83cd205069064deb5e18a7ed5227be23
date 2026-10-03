@@ -1,0 +1,109 @@
+internal/runtime/llmproxy/policies/script_session_evaluator_test.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 6-7,13,96-281
+internal/runtime/llmproxy/config.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 20,155-168,193
+internal/runtime/llmproxy/scriptjudge/judge_test.go
+  s_12b031c84469bf::t_354e0001687acb 36-88
+internal/runtime/llmproxy/audit.go
+  s_12b031c84469bf::t_6864277f6b7e0c 314-319,321-323,326-328,331-333,336-338,341-343
+  s_12b031c84469bf::t_7a5ec6a4e6693b 345
+  s_12b031c84469bf::t_b6b80d5f242d99 286-294,297-301
+  s_12b031c84469bf::t_f180054678f771 302-313,320,324-325,329-330,334-335,339-340,344
+internal/runtime/llmproxy/scriptjudge/llmjudge/llmjudge.go
+  s_12b031c84469bf::t_557c94deffe19f 84-93
+  s_12b031c84469bf::t_6320e971e8c552 97-110
+  s_12b031c84469bf::t_4ed33a8554b673 203-208,210
+  s_12b031c84469bf::t_dac35be7a20b63 73
+  s_12b031c84469bf::t_f36cdc029c6933 36-38
+  s_12b031c84469bf::t_501e357683a09b 213-265
+  s_12b031c84469bf::t_b73c613999df4a 202,209
+  s_12b031c84469bf::t_838ec99649233a 124-139
+internal/e2e/lite/harness.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 21,165-169,181-185
+  s_12b031c84469bf::t_50de511f0d1bb3 170-180
+  s_12b031c84469bf::t_a96d1c8f02f6e8 378-410
+internal/api/handlers/control_autovault_script.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 385
+internal/runtime/llmproxy/scriptrecognition/helpers.go
+  s_12b031c84469bf::t_328f46509b0364 9
+  s_12b031c84469bf::t_e5f061b1c1c302 121-140,142-154,156-159
+  s_12b031c84469bf::t_7a5ec6a4e6693b 10,17-19,23-62,64-68,70-87,90-91,93,97,106,108-115,160,162-163,165
+  s_12b031c84469bf::t_9a68190355d9a6 155
+  s_12b031c84469bf::t_c7e4ddaf8f87a4 20-21
+  s_12b031c84469bf::t_d12e99dc27e765 430,434-438,445
+  s_12b031c84469bf::t_ed0daeb1d6c740 433
+internal/e2e/lite/library/script_session_long_fanout_no_staging/scenario.yaml
+  s_12b031c84469bf::t_52359752110c85 73-91
+internal/runtime/conversation/verdict.go
+  s_12b031c84469bf::t_76bf3c3e5f28db 92-100
+internal/e2e/lite/library/script_session_inline_fanout/scenario.yaml
+  s_12b031c84469bf::t_fb6626f8c6811f 87-109
+internal/runtime/eval/eval.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 129-143,145-150
+internal/runtime/llmproxy/scriptjudge/llmjudge/llmjudge_test.go
+  s_12b031c84469bf::t_67cc93c429d9fe 3-4
+internal/runtime/llmproxy/scriptjudge/judge.go
+  s_12b031c84469bf::t_f8c98b420d0452 23-24
+  s_12b031c84469bf::t_39f319be43604d 145-148,151
+  s_12b031c84469bf::t_87a6202c7df737 92-100,105,111
+  s_12b031c84469bf::t_21899587d61bbc 107-110,112,122-125,128-135
+  s_12b031c84469bf::t_685e24ab9230c6 101-104,118-121,126-127,136-144,149-150,152-159
+internal/runtime/autovault/swap.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 9-10,51
+internal/api/handlers/llm_endpoint.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 22,93-101,1180-1182,1589-1591,1659-1660
+internal/runtime/llmproxy/script_session_redis.go
+  s_12b031c84469bf::t_173f1140c3d57b 77,80,83,86
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 62,717-718,720-724,729,731-734
+  s_12b031c84469bf::t_5c3289eb80d02a 134,137-139,146-148,158-165
+  s_12b031c84469bf::t_396492cbb514ae 140-145
+internal/runtime/llmproxy/policies/script_session_evaluator.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 6,11,35-39,47-48,51,68-70,79-96,102-106,108,120-121,130-137,139-169,172
+  s_12b031c84469bf::t_67f589c6059646 170-171,173-176
+  s_12b031c84469bf::t_4e712e5a006cdd 97-101,107
+  s_12b031c84469bf::t_490f4c46d1304a 109-119
+  s_12b031c84469bf::t_86da7f0a2d34c8 122-129,138
+  s_12b031c84469bf::t_e62e88678b5633 7,15-24
+  s_12b031c84469bf::t_ab1a1a8209bf94 5
+internal/e2e/lite/scenario_loader_test.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 31-32
+internal/runtime/llmproxy/inspector/parser.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 9,762,770,781
+internal/runtime/llmproxy/audit_test.go
+  s_12b031c84469bf::t_ffd7d97c2381ea 327-371
+  s_12b031c84469bf::t_7a5ec6a4e6693b 8,271-326,372-406
+internal/runtime/llmproxy/script_session_test.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 354-433,462-473
+  s_12b031c84469bf::t_78c4469e7c990e 434-461
+internal/api/server.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 35,1252-1259
+internal/e2e/lite/lite_test.go
+  s_12b031c84469bf::t_7a5ec6a4e6693b 49-50
+internal/runtime/llmproxy/script_session.go
+  s_12b031c84469bf::t_6907153c573aaf 164-166
+  s_12b031c84469bf::t_36239d2fb2836c 239-256
+  s_12b031c84469bf::t_d3487d9a9d3dd3 222,224
+  s_12b031c84469bf::t_7a5ec6a4e6693b 8,130-133,140-163,167-197,403-405,408-410,413-415,426-428
+  s_12b031c84469bf::t_4b8dd957c3069f 198-221,223,225-238
+internal/api/middleware/agent_llm.go
+  s_12b031c84469bf::t_9c8fa8512d1981 388,391,394-404,406
+  s_12b031c84469bf::t_ef0d3bd9aaa267 393
+  s_12b031c84469bf::t_7a5ec6a4e6693b 382-387,392,405,407
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "a3dbe2ed83cd205069064deb5e18a7ed5227be23",
+  "prompts": {},
+  "sessions": {
+    "s_12b031c84469bf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "13cb3dc6-467a-45cc-a644-845714de2cb2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

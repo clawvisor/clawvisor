@@ -1,0 +1,22 @@
+internal/api/skill_base_url_test.go
+  s_7bebf1a7f2da2e::t_04d15e2669aa9b 1-76
+internal/api/server.go
+  s_7bebf1a7f2da2e::t_2b9ba752010514 1299
+  s_7bebf1a7f2da2e::t_25e5e76463ce10 1991-2015
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "985482768a905135680d5c58aa6ef341e983cd71",
+  "prompts": {},
+  "sessions": {
+    "s_7bebf1a7f2da2e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a9063f2-d6c7-4ece-927d-f188797227cd",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

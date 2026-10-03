@@ -1,0 +1,27 @@
+internal/api/handlers/installer.go
+  s_7bebf1a7f2da2e::t_f0a674a2949103 483-513,519
+internal/api/handlers/mobileconfig.go
+  s_7bebf1a7f2da2e::t_716b26f872889e 137
+internal/api/handlers/onboarding.go
+  s_7bebf1a7f2da2e::t_58b223822bd9fe 161
+internal/api/server.go
+  s_7bebf1a7f2da2e::t_45e769522505d5 2002-2006,2011
+internal/api/handlers/forwarded_scheme_test.go
+  s_7bebf1a7f2da2e::t_04608b9a1d0b1d 1-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "5291107c560f6d106505003e99ac7bfcd3053cc2",
+  "prompts": {},
+  "sessions": {
+    "s_7bebf1a7f2da2e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a9063f2-d6c7-4ece-927d-f188797227cd",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

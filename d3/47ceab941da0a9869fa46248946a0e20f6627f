@@ -1,0 +1,36 @@
+internal/e2e/lite/drivers/driver.go
+  s_f042968e76e3c1::t_26ab69361e3548 38-42
+internal/e2e/lite/doc.go
+  s_f042968e76e3c1::t_0c6bea04565413 19-25
+internal/e2e/lite/scenario.go
+  s_f042968e76e3c1::t_47b877892e7233 4
+  s_f042968e76e3c1::t_9cb8cb55681eaf 133-139
+internal/e2e/lite/lite_test.go
+  s_f042968e76e3c1::t_9de8bc0de660bc 107-112
+  s_f042968e76e3c1::t_6aa09416a16b60 154-157,159-160,162-163
+  s_f042968e76e3c1::t_445573dd615fc4 158,161
+internal/e2e/lite/drivers/codex.go
+  s_f042968e76e3c1::t_73eb958433a007 52-55
+  s_f042968e76e3c1::t_b8871ab940a9b7 93-94,97
+internal/e2e/lite/drivers/claude.go
+  s_f042968e76e3c1::t_95c608892ea295 105-108
+  s_f042968e76e3c1::t_134b52574c4757 156-157,160
+internal/e2e/lite/scenario_loader_test.go
+  s_f042968e76e3c1::t_6b550d8337674f 1-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d347ceab941da0a9869fa46248946a0e20f6627f",
+  "prompts": {},
+  "sessions": {
+    "s_f042968e76e3c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8881c191-a906-418b-b0d9-3cc944cc26b1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

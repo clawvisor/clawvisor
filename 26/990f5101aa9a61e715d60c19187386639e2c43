@@ -1,0 +1,21 @@
+e2e/scenarios/stub_verifier_test.go
+  s_55f7a841d7c10e::t_d3376cf843705a 2-53
+  s_55f7a841d7c10e::t_4d4b66cf137870 54
+  s_55f7a841d7c10e::t_565a33e671c524 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "26990f5101aa9a61e715d60c19187386639e2c43",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,40 @@
+internal/api/handlers/llm_endpoint.go
+  s_522af339bc956c::t_bf39f45c52d41c 22
+  s_522af339bc956c::t_1eb331bb6d7a78 219-220
+  s_522af339bc956c::t_8e9b8366980dfb 310
+  s_813cf813d8b1d0::t_40ccbb8c014220 356-375,377,379,383,387
+  s_522af339bc956c::t_6e6b466c9850b9 378
+  s_813cf813d8b1d0::t_bb8f54742900f8 492
+  s_522af339bc956c::t_b25a4992270770 536
+  s_813cf813d8b1d0::t_aa02bc7e7c9b2f 592
+  s_522af339bc956c::t_5d4d9f90e58fa7 1967-1969
+  s_813cf813d8b1d0::t_3ee66e4c199a77 2807
+  s_813cf813d8b1d0::t_08782e11c3c7a2 2834,2836-2838,2840,2849-2861,2863-2864,2873-2886,2888-2893,2895-2903,2905-2911,2913-2931,2935,2939,2943-2965,2969,2971,2973,2976-2987,2990-2993
+  s_522af339bc956c::t_a8068dd5429993 4063-4064
+internal/api/handlers/llm_endpoint_pipeline.go
+  s_813cf813d8b1d0::t_be9cb61bb8efe9 1-3,13-37,45-52,54-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "bb768dc42c613b5de7c95445a3c500f45441ce47",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

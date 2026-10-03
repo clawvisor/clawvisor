@@ -1,0 +1,117 @@
+internal/runtime/llmproxy/policies/control_notice.go
+  s_522af339bc956c::t_bf39f45c52d41c 31-33,83,96
+internal/runtime/llmproxy/policies/pending_approval_hold_policy.go
+  s_522af339bc956c::t_bf39f45c52d41c 50,52
+internal/runtime/llmproxy/policies/inbound_sanitize_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 66
+internal/runtime/llmproxy/policies/task_approval_reply.go
+  s_522af339bc956c::t_bf39f45c52d41c 67,80
+internal/runtime/llmproxy/pipeline/post_orchestrator.go
+  s_522af339bc956c::t_bf39f45c52d41c 15,17,64,74-75
+internal/runtime/llmproxy/policies/anthropic_sanitize_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 56,81,118
+internal/runtime/llmproxy/pipeline/policy.go
+  s_522af339bc956c::t_bf39f45c52d41c 98,109
+internal/runtime/llmproxy/policies/secret_history_strip_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 64
+internal/runtime/llmproxy/policies/secret_rewrites.go
+  s_522af339bc956c::t_bf39f45c52d41c 58
+internal/runtime/llmproxy/policies/secret_decision_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 77-78
+internal/runtime/llmproxy/policies/full_pipeline_e2e_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 70-71
+internal/runtime/llmproxy/policies/inbound_sanitize.go
+  s_522af339bc956c::t_bf39f45c52d41c 57,70
+internal/runtime/llmproxy/policies/secret_history_strip.go
+  s_522af339bc956c::t_bf39f45c52d41c 40,53
+internal/runtime/llmproxy/policies/secret_hold.go
+  s_522af339bc956c::t_bf39f45c52d41c 44,46,89,95
+internal/runtime/llmproxy/policies/anthropic_sanitize.go
+  s_522af339bc956c::t_bf39f45c52d41c 47,61
+internal/runtime/llmproxy/policies/secret_hold_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 78-79,81-82
+internal/runtime/llmproxy/pipeline/orchestrator.go
+  s_522af339bc956c::t_bf39f45c52d41c 18,21,70,87-88
+internal/runtime/llmproxy/policies/synthetic_history_strip_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 35,78
+internal/runtime/llmproxy/policies/recording_response_mutator_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 13
+internal/runtime/llmproxy/pipeline/request_mutator_impl.go
+  s_522af339bc956c::t_bf39f45c52d41c 20-21
+internal/runtime/llmproxy/policies/secret_decision.go
+  s_522af339bc956c::t_bf39f45c52d41c 44,76,91,106,110
+internal/runtime/llmproxy/policies/emitter_equivalence_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 139-140
+internal/runtime/llmproxy/policies/secret_rewrites_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 71
+internal/runtime/llmproxy/policies/approval_release_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 87,90
+internal/runtime/llmproxy/policies/phase6_stub_provider_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 43-46
+internal/runtime/llmproxy/policies/inline_task_intercept.go
+  s_522af339bc956c::t_bf39f45c52d41c 21,69,93,121
+internal/runtime/llmproxy/policies/control_notice_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 75,97
+internal/runtime/llmproxy/policies/agent_notice.go
+  s_522af339bc956c::t_bf39f45c52d41c 48
+internal/runtime/llmproxy/policies/inspector_evaluator_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 113
+internal/runtime/llmproxy/policies/integration_full_chain_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 85-86,105-106
+internal/runtime/llmproxy/policies/inline_task_intercept_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 18-20,70
+internal/runtime/llmproxy/pipeline/stubs.go
+  s_522af339bc956c::t_bf39f45c52d41c 24-31,35-36
+internal/runtime/llmproxy/policies/task_scope_evaluator.go
+  s_522af339bc956c::t_bf39f45c52d41c 21
+internal/runtime/llmproxy/pipeline/response_mutator_impl.go
+  s_522af339bc956c::t_bf39f45c52d41c 24-27
+internal/runtime/llmproxy/policies/task_approval_reply_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 76
+internal/runtime/llmproxy/policies/approval_release.go
+  s_522af339bc956c::t_bf39f45c52d41c 83
+internal/runtime/llmproxy/policies/inspector_evaluator.go
+  s_522af339bc956c::t_bf39f45c52d41c 23
+internal/runtime/llmproxy/policies/control_tool_use_evaluator_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 39,110-111,140-141,168-169,205-206,245-246
+internal/runtime/llmproxy/policies/synthetic_history_strip.go
+  s_522af339bc956c::t_bf39f45c52d41c 47,60
+internal/runtime/llmproxy/policies/inline_task_augment.go
+  s_522af339bc956c::t_bf39f45c52d41c 63,76
+internal/runtime/llmproxy/policies/recording_mutator_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 16-23
+internal/runtime/llmproxy/policies/boundary_check_evaluator.go
+  s_522af339bc956c::t_bf39f45c52d41c 13,96,99,101,103,116
+internal/api/handlers/llm_endpoint.go
+  s_522af339bc956c::t_bf39f45c52d41c 23-24,389,490,544,596,624,685,741,749,752,755,874,1054-1055,1059-1061,1064-1070,1074-1076,1078-1080,1083-1085,1454-1455,1459-1461,1464-1470,1474-1476,1478-1480,1483-1485,1521-1522,1526-1528,1531-1537,1541-1543,1545-1547,1550-1552,3064,3093,3107,3116,3121,3124,3127,3131-3133,3192-3196,3740-3742
+internal/runtime/llmproxy/policies/script_session_evaluator_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 46-47
+internal/api/handlers/llm_endpoint_pipeline.go
+  s_522af339bc956c::t_bf39f45c52d41c 53
+internal/runtime/llmproxy/policies/agent_notice_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 54
+internal/runtime/llmproxy/policies/inspector_chain_integration_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 21-26
+internal/runtime/llmproxy/pipeline/post_orchestrator_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 41,113-114
+internal/runtime/llmproxy/policies/integration_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 89-90,147
+internal/runtime/llmproxy/pipeline/orchestrator_test.go
+  s_522af339bc956c::t_bf39f45c52d41c 22-32,36-38,45,64,91,148-149,151-152,187,190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "d7087a5be01f718d7560488fb5ba89cb354bfb4b",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

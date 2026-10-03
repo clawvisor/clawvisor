@@ -1,0 +1,22 @@
+internal/runtime/policy/task_match.go
+  s_5690062ed6cda8::t_76da2e19aad8c0 105
+pkg/runtime/decision/decision_test.go
+  s_5690062ed6cda8::t_ef88aee46ea764 349-367
+  s_5690062ed6cda8::t_75333d76587349 375-378
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "467931a61e873f46e40cdcb0bfaab024abcf7454",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

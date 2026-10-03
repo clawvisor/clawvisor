@@ -1,0 +1,19 @@
+pkg/store/sqlite/migrations/060_api_tokens.sql
+  s_55f7a841d7c10e::t_2cfef191a84f4f 13-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1199be366c8e7a19fe1846b7bc7f70794d2f0e72",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

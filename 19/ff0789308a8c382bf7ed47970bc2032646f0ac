@@ -1,0 +1,32 @@
+e2e/scenarios/api_tokens_test.go
+  s_55f7a841d7c10e::t_06bbb9a53b8e1b 120-159
+provider/docs/resources/api_token.md
+  s_55f7a841d7c10e::t_151db2f8694681 39
+internal/api/middleware/apitoken.go
+  s_55f7a841d7c10e::t_3ab87a2fd3cc91 43-50
+provider/internal/provider/resource_api_token.go
+  s_55f7a841d7c10e::t_e87da77f87baf1 66
+internal/api/handlers/apitokens_test.go
+  s_55f7a841d7c10e::t_8bb3f4c37969d4 1-84
+provider/internal/client/tokens.go
+  s_55f7a841d7c10e::t_fa0a1e08a87f49 16-18
+internal/api/handlers/apitokens.go
+  s_55f7a841d7c10e::t_dd6c3befc27a01 16-18
+  s_55f7a841d7c10e::t_2a270966f3d778 51-55,60,62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "19ff0789308a8c382bf7ed47970bc2032646f0ac",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

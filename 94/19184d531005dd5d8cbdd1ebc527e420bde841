@@ -1,0 +1,38 @@
+pkg/store/postgres/store.go
+  s_e6ce99dbd88a86::t_34e6ff9a652542 380-425
+internal/api/server.go
+  s_e6ce99dbd88a86::t_2976d2f98f3a6c 493
+internal/runtime/llmproxy/observe.go
+  s_e6ce99dbd88a86::t_8a7c5f71f1afca 131-144
+pkg/store/sqlite/store_enforcement_mode_test.go
+  s_e6ce99dbd88a86::t_e38146f2d67ba5 69-138
+pkg/store/sqlite/store.go
+  s_e6ce99dbd88a86::t_451a86ec9d47d7 472-520
+internal/api/handlers/enforcement_mode.go
+  s_e6ce99dbd88a86::t_27f2ed483baeb1 21-28,30,33-35,88-94,98
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_e6ce99dbd88a86::t_8ad4ed21d2b67b 793
+  s_e6ce99dbd88a86::t_9130f089a36ac4 803
+  s_e6ce99dbd88a86::t_1f33a5ff6e3536 868-874
+  s_e6ce99dbd88a86::t_34f3df60808c9e 759-779
+  s_e6ce99dbd88a86::t_e60c842dad36f0 615,634-637,639
+  s_e6ce99dbd88a86::t_855dd79c7c6b17 822-823,825
+pkg/store/store.go
+  s_e6ce99dbd88a86::t_8131f495581135 67-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "9419184d531005dd5d8cbdd1ebc527e420bde841",
+  "prompts": {},
+  "sessions": {
+    "s_e6ce99dbd88a86": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d8f54215-59b6-4fa0-8853-7dbf71fbb95c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

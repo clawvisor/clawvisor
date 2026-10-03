@@ -1,0 +1,95 @@
+internal/mcp/tools.go
+  s_fd6d9b102e043d::t_8f703e45b1a140 144,149-151,158,163-170
+internal/api/handlers/tasks_expand_test.go
+  s_fd6d9b102e043d::t_432a0749fcf61b 133,161
+  s_fd6d9b102e043d::t_7dfd599ae98d76 33,68,96,186,251,282
+internal/tui/client/types.go
+  s_fd6d9b102e043d::t_4ff8e7761f8e64 205-208
+  s_fd6d9b102e043d::t_23c7f80d1d1be2 184-194
+internal/runtime/tasks/envelope_test.go
+  s_fd6d9b102e043d::t_73c800c4ab94cd 134-143,157-208,217,220,225,228-294
+pkg/store/sqlite/store.go
+  s_fd6d9b102e043d::t_53971b8044f906 1771-1773
+  s_fd6d9b102e043d::t_7934a5b96f80d6 1698-1699,1707-1709,1711-1714
+pkg/store/sqlite/migrations/055_task_pending_expansion_envelope.sql
+  s_fd6d9b102e043d::t_046a0a2db245d8 10-13,15-17,22-24
+internal/api/handlers/tasks.go
+  s_fd6d9b102e043d::t_410df1fcbab53f 1862-1872
+  s_fd6d9b102e043d::t_589510aeafa657 2702-2709,2727-2733,2744,2747-2753,2766-2774,2780
+  s_fd6d9b102e043d::t_c250dddfdcd04c 3058-3060,3062,3066
+  s_fd6d9b102e043d::t_f9b08b32acac41 2101-2115
+  s_fd6d9b102e043d::t_56aa19dce84a1c 1148-1154,1159-1161
+  s_fd6d9b102e043d::t_aa1ae4e1cb1828 2557-2558,2560-2565
+  s_fd6d9b102e043d::t_461d72f2b8b22d 1906-1920
+  s_fd6d9b102e043d::t_f7ba1c7c35f377 2480-2489,2491,2496
+  s_fd6d9b102e043d::t_07c3c91d91afbe 2370-2371
+  s_fd6d9b102e043d::t_123ed3424521bf 2228-2231
+  s_fd6d9b102e043d::t_6efaf0fb8493a0 1155-1158
+  s_fd6d9b102e043d::t_429d6a2cdb3674 3019-3022
+  s_fd6d9b102e043d::t_6f6496bae96880 2542-2547,2550,2554,2559,2566-2582,2584-2586,2588-2589
+  s_fd6d9b102e043d::t_8c83dcafbb89fc 1208
+  s_fd6d9b102e043d::t_dcada631b1a518 2258
+  s_fd6d9b102e043d::t_b853ab9f699aca 2259-2267,2280
+  s_fd6d9b102e043d::t_98d70ca2fd631d 543-546,548-550
+pkg/store/store.go
+  s_fd6d9b102e043d::t_221d78dbadc491 880-894
+  s_fd6d9b102e043d::t_c6b09234b88378 858-864,870-871
+  s_fd6d9b102e043d::t_23c1e94796584f 812-825,833
+internal/runtime/tasks/envelope.go
+  s_fd6d9b102e043d::t_6fb889135fd8c2 5,126,128-147,149-153,179-183,190,201-214,220,223-227,238,245,252-265,276,279-284,310-322,332-374,384-388,439,464-492
+  s_fd6d9b102e043d::t_e540151e39dd6e 440-463
+internal/tui/screens/helpers_test.go
+  s_fd6d9b102e043d::t_87abaa932c87bd 1-116
+pkg/notify/expansion_render.go
+  s_fd6d9b102e043d::t_49a8944670362c 1-128
+pkg/notify/notify.go
+  s_fd6d9b102e043d::t_7917d9c6ff163d 149-155
+web/src/components/TaskCard.tsx
+  s_fd6d9b102e043d::t_cb609784c96a3b 774-775
+  s_fd6d9b102e043d::t_014505e959a92d 790,808
+  s_fd6d9b102e043d::t_1b2ac42f82c912 3
+  s_fd6d9b102e043d::t_a7a3c070ef862c 1134
+  s_fd6d9b102e043d::t_c43125ccb96a28 647-648
+  s_fd6d9b102e043d::t_e53f004935612c 832,838,860-875
+  s_fd6d9b102e043d::t_cf08d611e44084 915,938,955-976
+  s_fd6d9b102e043d::t_661ff77c18256d 446
+  s_fd6d9b102e043d::t_62271542fca0b3 1120,1124
+  s_fd6d9b102e043d::t_167a5793682508 413-420
+internal/notify/telegram/telegram.go
+  s_fd6d9b102e043d::t_c51069674801e6 778-783
+internal/api/handlers/tasks_inline.go
+  s_fd6d9b102e043d::t_fbaf4f1cb168ce 443-449,451-453
+  s_fd6d9b102e043d::t_273cbe2a86d11e 159-165,167-169
+pkg/store/postgres/migrations/055_task_pending_expansion_envelope.sql
+  s_fd6d9b102e043d::t_4e63609a22161d 14-21,28-30,35-37,41-43
+internal/notify/push/notifier.go
+  s_fd6d9b102e043d::t_e95056659a8271 229-255,260,263
+pkg/store/postgres/store.go
+  s_fd6d9b102e043d::t_a1fbf16347f9b2 1430-1437,1445-1447,1449-1450
+  s_fd6d9b102e043d::t_c889f2129c8956 1507-1509
+web/src/api/client.ts
+  s_fd6d9b102e043d::t_1698d3bf3d11e7 660
+internal/tui/screens/helpers.go
+  s_fd6d9b102e043d::t_e653e6437a5e1b 63-71
+  s_fd6d9b102e043d::t_a1d45e3a081fdc 222-251
+  s_fd6d9b102e043d::t_f5579d754d9e38 106
+  s_fd6d9b102e043d::t_f1f2d11b0cf496 167,174-185
+internal/api/gateway_test.go
+  s_fd6d9b102e043d::t_a072f978dbcd40 1076-1147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "77321c71edbf539768bca306039ec3a3855b7ccc",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

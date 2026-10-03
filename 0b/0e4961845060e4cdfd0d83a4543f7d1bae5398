@@ -1,0 +1,40 @@
+internal/runtime/llmproxy/inline_task_augment_test.go
+  s_8f3d790934e389::t_2a1b09e8552dcd 400-430
+  s_8f3d790934e389::t_ed30c21a3b2bbe 322-375
+internal/runtime/llmproxy/release_test.go
+  s_8f3d790934e389::t_57801273f3d07e 317-318
+internal/api/handlers/tasks_inline.go
+  s_8f3d790934e389::t_ecb99cd4a2be21 166-182
+internal/runtime/llmproxy/control_multistmt_test.go
+  s_8f3d790934e389::t_97be1d7ad3567c 264-268,275-276
+internal/runtime/llmproxy/control.go
+  s_8f3d790934e389::t_bc8c77f1f5c06d 866-871
+pkg/runtime/decision/decision.go
+  s_8f3d790934e389::t_9efb817c8d1050 439,489
+  s_8f3d790934e389::t_2ede4ffe40d899 585-623
+internal/runtime/llmproxy/release.go
+  s_8f3d790934e389::t_72405cf356a5b3 129-134,137
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_8f3d790934e389::t_03d4587d665904 577,584-602
+  s_8f3d790934e389::t_5c90daf77361c0 501-520
+pkg/runtime/decision/decision_test.go
+  s_8f3d790934e389::t_6437cb67df61e2 399-407,421-425,430-432,448-452,456-460,471-493,495
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_8f3d790934e389::t_aaa7eb3f2bf0ef 79-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "0b0e4961845060e4cdfd0d83a4543f7d1bae5398",
+  "prompts": {},
+  "sessions": {
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

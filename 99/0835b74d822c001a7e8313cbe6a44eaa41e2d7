@@ -1,0 +1,63 @@
+internal/runtime/llmproxy/policies/control_tool_use_evaluator_test.go
+  s_522af339bc956c::t_1f4001b8093871 23,38-41,236-266
+  s_522af339bc956c::t_432302207bb7f4 17-22
+internal/api/handlers/llm_endpoint.go
+  s_522af339bc956c::t_63534cded0777a 567,748
+  s_522af339bc956c::t_6e6b466c9850b9 397-399,559-560,740-741,4656
+  s_522af339bc956c::t_b25a4992270770 405,639-641,647
+  s_522af339bc956c::t_d915463a01ea73 4671
+internal/runtime/llmproxy/policies/control_notice_test.go
+  s_522af339bc956c::t_415566c0d8ed50 84-103
+internal/runtime/llmproxy/pipeline/orchestrator.go
+  s_522af339bc956c::t_d915463a01ea73 82-83
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator.go
+  s_522af339bc956c::t_d581523e437e9d 103,107-108,130,150
+internal/runtime/llmproxy/policies/task_approval_reply_test.go
+  s_522af339bc956c::t_415566c0d8ed50 5-6,86-111
+internal/runtime/llmproxy/pipeline/orchestrator_test.go
+  s_522af339bc956c::t_d915463a01ea73 258,262-269
+internal/runtime/llmproxy/policies/control_notice.go
+  s_522af339bc956c::t_63534cded0777a 84
+  s_522af339bc956c::t_6e6b466c9850b9 85
+  s_522af339bc956c::t_d915463a01ea73 82
+internal/api/handlers/llm_endpoint_stream_error_test.go
+  s_522af339bc956c::t_d915463a01ea73 40,43-44
+  s_522af339bc956c::t_6e6b466c9850b9 25-27
+internal/runtime/llmproxy/pipeline/tool_use_runner.go
+  s_522af339bc956c::t_d915463a01ea73 71-78
+internal/api/handlers/testdata/llm_characterization/malformed_request.json
+  s_522af339bc956c::t_826e33e75a5330 10,14
+internal/runtime/llmproxy/policies/anthropic_sanitize.go
+  s_522af339bc956c::t_6e6b466c9850b9 47
+  s_522af339bc956c::t_d915463a01ea73 32-34,44
+  s_522af339bc956c::t_63534cded0777a 46
+internal/runtime/llmproxy/policies/task_approval_reply.go
+  s_522af339bc956c::t_d915463a01ea73 75
+  s_522af339bc956c::t_6e6b466c9850b9 77-78
+internal/runtime/llmproxy/policies/credential_rewrite_evaluator_test.go
+  s_522af339bc956c::t_1f4001b8093871 179,183,205-212
+internal/runtime/llmproxy/policies/control_tool_use_evaluator.go
+  s_522af339bc956c::t_d581523e437e9d 110,114-115,125,133,142,166,170-171,181,189,198
+internal/runtime/llmproxy/pipeline/tool_use_runner_test.go
+  s_522af339bc956c::t_f23f2bac2723ad 125-145
+internal/runtime/llmproxy/policies/anthropic_sanitize_test.go
+  s_522af339bc956c::t_415566c0d8ed50 121-126
+internal/api/handlers/llm_endpoint_test.go
+  s_522af339bc956c::t_626d3c649b3494 1586-1590
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "990835b74d822c001a7e8313cbe6a44eaa41e2d7",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

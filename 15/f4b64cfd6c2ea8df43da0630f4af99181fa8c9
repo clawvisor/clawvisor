@@ -1,0 +1,26 @@
+config.example.yaml
+  s_55f7a841d7c10e::t_790f3bab7d0d4f 45-50
+pkg/config/config.go
+  s_55f7a841d7c10e::t_3e2f0dec592ad8 228-241
+  s_55f7a841d7c10e::t_3f084e6bfa49cc 520-526
+  s_55f7a841d7c10e::t_a46fe66abc6eff 995-1003
+  s_55f7a841d7c10e::t_048d402967d824 1205-1215,1225,1232
+pkg/config/config_test.go
+  s_55f7a841d7c10e::t_2177b00d334352 364-421
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "15f4b64cfd6c2ea8df43da0630f4af99181fa8c9",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}

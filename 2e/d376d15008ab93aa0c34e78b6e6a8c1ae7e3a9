@@ -1,0 +1,26 @@
+provider/internal/provider/common.go
+  s_55f7a841d7c10e::t_526132bdb41a9c 58-60
+provider/internal/provider/resource_vault_reference.go
+  s_55f7a841d7c10e::t_0a44b71ea1dbe5 103-105
+  s_55f7a841d7c10e::t_69a91f794c3913 120-122
+  s_55f7a841d7c10e::t_adea3ea34d93bb 161-163
+  s_55f7a841d7c10e::t_368a662205b832 143-145
+provider/internal/provider/resource_vault_reference_test.go
+  s_55f7a841d7c10e::t_f483c6c5e20c4c 1-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2ed376d15008ab93aa0c34e78b6e6a8c1ae7e3a9",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

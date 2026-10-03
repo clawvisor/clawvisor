@@ -1,0 +1,49 @@
+internal/api/handlers/installer.go
+  s_3c34af4b91b3c7::t_fe273e52a0d1d1 1384
+  s_3c34af4b91b3c7::t_162a9e9f576a61 1386-1387
+  s_3c34af4b91b3c7::t_d02e7ed04c5e3a 1473
+  s_3c34af4b91b3c7::t_d9957f1e32bb39 1385
+  s_3c34af4b91b3c7::t_2f40b3c1d09e35 1103
+  s_3c34af4b91b3c7::t_c4e03a06c30e4c 1368-1369,1373
+  s_3c34af4b91b3c7::t_49c5cc2962101c 1414-1415,1419-1420
+  s_3c34af4b91b3c7::t_3de089af79354d 1330
+  s_3c34af4b91b3c7::t_cc5500a2f94ce8 1331
+  s_3c34af4b91b3c7::t_1a9ccf44c79973 1245-1268
+  s_3c34af4b91b3c7::t_d7b76d59fd525c 1332-1333
+  s_3c34af4b91b3c7::t_8bbc03984738e9 1293-1301,1307,1309-1310,1314
+  s_3c34af4b91b3c7::t_e7178f93a33f14 1490,1501
+  s_3c34af4b91b3c7::t_97f0b65518159c 1401
+  s_3c34af4b91b3c7::t_73764f8feae606 972-1006
+  s_3c34af4b91b3c7::t_803eec389b14a6 1239-1240
+  s_3c34af4b91b3c7::t_4fd9c355923f7f 1510-1511
+  s_3c34af4b91b3c7::t_ce46a0a1272f67 1624-1628,1630
+  s_3c34af4b91b3c7::t_c4289c46af4afe 679-691
+  s_3c34af4b91b3c7::t_d18a89cf4b905d 1271-1273
+  s_3c34af4b91b3c7::t_31ec1afb478acd 1660-1664,1668
+  s_3c34af4b91b3c7::t_57aab4e4534d78 1078
+  s_3c34af4b91b3c7::t_16deba8bddae5d 952-965
+internal/api/handlers/installer_test.go
+  s_3c34af4b91b3c7::t_6fa4afba5256b2 171-179
+  s_3c34af4b91b3c7::t_3bb8b75862096c 250-251
+  s_3c34af4b91b3c7::t_a178db8f56aa40 238-239,241-242,249
+  s_3c34af4b91b3c7::t_8a43d73b6167db 291-299
+  s_3c34af4b91b3c7::t_4463629f17df5a 322-382
+  s_3c34af4b91b3c7::t_d768fc13238025 248
+  s_3c34af4b91b3c7::t_a96260d7531c59 273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "e7d3b65cf191610b48534f5bc1c562fd3572129a",
+  "prompts": {},
+  "sessions": {
+    "s_3c34af4b91b3c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35c0e80e-2cf6-45cb-a34c-a6f0314c5f4b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

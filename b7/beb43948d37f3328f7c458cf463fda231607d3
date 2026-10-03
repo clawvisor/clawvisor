@@ -1,0 +1,22 @@
+internal/observability/provider.go
+  s_55f7a841d7c10e::t_539626358ee326 156-159
+  s_55f7a841d7c10e::t_be2805ad1efb75 17
+internal/observability/provider_test.go
+  s_55f7a841d7c10e::t_087b28895c16fc 82-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b7beb43948d37f3328f7c458cf463fda231607d3",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

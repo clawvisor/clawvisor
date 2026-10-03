@@ -1,0 +1,35 @@
+e2e/browser/.npmrc
+  s_43730515fda43f::t_4059106287aa13 1
+e2e/browser/package-lock.json
+  s_43730515fda43f::t_0db05bdb21d071 11,15-17,21,46-48,52,65-67
+e2e/browser/package.json
+  s_43730515fda43f::t_8120bd511a75f9 12
+go.mod
+  s_43730515fda43f::t_ba59d557b35e66 39,42-43,120-121
+go.sum
+  s_43730515fda43f::t_1bbd29c600129f 270-271,274-275,280-281,286-291,294-295
+provider/go.mod
+  s_43730515fda43f::t_0848d2356acd18 18,56-57,59-62
+provider/go.sum
+  s_43730515fda43f::t_e5ad094be92780 18-19,31-34,111-112,140-141,183-184,186-187,197-198,210-211,218-219,223-224
+web/package-lock.json
+  s_43730515fda43f::t_769436df0926cf 15,1598-1600
+web/package.json
+  s_43730515fda43f::t_be8d686890a3cd 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "a072141c51478b87385eab815cc8d82b04e80624",
+  "prompts": {},
+  "sessions": {
+    "s_43730515fda43f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5fca92d-fd1c-4016-ad56-4041a99b3020",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

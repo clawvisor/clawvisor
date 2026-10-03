@@ -1,0 +1,29 @@
+internal/api/handlers/control_test.go
+  s_ae08316ed37510::t_00daa48bef60ab 206-235
+pkg/runtime/decision/decision_test.go
+  s_ae08316ed37510::t_0f6b2e34a6e0ea 333-342,354-358
+internal/runtime/policy/request_classify.go
+  s_ae08316ed37510::t_c004a8829dba29 81-91
+internal/runtime/policy/request_classify_test.go
+  s_ae08316ed37510::t_846ab32907374b 78-94
+internal/api/handlers/control.go
+  s_ae08316ed37510::t_6128817d78ad36 242
+  s_ae08316ed37510::t_6e3cf4b89be0cd 407-425
+  s_ae08316ed37510::t_3a392bec53c059 372
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "9652c9b4c2be46e763fb6fadcdfcd12eec16d89c",
+  "prompts": {},
+  "sessions": {
+    "s_ae08316ed37510": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5680719f-610d-40c6-91f4-3ca1c8c23b97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
