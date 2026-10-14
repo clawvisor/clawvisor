@@ -303,6 +303,7 @@ func TestBuiltinPatterns_NoEntityIDForKnownServices(t *testing.T) {
 	}{
 		{"google.gmail", `{"messages":[{"id":"19d5fe858c900042","threadId":"19d5fe858c900040"}]}`},
 		{"google.drive", `{"files":[{"id":"1BxR7a3mNpQ9vK2wL5sYcTfDgHjKlMnO"}]}`},
+		{"google.sheets", `{"spreadsheet_id":"1BxR7a3mNpQ9vK2wL5sYcTfDgHjKlMnO"}`},
 		{"google.calendar", `{"data":[{"id":"1pj4096shhq40g6hkl995jrqfo"}]}`},
 		{"slack", `{"channels":[{"id":"C0123456789"}]}`},
 		{"linear", `{"issues":[{"id":"3a7c8e1b-2d4f-49a0-91c5-b7e1f8d2c4a6","identifier":"ENG-123"}]}`},
