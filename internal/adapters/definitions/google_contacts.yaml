@@ -65,7 +65,7 @@ actions:
     method: GET
     path: "/{{.contact_id}}"
     params:
-      contact_id: { type: string, required: true, location: path }
+      contact_id: { type: string, required: true, location: path, allow_slash: true } # resource names like "people/c123"
       person_fields:
         type: string
         default: "names,emailAddresses,phoneNumbers,organizations,biographies"

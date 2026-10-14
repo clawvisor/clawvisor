@@ -168,6 +168,11 @@ type Param struct {
 	Max      *int   `yaml:"max,omitempty"`
 	Location string `yaml:"location,omitempty"` // "query", "body", "path"
 
+	// AllowSlash lets a path param span multiple segments (e.g. "people/123").
+	// Off by default: "/" in a path value is percent-encoded so the caller
+	// cannot address a different endpoint. Dot segments are always rejected.
+	AllowSlash bool `yaml:"allow_slash,omitempty"`
+
 	// Aliases are alternative caller-facing names for this parameter. When the
 	// primary name is absent from the request, the runtime falls back to the
 	// first alias that appears. Used for backward-compatibility renames and

@@ -140,7 +140,7 @@ func (a *GmailAdapter) httpClient(ctx context.Context, credBytes []byte) (*http.
 		return nil, fmt.Errorf("gmail: %w", err)
 	}
 	ts := a.OAuthConfig().TokenSource(ctx, cred.ToOAuth2Token())
-	return oauth2.NewClient(ctx, ts), nil
+	return adapters.GuardPathTraversal(oauth2.NewClient(ctx, ts)), nil
 }
 
 // ── list_messages ─────────────────────────────────────────────────────────────
@@ -268,7 +268,11 @@ func (a *GmailAdapter) getMessage(ctx context.Context, client *http.Client, para
 		return nil, fmt.Errorf("gmail get_message: message_id is required")
 	}
 
-	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=full", msgID)
+	msgSeg, err := adapters.PathSegment(msgID)
+	if err != nil {
+		return nil, fmt.Errorf("gmail get_message: message_id: %w", err)
+	}
+	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=full", msgSeg)
 	var raw gmailMessage
 	if err := gmailGET(ctx, client, url, &raw); err != nil {
 		return nil, fmt.Errorf("gmail get_message: %w", err)
@@ -305,8 +309,11 @@ func (a *GmailAdapter) getMessageRaw(ctx context.Context, client *http.Client, p
 		return nil, fmt.Errorf("gmail get_message_raw: %w", err)
 	}
 
-	endpoint := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=raw",
-		url.PathEscape(msgID))
+	msgSeg, err := adapters.PathSegment(msgID)
+	if err != nil {
+		return nil, fmt.Errorf("gmail get_message_raw: message_id: %w", err)
+	}
+	endpoint := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=raw", msgSeg)
 	var msg struct {
 		ID           string `json:"id"`
 		ThreadID     string `json:"threadId"`
@@ -367,7 +374,11 @@ func (a *GmailAdapter) getThread(ctx context.Context, client *http.Client, param
 		return nil, fmt.Errorf("gmail get_thread: thread_id is required")
 	}
 
-	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadID)
+	threadSeg, err := adapters.PathSegment(threadID)
+	if err != nil {
+		return nil, fmt.Errorf("gmail get_thread: thread_id: %w", err)
+	}
+	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadSeg)
 	var raw struct {
 		ID       string         `json:"id"`
 		Messages []gmailMessage `json:"messages"`
@@ -464,7 +475,15 @@ func (a *GmailAdapter) getAttachment(ctx context.Context, client *http.Client, p
 		return nil, fmt.Errorf("gmail get_attachment: attachment_id is required")
 	}
 
-	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/attachments/%s", msgID, attachmentID)
+	msgSeg, err := adapters.PathSegment(msgID)
+	if err != nil {
+		return nil, fmt.Errorf("gmail get_attachment: message_id: %w", err)
+	}
+	attachmentSeg, err := adapters.PathSegment(attachmentID)
+	if err != nil {
+		return nil, fmt.Errorf("gmail get_attachment: attachment_id: %w", err)
+	}
+	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/attachments/%s", msgSeg, attachmentSeg)
 	var raw struct {
 		Size int    `json:"size"`
 		Data string `json:"data"`
@@ -511,7 +530,11 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 	}
 
 	if threadID != "" {
-		threadURL := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadID)
+		threadSeg, err := adapters.PathSegment(threadID)
+		if err != nil {
+			return nil, fmt.Errorf("gmail send_message: thread_id: %w", err)
+		}
+		threadURL := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadSeg)
 		var threadResp struct {
 			ID       string         `json:"id"`
 			Messages []gmailMessage `json:"messages"`
@@ -647,7 +670,11 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 	}
 
 	if threadID != "" {
-		threadURL := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadID)
+		threadSeg, err := adapters.PathSegment(threadID)
+		if err != nil {
+			return nil, fmt.Errorf("gmail create_draft: thread_id: %w", err)
+		}
+		threadURL := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadSeg)
 		var threadResp struct {
 			ID       string         `json:"id"`
 			Messages []gmailMessage `json:"messages"`
@@ -756,7 +783,11 @@ func (a *GmailAdapter) archiveMessage(ctx context.Context, client *http.Client, 
 		return nil, fmt.Errorf("gmail archive_message: message_id is required")
 	}
 
-	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/modify", msgID)
+	msgSeg, err := adapters.PathSegment(msgID)
+	if err != nil {
+		return nil, fmt.Errorf("gmail archive_message: message_id: %w", err)
+	}
+	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/modify", msgSeg)
 	payload := map[string][]string{"removeLabelIds": {"INBOX"}}
 
 	var modifyResp struct {
@@ -813,7 +844,11 @@ func (a *GmailAdapter) modifyLabels(ctx context.Context, client *http.Client, pa
 	if len(removeLabelIDs) > 0 {
 		payload["removeLabelIds"] = removeLabelIDs
 	}
-	endpoint := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/modify", url.PathEscape(msgID))
+	msgSeg, err := adapters.PathSegment(msgID)
+	if err != nil {
+		return nil, fmt.Errorf("gmail modify_labels: message_id: %w", err)
+	}
+	endpoint := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/modify", msgSeg)
 	var modifyResp struct {
 		ID       string   `json:"id"`
 		ThreadID string   `json:"threadId"`
@@ -950,7 +985,11 @@ func resolveThreadFromMessageID(ctx context.Context, client *http.Client, messag
 	// (e.g. "<CABx...@mail.gmail.com>"). Agents commonly pass the API ID
 	// since that's the `id` field returned by get_message/list_messages.
 	if !strings.Contains(messageID, "<") {
-		u := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=minimal", messageID)
+		msgSeg, err := adapters.PathSegment(messageID)
+		if err != nil {
+			return ""
+		}
+		u := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=minimal", msgSeg)
 		var msg struct {
 			ThreadId string `json:"threadId"`
 		}

@@ -544,6 +544,42 @@ func TestArchiveMessage_RequiresMessageID(t *testing.T) {
 	}
 }
 
+func TestMessageIDCannotRetargetEndpoint(t *testing.T) {
+	// A message_id like "msg-1/trash#" must not turn archive_message into
+	// POST /messages/msg-1/trash; it has to stay one encoded path segment.
+	var gotPath string
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			gotPath = req.URL.EscapedPath()
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"msg-1","labelIds":[]}`)),
+			}, nil
+		}),
+	}
+	adapter := &GmailAdapter{}
+
+	if _, err := adapter.archiveMessage(context.Background(), client, map[string]any{
+		"message_id": "msg-1/trash#",
+	}); err != nil {
+		t.Fatalf("archiveMessage error: %v", err)
+	}
+	if want := "/gmail/v1/users/me/messages/msg-1%2Ftrash%23/modify"; gotPath != want {
+		t.Fatalf("path = %q, want %q", gotPath, want)
+	}
+
+	gotPath = ""
+	if _, err := adapter.getMessage(context.Background(), client, map[string]any{
+		"message_id": "../../settings/forwardingAddresses",
+	}); err == nil {
+		t.Fatal("expected error for dot-segment message_id")
+	}
+	if gotPath != "" {
+		t.Fatalf("request reached upstream at %q", gotPath)
+	}
+}
+
 func TestModifyLabels_AddsAndRemovesLabels(t *testing.T) {
 	var sentPayload struct {
 		AddLabelIDs    []string `json:"addLabelIds"`

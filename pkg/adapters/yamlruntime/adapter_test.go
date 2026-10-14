@@ -1311,7 +1311,7 @@ func TestYAMLAdapter_PathParamPreservesSlashes(t *testing.T) {
 				Method: "GET",
 				Path:   "/{{.contact_id}}",
 				Params: map[string]yamldef.Param{
-					"contact_id": {Type: "string", Required: true, Location: "path"},
+					"contact_id": {Type: "string", Required: true, Location: "path", AllowSlash: true},
 				},
 				Response: yamldef.ResponseDef{
 					Fields: []yamldef.FieldDef{
@@ -1337,6 +1337,81 @@ func TestYAMLAdapter_PathParamPreservesSlashes(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
+	}
+}
+
+func TestYAMLAdapter_PathParamCannotEscapeAction(t *testing.T) {
+	// An agent authorized for one action must not be able to steer the
+	// request to another endpoint through a path param value.
+	cases := []struct {
+		name       string
+		allowSlash bool
+		number     any
+		wantPath   string // empty means the request must be refused
+	}{
+		{name: "plain id", number: 42, wantPath: "/repos/o/r/issues/42"},
+		{name: "dot dot traversal", number: "../../../../user/repos"},
+		{name: "bare dot dot", number: ".."},
+		{name: "bare dot", number: "."},
+		{name: "empty", number: ""},
+		{name: "slash encoded by default", number: "42/lock", wantPath: "/repos/o/r/issues/42%2Flock"},
+		{name: "query and fragment encoded", number: "42?x=1#", wantPath: "/repos/o/r/issues/42%3Fx=1%23"},
+		{name: "percent-encoded dots stay literal", number: "%2e%2e", wantPath: "/repos/o/r/issues/%252e%252e"},
+		{name: "allow_slash keeps segments", allowSlash: true, number: "42/comments", wantPath: "/repos/o/r/issues/42/comments"},
+		{name: "allow_slash rejects dot dot", allowSlash: true, number: "42/../../../../user/repos"},
+		{name: "allow_slash rejects empty segment", allowSlash: true, number: "42//comments"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.EscapedPath()
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"number": 42})
+			}))
+			defer srv.Close()
+
+			def := yamldef.ServiceDef{
+				Service: yamldef.ServiceInfo{ID: "github"},
+				Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+				API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+				Actions: map[string]yamldef.Action{
+					"get_issue": {
+						Method: "GET",
+						Path:   "/repos/{{.owner}}/{{.repo}}/issues/{{.number}}",
+						Params: map[string]yamldef.Param{
+							"owner":  {Type: "string", Required: true, Location: "path"},
+							"repo":   {Type: "string", Required: true, Location: "path"},
+							"number": {Type: "string", Required: true, Location: "path", AllowSlash: tc.allowSlash},
+						},
+					},
+				},
+			}
+			adapter, err := New(def, nil)
+			if err != nil {
+				t.Fatalf("New failed: %v", err)
+			}
+			_, err = adapter.Execute(context.Background(), adapters.Request{
+				Action:     "get_issue",
+				Params:     map[string]any{"owner": "o", "repo": "r", "number": tc.number},
+				Credential: testCred("test-token"),
+			})
+			if tc.wantPath == "" {
+				if err == nil {
+					t.Fatalf("expected error, request reached upstream at %q", gotPath)
+				}
+				if gotPath != "" {
+					t.Fatalf("request reached upstream at %q despite error %v", gotPath, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Execute failed: %v", err)
+			}
+			if gotPath != tc.wantPath {
+				t.Fatalf("upstream path = %q, want %q", gotPath, tc.wantPath)
+			}
+		})
 	}
 }
 

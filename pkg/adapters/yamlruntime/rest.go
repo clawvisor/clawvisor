@@ -38,7 +38,10 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 	}
 
 	// Build the URL path with parameter interpolation.
-	path := interpolatePath(action.Path, pathParams, credFields)
+	path, err := interpolatePath(action.Path, action.Params, pathParams, credFields)
+	if err != nil {
+		return nil, err
+	}
 	if unresolved := findUnresolvedPlaceholders(path); len(unresolved) > 0 {
 		return nil, fmt.Errorf("missing required path parameter(s): %s", strings.Join(unresolved, ", "))
 	}
@@ -106,6 +109,11 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
+	// Backstop: a dot segment here would let the upstream resolve the request
+	// to an endpoint other than the authorized action's.
+	if adapters.HasDotSegment(req.URL.EscapedPath()) {
+		return nil, fmt.Errorf("refusing request with dot segment in path %q", req.URL.EscapedPath())
+	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -148,23 +156,41 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 	}, nil
 }
 
-// interpolatePath replaces {{.param}} and {{.credential.field}} placeholders in the URL path.
-func interpolatePath(path string, params map[string]any, credFields map[string]string) string {
+// interpolatePath replaces {{.param}} and {{.credential.field}} placeholders in
+// the URL path. Param values are agent-controlled, so each one must stay inside
+// its own segment: "/" is percent-encoded unless the param opts in with
+// allow_slash, and empty or dot segments are rejected either way.
+func interpolatePath(path string, defs map[string]yamldef.Param, params map[string]any, credFields map[string]string) (string, error) {
 	result := path
 	for k, v := range params {
-		result = strings.ReplaceAll(result, "{{."+k+"}}", escapePathValue(fmt.Sprintf("%v", v)))
+		placeholder := "{{." + k + "}}"
+		if !strings.Contains(result, placeholder) {
+			continue
+		}
+		escape := adapters.PathSegment
+		if defs[k].AllowSlash {
+			escape = adapters.PathSegments
+		}
+		escaped, err := escape(fmt.Sprintf("%v", v))
+		if err != nil {
+			return "", fmt.Errorf("invalid path parameter %q: %w", k, err)
+		}
+		result = strings.ReplaceAll(result, placeholder, escaped)
 	}
 	for k, v := range credFields {
-		result = strings.ReplaceAll(result, "{{.credential."+k+"}}", escapePathValue(v))
+		placeholder := "{{.credential." + k + "}}"
+		if !strings.Contains(result, placeholder) {
+			continue
+		}
+		// Credential fields come from the user, not the agent, so they may span
+		// segments, but dot segments are still refused.
+		escaped, err := adapters.PathSegments(v)
+		if err != nil {
+			return "", fmt.Errorf("invalid credential field %q in path: %w", k, err)
+		}
+		result = strings.ReplaceAll(result, placeholder, escaped)
 	}
-	return result
-}
-
-// escapePathValue encodes reserved characters inside a path placeholder while
-// preserving literal "/" so adapters can keep using multi-segment resource
-// names like "people/123".
-func escapePathValue(v string) string {
-	return strings.ReplaceAll(url.PathEscape(v), "%2F", "/")
+	return result, nil
 }
 
 // resolveParamWithExpr extracts a parameter value from the input, applying
