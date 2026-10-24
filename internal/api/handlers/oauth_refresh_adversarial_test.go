@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,88 +21,8 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlruntime"
 	"github.com/clawvisor/clawvisor/pkg/store"
-	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
-
-type oauthAdversarialFixture struct {
-	store     *sqlite.Store
-	v         vault.Vault
-	user      string
-	key       string
-	reg       *adapters.Registry
-	refreshes atomic.Int32
-	reads     atomic.Int32
-}
-
-func newOAuthAdversarialFixture(t *testing.T, lifetime int, clientID string, duringRefresh func(vault.Vault, string, string)) *oauthAdversarialFixture {
-	t.Helper()
-	t.Setenv("CLAWVISOR_YAMLRUNTIME_ALLOW_PRIVATE_NETWORKS", "1")
-	ctx := context.Background()
-	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "oauth.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	u, err := sqlite.NewStore(db).CreateUser(ctx, "race@example.test", "hash", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	v, err := vault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
-	if err != nil {
-		t.Fatal(err)
-	}
-	f := &oauthAdversarialFixture{store: sqlite.NewStore(db), v: v, user: u.ID, key: "x.account:alice", reg: adapters.NewRegistry()}
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/token" {
-			_ = r.ParseForm()
-			cid := r.Form.Get("client_id")
-			if cid == "" {
-				cid, _, _ = r.BasicAuth()
-			}
-			generation := f.refreshes.Load()
-			if cid != clientID || r.Form.Get("refresh_token") != fmt.Sprintf("refresh-%d", generation) || !f.refreshes.CompareAndSwap(generation, generation+1) {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
-				return
-			}
-			if duringRefresh != nil {
-				duringRefresh(v, u.ID, f.key)
-			}
-			_, _ = fmt.Fprintf(w, `{"access_token":"access-%d","refresh_token":"refresh-%d","token_type":"Bearer","expires_in":%d}`, generation+1, generation+1, lifetime)
-			return
-		}
-		f.reads.Add(1)
-		if r.Header.Get("Authorization") != fmt.Sprintf("Bearer access-%d", f.refreshes.Load()) {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		_, _ = w.Write([]byte(`{"data":{"id":"123"}}`))
-	}))
-	t.Cleanup(provider.Close)
-	def := yamldef.ServiceDef{
-		Service: yamldef.ServiceInfo{ID: "x.account"},
-		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer ", PKCEFlow: &yamldef.PKCEFlowDef{ClientID: "builtin-client", TokenURL: provider.URL + "/token"}},
-		API:     yamldef.APIDef{BaseURL: provider.URL, Type: "rest"},
-		Actions: map[string]yamldef.Action{"get_me": {Method: "GET", Path: "/me", Response: yamldef.ResponseDef{DataPath: "data"}}},
-	}
-	a, err := yamlruntime.New(def, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.reg.Register(a)
-	initial, _ := json.Marshal(map[string]any{"type": "oauth2", "access_token": "access-0", "refresh_token": "refresh-0", "expiry": time.Now().Add(-time.Hour)})
-	if err := v.Set(ctx, u.ID, f.key, initial); err != nil {
-		t.Fatal(err)
-	}
-	return f
-}
-
-func (f *oauthAdversarialFixture) execute() error {
-	_, err := executeAdapterRequest(context.Background(), f.v, f.reg, nil, f.user, f.key, "get_me", nil, f.key)
-	return err
-}
 
 func TestOAuthRefreshDoesNotOverwriteConcurrentCredentialChange(t *testing.T) {
 	for _, remove := range []bool{false, true} {

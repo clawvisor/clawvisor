@@ -5,94 +5,30 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/clawvisor/clawvisor/pkg/adapters"
-	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
-	"github.com/clawvisor/clawvisor/pkg/adapters/yamlruntime"
-	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 func TestGatewayPersistsRotatingPKCECredentials(t *testing.T) {
-	t.Setenv("CLAWVISOR_YAMLRUNTIME_ALLOW_PRIVATE_NETWORKS", "1")
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
 	ctx := context.Background()
-	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "oauth.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	user, err := sqlite.NewStore(db).CreateUser(ctx, "oauth@example.test", "hash", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyPath := filepath.Join(t.TempDir(), "vault.key")
-	v, err := vault.NewLocalVault(keyPath, db, "sqlite")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var refreshes atomic.Int32
-	var reads atomic.Int32
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/token" {
-			_ = r.ParseForm()
-			generation := refreshes.Load()
-			if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != fmt.Sprintf("refresh-%d", generation) || !refreshes.CompareAndSwap(generation, generation+1) {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token already redeemed"}`))
-				return
-			}
-			_, _ = fmt.Fprintf(w, `{"access_token":"access-%d","refresh_token":"refresh-%d","token_type":"Bearer","expires_in":7200}`, generation+1, generation+1)
-			return
-		}
-		reads.Add(1)
-		if r.Header.Get("Authorization") != fmt.Sprintf("Bearer access-%d", refreshes.Load()) && r.Header.Get("Authorization") != "Bearer static-key" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		_, _ = w.Write([]byte(`{"data":{"id":"123"}}`))
-	}))
-	t.Cleanup(provider.Close)
-	def := yamldef.ServiceDef{
-		Service: yamldef.ServiceInfo{ID: "x.account"},
-		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer ", PKCEFlow: &yamldef.PKCEFlowDef{ClientID: "native-client", TokenURL: provider.URL + "/token"}},
-		API:     yamldef.APIDef{BaseURL: provider.URL, Type: "rest"},
-		Actions: map[string]yamldef.Action{"get_me": {Method: "GET", Path: "/me", Response: yamldef.ResponseDef{DataPath: "data"}}},
-	}
-	newRegistry := func() *adapters.Registry {
-		a, err := yamlruntime.New(def, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		r := adapters.NewRegistry()
-		r.Register(a)
-		return r
-	}
 	initial, _ := json.Marshal(map[string]any{"type": "oauth2", "access_token": "access-0", "refresh_token": "refresh-0", "expiry": time.Now().Add(-time.Hour), "scopes": []string{"offline.access", "users.read"}, "custom_metadata": "preserve-me"})
-	const key = "x.account:alice"
-	if err := v.Set(ctx, user.ID, key, initial); err != nil {
+	if err := f.v.Set(ctx, f.user, f.key, initial); err != nil {
 		t.Fatal(err)
 	}
 	for request := 0; request < 2; request++ {
-		// A new registry discards all adapter-local token caches, as a restart does.
-		v, err = vault.NewLocalVault(keyPath, db, "sqlite")
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err := executeAdapterRequest(ctx, v, newRegistry(), nil, user.ID, key, "get_me", nil, key)
+		// Reopen both vault and adapters so these requests cannot rely on caches.
+		f.reopen(t)
+		err := f.execute()
 		if err != nil {
 			t.Fatalf("request %d failed: %v", request+1, err)
 		}
 	}
-	raw, err := v.Get(ctx, user.ID, key)
+	raw, err := f.v.Get(ctx, f.user, f.key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,13 +45,13 @@ func TestGatewayPersistsRotatingPKCECredentials(t *testing.T) {
 	if fmt.Sprint(stored["scopes"]) != "[offline.access users.read]" {
 		t.Fatal("credential scopes were lost")
 	}
-	if refreshes.Load() != 1 {
-		t.Fatalf("refresh count = %d, want 1", refreshes.Load())
+	if f.refreshes.Load() != 1 {
+		t.Fatalf("refresh count = %d, want 1", f.refreshes.Load())
 	}
 
 	expire := func() {
 		t.Helper()
-		raw, err := v.Get(ctx, user.ID, key)
+		raw, err := f.v.Get(ctx, f.user, f.key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,25 +64,25 @@ func TestGatewayPersistsRotatingPKCECredentials(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := v.Set(ctx, user.ID, key, raw); err != nil {
+		if err := f.v.Set(ctx, f.user, f.key, raw); err != nil {
 			t.Fatal(err)
 		}
 	}
 	expire()
-	if _, err := executeAdapterRequest(ctx, v, newRegistry(), nil, user.ID, key, "get_me", nil, key); err != nil {
+	if err := f.execute(); err != nil {
 		t.Fatalf("second expiry cycle: %v", err)
 	}
-	if refreshes.Load() != 2 {
+	if f.refreshes.Load() != 2 {
 		t.Fatal("second cycle did not use the rotated refresh token")
 	}
 
 	expire()
-	reg := newRegistry()
+	f.reg = f.newRegistry(t)
 	var wg sync.WaitGroup
 	failures := make(chan error, 12)
 	for range 12 {
 		wg.Go(func() {
-			_, err := executeAdapterRequest(ctx, v, reg, nil, user.ID, key, "get_me", nil, key)
+			err := f.execute()
 			failures <- err
 		})
 	}
@@ -157,46 +93,54 @@ func TestGatewayPersistsRotatingPKCECredentials(t *testing.T) {
 			t.Fatalf("concurrent request: %v", err)
 		}
 	}
-	if refreshes.Load() != 3 {
+	if f.refreshes.Load() != 3 {
 		t.Fatal("concurrent callers redeemed the same token more than once")
 	}
+}
 
-	// Do not contact the upstream API if persisting a rotation fails, and do
-	// not expose a storage/provider error body to the agent.
-	expire()
-	before := reads.Load()
-	_, err = executeAdapterRequest(ctx, failOAuthWriteVault{v}, reg, nil, user.ID, key, "get_me", nil, key)
+func TestOAuthRefreshPersistenceFailureBlocksAPI(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	f.v = failOAuthWriteVault{f.v}
+	err := f.execute()
 	if err == nil || strings.Contains(err.Error(), "secret-storage-detail") {
 		t.Fatalf("unexpected persistence failure: %v", err)
 	}
-	if reads.Load() != before {
-		t.Fatal("API called before refreshed tokens were persisted")
+	if f.refreshes.Load() != 1 || f.reads.Load() != 0 {
+		t.Fatal("API called before refreshed tokens were persisted, or renewal was not attempted")
 	}
+}
+
+func TestOAuthRefreshRejectsInvalidCredentials(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	ctx := context.Background()
 
 	for _, credential := range []string{
 		`{"access_token":"expired","refresh_token":"","expiry":"2000-01-01T00:00:00Z"}`,
 		`{"access_token":"expired","refresh_token":"secret-refresh","expiry":"malformed"}`,
 	} {
-		if err := v.Set(ctx, user.ID, key, []byte(credential)); err != nil {
+		if err := f.v.Set(ctx, f.user, f.key, []byte(credential)); err != nil {
 			t.Fatal(err)
 		}
-		_, err := executeAdapterRequest(ctx, v, reg, nil, user.ID, key, "get_me", nil, key)
+		err := f.execute()
 		if err == nil || strings.Contains(err.Error(), "secret-refresh") {
 			t.Fatalf("invalid credential was not rejected safely: %v", err)
 		}
-		if reads.Load() != before {
+		if f.reads.Load() != 0 || f.refreshes.Load() != 0 {
 			t.Fatal("invalid credential reached API")
 		}
 	}
-	if err := v.Set(ctx, user.ID, key, []byte(`{"type":"api_key","token":"static-key"}`)); err != nil {
+}
+
+func TestOAuthStaticKeyDoesNotRefresh(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	if err := f.v.Set(context.Background(), f.user, f.key, []byte(`{"type":"api_key","token":"access-0"}`)); err != nil {
 		t.Fatal(err)
 	}
-	beforeRefresh := refreshes.Load()
-	if _, err := executeAdapterRequest(ctx, v, reg, nil, user.ID, key, "get_me", nil, key); err != nil {
+	if err := f.execute(); err != nil {
 		t.Fatal(err)
 	}
-	if refreshes.Load() != beforeRefresh {
-		t.Fatal("static API key was refreshed")
+	if f.refreshes.Load() != 0 || f.reads.Load() != 1 {
+		t.Fatal("static API key did not reach API without OAuth renewal")
 	}
 }
 
