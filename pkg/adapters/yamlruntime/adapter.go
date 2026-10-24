@@ -17,6 +17,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
+	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 // ActionFunc is a Go function that handles a single action, used for overrides.
@@ -271,6 +272,26 @@ func (a *YAMLAdapter) OAuthConfig() *oauth2.Config {
 	}
 }
 
+// OAuthRefreshConfig includes PKCE adapters without changing OAuthConfig's
+// activation semantics. The gateway may resolve a missing PKCE client ID from
+// its system vault before refreshing the credential.
+func (a *YAMLAdapter) OAuthRefreshConfig(ctx context.Context, v vault.Vault) (*oauth2.Config, error) {
+	if a.def.Auth.Type == "oauth2" && a.def.Auth.OAuth != nil {
+		return a.OAuthConfig(), nil
+	}
+	if pf := a.def.Auth.PKCEFlow; pf != nil {
+		clientID, err := adapters.ResolvePKCEClientID(ctx, v, a.ServiceID(), pf)
+		if err != nil {
+			return nil, err
+		}
+		return &oauth2.Config{
+			ClientID: clientID,
+			Endpoint: oauth2.Endpoint{TokenURL: pf.TokenURL},
+		}, nil
+	}
+	return nil, nil
+}
+
 func (a *YAMLAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
 	if a.def.Auth.Type != "oauth2" {
 		return nil, fmt.Errorf("%s: OAuth token exchange not supported — use API key activation", a.def.Service.ID)
@@ -436,6 +457,10 @@ func (a *YAMLAdapter) OAuthTokenPath() string {
 // it also uses an OAuth2 token source for refresh. For other auth types,
 // delegates to buildHTTPClient.
 func (a *YAMLAdapter) buildAuthClient(ctx context.Context, credBytes []byte, config map[string]string) (*http.Client, error) {
+	if ts := adapters.OAuthTokenSourceFromContext(ctx); ts != nil && (a.def.Auth.Type == "oauth2" || a.def.Auth.PKCEFlow != nil) {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, yamlRuntimeHTTPClient(nil))
+		return oauth2.NewClient(ctx, ts), nil
+	}
 	if a.def.Auth.Type == "oauth2" {
 		oauthCfg := a.OAuthConfig()
 		if oauthCfg == nil {

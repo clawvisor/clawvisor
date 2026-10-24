@@ -42,10 +42,20 @@ func (v *InstanceAwareVault) Get(ctx context.Context, userID, serviceID string) 
 	if err == nil {
 		return cred, nil
 	}
-	if !errors.Is(err, ErrNotFound) || userID == InstanceUserID {
+	if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrRefNotFound) || userID == InstanceUserID {
 		return nil, err
 	}
 	return v.inner.Get(ctx, InstanceUserID, serviceID)
+}
+
+// GetForUpdate preserves the owner of shared fallback entries, so callers lock
+// and update the shared row instead of creating a personal copy.
+func (v *InstanceAwareVault) GetForUpdate(ctx context.Context, userID, serviceID string) (*ConditionalCredential, error) {
+	entry, err := ReadForConditionalUpdate(ctx, v.inner, userID, serviceID)
+	if err == nil || !errors.Is(err, ErrNotFound) || errors.Is(err, ErrRefNotFound) || userID == InstanceUserID {
+		return entry, err
+	}
+	return ReadForConditionalUpdate(ctx, v.inner, InstanceUserID, serviceID)
 }
 
 // Set delegates unchanged (shared writes go through the dedicated endpoints

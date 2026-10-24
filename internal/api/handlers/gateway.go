@@ -2366,13 +2366,20 @@ func executeAdapterRequest(
 	if vKey == "" {
 		vKey = reg.VaultKeyForUser(serviceType, userID)
 	}
-	cred, err := v.Get(ctx, userID, vKey)
+	oauthCfg, err := oauthConfigForCredential(ctx, v, adapter, userID, vKey)
+	if err != nil {
+		return nil, err
+	}
+	loaded, err := loadRefreshedCredential(ctx, v, userID, vKey, oauthCfg)
+	var cred []byte
 	if err != nil {
 		if errors.Is(err, vault.ErrNotFound) && adapter.ValidateCredential(nil) == nil {
 			cred = nil
 		} else {
 			return nil, err
 		}
+	} else {
+		cred = loaded.raw
 	}
 
 	// Fetch per-user service config (variable values) if stored.
@@ -2387,6 +2394,13 @@ func executeAdapterRequest(
 		}
 	}
 
+	if loaded != nil && loaded.token != nil {
+		if loaded.managed {
+			ctx = adapters.WithOAuthTokenSource(ctx, &vaultOAuthTokenSource{ctx: ctx, v: v, cfg: oauthCfg, userID: userID, vaultKey: vKey, initial: loaded.token})
+		} else {
+			ctx = adapters.WithOAuthTokenSource(ctx, &requestOAuthTokenSource{ctx: ctx, cfg: oauthCfg, token: loaded.token})
+		}
+	}
 	result, err := adapter.Execute(ctx, adapters.Request{
 		Action:     action,
 		Params:     params,

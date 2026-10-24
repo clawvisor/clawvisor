@@ -351,6 +351,27 @@ func (v *ReferenceVault) Get(ctx context.Context, userID, serviceID string) ([]b
 	return v.inner.Get(ctx, userID, serviceID)
 }
 
+// GetForUpdate exposes atomic updates only for pushed credentials. Resolved
+// external values are read-only and must never replace their reference envelope.
+func (v *ReferenceVault) GetForUpdate(ctx context.Context, userID, serviceID string) (*ConditionalCredential, error) {
+	kind, exists, err := v.store.readKind(ctx, userID, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	if exists && kind == KindRef {
+		env, err := v.store.getEnvelope(ctx, userID, serviceID)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := v.resolve(ctx, env)
+		if err != nil {
+			return nil, err
+		}
+		return &ConditionalCredential{Value: raw, UserID: userID, ServiceID: serviceID}, nil
+	}
+	return ReadForConditionalUpdate(ctx, v.inner, userID, serviceID)
+}
+
 // Delete removes both a pushed value (via the push backend) and any DB ref
 // row for the pair.
 func (v *ReferenceVault) Delete(ctx context.Context, userID, serviceID string) error {

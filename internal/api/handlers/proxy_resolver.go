@@ -23,7 +23,6 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
-	"golang.org/x/oauth2"
 )
 
 // ProxyResolverHandler is the lite-proxy reverse-proxy. The agent harness
@@ -764,7 +763,7 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 			}
 			return "", err
 		}
-		extracted, err := h.extractRuntimeCredentialValue(r.Context(), ph, raw)
+		extracted, err := h.extractRuntimeCredentialValue(r.Context(), ph, raw, vaultLookupKey)
 		if err != nil {
 			return "", err
 		}
@@ -856,8 +855,8 @@ type oauthCredentialForResolver struct {
 	Expiry       time.Time `json:"expiry"`
 }
 
-func (h *ProxyResolverHandler) extractRuntimeCredentialValue(ctx context.Context, ph *store.RuntimePlaceholder, raw []byte) (string, error) {
-	if token, ok, err := h.oauthAccessTokenForRuntimeCredential(ctx, ph, raw); ok || err != nil {
+func (h *ProxyResolverHandler) extractRuntimeCredentialValue(ctx context.Context, ph *store.RuntimePlaceholder, raw []byte, vaultKey string) (string, error) {
+	if token, ok, err := h.oauthAccessTokenForRuntimeCredential(ctx, ph, vaultKey); ok || err != nil {
 		if err != nil {
 			return "", err
 		}
@@ -870,7 +869,7 @@ func (h *ProxyResolverHandler) extractRuntimeCredentialValue(ctx context.Context
 	return extracted, nil
 }
 
-func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.Context, ph *store.RuntimePlaceholder, raw []byte) (string, bool, error) {
+func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.Context, ph *store.RuntimePlaceholder, vaultKey string) (string, bool, error) {
 	if h.AdapterReg == nil || ph == nil {
 		return "", false, nil
 	}
@@ -882,16 +881,30 @@ func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.
 	if !ok {
 		return "", false, nil
 	}
-	oauthCfg := adapter.OAuthConfig()
-	if oauthCfg == nil {
+	oauthCfg, configErr := oauthConfigForCredential(ctx, h.Vault, adapter, ph.UserID, vaultKey)
+	if oauthCfg == nil && configErr == nil {
 		return "", false, nil
 	}
-	// Past this point the adapter has declared itself OAuth via
-	// OAuthConfig(), so the stored credential MUST be OAuth-shaped.
-	// A parse failure here (e.g. malformed `expiry`) is not a signal
-	// to fall back to ExtractCredentialValue — that path would pull
-	// the stale access_token verbatim and ship it upstream, silently
-	// disabling refresh. Fail closed with a distinct error code.
+	// Read and refresh under the same credential lock used by the gateway.
+	// The actual vault key may come from a grant instead of ph.ServiceID.
+	var loaded *loadedOAuthCredential
+	err := configErr
+	if err == nil {
+		loaded, err = loadRefreshedCredential(ctx, h.Vault, ph.UserID, vaultKey, oauthCfg)
+	}
+	if err != nil {
+		h.logOAuthFailure(ctx, serviceID, err)
+		code := "OAUTH_REFRESH_FAILED"
+		if errors.Is(err, errOAuthCredentialInvalid) {
+			code = "OAUTH_CREDENTIAL_INVALID"
+		}
+		return "", true, &resolverAPIError{
+			status: http.StatusUnauthorized,
+			code:   code,
+			msg:    "could not load or refresh OAuth credential",
+		}
+	}
+	raw := loaded.raw
 	var stored oauthCredentialForResolver
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		return "", true, &resolverAPIError{
@@ -901,33 +914,46 @@ func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.
 		}
 	}
 	if stored.AccessToken == "" && stored.RefreshToken == "" {
+		// PKCE adapters can still be activated with a static API key. The
+		// shared loader validated this envelope without attempting refresh.
+		if adapter.OAuthConfig() == nil {
+			if value, err := autovault.ExtractCredentialValue(raw); err == nil {
+				return value, true, nil
+			}
+		}
 		return "", true, &resolverAPIError{
 			status: http.StatusUnauthorized,
 			code:   "OAUTH_CREDENTIAL_INVALID",
 			msg:    "stored OAuth credential has no access or refresh token",
 		}
 	}
-	token, err := oauthCfg.TokenSource(ctx, &oauth2.Token{
-		AccessToken:  stored.AccessToken,
-		RefreshToken: stored.RefreshToken,
-		Expiry:       stored.Expiry,
-		TokenType:    "Bearer",
-	}).Token()
-	if err != nil {
-		return "", true, &resolverAPIError{
-			status: http.StatusUnauthorized,
-			code:   "OAUTH_REFRESH_FAILED",
-			msg:    "could not refresh OAuth credential",
+	if !loaded.managed {
+		token, err := oauthTokenFromCredential(raw)
+		if err == nil && !token.Valid() {
+			token, err = exchangeOAuthToken(ctx, oauthCfg, token)
 		}
+		if err != nil {
+			h.logOAuthFailure(ctx, serviceID, err)
+			return "", true, &resolverAPIError{status: http.StatusUnauthorized, code: "OAUTH_REFRESH_FAILED", msg: "could not refresh OAuth credential"}
+		}
+		return token.AccessToken, true, nil
 	}
-	if token.AccessToken == "" {
+	if stored.AccessToken == "" {
 		return "", true, &resolverAPIError{
 			status: http.StatusUnauthorized,
 			code:   "OAUTH_REFRESH_FAILED",
 			msg:    "OAuth credential did not return an access token",
 		}
 	}
-	return token.AccessToken, true, nil
+	return stored.AccessToken, true, nil
+}
+
+func (h *ProxyResolverHandler) logOAuthFailure(ctx context.Context, serviceID string, err error) {
+	logger := h.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.WarnContext(ctx, "OAuth credential load or refresh failed", "service", serviceID, "category", oauthFailureCategory(err))
 }
 
 // resolverHopByHopHeaders is the canonical set of hop-by-hop headers

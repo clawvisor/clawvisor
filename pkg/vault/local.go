@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -123,6 +124,41 @@ func (v *LocalVault) SetIfAbsent(ctx context.Context, userID, serviceID string, 
 		return ErrAlreadyExists
 	}
 	return nil
+}
+
+// CompareAndSwap protects refresh results from concurrent reauthorization,
+// edits, or deletion, including changes made by another database connection.
+func (v *LocalVault) CompareAndSwap(ctx context.Context, userID, serviceID string, expected, replacement []byte) (bool, error) {
+	q := fmt.Sprintf(`SELECT encrypted, iv, auth_tag FROM vault_entries WHERE user_id = %s AND service_id = %s`, v.ph(1), v.ph(2))
+	var encrypted, iv, tag string
+	err := v.db.QueryRowContext(ctx, q, userID, serviceID).Scan(&encrypted, &iv, &tag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	plain, err := v.decrypt(encrypted, iv, tag, rowAAD(userID, serviceID))
+	if err != nil {
+		plain, err = v.decrypt(encrypted, iv, tag, nil)
+	}
+	if err != nil {
+		return false, err
+	}
+	if !bytes.Equal(plain, expected) {
+		return false, nil
+	}
+	newEncrypted, newIV, newTag, err := v.encrypt(replacement, rowAAD(userID, serviceID))
+	if err != nil {
+		return false, err
+	}
+	q = fmt.Sprintf(`UPDATE vault_entries SET encrypted = %s, iv = %s, auth_tag = %s, updated_at = CURRENT_TIMESTAMP WHERE user_id = %s AND service_id = %s AND encrypted = %s AND iv = %s AND auth_tag = %s`, v.ph(1), v.ph(2), v.ph(3), v.ph(4), v.ph(5), v.ph(6), v.ph(7), v.ph(8))
+	result, err := v.db.ExecContext(ctx, q, newEncrypted, newIV, newTag, userID, serviceID, encrypted, iv, tag)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
 }
 
 func (v *LocalVault) Get(ctx context.Context, userID, serviceID string) ([]byte, error) {

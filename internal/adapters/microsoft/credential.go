@@ -106,7 +106,7 @@ func HTTPClient(ctx context.Context, credBytes []byte, provider adapters.OAuthCr
 		Scopes:       cred.Scopes,
 	}
 
-	ts := cfg.TokenSource(ctx, cred.ToOAuth2Token())
+	ts := adapters.ManagedOAuthTokenSource(ctx, cfg.TokenSource(ctx, cred.ToOAuth2Token()))
 	return oauth2.NewClient(ctx, ts), nil
 }
 

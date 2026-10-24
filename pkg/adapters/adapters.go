@@ -7,6 +7,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
+	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 // ── Metadata types ──────────────────────────────────────────────────────────
@@ -87,6 +88,13 @@ type DeviceFlowProvider interface {
 // OAuth2 authorization code flow with PKCE (RFC 7636).
 type PKCEFlowProvider interface {
 	PKCEFlowConfig() *yamldef.PKCEFlowDef
+}
+
+// OAuthRefreshConfigProvider exposes token-refresh configuration independently
+// of OAuth activation. In particular, api_key adapters may use PKCE credentials
+// without advertising the traditional OAuth activation flow.
+type OAuthRefreshConfigProvider interface {
+	OAuthRefreshConfig(ctx context.Context, v vault.Vault) (*oauth2.Config, error)
 }
 
 // OAuthCredentialProvider supplies OAuth app credentials (client_id, client_secret)

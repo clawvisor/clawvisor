@@ -207,6 +207,6 @@ func (a *MCPAdapter) httpClientFor(ctx context.Context, cred []byte) (*http.Clie
 			token.Expiry = t
 		}
 	}
-	ts := oauthCfg.TokenSource(ctx, token)
+	ts := adapters.ManagedOAuthTokenSource(ctx, oauthCfg.TokenSource(ctx, token))
 	return oauth2.NewClient(ctx, ts), nil
 }

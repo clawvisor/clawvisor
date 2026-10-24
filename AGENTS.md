@@ -33,6 +33,7 @@ The highest-risk areas are authorization, task scope evaluation, scope drift enf
 - Follow existing package boundaries: keep public/shared interfaces in `pkg/` and implementations in `internal/`.
 - Use `gofmt` for Go changes and match existing React, TypeScript, and Tailwind patterns in `web/src/`.
 - Do not log credentials, bearer tokens, OAuth tokens, vault contents, or full downstream request/response bodies.
+- Gateway-managed OAuth HTTP clients must use the token source from the adapter execution context; independent token sources can lose rotated refresh tokens. SQL vault refresh writes use conditional replacement so concurrent revocation or reauthorization wins.
 
 ## Documentation Maintenance
 

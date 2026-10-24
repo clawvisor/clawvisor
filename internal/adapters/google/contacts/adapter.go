@@ -137,7 +137,7 @@ func (a *ContactsAdapter) httpClient(ctx context.Context, credBytes []byte) (*ht
 	if err != nil {
 		return nil, fmt.Errorf("contacts: %w", err)
 	}
-	ts := a.OAuthConfig().TokenSource(ctx, cred.ToOAuth2Token())
+	ts := adapters.ManagedOAuthTokenSource(ctx, a.OAuthConfig().TokenSource(ctx, cred.ToOAuth2Token()))
 	return oauth2.NewClient(ctx, ts), nil
 }
 
