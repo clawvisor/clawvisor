@@ -158,7 +158,7 @@ func ResolvePKCEClientID(ctx context.Context, v vault.Vault, serviceID string, p
 		return id, nil
 	}
 	raw, err := v.Get(ctx, SystemUserID, SystemVaultKeyPKCEPrefix+serviceID)
-	if errors.Is(err, vault.ErrNotFound) {
+	if errors.Is(err, vault.ErrNotFound) && !errors.Is(err, vault.ErrRefNotFound) {
 		return pf.ClientID, nil
 	}
 	if err != nil {

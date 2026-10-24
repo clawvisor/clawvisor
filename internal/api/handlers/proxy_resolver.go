@@ -893,11 +893,7 @@ func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.
 		loaded, err = loadRefreshedCredential(ctx, h.Vault, ph.UserID, vaultKey, oauthCfg)
 	}
 	if err != nil {
-		logger := h.Logger
-		if logger == nil {
-			logger = slog.Default()
-		}
-		logger.WarnContext(ctx, "OAuth credential load or refresh failed", "service", serviceID, "category", oauthFailureCategory(err))
+		h.logOAuthFailure(ctx, serviceID, err)
 		code := "OAUTH_REFRESH_FAILED"
 		if errors.Is(err, errOAuthCredentialInvalid) {
 			code = "OAUTH_CREDENTIAL_INVALID"
@@ -937,6 +933,7 @@ func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.
 			token, err = exchangeOAuthToken(ctx, oauthCfg, token)
 		}
 		if err != nil {
+			h.logOAuthFailure(ctx, serviceID, err)
 			return "", true, &resolverAPIError{status: http.StatusUnauthorized, code: "OAUTH_REFRESH_FAILED", msg: "could not refresh OAuth credential"}
 		}
 		return token.AccessToken, true, nil
@@ -949,6 +946,14 @@ func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.
 		}
 	}
 	return stored.AccessToken, true, nil
+}
+
+func (h *ProxyResolverHandler) logOAuthFailure(ctx context.Context, serviceID string, err error) {
+	logger := h.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.WarnContext(ctx, "OAuth credential load or refresh failed", "service", serviceID, "category", oauthFailureCategory(err))
 }
 
 // resolverHopByHopHeaders is the canonical set of hop-by-hop headers

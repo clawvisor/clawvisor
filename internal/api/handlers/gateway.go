@@ -2394,12 +2394,12 @@ func executeAdapterRequest(
 		}
 	}
 
-	if loaded != nil && loaded.managed {
-		initial, err := oauthTokenFromCredential(cred)
-		if err != nil {
-			return nil, err
+	if loaded != nil && loaded.token != nil {
+		if loaded.managed {
+			ctx = adapters.WithOAuthTokenSource(ctx, &vaultOAuthTokenSource{ctx: ctx, v: v, cfg: oauthCfg, userID: userID, vaultKey: vKey, initial: loaded.token})
+		} else {
+			ctx = adapters.WithOAuthTokenSource(ctx, &requestOAuthTokenSource{ctx: ctx, cfg: oauthCfg, token: loaded.token})
 		}
-		ctx = adapters.WithOAuthTokenSource(ctx, &vaultOAuthTokenSource{ctx: ctx, v: v, cfg: oauthCfg, userID: userID, vaultKey: vKey, initial: initial})
 	}
 	result, err := adapter.Execute(ctx, adapters.Request{
 		Action:     action,

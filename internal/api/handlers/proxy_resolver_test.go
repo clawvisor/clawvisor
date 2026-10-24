@@ -214,11 +214,17 @@ func TestResolver_HappyPath(t *testing.T) {
 }
 
 func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) {
-	for _, backend := range []string{"sql", "external_refresh_only"} {
+	for _, backend := range []string{"sql", "external_refresh_only", "external_refresh_failure"} {
 		t.Run(backend, func(t *testing.T) {
 			var refreshRequests int
 			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				refreshRequests++
+				if backend == "external_refresh_failure" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"sensitive-provider-detail"}`))
+					return
+				}
 				if refreshRequests > 1 {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
@@ -249,6 +255,8 @@ func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) 
 				t.Fatal(err)
 			}
 			h.Vault = v
+			var logs bytes.Buffer
+			h.Logger = slog.New(slog.NewTextHandler(&logs, nil))
 			reg := adapters.NewRegistry()
 			reg.Register(resolverOAuthTestAdapter{serviceID: "google.gmail", tokenURL: tokenSrv.URL})
 			h.AdapterReg = reg
@@ -265,7 +273,7 @@ func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) 
 				t.Fatalf("Marshal credential: %v", err)
 			}
 			const vaultKey = "google:eric@example.com"
-			if backend == "external_refresh_only" {
+			if strings.HasPrefix(backend, "external_refresh_") {
 				credential = []byte(`{"refresh_token":"refresh-token"}`)
 				h.Vault = nonAtomicOAuthVault{h.Vault}
 			}
@@ -316,6 +324,19 @@ func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) 
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 
+			if backend == "external_refresh_failure" {
+				if rec.Code != http.StatusUnauthorized || seenAuth != "" {
+					t.Fatal("failed refresh reached upstream or did not fail closed")
+				}
+				if !strings.Contains(logs.String(), "category=refresh") || !strings.Contains(logs.String(), "service=google.gmail") {
+					t.Fatal("external refresh failure missing safe diagnostic")
+				}
+				if strings.Contains(logs.String()+rec.Body.String(), "sensitive-provider-detail") {
+					t.Fatal("external refresh failure leaked provider error body")
+				}
+				return
+			}
+
 			if rec.Code != http.StatusOK {
 				t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 			}
@@ -326,6 +347,12 @@ func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) 
 				t.Fatalf("expected refreshed access token upstream, got %q", seenAuth)
 			}
 			if backend == "external_refresh_only" {
+				// This backend cannot atomically persist a rotation. Keep its
+				// supplied credential unchanged rather than inventing a write.
+				stored, err := h.Vault.Get(context.Background(), user.ID, vaultKey)
+				if err != nil || !bytes.Equal(stored, credential) {
+					t.Fatal("external-vault request changed the supplied credential")
+				}
 				return
 			}
 			// A second request must use the persisted bundle instead of redeeming the

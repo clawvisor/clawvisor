@@ -117,6 +117,7 @@ func lockedOAuthCredential(ctx context.Context, v vault.Vault, userID, key strin
 type loadedOAuthCredential struct {
 	raw     []byte
 	managed bool
+	token   *oauth2.Token
 }
 
 func oauthTokenFromCredential(raw []byte) (*oauth2.Token, error) {
@@ -174,10 +175,10 @@ func loadRefreshedCredential(ctx context.Context, v vault.Vault, userID, key str
 		return nil, err
 	}
 	if target.Updater == nil {
-		return &loadedOAuthCredential{raw: target.Value}, nil
+		return &loadedOAuthCredential{raw: target.Value, token: token}, nil
 	}
 	if token.Valid() {
-		return &loadedOAuthCredential{raw: target.Value, managed: true}, nil
+		return &loadedOAuthCredential{raw: target.Value, managed: true, token: token}, nil
 	}
 	token, err = exchangeOAuthToken(ctx, cfg, token)
 	if err != nil {
@@ -209,7 +210,34 @@ func loadRefreshedCredential(ctx context.Context, v vault.Vault, userID, key str
 	if err != nil || current.UserID != target.UserID || current.ServiceID != target.ServiceID || !bytes.Equal(current.Value, updated) {
 		return nil, errOAuthCredentialChanged
 	}
-	return &loadedOAuthCredential{raw: updated, managed: true}, nil
+	return &loadedOAuthCredential{raw: updated, managed: true, token: token}, nil
+}
+
+// External/read-only credentials retain rotations only for this execution.
+// Reuse the resolved configuration and current token without reloading the
+// external credential or ever writing it back to a reference/non-atomic vault.
+type requestOAuthTokenSource struct {
+	ctx   context.Context
+	cfg   *oauth2.Config
+	mu    sync.Mutex
+	token *oauth2.Token
+}
+
+func (s *requestOAuthTokenSource) Token() (*oauth2.Token, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.token.AccessToken != "" && (s.token.Expiry.IsZero() || time.Now().Before(s.token.Expiry)) {
+		return s.token, nil
+	}
+	token, err := exchangeOAuthToken(s.ctx, s.cfg, s.token)
+	if err != nil {
+		return nil, err
+	}
+	s.token = token
+	return token, nil
 }
 
 type vaultOAuthTokenSource struct {

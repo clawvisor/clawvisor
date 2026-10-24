@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -19,6 +21,7 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlruntime"
+	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
@@ -470,5 +473,168 @@ func TestOAuthIncompleteConfigNeverForwardsExpiredAccessToken(t *testing.T) {
 				t.Fatal("incomplete configuration contacted provider")
 			}
 		})
+	}
+}
+
+type oauthReferenceResolver struct {
+	raw []byte
+	err error
+}
+
+func (r oauthReferenceResolver) Resolve(context.Context, vault.RefEnvelope) ([]byte, error) {
+	return r.raw, r.err
+}
+
+func TestOAuthBrokenPersonalReferenceNeverUsesSharedIdentity(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	ctx := context.Background()
+	local := f.v.(*vault.LocalVault)
+	shared := []byte(`{"access_token":"access-0","refresh_token":"refresh-0","expiry":"2030-01-01T00:00:00Z"}`)
+	if err := local.Set(ctx, vault.InstanceUserID, f.key, shared); err != nil {
+		t.Fatal(err)
+	}
+	refs := vault.NewReferenceVault(local, local, map[string]vault.Resolver{vault.BackendAWSSM: oauthReferenceResolver{err: vault.ErrRefNotFound}}, []string{"arn:"})
+	if err := refs.SetReference(ctx, f.user, f.key, vault.RefEnvelope{Backend: vault.BackendAWSSM, ID: "arn:missing"}); err != nil {
+		t.Fatal(err)
+	}
+	f.v = vault.NewInstanceAware(refs)
+	if err := f.execute(); err == nil {
+		t.Fatal("broken personal reference used another identity")
+	}
+	if _, err := f.v.Get(ctx, f.user, f.key); !errors.Is(err, vault.ErrRefNotFound) {
+		t.Fatal("normal credential read fell back from broken personal reference")
+	}
+	if f.refreshes.Load() != 0 || f.reads.Load() != 0 {
+		t.Fatal("broken personal reference reached provider using shared identity")
+	}
+	after, err := local.Get(ctx, vault.InstanceUserID, f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(shared) {
+		t.Fatal("broken personal reference changed shared credential")
+	}
+}
+
+func TestOAuthExternalVaultUsesConfiguredPKCEClientWithoutWriting(t *testing.T) {
+	for _, backend := range []string{"non_atomic", "reference"} {
+		t.Run(backend, func(t *testing.T) {
+			f := newOAuthAdversarialFixture(t, 7200, "user-client", nil)
+			ctx := context.Background()
+			local := f.v.(*vault.LocalVault)
+			raw, err := local.Get(ctx, f.user, f.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := adapters.SetPKCEClientID(ctx, local, "x.account", "user-client"); err != nil {
+				t.Fatal(err)
+			}
+			if backend == "reference" {
+				refs := vault.NewReferenceVault(local, local, map[string]vault.Resolver{vault.BackendAWSSM: oauthReferenceResolver{raw: raw}}, []string{"arn:"})
+				if err := refs.SetReference(ctx, f.user, f.key, vault.RefEnvelope{Backend: vault.BackendAWSSM, ID: "arn:oauth"}); err != nil {
+					t.Fatal(err)
+				}
+				f.v = vault.NewInstanceAware(refs)
+			} else {
+				f.v = nonAtomicOAuthVault{local}
+			}
+			storedBefore, err := local.Get(ctx, f.user, f.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.execute(); err != nil {
+				t.Fatalf("configured external-vault request: %v", err)
+			}
+			if f.refreshes.Load() != 1 || f.reads.Load() != 1 {
+				t.Fatal("request did not renew with configured client and reach API")
+			}
+			storedAfter, err := local.Get(ctx, f.user, f.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(storedBefore) != string(storedAfter) {
+				t.Fatal("request changed external credential or reference envelope")
+			}
+		})
+	}
+}
+
+func TestPKCEStartConfigFailureIsDiagnosableWithoutLeakingBackendDetails(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	var logs bytes.Buffer
+	h := NewServicesHandler(f.store, failPKCEConfigVault{f.v}, f.reg, slog.New(slog.NewTextHandler(&logs, nil)), "", nil)
+	rec := httptest.NewRecorder()
+	h.PKCEFlowStart(rec, configRequest(&store.User{ID: f.user}, http.MethodPost, "/api/services/x.account/pkce-flow/start", "x.account", `{}`))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected configuration error, status=%d", rec.Code)
+	}
+	if !strings.Contains(logs.String(), "could not read PKCE client configuration") {
+		t.Fatal("configuration failure did not produce safe diagnostic")
+	}
+	if strings.Contains(logs.String()+rec.Body.String(), "sensitive-backend-detail") {
+		t.Fatal("configuration failure leaked backend details")
+	}
+}
+
+func TestOAuthBrokenClientIDReferenceNeverUsesBuiltInClient(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	local := f.v.(*vault.LocalVault)
+	refs := vault.NewReferenceVault(local, local, map[string]vault.Resolver{vault.BackendAWSSM: oauthReferenceResolver{err: vault.ErrRefNotFound}}, []string{"arn:"})
+	if err := refs.SetReference(context.Background(), adapters.SystemUserID, adapters.SystemVaultKeyPKCEPrefix+"x.account", vault.RefEnvelope{Backend: vault.BackendAWSSM, ID: "arn:missing-client"}); err != nil {
+		t.Fatal(err)
+	}
+	f.v = vault.NewInstanceAware(refs)
+	if err := f.execute(); err == nil {
+		t.Fatal("broken client-ID reference silently selected built-in client")
+	}
+	if f.refreshes.Load() != 0 || f.reads.Load() != 0 {
+		t.Fatal("broken client-ID reference reached provider")
+	}
+	if err := f.v.Set(context.Background(), f.user, f.key, []byte(`{"token":"access-0"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.execute(); err != nil {
+		t.Fatalf("unrelated broken client reference disabled static key: %v", err)
+	}
+}
+
+type twoReadsAcrossExpiryAdapter struct{ adapters.Adapter }
+
+func (a twoReadsAcrossExpiryAdapter) OAuthRefreshConfig(ctx context.Context, v vault.Vault) (*oauth2.Config, error) {
+	return a.Adapter.(adapters.OAuthRefreshConfigProvider).OAuthRefreshConfig(ctx, v)
+}
+func (a twoReadsAcrossExpiryAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
+	if _, err := a.Adapter.Execute(ctx, req); err != nil {
+		return nil, err
+	}
+	time.Sleep(1100 * time.Millisecond)
+	return a.Adapter.Execute(ctx, req)
+}
+
+func TestOAuthExternalRotationSurvivesExpiryWithinExecution(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 1, "user-client", nil)
+	ctx := context.Background()
+	if err := adapters.SetPKCEClientID(ctx, f.v, "x.account", "user-client"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := f.v.Get(ctx, f.user, f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.v = nonAtomicOAuthVault{f.v}
+	a, _ := f.reg.Get("x.account")
+	f.reg.Register(twoReadsAcrossExpiryAdapter{a})
+	if err := f.execute(); err != nil {
+		t.Fatalf("execution lost locally rotated token: %v", err)
+	}
+	if f.refreshes.Load() != 2 || f.reads.Load() != 2 {
+		t.Fatal("execution failed to renew its locally rotated token on later API call")
+	}
+	after, err := f.v.Get(ctx, f.user, f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("request-local renewal wrote the external vault")
 	}
 }
