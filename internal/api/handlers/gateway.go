@@ -2366,7 +2366,7 @@ func executeAdapterRequest(
 	if vKey == "" {
 		vKey = reg.VaultKeyForUser(serviceType, userID)
 	}
-	cred, err := v.Get(ctx, userID, vKey)
+	cred, err := loadRefreshedCredential(ctx, v, adapter, userID, vKey)
 	if err != nil {
 		if errors.Is(err, vault.ErrNotFound) && adapter.ValidateCredential(nil) == nil {
 			cred = nil
@@ -2387,6 +2387,15 @@ func executeAdapterRequest(
 		}
 	}
 
+	if _, managed := v.(vault.ConditionalUpdater); managed && oauthConfigForRefresh(ctx, v, adapter) != nil {
+		var envelope struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+		}
+		if json.Unmarshal(cred, &envelope) == nil && (envelope.AccessToken != "" || envelope.RefreshToken != "") {
+			ctx = adapters.WithOAuthTokenSource(ctx, &vaultOAuthTokenSource{ctx: ctx, v: v, a: adapter, userID: userID, vaultKey: vKey})
+		}
+	}
 	result, err := adapter.Execute(ctx, adapters.Request{
 		Action:     action,
 		Params:     params,

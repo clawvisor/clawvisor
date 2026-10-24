@@ -21,6 +21,7 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
+	"github.com/clawvisor/clawvisor/pkg/vault"
 	"golang.org/x/oauth2"
 )
 
@@ -216,6 +217,12 @@ func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) 
 	var refreshRequests int
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		refreshRequests++
+		if refreshRequests > 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token already redeemed"}`))
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("ParseForm: %v", err)
 		}
@@ -223,7 +230,7 @@ func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) 
 			t.Fatalf("unexpected refresh request form: %v", r.Form)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"fresh-access-token","token_type":"Bearer","expires_in":3600}`))
+		_, _ = w.Write([]byte(`{"access_token":"fresh-access-token","refresh_token":"rotated-refresh-token","token_type":"Bearer","expires_in":3600}`))
 	}))
 	defer tokenSrv.Close()
 
@@ -235,6 +242,11 @@ func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) 
 	defer upstream.Close()
 
 	h, st, user, agent, nonces, _ := newSeededResolver(t)
+	v, err := vault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), st.(*sqlite.Store).DB(), "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Vault = v
 	reg := adapters.NewRegistry()
 	reg.Register(resolverOAuthTestAdapter{serviceID: "google.gmail", tokenURL: tokenSrv.URL})
 	h.AdapterReg = reg
@@ -306,6 +318,28 @@ func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) 
 	}
 	if seenAuth != "Bearer fresh-access-token" {
 		t.Fatalf("expected refreshed access token upstream, got %q", seenAuth)
+	}
+	// A second request must use the persisted bundle instead of redeeming the
+	// original refresh token again. The grant's vault key differs from ServiceID.
+	req = httptest.NewRequest(http.MethodGet, "/api/proxy/gmail/v1/users/me/messages", nil)
+	req.Header.Set("X-Clawvisor-Target-Host", "gmail.googleapis.com")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+	req.Header.Set("Authorization", "Bearer "+placeholder)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second request status=%d: %s", rec.Code, rec.Body.String())
+	}
+	stored, err := h.Vault.Get(context.Background(), user.ID, vaultKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rotated map[string]any
+	if err := json.Unmarshal(stored, &rotated); err != nil {
+		t.Fatal(err)
+	}
+	if rotated["refresh_token"] != "rotated-refresh-token" {
+		t.Fatal("rotated credential was not persisted to the grant's vault key")
 	}
 }
 

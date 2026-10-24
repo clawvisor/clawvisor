@@ -12,6 +12,13 @@ var ErrNotFound = errors.New("vault: credential not found")
 // already stored for the (userID, serviceID) pair.
 var ErrAlreadyExists = errors.New("vault: credential already exists")
 
+// ConditionalUpdater atomically replaces an existing credential only while its
+// decrypted contents still equal expected. False means changed or deleted;
+// implementations must never recreate a missing credential.
+type ConditionalUpdater interface {
+	CompareAndSwap(ctx context.Context, userID, serviceID string, expected, replacement []byte) (bool, error)
+}
+
 // Vault stores and retrieves encrypted service credentials.
 // Credentials are scoped per-user per-service. The agent never interacts
 // with the vault directly and never receives credential values in responses.

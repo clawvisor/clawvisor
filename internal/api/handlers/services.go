@@ -2102,17 +2102,7 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 	// Resolve client_id: request body → env var → vault → hardcoded.
 	clientID := body.ClientID
 	if clientID == "" {
-		if pfCfg.ClientIDEnv != "" {
-			if v := os.Getenv(pfCfg.ClientIDEnv); v != "" {
-				clientID = v
-			}
-		}
-	}
-	if clientID == "" {
-		clientID = adapters.GetPKCEClientID(r.Context(), h.vault, serviceID)
-	}
-	if clientID == "" {
-		clientID = pfCfg.ClientID
+		clientID = adapters.ResolvePKCEClientID(r.Context(), h.vault, serviceID, pfCfg)
 	}
 	if clientID == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "PKCE flow requires a client_id — provide one in the request or set the "+pfCfg.ClientIDEnv+" environment variable")

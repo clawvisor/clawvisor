@@ -109,7 +109,7 @@ func (a *DriveAdapter) httpClient(ctx context.Context, credBytes []byte) (*http.
 	if err != nil {
 		return nil, fmt.Errorf("drive: %w", err)
 	}
-	ts := a.OAuthConfig().TokenSource(ctx, cred.ToOAuth2Token())
+	ts := adapters.ManagedOAuthTokenSource(ctx, a.OAuthConfig().TokenSource(ctx, cred.ToOAuth2Token()))
 	return oauth2.NewClient(ctx, ts), nil
 }
 

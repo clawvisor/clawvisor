@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +48,48 @@ func TestLocalVault_EncryptDecryptRoundTrip(t *testing.T) {
 		if !bytes.Equal(got, plaintext) {
 			t.Fatalf("round-trip mismatch: want %q got %q", plaintext, got)
 		}
+	}
+}
+
+func TestLocalVault_CompareAndSwapPreservesConcurrentChanges(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec(`CREATE TABLE vault_entries (id TEXT PRIMARY KEY,user_id TEXT NOT NULL,service_id TEXT NOT NULL,encrypted TEXT NOT NULL,iv TEXT NOT NULL,auth_tag TEXT NOT NULL,updated_at TEXT DEFAULT CURRENT_TIMESTAMP,UNIQUE(user_id,service_id))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := NewLocalVaultFromKeyWithDB(newKey(t), db, "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Set(ctx, "u", "x", []byte("original")); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := v.CompareAndSwap(ctx, "u", "x", []byte("original"), []byte("rotated"))
+	if err != nil || !ok {
+		t.Fatalf("initial conditional replacement: ok=%v err=%v", ok, err)
+	}
+	ok, err = v.CompareAndSwap(ctx, "u", "x", []byte("original"), []byte("stale"))
+	if err != nil || ok {
+		t.Fatalf("stale conditional replacement: ok=%v err=%v", ok, err)
+	}
+	raw, err := v.Get(ctx, "u", "x")
+	if err != nil || string(raw) != "rotated" {
+		t.Fatal("stale writer overwrote current credential")
+	}
+	if err := v.Delete(ctx, "u", "x"); err != nil {
+		t.Fatal(err)
+	}
+	ok, err = v.CompareAndSwap(ctx, "u", "x", []byte("rotated"), []byte("resurrected"))
+	if err != nil || ok {
+		t.Fatalf("conditional replacement after deletion: ok=%v err=%v", ok, err)
+	}
+	if _, err := v.Get(ctx, "u", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("conditional update recreated deleted credential")
 	}
 }
 

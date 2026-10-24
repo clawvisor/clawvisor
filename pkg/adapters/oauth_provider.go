@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
@@ -149,6 +150,18 @@ type pkceClientIDCred struct {
 	ClientID string `json:"client_id"`
 }
 
+// ResolvePKCEClientID uses the same client-ID precedence for activation and
+// refresh: environment, system vault, then the adapter's built-in default.
+func ResolvePKCEClientID(ctx context.Context, v vault.Vault, serviceID string, pf *yamldef.PKCEFlowDef) string {
+	if id := os.Getenv(pf.ClientIDEnv); id != "" {
+		return id
+	}
+	if id := GetPKCEClientID(ctx, v, serviceID); id != "" {
+		return id
+	}
+	return pf.ClientID
+}
+
 // SetPKCEClientID stores a PKCE client ID for a specific service in the system vault.
 func SetPKCEClientID(ctx context.Context, v vault.Vault, serviceID, clientID string) error {
 	data, err := json.Marshal(pkceClientIDCred{ClientID: clientID})
@@ -250,11 +263,11 @@ type MCPOAuthEntry struct {
 // vault record so a server restart doesn't trigger re-discovery or
 // re-registration on the next request.
 type MCPClientRecord struct {
-	ClientID             string `json:"client_id"`
-	ClientSecret         string `json:"client_secret,omitempty"` // empty for public/PKCE clients
+	ClientID              string `json:"client_id"`
+	ClientSecret          string `json:"client_secret,omitempty"` // empty for public/PKCE clients
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
-	TokenEndpoint        string `json:"token_endpoint"`
-	RegistrationEndpoint string `json:"registration_endpoint,omitempty"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	RegistrationEndpoint  string `json:"registration_endpoint,omitempty"`
 }
 
 // SetMCPClientRecord stores the discovered + registered client record for an MCP service.
