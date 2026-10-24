@@ -19,6 +19,34 @@ type ConditionalUpdater interface {
 	CompareAndSwap(ctx context.Context, userID, serviceID string, expected, replacement []byte) (bool, error)
 }
 
+// ConditionalCredential identifies the real owner of a resolved credential.
+// Updater is nil for read-only references or backends without atomic updates.
+type ConditionalCredential struct {
+	Value     []byte
+	UserID    string
+	ServiceID string
+	Updater   ConditionalUpdater
+}
+
+// ConditionalReader lets routing wrappers preserve ownership and write policy
+// when loading credentials for a conditional update. Unknown wrappers are never
+// unwrapped implicitly.
+type ConditionalReader interface {
+	GetForUpdate(context.Context, string, string) (*ConditionalCredential, error)
+}
+
+func ReadForConditionalUpdate(ctx context.Context, v Vault, userID, serviceID string) (*ConditionalCredential, error) {
+	if reader, ok := v.(ConditionalReader); ok {
+		return reader.GetForUpdate(ctx, userID, serviceID)
+	}
+	raw, err := v.Get(ctx, userID, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	updater, _ := v.(ConditionalUpdater)
+	return &ConditionalCredential{Value: raw, UserID: userID, ServiceID: serviceID, Updater: updater}, nil
+}
+
 // Vault stores and retrieves encrypted service credentials.
 // Credentials are scoped per-user per-service. The agent never interacts
 // with the vault directly and never receives credential values in responses.

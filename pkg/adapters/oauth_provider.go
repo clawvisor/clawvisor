@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 
@@ -152,14 +153,22 @@ type pkceClientIDCred struct {
 
 // ResolvePKCEClientID uses the same client-ID precedence for activation and
 // refresh: environment, system vault, then the adapter's built-in default.
-func ResolvePKCEClientID(ctx context.Context, v vault.Vault, serviceID string, pf *yamldef.PKCEFlowDef) string {
+func ResolvePKCEClientID(ctx context.Context, v vault.Vault, serviceID string, pf *yamldef.PKCEFlowDef) (string, error) {
 	if id := os.Getenv(pf.ClientIDEnv); id != "" {
-		return id
+		return id, nil
 	}
-	if id := GetPKCEClientID(ctx, v, serviceID); id != "" {
-		return id
+	raw, err := v.Get(ctx, SystemUserID, SystemVaultKeyPKCEPrefix+serviceID)
+	if errors.Is(err, vault.ErrNotFound) {
+		return pf.ClientID, nil
 	}
-	return pf.ClientID
+	if err != nil {
+		return "", errors.New("could not read PKCE client configuration")
+	}
+	var cred pkceClientIDCred
+	if json.Unmarshal(raw, &cred) != nil || cred.ClientID == "" {
+		return "", errors.New("invalid PKCE client configuration")
+	}
+	return cred.ClientID, nil
 }
 
 // SetPKCEClientID stores a PKCE client ID for a specific service in the system vault.

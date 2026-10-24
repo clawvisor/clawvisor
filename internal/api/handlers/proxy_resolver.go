@@ -881,14 +881,23 @@ func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.
 	if !ok {
 		return "", false, nil
 	}
-	oauthCfg := oauthConfigForRefresh(ctx, h.Vault, adapter)
-	if oauthCfg == nil {
+	oauthCfg, configErr := oauthConfigForCredential(ctx, h.Vault, adapter, ph.UserID, vaultKey)
+	if oauthCfg == nil && configErr == nil {
 		return "", false, nil
 	}
 	// Read and refresh under the same credential lock used by the gateway.
 	// The actual vault key may come from a grant instead of ph.ServiceID.
-	raw, err := loadRefreshedCredential(ctx, h.Vault, adapter, ph.UserID, vaultKey)
+	var loaded *loadedOAuthCredential
+	err := configErr
+	if err == nil {
+		loaded, err = loadRefreshedCredential(ctx, h.Vault, ph.UserID, vaultKey, oauthCfg)
+	}
 	if err != nil {
+		logger := h.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.WarnContext(ctx, "OAuth credential load or refresh failed", "service", serviceID, "category", oauthFailureCategory(err))
 		code := "OAUTH_REFRESH_FAILED"
 		if errors.Is(err, errOAuthCredentialInvalid) {
 			code = "OAUTH_CREDENTIAL_INVALID"
@@ -899,6 +908,7 @@ func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.
 			msg:    "could not load or refresh OAuth credential",
 		}
 	}
+	raw := loaded.raw
 	var stored oauthCredentialForResolver
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		return "", true, &resolverAPIError{
@@ -920,6 +930,16 @@ func (h *ProxyResolverHandler) oauthAccessTokenForRuntimeCredential(ctx context.
 			code:   "OAUTH_CREDENTIAL_INVALID",
 			msg:    "stored OAuth credential has no access or refresh token",
 		}
+	}
+	if !loaded.managed {
+		token, err := oauthTokenFromCredential(raw)
+		if err == nil && !token.Valid() {
+			token, err = exchangeOAuthToken(ctx, oauthCfg, token)
+		}
+		if err != nil {
+			return "", true, &resolverAPIError{status: http.StatusUnauthorized, code: "OAUTH_REFRESH_FAILED", msg: "could not refresh OAuth credential"}
+		}
+		return token.AccessToken, true, nil
 	}
 	if stored.AccessToken == "" {
 		return "", true, &resolverAPIError{

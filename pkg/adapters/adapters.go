@@ -94,7 +94,7 @@ type PKCEFlowProvider interface {
 // of OAuth activation. In particular, api_key adapters may use PKCE credentials
 // without advertising the traditional OAuth activation flow.
 type OAuthRefreshConfigProvider interface {
-	OAuthRefreshConfig(ctx context.Context, v vault.Vault) *oauth2.Config
+	OAuthRefreshConfig(ctx context.Context, v vault.Vault) (*oauth2.Config, error)
 }
 
 // OAuthCredentialProvider supplies OAuth app credentials (client_id, client_secret)

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,6 +24,7 @@ import (
 )
 
 type oauthAdversarialFixture struct {
+	store     *sqlite.Store
 	v         vault.Vault
 	user      string
 	key       string
@@ -47,7 +50,7 @@ func newOAuthAdversarialFixture(t *testing.T, lifetime int, clientID string, dur
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &oauthAdversarialFixture{v: v, user: u.ID, key: "x.account:alice", reg: adapters.NewRegistry()}
+	f := &oauthAdversarialFixture{store: sqlite.NewStore(db), v: v, user: u.ID, key: "x.account:alice", reg: adapters.NewRegistry()}
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/token" {
@@ -134,9 +137,12 @@ func TestOAuthRefreshDoesNotOverwriteConcurrentCredentialChange(t *testing.T) {
 
 func TestOAuthRefreshPersistsShortLivedRotations(t *testing.T) {
 	f := newOAuthAdversarialFixture(t, 5, "builtin-client", nil)
-	for range 2 {
+	for i := range 2 {
 		if err := f.execute(); err != nil {
 			t.Fatalf("short-lived token request: %v", err)
+		}
+		if f.refreshes.Load() != int32(i+1) {
+			t.Fatal("one execution redeemed more than one refresh token")
 		}
 		raw, err := f.v.Get(context.Background(), f.user, f.key)
 		if err != nil {
@@ -162,40 +168,45 @@ func TestOAuthRefreshUsesConfiguredPKCEClientID(t *testing.T) {
 	}
 }
 
+func TestOAuthRefreshPersistsThroughProductionVaultWrappers(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	local := f.v.(*vault.LocalVault)
+	f.v = vault.NewInstanceAware(vault.NewReferenceVault(local, local, nil, nil))
+	for range 2 {
+		if err := f.execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := local.Get(context.Background(), f.user, f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored["refresh_token"] != "refresh-1" {
+		t.Fatal("production vault wrappers hid conditional persistence")
+	}
+}
+
 type expireBeforeExecutionAdapter struct {
 	adapters.Adapter
 	f *oauthAdversarialFixture
 }
 
-func (a expireBeforeExecutionAdapter) OAuthRefreshConfig(ctx context.Context, v vault.Vault) *oauth2.Config {
+func (a expireBeforeExecutionAdapter) OAuthRefreshConfig(ctx context.Context, v vault.Vault) (*oauth2.Config, error) {
 	return a.Adapter.(adapters.OAuthRefreshConfigProvider).OAuthRefreshConfig(ctx, v)
 }
 
 func (a expireBeforeExecutionAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	// Simulate expiry after the gateway's initial refresh but before the
-	// adapter issues its HTTP request, without a sleep or real credentials.
-	raw, err := a.f.v.Get(ctx, a.f.user, a.f.key)
-	if err != nil {
-		return nil, err
-	}
-	var fields map[string]any
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, err
-	}
-	fields["expiry"] = time.Now().Add(-time.Hour)
-	raw, err = json.Marshal(fields)
-	if err != nil {
-		return nil, err
-	}
-	if err := a.f.v.Set(ctx, a.f.user, a.f.key, raw); err != nil {
-		return nil, err
-	}
-	req.Credential = raw
+	// Let the actual preflight token expire before its first HTTP use.
+	time.Sleep(1100 * time.Millisecond)
 	return a.Adapter.Execute(ctx, req)
 }
 
 func TestOAuthRefreshPersistsAfterDelayedAdapterExecution(t *testing.T) {
-	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	f := newOAuthAdversarialFixture(t, 1, "builtin-client", nil)
 	a, _ := f.reg.Get("x.account")
 	f.reg.Register(expireBeforeExecutionAdapter{Adapter: a, f: f})
 	if err := f.execute(); err != nil {
@@ -229,5 +240,235 @@ func TestOAuthRefreshDoesNotFollowTokenEndpointRedirect(t *testing.T) {
 	}
 	if leaked.Load() {
 		t.Fatal("refresh credential was forwarded to a redirect destination")
+	}
+}
+
+// Cancel only after the provider has redeemed the old token. The next request
+// must succeed using the saved rotation despite the original caller leaving.
+func TestOAuthRefreshSurvivesCallerCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", func(vault.Vault, string, string) { cancel() })
+	_, _ = executeAdapterRequest(ctx, f.v, f.reg, nil, f.user, f.key, "get_me", nil, f.key)
+	if err := f.execute(); err != nil {
+		t.Fatalf("next request lost rotated credential: %v", err)
+	}
+	if f.refreshes.Load() != 1 || f.reads.Load() != 1 {
+		t.Fatal("next request did not reuse the saved rotation")
+	}
+}
+
+func TestOAuthRefreshUsesSharedCredentialWithoutCreatingPersonalCopy(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	ctx := context.Background()
+	local := f.v.(*vault.LocalVault)
+	raw, err := local.Get(ctx, f.user, f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := local.Set(ctx, vault.InstanceUserID, f.key, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.Delete(ctx, f.user, f.key); err != nil {
+		t.Fatal(err)
+	}
+	f.v = vault.NewInstanceAware(vault.NewReferenceVault(local, local, nil, nil))
+	bob, err := f.store.CreateUser(ctx, "bob@example.test", "hash", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	failures := make(chan error, 8)
+	for i := range 8 {
+		user := f.user
+		if i%2 == 1 {
+			user = bob.ID
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := executeAdapterRequest(ctx, f.v, f.reg, nil, user, f.key, "get_me", nil, f.key)
+			failures <- err
+		}()
+	}
+	wg.Wait()
+	close(failures)
+	for err := range failures {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := local.Get(ctx, bob.ID, f.key); !errors.Is(err, vault.ErrNotFound) {
+		t.Fatal("renewal created a second user's personal credential")
+	}
+	if f.refreshes.Load() != 1 {
+		t.Fatal("shared rotation was not reused")
+	}
+	if _, err := local.Get(ctx, f.user, f.key); !errors.Is(err, vault.ErrNotFound) {
+		t.Fatal("renewal created a personal credential")
+	}
+}
+
+type failPKCEConfigVault struct{ vault.Vault }
+
+func (v failPKCEConfigVault) Get(ctx context.Context, user, key string) ([]byte, error) {
+	if user == adapters.SystemUserID {
+		return nil, errors.New("sensitive-backend-detail")
+	}
+	return v.Vault.Get(ctx, user, key)
+}
+
+func TestOAuthRefreshConfigReadFailureFailsClosed(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	f.v = failPKCEConfigVault{f.v}
+	err := f.execute()
+	if err == nil || err.Error() != errOAuthConfiguration.Error() {
+		t.Fatalf("expected safe config failure: %v", err)
+	}
+	if f.refreshes.Load() != 0 || f.reads.Load() != 0 {
+		t.Fatal("configuration failure contacted provider")
+	}
+}
+
+func TestOAuthStaticKeyIgnoresUnavailablePKCEConfig(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	// The provider accepts access-0 before any renewal; use it as a static key.
+	if err := f.v.Set(context.Background(), f.user, f.key, []byte(`{"token":"access-0"}`)); err != nil {
+		t.Fatal(err)
+	}
+	f.v = failPKCEConfigVault{f.v}
+	if err := f.execute(); err != nil {
+		t.Fatal(err)
+	}
+	if f.refreshes.Load() != 0 || f.reads.Load() != 1 {
+		t.Fatal("static key did not reach API without OAuth")
+	}
+}
+
+func TestOAuthRefreshRetainsOmittedRefreshTokenAndClientSecret(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	var calls atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/me" {
+			if r.Header.Get("Authorization") != fmt.Sprintf("Bearer new-%d", calls.Load()) {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"id":"123"}}`))
+			return
+		}
+		_ = r.ParseForm()
+		id, secret, _ := r.BasicAuth()
+		if id != "confidential-client" || secret != "client-secret" || r.Form.Get("refresh_token") != "refresh-0" {
+			t.Error("confidential refresh omitted client authentication or retained refresh token")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		n := calls.Add(1)
+		_, _ = fmt.Fprintf(w, `{"access_token":"new-%d","token_type":"Bearer","expires_in":3600}`, n)
+	}))
+	t.Cleanup(provider.Close)
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "x.account"},
+		Auth:    yamldef.AuthDef{Type: "oauth2", OAuth: &yamldef.OAuthDef{ClientID: "confidential-client", ClientSecret: "client-secret", TokenURL: provider.URL + "/token"}},
+		API:     yamldef.APIDef{BaseURL: provider.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{"get_me": {Method: "GET", Path: "/me", Response: yamldef.ResponseDef{DataPath: "data"}}},
+	}
+	a, err := yamlruntime.New(def, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.reg.Register(a)
+	for i := range 2 {
+		if err := f.execute(); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := f.v.Get(context.Background(), f.user, f.key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved oauthCredentialForResolver
+		if err := json.Unmarshal(raw, &saved); err != nil {
+			t.Fatal(err)
+		}
+		if saved.AccessToken != fmt.Sprintf("new-%d", i+1) || saved.RefreshToken != "refresh-0" || !saved.Expiry.After(time.Now()) {
+			t.Fatal("renewal failed to preserve reusable credential bundle")
+		}
+		saved.Expiry = time.Now().Add(-time.Hour)
+		raw, _ = json.Marshal(saved)
+		if err := f.v.Set(context.Background(), f.user, f.key, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls.Load() != 2 {
+		t.Fatal("expected two successful renewal cycles")
+	}
+}
+
+func TestOAuthPKCEOnlyOAuthTypeCanRenew(t *testing.T) {
+	f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+	original, _ := f.reg.Get("x.account")
+	cfg, err := oauthConfigForRefresh(context.Background(), f.v, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := strings.TrimSuffix(cfg.Endpoint.TokenURL, "/token")
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "x.account"},
+		Auth:    yamldef.AuthDef{Type: "oauth2", PKCEFlow: &yamldef.PKCEFlowDef{ClientID: "builtin-client", TokenURL: cfg.Endpoint.TokenURL}},
+		API:     yamldef.APIDef{BaseURL: base, Type: "rest"},
+		Actions: map[string]yamldef.Action{"get_me": {Method: "GET", Path: "/me", Response: yamldef.ResponseDef{DataPath: "data"}}},
+	}
+	a, err := yamlruntime.New(def, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.reg.Register(a)
+	for range 2 {
+		if err := f.execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.refreshes.Load() != 1 || f.reads.Load() != 2 {
+		t.Fatal("PKCE-only OAuth adapter did not reuse renewed credential")
+	}
+}
+
+// Hiding CAS simulates an external vault backend with legacy per-request
+// refresh behavior. A refresh-only credential must remain usable in the proxy.
+type nonAtomicOAuthVault struct{ vault.Vault }
+
+type incompleteOAuthConfigAdapter struct {
+	adapters.Adapter
+	cfg *oauth2.Config
+}
+
+func (a incompleteOAuthConfigAdapter) OAuthRefreshConfig(context.Context, vault.Vault) (*oauth2.Config, error) {
+	return a.cfg, nil
+}
+
+func TestOAuthIncompleteConfigNeverForwardsExpiredAccessToken(t *testing.T) {
+	for _, missing := range []string{"client_id", "token_url"} {
+		t.Run(missing, func(t *testing.T) {
+			f := newOAuthAdversarialFixture(t, 7200, "builtin-client", nil)
+			a, _ := f.reg.Get("x.account")
+			cfg, err := oauthConfigForRefresh(context.Background(), f.v, a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if missing == "client_id" {
+				cfg.ClientID = ""
+			} else {
+				cfg.Endpoint.TokenURL = ""
+			}
+			f.reg.Register(incompleteOAuthConfigAdapter{Adapter: a, cfg: cfg})
+			if err := f.execute(); err == nil {
+				t.Fatal("expired OAuth credential accepted without renewal configuration")
+			}
+			if f.refreshes.Load() != 0 || f.reads.Load() != 0 {
+				t.Fatal("incomplete configuration contacted provider")
+			}
+		})
 	}
 }

@@ -214,132 +214,147 @@ func TestResolver_HappyPath(t *testing.T) {
 }
 
 func TestResolver_RefreshesExpiredOAuthCredentialBeforeForwarding(t *testing.T) {
-	var refreshRequests int
-	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		refreshRequests++
-		if refreshRequests > 1 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token already redeemed"}`))
-			return
-		}
-		if err := r.ParseForm(); err != nil {
-			t.Fatalf("ParseForm: %v", err)
-		}
-		if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "refresh-token" {
-			t.Fatalf("unexpected refresh request form: %v", r.Form)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"fresh-access-token","refresh_token":"rotated-refresh-token","token_type":"Bearer","expires_in":3600}`))
-	}))
-	defer tokenSrv.Close()
+	for _, backend := range []string{"sql", "external_refresh_only"} {
+		t.Run(backend, func(t *testing.T) {
+			var refreshRequests int
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				refreshRequests++
+				if refreshRequests > 1 {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token already redeemed"}`))
+					return
+				}
+				if err := r.ParseForm(); err != nil {
+					t.Fatalf("ParseForm: %v", err)
+				}
+				if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "refresh-token" {
+					t.Fatalf("unexpected refresh request form: %v", r.Form)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"fresh-access-token","refresh_token":"rotated-refresh-token","token_type":"Bearer","expires_in":3600}`))
+			}))
+			defer tokenSrv.Close()
 
-	var seenAuth string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seenAuth = r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer upstream.Close()
+			var seenAuth string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenAuth = r.Header.Get("Authorization")
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}))
+			defer upstream.Close()
 
-	h, st, user, agent, nonces, _ := newSeededResolver(t)
-	v, err := vault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), st.(*sqlite.Store).DB(), "sqlite")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.Vault = v
-	reg := adapters.NewRegistry()
-	reg.Register(resolverOAuthTestAdapter{serviceID: "google.gmail", tokenURL: tokenSrv.URL})
-	h.AdapterReg = reg
-	h.Client = upstream.Client()
-	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
+			h, st, user, agent, nonces, _ := newSeededResolver(t)
+			v, err := vault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), st.(*sqlite.Store).DB(), "sqlite")
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.Vault = v
+			reg := adapters.NewRegistry()
+			reg.Register(resolverOAuthTestAdapter{serviceID: "google.gmail", tokenURL: tokenSrv.URL})
+			h.AdapterReg = reg
+			h.Client = upstream.Client()
+			h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
-	credential, err := json.Marshal(map[string]any{
-		"type":          "oauth2",
-		"access_token":  "expired-access-token",
-		"refresh_token": "refresh-token",
-		"expiry":        time.Now().UTC().Add(-time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("Marshal credential: %v", err)
-	}
-	const vaultKey = "google:eric@example.com"
-	if err := h.Vault.Set(context.Background(), user.ID, vaultKey, credential); err != nil {
-		t.Fatalf("vault.Set: %v", err)
-	}
-	expiresAt := time.Now().UTC().Add(time.Hour)
-	const grantID = "grant-google"
-	if err := st.CreateCredentialAuthorization(context.Background(), &store.CredentialAuthorization{
-		ID:            grantID,
-		UserID:        user.ID,
-		AgentID:       agent.ID,
-		Scope:         "session",
-		CredentialRef: vaultKey,
-		Service:       "google.gmail:eric@example.com",
-		Host:          "gmail.googleapis.com",
-		HeaderName:    "authorization",
-		Scheme:        "bearer",
-		Status:        "active",
-		ExpiresAt:     &expiresAt,
-	}); err != nil {
-		t.Fatalf("CreateCredentialAuthorization: %v", err)
-	}
-	placeholder, err := autovault.GeneratePlaceholder(autovault.PlaceholderPrefix("google.gmail:eric@example.com"))
-	if err != nil {
-		t.Fatalf("GeneratePlaceholder: %v", err)
-	}
-	if err := st.CreateRuntimePlaceholder(context.Background(), &store.RuntimePlaceholder{
-		Placeholder:       placeholder,
-		UserID:            user.ID,
-		AgentID:           agent.ID,
-		ServiceID:         "google.gmail:eric@example.com",
-		VaultItemID:       "google.gmail:eric@example.com",
-		CredentialGrantID: grantID,
-		ExpiresAt:         &expiresAt,
-	}); err != nil {
-		t.Fatalf("CreateRuntimePlaceholder: %v", err)
-	}
+			credential, err := json.Marshal(map[string]any{
+				"type":          "oauth2",
+				"access_token":  "expired-access-token",
+				"refresh_token": "refresh-token",
+				"expiry":        time.Now().UTC().Add(-time.Hour),
+			})
+			if err != nil {
+				t.Fatalf("Marshal credential: %v", err)
+			}
+			const vaultKey = "google:eric@example.com"
+			if backend == "external_refresh_only" {
+				credential = []byte(`{"refresh_token":"refresh-token"}`)
+				h.Vault = nonAtomicOAuthVault{h.Vault}
+			}
+			if err := h.Vault.Set(context.Background(), user.ID, vaultKey, credential); err != nil {
+				t.Fatalf("vault.Set: %v", err)
+			}
+			expiresAt := time.Now().UTC().Add(time.Hour)
+			const grantID = "grant-google"
+			if err := st.CreateCredentialAuthorization(context.Background(), &store.CredentialAuthorization{
+				ID:            grantID,
+				UserID:        user.ID,
+				AgentID:       agent.ID,
+				Scope:         "session",
+				CredentialRef: vaultKey,
+				Service:       "google.gmail:eric@example.com",
+				Host:          "gmail.googleapis.com",
+				HeaderName:    "authorization",
+				Scheme:        "bearer",
+				Status:        "active",
+				ExpiresAt:     &expiresAt,
+			}); err != nil {
+				t.Fatalf("CreateCredentialAuthorization: %v", err)
+			}
+			placeholder, err := autovault.GeneratePlaceholder(autovault.PlaceholderPrefix("google.gmail:eric@example.com"))
+			if err != nil {
+				t.Fatalf("GeneratePlaceholder: %v", err)
+			}
+			if err := st.CreateRuntimePlaceholder(context.Background(), &store.RuntimePlaceholder{
+				Placeholder:       placeholder,
+				UserID:            user.ID,
+				AgentID:           agent.ID,
+				ServiceID:         "google.gmail:eric@example.com",
+				VaultItemID:       "google.gmail:eric@example.com",
+				CredentialGrantID: grantID,
+				ExpiresAt:         &expiresAt,
+			}); err != nil {
+				t.Fatalf("CreateRuntimePlaceholder: %v", err)
+			}
 
-	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
-	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
+			mux := http.NewServeMux()
+			mw := middleware.RequireAgentLLMNonce(st, nonces, nil, slog.Default())
+			mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/proxy/gmail/v1/users/me/messages", nil)
-	req.Header.Set("X-Clawvisor-Target-Host", "gmail.googleapis.com")
-	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
-	req.Header.Set("Authorization", "Bearer "+placeholder)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+			req := httptest.NewRequest(http.MethodGet, "/api/proxy/gmail/v1/users/me/messages", nil)
+			req.Header.Set("X-Clawvisor-Target-Host", "gmail.googleapis.com")
+			req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+			req.Header.Set("Authorization", "Bearer "+placeholder)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	if refreshRequests != 1 {
-		t.Fatalf("expected one refresh request, got %d", refreshRequests)
-	}
-	if seenAuth != "Bearer fresh-access-token" {
-		t.Fatalf("expected refreshed access token upstream, got %q", seenAuth)
-	}
-	// A second request must use the persisted bundle instead of redeeming the
-	// original refresh token again. The grant's vault key differs from ServiceID.
-	req = httptest.NewRequest(http.MethodGet, "/api/proxy/gmail/v1/users/me/messages", nil)
-	req.Header.Set("X-Clawvisor-Target-Host", "gmail.googleapis.com")
-	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
-	req.Header.Set("Authorization", "Bearer "+placeholder)
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("second request status=%d: %s", rec.Code, rec.Body.String())
-	}
-	stored, err := h.Vault.Get(context.Background(), user.ID, vaultKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var rotated map[string]any
-	if err := json.Unmarshal(stored, &rotated); err != nil {
-		t.Fatal(err)
-	}
-	if rotated["refresh_token"] != "rotated-refresh-token" {
-		t.Fatal("rotated credential was not persisted to the grant's vault key")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if refreshRequests != 1 {
+				t.Fatalf("expected one refresh request, got %d", refreshRequests)
+			}
+			if seenAuth != "Bearer fresh-access-token" {
+				t.Fatalf("expected refreshed access token upstream, got %q", seenAuth)
+			}
+			if backend == "external_refresh_only" {
+				return
+			}
+			// A second request must use the persisted bundle instead of redeeming the
+			// original refresh token again. The grant's vault key differs from ServiceID.
+			req = httptest.NewRequest(http.MethodGet, "/api/proxy/gmail/v1/users/me/messages", nil)
+			req.Header.Set("X-Clawvisor-Target-Host", "gmail.googleapis.com")
+			req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+			req.Header.Set("Authorization", "Bearer "+placeholder)
+			rec = httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("second request status=%d: %s", rec.Code, rec.Body.String())
+			}
+			stored, err := h.Vault.Get(context.Background(), user.ID, vaultKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rotated map[string]any
+			if err := json.Unmarshal(stored, &rotated); err != nil {
+				t.Fatal(err)
+			}
+			var saved oauthCredentialForResolver
+			if refreshRequests != 1 || json.Unmarshal(stored, &saved) != nil || saved.AccessToken != "fresh-access-token" || !saved.Expiry.After(time.Now()) {
+				t.Fatal("second request did not reuse a complete persisted token bundle")
+			}
+			if rotated["refresh_token"] != "rotated-refresh-token" {
+				t.Fatal("rotated credential was not persisted to the grant's vault key")
+			}
+		})
 	}
 }
 

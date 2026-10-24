@@ -2366,13 +2366,20 @@ func executeAdapterRequest(
 	if vKey == "" {
 		vKey = reg.VaultKeyForUser(serviceType, userID)
 	}
-	cred, err := loadRefreshedCredential(ctx, v, adapter, userID, vKey)
+	oauthCfg, err := oauthConfigForCredential(ctx, v, adapter, userID, vKey)
+	if err != nil {
+		return nil, err
+	}
+	loaded, err := loadRefreshedCredential(ctx, v, userID, vKey, oauthCfg)
+	var cred []byte
 	if err != nil {
 		if errors.Is(err, vault.ErrNotFound) && adapter.ValidateCredential(nil) == nil {
 			cred = nil
 		} else {
 			return nil, err
 		}
+	} else {
+		cred = loaded.raw
 	}
 
 	// Fetch per-user service config (variable values) if stored.
@@ -2387,14 +2394,12 @@ func executeAdapterRequest(
 		}
 	}
 
-	if _, managed := v.(vault.ConditionalUpdater); managed && oauthConfigForRefresh(ctx, v, adapter) != nil {
-		var envelope struct {
-			AccessToken  string `json:"access_token"`
-			RefreshToken string `json:"refresh_token"`
+	if loaded != nil && loaded.managed {
+		initial, err := oauthTokenFromCredential(cred)
+		if err != nil {
+			return nil, err
 		}
-		if json.Unmarshal(cred, &envelope) == nil && (envelope.AccessToken != "" || envelope.RefreshToken != "") {
-			ctx = adapters.WithOAuthTokenSource(ctx, &vaultOAuthTokenSource{ctx: ctx, v: v, a: adapter, userID: userID, vaultKey: vKey})
-		}
+		ctx = adapters.WithOAuthTokenSource(ctx, &vaultOAuthTokenSource{ctx: ctx, v: v, cfg: oauthCfg, userID: userID, vaultKey: vKey, initial: initial})
 	}
 	result, err := adapter.Execute(ctx, adapters.Request{
 		Action:     action,

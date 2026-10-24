@@ -275,17 +275,21 @@ func (a *YAMLAdapter) OAuthConfig() *oauth2.Config {
 // OAuthRefreshConfig includes PKCE adapters without changing OAuthConfig's
 // activation semantics. The gateway may resolve a missing PKCE client ID from
 // its system vault before refreshing the credential.
-func (a *YAMLAdapter) OAuthRefreshConfig(ctx context.Context, v vault.Vault) *oauth2.Config {
-	if a.def.Auth.Type == "oauth2" {
-		return a.OAuthConfig()
+func (a *YAMLAdapter) OAuthRefreshConfig(ctx context.Context, v vault.Vault) (*oauth2.Config, error) {
+	if a.def.Auth.Type == "oauth2" && a.def.Auth.OAuth != nil {
+		return a.OAuthConfig(), nil
 	}
 	if pf := a.def.Auth.PKCEFlow; pf != nil {
-		return &oauth2.Config{
-			ClientID: adapters.ResolvePKCEClientID(ctx, v, a.ServiceID(), pf),
-			Endpoint: oauth2.Endpoint{TokenURL: pf.TokenURL},
+		clientID, err := adapters.ResolvePKCEClientID(ctx, v, a.ServiceID(), pf)
+		if err != nil {
+			return nil, err
 		}
+		return &oauth2.Config{
+			ClientID: clientID,
+			Endpoint: oauth2.Endpoint{TokenURL: pf.TokenURL},
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 func (a *YAMLAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {

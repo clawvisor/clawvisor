@@ -426,3 +426,52 @@ func TestExtractJSONKey(t *testing.T) {
 		t.Fatalf("non-JSON payload: got %v, want ErrRefKeyMissing", err)
 	}
 }
+
+func TestConditionalReadPreservesExternalReference(t *testing.T) {
+	ctx := context.Background()
+	rv := newRefVault(t, nil, map[string]Resolver{BackendAWSSM: &fakeResolver{val: []byte(`{"access_token":"external"}`)}}, []string{"arn:"})
+	env := RefEnvelope{Backend: BackendAWSSM, ID: "arn:test"}
+	if err := rv.SetReference(ctx, "alice", "oauth", env); err != nil {
+		t.Fatal(err)
+	}
+	before, err := rv.store.crypto.Get(ctx, "alice", "oauth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := ReadForConditionalUpdate(ctx, NewInstanceAware(rv), "alice", "oauth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Updater != nil {
+		t.Fatal("external secret incorrectly exposed as writable")
+	}
+	if string(entry.Value) != `{"access_token":"external"}` {
+		t.Fatal("reference did not resolve")
+	}
+	after, err := rv.store.crypto.Get(ctx, "alice", "oauth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, err := rv.EntryKind(ctx, "alice", "oauth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) || kind != KindRef {
+		t.Fatal("conditional read changed reference envelope")
+	}
+}
+
+func TestConditionalReadDoesNotInventAtomicBackendSupport(t *testing.T) {
+	ctx := context.Background()
+	rv := newRefVault(t, newMemVault(), nil, nil)
+	if err := rv.Set(ctx, "alice", "oauth", []byte("credential")); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := ReadForConditionalUpdate(ctx, NewInstanceAware(rv), "alice", "oauth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Updater != nil || string(entry.Value) != "credential" {
+		t.Fatal("unsupported backend did not remain read-only")
+	}
+}
