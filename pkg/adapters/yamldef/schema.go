@@ -173,6 +173,11 @@ type Param struct {
 	// cannot address a different endpoint. Dot segments are always rejected.
 	AllowSlash bool `yaml:"allow_slash,omitempty"`
 
+	// Pattern is a regular expression a path param value must match in full
+	// (it is anchored automatically). Use it with AllowSlash to pin a
+	// multi-segment value to one resource shape, e.g. "people/[^/]+".
+	Pattern string `yaml:"pattern,omitempty"`
+
 	// Aliases are alternative caller-facing names for this parameter. When the
 	// primary name is absent from the request, the runtime falls back to the
 	// first alias that appears. Used for backward-compatibility renames and

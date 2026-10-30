@@ -266,6 +266,31 @@ func TestValidate_InvalidParamLocation(t *testing.T) {
 	}
 }
 
+func TestValidate_PathOnlyParamOptions(t *testing.T) {
+	cases := map[string]struct {
+		param   yamldef.Param
+		wantErr string
+	}{
+		"allow_slash on query param": {param: yamldef.Param{Type: "string", Location: "query", AllowSlash: true}, wantErr: "only apply"},
+		"pattern on body param":      {param: yamldef.Param{Type: "string", Location: "body", Pattern: "a+"}, wantErr: "only apply"},
+		"invalid pattern":            {param: yamldef.Param{Type: "string", Location: "path", Pattern: "people/["}, wantErr: "invalid pattern"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			def := minimalValidDef()
+			a := def.Actions["list_items"]
+			a.Path = "/items/{{.id}}"
+			a.Params = map[string]yamldef.Param{"id": tc.param}
+			def.Actions["list_items"] = a
+
+			r := Validate(&def)
+			if !containsStr(r.Errors, tc.wantErr) {
+				t.Errorf("expected error containing %q, got: %v", tc.wantErr, r.Errors)
+			}
+		})
+	}
+}
+
 // ── Risk sanity checks ──────────────────────────────────────────────────────
 
 func TestValidate_DeleteMethodReadCategory(t *testing.T) {

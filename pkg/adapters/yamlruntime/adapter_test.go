@@ -1415,6 +1415,67 @@ func TestYAMLAdapter_PathParamCannotEscapeAction(t *testing.T) {
 	}
 }
 
+func TestYAMLAdapter_PathParamPattern(t *testing.T) {
+	// allow_slash alone would let get_contact reach any People API path;
+	// the pattern pins it to a single contact resource name.
+	cases := []struct {
+		contactID string
+		wantPath  string // empty means the request must be refused
+	}{
+		{contactID: "people/c123", wantPath: "/v1/people/c123"},
+		{contactID: "people/me/connections"},
+		{contactID: "otherContacts"},
+		{contactID: "xpeople/c123"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.contactID, func(t *testing.T) {
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.EscapedPath()
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"resourceName": "people/c123"})
+			}))
+			defer srv.Close()
+
+			def := yamldef.ServiceDef{
+				Service: yamldef.ServiceInfo{ID: "google.contacts"},
+				Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+				API:     yamldef.APIDef{BaseURL: srv.URL + "/v1", Type: "rest"},
+				Actions: map[string]yamldef.Action{
+					"get_contact": {
+						Method: "GET",
+						Path:   "/{{.contact_id}}",
+						Params: map[string]yamldef.Param{
+							"contact_id": {Type: "string", Required: true, Location: "path", AllowSlash: true, Pattern: "people/[^/]+"},
+						},
+					},
+				},
+			}
+			adapter, err := New(def, nil)
+			if err != nil {
+				t.Fatalf("New failed: %v", err)
+			}
+			_, err = adapter.Execute(context.Background(), adapters.Request{
+				Action:     "get_contact",
+				Params:     map[string]any{"contact_id": tc.contactID},
+				Credential: testCred("test-token"),
+			})
+			if tc.wantPath == "" {
+				if err == nil || gotPath != "" {
+					t.Fatalf("expected refusal before upstream, got err=%v path=%q", err, gotPath)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Execute failed: %v", err)
+			}
+			if gotPath != tc.wantPath {
+				t.Fatalf("upstream path = %q, want %q", gotPath, tc.wantPath)
+			}
+		})
+	}
+}
+
 func TestYAMLAdapter_UnresolvedPathParam(t *testing.T) {
 	// When a required path param is missing and has no default, the error
 	// should mention the parameter name, not silently send a broken URL.

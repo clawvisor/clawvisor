@@ -107,3 +107,15 @@ func (t *pathGuardTransport) RoundTrip(req *http.Request) (*http.Response, error
 	}
 	return base.RoundTrip(req)
 }
+
+// CloseIdleConnections forwards to the wrapped transport so the guarded
+// client can still release pooled connections.
+func (t *pathGuardTransport) CloseIdleConnections() {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if ci, ok := base.(interface{ CloseIdleConnections() }); ok {
+		ci.CloseIdleConnections()
+	}
+}

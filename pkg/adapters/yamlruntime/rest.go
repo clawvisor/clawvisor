@@ -38,7 +38,7 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 	}
 
 	// Build the URL path with parameter interpolation.
-	path, err := interpolatePath(action.Path, action.Params, pathParams, credFields)
+	path, err := interpolatePath(action.Path, action.Params, pathParams, credFields, ca)
 	if err != nil {
 		return nil, err
 	}
@@ -159,8 +159,9 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 // interpolatePath replaces {{.param}} and {{.credential.field}} placeholders in
 // the URL path. Param values are agent-controlled, so each one must stay inside
 // its own segment: "/" is percent-encoded unless the param opts in with
-// allow_slash, and empty or dot segments are rejected either way.
-func interpolatePath(path string, defs map[string]yamldef.Param, params map[string]any, credFields map[string]string) (string, error) {
+// allow_slash, and empty or dot segments are rejected either way. A param with
+// a pattern must also match it in full.
+func interpolatePath(path string, defs map[string]yamldef.Param, params map[string]any, credFields map[string]string, ca *compiledAction) (string, error) {
 	result := path
 	for k, v := range params {
 		placeholder := "{{." + k + "}}"
@@ -171,7 +172,13 @@ func interpolatePath(path string, defs map[string]yamldef.Param, params map[stri
 		if defs[k].AllowSlash {
 			escape = adapters.PathSegments
 		}
-		escaped, err := escape(fmt.Sprintf("%v", v))
+		raw := fmt.Sprintf("%v", v)
+		if ca != nil {
+			if re := ca.paramPatterns[k]; re != nil && !re.MatchString(raw) {
+				return "", fmt.Errorf("invalid path parameter %q: must match %s", k, defs[k].Pattern)
+			}
+		}
+		escaped, err := escape(raw)
 		if err != nil {
 			return "", fmt.Errorf("invalid path parameter %q: %w", k, err)
 		}

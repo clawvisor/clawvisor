@@ -102,6 +102,21 @@ func TestGuardPathTraversal(t *testing.T) {
 	}
 }
 
+func TestGuardPathTraversalForwardsCloseIdleConnections(t *testing.T) {
+	base := &closeIdleRecorder{}
+	GuardPathTraversal(&http.Client{Transport: base}).CloseIdleConnections()
+	if !base.closed {
+		t.Fatal("CloseIdleConnections was not forwarded to the wrapped transport")
+	}
+}
+
+type closeIdleRecorder struct {
+	http.RoundTripper
+	closed bool
+}
+
+func (c *closeIdleRecorder) CloseIdleConnections() { c.closed = true }
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
