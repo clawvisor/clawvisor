@@ -1,0 +1,19 @@
+web/vite.config.ts
+  s_320b513b6be9a2::t_6cbbd4c79131a0 23-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "bbaa0b6ab64ba27e22a00df57be19bf0fb0097ad",
+  "prompts": {},
+  "sessions": {
+    "s_320b513b6be9a2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "19c7857d-8f8e-4c04-92a3-39cf5f11fd11",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

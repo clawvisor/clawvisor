@@ -1,0 +1,32 @@
+internal/runtime/autovault/adjudicator.go
+  s_5690062ed6cda8::t_96b87e563658c9 1-178
+internal/api/server.go
+  s_5690062ed6cda8::t_7c26bd4ed2967a 894
+  s_5690062ed6cda8::t_0534c575350179 32
+internal/api/handlers/llm_endpoint.go
+  s_5690062ed6cda8::t_95a86c8b063e90 16,83-87,1126-1132
+internal/runtime/llmproxy/secret_detection.go
+  s_5690062ed6cda8::t_d89e0cac5cd803 35-42,185-193,202,222,225,233,243,255,267,271,285,293,297-309,315-332
+internal/api/handlers/llm_endpoint_test.go
+  s_5690062ed6cda8::t_48fc7c8e563b4e 597-617,619-658,660-680
+  s_5690062ed6cda8::t_b5b45146e84f88 17,28-36
+  s_5690062ed6cda8::t_25836811c80742 618,659
+pkg/runtime/proxy/inbound_secret_runtime.go
+  s_5690062ed6cda8::t_905935475375b6 41,525,603,780,788,984,988,999
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "03078867e0a4f662843910519c74cd1019afd801",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

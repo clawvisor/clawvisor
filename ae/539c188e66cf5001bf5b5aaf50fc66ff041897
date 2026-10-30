@@ -1,0 +1,37 @@
+internal/notify/slack/detail_test.go
+  s_20c7cd26d72652::t_bb354fbdcd8872 1-87
+internal/notify/slack/slack.go
+  s_20c7cd26d72652::t_93f9463d2c090a 123,130-132,150,443-450,453-456,468-471,473-476,479-481
+  s_20c7cd26d72652::t_ada62eb4c9a6e3 91,110
+  s_20c7cd26d72652::t_20e0935dfeefcf 452,472,477-478
+  s_20c7cd26d72652::t_4fb768a98fa88c 348,432
+  s_20c7cd26d72652::t_a0cc501ea35783 482-483
+internal/notify/slack/blocks.go
+  s_20c7cd26d72652::t_93f9463d2c090a 451-485
+internal/notify/slack/detail.go
+  s_20c7cd26d72652::t_bc3a378605b3d1 1-29,32-34,46,48-59,61-62,64-66,68-71,73,75-100,103-110,112-115,118,120,122,126,128-136
+  s_20c7cd26d72652::t_9d55b60cd9c570 30-31,35-45,47,60,63,67,72,74,101-102,111,116-117,119,121,123-125,127
+pkg/clawvisor/defaults.go
+  s_20c7cd26d72652::t_36c798f9f9625e 580
+internal/notify/slack/interactivity.go
+  s_20c7cd26d72652::t_20e0935dfeefcf 484-485,491-499,501-502,508
+  s_20c7cd26d72652::t_ada62eb4c9a6e3 30
+  s_20c7cd26d72652::t_f9547da057306e 65,147-151,471-483,486-490,500,503-507,509-513
+  s_20c7cd26d72652::t_a179a1d8627908 514
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "ae539c188e66cf5001bf5b5aaf50fc66ff041897",
+  "prompts": {},
+  "sessions": {
+    "s_20c7cd26d72652": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51f12a99-8a7d-4eaf-b0b7-4a4c8fe6113d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

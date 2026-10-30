@@ -1,0 +1,23 @@
+e2e/install/mock_github_server.py
+  s_cd5a3837ded788::t_58f0e1aa443808 5,11-12,56,58-59,63,66-67,69,87
+scripts/install.sh
+  s_cd5a3837ded788::t_6a65840c31c397 2,4,7,12-15,17-41,43-45,48-53,55-66,70-93,98-100,102-107,110,112,114,118,120,122-129,132-134,137-138,141-159,163,165,167-181
+e2e/install/test_curl_install.sh
+  s_cd5a3837ded788::t_7101c95515a722 5,88-89,145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "05c984fbbbf1eacd1667ac0bb4f419b14527cf83",
+  "prompts": {},
+  "sessions": {
+    "s_cd5a3837ded788": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3bdb-b99a-76d2-a693-40be2aa4a982",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+pkg/store/sqlite/store.go
+  s_55f7a841d7c10e::t_d4d89af70b81d9 110
+  s_55f7a841d7c10e::t_cd5a930d583311 126-241
+pkg/store/sqlite/migrations/060_api_tokens.sql
+  s_55f7a841d7c10e::t_93978c25e6c0e0 1-37
+pkg/store/store.go
+  s_55f7a841d7c10e::t_5fac4158e2b2f8 497-515
+  s_55f7a841d7c10e::t_cd490c25dc37bb 44-52
+  s_55f7a841d7c10e::t_f459a57ed6e83f 12-19
+pkg/store/postgres/store.go
+  s_55f7a841d7c10e::t_fd2b9ef303fd19 99
+  s_55f7a841d7c10e::t_878b230ce72f7f 114-212
+pkg/store/postgres/migrations/059_api_tokens.sql
+  s_55f7a841d7c10e::t_3504d798bed57f 1-38
+pkg/store/sqlite/store_apitokens_test.go
+  s_55f7a841d7c10e::t_958fd15d70e92e 1-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "40af86e84ea814d6f8d4fa209a86dace91e2ed66",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

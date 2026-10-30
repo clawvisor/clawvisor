@@ -1,0 +1,52 @@
+internal/runtime/tasks/envelope.go
+  s_5690062ed6cda8::t_dbb7894edc8ecb 28-33,37,59,87-88
+  s_5690062ed6cda8::t_b32401078a74cc 54-58,60-65
+pkg/store/sqlite/store.go
+  s_5690062ed6cda8::t_50c4489c910990 1306,1325,1331,1374-1376,1552,1566,1572,1615-1616
+  s_5690062ed6cda8::t_1c119b0332148e 1176,1201-1202,1207,1216,1223,1229,1273-1274
+internal/runtime/policy/request_shape.go
+  s_5690062ed6cda8::t_94726be789d182 108-115
+  s_5690062ed6cda8::t_734e945009e925 116-129
+pkg/store/postgres/store.go
+  s_5690062ed6cda8::t_c7da98fea913ea 1116,1286,1300,1307,1344-1345
+  s_5690062ed6cda8::t_f930cf8de3f734 1003,1017-1018,1024,1031,1039,1045,1080-1081
+internal/runtime/policy/envelope_risk.go
+  s_5690062ed6cda8::t_e2d794c6ae0305 61,105-115
+  s_5690062ed6cda8::t_c8b3113605b4f9 52
+pkg/store/postgres/migrations/044_task_required_credentials.sql
+  s_5690062ed6cda8::t_724b079ad1b325 1
+pkg/store/sqlite/store_runtime_test.go
+  s_5690062ed6cda8::t_1458cfb37995c0 50,79-80
+internal/api/handlers/tasks.go
+  s_5690062ed6cda8::t_759d3ebc000aab 135,165-166,230,245,249,257,262,282-298,491,499,556-562
+  s_5690062ed6cda8::t_b32401078a74cc 130-134,136-142
+  s_5690062ed6cda8::t_180e0bacbe3d1e 580,588
+internal/runtime/policy/request_shape_test.go
+  s_5690062ed6cda8::t_a5a6d9e65d93c9 23-25,29,46-49,57-73
+pkg/store/sqlite/migrations/044_task_required_credentials.sql
+  s_5690062ed6cda8::t_724b079ad1b325 1
+internal/api/handlers/tasks_inline.go
+  s_5690062ed6cda8::t_0f1c014cf36ae0 65,133-138
+pkg/store/store.go
+  s_5690062ed6cda8::t_ab7e45f9407cdf 569
+internal/runtime/policy/envelope_risk_test.go
+  s_5690062ed6cda8::t_4857e09aa86f04 49-68
+internal/api/task_v2_test.go
+  s_5690062ed6cda8::t_9eda14e0812eee 83-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "aa70512625f6d9f398808dcf1bb4dd8371389834",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

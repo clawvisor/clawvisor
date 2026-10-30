@@ -1,0 +1,19 @@
+docs/dashboard-prd.md
+  s_9f49afcf471aa6::t_bda2d383bc8156 1-850
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "ef60f0276f34c5f5360805eb610a0563865dad65",
+  "prompts": {},
+  "sessions": {
+    "s_9f49afcf471aa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d96073c8-3eed-4ff9-bf1e-71697a8dbed3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

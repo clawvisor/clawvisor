@@ -1,0 +1,21 @@
+internal/notify/slack/response_url_test.go
+  s_20c7cd26d72652::t_04d5303b5f5fa8 1-41
+internal/notify/slack/interactivity.go
+  s_20c7cd26d72652::t_33545e47c99659 16,244-245,269-297,302-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "cc9eb1b56c54460e18f6129e152ecf9946b14521",
+  "prompts": {},
+  "sessions": {
+    "s_20c7cd26d72652": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51f12a99-8a7d-4eaf-b0b7-4a4c8fe6113d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+e2e/scenarios/audit_correctness_more_test.go
+  s_8b1f6f8ddc53d3::t_68f086a3b17843 312-315
+  s_8b1f6f8ddc53d3::t_870eb99f6ecda2 213-216
+  s_8b1f6f8ddc53d3::t_1c88a527b84507 56-59
+  s_8b1f6f8ddc53d3::t_723052a37dc33a 360-363
+  s_8b1f6f8ddc53d3::t_65085db7595383 426-432
+  s_8b1f6f8ddc53d3::t_833fcb5e3f1589 258-261
+  s_8b1f6f8ddc53d3::t_9bacc922c5fb60 126-129
+e2e/scenarios/audit_invariants_test.go
+  s_8b1f6f8ddc53d3::t_fd338745679c38 42-45,51-54
+  s_8b1f6f8ddc53d3::t_a9ad6c5485514c 99-102
+  s_8b1f6f8ddc53d3::t_c51fb160532d6c 220-223
+  s_8b1f6f8ddc53d3::t_b607f89a153905 261-264
+  s_8b1f6f8ddc53d3::t_2961e877ed3a6f 147-150,160-163
+e2e/scenarios/audit_lifecycle_test.go
+  s_8b1f6f8ddc53d3::t_f8e0aec6e1b7a7 65-70,109-110,114-116,120-121,124-133
+  s_8b1f6f8ddc53d3::t_cc7071709b05f2 111-113,117-119,122-123
+  s_8b1f6f8ddc53d3::t_358550fbd25250 137-140,176-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cec5f10a9e58c8c0c370ccd0f042b7d66a39e55c",
+  "prompts": {},
+  "sessions": {
+    "s_8b1f6f8ddc53d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2217843-2b00-445d-88f2-f33b3fb654b2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

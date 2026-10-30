@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/pipeline/tool_use_bridge.go
+  s_813cf813d8b1d0::t_b46a92a48cd8b8 1-100
+internal/runtime/llmproxy/pipeline/tool_use_bridge_test.go
+  s_813cf813d8b1d0::t_f3e59d71cf1fb8 1-188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "8b37bac2ab3f6305023d46e43a3738b4d667b815",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

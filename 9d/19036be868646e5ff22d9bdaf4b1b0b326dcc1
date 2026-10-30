@@ -1,0 +1,36 @@
+internal/e2e/lite/drivers/claude.go
+  s_23705c7562535d::t_37c88d87a66f80 198-203
+internal/e2e/lite/library/vault_first_before_mcp_auth/scenario.yaml
+  s_23705c7562535d::t_54b07c4f451326 1-88
+internal/e2e/lite/harness.go
+  s_23705c7562535d::t_abab433fc36c84 83-88,95-99
+  s_23705c7562535d::t_4886496b503dc8 296-304,306-316,320-358
+  s_23705c7562535d::t_a3dc7643d36175 5,7,13
+internal/e2e/lite/scenario_loader_test.go
+  s_23705c7562535d::t_51fe43ab7efbbf 29
+internal/e2e/lite/scenario.go
+  s_23705c7562535d::t_91c60f134bbbb6 22-28
+internal/e2e/lite/drivers/mcpstub/main.go
+  s_23705c7562535d::t_4045acc8cafbce 1-119
+internal/e2e/lite/drivers/driver.go
+  s_23705c7562535d::t_da226c53fc24a2 51-58
+internal/e2e/lite/lite_test.go
+  s_23705c7562535d::t_a0aec77038f5fa 134
+  s_23705c7562535d::t_6c6313fc55aa59 47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "9d19036be868646e5ff22d9bdaf4b1b0b326dcc1",
+  "prompts": {},
+  "sessions": {
+    "s_23705c7562535d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "797b76f2-7008-4bde-940b-2a0d7f263236",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+docs/flip-cloud-coordination.md
+  s_55f7a841d7c10e::t_d79c8123e602ff 1-126
+  s_55f7a841d7c10e::t_63cee095d9e43e 127-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c951d3fef620ccd656a53dfd03b805a3f2c609f8",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

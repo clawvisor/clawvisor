@@ -1,0 +1,21 @@
+internal/api/handlers/llm_endpoint.go
+  s_c66a57870d80b0::t_6f3f88fd2e7322 1127
+  s_c66a57870d80b0::t_15ba018480516b 998-1007
+  s_c66a57870d80b0::t_0f570906357003 2700-2706,2715-2742
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "02f69335e68f1a0f1b350c4954dd85dec4464db7",
+  "prompts": {},
+  "sessions": {
+    "s_c66a57870d80b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "94a734a6-ae13-407e-a2f5-5e4ca7f90544",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

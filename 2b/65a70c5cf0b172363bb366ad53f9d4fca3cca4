@@ -1,0 +1,25 @@
+pkg/vault/refaws/refaws.go
+  s_55f7a841d7c10e::t_da0d23ce185b97 86
+  s_55f7a841d7c10e::t_a485c8c36e0557 71,73-77
+pkg/vault/refaws/refaws_test.go
+  s_55f7a841d7c10e::t_4f236ac2e2af1b 53-79
+pkg/vault/refgcp/refgcp.go
+  s_55f7a841d7c10e::t_f8650f72701435 44,55-59
+  s_55f7a841d7c10e::t_b6442d9c86f661 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2b65a70c5cf0b172363bb366ad53f9d4fca3cca4",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

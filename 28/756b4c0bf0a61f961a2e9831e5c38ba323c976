@@ -1,0 +1,36 @@
+pkg/runtime/decision/batch.go
+  s_ca96bd69448fdf::t_4c149fbc8b5210 1-52
+internal/runtime/llmproxy/postproc/parallel_intent_verify_test.go
+  s_ca96bd69448fdf::t_731f6e5775a089 163-278
+  s_ca96bd69448fdf::t_6d41162d3342aa 1-162
+pkg/runtime/decision/batch_test.go
+  s_ca96bd69448fdf::t_4c646ec60189ad 1-183
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_ca96bd69448fdf::t_8d9bfbf328a0eb 719-725
+  s_ca96bd69448fdf::t_d769e14b39fb0a 731-746,751-752,760,762,777-782,806-863,868-870
+  s_ca96bd69448fdf::t_fed1c5a7120359 88-104,106,109
+  s_ca96bd69448fdf::t_535aa9e1de2a87 84,107-108
+  s_ca96bd69448fdf::t_f02b9866a15e28 50,68
+  s_ca96bd69448fdf::t_3359f63bf5ccc0 60-61,67,85-87,105,110
+  s_ca96bd69448fdf::t_f7bd95348138c3 445-477,487-492,501,503,506-512,519,521-522,524-531,544-575,577-583,585-600,602-604,606-658,695-718,727-728
+  s_ca96bd69448fdf::t_0e989f927a2263 864-867
+internal/runtime/llmproxy/policies/authorization_policy.go
+  s_ca96bd69448fdf::t_8865bef2759ef8 60-73
+  s_ca96bd69448fdf::t_c096249df7ecf2 142-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "28756b4c0bf0a61f961a2e9831e5c38ba323c976",
+  "prompts": {},
+  "sessions": {
+    "s_ca96bd69448fdf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "61df16e7-5cad-4279-9d7d-f93b58e6b14e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

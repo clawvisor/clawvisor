@@ -1,0 +1,19 @@
+internal/api/handlers/gateway.go
+  s_aeeca9dea99c0c::t_6e3d4e71ec8b2b 1513-1514
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "30b74868e43ac46ef69755b6724e63e5775d44c3",
+  "prompts": {},
+  "sessions": {
+    "s_aeeca9dea99c0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "29f21bad-67c4-4e04-9440-142cf0795719",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

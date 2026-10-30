@@ -1,0 +1,23 @@
+internal/runtime/conversation/conversation_id.go
+  s_7afedb560012eb::t_ac6a0ff0b105e7 33-41,53-61
+internal/runtime/conversation/conversation_id_marker.go
+  s_7afedb560012eb::t_d8079405f96412 1-115
+internal/runtime/conversation/conversation_id_marker_test.go
+  s_7afedb560012eb::t_f14477bcc4e278 1-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "4a7ee3d292c6bbd21f9469a016505df49ec226e4",
+  "prompts": {},
+  "sessions": {
+    "s_7afedb560012eb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dc77baa2-f791-4b45-9533-97c5ea51a358",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+internal/runtime/llmproxy/postprocess.go
+  s_48544d04b3a3f6::t_9f023123d54010 2128-2136,2138-2141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e919c21ab30b4d7f2de07dda10787cbf1c2ead53",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

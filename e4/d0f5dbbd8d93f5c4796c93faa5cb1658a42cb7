@@ -1,0 +1,49 @@
+internal/runtime/conversation/stream/stream_edge_test.go
+  s_522af339bc956c::t_d5a1d59c87a9af 1-386
+internal/runtime/llmproxy/pipeline/response_mutator_impl_test.go
+  s_522af339bc956c::t_a7d28a6c25f062 153-171
+internal/api/handlers/llm_endpoint_stream_error_test.go
+  s_522af339bc956c::t_fd194792a812d1 45-62
+internal/runtime/conversation/stream/sse.go
+  s_522af339bc956c::t_1751ad821beea9 9
+internal/runtime/llmproxy/policies/inspector_chain_test.go
+  s_522af339bc956c::t_ede1a7e5abc7c4 6
+  s_522af339bc956c::t_22c9dcf9943416 82-106,172-174
+internal/runtime/llmproxy/pipeline/finalizer_test.go
+  s_522af339bc956c::t_73c91118498c90 14-20,39-40,209-349
+internal/runtime/conversation/stream/openai_chat_prepend_test.go
+  s_522af339bc956c::t_a7d28a6c25f062 78-98
+internal/runtime/llmproxy/policies/boundary_check_evaluator_test.go
+  s_522af339bc956c::t_c850449ec5166c 5,8,95-110
+internal/runtime/conversation/stream/google_decoder.go
+  s_522af339bc956c::t_1751ad821beea9 44-46
+internal/runtime/llmproxy/policies/inspector_chain_integration_test.go
+  s_522af339bc956c::t_ede1a7e5abc7c4 6
+  s_522af339bc956c::t_22c9dcf9943416 107-164
+internal/runtime/conversation/stream/anthropic_decoder.go
+  s_522af339bc956c::t_1751ad821beea9 51-53
+internal/runtime/conversation/stream/openai_responses_decoder.go
+  s_522af339bc956c::t_1751ad821beea9 45-47
+internal/runtime/conversation/stream/openai_chat_decoder.go
+  s_522af339bc956c::t_1751ad821beea9 42-44,74,77-81,84,138,140,143,146,155,160-161
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator_test.go
+  s_522af339bc956c::t_22c9dcf9943416 269-294,325-346
+internal/runtime/conversation/stream/openai_responses_prepend_test.go
+  s_522af339bc956c::t_a7d28a6c25f062 98-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "e4d0f5dbbd8d93f5c4796c93faa5cb1658a42cb7",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

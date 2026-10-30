@@ -1,0 +1,44 @@
+docs/LITE_PROXY.md
+  s_a5f208ad60cc21::t_e540b9c99b3aa7 67-98
+pkg/config/config.go
+  s_a5f208ad60cc21::t_75374b818c8896 541-543,788-808,885-894,969,971,973-975
+  s_a5f208ad60cc21::t_62f28b2a95c21c 122,970,972
+pkg/clawvisor/options.go
+  s_a5f208ad60cc21::t_c72c69975bd0ae 150
+  s_a5f208ad60cc21::t_23180e5264862d 20
+pkg/clawvisor/run.go
+  s_a5f208ad60cc21::t_dae4a44dbd0bda 326-328
+internal/api/server.go
+  s_a5f208ad60cc21::t_53136521bccb91 107,327-331
+  s_a5f208ad60cc21::t_65562c38cfe68c 1266-1268
+  s_a5f208ad60cc21::t_d3b9a43512aa9d 880-884
+  s_a5f208ad60cc21::t_2d1255241e1254 594-600,618-626
+  s_a5f208ad60cc21::t_de8b5fbb0d62eb 878
+  s_a5f208ad60cc21::t_38198e221fd913 1095-1206
+pkg/clawvisor/defaults.go
+  s_a5f208ad60cc21::t_23180e5264862d 45
+  s_a5f208ad60cc21::t_1bf0e8e669642c 348,386,434
+internal/runtime/llmproxy/pending_approval_cache_redis.go
+  s_a5f208ad60cc21::t_17bcf27dcaf2ba 10,181-182
+  s_a5f208ad60cc21::t_98146f154efd2e 1-9,11-180,183-186
+internal/api/proxy_lite_routes_test.go
+  s_a5f208ad60cc21::t_2f3b6da162a994 1-96
+pkg/config/config_test.go
+  s_a5f208ad60cc21::t_ffd8a97a2cfd51 32-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "272b534a5d3587fc8e9bc35598838d33ca5f04f5",
+  "prompts": {},
+  "sessions": {
+    "s_a5f208ad60cc21": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2a03-2bf5-7d62-80b1-67fd5e44976e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

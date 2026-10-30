@@ -1,0 +1,59 @@
+web/src/api/client.ts
+  s_9a0aa4d466d78e::t_61f6522a846ac7 164-169,172-173,1129-1130
+web/src/pages/Settings.tsx
+  s_9a0aa4d466d78e::t_61f6522a846ac7 24,1325-1395
+pkg/store/sqlite/store.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 60,62,78,80,107-110
+pkg/store/store_test.go
+  s_9a0aa4d466d78e::t_ce372f9480f5e2 1-88
+pkg/store/store.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 7-8,33-39,394-474
+internal/runtime/llmproxy/human_turns_test.go
+  s_9a0aa4d466d78e::t_ce372f9480f5e2 1-304
+internal/runtime/llmproxy/human_turns.go
+  s_9a0aa4d466d78e::t_ce372f9480f5e2 1-244
+internal/api/user_settings_test.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 147-244
+pkg/store/postgres/migrations/051_user_conversation_auto_approve_threshold.sql
+  s_9a0aa4d466d78e::t_ce372f9480f5e2 1-10
+internal/taskrisk/prompts.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 44-45,56-62,75-77,80,261-271,274-284
+pkg/store/sqlite/migrations/051_user_conversation_auto_approve_threshold.sql
+  s_9a0aa4d466d78e::t_ce372f9480f5e2 1-7
+internal/api/server.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 705-708
+internal/runtime/llmproxy/postprocess.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 49-56,67-87,199-231
+internal/api/handlers/llm_endpoint.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 806-823,845-852,2674,2679-2686,2688-2693
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 13,133-186,217-266,300,307-317,319-324
+internal/api/handlers/auth.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 291-334
+pkg/store/postgres/store.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 61,63,73,75,96-99
+internal/taskrisk/assessor_test.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 79-188
+internal/taskrisk/assessor.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 52-61,77-85,197-202,224-236,238-243
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_9a0aa4d466d78e::t_61f6522a846ac7 168-169,172,178-180,184-191,425-714
+pkg/store/sqlite/store_user_threshold_test.go
+  s_9a0aa4d466d78e::t_ce372f9480f5e2 1-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "6453ff9b27879cca0e8541ecd3aadf0f6aa5a112",
+  "prompts": {},
+  "sessions": {
+    "s_9a0aa4d466d78e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c440bd80-3777-4757-aac1-06e9c87701cb",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

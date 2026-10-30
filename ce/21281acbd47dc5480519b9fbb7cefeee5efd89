@@ -1,0 +1,26 @@
+web/src/components/attention/ApprovalAttentionCard.tsx
+  s_9f49afcf471aa6::t_99f8b9e2c07be2 126
+web/src/hooks/useAttentionDeepLinks.ts
+  s_9f49afcf471aa6::t_933b4b48405db7 69-73,76-94,97-98
+web/src/pages/DashboardIndex.tsx
+  s_9f49afcf471aa6::t_d908c76d21208a 25-36,46,52-56
+web/src/hooks/useAttentionItems.ts
+  s_9f49afcf471aa6::t_7c6044234d9ad1 40-46,58
+  s_9f49afcf471aa6::t_077b9944287a82 77,83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "ce21281acbd47dc5480519b9fbb7cefeee5efd89",
+  "prompts": {},
+  "sessions": {
+    "s_9f49afcf471aa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d96073c8-3eed-4ff9-bf1e-71697a8dbed3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+pkg/store/postgres/postgres.go
+  s_fa4712eda9c001::t_d25a2e15b44d4b 81-91
+  s_fa4712eda9c001::t_fab72deafadd13 10
+pkg/store/postgres/migration_safety_general_test.go
+  s_fa4712eda9c001::t_c144c653c1b3a6 117-129
+  s_fa4712eda9c001::t_88920a96822293 89-95,99,104,110
+  s_fa4712eda9c001::t_6174592300ca0e 34-48,52,54,57,61-69,71
+  s_fa4712eda9c001::t_26180a80afc907 74-88,97
+  s_fa4712eda9c001::t_81a26bc8c5d54e 72,162-224
+  s_fa4712eda9c001::t_3d5350cbeffbb7 58-60
+  s_fa4712eda9c001::t_822b64dc8bd9a7 73
+scripts/postgres/post-062-backfill.sql
+  s_fa4712eda9c001::t_5cfd4aed63b896 11-16,26-41,45-46,48-54,56-101,105-108,110-148,154,159-179,182-194
+  s_fa4712eda9c001::t_698b5e006f77a1 202-228
+pkg/store/postgres/migration_safety_test.go
+  s_fa4712eda9c001::t_6a3efce4fdfe9b 47-56,58,63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "c5206f4c3abc6f4b7d7b8afb7312a1de014d95f3",
+  "prompts": {},
+  "sessions": {
+    "s_fa4712eda9c001": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "43e64dce-c215-4362-86de-13c0bc757714",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

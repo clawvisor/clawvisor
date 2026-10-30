@@ -1,0 +1,19 @@
+internal/api/handlers/llm_endpoint_active_tasks_snapshot_test.go
+  s_392c378a08ddad::t_d33125dd60c46a 14-18,23,26-28,31-32,36-37,41-42,46-47,51-52,56-57,61-62,66-67,71-73,78,83,88,95-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "4dfd939eb782016bbbaee4a487b83ee59a098b17",
+  "prompts": {},
+  "sessions": {
+    "s_392c378a08ddad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e042dbd7-88e2-4c8d-b7d9-a5f55befb2e5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

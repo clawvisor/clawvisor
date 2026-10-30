@@ -1,0 +1,58 @@
+internal/runtime/llmproxy/approval_reply_resolver.go
+  s_c437c10337e49e::t_6d50e3eada65ec 40
+docs/LITE_PROXY.md
+  s_c437c10337e49e::t_c4e4e04a67433a 10,224,230-231
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_c437c10337e49e::t_ed5569bcbc6512 14,45-46,148
+internal/runtime/conversation/approval_reply.go
+  s_c437c10337e49e::t_88e57456dd4d4f 9,26,29,34-43
+  s_c437c10337e49e::t_097d598bf3e90c 8
+  s_c437c10337e49e::t_aaa5d4115d1a6b 12-16
+internal/runtime/llmproxy/inline_approval_outcome.go
+  s_c437c10337e49e::t_59f28ea997942e 38
+internal/runtime/llmproxy/inline_task_prompt.go
+  s_c437c10337e49e::t_a9fd752e73febf 10,45,49,137
+internal/api/handlers/llm_endpoint_test.go
+  s_c437c10337e49e::t_7b0d3ab09a685e 401,1537,1651
+internal/runtime/llmproxy/postprocess_test.go
+  s_c437c10337e49e::t_f802cca1de4b0e 487,542,579
+internal/runtime/llmproxy/inline_task_prompt_test.go
+  s_c437c10337e49e::t_32c24818c5edab 43-44,88-89
+internal/runtime/llmproxy/pending_approval_cache.go
+  s_c437c10337e49e::t_b06ff57816ac7b 34,44
+internal/runtime/llmproxy/inline_task_state_machine.md
+  s_c437c10337e49e::t_d116a4cdba570d 11-12,19-20
+  s_c437c10337e49e::t_18feec836013b8 33,35,73-74,89-90
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_c437c10337e49e::t_01e2af8396373d 120
+  s_c437c10337e49e::t_87e4bdb15fdeb8 131,362
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_c437c10337e49e::t_e9f5947b672ef2 66
+internal/runtime/llmproxy/postprocess.go
+  s_c437c10337e49e::t_1ec562d1606b25 707
+  s_c437c10337e49e::t_6f48c21088effa 233-234,731
+internal/runtime/llmproxy/approval_body_editor_test.go
+  s_c437c10337e49e::t_d23c430f5f3454 30
+internal/runtime/llmproxy/inline_task_augment_test.go
+  s_c437c10337e49e::t_af6d69f89bc61c 29,92
+  s_c437c10337e49e::t_dca855cbdd5732 33,40,49
+internal/runtime/llmproxy/release_test.go
+  s_c437c10337e49e::t_78922a9c502e44 66-73,77-80
+  s_c437c10337e49e::t_9b2e588632fc37 62-65,74-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "35005bb54d1b7be5072c12ce0f99d62af06c9c17",
+  "prompts": {},
+  "sessions": {
+    "s_c437c10337e49e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e398f-2cf9-7ab1-a5a7-d06c129dd4ea",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

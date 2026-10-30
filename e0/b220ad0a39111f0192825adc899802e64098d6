@@ -1,0 +1,72 @@
+internal/runtime/policy/global_rules_test.go
+  s_69905dfe20e322::t_052ca605aa0ff8 59-79
+internal/api/handlers/runtime_tool_controls.go
+  s_69905dfe20e322::t_f8cdeed89d58b1 174-181,183-184
+  s_69905dfe20e322::t_7da466e369e483 17-18,73,172-173,182,230,249-253,273,285-312
+  s_69905dfe20e322::t_825581106b8d07 424-448
+  s_69905dfe20e322::t_d4a249d1b3e592 449-469,552-557,559
+  s_69905dfe20e322::t_0b39f3100dcf2b 522-524,528-551,558,560-615
+  s_69905dfe20e322::t_506283dce56667 20-37,66-72,74
+  s_69905dfe20e322::t_eb3c8a88971d64 92-96,114-115,119-124,126,137-149,185-186,200,205,210,331
+  s_69905dfe20e322::t_945ec243a57832 4
+  s_69905dfe20e322::t_49261dc637ec14 90-91,104-109,125,127-136,150
+internal/runtime/llmproxy/control_test.go
+  s_69905dfe20e322::t_eeec0dbbec6e6b 35-38
+  s_69905dfe20e322::t_b1d5f31f9f67cd 58-59,141-156
+internal/runtime/llmproxy/inspector/readonly_bash_test.go
+  s_69905dfe20e322::t_c0998112f3bb75 11,20-24,53-73
+  s_69905dfe20e322::t_d32ad64331d703 1-10,12-19,25-45,74-92
+  s_69905dfe20e322::t_c88c4367fcc100 46-52
+pkg/runtime/decision/decision.go
+  s_69905dfe20e322::t_8094935a4d7bd8 170-172
+  s_69905dfe20e322::t_91aba69c46879a 119-123,425,464
+web/src/pages/Restrictions.tsx
+  s_69905dfe20e322::t_9af778dab2f0f6 390
+  s_69905dfe20e322::t_1bdeabfd471b78 1002-1005
+  s_69905dfe20e322::t_116ac49ecc7b13 495,607,620,698,715,738,754,785,806,819,835-840,872-891
+  s_69905dfe20e322::t_d8d6b3b2bca2ce 628,825,830,871
+internal/runtime/policy/global_rules.go
+  s_69905dfe20e322::t_fdcfe553a45b2b 63-65
+internal/runtime/llmproxy/postprocess_test.go
+  s_69905dfe20e322::t_334eea058086c1 205,241-249,255-262,271-289
+  s_69905dfe20e322::t_506283dce56667 263-270
+internal/runtime/llmproxy/control.go
+  s_69905dfe20e322::t_d4c4dd5358e04c 164,171-173,180-220,235
+  s_69905dfe20e322::t_0e8f2d31d701fd 56-58
+pkg/runtime/decision/decision_test.go
+  s_69905dfe20e322::t_3cb281e75bc8a3 291-310
+  s_69905dfe20e322::t_ae08c1b9a1decc 186-209
+internal/runtime/llmproxy/inspector/readonly_bash.go
+  s_69905dfe20e322::t_0bb0bae19edca9 1-68,72-78,83-159,164,170-171,175-178,180-182,189-190,195-197,207-208,215-226,292,335-338
+  s_69905dfe20e322::t_07cd9360c9a694 69-71,160-163,165-169,172-174,179,183-188,191-194,198-206,209-214,227-291,293-334
+  s_69905dfe20e322::t_3c6788d92f9ee1 79-82
+internal/api/handlers/runtime_controls_test.go
+  s_69905dfe20e322::t_348727fa8483b9 502-516,523-535,573-575
+  s_69905dfe20e322::t_9131e54fef99d6 346,351-353,358-360,427-450
+  s_69905dfe20e322::t_bceb060370b59d 454-501,517-522,536-572,576-582
+internal/runtime/llmproxy/postprocess.go
+  s_69905dfe20e322::t_9ee39dcfdba355 362-367,369-377,408-411
+  s_69905dfe20e322::t_044ef75ed1aace 412,848-849,855-892
+internal/intent/verifier_test.go
+  s_69905dfe20e322::t_2692b55d35c1c0 196-203
+web/src/api/client.ts
+  s_69905dfe20e322::t_a13939b7e35c74 744-748,1315
+internal/intent/prompts.go
+  s_69905dfe20e322::t_6b0751ac7f95f6 277
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "e0b220ad0a39111f0192825adc899802e64098d6",
+  "prompts": {},
+  "sessions": {
+    "s_69905dfe20e322": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e46df-8e1d-75e1-ac16-0dc9b080d6ba",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+pkg/clawvisor/defaults.go
+  s_ae11d5e26da131::t_3bcb8f1a81e239 34
+  s_ae11d5e26da131::t_ab10441a03212c 206-208
+internal/adapters/slack/adapter.go
+  s_ae11d5e26da131::t_a20ba8bb851258 23-28
+  s_ae11d5e26da131::t_3916d232307bd0 30-34
+  s_ae11d5e26da131::t_7c199ea32f13a4 126-135,141-142
+  s_ae11d5e26da131::t_68ab5d35a3c018 197-199
+  s_ae11d5e26da131::t_8aff3244ce69c5 318-321
+  s_ae11d5e26da131::t_50557c95caeb8f 104,153,215
+  s_ae11d5e26da131::t_a4929d6ec99c5a 166-174,177-179,188
+  s_ae11d5e26da131::t_32857d37212c12 239-241,243,247-268
+  s_ae11d5e26da131::t_045230adc3cf26 1-22,29,35-103,105-107,109-125,136-140,143-152,154-165,175-176,180-187,189-196,200-214,216-238,242,244-246,269-317,322-362
+  s_ae11d5e26da131::t_cd913498507d44 108
+internal/adapters/definitions/slack.yaml
+  s_ae11d5e26da131::t_b4052c3c397c6d 95-100
+  s_ae11d5e26da131::t_2959c0809aeb1a 165-221,224-235
+  s_ae11d5e26da131::t_ffd826eabd7bc3 222-223
+internal/adapters/slack/adapter_test.go
+  s_ae11d5e26da131::t_d057565affc49e 46-48
+  s_ae11d5e26da131::t_805d58ad7f70e0 23-28
+  s_ae11d5e26da131::t_98a196c4fb4a4c 109-111,114-116,128-169
+  s_ae11d5e26da131::t_6eaec14b324a08 4
+  s_ae11d5e26da131::t_0f6c3de1809b0c 264-321,323-355
+  s_ae11d5e26da131::t_16b2166e79346e 322
+  s_ae11d5e26da131::t_6c7280c3d5a0eb 1-3,5-22,29-45,49-108,112-113,117-127,170-263,356-405
+internal/adapters/format/format.go
+  s_ae11d5e26da131::t_af17ef848257b2 20-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "bd16958bdd7e86a97470bafafc6ddb3d5bf99385",
+  "prompts": {},
+  "sessions": {
+    "s_ae11d5e26da131": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "811c5d27-2b15-4eac-8e3c-a01783a0fa97",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+internal/runtime/llmproxy/control.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 90
+pkg/store/store.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 789
+docs/TASK_EXAMPLES.md
+  s_f9f5f12adece22::t_ab60086ddd5e66 170-175
+internal/mcp/tools.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 104
+internal/e2e/lite/recorder.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 76-77,229
+internal/api/handlers/tasks.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 144,451,455-456
+internal/runtime/llmproxy/task_slide.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 10-13,15-17,26-27,29-31,38-39,42
+internal/runtime/llmproxy/postprocess.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 1085-1088
+internal/runtime/llmproxy/task_slide_test.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 29,47-51,54,58-59,64,68-69,71,75,88,122,126,128
+internal/runtime/llmproxy/inline_task_prompt.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 199-200,206-208,226-234
+internal/tui/client/types.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 190
+skills/clawvisor/SKILL.md.tmpl
+  s_f9f5f12adece22::t_ab60086ddd5e66 135
+internal/api/handlers/runtime_controls.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 389-390,420
+internal/api/handlers/tasks_inline.go
+  s_f9f5f12adece22::t_ab60086ddd5e66 104-105,420-421
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c2a068d63cca16c2a2b7395fb412c3a91afdcd4d",
+  "prompts": {},
+  "sessions": {
+    "s_f9f5f12adece22": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f35e396-42d1-4290-a586-ffc66b4f4d66",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_69f9d6afb3581a::t_45e8f668632c36 22
+internal/api/handlers/llm_endpoint.go
+  s_69f9d6afb3581a::t_646ddc264a6dda 169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6c93a4645e375321f1602c99526036e8e6c03fda",
+  "prompts": {},
+  "sessions": {
+    "s_69f9d6afb3581a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f5b62fe-f3e2-49ac-ae29-0e3591252b00",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

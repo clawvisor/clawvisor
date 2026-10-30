@@ -1,0 +1,23 @@
+pkg/notify/expansion_render.go
+  s_fd6d9b102e043d::t_49a8944670362c 1-84,89-92,124-140
+  s_fd6d9b102e043d::t_7e5966f3b17c3c 112
+pkg/notify/expansion_render_test.go
+  s_fd6d9b102e043d::t_e50fe69ce72e26 1-25,29-31,35-75
+  s_fd6d9b102e043d::t_99962e3e5fe95e 32-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "7f62685935185a5967401eb44374bc6133a8d4ac",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

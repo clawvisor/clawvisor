@@ -1,0 +1,20 @@
+e2e/scenarios/vault_ref_test.go
+  s_55f7a841d7c10e::t_ec9eea44ae32b3 1-134,139-208
+  s_55f7a841d7c10e::t_a0e53f2bec480f 135-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "18eeb23ac73d138c531e01aefb5ffe6350bc16fb",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

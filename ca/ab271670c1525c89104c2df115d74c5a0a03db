@@ -1,0 +1,67 @@
+cmd/render-installer/main_test.go
+  s_a9afcf61fae206::t_2a6ead64c4a93f 26,29
+  s_a9afcf61fae206::t_b45e6b65e7a648 1-20,23-25,30-46
+  s_a9afcf61fae206::t_1379c33c8face7 21-22
+  s_a9afcf61fae206::t_8284c7b60e76d0 27-28
+internal/api/handlers/installer_scripts/common.sh.tmpl
+  s_a9afcf61fae206::t_c3c1b6a09db457 530-535,554,561,563
+  s_a9afcf61fae206::t_208c0c640c1074 552-553,555
+  s_a9afcf61fae206::t_1c1353b3a15a2c 480-489,495-496,536-542,550,590-596,607
+  s_a9afcf61fae206::t_9fab164299284e 32,659-660,712,731,751-752,758,761-762
+  s_a9afcf61fae206::t_40d354f25cafa7 344-348,351-378,380-382,384,386,388,391-411,413-417,646-652,706
+  s_a9afcf61fae206::t_ca819a03807e50 569-589,597-606,608-632,705,708
+  s_a9afcf61fae206::t_8284c7b60e76d0 698-700,707,726
+  s_a9afcf61fae206::t_f53a0770518bc8 514-529,543-548,551,556-560,562,564-568,633,725,727
+  s_a9afcf61fae206::t_cfeb409d672ce5 716-722
+  s_a9afcf61fae206::t_2a6ead64c4a93f 549
+cmd/render-installer/main.go
+  s_a9afcf61fae206::t_b45e6b65e7a648 1-40,43-112
+  s_a9afcf61fae206::t_1379c33c8face7 41-42
+scripts/render-staging-installer.sh
+  s_a9afcf61fae206::t_ef1e3906f0a16c 7,14,17,26-31,33-36,43-45,47-49,55-56
+  s_a9afcf61fae206::t_1379c33c8face7 10-11,20-21,61-62,68
+  s_a9afcf61fae206::t_78394e7f06c9db 32,37-42
+  s_a9afcf61fae206::t_b45e6b65e7a648 1-6,8-9,12-13,15-16,18-19,22-25,46,50-54,57-60,63-67,69-71
+internal/api/handlers/installer_scripts/claude_code_skill_only.sh.tmpl
+  s_a9afcf61fae206::t_b04d686c35e466 85,89
+internal/api/handlers/installer_runtime_test.go
+  s_a9afcf61fae206::t_1c1353b3a15a2c 86-87,100-101,242,252
+  s_a9afcf61fae206::t_c3c1b6a09db457 83-85,239,241
+  s_a9afcf61fae206::t_570aa3d7f4a976 1-45,47-58,63-79,118-134,136-141,149-153,156-207,209-235,259
+  s_a9afcf61fae206::t_f53a0770518bc8 80-81,88-92,117,143,236-238,240,254-258
+  s_a9afcf61fae206::t_48c5dc7501432a 208
+  s_a9afcf61fae206::t_9fab164299284e 59-62
+  s_a9afcf61fae206::t_3e90d2ea110402 46,154-155
+  s_a9afcf61fae206::t_ca819a03807e50 93-99,102-116,135,243-251,253
+  s_a9afcf61fae206::t_8284c7b60e76d0 82
+  s_a9afcf61fae206::t_bf2d50b22a28eb 142,144-148
+internal/api/handlers/installer_test.go
+  s_a9afcf61fae206::t_cfeb409d672ce5 1119-1128,1136-1141
+  s_a9afcf61fae206::t_8284c7b60e76d0 1130-1132,1134
+  s_a9afcf61fae206::t_ca819a03807e50 1142-1156
+  s_a9afcf61fae206::t_f53a0770518bc8 1129,1133,1135
+  s_a9afcf61fae206::t_b04d686c35e466 1018,1024,1349,1359
+  s_a9afcf61fae206::t_1c1353b3a15a2c 1184-1187
+  s_a9afcf61fae206::t_b47b01885d3b18 519-522,1198-1204,1220,1222-1232,1234-1249
+  s_a9afcf61fae206::t_a2f1a59de2104a 1205-1219,1221
+  s_a9afcf61fae206::t_f11586d06c5a4d 1233
+  s_a9afcf61fae206::t_a2fa5a3c95eb52 1250
+internal/api/handlers/installer_scripts/codex_skill_only.sh.tmpl
+  s_a9afcf61fae206::t_b04d686c35e466 138,142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "caab271670c1525c89104c2df115d74c5a0a03db",
+  "prompts": {},
+  "sessions": {
+    "s_a9afcf61fae206": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe98b-7d19-7ae1-b820-64975bafcda2",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

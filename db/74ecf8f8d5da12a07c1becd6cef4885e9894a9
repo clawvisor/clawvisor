@@ -1,0 +1,33 @@
+internal/runtime/llmproxy/expired_task_notice_test.go
+  s_40d323bf8e3078::t_70cf36b7b5bfa2 88,110,174
+  s_40d323bf8e3078::t_0381325bcc65dd 1-87,89-109,111-173,175-222
+internal/runtime/llmproxy/expired_task_notice.go
+  s_40d323bf8e3078::t_f7ad51ebd56d90 38-40
+  s_40d323bf8e3078::t_87bd77164d10dd 1-37,41-217
+internal/runtime/llmproxy/policies/expired_task_notice.go
+  s_40d323bf8e3078::t_6be5e80bb7b6bb 1-96,101-140
+  s_40d323bf8e3078::t_389686b54f064a 97-100
+internal/runtime/llmproxy/policies/expired_task_notice_test.go
+  s_40d323bf8e3078::t_ba9b13dac35fbb 1-204
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_40d323bf8e3078::t_c3a303d9985d00 314-320
+internal/api/handlers/llm_endpoint.go
+  s_40d323bf8e3078::t_6882cce777e7c4 3049-3091
+  s_40d323bf8e3078::t_0ca7abeca9010f 717-772
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.7",
+  "base_commit_sha": "db74ecf8f8d5da12a07c1becd6cef4885e9894a9",
+  "prompts": {},
+  "sessions": {
+    "s_40d323bf8e3078": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e29bd13d-0ddc-4158-b143-541cdf0eb5dc",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

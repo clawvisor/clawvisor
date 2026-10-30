@@ -1,0 +1,21 @@
+e2e/scenarios/llm_proxy_posture_test.go
+  s_55f7a841d7c10e::t_9b70bd3cf4a19a 166-225,234-266,275-276,283-286,290-292,296,306
+e2e/scenarios/llm_proxy_local_gov_test.go
+  s_55f7a841d7c10e::t_e20bfa21525bd2 64-173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d0d9a05a9b0071f76bb08df1be4b83956cc6c7e2",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

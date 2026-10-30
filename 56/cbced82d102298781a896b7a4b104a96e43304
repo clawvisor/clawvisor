@@ -1,0 +1,40 @@
+internal/adapters/google/gmail/adapter.go
+  s_ae11d5e26da131::t_610f595ae1486c 319,335-336
+internal/adapters/slack/adapter.go
+  s_ae11d5e26da131::t_610f595ae1486c 281
+pkg/adapters/yamlloader/loader_test.go
+  s_ae11d5e26da131::t_9ed9f5529900a5 4,23-36,89-110,117,119-123,133-135,138-139,141,143-144
+  s_ae11d5e26da131::t_4ece8df6b27076 111-116,118,124-132,136-137,140,142
+  s_ae11d5e26da131::t_3b3f86e2161353 145
+internal/adapters/microsoft/onedrive/adapter.go
+  s_ae11d5e26da131::t_610f595ae1486c 176
+internal/adapters/format/format_test.go
+  s_ae11d5e26da131::t_396ffb586469d1 107-131
+internal/adapters/dropbox/adapter.go
+  s_ae11d5e26da131::t_610f595ae1486c 175
+internal/adapters/definitions/microsoft_onedrive.yaml
+  s_ae11d5e26da131::t_6e11f57230508e 95-97
+internal/adapters/format/format.go
+  s_ae11d5e26da131::t_55775bcad24795 61-67,91-98
+  s_ae11d5e26da131::t_943af3f7240c17 99-100
+internal/adapters/google/drive/adapter.go
+  s_ae11d5e26da131::t_40d38f04904c48 463-467,655-677
+  s_ae11d5e26da131::t_610f595ae1486c 293,381,494-495
+  s_ae11d5e26da131::t_38cb6f0ca66c1a 678-680
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "56cbced82d102298781a896b7a4b104a96e43304",
+  "prompts": {},
+  "sessions": {
+    "s_ae11d5e26da131": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "811c5d27-2b15-4eac-8e3c-a01783a0fa97",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+web/src/App.tsx
+  s_1bd249c4136f99::t_732fc306a33a63 58,60-64
+web/src/hooks/useAuth.tsx
+  s_55f7a841d7c10e::t_a0d4148bc7ba43 27-31,50-53,155,157-163,220-224,226
+web/src/pages/Dashboard.tsx
+  s_1bd249c4136f99::t_a93bf6649bd32b 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "82281882cca806d213d7a6e430aaaf007de563aa",
+  "prompts": {},
+  "sessions": {
+    "s_1bd249c4136f99": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a432e3e7-1359-46b2-afe1-950fd9475dc6",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+internal/adapters/definitions/google_calendar.yaml
+  s_271c1c1ec30ce4::t_fb23967ccaa3a5 45,48,51,53,56-57
+  s_271c1c1ec30ce4::t_9ad9f098b4b95f 132
+  s_271c1c1ec30ce4::t_af5afa5d809f61 175
+internal/intent/testdata/eval_cases.json
+  s_271c1c1ec30ce4::t_a17cad3ee99e62 11-12,172-173,414-415,454-455,554-555,1075,1131-1132,1258-1259,1482,1567-1568,1790,1913-1914,1936,2202,2321,2519-2520,2562,2738-2739,2839,2915-2916,2977-2978,2980,3091,3128,3164,3175,3194,3212,3259,3718-3719,4613,4633,4672,4691,4730,4749,4768,4775,4787,4806,4825,4846,4867,4893-4894,4914-4915,4918,4938,4958,4995-4996,4999,5044,5086,5167-5168,5183,5203,5248,5275,5295-5296
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "77192d9bde67036b6298b3b7ded540b5d406a9d7",
+  "prompts": {},
+  "sessions": {
+    "s_271c1c1ec30ce4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3a4ddb94-88f6-4a94-8fce-581c46e95448",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

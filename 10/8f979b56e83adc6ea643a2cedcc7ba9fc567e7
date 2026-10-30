@@ -1,0 +1,22 @@
+internal/runtime/llmproxy/assistant_notice_prepend.go
+  s_bbe778adcf6f02::t_958716a2cfff91 55-56,58,67-127
+  s_bbe778adcf6f02::t_b8c10d6174bd90 4
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_bbe778adcf6f02::t_ee17c368dfe356 301-313
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "108f979b56e83adc6ea643a2cedcc7ba9fc567e7",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

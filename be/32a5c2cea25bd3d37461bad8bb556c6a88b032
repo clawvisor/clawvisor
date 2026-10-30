@@ -1,0 +1,54 @@
+e2e/scenarios/llm_proxy_transport_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-252
+e2e/scenarios/llm_proxy_auth_matrix_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-66
+e2e/scenarios/testdata/llm-cassettes/TestLLMProxyEndToEndViaCassette/000.json
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-23
+e2e/scenarios/llm_proxy_endpoints_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-172
+e2e/scenarios/llm_proxy_streaming_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-96
+e2e/scenarios/llm_proxy_test.go
+  s_8b1f6f8ddc53d3::t_cccbdedc2b2379 1-165
+e2e/scenarios/llm_proxy_openai_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-148
+e2e/scenarios/llm_proxy_provider_headers_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-149
+e2e/scenarios/helpers_test.go
+  s_8b1f6f8ddc53d3::t_f940df010ebe1c 1-160,171-186
+  s_8b1f6f8ddc53d3::t_dbde5cdf5e3ef2 161-170
+e2e/scenarios/llm_proxy_markup_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-102
+e2e/scenarios/llm_proxy_control_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-77
+e2e/scenarios/llm_proxy_cassette_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-106
+e2e/scenarios/llm_proxy_intent_verify_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-204
+e2e/scenarios/llm_proxy_audit_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-71
+e2e/scenarios/llm_proxy_passthrough_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-105
+e2e/scenarios/llm_proxy_security_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-165
+e2e/scenarios/llm_cassette_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-75
+e2e/scenarios/llm_proxy_tool_mechanics_test.go
+  s_8b1f6f8ddc53d3::t_88ab24e2660401 1-338
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "be32a5c2cea25bd3d37461bad8bb556c6a88b032",
+  "prompts": {},
+  "sessions": {
+    "s_8b1f6f8ddc53d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2217843-2b00-445d-88f2-f33b3fb654b2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

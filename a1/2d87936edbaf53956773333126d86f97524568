@@ -1,0 +1,19 @@
+e2e/browser/tests/approvals.spec.ts
+  s_7bebf1a7f2da2e::t_15bda5f28887c5 37-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "a12d87936edbaf53956773333126d86f97524568",
+  "prompts": {},
+  "sessions": {
+    "s_7bebf1a7f2da2e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a9063f2-d6c7-4ece-927d-f188797227cd",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

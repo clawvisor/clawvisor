@@ -1,0 +1,21 @@
+internal/clawvisorcli/cmd_agent_docker.go
+  s_55f7a841d7c10e::t_d2140e13fd75c7 285-295
+internal/clawvisorcli/cmd_agent_docker_test.go
+  s_55f7a841d7c10e::t_6d2db972922796 90-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "30ef31907eaad9222374535967243f7a2d70b978",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    }
+  }
+}

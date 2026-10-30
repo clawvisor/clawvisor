@@ -1,0 +1,21 @@
+provider/go.mod
+  s_f4ff4894e57428::t_c185985db416f5 65
+provider/go.sum
+  s_f4ff4894e57428::t_2bb7bc7580ff46 236-237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "6510797d8ee77d794f4dcd180b2a6f153282fd60",
+  "prompts": {},
+  "sessions": {
+    "s_f4ff4894e57428": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2bf5b2d1-0132-40cd-a831-cdbf1e9ef5fc",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+internal/runtime/llmproxy/orggov/canonical.go
+  s_5968b5a9192332::t_8fcc820368c8f3 3-7,15,32-33,38,40-41,53-57
+  s_5968b5a9192332::t_1b2e80294b1ff4 13-14,16-21,36-37,39,42-52
+internal/runtime/llmproxy/orggov/canonical_test.go
+  s_5968b5a9192332::t_ae9684021f5608 20-21
+internal/runtime/llmproxy/policies/org_model_policy.go
+  s_5968b5a9192332::t_045888a2864902 133-147,151,156-161,163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "aecffef6177f9b6ad7b02224e6a860fbd80396ef",
+  "prompts": {},
+  "sessions": {
+    "s_5968b5a9192332": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a904c4d-ba8e-4c28-baa2-feb0913c70b6",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

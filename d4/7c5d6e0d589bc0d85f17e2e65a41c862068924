@@ -1,0 +1,75 @@
+internal/notify/slack/mrkdwn.go
+  s_20c7cd26d72652::t_424b822a32e310 24-28,38-46
+web/src/pages/Settings.tsx
+  s_20c7cd26d72652::t_d4e628f300418f 776-781,823,826-830,840-842,975-986
+internal/notify/slack/config_lifecycle_test.go
+  s_20c7cd26d72652::t_9c6dd2eee650e8 1-322
+internal/api/handlers/notification_message_test.go
+  s_20c7cd26d72652::t_1d1a7a60400c61 1-125
+internal/notify/slack/oauth_install_test.go
+  s_20c7cd26d72652::t_d9a792fd3d831d 1-98
+internal/notify/slack/interactivity_test.go
+  s_20c7cd26d72652::t_9187d2e4b0316f 27,30,34-35,38,42,50,54,58,111,160-161
+  s_20c7cd26d72652::t_240ae3dee70cfe 1-26,28-29,31-33,36-37,39-41,43-49,51-53,55-57,59-110,112-137,145-159,162-232
+  s_20c7cd26d72652::t_741ebc79b3904f 138-144
+internal/notify/slack/replay.go
+  s_20c7cd26d72652::t_a1b0c199d88113 68-71
+pkg/clawvisor/defaults.go
+  s_20c7cd26d72652::t_df026999af8616 464-468
+internal/api/handlers/tasks.go
+  s_20c7cd26d72652::t_b1b03f8efb1b65 3302,3330,3374,3438,3480
+  s_20c7cd26d72652::t_19511abc7590fe 8,739-742,745,747
+internal/api/handlers/notifications_slack_pending_test.go
+  s_20c7cd26d72652::t_d9a792fd3d831d 1-32
+internal/notify/slack/oauth.go
+  s_20c7cd26d72652::t_e021098185fc44 119-134
+internal/api/handlers/notifications_slack.go
+  s_20c7cd26d72652::t_1fa76e9db000e6 7,16,148-158
+  s_20c7cd26d72652::t_f59403d41b25a6 14,188-192
+internal/notify/slack/slack.go
+  s_20c7cd26d72652::t_ffed679718867b 385-387,597-601,629-632
+  s_20c7cd26d72652::t_f2258d894b7c4b 39-52,379-384,547-551,553-555,576,582-596,602-610,620-627,633-644
+  s_20c7cd26d72652::t_a1b0c199d88113 413
+internal/notify/slack/blocks.go
+  s_20c7cd26d72652::t_c7390ddace4633 199-203,207,212-213,216,223-224,232-236,238-241
+  s_20c7cd26d72652::t_a1b0c199d88113 44-49
+internal/notify/slack/mrkdwn_test.go
+  s_20c7cd26d72652::t_ca4036655e25c0 3-7,31-53,110-114,116-218
+pkg/config/config.go
+  s_20c7cd26d72652::t_88afcfb0f21488 163-167
+internal/notify/slack/tokens_redis.go
+  s_20c7cd26d72652::t_220a5319d75548 15,35-37,65-68,75,93-97,100,132-142,147-149,166-167,170-180,184-214
+  s_20c7cd26d72652::t_ca96d04607be1e 215
+pkg/config/slack_callback_test.go
+  s_20c7cd26d72652::t_445c805d0c64ea 37-51
+internal/api/handlers/notification_message.go
+  s_20c7cd26d72652::t_85cfb33d7f2e6a 1-49
+internal/notify/slack/interactivity.go
+  s_20c7cd26d72652::t_a1b0c199d88113 274
+  s_20c7cd26d72652::t_11408269b42e0e 95-110,168-171,192,207-242
+  s_20c7cd26d72652::t_9c59fe650318ab 243
+internal/api/handlers/approvals.go
+  s_20c7cd26d72652::t_dc489a06a947ee 588-592
+  s_20c7cd26d72652::t_074091cec8f2be 9
+  s_20c7cd26d72652::t_b1b03f8efb1b65 382,465,535,594,656,732
+internal/api/handlers/connections.go
+  s_20c7cd26d72652::t_b1b03f8efb1b65 1010,1064,1088
+internal/notify/slack/tokens_redis_test.go
+  s_20c7cd26d72652::t_9cf588bbe4348c 1-295
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "d47c5d6e0d589bc0d85f17e2e65a41c862068924",
+  "prompts": {},
+  "sessions": {
+    "s_20c7cd26d72652": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51f12a99-8a7d-4eaf-b0b7-4a4c8fe6113d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

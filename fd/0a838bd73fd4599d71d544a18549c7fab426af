@@ -1,0 +1,26 @@
+pkg/config/config_test.go
+  s_55f7a841d7c10e::t_d3bda56f63eeb8 192,201-206
+config.example.yaml
+  s_55f7a841d7c10e::t_bd84b0571cd86c 134
+deploy/docker-compose.yml
+  s_55f7a841d7c10e::t_2e577d4eb07e50 54
+pkg/config/config.go
+  s_55f7a841d7c10e::t_98723415bbca16 927-940
+  s_55f7a841d7c10e::t_fd91b43a0559d2 124-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "fd0a838bd73fd4599d71d544a18549c7fab426af",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

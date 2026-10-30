@@ -1,0 +1,21 @@
+internal/runtime/policy/request_classify_test.go
+  s_ae08316ed37510::t_6f771f0628cc43 78,80-87,90-91,93-94
+internal/runtime/policy/request_classify.go
+  s_ae08316ed37510::t_24f71535c29524 58-68,79-84,87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "4c89ca346084af891a30555d1d6a938c0c77e3df",
+  "prompts": {},
+  "sessions": {
+    "s_ae08316ed37510": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5680719f-610d-40c6-91f4-3ca1c8c23b97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

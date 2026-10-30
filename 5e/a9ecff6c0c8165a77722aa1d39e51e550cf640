@@ -1,0 +1,72 @@
+pkg/clawvisor/defaults.go
+  s_aecb10c54ef7c6::t_230b816ababbd8 430,472,524
+pkg/runtime/decision/decision.go
+  s_aecb10c54ef7c6::t_49f1d960089d4b 192,222,229
+  s_aecb10c54ef7c6::t_89202c6aaab8a5 112-115,396
+  s_aecb10c54ef7c6::t_494e411a6c5e38 243
+internal/runtime/policy/request_classify.go
+  s_aecb10c54ef7c6::t_89202c6aaab8a5 36-39,70-77
+internal/api/server.go
+  s_aecb10c54ef7c6::t_378fa531688105 1276-1278
+  s_aecb10c54ef7c6::t_7ac81e31d2c1e6 112,361-367
+  s_aecb10c54ef7c6::t_49f1d960089d4b 1268-1272,1300
+internal/runtime/llmproxy/task_checkout_redis.go
+  s_aecb10c54ef7c6::t_4c6b10dc0f6155 1-83
+internal/runtime/policy/task_match.go
+  s_aecb10c54ef7c6::t_89202c6aaab8a5 35-44,48,52-102,106-113,116,142-145,148-153,157,161-203,205,208-218,221
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_aecb10c54ef7c6::t_027459b7438499 37-39,66-67
+  s_aecb10c54ef7c6::t_8f3d9c9a979d22 289,349,354,358,360,362-365
+  s_aecb10c54ef7c6::t_6b8794631ec3a6 359,361
+  s_aecb10c54ef7c6::t_49f1d960089d4b 210
+internal/runtime/llmproxy/inline_task_augment_test.go
+  s_aecb10c54ef7c6::t_fce56d1c761905 437
+internal/runtime/llmproxy/inline_approval_outcome.go
+  s_aecb10c54ef7c6::t_027459b7438499 34-36
+internal/runtime/llmproxy/postprocess.go
+  s_aecb10c54ef7c6::t_49f1d960089d4b 117-120,378,485-496
+  s_aecb10c54ef7c6::t_fa70c4ddf64234 121
+internal/runtime/llmproxy/control.go
+  s_aecb10c54ef7c6::t_2667cb409a2c79 43
+  s_aecb10c54ef7c6::t_8a70c0005978ab 65
+internal/api/handlers/control.go
+  s_aecb10c54ef7c6::t_4cd8011185a316 8-12,17-19,99,126-163,165-201,208-209
+  s_aecb10c54ef7c6::t_7ac81e31d2c1e6 5,164
+  s_aecb10c54ef7c6::t_49f1d960089d4b 39,59,94-98,100,210-218,229
+  s_aecb10c54ef7c6::t_f4bf9a2efb628a 204
+  s_aecb10c54ef7c6::t_fb8bd7ddd48472 13,20,202-203,205-207
+pkg/runtime/decision/decision_test.go
+  s_aecb10c54ef7c6::t_5d11e8f38faf18 291-349
+internal/runtime/llmproxy/inline_task_release_test.go
+  s_aecb10c54ef7c6::t_aa8d511b600581 86
+  s_aecb10c54ef7c6::t_49f1d960089d4b 114,131-137
+internal/runtime/llmproxy/inline_task_transitions.go
+  s_aecb10c54ef7c6::t_57edfc9e6f03f3 97-104,112
+internal/api/handlers/llm_endpoint.go
+  s_aecb10c54ef7c6::t_e9014157e85215 107-110
+  s_aecb10c54ef7c6::t_49f1d960089d4b 163,434,458-460,795,812
+  s_aecb10c54ef7c6::t_8a70c0005978ab 780-786
+  s_aecb10c54ef7c6::t_992835125e89ff 1081-1102
+internal/runtime/llmproxy/task_checkout.go
+  s_aecb10c54ef7c6::t_4c6b10dc0f6155 1-100
+pkg/clawvisor/run.go
+  s_aecb10c54ef7c6::t_49f1d960089d4b 349-351
+pkg/clawvisor/options.go
+  s_aecb10c54ef7c6::t_230b816ababbd8 154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "5ea9ecff6c0c8165a77722aa1d39e51e550cf640",
+  "prompts": {},
+  "sessions": {
+    "s_aecb10c54ef7c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e4b18-3198-7a31-9219-d7566e0c3660",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

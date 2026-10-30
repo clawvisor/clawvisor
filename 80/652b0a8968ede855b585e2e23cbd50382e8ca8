@@ -1,0 +1,33 @@
+pkg/notify/notify.go
+  s_fd6d9b102e043d::t_c7203ac770a92f 27-36
+internal/notify/telegram/telegram.go
+  s_fd6d9b102e043d::t_cd1ecf9a19314b 860-866,871-875
+internal/api/handlers/tasks.go
+  s_fd6d9b102e043d::t_050477c709b375 2322,2328,2333,2341,2349-2357,2364,2366-2370,2375-2386,2388-2394,2396,2398,2400-2406
+internal/tui/screens/helpers.go
+  s_fd6d9b102e043d::t_609d8441aeea71 115-126
+  s_fd6d9b102e043d::t_e76b31050b040d 268-275,288-292,294-299,301
+  s_fd6d9b102e043d::t_acb1a08ee7f084 142
+web/src/components/TaskCard.tsx
+  s_fd6d9b102e043d::t_ed7cee0111ceea 834,841
+  s_fd6d9b102e043d::t_b76778098c9f13 447
+  s_fd6d9b102e043d::t_43607da2bc71fb 884-892,904-911,913-914,918-930
+internal/tui/screens/helpers_test.go
+  s_fd6d9b102e043d::t_596e65b99254a8 100,109-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "80652b0a8968ede855b585e2e23cbd50382e8ca8",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

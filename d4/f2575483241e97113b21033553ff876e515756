@@ -1,0 +1,20 @@
+internal/runtime/llmproxy/controltool/control_multistmt_test.go
+  s_d937730cc571e0::t_731b4a5a852650 110-167,175-177
+  s_d937730cc571e0::t_902bf2a560a92b 168-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "d4f2575483241e97113b21033553ff876e515756",
+  "prompts": {},
+  "sessions": {
+    "s_d937730cc571e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44fa7574-f3cf-45f3-aa60-247502858b10",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

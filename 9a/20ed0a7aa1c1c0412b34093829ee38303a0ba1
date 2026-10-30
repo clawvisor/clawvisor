@@ -1,0 +1,58 @@
+internal/api/server.go
+  s_8de9dcae61d3e3::t_7b0b6fdc8887af 900,903,916,918-931,954,999,940,946,1003
+  s_8f3d790934e389::t_fa390b916ed2db 904,957,963,971,983,988,1015,1019,1025,1030,1045,1050,1057,1012,296
+  s_8de9dcae61d3e3::t_8b31f83b147ad9 907-914,917
+internal/runtime/llmproxy/forward.go
+  8de9dcae61d3e38a 393-396,402-404,412-430
+internal/runtime/llmproxy/forward_test.go
+  8de9dcae61d3e38a 366-388,391,400-401,405,408-410,416,421,425-427,440,443-445,454,457,460,463-465,469,472,475-477,483-484
+web/src/pages/Agents.tsx
+  8de9dcae61d3e38a 2679-2691
+internal/runtime/conversation/openai_response.go
+  8de9dcae61d3e38a 289-296,365-368,385-397,467-477,479-482,484-487,539-541,574,587-589
+  s_8de9dcae61d3e3::t_fa151eeef756e0 372-376
+  s_8de9dcae61d3e3::t_4fd113a54c4dc4 383
+  s_8de9dcae61d3e3::t_6146e91dd14c11 581-586
+  s_8de9dcae61d3e3::t_cbe6e4f82a2fbd 1220-1222
+  s_8de9dcae61d3e3::t_ee3cea1b041350 1223-1241,1244-1247,1250
+pkg/clawvisor/defaults.go
+  s_8de9dcae61d3e3::t_9681258530fd53 478
+  s_8de9dcae61d3e3::t_bb6843108bd260 628,630-653,656
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "9a20ed0a7aa1c1c0412b34093829ee38303a0ba1",
+  "prompts": {
+    "8de9dcae61d3e38a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine",
+      "total_additions": 342,
+      "total_deletions": 72,
+      "accepted_lines": 73,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

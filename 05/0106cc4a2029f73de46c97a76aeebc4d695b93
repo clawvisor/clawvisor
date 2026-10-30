@@ -1,0 +1,25 @@
+internal/runtime/llmproxy/postproc/postproc.go
+  s_bbe778adcf6f02::t_8ed111d8c9c7a1 70
+internal/runtime/llmproxy/postproc/recoverable_deny.go
+  s_bbe778adcf6f02::t_dce11ae8b4e502 1-92
+internal/runtime/llmproxy/postproc/recoverable_deny_test.go
+  s_bbe778adcf6f02::t_950117d2423384 1-116
+internal/runtime/llmproxy/scope_drift_sentinel.go
+  s_bbe778adcf6f02::t_45413f97700c1d 36,43-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "050106cc4a2029f73de46c97a76aeebc4d695b93",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

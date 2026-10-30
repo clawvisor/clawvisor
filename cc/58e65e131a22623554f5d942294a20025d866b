@@ -1,0 +1,21 @@
+internal/taskrisk/assessor_test.go
+  s_9a0aa4d466d78e::t_7b5b5a17859603 150
+  s_9a0aa4d466d78e::t_c09675cb498619 170
+  s_9a0aa4d466d78e::t_9a67489188eb16 183
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "cc58e65e131a22623554f5d942294a20025d866b",
+  "prompts": {},
+  "sessions": {
+    "s_9a0aa4d466d78e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c440bd80-3777-4757-aac1-06e9c87701cb",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

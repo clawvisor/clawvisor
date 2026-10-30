@@ -1,0 +1,48 @@
+internal/api/middleware/agent_llm.go
+  s_b7635082fff64b::t_81a1daabbb77d6 174
+  s_b7635082fff64b::t_6fd1801842db1d 51,54-55,58,62-63,80-82
+  s_b7635082fff64b::t_3030e6849387d1 20-21
+  s_b7635082fff64b::t_b442688759f6e3 176-192,194,197,202-222
+  s_b7635082fff64b::t_5dc5d5107cdfc4 34-39
+internal/api/server.go
+  s_b7635082fff64b::t_cf7495fb15f73c 881-883,1004-1005
+web/src/pages/Agents.tsx
+  s_b7635082fff64b::t_51ac96e7102139 1383
+internal/runtime/llmproxy/synthetic_history_strip_test.go
+  s_b7635082fff64b::t_fcb6f2b5d69c4b 1-114
+internal/runtime/llmproxy/auth_context.go
+  s_b7635082fff64b::t_fed5d1a777e4f9 1-21
+internal/runtime/llmproxy/synthetic_history_strip.go
+  s_b7635082fff64b::t_11b255cc8924ec 1-109
+internal/api/middleware/agent_llm_test.go
+  s_b7635082fff64b::t_995a4f3a1fb782 11,86-110
+internal/api/handlers/llm_endpoint.go
+  s_b7635082fff64b::t_8fb466bcbc3f52 512-517
+  s_b7635082fff64b::t_28ebb87c3fca86 31-33,2324,2326-2333,2384-2386,2388-2390,2402-2412
+  s_b7635082fff64b::t_ee7210ac3bc817 523-533
+cmd/clawvisor/cmd_agent_lite_test.go
+  s_b7635082fff64b::t_5c127a2004f62e 32-37
+internal/runtime/llmproxy/forward_test.go
+  s_b7635082fff64b::t_33405ea35bed0e 98-135
+cmd/clawvisor/cmd_agent_lite.go
+  s_b7635082fff64b::t_432379b19e589f 16,206-207
+  s_b7635082fff64b::t_6fd1801842db1d 14-15
+internal/runtime/llmproxy/forward.go
+  s_b7635082fff64b::t_5964943749cef6 158-171,230-251
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "b77916e4da8493ada021f9e7d04e947e49385d6c",
+  "prompts": {},
+  "sessions": {
+    "s_b7635082fff64b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e32a6-368e-7c40-a4de-d67d7171c8f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

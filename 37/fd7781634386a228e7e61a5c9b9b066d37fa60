@@ -1,0 +1,30 @@
+internal/local/executor/dispatch.go
+  s_71f34d4bf2c277::t_48767885a80158 111-112,116-131
+  s_71f34d4bf2c277::t_69c669952fa7cb 15-18,23-32,35-37,44,46-56,64-77,79
+  s_71f34d4bf2c277::t_ef4a46a3094e20 7
+  s_71f34d4bf2c277::t_a889f29863b532 132
+internal/local/config/config.go
+  s_71f34d4bf2c277::t_ef4a46a3094e20 26,69,107-108
+  s_71f34d4bf2c277::t_8dd83cf4774b9c 109
+internal/local/executor/dispatch_test.go
+  s_71f34d4bf2c277::t_2ba278abfb29dc 55-58
+  s_71f34d4bf2c277::t_2a50a0515d3641 1-54,59-152
+internal/local/daemon/daemon.go
+  s_71f34d4bf2c277::t_ef4a46a3094e20 136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "37fd7781634386a228e7e61a5c9b9b066d37fa60",
+  "prompts": {},
+  "sessions": {
+    "s_71f34d4bf2c277": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c96edf9e-9cb7-432a-b310-ebd9a63e9781",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+internal/runtime/llmproxy/policies/provider_abstraction_test.go
+  s_813cf813d8b1d0::t_c2de8b5686da17 1-9,57-132,18,20-27,29,31-38,48-52,54-56
+  s_813cf813d8b1d0::t_851e2123a85384 10-17,19,28,30,39-47,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "c3cf48b1a160975bc2b25e577edce6a62300558e",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

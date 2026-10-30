@@ -1,0 +1,30 @@
+internal/adapters/apple/imessage/adapter.go
+  s_a756e7579a21d2::t_28fceeeb281fc1 371-375
+  s_a756e7579a21d2::t_ac54e572f5b33e 424-425,429-431
+web/.npmrc
+  s_a756e7579a21d2::t_05df1c11283d2a 1
+internal/tui/screens/services.go
+  s_a756e7579a21d2::t_bab4fd7135c51f 1245
+internal/daemon/oauth_listener.go
+  s_a756e7579a21d2::t_a19cdc3788ae77 36
+  s_a756e7579a21d2::t_3b52e3634d299e 8
+internal/local/remoteinstall/manager.go
+  s_a756e7579a21d2::t_ad296e753655a7 480-484
+  s_a756e7579a21d2::t_d5ebd5dae20af8 531-532,536-538
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "3336cef7c885b99f331e4eb26d264f2b3b04cb86",
+  "prompts": {},
+  "sessions": {
+    "s_a756e7579a21d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4151cca2-ee27-4d35-9337-6aebeb3229a4",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

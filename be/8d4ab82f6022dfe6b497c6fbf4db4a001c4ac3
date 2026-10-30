@@ -1,0 +1,23 @@
+internal/runtime/conversation/stream/anthropic_substitute_test.go
+  s_813cf813d8b1d0::t_9679b4bf3f5462 1-66
+internal/runtime/llmproxy/pipeline/response_mutator_impl.go
+  s_813cf813d8b1d0::t_a0922b0c218878 86-95
+internal/runtime/conversation/stream/anthropic_substitute.go
+  s_813cf813d8b1d0::t_59b7742cc45283 1-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "be8d4ab82f6022dfe6b497c6fbf4db4a001c4ac3",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

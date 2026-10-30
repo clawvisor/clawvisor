@@ -1,0 +1,22 @@
+internal/api/handlers/installer_scripts/common.sh.tmpl
+  s_fa4712eda9c001::t_a712b68cd7321d 502-512,515,517-518
+  s_fa4712eda9c001::t_3aafdb3a04f8df 616-626
+  s_fa4712eda9c001::t_fa9a07e9753d80 571-602,608-615,631
+  s_fa4712eda9c001::t_91b7c1dd53f0e0 603-607
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "009c19d91fdc9afd27e537ff5251ad4544a942fd",
+  "prompts": {},
+  "sessions": {
+    "s_fa4712eda9c001": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "43e64dce-c215-4362-86de-13c0bc757714",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

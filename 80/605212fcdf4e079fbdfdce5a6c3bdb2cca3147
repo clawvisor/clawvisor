@@ -1,0 +1,19 @@
+CHANGELOG.md
+  s_55f7a841d7c10e::t_911e9e876dbd27 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "80605212fcdf4e079fbdfdce5a6c3bdb2cca3147",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}

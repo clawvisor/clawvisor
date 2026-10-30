@@ -1,0 +1,35 @@
+pkg/adapters/yamlloader/loader_test.go
+  s_ae11d5e26da131::t_4f8a36736dd803 4-7,104,112,139-149,153-197
+  s_ae11d5e26da131::t_d6fd3fe959a08a 26-39,92-103,105-111,113-138,150-151
+  s_ae11d5e26da131::t_855a54f5114ece 198
+  s_ae11d5e26da131::t_a91dbcdf91ecc5 152
+pkg/adapters/yamldef/schema.go
+  s_ae11d5e26da131::t_7bbd1c3a507013 158-164
+pkg/adapters/yamlruntime/adapter.go
+  s_ae11d5e26da131::t_4472c1b743be14 84-88,542-548
+internal/api/handlers/skill.go
+  s_ae11d5e26da131::t_9a99773f618506 511,541-545
+  s_ae11d5e26da131::t_c3af3eee73b500 440
+  s_ae11d5e26da131::t_36d90451fa99ef 546-547
+  s_ae11d5e26da131::t_b1e718da9d9cfc 510,512
+pkg/adapters/adapters.go
+  s_ae11d5e26da131::t_a56f48e7ce0656 63-69,254-258
+internal/api/handlers/skill_params_test.go
+  s_ae11d5e26da131::t_bd1ef22b110ad3 1-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "b4e4ee46c681e3c0974f34af9e9f51f35d6f0cd9",
+  "prompts": {},
+  "sessions": {
+    "s_ae11d5e26da131": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "811c5d27-2b15-4eac-8e3c-a01783a0fa97",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

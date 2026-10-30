@@ -1,0 +1,19 @@
+internal/runtime/llmproxy/control.go
+  s_8de9dcae61d3e3::t_0b392df5731523 32-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "68c97614cfede784ad4ce5936225aee89b8ff3ea",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+internal/testharness/harness.go
+  s_8b1f6f8ddc53d3::t_c17a1710668d5f 1-126
+internal/e2e/testapp/server.go
+  s_8b1f6f8ddc53d3::t_f60ea173ae6045 1-213
+internal/e2e/testapp/fixture.go
+  s_8b1f6f8ddc53d3::t_59c8ce161ede8a 1-133
+internal/e2e/testapp/build.go
+  s_8b1f6f8ddc53d3::t_fb22d4a548741e 1-80
+internal/e2e/testapp/server_test.go
+  s_8b1f6f8ddc53d3::t_95b64d41a9fc64 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "6ff1767018e19b9e0ade8df3417e5b2e345d0b32",
+  "prompts": {},
+  "sessions": {
+    "s_8b1f6f8ddc53d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2217843-2b00-445d-88f2-f33b3fb654b2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

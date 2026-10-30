@@ -1,0 +1,23 @@
+internal/api/server.go
+  s_6d95d507d56682::t_71e819fa8c8f0b 1021-1027
+internal/api/handlers/installer.go
+  s_6d95d507d56682::t_a926983730b073 237-260
+internal/api/handlers/installer_test.go
+  s_6d95d507d56682::t_cf3830f9ad25d3 667-696
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "8941a5cc06de7e3eb206e049801c7cd450d53129",
+  "prompts": {},
+  "sessions": {
+    "s_6d95d507d56682": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e5ca272-33dd-461c-beff-3878d45c0d32",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

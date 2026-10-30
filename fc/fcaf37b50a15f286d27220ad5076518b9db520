@@ -1,0 +1,31 @@
+coworkplugin/plugin/.claude-plugin/plugin.json
+  s_3f3a0e56d60dbc::t_ea1589468d9df3 10
+CONTRIBUTING.md
+  s_3f3a0e56d60dbc::t_6c2af5fd966161 17-25
+NOTICE
+  s_3f3a0e56d60dbc::t_75ec6a4ad5baf0 1-4
+coworkplugin/plugin/NOTICE
+  s_3f3a0e56d60dbc::t_e764500795f635 1-4
+README.md
+  s_3f3a0e56d60dbc::t_8a3133144c08c7 637-643
+coworkplugin/plugin/LICENSE
+  s_3f3a0e56d60dbc::t_e1a0cea1d775a8 1-201
+LICENSE
+  s_3f3a0e56d60dbc::t_e1a0cea1d775a8 1-201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "fcfcaf37b50a15f286d27220ad5076518b9db520",
+  "prompts": {},
+  "sessions": {
+    "s_3f3a0e56d60dbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "978ff394-9ef9-4a60-acbd-f2fd4408d6fd",
+        "model": "claude-opus-5"
+      },
+      "human_author": null
+    }
+  }
+}

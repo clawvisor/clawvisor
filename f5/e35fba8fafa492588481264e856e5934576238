@@ -1,0 +1,21 @@
+internal/api/handlers/tasks.go
+  s_22de147f45dbe8::t_59c24192e55c7b 51-52,124-125,127-128,130-135
+pkg/clawvisor/options.go
+  s_22de147f45dbe8::t_36c378e48aedb1 93-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "f5e35fba8fafa492588481264e856e5934576238",
+  "prompts": {},
+  "sessions": {
+    "s_22de147f45dbe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86220531-c32b-4dde-b5bc-a6525a733059",
+        "model": "unknown"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

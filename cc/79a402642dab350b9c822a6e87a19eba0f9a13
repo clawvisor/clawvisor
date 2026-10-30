@@ -1,0 +1,173 @@
+internal/daemon/status.go
+  s_2ca2932e433eea::t_274df9ce17a1a9 182
+scripts/install.sh
+  s_2ca2932e433eea::t_d67ffec55790b1 11,45,86
+internal/clawvisorcli/cmd_server.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-45
+internal/server/run.go
+  s_2ca2932e433eea::t_21a93b0aa72fea 116
+internal/clawvisorcli/cmd_daemon.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-100
+internal/clawvisorcli/cmd_agent_runtime_trace.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-92
+scripts/upgrade.sh
+  s_2ca2932e433eea::t_21120b40aef724 4,32,39,67,70
+e2e/install/mock_github_server.py
+  s_2ca2932e433eea::t_36db2edbda2a4e 5,11,56,58-60,64,67-68,70,88
+internal/api/handlers/devices.go
+  s_2ca2932e433eea::t_c08b98eec9da27 23,309-310
+  s_2ca2932e433eea::t_d711b551d4c343 123
+cmd/clawvisor-server/main.go
+  s_2ca2932e433eea::t_4cf424d44eb5cb 1-13
+internal/clawvisorcli/cmd_proxy_expose_test.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-260
+docs/INTEGRATE_OPENCLAW.md
+  s_2ca2932e433eea::t_d711b551d4c343 42
+  s_2ca2932e433eea::t_21a93b0aa72fea 48
+e2e/install/test_curl_install.sh
+  s_2ca2932e433eea::t_c557cba49a71d5 22,37-38,103
+  s_2ca2932e433eea::t_3022bb4175d133 39,41,146
+  s_2ca2932e433eea::t_d7762b125cd87c 5
+internal/clawvisorcli/cmd_healthcheck.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-33
+internal/daemon/pair.go
+  s_2ca2932e433eea::t_274df9ce17a1a9 27,49,108
+internal/clawvisorcli/cmd_agent_runtime_test.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-255
+Makefile
+  s_2ca2932e433eea::t_4d0369694e1f85 43
+  s_2ca2932e433eea::t_8876c5d40cca04 120
+  s_2ca2932e433eea::t_198d230be4f2b6 1,6-10,15-18,29,40-42,51-53,87,90,102,108,112,164
+internal/clawvisorcli/cmd_agent.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-176
+internal/clawvisorcli/cmd_update.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-66
+internal/daemon/services_setup.go
+  s_2ca2932e433eea::t_274df9ce17a1a9 19
+  s_2ca2932e433eea::t_168994e7eff901 526
+docs/SETUP.md
+  s_2ca2932e433eea::t_274df9ce17a1a9 40,47-48
+README.md
+  s_2ca2932e433eea::t_bf4bb65b7009d9 497-498,502
+  s_2ca2932e433eea::t_274df9ce17a1a9 57,63-64,118-121,127-130,136-139,145-147,153-155,161-163,422,429,432,438,448,473-474
+  s_2ca2932e433eea::t_e7565db05d1c44 112,169-170,437
+internal/clawvisorcli/cmd_agent_docker.go
+  s_2ca2932e433eea::t_d711b551d4c343 99,700,758
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-98,100-699,701-757,759-784
+e2e/install/Dockerfile
+  s_2ca2932e433eea::t_2dd41d1b9eccc2 26-27,59
+e2e/smoke/testserver_test.go
+  s_2ca2932e433eea::t_97b00814868828 400
+docs/INTEGRATE_CLAUDE_CODE.md
+  s_2ca2932e433eea::t_274df9ce17a1a9 51,57,67,73
+docs/SETUP_LOCAL.md
+  s_2ca2932e433eea::t_d7ba15f66cf51d 142
+  s_2ca2932e433eea::t_3b6ac457931cdb 51,65
+internal/clawvisorcli/cmd_proxy_expose.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-331
+internal/clawvisorcli/undici_shim.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-44
+docs/INTEGRATE_GENERIC.md
+  s_2ca2932e433eea::t_21a93b0aa72fea 45
+  s_2ca2932e433eea::t_d711b551d4c343 39
+cmd/clawvisor/main.go
+  s_2ca2932e433eea::t_4cf424d44eb5cb 6,10
+internal/daemon/run.go
+  s_2ca2932e433eea::t_274df9ce17a1a9 45-46,169,204-206
+scripts/dev.sh
+  s_2ca2932e433eea::t_ed2ca2412983b2 63
+  s_2ca2932e433eea::t_274df9ce17a1a9 64,90
+internal/clawvisorcli/cmd_agent_docker_test.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-582
+internal/clawvisorcli/cmd_agent_runtime_controls.go
+  s_2ca2932e433eea::t_168994e7eff901 26-29
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-25,30-141
+e2e/install/test_clawvisor_install.sh
+  s_2ca2932e433eea::t_3022bb4175d133 2,6,27,45,48,50,55,105,152
+internal/daemon/setup.go
+  s_2ca2932e433eea::t_274df9ce17a1a9 593
+internal/clawvisorcli/cmd_auto_update.go
+  s_2ca2932e433eea::t_d711b551d4c343 53
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-52,54-63
+internal/clawvisorcli/cmd_services.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-69
+internal/daemon/install_test.go
+  s_2ca2932e433eea::t_d0320b4ec568a8 16-18,20,36,77
+  s_2ca2932e433eea::t_274df9ce17a1a9 98
+internal/tui/app.go
+  s_2ca2932e433eea::t_c08b98eec9da27 228
+  s_2ca2932e433eea::t_d711b551d4c343 367
+scripts/build-release.sh
+  s_2ca2932e433eea::t_e235eb062a62e1 35-38,43,47-52,69,72
+pkg/version/version.go
+  s_2ca2932e433eea::t_8b25c8c9db42f8 17-20
+  s_2ca2932e433eea::t_9e59d12a16a376 109
+internal/clawvisorcli/cmd_agent_registry.go
+  s_2ca2932e433eea::t_d711b551d4c343 192,198
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-191,193-197,199-239
+deploy/Dockerfile
+  s_2ca2932e433eea::t_f789887d7a2fa2 17,21,25
+docs/RUNTIME_PROXY.md
+  s_2ca2932e433eea::t_21a93b0aa72fea 100,117,212-213
+  s_2ca2932e433eea::t_d711b551d4c343 37,58,63,71,82,93,108-110,134,146,158,180,201-202
+internal/clawvisorcli/cmd_agent_runtime.go
+  s_2ca2932e433eea::t_d711b551d4c343 379
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-12,14-378,380-390
+  s_2ca2932e433eea::t_168994e7eff901 13
+internal/clawvisorcli/main.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-5,7-13,15-40,47,51
+  s_2ca2932e433eea::t_17b4e5dd24890b 6,14,41-46,48-50
+docs/runtime-capability-matrix.md
+  s_2ca2932e433eea::t_3b6ac457931cdb 15
+internal/runtime/isolation/isolation.go
+  s_2ca2932e433eea::t_bdc85bfa8c323f 23
+internal/clawvisorcli/cmd_agent_runtime_trace_test.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-68
+internal/clawvisorcli/cmd_setup.go
+  s_2ca2932e433eea::t_d711b551d4c343 12
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-11,13-21
+internal/daemon/install.go
+  s_2ca2932e433eea::t_274df9ce17a1a9 122,147,163,167,176,189-190,197,202,309,325,330,341,347,395,418
+internal/clawvisorcli/cmd_tui.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-41,43-131,133-212
+  s_2ca2932e433eea::t_d711b551d4c343 42,132
+internal/api/handlers/pairing.go
+  s_2ca2932e433eea::t_d711b551d4c343 48
+internal/clawvisorcli/cmd_agent_runtime_controls_test.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-12,23-168,178-179,181-281
+  s_2ca2932e433eea::t_168994e7eff901 13-22,169-177,180
+internal/clawvisorcli/cmd_validate.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-97
+internal/clawvisorcli/cmd_agent_registry_test.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-234
+pkg/version/update.go
+  s_2ca2932e433eea::t_9606faaf9eb687 88-91
+internal/adapters/apple/imessage/adapter.go
+  s_2ca2932e433eea::t_bdc85bfa8c323f 7
+internal/daemon/claude_code.go
+  s_2ca2932e433eea::t_274df9ce17a1a9 38,446,455
+internal/clawvisorcli/cmd_connect_agent.go
+  s_2ca2932e433eea::t_f3ef88135ffefa 1-52
+internal/runtime/isolation/compose.go
+  s_2ca2932e433eea::t_bdc85bfa8c323f 146
+internal/setup/setup.go
+  s_2ca2932e433eea::t_168994e7eff901 34-38,40-41
+  s_2ca2932e433eea::t_274df9ce17a1a9 109
+  s_2ca2932e433eea::t_d7ba15f66cf51d 755
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "cc79a402642dab350b9c822a6e87a19eba0f9a13",
+  "prompts": {},
+  "sessions": {
+    "s_2ca2932e433eea": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3313-b5ad-7a40-800d-4521f01c2c53",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+internal/notify/decision_redis.go
+  s_20c7cd26d72652::t_d2a597d79d1852 23-29,54-64,66-67,71,83-87,91-97,128
+  s_20c7cd26d72652::t_def88dcc83efda 177-179,181-190,195,227-245,337-339,341-347,360-361,375
+internal/notify/decision_redis_test.go
+  s_20c7cd26d72652::t_b8fc251d135921 5,8,261,323-410
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "08410d4cf496cee02a950a970d0ca59889453028",
+  "prompts": {},
+  "sessions": {
+    "s_20c7cd26d72652": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51f12a99-8a7d-4eaf-b0b7-4a4c8fe6113d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+testharness/otlp/receiver.go
+  s_55f7a841d7c10e::t_b8377321cb5386 264-266
+  s_55f7a841d7c10e::t_cdd28b9f2496ff 35-40
+  s_55f7a841d7c10e::t_74a70fa3454d11 133-142
+  s_55f7a841d7c10e::t_5d7bd7d8d9525e 96
+  s_55f7a841d7c10e::t_67e71ef680cf7c 74
+testharness/otlp/receiver_test.go
+  s_55f7a841d7c10e::t_e75b5adc2b1ae9 1-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cd7bd4348282e26bb5a84b74c53f48884d03c4cc",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

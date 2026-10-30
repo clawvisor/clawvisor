@@ -1,0 +1,24 @@
+internal/api/handlers/installer_scripts/common.sh.tmpl
+  s_6d95d507d56682::t_f0752f62f2639a 269,273
+  s_6d95d507d56682::t_a1af3d7a0a3591 257-260
+internal/api/handlers/installer_test.go
+  s_6d95d507d56682::t_e9904b6701f892 516-523
+internal/api/handlers/installer_scripts/claude_code.sh.tmpl
+  s_6d95d507d56682::t_99fc8cd21a0c99 5-51,53-58,76-78,80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "a9e6f9e634e729c1f582970981a6074492905ae1",
+  "prompts": {},
+  "sessions": {
+    "s_6d95d507d56682": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e5ca272-33dd-461c-beff-3878d45c0d32",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+internal/runtime/conversation/conversation_id_test.go
+  s_ae08316ed37510::t_8070714b14f6df 23-31,36-38,44,46-47,51,56-88
+  s_ae08316ed37510::t_885fece69771f0 89-90,111-112,115-149
+  s_ae08316ed37510::t_ea821f8ad1e580 91
+internal/api/handlers/testdata/llm_characterization/tool_use_credential_rewrite.json
+  s_ae08316ed37510::t_9a4c8af5bf9c67 56-57
+internal/runtime/conversation/conversation_id.go
+  s_ae08316ed37510::t_e34e601579a771 90-100,103,110-127,131-182
+  s_ae08316ed37510::t_a9e5d5a56a14b6 17-26,28,30-35,37-41
+internal/api/handlers/llm_endpoint_test.go
+  s_ae08316ed37510::t_b0c002c2e848cc 2046-2051,2053-2056,2070
+  s_ae08316ed37510::t_19f5d0cfd87d35 1868-1877,1891
+internal/api/handlers/llm_endpoint.go
+  s_ae08316ed37510::t_9962255f667a98 4251-4261
+internal/api/handlers/llm_endpoint_conversation_id_marker_test.go
+  s_ae08316ed37510::t_a1f69ce3266c88 259-267,269
+internal/api/handlers/testdata/llm_characterization/tool_use_held_for_approval.json
+  s_ae08316ed37510::t_9a4c8af5bf9c67 46-47
+internal/api/handlers/testdata/llm_characterization/control_notice_injected.json
+  s_ae08316ed37510::t_9a4c8af5bf9c67 17-18
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_anthropic.json
+  s_ae08316ed37510::t_9a4c8af5bf9c67 14-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "61532969c29b647b999a4419343a98672e79b117",
+  "prompts": {},
+  "sessions": {
+    "s_ae08316ed37510": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5680719f-610d-40c6-91f4-3ca1c8c23b97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

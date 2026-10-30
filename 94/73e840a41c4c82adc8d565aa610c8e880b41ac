@@ -1,0 +1,49 @@
+README.md
+  s_686922fd60c369::t_c4e5891602693a 463,465,468,470,477
+cmd/clawvisor/cmd_proxy_expose.go
+  s_686922fd60c369::t_66ad5241b48dfe 330-331
+internal/tui/client/client.go
+  s_686922fd60c369::t_4c3c505b5d8e0a 133-146
+cmd/clawvisor/cmd_agent_registry.go
+  s_686922fd60c369::t_6a71c33ce05e09 7,294
+  s_686922fd60c369::t_a26a529139f8f6 194,203
+  s_686922fd60c369::t_e564272b7cfa4d 309,314-315,322-341
+  s_686922fd60c369::t_dd9e85d73c582d 14,16,47-49,104-108,117,187-193,195-202,204-293,295-308,310-313,316-319,342-354,418-420
+  s_686922fd60c369::t_a016ece7565c13 320-321
+cmd/clawvisor/cmd_agent_lite_test.go
+  s_686922fd60c369::t_5c750f9009e352 6-7,175-205
+cmd/clawvisor/cmd_agent_lite.go
+  s_686922fd60c369::t_ce770829562156 62-80,277,281,284
+docs/LITE_PROXY.md
+  s_686922fd60c369::t_0c69e337ccfe51 98-99
+  s_686922fd60c369::t_4a10ed0677955a 81
+  s_686922fd60c369::t_90f2aca4463466 82-89,91
+docs/RUNTIME_PROXY.md
+  s_686922fd60c369::t_495eb57cbfabbf 47,71,73-75,78-82,85,88-90,112
+  s_686922fd60c369::t_4d66c968cf11ec 6-12,58,60-62,69
+cmd/clawvisor/cmd_agent_registry_test.go
+  s_686922fd60c369::t_44dacc3d2168c6 4,8,237-298
+cmd/clawvisor/cmd_agent_docker.go
+  s_686922fd60c369::t_535b9c98b3f4bb 781-783
+internal/tui/client/types.go
+  s_686922fd60c369::t_27c262acb89ad8 66-72
+cmd/clawvisor/cmd_agent_runtime.go
+  s_686922fd60c369::t_a0b542d9baed98 388-390
+  s_686922fd60c369::t_a7e4bf76455217 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "9473e840a41c4c82adc8d565aa610c8e880b41ac",
+  "prompts": {},
+  "sessions": {
+    "s_686922fd60c369": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3312-0c8e-7973-b5fd-31ee7a487709",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    }
+  }
+}

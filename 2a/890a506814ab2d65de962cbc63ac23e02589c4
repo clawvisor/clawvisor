@@ -1,0 +1,23 @@
+pkg/cloudlogging/cloudlogging.go
+  s_cebd7a63ef1d8d::t_56f0cc1d89e123 56-59,62,68,73-74,83-91
+  s_cebd7a63ef1d8d::t_4f85e950a5cc86 16
+pkg/cloudlogging/cloudlogging_test.go
+  s_cebd7a63ef1d8d::t_305207cce8fa74 14-15,19,24-40
+  s_cebd7a63ef1d8d::t_ce66cf3ce2b4b1 78,88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2a890a506814ab2d65de962cbc63ac23e02589c4",
+  "prompts": {},
+  "sessions": {
+    "s_cebd7a63ef1d8d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a6924841-c083-41c2-aa05-d3db1b06e5b5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

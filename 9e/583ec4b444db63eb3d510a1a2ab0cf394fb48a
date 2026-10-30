@@ -1,0 +1,52 @@
+internal/runtime/conversation/response.go
+  s_a5c5f722ecfc61::t_97c6244f815db3 81-95
+internal/runtime/llmproxy/postproc/transient_deny_test.go
+  s_a5c5f722ecfc61::t_1e42a1e5a79073 1-162
+internal/runtime/llmproxy/policies/script_session_evaluator_test.go
+  s_a5c5f722ecfc61::t_7f9b13c2d3c42c 294-299,315-320
+internal/runtime/llmproxy/policies/script_session_evaluator.go
+  s_a5c5f722ecfc61::t_21a49950253a4e 124-130,132-135,142-143
+internal/runtime/llmproxy/postproc/postproc.go
+  s_a5c5f722ecfc61::t_cda4e2d610d992 70
+internal/runtime/llmproxy/postproc/transient_deny.go
+  s_a5c5f722ecfc61::t_6d58a353a798e9 1-57
+internal/runtime/llmproxy/config.go
+  s_a5c5f722ecfc61::t_27aeb0d77d701c 131-136
+internal/runtime/llmproxy/postproc/stream.go
+  s_a5c5f722ecfc61::t_25bb36de397903 102
+internal/runtime/llmproxy/inspector/parser.go
+  s_a5c5f722ecfc61::t_303527f942501c 395,402,424,429,436,446,453,458,461,466
+  s_a5c5f722ecfc61::t_3f53acd036a0b9 302
+  s_a5c5f722ecfc61::t_8690fe6cd8500a 365-371,373-376
+  s_a5c5f722ecfc61::t_d951051a62dcc3 241-261
+internal/runtime/llmproxy/inspector/parser_flags_test.go
+  s_a5c5f722ecfc61::t_f3841a3ed5afd8 258-360
+  s_a5c5f722ecfc61::t_d6fbc74bd2c451 227-257
+internal/runtime/llmproxy/transient_budget.go
+  s_a5c5f722ecfc61::t_37ad1fb38f4f6f 1-75
+internal/runtime/conversation/verdict.go
+  s_a5c5f722ecfc61::t_507f974a3acdd8 80-103
+internal/runtime/llmproxy/transient_budget_test.go
+  s_a5c5f722ecfc61::t_fa1915640d326a 1-101
+internal/api/handlers/llm_endpoint.go
+  s_a5c5f722ecfc61::t_5d222544f6751b 114-119
+  s_a5c5f722ecfc61::t_b26e3c01240b8f 1663
+  s_a5c5f722ecfc61::t_9a5f734b01ba3e 231
+  s_a5c5f722ecfc61::t_c966aa2c64a857 1314
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "9e583ec4b444db63eb3d510a1a2ab0cf394fb48a",
+  "prompts": {},
+  "sessions": {
+    "s_a5c5f722ecfc61": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf8404af-e2fb-463e-82d2-a637ab03a34b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

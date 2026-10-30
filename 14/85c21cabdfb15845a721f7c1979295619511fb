@@ -1,0 +1,60 @@
+internal/api/handlers/llm_endpoint_test.go
+  s_174a846accf7eb::t_f9eed813612f68 505
+  s_174a846accf7eb::t_19ee2e025f91d3 135-138,161-166
+  s_174a846accf7eb::t_57b98f348e62f4 484
+  s_174a846accf7eb::t_2894b9bfac86ac 534-569
+  s_174a846accf7eb::t_2daa78304778af 485-504,506-533
+pkg/store/postgres/store.go
+  s_174a846accf7eb::t_f9eed813612f68 277,295,301,315,323,326,3183,3188,3214-3215
+  s_174a846accf7eb::t_a505207097c39d 278,302,316,3189
+internal/tui/client/types.go
+  s_174a846accf7eb::t_ca4b77c600c2b3 56-61,63-64
+  s_174a846accf7eb::t_f9eed813612f68 62
+pkg/store/sqlite/store.go
+  s_174a846accf7eb::t_645c285d8bb550 296,392
+  s_174a846accf7eb::t_f9eed813612f68 295,320,325,336,360,367,370,379,391,399,402,3584,3606-3607
+pkg/store/sqlite/migrations/050_agent_lite_proxy_secret_detection_disabled.sql
+  s_174a846accf7eb::t_70fa58da07499f 1
+  s_174a846accf7eb::t_9143c5b1a337c5 2
+internal/api/handlers/agents.go
+  s_174a846accf7eb::t_ca4b77c600c2b3 175-179,325-330
+  s_174a846accf7eb::t_acff2117cce269 207
+  s_174a846accf7eb::t_9b1b868b1b762b 331
+  s_174a846accf7eb::t_f9eed813612f68 180,205-206
+web/src/pages/Agents.tsx
+  s_174a846accf7eb::t_817c265716674b 729-730,734-735
+  s_174a846accf7eb::t_6810cf402e886f 680-695,697
+  s_174a846accf7eb::t_0818c49fffcfb0 713-728,731-733,736-741
+  s_174a846accf7eb::t_94141faff4e0e0 593,596,609
+  s_174a846accf7eb::t_15b0a83e721246 557-565,592,605,608,610-613,620-679
+  s_174a846accf7eb::t_b89fcc5c117804 19,118,302,311,324,358-360,406
+web/src/api/client.ts
+  s_174a846accf7eb::t_f9eed813612f68 262
+internal/api/handlers/llm_endpoint.go
+  s_174a846accf7eb::t_8bf4c0e61215d7 344-359
+  s_174a846accf7eb::t_f9eed813612f68 341-343,362,1325,1347-1348,1365
+  s_174a846accf7eb::t_1c63d2ed31ae54 1367-1368
+  s_174a846accf7eb::t_8cb43396e9558e 1366
+  s_174a846accf7eb::t_6607a0a2cba3d2 1349-1353
+pkg/store/store.go
+  s_174a846accf7eb::t_ca4b77c600c2b3 417-425
+pkg/store/postgres/migrations/050_agent_lite_proxy_secret_detection_disabled.sql
+  s_174a846accf7eb::t_9143c5b1a337c5 2
+  s_174a846accf7eb::t_70fa58da07499f 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "1485c21cabdfb15845a721f7c1979295619511fb",
+  "prompts": {},
+  "sessions": {
+    "s_174a846accf7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e46c9-53fc-7000-88f3-7aab5f159e09",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    }
+  }
+}

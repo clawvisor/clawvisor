@@ -1,0 +1,21 @@
+internal/api/handlers/vault.go
+  s_5690062ed6cda8::t_27bc55b9caa36e 324,350
+internal/api/handlers/vault_control_test.go
+  s_5690062ed6cda8::t_bf3e890f1c84c9 9,70-72,167-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "8da62fcb776a705f2110eb9b7fb7984cc24cbf84",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

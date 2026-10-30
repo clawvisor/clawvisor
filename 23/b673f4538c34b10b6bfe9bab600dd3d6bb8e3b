@@ -1,0 +1,20 @@
+internal/runtime/llmproxy/policies/full_pipeline_e2e_test.go
+  s_813cf813d8b1d0::t_0bb426627e498b 1-42,46-69,72-84,86-87,89-127,133-134,138-152,155-203
+  s_813cf813d8b1d0::t_591cbee7c556c7 128-132,135-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "23b673f4538c34b10b6bfe9bab600dd3d6bb8e3b",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

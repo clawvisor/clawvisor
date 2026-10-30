@@ -1,0 +1,38 @@
+internal/api/server.go
+  s_8de9dcae61d3e3::t_7b0b6fdc8887af 848-861
+internal/runtime/llmproxy/postprocess.go
+  s_8de9dcae61d3e3::t_141061136151e3 194-221
+  s_8de9dcae61d3e3::t_b72689bd49ecad 267-273
+  s_8de9dcae61d3e3::t_3b11dba8e97c1c 752-760
+  s_8de9dcae61d3e3::t_0aa74380bb70b6 558-565
+  s_8de9dcae61d3e3::t_6d234370246075 390-398,401
+  s_8de9dcae61d3e3::t_8e54f4dcd74d91 316-322
+  s_8de9dcae61d3e3::t_f1d142e52587c0 125-130
+  s_8de9dcae61d3e3::t_0203d2b31709b7 432-440
+  s_8de9dcae61d3e3::t_b2df66568f746d 285-294
+internal/runtime/llmproxy/trace_test.go
+  s_8de9dcae61d3e3::t_963a720d126410 1-87
+pkg/config/config.go
+  s_8de9dcae61d3e3::t_4f427a59f87d6d 295-301
+internal/api/handlers/llm_endpoint.go
+  s_8de9dcae61d3e3::t_efc7d77cd882f5 84-88
+  s_8de9dcae61d3e3::t_ef76046a2cdff9 456
+internal/runtime/llmproxy/trace.go
+  s_8de9dcae61d3e3::t_834aa0c2a618af 1-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "9f1401a7d686b21be606379c5bfa367d9f29ae21",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

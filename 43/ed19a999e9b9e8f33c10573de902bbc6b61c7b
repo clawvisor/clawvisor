@@ -1,0 +1,23 @@
+provider/internal/provider/resource_sso_connection.go
+  s_55f7a841d7c10e::t_44966b7c39d232 300-302
+provider/examples/resources/clawvisor_sso_connection/resource.tf
+  s_55f7a841d7c10e::t_57be4621f42e88 5-18
+provider/docs/resources/sso_connection.md
+  s_55f7a841d7c10e::t_7dfd8f2398431c 16-33,35,37,52-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "43ed19a999e9b9e8f33c10573de902bbc6b61c7b",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+internal/runtime/llmproxy/human_turns_test.go
+  s_40d323bf8e3078::t_fc15b5ea23df67 151-204
+internal/runtime/llmproxy/expired_task_notice.go
+  s_40d323bf8e3078::t_9be8765dfe715f 150
+internal/runtime/llmproxy/human_turns.go
+  s_40d323bf8e3078::t_371630b811a9ba 87-105
+  s_40d323bf8e3078::t_3ef881c21348e3 133-134,145-146,148
+  s_40d323bf8e3078::t_e0fa9e0bb1a0c0 75
+  s_40d323bf8e3078::t_c78ea6b1c0d196 136-144
+  s_40d323bf8e3078::t_eab994562432bd 258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "3935c96c9d0947582e442ed11f891d6c02253426",
+  "prompts": {},
+  "sessions": {
+    "s_40d323bf8e3078": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e29bd13d-0ddc-4158-b143-541cdf0eb5dc",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

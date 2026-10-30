@@ -1,0 +1,30 @@
+internal/runtime/conversation/stream/anthropic_prepend_test.go
+  s_813cf813d8b1d0::t_ea88bf2aec0957 1-111
+internal/runtime/conversation/stream/anthropic_prepend.go
+  s_813cf813d8b1d0::t_71757d7af82db2 1-15,22-44,48-50,52-54,56,58,61-69,73-79,81-83,85-88,90-93,95-103,106-115
+  s_522af339bc956c::t_9f0b719c43eac4 70-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "2a226e7c30b6896268730c3812259d764fda402b",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

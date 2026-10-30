@@ -1,0 +1,21 @@
+internal/api/handlers/installer_scripts/codex.sh.tmpl
+  s_6d95d507d56682::t_884c20dc75a3eb 79
+internal/api/handlers/installer_scripts/claude_code.sh.tmpl
+  s_6d95d507d56682::t_7175b7d2794644 119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "6403a2a41814f01d1c5988383a3357742dc54def",
+  "prompts": {},
+  "sessions": {
+    "s_6d95d507d56682": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e5ca272-33dd-461c-beff-3878d45c0d32",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

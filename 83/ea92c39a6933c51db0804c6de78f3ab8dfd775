@@ -1,0 +1,23 @@
+web/src/api/client.ts
+  s_d5941c76d46281::t_782c04c42eb289 329-334,344,1600-1603,1606-1608
+web/src/pages/Settings.tsx
+  s_d5941c76d46281::t_2fb544ccca5d5a 1725-1726,1746,1825-1826,1847,1901-1904,1910,1917-1918,1922-1923,1937,1960,1963
+  s_d5941c76d46281::t_bed8e6705c24c7 10,26,1652-1724,1727-1745,1747-1824,1827-1846,1848-1900,1905-1909,1911-1916,1919-1921,1924-1936,1938-1959,1961-1962,1964-1972
+  s_d5941c76d46281::t_6cbf670adababe 1973
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "83ea92c39a6933c51db0804c6de78f3ab8dfd775",
+  "prompts": {},
+  "sessions": {
+    "s_d5941c76d46281": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6b3a49a-1fa4-49c9-ac40-ed293fbae0c3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

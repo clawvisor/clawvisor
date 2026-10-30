@@ -1,0 +1,27 @@
+internal/api/handlers/agents.go
+  s_60434a1c202264::t_bb88f6a2eeed57 50-54,63-65,85-90
+web/src/api/client.ts
+  s_60434a1c202264::t_bb88f6a2eeed57 1272-1277
+internal/api/handlers/mobileconfig.go
+  s_60434a1c202264::t_bb88f6a2eeed57 90-91,95-106
+web/src/pages/Agents.tsx
+  s_60434a1c202264::t_bb88f6a2eeed57 423,1340-1341,1392-1393,1528-1537,1715-1716,1743,2434,3584-3590,3752,4292,4374,4378-4380,4448-4484,4493,4495,4502-4509,4511-4524,4526
+internal/api/handlers/onboarding.go
+  s_60434a1c202264::t_bb88f6a2eeed57 14-19,60-71,93-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e19ae9508f0a26dcd74d2daa11b19df5e1219452",
+  "prompts": {},
+  "sessions": {
+    "s_60434a1c202264": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e8442-5291-77e3-8941-ca38a65a0bb8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

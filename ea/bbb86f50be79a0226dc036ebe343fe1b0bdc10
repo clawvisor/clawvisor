@@ -1,0 +1,31 @@
+internal/intent/prompts.go
+  s_5690062ed6cda8::t_59306648a1c5de 360-363,365,383-386,388
+  s_5690062ed6cda8::t_33dc9a38a36c70 19,43,66,329-331
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_5690062ed6cda8::t_6b971b3cbfa551 239-267
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_5690062ed6cda8::t_feb997f6bcad42 10,136-143,147
+internal/runtime/llmproxy/inline_task_prompt.go
+  s_5690062ed6cda8::t_3e28f920b45805 23
+  s_5690062ed6cda8::t_57af2b7a41135c 7,39-42,108-114
+internal/runtime/llmproxy/inline_task_prompt_test.go
+  s_5690062ed6cda8::t_d90640a460bd0c 8,138,144,152-169
+internal/intent/verifier_test.go
+  s_5690062ed6cda8::t_207048a3637693 150-167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "eabbb86f50be79a0226dc036ebe343fe1b0bdc10",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

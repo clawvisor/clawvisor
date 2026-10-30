@@ -1,0 +1,29 @@
+internal/api/vault_items_test.go
+  s_5690062ed6cda8::t_e023a37c76f496 59-61
+web/src/pages/Services.tsx
+  s_5690062ed6cda8::t_66834f70fa8cad 4
+  s_5690062ed6cda8::t_40da7d10140c48 64
+  s_5690062ed6cda8::t_600b80120cccc1 1504-1509,1626-1628,1632-1633,1636
+  s_5690062ed6cda8::t_b5fc47697962c2 42-44,47-49,52-57,62,65-67,70-75,77-161,163-164,170-185,188-194,236-237,288,291,323-328
+web/src/api/client.ts
+  s_5690062ed6cda8::t_b40f4064e43a9d 471
+internal/api/handlers/vault.go
+  s_5690062ed6cda8::t_d1e56d1c1fb16a 34-41
+  s_5690062ed6cda8::t_098f6f98360c3c 42,81-86,94-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "be37697cbe1ce9a5458ce20e7d5d44312e69450d",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

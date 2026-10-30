@@ -1,0 +1,29 @@
+internal/runtime/llmproxy/trace.go
+  s_48544d04b3a3f6::t_ec8cb661f0f2a4 88-92
+internal/runtime/llmproxy/postprocess.go
+  s_48544d04b3a3f6::t_94fecb22ef95d2 2095-2101,2103,2107,2118-2119
+  s_48544d04b3a3f6::t_d88fe2d8a64157 1224-1238
+  s_48544d04b3a3f6::t_9c45d0a556aebd 2180
+  s_48544d04b3a3f6::t_84110a309e2f97 2124-2131,2135
+  s_48544d04b3a3f6::t_b12f8a2071c034 2197
+  s_48544d04b3a3f6::t_50db79aeb45310 913-924
+  s_48544d04b3a3f6::t_c8b0c77e03fb41 1104-1117
+  s_48544d04b3a3f6::t_5e50b22d59a6a8 2156
+  s_48544d04b3a3f6::t_8cbdc37d3ebc46 1193-1207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "247044c6d4128e3171a71f7e9f929449f7144a76",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+internal/api/handlers/runtime.go
+  s_8de9dcae61d3e3::t_d0d574c1ec0f76 381-389
+internal/api/handlers/runtime_test.go
+  s_8de9dcae61d3e3::t_94927ae5b5178c 334-434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "3c1957b013d14962fb15cd11e2923954a3801e55",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,76 @@
+internal/runtime/autovault/inbound_shared.go
+  s_b7635082fff64b::t_1cbe7b8e8e3a2b 260-290
+  s_b7635082fff64b::t_e7d3a9c5285732 6,8
+internal/runtime/llmproxy/secret_detection.go
+  s_b7635082fff64b::t_ec5c7e9e65cfbb 364-367,417,419,432,434
+  s_b7635082fff64b::t_df4aebd9fbe8ff 534-540
+  s_b7635082fff64b::t_172a8a436f026c 79,85,103,115,132-133,145-146,149,162-163,166-172,176-201,203-211,213-214
+internal/api/handlers/runtime_controls_test.go
+  s_b7635082fff64b::t_6579297a8d0a44 633-706
+internal/api/handlers/llm_endpoint.go
+  s_b7635082fff64b::t_2b19d30d67d960 1347,1356-1359,1361-1365,1369-1371,1373
+  s_b7635082fff64b::t_b3dcf773a094ef 1242-1245,1247,1249
+  s_b7635082fff64b::t_736721dcf63dce 1339,1355
+  s_b7635082fff64b::t_21287f38ce1f90 1456,1459-1462,1483-1488
+  s_b7635082fff64b::t_4af8c183f1d290 14,135-137
+  s_b7635082fff64b::t_2d11097a6e3a44 1345,1360,1388,1390,1401,1427,1431,1442,1444
+  s_b7635082fff64b::t_66257958dbaf2b 157-159
+  s_b7635082fff64b::t_c94eb55f159d41 1020,1023-1027,1030-1080
+  s_b7635082fff64b::t_512ddc39d95a63 1451-1455,1457-1458,1463-1482,1489-1499
+  s_b7635082fff64b::t_7fdec851cdea62 1281,1302,1313,1323,1375
+web/src/api/client.ts
+  s_b7635082fff64b::t_397b6ff7f31e83 739-742,1307
+  s_b7635082fff64b::t_046faffd58733c 733-734
+pkg/store/sqlite/store.go
+  s_3460de0f2fbf3b::t_7fe21d2f7db4b0 2681-2692
+internal/api/handlers/runtime_tool_controls.go
+  s_b7635082fff64b::t_adfddcbb532286 58-62,64-65,232,235,238,263-274,297-299,327-328
+  s_b7635082fff64b::t_7425c750a72d7e 320,329-337
+  s_b7635082fff64b::t_28509181156ea0 380-387
+  s_b7635082fff64b::t_550de705c25a6c 23-26,63,141-150,153-160,198,206-209,222-225,231,233-234,236,247-253,278,307
+  s_b7635082fff64b::t_a7135c66871f23 292-296,321-326
+web/src/pages/Restrictions.tsx
+  s_b7635082fff64b::t_ef50e3dd8b377c 1139,1159-1166,1170-1190,1194,1196,1199,1213
+  s_b7635082fff64b::t_b2a74e1bceec06 1253-1258,1260-1267,1270-1281,1290-1309
+  s_b7635082fff64b::t_c5302a1622985b 1094-1095,1097
+  s_b7635082fff64b::t_5b8cd9bc80efcb 326-327,505,1026,1036,1038,1055,1058,1096,1122-1138,1140-1158,1167-1169,1191-1193,1195,1197-1198,1200-1212,1214-1252,1259,1268-1269,1282-1289,1310-1312,1381,1404,1487,1489
+  s_b7635082fff64b::t_e3eb898f894f9f 586-587,594,671,707-708,763-764,772-773,775-777,797,799
+  s_b7635082fff64b::t_8304aab1bc4e53 377,468-469
+  s_b7635082fff64b::t_490a41655a1921 596-608,622-632,637-647,670
+  s_b7635082fff64b::t_b7f02702e0995c 463-464,569-570,581-582,690,703,715-720
+  s_b7635082fff64b::t_45ffab47041435 321-322,424,432
+internal/api/handlers/runtime.go
+  s_b7635082fff64b::t_a55c6c236a9aaf 411,415
+pkg/store/postgres/store.go
+  s_b7635082fff64b::t_c4d2b43dd7575d 2432-2442
+internal/runtime/policy/global_rules_test.go
+  s_b7635082fff64b::t_d91fbb084d1be6 1-58
+internal/api/handlers/runtime_passthrough.go
+  s_b7635082fff64b::t_fa103f2c25e990 130-133
+internal/runtime/policy/global_rules.go
+  s_b7635082fff64b::t_022fe268efde16 88,110-117,120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "0ce701af6400a852bc6537656d8390121bc5b123",
+  "prompts": {},
+  "sessions": {
+    "s_3460de0f2fbf3b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6c0dd45a-3031-4d0e-abc5-81979e825ee1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_b7635082fff64b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e32a6-368e-7c40-a4de-d67d7171c8f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

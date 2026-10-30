@@ -1,0 +1,24 @@
+internal/api/handlers/approvals.go
+  s_98743970e8b00b::t_45df3774bb6978 772-781
+  s_98743970e8b00b::t_82ccb242294691 721-725
+internal/runtime/llmproxy/inline_task_transitions.go
+  s_98743970e8b00b::t_0a6ac702e1f1fa 76-99,115-117
+pkg/store/store.go
+  s_98743970e8b00b::t_530d1c4c1d57f1 800-805
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "17ee8ac024558a12c3022d93a140c498c48d5fa9",
+  "prompts": {},
+  "sessions": {
+    "s_98743970e8b00b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9e29f8b-93f1-4e36-852b-34ec8729e599",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

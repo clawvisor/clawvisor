@@ -1,0 +1,21 @@
+internal/adapters/google/gmail/adapter_test.go
+  s_c8d5672f06a911::t_a6b705f4012af1 911-963
+internal/adapters/google/gmail/adapter.go
+  s_c8d5672f06a911::t_928237427adbf4 1038-1046,1073
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "a54845cb00e85117a0c29db84e05f4085e39be69",
+  "prompts": {},
+  "sessions": {
+    "s_c8d5672f06a911": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b6e9a80f-52ee-4b83-a167-6a6c8dc06582",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+internal/api/server.go
+  s_5690062ed6cda8::t_e262fb78e65252 797
+web/src/pages/Services.tsx
+  s_5690062ed6cda8::t_6253abf958c4df 54,56-60,75-94,165-202
+web/src/api/client.ts
+  s_5690062ed6cda8::t_41fcc649119c8f 1310-1311
+internal/api/handlers/vault.go
+  s_5690062ed6cda8::t_8b2dbc1b74730e 5
+  s_5690062ed6cda8::t_c3811057318293 67-114
+  s_5690062ed6cda8::t_9e6adfde52d3dd 231-264
+internal/api/vault_items_test.go
+  s_5690062ed6cda8::t_71940daee37b86 193-225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "0dbf4e618b4178d93f6a4ad7f32b43b2336f956a",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

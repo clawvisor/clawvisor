@@ -1,0 +1,25 @@
+deploy/terraform/modules/vm-docker/outputs.tf
+  s_55f7a841d7c10e::t_287dfc582f6da3 31
+  s_55f7a841d7c10e::t_a8f9ce20aed14c 2,6-8
+  s_55f7a841d7c10e::t_971066e18a2eb8 18,22-23
+  s_55f7a841d7c10e::t_3691da78708793 9-10
+deploy/terraform/modules/vm-docker/main.tf
+  s_55f7a841d7c10e::t_9069a7555c7820 12-17
+  s_55f7a841d7c10e::t_5e23d3eee1d954 27-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1e5dc2ab78297e9e40594517fb027a539b10c5f6",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

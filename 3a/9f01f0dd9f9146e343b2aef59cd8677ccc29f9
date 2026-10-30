@@ -1,0 +1,21 @@
+internal/runtime/llmproxy/synthetic_history_strip.go
+  s_4c4a32022426f9::t_f370832aaa23f3 185-187
+internal/runtime/conversation/assistant_prepend.go
+  s_4c4a32022426f9::t_6789855e9db8b3 66-70,73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3a9f01f0dd9f9146e343b2aef59cd8677ccc29f9",
+  "prompts": {},
+  "sessions": {
+    "s_4c4a32022426f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "064ca6c4-1275-4b5f-ac62-2f39b7e5f939",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

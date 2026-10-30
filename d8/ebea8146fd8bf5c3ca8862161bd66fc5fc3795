@@ -1,0 +1,19 @@
+pkg/runtime/proxy/ca.go
+  s_a756e7579a21d2::t_52043c725d2d2e 57-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "d8ebea8146fd8bf5c3ca8862161bd66fc5fc3795",
+  "prompts": {},
+  "sessions": {
+    "s_a756e7579a21d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4151cca2-ee27-4d35-9337-6aebeb3229a4",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

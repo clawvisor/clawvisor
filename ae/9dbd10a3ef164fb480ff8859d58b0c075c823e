@@ -1,0 +1,21 @@
+cmd/render-installer/main_test.go
+  s_a9afcf61fae206::t_d4a7f59b318cf3 217-240
+scripts/render-staging-installer.sh
+  s_a9afcf61fae206::t_d4a7f59b318cf3 39-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "ae9dbd10a3ef164fb480ff8859d58b0c075c823e",
+  "prompts": {},
+  "sessions": {
+    "s_a9afcf61fae206": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe98b-7d19-7ae1-b820-64975bafcda2",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

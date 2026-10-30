@@ -1,0 +1,44 @@
+internal/api/handlers/tasks_inline.go
+  s_fd6d9b102e043d::t_2ae117669355fc 954
+  s_fd6d9b102e043d::t_35ccbc4061a50d 1014-1018
+internal/api/gateway_test.go
+  s_fd6d9b102e043d::t_363eb6cdcbc4e5 713-720,733-756
+  s_fd6d9b102e043d::t_fe66662f6a68f7 760,776-779,781-782
+internal/runtime/llmproxy/controltool/control.go
+  s_fd6d9b102e043d::t_24932b7424e8e7 91,93
+internal/runtime/llmproxy/inline_expansion_prompt.go
+  s_fd6d9b102e043d::t_1cc84c02973b26 26,46-52
+internal/runtime/llmproxy/expand_capability_live_test.go
+  s_fd6d9b102e043d::t_8a05380f86a924 123,125,130-143
+internal/notify/telegram/telegram.go
+  s_fd6d9b102e043d::t_27818ed13f33fe 784-789
+internal/runtime/llmproxy/controltool/control_test.go
+  s_fd6d9b102e043d::t_9dfe4d2414b0a8 71-72
+internal/runtime/llmproxy/inline_expansion_intercept.go
+  s_fd6d9b102e043d::t_0ec2df7dd57312 147-151,153,157
+  s_fd6d9b102e043d::t_6533219c9a1e63 204
+internal/api/handlers/gateway.go
+  s_fd6d9b102e043d::t_603f89b4881795 756-757
+internal/api/handlers/tasks.go
+  s_fd6d9b102e043d::t_11ca1b2a56586c 3121
+  s_fd6d9b102e043d::t_4c0ebe882df7d1 2176-2182
+  s_fd6d9b102e043d::t_770a2023f00cec 2283
+  s_fd6d9b102e043d::t_48b7df6378f3be 2562-2582
+  s_fd6d9b102e043d::t_4034266deb21f7 2530-2534
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "88a85961dd544f85a160cb66cc66ba1600676cad",
+  "prompts": {},
+  "sessions": {
+    "s_fd6d9b102e043d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa83669-5dd4-4773-aa2d-0f9889359812",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

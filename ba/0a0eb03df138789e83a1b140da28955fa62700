@@ -1,0 +1,25 @@
+deploy/otel-collector.yaml
+  s_55f7a841d7c10e::t_a0a236078e532e 1-50
+docs/SETUP_DOCKER.md
+  s_55f7a841d7c10e::t_c51bc5dd879bdc 193-229
+deploy/docker-compose.yml
+  s_55f7a841d7c10e::t_01c7004f73d82b 44-63
+config.example.yaml
+  s_55f7a841d7c10e::t_55d12b621e3a74 117-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ba0a0eb03df138789e83a1b140da28955fa62700",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

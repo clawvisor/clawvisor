@@ -1,0 +1,37 @@
+internal/runtime/llmproxy/inbound_sanitize.go
+  s_8de9dcae61d3e3::t_d4c86e279ccc47 189-199
+internal/runtime/llmproxy/inspector/readonly_bash_test.go
+  s_8de9dcae61d3e3::t_cbb8e451368a9c 126-162
+internal/runtime/llmproxy/taskscope.go
+  s_8de9dcae61d3e3::t_e62448ad22eaf8 79-84
+internal/runtime/policy/task_match.go
+  s_8de9dcae61d3e3::t_cf55d40d48517e 109,111,113
+internal/runtime/llmproxy/caller_nonce_redis.go
+  s_8de9dcae61d3e3::t_2c7d65a8430c00 7
+  s_8de9dcae61d3e3::t_41c11cd33b1d3a 47-49
+internal/runtime/llmproxy/inbound_sanitize_test.go
+  s_8de9dcae61d3e3::t_dca91ca9944ad1 175-207
+internal/runtime/policy/task_match_test.go
+  s_8de9dcae61d3e3::t_6d68710f1ee1c0 177-186
+internal/api/handlers/proxy_resolver.go
+  s_8de9dcae61d3e3::t_b29ae19f2ffacc 199
+  s_8de9dcae61d3e3::t_4bbee3e25413ed 560-563,577
+internal/runtime/llmproxy/inspector/readonly_bash.go
+  s_8de9dcae61d3e3::t_2948d4d1342b97 245-279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "723b3a37e4e32063816ba257ad25dc8db7c731a4",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

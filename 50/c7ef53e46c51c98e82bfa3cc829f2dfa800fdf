@@ -1,0 +1,27 @@
+internal/runtime/conversation/stream/anthropic_decoder.go
+  s_813cf813d8b1d0::t_46abc1e035f794 1-187
+internal/runtime/conversation/stream/anthropic_roundtrip_test.go
+  s_813cf813d8b1d0::t_a2d563a21e96ad 1-242
+internal/runtime/conversation/stream/decoder.go
+  s_813cf813d8b1d0::t_92b8420289536c 1-37
+internal/runtime/conversation/stream/event.go
+  s_813cf813d8b1d0::t_a26d0db46c6c77 1-201
+internal/runtime/conversation/stream/anthropic_encoder.go
+  s_813cf813d8b1d0::t_f9174756d4ba84 1-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "50c7ef53e46c51c98e82bfa3cc829f2dfa800fdf",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

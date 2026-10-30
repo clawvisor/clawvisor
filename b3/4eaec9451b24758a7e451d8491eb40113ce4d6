@@ -1,0 +1,44 @@
+internal/adapters/definitions/microsoft_onedrive.yaml
+  s_ae11d5e26da131::t_c7778fc3e784f8 88-89
+internal/adapters/google/drive/adapter.go
+  s_ae11d5e26da131::t_86a6fef475133a 473-477
+  s_ae11d5e26da131::t_8abc19c60e62f5 363-365,371-372
+internal/adapters/definitions/dropbox.yaml
+  s_ae11d5e26da131::t_c7778fc3e784f8 78-79
+internal/adapters/microsoft/onedrive/adapter.go
+  s_ae11d5e26da131::t_749be60340aa51 207-208,215-218,224-225
+internal/adapters/dropbox/adapter.go
+  s_ae11d5e26da131::t_bdf935a7f4c712 180-183,189-190
+  s_ae11d5e26da131::t_e2e71610f3560d 243-247
+internal/adapters/google/gmail/adapter.go
+  s_ae11d5e26da131::t_27e833f1fb7820 1394-1408
+  s_ae11d5e26da131::t_2dceae11d5a514 107-108
+  s_ae11d5e26da131::t_f2938d37b51380 58
+  s_ae11d5e26da131::t_9fd412075dc3ca 816-841
+  s_ae11d5e26da131::t_2988bf6c25c531 281-373
+internal/adapters/definitions/google_gmail.yaml
+  s_ae11d5e26da131::t_42a844b8aad0d3 47-67
+pkg/clawvisor/defaults.go
+  s_ae11d5e26da131::t_d1bb386b5ad3ca 186
+internal/adapters/google/gmail/adapter_test.go
+  s_ae11d5e26da131::t_6cd412696c449e 22,1080,1082-1204
+internal/adapters/google/drive/adapter_test.go
+  s_ae11d5e26da131::t_b0fba2f03ee5d6 74-82
+  s_ae11d5e26da131::t_06fa13145f67ea 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "b34eaec9451b24758a7e451d8491eb40113ce4d6",
+  "prompts": {},
+  "sessions": {
+    "s_ae11d5e26da131": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "811c5d27-2b15-4eac-8e3c-a01783a0fa97",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

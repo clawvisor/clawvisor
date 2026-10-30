@@ -1,0 +1,28 @@
+internal/e2e/testapp/server.go
+  s_8b1f6f8ddc53d3::t_30a7c8ceb6dab4 215-217
+  s_8b1f6f8ddc53d3::t_697248e6779c25 263
+  s_8b1f6f8ddc53d3::t_38601fa897b5fd 307-323
+  s_8b1f6f8ddc53d3::t_46d4b1df7f4866 38
+  s_8b1f6f8ddc53d3::t_0d7f95417b94e0 91-100,103-111
+  s_8b1f6f8ddc53d3::t_65a53305b4fdae 237-250
+  s_8b1f6f8ddc53d3::t_ac8923b73fd58f 17
+internal/e2e/testapp/server_internal_test.go
+  s_8b1f6f8ddc53d3::t_8a298d6b197f2b 65-99
+  s_8b1f6f8ddc53d3::t_eacc4faae31ab3 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "c495d2fab1d09ae0da1b35e50549fd1a7f649d31",
+  "prompts": {},
+  "sessions": {
+    "s_8b1f6f8ddc53d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2217843-2b00-445d-88f2-f33b3fb654b2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,47 @@
+internal/local/state/state.go
+  s_aeeca9dea99c0c::t_0920640865be41 34
+internal/callback/stressdemo_test.go
+  s_aeeca9dea99c0c::t_701a676259d6e9 23
+internal/callback/callback_test.go
+  s_aeeca9dea99c0c::t_701a676259d6e9 29,42,68,116,120,128,146,185,203,222,240
+  s_aeeca9dea99c0c::t_9c88e27f28c27c 111-114,118
+internal/api/handlers/gateway.go
+  s_aeeca9dea99c0c::t_6e3d4e71ec8b2b 1580-1581,1799
+  s_aeeca9dea99c0c::t_8924f0e9ddde61 1666,1673-1675,1685-1687,1692-1694
+  s_aeeca9dea99c0c::t_b0fddbe697696d 1672,1764,1791-1794
+  s_aeeca9dea99c0c::t_dd197d136dd7e3 1684,1691,1724,1749-1752
+  s_aeeca9dea99c0c::t_edd428e17f7103 1725-1727
+  s_aeeca9dea99c0c::t_0dc20fd34d1359 1765-1767
+cmd/clawvisor-local/toolbar_darwin.go
+  s_aeeca9dea99c0c::t_6ccda637b6a5f4 461-464,466-468
+internal/intent/prompts.go
+  s_aeeca9dea99c0c::t_c2cc6457a4f77d 407-413,416-427,429-438,440
+internal/callback/callback.go
+  s_aeeca9dea99c0c::t_c5dc5b102219c8 161-162,164-165,170-172
+pkg/clawvisor/defaults.go
+  s_aeeca9dea99c0c::t_ff16f1cc5385d9 110-114
+internal/api/handlers/stressdemo_test.go
+  s_aeeca9dea99c0c::t_701a676259d6e9 197-198
+internal/api/handlers/runtime.go
+  s_aeeca9dea99c0c::t_074ca869a29197 851-852,76,853-872
+  s_aeeca9dea99c0c::t_603d314906e04b 72-75
+internal/local/tunnel/client.go
+  s_aeeca9dea99c0c::t_bd5a0ee7ef1f28 133,306,113,125-132,134-142,144-146,160-163
+  s_aeeca9dea99c0c::t_679c925738f9e0 28-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "b54b51a8a09853678f39671166871c1eb2f835d4",
+  "prompts": {},
+  "sessions": {
+    "s_aeeca9dea99c0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "29f21bad-67c4-4e04-9440-142cf0795719",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

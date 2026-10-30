@@ -1,0 +1,22 @@
+internal/runtime/llmproxy/pipeline/response_mutator_impl.go
+  s_813cf813d8b1d0::t_c3368125f20fce 45-46
+  s_813cf813d8b1d0::t_d289f1c6621fdd 105-110
+internal/runtime/llmproxy/pipeline/response_mutator_impl_test.go
+  s_813cf813d8b1d0::t_e410feaaa25066 127-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "0ef47c32428f787c1b149a2082d1d63a45f42c5c",
+  "prompts": {},
+  "sessions": {
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

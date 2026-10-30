@@ -1,0 +1,30 @@
+internal/e2e/testapp/server_internal_test.go
+  s_8b1f6f8ddc53d3::t_bf90063cf0836d 9
+  s_8b1f6f8ddc53d3::t_83b5c530c0245d 50,52,59-60
+  s_8b1f6f8ddc53d3::t_7ffcf12e66dfa9 1-8,10-49,51,53-58,61-76
+internal/e2e/testapp/server.go
+  s_8b1f6f8ddc53d3::t_877083e957a543 248-252,256-257
+  s_8b1f6f8ddc53d3::t_debdd4451a29dd 201-208,210,212
+  s_8b1f6f8ddc53d3::t_714c4f9915aaf9 9
+  s_8b1f6f8ddc53d3::t_c776b5f0fa7e24 244-247,255,258-259
+  s_8b1f6f8ddc53d3::t_acfb73c7f73c07 110,113
+  s_8b1f6f8ddc53d3::t_536ac00bf64ee8 161
+  s_8b1f6f8ddc53d3::t_8f7f365f08875b 50-56,60-102
+  s_8b1f6f8ddc53d3::t_aba6038aaf9dda 185,199-200,209,211,213-222,225-228,241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.4",
+  "base_commit_sha": "5f6829b894f0e660683c6d34dda25eca8d383a3f",
+  "prompts": {},
+  "sessions": {
+    "s_8b1f6f8ddc53d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2217843-2b00-445d-88f2-f33b3fb654b2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

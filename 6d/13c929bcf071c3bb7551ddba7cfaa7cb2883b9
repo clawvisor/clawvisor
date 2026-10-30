@@ -1,0 +1,25 @@
+internal/api/handlers/installer_scripts/common.sh.tmpl
+  s_7bebf1a7f2da2e::t_d1fba1b1c3b31e 615-616,619-627
+  s_7bebf1a7f2da2e::t_299d1fd40f590d 506-519
+  s_7bebf1a7f2da2e::t_1594de3e354767 461-471,474-502
+  s_7bebf1a7f2da2e::t_4f5a113d23ae49 568-577,579,582-586,593-597,603
+internal/api/handlers/installer_test.go
+  s_7bebf1a7f2da2e::t_d6ed3a8c826693 1111-1139,1143-1147
+  s_7bebf1a7f2da2e::t_e3b6d06e80dc0f 1140-1142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "6d13c929bcf071c3bb7551ddba7cfaa7cb2883b9",
+  "prompts": {},
+  "sessions": {
+    "s_7bebf1a7f2da2e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a9063f2-d6c7-4ece-927d-f188797227cd",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

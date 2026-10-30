@@ -1,0 +1,33 @@
+internal/runtime/conversation/stream/openai_chat_decoder.go
+  s_813cf813d8b1d0::t_6303fef7a7fa0d 1-31,34-41,45-71,75-76,78-126,128,130-131,134-135,137-144,146-147,150-162
+  s_522af339bc956c::t_1751ad821beea9 145
+internal/runtime/conversation/stream/openai_chat_encoder.go
+  s_813cf813d8b1d0::t_7d0e42addd11cd 1-49
+internal/runtime/conversation/stream/openai_chat_roundtrip_test.go
+  s_813cf813d8b1d0::t_41945b93e958b0 1-40,42-52,56-112
+  s_522af339bc956c::t_48bc00a28f4b3a 53-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "612b718349022aa8462551f375771c2e494ac145",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_813cf813d8b1d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "432a3632-6f8d-4784-9b6f-d21bfa3d2733",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

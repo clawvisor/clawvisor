@@ -1,0 +1,22 @@
+internal/api/handlers/llm_endpoint_test.go
+  s_522af339bc956c::t_5a494cf35274e0 34-50
+internal/api/handlers/llm_endpoint.go
+  s_522af339bc956c::t_8e9b8366980dfb 319-328
+  s_522af339bc956c::t_1eb331bb6d7a78 222-228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "5706b149a647a173006890c8d21e2f13f4331023",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

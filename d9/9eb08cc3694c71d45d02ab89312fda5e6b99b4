@@ -1,0 +1,39 @@
+internal/api/handlers/runtime_test.go
+  s_5690062ed6cda8::t_e77e795f6ec6fe 56,58,71-73,81-89
+internal/runtime/llmproxy/control_test.go
+  s_5690062ed6cda8::t_e2cb0e133442e0 137-150
+internal/api/handlers/tasks_inline.go
+  s_5690062ed6cda8::t_d99f028a1ea4e2 178-183
+pkg/store/postgres/migrations/047_manual_placeholder_credential_authorizations.sql
+  s_5690062ed6cda8::t_eb0375cfa473f4 3-17
+internal/api/handlers/runtime.go
+  s_5690062ed6cda8::t_737de4b0c2f993 139-142,157,159,177,185,907-913
+internal/runtime/llmproxy/inspector/parser.go
+  s_5690062ed6cda8::t_ed9dfb6a560f6b 287-290
+internal/api/handlers/tasks_inline_test.go
+  s_5690062ed6cda8::t_05e32ef9453897 6,272-280,282-308
+  s_5690062ed6cda8::t_5333ddbccb4143 281
+internal/runtime/llmproxy/rawlog_test.go
+  s_5690062ed6cda8::t_4b854baf6adb86 145-158
+internal/runtime/llmproxy/control.go
+  s_5690062ed6cda8::t_dd79e9bc90e9b1 518-529
+internal/runtime/llmproxy/rawlog.go
+  s_5690062ed6cda8::t_7fa52ef1e582ec 120-122
+  s_5690062ed6cda8::t_5c919922794ced 4,13,41-44,204,271,276-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "d99eb08cc3694c71d45d02ab89312fda5e6b99b4",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

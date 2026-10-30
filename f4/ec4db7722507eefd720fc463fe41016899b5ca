@@ -1,0 +1,19 @@
+internal/taskrisk/testdata/eval_cases.json
+  s_b9e768e6585176::t_2f99c580d1d82c 213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "f4ec4db7722507eefd720fc463fe41016899b5ca",
+  "prompts": {},
+  "sessions": {
+    "s_b9e768e6585176": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a9e84c0-ed5a-47c9-89ab-1fa885f415b5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+internal/runtime/conversation/approval_release_test.go
+  s_068454be9023ad::t_f34bdc86917ed6 340-374
+internal/runtime/conversation/approval_release.go
+  s_068454be9023ad::t_9a23cc0c6b857e 246-256,279-283,286-287,293-294,296,298,301-302,304
+internal/runtime/llmproxy/approval_body_editor.go
+  s_068454be9023ad::t_e8da65f2fa96db 243-253,280,283-284,293-294,296,298,301-302,304
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "26617ee04da3a880e59b622e080d9c409ad0673f",
+  "prompts": {},
+  "sessions": {
+    "s_068454be9023ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6c43e544-5845-4973-a64b-7695becd7168",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

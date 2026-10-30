@@ -1,0 +1,29 @@
+internal/runtime/llmproxy/inline_task_rewrite.go
+  s_5690062ed6cda8::t_c1bf16b6cc4eb6 84
+internal/runtime/llmproxy/release.go
+  s_5690062ed6cda8::t_c577838b9650e2 85
+internal/runtime/llmproxy/task_reply.go
+  s_5690062ed6cda8::t_068434b9090360 27,89-90,93
+internal/runtime/llmproxy/approval_characterization_test.go
+  s_5690062ed6cda8::t_5c2f63036daffa 147,158,169,180,197,213-214
+  s_5690062ed6cda8::t_04cef7e5fcda24 154-157,159-160,176-179,181-182
+  s_5690062ed6cda8::t_8e4e10c1a226bb 148-149,170-171,198-199,208-212,215
+internal/runtime/llmproxy/approval_body_editor.go
+  s_5690062ed6cda8::t_ca0f10f0fb0c0d 1-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "31869a43150bcf9e5e485132f584a357bef53f42",
+  "prompts": {},
+  "sessions": {
+    "s_5690062ed6cda8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24c1-cde7-7413-989e-7cd9bdb06212",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

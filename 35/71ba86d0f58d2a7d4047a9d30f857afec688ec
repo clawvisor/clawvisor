@@ -1,0 +1,21 @@
+internal/api/control_complete_route_test.go
+  s_d937730cc571e0::t_f9178943df4650 1-40
+internal/api/server.go
+  s_d937730cc571e0::t_f160c795bc04ea 1398
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "3571ba86d0f58d2a7d4047a9d30f857afec688ec",
+  "prompts": {},
+  "sessions": {
+    "s_d937730cc571e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44fa7574-f3cf-45f3-aa60-247502858b10",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

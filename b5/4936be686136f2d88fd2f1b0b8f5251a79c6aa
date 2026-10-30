@@ -1,0 +1,21 @@
+internal/api/server.go
+  s_20c7cd26d72652::t_762ad4a3d97a0c 1844-1849
+internal/api/handlers/notification_message.go
+  s_20c7cd26d72652::t_762ad4a3d97a0c 33-39,41-42,66-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "b54936be686136f2d88fd2f1b0b8f5251a79c6aa",
+  "prompts": {},
+  "sessions": {
+    "s_20c7cd26d72652": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51f12a99-8a7d-4eaf-b0b7-4a4c8fe6113d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

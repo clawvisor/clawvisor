@@ -1,0 +1,19 @@
+internal/runtime/conversation/response.go
+  s_bbe778adcf6f02::t_1ba50df034c51e 269-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "cced77c3cef64bcdb68a729f0bfee71f44c90551",
+  "prompts": {},
+  "sessions": {
+    "s_bbe778adcf6f02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e4dc493-f56d-4c8a-90c6-5732febb4b16",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": null
+    }
+  }
+}

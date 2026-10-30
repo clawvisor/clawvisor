@@ -1,0 +1,24 @@
+internal/e2e/lite/harness.go
+  s_48544d04b3a3f6::t_3c238b6a02e05a 163-168
+  s_48544d04b3a3f6::t_fe09a93a47d68f 169-183
+internal/e2e/lite/verifier.go
+  s_48544d04b3a3f6::t_2eda92b6964a21 1-20,22-34,36-39,41-143
+internal/e2e/lite/verifier_test.go
+  s_48544d04b3a3f6::t_badb369d881362 1-27,29-49,51-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "46e791943d6d5f5f0fb9f248e6a8cb094d6c7404",
+  "prompts": {},
+  "sessions": {
+    "s_48544d04b3a3f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a28e2b3-4f9b-4998-a843-eaf7f744852f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

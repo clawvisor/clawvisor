@@ -1,0 +1,22 @@
+internal/api/handlers/control_test.go
+  s_d937730cc571e0::t_60d79c3a148475 203-271
+internal/api/handlers/control.go
+  s_d937730cc571e0::t_a340502dd3be19 50
+  s_d937730cc571e0::t_a18bb018bc653a 118-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "ea0b66487d8ccec14a138914a432924c17a6cf10",
+  "prompts": {},
+  "sessions": {
+    "s_d937730cc571e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44fa7574-f3cf-45f3-aa60-247502858b10",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

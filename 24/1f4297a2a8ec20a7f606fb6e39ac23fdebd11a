@@ -1,0 +1,49 @@
+internal/api/handlers/llm_endpoint.go
+  s_55f7a841d7c10e::t_ea266a71a3163d 510-511
+  s_55f7a841d7c10e::t_bcf61ca9efe570 502-509,512-524,526-540
+  s_55f7a841d7c10e::t_faa9c8fb5b4306 242-260,265-274
+  s_55f7a841d7c10e::t_61a246f325c30e 525
+  s_55f7a841d7c10e::t_fdda42c3e4a6df 275,2172-2187
+  s_55f7a841d7c10e::t_af40ecee9c4da7 276
+internal/runtime/llmproxy/credential_class_test.go
+  s_55f7a841d7c10e::t_82d9df44fc3ded 1-68
+internal/runtime/llmproxy/credential_class.go
+  s_55f7a841d7c10e::t_e9e1ee78e185ca 1-129
+e2e/scenarios/llm_proxy_passthrough_test.go
+  s_55f7a841d7c10e::t_ec404497968bc9 31-33,35-36
+internal/e2e/lite/harness.go
+  s_55f7a841d7c10e::t_ca214e7695c340 184-188
+internal/runtime/llmproxy/auth_context.go
+  s_55f7a841d7c10e::t_48c57ee4f303dd 10-13,22-29
+  s_55f7a841d7c10e::t_6126fb5bfc0702 30-31
+internal/api/server.go
+  s_55f7a841d7c10e::t_1e2bee1589bacd 1346-1349
+internal/api/handlers/testdata/llm_characterization/control_notice_injected.json
+  s_55f7a841d7c10e::t_614868ea47841a 10
+internal/api/handlers/testdata/llm_characterization/malformed_request.json
+  s_55f7a841d7c10e::t_74986e102627eb 11
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_anthropic.json
+  s_55f7a841d7c10e::t_1ce48940140579 10
+internal/api/handlers/testdata/llm_characterization/passthrough_clean_openai_chat.json
+  s_55f7a841d7c10e::t_e1f8c4585a9e23 10
+internal/api/handlers/testdata/llm_characterization/tool_use_credential_rewrite.json
+  s_55f7a841d7c10e::t_6b1ee7c57a50b1 52
+internal/api/handlers/testdata/llm_characterization/tool_use_held_for_approval.json
+  s_55f7a841d7c10e::t_9871bf3f6f051d 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "241f4297a2a8ec20a7f606fb6e39ac23fdebd11a",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+internal/runtime/llmproxy/pipeline/tool_use_orchestrator.go
+  s_522af339bc956c::t_a30d17aa559732 124,129
+internal/runtime/llmproxy/postproc/postproc.go
+  s_522af339bc956c::t_e1411bd17eada2 110-113,115
+internal/runtime/llmproxy/finalizer_adapter.go
+  s_522af339bc956c::t_5bf0006658b0e5 6,61,128-134
+internal/runtime/llmproxy/pipeline/finalizer.go
+  s_522af339bc956c::t_5bf0006658b0e5 17-20,242-243,293,331,347,362-365
+  s_522af339bc956c::t_e1411bd17eada2 204-208,259-266,316-320,325
+internal/runtime/llmproxy/pipeline/post_orchestrator.go
+  s_522af339bc956c::t_5bf0006658b0e5 56-61,101
+internal/api/handlers/llm_endpoint.go
+  s_522af339bc956c::t_5bf0006658b0e5 816,819,822,844-847,849
+internal/runtime/llmproxy/pipelineeval/factory.go
+  s_522af339bc956c::t_5bf0006658b0e5 86-95
+internal/runtime/conversation/stream/sse.go
+  s_522af339bc956c::t_a30d17aa559732 18-29
+internal/runtime/llmproxy/postproc/session.go
+  s_522af339bc956c::t_e1411bd17eada2 87-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "fb0176d088cdfe01d3952040bacc4e1ebafa0db8",
+  "prompts": {},
+  "sessions": {
+    "s_522af339bc956c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9b2e-844e-7fa3-bebf-ef6ba1181fd2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

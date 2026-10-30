@@ -1,0 +1,71 @@
+pkg/vault/reference_test.go
+  s_55f7a841d7c10e::t_3dc234421b14fe 1-417
+internal/api/handlers/vault_reference.go
+  s_55f7a841d7c10e::t_5a3822248503ef 1-118
+internal/api/handlers/vault.go
+  s_55f7a841d7c10e::t_34c13da78765c6 139,222,432-446
+  s_55f7a841d7c10e::t_0440a4dc0412c6 95-97,111,117,120-123,130-137
+  s_55f7a841d7c10e::t_5a6234799079f0 207-208
+  s_55f7a841d7c10e::t_bab3b45214874d 138,198-199,204-206,209-214,219-221
+  s_55f7a841d7c10e::t_398e5734388a51 477-480,485
+  s_55f7a841d7c10e::t_ab69eab82c5957 112-116,118-119
+pkg/vault/refaws/refaws_test.go
+  s_55f7a841d7c10e::t_9466c068d91e40 1-73
+pkg/store/postgres/migrations/065_vault_entry_kind.sql
+  s_55f7a841d7c10e::t_54378858fb3c8b 1-10
+pkg/vault/reference.go
+  s_55f7a841d7c10e::t_0cf7f4a60d114c 411-416
+  s_55f7a841d7c10e::t_3500d0988f3e71 1-9,11-12,15-192,194-367,369-410,417-492
+  s_55f7a841d7c10e::t_473d9b73a9ab80 10,13-14
+  s_2272b9604c80ae::t_c7defbe6c1367a 193,368
+pkg/vault/refgcp/refgcp_test.go
+  s_55f7a841d7c10e::t_46ccb772d1b94c 1-32
+pkg/config/config.go
+  s_55f7a841d7c10e::t_d8445e1f9478ff 186-199
+  s_55f7a841d7c10e::t_4d6934ab03fbde 655-663
+pkg/vault/refgcp/refgcp_live_test.go
+  s_55f7a841d7c10e::t_a8c48ffd23eb3a 1-43
+pkg/clawvisor/defaults.go
+  s_55f7a841d7c10e::t_7b210d063d936a 52-53
+  s_55f7a841d7c10e::t_b7a7c7923b79da 678-687,690,692,698,700,705-719
+pkg/vault/refgcp/refgcp.go
+  s_55f7a841d7c10e::t_d9a91259c1951a 1-16,18,20-47,49-51,53-70,72-94
+  s_55f7a841d7c10e::t_af1544632d3145 17,19,48,52,71
+pkg/vault/refaws/refaws.go
+  s_55f7a841d7c10e::t_40582b096af622 1-123
+pkg/vault/refaws/refaws_live_test.go
+  s_55f7a841d7c10e::t_07fbd1713c2388 1-44
+pkg/store/sqlite/migrations/066_vault_entry_kind.sql
+  s_55f7a841d7c10e::t_829fd0193df042 1-12
+config.example.yaml
+  s_55f7a841d7c10e::t_b76b6468ffedb8 14,18-31
+  s_2272b9604c80ae::t_bfd821b881b348 32
+go.mod
+  s_55f7a841d7c10e::t_8e77edee490814 9-12,59-69
+go.sum
+  s_55f7a841d7c10e::t_d0a2fe9c56dfac 21-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c92b79381db35293062f6eda7ebdf29913c87208",
+  "prompts": {},
+  "sessions": {
+    "s_2272b9604c80ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01bd258c-cdde-4b3f-afd2-10b73065bcd5",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    },
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

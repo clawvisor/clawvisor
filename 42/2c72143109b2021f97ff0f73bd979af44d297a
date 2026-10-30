@@ -1,0 +1,27 @@
+internal/runtime/conversation/openai_response.go
+  s_d376867ed9f630::t_ce9a5c8f67fb51 844
+  s_d376867ed9f630::t_54a3bbb504631a 502
+  s_d376867ed9f630::t_8fb2d7ca8ddd5a 242
+internal/runtime/conversation/cvreason_stream_test.go
+  s_d376867ed9f630::t_62956abdcd79c1 121-126
+  s_d376867ed9f630::t_cb4bf2b1a3736f 70-93
+internal/runtime/conversation/anthropic_response.go
+  s_d376867ed9f630::t_e2523cdbda44d9 145
+  s_d376867ed9f630::t_a9f117716d8c4f 368
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "422c72143109b2021f97ff0f73bd979af44d297a",
+  "prompts": {},
+  "sessions": {
+    "s_d376867ed9f630": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88ad9f92-c54d-4b4a-a66a-a9e176a40e90",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

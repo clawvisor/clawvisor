@@ -1,0 +1,19 @@
+.github/workflows/terraform-ci.yml
+  s_55f7a841d7c10e::t_29c94ab8689b4e 87-89,91,97-99,103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4dd67036cef7b0a4d7ec1c3d139e81eb072418b1",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

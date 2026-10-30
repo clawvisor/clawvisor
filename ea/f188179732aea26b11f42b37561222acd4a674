@@ -1,0 +1,22 @@
+internal/runtime/jsonpatch/jsonpatch.go
+  s_31908c954c0811::t_c5ff1c8d20b080 10
+  s_31908c954c0811::t_c29b3fd8d15bbe 92-97,123-136
+internal/runtime/jsonpatch/jsonpatch_test.go
+  s_31908c954c0811::t_63c878c18646a4 110-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "eaf188179732aea26b11f42b37561222acd4a674",
+  "prompts": {},
+  "sessions": {
+    "s_31908c954c0811": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f8093a2-18fd-45f3-8800-bf58ea98fffd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+pkg/clawvisor/defaults.go
+  s_8de9dcae61d3e3::t_9681258530fd53 387
+  s_8de9dcae61d3e3::t_bb6843108bd260 538-560
+pkg/clawvisor/defaults_test.go
+  s_8de9dcae61d3e3::t_54a516b842dc70 28-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "1dfeea2c9b2999a23967532f2bd15dde967304a6",
+  "prompts": {},
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

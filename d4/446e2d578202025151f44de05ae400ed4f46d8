@@ -1,0 +1,37 @@
+config.example.yaml
+  s_55f7a841d7c10e::t_1c536b55fe0430 202-214,217-226
+e2e/scenarios/llm_proxy_local_gov_test.go
+  s_55f7a841d7c10e::t_236b5a024f37a5 64-173
+e2e/scenarios/llm_proxy_posture_test.go
+  s_55f7a841d7c10e::t_d54e503d4cb59b 166-225,234-266,275-276,283-286,290-292,296,306
+internal/api/handlers/installer_scripts/claude_code_subscription.sh.tmpl
+  s_55f7a841d7c10e::t_b5e8c1d4071eaf 8-12,14-25
+internal/api/handlers/llm_endpoint.go
+  s_55f7a841d7c10e::t_08b268f8b7359d 262-271,288-319,600-615,619,621,623-638
+internal/api/handlers/llm_endpoint_subscription_seat_test.go
+  s_55f7a841d7c10e::t_9668876e7e47c2 1-32
+internal/api/server.go
+  s_55f7a841d7c10e::t_15716c914a625a 1501
+internal/e2e/lite/harness.go
+  s_55f7a841d7c10e::t_57ecd1e2fa785c 189
+pkg/config/config.go
+  s_55f7a841d7c10e::t_9530ea0e3dc706 505-521,668-672,1137-1141
+pkg/config/config_test.go
+  s_55f7a841d7c10e::t_c9ad4cda3ca10b 282-284,550-575
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d4446e2d578202025151f44de05ae400ed4f46d8",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

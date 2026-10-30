@@ -1,0 +1,31 @@
+pkg/clawvisor/options.go
+  s_c55c88f9f7074a::t_eb956ddff65d55 143
+internal/api/handlers/claim_cache_redis.go
+  s_c55c88f9f7074a::t_0c3811952b2a54 1-45
+pkg/clawvisor/defaults.go
+  s_c55c88f9f7074a::t_871be83a02c306 411
+  s_c55c88f9f7074a::t_00a337019703b7 498
+  s_c55c88f9f7074a::t_8e9619d4b5b191 435
+internal/api/server.go
+  s_c55c88f9f7074a::t_8be70d11b6e042 710-712
+  s_c55c88f9f7074a::t_f9a90ab5642111 101
+  s_c55c88f9f7074a::t_31f833a77770c4 290-296
+pkg/clawvisor/run.go
+  s_c55c88f9f7074a::t_37aa183a5d3043 309-311
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "51c3c4008b05b551e79bba07371dfcf6a4408fb9",
+  "prompts": {},
+  "sessions": {
+    "s_c55c88f9f7074a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e8958da-493e-4cef-9029-07eb2d87ba12",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

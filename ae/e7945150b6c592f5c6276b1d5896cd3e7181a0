@@ -1,0 +1,20 @@
+internal/runtime/llmproxy/pipeline/observe.go
+  s_55f7a841d7c10e::t_e602e0f7f0f2e5 51-55
+  s_55f7a841d7c10e::t_5b27108a32bf6a 77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "aee7945150b6c592f5c6276b1d5896cd3e7181a0",
+  "prompts": {},
+  "sessions": {
+    "s_55f7a841d7c10e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48099b2e-3226-4db6-9eb9-e0007b2e6afe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}

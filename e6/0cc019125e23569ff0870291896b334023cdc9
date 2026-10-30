@@ -1,0 +1,49 @@
+web/src/components/attention/ApprovalAttentionCard.tsx
+  s_9f49afcf471aa6::t_07e42faa65d8c8 126
+  s_9f49afcf471aa6::t_b17e4fefe67268 1-125,127-150
+web/src/components/attention/TaskAttentionCard.tsx
+  s_9f49afcf471aa6::t_240990d204e952 1-9
+web/src/components/attention/InlineChatBoundNotice.tsx
+  s_9f49afcf471aa6::t_45d5fade25abc9 1-8
+web/src/components/attention/runtimeHelpers.ts
+  s_9f49afcf471aa6::t_42de77b40992f3 1-58
+web/src/pages/Inbox.tsx
+  s_9f49afcf471aa6::t_fafade9cd63653 1-30
+web/src/components/attention/invalidate.ts
+  s_9f49afcf471aa6::t_817f491bf35a50 1-11
+web/src/pages/Dashboard.tsx
+  s_9f49afcf471aa6::t_4f7fbe7eeac390 16
+  s_9f49afcf471aa6::t_eba42460c773f6 365
+web/src/components/attention/ConnectionAttentionCard.tsx
+  s_9f49afcf471aa6::t_8fc255172c495c 1-65,67-89
+  s_9f49afcf471aa6::t_cdf4ac1d9b67ba 66
+web/src/components/attention/RuntimeApprovalAttentionCard.tsx
+  s_9f49afcf471aa6::t_c5c4d5604e492b 1-74,76-98
+  s_9f49afcf471aa6::t_7570f20d0e84cb 75
+web/src/hooks/useAttentionItems.ts
+  s_9f49afcf471aa6::t_cfd852f6ac6280 1-121
+web/src/hooks/useAttentionDeepLinks.ts
+  s_9f49afcf471aa6::t_853504a1a4379e 1-97
+web/src/components/attention/AttentionInbox.tsx
+  s_9f49afcf471aa6::t_2ece81b1b79b60 1-77
+web/src/components/attention/types.ts
+  s_9f49afcf471aa6::t_ae04936dbb6e18 1-5
+web/src/components/attention/VerificationPanel.tsx
+  s_9f49afcf471aa6::t_5145ca732c8ca7 1-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "e60cc019125e23569ff0870291896b334023cdc9",
+  "prompts": {},
+  "sessions": {
+    "s_9f49afcf471aa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d96073c8-3eed-4ff9-bf1e-71697a8dbed3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}

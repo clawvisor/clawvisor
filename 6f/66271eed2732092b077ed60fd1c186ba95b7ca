@@ -1,0 +1,60 @@
+internal/api/handlers/llm_endpoint.go
+  s_273708382f1863::t_1ca6b3eadc0d92 819-830,853-860,1629-1643,2877,2882-2889,2891-2896,931,1086,1095-1096,1099,1103,1116,1121,1124,1128,1137-1138
+  s_a5f33eee989c6d::t_d8dc605c8115e9 1048-1049,1050-1077,1079-1084,1087-1090,1092-1094,1097,1100-1102,1104-1108,1110-1111,1114-1115,1117-1120,1122-1123,1125-1127,1136
+  s_a5f33eee989c6d::t_a6933d3ffeac49 872-878,886-912,914-923,925-926
+  s_a5f33eee989c6d::t_7cdc3d1bd4671d 924,928
+  s_a5f33eee989c6d::t_72cc854f24876d 929
+  s_a5f33eee989c6d::t_279c6fbc432f4a 930,1091
+  s_a5f33eee989c6d::t_1c3c9d6a57aa59 1085,1098
+internal/runtime/llmproxy/inline_task_intercept.go
+  s_273708382f1863::t_1ca6b3eadc0d92 13,133-143,145-152,154-162,165-200,202,216-220,252-274,279,281-284,289-290,292-293,295-296,298,300-301,335,342-352,354-359
+  s_a5f33eee989c6d::t_416fe647026f84 250-251
+  s_a5f33eee989c6d::t_c64c202504a007 201,203-215
+internal/runtime/llmproxy/inline_task_intercept_test.go
+  s_273708382f1863::t_1ca6b3eadc0d92 168-169,172,178-180,184-191,425-527,558-817,537-540,544,548,551,555-557
+  s_a5f33eee989c6d::t_383b1535014890 528-530,531-536,541-543,545-547,549-550,552-554
+internal/api/handlers/llm_endpoint_continuation_test.go
+  s_a5f33eee989c6d::t_13b907bc73b2a6 1-3,5-13,16,33-104,107-126,128-192,196-204,206,208-218,220-225,229-240,242,244-260,262-269
+  s_a5f33eee989c6d::t_73b6b369716b44 4,14-15,17-32
+  s_a5f33eee989c6d::t_0eced3e44222a6 105-106,205,207,241,243
+  s_a5f33eee989c6d::t_af3fdf4f4fe3ca 193-195
+  s_a5f33eee989c6d::t_bdc9704071d651 226-228
+internal/runtime/conversation/anthropic_response.go
+  s_a5f33eee989c6d::t_5415a77f07a01a 719-739,741,743-863
+internal/runtime/conversation/response.go
+  s_a5f33eee989c6d::t_656d8c5c865fba 23-31
+  s_a5f33eee989c6d::t_7bd122ed67c86f 206-211
+internal/runtime/llmproxy/continuation.go
+  s_a5f33eee989c6d::t_3d015ee95937cd 1-19,27-28,35,38-53,56-61,64-76,78,80-124
+  s_a5f33eee989c6d::t_6849410aa4a17a 20-26,29-34,62-63,77,79
+  s_a5f33eee989c6d::t_5ca60869ed8eb4 54-55
+internal/runtime/llmproxy/continuation_test.go
+  s_a5f33eee989c6d::t_7ffe1a4fa6c294 1-4,6-19,21,29-208
+  ai_agent 5
+  s_a5f33eee989c6d::t_0dcea64edd1b5c 26
+  s_a5f33eee989c6d::t_dc9b4b1f865374 27-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "6f66271eed2732092b077ed60fd1c186ba95b7ca",
+  "prompts": {},
+  "sessions": {
+    "s_273708382f1863": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65ad44a3-10d2-499a-9b48-97e867b288d0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    },
+    "s_a5f33eee989c6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37aa2c5f-2455-40a0-84dc-0b1a4ce1fdcd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

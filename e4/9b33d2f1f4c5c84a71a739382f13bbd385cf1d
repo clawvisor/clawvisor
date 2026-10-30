@@ -1,0 +1,21 @@
+internal/api/handlers/tasks_complete_test.go
+  s_d937730cc571e0::t_6a37800443efff 1-257
+internal/api/handlers/tasks.go
+  s_d937730cc571e0::t_da7f57b4a62171 1978-1991,2010,2014-2015,2019-2020,2024-2037
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "e49b33d2f1f4c5c84a71a739382f13bbd385cf1d",
+  "prompts": {},
+  "sessions": {
+    "s_d937730cc571e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44fa7574-f3cf-45f3-aa60-247502858b10",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <ericlevine@Erics-MacBook-Pro.local>"
+    }
+  }
+}
