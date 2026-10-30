@@ -65,7 +65,9 @@ actions:
     method: GET
     path: "/{{.contact_id}}"
     params:
-      contact_id: { type: string, required: true, location: path }
+      # Resource names like "people/c123"; the pattern keeps the slash from
+      # reaching other People API endpoints such as "people/me/connections".
+      contact_id: { type: string, required: true, location: path, allow_slash: true, pattern: "people/[^/]+" }
       person_fields:
         type: string
         default: "names,emailAddresses,phoneNumbers,organizations,biographies"

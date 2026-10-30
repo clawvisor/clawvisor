@@ -3,6 +3,7 @@ package yamlruntime
 import (
 	"encoding/base64"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,9 +16,10 @@ import (
 
 // compiledAction holds pre-compiled expr programs for a single action.
 type compiledAction struct {
-	fieldExprs      map[int]*vm.Program    // response field index → compiled expr
-	paramTransforms map[string]*vm.Program // param name → compiled transform expr
-	paramDefaults   map[string]*vm.Program // param name → compiled default_expr
+	fieldExprs      map[int]*vm.Program       // response field index → compiled expr
+	paramTransforms map[string]*vm.Program    // param name → compiled transform expr
+	paramDefaults   map[string]*vm.Program    // param name → compiled default_expr
+	paramPatterns   map[string]*regexp.Regexp // path param name → anchored pattern
 }
 
 // compileOptions are shared expr compilation options.
@@ -43,6 +45,7 @@ func compileAction(action yamldef.Action) (*compiledAction, error) {
 		fieldExprs:      map[int]*vm.Program{},
 		paramTransforms: map[string]*vm.Program{},
 		paramDefaults:   map[string]*vm.Program{},
+		paramPatterns:   map[string]*regexp.Regexp{},
 	}
 
 	// Compile response field expressions.
@@ -73,13 +76,25 @@ func compileAction(action yamldef.Action) (*compiledAction, error) {
 			}
 			ca.paramDefaults[name] = prog
 		}
+		if p.Pattern != "" {
+			re, err := compileParamPattern(p.Pattern)
+			if err != nil {
+				return nil, fmt.Errorf("param %q pattern: %w", name, err)
+			}
+			ca.paramPatterns[name] = re
+		}
 	}
 
-	if len(ca.fieldExprs) == 0 && len(ca.paramTransforms) == 0 && len(ca.paramDefaults) == 0 {
+	if len(ca.fieldExprs) == 0 && len(ca.paramTransforms) == 0 && len(ca.paramDefaults) == 0 && len(ca.paramPatterns) == 0 {
 		return nil, nil // no expressions to compile
 	}
 
 	return ca, nil
+}
+
+// compileParamPattern anchors a param pattern so it must match the whole value.
+func compileParamPattern(pattern string) (*regexp.Regexp, error) {
+	return regexp.Compile(`^(?:` + pattern + `)$`)
 }
 
 // evalExpr runs a compiled program against a data map.

@@ -305,6 +305,8 @@ actions:
 | `required` | bool | Parameter is mandatory |
 | `default` | any | Static default value |
 | `location` | string | `"query"`, `"body"`, or `"path"` |
+| `allow_slash` | bool | Path params only. Lets the value span multiple segments (e.g. `people/123`). By default `/`, `?` and `#` in a path value are percent-encoded so the value stays one segment. Empty values and `.`/`..` components are always rejected; with `allow_slash`, empty segments (`a//b`) are rejected too. Pair it with `pattern` to limit which paths the value can form. |
+| `pattern` | string | Path params only. Regular expression the raw value must match in full (anchored automatically), e.g. `people/[^/]+`. |
 | `map_to` | string | API-side parameter name if different (e.g. `max_results` → `maxResults`) |
 | `min` / `max` | int | Constraints for int params |
 | `transform` | string | Expr-lang expression to transform value before sending |

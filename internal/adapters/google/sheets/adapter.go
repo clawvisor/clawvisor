@@ -106,5 +106,5 @@ func (a *SheetsAdapter) httpClient(ctx context.Context, credBytes []byte) (*http
 		return nil, fmt.Errorf("sheets: OAuth client credentials not configured")
 	}
 	ts := cfg.TokenSource(ctx, cred.ToOAuth2Token())
-	return oauth2.NewClient(ctx, ts), nil
+	return adapters.GuardPathTraversal(oauth2.NewClient(ctx, ts)), nil
 }

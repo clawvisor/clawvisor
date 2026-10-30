@@ -201,6 +201,14 @@ func validateAction(_ string, action yamldef.Action, apiType string) []string {
 		if param.Location != "" && !validParamLocations[param.Location] {
 			errs = append(errs, fmt.Sprintf("param %q has invalid location %q", pname, param.Location))
 		}
+		if (param.AllowSlash || param.Pattern != "") && param.Location != "path" {
+			errs = append(errs, fmt.Sprintf("param %q sets allow_slash or pattern, which only apply to location \"path\"", pname))
+		}
+		if param.Pattern != "" {
+			if _, err := regexp.Compile(param.Pattern); err != nil {
+				errs = append(errs, fmt.Sprintf("param %q has invalid pattern: %v", pname, err))
+			}
+		}
 	}
 
 	// Path param consistency: every {{.X}} in path must have a matching param with location: path.

@@ -107,7 +107,7 @@ func HTTPClient(ctx context.Context, credBytes []byte, provider adapters.OAuthCr
 	}
 
 	ts := cfg.TokenSource(ctx, cred.ToOAuth2Token())
-	return oauth2.NewClient(ctx, ts), nil
+	return adapters.GuardPathTraversal(oauth2.NewClient(ctx, ts)), nil
 }
 
 // FetchMicrosoftEmail calls the Microsoft Graph /me endpoint and returns the
