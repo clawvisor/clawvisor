@@ -280,6 +280,9 @@ func taskApprovalBlocks(req notify.TaskApprovalRequest) []block {
 		pc.WriteString("*Planned calls*\n")
 		for _, c := range req.PlannedCalls {
 			fmt.Fprintf(&pc, "• %s — %s\n", esc(display.FormatServiceAction(c.Service, c.Action)), esc(c.Reason))
+			if params := notify.RenderPlannedCallParams(c); params != "" {
+				fmt.Fprintf(&pc, "    params: `%s`\n", esc(params))
+			}
 		}
 		b = append(b, section(strings.TrimRight(pc.String(), "\n")))
 	}

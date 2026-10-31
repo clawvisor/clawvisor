@@ -580,6 +580,40 @@ func TestMessageIDCannotRetargetEndpoint(t *testing.T) {
 	}
 }
 
+func TestSendAndDraftRejectHeaderInjection(t *testing.T) {
+	// A line break in a header-bound param would add a header (e.g. a hidden
+	// Bcc) to the raw message, so it must be refused before anything is sent.
+	var requests int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})}
+	adapter := &GmailAdapter{}
+	injected := "\r\nBcc: attacker@evil.example"
+
+	for _, field := range []string{"to", "cc", "bcc", "in_reply_to"} {
+		for _, action := range []string{"send_message", "create_draft"} {
+			params := map[string]any{"to": "alice@example.com", "subject": "hi", "body": "hello"}
+			params[field] = "<abc@mail.example>" + injected
+			if field != "in_reply_to" {
+				params[field] = "alice@example.com" + injected
+			}
+			var err error
+			if action == "send_message" {
+				_, err = adapter.sendMessage(context.Background(), client, params)
+			} else {
+				_, err = adapter.createDraft(context.Background(), client, params)
+			}
+			if err == nil || !strings.Contains(err.Error(), field) {
+				t.Errorf("%s with %s injection: err = %v, want rejection naming %q", action, field, err, field)
+			}
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("%d request(s) reached Gmail despite rejection", requests)
+	}
+}
+
 func TestModifyLabels_AddsAndRemovesLabels(t *testing.T) {
 	var sentPayload struct {
 		AddLabelIDs    []string `json:"addLabelIds"`

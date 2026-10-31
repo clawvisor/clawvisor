@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/notify"
+	"github.com/clawvisor/clawvisor/pkg/store"
 	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
@@ -161,5 +162,19 @@ func TestCallbackTokenStore_TaskIDRoundTrips(t *testing.T) {
 	}
 	if _, err := s.Consume(approveB); err != errTokenUsed {
 		t.Fatalf("Consume(approveB after denyB): want errTokenUsed, got %v", err)
+	}
+}
+
+func TestFormatTaskApprovalMessageShowsPlannedCallParams(t *testing.T) {
+	msg := formatTaskApprovalMessage(notify.TaskApprovalRequest{
+		Purpose:   "Reply to Alice",
+		ExpiresIn: "1h",
+		PlannedCalls: []store.PlannedCall{{
+			Service: "google.gmail", Action: "send_message", Reason: "Send the reply",
+			Params: map[string]any{"to": "<alice@example.com>"},
+		}},
+	})
+	if !strings.Contains(msg, "&lt;alice@example.com&gt;") {
+		t.Fatalf("planned call params missing or unescaped in approval message:\n%s", msg)
 	}
 }

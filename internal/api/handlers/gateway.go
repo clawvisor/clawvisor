@@ -2107,6 +2107,9 @@ func verificationModeFor(matched *store.TaskAction) string {
 //   - Service (base type, ignoring alias) and action must match exactly.
 //   - Planned call must have non-empty params (calls without params never match
 //     because we can't verify what entity they target).
+//   - The request may not carry params the plan didn't list (see
+//     plannedParamsMatch), since an unplanned param such as bcc would
+//     otherwise ride along without verification.
 //   - Each planned param is checked against actual params:
 //   - "$chain" values match any actual value found in chainFacts.
 //   - All other values must match exactly (JSON-normalized).
@@ -2128,10 +2131,23 @@ func matchPlannedCall(planned []store.PlannedCall, service, action string, param
 	return nil
 }
 
-// plannedParamsMatch returns true if every key/value in planned appears in actual.
+// plannedParamsMatch returns true if planned and actual carry the same params:
+// every key/value in planned appears in actual, and actual has no other params
+// apart from empty ones (nil or ""), which are treated as omitted. A request
+// that doesn't match falls back to intent verification, so strictness here
+// costs a verifier call, never a failed request.
 // A planned value of "$chain" matches if the actual value appears in any chain fact.
 // All other values are compared via JSON round-trip for type-safe deep equality.
 func plannedParamsMatch(planned, actual map[string]any, chainFacts []store.ChainFact) bool {
+	for k, av := range actual {
+		if _, ok := planned[k]; ok {
+			continue
+		}
+		if av == nil || av == "" {
+			continue
+		}
+		return false
+	}
 	for k, pv := range planned {
 		av, ok := actual[k]
 		if !ok {

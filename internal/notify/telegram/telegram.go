@@ -771,6 +771,9 @@ func formatTaskApprovalMessage(req notify.TaskApprovalRequest) string {
 			sb.WriteString(fmt.Sprintf("  • %s — %s\n",
 				html.EscapeString(display.FormatServiceAction(pc.Service, pc.Action)),
 				html.EscapeString(pc.Reason)))
+			if params := notify.RenderPlannedCallParams(pc); params != "" {
+				sb.WriteString("    params: <code>" + html.EscapeString(params) + "</code>\n")
+			}
 		}
 	}
 
