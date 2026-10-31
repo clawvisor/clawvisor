@@ -580,6 +580,77 @@ func TestMessageIDCannotRetargetEndpoint(t *testing.T) {
 	}
 }
 
+func TestSendAndDraftRejectHeaderInjection(t *testing.T) {
+	// A line break in a header-bound param would add a header (e.g. a hidden
+	// Bcc) to the raw message, so it must be refused before anything is sent.
+	var requests int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})}
+	adapter := &GmailAdapter{}
+	injected := "\r\nBcc: attacker@evil.example"
+
+	for _, field := range []string{"to", "cc", "bcc", "in_reply_to"} {
+		for _, action := range []string{"send_message", "create_draft"} {
+			params := map[string]any{"to": "alice@example.com", "subject": "hi", "body": "hello"}
+			params[field] = "<abc@mail.example>" + injected
+			if field != "in_reply_to" {
+				params[field] = "alice@example.com" + injected
+			}
+			var err error
+			if action == "send_message" {
+				_, err = adapter.sendMessage(context.Background(), client, params)
+			} else {
+				_, err = adapter.createDraft(context.Background(), client, params)
+			}
+			if err == nil || !strings.Contains(err.Error(), field) {
+				t.Errorf("%s with %s injection: err = %v, want rejection naming %q", action, field, err, field)
+			}
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("%d request(s) reached Gmail despite rejection", requests)
+	}
+}
+
+func TestSendMessageRejectsLineBreakFromThreadHeaders(t *testing.T) {
+	// Reply headers are copied from the fetched thread, so a line break there
+	// must be refused too, not only one in the agent's params.
+	sent := false
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var body string
+		switch {
+		case strings.Contains(req.URL.Path, "/threads/thread-123"):
+			body = `{"id":"thread-123","messages":[{"id":"msg-1","threadId":"thread-123","payload":{
+				"headers":[
+					{"name":"From","value":"alice@example.com"},
+					{"name":"Subject","value":"Original subject"},
+					{"name":"Message-ID","value":"<orig@mail.example>\r\nBcc: attacker@evil.example"}
+				],
+				"mimeType":"text/plain","body":{"data":"` + rawB64("hi") + `"}}}]}`
+		case strings.Contains(req.URL.Path, "/settings/sendAs"):
+			body = `{"sendAs":[{"sendAsEmail":"sender@example.com","isDefault":true,"isPrimary":true}]}`
+		case strings.Contains(req.URL.Path, "/messages/send"):
+			sent = true
+			body = `{"id":"sent-1"}`
+		default:
+			body = `{}`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+
+	_, err := (&GmailAdapter{}).sendMessage(context.Background(), client, map[string]any{
+		"to": "alice@example.com", "body": "thanks", "thread_id": "thread-123",
+	})
+	if err == nil || !strings.Contains(err.Error(), "line break") {
+		t.Fatalf("err = %v, want a line-break rejection", err)
+	}
+	if sent {
+		t.Fatal("message was sent despite a line break in a thread-derived header")
+	}
+}
+
 func TestModifyLabels_AddsAndRemovesLabels(t *testing.T) {
 	var sentPayload struct {
 		AddLabelIDs    []string `json:"addLabelIds"`

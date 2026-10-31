@@ -737,6 +737,11 @@ func formatApprovalMessage(req notify.ApprovalRequest) string {
 	return sb.String()
 }
 
+// plannedParamsBudget is the total bytes of escaped planned-call params one
+// task approval message may carry, leaving the rest of Telegram's 4096-character
+// limit for the purpose, actions and reasons.
+const plannedParamsBudget = 1500
+
 func formatTaskApprovalMessage(req notify.TaskApprovalRequest) string {
 	var sb strings.Builder
 	sb.WriteString("📋 <b>Clawvisor — Task Approval Request</b>\n\n")
@@ -767,10 +772,23 @@ func formatTaskApprovalMessage(req notify.TaskApprovalRequest) string {
 
 	if len(req.PlannedCalls) > 0 {
 		sb.WriteString("\n<b>Planned calls:</b>\n")
+		// Telegram rejects messages over 4096 characters, so params share one
+		// budget across all planned calls; past it they point to the dashboard.
+		paramsBudget := plannedParamsBudget
 		for _, pc := range req.PlannedCalls {
 			sb.WriteString(fmt.Sprintf("  • %s — %s\n",
 				html.EscapeString(display.FormatServiceAction(pc.Service, pc.Action)),
 				html.EscapeString(pc.Reason)))
+			if params := notify.RenderPlannedCallParams(pc); params != "" {
+				escaped := html.EscapeString(params)
+				if len(escaped) > paramsBudget {
+					sb.WriteString("    params: <i>omitted for length; review them in the dashboard</i>\n")
+					paramsBudget = 0
+					continue
+				}
+				paramsBudget -= len(escaped)
+				sb.WriteString("    params: <code>" + escaped + "</code>\n")
+			}
 		}
 	}
 

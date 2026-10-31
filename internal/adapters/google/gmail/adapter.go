@@ -505,6 +505,9 @@ func (a *GmailAdapter) getAttachment(ctx context.Context, client *http.Client, p
 // ── send_message ──────────────────────────────────────────────────────────────
 
 func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	if err := checkHeaderParams("send_message", params); err != nil {
+		return nil, err
+	}
 	to, _ := params["to"].(string)
 	cc, _ := params["cc"].(string)
 	bcc, _ := params["bcc"].(string)
@@ -604,6 +607,9 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 	// Fetch the sender's address for a proper From header.
 	from, _ := fetchSenderAddress(ctx, client)
 
+	if err := checkHeaderValues("send_message", from, to, cc, bcc, inReplyTo, references); err != nil {
+		return nil, err
+	}
 	fullBody := body + quotedBody
 	raw := buildMIMEMessage(from, to, cc, bcc, subject, fullBody, htmlBody, inReplyTo, references)
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
@@ -650,6 +656,9 @@ func (a *GmailAdapter) requireModifyScope(credBytes []byte, action, permissionDe
 // ── create_draft ──────────────────────────────────────────────────────────────
 
 func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	if err := checkHeaderParams("create_draft", params); err != nil {
+		return nil, err
+	}
 	to, _ := params["to"].(string)
 	cc, _ := params["cc"].(string)
 	bcc, _ := params["bcc"].(string)
@@ -739,6 +748,9 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 
 	from, _ := fetchSenderAddress(ctx, client)
 
+	if err := checkHeaderValues("create_draft", from, to, cc, bcc, inReplyTo, references); err != nil {
+		return nil, err
+	}
 	fullBody := body + quotedBody
 	raw := buildMIMEMessage(from, to, cc, bcc, subject, fullBody, htmlBody, inReplyTo, references)
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
@@ -1541,6 +1553,35 @@ func decodeBase64(s string) string {
 		return ""
 	}
 	return string(b)
+}
+
+// headerParams are the agent-supplied params that buildMIMEMessage writes
+// into MIME headers verbatim. Subject is not listed: it is Q-encoded.
+var headerParams = []string{"to", "cc", "bcc", "in_reply_to"}
+
+// checkHeaderParams rejects line breaks in header-bound params. A value like
+// "<id@mail>\r\nBcc: someone@example.com" would otherwise add a header, and
+// Gmail delivers to every recipient header in the raw message.
+func checkHeaderParams(action string, params map[string]any) error {
+	for _, name := range headerParams {
+		if v, _ := params[name].(string); strings.ContainsAny(v, "\r\n") {
+			return fmt.Errorf("gmail %s: %s must not contain line breaks", action, name)
+		}
+	}
+	return nil
+}
+
+// checkHeaderValues is the last check before buildMIMEMessage. Some header
+// values are filled from the fetched thread (the reply recipient, In-Reply-To,
+// References) rather than from params, so checkHeaderParams alone doesn't
+// cover everything that reaches a header.
+func checkHeaderValues(action string, values ...string) error {
+	for _, v := range values {
+		if strings.ContainsAny(v, "\r\n") {
+			return fmt.Errorf("gmail %s: a header value contains a line break", action)
+		}
+	}
+	return nil
 }
 
 func buildMIMEMessage(from, to, cc, bcc, subject, body, htmlBody, inReplyTo, references string) string {

@@ -492,6 +492,50 @@ func TestGateway_LocalService_PlannedCall_SkipsVerification(t *testing.T) {
 	}
 }
 
+func TestGateway_LocalService_PlannedCall_ExtraParamRunsVerifier(t *testing.T) {
+	// A request that adds a param the plan didn't list must not inherit the
+	// planned call's verification bypass.
+	st := newLocalTestStore()
+	st.tasks["task-1"] = &store.Task{
+		ID: "task-1", UserID: "user-1", AgentID: "agent-1", Status: "active",
+		RiskLevel: "low",
+		AuthorizedActions: []store.TaskAction{
+			{Service: "local.files", Action: "read_file", AutoExecute: true},
+		},
+		PlannedCalls: []store.PlannedCall{
+			{Service: "local.files", Action: "read_file", Params: map[string]any{"path": "/etc/hosts"}, Reason: "Read hosts file"},
+		},
+	}
+
+	provider := &mockLocalProvider{services: testServices()}
+	executor := &mockLocalExecutor{result: &adapters.Result{Summary: "127.0.0.1 localhost"}}
+	verifier := &mockVerifier{
+		verdict: &intent.VerificationVerdict{
+			Allow: false, ParamScope: "violation", Explanation: "extra param not covered by the plan",
+		},
+	}
+
+	h := newTestGatewayHandler(st, provider, executor, verifier)
+
+	w := makeGatewayRequest(t, h, map[string]any{
+		"service": "local.files",
+		"action":  "read_file",
+		"reason":  "Read hosts file",
+		"task_id": "task-1",
+		"params":  map[string]any{"path": "/etc/hosts", "encoding": "base64"},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !verifier.called {
+		t.Fatal("verifier should run when the request carries a param the plan didn't list")
+	}
+	if executor.called {
+		t.Fatal("executor should not run after the verifier blocks the request")
+	}
+}
+
 func TestPlannedCallBypassEligible(t *testing.T) {
 	cases := []struct {
 		risk string
