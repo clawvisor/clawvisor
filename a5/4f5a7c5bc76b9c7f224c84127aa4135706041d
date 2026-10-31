@@ -1,0 +1,38 @@
+internal/adapters/google/gmail/adapter.go
+  s_efc97519e3cba2::t_596aca29cec2f1 610-612,751-753,1574-1581,1583
+  s_efc97519e3cba2::t_d636b0bc89f61c 1582,1584-1586
+internal/api/handlers/gateway.go
+  s_efc97519e3cba2::t_70542ee504dbb3 2136-2137,2147
+internal/api/handlers/planned_call_test.go
+  s_efc97519e3cba2::t_70542ee504dbb3 25
+pkg/notify/planned_render.go
+  s_efc97519e3cba2::t_70542ee504dbb3 13,16-18,39-40
+internal/adapters/google/gmail/adapter_test.go
+  s_efc97519e3cba2::t_99a0b8bd0aa8ff 617-653
+internal/notify/telegram/telegram.go
+  s_efc97519e3cba2::t_70542ee504dbb3 740-744,775-777,783-790
+internal/notify/telegram/telegram_test.go
+  s_efc97519e3cba2::t_07427fe6d36c63 181-197
+internal/notify/slack/planned_calls_test.go
+  s_efc97519e3cba2::t_07427fe6d36c63 25-37
+internal/notify/slack/blocks.go
+  s_efc97519e3cba2::t_70542ee504dbb3 284-287
+pkg/notify/planned_render_test.go
+  s_efc97519e3cba2::t_70542ee504dbb3 24-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "a54f5a7c5bc76b9c7f224c84127aa4135706041d",
+  "prompts": {},
+  "sessions": {
+    "s_efc97519e3cba2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e384705d-4485-4208-8d9f-d39a5cf607b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Eric Levine <eric@clawvisor.com>"
+    }
+  }
+}
