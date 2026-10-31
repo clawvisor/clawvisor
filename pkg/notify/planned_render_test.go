@@ -21,7 +21,7 @@ func TestRenderPlannedCallParams(t *testing.T) {
 	if !strings.Contains(long, "truncated") {
 		t.Fatalf("long params should carry a truncation marker, got %d chars without one", len(long))
 	}
-	if len([]rune(long)) > plannedParamsMaxLen+100 {
-		t.Fatalf("long params rendered at %d runes, want about %d", len([]rune(long)), plannedParamsMaxLen)
+	if n := len([]rune(long)); n != plannedParamsMaxLen {
+		t.Fatalf("long params rendered at %d runes, want exactly %d", n, plannedParamsMaxLen)
 	}
 }

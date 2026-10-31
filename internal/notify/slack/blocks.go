@@ -281,6 +281,10 @@ func taskApprovalBlocks(req notify.TaskApprovalRequest) []block {
 		for _, c := range req.PlannedCalls {
 			fmt.Fprintf(&pc, "• %s — %s\n", esc(display.FormatServiceAction(c.Service, c.Action)), esc(c.Reason))
 			if params := notify.RenderPlannedCallParams(c); params != "" {
+				// Slack has no escape for a backtick inside a code span, so a
+				// raw one would end the span and let the rest render as
+				// formatting. Show a look-alike (U+02CB) instead.
+				params = strings.ReplaceAll(params, "`", "ˋ")
 				fmt.Fprintf(&pc, "    params: `%s`\n", esc(params))
 			}
 		}

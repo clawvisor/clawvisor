@@ -178,3 +178,20 @@ func TestFormatTaskApprovalMessageShowsPlannedCallParams(t *testing.T) {
 		t.Fatalf("planned call params missing or unescaped in approval message:\n%s", msg)
 	}
 }
+
+func TestFormatTaskApprovalMessageCapsTotalPlannedParams(t *testing.T) {
+	var calls []store.PlannedCall
+	for i := 0; i < 10; i++ {
+		calls = append(calls, store.PlannedCall{
+			Service: "google.gmail", Action: "send_message", Reason: "Send update",
+			Params: map[string]any{"body": strings.Repeat("x", 1000)},
+		})
+	}
+	msg := formatTaskApprovalMessage(notify.TaskApprovalRequest{Purpose: "Updates", ExpiresIn: "1h", PlannedCalls: calls})
+	if len(msg) > 4096 {
+		t.Fatalf("approval message is %d characters, over Telegram's 4096 limit", len(msg))
+	}
+	if !strings.Contains(msg, "omitted for length") {
+		t.Fatal("params past the budget should say they were omitted")
+	}
+}

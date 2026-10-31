@@ -10,8 +10,11 @@ import (
 
 // plannedParamsMaxLen caps the params text in a chat approval message so one
 // long value (an email body, say) can't blow past Slack's or Telegram's
-// message limits.
+// message limits. The truncation marker counts toward the cap.
 const plannedParamsMaxLen = 500
+
+// PlannedParamsTruncatedMarker ends params text that was cut to fit.
+const PlannedParamsTruncatedMarker = "… (truncated; review the full params in the dashboard)"
 
 // RenderPlannedCallParams renders a planned call's params as compact JSON for
 // approval messages. A planned call whose params match skips per-request
@@ -33,7 +36,8 @@ func RenderPlannedCallParams(pc store.PlannedCall) string {
 	}
 	s := strings.TrimSuffix(buf.String(), "\n")
 	if r := []rune(s); len(r) > plannedParamsMaxLen {
-		s = string(r[:plannedParamsMaxLen]) + "… (truncated; review the full params in the dashboard)"
+		keep := plannedParamsMaxLen - len([]rune(PlannedParamsTruncatedMarker))
+		s = string(r[:keep]) + PlannedParamsTruncatedMarker
 	}
 	return s
 }

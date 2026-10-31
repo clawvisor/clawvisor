@@ -22,3 +22,16 @@ func TestTaskApprovalBlocksShowPlannedCallParams(t *testing.T) {
 		t.Fatalf("planned call params missing from approval blocks: %s", b)
 	}
 }
+
+func TestTaskApprovalBlocksNeutralizeBackticksInParams(t *testing.T) {
+	blocks := taskApprovalBlocks(notify.TaskApprovalRequest{
+		PlannedCalls: []store.PlannedCall{{
+			Service: "google.gmail", Action: "send_message", Reason: "Send the reply",
+			Params: map[string]any{"body": "x` *bold* `y"},
+		}},
+	})
+	b, _ := json.Marshal(blocks)
+	if strings.Contains(string(b), "x`") {
+		t.Fatalf("raw backtick from params reached the code span: %s", b)
+	}
+}

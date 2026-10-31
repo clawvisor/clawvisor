@@ -2133,7 +2133,8 @@ func matchPlannedCall(planned []store.PlannedCall, service, action string, param
 
 // plannedParamsMatch returns true if planned and actual carry the same params:
 // every key/value in planned appears in actual, and actual has no other params
-// apart from empty ones (nil or ""), which are treated as omitted. A request
+// apart from nil ones, which adapters treat as omitted. An empty string is not
+// omitted: sparse-body actions send it, so it can clear a field. A request
 // that doesn't match falls back to intent verification, so strictness here
 // costs a verifier call, never a failed request.
 // A planned value of "$chain" matches if the actual value appears in any chain fact.
@@ -2143,7 +2144,7 @@ func plannedParamsMatch(planned, actual map[string]any, chainFacts []store.Chain
 		if _, ok := planned[k]; ok {
 			continue
 		}
-		if av == nil || av == "" {
+		if av == nil {
 			continue
 		}
 		return false

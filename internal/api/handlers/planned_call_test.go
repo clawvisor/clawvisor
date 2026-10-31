@@ -22,7 +22,7 @@ func TestMatchPlannedCall_RequiresSameParams(t *testing.T) {
 		want   bool
 	}{
 		{name: "identical", mutate: func(map[string]any) {}, want: true},
-		{name: "empty extra param is ignored", mutate: func(p map[string]any) { p["cc"] = "" }, want: true},
+		{name: "empty-string extra param", mutate: func(p map[string]any) { p["cc"] = "" }, want: false},
 		{name: "nil extra param is ignored", mutate: func(p map[string]any) { p["cc"] = nil }, want: true},
 		{name: "extra bcc", mutate: func(p map[string]any) { p["bcc"] = "attacker@evil.example" }, want: false},
 		{name: "extra body", mutate: func(p map[string]any) { p["body"] = "anything" }, want: false},
