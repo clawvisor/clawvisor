@@ -21,13 +21,16 @@ import (
 
 // Payload is posted to the agent's callback URL.
 type Payload struct {
-	Type      string           `json:"type"`                 // "request" or "task"
-	RequestID string           `json:"request_id,omitempty"` // populated when Type == "request"
-	TaskID    string           `json:"task_id,omitempty"`    // populated when Type == "task"
-	Status    string           `json:"status"`
-	Result    *adapters.Result `json:"result,omitempty"`
-	Error     string           `json:"error,omitempty"`
-	AuditID   string           `json:"audit_id,omitempty"`
+	Type        string           `json:"type"`                 // "request" or "task"
+	RequestID   string           `json:"request_id,omitempty"` // populated when Type == "request"
+	TaskID      string           `json:"task_id,omitempty"`    // populated when Type == "task"
+	Status      string           `json:"status"`
+	Result      *adapters.Result `json:"result,omitempty"`
+	Error       string           `json:"error,omitempty"`
+	Code        string           `json:"code,omitempty"`
+	FailureKind string           `json:"failure_kind,omitempty"`
+	TimedOut    bool             `json:"timed_out,omitempty"`
+	AuditID     string           `json:"audit_id,omitempty"`
 }
 
 var httpClient = &http.Client{

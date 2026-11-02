@@ -1,0 +1,39 @@
+{
+  "id": "event-123",
+  "etag": "\"event-v1\"",
+  "sequence": 7,
+  "summary": "Calendar approval review",
+  "location": "Video call",
+  "description": "Review the proposed provider action",
+  "status": "confirmed",
+  "hangoutLink": "https://meet.google.com/example",
+  "start": {
+    "dateTime": "2026-08-28T16:00:00Z",
+    "timeZone": "UTC"
+  },
+  "end": {
+    "dateTime": "2026-08-28T16:30:00Z",
+    "timeZone": "UTC"
+  },
+  "attendees": [
+    {
+      "email": "self@example.com",
+      "displayName": "Calendar Owner",
+      "responseStatus": "needsAction",
+      "self": true
+    },
+    {
+      "email": "organizer@example.com",
+      "responseStatus": "accepted",
+      "organizer": true
+    }
+  ],
+  "attachments": [
+    {
+      "fileUrl": "https://drive.google.com/file/d/example",
+      "title": "Agenda",
+      "mimeType": "application/pdf",
+      "fileId": "file-123"
+    }
+  ]
+}

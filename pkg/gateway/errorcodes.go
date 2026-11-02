@@ -24,14 +24,14 @@ const (
 	CodeUnknownAction  = "UNKNOWN_ACTION"
 
 	// State — the target task/approval is not in a state that permits this action.
-	CodeInvalidState      = "INVALID_STATE"
-	CodeNotFound          = "NOT_FOUND"
-	CodeAlreadyExecuting  = "ALREADY_EXECUTING"
-	CodeNotApproved       = "NOT_APPROVED"
-	CodeApprovalExpired   = "APPROVAL_EXPIRED"
+	CodeInvalidState     = "INVALID_STATE"
+	CodeNotFound         = "NOT_FOUND"
+	CodeAlreadyExecuting = "ALREADY_EXECUTING"
+	CodeNotApproved      = "NOT_APPROVED"
+	CodeApprovalExpired  = "APPROVAL_EXPIRED"
 
 	// Policy — the request is syntactically fine but blocked by authorization.
-	CodeScopeMismatch  = "SCOPE_MISMATCH"  // outside the approved task scope
+	CodeScopeMismatch  = "SCOPE_MISMATCH"   // outside the approved task scope
 	CodeReasonTooVague = "REASON_TOO_VAGUE" // intent verifier found reason incoherent/insufficient
 	CodeParamViolation = "PARAM_VIOLATION"  // params inconsistent with task scope / chain context
 	CodeRestricted     = "RESTRICTED"       // user restriction or org policy blocked the action
@@ -40,9 +40,13 @@ const (
 	// Execution — downstream failure during or after dispatch.
 	CodeAdapterError            = "ADAPTER_ERROR"
 	CodeLocalServiceUnavailable = "LOCAL_SERVICE_UNAVAILABLE"
+	CodeProviderDefiniteFailure = "PROVIDER_DEFINITE_FAILURE"
+	CodeStaleVersion            = "STALE_VERSION"
+	CodeAmbiguousOutcome        = "AMBIGUOUS_OUTCOME"
+	CodeProviderTimeout         = "PROVIDER_TIMEOUT"
 
 	// Operational.
-	CodeRateLimited  = "RATE_LIMITED"
+	CodeRateLimited   = "RATE_LIMITED"
 	CodeInternalError = "INTERNAL_ERROR"
 
 	// Batch — aggregate endpoint specific.
