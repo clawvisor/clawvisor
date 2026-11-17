@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	llmprices "github.com/Mattbusel/llm-prices/go"
 )
 
 // ModelPricing is the per-1M-token list price (USD) for one model.
@@ -71,10 +73,10 @@ var table = map[string]ModelPricing{
 	// Anthropic — current generation (Claude 4.x). CacheWrite1hPerM
 	// is 2x InputPerM (Anthropic's 1-hour cache premium); 5-minute
 	// writes are at 1.25x.
-	"claude-opus-4-8":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)},
-	"claude-opus-4-7":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: lastBulkPricedAt},
-	"claude-opus-4-6":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: lastBulkPricedAt},
-	"claude-opus-4-5":             {InputPerM: 15.00, OutputPerM: 75.00, CacheWritePerM: 18.75, CacheWrite1hPerM: 30.00, CacheReadPerM: 1.50, PricedAt: lastBulkPricedAt},
+	"claude-opus-4-8":             {InputPerM: 5.00, OutputPerM: 25.00, CacheWritePerM: 6.25, CacheWrite1hPerM: 10.00, CacheReadPerM: 0.50, PricedAt: time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)},
+	"claude-opus-4-7":             {InputPerM: 5.00, OutputPerM: 25.00, CacheWritePerM: 6.25, CacheWrite1hPerM: 10.00, CacheReadPerM: 0.50, PricedAt: time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)},
+	"claude-opus-4-6":             {InputPerM: 5.00, OutputPerM: 25.00, CacheWritePerM: 6.25, CacheWrite1hPerM: 10.00, CacheReadPerM: 0.50, PricedAt: time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)},
+	"claude-opus-4-5":             {InputPerM: 5.00, OutputPerM: 25.00, CacheWritePerM: 6.25, CacheWrite1hPerM: 10.00, CacheReadPerM: 0.50, PricedAt: time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)},
 	"claude-sonnet-4-7":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: lastBulkPricedAt},
 	"claude-sonnet-4-6":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: lastBulkPricedAt},
 	"claude-sonnet-4-5":           {InputPerM: 3.00, OutputPerM: 15.00, CacheWritePerM: 3.75, CacheWrite1hPerM: 6.00, CacheReadPerM: 0.30, PricedAt: lastBulkPricedAt},
@@ -106,7 +108,10 @@ var table = map[string]ModelPricing{
 // models return Cost{Known: false, CostMicros: 0}.
 func Compute(model string, u Usage) Cost {
 	key := Normalize(model)
-	p, ok := table[key]
+	p, ok := listPrice(key)
+	if !ok {
+		p, ok = table[key]
+	}
 	if !ok {
 		return Cost{Known: false, Model: model}
 	}
@@ -130,6 +135,34 @@ func Compute(model string, u Usage) Cost {
 		Model:      key,
 		CostMicros: int64(total + 0.5),
 	}
+}
+
+// listPrice looks Anthropic, OpenAI and Google ids up in the llm-prices Go module, whose
+// rows are read from each provider's pricing page and dated (Checked), so new releases and
+// price changes do not wait on a table edit. Other ids use the table above.
+func listPrice(key string) (ModelPricing, bool) {
+	lp, ok := llmprices.Lookup(key)
+	if !ok || lp.Input == nil || lp.Output == nil {
+		return ModelPricing{}, false
+	}
+	switch lp.Provider {
+	case "anthropic", "openai", "google":
+	default:
+		return ModelPricing{}, false
+	}
+	p := ModelPricing{
+		InputPerM:        *lp.Input,
+		OutputPerM:       *lp.Output,
+		CacheWritePerM:   lp.CacheWrite["5m"],
+		CacheWrite1hPerM: lp.CacheWrite["1h"],
+	}
+	if lp.CacheRead != nil {
+		p.CacheReadPerM = *lp.CacheRead
+	}
+	if t, err := time.Parse("2006-01-02", lp.Checked); err == nil {
+		p.PricedAt = t
+	}
+	return p, true
 }
 
 // dateSuffix matches an `-YYYYMMDD` trailing component on a model

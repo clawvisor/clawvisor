@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	cloud.google.com/go/secretmanager v1.16.0
+	github.com/Mattbusel/llm-prices/go v0.1.1
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/aws/aws-sdk-go-v2 v1.42.1
