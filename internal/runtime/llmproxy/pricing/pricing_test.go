@@ -84,3 +84,19 @@ func TestCompute_DatedAnthropicMatches(t *testing.T) {
 		t.Errorf("CostMicros = %d, want 10500", got.CostMicros)
 	}
 }
+
+func TestCompute_OpusListPrice(t *testing.T) {
+	// Opus 4.5-4.8: $5 in, $25 out, $6.25 5m write, $10 1h write, $0.50 read per 1M.
+	for _, m := range []string{"claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"} {
+		got := Compute(m, Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000, CacheWriteTokens: 1_000_000, CacheWrite1hTokens: 1_000_000, CacheReadTokens: 1_000_000})
+		if got.CostMicros != 46_750_000 {
+			t.Errorf("%s: CostMicros = %d, want 46750000", m, got.CostMicros)
+		}
+	}
+}
+
+func TestCompute_ModelsOutsideTable(t *testing.T) {
+	if got := Compute("gpt-5.4", Usage{InputTokens: 1_000_000}); !got.Known || got.CostMicros != 2_500_000 {
+		t.Fatalf("gpt-5.4: %+v, want known at 2500000 micros", got)
+	}
+}
